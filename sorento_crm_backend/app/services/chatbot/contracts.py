@@ -208,7 +208,10 @@ SelectionContext = Literal[SELECTION_CONTEXTS]  # type: ignore[valid-type]
 # Engine vocabularies
 # --------------------------------------------------------------------------- #
 
-# The 13 arms `route-turn` decides between, in ladder order.
+# The 13 arms `route-turn` decides between, in ladder order, plus `media_denied`
+# (chatbot media-into-turn, S2): a photo or voice note the intake step refused
+# (quota, burst, disabled number, clip too long) or could not complete (extraction
+# failed, timed out) before a parser ever ran.
 BRANCH_KINDS = (
     "access_denied",
     "escalate_offer",
@@ -223,6 +226,7 @@ BRANCH_KINDS = (
     "stock_denied",
     "demand_qty",
     "business_query",
+    "media_denied",
 )
 BranchKind = Literal[BRANCH_KINDS]  # type: ignore[valid-type]
 
@@ -259,8 +263,10 @@ TraceStatus = Literal[TRACE_STATUSES]  # type: ignore[valid-type]
 # trace record exists (H5, AC-107), `queued` is the S7 per-contact wait (AC-710),
 # `casual_llm` is the S4 clarifier call (AC-403), and `delegated` is a turn an n8n lane
 # took over and never finished, failed by the sweep (AC-260,
-# `app/services/chatbot_turn_sweep.py`).
-TURN_FAILURE_STAGES = TURN_STAGES + ("intake", "queued", "casual_llm", "delegated")
+# `app/services/chatbot_turn_sweep.py`). `media_intake` (chatbot media-into-turn, S2)
+# is a fifth: an extraction that failed or outlived the sync wait stops there, before
+# the parser ever ran.
+TURN_FAILURE_STAGES = TURN_STAGES + ("intake", "queued", "casual_llm", "delegated", "media_intake")
 TurnFailureStage = Literal[TURN_FAILURE_STAGES]  # type: ignore[valid-type]
 # Enforced where the column is written (`engine._close_turn`), so a typo'd stage fails
 # loudly instead of landing in the row and reading as an unknown state on the trace
@@ -596,6 +602,12 @@ class Envelope(BaseModel):
     ingress: IngressKind = "webhook"
     # Gate 4 (shadow mode). Same reason as `messageId`: it lands in a VARCHAR(128).
     shadow_of: str | None = Field(default=None, max_length=128)
+    # PLAN-chatbot-media-into-turn.md, AC-1805 (review round S3): n8n's OWN transition-
+    # window shape, while its media pipeline still runs upstream of `/chat/turn` during
+    # the cutover - `{envelope: {..., message, media: <patched item>}}`. Read by
+    # `media_intake.patched_upstream()`; `None` on every other envelope, including
+    # every one this repo's own tests build.
+    media: dict[str, Any] | None = None
 
     @field_validator("message")
     @classmethod

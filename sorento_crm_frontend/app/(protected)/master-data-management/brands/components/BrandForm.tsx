@@ -49,6 +49,7 @@ export default function BrandForm({ brandId, onSuccess }: BrandFormProps) {
       logo_url: null,
       is_active: true,
       access_levels: [],
+      flows_to_purchasing: true,
     },
     mode: 'onTouched',
   });
@@ -65,6 +66,7 @@ export default function BrandForm({ brandId, onSuccess }: BrandFormProps) {
         logo_url: brand.logo_url || null,
         is_active: brand.is_active,
         access_levels: brand.access_levels ?? [],
+        flows_to_purchasing: brand.flows_to_purchasing,
       });
     }
   }, [brand, isEditMode, form]);
@@ -81,6 +83,7 @@ export default function BrandForm({ brandId, onSuccess }: BrandFormProps) {
         logo_url: data.logo_url ?? undefined,
         is_active: data.is_active,
         access_levels: data.access_levels ?? [],
+        flows_to_purchasing: data.flows_to_purchasing,
       };
       
       if (isEditMode && brandId) {
@@ -221,6 +224,24 @@ export default function BrandForm({ brandId, onSuccess }: BrandFormProps) {
                       <FormDescription>
                         Inactive brands will not appear in dropdowns
                       </FormDescription>
+                    </div>
+                    <FormControl>
+                      <Switch
+                        checked={field.value}
+                        onCheckedChange={field.onChange}
+                      />
+                    </FormControl>
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="flows_to_purchasing"
+                render={({ field }) => (
+                  <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                    <div className="space-y-0.5">
+                      <FormLabel className="text-base">Flows to purchasing</FormLabel>
                     </div>
                     <FormControl>
                       <Switch

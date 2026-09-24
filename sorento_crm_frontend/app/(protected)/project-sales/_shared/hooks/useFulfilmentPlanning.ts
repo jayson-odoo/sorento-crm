@@ -264,7 +264,7 @@ export function useReconciliationMutations() {
  */
 export function usePlanningBoard(
   soNumbers: string[],
-  granularity: BoardGranularity = 'week',
+  granularity: BoardGranularity = 'date',
   previewPolicy: boolean | string = false,
   options: { dayWindow?: string; asOf?: string } = {},
   enabled = true,
@@ -344,11 +344,20 @@ export function useStockDetail(
   lineIds: string[] = [],
   /** A whole SET instead of one bin: the group suffix (`IB`), or `pools`. */
   group?: string | null,
+  /**
+   * Off while a caller is still resolving WHICH bin or group to ask for
+   * (`OrderInquiryStockGrid`, a bare pool code resolved to its warehouse id first) - the
+   * route 422s when asked for neither, and firing that request every render while nothing
+   * is resolved yet would be a failed fetch nobody asked for. Defaults on: every other
+   * caller already knows its target before this hook is called.
+   */
+  enabled = true,
 ) {
   const key = lineIds.join(',');
   return useQuery({
     queryKey: [STOCK_DETAIL_KEY, productId, group ?? warehouseId, key],
     queryFn: () => getStockDetail(productId, warehouseId, lineIds, group),
+    enabled: enabled && Boolean(warehouseId || group),
     retry: 1,
   });
 }

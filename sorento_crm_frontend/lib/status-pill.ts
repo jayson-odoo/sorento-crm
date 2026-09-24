@@ -99,3 +99,17 @@ export function statusPillClass(status?: string | null): string {
   const s = (status ?? '').trim().toLowerCase().replace(/\s+/g, '_');
   return STATUS_PILL_CLASS[s] ?? 'bg-muted text-muted-foreground';
 }
+
+/**
+ * The same palette, `text-*` only - for an icon-only control (a toolbar button, a row
+ * icon) that reads the status by colour but carries no pill background of its own.
+ * Reviewer round (S6, `PLAN-oi-request-cs-reserve.md`): an OI row's own Reserve
+ * icon-button used to hardcode `text-amber-600`/`text-emerald-600` locally rather than
+ * reading this ONE source of truth, so it could silently drift from every pill that
+ * already reads `pending`/`done` this way (`OrderInquiryVerbPill.tsx`'s own
+ * `ReservePill`).
+ */
+export function statusTextClass(status?: string | null): string {
+  const classes = statusPillClass(status).split(' ');
+  return classes.find((cls) => cls.startsWith('text-')) ?? 'text-muted-foreground';
+}

@@ -1149,3 +1149,29 @@ def test_ac_r_36_a_row_with_no_core_line_keeps_todays_reading(world):
     world.db.flush()
 
     assert Decimal(_worklist(world)._kinds({})["buy"]) == Decimal("6")
+
+
+def test_ac_ob_8_an_order_back_row_ignores_the_core_lines_cap(world):
+    """AC-OB-8 (R2, `PLAN-oi-order-back-not-capped.md`). The SAME shape as
+    `test_ac_r_36_buy_is_capped_by_what_the_core_line_still_owes` above - a core line
+    ordered and delivered in full, so `_LINE_OUTSTANDING` is 0 - except the row is
+    ORDER_BACK, not ORDER: an order back is a shortfall against something already
+    shipped, and a delivered borrowing line is the NORMAL case for one, not a reason to
+    read Remaining as 0. Buy (the worklist's own Remaining total, `_UNLINKED_QTY`) must
+    still read the row's own qty."""
+    row = _row_on_a_core_line(world, "CKS1050", 3, ordered=3, delivered=3)
+    world.db.execute(
+        text("UPDATE " + P + ".order_inquiry_rows SET verb = 'ORDER_BACK' WHERE id = :r"),
+        {"r": row.id},
+    )
+    world.db.flush()
+    world.db.refresh(row)
+
+    kinds = _worklist(world)._kinds({})
+
+    assert Decimal(kinds["buy"]) == Decimal("3"), (
+        "the core line owes nothing more, but an ORDER_BACK row is owed in full - the "
+        "14 Sep cap (7.3) must never touch it"
+    )
+    ids = {entry["id"] for entry in _worklist(world).list_rows(limit=100, kind="buy")["data"]}
+    assert row.id in ids

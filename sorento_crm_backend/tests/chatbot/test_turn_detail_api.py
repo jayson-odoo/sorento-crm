@@ -308,6 +308,62 @@ class TestFailedTurnStageOrder:
         assert stages[1]["name"] == "received"
 
 
+class TestStagesCarryFacts:
+    """Kill test (reviewer round): `trace_detail.py::_stages()` used to project only
+    `{name, started_at, ms, status, summary, error}` - `facts` was never part of the
+    Stages tab's own shape at all (`TurnDetailDrawer`'s "Stages" section, distinct
+    from `TurnPanel`'s own inline row which reads `turn.trace` directly and never
+    lost anything). Fixed alongside the entities-only live diagnosis; guarded here so
+    a regression on the PROJECTION side (as opposed to `TurnPanel`'s own component,
+    already guarded by `TurnPanel.media.test.tsx`) is caught in the backend suite.
+
+    The record is the shape copied from a REAL live turn (`TurnPanel.media.test.tsx`'s
+    own fixture, itself copied from `chatbot.turns.trace` on 0921, turn
+    767e0472-2388-47f8-9b40-efef429b45a8) - not hand-typed.
+    """
+
+    def test_media_intake_facts_render_and_raw_is_not_projected(self, client, db):
+        contact = _contact("media-facts")
+        trace = [
+            _trace_record("received"),
+            {
+                "stage": "media_intake",
+                "status": "ok",
+                "started_at": datetime.now(timezone.utc).isoformat(),
+                "ms": 2632,
+                "summary": "Read the photo.",
+                "why": "The customer sent media; this is what the intake pipeline decided and read.",
+                "facts": {
+                    "notes": "Simple list of product codes with no quantities or caption.",
+                    "status": "completed",
+                    "decision": "accepted",
+                    "entities": "BRBC22293W-1, SRTWT1506, SRTWT1805",
+                    "modality": "image",
+                    "elapsed_ms": 72,
+                },
+                "error": None,
+                "raw": {
+                    "job_id": "b6ccbbed-b617-4993-bf22-6e930900ba84",
+                    "attachment_id": None,
+                    "result": {"rendered_text": "null: BRBC22293W-1, SRTWT1506, SRTWT1805"},
+                },
+            },
+        ]
+        row = _seed_turn(db, contact_respond_id=contact, trace=trace)
+
+        resp = client.get(f"{BASE}/{row.id}")
+        assert resp.status_code == 200, resp.text
+        stages = resp.json()["trace_detail"]["stages"]
+        media_stage = next(s for s in stages if s["name"] == "media_intake")
+
+        assert media_stage["facts"]["modality"] == "image"
+        assert media_stage["facts"]["decision"] == "accepted"
+        assert media_stage["facts"]["entities"] == "BRBC22293W-1, SRTWT1506, SRTWT1805"
+        # `raw` (job_id/attachment_id/the full extraction result) is NEVER part of
+        # this projection - no UUIDs on screen, and the full result is unbounded.
+        assert "raw" not in media_stage
+
+
 class TestComposedFromARealTurn:
     """AC-970: the endpoint composes something real off a turn the engine actually ran."""
 

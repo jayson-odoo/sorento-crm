@@ -15,7 +15,7 @@
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
@@ -31,6 +31,7 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
 }));
 
 const getPlanningBoard = vi.fn();
+const deleteLineDraft = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('../../_shared/services/fulfilmentPlanningService', () => ({
   getPlanningBoard: (...args: unknown[]) => getPlanningBoard(...args),
@@ -46,21 +47,34 @@ vi.mock('../../_shared/services/fulfilmentPlanningService', () => ({
     saved_by: 'Test Planner',
     saved_at: '2026-09-03T00:00:00Z',
   }),
-  deleteLineDraft: vi.fn().mockResolvedValue(undefined),
+  deleteLineDraft: (...args: unknown[]) => deleteLineDraft(...args),
   ConfirmSupplyError: class ConfirmSupplyError extends Error {
     readonly failingLines: unknown[] = [];
   },
 }));
 
+// AC-B13: captured (not an inline `vi.fn()`) so the new describe block below can seed a
+// real `PlanningChangeBatch` per test - the same pattern `FulfilmentBoardPanel.change.test.tsx`
+// uses for the same mock.
+const getPlanningChangeBatch = vi.fn();
+
 vi.mock('../../_shared/services/planningChangeService', () => ({
   listPlanningChangeBatches: vi.fn(),
-  getPlanningChangeBatch: vi.fn(),
+  getPlanningChangeBatch: (...args: unknown[]) => getPlanningChangeBatch(...args),
   updatePlanningChangeRow: vi.fn(),
   applyPlanningChanges: vi.fn(),
 }));
 
 vi.mock('@/lib/toast', () => ({
-  toast: { success: vi.fn(), warning: vi.fn(), error: vi.fn() },
+  toast: {
+    success: vi.fn(),
+    warning: vi.fn(),
+    error: vi.fn(),
+    // The pending-entity store takes its own countdown toast down once the
+    // parked undo settles - without this the store's follow-through timer
+    // throws an unhandled rejection if it fires after the test ends.
+    dismiss: vi.fn(),
+  },
 }));
 
 vi.mock('next-auth/react', () => ({
@@ -79,7 +93,14 @@ const createPendingAction = vi.fn().mockResolvedValue({
 vi.mock('@/services/pendingActionService', () => ({
   createPendingAction: (...args: unknown[]) => createPendingAction(...args),
   cancelPendingAction: vi.fn(),
-  getCurrentPendingAction: vi.fn().mockResolvedValue(null),
+  // DELTA-1 (reviewer, fix round 3): the REAL shape, never a bare `null`.
+  // `settleFromServer` (`lib/pending-entity-store.ts`) reads `current.pending` straight off
+  // this resolution outside the try/catch that guards the read itself, so a `null` threw an
+  // unhandled rejection in roughly two runs in five - the file exited 1 with every test
+  // still reported as passing, which is the worst possible way to find out.
+  getCurrentPendingAction: vi
+    .fn()
+    .mockResolvedValue({ pending: null, last_outcome: null }),
 }));
 
 vi.mock('@/hooks/usePermissions', () => ({
@@ -124,8 +145,11 @@ vi.mock('@/components/common/SearchableSelect', () => ({
   ),
 }));
 
+import { toast } from '@/lib/toast';
 import { FulfilmentBoardPanel } from './FulfilmentBoardPanel';
 import { buildBoard, type BoardDemandLine } from '../../_shared/lib/__testsupport__/boardFixture';
+import { MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE } from '../../_shared/__mocks__/planningChanges';
+import { pendingEntityStore } from '@/lib/pending-entity-store';
 
 const TODAY = '2026-09-17';
 
@@ -198,6 +222,15 @@ async function openBoardActions() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+afterEach(() => {
+  // AC-R2-F04 starts an undo whose fixture `commit_at` is already in the
+  // past, so the store's own follow-through timer is armed for real; putting
+  // it down here (rather than waiting for it to fire on its own after the
+  // test ends) is what keeps a later suite from seeing an unhandled
+  // rejection from a timer this test left running.
+  pendingEntityStore.clear('project_sales_order', 'pso-1');
 });
 
 describe('AC-UC-02: one gear entry per undoable order, of three', () => {
@@ -389,5 +422,295 @@ describe('review round: the reconstructed entry is not clipped at desktop width'
     // width cap under test lives on the menu's own first child.
     const contentDiv = menu.firstElementChild as HTMLElement;
     expect(contentDiv.className).not.toMatch(/\bsm:max-w-80\b/);
+  });
+});
+
+// --------------------------------------------------------------------------- //
+// AC-B13 (`board-verdict-actions-chips-acceptance-criteria.md`, "Undo returns to the
+// pre-mark", owner finding 22 Sep: "it becomes suggested instead of change proposed"):
+// a line the OPEN change batch names arrives pre-marked `Change proposed`
+// (`{ verdict: 'approved', preMarked: true }`, `FulfilmentBoardPanel`'s own seeding
+// effect ~line 546). Saving it writes a real draft (pill `Saved`); Undo today
+// (`decide(key, null)` ~line 695) deletes the draft key outright, so the pill falls
+// through `verdictOf` to `suggested` - the addendum's own diagnosis of the bug. The fix
+// keeps `decide(null)` writing `{ verdict: 'approved', preMarked: true }` back over a key
+// the seeding effect once pre-marked, instead of deleting it, while the SERVER delete
+// still fires. RED today: Undo removes the key outright and the pill reads "Suggested".
+// --------------------------------------------------------------------------- //
+
+describe('AC-B13: Undo on a pre-marked line returns to "Change proposed", not "Suggested"', () => {
+  const NAMED_BATCH = MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE;
+
+  function namedDemand(): BoardDemandLine {
+    // The batch's own row (`pcr-381895-1`) names exactly this `project_line_id` as
+    // changed - `preMarkedKeys` (`boardChangeAnnotations.ts`) matches on it alone.
+    return demand({
+      sales_order_id: 'so-381895',
+      so_number: 'SO381895',
+      project_sales_order_id: 'pso-381895',
+      project_line_id: 'pl-381895-1',
+      line_no: 1,
+      item_code: 'SRTWCX7405-RL-S-PJ',
+      qty: '25',
+      required_date: '2026-09-20',
+    });
+  }
+
+  function unnamedDemand(): BoardDemandLine {
+    // A line on the SAME board, opened on the SAME batch, whose `project_line_id` the
+    // batch's rows never mention - `preMarkedKeys` leaves it out, so it opens plain
+    // `Suggested` rather than `Change proposed`.
+    return demand({
+      sales_order_id: 'so-999',
+      so_number: 'SO000999',
+      project_sales_order_id: 'pso-999',
+      project_line_id: 'pl-999-1',
+      line_no: 1,
+      item_code: 'ZZT-ITEM-9',
+      qty: '5',
+      required_date: '2026-09-21',
+    });
+  }
+
+  function renderOnBatch(soNumbers: string[]) {
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false, gcTime: 0 },
+        mutations: { retry: false },
+      },
+    });
+    return render(
+      <QueryClientProvider client={client}>
+        <FulfilmentBoardPanel
+          soNumbers={soNumbers}
+          batchId={NAMED_BATCH.id}
+          onBack={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+  }
+
+  /** Switches to the List view, waits for the row's OPENING pill, saves it from the
+   * expanded panel, waits for "Saved", then presses Undo - returning a live getter for
+   * the row so the caller can read whatever the pill settles on afterwards. */
+  async function saveThenUndo(soNumber: string, lineNo: number, openingPill: string) {
+    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+    await screen.findByText(soNumber);
+    const row = () => screen.getByText(soNumber).closest('tr') as HTMLElement;
+
+    await waitFor(() => expect(within(row()).getByText(openingPill)).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTestId('board-list-expand-all'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Save decision' }));
+
+    await waitFor(() => expect(within(row()).getByText('Saved')).toBeInTheDocument());
+
+    fireEvent.click(
+      within(row()).getByRole('button', { name: `Undo ${soNumber} line ${lineNo}` }),
+    );
+    return row;
+  }
+
+  beforeEach(() => {
+    getPlanningChangeBatch.mockResolvedValue(NAMED_BATCH);
+  });
+
+  it('a line the open batch names is "Change proposed" again after Save then Undo, and the server draft is deleted', async () => {
+    getPlanningBoard.mockResolvedValue(
+      buildBoard([namedDemand()], { today: TODAY, freeStock: {}, granularity: 'week' }),
+    );
+
+    renderOnBatch(['SO381895']);
+    const row = await saveThenUndo('SO381895', 1, 'Change proposed');
+
+    // The server DELETE still runs (the addendum: "the server DELETE still runs"); only
+    // the LOCAL draft entry changes shape.
+    await waitFor(() => expect(deleteLineDraft).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(within(row()).getByText('Change proposed')).toBeInTheDocument(),
+    );
+    expect(within(row()).queryByText('Suggested')).not.toBeInTheDocument();
+  });
+
+  it('a line the batch does NOT name still goes back to "Suggested" after Save then Undo, as today', async () => {
+    getPlanningBoard.mockResolvedValue(
+      buildBoard([unnamedDemand()], { today: TODAY, freeStock: {}, granularity: 'week' }),
+    );
+
+    renderOnBatch(['SO000999']);
+    const row = await saveThenUndo('SO000999', 1, 'Suggested');
+
+    await waitFor(() => expect(within(row()).getByText('Suggested')).toBeInTheDocument());
+    expect(within(row()).queryByText('Change proposed')).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * SF-5 (reviewer, fix round 2): AC-B13 is a rule about UNDOING, not about one button. The
+ * board-wide discard ("Board actions" > "Undo all") deletes every draft key straight through
+ * `removeDraftKey` and then wrote `setDraft({})`, which threw the pre-marks away with them -
+ * so a line the open batch names came back reading `Suggested` from that path even after the
+ * per-row Undo had been fixed.
+ */
+describe('SF-5: "Undo all" returns a batch-named line to "Change proposed" too', () => {
+  const NAMED_BATCH = MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE;
+
+  function namedDemand(): BoardDemandLine {
+    return demand({
+      sales_order_id: 'so-381895',
+      so_number: 'SO381895',
+      project_sales_order_id: 'pso-381895',
+      project_line_id: 'pl-381895-1',
+      line_no: 1,
+      item_code: 'SRTWCX7405-RL-S-PJ',
+      qty: '25',
+      required_date: '2026-09-20',
+    });
+  }
+
+  /** The batch's THIRD row names `pl-381895-3`, so this line opens pre-marked too - and
+   * nothing here ever saves it, which is what makes its DELETE a 404 waiting to happen. */
+  function preMarkOnlyDemand(): BoardDemandLine {
+    return demand({
+      sales_order_id: 'so-381895',
+      so_number: 'SO381895',
+      project_sales_order_id: 'pso-381895',
+      project_line_id: 'pl-381895-3',
+      line_no: 3,
+      item_code: 'SRTWCX7405-RL-S-PJ',
+      qty: '5',
+      required_date: '2026-10-05',
+    });
+  }
+
+  beforeEach(() => {
+    getPlanningChangeBatch.mockResolvedValue(NAMED_BATCH);
+  });
+
+  /**
+   * AC-B14 (browser pass, 22 Sep 2026): the board-wide discard said NOTHING when it landed -
+   * the `N lines undone` toast lived on `undoMany`, which only the grid cell's own undo icon
+   * calls - and it fired a DELETE for every key in the draft, including the bare pre-marks
+   * the seeding effect put there: 17 requests, 16 of them 404, on the owner's own run.
+   */
+  it('AC-B14: toasts the lines it actually undid, and never DELETEs a bare pre-mark', async () => {
+    getPlanningBoard.mockResolvedValue(
+      buildBoard([namedDemand(), preMarkOnlyDemand()], {
+        today: TODAY,
+        freeStock: {},
+        granularity: 'week',
+      }),
+    );
+
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false, gcTime: 0 },
+        mutations: { retry: false },
+      },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <FulfilmentBoardPanel
+          soNumbers={['SO381895']}
+          batchId={NAMED_BATCH.id}
+          onBack={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+    // S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-13/AC-B6-14) split the old
+    // "SO381895 (Line 1)" cell title: the Sales order cell now titles the number alone,
+    // which every row of this one order shares. The row's own select checkbox still names
+    // the line ("Select SO381895 line 1", `buildSelectColumn`'s `rowLabel`), so it is what
+    // tells two rows of one order apart here.
+    const rowOf = (lineNo: number) =>
+      screen
+        .getByRole('checkbox', { name: `Select SO381895 line ${lineNo}` })
+        .closest('tr') as HTMLElement;
+    await screen.findByRole('checkbox', { name: 'Select SO381895 line 1' });
+
+    // BOTH lines are named by the open batch, so both open pre-marked.
+    await waitFor(() =>
+      expect(within(rowOf(1)).getByText('Change proposed')).toBeInTheDocument(),
+    );
+    expect(within(rowOf(3)).getByText('Change proposed')).toBeInTheDocument();
+
+    // Only line 1 is actually saved, so only line 1 has anything on the server. (The row
+    // opens on a click anywhere but the sales-order link, which navigates instead.)
+    fireEvent.click(within(rowOf(1)).getByText('SRTWCX7405-RL-S-PJ'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Save decision' }));
+    await waitFor(() => expect(within(rowOf(1)).getByText('Saved')).toBeInTheDocument());
+    vi.mocked(toast.success).mockClear();
+
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Board actions' }), {
+      key: 'Enter',
+    });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Undo all' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Discard' }));
+
+    // ONE delete, for the one line that had a decision saved against it.
+    await waitFor(() => expect(deleteLineDraft).toHaveBeenCalledTimes(1));
+    expect(String(deleteLineDraft.mock.calls[0][0])).toContain('so-381895|1|');
+    expect(
+      deleteLineDraft.mock.calls.some(([key]) => String(key).includes('|3|')),
+    ).toBe(false);
+
+    // And it says so, counting the line it undid rather than every key in the draft.
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith('1 line undone'));
+
+    // Both lines are back to the book's own proposal.
+    await waitFor(() =>
+      expect(within(rowOf(1)).getByText('Change proposed')).toBeInTheDocument(),
+    );
+    expect(within(rowOf(3)).getByText('Change proposed')).toBeInTheDocument();
+  });
+
+  it('discards the saved draft on the server and leaves the pre-mark reading "Change proposed"', async () => {
+    getPlanningBoard.mockResolvedValue(
+      buildBoard([namedDemand()], { today: TODAY, freeStock: {}, granularity: 'week' }),
+    );
+
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false, gcTime: 0 },
+        mutations: { retry: false },
+      },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <FulfilmentBoardPanel
+          soNumbers={['SO381895']}
+          batchId={NAMED_BATCH.id}
+          onBack={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+    await screen.findByText('SO381895');
+    const row = () => screen.getByText('SO381895').closest('tr') as HTMLElement;
+    await waitFor(() =>
+      expect(within(row()).getByText('Change proposed')).toBeInTheDocument(),
+    );
+
+    // Save it, so there is a real draft for the board-wide discard to act on.
+    fireEvent.click(screen.getByTestId('board-list-expand-all'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Save decision' }));
+    await waitFor(() => expect(within(row()).getByText('Saved')).toBeInTheDocument());
+
+    // Board actions > Undo all > Discard.
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Board actions' }), {
+      key: 'Enter',
+    });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Undo all' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Discard' }));
+
+    // The server draft goes (AC-4.3) and the pre-mark comes back in its place.
+    await waitFor(() => expect(deleteLineDraft).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(within(row()).getByText('Change proposed')).toBeInTheDocument(),
+    );
+    expect(within(row()).queryByText('Suggested')).not.toBeInTheDocument();
   });
 });

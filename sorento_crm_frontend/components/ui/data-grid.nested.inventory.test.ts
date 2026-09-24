@@ -83,6 +83,10 @@ const EXPANDED_CONTENT_SITES = new Map<string, string>([
     'app/(protected)/project-sales/_shared/components/LinkDocumentDialog.tsx',
     'CandidateExpandPanel - a definition-list of fields plus a hand-rolled <table> of other rows already linked on the line, no grid',
   ],
+  [
+    'app/(protected)/project-sales/order-inquiries/[id]/components/orderInquiryHeaderLinesColumns.tsx',
+    'NESTED GRID: OrderInquiryStockGrid, a thin wrapper over CellStockTable (the hand-rolled <table> carve-out) whose rows open StockDocumentsPanel (PanelDataGrid). The expansion sits inside the OI detail lines grid\'s own provider, so the context default covers it, AND StockDocumentsPanel passes scrollerMaxHeight={false} itself (S3, PLAN-oi-request-cs-reserve.md, stock grid on the OI page)',
+  ],
   // The primitives themselves: the prop declaration, the renderer, and the
   // wrapper that forwards `expanded`. Not nesting sites.
   ['components/ui/data-grid.tsx', 'declares the ColumnMeta field'],
@@ -141,8 +145,8 @@ const GRID_IN_FLOATING_SURFACE_SITES = new Map<string, string>([
     'NESTED GRID: the items popover opens from a CELL of this section\'s own grid. It names scrollerMaxHeight="16rem", so the nested default leaves it alone and it keeps its sticky header inside that window',
   ],
   [
-    'app/(protected)/project-sales/fulfilment-planning/components/BoardCellBreakdownDialog.tsx:1223',
-    'Contributing lines, in a dialog opened as a sibling of the board (a hand-rolled matrix). Already scrollerMaxHeight={false}',
+    'app/(protected)/project-sales/fulfilment-planning/components/BoardCellBreakdownDialog.tsx:1251',
+    'Contributing lines, in a dialog opened as a sibling of the board (a hand-rolled matrix). Already scrollerMaxHeight={false}. (Line moved 1223 -> 1251 when the Decision column gained the Verdict actions and the Product column its chip; the census is keyed by line, so a site that moves is a one-line diff here rather than a silent pass)',
   ],
   [
     'app/(protected)/project-sales/fulfilment-planning/components/FulfilmentPlanningSheet.tsx:457',

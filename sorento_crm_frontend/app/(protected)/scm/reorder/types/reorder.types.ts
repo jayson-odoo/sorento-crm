@@ -500,8 +500,9 @@ export interface CreateReorderRunRequest {
   plan_horizon_start?: string | null;
   /** Demand scope (21 Sep 2026): which leg to net. Omitted = both, today's behaviour. */
   demand_class?: 'project' | 'retail';
-  /** SO scope, project only. Sent only when `demand_class === 'project'` and non-empty
-   *  (the service omits an empty list - "no SO narrowing" and "every project order in
-   *  range" are the same request on the wire). */
+  /** SO scope (Lane D, 23 Sep: widened from project-only) - sent whenever non-empty,
+   *  under `demand_class === 'project'` OR an omitted `demand_class` (All); the server
+   *  refuses it alongside `'retail'`. The service omits an empty list - "no SO
+   *  narrowing" and "every project order in range" are the same request on the wire. */
   so_numbers?: string[];
 }

@@ -86,6 +86,7 @@ from app.models.project_so import (
     IV_ORDER,
     IV_ORDER_BACK,
     IV_RESERVE_AND_ORDER,
+    OrderInquiry,
     OrderInquiryLink,
     OrderInquiryRow,
     ProjectSalesOrder,
@@ -3803,6 +3804,7 @@ def _oi_demand_rows(
     live_rows: Sequence[PlanningChangeRow],
     so_number: str,
     settled_line_ids: Sequence[str] = (),
+    order_inquiry_id: Optional[str] = None,
 ) -> Tuple[List[dict], Dict[str, int]]:
     """What purchasing is told, beyond what the rows themselves now say.
 
@@ -3812,6 +3814,24 @@ def _oi_demand_rows(
     instruction told twice - the duplicate "one row per sales-order line" exists to stop.
     Those lines are skipped here. A line the plan did NOT carry still gets its change row,
     because nothing else said anything about it.
+
+    S2 (`PLAN-board-oi-mechanical-22sep.md`, AC-B2-4/AC-B2-8): a date-move line
+    `_stamp_date_move` (`project_order_inquiry_service.py`, `_write`'s decline branch)
+    never reaches - it had NO buy row before this confirm - still must not carry a
+    duplicate notice beside the fresh buy row this SAME confirm just raised for it.
+    Checked here, once, for every `advanced`/`delayed` line `settled_line_ids` did not
+    already exclude: does the line hold a non-cancelled `ORDER`/`ORDER_BACK` row that
+    ALREADY CARRIES THIS CHANGE'S NEW DATE? If it does, that row's own note is stamped
+    with the old date instead of a second row saying the same thing; a line with no such
+    row - none at all (the reserve covered it, AC-B2-8), or one still sitting on the old
+    date - still gets its notice, because nothing else on the screen would say the date
+    had moved.
+
+    `order_inquiry_id` scopes that lookup to the header THIS confirm writes, the same way
+    `_write` scopes its own (review round, 22 Sep): an OCN amendment raises its exception
+    verbs under a SEPARATE inquiry on the same sales-order line, and reading one of those
+    as "this line already carries a buy row" would suppress a notice the confirm's own
+    header never got.
     """
     from app.services.project_order_inquiry_engine import (
         CHANGE_DATE_EARLIER,
@@ -3832,6 +3852,27 @@ def _oi_demand_rows(
 
     pool_cache: Dict[str, Optional[str]] = {}
     settled = {str(line_id) for line_id in (settled_line_ids or [])}
+    date_move_line_ids = [
+        str(r.project_line_id)
+        for r in live_rows
+        if r.kind in ("delayed", "advanced")
+        and r.project_line_id
+        and str(r.project_line_id) not in settled
+    ]
+    buy_rows_by_line: Dict[str, List[OrderInquiryRow]] = {}
+    if date_move_line_ids:
+        buy_row_query = db.query(OrderInquiryRow).filter(
+            OrderInquiryRow.so_line_id.in_(date_move_line_ids),
+            OrderInquiryRow.verb.in_((IV_ORDER, IV_ORDER_BACK)),
+            OrderInquiryRow.state != INQUIRY_CANCELLED,
+        )
+        if order_inquiry_id:
+            buy_row_query = buy_row_query.filter(
+                OrderInquiryRow.order_inquiry_id == order_inquiry_id
+            )
+        for buy_row in buy_row_query.all():
+            buy_rows_by_line.setdefault(str(buy_row.so_line_id), []).append(buy_row)
+
     out: List[dict] = []
     counts: Dict[str, int] = {}
     for r in live_rows:
@@ -3853,6 +3894,26 @@ def _oi_demand_rows(
             if qty <= _ZERO:
                 continue
             from_date = (r.from_json or {}).get("required_date")
+            to_date = _as_date((r.to_json or {}).get("required_date"))
+            # AC-B2-4: a buy row of this line that ALREADY CARRIES the new date - the one
+            # this confirm raised fresh, or one `_stamp_date_move` just stamped. A row
+            # still sitting on the old date says nothing about the move, so it does not
+            # earn the suppression (review round, 22 Sep) and the notice below stands.
+            buy_rows = [
+                buy_row
+                for buy_row in buy_rows_by_line.get(str(r.project_line_id), [])
+                if to_date is not None and buy_row.delivery_date == to_date
+            ]
+            if buy_rows:
+                # Stamp ITS note rather than raise a second row saying the same thing.
+                stamp = f"Was {from_date}" if from_date else "No previous delivery date"
+                for buy_row in buy_rows:
+                    if buy_row.note and "Was" in buy_row.note:
+                        continue
+                    buy_row.note = (
+                        f"{buy_row.note}; {stamp}" if buy_row.note else stamp
+                    )
+                continue
             out.append(
                 {
                     "line_id": r.project_line_id,
@@ -4688,7 +4749,21 @@ def _apply_one_order(
         previous_reason_for_report, handled_line_ids, revised,
     )
 
-    demand_rows, inquiry_counts = _oi_demand_rows(db, live, so_number, settled_in_place)
+    # The header THIS order's confirm writes to - its one `amendment_id IS NULL` inquiry,
+    # the same one `_write` scopes its own row lookups to. None when the order has never
+    # raised an inquiry, in which case there is no buy row to find anyway.
+    order_inquiry = (
+        db.query(OrderInquiry.id)
+        .filter(
+            OrderInquiry.project_sales_order_id == order.id,
+            OrderInquiry.amendment_id.is_(None),
+        )
+        .first()
+    )
+    demand_rows, inquiry_counts = _oi_demand_rows(
+        db, live, so_number, settled_in_place,
+        order_inquiry_id=str(order_inquiry[0]) if order_inquiry else None,
+    )
     if demand_rows:
         ProjectOrderInquiryService(db).derive_for_book_change(
             order, demand_rows, batch_id=str(batch.id), actor_user_id=actor

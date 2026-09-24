@@ -153,6 +153,9 @@ export interface Brand {
   logo_url?: string | null;
   is_active: boolean;
   access_levels?: string[];
+  // A brand marked false is bought locally by CS and never raises an Order
+  // Inquiry - PLAN-brand-flows-to-purchasing.md.
+  flows_to_purchasing: boolean;
   created_at: Date;
   updated_at: Date;
   created_by?: string | null;

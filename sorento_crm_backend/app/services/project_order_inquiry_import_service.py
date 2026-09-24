@@ -2824,6 +2824,9 @@ def _close_history(rows: Sequence[Any], actor: Optional[str], now: datetime) -> 
     links stay visible on the worklist through `links_for_rows`.
 
     A row on a still-open line keeps whatever its links make it.
+
+    ORDER_BACK is never passed in here (the caller filters it out, owner ruling R3, 22 Sep
+    2026): a delivered borrowing line is the normal case for an order back, not history.
     """
     from app.models.project_so import INQUIRY_ACTIONED
 
@@ -3173,7 +3176,11 @@ def apply(
         outcome.success(row=row.source_row, code=oc.CREATED, identity=identity,
                         value=row.so_number, entity_type="order_inquiry_row",
                         entity_id=entry.id)
-        if not _is_open_demand(match.core_line):
+        # ORDER_BACK is never history-closed here (owner ruling R3, 22 Sep 2026): the whole
+        # point of an order back is that the borrowing line is delivered, so testing
+        # `_is_open_demand` against it would close every one. An ORDER row on a delivered
+        # line still closes as today (AC-S1-29 stands for ORDER).
+        if entry.verb != IV_ORDER_BACK and not _is_open_demand(match.core_line):
             history.append(entry)
 
         held = links.get(index)

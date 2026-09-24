@@ -32,18 +32,19 @@ def require_start_on_or_before_end(start: Optional[date], end: Optional[date]) -
         raise ValueError("plan_horizon_start must be on or before plan_horizon_date")
 
 
-def require_so_numbers_need_project_demand_class(
+def refuse_so_numbers_on_a_dealer_run(
     demand_class: Optional[str], so_numbers: List[str]
 ) -> None:
-    """Raises when ``so_numbers`` is asked for without ``demand_class='project'`` (T2).
+    """Raises when ``so_numbers`` is asked for against a retail run (T2, Lane D AC-D2/AC-D6).
 
-    An SO scope only means something against the project leg specifically - a retail run or
-    an unscoped ("all") run nets without regard to which sales orders the buyer named, so a
-    non-empty list on either of those is a request that cannot be honoured rather than one
-    that is silently ignored.
+    An SO scope only means something against the project legs specifically - a retail run
+    nets without regard to which sales orders the buyer named, so a non-empty list there is
+    a request that cannot be honoured rather than one that is silently ignored. An unscoped
+    ("all") run narrows its own project legs by the same list (Lane D), so ``demand_class``
+    omitted is accepted alongside ``project``; only ``retail`` is refused.
     """
-    if so_numbers and demand_class != "project":
-        raise ValueError("so_numbers requires demand_class='project'")
+    if so_numbers and demand_class == "retail":
+        raise ValueError("so_numbers cannot be used with demand_class='retail'")
 
 
 # --- create / poll ----------------------------------------------------------
@@ -82,7 +83,7 @@ class CreateReorderRunRequest(BaseModel):
     @model_validator(mode="after")
     def _start_before_end(self):
         require_start_on_or_before_end(self.plan_horizon_start, self.plan_horizon_date)
-        require_so_numbers_need_project_demand_class(self.demand_class, self.so_numbers)
+        refuse_so_numbers_on_a_dealer_run(self.demand_class, self.so_numbers)
         return self
 
 
@@ -111,7 +112,7 @@ class ReplanReorderRunRequest(BaseModel):
     @model_validator(mode="after")
     def _start_before_end(self):
         require_start_on_or_before_end(self.plan_horizon_start, self.plan_horizon_date)
-        require_so_numbers_need_project_demand_class(self.demand_class, self.so_numbers)
+        refuse_so_numbers_on_a_dealer_run(self.demand_class, self.so_numbers)
         return self
 
 
@@ -243,6 +244,10 @@ class CandidateOrder(BaseModel):
     rows_total: int = 0
     rows_in_range: int = 0
     rows_awaiting: int = 0
+    # PLAN-reorder-plan-raised-filter.md, 22 Sep 2026: rows in `raised_from`/`raised_to`
+    # by their first upload day (`order_inquiry_rows.created_at`) - the book carries no
+    # raise date of its own (owner ruling R1).
+    rows_raised_in_window: int = 0
     first_delivery: Optional[str] = None
     last_delivery: Optional[str] = None
 

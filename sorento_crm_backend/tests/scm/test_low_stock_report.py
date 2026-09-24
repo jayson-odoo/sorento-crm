@@ -347,10 +347,13 @@ def test_workbook_has_two_sheets_in_order_with_16_columns(db):
         assert ws.freeze_panes == "A2", f"{name} is not frozen at A2"
         assert ws["A1"].fill.fgColor.rgb == "FF404040", f"{name} header is not styled"
 
+    # AC-A2 (PLAN-order-sheet-oi-reports-22sep.md, Lane A): the SPO number itself is
+    # dropped from this cell now - the container and the quantity are what a buyer acts
+    # on. `_last_in_text` prints "<container> - <qty>", never "<SPO> - <container> - <qty>".
     last_in_index = _EXPECTED_COLUMNS.index("Last in qty")
     all_rows = {r[0]: r for r in _rows_of(wb["All"])}
     assert all_rows[receipt_product.product_code][last_in_index] == (
-        "202608-S0084 - TLLU8306312 - 180"
+        "TLLU8306312 - 180"
     ), all_rows[receipt_product.product_code]
 
 
@@ -788,6 +791,72 @@ def test_generate_low_stock_report_marks_failed_when_render_raises(monkeypatch):
         row = DownloadService(db).get(str(dl.id))
         assert row.status == "failed", row.status
         assert "render exploded" in (row.error or ""), row.error
+
+
+# =========================================================================== #
+# AC-A10 twin (PLAN-order-sheet-oi-reports-22sep.md, security should-fix, fix round 3):
+# the same fail-closed change `generate_order_sheet` got - a run row with NO company
+# must not export under the `None` (all-companies) scope this task starts under while
+# it looks the run up.
+# =========================================================================== #
+
+def test_generate_low_stock_report_fails_closed_when_the_run_has_no_company(monkeypatch):
+    """A legacy run row (`company_id IS NULL`) must not leak every company's rows into
+    the export. `ReorderRun` is itself `CompanyScopedMixin`, so once the task sets the
+    scope to `UNSET` (fail closed) rather than leaving it at `None`,
+    `low_stock_report_service.export_low_stock`'s own run lookup (`svc.report` ->
+    `_run_for`) finds NOTHING and raises `AppException(404, ...)` - the task converts
+    that into a FAILED download, never a silently empty "ready" one."""
+    from app.services.download_service import DownloadService
+
+    export_tasks, task_fn = _task()
+
+    with _savepoint_session() as db:
+        run_id = str(db.execute(text(
+            "INSERT INTO scm.reorder_run (id, status, include_market, company_id, "
+            "created_at) VALUES (:id, 'completed', false, NULL, now()) RETURNING id"
+        ), {"id": _u()}).scalar())
+        user_id = seed_user(db, "purchasing")
+        db.flush()
+
+        dl = DownloadService(db).create(
+            user_id=user_id, kind="low_stock_xlsx", source_entity_type="reorder_run",
+            source_entity_id=run_id, filename="low-stock-10092026.xlsx",
+        )
+
+        monkeypatch.setattr(export_tasks, "SessionLocal", lambda: _NoCloseSession(db))
+
+        result = task_fn(str(dl.id), run_id, user_id)
+
+        assert result["status"] == "failed", result
+        row = DownloadService(db).get(str(dl.id))
+        assert row.status == "failed", row.status
+
+
+def test_generate_low_stock_report_fails_closed_when_the_run_does_not_exist(monkeypatch):
+    """The other half: a `run_id` that names no row at all must also fail closed rather
+    than export under `None` (all companies)."""
+    from app.services.download_service import DownloadService
+
+    export_tasks, task_fn = _task()
+
+    with _savepoint_session() as db:
+        missing_run_id = _u()
+        user_id = seed_user(db, "purchasing")
+        db.flush()
+
+        dl = DownloadService(db).create(
+            user_id=user_id, kind="low_stock_xlsx", source_entity_type="reorder_run",
+            source_entity_id=missing_run_id, filename="low-stock-10092026.xlsx",
+        )
+
+        monkeypatch.setattr(export_tasks, "SessionLocal", lambda: _NoCloseSession(db))
+
+        result = task_fn(str(dl.id), missing_run_id, user_id)
+
+        assert result["status"] == "failed", result
+        row = DownloadService(db).get(str(dl.id))
+        assert row.status == "failed", row.status
 
 
 # =========================================================================== #

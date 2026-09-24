@@ -3,10 +3,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
 import { useUploadActivity } from '@/components/upload-activity/useUploadActivity';
+import { ENTITY_DOWNLOADS_QUERY_KEY, MY_DOWNLOADS_QUERY_KEY } from '@/services/myDownloadsService';
 import {
   acknowledgeOrderInquiryRows,
   acknowledgeOrderInquiryRowsByFilter,
   autoPlaceOrderInquiryRows,
+  exportOrderInquiryXlsx,
   getOrderInquiryHeader,
   getOrderInquiryHeaderLines,
   getOrderInquiryHeaderRelatedDocuments,
@@ -31,6 +33,14 @@ import {
   unplaceAllOrderInquiryRows,
   unplaceOrderInquiryRow,
 } from '../services/orderInquiryService';
+import {
+  createOrderInquiryReserveRequest,
+  getOrderInquiryReserveRequests,
+  getOrderInquiryRowHistory,
+  reserveOrderInquiryRow,
+  type CreateReserveRequestPayload,
+  type ReserveRowPayload,
+} from '../services/orderInquiryReserveService';
 import { getOrderInquiryMatrix } from '../services/orderInquiryMatrixService';
 import { PLANNING_BOARD_KEY } from './useFulfilmentPlanning';
 import type { LinkHorizonRequest } from '../lib/linkHorizon';
@@ -63,6 +73,8 @@ export const ORDER_INQUIRY_HEADER_KEY = 'order-inquiry-header';
 export const ORDER_INQUIRY_HEADER_LINES_KEY = 'order-inquiry-header-lines';
 export const ORDER_INQUIRY_HEADER_RELATED_DOCUMENTS_KEY =
   'order-inquiry-header-related-documents';
+export const ORDER_INQUIRY_RESERVE_REQUESTS_KEY = 'order-inquiry-reserve-requests';
+export const ORDER_INQUIRY_ROW_HISTORY_KEY = 'order-inquiry-row-history';
 
 /**
  * The header LIST's own React Query key (`PLAN-oi-header-list-detail.md`). Built through
@@ -147,6 +159,102 @@ export function useOrderInquiryHeaderRelatedDocuments(id: string | undefined) {
     queryKey: [ORDER_INQUIRY_HEADER_RELATED_DOCUMENTS_KEY, id],
     queryFn: () => getOrderInquiryHeaderRelatedDocuments(id as string),
     enabled: Boolean(id),
+  });
+}
+
+/**
+ * `PLAN-oi-request-cs-reserve.md` section 6c: every reserve request this header has
+ * ever raised, newest first - `ReserveRowDialog`'s own read, used to find a row's open
+ * request (or its last-answered one).
+ */
+export function useOrderInquiryReserveRequests(inquiryId: string | undefined) {
+  return useQuery({
+    queryKey: [ORDER_INQUIRY_RESERVE_REQUESTS_KEY, inquiryId],
+    queryFn: () => getOrderInquiryReserveRequests(inquiryId as string),
+    enabled: Boolean(inquiryId),
+  });
+}
+
+/**
+ * S5 (reviewer round): `ReserveRequestDialog` used to call `createOrderInquiryReserve
+ * Request` straight from the component, skipping the hooks layer every other write in
+ * this file goes through. The mutate function is what the caller hands the dialog as
+ * `onSend` - the dialog stays free of `QueryClientProvider` (its own vitest suite
+ * renders it with no providers), and this hook is what supplies the invalidate + toast
+ * the layering rule asks for.
+ */
+export function useCreateOrderInquiryReserveRequest(inquiryId: string | undefined) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: CreateReserveRequestPayload) =>
+      createOrderInquiryReserveRequest(inquiryId as string, payload),
+    onSuccess: (response) => {
+      toast.success(`Request #${response.ordinal} sent to ${response.first_to_name ?? 'CS'}`);
+      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_RESERVE_REQUESTS_KEY, inquiryId] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+}
+
+/**
+ * S5: `ReserveRowDialog`'s own Confirm reserved, moved off a direct service call the
+ * same way. Unreserve is NOT here - S2 makes it a server-deferred pending action
+ * (`useDeferredAction`), which is its own hook already.
+ */
+export function useReserveOrderInquiryRow(inquiryId: string | undefined) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      requestId,
+      rowId,
+      payload,
+    }: {
+      requestId: string;
+      rowId: string;
+      payload: ReserveRowPayload;
+      /** N1 (reviewer round, AC-RS-26 "toast wording kept"): the requester's own name,
+       * for the toast alone - never read by `mutationFn` itself. */
+      requestedByName?: string | null;
+    }) => reserveOrderInquiryRow(requestId, rowId, payload),
+    onSuccess: (_data, variables) => {
+      toast.success(`Reserved, ${variables.requestedByName ?? 'the requester'} notified`);
+      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_RESERVE_REQUESTS_KEY, inquiryId] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+}
+
+/** F3: one row's own History tab, fetched only while `ReserveRowDialog` is open for it. */
+export function useOrderInquiryRowHistory(
+  requestId: string | null | undefined,
+  rowId: string | null | undefined,
+) {
+  return useQuery({
+    queryKey: [ORDER_INQUIRY_ROW_HISTORY_KEY, requestId, rowId],
+    queryFn: () => getOrderInquiryRowHistory(requestId as string, rowId as string),
+    enabled: Boolean(requestId) && Boolean(rowId),
+  });
+}
+
+/**
+ * The detail page's own Export Excel (Lane B, AC-B1/AC-B5): starts the export and
+ * refreshes both surfaces that show it - My Downloads' own drawer and this OI's
+ * "Download history" chip. The workbook itself is fetched later from My Downloads,
+ * once the worker marks the row ready - this mutation never returns or saves a file.
+ */
+export function useExportOrderInquiryXlsx(id: string | undefined) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => exportOrderInquiryXlsx(id as string),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: MY_DOWNLOADS_QUERY_KEY });
+      queryClient.invalidateQueries({
+        queryKey: [...ENTITY_DOWNLOADS_QUERY_KEY, 'order_inquiry', id],
+      });
+      toast.success('Preparing the order inquiry export - it will appear in My Downloads.');
+    },
+    onError: (error: Error) =>
+      toast.error(error.message || 'Failed to start the order inquiry export'),
   });
 }
 

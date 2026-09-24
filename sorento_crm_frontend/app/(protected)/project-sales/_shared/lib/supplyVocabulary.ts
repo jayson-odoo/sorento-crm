@@ -210,6 +210,10 @@ export function locationOf(part: SupplyPart): string | null {
  * (`app/services/scm/sales_agent_service.group_of_warehouse_code`) spelled the same way here so
  * the two cannot drift. A plain site code (`BRW`, `MWH`, `DC1`, `WH3`, `RSW`) has no hyphen and
  * therefore no group: it is a POOL, not anyone's ownership group.
+ *
+ * Exported as `groupOfWarehouseCode` too (`PLAN-oi-request-cs-reserve.md` 3.9): the OI stock
+ * grid needs the identical rule to decide `group=` vs `warehouse_id=` on `stock-detail`, and a
+ * second copy of six lines of hyphen-splitting is how the two come to disagree.
  */
 function groupOf(code: string | null | undefined): string | null {
   if (!code) return null;
@@ -222,6 +226,11 @@ function groupOf(code: string | null | undefined): string | null {
       .trim()
       .toUpperCase() || null
   );
+}
+
+/** Public name for `groupOf`, for a caller outside this module (`OrderInquiryStockGrid`). */
+export function groupOfWarehouseCode(code: string | null | undefined): string | null {
+  return groupOf(code);
 }
 
 /**
@@ -866,17 +875,59 @@ export function contributionInquiryDecision(
  * composition to print, or does an inquiry already decide this line) and stays gated by
  * `contributionInquiryDecision` above; this one is a plain fact about the book, true or not
  * on every line regardless of verdict.
+ *
+ * Widened to the WHOLE LADDER (`board-verdict-actions-chips-acceptance-criteria.md` AC-A1 to
+ * AC-A7, owner finding 22 Sep on SO402757): the two words it used to answer with left a line
+ * that has become an SPO, a line that has become a PO and a line still sitting on an open
+ * inquiry all reading exactly the same as a line with no inquiry at all - silent. So the
+ * ladder is `used` > `received` > `SPO` > `PO` > `OI`, most advanced state wins, and the
+ * chip's own tooltip carries the numbers (R1: the chip is a word, the number is in the
+ * title) - nothing else on the board has room for a document number beside a product code.
+ *
+ * ONE helper for both readings of the board (AC-A7): the list view's Product cell and the
+ * cell breakdown's own, so the two cannot come to say different things about one line.
  */
+export interface BoardOrderInquiryWord {
+  /** The one word the chip prints. */
+  word: 'received' | 'used' | 'SPO' | 'PO' | 'OI';
+  /** What the chip's tooltip says: the document number(s), or the inquiry's own number. */
+  title: string;
+}
+
 export function boardOrderInquiryWord(
   inquiry: BoardLineOrderInquiry | null | undefined,
-): 'received' | 'used' | null {
+): BoardOrderInquiryWord | null {
   if (!inquiry) return null;
-  if (inquiry.redirected) return 'used';
   const documents = inquiry.documents ?? [];
+  const numbersOf = (kinds: ('po' | 'spo')[]) =>
+    documents
+      .filter((document) => kinds.includes(document.kind))
+      .map((document) => document.document)
+      .filter((document): document is string => Boolean(document))
+      .join(', ');
+
+  // REDIRECTED FIRST (AC-A2/AC-A7, AC-RL-10 unchanged): `used` means the document that
+  // landed was redirected off THIS line, so its goods are somebody else's now - reading
+  // `received` over it would send a planner looking for stock that has already gone.
+  if (inquiry.redirected) return { word: 'used', title: numbersOf(['po', 'spo']) };
   if (documents.length > 0 && documents.every((document) => document.received)) {
-    return 'received';
+    return { word: 'received', title: numbersOf(['po', 'spo']) };
   }
-  return null;
+  // An SPO is further along than a PO - purchasing has committed a supplier order for this
+  // line - so it wins, and the title carries the SPO numbers ALONE: a PO number in an SPO
+  // chip's tooltip would be a document the word does not describe.
+  if (documents.some((document) => document.kind === 'spo')) {
+    return { word: 'SPO', title: numbersOf(['spo']) };
+  }
+  if (documents.some((document) => document.kind === 'po')) {
+    return { word: 'PO', title: numbersOf(['po']) };
+  }
+  // Nothing on a document yet. A CANCELLED inquiry with nothing behind it says nothing
+  // (AC-A6): the row is not an instruction anybody holds. One that still carries a document
+  // is answered by the branches above, because that document is a fact whatever the row's
+  // own state has since become.
+  if (inquiry.state === 'cancelled') return null;
+  return { word: 'OI', title: inquiry.inquiry_no ?? 'Unnumbered inquiry' };
 }
 
 /**

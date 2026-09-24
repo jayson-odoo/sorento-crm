@@ -68,6 +68,8 @@ from app.models.project_so import (
     IV_RESERVE_AND_ORDER,
     OrderInquiry,
     OrderInquiryLink,
+    OrderInquiryReserveRequest,
+    OrderInquiryReserveRequestRow,
     OrderInquiryRow,
     ProjectSalesOrder,
     ProjectSalesOrderLine,
@@ -202,6 +204,14 @@ EXPORT_HEADINGS = (
     # APPENDED, never inserted: their own filters and habits are keyed on the columns
     # above being where they have always been (`PLAN-scm-oi-handshake.md` section 4).
     "ACKNOWLEDGED",
+    # Fix round (22 Sep): parity with the grid's own S3 columns (AC-D15) - the SAME
+    # row-level Taken/Remaining the grid has shown since S3, never the retired
+    # LINE-scoped `taken_from_po`/`remaining_open` pair. APPENDED for the same reason
+    # ACKNOWLEDGED was (review round, 22 Sep): they first landed BETWEEN Location and
+    # Acknowledged, which pushed a column purchasing's own filters already point at one
+    # place to the right.
+    "TAKEN",
+    "REMAINING",
 )
 
 # The two routes a row can be attributed by, joined ONCE through a coalesce rather than
@@ -380,6 +390,29 @@ def _linked_qty(*where) -> Any:
 #: column applies it.
 _SPO_LINKED_QTY = _linked_qty(OrderInquiryLink.spo_allocation_id.isnot(None))
 _PO_LINKED_QTY = _linked_qty(OrderInquiryLink.po_line_id.isnot(None))
+#: PLAN-oi-request-cs-reserve.md 3.4 (AC-RS-12): what CS has reserved off this row - a
+#: THIRD link target beside PO/SPO, never counted into either of the two above (a reserve
+#: link's `po_line_id`/`spo_allocation_id` are both null by the widened CHECK, so this is
+#: purely additive, not a re-split of the same links).
+_RESERVED_LINKED_QTY = _linked_qty(OrderInquiryLink.reserve_request_row_id.isnot(None))
+#: AC-RS-20: an OPEN reserve request row exists for this row (its parent request still
+#: `requested`) - the chip reads `requested` while this is true, whatever `_RESERVED_
+#: LINKED_QTY` above already holds from an earlier cycle (R5: reserved then requested
+#: again on the balance still reads `requested`).
+_HAS_OPEN_RESERVE_REQUEST = (
+    select(OrderInquiryReserveRequestRow.id)
+    .select_from(OrderInquiryReserveRequestRow)
+    .join(
+        OrderInquiryReserveRequest,
+        OrderInquiryReserveRequest.id == OrderInquiryReserveRequestRow.request_id,
+    )
+    .where(
+        OrderInquiryReserveRequestRow.row_id == OrderInquiryRow.id,
+        OrderInquiryReserveRequest.state == "requested",
+    )
+    .correlate(OrderInquiryRow)
+    .exists()
+)
 #: What the row's own SALES ORDER LINE still owes, over the core line `_base` already
 #: outer-joins (`scm/demand.py`'s own expression, so the worklist and reorder planning read
 #: one definition of outstanding). The `case` is not decoration: on a row whose mirror names
@@ -395,12 +428,19 @@ _LINE_OUTSTANDING = case(
 _LINE_CANCELLED = case(
     (SalesOrderLine.line_status == "cancelled", True), else_=False
 )
-#: The row's quantity, capped at that (7.3). ONE expression, used by the Buy card, the
-#: `kind=buy` filter and the Remaining column, so the three cannot answer differently for
-#: one row; `scm.committed_v` and the plan's horizon SQL carry the same rule as
-#: `demand._OWED_SQL`. Every reader of it must have `SalesOrderLine` joined - `_base` does,
-#: and `_quantity_flow_by_so_line` joins it for itself.
-_CAPPED_QTY = func.least(OrderInquiryRow.qty, _LINE_OUTSTANDING)
+#: The row's quantity, capped at that (7.3) for an ORDER row. An ORDER_BACK row is NEVER
+#: capped by its borrowing line's outstanding (owner ruling 22 Sep 2026, SO417310 /
+#: MKT5529SS-DIY): it is a hole at the DONOR location left behind when goods already shipped
+#: off the borrowing line, so the line reading delivered in full is the normal case, not a
+#: reason to zero it out. ONE expression, used by the Buy card, the `kind=buy` filter and the
+#: Remaining column, so the three cannot answer differently for one row; `scm.committed_v`
+#: and the plan's horizon SQL carry the same rule as `demand._OWED_SQL`. Every reader of it
+#: must have `SalesOrderLine` joined - `_base` does, and `_quantity_flow_by_so_line` joins it
+#: for itself.
+_CAPPED_QTY = case(
+    (OrderInquiryRow.verb == IV_ORDER_BACK, OrderInquiryRow.qty),
+    else_=func.least(OrderInquiryRow.qty, _LINE_OUTSTANDING),
+)
 #: PLAN-scm-supplied-with-companions.md ruling 7 excludes only a row's OWN `bundled_qty`
 #: from the cards - the item it rides ON (the host) still needs buying independently of
 #: whether a companion happens to ride inside its line: CKS1050 unlinked qty 1 is Buy 1
@@ -676,6 +716,17 @@ _COLUMNS = (
     ProjectSalesOrder.id.label("project_sales_order_id"),
     ProjectSalesOrder.is_pre_order.label("is_pre_order"),
     SalesOrder.id.label("core_sales_order_id"),
+    # AC-B6-7 (`PLAN-board-oi-mechanical-22sep.md`, S6): the "SO line" cell resolves
+    # `/scm/sales-orders/<core_sales_order_id>?tab=lines&line=<core_line_id>`, so the only
+    # NEW column the deep link needs is the core LINE's own id - the sales-order half is
+    # `core_sales_order_id` above, which the cell already reads. A second label for that
+    # same column (review round, 22 Sep) put one fact on the wire under two names. Null
+    # when the mirror has no core line.
+    SalesOrderLine.id.label("core_line_id"),
+    # Fix round (22 Sep): AutoCount's own line number, for the S/O no cell's `SO402757 ·
+    # L5` label (`orderInquirySoLineLabel`) - the SAME `SalesOrderLine` join `core_line_id`
+    # above already reads, so this adds no join of its own.
+    SalesOrderLine.line_no.label("line_no"),
     Supplier.id.label("supplier_id"),
     Supplier.supplier_name.label("supplier"),
     PurchaseOrder.id.label("po_id"),
@@ -702,6 +753,9 @@ _COLUMNS = (
     _LINE_CANCELLED.label("line_cancelled"),
     _ACK_USER.name.label("acknowledged_by_name"),
     _REJECT_USER.name.label("rejected_by_name"),
+    # PLAN-oi-request-cs-reserve.md 3.4/3.5 (AC-RS-12/AC-RS-20).
+    _RESERVED_LINKED_QTY.label("reserved_qty"),
+    _HAS_OPEN_RESERVE_REQUEST.label("has_open_reserve_request"),
     # PLAN-oi-worklist-split-customer-project.md, Slice 2: the Raised at column's own
     # tooltip. `_write_sheet` never reads this key, but `_EXPORT_COLUMNS` below drops the
     # label outright (S2, review round 1) - the export runs this `json_agg` for every row
@@ -731,6 +785,40 @@ def _dec(value: Any) -> Decimal:
 def _qty_str(value: Decimal) -> str:
     """`600`, not `600.0000`. ``normalize()`` alone turns 100 into `1E+2`."""
     return format(_dec(value).normalize(), "f")
+
+
+#: Fix round (22 Sep, AC-D15 parity): the export's own Taken/Remaining, read off the SAME
+#: serialized row dict the grid's own `linked_qty`/`qty`/`bundled_qty` come from - so the
+#: file and the screen can never print two different numbers for one row. Mirrors the FE's
+#: `inquiryRowTaken`/`inquiryRowRemaining` (`orderInquiryWorklist.ts`) exactly, including
+#: the buy-verb gate (`_SUGGESTION_LINKABLE_VERBS`, the same set the FE's
+#: `TAKEN_REMAINING_VERBS` names): `-` on a notice row (it never carries a link of its
+#: own), `0` on a row or line already cancelled.
+#:
+#: Review round 2, B1 (`PLAN-oi-request-cs-reserve.md` section 7): `linked_qty`
+#: deliberately excludes a reserve link (`links_for_rows`'s own AC-RS-12 note), so
+#: `reserved_qty` (the serializer's own separate field) is the only other place that
+#: quantity can come from - both readers add it in, the same way the FE's own
+#: `inquiryRowTakenQty` does.
+def _export_taken_qty(row: Dict[str, Any]) -> Decimal:
+    return _dec(row.get("linked_qty")) + _dec(row.get("reserved_qty"))
+
+
+def _export_taken(row: Dict[str, Any]) -> str:
+    if row.get("verb") not in _SUGGESTION_LINKABLE_VERBS:
+        return "-"
+    return _qty_str(_export_taken_qty(row))
+
+
+def _export_remaining(row: Dict[str, Any]) -> str:
+    if row.get("verb") not in _SUGGESTION_LINKABLE_VERBS:
+        return "-"
+    if row.get("state") == "cancelled" or row.get("line_cancelled"):
+        return "0"
+    remaining = (
+        _dec(row.get("qty")) - _export_taken_qty(row) - _dec(row.get("bundled_qty"))
+    )
+    return _qty_str(max(remaining, _ZERO))
 
 
 def ack_label(row: Dict[str, Any]) -> str:
@@ -795,6 +883,12 @@ def _as_day(value: str, code: str = "invalid_raised_date") -> date:
 
 class OrderInquiryWorklistService:
     """Reads, totals and exports every raised instruction, whoever it belongs to."""
+
+    #: Lane C, PLAN-order-sheet-oi-reports-22sep.md (AC-C6): the OI worksheet's OWN cap,
+    #: separate from `summary_order_service.MAX_EXPORT_ROWS` - the worksheet's row set is
+    #: OI rows, not order-sheet rows, and the two must never share a limit that happens
+    #: to describe a different population.
+    MAX_WORKSHEET_ROWS = 5000
 
     def __init__(self, db: Session):
         self.db = db
@@ -969,6 +1063,12 @@ class OrderInquiryWorklistService:
         # the whole-OI Confirm (`AcknowledgeFilter.inquiry_id`) and gear > Auto link
         # (`AutoPlaceRequest.filter.inquiry_id`).
         inquiry_id: Optional[str] = None,
+        # Lane C, PLAN-order-sheet-oi-reports-22sep.md (AC-C3): the OI worksheet's own
+        # row set - a run's `run_scope_oi_rows` result, fed in as the row ids to print
+        # rather than as a new set of filter clauses. `None` (the default) means "every
+        # filter above decides", unchanged for the list page's own export; an EMPTY list
+        # means "no rows" (AC-C5), not "no filter".
+        row_ids: Optional[Sequence[str]] = None,
     ):
         """Every inquiry row in the company, with everything a column needs beside it.
 
@@ -1058,6 +1158,8 @@ class OrderInquiryWorklistService:
             base = base.filter(_PROJECT_TITLE == project)
         if inquiry_id:
             base = base.filter(OrderInquiry.id == inquiry_id)
+        if row_ids is not None:
+            base = base.filter(OrderInquiryRow.id.in_(list(row_ids)))
         if supplier_id:
             base = base.filter(Supplier.id == supplier_id)
         if raised_by:
@@ -1974,6 +2076,11 @@ class OrderInquiryWorklistService:
             "so_date": row.so_date,
             "so_number": row.so_number,
             "item_code": row.item_code,
+            # PLAN-oi-request-cs-reserve.md section 6 item 1: the stock grid keys on the
+            # product's id, never the item code string - two products share one code on
+            # the live book. Already on `row` (`_COLUMNS` selects `Product.id`);
+            # `response_model` drops what it is not told about.
+            "product_id": row.product_id,
             "product_name": row.product_name,
             "qty": _qty_str(_dec(row.qty)),
             "delivery_date": row.delivery_date,
@@ -1996,6 +2103,16 @@ class OrderInquiryWorklistService:
             "location": row.location,
             "taken_from_po": _qty_str(line_flow.get("taken", _ZERO)),
             "remaining_open": _qty_str(line_flow.get("remaining", _ZERO)),
+            # PLAN-oi-request-cs-reserve.md 3.4/3.5 (AC-RS-12/AC-RS-20): `requested` while
+            # an open request row exists, else `reserved` once something has actually
+            # been reserved, else null - an open request always wins (R5: reserved then
+            # requested again on the balance reads `requested`, never `reserved`).
+            "reserve_state": (
+                "requested"
+                if getattr(row, "has_open_reserve_request", False)
+                else ("reserved" if _dec(getattr(row, "reserved_qty", None)) > _ZERO else None)
+            ),
+            "reserved_qty": _qty_str(_dec(getattr(row, "reserved_qty", None))),
             # WHERE this row's quantity sits (AC-I5), off the ONE reader the per-project
             # list and the SCM sales-order detail also use.
             "links": row_links,
@@ -2072,6 +2189,14 @@ class OrderInquiryWorklistService:
             "project_id": row.project_id,
             "project_sales_order_id": row.project_sales_order_id,
             "core_sales_order_id": row.core_sales_order_id,
+            # AC-B6-7 (`PLAN-board-oi-mechanical-22sep.md`, S6): the core LINE's own id,
+            # which the "SO line" cell puts on
+            # `/scm/sales-orders/<core_sales_order_id>?tab=lines&line=<core_line_id>`
+            # beside `core_sales_order_id` above - null when the mirror has no core line.
+            "core_line_id": row.core_line_id,
+            # Fix round (22 Sep): AutoCount's own line number, beside the id above - the
+            # S/O line cell's own `SO402757 · L5` label reads this.
+            "line_no": row.line_no,
             # An adopted record is a mirror of a core sales order and has no project
             # registration; that pair is the whole distinction and the screen links on it.
             "is_adopted": bool(row.core_sales_order_id) and row.project_id is None,
@@ -2885,7 +3010,9 @@ class OrderInquiryWorklistService:
 
     # ----------------------------------------------------------------- export
 
-    def export_xlsx(self, **filters) -> Tuple[str, bytes]:
+    def export_xlsx(
+        self, *, columns: Sequence[str] = EXPORT_HEADINGS, **filters
+    ) -> Tuple[str, bytes]:
         """The filtered set as their own workbook: one sheet per delivery month.
 
         Within a sheet the rows go SUPPLIER then ITEM CODE, which is the order their own
@@ -2899,6 +3026,11 @@ class OrderInquiryWorklistService:
         Generated per request rather than stored, exactly as the per-project export is: a
         stored file goes stale the moment supply is reconfirmed, and a stale instruction
         is the thing this replaces.
+
+        `columns` (Lane C, AC-C3): the heading tuple to print, defaulting to the full
+        `EXPORT_HEADINGS` so the list page's own export is unchanged. The OI worksheet
+        passes `EXPORT_HEADINGS[:10]` (no ACKNOWLEDGED / TAKEN / REMAINING) - a prefix,
+        so the row values below can be cut to the same length.
         """
         import openpyxl
 
@@ -2922,13 +3054,15 @@ class OrderInquiryWorklistService:
         # Dated months in order, undated last: a row with no date is still an instruction
         # and is never dropped from the file.
         for key in sorted(month for month in grouped if month):
-            self._write_sheet(workbook, month_label(key), grouped[key])
+            self._write_sheet(workbook, month_label(key), grouped[key], columns=columns)
         if "" in grouped:
-            self._write_sheet(workbook, EXPORT_UNDATED_SHEET, grouped[""])
+            self._write_sheet(
+                workbook, EXPORT_UNDATED_SHEET, grouped[""], columns=columns
+            )
         if not workbook.sheetnames:
             # An empty result is still a workbook a person can open and see the headings
             # of, rather than a file their spreadsheet refuses.
-            self._write_sheet(workbook, EXPORT_TITLE, [])
+            self._write_sheet(workbook, EXPORT_TITLE, [], columns=columns)
 
         buffer = io.BytesIO()
         workbook.save(buffer)
@@ -2954,14 +3088,26 @@ class OrderInquiryWorklistService:
             .all()
         )
         bundle_map = self._bundle_map_for_rows(rows)
-        return [self._serialize(row, bundle_map=bundle_map) for row in rows]
+        # Fix round (22 Sep, AC-D15 parity): the SAME per-row links the paged list reads
+        # (`list_rows` above) - without this, `_serialize`'s own `linked_qty` sums an
+        # empty `links` dict for every row, and the export's new Taken/Remaining columns
+        # would print "0"/the bare qty regardless of what is actually linked.
+        links = ProjectOrderInquiryService(self.db).links_for_rows([row.id for row in rows])
+        return [
+            self._serialize(row, bundle_map=bundle_map, links=links) for row in rows
+        ]
 
     def _write_sheet(
-        self, workbook, title: str, rows: Sequence[Dict[str, Any]]
+        self,
+        workbook,
+        title: str,
+        rows: Sequence[Dict[str, Any]],
+        *,
+        columns: Sequence[str] = EXPORT_HEADINGS,
     ) -> None:
         sheet = workbook.create_sheet(title=title[:31])
         sheet.append([EXPORT_TITLE])
-        sheet.append(list(EXPORT_HEADINGS))
+        sheet.append(list(columns))
         # `￿` sorts after every real string, so a missing supplier or item code
         # lands at the end rather than at the top where a buyer would read it first.
         ordered = sorted(
@@ -2983,20 +3129,24 @@ class OrderInquiryWorklistService:
                 # Only where it says something the QTY column does not: a single-row
                 # run has its own quantity as its total, and printing it twice is noise.
                 run_total = float(total) if last_of_run and len(run) > 1 else None
-                sheet.append(
-                    [
-                        row.get("so_date"),
-                        row.get("so_number") or "",
-                        code or "",
-                        float(_dec(row.get("qty"))),
-                        run_total,
-                        row.get("delivery_date"),
-                        row.get("project_customer") or "",
-                        # Blank means nobody has placed it, exactly as it does on their
-                        # sheet.
-                        row.get("supplier") or "",
-                        row.get("po_number") or "",
-                        row.get("location") or "",
-                        ack_label(row),
-                    ]
-                )
+                values = [
+                    row.get("so_date"),
+                    row.get("so_number") or "",
+                    code or "",
+                    float(_dec(row.get("qty"))),
+                    run_total,
+                    row.get("delivery_date"),
+                    row.get("project_customer") or "",
+                    # Blank means nobody has placed it, exactly as it does on their
+                    # sheet.
+                    row.get("supplier") or "",
+                    row.get("po_number") or "",
+                    row.get("location") or "",
+                    ack_label(row),
+                    _export_taken(row),
+                    _export_remaining(row),
+                ]
+                # `columns` may be a PREFIX of `EXPORT_HEADINGS` (Lane C's worksheet, no
+                # ACKNOWLEDGED / TAKEN / REMAINING) - cut the row to match so the sheet
+                # never carries more cells than it has headings for.
+                sheet.append(values[: len(columns)])

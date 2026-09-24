@@ -22,7 +22,7 @@ if (!window.matchMedia) {
   });
 }
 
-type StubOption = { value: string; label: string; description?: string };
+type StubOption = { value: string; label: string; description?: string; searchText?: string };
 
 // Stub the multi-select as a group of checkboxes so selection is deterministic. There
 // are now TWO of them on this modal, so the group is labelled by its placeholder
@@ -41,6 +41,7 @@ vi.mock('@/components/common/SearchableMultiSelect', () => ({
     selectedOptions,
     placeholder,
     renderOption,
+    renderTriggerLabel,
   }: {
     value: string[];
     onChange: (v: string[]) => void;
@@ -49,6 +50,7 @@ vi.mock('@/components/common/SearchableMultiSelect', () => ({
     selectedOptions?: StubOption[];
     placeholder?: string;
     renderOption?: (opt: StubOption) => React.ReactNode;
+    renderTriggerLabel?: (selected: StubOption[]) => React.ReactNode;
   }) => {
     const [fetched, setFetched] = React.useState<StubOption[]>([]);
     const [query, setQuery] = React.useState('');
@@ -63,16 +65,42 @@ vi.mock('@/components/common/SearchableMultiSelect', () => ({
       };
     }, [fetchOptions, query]);
     const rows = fetchOptions ? fetched : (options ?? []);
+    // The trigger's own closed-state label (D1: ONE line, "SO1, SO2 +12" rather than a
+    // chip wall) - `chosen` is the same set the real component would pass, options
+    // filtered to the current `value`. Built off `rows` UNFILTERED by the static
+    // search box below, so a selection stays in the trigger label even while a query
+    // narrows which rows are drawn - the real component keeps `chosen` off every
+    // option it has ever seen, not just the currently visible page.
+    const chosen = rows.filter((o) => value.includes(o.value));
+    // Static mode (fix round 4 nit): a fuzzy-filter search box too, mirroring the real
+    // component's own `opt.searchText ?? label` read (`SearchableMultiSelect.tsx` ~
+    // L191) - so a static field (Orders, Warehouses) can be searched by a term that is
+    // in `searchText` but never printed in `label`.
+    const [staticQuery, setStaticQuery] = React.useState('');
+    const visibleRows = fetchOptions
+      ? rows
+      : rows.filter((o) =>
+          (o.searchText ?? o.label).toLowerCase().includes(staticQuery.toLowerCase()),
+        );
     return (
       <div aria-label={placeholder ?? 'multi-select'}>
+        {renderTriggerLabel ? (
+          <div data-testid={`trigger-label-${placeholder}`}>{renderTriggerLabel(chosen)}</div>
+        ) : null}
         {fetchOptions ? (
           <input
             aria-label={`Search ${placeholder ?? 'multi-select'}`}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
-        ) : null}
-        {rows.map((o) => (
+        ) : (
+          <input
+            aria-label={`Search ${placeholder ?? 'multi-select'}`}
+            value={staticQuery}
+            onChange={(e) => setStaticQuery(e.target.value)}
+          />
+        )}
+        {visibleRows.map((o) => (
           <label key={o.value}>
             <input
               type="checkbox"
@@ -183,23 +211,34 @@ vi.mock('../../services/scmOptionsService', () => ({
 /** V1-V4 (PLAN-reorder-plan-demand-class-orders): the Orders field's candidates, keyed on
  *  the From/To range. `RunPlanningModal.tsx` calls
  *  `getCandidateOrders({ from: horizonStart || undefined, to: horizon || undefined })` -
- *  ONE object argument, `undefined` (not `''`) when a bound is unset. */
+ *  ONE object argument, `undefined` (not `''`) when a bound is unset.
+ *
+ *  `rows_raised_in_window` and the `raised_from`/`raised_to` range (AC-RF-1..8,
+ *  `PLAN-reorder-plan-raised-filter.md`, 22 Sep 2026) ride the SAME call/object - a
+ *  window typed into "Inquiries raised" From/To adds two more keys, never a second
+ *  fetch. */
 type CandidateOrder = {
   so_number: string;
   project_label: string;
   customer_name: string;
   rows_total: number;
   rows_in_range: number;
+  rows_raised_in_window: number;
   rows_awaiting: number;
   first_delivery: string;
   last_delivery: string;
 };
-const getCandidateOrders = vi.fn(
-  async (_range: { from?: string; to?: string }): Promise<CandidateOrder[]> => [],
-);
+type CandidateOrdersRange = { from?: string; to?: string; raised_from?: string; raised_to?: string };
+const getCandidateOrders = vi.fn(async (range: CandidateOrdersRange): Promise<CandidateOrder[]> => {
+  // Ignored by this default implementation - kept as a named, typed parameter (not
+  // `_range`) so callers below (`mockImplementation`) type-check against the same
+  // one-argument signature `vi.mock` calls this with.
+  void range;
+  return [];
+});
 getCandidateOrders.mockResolvedValue([]);
 vi.mock('../services/reorderRunService', () => ({
-  getCandidateOrders: (range: { from?: string; to?: string }) => getCandidateOrders(range),
+  getCandidateOrders: (range: CandidateOrdersRange) => getCandidateOrders(range),
 }));
 
 import { RunPlanningModal } from './RunPlanningModal';
@@ -228,7 +267,9 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
     await renderModal();
     // The title and the submit button both read "Start Plan" - that is the point.
     expect(screen.getAllByText('Start Plan').length).toBeGreaterThan(0);
-    expect(screen.getByText('Sales orders needed')).toBeInTheDocument();
+    // Renamed by Lane D (AC-D1b, `PLAN-order-sheet-oi-reports-22sep.md`) - see the
+    // "Lane D" describe block below for the section's new label.
+    expect(screen.getByText('Project delivery range')).toBeInTheDocument();
     expect(screen.getByText('Warehouses')).toBeInTheDocument();
     expect(screen.getByLabelText('All warehouses')).toBeInTheDocument();
     expect(screen.getByText('Products')).toBeInTheDocument();
@@ -240,15 +281,16 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
     expect(screen.queryByText(/buy scope/i)).not.toBeInTheDocument();
   });
 
-  it('B1: fields read top to bottom Sales orders needed, Warehouses, Products', async () => {
+  it('B1: fields read top to bottom Project delivery range, Warehouses, Products', async () => {
     await renderModal();
     // The dialog renders through a portal, so the labels are on `document.body`.
+    // Renamed by Lane D (AC-D1b) - see below.
     const labels = Array.from(document.body.querySelectorAll('label, [data-slot="label"]'))
       .map((el) => el.textContent?.trim())
       .filter((t): t is string =>
-        t === 'Sales orders needed' || t === 'Warehouses' || t === 'Products',
+        t === 'Project delivery range' || t === 'Warehouses' || t === 'Products',
       );
-    expect(labels).toEqual(['Sales orders needed', 'Warehouses', 'Products']);
+    expect(labels).toEqual(['Project delivery range', 'Warehouses', 'Products']);
   });
 
   it('B1: has no Select all - empty already means every warehouse', async () => {
@@ -422,9 +464,9 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
   // ===========================================================================
 
   describe('Sales orders needed - From/To window (AC-S4.4)', () => {
-    it('shows the section under "Sales orders needed" with separate From and To date inputs', async () => {
+    it('shows the section (relabelled "Project delivery range" by Lane D/AC-D1b) with separate From and To date inputs', async () => {
       await renderModal();
-      expect(screen.getByText('Sales orders needed')).toBeInTheDocument();
+      expect(screen.getByText('Project delivery range')).toBeInTheDocument();
       expect(screen.getByLabelText('From')).toBeInTheDocument();
       expect(screen.getByLabelText('To')).toBeInTheDocument();
     });
@@ -473,9 +515,9 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
   // ===========================================================================
 
   describe('Demand scope - Project / Dealer / All (V1-V4)', () => {
-    it('V1: Demand defaults to All; Orders is absent for All and Dealer, present for Project', async () => {
+    it('V1: Demand defaults to All; Orders is present for All and Project, absent for Dealer (Lane D, AC-D1/AC-D6)', async () => {
       await renderModal();
-      expect(screen.queryByText('Orders')).not.toBeInTheDocument();
+      expect(await screen.findByText('Orders')).toBeInTheDocument();
 
       fireEvent.change(screen.getByTestId('demand-select'), { target: { value: 'project' } });
       expect(await screen.findByText('Orders')).toBeInTheDocument();
@@ -485,12 +527,18 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
     });
 
     it('V2: Project options come from getCandidateOrders({from,to}); rows_in_range>0 is pre-selected; label + description', async () => {
-      getCandidateOrders.mockResolvedValueOnce([
+      // `mockResolvedValue` (persistent), not `...Once`: Lane D (AC-D1) now fetches
+      // candidates as soon as the modal opens (Demand = All, the default), so this
+      // scenario's From/To edits each trigger their OWN intervening fetch before the
+      // one this test cares about - a `...Once` queued for exactly one call would land
+      // on the wrong one.
+      getCandidateOrders.mockResolvedValue([
         {
           so_number: 'SO419517',
           project_label: 'OTM GROUP / TAT LIAN',
           customer_name: 'OTM',
           rows_total: 7,
+          rows_raised_in_window: 7,
           rows_in_range: 7,
           rows_awaiting: 2,
           first_delivery: '2026-08-01',
@@ -501,6 +549,7 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
           project_label: 'ARC RESIDENCE',
           customer_name: 'ARC',
           rows_total: 3,
+          rows_raised_in_window: 3,
           rows_in_range: 0,
           rows_awaiting: 0,
           first_delivery: '2026-11-02',
@@ -516,28 +565,25 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
         expect(getCandidateOrders).toHaveBeenCalledWith({ from: '2026-08-01', to: '2026-10-31' }),
       );
 
+      // Fix round 3 item 3: the option's accessible name (label) and the menu row's own
+      // printed text now agree - both "<SO number> - <customer_name>", `project_label`
+      // dropped from the label.
       expect(
-        await screen.findByLabelText('SO419517 - OTM GROUP / TAT LIAN'),
+        await screen.findByLabelText('SO419517 - OTM'),
       ).toBeInTheDocument();
-      expect(screen.getByTestId('option-body-SO419517').textContent).toContain(
-        '7 lines in range',
+      // Owner ruling (Lane D fix round 1): one-line menu rows under Project too -
+      // "<SO number> - <customer>", the awaiting-ack count appended only when non-zero.
+      expect(screen.getByTestId('option-body-SO419517').textContent).toBe(
+        'SO419517 - OTM, 2 awaiting ack',
       );
-      expect(screen.getByTestId('option-body-SO419517').textContent).toContain(
-        '2 awaiting ack',
-      );
-      expect(screen.getByTestId('option-body-SO420374').textContent).toContain(
-        '0 lines in range',
-      );
-      expect(screen.getByTestId('option-body-SO420374').textContent).not.toContain(
-        'awaiting ack',
-      );
+      expect(screen.getByTestId('option-body-SO420374').textContent).toBe('SO420374 - ARC');
 
       // Pre-selected: only the SO with rows_in_range > 0.
       expect(
-        (screen.getByLabelText('SO419517 - OTM GROUP / TAT LIAN') as HTMLInputElement).checked,
+        (screen.getByLabelText('SO419517 - OTM') as HTMLInputElement).checked,
       ).toBe(true);
       expect(
-        (screen.getByLabelText('SO420374 - ARC RESIDENCE') as HTMLInputElement).checked,
+        (screen.getByLabelText('SO420374 - ARC') as HTMLInputElement).checked,
       ).toBe(false);
 
       fireEvent.click(screen.getByRole('button', { name: 'Start Plan' }));
@@ -546,13 +592,14 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
       );
     });
 
-    it('V3: submit sends demand_class + so_numbers for Project (final selection), demand_class only for Dealer, neither for All', async () => {
+    it('V3: submit sends demand_class + so_numbers for Project (final selection), demand_class only for Dealer, so_numbers with no demand_class for All (Lane D, AC-D2)', async () => {
       getCandidateOrders.mockResolvedValue([
         {
           so_number: 'SO1',
           project_label: 'P1',
           customer_name: 'C1',
           rows_total: 2,
+          rows_raised_in_window: 2,
           rows_in_range: 2,
           rows_awaiting: 0,
           first_delivery: '2026-08-01',
@@ -561,10 +608,12 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
       ]);
       const { onSubmit } = await renderModal();
 
-      // All (default): neither key present.
+      // All (default): so_numbers present (Lane D keeps the Orders picker open under
+      // All too), no demand_class.
+      await screen.findByText('Orders');
       fireEvent.click(screen.getByRole('button', { name: 'Start Plan' }));
       expect(onSubmit.mock.calls[0][0]).not.toHaveProperty('demand_class');
-      expect(onSubmit.mock.calls[0][0]).not.toHaveProperty('so_numbers');
+      expect(onSubmit.mock.calls[0][0].so_numbers).toEqual(['SO1']);
       onSubmit.mockClear();
 
       // Dealer: demand_class='retail', no so_numbers - there is no Orders field to pick from.
@@ -577,56 +626,65 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
       // Project, untick the pre-selected order: empty so_numbers means "every project
       // order in range", sent as `[]`, never omitted.
       fireEvent.change(screen.getByTestId('demand-select'), { target: { value: 'project' } });
-      fireEvent.click(await screen.findByLabelText('SO1 - P1'));
+      fireEvent.click(await screen.findByLabelText('SO1 - C1'));
       fireEvent.click(screen.getByRole('button', { name: 'Start Plan' }));
       expect(onSubmit.mock.calls[0][0].demand_class).toBe('project');
       expect(onSubmit.mock.calls[0][0].so_numbers).toEqual([]);
     });
 
     it('V4: changing the range re-derives the pre-selection until the user edits the list, then the edit is kept', async () => {
-      getCandidateOrders
-        .mockResolvedValueOnce([
-          {
-            so_number: 'SO1',
-            project_label: 'P1',
-            customer_name: 'C1',
-            rows_total: 2,
-            rows_in_range: 2,
-            rows_awaiting: 0,
-            first_delivery: '2026-08-01',
-            last_delivery: '2026-08-05',
-          },
-        ])
-        .mockResolvedValueOnce([
-          {
-            so_number: 'SO2',
-            project_label: 'P2',
-            customer_name: 'C2',
-            rows_total: 1,
-            rows_in_range: 1,
-            rows_awaiting: 0,
-            first_delivery: '2026-09-01',
-            last_delivery: '2026-09-05',
-          },
-        ]);
+      // Keyed on `to` rather than call order: Lane D (AC-D1) fetches candidates as soon
+      // as the modal opens (Demand = All, the default) and again on every From/To
+      // keystroke even before Demand switches to Project, so a `mockResolvedValueOnce`
+      // pair queued by call order would land on the wrong intervening fetch.
+      getCandidateOrders.mockImplementation(async (range: CandidateOrdersRange) => {
+        if (range.to === '2026-08-31') {
+          return [
+            {
+              so_number: 'SO1',
+              project_label: 'P1',
+              customer_name: 'C1',
+              rows_total: 2,
+              rows_raised_in_window: 2,
+              rows_in_range: 2,
+              rows_awaiting: 0,
+              first_delivery: '2026-08-01',
+              last_delivery: '2026-08-05',
+            },
+          ];
+        }
+        if (range.to === '2026-09-30') {
+          return [
+            {
+              so_number: 'SO2',
+              project_label: 'P2',
+              customer_name: 'C2',
+              rows_total: 1,
+              rows_raised_in_window: 1,
+              rows_in_range: 1,
+              rows_awaiting: 0,
+              first_delivery: '2026-09-01',
+              last_delivery: '2026-09-05',
+            },
+          ];
+        }
+        return [];
+      });
       const { onSubmit } = await renderModal();
-      // From/To are set BEFORE Demand switches to Project (mirrors V2): the fetch is
-      // `enabled: demand === 'project'`, so setting the range first means exactly ONE
-      // fetch happens for the full range, rather than one per keystroke against an
-      // empty range that a Demand-first order would trigger.
+      // From/To are set BEFORE Demand switches to Project (mirrors V2).
       fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-08-01' } });
       fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-08-31' } });
       fireEvent.change(screen.getByTestId('demand-select'), { target: { value: 'project' } });
-      expect(await screen.findByLabelText('SO1 - P1')).toBeInTheDocument();
+      expect(await screen.findByLabelText('SO1 - C1')).toBeInTheDocument();
 
       // Range changes BEFORE the user has touched the list: the new pre-selection replaces
       // the old one. Only `To` moves, so this is exactly one more fetch (one new queryKey).
       fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-09-30' } });
-      expect(await screen.findByLabelText('SO2 - P2')).toBeInTheDocument();
-      expect((screen.getByLabelText('SO2 - P2') as HTMLInputElement).checked).toBe(true);
+      expect(await screen.findByLabelText('SO2 - C2')).toBeInTheDocument();
+      expect((screen.getByLabelText('SO2 - C2') as HTMLInputElement).checked).toBe(true);
 
       // Now the user edits the list by hand.
-      fireEvent.click(screen.getByLabelText('SO2 - P2'));
+      fireEvent.click(screen.getByLabelText('SO2 - C2'));
 
       // A further range change - even one whose candidates would re-select SO2 (still
       // rows_in_range > 0) - must not override the user's own edit. `rows_awaiting` is
@@ -641,6 +699,7 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
           project_label: 'P2',
           customer_name: 'C2',
           rows_total: 1,
+          rows_raised_in_window: 1,
           rows_in_range: 1,
           rows_awaiting: 4,
           first_delivery: '2026-09-01',
@@ -658,12 +717,317 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
       // Fresh data says SO2 qualifies for pre-selection again; the user's own untick must
       // still win. Removing `touchedOrdersRef.current` from the guard (RunPlanningModal.tsx)
       // re-checks SO2 here and fails this assertion.
-      expect((screen.getByLabelText('SO2 - P2') as HTMLInputElement).checked).toBe(false);
+      expect((screen.getByLabelText('SO2 - C2') as HTMLInputElement).checked).toBe(false);
 
       fireEvent.click(screen.getByRole('button', { name: 'Start Plan' }));
       expect(onSubmit).toHaveBeenCalledWith(
         expect.objectContaining({ demand_class: 'project', so_numbers: [] }),
       );
+    });
+  });
+
+  // ===========================================================================
+  // AC-RF-1..8 (PLAN-reorder-plan-raised-filter.md, 22 Sep 2026) - "Inquiries raised"
+  // From/To under the delivery range, Project-only, driving PRE-SELECTION only
+  // (rows_in_range > 0 AND rows_raised_in_window > 0). The list itself is unchanged by
+  // the window (AC-RF-3, backend-only - nothing to assert here).
+  // ===========================================================================
+
+  describe('Inquiries raised window (AC-RF-5..8)', () => {
+    it('AC-RF-5: "Raised from"/"Raised to" render only while Demand = Project', async () => {
+      await renderModal();
+      expect(screen.queryByLabelText('Raised from')).not.toBeInTheDocument();
+      expect(screen.queryByLabelText('Raised to')).not.toBeInTheDocument();
+
+      fireEvent.change(screen.getByTestId('demand-select'), { target: { value: 'project' } });
+      expect(await screen.findByLabelText('Raised from')).toBeInTheDocument();
+      expect(screen.getByLabelText('Raised to')).toBeInTheDocument();
+
+      fireEvent.change(screen.getByTestId('demand-select'), { target: { value: 'retail' } });
+      await waitFor(() => expect(screen.queryByLabelText('Raised from')).not.toBeInTheDocument());
+      expect(screen.queryByLabelText('Raised to')).not.toBeInTheDocument();
+
+      // And absent again for the empty/"All" reading (V1 default), not just Dealer.
+      fireEvent.change(screen.getByTestId('demand-select'), { target: { value: '' } });
+      expect(screen.queryByLabelText('Raised from')).not.toBeInTheDocument();
+    });
+
+    it('AC-RF-6: with a raise window set, pre-selection is rows_in_range>0 AND rows_raised_in_window>0', async () => {
+      getCandidateOrders.mockResolvedValue([
+        {
+          so_number: 'SOA', project_label: 'PA', customer_name: 'CA',
+          rows_total: 2, rows_in_range: 2, rows_raised_in_window: 1, rows_awaiting: 0,
+          first_delivery: '2026-09-01', last_delivery: '2026-09-05',
+        },
+        {
+          so_number: 'SOB', project_label: 'PB', customer_name: 'CB',
+          rows_total: 3, rows_in_range: 3, rows_raised_in_window: 0, rows_awaiting: 0,
+          first_delivery: '2026-09-01', last_delivery: '2026-09-05',
+        },
+        {
+          so_number: 'SOC', project_label: 'PC', customer_name: 'CC',
+          rows_total: 2, rows_in_range: 0, rows_raised_in_window: 2, rows_awaiting: 0,
+          first_delivery: '2026-09-01', last_delivery: '2026-09-05',
+        },
+      ]);
+      await renderModal();
+      fireEvent.change(screen.getByTestId('demand-select'), { target: { value: 'project' } });
+      fireEvent.change(await screen.findByLabelText('Raised from'), { target: { value: '2026-09-17' } });
+      fireEvent.change(screen.getByLabelText('Raised to'), { target: { value: '2026-09-18' } });
+
+      // Matched with a leading-anchor regex, not an exact string: the plan's own S2
+      // ("the picker option label appends 'raised N' only when a window is set") means
+      // the accessible name may carry a suffix once a window is typed - the pre-selection
+      // fact under test does not depend on that exact display string.
+      expect(await screen.findByLabelText(/^SOA - CA/)).toBeInTheDocument();
+      await waitFor(() => {
+        // A: rows_in_range 2 > 0 AND rows_raised_in_window 1 > 0 -> pre-selected.
+        expect((screen.getByLabelText(/^SOA - CA/) as HTMLInputElement).checked).toBe(true);
+        // B: rows_in_range 3 > 0 but rows_raised_in_window 0 -> NOT pre-selected, even
+        // though the old rows_in_range-only rule would have picked it.
+        expect((screen.getByLabelText(/^SOB - CB/) as HTMLInputElement).checked).toBe(false);
+        // C: rows_raised_in_window 2 > 0 but rows_in_range 0 -> NOT pre-selected.
+        expect((screen.getByLabelText(/^SOC - CC/) as HTMLInputElement).checked).toBe(false);
+      });
+      // The raised count used to be rendered on the option (S2's own description
+      // suffix) - dropped by the owner's Lane D fix-round-1 ruling, which retires the
+      // two-line row (and its description) everywhere, Project included: the menu row
+      // is now ONE line, "<SO number> - <customer>[, N awaiting ack]" only. The raise
+      // window still drives pre-selection above, silently.
+    });
+
+    it('AC-RF-6: clearing the raise window widens pre-selection back to rows_in_range>0', async () => {
+      // The mock branches on whether a window was actually sent, exactly like the real
+      // backend contract (AC-RF-2): windowed counts while raised_from/raised_to are set,
+      // rows_raised_in_window === rows_total once they are cleared.
+      getCandidateOrders.mockImplementation(async (range: CandidateOrdersRange) => {
+        const windowed = Boolean(range.raised_from || range.raised_to);
+        return [
+          {
+            so_number: 'SOA', project_label: 'PA', customer_name: 'CA',
+            rows_total: 2, rows_in_range: 2, rows_raised_in_window: windowed ? 1 : 2,
+            rows_awaiting: 0, first_delivery: '2026-09-01', last_delivery: '2026-09-05',
+          },
+          {
+            so_number: 'SOB', project_label: 'PB', customer_name: 'CB',
+            rows_total: 3, rows_in_range: 3, rows_raised_in_window: windowed ? 0 : 3,
+            rows_awaiting: 0, first_delivery: '2026-09-01', last_delivery: '2026-09-05',
+          },
+        ];
+      });
+
+      await renderModal();
+      fireEvent.change(screen.getByTestId('demand-select'), { target: { value: 'project' } });
+      fireEvent.change(await screen.findByLabelText('Raised from'), { target: { value: '2026-09-17' } });
+      fireEvent.change(screen.getByLabelText('Raised to'), { target: { value: '2026-09-18' } });
+
+      // Windowed: only A qualifies.
+      await waitFor(() => {
+        expect((screen.getByLabelText(/^SOA - CA/) as HTMLInputElement).checked).toBe(true);
+        expect((screen.getByLabelText(/^SOB - CB/) as HTMLInputElement).checked).toBe(false);
+      });
+
+      // Clear both raise inputs - the buyer has not touched the Orders list by hand, so
+      // the pre-selection re-derives on the wider (unwindowed) result (V4's own guard).
+      fireEvent.change(screen.getByLabelText('Raised from'), { target: { value: '' } });
+      fireEvent.change(screen.getByLabelText('Raised to'), { target: { value: '' } });
+
+      await waitFor(() => {
+        expect((screen.getByLabelText(/^SOA - CA/) as HTMLInputElement).checked).toBe(true);
+        expect((screen.getByLabelText(/^SOB - CB/) as HTMLInputElement).checked).toBe(true);
+      });
+    });
+
+    it('AC-RF-6: without a raise window, pre-selection stays rows_in_range>0 (today\'s behaviour, unchanged)', async () => {
+      getCandidateOrders.mockResolvedValue([
+        {
+          so_number: 'SOA', project_label: 'PA', customer_name: 'CA',
+          // No window -> rows_raised_in_window === rows_total, same as the backend
+          // contract (AC-RF-2).
+          rows_total: 2, rows_in_range: 2, rows_raised_in_window: 2, rows_awaiting: 0,
+          first_delivery: '2026-09-01', last_delivery: '2026-09-05',
+        },
+        {
+          so_number: 'SOB', project_label: 'PB', customer_name: 'CB',
+          rows_total: 3, rows_in_range: 3, rows_raised_in_window: 3, rows_awaiting: 0,
+          first_delivery: '2026-09-01', last_delivery: '2026-09-05',
+        },
+        {
+          so_number: 'SOC', project_label: 'PC', customer_name: 'CC',
+          rows_total: 2, rows_in_range: 0, rows_raised_in_window: 2, rows_awaiting: 0,
+          first_delivery: '2026-09-01', last_delivery: '2026-09-05',
+        },
+      ]);
+      await renderModal();
+      fireEvent.change(screen.getByTestId('demand-select'), { target: { value: 'project' } });
+
+      expect(await screen.findByLabelText('SOA - CA')).toBeInTheDocument();
+      await waitFor(() => {
+        expect((screen.getByLabelText('SOA - CA') as HTMLInputElement).checked).toBe(true);
+        expect((screen.getByLabelText('SOB - CB') as HTMLInputElement).checked).toBe(true);
+        expect((screen.getByLabelText('SOC - CC') as HTMLInputElement).checked).toBe(false);
+      });
+    });
+
+    it('AC-RF-7: typing a raise window calls getCandidateOrders with raised_from/raised_to alongside from/to', async () => {
+      getCandidateOrders.mockResolvedValue([]);
+      await renderModal();
+      fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-08-01' } });
+      fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-10-31' } });
+      fireEvent.change(screen.getByTestId('demand-select'), { target: { value: 'project' } });
+      fireEvent.change(await screen.findByLabelText('Raised from'), { target: { value: '2026-09-17' } });
+      fireEvent.change(screen.getByLabelText('Raised to'), { target: { value: '2026-09-18' } });
+
+      await waitFor(() =>
+        expect(getCandidateOrders).toHaveBeenLastCalledWith({
+          from: '2026-08-01',
+          to: '2026-10-31',
+          raised_from: '2026-09-17',
+          raised_to: '2026-09-18',
+        }),
+      );
+    });
+  });
+
+  // ===========================================================================
+  // Lane D (PLAN-order-sheet-oi-reports-22sep.md, AC-D1) - Demand = All keeps the Orders
+  // picker (project SOs only, same "everything in range ticked" rule as Project), a
+  // one-line closed trigger ("SO1, SO2 +12"), and one-line menu rows (no two-line
+  // description). Today: the Orders field is hidden for every demand EXCEPT
+  // `demand === 'project'` (`RunPlanningModal.tsx` "demand === 'project' ? (...)"), so
+  // every test in this block that opens the picker under All (the default, unswitched
+  // demand) is RED for that one reason - a genuinely missing field, not a broken fixture.
+  //
+  // NOTE (measured against `test('V1: ... Orders is absent for All and Dealer ...')`
+  // above): that existing assertion (`expect(screen.queryByText('Orders')).not.toBeIn
+  // TheDocument()` for the unswitched/All state) PINS the OLD contract this lane
+  // deliberately changes - implementing AC-D1 flips that one line of V1 from absent to
+  // present. Left as-is here (not the tester's edit to make); the coder updates it
+  // alongside the fix.
+  // ===========================================================================
+
+  describe('Lane D - Demand = All keeps the Orders picker, so_numbers with no demand_class (AC-D1/AC-D2)', () => {
+    it('AC-D1: Orders picker renders under Demand = All (the default, unswitched state)', async () => {
+      getCandidateOrders.mockResolvedValueOnce([
+        {
+          so_number: 'SO1', project_label: 'P1', customer_name: 'C1',
+          rows_total: 2, rows_in_range: 2, rows_raised_in_window: 2, rows_awaiting: 0,
+          first_delivery: '2026-08-01', last_delivery: '2026-08-05',
+        },
+      ]);
+      await renderModal();
+      // Unswitched demand === '' (All) - no click on the demand select at all.
+      expect(await screen.findByText('Orders')).toBeInTheDocument();
+    });
+
+    it('AC-D1: every candidate order with rows_in_range > 0 is pre-ticked under All, same rule as Project', async () => {
+      getCandidateOrders.mockResolvedValueOnce([
+        {
+          so_number: 'SO1', project_label: 'P1', customer_name: 'C1',
+          rows_total: 2, rows_in_range: 2, rows_raised_in_window: 2, rows_awaiting: 0,
+          first_delivery: '2026-08-01', last_delivery: '2026-08-05',
+        },
+        {
+          so_number: 'SO2', project_label: 'P2', customer_name: 'C2',
+          rows_total: 3, rows_in_range: 0, rows_raised_in_window: 3, rows_awaiting: 0,
+          first_delivery: '2026-08-01', last_delivery: '2026-08-05',
+        },
+      ]);
+      await renderModal();
+      await waitFor(() => {
+        expect((screen.getByLabelText('SO1 - C1') as HTMLInputElement).checked).toBe(true);
+        expect((screen.getByLabelText('SO2 - C2') as HTMLInputElement).checked).toBe(false);
+      });
+    });
+
+    it('AC-D2: submitting under All sends so_numbers and NO demand_class', async () => {
+      getCandidateOrders.mockResolvedValueOnce([
+        {
+          so_number: 'SO1', project_label: 'P1', customer_name: 'C1',
+          rows_total: 2, rows_in_range: 2, rows_raised_in_window: 2, rows_awaiting: 0,
+          first_delivery: '2026-08-01', last_delivery: '2026-08-05',
+        },
+      ]);
+      const { onSubmit } = await renderModal();
+      await screen.findByText('Orders');
+      fireEvent.click(screen.getByRole('button', { name: 'Start Plan' }));
+
+      expect(onSubmit.mock.calls[0][0]).not.toHaveProperty('demand_class');
+      expect(onSubmit.mock.calls[0][0].so_numbers).toEqual(['SO1']);
+    });
+
+    it('AC-D6: Demand = Dealer still shows no Orders picker (unchanged)', async () => {
+      await renderModal();
+      fireEvent.change(screen.getByTestId('demand-select'), { target: { value: 'retail' } });
+      await waitFor(() => expect(screen.queryByText('Orders')).not.toBeInTheDocument());
+    });
+
+    it('AC-D1b: the From/To range section is labelled "Project delivery range"', async () => {
+      await renderModal();
+      expect(screen.getByText('Project delivery range')).toBeInTheDocument();
+      expect(screen.queryByText('Sales orders needed')).not.toBeInTheDocument();
+    });
+
+    it('AC-D1: the closed trigger reads ONE line, first two SO numbers then +x for the rest', async () => {
+      const orders = Array.from({ length: 14 }, (_, i) => ({
+        so_number: `SO${i + 1}`, project_label: `P${i + 1}`, customer_name: `C${i + 1}`,
+        rows_total: 1, rows_in_range: 1, rows_raised_in_window: 1, rows_awaiting: 0,
+        first_delivery: '2026-08-01', last_delivery: '2026-08-05',
+      }));
+      getCandidateOrders.mockResolvedValueOnce(orders);
+      await renderModal();
+      await screen.findByLabelText('SO1 - C1');
+
+      const trigger = await screen.findByTestId(/trigger-label-/);
+      expect(trigger.textContent).toBe('SO1, SO2 +12');
+      // Fix round 3 item 2: `truncate` + `title` (every selected SO number, not just the
+      // two shown) - the ADR-PRODUCT-STANDARDS pattern every other long-text cell uses,
+      // so a hover/long-press at 375px still reads the full pick.
+      const span = trigger.querySelector('span');
+      expect(span?.className).toContain('truncate');
+      expect(span?.title).toBe(
+        Array.from({ length: 14 }, (_, i) => `SO${i + 1}`).join(', '),
+      );
+    });
+
+    it('AC-D1: menu rows are one line each - "<SO number> - <customer>[, N awaiting ack]", no second description line', async () => {
+      getCandidateOrders.mockResolvedValueOnce([
+        {
+          so_number: 'SO1', project_label: 'P1', customer_name: 'C1',
+          rows_total: 5, rows_in_range: 5, rows_raised_in_window: 5, rows_awaiting: 3,
+          first_delivery: '2026-08-01', last_delivery: '2026-08-05',
+        },
+      ]);
+      await renderModal();
+      const body = await screen.findByTestId('option-body-SO1');
+      // Owner ruling (Lane D fix round 1): the awaiting-ack count DOES join this one
+      // line when non-zero - only the old "N lines in range" description is gone.
+      expect(body.textContent).toBe('SO1 - C1, 3 awaiting ack');
+      expect(body.textContent).not.toContain('lines in range');
+    });
+
+    it('fix round 4 nit: the project label is still searchable, though it is no longer printed', async () => {
+      getCandidateOrders.mockResolvedValueOnce([
+        {
+          so_number: 'SO1', project_label: 'ARC RESIDENCE TOWER B', customer_name: 'C1',
+          rows_total: 1, rows_in_range: 1, rows_raised_in_window: 1, rows_awaiting: 0,
+          first_delivery: '2026-08-01', last_delivery: '2026-08-05',
+        },
+        {
+          so_number: 'SO2', project_label: 'OTM GROUP', customer_name: 'C2',
+          rows_total: 1, rows_in_range: 1, rows_raised_in_window: 1, rows_awaiting: 0,
+          first_delivery: '2026-08-01', last_delivery: '2026-08-05',
+        },
+      ]);
+      await renderModal();
+      await screen.findByLabelText('SO1 - C1');
+
+      // The row/label print NEITHER project label - typing one still finds its order.
+      fireEvent.change(screen.getByLabelText('Search Every project order in range'), {
+        target: { value: 'RESIDENCE TOWER' },
+      });
+      expect(await screen.findByLabelText('SO1 - C1')).toBeInTheDocument();
+      expect(screen.queryByLabelText('SO2 - C2')).not.toBeInTheDocument();
     });
   });
 });

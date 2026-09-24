@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime
+from decimal import Decimal
 
 import pytest
 from fastapi.testclient import TestClient
@@ -39,6 +40,7 @@ from app.models.project_so import (
     INQUIRY_CANCELLED,
     INQUIRY_RAISED,
     IV_ORDER,
+    IV_ORDER_BACK,
     OrderInquiry,
     OrderInquiryRow,
     ProjectSalesOrder,
@@ -353,6 +355,87 @@ def _seed_scope_universe(db) -> dict:
     return {"wid": wid, "pid": pid, "so_a": so_a["so_number"], "so_b": so_b["so_number"]}
 
 
+def _project_so_delivered_line_with_order_back(
+    db, *, product_id, warehouse_id, donor_warehouse_code, qty="3",
+    company_id: str = SORENTO_COMPANY_ID,
+):
+    """AC-OB-7/AC-OB-9's own seed (`PLAN-oi-order-back-not-capped.md`): ONE project SO,
+    ONE core line delivered in full (3/3 - nothing outstanding, `line_status` closed the
+    way SO417310 line 16 reads), and TWO sibling confirmed-leg rows on it - an
+    ORDER_BACK of `qty` at the DONOR location its `stock_location` names, and an ORDER
+    of the same `qty` at the line's own location - so a caller reading "the ORDER_BACK
+    is uncapped, the sibling ORDER stays capped" gets both off ONE delivered line.
+    """
+    so_number = _code("SO")
+    so = SalesOrder(
+        id=_u(), so_number=so_number, status="open", demand_class="project",
+        company_id=company_id,
+    )
+    db.add(so)
+    db.flush()
+    core_line = SalesOrderLine(
+        id=_u(), sales_order_id=so.id, product_id=product_id, warehouse_id=warehouse_id,
+        qty_ordered=Decimal(qty), qty_delivered=Decimal(qty), line_status="closed",
+        company_id=company_id,
+    )
+    db.add(core_line)
+    db.flush()
+
+    owner_id = _u()
+    db.add(User(id=owner_id, email=f"{owner_id}@{MARKER.lower()}.test", name=f"{MARKER} CS"))
+    db.flush()
+    _project_numbering_rule(db)
+    project = register_project(
+        db, company_id=company_id, actor_user_id=owner_id,
+        developer_party_id=None, title=f"{MARKER} project {_u()[:8]}",
+    )
+    pso = ProjectSalesOrder(
+        id=_u(), company_id=company_id, project_id=project.id,
+        provisional_ref=_code("PSO"), so_id=so.id,
+    )
+    db.add(pso)
+    db.flush()
+    pso_line = ProjectSalesOrderLine(
+        id=_u(), company_id=company_id, project_sales_order_id=pso.id,
+        line_no=1, product_id=product_id, qty=Decimal(qty),
+        core_sales_order_line_id=core_line.id,
+    )
+    db.add(pso_line)
+    db.flush()
+    inquiry = OrderInquiry(id=_u(), company_id=company_id, project_sales_order_id=pso.id)
+    db.add(inquiry)
+    db.flush()
+    decision = SOSupplyDecision(
+        id=_u(), company_id=company_id, project_sales_order_id=pso.id,
+        revision_no=1, state="active",
+        line_snapshots=[{
+            "line_no": 1, "project_line_id": str(pso_line.id),
+            "core_line_id": str(core_line.id), "buy_qty": str(qty),
+        }],
+        confirmed_at=datetime.utcnow(),
+    )
+    db.add(decision)
+    db.flush()
+    order_back_row = OrderInquiryRow(
+        id=_u(), company_id=company_id, order_inquiry_id=inquiry.id,
+        so_line_id=pso_line.id, qty=Decimal(qty), verb=IV_ORDER_BACK,
+        state=INQUIRY_RAISED, supply_decision_id=decision.id,
+        ack_state=ACK_ACKNOWLEDGED, stock_location=donor_warehouse_code,
+    )
+    order_row = OrderInquiryRow(
+        id=_u(), company_id=company_id, order_inquiry_id=inquiry.id,
+        so_line_id=pso_line.id, qty=Decimal(qty), verb=IV_ORDER,
+        state=INQUIRY_RAISED, supply_decision_id=decision.id,
+        ack_state=ACK_ACKNOWLEDGED,
+    )
+    db.add_all([order_back_row, order_row])
+    db.flush()
+    return {
+        "so_number": so_number, "pso": pso, "inquiry": inquiry,
+        "order_back_row": order_back_row, "order_row": order_row,
+    }
+
+
 # =============================================================================
 # T1-T3 - the scope is stored on the run and carried through Re-plan (route level)
 # =============================================================================
@@ -386,18 +469,31 @@ def test_t1_create_run_stores_and_returns_demand_class_and_so_numbers(scm_app):
         assert body["so_numbers"] == ["SO1"]
 
 
-def test_t2_so_numbers_without_project_demand_class_is_refused(scm_app):
+def test_t2_so_numbers_without_demand_class_is_accepted_as_an_all_run(scm_app):
+    """Split from the original `test_t2_so_numbers_without_project_demand_class_is_
+    refused` (Lane D, `PLAN-order-sheet-oi-reports-22sep.md`, AC-D2): an omitted
+    `demand_class` alongside `so_numbers` used to be refused the same as `retail` - Lane D
+    changes the contract so an All run (no `demand_class`) accepts a picked `so_numbers`
+    list to narrow its own project legs. The `retail` half of the original assertion is
+    unchanged (below, renamed `..._is_refused_for_retail`)."""
     app, _db = _client(scm_app, "purchasing")
 
     with TestClient(app) as c:
         omitted = c.post("/api/v1/scm/reorder-runs", json={
             "warehouse_codes": [], "so_numbers": ["SO1"],
         })
+
+    assert omitted.status_code == 202, omitted.text
+
+
+def test_t2_so_numbers_without_project_demand_class_is_refused_for_retail(scm_app):
+    app, _db = _client(scm_app, "purchasing")
+
+    with TestClient(app) as c:
         retail = c.post("/api/v1/scm/reorder-runs", json={
             "warehouse_codes": [], "demand_class": "retail", "so_numbers": ["SO1"],
         })
 
-    assert omitted.status_code == 422, omitted.text
     assert retail.status_code == 422, retail.text
 
 
@@ -565,6 +661,46 @@ def test_t8_demand_drill_matches_the_scoped_runs_frozen_committed_figure(scm_app
 
 
 # =============================================================================
+# AC-OB-7 (`PLAN-oi-order-back-not-capped.md`) - the PLAN's own read of the same rule
+# AC-OB-4/5/6 pin against `scm.committed_v`: `horizon_committed_select_sql` must never
+# disagree with the view about which rows are capped.
+# =============================================================================
+
+
+def test_ac_ob_7_horizon_select_reads_the_order_back_row_uncapped(scm_app):
+    """AC-OB-7. An ORDER_BACK row on a core line delivered in full still counts its own
+    qty at the DONOR warehouse through `horizon_committed_select_sql` - the plan's own
+    committed figure - exactly as `scm.committed_v` does (AC-OB-4); the sibling ORDER row
+    on the SAME line stays capped at 0 (AC-OB-5), unchanged."""
+    _, db, _, _ = scm_app
+    wid = _mk_warehouse(db, _code("WH"))
+    donor_wid = _mk_warehouse(db, _code("DONOR"))
+    donor_code = db.execute(
+        text("select warehouse_code from warehouses where id = :w"), {"w": donor_wid}
+    ).scalar()
+    pid = _mk_product(db, _code("P"))
+    db.flush()
+
+    _project_so_delivered_line_with_order_back(
+        db, product_id=pid, warehouse_id=wid, donor_warehouse_code=donor_code,
+    )
+
+    sql = demand.horizon_committed_select_sql(demand_class="project", so_scoped=False)
+    rows = db.execute(
+        text(sql), {"horizon": None, "horizon_start": None}
+    ).mappings().all()
+    # `.mappings()` returns native `uuid.UUID` objects for a `uuid` column; `pid`/`wid`
+    # are plain strings (`_mk_product`/`_mk_warehouse`), so the comparison is stringwise.
+    by_warehouse = {
+        str(r["warehouse_id"]): float(r["project_committed"])
+        for r in rows if str(r["product_id"]) == pid
+    }
+
+    assert by_warehouse.get(donor_wid) == 3.0, by_warehouse
+    assert by_warehouse.get(wid, 0.0) == 0.0, by_warehouse
+
+
+# =============================================================================
 # T9-T11 - GET /reorder-runs/candidate-orders (new endpoint)
 # =============================================================================
 
@@ -671,6 +807,212 @@ def test_t11_candidate_orders_is_company_scoped_and_needs_reorder_run_permission
     with TestClient(bare_app) as c2:
         denied = c2.get("/api/v1/scm/reorder-runs/candidate-orders")
     assert denied.status_code == 403, denied.text
+
+
+def _stamp_row_created_at(db, row_id: str, when: datetime) -> None:
+    """The book carries no raise date - a row's raise is its first upload, `created_at`
+    (R1, `PLAN-reorder-plan-raised-filter.md`). `_project_so_with_lines` stamps it via
+    `server_default=now()`, so a specific raise day is set with a direct UPDATE after the
+    row exists, rather than widening the shared seeding helper for one lane's tests."""
+    db.execute(
+        text("UPDATE projects.order_inquiry_rows SET created_at = :dt WHERE id = :id"),
+        {"dt": when, "id": row_id},
+    )
+    db.flush()
+
+
+def test_rf1_2_3_4_raise_window_counts_rows_raised_in_it_without_moving_anything_else(scm_app):
+    """AC-RF-1/2/3/4. Two project SOs, one row each, raised (created_at) on 17 Sep and
+    20 Sep respectively. A window of 17-18 Sep counts SO A's row and not SO B's, both SOs
+    stay listed (AC-RF-3), and `rows_in_range`/`rows_awaiting`/`rows_total` read exactly
+    as they do with no raise window at all (AC-RF-4)."""
+    app, db = _client(scm_app, "purchasing")
+    wid = _mk_warehouse(db, _code("WH"))
+    pid = _mk_product(db, _code("P"))
+    db.flush()
+
+    so_a = _project_so_with_lines(db, lines=[
+        {"product_id": pid, "warehouse_id": wid, "qty": 5, "delivery_date": date(2026, 9, 1)},
+    ])
+    so_b = _project_so_with_lines(db, lines=[
+        {"product_id": pid, "warehouse_id": wid, "qty": 8, "delivery_date": date(2026, 9, 20)},
+    ])
+    _stamp_row_created_at(db, so_a["rows"][0].id, datetime(2026, 9, 17, 9, 0, 0))
+    _stamp_row_created_at(db, so_b["rows"][0].id, datetime(2026, 9, 20, 9, 0, 0))
+
+    with TestClient(app) as c:
+        windowed = c.get(
+            "/api/v1/scm/reorder-runs/candidate-orders",
+            params={
+                "from": "2026-09-01", "to": "2026-10-31",
+                "raised_from": "2026-09-17", "raised_to": "2026-09-18",
+            },
+        )
+        unwindowed = c.get(
+            "/api/v1/scm/reorder-runs/candidate-orders",
+            params={"from": "2026-09-01", "to": "2026-10-31"},
+        )
+
+    assert windowed.status_code == 200, windowed.text
+    by_so = {row["so_number"]: row for row in windowed.json()}
+
+    # AC-RF-3: an order with zero rows in the window is still listed.
+    assert so_a["so_number"] in by_so, "SO A must be listed"
+    assert so_b["so_number"] in by_so, "SO B must be listed even with zero rows in the window"
+
+    a = by_so[so_a["so_number"]]
+    b = by_so[so_b["so_number"]]
+
+    # AC-RF-1: the field is present and response_model does not drop it silently.
+    assert "rows_raised_in_window" in a
+    assert "rows_raised_in_window" in b
+
+    # AC-RF-2: SO A's row was raised inside the window, SO B's was not.
+    assert a["rows_raised_in_window"] == 1
+    assert b["rows_raised_in_window"] == 0
+
+    # AC-RF-4: rows_in_range / rows_awaiting / rows_total read the same with or without
+    # the raise window.
+    assert unwindowed.status_code == 200, unwindowed.text
+    by_so_nw = {row["so_number"]: row for row in unwindowed.json()}
+    for so_number, row in ((so_a["so_number"], a), (so_b["so_number"], b)):
+        baseline = by_so_nw[so_number]
+        assert row["rows_in_range"] == baseline["rows_in_range"]
+        assert row["rows_awaiting"] == baseline["rows_awaiting"]
+        assert row["rows_total"] == baseline["rows_total"]
+
+
+def test_rf2_no_raise_bounds_rows_raised_in_window_equals_rows_total(scm_app):
+    """AC-RF-2: with both bounds omitted, `rows_raised_in_window` equals `rows_total`
+    regardless of how far apart the rows were actually raised."""
+    app, db = _client(scm_app, "purchasing")
+    wid = _mk_warehouse(db, _code("WH"))
+    pid = _mk_product(db, _code("P"))
+    db.flush()
+
+    so = _project_so_with_lines(db, lines=[
+        {"product_id": pid, "warehouse_id": wid, "qty": 2, "delivery_date": date(2026, 9, 1)},
+        {"product_id": pid, "warehouse_id": wid, "qty": 3, "delivery_date": date(2026, 9, 20)},
+    ])
+    _stamp_row_created_at(db, so["rows"][0].id, datetime(2020, 1, 1))
+    _stamp_row_created_at(db, so["rows"][1].id, datetime(2030, 12, 31))
+
+    with TestClient(app) as c:
+        resp = c.get("/api/v1/scm/reorder-runs/candidate-orders")
+
+    assert resp.status_code == 200, resp.text
+    row = next(r for r in resp.json() if r["so_number"] == so["so_number"])
+    assert row["rows_raised_in_window"] == row["rows_total"] == 2
+
+
+def test_rf2_open_lower_bound_raised_to_only_counts_everything_up_to_it(scm_app):
+    """AC-RF-2: `raised_to` alone leaves the lower bound open - a row raised long before it
+    still counts, the same open-bound reading `rows_in_range` already gives `from`/`to`."""
+    app, db = _client(scm_app, "purchasing")
+    wid = _mk_warehouse(db, _code("WH"))
+    pid = _mk_product(db, _code("P"))
+    db.flush()
+
+    so = _project_so_with_lines(db, lines=[
+        {"product_id": pid, "warehouse_id": wid, "qty": 2, "delivery_date": date(2026, 9, 1)},
+        {"product_id": pid, "warehouse_id": wid, "qty": 3, "delivery_date": date(2026, 9, 20)},
+    ])
+    _stamp_row_created_at(db, so["rows"][0].id, datetime(2020, 1, 1))
+    _stamp_row_created_at(db, so["rows"][1].id, datetime(2026, 9, 17))
+
+    with TestClient(app) as c:
+        resp = c.get(
+            "/api/v1/scm/reorder-runs/candidate-orders",
+            params={"raised_to": "2026-09-18"},
+        )
+
+    assert resp.status_code == 200, resp.text
+    row = next(r for r in resp.json() if r["so_number"] == so["so_number"])
+    assert row["rows_raised_in_window"] == 2, "an open lower bound must not exclude the 2020 row"
+
+
+def test_rf2_window_uses_the_kuala_lumpur_day(scm_app):
+    """AC-RF-2 (reviewer kill, round 2): R1 reads the row's raise as its first upload
+    DAY, and the buyer's day is Malaysia civil time, not UTC. `created_at` is stored naive
+    UTC (`_stamp_row_created_at`'s docstring), so a row stamped 17 Sep 23:00 UTC is really
+    18 Sep 07:00 MYT and must count under an 18 Sep window, never a 17 Sep one - a bare
+    `created_at::date` (UTC) would get this backwards. This machine's own Postgres session
+    TimeZone is Asia/Seoul (a THIRD zone), so the UPDATE's bound value is asserted to have
+    landed exactly as given before trusting the endpoint's own conversion."""
+    app, db = _client(scm_app, "purchasing")
+    wid = _mk_warehouse(db, _code("WH"))
+    pid = _mk_product(db, _code("P"))
+    db.flush()
+
+    so = _project_so_with_lines(db, lines=[
+        {"product_id": pid, "warehouse_id": wid, "qty": 4, "delivery_date": date(2026, 9, 1)},
+    ])
+    stamped = datetime(2026, 9, 17, 23, 0, 0)
+    _stamp_row_created_at(db, so["rows"][0].id, stamped)
+
+    # The bound really did land naive/unconverted - rules out a session-TimeZone artefact
+    # (this machine's own session TimeZone is Asia/Seoul) masquerading as the MYT
+    # conversion under test.
+    landed = db.execute(
+        text("SELECT created_at FROM projects.order_inquiry_rows WHERE id = :id"),
+        {"id": so["rows"][0].id},
+    ).scalar()
+    assert landed == stamped, "the UPDATE must have stamped the naive value verbatim"
+
+    with TestClient(app) as c:
+        on_18 = c.get(
+            "/api/v1/scm/reorder-runs/candidate-orders",
+            params={"raised_from": "2026-09-18", "raised_to": "2026-09-18"},
+        )
+        on_17 = c.get(
+            "/api/v1/scm/reorder-runs/candidate-orders",
+            params={"raised_from": "2026-09-17", "raised_to": "2026-09-17"},
+        )
+
+    assert on_18.status_code == 200, on_18.text
+    assert on_17.status_code == 200, on_17.text
+    row_18 = next(r for r in on_18.json() if r["so_number"] == so["so_number"])
+    row_17 = next(r for r in on_17.json() if r["so_number"] == so["so_number"])
+
+    # 17 Sep 23:00 UTC == 18 Sep 07:00 MYT - the row belongs to the 18th, not the 17th.
+    assert row_18["rows_raised_in_window"] == 1, "23:00 UTC on the 17th is the 18th in MYT"
+    assert row_17["rows_raised_in_window"] == 0, "a bare UTC day would wrongly count it here"
+
+
+def test_ac_ob_9_candidate_orders_lists_an_so_whose_only_open_row_is_order_back_on_a_delivered_line(
+    scm_app,
+):
+    """AC-OB-9 (`PLAN-oi-order-back-not-capped.md`). The picker's confirmed leg gates on
+    `AND {demand._OWED_SQL} > 0` (`app/api/v1/scm/reorder_runs.py`), the same fragment
+    AC-OB-4/AC-OB-7 pin - so once it stops capping ORDER_BACK, an SO whose only OPEN row
+    is an ORDER_BACK on a delivered line surfaces here too. This is the SO417310 journey
+    (plan section 1): the sibling ORDER row is cancelled, so `rows_total` states
+    unambiguously what the ORDER_BACK row alone buys the SO onto this list."""
+    app, db = _client(scm_app, "purchasing")
+    wid = _mk_warehouse(db, _code("WH"))
+    donor_wid = _mk_warehouse(db, _code("DONOR"))
+    donor_code = db.execute(
+        text("select warehouse_code from warehouses where id = :w"), {"w": donor_wid}
+    ).scalar()
+    pid = _mk_product(db, _code("P"))
+    db.flush()
+
+    seeded = _project_so_delivered_line_with_order_back(
+        db, product_id=pid, warehouse_id=wid, donor_warehouse_code=donor_code,
+    )
+    seeded["order_row"].state = INQUIRY_CANCELLED
+    db.flush()
+
+    with TestClient(app) as c:
+        resp = c.get("/api/v1/scm/reorder-runs/candidate-orders",
+                      params={"from": "2026-01-01", "to": "2026-12-31"})
+
+    assert resp.status_code == 200, resp.text
+    by_so = {row["so_number"]: row for row in resp.json()}
+    assert seeded["so_number"] in by_so, (
+        "an ORDER_BACK row on a delivered line must still make its SO a candidate"
+    )
+    assert by_so[seeded["so_number"]]["rows_total"] == 1
 
 
 # =============================================================================

@@ -42,6 +42,7 @@ import {
 } from '@/lib/respondIoOutgoingMessage';
 import { linkifySegments } from '@/lib/linkifySegments';
 import { parseWhatsAppText, stripWhatsAppMarkup } from '@/lib/whatsappText';
+import { cn } from '@/lib/utils';
 import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
 } from '@/components/common/AttachmentPreviewModal';
@@ -100,6 +101,19 @@ interface RespondChatListProps {
   emptyHint?: string;
   /** Caps message-list scroll height; chat header sits above. */
   maxHeightClass?: string;
+  /**
+   * Fix round 5: the SAME floor `maxHeightClass` puts on the inner scroll box
+   * (e.g. `min-h-40 flex-1`) has to ALSO sit on this component's OWN root -
+   * otherwise the root is a bare `min-h-0 flex-1` flex item with no floor of
+   * its own, the outer flex algorithm can still squeeze IT to near-zero, and
+   * the scroll box's `min-h-40` (a per-element CSS min-height, which does not
+   * enlarge an ancestor's computed flex size) overflows that squeezed root
+   * and paints over whatever comes after it in the column (the drawer's
+   * composer, at 375px - AC-CP-B1). Callers that flex-fill a Sheet pass the
+   * same value here that they pass as `maxHeightClass`; a caller with a fixed
+   * `max-h-[...]` cap (no flex-fill) passes nothing, unchanged.
+   */
+  className?: string;
   /**
    * If set, the bubble whose `messageId` matches gets a highlight ring + a
    * "Ticket based on this message" badge, and the list scrolls to it on mount
@@ -172,6 +186,14 @@ interface RespondChatListProps {
    */
   focusMessageId?: string | null;
   focusNonce?: number;
+  /**
+   * R4: reuses the caller's search-jump fetch-back loader (`useConversationThread`'s
+   * `jumpToMessage`) for a "Replying to" quote whose target is OUTSIDE the loaded
+   * window. Passing this is what turns that quote from plain text into a button -
+   * a surface with no scroll-back (no loader supplied) still shows only the
+   * quotes it can actually reach.
+   */
+  onJumpToMessage?: (messageId: string) => void;
 }
 
 /** Message text with the searched term marked. Escaping lives in the helper. */
@@ -487,6 +509,8 @@ export default function RespondChatList({
   mediaProxy,
   focusMessageId = null,
   focusNonce = 0,
+  onJumpToMessage,
+  className,
 }: RespondChatListProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const highlightRef = useRef<HTMLDivElement>(null);
@@ -561,6 +585,21 @@ export default function RespondChatList({
     });
   }, [items]);
 
+  // B1 regression: the three "scroll to a specific bubble" effects below
+  // (highlight, active search match, external focus/jump) used to depend on
+  // `sortedItems` itself so a same-size window SWAP (an `around` page
+  // replacing the old one) would still re-run them - `.length` alone missed
+  // it. But `sortedItems` is a new array on every content-only update too (a
+  // receipt tier flip, a note added), which re-ran them on every live poll
+  // tick and re-scrolled the reader to a match they had already left. This key
+  // changes exactly when the loaded WINDOW's identity changes - a different
+  // set of message ids, in a different order - and not when only a message's
+  // own fields change.
+  const loadedIdsKey = useMemo(
+    () => sortedItems.map((item) => (item.messageId == null ? '' : String(item.messageId))).join(','),
+    [sortedItems],
+  );
+
   // Messages and internal notes are two streams shown as one thread: comments
   // live in their own table (never in `chat_histories`), so the interleave
   // happens here, at render time, on the wall clock both carry.
@@ -607,9 +646,13 @@ export default function RespondChatList({
   // The enquiry bubble is scrolled to ONCE per highlighted message, not on every
   // render that changes the item count: the drawer always passes a highlight id,
   // so re-running this on each prepended page (or each live poll) dragged the
-  // reader back to the enquiry every time they scrolled up. The item count stays
-  // in the deps because the target bubble mounts asynchronously - the ref, not
-  // the dependency list, is what makes it fire once.
+  // reader back to the enquiry every time they scrolled up. `loadedIdsKey`
+  // stays in the deps because the target bubble mounts asynchronously - the
+  // ref, not the dependency list, is what makes it fire once. B1: `.length`
+  // alone missed a same-size window swap (an `around` page replacing the old
+  // one) - the ids key changes whenever the window's CONTENTS do, even when
+  // the count does not, but NOT on a content-only update to an already-loaded
+  // message (a receipt flip, a note), which used to re-fire this on every poll.
   const didHighlight = useRef<string | null>(null);
   useEffect(() => {
     if (activeMatchId || !normalizedHighlightId) return;
@@ -618,7 +661,7 @@ export default function RespondChatList({
     if (!node) return;
     didHighlight.current = normalizedHighlightId;
     scrollBubbleIntoView(node, { behavior: 'smooth', block: 'center' });
-  }, [sortedItems.length, normalizedHighlightId, activeMatchId, scrollBubbleIntoView]);
+  }, [loadedIdsKey, normalizedHighlightId, activeMatchId, scrollBubbleIntoView]);
 
   // Whether this thread has been landed on its tail yet. The slack check below
   // exists so a reader who scrolled up to read history is not yanked back on
@@ -676,13 +719,21 @@ export default function RespondChatList({
     if (!isLoadingOlder) prependAnchor.current = null;
   }, [isLoadingOlder]);
 
+  // Fix round 2 regression: this used to depend on `sortedItems` itself (the
+  // array reference), which is a NEW array on every content-only update (a
+  // receipt tier flip, a note) too, not only on a window swap - it re-scrolled
+  // the reader back to the match on every live poll tick that touched any
+  // message. `loadedIdsKey` changes only when the loaded window's ids change -
+  // a window swap while the SAME match is active re-fires this on purpose
+  // (the bubble has to be found again in the fresh window), a content-only
+  // tick does not.
   useEffect(() => {
     if (!activeMatchId) return;
     scrollBubbleIntoView(bubbleRefs.current.get(activeMatchId), {
       behavior: 'smooth',
       block: 'center',
     });
-  }, [activeMatchId, sortedItems.length, scrollBubbleIntoView]);
+  }, [activeMatchId, loadedIdsKey, scrollBubbleIntoView]);
 
   // In-flight latch for the older lane. A ref, not the `isLoadingOlder` prop:
   // scroll fires many times per frame and the prop only arrives a render later,
@@ -767,10 +818,18 @@ export default function RespondChatList({
     [scrollBubbleIntoView],
   );
 
-  // AC-N6: an external jump (the drawer's quoted enquiry). The nonce is the
-  // trigger, and it is only marked handled once the bubble EXISTS - after an
-  // around-page load the target mounts a render or two later, so the effect
-  // re-runs on the item count until it can actually scroll.
+  // AC-N6 / R4: an external jump (the drawer's quoted enquiry, or a reply-to
+  // quote whose target was outside the window). The nonce is the trigger, and
+  // it is only marked handled once the bubble EXISTS - after an around-page
+  // load the target mounts a render or two later, so the effect re-runs on
+  // `loadedIdsKey` (not just the item count: B1) until it can actually scroll.
+  // `focusNonce` is set ONCE, synchronously, before the fetch resolves; the
+  // page that lands afterwards is a separate prop update that does NOT bump it
+  // again, so the item count alone missed a same-size window swap. Fix round
+  // 2: a plain array reference (`sortedItems`) also changes on a
+  // content-only tick (a receipt flip, a note), which the id-set key does not
+  // - though `handledFocusNonce` already stops this one from ACTING twice,
+  // matching it to the other two effects keeps all three on one rule.
   const handledFocusNonce = useRef(0);
   useEffect(() => {
     if (!focusNonce || focusNonce === handledFocusNonce.current) return;
@@ -780,7 +839,7 @@ export default function RespondChatList({
     handledFocusNonce.current = focusNonce;
     scrollBubbleIntoView(node, { behavior: 'smooth', block: 'center' });
     setFlashMessageId(focusMessageId);
-  }, [focusNonce, focusMessageId, sortedItems.length, scrollBubbleIntoView]);
+  }, [focusNonce, focusMessageId, loadedIdsKey, scrollBubbleIntoView]);
 
   // Clear the flash ring after it has been seen. Reset on every new target so a
   // second jump re-flashes instead of inheriting the first one's timer.
@@ -797,7 +856,7 @@ export default function RespondChatList({
   let lastDateKey = '';
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col">
+    <div className={cn('relative flex min-h-0 flex-1 flex-col', className)}>
       <div className="flex items-center gap-3 rounded-t-md border border-b-0 bg-[#f0f2f5] dark:bg-[#202c33] px-3 py-2">
         <div className="flex size-9 items-center justify-center rounded-full bg-emerald-600 text-sm font-semibold text-white">
           {contactInitial}
@@ -954,7 +1013,11 @@ export default function RespondChatList({
           const quotedTarget = quotedContext?.messageId
             ? loadedMessages.get(quotedContext.messageId)
             : undefined;
-          const quotedTargetId = quotedTarget ? (quotedContext?.messageId ?? null) : null;
+          // AC-CP-8/9: a quote with an id is a button whether or not the page is
+          // loaded yet - a loaded target scrolls locally, an out-of-window one
+          // asks the caller's fetch-back loader (below). AC-CP-10: no id at all
+          // (a malformed replyTo) stays inert either way.
+          const quotedTargetId = quotedContext?.messageId ?? null;
 
           return (
             <div
@@ -1000,7 +1063,15 @@ export default function RespondChatList({
                       context={quotedContext}
                       agentLabel={quotedAgentLabel(quotedTarget)}
                       contactLabel={contactName}
-                      onJump={quotedTargetId ? () => jumpToMessage(quotedTargetId) : undefined}
+                      onJump={
+                        !quotedTargetId
+                          ? undefined
+                          : quotedTarget
+                            ? () => jumpToMessage(quotedTargetId)
+                            : onJumpToMessage
+                              ? () => onJumpToMessage(quotedTargetId)
+                              : undefined
+                      }
                     />
                   )}
                   {attachments.map((att, i) => (

@@ -12,7 +12,8 @@
             ref (customer_ref/supplier_ref) scoped to another company is
             invisible under this anchor, same as an unresolved one - so it is
             `retryable`, not `failed`, new fields present or not
-  AC-V1-9   PO currency defaults to CNY on header and line when unstated
+  AC-V1-9   PO line currency follows its header's resolved currency when
+            unstated (header still CNY-fills when it states none itself)
   AC-V1-10  dry_run creates no master; the verdict still reports what would happen
 
 Every test seeds its own chain on the blank scratch schema (`tests._pg_fixture`),
@@ -529,8 +530,41 @@ class TestCrossCompanyRefIsRetryable:
 
 
 # ================================================================== AC-V1-9
-class TestPurchaseOrderCurrencyDefault:
-    def test_header_and_line_default_to_cny_when_unstated(self, env):
+class TestPurchaseOrderLineCurrencyFollowsHeader:
+    """AC-PLC-1..3: a line with no stated currency takes the HEADER's resolved
+    currency, never a hardcoded CNY. Header-level CNY fill (when the header
+    itself states none) is unchanged and untested here (AC-V1-9's old name);
+    it merely becomes the value a line inherits."""
+
+    def test_header_stated_myr_lines_unstated_take_the_header_currency(self, env):
+        record = _po_record(env, currency="MYR")  # no currency on the line
+        assert "currency" not in record["lines"][0]
+
+        res = env.post(INGEST_PO, [record])
+
+        entry = res.json()["records"][0]
+        assert entry["outcome"] == "created", res.text
+        header = env.header("purchase_orders", record["source_ref"])
+        assert header["currency"] == "MYR"
+        lines = env.po_lines(header["id"])
+        assert lines[0]["currency"] == "MYR"
+
+    def test_header_stated_usd_one_line_states_cny_the_rest_follow_header(self, env):
+        follows = _po_line(env)
+        stated = _po_line(env, product_ref=env.product2_ref, currency="CNY")
+        record = _po_record(env, lines=[follows, stated], currency="USD")
+
+        res = env.post(INGEST_PO, [record])
+
+        entry = res.json()["records"][0]
+        assert entry["outcome"] == "created", res.text
+        header = env.header("purchase_orders", record["source_ref"])
+        assert header["currency"] == "USD"
+        lines = {line["source_ref"]: line for line in env.po_lines(header["id"])}
+        assert lines[follows["source_ref"]]["currency"] == "USD"
+        assert lines[stated["source_ref"]]["currency"] == "CNY"
+
+    def test_nothing_stated_anywhere_the_line_gets_the_headers_cny_fill(self, env):
         record = _po_record(env)  # no currency anywhere
         assert "currency" not in record
 

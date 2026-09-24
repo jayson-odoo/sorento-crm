@@ -281,6 +281,131 @@ class TestAC1699DatedOrderMissScopeBlockAndMemberPicker:
 
 
 # --------------------------------------------------------------------------- #
+# PLAN-chatbot-order-status-all-orders-23sep, Fix 2 / AC-1866 / AC-1867. Owner ruling
+# 23 Sep 2026: a `member_offer` already prints its own numbered text list ("Please
+# choose who to route to (reply with the number): 1. Ah Chong ..."), so the SAME names
+# must not ALSO go out as WhatsApp quick-reply buttons - `result_set` stays populated
+# (a numbered reply still resolves through it), only `quick_replies` is withheld, and
+# only for this one pending kind.
+# --------------------------------------------------------------------------- #
+
+
+class TestAC1866MemberOfferSendsNoQuickReplies:
+    def test_engine_reply_has_no_quick_replies_but_keeps_the_member_result_set(
+        self, monkeypatch
+    ) -> None:
+        """Engine-level: the real `answer_bridge.answer_for` production chain mints the
+        `member_offer` Pending, and `engine._reply_of` - the exact function both
+        `engine._run_answer` and `engine._answer_actions` call to build a reply/action
+        from an `Answer` - is exercised directly on that real `Answer`, the same way
+        the tail does."""
+        from app.services.chatbot import engine as engine_mod
+        from app.services.chatbot.tail import member_offer as member_mod
+
+        parser, resolved, gate, services = _dated_order_scenario()
+        payload = {"resolved": resolved, "gate": gate, "_exit_kind": "not_found"}
+
+        def stub_rosters(db, plan, ctx):
+            return [
+                {
+                    "body": [
+                        {"user_id": "u1", "respond_user_id": "ru1", "name": "Maryam Ariffin"},
+                        {"user_id": "u2", "respond_user_id": "ru2", "name": "Nurain"},
+                    ]
+                }
+            ]
+
+        monkeypatch.setattr(member_mod, "fetch_rosters", stub_rosters)
+
+        bridge = _require_answer_for()
+        answer = bridge.answer_for(
+            payload,
+            envelope=None,
+            parser=parser,
+            ctx=_ctx_for(parser),
+            canned=_canned(),
+            services=services,
+            db=None,
+            asked_at_turn=6,
+        )
+        assert answer is not None and answer.question is not None
+        assert answer.question.kind == "member_offer", answer.question.kind
+        assert "Please choose who to route to" in (answer.text or ""), answer.text
+
+        # The real seam both `_run_answer` and `_answer_actions` build their
+        # reply/action from - calling it directly (rather than re-deriving the same
+        # shape by hand) is what makes this assertion guard the production wiring.
+        reply = engine_mod._reply_of(answer)
+        assert reply["quick_replies"] is None, (
+            f"a member_offer must not go out with quick replies: {reply['quick_replies']!r}"
+        )
+        assert len(reply["result_set"]) > 0, "the member roster must stay in result_set"
+        assert all(row.get("entity_type") == "member" for row in reply["result_set"]), reply["result_set"]
+        assert [row.get("label") for row in reply["result_set"]] == ["Maryam Ariffin", "Nurain"]
+
+
+class TestAC1867OtherPendingKindsKeepTheirQuickReplies:
+    """Regression guard for AC-1866's scope: `team_pick` / `company_pick` / a roster
+    kind still send the comma-joined `quick_replies` string exactly as before - the
+    suppression is `member_offer` ONLY."""
+
+    def test_team_pick_still_yields_the_comma_joined_quick_replies_string(self) -> None:
+        from app.services.chatbot import engine as engine_mod
+        from app.services.chatbot.turn import pending as turn_pending
+        from types import SimpleNamespace
+
+        question = turn_pending.ask(
+            "team_pick",
+            [
+                {"position": 1, "label": "Mocha", "entity_type": "team"},
+                {"position": 2, "label": "Sorento", "entity_type": "team"},
+            ],
+        )
+        answer = SimpleNamespace(question=question)
+        assert engine_mod._quick_replies_of(answer) == "Mocha, Sorento"
+
+    def test_product_pick_still_yields_the_comma_joined_quick_replies_string(self) -> None:
+        from app.services.chatbot import engine as engine_mod
+        from app.services.chatbot.turn import pending as turn_pending
+        from types import SimpleNamespace
+
+        question = turn_pending.ask(
+            "product_pick",
+            [
+                {"position": 1, "label": "SRTWC8517", "entity_type": "product"},
+                {"position": 2, "label": "SRTWC8518", "entity_type": "product"},
+            ],
+        )
+        answer = SimpleNamespace(question=question)
+        assert engine_mod._quick_replies_of(answer) == "SRTWC8517, SRTWC8518"
+
+    def test_compose_question_reask_suppresses_only_member_offer(self) -> None:
+        from app.services.chatbot.turn import compose as turn_compose
+        from app.services.chatbot.turn import pending as turn_pending
+
+        member_question = turn_pending.ask(
+            "member_offer",
+            [
+                {"position": 1, "label": "Maryam Ariffin", "entity_type": "member"},
+                {"position": 2, "label": "Nurain", "entity_type": "member"},
+            ],
+        )
+        member_answer = turn_compose.compose_question(member_question)
+        assert member_answer.actions[0]["quick_replies"] is None
+        assert len(member_answer.actions[0]["result_set"]) == 2
+
+        team_question = turn_pending.ask(
+            "team_pick",
+            [
+                {"position": 1, "label": "Mocha", "entity_type": "team"},
+                {"position": 2, "label": "Sorento", "entity_type": "team"},
+            ],
+        )
+        team_answer = turn_compose.compose_question(team_question)
+        assert team_answer.actions[0]["quick_replies"] == "Mocha, Sorento"
+
+
+# --------------------------------------------------------------------------- #
 # AC-1701 / AC-1702 (F6 moved from R3, F7) - real-DB attachment roster + plain miss,
 # reusing test_product_attachment_picker_stamp.py's own harness
 # --------------------------------------------------------------------------- #

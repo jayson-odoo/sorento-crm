@@ -27,6 +27,26 @@ import type {
   BoardDraft,
 } from '../../_shared/types/fulfilmentPlanning.types';
 
+/**
+ * Pending changes grouped by the LINE they happened to, in the order the lines first appear
+ * (AC-D5). The planning line first, then the sales order's own address for a line nobody has
+ * adopted - the same pair `FulfilmentBoardListView`'s own `changeIcons` keys a row by.
+ */
+function changesByLine(
+  annotations: BoardChangeAnnotation[],
+): BoardChangeAnnotation[][] {
+  const byLine = new Map<string, BoardChangeAnnotation[]>();
+  for (const annotation of annotations) {
+    const key =
+      annotation.projectLineId ??
+      `${annotation.soNumber}|${annotation.lineNo}|${annotation.itemCode}`;
+    const held = byLine.get(key);
+    if (held) held.push(annotation);
+    else byLine.set(key, [annotation]);
+  }
+  return [...byLine.values()];
+}
+
 const PRODUCT_COL = 'w-[190px] min-w-[190px] max-w-[190px]';
 /**
  * A FLOOR, not a fixed width. With `table` at `w-full` and `table-layout` left at its browser
@@ -266,12 +286,18 @@ export function FulfilmentBoardMatrix({
                         {(annotations?.get(`${product.key}|${bucket.key}`) ?? []).length >
                         0 ? (
                           <div className="flex flex-wrap items-center gap-1 px-2 pb-1.5">
-                            {(
-                              annotations?.get(`${product.key}|${bucket.key}`) ?? []
-                            ).map((annotation) => (
+                            {/* ONE icon per changed LINE, not per pending batch row
+                                (AC-D5, owner finding 22 Sep: "why so many warning
+                                signs") - two rows that both moved the same line's date
+                                are one warning about one line, and the lightbox behind
+                                the icon lists them. A cell holding three DIFFERENT
+                                lines still draws three icons: they are three lines. */}
+                            {changesByLine(
+                              annotations?.get(`${product.key}|${bucket.key}`) ?? [],
+                            ).map((group) => (
                               <BoardChangeTable
-                                key={annotation.rowId}
-                                annotation={annotation}
+                                key={group[0].rowId}
+                                annotations={group}
                                 compact
                               />
                             ))}

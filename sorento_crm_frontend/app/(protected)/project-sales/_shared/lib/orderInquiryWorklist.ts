@@ -59,6 +59,32 @@ export function orderInquiryRowHref(row: OrderInquiryWorklistRow): string | null
   return null;
 }
 
+/**
+ * S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-1): the "SO line" column's own text -
+ * `SO402757 · L5` when the row carries a line number, the bare SO number otherwise (a
+ * row with no line to name still deserves its SO number rather than a blank cell).
+ */
+export function orderInquirySoLineLabel(
+  row: Pick<OrderInquiryWorklistRow, 'so_number' | 'line_no'>,
+): string {
+  const so = row.so_number ?? 'Not numbered';
+  return row.line_no ? `${so} · L${row.line_no}` : so;
+}
+
+/**
+ * S6 (AC-B6-1): the "SO line" column's own href, landing on the exact line
+ * (`?tab=lines&line=<core_line_id>`). `null` when either id the link needs is missing -
+ * `core_sales_order_id`, or `core_line_id` on a row whose mirror reaches no core line -
+ * so the cell falls back to plain text rather than a link that lands nowhere in
+ * particular, the same rule `orderInquiryRowHref` already follows.
+ */
+export function orderInquirySoLineHref(
+  row: Pick<OrderInquiryWorklistRow, 'core_sales_order_id' | 'core_line_id'>,
+): string | null {
+  if (!row.core_sales_order_id || !row.core_line_id) return null;
+  return `/scm/sales-orders/${row.core_sales_order_id}?tab=lines&line=${row.core_line_id}`;
+}
+
 /** A quantity as a person reads it: `600`, never `600.0000`. */
 export function formatInquiryQty(qty?: string | null): string {
   if (qty === null || qty === undefined) return '';
@@ -100,6 +126,96 @@ const FLOW_VERBS = ['ORDER', 'ORDER_BACK'];
 export function flowExclusionLabel(verb: string): string | null {
   if (FLOW_VERBS.includes(verb)) return null;
   return NON_ORDER_FLOW_LABEL[verb] ?? 'Not an ORDER row';
+}
+
+/**
+ * S3 (`PLAN-board-oi-mechanical-22sep.md`, AC-B3-1..7): the verbs Taken / Remaining are
+ * ever a real figure for - a BUY row, one that can carry a link of its own. Deliberately a
+ * different list from `FLOW_VERBS` above: that pair is scoped to `ORDER` siblings on the
+ * same SO LINE (a different question, kept as-is), while Taken/Remaining read THIS row's
+ * own `linked_qty` and so include `RESERVE_AND_ORDER` too - it still buys and still links.
+ */
+const TAKEN_REMAINING_VERBS = ['ORDER', 'ORDER_BACK', 'RESERVE_AND_ORDER'];
+
+export function isInquiryBuyRow(verb: string): boolean {
+  return TAKEN_REMAINING_VERBS.includes(verb);
+}
+
+/**
+ * Taken: this row's own links, summed, PLUS what CS has reserved off it (review round 2,
+ * B1 / `PLAN-oi-request-cs-reserve.md` section 7: "this lane only adds reserved_qty to
+ * those figures") - `linked_qty` deliberately excludes a reserve link
+ * (`links_for_rows`'s own AC-RS-12 note: a reserve link is not a PO/SPO document), so
+ * `reserved_qty` is the ONLY other place that quantity can come from.
+ */
+function inquiryRowTakenQty(
+  row: Pick<OrderInquiryWorklistRow, 'linked_qty' | 'reserved_qty'>,
+): number {
+  return Number(row.linked_qty ?? '0') + Number(row.reserved_qty ?? '0');
+}
+
+/**
+ * Taken: this row's own links, summed - `linked_qty` already IS that sum (the REAL links
+ * only, never the synthetic "via PO" entries, per `OrderInquiryRow.linked_qty`'s own doc
+ * comment) - plus `reserved_qty` (see `inquiryRowTakenQty` above). `-` on a notice row
+ * (AC-B3-3): an ADVANCE/DELAY/CHANGE_SO/... row never carries a link of its own, and a
+ * `0` there would read as "nothing was taken" rather than "this question does not apply
+ * to this row".
+ */
+export function inquiryRowTaken(
+  row: Pick<OrderInquiryWorklistRow, 'verb' | 'linked_qty' | 'reserved_qty'>,
+): string {
+  if (!isInquiryBuyRow(row.verb)) return '-';
+  return formatInquiryQty(String(inquiryRowTakenQty(row)));
+}
+
+/**
+ * Remaining: Qty minus Taken (links + reserved) minus bundled, never negative (AC-B3-2).
+ * `-` on a notice row (AC-B3-3, same reason as Taken above); `0` on a row itself
+ * `cancelled` or whose sales-order LINE is cancelled (AC-B3-4, `line_cancelled`) - that
+ * quantity is called off, not still owed.
+ */
+export function inquiryRowRemaining(
+  row: Pick<
+    OrderInquiryWorklistRow,
+    'verb' | 'qty' | 'linked_qty' | 'reserved_qty' | 'bundled_qty' | 'state' | 'line_cancelled'
+  >,
+): string {
+  if (!isInquiryBuyRow(row.verb)) return '-';
+  if (row.state === 'cancelled' || row.line_cancelled) return '0';
+  const remaining =
+    Number(row.qty ?? '0') - inquiryRowTakenQty(row) - Number(row.bundled_qty ?? '0');
+  return formatInquiryQty(String(Math.max(remaining, 0)));
+}
+
+/**
+ * Whether this row counts toward a Qty / Taken / Remaining FOOTER sum (AC-B3-4, AC-B3-5): a
+ * buy row, neither cancelled itself nor on a cancelled sales-order line. Named once so the
+ * footer and `inquiryRowRemaining`'s own `0` can never disagree about which rows are in it.
+ */
+export function inquiryRowCountsForFooter(
+  row: Pick<OrderInquiryWorklistRow, 'verb' | 'state' | 'line_cancelled'>,
+): boolean {
+  return isInquiryBuyRow(row.verb) && row.state !== 'cancelled' && !row.line_cancelled;
+}
+
+/**
+ * The three footer sums over the rows Taken/Remaining actually apply to (AC-B3-5): Qty and
+ * Taken are each a plain sum, and Remaining is the FOOTER's own subtraction - Qty footer
+ * minus Taken footer minus the bundled total - rather than a sum of each row's own already-
+ * clamped Remaining, which is the exact wording the UAC states it by.
+ */
+export function inquiryFooterTotals(
+  rows: Pick<
+    OrderInquiryWorklistRow,
+    'verb' | 'state' | 'line_cancelled' | 'qty' | 'linked_qty' | 'reserved_qty' | 'bundled_qty'
+  >[],
+): { qty: number; taken: number; remaining: number } {
+  const counted = rows.filter(inquiryRowCountsForFooter);
+  const qty = counted.reduce((total, row) => total + Number(row.qty ?? '0'), 0);
+  const taken = counted.reduce((total, row) => total + inquiryRowTakenQty(row), 0);
+  const bundled = counted.reduce((total, row) => total + Number(row.bundled_qty ?? '0'), 0);
+  return { qty, taken, remaining: Math.max(qty - taken - bundled, 0) };
 }
 
 /**

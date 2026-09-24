@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { statusPillClass } from './status-pill';
+import { statusPillClass, statusTextClass } from './status-pill';
 
 describe('statusPillClass', () => {
   it('is the amber "waiting" colour for a flyer reading that is processing', () => {
@@ -26,5 +26,22 @@ describe('statusPillClass', () => {
     expect(statusPillClass('made-up-status')).toBe('bg-muted text-muted-foreground');
     expect(statusPillClass(null)).toBe('bg-muted text-muted-foreground');
     expect(statusPillClass(undefined)).toBe('bg-muted text-muted-foreground');
+  });
+});
+
+/**
+ * S6 (reviewer round, `PLAN-oi-request-cs-reserve.md`): an icon-only control reads
+ * the SAME palette as a pill, just the `text-*` half - the OI Lines grid's own Reserve
+ * icon-button used to hardcode `text-amber-600`/`text-emerald-600` rather than this
+ * ONE source of truth.
+ */
+describe('statusTextClass', () => {
+  it('is only the text-* class off the same palette statusPillClass reads', () => {
+    expect(statusTextClass('pending')).toBe('text-amber-800');
+    expect(statusTextClass('done')).toBe('text-emerald-800');
+  });
+
+  it('falls back to the neutral text colour for an unrecognised status', () => {
+    expect(statusTextClass('made-up-status')).toBe('text-muted-foreground');
   });
 });

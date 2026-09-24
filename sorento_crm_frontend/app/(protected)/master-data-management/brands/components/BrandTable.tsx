@@ -84,6 +84,24 @@ export function buildBrandColumns(handlers: {
       ),
     },
     {
+      id: 'purchasing',
+      accessorFn: (row) => row.flows_to_purchasing,
+      header: ({ column }) => <DataGridColumnHeader title="Purchasing" column={column} />,
+      size: 120,
+      enableSorting: false,
+      meta: { headerTitle: 'Purchasing' },
+      cell: ({ row }) => (
+        <Badge
+          variant={row.original.flows_to_purchasing ? 'success' : 'secondary'}
+          size="sm"
+          className="shrink-0"
+        >
+          <BadgeDot />
+          {row.original.flows_to_purchasing ? 'Yes' : 'No'}
+        </Badge>
+      ),
+    },
+    {
       id: 'product_count',
       accessorFn: (row) => row.product_count ?? 0,
       header: ({ column }) => <DataGridColumnHeader title="Products" column={column} />,

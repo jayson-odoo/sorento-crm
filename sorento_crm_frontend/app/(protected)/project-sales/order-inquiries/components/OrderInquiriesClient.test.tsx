@@ -85,7 +85,10 @@ vi.mock('@/lib/listing-column-preferences/listColumnPreferencesService', () => (
 
 const listOrderInquiryWorklist = vi.fn();
 const getOrderInquiryWorklistSummary = vi.fn();
-const downloadOrderInquiryWorklistXlsx = vi.fn();
+// Lane B (`PLAN-order-sheet-oi-reports-22sep.md`, AC-B6): the list page's Export Excel
+// goes async (My Downloads) - the sync `downloadOrderInquiryWorklistXlsx` blob fetch is
+// retired from THIS screen (the sync GET route itself stays for one release elsewhere).
+const exportOrderInquiryWorklistXlsx = vi.fn();
 const autoPlaceOrderInquiryRows = vi.fn();
 const getUnplaceAllPreview = vi.fn();
 const unplaceAllOrderInquiryRows = vi.fn();
@@ -101,8 +104,8 @@ vi.mock('../../_shared/services/orderInquiryService', () => ({
     listOrderInquiryWorklist(...args),
   getOrderInquiryWorklistSummary: (...args: unknown[]) =>
     getOrderInquiryWorklistSummary(...args),
-  downloadOrderInquiryWorklistXlsx: (...args: unknown[]) =>
-    downloadOrderInquiryWorklistXlsx(...args),
+  exportOrderInquiryWorklistXlsx: (...args: unknown[]) =>
+    exportOrderInquiryWorklistXlsx(...args),
   autoPlaceOrderInquiryRows: (...args: unknown[]) =>
     autoPlaceOrderInquiryRows(...args),
   getUnplaceAllPreview: (...args: unknown[]) => getUnplaceAllPreview(...args),
@@ -178,8 +181,12 @@ vi.mock('../../_shared/services/fileDownload', () => ({
   filenameFromContentDisposition: vi.fn(),
 }));
 
+const { toastSuccessSpy, toastErrorSpy } = vi.hoisted(() => ({
+  toastSuccessSpy: vi.fn(),
+  toastErrorSpy: vi.fn(),
+}));
 vi.mock('@/lib/toast', () => ({
-  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
+  toast: { success: toastSuccessSpy, error: toastErrorSpy, warning: vi.fn(), dismiss: vi.fn() },
 }));
 
 vi.mock('@/components/common/SearchableSelect', () => ({
@@ -277,7 +284,10 @@ beforeEach(() => {
   currentSearchParams = new URLSearchParams('');
   listOrderInquiryWorklist.mockResolvedValue(envelope(MOCK_WORKLIST_ROWS));
   getOrderInquiryWorklistSummary.mockResolvedValue(MOCK_WORKLIST_SUMMARY);
-  downloadOrderInquiryWorklistXlsx.mockResolvedValue(new Blob(['x']));
+  exportOrderInquiryWorklistXlsx.mockResolvedValue({
+    id: 'dl-1', kind: 'order_inquiry_worklist_xlsx', status: 'pending',
+    filename: 'order-inquiries-23092026.xlsx',
+  });
   getUnplaceAllPreview.mockResolvedValue({
     count: 0,
     product_code: null,
@@ -318,7 +328,9 @@ describe('OrderInquiriesClient: reading the page', () => {
       // it renders no `columnheader` cell at all until a reader ticks it back on -
       // asserted separately below, via the Columns menu.
       'SO date',
-      'S/O no',
+      // Review round (22 Sep): "S/O line", not "S/O no" - the cell prints `SO402757 · L5`
+      // since S6, so the heading names the whole of what is under it.
+      'S/O line',
       'Item code',
       'Qty',
       'Delivery date',
@@ -334,7 +346,10 @@ describe('OrderInquiriesClient: reading the page', () => {
       'SPO',
       'Agent',
       'Location',
-      'Taken by PO/SPO',
+      // S3 (`PLAN-board-oi-mechanical-22sep.md`, AC-B3-1): renamed from the retired
+      // line-scoped "Taken by PO/SPO" pair to the shared, row-level Taken/Remaining
+      // columns the Lines tab and this worklist both use now.
+      'Taken',
       'Remaining',
       'Instruction',
       'Raised by',
@@ -1063,8 +1078,8 @@ describe('Unlink all (S2/S3/N1, carried over unchanged from the handshake plan)'
   });
 });
 
-describe('exports the set the screen is showing, not the whole book', () => {
-  it('carries the active ack filter into the export request', async () => {
+describe('exports the set the screen is showing, not the whole book (Lane B, AC-B6)', () => {
+  it('carries the active ack filter into the async export request, toasts, never saves a blob', async () => {
     // No default filter any more (S1, AC-1.5) - an explicit one, named in the URL,
     // still has to reach the export exactly as it reaches the list.
     currentSearchParams = new URLSearchParams('ack=rejected');
@@ -1082,11 +1097,49 @@ describe('exports the set the screen is showing, not the whole book', () => {
     );
 
     await waitFor(() =>
-      expect(downloadOrderInquiryWorklistXlsx).toHaveBeenCalledWith(
+      expect(exportOrderInquiryWorklistXlsx).toHaveBeenCalledWith(
         expect.objectContaining({ ack: 'rejected' }),
       ),
     );
-    await waitFor(() => expect(saveBlobAs).toHaveBeenCalled());
+    await waitFor(() => expect(toastSuccessSpy).toHaveBeenCalled());
+    expect(toastSuccessSpy.mock.calls[0][0]).toMatch(/my downloads/i);
+    expect(saveBlobAs).not.toHaveBeenCalled();
+  });
+
+  it('disables Export Excel while the export is pending', async () => {
+    let resolveExport: (v: unknown) => void = () => {};
+    exportOrderInquiryWorklistXlsx.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveExport = resolve; }),
+    );
+    renderClient();
+    await screen.findByText('SO385126');
+
+    openActionsMenu();
+    fireEvent.click(await screen.findByRole('menuitem', { name: /export excel/i }));
+
+    await waitFor(() => expect(exportOrderInquiryWorklistXlsx).toHaveBeenCalled());
+    openActionsMenu();
+    const item = await screen.findByRole('menuitem', { name: /export excel/i });
+    expect(item).toHaveAttribute('aria-disabled', 'true');
+
+    resolveExport({
+      id: 'dl-1', kind: 'order_inquiry_worklist_xlsx', status: 'pending',
+      filename: 'order-inquiries-23092026.xlsx',
+    });
+    await waitFor(() => expect(toastSuccessSpy).toHaveBeenCalled());
+  });
+
+  it('shows an error toast when the export fails to start', async () => {
+    exportOrderInquiryWorklistXlsx.mockRejectedValueOnce(new Error('An export is already queued'));
+    renderClient();
+    await screen.findByText('SO385126');
+
+    openActionsMenu();
+    fireEvent.click(await screen.findByRole('menuitem', { name: /export excel/i }));
+
+    await waitFor(() => expect(toastErrorSpy).toHaveBeenCalled());
+    expect(toastErrorSpy.mock.calls[0][0]).toMatch(/already queued/i);
+    expect(saveBlobAs).not.toHaveBeenCalled();
   });
 });
 
@@ -1219,13 +1272,16 @@ describe('AC-OH-61: a State filter in the Filters popover (`oi-worklist-one-head
     const optionTexts = Array.from(select.options).map(
       (option) => option.textContent,
     );
+    // S5 (`PLAN-board-oi-mechanical-22sep.md`, AC-B5-1, owner's pick, 22 Sep 2026): the
+    // filter's own labels read off the SAME `STATE_LABEL` map the pill does, which now
+    // spells the words differently - same counts, new words.
     expect(optionTexts).toEqual(
       expect.arrayContaining([
-        'Raised (2)',
-        'Partly linked (2)',
-        'Actioned (1)',
+        'To buy (2)',
+        'Partly on PO/SPO (2)',
+        'Done (1)',
         'Cancelled (1)',
-        'Linked (1)',
+        'On PO/SPO (1)',
       ]),
     );
     // `total` is a count, not a state a row can be filtered to.

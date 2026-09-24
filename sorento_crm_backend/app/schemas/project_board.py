@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-BoardGranularity = Literal["day", "week", "month"]
+BoardGranularity = Literal["day", "date", "week", "month"]
 BoardBucketKind = Literal["dated", "no_date"]
 #: `borrow` appears on a COVERED line only. The engine never proposes one - a Borrow needs a
 #: donor and a reason from a person (AC-B09) - but a line a decision already covers states the
@@ -467,6 +467,12 @@ class BoardLineOrderInquiry(BaseModel):
 
     #: `OI-000123`. Null only on a row raised before inquiries were numbered.
     inquiry_no: Optional[str] = None
+    #: S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-15): the inquiry HEADER's own id and
+    #: this row's own id. Addressing only, never rendered - the List view's OI column links
+    #: to `/project-sales/order-inquiries/<inquiry_id>?row=<row_id>` and needs both to land
+    #: on the exact row; a cell missing either falls back to plain text.
+    inquiry_id: Optional[str] = None
+    row_id: Optional[str] = None
     state: str
     #: The HANDSHAKE (`PLAN-scm-oi-handshake.md`): `awaiting`, `acknowledged`, `changed` or
     #: `rejected`. Defaulted so a row written before the handshake existed still reads, and
@@ -906,6 +912,14 @@ class StockDetail(BaseModel):
     #: members. Null / empty for the ordinary one-bin read.
     group: Optional[str] = None
     bins: List[StockDetailBin] = []
+    #: PLAN-oi-request-cs-reserve.md 3.9: one entry per member of `bins` (the same set),
+    #: in `CellStockTable`'s own shape - so the OI stock grid can render the SAME
+    #: component the board's cell dialog does rather than a second matrix built from
+    #: `bins` alone, which carries on-hand only. `where` is `group` for every member of
+    #: a GROUP read (this endpoint carries no asking line, so it cannot say which one bin
+    #: is "its own") and `own` for a plain one-bin read; `net`/`net_of` are stated on a
+    #: GROUP read only, off this SAME read's own aggregate below.
+    locations: List[BoardCellLocation] = []
     qty_on_hand: str
     #: What the whole book still owes here, by the shared `is_open_demand()` rule, every demand
     #: class: a dealer order occupies the stock as completely as a project one.
@@ -1097,6 +1111,9 @@ class BoardIncoming(BaseModel):
 # `BoardContribution` names `BoardCellLocation` above the class that defines it (a line's own
 # table is a fact about the line), so the reference is resolved here, once both exist.
 BoardContribution.model_rebuild()
+# `StockDetail` does the same (PLAN-oi-request-cs-reserve.md 3.9): its own `locations` field
+# names `BoardCellLocation` above that class's definition too.
+StockDetail.model_rebuild()
 
 
 class BoardCell(BaseModel):

@@ -308,6 +308,83 @@ register(
 )
 
 
+def _cancel_order_inquiry_reserve_request(db: Session, payload: dict):
+    from app.services.order_inquiry_reserve_service import OrderInquiryReserveService
+    from app.services.user_service import UserPermissionService
+
+    actor_id = payload.get("requested_by_id")
+    # SF-1 (review round): the requester or CS may cancel - recomputed HERE, at commit
+    # time, rather than trusted off whatever was true the moment the countdown started,
+    # since a role change during the window is the actor's CURRENT standing to act on.
+    actor_can_reserve = bool(actor_id) and UserPermissionService(db).check_user_has_permission(
+        str(actor_id), "projects.order_inquiries.reserve"
+    )
+    return OrderInquiryReserveService(db).cancel_request(
+        request_id=_entity_id(payload),
+        actor_user_id=actor_id,
+        actor_can_reserve=actor_can_reserve,
+    )
+
+
+register(
+    FormAction(
+        key="order_inquiry_reserve_request.cancel",
+        entity_types=("order_inquiry_reserve_request",),
+        execute=_cancel_order_inquiry_reserve_request,
+        # Reversible (PLAN-oi-request-cs-reserve.md 3.2): a cancel while nothing has been
+        # reserved yet takes nothing back except the ask itself, and the countdown gives
+        # a misclick a few seconds to catch itself. No email either way (R9's ONE email
+        # is the request itself; a cancel is silent).
+        window=WINDOW_REVERSIBLE,
+        # SF-4 (review round): the declared slug the generic registry contract checks
+        # (`test_record_actions_s6b.py`) - the requester's own grant. A RESERVE-only
+        # holder (Eling, who never raises a request) ALSO needs to start this countdown
+        # on a request that is not hers; `_ANY_OF_PERMISSIONS` in `pending_actions.py`
+        # widens the actual PARK-time gate to either grant, since `FormAction.permission`
+        # carries one slug only - the ownership question itself (whose request this is)
+        # stays inside `cancel_request` above, never at the park gate.
+        permission="projects.order_inquiries.acknowledge",
+        label="Cancel request",
+    )
+)
+
+
+def _unreserve_order_inquiry_reserve_row(db: Session, payload: dict):
+    from app.services.order_inquiry_reserve_service import OrderInquiryReserveService
+
+    return OrderInquiryReserveService(db).unreserve_row(
+        request_id=str(payload.get("request_id")),
+        row_id=_entity_id(payload),
+        qty=payload.get("qty"),
+        note=payload.get("note"),
+        actor_user_id=payload.get("requested_by_id"),
+    )
+
+
+register(
+    FormAction(
+        key="order_inquiry_reserve_row.unreserve",
+        # A distinct entity type from `order_inquiry_row` (S2, review round 2,
+        # ADR-PRODUCT-STANDARDS D7) even though `entity_id` is the SAME
+        # `OrderInquiryRow.id` `order_inquiry_row.unlink` already keys by - the two are
+        # different pending actions on the same row, and sharing a type would let one
+        # block the other under `uq_sla_form_actions_one_pending`. `request_id` is a
+        # REQUIRED payload key (`_REQUIRED_PAYLOAD_KEYS` in `pending_actions.py`):
+        # `unreserve_row` needs it beside `row_id`, and there is no way to derive it
+        # from the row alone (a row can carry more than one answered request over its
+        # life).
+        entity_types=("order_inquiry_reserve_row",),
+        execute=_unreserve_order_inquiry_reserve_row,
+        # Reversible: giving back part of a reserve touches no document the row might
+        # also carry, and Cancel restores exactly what was there (the SAME link, its
+        # qty untouched) - never a destructive window.
+        window=WINDOW_REVERSIBLE,
+        permission="projects.order_inquiries.reserve",
+        label="Unreserve",
+    )
+)
+
+
 def _actor(db: Session, payload: dict) -> dict:
     """The click's actor, in the shape a service expects `current_user` to be.
 

@@ -520,7 +520,7 @@ def generate_order_sheet(download_id: str, run_id: str, fmt: str, user_id: str) 
     # then its OWN company is adopted before anything company-scoped is touched -
     # `reorder_run_service._adopt_run_company_scope`, the same shape
     # `generate_promotions_pdf` above uses via its own snapshotted `company_id` param.
-    from app.models.base import get_company_scope
+    from app.models.base import UNSET, get_company_scope
     from app.models.scm import ReorderRun
     from app.services.scm.reorder_run_service import _adopt_run_company_scope
 
@@ -534,9 +534,21 @@ def generate_order_sheet(download_id: str, run_id: str, fmt: str, user_id: str) 
     run = db.get(ReorderRun, run_id)
     if run is not None:
         _adopt_run_company_scope(db, run)
-    else:
+    if run is None or not getattr(run, "company_id", None):
+        # AC-A10 (security should-fix, PLAN-order-sheet-oi-reports-22sep.md, 23 Sep
+        # review): a run that does not exist, or whose OWN `company_id` is NULL (a
+        # legacy row from before the column existed - `_adopt_run_company_scope`
+        # deliberately leaves such a row's scope untouched rather than defaulting it),
+        # must not export under the `None` scope set two lines up - `None` means "no
+        # predicate, every company", the exact isolation break this export exists to
+        # close. UNSET fails closed instead: every raw-SQL company predicate downstream
+        # (`company_sql_predicate`, read by `_last_cost_map` / `_project_inquiry_map`)
+        # renders `1=0`, and `ReorderRun` itself is company-scoped, so `export_report`'s
+        # own `_run_for` lookup finds nothing and the export fails rather than leaking.
+        set_company_scope(db, UNSET)
         logger.warning(
-            "generate_order_sheet: run %s not found; export runs under no company", run_id
+            "generate_order_sheet: run %s not found or has no company; "
+            "failing closed rather than exporting under no company scope", run_id
         )
     svc = DownloadService(db)
     try:
@@ -573,6 +585,112 @@ def generate_order_sheet(download_id: str, run_id: str, fmt: str, user_id: str) 
     except Exception as e:  # noqa: BLE001 - mark failed, never poison the queue
         logger.exception("generate_order_sheet failed for download %s", download_id)
         _record_failure(db, svc, download_id, e, "generate_order_sheet")
+        return {"download_id": download_id, "status": "failed", "error": str(e)}
+    finally:
+        set_company_scope(db, caller_scope)
+        db.close()
+
+
+def generate_oi_worksheet(download_id: str, run_id: str, user_id: str) -> dict:
+    """Render the run's OI worksheet, store it, and update the download row.
+
+    Lane C, PLAN-order-sheet-oi-reports-22sep.md (AC-C1..AC-C4). `generate_order_sheet`'s
+    own twin, line for line, including the company dance: the worker has NO request-scoped
+    company, so the run row is read under NO scope (it is the one thing that states which
+    company this export belongs to), its OWN company is adopted before anything company-
+    scoped is touched, UNSET fails closed when the run is missing or carries no company
+    (AC-A10's own reasoning), and the caller's scope is restored in `finally` - a
+    synchronous caller whose session this reuses (a test) did not ask to have its scope
+    changed underneath it.
+
+    The row set is the run's own Start Plan scope (`demand.run_scope_oi_rows`, C2/C4a -
+    the SAME helper the order sheet's Project qty column reads, so the two can never list
+    a different row set for the same run), printed through the worklist's own writer with
+    the worksheet's 10-column slice (`EXPORT_HEADINGS[:10]`, C3 - no ACKNOWLEDGED / TAKEN
+    / REMAINING).
+
+    `_record_failure` on any exception, never raising into RQ: a poisoned job retries for
+    ever and the buyer's row sits `processing` until it goes stale.
+    """
+    db = SessionLocal()
+    from app.models.base import UNSET, get_company_scope
+    from app.models.scm import ReorderRun
+    from app.services.scm.reorder_run_service import _adopt_run_company_scope
+
+    caller_scope = get_company_scope(db)
+    set_company_scope(db, None)
+    run = db.get(ReorderRun, run_id)
+    if run is not None:
+        _adopt_run_company_scope(db, run)
+    if run is None or not getattr(run, "company_id", None):
+        set_company_scope(db, UNSET)
+        logger.warning(
+            "generate_oi_worksheet: run %s not found or has no company; "
+            "failing closed rather than exporting under no company scope", run_id
+        )
+    svc = DownloadService(db)
+    try:
+        svc.mark_processing(download_id)
+        row = svc.get(download_id)
+        filename = row.filename if row else None
+
+        # Fix round 2 (S2): `generate_order_sheet`'s twin check raises the SAME 404
+        # implicitly - under UNSET scope, `export_report`'s own `_run_for` lookup finds
+        # nothing and raises `AppException(404, "That plan does not exist.")`, which this
+        # function converts to a FAILED download. This task calls no ORM query on
+        # `ReorderRun` past this point (`run_scope_oi_rows` is raw SQL, and its own
+        # company predicate renders `1=0` under UNSET - EMPTY rows, not an exception), so
+        # the same case has to be raised explicitly here, or a missing/company-less run
+        # would render a "ready" workbook with nothing wrong reported.
+        from app.services.error_handler import AppException
+
+        if run is None or not getattr(run, "company_id", None):
+            raise AppException(404, "That plan does not exist.")
+
+        from app.services.order_inquiry_worklist_service import (
+            EXPORT_HEADINGS,
+            OrderInquiryWorklistService,
+        )
+        from app.services.scm.demand import run_scope_oi_rows
+
+        # Fix round 1: `run.product_ids` unchanged, NOT `run.product_ids or None` - see
+        # the twin comment in `order_summary.py`'s own guard.
+        scope_rows = run_scope_oi_rows(
+            db, run.product_ids, so_numbers=run.so_numbers,
+            horizon_start=run.plan_horizon_start, horizon=run.plan_horizon_date,
+        )
+        row_ids = [r["row_id"] for r in scope_rows]
+
+        fallback_filename, file_bytes = OrderInquiryWorklistService(db).export_xlsx(
+            row_ids=row_ids, columns=EXPORT_HEADINGS[:10],
+        )
+        filename = filename or fallback_filename
+        content_type = (
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+        provider = default_provider()
+        backend = get_backend(provider)
+        key = f"exports/oi-worksheet/{download_id}/{filename}"
+        stored_key, _signed = backend.upload_file(
+            file_content=file_bytes,
+            file_path=key,
+            content_type=content_type,
+        )
+
+        svc.mark_ready(
+            download_id,
+            storage_provider=provider,
+            storage_key=stored_key,
+            filename=filename,
+        )
+        logger.info(
+            "generate_oi_worksheet: download %s ready (%d bytes)", download_id, len(file_bytes)
+        )
+        return {"download_id": download_id, "status": "ready", "bytes": len(file_bytes)}
+    except Exception as e:  # noqa: BLE001 - mark failed, never poison the queue
+        logger.exception("generate_oi_worksheet failed for download %s", download_id)
+        _record_failure(db, svc, download_id, e, "generate_oi_worksheet")
         return {"download_id": download_id, "status": "failed", "error": str(e)}
     finally:
         set_company_scope(db, caller_scope)
@@ -865,7 +983,7 @@ def generate_low_stock_report(download_id: str, run_id: str, user_id: str, *,
     ever and the buyer's row sits `processing` until it goes stale.
     """
     db = SessionLocal()
-    from app.models.base import get_company_scope
+    from app.models.base import UNSET, get_company_scope
     from app.models.scm import ReorderRun
     from app.services.scm.reorder_run_service import _adopt_run_company_scope
 
@@ -874,10 +992,17 @@ def generate_low_stock_report(download_id: str, run_id: str, user_id: str, *,
     run = db.get(ReorderRun, run_id)
     if run is not None:
         _adopt_run_company_scope(db, run)
-    else:
+    if run is None or not getattr(run, "company_id", None):
+        # AC-A10 twin (security should-fix, fix round 3): the same fail-closed change
+        # `generate_order_sheet` got - a run that does not exist, or whose OWN
+        # `company_id` is NULL, must not export under the `None` scope set two lines up.
+        # UNSET fails closed instead: `ReorderRun` is itself company-scoped, so
+        # `low_stock_report_service.export_low_stock`'s own run lookup finds nothing and
+        # the export fails rather than reading every company's rows.
+        set_company_scope(db, UNSET)
         logger.warning(
-            "generate_low_stock_report: run %s not found; export runs under no company",
-            run_id,
+            "generate_low_stock_report: run %s not found or has no company; "
+            "failing closed rather than exporting under no company scope", run_id
         )
     svc = DownloadService(db)
     try:
@@ -940,6 +1065,167 @@ def generate_low_stock_report(download_id: str, run_id: str, user_id: str, *,
         # nothing here needs the outer handler.
         _push_low_stock_to_chat(db, download_id, provider=provider, key=stored_key)
         return ready
+    finally:
+        set_company_scope(db, caller_scope)
+        db.close()
+
+
+#: The workbook `openpyxl` produces for both order-inquiry exports below - same media
+#: type the existing sync `GET /order-inquiries/export` route answers with.
+_OI_XLSX_CONTENT_TYPE = (
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
+
+def generate_order_inquiry_xlsx(download_id: str, inquiry_id: str, user_id: str) -> dict:
+    """Render one OI header's own workbook (Lane B, AC-B1/AC-B2), store it, update the
+    download row. Mirrors `generate_order_sheet` line for line: `mark_processing`,
+    render, upload, `mark_ready` - `_record_failure` on any exception, never raising
+    into RQ.
+
+    The header names its own company (`OrderInquiry.company_id`), so - exactly the
+    `_adopt_run_company_scope` shape `generate_order_sheet` uses for a reorder run -
+    it is read under NO scope first (the row itself is what states the company), then
+    that company is adopted before the render touches anything company-scoped.
+
+    Security review fix round 2, item 2 (mirrors `generate_order_sheet`'s own fix,
+    Lane A fix round 2, sha 002fd3d2e on `fix/order-sheet-cells`): a header that is
+    missing, or carries a NULL `company_id` (should not exist post-isolation, but the
+    fail-closed rule is never assumed away), sets the scope to `UNSET` explicitly -
+    never left at the `None` (all-companies) scope used to look the header up - and
+    the render is refused outright rather than silently producing an empty workbook
+    under that `None` scope, which `OrderInquiryWorklistService.export_xlsx` would
+    otherwise do without raising.
+    """
+    db = SessionLocal()
+    from app.models.base import UNSET, get_company_scope
+    from app.models.project_so import OrderInquiry
+
+    caller_scope = get_company_scope(db)
+    set_company_scope(db, None)
+    header = db.get(OrderInquiry, inquiry_id)
+    company_id = getattr(header, "company_id", None) if header is not None else None
+    if company_id:
+        set_company_scope(db, frozenset({str(company_id)}))
+    else:
+        set_company_scope(db, UNSET)
+        logger.warning(
+            "generate_order_inquiry_xlsx: order inquiry %s not found or carries no "
+            "company; refusing to export", inquiry_id,
+        )
+    svc = DownloadService(db)
+    try:
+        svc.mark_processing(download_id)
+        if not company_id:
+            raise ValueError(
+                f"Order inquiry {inquiry_id} could not be found or carries no "
+                "company; refusing to export."
+            )
+        row = svc.get(download_id)
+        filename = row.filename if row else None
+
+        from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
+
+        fallback_filename, file_bytes = OrderInquiryWorklistService(db).export_xlsx(
+            inquiry_id=inquiry_id,
+        )
+        filename = filename or fallback_filename
+
+        provider = default_provider()
+        backend = get_backend(provider)
+        key = f"exports/order-inquiry/{download_id}/{filename}"
+        stored_key, _signed = backend.upload_file(
+            file_content=file_bytes,
+            file_path=key,
+            content_type=_OI_XLSX_CONTENT_TYPE,
+        )
+
+        svc.mark_ready(
+            download_id,
+            storage_provider=provider,
+            storage_key=stored_key,
+            filename=filename,
+        )
+        logger.info(
+            "generate_order_inquiry_xlsx: download %s ready (%d bytes)",
+            download_id, len(file_bytes),
+        )
+        return {"download_id": download_id, "status": "ready", "bytes": len(file_bytes)}
+    except Exception as e:  # noqa: BLE001 - mark failed, never poison the queue
+        logger.exception("generate_order_inquiry_xlsx failed for download %s", download_id)
+        _record_failure(db, svc, download_id, e, "generate_order_inquiry_xlsx")
+        return {"download_id": download_id, "status": "failed", "error": str(e)}
+    finally:
+        set_company_scope(db, caller_scope)
+        db.close()
+
+
+def generate_order_inquiry_worklist_xlsx(
+    download_id: str, filters: dict, user_id: str, *, company_id: Optional[str] = None,
+) -> dict:
+    """Render the OI worklist's filtered workbook (Lane B, AC-B2/AC-B6), store it,
+    update the download row. Same shape as `generate_order_inquiry_xlsx` above, minus
+    the single header to read a company off: the worklist export names no header a
+    task could adopt a company from, so the enqueuing request's own single-company
+    scope travels as `company_id`, snapshotted at enqueue time - the same shape
+    `generate_promotions_pdf`'s own `company_id` param uses.
+
+    No `company_id` (a direct call, or a caller with no single-company scope) sets
+    the scope to `UNSET` explicitly - review fix round 4, matching
+    `generate_order_inquiry_xlsx`'s own no-company branch - never merely left at
+    whatever the session already carried: no rows, fail-closed, same rule every
+    other export task in this module follows.
+    """
+    db = SessionLocal()
+    from app.models.base import UNSET, get_company_scope
+
+    caller_scope = get_company_scope(db)
+    if company_id:
+        set_company_scope(db, frozenset({str(company_id)}))
+    else:
+        set_company_scope(db, UNSET)
+        logger.warning(
+            "generate_order_inquiry_worklist_xlsx: download %s carries no company "
+            "scope; export runs under no company", download_id,
+        )
+    svc = DownloadService(db)
+    try:
+        svc.mark_processing(download_id)
+        row = svc.get(download_id)
+        filename = row.filename if row else None
+
+        from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
+
+        fallback_filename, file_bytes = OrderInquiryWorklistService(db).export_xlsx(
+            **(filters or {}),
+        )
+        filename = filename or fallback_filename
+
+        provider = default_provider()
+        backend = get_backend(provider)
+        key = f"exports/order-inquiry-worklist/{download_id}/{filename}"
+        stored_key, _signed = backend.upload_file(
+            file_content=file_bytes,
+            file_path=key,
+            content_type=_OI_XLSX_CONTENT_TYPE,
+        )
+
+        svc.mark_ready(
+            download_id,
+            storage_provider=provider,
+            storage_key=stored_key,
+            filename=filename,
+        )
+        logger.info(
+            "generate_order_inquiry_worklist_xlsx: download %s ready (%d bytes)",
+            download_id, len(file_bytes),
+        )
+        return {"download_id": download_id, "status": "ready", "bytes": len(file_bytes)}
+    except Exception as e:  # noqa: BLE001 - mark failed, never poison the queue
+        logger.exception(
+            "generate_order_inquiry_worklist_xlsx failed for download %s", download_id
+        )
+        _record_failure(db, svc, download_id, e, "generate_order_inquiry_worklist_xlsx")
+        return {"download_id": download_id, "status": "failed", "error": str(e)}
     finally:
         set_company_scope(db, caller_scope)
         db.close()

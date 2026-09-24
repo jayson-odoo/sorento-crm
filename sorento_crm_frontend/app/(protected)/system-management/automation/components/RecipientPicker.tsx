@@ -190,6 +190,24 @@ export default function RecipientPicker({ value, onChange }: Props) {
 
       <div className="flex items-center gap-2">
         <Checkbox
+          id="rp-raiser"
+          checked={Boolean(value.include_raiser)}
+          onCheckedChange={(c) => onChange({ ...value, include_raiser: Boolean(c) })}
+        />
+        <Label htmlFor="rp-raiser">Cc the person who raised the inquiry</Label>
+      </div>
+
+      <div className="flex items-center gap-2">
+        <Checkbox
+          id="rp-requester"
+          checked={Boolean(value.include_requester)}
+          onCheckedChange={(c) => onChange({ ...value, include_requester: Boolean(c) })}
+        />
+        <Label htmlFor="rp-requester">Cc the person who requested</Label>
+      </div>
+
+      <div className="flex items-center gap-2">
+        <Checkbox
           id="rp-one-email"
           checked={Boolean(value.one_email)}
           onCheckedChange={(c) => onChange({ ...value, one_email: Boolean(c) })}

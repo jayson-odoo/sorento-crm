@@ -11,6 +11,7 @@
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -530,6 +531,103 @@ describe('FulfilmentBoardPanel: the axes', () => {
 });
 
 /**
+ * S1 (`PLAN-board-oi-mechanical-22sep.md`, AC-B1-1..5): the board's exact-date grid. The
+ * period select gains a fourth, DEFAULT option that keys every column on the line's own
+ * required date rather than a calendar bucket - day/week/month keep behaving exactly as
+ * before, both as options and as explicit URL values.
+ */
+describe('FulfilmentBoardPanel: AC-B1 grid date (`PLAN-board-oi-mechanical-22sep.md`)', () => {
+  it('AC-B1-1: offers By date (default), By day, By week, By month, in that order', async () => {
+    getPlanningBoard.mockResolvedValue(boardOf([demand()], {}, 'date'));
+
+    renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    const select = screen.getByLabelText('granularity');
+    const options = within(select)
+      .getAllByRole('option')
+      .map((option) => option.textContent);
+    expect(options).toEqual(['By date', 'By day', 'By week', 'By month']);
+    expect(select).toHaveValue('date');
+  });
+
+  it('AC-B1-2: three distinct dates each get their own column, in date order, No date last', async () => {
+    getPlanningBoard.mockResolvedValue(
+      boardOf(
+        [
+          demand({ line_no: 1, required_date: '2026-11-01' }),
+          demand({ line_no: 2, required_date: '2027-02-01' }),
+          demand({ line_no: 3, required_date: '2027-04-01' }),
+          demand({ line_no: 4, required_date: null, fulfilment_location: null }),
+        ],
+        {},
+        'date',
+      ),
+    );
+
+    renderPanel();
+
+    const matrix = await screen.findByTestId('fulfilment-board-matrix');
+    const headers = within(matrix)
+      .getAllByRole('columnheader')
+      .map((node) => node.textContent ?? '');
+    expect(headers[0]).toBe('Product');
+    // Product + three dated columns + No date - nothing folded, nothing extra.
+    expect(headers).toHaveLength(5);
+    expect(headers[1]).toContain('01/11/2026');
+    expect(headers[2]).toContain('01/02/2027');
+    expect(headers[3]).toContain('01/04/2027');
+    expect(headers[4]).toContain('No date');
+  });
+
+  it('AC-B1-3: forty distinct dates all become their own columns - no folding, no paging', async () => {
+    const lines = Array.from({ length: 42 }, (_unused, index) =>
+      demand({
+        line_no: index + 1,
+        required_date: new Date(Date.UTC(2026, 0, 1) + index * 86_400_000)
+          .toISOString()
+          .slice(0, 10),
+      }),
+    );
+    getPlanningBoard.mockResolvedValue(boardOf(lines, {}, 'date'));
+
+    renderPanel();
+
+    const matrix = await screen.findByTestId('fulfilment-board-matrix');
+    // 42 distinct dates + the Product corner - every one of them is a column, at once.
+    expect(within(matrix).getAllByRole('columnheader')).toHaveLength(43);
+    // The container scrolls rather than paging or folding anything off screen.
+    expect(matrix.className).toContain('overflow-auto');
+    expect(screen.queryByText(/Page \d/i)).not.toBeInTheDocument();
+  });
+
+  it('AC-B1-4: a past date column under By date carries the same Already past treatment week columns do', async () => {
+    getPlanningBoard.mockResolvedValue(
+      boardOf(
+        [
+          demand({ line_no: 1, qty: '40', required_date: '2022-07-03' }),
+          demand({ line_no: 2, qty: '100', required_date: '2026-09-04' }),
+        ],
+        {},
+        'date',
+      ),
+    );
+
+    renderPanel();
+
+    const matrix = await screen.findByTestId('fulfilment-board-matrix');
+    const past = matrix.querySelector('[data-bucket="2022-07-03"]');
+    expect(past).not.toBeNull();
+    expect(past?.getAttribute('data-past')).toBe('true');
+    expect(past?.className).toContain('destructive');
+    expect(past?.textContent).toContain('Already past');
+    expect(
+      matrix.querySelector('[data-bucket="2026-09-04"]')?.getAttribute('data-past'),
+    ).toBe('false');
+  });
+});
+
+/**
  * AC-S4-1 (panel), owner ruling S4 fix round #1076: the LIST view reads sales order then
  * AutoCount line number, never the grid's product axis - at the PANEL, the level that
  * actually wires `board.data.productRows` and `orderListRows`/`orderByProductRows` together
@@ -584,9 +682,10 @@ describe('FulfilmentBoardPanel: AC-S4-1 (panel) - the List view reads AutoCount 
     fireEvent.click(screen.getByRole('button', { name: 'List' }));
 
     const table = await screen.findByRole('table');
-    // Select, Sales order, Agent, Customer, PRODUCT, ... - same column convention
-    // `boardViewRowOrder.test.tsx`'s own `PRODUCT_CELL` pins for this list.
-    const PRODUCT_CELL = 4;
+    // Select, Line, Sales order, Agent, Customer, PRODUCT, OI, ... - S6
+    // (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-13) inserted the leftmost Line column
+    // ahead of Sales order, so PRODUCT_CELL shifts from 4 to 5.
+    const PRODUCT_CELL = 5;
     const productSequence = within(table)
       .getAllByRole('row')
       .slice(1) // the header row
@@ -861,7 +960,11 @@ describe('FulfilmentBoardPanel: the confirm counter is selection-scoped, not win
     fireEvent.change(screen.getByLabelText(/^Why this differs/), {
       target: { value: 'This line is being replaced.' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    // Reject is async now (mirrors Save): closing the dialog before the write settles would
+    // still find the row `dirty` and prompt to discard it instead of closing outright.
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    });
     closeDialog();
 
     await waitFor(() =>
@@ -891,7 +994,11 @@ describe('FulfilmentBoardPanel: the confirm counter is selection-scoped, not win
     fireEvent.change(screen.getByLabelText(/^Why this differs/), {
       target: { value: 'This line is being replaced.' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    // Reject is async now (mirrors Save): closing the dialog before the write settles would
+    // still find the row `dirty` and prompt to discard it instead of closing outright.
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    });
     closeDialog();
     await waitFor(() =>
       expect(screen.getByTestId('board-confirm-summary')).toHaveTextContent(
@@ -1335,10 +1442,11 @@ describe('FulfilmentBoardPanel: the calendar control (13.3)', () => {
 
     // The what-if existed to show a fair weighting before one was switched on. It is now the
     // live one, so every board is fetched against the live policy and nothing offers to
-    // preview it against itself.
+    // preview it against itself. S1 (`PLAN-board-oi-mechanical-22sep.md`, AC-B1-1): an
+    // absent granularity param now resolves to `date`, not `week`.
     expect(getPlanningBoard).toHaveBeenCalledWith(
       ['SO403340'],
-      'week',
+      'date',
       false,
       {},
     );
@@ -2389,9 +2497,11 @@ describe('FulfilmentBoardPanel: the live policy, and only it', () => {
     renderPanel(['SO403340']);
     await screen.findByTestId('fulfilment-board-matrix');
 
+    // S1 (`PLAN-board-oi-mechanical-22sep.md`, AC-B1-1): an absent granularity param now
+    // resolves to `date`, not `week`.
     expect(getPlanningBoard).toHaveBeenCalledWith(
       ['SO403340'],
-      'week',
+      'date',
       false,
       {},
     );
@@ -2443,7 +2553,27 @@ describe('FulfilmentBoardPanel: granularity in the URL', () => {
     expect(screen.getByLabelText('granularity')).toHaveValue('month');
   });
 
-  it('falls back to week on a granularity nobody defined', async () => {
+  it('AC-B1-5: a URL naming granularity=week opens week view, not the date default', async () => {
+    currentSearchParams = new URLSearchParams('view=grid&granularity=week');
+    getPlanningBoard.mockResolvedValue(boardOf([demand()], {}, 'week'));
+
+    renderPanel(['SO403340']);
+
+    await waitFor(() =>
+      expect(getPlanningBoard).toHaveBeenCalledWith(
+        ['SO403340'],
+        'week',
+        false,
+        {},
+      ),
+    );
+    expect(screen.getByLabelText('granularity')).toHaveValue('week');
+  });
+
+  it('falls back to date on a granularity nobody defined', async () => {
+    // S1 (`PLAN-board-oi-mechanical-22sep.md`, AC-B1-1/AC-B1-5): `date` is what an
+    // unrecognised param resolves to now, the same default an ABSENT param gets - `week`
+    // is still a real, explicitly-named option (`?granularity=week` is honoured as-is).
     currentSearchParams = new URLSearchParams('view=grid&granularity=fortnightly');
     getPlanningBoard.mockResolvedValue(boardOf([demand()]));
 
@@ -2452,7 +2582,7 @@ describe('FulfilmentBoardPanel: granularity in the URL', () => {
     await waitFor(() =>
       expect(getPlanningBoard).toHaveBeenCalledWith(
         ['SO403340'],
-        'week',
+        'date',
         false,
         {},
       ),
@@ -2647,7 +2777,11 @@ describe('FulfilmentBoardPanel: pivoting the rows', () => {
     fireEvent.change(screen.getByLabelText(/^Why this differs/), {
       target: { value: 'The tower plan changed.' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    // Reject is async now (mirrors Save): closing the dialog before the write settles would
+    // still find the row `dirty` and prompt to discard it instead of closing outright.
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    });
     closeDialog();
     await waitFor(() =>
       expect(screen.getByTestId('board-confirm-summary')).toHaveTextContent(
@@ -2893,7 +3027,11 @@ describe('FulfilmentBoardPanel: one Confirm, not Approve all (D1, D4)', () => {
     fireEvent.change(screen.getByLabelText(/^Why this differs/), {
       target: { value: 'Cancelled by the customer.' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    // Reject is async now (mirrors Save): closing the dialog before the write settles would
+    // still find the row `dirty` and prompt to discard it instead of closing outright.
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    });
     closeDialog();
 
     expect(screen.getByTestId('board-confirm')).toHaveTextContent(
@@ -3464,12 +3602,42 @@ describe('FulfilmentBoardPanel: a cell’s own Undo saves and toasts once (D15)'
 
     await waitFor(() => expect(deleteLineDraft).toHaveBeenCalledTimes(2));
     expect(toast.success).toHaveBeenCalledTimes(1);
-    expect(toast.success).toHaveBeenCalledWith('2 lines back to suggested');
+    // SF-5 (reviewer, fix round 2): "undone", never "back to suggested" - a line the open
+    // change batch named goes back to `Change proposed` (AC-B13), so the old wording
+    // described the wrong outcome for half the presses this button takes.
+    expect(toast.success).toHaveBeenCalledWith('2 lines undone');
 
     fireEvent.click(screen.getByRole('button', { name: 'List' }));
     for (const pill of screen.getAllByTestId(/^decision-pill-/)) {
       expect(pill).toHaveTextContent('Suggested');
     }
+  });
+});
+
+/**
+ * A rejection used to skip `decide()`'s own per-line toast outright (`decision.verdict !==
+ * 'rejected'`), for no documented reason beyond the wording not fitting - so a planner who
+ * pressed Reject got no system feedback at all, unlike Save's toast beside its own button
+ * state. A rejection is a decision too now, and gets the same toast, worded for what it is.
+ */
+describe('FulfilmentBoardPanel: a rejection toasts too (owner, 22 Sep 2026)', () => {
+  it('toasts "Line N rejected · M to confirm · K rejected" on a single-line Reject', async () => {
+    getPlanningBoard.mockResolvedValue(boardOf([demand()]));
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+
+    fireEvent.click(await screen.findByText('WESERP10B'));
+    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+      target: { value: 'The customer cancelled this line.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
+
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith(
+        'Line 1 rejected · 0 to confirm · 1 rejected',
+      ),
+    );
   });
 });
 

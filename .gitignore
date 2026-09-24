@@ -21,6 +21,10 @@ sorento_crm_backend/.next/*
 # `git add -A` swept one in. The exact-name entries above do not cover the shape.
 .env.slot*
 
+# Private test-DB env (`SORENTO_ENV_FILE=.env.ci-tests`, see CLAUDE.md) - carries a DB
+# password and was not matched by any rule above (review, round 2).
+.env.ci-tests
+
 # Playwright MCP scratch (console logs, page snapshots)
 .playwright-mcp/
 
@@ -86,3 +90,6 @@ sorento_crm_backend/scripts/container_status_trial_snapshot.json
 # It was committed by accident on this lane and is per-machine, never shipped.
 sorento_crm_mcp/*.egg-info/
 .env.*.bak
+
+# per-lane private test DB env, never committed
+.env.ci-tests

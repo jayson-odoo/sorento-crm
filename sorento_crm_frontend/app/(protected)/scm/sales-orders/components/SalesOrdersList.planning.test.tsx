@@ -6,14 +6,15 @@
  *
  *  1. REPORTING BACK - each order names the inquiries raised against it, links to them, and
  *     says on hover who raised each one and how much of it purchasing has placed.
- *  2. STARTING - tick the orders, open Actions, press "Plan selected (N)", and the
- *     fulfilment board opens on them. The board IS the URL (`?orders=SO1,SO2`), so the
- *     action navigates and stores nothing.
+ *  2. STARTING - tick the orders, press "Plan selected (N)", and the fulfilment board opens
+ *     on them. The board IS the URL (`?orders=SO1,SO2`), so the action navigates and stores
+ *     nothing.
  *
- * The action lives in the toolbar's Actions dropdown, NOT in the bulk strip. In the strip it
- * only existed once rows were ticked, so nobody who had not already found it could learn it
- * was there, and over the board's bound it was a greyed-out button whose reason was a hover
- * away - which is exactly the dead click that was reported.
+ * The action is the toolbar's own primary button (the owner's ruling, 22 Sep 2026), NOT a
+ * menu item and NOT in the bulk strip. In the strip it only existed once rows were ticked, so
+ * nobody who had not already found it could learn it was there, and over the board's bound it
+ * was a greyed-out button whose reason was a hover away - which is exactly the dead click that
+ * was reported.
  *
  * The bound (50) is the board's own `MAX_BOARD_SELECTION`. Over it the item is DISABLED with
  * the count in its reason rather than hidden: the user picked something specific and is
@@ -222,24 +223,12 @@ describe('SalesOrdersList - planning the selected orders', () => {
     fireEvent.click(all);
   }
 
-  /**
-   * Open the toolbar's Start dropdown (A1/A3: Plan selected moved off the Actions menu and
-   * onto Start, beside Upload sales orders - the two ways a day's work begins). Radix opens
-   * on pointerdown, which jsdom does not synthesise from `fireEvent.click`, so the keyboard
-   * opens it instead.
-   */
-  async function openStart() {
-    const trigger = await screen.findByRole('button', { name: /^Start$/ });
-    fireEvent.keyDown(trigger, { key: 'Enter' });
-  }
-
   it('opens the board on the ticked orders, by document number', async () => {
     stub(rows(2));
     renderList();
 
     fireEvent.click(await screen.findByLabelText('Select SO900000'));
-    await openStart();
-    fireEvent.click(screen.getByRole('menuitem', { name: /^Plan selected \(1\)$/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Plan selected \(1\)$/ }));
 
     expect(push).toHaveBeenCalledWith(
       '/project-sales/fulfilment-planning?orders=SO900000',
@@ -251,8 +240,7 @@ describe('SalesOrdersList - planning the selected orders', () => {
     renderList();
     await selectAll();
 
-    await openStart();
-    fireEvent.click(screen.getByRole('menuitem', { name: /^Plan selected \(3\)$/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Plan selected \(3\)$/ }));
 
     expect(push).toHaveBeenCalledWith(
       '/project-sales/fulfilment-planning?orders=SO900000%2CSO900001%2CSO900002',
@@ -260,33 +248,36 @@ describe('SalesOrdersList - planning the selected orders', () => {
   });
 
   it('is offered before anything is ticked, disabled, saying what it wants', async () => {
-    // The bug: in the bulk strip this action did not exist until rows were selected, so
-    // the menu never taught that the orders are picked on the rows.
+    // The bug this whole rework traces to: the action lived behind a menu that had to be
+    // opened first, so nobody who had not already found it could learn it was there.
     stub(rows(2));
     renderList();
 
-    await openStart();
-    const item = screen.getByRole('menuitem', { name: /^Plan selected \(0\)$/ });
-    expect(item).toHaveAttribute('data-disabled');
-    expect(item).toHaveAttribute('title', expect.stringContaining('Tick the sales orders'));
-    fireEvent.click(item);
+    const button = await screen.findByRole('button', { name: /^Plan selected \(0\)$/ });
+    expect(button).toBeDisabled();
+    // A `title` on a disabled Button never reaches a real browser's hover (the primitive
+    // sets `disabled:pointer-events-none`), so the reason lives in a Radix Tooltip on the
+    // wrapper `<span>` around it instead.
+    fireEvent.focus(screen.getByTestId('plan-selected-trigger'));
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Tick the sales orders');
+    fireEvent.click(button);
     expect(push).not.toHaveBeenCalled();
   });
 
-  it('refuses more than the board can hold, and says so on the item', async () => {
+  it('refuses more than the board can hold, and says so on the button', async () => {
     stub(rows(51));
     renderList();
     await selectAll();
 
-    await openStart();
-    const item = screen.getByRole('menuitem', { name: /^Plan selected \(51\)$/ });
-    expect(item).toHaveAttribute('data-disabled');
-    expect(item).toHaveAttribute('title', expect.stringContaining('up to 50'));
-    fireEvent.click(item);
+    const button = await screen.findByRole('button', { name: /^Plan selected \(51\)$/ });
+    expect(button).toBeDisabled();
+    fireEvent.focus(screen.getByTestId('plan-selected-trigger'));
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('up to 50');
+    fireEvent.click(button);
     expect(push).not.toHaveBeenCalled();
   });
 
-  it('leaves the bulk strip to the count, Export and Clear', async () => {
+  it('leaves the bulk strip to the count, Export and Clear - Plan selected stays the one toolbar button', async () => {
     stub(rows(2));
     renderList();
     await selectAll();
@@ -294,10 +285,9 @@ describe('SalesOrdersList - planning the selected orders', () => {
     await waitFor(() => expect(screen.getByText('2 selected')).toBeInTheDocument());
     expect(screen.getByRole('button', { name: 'Export' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Clear' })).toBeInTheDocument();
-    // No "Plan selected" BUTTON anywhere: the only one is the menu item, which is not open.
     // Named in full since S4 added a `Planned` COLUMN, whose header is a button too - a bare
     // /^Plan/ matches that header and turns this into an assertion about the grid's columns.
-    expect(screen.queryByRole('button', { name: /^Plan selected/ })).toBeNull();
+    expect(screen.getAllByRole('button', { name: /^Plan selected \(2\)$/ }).length).toBe(1);
   });
 
   it('offers nothing at all without the permission the board itself requires', async () => {
@@ -307,8 +297,15 @@ describe('SalesOrdersList - planning the selected orders', () => {
     await selectAll();
 
     await waitFor(() => expect(screen.getByText('2 selected')).toBeInTheDocument());
-    await openStart();
-    expect(screen.queryByRole('menuitem', { name: /^Plan selected/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Plan selected/ })).toBeNull();
+  });
+
+  it('is the CTA, not a menu behind a Start button - there is no Start button left', async () => {
+    stub(rows(2));
+    renderList();
+
+    await screen.findByRole('button', { name: /^Plan selected \(0\)$/ });
+    expect(screen.queryByRole('button', { name: /^Start$/ })).toBeNull();
   });
 });
 

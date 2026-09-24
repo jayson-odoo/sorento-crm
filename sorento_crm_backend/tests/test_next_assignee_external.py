@@ -1,15 +1,29 @@
 """
 Tests for POST /api/v1/external/next-assignee (n8n): flags + round-robin assignee.
 Mocks DB services to avoid real PostgreSQL.
+
+AC-KA-11/12 (PLAN-keep-assignee-on-resolve-22sep, fix round 1, BLOCKER B1) are the
+exception: they run against a real Postgres session so the actual
+``get_tracking_by_contact_phone`` -> ``get_preferred_tracking_for_contact`` seam is
+exercised, not a hand-built mock. Round-robin (``AccessAgentService``) and working
+hours (``CalendarService``) stay mocked - unrelated to the seam under test.
 """
+import uuid
 from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 
 from app.main import app
 from app.dependencies import get_db, get_external_api_user
+from app.models.access import AccessAgent, AgentTeam, RespondContact, Team
+from app.models.sla import SLAPolicy, SLAPolicyTier
+from app.models.user import User
+from app.schemas.sla import ConversationSLATrackingCreate, ConversationSLATrackingUpdate
+from app.services.sla_service import ConversationSLATrackingService
 from tests._external_auth import external_permissions_granted
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
@@ -148,7 +162,10 @@ def test_non_working_hours_already_assigned(
     mock_cal, mock_sla, mock_access, client: TestClient
 ):
     mock_cal.return_value.is_within_working_time.return_value = False
-    tr = MagicMock(assigned_to_id="x", assigned_to=None)
+    # is_resolved=False: an unspecced MagicMock auto-creates any attribute as a
+    # truthy MagicMock, so leaving it unset would read as resolved (AC-KA-11's
+    # fix) and flip this "already assigned" case to False.
+    tr = MagicMock(assigned_to_id="x", assigned_to=None, is_resolved=False)
     mock_sla.return_value.get_tracking_by_contact_phone.return_value = tr
     mock_access.return_value.get_agent_id_by_code.return_value = "agent-1"
     mock_access.return_value.list_team_ids_for_agent_code.return_value = ["team-1"]
@@ -434,3 +451,158 @@ def test_policy_code_without_tier_returns_400(mock_cal, mock_sla, mock_access, c
     )
     assert r.status_code == 400
     assert "both" in r.json()["detail"].lower()
+
+
+# --------------------------------------------------------------------------- #
+# AC-KA-11/12: a resolved tracker is never "already assigned" for routing      #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture
+def real_db():
+    with blank_session() as session:
+        schema = session.get_bind()._execution_options["schema_translate_map"][None]
+        session.execute(text(f'SET LOCAL search_path TO "{schema}"'))
+        yield session
+
+
+@pytest.fixture
+def real_db_client(real_db):
+    def _user():
+        return {"id": "system"}
+
+    app.dependency_overrides[get_external_api_user] = _user
+    app.dependency_overrides[get_db] = lambda: real_db
+    with external_permissions_granted():
+        yield TestClient(app)
+    app.dependency_overrides.clear()
+
+
+def _seed_ka(db):
+    policy_id = str(uuid.uuid4())
+    db.add(SLAPolicy(id=policy_id, code="ZZT-KA-NA", name="ZZT KA Next Assignee"))
+    db.add(
+        SLAPolicyTier(
+            id=str(uuid.uuid4()),
+            policy_id=policy_id,
+            tier_level=1,
+            tier_name="Tier 1",
+            response_hours=4,
+            resolution_hours=24,
+        )
+    )
+    contact_id = str(uuid.uuid4())
+    phone = f"+601{uuid.uuid4().int % 10**8:08d}"
+    db.add(
+        RespondContact(
+            id=contact_id,
+            phone_number=phone,
+            name="ZZT KA NA Contact",
+            respond_io_id=f"zzt-ka-na-{uuid.uuid4().hex[:8]}",
+            session_vars={},
+        )
+    )
+    assignee_id = str(uuid.uuid4())
+    db.add(User(id=assignee_id, email=f"zzt-ka-na-{uuid.uuid4().hex[:8]}@test.com", name="Agent One"))
+    agent_id = str(uuid.uuid4())
+    agent_code = f"ZZT_KA_NA_{uuid.uuid4().hex[:6]}"
+    db.add(AccessAgent(id=agent_id, code=agent_code, name="ZZT KA NA Agent"))
+    team_id = str(uuid.uuid4())
+    db.add(Team(id=team_id, name="ZZT KA NA Team"))
+    db.add(
+        AgentTeam(
+            id=str(uuid.uuid4()),
+            agent_id=agent_id,
+            code="zzt_ka_na_general",
+            team_id=team_id,
+            tier=1,
+            policy_id=policy_id,
+        )
+    )
+    db.commit()
+    return {
+        "policy_id": policy_id,
+        "contact_id": contact_id,
+        "phone": phone,
+        "assignee_id": assignee_id,
+        "agent_code": agent_code,
+        "team_set_code": "zzt_ka_na_general",
+    }
+
+
+def _ticket_ka(db, seed, *, source_message_id):
+    return ConversationSLATrackingService(db).create_tracking(
+        ConversationSLATrackingCreate(
+            agent_code=seed["agent_code"],
+            team_set_code=seed["team_set_code"],
+            policy_id=seed["policy_id"],
+            assigned_to_id=seed["assignee_id"],
+            contact_phone_number=seed["phone"],
+            source_message_id=source_message_id,
+            source_message_text="Please connect me to a person.",
+        )
+    )
+
+
+@patch("app.api.v1.external.next_assignee.AccessAgentService")
+@patch("app.api.v1.external.next_assignee.CalendarService")
+def test_ac_ka_11_a_resolved_tracker_is_not_already_assigned(
+    mock_cal, mock_access, real_db_client: TestClient, real_db
+):
+    """A returning contact whose only ticket is resolved must draw a fresh
+    assignee, not read as already handled by whoever last closed it out."""
+    mock_cal.return_value.is_within_working_time.return_value = True
+    mock_access.return_value.get_agent_id_by_code.return_value = "agent-1"
+    mock_access.return_value.list_team_ids_for_agent_code.return_value = ["team-1"]
+    mock_access.return_value.get_team_id_by_tier.return_value = None
+    mock_access.return_value.get_next_assignee.return_value = ASSIGNEE
+
+    seed = _seed_ka(real_db)
+    tracking = _ticket_ka(real_db, seed, source_message_id="ka-11")
+    ConversationSLATrackingService(real_db).update_tracking(
+        str(tracking.id), ConversationSLATrackingUpdate(is_resolved=True)
+    )
+
+    r = real_db_client.post(
+        "/api/v1/external/next-assignee",
+        json={
+            "contact_phone": seed["phone"],
+            "agent_code": "general_enquiries",
+            "team_code": "marketing",
+        },
+    )
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["is_already_assigned"] is False
+    assert "already_assigned" not in data["status_flags"]
+    assert data["assignee_id"] == "user-1"
+
+
+@patch("app.api.v1.external.next_assignee.AccessAgentService")
+@patch("app.api.v1.external.next_assignee.CalendarService")
+def test_ac_ka_12_an_open_assigned_tracker_is_already_assigned(
+    mock_cal, mock_access, real_db_client: TestClient, real_db
+):
+    """Pins the other direction: an OPEN, assigned ticket still reads as
+    already assigned - only the resolved case changed."""
+    mock_cal.return_value.is_within_working_time.return_value = True
+    mock_access.return_value.get_agent_id_by_code.return_value = "agent-1"
+    mock_access.return_value.list_team_ids_for_agent_code.return_value = ["team-1"]
+    mock_access.return_value.get_team_id_by_tier.return_value = None
+    mock_access.return_value.get_next_assignee.return_value = ASSIGNEE
+
+    seed = _seed_ka(real_db)
+    _ticket_ka(real_db, seed, source_message_id="ka-12")
+
+    r = real_db_client.post(
+        "/api/v1/external/next-assignee",
+        json={
+            "contact_phone": seed["phone"],
+            "agent_code": "general_enquiries",
+            "team_code": "marketing",
+        },
+    )
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["is_already_assigned"] is True
+    assert "already_assigned" in data["status_flags"]

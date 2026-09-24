@@ -92,10 +92,9 @@ import { facetSegments } from '../../_shared/lib/orderInquiryKinds';
 import type { OrderInquiryKind } from '../../_shared/lib/orderInquiryKinds';
 import { buildOrderInquiryMatrix } from '../../_shared/lib/orderInquiryMatrix';
 import { deliveryMonthLabel } from '../../_shared/lib/orderInquiryWorklist';
-import { saveBlobAs } from '../../_shared/services/fileDownload';
 import {
   autoPlaceOrderInquiryRows,
-  downloadOrderInquiryWorklistXlsx,
+  exportOrderInquiryWorklistXlsx,
   unplaceOrderInquiryRow,
 } from '../../_shared/services/orderInquiryService';
 import type {
@@ -1121,8 +1120,11 @@ export function OrderInquiriesClient({
   async function handleExport() {
     setExporting(true);
     try {
-      const blob = await downloadOrderInquiryWorklistXlsx(listFilters);
-      saveBlobAs(blob, `order-inquiry-${month || 'all-months'}.xlsx`);
+      // Lane B (AC-B6, R4): async, through My Downloads - the sync blob-save is
+      // retired from this screen (the sync GET route itself stays for one release,
+      // for MCP / other callers).
+      await exportOrderInquiryWorklistXlsx(listFilters);
+      toast.success('Preparing the order inquiry export - it will appear in My Downloads.');
     } catch (error) {
       toast.error(
         error instanceof Error
@@ -1568,7 +1570,7 @@ export function OrderInquiriesClient({
           : []),
         {
           key: 'export',
-          label: exporting ? 'Preparing…' : 'Export Excel',
+          label: 'Export Excel',
           icon: Download,
           disabled: exporting,
           onClick: () => void handleExport(),

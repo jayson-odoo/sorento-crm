@@ -237,13 +237,40 @@ def _apply_products(db, job: ImportJob, snapshot_id: str) -> dict:
     result = ingest.ingest("products", rows)
 
     outcome_writer = ImportOutcome(job.id)
+    # C1/PP-4 (`PLAN-autocount-pull-preview-perf.md`): a real ingest now carries
+    # a `diff` too (see `MasterIngestService._diff`), so an UPDATED record with
+    # an empty one is a no-op re-sync - counted `unchanged` here, with no
+    # "Product updated" outcome row, the same rule `_preview_products` already
+    # applies (AC-PP-3). Built as its own dict rather than
+    # `result.as_dict()["summary"]`: that generic summary is also the
+    # `/api/v1/ingest/*` contract shape (PP-10, unchanged), which has no
+    # `unchanged` count and must not grow one just for this one caller.
+    summary = {
+        "total": len(result.records),
+        "created": 0,
+        "updated": 0,
+        "unchanged": 0,
+        "failed": 0,
+        "retryable": 0,
+    }
     for raw, record in zip(rows, result.records):
         item_code = raw.get("code") if isinstance(raw, dict) else None
         if record.outcome == IngestOutcome.CREATED:
+            summary["created"] += 1
             _write_created_outcome(outcome_writer, item_code, record)
         elif record.outcome == IngestOutcome.UPDATED:
-            # A real ingest carries no `diff` (dry-run only) - one outcome per updated
-            # record either way, just without the field-by-field detail the preview shows.
+            # `not record.diff` is true for BOTH `{}` (the ordinary no-op
+            # re-sync) and `None` (`_diff`'s own edge case: the row vanished
+            # between the read and the write inside this record's own
+            # savepoint) - reading `record.diff` here directly on the
+            # in-process object, not through `as_dict()` (PP-10 gates THAT
+            # one to dry runs only), so this counter sees it either way.
+            # Both count as `unchanged`: neither is a change an operator
+            # needs an outcome row for.
+            if not record.diff:
+                summary["unchanged"] += 1
+                continue
+            summary["updated"] += 1
             outcome_writer.updated(
                 message=f"Product updated: {item_code}",
                 value=item_code,
@@ -251,11 +278,23 @@ def _apply_products(db, job: ImportJob, snapshot_id: str) -> dict:
                 entity_id=record.entity_id,
                 entity_type="product",
             )
-        else:
+        elif record.outcome == IngestOutcome.RETRYABLE:
+            # Small fix round (captain's ruling): kept as its own summary
+            # key rather than folded into `failed` - a sequencing artefact
+            # (AC-AC-16, `MissingReference`) is not a data error, and an
+            # operator reading this summary should be able to tell the two
+            # apart without opening the job rows. The outcome ROW itself is
+            # unchanged: `_write_failed_outcome` writes the same `fail`
+            # outcome for both, since the ESB re-drains a retryable record
+            # automatically either way.
+            summary["retryable"] += 1
+            _write_failed_outcome(outcome_writer, item_code, record)
+        else:  # FAILED
+            summary["failed"] += 1
             _write_failed_outcome(outcome_writer, item_code, record)
     outcome_writer.flush()
 
-    return result.as_dict()["summary"]
+    return summary
 
 
 def _apply_stock(db, job: ImportJob, snapshot_id: str, pull_job_id: Optional[str]) -> dict:

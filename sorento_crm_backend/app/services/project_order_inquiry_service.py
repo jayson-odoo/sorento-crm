@@ -1094,6 +1094,49 @@ class ProjectOrderInquiryService:
                 if asked_to_settle:
                     settled_in_place.append(str(line.id))
                 continue
+            if asked_to_settle:
+                # S2 (`PLAN-board-oi-mechanical-22sep.md`, AC-B2-4..7): `_settle_row_in_
+                # place` just declined - two still-owed rows, a lone placed row with no
+                # link, or every row already actioned (excluded from its own `live`
+                # filter outright). None of that changes what the DATE half of the change
+                # should do: every buy row of the line still gets the date stamped in
+                # place, and no second ADVANCE/DELAY row is raised beside it.
+                #
+                # The stamp is UNGATED by the quantity (review round, 22 Sep). It was
+                # gated on the composed `need` matching what the line's own live buy rows
+                # already total, and a book that moved the date AND the quantity then
+                # moved neither: the gate failed, nothing was stamped, and the line came
+                # out of the confirm with its existing row on the OLD date, a fresh
+                # remainder row on the new one, and no notice either (a buy row existed,
+                # so `_oi_demand_rows` suppressed it). The stamp touches no quantity and
+                # no link, so it is safe either way; the quantity half stays with the
+                # netting below, which still runs whenever the two disagree.
+                #
+                # A line with NO existing buy row at all still falls through on its own:
+                # `_stamp_date_move` finds no target and returns False, and the netting
+                # raises its fresh row exactly as it always has (AC-B2-4).
+                live_buy_qty = sum(
+                    (
+                        _dec(r.qty)
+                        for r in rows
+                        if r.verb in (IV_ORDER, IV_ORDER_BACK)
+                        and r.state in (
+                            INQUIRY_RAISED, INQUIRY_PARTLY_LINKED,
+                            INQUIRY_PLACED, INQUIRY_ACTIONED,
+                        )
+                        and not r.redirected_to_pool
+                    ),
+                    _ZERO,
+                )
+                stamped = self._stamp_date_move(
+                    inquiry, rows, entry, decision, actor_user_id=actor_user_id,
+                    will_net=(live_buy_qty != need),
+                )
+                if stamped and live_buy_qty == need:
+                    # Nothing but the date moved, so the netting has nothing left to say
+                    # about this line and the caller is told it is settled.
+                    settled_in_place.append(str(line.id))
+                    continue
             # Read BEFORE the loop below cancels anything: what purchasing had already
             # taken on for this line, off the rows that are still LIVE. Taken afterwards it
             # would read the rows this loop has just cancelled, which is every superseded
@@ -1672,6 +1715,142 @@ class ProjectOrderInquiryService:
             self._record_handover(
                 row, kind="settled", was=handover_was, actor_user_id=actor_user_id
             )
+        return True
+
+    def _stamp_date_move(
+        self,
+        inquiry: OrderInquiry,
+        rows: Sequence[OrderInquiryRow],
+        entry: Dict[str, Any],
+        decision: Any,
+        *,
+        actor_user_id: Optional[str] = None,
+        will_net: bool = False,
+    ) -> bool:
+        """The DATE half of a change `_settle_row_in_place` declined to read as one
+        instruction - two still-owed rows, a lone placed row with no link, or every row
+        already actioned (excluded from its own `live` filter outright) - restated on
+        EVERY buy row of the line instead (S2, `PLAN-board-oi-mechanical-22sep.md`,
+        AC-B2-4..7). Purchasing sees the row(s) it already had, each carrying the new
+        date, the old one on its own note and as `previous_delivery_date`, rather than
+        the same rows left bare beside a duplicate ADVANCE/DELAY notice telling them the
+        same thing a second time.
+
+        Links and QUANTITIES are untouched, and that is what makes this safe to run
+        regardless of what the quantity did (review round, 22 Sep): the two halves of a
+        `DATE_AND_QTY_CHANGED` are independent, so gating the date stamp on the composed
+        `need` matching the line's live buy total - as this used to - meant a book that
+        moved the date AND the quantity moved neither on the existing row, left it
+        sitting on the OLD date beside a freshly-raised remainder row on the new one,
+        and suppressed the notice as well because a buy row existed. The quantity half
+        stays the netting's own business: the caller falls through to it whenever `need`
+        and the live buy total disagree.
+
+        One handover line for the WHOLE line, not one per row (AC-B2-9): the line's
+        `ADVANCE`/`DELAY` change is told once, off a single representative row, the same
+        "one row per sales-order line" rule `_oi_demand_rows` already holds for the
+        notice this replaces. `order_inquiry_changed_with_links` is per ROW, though, and
+        fires for each stamped row that actually carries a link (review round): a date
+        purchasing already bought against moving is exactly what that automation exists
+        to tell them, and `_settle_row_in_place` fires it for the same reason.
+
+        `will_net` is the caller's own fact (round 3, nit): whether the netting loop
+        below this call in `_write` is about to run (`live_buy_qty != need`), which
+        cancels every still-RAISED row of the line seconds after this method returns. A
+        RAISED row is a live target here too - it still needs its date stamped, whether
+        or not it survives what comes next - but it must never be the row the ONE
+        handover line is recorded off: purchasing would be pointed at a row already
+        gone by the time the email lands. When netting is coming, the representative
+        is picked from whatever targets are NOT `raised`; falling back to the full list
+        only when every target is (nothing else to point at).
+
+        `refresh_link_state` is deliberately NOT called, unlike the settle path: nothing
+        here changes a row's quantity or its links, so there is no coverage to re-derive
+        - and it would DEMOTE the very shape AC-B2-6 is about, a lone `placed` row with
+        no link row behind it, back to `raised` (the reason `_settle_row_in_place`
+        declines that shape outright).
+
+        Returns False, writing nothing, when there is no date to move to or every buy
+        row already carries it - the caller reads that as "nothing to stamp" and falls
+        through to its own fallback (AC-B2-4's fresh line has no row here to stamp at
+        all).
+        """
+        new_date = entry.get("required_date")
+        if new_date is None:
+            return False
+        targets = [
+            row
+            for row in rows
+            if row.verb in (IV_ORDER, IV_ORDER_BACK)
+            and row.state in (
+                INQUIRY_RAISED, INQUIRY_PARTLY_LINKED, INQUIRY_PLACED, INQUIRY_ACTIONED,
+            )
+            and not row.redirected_to_pool
+            and row.delivery_date != new_date
+        ]
+        if not targets:
+            return False
+        # The ONE handover line (AC-B2-9) is recorded off a row that will still be here
+        # to have moved (round 3, nit): when the netting below is about to run, a
+        # still-RAISED target is seconds from being cancelled by it
+        # (`project_order_inquiry_service.py`'s own supersede loop in `_write`), so the
+        # representative is picked from whatever survives - falling back to the full
+        # list only when every target is RAISED and there is nothing else to point at.
+        handover_pool = targets
+        if will_net:
+            handover_pool = [
+                row for row in targets if row.state != INQUIRY_RAISED
+            ] or targets
+        previous_date = handover_pool[0].delivery_date
+        for row in targets:
+            previous_qty = _dec(row.qty)
+            row_previous_date = row.delivery_date
+            moved = (
+                f"Was {_qty_str(previous_qty)} on {row_previous_date.isoformat()}"
+                if row_previous_date
+                else f"Was {_qty_str(previous_qty)}, no previous delivery date"
+            )
+            row.previous_qty = previous_qty
+            row.previous_delivery_date = row_previous_date
+            row.delivery_date = new_date
+            row.note = f"{row.note}; {moved}" if row.note else moved
+            # Whose instruction the row is now, the same two facts `_settle_row_in_place`
+            # restates: this decision's, at the location this composition states (when it
+            # states one - a composition naming none must not blank a location purchasing
+            # is working to).
+            if entry.get("stock_location"):
+                row.stock_location = entry.get("stock_location")
+            row.supply_decision_id = decision.id
+            # Same handshake rule as `_settle_row_in_place`, `changed_at` included (owner
+            # ruling, 22 Sep): a row purchasing has already taken on goes back to To
+            # confirm and stamps WHEN it was amended under them; one still AWAITING is
+            # left alone, because CS is free to change what nobody has read yet.
+            # `changed_at` is the column's own question - "when CS last amended a row
+            # purchasing had already acknowledged" (`OrderInquiryRow.changed_at`) - so a
+            # stamp on an awaiting row would answer it about a row nobody had read. The
+            # Was/Now table is unaffected: it reads `previous_qty` /
+            # `previous_delivery_date`, which every stamped row gets either way.
+            if row.ack_state in (ACK_ACKNOWLEDGED, ACK_CHANGED):
+                row.changed_at = datetime.utcnow()
+                row.ack_state = ACK_CHANGED
+        self.db.flush()
+        # Batched (round 3, nit): one grouped load for every target's links rather than
+        # one query per row - the same `_links_by_row` the raise/settle paths above
+        # already reach for once a caller is walking a SET rather than one row.
+        links_by_target = self._links_by_row([str(row.id) for row in targets])
+        for row in targets:
+            self._dispatch_changed_with_links(
+                inquiry, row, had_link=bool(links_by_target.get(str(row.id)))
+            )
+        # AC-H3/AC-H4, as `_settle_row_in_place` reads them: only the field that actually
+        # moved. A row that carried NO previous date states none rather than a blank one -
+        # "Was <nothing>" is a handover line nobody can act on.
+        self._record_handover(
+            handover_pool[0],
+            kind="settled",
+            was={"delivery_date": previous_date} if previous_date else {},
+            actor_user_id=actor_user_id,
+        )
         return True
 
     def _own_arrival_credit_for_row(self, row: OrderInquiryRow, need: Decimal) -> Decimal:
@@ -4306,6 +4485,12 @@ class ProjectOrderInquiryService:
                     "so_line_id": row.so_line_id,
                     "sales_order_ref": meta.get("sales_order_ref"),
                     "project_sales_order_id": meta.get("project_sales_order_id"),
+                    # AC-B6-7 (`PLAN-board-oi-mechanical-22sep.md`, S6): the deep-link
+                    # ids the OI Lines tab / worklist's own "SO line" column resolves to
+                    # `/scm/sales-orders/<sales_order_id>?tab=lines&line=<core_line_id>`
+                    # - never printed, addressing only.
+                    "sales_order_id": meta.get("sales_order_id"),
+                    "core_line_id": trace.get("core_line_id"),
                     # AC-D06: the buyer traces a Buy back to the Project SO, the line
                     # number and the revision that decided it, in identifiers a person
                     # reads - never an id.
@@ -4470,6 +4655,12 @@ class ProjectOrderInquiryService:
                 # would otherwise keep printing its documents on the SO detail beside the
                 # revision that replaced it.
                 OrderInquiryRow.state != INQUIRY_CANCELLED,
+                # PLAN-oi-request-cs-reserve.md (AC-RS-12): a reserve link is not a PO or
+                # an SPO document - this reader's whole vocabulary is "which BOOK is this
+                # on" - so it never leaks in here as a `kind="po"` entry with every book
+                # column blank. `reserved_qty` (the worklist serializer) is where it
+                # actually surfaces.
+                OrderInquiryLink.reserve_request_row_id.is_(None),
                 # R7/AC-E9: SPOAllocation is OUTER-joined, so this passes a plain PO
                 # link (its columns come back NULL) untouched and only excludes a
                 # link whose SPO side names a retired line.
@@ -4742,6 +4933,11 @@ class ProjectOrderInquiryService:
         for inquiry, order in joined:
             context[inquiry.id] = {
                 "project_sales_order_id": order.id,
+                # AC-B6-7 (`PLAN-board-oi-mechanical-22sep.md`, S6): the CORE
+                # `sales_orders.id` the SCM sales order detail page is keyed by
+                # (`/scm/sales-orders/<sales_order_id>`) - null on a project order never
+                # published to the core book.
+                "sales_order_id": order.so_id,
                 "sales_order_ref": order.autocount_doc_no or order.provisional_ref,
                 # The Project SO's OWN reference, beside the AutoCount number the
                 # sales_order_ref prefers: they are two different documents and the buyer
@@ -4780,17 +4976,22 @@ class ProjectOrderInquiryService:
 
         line_ids = {row.so_line_id for row in rows if row.so_line_id}
         decision_ids = {row.supply_decision_id for row in rows if row.supply_decision_id}
-        line_nos = (
-            dict(
+        line_nos: Dict[str, int] = {}
+        # AC-B6-7: the mirror's own `core_sales_order_line_id` - the AutoCount line the
+        # SCM Lines tab actually addresses - null when the mirror has no core line at all.
+        core_line_ids: Dict[str, Optional[str]] = {}
+        if line_ids:
+            for line_id, line_no, core_line_id in (
                 self.db.query(
-                    ProjectSalesOrderLine.id, ProjectSalesOrderLine.line_no
+                    ProjectSalesOrderLine.id,
+                    ProjectSalesOrderLine.line_no,
+                    ProjectSalesOrderLine.core_sales_order_line_id,
                 )
                 .filter(ProjectSalesOrderLine.id.in_(list(line_ids)))
                 .all()
-            )
-            if line_ids
-            else {}
-        )
+            ):
+                line_nos[line_id] = line_no
+                core_line_ids[line_id] = core_line_id
         revisions = (
             dict(
                 self.db.query(SOSupplyDecision.id, SOSupplyDecision.revision_no)
@@ -4804,6 +5005,7 @@ class ProjectOrderInquiryService:
             row.id: {
                 "line_no": line_nos.get(row.so_line_id),
                 "decision_revision": revisions.get(row.supply_decision_id),
+                "core_line_id": core_line_ids.get(row.so_line_id),
             }
             for row in rows
         }
@@ -5535,11 +5737,19 @@ class ProjectOrderInquiryService:
             links = self._links_of(row.id)
             linked = sum((_dec(link.qty) for link in links), _ZERO)
             row.state = self._coverage_state(_dec(row.qty), linked, _dec(row.bundled_qty))
-            first = links[0] if links else None
-            # The FIRST link's document, by when it was made. `po_ref` has carried a PO
-            # number since section G and several readers still print it; it is a display of
-            # the links now, so it is restated here rather than left holding whatever the
-            # last single-line placement happened to set.
+            # The FIRST REAL document's own link, by when it was made - a reserve link
+            # (`document="Reserved @ BRW"`, `reserve_request_row_id` set) is not a PO or
+            # an SPO (PLAN-oi-request-cs-reserve.md, review round SF-1): skipped here so
+            # a row reserved before it is ever placed on a book does not read a fake
+            # `po_ref`. `po_number` (the worklist's own reader) already gets this right
+            # (`_PO_LINKED_QTY`/`links_for_rows` both filter on the real target column);
+            # this is the SAME rule applied to the row's own stored display.
+            first = next(
+                (link for link in links if link.reserve_request_row_id is None), None
+            )
+            # `po_ref` has carried a PO number since section G and several readers still
+            # print it; it is a display of the links now, so it is restated here rather
+            # than left holding whatever the last single-line placement happened to set.
             row.po_ref = first.document if first is not None else None
             row.po_line_id = first.po_line_id if first is not None else None
             row.spo_ref = (
@@ -8742,12 +8952,18 @@ class ProjectOrderInquiryService:
     def unplace(
         self, row_id: str, *, actor_user_id: str, link_id: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Unlink. With a `link_id` that ONE link goes; without one every link on the row
-        goes, which is what the whole-row action means.
+        """Unlink. With a `link_id` that ONE link goes; without one every PO/SPO link on
+        the row goes, which is what the whole-row action means.
 
         A partly linked row can therefore give back one of its documents and keep the
         other, which is the point of the child table: before it, "unplace" was the only
         move and it took the whole placement with it.
+
+        **A reserve link is never touched here** (`PLAN-oi-request-cs-reserve.md`
+        section 6c, F5 - "unlink is unlink, unreserve is unreserve ... the one doing
+        the job different so dangerous if they are the same"). Naming a reserve
+        link's own id is refused outright; the whole-row form silently leaves any
+        reserve link standing and acts on the PO/SPO links only.
         """
         row = self._row_or_404(row_id)
         links = self._links_of(row.id)
@@ -8759,6 +8975,16 @@ class ProjectOrderInquiryService:
                     message="That link no longer exists.",
                     code="order_inquiry_link_not_found",
                 )
+            if links[0].reserve_request_row_id is not None:
+                raise AppException(
+                    status_code=409,
+                    message=(
+                        "This is a reserve, not a link - use Unreserve to give it back."
+                    ),
+                    code="order_inquiry_unlink_reserve_refused",
+                )
+        else:
+            links = [link for link in links if link.reserve_request_row_id is None]
         if not links:
             raise AppException(
                 status_code=409,
@@ -8788,6 +9014,10 @@ class ProjectOrderInquiryService:
 
         Idempotent: an empty `row_ids`, or a set none of which holds a link (a second click
         after the first already ran), returns 0.
+
+        **Skips reserve links** (`PLAN-oi-request-cs-reserve.md` section 6c, F5): the
+        bulk action is PO/SPO unlink, never Unreserve, so a row holding only a reserve
+        link is left standing and not counted.
         """
         wanted = [row_id for row_id in (row_ids or []) if row_id]
         if not wanted:
@@ -8795,12 +9025,22 @@ class ProjectOrderInquiryService:
         rows = (
             self.db.query(OrderInquiryRow)
             .join(OrderInquiryLink, OrderInquiryLink.row_id == OrderInquiryRow.id)
-            .filter(OrderInquiryRow.id.in_(wanted))
+            .filter(
+                OrderInquiryRow.id.in_(wanted),
+                OrderInquiryLink.reserve_request_row_id.is_(None),
+            )
             .distinct()
             .all()
         )
         for row in rows:
-            self._remove_links(row, self._links_of(row.id))
+            self._remove_links(
+                row,
+                [
+                    link
+                    for link in self._links_of(row.id)
+                    if link.reserve_request_row_id is None
+                ],
+            )
         if rows:
             self.refresh_link_state(rows)
             self.db.flush()

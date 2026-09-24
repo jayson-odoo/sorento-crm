@@ -21,8 +21,8 @@ Plan**) to see the upload entries:
 * **Refresh**
 
 The same two order-book uploads are also reachable from their own lists: **Upload sales orders**
-is under the **Start** button on **[Supply Chain → Orders → Sales Orders](/scm/sales-orders)**,
-and **Upload purchase orders** is under **Actions** on
+is under **Actions** on **[Supply Chain → Orders → Sales Orders](/scm/sales-orders)**, and
+**Upload purchase orders** is under **Actions** on
 **[Supply Chain → Orders → Purchase Orders](/scm/purchase-orders)**. All three open the same
 dialog.
 
@@ -137,13 +137,19 @@ you open the page. Page number and the search box always start fresh.
 
 ### Columns
 
-The default column order mirrors the Excel order book: **SO date**, **S/O no**, **Item code**,
-**Qty**, **Delivery date**, **Customer**, **Project**, **Supplier**, **PO**, **SPO**, **Agent**,
-**Location**, **Order inquiry**, then the rest. **Customer** and **Project** sort independently
-of each other. A pre-order shows **PRE-ORDER** in the **Project** cell. Every row of one sales
-order now sits under one order inquiry number, so the **Order inquiry** column is hidden by
-default - open **Columns** in the toolbar and tick it to show it. If you have already
-personalised your own column order or visibility, yours is kept.
+The default column order mirrors the Excel order book: **SO date**, **S/O line**, **Item code**,
+**Qty**, **Taken**, **Remaining**, **Delivery date**, **Customer**, **Project**, **Supplier**,
+**PO**, **SPO**, **Agent**, **Location**, **Order inquiry**, then the rest. **S/O line** prints
+the sales order number and its line together, e.g. `SO402757 · L5`, and is a link straight to
+that exact line on the sales order (this column's own Excel export still heads it **S/O NO**, so
+a sheet you download stays lined up with the original order book). **Taken** is how much of the
+row's own quantity is already on a PO or SPO link; **Remaining** is Qty minus Taken, minus
+anything covered by an **Included with** companion (see below) - both print a dash on a notice
+row, and both read as nothing owed on a row whose sales order line is cancelled. **Customer** and
+**Project** sort independently of each other. A pre-order shows **PRE-ORDER** in the **Project**
+cell. Every row of one sales order now sits under one order inquiry number, so the **Order
+inquiry** column is hidden by default - open **Columns** in the toolbar and tick it to show it.
+If you have already personalised your own column order or visibility, yours is kept.
 
 ### The PO and SPO columns
 
@@ -212,6 +218,14 @@ A row **Included with** another item (a "supplied with" companion, like a seat c
 inside its pedestal and cistern) carries no Was of its own, so its Qty cell's (i) lists each of
 those items' own change instead - hover it for one line per item, e.g. "with SRTWCX8605-S-RL-PJ:
 Was 182 on 01/06/2026, now 280 on 01/03/2027".
+
+### A date move on a line already bought
+
+When the book moves a line's delivery date and you have already been asked to buy for that line,
+the row you already know is restated in place - the same row, never a second one. Its **Delivery
+date** carries a **Changed** tag, and its Qty **(i)** reads **Was** the old quantity and date, the
+same as any other changed row. Every PO/SPO link the row already held stays exactly as it was.
+Only a line with nothing bought for it yet gets an ordinary new row instead.
 
 ### A row on a cancelled line
 
@@ -299,9 +313,18 @@ what the ticked rows can do; each item counts only the rows it applies to, for e
 * **Link selected** auto-links the ticked rows that still have something left to link.
 * **Unlink selected** takes a link off the ticked rows, including a row that is already fully
   linked.
-* **Reject selected**, **Unconfirm**, **Unlink all...**, **Upload purchase orders** and
-  **Export Excel** round out the menu. See "Unconfirming a row" below for what **Unconfirm**
-  does.
+* **Reject selected**, **Unconfirm**, **Unlink all...** and **Upload purchase orders** round out
+  the menu. See "Unconfirming a row" below for what **Unconfirm** does.
+
+**Export Excel** queues a workbook of the current filters instead of downloading one straight
+away: a toast reads "Preparing the order inquiry export - it will appear in My Downloads.", and
+the file lands in **My Downloads** once it is ready. Pressing it again while one is still being
+prepared does nothing but tell you it already is, with a toast reading "An order inquiry export
+is already being prepared - check My Downloads." Unlike the OI detail page's own **Export Excel**
+(see [The Documents view and the OI detail
+page](order-inquiry-documents.md#fixing-a-link-without-leaving-the-page)), this export is not
+tied to one order inquiry, so there is no download history for it - only **My Downloads**. Needs
+the **Order Inquiries** view permission and a signed-in user.
 
 Use **Auto link all...**, **Choose document (1)**, **Link selected** and **Unlink selected** to
 review and fix a row's PO/SPO link before you confirm it - AutoCount's own linkage and the
@@ -604,7 +627,8 @@ and load by hand.
 
 * [Order inquiries: the Documents view and the OI detail page](order-inquiry-documents.md)
 * [Run a reorder plan](run-a-reorder-plan.md)
-* [Print the order summary](print-the-order-summary.md)
+* [Print the order summary](print-the-order-summary.md) (its "OI worksheet Excel" prints this
+  worklist's own ORDER INQUIRY layout, scoped to a reorder plan instead of this page's filters)
 * [Upload SPO allocations](../purchasing/upload-spo.md)
 * [Upload the product master](../purchasing/upload-product-master.md)
 * [Plan a sales order nobody decided](plan-undecided-lines.md) (raises a Buy onto Order

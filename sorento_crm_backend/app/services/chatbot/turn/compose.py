@@ -13,7 +13,7 @@ from typing import Any
 from app.services.chatbot.turn.decide import OUTSTANDING_KINDS
 from app.services.chatbot.turn.fetch import envelope_missed
 from app.services.chatbot.turn.narrow import ledger_family_key, ledger_family_label
-from app.services.chatbot.turn.pending import ask as pending_ask, is_roster
+from app.services.chatbot.turn.pending import ask as pending_ask, is_roster, quick_replies_suppressed
 from app.services.chatbot.turn.policy import Policy
 from app.services.chatbot.turn.state import KIND_FIELD_MAP, State, focus_row_label
 
@@ -69,7 +69,13 @@ def _file_key(f: dict[str, Any]) -> Any:
     return f.get("url") or f.get("id") or f.get("filename")
 
 
-def _team_pick_question(missed_domains: list[str], policy: Policy):
+def _team_pick_question(
+    missed_domains: list[str],
+    policy: Policy,
+    *,
+    agent: str | None = None,
+    brand: str | None = None,
+):
     """Team pick over the missed domains (contract 106-113, 127; AC-1533). A single
     missed team is yes/no over that one team; two or more become a numbered pick plus
     a "No it's okay" hold option (contract 43).
@@ -77,6 +83,16 @@ def _team_pick_question(missed_domains: list[str], policy: Policy):
     `Pending.team` stays a single `str | None` (S2): set when there is exactly one
     team, else None until the pick resolves - each option carries ITS OWN team under
     `payload.team` (captain ruling, 16 Sep 2026).
+
+    `agent` is this minting turn's own `routing.suggested_agent` (SRTSC07, prod
+    transcript 22 Sep 2026), carried the same way `team` is: onto the single-team
+    offer's own top-level `payload`, and onto EACH multi-team option beside its own
+    `payload.team` - so a bare "yes" acceptance turn, which names no agent of its own,
+    can still hand `/external/next-assignee` the `(agent_code, team_code)` pair this
+    turn actually meant, instead of falling to `DEFAULT_SUGGESTED_AGENT`. `brand` is
+    the SAME idiom, one axis over (round 4, owner-approved, 22 Sep 2026): this turn's
+    own resolved brand, so a Packing List escalation draws the brand-tagged member
+    instead of rotating the whole team.
     """
     teams: list[tuple[str, str]] = []
     seen: set[str] = set()
@@ -94,10 +110,21 @@ def _team_pick_question(missed_domains: list[str], policy: Policy):
     if len(teams) == 1:
         team, label = teams[0]
         options = [{"position": 1, "label": label, "entity_type": "team", "payload": {"team": team}}]
-        return pending_ask("team_pick", options, team=team, expects="yes_no")
+        return pending_ask(
+            "team_pick",
+            options,
+            team=team,
+            expects="yes_no",
+            payload={"agent": agent, "brand_code": brand},
+        )
 
     options = [
-        {"position": i + 1, "label": label, "entity_type": "team", "payload": {"team": team}}
+        {
+            "position": i + 1,
+            "label": label,
+            "entity_type": "team",
+            "payload": {"team": team, "agent": agent, "brand_code": brand},
+        }
         for i, (team, label) in enumerate(teams)
     ]
     options.append(
@@ -109,7 +136,7 @@ def _team_pick_question(missed_domains: list[str], policy: Policy):
             # so in its own payload rather than being inferred from a null team - a
             # `company_pick` option carries no team either, and "the customer said no"
             # must not be a thing the reader works out from a missing field.
-            "payload": {"team": None, "hold": True},
+            "payload": {"team": None, "agent": None, "brand_code": None, "hold": True},
         }
     )
     return pending_ask("team_pick", options, team=None, expects="pick")
@@ -382,10 +409,54 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
                 question = replace(
                     carried,
                     team=carried.team or teams[0],
-                    payload={**carried.payload, "escalate_offered": True},
+                    payload={
+                        **carried.payload,
+                        "escalate_offered": True,
+                        # SRTSC07 review round 2, SHOULD-A: both halves come from
+                        # the SAME source as the `team` expression right above, not
+                        # independently. A roster CAN carry a team with no agent at
+                        # all (`answer_bridge.py`'s D4 narrower roster,
+                        # `turn/apply.py`'s narrow ask) - `carried.payload.get(
+                        # "agent") or ctx.suggested_agent` mixed a STALE carried
+                        # team with THIS turn's fresh agent whenever that happened,
+                        # a pair `/external/next-assignee` has no link for
+                        # (measured: an incoming miss with no agent, re-armed under
+                        # a later order-domain miss, paired `order_enquiries` with
+                        # the old `purchasing` team). When the team is the roster's
+                        # OWN (`carried.team` truthy), the agent is the roster's own
+                        # too, carried or not - never THIS turn's, which named no
+                        # opinion about the roster's team at all. Only when the team
+                        # itself falls to `teams[0]` (this turn's own) does the
+                        # agent follow it.
+                        "agent": (
+                            carried.payload.get("agent")
+                            if carried.team
+                            else getattr(ctx, "suggested_agent", None)
+                        ),
+                        # Round 4 (owner-approved, 22 Sep 2026): the SAME one-source
+                        # rule, one axis over - the brand travels with whichever
+                        # source the team came from.
+                        "brand_code": (
+                            carried.payload.get("brand_code")
+                            if carried.team
+                            else getattr(ctx, "routing_brand", None)
+                        ),
+                    },
                 )
             else:
-                question = _team_pick_question(missed_domains, policy)
+                # SRTSC07 (prod transcript, 22 Sep 2026): `ctx.suggested_agent` is this
+                # turn's own `routing.suggested_agent` (`TurnContext`, set by
+                # `engine.py` off the SAME verdict the team half above is read from),
+                # carried onto the fresh offer so a later bare "yes" over it can hand
+                # `/external/next-assignee` the `(agent_code, team_code)` pair this
+                # turn actually meant. `ctx.routing_brand` (round 4) is the SAME idiom
+                # for the brand axis.
+                question = _team_pick_question(
+                    missed_domains,
+                    policy,
+                    agent=getattr(ctx, "suggested_agent", None),
+                    brand=getattr(ctx, "routing_brand", None),
+                )
 
     actions: list[dict[str, Any]] = []
     if files:
@@ -530,7 +601,79 @@ def compose_question(pending: Any, state: State | None = None) -> Answer:
     action: dict[str, Any] = {
         "kind": "send_message",
         "text": body,
-        "quick_replies": ", ".join(labels) if labels else None,
+        # AC-1866: a `member_offer` re-print keeps its numbered text list but not the
+        # names as quick-reply buttons (owner ruling 23 Sep 2026) - `result_set` below
+        # still carries the roster, so a numbered reply still resolves.
+        "quick_replies": None if quick_replies_suppressed(pending.kind) else (
+            ", ".join(labels) if labels else None
+        ),
         "result_set": list(pending.options),
     }
     return Answer(sections=[], question=pending, offer=None, canned=[], files=[], actions=[action], text=body)
+
+
+def _join_words_and(items: list[str]) -> str:
+    """"a", "a and b", "a, b and c" - the same shape `media_extract.wording.join_
+    phrase` uses, copied rather than imported (`turn/` reads no module outside its
+    own package and `contracts.py`). NOT `_join_words` above: that one joins on
+    "or" for the rung-fallback list ("Nothing on X or Y either.") - a distinct
+    word for a distinct grammar, not a formatting variant of the same one."""
+    values = [item for item in items if item]
+    if not values:
+        return ""
+    if len(values) == 1:
+        return values[0]
+    return ", ".join(values[:-1]) + " and " + values[-1]
+
+
+def entities_only_reply(
+    placed: list[str], unplaced: list[str], *, from_photo: bool, media_prefixed: bool = False
+) -> str:
+    """S3 (PLAN-chatbot-media-into-turn.md): the entities-only arm's own deterministic
+    reply (AC-1824/AC-1825) - never an LLM, never a roster. `placed`/`unplaced` are the
+    raw tokens as typed or read, in the order the message named them.
+
+    `media_prefixed`, true on a photo-sourced turn, drops this function's OWN "I read
+    ..." lead: `engine.py`'s reply-prefix wrapper (AC-1817, the SAME sentence shape,
+    the intake's own raws) already supplies it for every media turn, and printing it
+    twice would violate AC-1820 ("the prefix appears exactly once"). A typed turn
+    carries no such wrapper, so it stays self-contained.
+
+    Review round B1(a): nothing PLACED is its own case, not "I have ." with an empty
+    join - a photo where every code missed says so up front ("I could not match any
+    product code in that photo."); a typed message with nothing placed says try again,
+    since "What would you like me to know?" has nothing left to be about.
+
+    Browser pass follow-up: the "I could not match..." lead is ALSO gated on
+    `media_prefixed`, exactly like the placed branch below - a LIVE photo outcome
+    already told the customer what was read ("I read X from that photo.", via the
+    engine's own reply-prefix wrapper), so this arm claiming "I could not match ANY
+    product code" on top of that would contradict what the wrapper just said. Only
+    the `patched_upstream` case (no live outcome, no wrapper prefix at all) still
+    needs this arm's own lead to say anything was a photo in the first place.
+    """
+    if not placed:
+        parts: list[str] = []
+        if from_photo and not media_prefixed:
+            parts.append("I could not match any product code in that photo.")
+        if unplaced:
+            parts.append(f"Couldn't find {_join_words_and(unplaced)}.")
+        parts.append(
+            "What would you like me to do with it?" if from_photo else "Ask again with the correct code."
+        )
+        return " ".join(parts)
+
+    parts = []
+    if not media_prefixed:
+        lead = (
+            f"I read {_join_words_and(placed)} from that photo."
+            if from_photo
+            else f"I have {_join_words_and(placed)}."
+        )
+        parts.append(lead)
+    if unplaced:
+        parts.append(f"Couldn't find {_join_words_and(unplaced)}.")
+    parts.append(
+        "What would you like me to do with it?" if from_photo else "What would you like me to know?"
+    )
+    return " ".join(parts)

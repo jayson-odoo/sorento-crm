@@ -365,6 +365,9 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
   so_date?: string | null;
   so_number?: string | null;
   item_code?: string | null;
+  /** Addressing only, never rendered - two products share one item code on the live
+   * book, so the stock grid (`OrderInquiryStockGrid`) keys on this, never `item_code`. */
+  product_id?: string | null;
   product_name?: string | null;
   qty: string;
   delivery_date?: string | null;
@@ -442,6 +445,13 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
    * on every row before this plan.
    */
   line_cancelled?: boolean;
+  /** `PLAN-oi-request-cs-reserve.md` 3.5 (AC-RS-20): `requested` while an open reserve
+   * request row exists, `reserved` once CS has actually reserved something (and no open
+   * request), else null. */
+  reserve_state?: 'requested' | 'reserved' | string | null;
+  /** 3.4 (AC-RS-12): the sum of the row's reserve links - already included in
+   * `taken_from_po`/`remaining_open`, both of which sum every link with no target filter. */
+  reserved_qty?: string;
   /** Who sold it (`sales_orders.sales_agent_id` -> `sales_agents`), off the same core
    * sales order the S/O no column reaches. Null when the row reaches no core order, or
    * that order carries no agent. */
@@ -473,6 +483,20 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
   project_id?: string | null;
   project_sales_order_id?: string | null;
   core_sales_order_id?: string | null;
+  /**
+   * S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-1/AC-B6-7): the AutoCount line number,
+   * for the "SO line" column's own text (`SO402757 · L5`, `orderInquirySoLineLabel`).
+   */
+  line_no?: number | null;
+  /**
+   * S6 (AC-B6-1/AC-B6-7): the CORE sales-order line's own id, which the backend resolves
+   * server-side off the row's mirror line - never the mirror id itself, which this screen
+   * has no use for. Addresses the "SO line" link's own `?line=` param
+   * (`orderInquirySoLineHref`); null when the mirror reaches no core line, in which case
+   * the cell reads as plain text, the same fallback `orderInquiryRowHref` already uses
+   * for a row that reaches no book at all.
+   */
+  core_line_id?: string | null;
   /** Came from the AutoCount book rather than a document authored here. */
   is_adopted?: boolean;
   /**

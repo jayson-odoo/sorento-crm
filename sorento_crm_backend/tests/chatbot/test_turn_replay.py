@@ -45,18 +45,23 @@ checked when the list is non-empty. A structural mismatch is a FAILURE unless
 `- <group>/<slug>: <field>: <reason> (signed <initials> <date>)` for that exact
 `<group>/<slug>` and `<field>`.
 
-**Chain state carries step to step via `session_patch`, not the harness key.**
-`engine.run_turn`'s dry-run path (D14) writes nothing to `respond_contacts` and
-returns what it WOULD have written as `TurnResult.session_patch` (`engine.py
-run_tail`, `session_patch=session_patch if dry_run else None`) - exactly the
-top-level five-key shape `test_rearch_s3_journey_chain.py::_set_session_vars`
-writes. Every step here stays `is_test=True` (D14, and the brief's own words); this
-harness takes step N's `session_patch` and writes it onto the contact's
-`session_vars` itself before step N+1 runs, rather than relying on
-`previous_conversation_state` (`engine.HARNESS_KEYS`) - measured
-(`engine._inject_harness_session`) to still write into the OLD nested
-`session_vars["variables"]` key, not the five-key top level, so it would silently
-carry nothing forward under the new shape. Flagged as a design decision, not a
+**Chain state carries step to step via `session_patch`, not the harness key - by
+design, not because the harness key is broken.** `engine.run_turn`'s dry-run path
+(D14) writes nothing to `respond_contacts` and returns what it WOULD have written as
+`TurnResult.session_patch` (`engine.py run_tail`, `session_patch=session_patch if
+dry_run else None`) - exactly the top-level five-key shape
+`test_rearch_s3_journey_chain.py::_set_session_vars` writes. Every step here stays
+`is_test=True` (D14, and the brief's own words); this harness takes step N's
+`session_patch` and writes it onto the contact's `session_vars` ROW itself before step
+N+1 runs, the same row `engine.run_turn` reads from at the start of the next step,
+rather than sending it back as `previous_conversation_state`. `_build_envelope`
+(~line 828) strips any `previous_conversation_state` a case's captured envelope
+carries for exactly this reason: since Fix 3 (`engine._inject_harness_session`)
+that key IS honoured for real, and the `replay_turns/console/*.json` captures predate
+several current wire-shape conventions (singular `focus.customer`, `focus.
+order_status`, `open_question.options[].idx` - see that function's own comment), so
+letting a stale capture through would override the row this runner just wrote with
+shape the current read-back code cannot parse. Flagged as a design decision, not a
 silent guess.
 
 **`system_settings` switches are per-case, applied before each step (`_apply_switches`,
@@ -825,6 +830,16 @@ def _install_stubs(monkeypatch, stub_parser, *, turn: dict[str, Any]) -> list[di
 
 def _build_envelope(turn: dict[str, Any], *, message_id: str) -> Envelope:
     envelope_dict = dict(turn.get("envelope") or {})
+    # This runner chains state via the contact's `session_vars` ROW (this file's own
+    # note above, "Chain state carries step to step via `session_patch`, not the
+    # harness key") - a captured `previous_conversation_state` was never what the
+    # engine actually ran on. It predates the five-key wire shape besides (singular
+    # `focus.customer`, `focus.order_status`, `open_question.options[].idx`), and now
+    # that `engine._inject_harness_session` honours it for real, letting it through
+    # here would override the row the runner just wrote with stale shape the current
+    # read-back code cannot parse. Stripped before every step; `referenced_result_set`
+    # and `prompt_overrides` are unaffected.
+    envelope_dict.pop("previous_conversation_state", None)
     envelope_dict.setdefault("message", {})
     envelope_dict.setdefault("contact", {"id": 999999999})
     envelope_dict["is_test"] = True

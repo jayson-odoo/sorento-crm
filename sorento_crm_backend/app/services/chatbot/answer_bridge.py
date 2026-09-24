@@ -218,7 +218,10 @@ def apply_crossdomain_hit(
     identical phrase does, through `_miss_question`'s bare "Yes" arm, so a customer's
     "yes" answered a HIT-side offer with nothing to match against. `_crossdomain_offer_
     pending` mints the SAME `team_pick` shape, team off the rung's own `_xdBlock["team"]`
-    (`lanes/business/answer.py:1071/1427` - the exact value the phrase itself prints).
+    (`lanes/business/answer.py:1079`, set from `crossdomain_zeroset`'s own `team`
+    read at `:489` - the exact value the phrase itself prints; owner ruling 22 Sep
+    2026, R6 retired the PO-rung override that used to overwrite it after the fact,
+    so this is now the question's OWN origin-domain team, unconditionally).
 
     `focus_products` (hand pass 12 round 3, R5, owner ruling): a DID-YOU-MEAN PICK
     runs no resolver of its own (`resolver_payload is None`, the SAME fact `_ladder_
@@ -278,6 +281,12 @@ def _crossdomain_offer_pending(
     if not isinstance(block, Mapping) or block.get("any") is not True or not block.get("block"):
         return None
     team = block.get("team")
+    # SRTSC07 review round 2, item 3 (agent) / round 4 (brand, owner-approved, same
+    # reason): deliberately UNSTAMPED, both axes. `team` above comes off the
+    # cross-domain RUNG's own render block, not off this turn's `routing`/`gate` at
+    # all (this function takes neither as a parameter to read one from) - there is
+    # no "this turn's agent" or "this turn's brand" to stamp here, so the carry
+    # falls through to the default chain exactly as it did before either fix.
     return pending.ask(
         "team_pick",
         [{"position": 1, "label": "Yes", "entity_type": "team", "payload": {}}],
@@ -406,6 +415,18 @@ def apply_silent_company_offer(
             team=raw_team,
             asked_at_turn=asked_at_turn,
             expects="yes_no",
+            # SRTSC07 review round 2, item 3: `raw_team` is already THIS turn's own
+            # `routing.suggested_team`, so the agent half rides beside it on the
+            # pending's top-level payload, the same as `_miss_question`'s own
+            # bare-"Yes"/company-clarify arms - a bare "yes" over this offer answers
+            # it without a position. `brand_code` (round 4, owner-approved) is the
+            # SAME turn-level idiom, off the `gate` this function already takes as a
+            # parameter - never the option's OWN `brand_code` above, which stays
+            # `None` for the SILENT company (reviewer SF-3, unchanged).
+            payload={
+                "agent": (routing or {}).get("suggested_agent"),
+                "brand_code": gate.get("routing_brand") if isinstance(gate, Mapping) else None,
+            },
         )
         from dataclasses import replace
 
@@ -822,6 +843,27 @@ def _breakdown_gate(gate: Any, raw_fragment: Any) -> Any:
     return gate
 
 
+def _scope_gate(raw_fragment: Any) -> Any:
+    """The FETCH step's own scope refusal, when it made one - otherwise `None`.
+
+    Hotfix 22 Sep 2026 (PLAN-chatbot-stock-no-subject-hotfix-22sep.md): a turn that
+    `turn_runtime.make_tool_runner.runner` refused BEFORE the tool ran, because the
+    domain requires a scoping entity and this fetch carried none, rides its own
+    `run_gate` verdict on the fragment as `scope_gate`. That verdict is what
+    `not_found_error_message`'s `needs_scope` branch keys on (`gate_passed: False`
+    plus a `requires a scoping entity` reason, and the `gate_debug.allowed_lookup`
+    the sentence lists its filters from), and the RESOLVER's own gate cannot supply
+    it: on a bare "stock?" the resolver never ran at all (no entity to resolve), and
+    on the carried-subject turn it placed the carry perfectly well and has no
+    opinion about scope. Read for the miss TEXT only - `run_miss_lane` and the
+    breakdown bullets keep the resolver's gate, exactly as before.
+    """
+    if not isinstance(raw_fragment, Mapping):
+        return None
+    scope_gate = raw_fragment.get("scope_gate")
+    return scope_gate if isinstance(scope_gate, Mapping) else None
+
+
 def _ladder_resolved(resolved: Any, raw_fragment: Any) -> Any:
     """`resolved`, widened the SAME way `_breakdown_gate` widens `gate` - for
     `answer.crossdomain_zeroset`'s own read ONLY (D4, hand pass 9).
@@ -913,6 +955,15 @@ def _miss_question(
     option` always prefers a row's own `idx` over the position it is called with)."""
     routing = (parser or {}).get("routing") or {}
     team = routing.get("suggested_team")
+    # SRTSC07 (prod transcript, 22 Sep 2026): carried onto the pending beside `team`, so
+    # the acceptance turn's `(agent_code, team_code)` pair reaches `/external/
+    # next-assignee` intact - the pair it resolves a pool by - instead of the acceptance
+    # turn's own null `suggested_agent` falling to `DEFAULT_SUGGESTED_AGENT`.
+    agent = routing.get("suggested_agent")
+    # Round 4 (owner-approved, 22 Sep 2026): this turn's own resolved brand, off the
+    # SAME gate this function already takes as a parameter - `lanes/business/
+    # gate.py::run_gate`'s own `routing_brand`.
+    brand = gate.get("routing_brand") if isinstance(gate, Mapping) else None
 
     # The did-you-mean roster (`build_suggest_offer`'s D1/D2/D3 arms all populate
     # `suggest_last_result_set`). The require-specific PICKER (F6/AC-1701) is a FOURTH
@@ -965,7 +1016,12 @@ def _miss_question(
                 roster_options + member_options,
                 team=team,
                 asked_at_turn=asked_at_turn,
-                payload={"domain": (parser or {}).get("domain_hint"), "escalate_offered": True},
+                payload={
+                    "domain": (parser or {}).get("domain_hint"),
+                    "escalate_offered": True,
+                    "agent": agent,
+                    "brand_code": brand,
+                },
             )
 
     member = producers.get("build-cs-member-offer")
@@ -977,7 +1033,15 @@ def _miss_question(
             if option
         ]
         if options:
-            return pending.ask("member_offer", options, asked_at_turn=asked_at_turn)
+            # SRTSC07 review round 1, SHOULD-2: the member roster's own offer needed
+            # the same top-level stamp as the other mint sites in this function -
+            # picking a member option IS an escalation acceptance (`turn/apply.py:546`).
+            return pending.ask(
+                "member_offer",
+                options,
+                asked_at_turn=asked_at_turn,
+                payload={"agent": agent, "brand_code": brand},
+            )
 
     if roster_options:
         # AC-1691's umbrella, "in any domain and for any entity kind" - the SAME guard
@@ -990,7 +1054,12 @@ def _miss_question(
                 roster_options,
                 team=team,
                 asked_at_turn=asked_at_turn,
-                payload={"domain": (parser or {}).get("domain_hint"), "escalate_offered": True},
+                payload={
+                    "domain": (parser or {}).get("domain_hint"),
+                    "escalate_offered": True,
+                    "agent": agent,
+                    "brand_code": brand,
+                },
             )
 
     catalog = producers.get("escalate-catalog")
@@ -1028,6 +1097,13 @@ def _miss_question(
                 team=team,
                 asked_at_turn=asked_at_turn,
                 expects="yes_no",
+                # SRTSC07: the company clarify's own bare "yes" (no numbered pick) is
+                # answered by the generic accept arm, so this offer's top-level
+                # `payload["agent"]` is what the acceptance carry reads. `brand_code`
+                # (round 4) is the SAME turn-level idiom, one axis over - never the
+                # per-option `brand_code` two lines up, which is that SPECIFIC
+                # company's own and stays untouched.
+                payload={"agent": agent, "brand_code": brand},
             )
         return pending.ask(
             "team_pick",
@@ -1035,6 +1111,7 @@ def _miss_question(
             team=team,
             asked_at_turn=asked_at_turn,
             expects="yes_no",
+            payload={"agent": agent, "brand_code": brand},
         )
     return None
 
@@ -1138,22 +1215,22 @@ def _run_crossdomain_ladder(
 ) -> dict[str, Any]:
     """AC-1705's cross-domain stock ladder: `answer.run_crossdomain`'s own call, split
     out from the FOLD below (`_apply_crossdomain_render`, hand pass 9 item 2) so a
-    caller that needs the rung's own TEAM update (`_apply_crossdomain_rung` mutates
-    `parser["routing"]["suggested_team"]` in place) can run this BEFORE building any
-    text that reads `parser.routing`, then fold the SAME result's render afterwards -
-    never a second `run_crossdomain` call, which would probe twice for one fact.
+    caller can run this BEFORE building any text that reads the ladder's own render,
+    then fold the SAME result's render afterwards - never a second `run_crossdomain`
+    call, which would probe twice for one fact.
 
-    Main's own sequencing, measured (`lanes/business/__init__.py::complete_answer`,
-    `origin/main` at the time of this split): `run_crossdomain` runs BEFORE
-    `_run_miss_half`/`not_found_error_message` even starts, so `not_found_error_
-    message`'s own `team = _pretty_team(routing.suggested_team or "customer_service")`
-    (read at the TOP of that function, before its own `build_breakdown_msg` composes the
-    escalate sentence) already sees the rung's own team. This bridge's OLD single-call
-    shape (`_fold_crossdomain_ladder`, folded the render immediately after running the
-    ladder) ran this AFTER the miss text (and its escalate sentence) were already
-    composed, so the sentence was always built off the STALE/default team - live turn
-    on this lane named "customer service" instead of the PO rung's own "purchasing"
-    (hand pass 9, item 2, tester 43's own measurement).
+    Owner ruling 22 Sep 2026, R6 retired the reason this split originally existed:
+    `_apply_crossdomain_rung` no longer mutates `parser["routing"]["suggested_team"]`
+    at all (`_CROSSDOMAIN_RUNG_TEAM` is deleted - a stock-origin ask is ALWAYS
+    warehouse and an incoming-origin ask is ALWAYS purchasing, whichever rung answers,
+    so there is no team update left for a caller to race). Ordering still matters for
+    a different, unrelated reason: the ladder's own RENDERED TEXT (the "but PO is
+    placed" block) has to exist before `not_found_error_message` / `miss_suggest.
+    run_miss_lane` compose the miss reply, so `_apply_crossdomain_render` can fold it
+    in - this call still has to run first, it just never again changes which team the
+    escalate sentence names (that is now `turn_runtime.lane_parse_output`'s own
+    domain-aware fallback, filled before this function ever sees the parser dict - see
+    that function's own docstring).
 
     `answer.run_crossdomain` gates itself to `domain_hint in ("incoming", "inventory")`
     and at least one probeable (uuid-carrying) product (`crossdomain_zeroset`'s own
@@ -1452,12 +1529,13 @@ def answer_for(
     contact_id = (ctx.get("contact") or {}).get("id") if isinstance(ctx, Mapping) else None
     space_id = business_services.fetch_space_id(db) if db is not None else None
     # Hand pass 9, item 2: the ladder runs BEFORE the miss text - matching main's own
-    # sequencing (`complete_answer` calls `run_crossdomain` ahead of `_run_miss_half`) -
-    # so `_apply_crossdomain_rung`'s own `parser["routing"]["suggested_team"] = rung_team`
-    # mutation (`lanes/business/answer.py`, unchanged from main) lands BEFORE
-    # `not_found_error_message` reads `routing.suggested_team` for its own escalate
-    # sentence. See `_run_crossdomain_ladder`'s own docstring for the measured main
-    # citation. The render itself is folded onto `text` at the very end, from this SAME
+    # sequencing (`complete_answer` calls `run_crossdomain` ahead of `_run_miss_half`).
+    # Owner ruling 22 Sep 2026, R6 retired the TEAM half of why this ordering mattered
+    # (`_apply_crossdomain_rung` no longer mutates `parser["routing"]["suggested_team"]`
+    # at all - see `_run_crossdomain_ladder`'s own docstring); the ordering still holds
+    # for the ladder's own RENDERED TEXT, which has to exist before
+    # `not_found_error_message` composes the miss reply so it can be folded in. The
+    # render itself is folded onto `text` at the very end, from this SAME
     # `crossdomain_result` - never a second `run_crossdomain` call.
     crossdomain_result = _run_crossdomain_ladder(
         parser=parser,
@@ -1472,8 +1550,11 @@ def answer_for(
         dry_run=dry_run,
     )
 
+    miss_gate = _scope_gate(raw_fragment)
+    if miss_gate is None:
+        miss_gate = _breakdown_gate(gate, raw_fragment)
     not_found = answer_mod.not_found_error_message(
-        full_payload, parser=parser, resolved=resolved, gate=_breakdown_gate(gate, raw_fragment)
+        full_payload, parser=parser, resolved=resolved, gate=miss_gate
     )
     offer = miss_mod.run_miss_lane(
         not_found,

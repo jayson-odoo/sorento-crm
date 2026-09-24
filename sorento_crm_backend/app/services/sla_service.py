@@ -2,7 +2,7 @@
 import logging
 import re
 from sqlalchemy.orm import Session
-from sqlalchemy import or_, func, update
+from sqlalchemy import or_, func
 from sqlalchemy.exc import IntegrityError
 from typing import Iterable, Optional
 from datetime import date, datetime, timezone, timedelta
@@ -1452,10 +1452,11 @@ class ConversationSLATrackingService:
             return True
         if self._is_admin(user_id):
             return True
-        # Resolving a CONVERSATION ticket NULLs assigned_to_id by design, so an
-        # assignee-only rule locks the resolver out of the very drawer AC-M1
-        # keeps open in front of them (thread, comments, snippet picker, AI
-        # draft) the instant they press Resolve. Read access follows whoever
+        # A conversation ticket keeps its assignee on resolve (owner ruling R5,
+        # 22 Sep 2026), but a resolver who was never the assignee (e.g. an admin
+        # or teammate resolving on someone else's behalf) still needs the drawer
+        # AC-M1 keeps open in front of them (thread, comments, snippet picker, AI
+        # draft) the instant they press Resolve. Read access also follows whoever
         # resolved it; the write paths (send, takeover, reassign, escalate) keep
         # their own is_resolved guards, so this widens reading only.
         resolved_by = getattr(tracking, "resolved_by", None)
@@ -3340,8 +3341,9 @@ class ConversationSLATrackingService:
 
     def get_existing_assignee_for_contact_phone(self, contact_phone: str) -> Optional[dict]:
         """
-        If there is a conversation SLA tracking for this contact phone that already has an assignee,
-        return that user's info (id, email, name, respond_user_id). Otherwise return None.
+        If there is an OPEN conversation SLA tracking for this contact phone that
+        already has an assignee, return that user's info (id, email, name,
+        respond_user_id). Otherwise return None.
         Used by next-assignee API to avoid reassigning conversations that are already assigned.
 
         AC-F1: not currently wired into any route (kept for callers that may want a
@@ -3350,6 +3352,12 @@ class ConversationSLATrackingService:
         explicit ``order_by`` below (matching ``get_preferred_tracking_for_contact``)
         replaces what used to be an undocumented, unordered ``.first()`` over a
         possibly-multi-row result.
+
+        A resolved row is excluded outright (owner ruling R5, 22 Sep 2026, fix
+        round 1 / S2): resolve keeps ``assigned_to_id`` for audit now, so without
+        this filter a contact whose only ticket is resolved would read back its
+        last resolver as the "existing assignee", the same bug ``next_assignee.
+        _tracking_is_assigned`` had (AC-KA-11).
         """
         from sqlalchemy.orm import joinedload
         from app.models.access import RespondContact
@@ -3367,12 +3375,10 @@ class ConversationSLATrackingService:
             .filter(
                 ConversationSLATracking.respond_contact_id == contact.id,
                 ConversationSLATracking.assigned_to_id.isnot(None),
+                ConversationSLATracking.is_resolved.is_(False),
                 conversation_tracking_scope(),
             )
-            .order_by(
-                ConversationSLATracking.is_resolved.asc(),  # open first
-                ConversationSLATracking.created_at.desc(),
-            )
+            .order_by(ConversationSLATracking.created_at.desc())
             .first()
         )
         if tracking is None or getattr(tracking, "assigned_to_id", None) is None:
@@ -4744,8 +4750,10 @@ class ConversationSLATrackingService:
         # Smart handling for is_resolved (same pattern: resolved_at, resolution_duration, resolved_by as user UUID)
         resolved_in_this_request = False
         # AC-M3: the close webhook names the team as the contact-facing fallback
-        # when the resolver has no Respond mapping. Snapshot it BEFORE the resolve
-        # blanks agent_id / team_set_code below - after the commit it is gone.
+        # when the resolver has no Respond mapping. Owner ruling R5 (22 Sep 2026):
+        # resolve no longer clears team_set_code, so this could read it straight
+        # off `tracking` after the commit - snapshotted here anyway to keep this
+        # read on the same footing as the rest of the resolve block.
         close_team_label: Optional[str] = None
         if is_resolved:
             # Short-circuit above already returned for already-resolved case.
@@ -4756,9 +4764,13 @@ class ConversationSLATrackingService:
                 if _rid:
                     update_data["resolved_by"] = _rid
             update_data["is_resolved"] = True
-            # Conversation SLA: unset assignee + escalation routing on resolve so n8n / external
-            # API stops looking at the row. Form SLA: keep all those fields so the audit trail
-            # (agent / stage / assignee at resolution) survives in the per-form SLA Tracking tab.
+            # Owner ruling R5 (22 Sep 2026): both Conversation SLA and Form SLA keep
+            # assigned_to / assigned_to_id / agent_id / team_set_code / message_id on
+            # resolve, for the audit trail (agent / stage / assignee at resolution).
+            # Every worklist (My Pending, My Team, the inbox Mine tab) already gates
+            # on is_resolved rather than on the assignee, so this does not resurrect a
+            # resolved ticket anywhere - see sla_scope.open_tracker_scope() and
+            # conversation_inbox_service._open_conversation_ticket_clause().
             from app.services.form_sla_service import FORM_SLA_TYPES
 
             _is_form_tracker = (
@@ -4768,11 +4780,6 @@ class ConversationSLATrackingService:
                 close_team_label = (self._ticket_team_labels([tracking]) or {}).get(
                     str(tracking.id)
                 )
-                update_data["assigned_to"] = None
-                update_data["assigned_to_id"] = None
-                update_data["agent_id"] = None
-                update_data["team_set_code"] = None
-                update_data["message_id"] = None
             # Always set resolved_at when marking resolved (UTC)
             if "resolved_at" not in update_data or update_data.get("resolved_at") is None:
                 update_data["resolved_at"] = _now_utc()
@@ -4829,21 +4836,6 @@ class ConversationSLATrackingService:
         for key, value in update_data.items():
             setattr(tracking, key, value)
 
-        # Force NULL for routing / external ids on resolve. Some session edge cases (e.g. after a prior
-        # commit in the same request) can leave ORM-only clears from not flushing; a direct UPDATE
-        # matches DB state (used by test-overrides "Mark as resolved" and all other resolve paths).
-        # Skip for form trackers - they keep agent / team / assignee for audit.
-        from app.services.form_sla_service import FORM_SLA_TYPES as _FORM_TYPES
-
-        if resolved_in_this_request and (
-            getattr(tracking, "source_entity_type", None) not in _FORM_TYPES
-        ):
-            self.db.execute(
-                update(ConversationSLATracking)
-                .where(ConversationSLATracking.id == tracking.id)
-                .values(message_id=None, team_set_code=None, agent_id=None)
-            )
-
         self.db.commit()
         self.db.refresh(tracking)
 
@@ -4871,6 +4863,8 @@ class ConversationSLATrackingService:
         # reading of AC-C3: "no Respond API call is made" on ANY ticket resolve) is an
         # open product question for the dedicated ticket-resolve build - not applied
         # here; flagged for an orchestrator decision.
+        from app.services.form_sla_service import FORM_SLA_TYPES as _FORM_TYPES
+
         if resolved_in_this_request and (
             getattr(tracking, "source_entity_type", None) not in _FORM_TYPES
         ):
@@ -4907,8 +4901,10 @@ class ConversationSLATrackingService:
 
         # AC-K3: the shared write path for resolve, respond and assignment
         # changes - one poke covers every route that funnels through here.
-        # Both owners: a resolve clears the assignee, an assignment change
-        # replaces them, and either way two pending lists can be stale.
+        # Both owners: an assignment change replaces the assignee outright; a
+        # resolve keeps the same assignee (owner ruling R5, 22 Sep 2026) but
+        # still drops the row off that assignee's pending list, so both events
+        # still need publishing even when before/after are the same id.
         self._publish_conversation_event(
             tracking,
             conversation_event_bus.EVENT_TICKET_UPDATED,

@@ -103,14 +103,17 @@ export interface AutocountPullCompareSummary {
 
 /** One field-level (or row-level) difference the Compare tab lists and can export - the
  *  REAL backend shape (`app/services/autocount_pull_compare.py`): `excel` / `pull`, not
- *  `your_excel` / `autocount_pull`. */
+ *  `your_excel` / `autocount_pull`. `excel`/`pull` are JSON-typed, not always strings - an
+ *  `is_active` difference carries a boolean and `on_hand_qty` carries a number (small-fix
+ *  track, autocount-compare-tab-detail: booleans rendered blank before this type was widened
+ *  to match what the backend actually sends). */
 export interface AutocountCompareDifference {
   item_code: string;
   /** Stock compare only - the pair's location. */
   location?: string;
   field: string;
-  excel: string;
-  pull: string;
+  excel: string | number | boolean | null;
+  pull: string | number | boolean | null;
 }
 
 /** `POST /api/v1/autocount/pulls/{job_id}/compare` response. `summary` is the STORED

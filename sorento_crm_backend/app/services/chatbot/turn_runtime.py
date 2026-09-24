@@ -33,6 +33,7 @@ from sqlalchemy.orm import Session
 
 from app.services.chatbot import jsc
 from app.services.chatbot.contracts import DEFAULT_SUGGESTED_AGENT, DEFAULT_SUGGESTED_TEAM
+from app.services.chatbot.turn.decide import picked_positions
 from app.services.chatbot.turn.pending import OFFER_KINDS, Pending, from_wire, tick as tick_pending
 from app.services.chatbot.turn.plan import FetchSpec
 from app.services.chatbot.turn import policy_rows
@@ -84,6 +85,17 @@ class TurnContext:
     access_levels: list[str] = field(default_factory=list)
     contains_flyer: bool = False
     ideation: Any = None
+    # SRTSC07 (prod transcript, 22 Sep 2026): this turn's own `routing.suggested_agent`,
+    # read by `turn/compose.py::compose` so a freshly minted `team_pick` offer can carry
+    # the agent half beside the team it already carries - `answer_bridge`'s own mint
+    # sites read it straight off `parser["routing"]`, which needs no ctx field of its
+    # own, so this is the ONE mint site that had nowhere else to read it from.
+    suggested_agent: str | None = None
+    # Round 4 (owner-approved, 22 Sep 2026): the SAME reasoning, one axis over - this
+    # turn's own resolved brand (`lanes/business/gate.py`'s `routing_brand`), read by
+    # `turn/compose.py::compose` so a freshly minted `team_pick`/roster re-arm can
+    # stamp `payload["brand_code"]` beside the agent it already stamps.
+    routing_brand: str | None = None
 
 
 # --------------------------------------------------------------------------- #
@@ -418,7 +430,157 @@ def escalation_roster_plan(
     return plan or None
 
 
-def with_routing_agent_default(verdict: dict[str, Any]) -> dict[str, Any]:
+def _accepted_pending_field(
+    pending: Pending | None, verdict: Mapping[str, Any], field: str
+) -> str | None:
+    """The AGENT or BRAND the customer just picked THIS turn, off an ACCEPTABLE open
+    offer - one reader, parameterized only by which payload key it is reading, shared
+    by `_accepted_pending_agent` (called from `with_routing_agent_default`, before
+    the access read) and `_accepted_pending_brand` (round 4, called from
+    `lane_parse_output`, for `escalation_context`'s new `carried_brand` rung). The
+    gate, the accept check and the per-option/top-level fall-through are the SAME
+    for both fields - only the key read off each payload differs.
+
+    Reuses `turn.decide.picked_positions` - the SAME reading `apply()` uses to tell
+    which option a numbered pick answered - rather than re-parsing
+    `reference_positions` a second time here (PLAN "one seam"). A multi-team
+    `team_pick` names one specific option's own `payload[field]`; a plain
+    acceptance (a bare "yes" over a single-option offer, or a roster's attached
+    escalate sentence - nothing picked by number) falls to the pending's own
+    top-level `payload[field]`, which is where the mint sites
+    (`turn/compose.py::_team_pick_question`, `answer_bridge.py::_miss_question`,
+    `engine.py::_question_offered`) store the minting turn's own value.
+
+    SRTSC07 review round 1, SHOULD-1: gated on the SAME condition `turn/apply.py:691`
+    uses to decide "this offer is acceptable" - `pending.kind in OFFER_KINDS or
+    pending.payload.get("escalate_offered") is True`. Without this gate a roster
+    pending with NO escalate offer attached (a plain `product_pick`, still open while
+    this turn asks for something else entirely) could still supply a value here,
+    while `lane_parse_output`'s own team chain (`pending.kind in OFFER_KINDS` alone,
+    no `escalate_offered` arm - a fresh, un-accepted handover carries no `accepted_
+    team` either) left the team at `DEFAULT_SUGGESTED_TEAM` - the two halves of the
+    pair disagreeing and `/external/next-assignee` 404ing on a pool that does not
+    exist (measured: `incoming_stock_enquiries` / `customer_service`).
+
+    SHOULD-3: the per-option read only short-circuits on an option that actually
+    NAMES a value for this field, or the explicit hold (`payload.get("hold") is
+    True`, the "No it's okay" decline). A MEMBER option (a combined roster+CS
+    offer's own member half, `_miss_question`'s `combined_member_rows` arm) carries
+    no agent/brand of its own - picking one IS still an escalation acceptance
+    (`turn/apply.py:546`) - so it falls through to the pending's own top-level value
+    instead of returning `None` outright.
+
+    SRTSC07 review round 2, SHOULD-1 residual: the round 1 gate was "ACCEPTABLE",
+    not "ACCEPTED" - an `escalate_offered` roster (not in `OFFER_KINDS`) still open
+    while THIS turn asks about something else entirely (no yes, no escalation
+    confirmation, no number landing on the roster) supplied its carried value
+    unconditionally, while the TEAM half stays at `DEFAULT_SUGGESTED_TEAM` for that
+    same roster - `lane_parse_output`'s own chain only reads `pending.team` for an
+    `OFFER_KINDS` pending (`turn_runtime.py:647`), never a roster, accepted or not.
+    An extra accept check now gates ONLY that arm, using the same signal `decide()`
+    itself reads at `turn/decide.py:571-575` (a bare "yes"/escalation-confirmation
+    flag, vetoed by a decline or a negation) plus a numbered pick that actually
+    lands on one of the roster's own options. A proper `OFFER_KINDS` pending
+    (`team_pick`/`company_pick`/`member_offer`) kept round 1's behaviour
+    unconditionally at the time - its team was ALSO read unconditionally at that
+    same `lane_parse_output` line, so the two halves stayed in step either way.
+
+    Historical note (S10, fix round 6, 23 Sep 2026): `lane_parse_output` no longer
+    has an `OFFER_KINDS` pending arm at all - `turn/apply.py::_answer_pending`
+    already makes the acceptance judgement this paragraph describes and stamps it
+    onto `trace.team`, which reaches `lane_parse_output` as `accepted_team` (the
+    chain's own first read). The paragraph above is kept as the design history for
+    THIS function's own accept-check, not a claim about `lane_parse_output`'s
+    current shape.
+
+    SRTSC07 review round 2 NITs: (A) a numbered pick only counts as landing on the
+    roster's OWN escalation offer when the matched option is MEMBER-typed - the
+    same reading `turn/apply.py::_picks_a_member_option` uses to decide a roster
+    pick is an escalation acceptance rather than a business one. Without it, "2"
+    over an ordinary PRODUCT option in a did-you-mean roster that also carries an
+    attached escalate sentence carried the roster's agent onto a plain business
+    fetch, with the team still defaulted (no assign happens, but the access check
+    and any miss-offer minted off that same turn saw the mismatched pair). (B) the
+    accept signal is vetoed by the SAME two reads `decide()`'s own qualifier uses
+    (`facts["declined"]` off `escalation.escalation_declined`, `facts["negated"]`
+    off `is_affirmative is False`) - a verdict can carry BOTH `is_affirmative: true`
+    and an explicit decline (the parser is not asked to keep the two mutually
+    exclusive), and `decide()` treats the decline as decisive either way.
+    """
+    if pending is None:
+        return None
+    payload = pending.payload if isinstance(pending.payload, Mapping) else {}
+    acceptable_offer = pending.kind in OFFER_KINDS
+    escalate_offered_roster = not acceptable_offer and payload.get("escalate_offered") is True
+    if not acceptable_offer and not escalate_offered_roster:
+        return None
+    try:
+        picked = picked_positions(pending, dict(verdict))
+    except Exception:  # noqa: BLE001 - a malformed verdict must not break the carry
+        picked = None
+    picked_position = None
+    if picked:
+        positions, _via = picked
+        if len(positions) == 1:
+            picked_position = positions[0]
+    if escalate_offered_roster:
+        escalation = verdict.get("escalation")
+        escalation = escalation if isinstance(escalation, Mapping) else {}
+        landed_on_a_member_option = picked_position is not None and any(
+            isinstance(opt, Mapping)
+            and opt.get("position") == picked_position
+            and opt.get("entity_type") == "member"
+            for opt in pending.options
+        )
+        declined = escalation.get("escalation_declined") is True
+        negated = verdict.get("is_affirmative") is False
+        accepted = (
+            verdict.get("is_affirmative") is True
+            or escalation.get("is_escalation_confirmation") is True
+            or landed_on_a_member_option
+        ) and not (declined or negated)
+        if not accepted:
+            return None
+    if picked_position is not None:
+        for opt in pending.options:
+            if not isinstance(opt, Mapping) or opt.get("position") != picked_position:
+                continue
+            opt_payload = opt.get("payload")
+            opt_payload = opt_payload if isinstance(opt_payload, Mapping) else {}
+            value = opt_payload.get(field)
+            if value or opt_payload.get("hold") is True:
+                return value or None
+            # A matched option that names neither a value for this field nor the
+            # hold flag (a MEMBER option) falls through to the pending's own
+            # top-level value below, rather than returning `None` here.
+            break
+    value = payload.get(field)
+    return value or None
+
+
+def _accepted_pending_agent(pending: Pending | None, verdict: Mapping[str, Any]) -> str | None:
+    """The agent half - see `_accepted_pending_field`'s own docstring for the shared
+    gate/accept-check/fall-through this and `_accepted_pending_brand` both share."""
+    return _accepted_pending_field(pending, verdict, "agent")
+
+
+def _accepted_pending_brand(pending: Pending | None, verdict: Mapping[str, Any]) -> str | None:
+    """The brand half (round 4, owner-approved, 22 Sep 2026 - "a MOCHA product's
+    escalation goes to Lucas, a SORENTO product's to Jereen"). Read by
+    `lane_parse_output`, not `with_routing_agent_default`: the brand has no access
+    check to sit ahead of (unlike the agent), and it is written onto
+    `out["escalation"]["carried_brand"]` for `escalation_context`'s own new rung to
+    read back, the same "one flag on ctx.parse.output" idiom `preferred_assignee_id`
+    / `company_pick` already use. See `_accepted_pending_field`'s own docstring for
+    the shared gate/accept-check/fall-through."""
+    return _accepted_pending_field(pending, verdict, "brand_code")
+
+
+def with_routing_agent_default(
+    verdict: dict[str, Any],
+    *,
+    pending: Pending | None = None,
+) -> dict[str, Any]:
     """The verdict with `routing.suggested_agent` filled in ONCE, before access.
 
     Hand-pass 1 finding 2b (16 Sep 2026): `engine.run_turn` checked access on the
@@ -430,11 +592,30 @@ def with_routing_agent_default(verdict: dict[str, Any]) -> dict[str, Any]:
     access read; `lane_parse_output` no longer carries its own copy. The team half of the
     routing pair stays in `lane_parse_output`, because its chain reads the pending offer
     and the prior session, which are lane inputs, not a verdict fact.
+
+    SRTSC07 (prod transcript, 22 Sep 2026): the agent half used to stop here, at the
+    hard default, while the team half two lines below (`lane_parse_output`) carried
+    an accepted offer's team forward. `pending` is the SAME extra input that chain
+    already reads, added here as a keyword so every existing one-arg caller keeps
+    working unchanged. Precedence, in order: a NAMED agent (this turn's own, from the
+    parser - never overridden); the accepted option's agent off `pending`
+    (`_accepted_pending_agent`, the customer picked it THIS turn); the hard default,
+    last.
+
+    SRTSC07 review round 1, SHOULD-4: a `session=` keyword and its own
+    `_prior_suggested_agent` fallback (`variables.routing.suggested_agent`, one turn
+    back) used to sit between the two - removed. No writer in this codebase ever
+    produces that nest for the agent half: `turn/tail.py`'s own five session keys hold
+    no `variables.routing` at all, and `overwrite_for_contact` replaces the whole
+    block rather than merging into a legacy nest. `_prior_suggested_team` keeps its
+    own copy of that read because a REAL writer exists for the team half (measured:
+    reviewer round 1 found none for the agent half) - the two chains are allowed to
+    differ in length for that reason.
     """
     out = dict(verdict)
     routing = dict(out.get("routing") or {})
     if not routing.get("suggested_agent"):
-        routing["suggested_agent"] = DEFAULT_SUGGESTED_AGENT
+        routing["suggested_agent"] = _accepted_pending_agent(pending, out) or DEFAULT_SUGGESTED_AGENT
     out["routing"] = routing
     _report_status_means_order_domain(out)
     return out
@@ -498,6 +679,7 @@ def lane_parse_output(
     accepted_company: str | None = None,
     declined_offer_copy: bool = False,
     prior_session: Any = None,
+    policy: Any = None,
 ) -> dict[str, Any]:
     """`ctx.parse.output` for the kept lanes, projected from the v3 verdict.
 
@@ -517,17 +699,41 @@ def lane_parse_output(
       `test_two_staff_with_the_same_name_in_different_teams_clarifies_instead_of_guessing`
       both call `escalation.run()` directly with a hand-built ctx and pin a null/inherited
       team flowing through UNGUARDED - the default belongs to the layer that builds
-      `ctx.parse.output`, not to the lane that reads it). Chain, in order: the team an
-      ACCEPTED offer just named (`apply`'s `trace.team`, the option the customer picked
-      off the roster - it outranks the rest because they picked it THIS turn, and a
-      multi-team offer's own `pending.team` stays null until they do); a NAMED team
-      (this turn's own); an OFFER's carried team (`pending.team`, contract 108, an
-      acceptance names no team of its own); a PREVIOUS turn's own carried routing
-      (`_prior_suggested_team`, test_pass4_item5's B3 - "the carried team when a previous
-      turn had one, else the table's default", never the default unconditionally); the
-      hard default, last. The parser's own answer stays untouched on `_parser_raw`, which
-      is what `escalation._parser_team` reads to tell "this turn named a team" from "this
-      turn accepted one".
+      `ctx.parse.output`, not to the lane that reads it). Chain, in order (owner ruling
+      23 Sep 2026, R9, satisfied here by `accepted_team` alone - see the S10 note
+      below): the team an ACCEPTED offer just named (`apply`'s `trace.team`, the
+      option the customer picked off the roster - it outranks the rest because they
+      picked it THIS turn, and a multi-team offer's own `pending.team` stays null
+      until they do); a NAMED team (this turn's own, read straight off the verdict);
+      THIS TURN's own domain (`policy.domain(domain_hint).escalation_team_code`,
+      R6/R7 - a parser emission naming no team gets the domain's real escalation
+      team, a deterministic fact about the question just asked, read before a stale
+      carry from a PREVIOUS turn, AC-EQ-16/17/20); a PREVIOUS turn's own carried
+      routing (`_prior_suggested_team`, test_pass4_item5's B3 - "the carried team
+      when a previous turn had one, else the table's default" - still applies when
+      THIS turn names no resolvable domain at all, AC-EQ-19); the hard default
+      (`DEFAULT_SUGGESTED_TEAM`), last of all, for a domain `policy` cannot resolve
+      (no `policy` in scope, or a domain with no escalation row) and no prior carry
+      either. The parser's own answer stays untouched on `_parser_raw`, which is
+      what `escalation._parser_team` reads to tell "this turn named a team" from
+      "this turn accepted one".
+
+      **S10 (fix round 6, "simplest thing that works"): there is no separate OPEN-
+      OFFER arm here any more.** R9 (23 Sep 2026) ruled that an open offer's team
+      wins only on an actual acceptance - but `turn/apply.py`'s own `_answer_pending`
+      (:285, :675) ALREADY computes exactly that judgement and stamps it onto
+      `trace.team` the moment `decide()` calls a turn an acceptance
+      (`answer_pending_accept`), and `engine.py` already hands `trace.team` in here
+      as `accepted_team` (the very first read above). A `pending.team` arm gated by
+      its own copy of the same accept signal (`_pending_offer_answered`, added in
+      fix round 5, deleted here) was judging the SAME fact TWICE - reviewer kill
+      test, fix round 6: deleting both the arm and the helper left the full suite
+      green except two unit tests (AC-EQ-21/22) that called this function directly
+      with `pending=` but no `accepted_team=`, a shape `engine.run_turn` never
+      actually produces (a real acceptance always sets `accepted_team`). Those two
+      tests are re-pointed to pass `accepted_team`, the production shape, instead.
+      AC-EQ-18 (a fresh, unaccepted question over an open offer) is byte-identical
+      to AC-EQ-20 once the arm is gone - folded into it, not duplicated.
     """
     out = dict(verdict)
     if domain:
@@ -565,11 +771,35 @@ def lane_parse_output(
 
     routing = dict(out.get("routing") or {})
     if accepted_team:
+        # R9 is satisfied here: `accepted_team` IS the open offer's team whenever
+        # THIS turn genuinely accepted one - `turn/apply.py::_answer_pending` only
+        # stamps `trace.team` (what `engine.py` passes in as `accepted_team`) on the
+        # `answer_pending_accept` rule, the acceptance judgement itself. A turn that
+        # did not accept anything passes `accepted_team=None` and falls straight
+        # through to the domain fill below - see S10 in this function's own
+        # docstring for the fix round 6 history (a redundant second arm, judging the
+        # SAME fact off `pending` directly, used to sit here and was deleted).
         routing["suggested_team"] = accepted_team
-    if not routing.get("suggested_team") and pending is not None and pending.kind in OFFER_KINDS:
-        routing["suggested_team"] = pending.team
     if not routing.get("suggested_team"):
-        routing["suggested_team"] = _prior_suggested_team(prior_session) or DEFAULT_SUGGESTED_TEAM
+        # Owner ruling 23 Sep 2026, R7 (AC-EQ-16/17/19), supersedes R6's own
+        # ordering (22 Sep 2026). Chain, in order: an ACCEPTED offer's team (above);
+        # THIS TURN's domain (`policy.domain(domain_hint).escalation_team_code`,
+        # `turn/policy_rows.py`) - a deterministic fact about the QUESTION the
+        # parser was just asked, read before the prior-turn carry because a turn
+        # that named a real domain is a fresher fact than whatever team a stale
+        # session happened to be carrying (AC-EQ-16/17: an incoming ask carrying
+        # "purchasing" forward must not paint the NEXT turn's plain stock question
+        # "purchasing" too - AC-EQ-20 is the same shape for an unanswered open
+        # offer, which reaches this same fallback since it named no `accepted_team`
+        # either); a PREVIOUS turn's own carried routing (`_prior_suggested_team`,
+        # test_pass4_item5's B3) - still applies when THIS turn names no resolvable
+        # domain at all (AC-EQ-19, `policy.domain(None)` is `None`); the hard
+        # default (`DEFAULT_SUGGESTED_TEAM`), last of all.
+        domain_row = policy.domain(out.get("domain_hint")) if policy else None
+        domain_team = domain_row.escalation_team_code if domain_row else None
+        routing["suggested_team"] = (
+            domain_team or _prior_suggested_team(prior_session) or DEFAULT_SUGGESTED_TEAM
+        )
     # `suggested_agent`'s default is applied once, upstream, by `with_routing_agent_default`
     # (finding 2b) - the access read and the lanes see the same value.
     out["routing"] = routing
@@ -590,6 +820,17 @@ def lane_parse_output(
     # fills what the message itself did not say.
     if accepted_company and not (out.get("escalation") or {}).get("company_pick"):
         out["escalation"] = {**(out.get("escalation") or {}), "company_pick": accepted_company}
+    # Round 4 (owner-approved, 22 Sep 2026): the brand half of the SAME acceptance
+    # carry the agent uses - `_accepted_pending_brand` shares `_accepted_pending_
+    # field`'s gate/accept-check with `_accepted_pending_agent`, so an unaccepted
+    # turn carries no brand either. `escalation_context`'s own new `carried_brand`
+    # rung reads this key back (`lanes/escalation.py`), after its picked-member/
+    # company-pick/same-team arms - a SPECIFIC row's own brand there must still
+    # outrank a generic carry, which is why this writes a NEW key rather than
+    # touching `company_pick`/`preferred_assignee_id` at all.
+    carried_brand = _accepted_pending_brand(pending, verdict)
+    if carried_brand:
+        out["escalation"] = {**(out.get("escalation") or {}), "carried_brand": carried_brand}
     # AC-1703's tail, captain's ruling 20 Sep 2026: a decline over a NON-escalation
     # offer (a did-you-mean roster's own attached escalate sentence, a detail offer)
     # finishes on the SAME `escalation_declined` branch kind as an actual escalation
@@ -1420,6 +1661,7 @@ def make_tool_runner(
     resolver_gate: dict[str, Any] | None = None,
     resolver_tier_gate: dict[str, Any] | None = None,
     resolved_kinds: dict[str, dict[str, int]] | None = None,
+    policy: Any = None,
 ) -> Callable[[str, FetchSpec], dict[str, Any]]:
     """The ONE seam that reaches a tool: `run_fetch` calls it once per `FetchSpec`.
 
@@ -1456,6 +1698,7 @@ def make_tool_runner(
     """
     from app.services.chatbot.lanes import business
     from app.services.chatbot.lanes.business import fetch as business_fetch
+    from app.services.chatbot.lanes.business import gate as gate_mod
     from app.services.chatbot.lanes.business import services as business_services
 
     def runner(domain: str, spec: FetchSpec) -> dict[str, Any]:
@@ -1467,7 +1710,21 @@ def make_tool_runner(
             # under), never off this turn's verdict - a bare "more" states no tier, and
             # an empty list is read downstream as "no tier filter at all".
             page_predicate, page_ids = page_the_set(db, carry)
-        lane_out = lane_parse_output(verdict, focus=focus, domain=domain)
+        # R6 (fix round 2), corrected in fix round 4: `policy` is threaded through
+        # so a null `routing.suggested_team` gets a domain-aware fill here too,
+        # rather than the flat `DEFAULT_SUGGESTED_TEAM` literal - but this is the
+        # DOMAIN RUNG ONLY. Unlike `engine.py`'s own `lane_parse_output` call, this
+        # one passes no `pending`/`prior_session`, so the fetch context's own
+        # `routing.suggested_team` can never come from an open offer or a carried
+        # prior-turn team the way the turn's real `ctx.parse.output` can (measured,
+        # fix round 4: case-025 turn 1's fetch context reads "purchasing" off the
+        # domain rung while its parse output reads "warehouse" off the open offer -
+        # the two genuinely disagree). Not a bug worth chasing today: nothing reads
+        # this fetch context's own `routing.suggested_team` - `lane_out` feeds tool
+        # ARGS (access levels, date filters, entities), never an escalate sentence
+        # or a pending write, both of which read the turn's real `ctx.parse.output`
+        # instead. Flagged here so the next reader does not assume parity.
+        lane_out = lane_parse_output(verdict, focus=focus, domain=domain, policy=policy)
         lane_out = _spec_window(lane_out, spec)
         answered = spec.filters.get("outstanding")
         if isinstance(answered, dict):
@@ -1555,6 +1812,56 @@ def make_tool_runner(
             and bool(unplaced)
             and all(_entity_is_unplaced(e, unplaced) for e in entities)
         )
+        # Hotfix 22 Sep 2026 (PLAN-chatbot-stock-no-subject-hotfix-22sep.md, live
+        # contact 423729104 turns 59-60): the guard above needs `bool(unplaced)`, and
+        # the whole-book read that got through carried NOTHING unplaced. Turn 59's
+        # "Srtwc8608-p-rl" resolved only as a `product_set` - a kind
+        # `ALLOWED["inventory"]` does not take - so the carry was parked on
+        # `focus.extra["product_set"]`, handed back to the resolver on turn 60
+        # ("Stock"), left `unplaced` empty either way, and `compatible_entities` came
+        # out empty: `crm_inventory_stock_balance_list` ran with zero filters and
+        # answered with 50 rows of the catalogue. A bare "stock?" on turn 1 is the
+        # same hole from the other side - no entities at all, so the resolver never
+        # even runs and `unplaced` is empty for that reason instead.
+        #
+        # `run_gate` is ASKED the question rather than given a second copy of its
+        # tables: an entity-less ask in this domain is exactly what `ALLOWS_EMPTY` /
+        # `INTENTS_ALLOWING_EMPTY` already rule on (`inventory` is False on purpose -
+        # "a bare 'stock?' must ask which product" - and `low_stock_report` is the one
+        # intent exempted from it, PLAN-low-stock-report S6), and its verdict carries
+        # both the reason string and the `allowed_lookup` production's own miss
+        # composer reads to build the scope-needed sentence. Scoped to `inventory`:
+        # the trigger to widen is a SECOND domain measured dumping unfiltered, not the
+        # fact that other `ALLOWS_EMPTY` rows are False too.
+        #
+        # A predicate block IS a filter (the described-set ask, "which taps have
+        # stock"), so a turn carrying one is never refused here.
+        #
+        # Reviewer S1: `would_be_unfiltered` is EXCLUDED, not merely redundant with
+        # this. Every entity it refuses is unplaced and therefore uuid-less, so
+        # without the exclusion this condition also fires on the R6/R8 refusals and
+        # stamps `scope_gate` on them - which re-points their miss text at a gate
+        # whose `compatible_entities` is empty and loses the breakdown bullets
+        # (`answer.py`'s own per-entity lines), for a turn that is not a scope gap at
+        # all: the customer DID name a subject, it just did not resolve.
+        # `not_found_error_message` says the same thing in its own `needs_scope`
+        # condition (`and not has_unresolved`). Those two refusals keep the
+        # resolver's gate and their existing "could not find X" wording untouched;
+        # `scope_gate` rides ONLY the hole this hotfix opened the guard for.
+        no_subject_gate: dict[str, Any] | None = None
+        if (
+            domain == "inventory"
+            and block is None
+            and not would_be_unfiltered
+            and not any(isinstance(e, dict) and e.get("uuid") for e in entities)
+        ):
+            probe_gate = gate_mod.run_gate(
+                {},
+                parser={**lane_out, "domain_hint": domain, "entities": []},
+                resolver={"resolutions": []},
+            )
+            if probe_gate.get("gate_passed") is False:
+                no_subject_gate = probe_gate
         if (
             (
                 spec.filters.get("tier")
@@ -1563,11 +1870,20 @@ def make_tool_runner(
             )
             or (page_predicate is not None and page_predicate.get("entitlement_missing"))
             or would_be_unfiltered
+            or no_subject_gate is not None
         ):
             fragment: dict[str, Any] = {
                 "fetch": {"has_result": False, "response": business_fetch.NO_RESULT_INTRO},
                 "outcome": "not_found",
             }
+            if no_subject_gate is not None:
+                # The refusal's OWN reason, for `answer_bridge.answer_for`'s miss
+                # composer - which otherwise reads the RESOLVER's gate, and the
+                # resolver here either never ran (nothing to resolve) or placed the
+                # carry perfectly well and has no opinion about scope at all. The
+                # words stay `answer.not_found_error_message`'s own `needs_scope`
+                # branch; this carries only the gate verdict that branch keys on.
+                fragment["scope_gate"] = no_subject_gate
         else:
             fragment = business.run_fetch(
                 payload,

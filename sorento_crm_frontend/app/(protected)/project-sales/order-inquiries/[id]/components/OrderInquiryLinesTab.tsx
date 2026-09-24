@@ -2,10 +2,12 @@
 
 import { useMemo, useState } from 'react';
 import {
+  ExpandedState,
   PaginationState,
   RowSelectionState,
   SortingState,
   getCoreRowModel,
+  getExpandedRowModel,
   getFilteredRowModel,
   getPaginationRowModel,
   getSortedRowModel,
@@ -17,6 +19,7 @@ import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { useTableDeepLinkHighlight } from '@/hooks/useTableDeepLinkHighlight';
 import { useOrderInquiryHeaderLinesColumns } from './orderInquiryHeaderLinesColumns';
 import type { OrderInquiryWorklistRow } from '../../../_shared/types/orderInquiry.types';
 
@@ -34,16 +37,21 @@ export function OrderInquiryLinesTab({
   isLoading,
   rowSelection,
   onRowSelectionChange,
+  onReserveClick,
 }: {
   lines: OrderInquiryWorklistRow[];
   isLoading: boolean;
   rowSelection: RowSelectionState;
   onRowSelectionChange: (next: RowSelectionState) => void;
+  /** `PLAN-oi-request-cs-reserve.md` section 6c F2: opens `ReserveRowDialog` for the row
+   * whose Reserve icon-button was clicked (`orderInquiryHeaderLinesColumns.tsx`). */
+  onReserveClick?: (row: OrderInquiryWorklistRow) => void;
 }) {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
   const [sorting, setSorting] = useState<SortingState>([]);
   const [search, setSearch] = useState('');
-  const columns = useOrderInquiryHeaderLinesColumns();
+  const [expanded, setExpanded] = useState<ExpandedState>({});
+  const columns = useOrderInquiryHeaderLinesColumns({ onReserveClick });
 
   // Cancelled lines are hidden here, same as the worklist (S5) - they carry no
   // instruction left to confirm or link, only a history the raise-cancel already told.
@@ -53,9 +61,10 @@ export function OrderInquiryLinesTab({
     columns,
     data: rows,
     getRowId: (row) => row.id,
-    state: { pagination, sorting, rowSelection, globalFilter: search },
+    state: { pagination, sorting, rowSelection, globalFilter: search, expanded },
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
+    onExpandedChange: setExpanded,
     onRowSelectionChange: (updater) =>
       onRowSelectionChange(
         typeof updater === 'function' ? updater(rowSelection) : updater,
@@ -67,11 +76,24 @@ export function OrderInquiryLinesTab({
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
+    getExpandedRowModel: getExpandedRowModel(),
     columnResizeMode: 'onChange',
     enableColumnResizing: true,
   });
 
+  // S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-4/10/11/12): a link from the SO detail's
+  // own "Order inquiry" cell lands on this exact row (`?row=<id>`).
+  const deepLink = useTableDeepLinkHighlight(table, {
+    paramName: 'row',
+    rowId: (row: OrderInquiryWorklistRow) => row.id,
+    currentSearch: search,
+    clearSearch: () => setSearch(''),
+    enabled: !isLoading,
+  });
+
   return (
+    // N3 (reviewer round): this used to be wrapped in an orphan `<div
+    // className="space-y-4">` - one child, so the spacing utility did nothing.
     <DataGrid
       table={table}
       recordCount={table.getFilteredRowModel().rows.length}
@@ -81,6 +103,8 @@ export function OrderInquiryLinesTab({
         lines.length === 0 ? 'Nothing was raised on this order inquiry.' : 'No product matches that search.'
       }
       listingKey={LISTING_KEY}
+      rowAttributes={deepLink.rowAttributes}
+      rowClassName={deepLink.rowClassName}
     >
       <Card>
         <CardHeader className="block">

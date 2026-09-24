@@ -446,6 +446,53 @@ describe('RespondChatList in-thread search (AC-L8)', () => {
     expect(ringed?.className).toContain('ring-sky-500');
     expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'center' });
   });
+
+  it('fix round 2 regression: a content-only rerender (same ids, same count, same order) does not re-scroll to the still-active match', () => {
+    // B1's fix (depending on the item array itself) over-corrected: a receipt
+    // tier flip or a note attached is a NEW array reference on every live poll
+    // tick too, not only a window swap, and re-ran this effect on every one of
+    // them - yanking a reader who had scrolled away from the match back to it.
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      value: scrollIntoView,
+      configurable: true,
+      writable: true,
+    });
+
+    // Fixed status timestamps (never `Date.now()`, which sorts nowhere near
+    // these synthetic message ids): `getRespondMessageSortTimeMs` prefers the
+    // latest STATUS timestamp over the id-derived one, so an uncontrolled one
+    // would itself reorder the list and confound this test with a genuine
+    // window-identity change instead of isolating a content-only one.
+    const statusAt = (n: number) => 1_700_000_000_000 + n * 1_000;
+    const activeId = String(BASE_US + 2_000_000);
+    const items = [
+      { ...msg(1), status: [{ value: 'sent', timestamp: statusAt(1) }] },
+      { ...msg(2), status: [{ value: 'sent', timestamp: statusAt(2) }] },
+      { ...msg(3), status: [{ value: 'sent', timestamp: statusAt(3) }] },
+    ];
+    const { rerender } = render(
+      <RespondChatList
+        items={items}
+        searchController={searchController({ open: true, query: 'x', activeMessageId: activeId })}
+      />,
+    );
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+
+    // Same three ids, same order, same status TIME - only the receipt VALUE
+    // changed (sent -> delivered), same as a live poll tick would bring.
+    const changedItems = items.map((item, i) =>
+      i === 1 ? { ...item, status: [{ value: 'delivered', timestamp: statusAt(2) }] } : item,
+    );
+    rerender(
+      <RespondChatList
+        items={changedItems}
+        searchController={searchController({ open: true, query: 'x', activeMessageId: activeId })}
+      />,
+    );
+
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+  });
 });
 
 /**
