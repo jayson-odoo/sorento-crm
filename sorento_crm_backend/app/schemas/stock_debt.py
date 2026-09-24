@@ -26,6 +26,8 @@ SupplyKind = Literal["on_hand", "spo", "po"]
 #: read; `project` reproduces the pre-24-Sep view (flagged bins only); `retail` is pools
 #: only and ignores `group`.
 Book = Literal["all", "project", "retail"]
+#: The export workbook's split (R5/AC-13..AC-16). One sheet for `none`.
+ExportSplit = Literal["none", "supplier", "category", "supplier_category"]
 
 
 class StockDebtMonth(BaseModel):
@@ -170,3 +172,17 @@ class StockDebtCell(BaseModel):
 
     demand: List[StockDebtDemandLine]
     supply: List[StockDebtSupplyEvent]
+
+
+class StockDebtExportIn(BaseModel):
+    """The export route's body (AC-12): every list filter except `page`/`limit`, plus the
+    workbook `split`. Every field optional/defaulted so `{"split": "none"}` alone is a
+    valid request - the same shape `list_stock_debt`'s own query params default to."""
+
+    query: Optional[str] = None
+    group: Optional[str] = None
+    only_debt: bool = True
+    cutoff: Optional[DateType] = None
+    supplier_id: Optional[str] = None
+    book: Book = "all"
+    split: ExportSplit = "none"

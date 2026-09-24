@@ -25,7 +25,8 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from io import BytesIO
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
@@ -53,6 +54,10 @@ from app.services.project_supply_service import ProjectSupplyService, held_qty_e
 from app.services.scm import sales_agent_service, spo_supply
 from app.services.scm.demand import demand_qty, is_open_demand
 from app.services.scm.front_planning_engine import DEFAULT_LEAD_TIME_DAYS
+# Reused, not reinvented (AC-18): the low stock report's own cap. A read-only export off a
+# bounded catalogue does not need a cap of its own; it needs the SAME reason that one has -
+# "narrow it first" past a size nobody opens a workbook to page through.
+from app.services.scm.low_stock_report_service import MAX_LOW_STOCK_ROWS
 from app.services.scm.planning_predicate import fulfilment_planning_predicate
 from app.services.scm.supply_assignment import (
     BUCKET_TBA,
@@ -78,6 +83,50 @@ _ZERO = Decimal("0")
 #: the screen's TBA, No date and No location columns are cells a reader clicks like any
 #: other (R28).
 BUCKET_KEYS = (BUCKET_TBA, BUCKET_UNDATED, BUCKET_UNLOCATED)
+
+EXPORT_CONTENT_TYPE = (
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
+
+_MONTH_NAMES = (
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+)
+
+#: Excel forbids these in a sheet title (AC-16); stripped rather than replaced, so a
+#: forbidden character never leaves a stray placeholder character behind.
+_FORBIDDEN_TITLE_CHARS = "[]:*?/\\"
+
+
+def _export_month_label(key: str) -> str:
+    """`2026-09` -> `Sep 26` (AC-13). The export's own copy of the FE's `monthLabel` -
+    the two are the same three lines twice, not a shared import, because one lives in
+    Python and the other in TypeScript."""
+    year, month = key.split("-")
+    return f"{_MONTH_NAMES[int(month) - 1]} {year[2:]}"
+
+
+def _sanitize_sheet_title(raw: str) -> str:
+    """Strip the characters Excel refuses in a sheet title and cut to its 31-char limit
+    (AC-16). Never empty: a title that sanitises to nothing still needs a tab to sit on."""
+    cleaned = "".join(ch for ch in raw if ch not in _FORBIDDEN_TITLE_CHARS).strip()
+    return cleaned[:31] or "Sheet"
+
+
+def _unique_sheet_title(raw: str, used: Set[str]) -> str:
+    """`_sanitize_sheet_title`, then a `(2)`/`(3)`/... suffix for a title that collides
+    with one already taken (AC-16) - two supplier/category pairs whose names agree on
+    their first 31 characters must not silently overwrite one sheet with the other."""
+    base = _sanitize_sheet_title(raw)
+    if base not in used:
+        used.add(base)
+        return base
+    for n in range(2, 1000):
+        suffix = f" ({n})"
+        candidate = base[: 31 - len(suffix)] + suffix
+        if candidate not in used:
+            used.add(candidate)
+            return candidate
+    raise AppException(500, "Could not title every export sheet uniquely.")
 
 
 def _float(value: Any) -> float:
@@ -1114,3 +1163,129 @@ class StockDebtService:
             "category": len(category_keys),
             "supplier_category": len(pair_keys),
         }
+    # ------------------------------------------------------------------ export (R5/R10, AC-12..AC-18)
+
+    def export(
+        self,
+        *,
+        query: Optional[str] = None,
+        group: Optional[str] = None,
+        only_debt: bool = True,
+        cutoff: Optional[date] = None,
+        supplier_id: Optional[str] = None,
+        book: str = "all",
+        split: str = "none",
+    ) -> Tuple[bytes, str, str, Dict[str, int]]:
+        """The workbook for the CURRENT filters (AC-17): `(bytes, content_type, filename,
+        {"rows": n, "sheets": m})`, the same tuple shape `low_stock_report_service.
+        export_low_stock` returns.
+
+        Built off `list()` itself, unpaged (AC-17: the export's rows are exactly the
+        list's, for the same filters) - `limit=MAX_LOW_STOCK_ROWS + 1` is enough to prove
+        whether the filtered set fits under the cap (AC-18) without a second, differently-
+        shaped read: `pagination["total"]` is always the WHOLE filtered set regardless of
+        the limit used to slice `data`, so a set that fits is returned complete and a set
+        that does not is refused before `data` is ever trusted to be complete.
+        """
+        listing = self.list(
+            query=query, group=group, only_debt=only_debt, cutoff=cutoff,
+            supplier_id=supplier_id, book=book, page=1, limit=MAX_LOW_STOCK_ROWS + 1,
+        )
+        if listing["pagination"]["total"] > MAX_LOW_STOCK_ROWS:
+            raise AppException(422, "Narrow the plan first")
+        return self._render_workbook(listing, split=split)
+
+    def _render_workbook(
+        self, listing: Dict[str, Any], *, split: str
+    ) -> Tuple[bytes, str, str, Dict[str, int]]:
+        from openpyxl import Workbook
+        from openpyxl.utils import get_column_letter
+
+        from app.services.scm.summary_order_service import write_sheet
+
+        axis: List[str] = listing["months"]
+        rows: List[dict] = listing["data"]
+
+        columns = (
+            ["Product", "Name", "Category", "Supplier"]
+            + [_export_month_label(key) for key in axis]
+            + ["TBA", "No date", "No location", "Total"]
+        )
+        widths = [16, 30, 14, 24] + [10] * len(axis) + [10, 10, 12, 12]
+        width_map = {
+            get_column_letter(index + 1): width for index, width in enumerate(widths)
+        }
+
+        groups: Dict[str, List[dict]] = {}
+        if split == "none":
+            # R5/AC-13: one sheet, one fixed title - never derived from a row's own data.
+            groups["Stock debt"] = rows
+        else:
+            for row in rows:
+                supplier_label = row["supplier_name"] or "No supplier"
+                category_label = row["category_code"] or "No category"
+                if split == "supplier":
+                    key = supplier_label
+                elif split == "category":
+                    key = category_label
+                else:
+                    key = f"{supplier_label} - {category_label}"
+                groups.setdefault(key, []).append(row)
+
+        wb = Workbook()
+        used_titles: Set[str] = set()
+        sheet_count = 0
+        for index, key in enumerate(sorted(groups)):
+            group_rows = groups[key]
+            ws = wb.active if index == 0 else wb.create_sheet()
+            ws.title = key if split == "none" else _unique_sheet_title(key, used_titles)
+            sheet_count += 1
+            data = [self._export_row(row, axis) for row in group_rows]
+            data.append(self._export_total_row(group_rows, axis))
+            write_sheet(ws, columns, data, width_map)
+
+        buf = BytesIO()
+        wb.save(buf)
+        return (
+            buf.getvalue(),
+            EXPORT_CONTENT_TYPE,
+            f"stock-debt-{date.today().strftime('%d%m%Y')}.xlsx",
+            {"rows": len(rows), "sheets": sheet_count},
+        )
+
+    @staticmethod
+    def _export_row(row: dict, axis: Sequence[str]) -> tuple:
+        """One product, in the export's own column order (AC-13). `Name` prints blank when
+        `list()` has already nulled it (AC-9); every other blank prints as `""`, never a
+        bare 0 that would read as a fact somebody measured."""
+        balances = {month["key"]: month["balance"] for month in row["months"]}
+        return (
+            row["product_code"],
+            row["product_name"] or "",
+            row["category_code"] or "",
+            row["supplier_name"] or "",
+            *[balances.get(key, 0.0) for key in axis],
+            row["tba"],
+            row["undated"],
+            row["unlocated"],
+            row["total"],
+        )
+
+    @staticmethod
+    def _export_total_row(rows: List[dict], axis: Sequence[str]) -> tuple:
+        """The sheet's OWN Total footer (R5): summed over the rows THIS sheet carries, so
+        a buyer reading one supplier's tab foots it without opening the others."""
+        month_sums = {key: 0.0 for key in axis}
+        tba = undated = unlocated = total = 0.0
+        for row in rows:
+            for month in row["months"]:
+                month_sums[month["key"]] += month["balance"]
+            tba += row["tba"]
+            undated += row["undated"]
+            unlocated += row["unlocated"]
+            total += row["total"]
+        return (
+            "Total", "", "", "",
+            *[month_sums[key] for key in axis],
+            tba, undated, unlocated, total,
+        )
