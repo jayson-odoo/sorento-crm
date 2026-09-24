@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import sys
 
 from app.models.base import company_scope
 from app.models.project_so import (
@@ -53,6 +54,23 @@ def _repair_module():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+class _NoCloseSession:
+    """Should-fix 5 (review of PR #1220): `main()` owns `SessionLocal()` end to end,
+    including its own `db.close()` - but the test's `db` is the fixture's ONE session
+    for the whole test (`blank_session`'s single rolled-back transaction), so letting
+    `main()` close it would break every assertion made after it returns. Forwards
+    everything except `close`, which the fixture alone is allowed to call."""
+
+    def __init__(self, session):
+        self._session = session
+
+    def __getattr__(self, name):
+        return getattr(self._session, name)
+
+    def close(self):
+        pass
 
 
 def _invariant_holds(db, row) -> bool:
@@ -241,3 +259,51 @@ def test_repair_script_apply_heals_the_row_and_reports_before_after_counts(api):
     assert row.po_ref is None
     # A second pass finds nothing left - idempotent.
     assert row.id not in [r.id for r in module.find_stale_rows(db)]
+
+
+def test_repair_script_main_default_run_writes_nothing(api, monkeypatch):
+    """Should-fix 5 (review of PR #1220): `main()`'s own CLI gate, not just
+    `find_stale_rows`/`refresh_link_state` called directly - dry run by default."""
+    _client, db, world, _user_id = api
+    row = _row(
+        db, world["company_id"], world["inquiry"],
+        qty="5", item_code=world["product"].product_code,
+        state=INQUIRY_PLACED, po_ref="STALE-PO-0003",
+        note="Linked to STALE-PO-0003; auto: worklist",
+    )
+    db.commit()
+
+    module = _repair_module()
+    monkeypatch.setattr(module, "SessionLocal", lambda: _NoCloseSession(db))
+    monkeypatch.setattr(sys, "argv", ["repair_oi_stale_link_state.py"])
+
+    exit_code = module.main()
+
+    assert exit_code == 0
+    db.refresh(row)
+    assert row.state == INQUIRY_PLACED
+    assert row.po_ref == "STALE-PO-0003"
+
+
+def test_repair_script_main_apply_writes_through_refresh_link_state_only(api, monkeypatch):
+    """Should-fix 5: `--apply` is the only thing that writes, and it writes through
+    `refresh_link_state` - the same formula the guard uses, never a raw state write."""
+    _client, db, world, _user_id = api
+    row = _row(
+        db, world["company_id"], world["inquiry"],
+        qty="5", item_code=world["product"].product_code,
+        state=INQUIRY_PLACED, po_ref="STALE-PO-0004",
+        note="Linked to STALE-PO-0004; auto: worklist",
+    )
+    db.commit()
+
+    module = _repair_module()
+    monkeypatch.setattr(module, "SessionLocal", lambda: _NoCloseSession(db))
+    monkeypatch.setattr(sys, "argv", ["repair_oi_stale_link_state.py", "--apply"])
+
+    exit_code = module.main()
+
+    assert exit_code == 0
+    db.refresh(row)
+    assert row.state == INQUIRY_RAISED
+    assert row.po_ref is None

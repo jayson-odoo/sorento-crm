@@ -730,6 +730,35 @@ def test_the_supplier_and_po_are_the_ones_the_row_actually_links_to(api):
     assert [row["id"] for row in filtered["data"]] == [seeded["adopted_row"].id]
 
 
+def test_the_links_payload_pins_po_line_id_for_highlighting_the_lightbox_line(api):
+    """Should-fix 6 (review of PR #1220): `po_line_id` is the field the PO lightbox's
+    linked-line highlight (issue #1215 point 2) and the worklist's backing-documents
+    dialog (review Blocking 1) both key off - `links_for_rows` already computed it, but
+    `response_model` silently drops an undeclared field (LESSONS-LEARNT), and nothing
+    asserted it actually reaches the wire."""
+    client, db, company_id, seeded = api
+    po = _purchase_order(db, company_id)
+    # A fresh order, not `seeded["authored"]`/`seeded["adopted"]` - each already carries
+    # its own inquiry, and `order_inquiries` allows exactly one per sales order.
+    pso = ProjectSalesOrder(
+        id=_uid(), company_id=company_id, provisional_ref=f"ZZT-PSO-{_uid()[:8]}",
+    )
+    db.add(pso)
+    db.flush()
+    inquiry = _inquiry_for(db, company_id, pso)
+    row = _row(
+        db, company_id, inquiry, po_line_id=po["line"].id,
+        item_code=po["product"].product_code, qty="5", state=INQUIRY_PLACED,
+    )
+    db.commit()
+
+    body = client.get(LIST, params={"limit": 200}).json()
+    wire_row = next(r for r in body["data"] if r["id"] == row.id)
+    [link] = wire_row["links"]
+
+    assert link["po_line_id"] == po["line"].id
+
+
 def test_supplier_reads_off_an_spo_only_links_own_supplier(api):
     """AC-FB-52 (measured on the prod copy: 5,156 SPO-only rows show "Not linked"
     under Supplier): a row whose ONLY link is an SPO allocation with no `po_line_id`
