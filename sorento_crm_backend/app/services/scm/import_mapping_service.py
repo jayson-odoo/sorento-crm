@@ -22,6 +22,25 @@ from app.services.import_alias_service import (
     normalize_header,
 )
 from app.services.scm.header_probe import probe as probe_headers
+from app.services.scm.outstanding_reader import all_sheet_rows
+from app.services.scm.packing_list_reader import header_field_candidates
+
+#: Doc types whose readers carry a header BLOCK at all (F1/R-D,
+#: PLAN-pi-header-fields-convert-fixes-24sep.md) - `supplier_inventory` is one row per
+#: line, nothing above it to scan.
+_HEADER_FIELD_DOC_TYPES = {"proforma_invoice", "packing_list"}
+
+
+def _block_fields_for(doc_type: str) -> tuple[str, ...]:
+    if doc_type == "proforma_invoice":
+        from app.services.scm.proforma_invoice_reader import _BLOCK_FIELDS
+
+        return _BLOCK_FIELDS
+    if doc_type == "packing_list":
+        from app.services.scm.packing_list_reader import _BLOCK_FIELDS
+
+        return _BLOCK_FIELDS
+    return ()
 
 
 def _required_columns(doc_type: str) -> tuple[str, ...]:
@@ -109,6 +128,27 @@ def probe(
             }
         )
 
+    # F1/R-D: every `label：value` pair ABOVE the header row, for a doc type whose reader
+    # carries a header block at all - the mapper's own "Header fields" section (F2). Block
+    # fields ACROSS every requested doc type, `consignee` excluded (R-B: always the PI's
+    # own company, never a mapper pick) - resolved through whichever of THIS probe's own
+    # resolvers answers for a relevant doc type, the same "first doc type wins" rule the
+    # columns above already follow.
+    header_fields: list[dict] = []
+    if probed.header_row and probed.header_row > 1:
+        block_fields: set[str] = set()
+        for dt in doc_types:
+            block_fields.update(_block_fields_for(dt))
+        block_fields.discard("consignee")
+        resolver = next(
+            (r for r, dt in zip(resolvers, doc_types) if dt in _HEADER_FIELD_DOC_TYPES), None
+        )
+        if resolver is not None and block_fields:
+            rows = all_sheet_rows(file_data)
+            above_rows = rows[: probed.header_row - 1]
+            if above_rows:
+                header_fields = header_field_candidates(above_rows, resolver, tuple(block_fields))
+
     return {
         "header_row": probed.header_row,
         "columns": columns,
@@ -118,6 +158,7 @@ def probe(
         # Review round 1, item 12: the stepper's own ceiling, so "move header row down"
         # has somewhere to stop.
         "row_count": probed.row_count,
+        "header_fields": header_fields,
     }
 
 

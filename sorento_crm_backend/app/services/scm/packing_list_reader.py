@@ -485,6 +485,63 @@ def _is_label(value: str, resolver: AliasResolver) -> bool:
     return False
 
 
+def header_field_candidates(
+    rows: list, resolver: Optional[AliasResolver], fields: tuple[str, ...],
+) -> list[dict]:
+    """Every `label：value` pair the mapper's own "Header fields" section lists (F1,
+    PLAN-pi-header-fields-convert-fixes-24sep.md, R-D) - `rows` is normally every row ABOVE
+    the table's header row. Unlike `_labelled` (the reader's own A1 path, which only ever
+    accepts a KNOWN label), this accepts ANY `label：value`-shaped run so an unmapped label
+    still lands on screen for the operator to answer (ruling 5) - `field` is `None` for one
+    `resolver` cannot place among `fields` yet.
+
+    Two shapes, the same two `_labelled` reads: a cell stating the pair inline (DAFUYUAN's
+    `提单号 ：OOLU… 柜号 ：FSCU… 封条号：OOLLGZ7182`, three from ONE cell), and a bare label
+    cell whose value sits in the NEXT cell of the same row (`Date:` | `22/09/2026`) - the
+    second shape stays resolver-gated (only a label `resolver` already knows anything about
+    can be told apart from a genuine title cell with no answer anywhere near it).
+    """
+    out: list[dict] = []
+    for row_idx, raw in enumerate(rows):
+        row_no = row_idx + 1
+        inline_positions: set[int] = set()
+        for pos, cell in enumerate(raw):
+            text = _text(cell)
+            if not text:
+                continue
+            pairs = _split_label_pairs(text, resolver, fields, any_label=True)
+            if not pairs:
+                continue
+            inline_positions.add(pos)
+            for label, value, f in pairs:
+                source = (resolver.source_for_header(label) if (resolver and f) else None) or "none"
+                out.append(
+                    {"row": row_no, "label": label, "sample": value, "field": f, "source": source}
+                )
+        if resolver is None:
+            continue
+        for pos, cell in enumerate(raw):
+            if pos in inline_positions:
+                continue
+            text = _text(cell)
+            if not text:
+                continue
+            f = resolver.field_for_header(text)
+            if f not in fields:
+                continue
+            for nxt in raw[pos + 1:]:
+                val = _text(nxt)
+                if val is None:
+                    continue
+                if not _is_label(val, resolver):
+                    source = resolver.source_for_header(text) or "none"
+                    out.append(
+                        {"row": row_no, "label": text, "sample": val, "field": f, "source": source}
+                    )
+                break
+    return out
+
+
 def _line_from(raw: list, col_field: dict[int, str], row_number: int) -> Optional[PackingLine]:
     vals: dict[str, Any] = {}
     for pos, f in col_field.items():
