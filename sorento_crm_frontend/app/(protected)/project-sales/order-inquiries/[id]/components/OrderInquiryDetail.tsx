@@ -45,6 +45,7 @@ import {
   useCommitOrderInquiryReserve,
   useCreateOrderInquiryReserveRequest,
   useExportOrderInquiryXlsx,
+  useLinkSuggestedOrderInquiryRows,
   useOrderInquiryHandshake,
   useOrderInquiryHeaderDetail,
   useOrderInquiryHeaderLines,
@@ -123,15 +124,11 @@ function reserveIneligibleReason(row: OrderInquiryWorklistRow): string | null {
   return null;
 }
 
-/** A ticked line still owed a document (mirrors `OrderInquiriesClient.tsx`'s own
- * `isLinkable`, kept smaller here on purpose: a single header's lines carry none of the
- * worklist's cross-header bundling, so the extra tests that function runs have nothing
- * to answer on this screen). */
-function isLinkable(row: OrderInquiryWorklistRow): boolean {
-  if (ackStateOf(row) === 'rejected') return false;
-  if (!['raised', 'partly_linked', 'placed'].includes(row.state)) return false;
-  const linked = (row.links ?? []).reduce((sum, link) => sum + Number(link.qty || '0'), 0);
-  return Number(row.qty || '0') - linked > 0;
+/** A ticked line "Link selected" can turn real (G1, `PLAN-oi-links-autocount-truth-24sep.md`
+ * - mirrors `OrderInquiriesClient.tsx`'s own `hasSuggestedLink`): it holds a suggested
+ * link. The press no longer runs the cascade over whatever is still owed. */
+function hasSuggestedLink(row: OrderInquiryWorklistRow): boolean {
+  return (row.suggested_links ?? []).length > 0;
 }
 
 export function OrderInquiryDetail({ id }: { id: string }) {
@@ -156,6 +153,7 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   const commitReserveMutation = useCommitOrderInquiryReserve(id);
   const { acknowledge, unacknowledge } = useOrderInquiryHandshake();
   const autoPlace = useAutoPlaceOrderInquiryRows();
+  const linkSuggested = useLinkSuggestedOrderInquiryRows();
   const exportXlsx = useExportOrderInquiryXlsx(id);
 
   const [rowSelection, setRowSelection] = useState<Record<string, boolean>>({});
@@ -253,7 +251,10 @@ export function OrderInquiryDetail({ id }: { id: string }) {
       ),
     [selectedLines],
   );
-  const selectedLinkable = useMemo(() => selectedLines.filter(isLinkable), [selectedLines]);
+  const selectedSuggested = useMemo(
+    () => selectedLines.filter(hasSuggestedLink),
+    [selectedLines],
+  );
   const selectedLinked = useMemo(
     () => selectedLines.filter((l) => l.state === 'placed' || l.state === 'partly_linked'),
     [selectedLines],
@@ -559,10 +560,13 @@ export function OrderInquiryDetail({ id }: { id: string }) {
     );
   }
 
+  /** "Link selected" (G1): writes exactly the ticked lines' OWN suggested links as real
+   * links, in the caller's own name - a different mutation from `runAutoLink` below,
+   * which still runs the cascade. */
   function runLinkSelected() {
-    if (selectedLinkable.length === 0) return;
-    autoPlace.mutate(
-      { row_ids: selectedLinkable.map((l) => l.id) },
+    if (selectedSuggested.length === 0) return;
+    linkSuggested.mutate(
+      selectedSuggested.map((l) => l.id),
       { onSuccess: () => setRowSelection({}) },
     );
   }
@@ -573,14 +577,10 @@ export function OrderInquiryDetail({ id }: { id: string }) {
    * first. Ticked lines -> exactly those (unfiltered - the cascade itself decides what
    * it can and cannot place, the same as the worklist's own unconditional run over
    * everything); nothing ticked -> the whole OI via `filter: { inquiry_id }` (AC-AL-01).
-   * Same hook, same result reporting (`linkOutcomeText`'s toast) as "Link selected" and
-   * the worklist's "Auto link all" - nothing new invented here.
-   *
-   * NOTE for the captain: when every ticked line already IS linkable, this sends the
-   * exact same `{ row_ids }` payload through the exact same `autoPlace` mutation as
-   * `runLinkSelected` above - the two differ only when a ticked line is NOT linkable
-   * (rejected, or already fully placed), which `runLinkSelected` silently drops and this
-   * still sends. Left both in place; not my call which one goes.
+   * Same hook, same result reporting (`linkOutcomeText`'s toast) as the worklist's "Auto
+   * link all" - nothing new invented here. `runLinkSelected` above is a DIFFERENT
+   * mutation since G1: it writes what is already suggested rather than running the
+   * cascade, so the two presses no longer share a payload.
    */
   function runAutoLink() {
     autoPlace.mutate(
@@ -693,8 +693,8 @@ export function OrderInquiryDetail({ id }: { id: string }) {
                         Choose document
                       </DropdownMenuItem>
                       <DropdownMenuItem
-                        disabled={selectedLinkable.length === 0}
-                        onSelect={selectedLinkable.length ? runLinkSelected : undefined}
+                        disabled={selectedSuggested.length === 0}
+                        onSelect={selectedSuggested.length ? runLinkSelected : undefined}
                       >
                         <Wand2 className="size-4" aria-hidden />
                         Link selected

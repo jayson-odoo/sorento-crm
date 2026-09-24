@@ -193,6 +193,38 @@ export interface OrderInquiryLink {
   suggestion?: OrderInquiryLinkSuggestion | null;
 }
 
+/**
+ * One document line the cascade SUGGESTS for this row - never an `order_inquiry_links`
+ * row (`PLAN-oi-links-autocount-truth-24sep.md` section 3.3, owner ruling "the idea is
+ * the suggested link shouldn't be counted as real link and actually appearing in the PO
+ * or SPO column"). Always called a SUGGESTED LINK, in code and on screen - unrelated to
+ * `OrderInquiryLink.suggestion` (S1b's `reallocate`/`unlink` advice on a REAL link),
+ * which keeps its own name so the two concepts can never be confused.
+ *
+ * `suggested_links` rides on the row (`OrderInquiryRow`/`OrderInquiryWorklistRow`) and on
+ * the lightbox payloads (`OrderInquiryPoDetail`/`OrderInquirySpoDetail`), separate from
+ * `links` - a row's PO/SPO cells and State pill never read this array (section 3.5/3.7).
+ */
+export interface OrderInquirySuggestedLink {
+  /** Which book. `spo` only on an ORDER BACK row, same as a real link. */
+  kind: 'po' | 'spo';
+  /** `202607-S0105`, `SPO-2026/08-0061`. Never an id: what the buyer quotes. */
+  document: string;
+  /** Addresses the PO lightbox. Null on an SPO suggestion. */
+  po_id?: string | null;
+  po_line_id?: string | null;
+  spo_allocation_id?: string | null;
+  location?: string | null;
+  qty: string;
+  expected_date?: string | null;
+  /** BY HOW MUCH the suggested document lands after the row's own required date - same
+   * convention as `OrderInquiryLink.late_days`. Null or absent when it is not late. */
+  late_days?: number | null;
+  /** Which cascade door wrote it (section 2.5/3.4) - never rendered, `converted` only
+   * ever appears after the S5 conversion script (section 3.8). */
+  trigger?: string | null;
+}
+
 /** One row a `reallocate` suggestion could move the link to (AC-RL-20). */
 export interface OrderInquiryLinkSuggestionCandidate {
   inquiry_no: string | null;
@@ -287,6 +319,13 @@ export interface OrderInquiryRow extends OrderInquiryAckFields {
    * `qty - linked_qty` is what still flows to reorder planning.
    */
   linked_qty?: string;
+  /**
+   * `PLAN-oi-links-autocount-truth-24sep.md` section 3.5: what the cascade suggests for
+   * this row's unlinked remainder - never a real link, never read by `state`/`po_ref`/
+   * `spo_ref`. Empty or absent on a row the cascade has not covered (S2 mock: absent on
+   * every row the real backend answers today, until S3/S4 land).
+   */
+  suggested_links?: OrderInquirySuggestedLink[];
   /** The document CS cited on an order back, which the cascade tries before any other. */
   cited_document?: string | null;
   po_ref?: string | null;
@@ -413,6 +452,12 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
    */
   links?: OrderInquiryLink[];
   linked_qty?: string;
+  /**
+   * `PLAN-oi-links-autocount-truth-24sep.md` section 3.5: the Suggested column, after
+   * SPO, on both the worklist and the OI detail Lines tab (`orderInquirySuggestedColumn`
+   * reads this - never `links`). Absent or empty on every row today (S2, FE mock).
+   */
+  suggested_links?: OrderInquirySuggestedLink[];
   /**
    * PLAN-scm-supplied-with-companions.md, S2. `bundled_qty` never exceeds `qty - linked_qty`
    * (a link a person already made stays a link); `bundled_with` is null on an un-bundled
@@ -984,6 +1029,28 @@ export interface AutoPlaceResult {
   /** Whether a horizon was in force at all (S1) - `'none'` says the null above is a
    *  deliberate "no horizon", not a plan that has never named one. */
   link_horizon?: 'date' | 'none';
+  /**
+   * G4 (`PLAN-oi-links-autocount-truth-24sep.md`): "Auto link all"'s own book step -
+   * rows AutoCount itself ties to a document, a REAL link. Absent on a backend that has
+   * not yet split the cascade into suggested links (S2/S3); the toast then falls back to
+   * `placed_rows` alone, exactly as it reads today.
+   */
+  book_linked_rows?: number;
+  /** The rows the cascade only SUGGESTED, on top of `book_linked_rows` - never written
+   * as an `order_inquiry_links` row, never counted as bought. Same absence rule. */
+  suggested_rows?: number;
+}
+
+/**
+ * `POST {BASE}/order-inquiries/link-suggested` (G1): "Link selected" no longer runs the
+ * cascade - it writes what the cascade already suggested as REAL links, in the buyer's
+ * own name (`PLAN-oi-links-autocount-truth-24sep.md` section 3.6). A ticked row holding
+ * nothing suggested is reported on `nothing_suggested`, not silently dropped.
+ */
+export interface LinkSuggestedResult {
+  linked_rows: number;
+  links: number;
+  nothing_suggested: number;
 }
 
 /**
@@ -1109,6 +1176,12 @@ export interface OrderInquiryPoDetail {
    * answers it (plan section 5.1), and the panel then says so rather than claiming none.
    */
   allocations?: OrderInquiryDocumentAllocation[];
+  /**
+   * `PLAN-oi-links-autocount-truth-24sep.md` section 3.5: the lightbox's own "Suggested
+   * for" panel, below Allocated to - every row the cascade suggests THIS document for.
+   * Absent or empty on every purchase order today (S2, FE mock; AC-LT-34 wires it live).
+   */
+  suggested_links?: OrderInquiryDocumentAllocation[];
 }
 
 /* --------------------------------------------------------- the SPO lightbox
@@ -1148,6 +1221,9 @@ export interface OrderInquirySpoDetail {
   container_no?: string | null;
   lines: OrderInquirySpoDetailLine[];
   allocations?: OrderInquiryDocumentAllocation[];
+  /** Section 3.5's "Suggested for" panel, for the other book. Absent or empty today
+   * (S2, FE mock; AC-LT-34 wires it live). */
+  suggested_links?: OrderInquiryDocumentAllocation[];
 }
 
 /**

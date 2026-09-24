@@ -3,14 +3,22 @@
  *
  * Every path that ties a document to an order-inquiry row reaches only as far as a date:
  * a row due after it is left Not linked, so a 2030 order stops eating a purchase order a
- * nearer one needed. Three presses share the date - Acknowledge, Link selected and Link
- * now - plus the manual Link dialog, which shows it and lets a person overrule it.
+ * nearer one needed. Two presses share the date - Acknowledge and Link now - plus the
+ * manual Link dialog, which shows it and lets a person overrule it. "Link selected" no
+ * longer does (G1, `PLAN-oi-links-autocount-truth-24sep.md`): it stopped running the
+ * cascade and now only writes what is already suggested, so it carries no horizon of its
+ * own - `linkSuggestedOutcomeText` lives here beside the others only because this is
+ * where an order-inquiry link result's own words live, not because it shares the date.
  *
- * The words a result is reported in live here too, so the three presses cannot come to
- * report the same outcome differently.
+ * The words a result is reported in live here too, so the presses cannot come to report
+ * the same outcome differently.
  */
 import { formatDateInMalaysia } from '@/lib/helpers';
-import type { AcknowledgeResult, AutoPlaceResult } from '../types/orderInquiry.types';
+import type {
+  AcknowledgeResult,
+  AutoPlaceResult,
+  LinkSuggestedResult,
+} from '../types/orderInquiry.types';
 
 /** Where the buyer's own choice is remembered between visits (AC-LH5). */
 export const LINK_HORIZON_STORAGE_KEY = 'sorento.order-inquiries.link-up-to';
@@ -202,8 +210,20 @@ function afterPhrase(after: number, linkUpTo: string | null | undefined): string
  * the horizon changed nothing.
  */
 export function linkOutcomeText(result: AutoPlaceResult): string {
-  const placed = result.placed_rows ?? 0;
   const after = result.after_horizon ?? 0;
+  // G4 (`PLAN-oi-links-autocount-truth-24sep.md`): once "Auto link all" follows AutoCount
+  // first and only SUGGESTS the rest, the toast states the two apart - never one merged
+  // "linked" figure that would read a suggestion as bought. `book_linked_rows` /
+  // `suggested_rows` are absent on today's backend (S2/S3 not live yet), so this falls
+  // back to the figure the toast has always sent.
+  if (result.book_linked_rows !== undefined || result.suggested_rows !== undefined) {
+    const bookLinked = result.book_linked_rows ?? 0;
+    const suggested = result.suggested_rows ?? 0;
+    const parts = [`${bookLinked} linked from AutoCount`, `${suggested} suggested`];
+    if (after > 0) parts.push(afterPhrase(after, result.link_up_to));
+    return parts.join(', ');
+  }
+  const placed = result.placed_rows ?? 0;
   if (after > 0) {
     return `${placed} linked, ${afterPhrase(after, result.link_up_to)}`;
   }
@@ -212,6 +232,24 @@ export function linkOutcomeText(result: AutoPlaceResult): string {
     `${placed} row${placed === 1 ? '' : 's'} linked across ` +
     `${result.allocations} document line${result.allocations === 1 ? '' : 's'}`
   );
+}
+
+/**
+ * "Link selected"'s own outcome (G1): it no longer runs the cascade, so there is no
+ * horizon or allocation count to report - only how many rows it made real, and how many
+ * held nothing suggested (reported, not silently dropped, same as `acknowledgeOutcomeText`
+ * reports `skipped`).
+ */
+export function linkSuggestedOutcomeText(result: LinkSuggestedResult): string {
+  const linked = result.linked_rows ?? 0;
+  const nothing = result.nothing_suggested ?? 0;
+  if (linked === 0) {
+    return nothing > 0
+      ? `Nothing suggested on ${nothing} row${nothing === 1 ? '' : 's'}`
+      : 'Nothing new to link yet';
+  }
+  const rows = `${linked} row${linked === 1 ? '' : 's'} linked`;
+  return nothing > 0 ? `${rows}, ${nothing} had nothing suggested` : rows;
 }
 
 /**

@@ -90,6 +90,7 @@ const getOrderInquiryWorklistSummary = vi.fn();
 // retired from THIS screen (the sync GET route itself stays for one release elsewhere).
 const exportOrderInquiryWorklistXlsx = vi.fn();
 const autoPlaceOrderInquiryRows = vi.fn();
+const linkSuggestedOrderInquiryRows = vi.fn();
 const getUnplaceAllPreview = vi.fn();
 const unplaceAllOrderInquiryRows = vi.fn();
 const acknowledgeOrderInquiryRows = vi.fn();
@@ -108,6 +109,8 @@ vi.mock('../../_shared/services/orderInquiryService', () => ({
     exportOrderInquiryWorklistXlsx(...args),
   autoPlaceOrderInquiryRows: (...args: unknown[]) =>
     autoPlaceOrderInquiryRows(...args),
+  linkSuggestedOrderInquiryRows: (...args: unknown[]) =>
+    linkSuggestedOrderInquiryRows(...args),
   getUnplaceAllPreview: (...args: unknown[]) => getUnplaceAllPreview(...args),
   unplaceAllOrderInquiryRows: (...args: unknown[]) =>
     unplaceAllOrderInquiryRows(...args),
@@ -615,15 +618,26 @@ describe('AC-D13/AC-D14: one toolbar row, Actions + Start, counts disabling at 0
     expect(getOrderInquiryPoCandidates).toHaveBeenCalledWith('row-2');
   });
 
-  it('AC-T4: Link selected posts auto-place with only the linkable ticked row ids', async () => {
-    autoPlaceOrderInquiryRows.mockResolvedValue({
-      placed_rows: 1,
-      after_horizon: 0,
+  it('AC-LT-05 (G1, reverses AC-T4): Link selected posts link-suggested with only the rows holding a suggested link', async () => {
+    // `PLAN-oi-links-autocount-truth-24sep.md`: "Link selected" no longer runs the
+    // cascade over whatever is still owed (the old `isLinkable` reading, S4 R-B) - it
+    // writes what the cascade already suggested. row-2 gets a suggested link here;
+    // row-1 (actioned, fully linked, no suggestion) does not.
+    const suggested: OrderInquiryWorklistRow = {
+      ...MOCK_WORKLIST_ROWS[1],
+      suggested_links: [{ kind: 'po', document: '202609-S0090', qty: '10' }],
+    };
+    listOrderInquiryWorklist.mockResolvedValue(
+      envelope([MOCK_WORKLIST_ROWS[0], suggested, ...MOCK_WORKLIST_ROWS.slice(2)]),
+    );
+    linkSuggestedOrderInquiryRows.mockResolvedValue({
+      linked_rows: 1,
+      links: 1,
+      nothing_suggested: 0,
     });
     renderClient();
     await screen.findByText('SO385126');
 
-    // row-2 (raised, unlinked) is linkable; row-1 (actioned, fully linked) is not.
     fireEvent.click(screen.getByLabelText('Select SRTWC8605-SC-RL on SO386461'));
     fireEvent.click(screen.getByLabelText('Select SRTWB5400 on SO385126'));
     openActionsMenu();
@@ -632,16 +646,14 @@ describe('AC-D13/AC-D14: one toolbar row, Actions + Start, counts disabling at 0
     );
 
     await waitFor(() =>
-      expect(autoPlaceOrderInquiryRows).toHaveBeenCalledWith({ row_ids: ['row-2'] }),
+      expect(linkSuggestedOrderInquiryRows).toHaveBeenCalledWith(['row-2']),
     );
   });
 
-  it('SF-4: a fully bundled row is not linkable - not counted, not posted', async () => {
-    // Bundled entirely inside another row's own line (its whole unlinked remainder
-    // rides along): `isLinkable` today reads only `qty - linked_qty`, so a row with
-    // bundled_qty covering its whole unlinked remainder still counts as needing a
-    // document, and "Link selected" would post an id `auto_place_for_rows` refuses
-    // (nothing left FOR this row to place - it is not the row's own demand).
+  it('AC-LT-05 (G1, reverses SF-4): a bundled row IS counted once it holds a suggested link - bundling no longer decides eligibility', async () => {
+    // SF-4 (superseded): `isLinkable` used to read `qty - linked_qty - bundled_qty`, so
+    // a fully bundled row never counted. Eligibility is now purely "does this row hold
+    // a suggested link" - bundling plays no part any more.
     const bundled: OrderInquiryWorklistRow = {
       ...MOCK_WORKLIST_ROWS[1],
       id: 'row-bundled',
@@ -656,6 +668,7 @@ describe('AC-D13/AC-D14: one toolbar row, Actions + Start, counts disabling at 0
         item_codes: ['ZZT-HOST'],
         anchor_headline: '5 of 5',
       },
+      suggested_links: [{ kind: 'po', document: '202609-S0090', qty: '5' }],
     };
     const plain: OrderInquiryWorklistRow = {
       ...MOCK_WORKLIST_ROWS[1],
@@ -666,9 +679,14 @@ describe('AC-D13/AC-D14: one toolbar row, Actions + Start, counts disabling at 0
       linked_qty: '0',
       bundled_qty: '0',
       bundled_with: null,
+      suggested_links: [],
     };
     listOrderInquiryWorklist.mockResolvedValue(envelope([bundled, plain]));
-    autoPlaceOrderInquiryRows.mockResolvedValue({ placed_rows: 1, after_horizon: 0 });
+    linkSuggestedOrderInquiryRows.mockResolvedValue({
+      linked_rows: 1,
+      links: 1,
+      nothing_suggested: 0,
+    });
     renderClient();
     await screen.findByText('SO-BUNDLED');
 
@@ -681,7 +699,7 @@ describe('AC-D13/AC-D14: one toolbar row, Actions + Start, counts disabling at 0
     fireEvent.click(screen.getByRole('menuitem', { name: 'Link selected (1 of 2)' }));
 
     await waitFor(() =>
-      expect(autoPlaceOrderInquiryRows).toHaveBeenCalledWith({ row_ids: ['row-plain'] }),
+      expect(linkSuggestedOrderInquiryRows).toHaveBeenCalledWith(['row-bundled']),
     );
   });
 
@@ -739,7 +757,16 @@ describe('AC-D13/AC-D14: one toolbar row, Actions + Start, counts disabling at 0
     ).toBeDisabled();
   });
 
-  it('AC-T2: three rows ticked - one fully linked, one partly linked, one unlinked - label the eligible count', async () => {
+  it('AC-T2 / AC-LT-05: three rows ticked - two holding a suggested link, one without - label the eligible count', async () => {
+    // Link selected's own count is AC-LT-05's (G1) - row-2 and row-3 each get a
+    // suggested link, row-1 (actioned, fully linked) gets none. Reject selected's count
+    // is unrelated and unchanged (still owed-an-answer, S4 R-B).
+    const rows = MOCK_WORKLIST_ROWS.map((row) =>
+      row.id === 'row-2' || row.id === 'row-3'
+        ? { ...row, suggested_links: [{ kind: 'po' as const, document: '202609-S0090', qty: '5' }] }
+        : row,
+    );
+    listOrderInquiryWorklist.mockResolvedValue(envelope(rows));
     renderClient();
     await screen.findByText('SO385126');
 
@@ -749,8 +776,7 @@ describe('AC-D13/AC-D14: one toolbar row, Actions + Start, counts disabling at 0
     fireEvent.click(screen.getByLabelText('Select SRTWC8605-SC-RL on SO386461'));
     openActionsMenu();
 
-    // Link selected: row-3 (partly linked, remainder owed) and row-2 (raised) are
-    // linkable, row-1 (actioned) is not -> 2 of 3.
+    // Link selected: row-3 and row-2 hold a suggested link, row-1 does not -> 2 of 3.
     expect(
       screen.getByRole('menuitem', { name: 'Link selected (2 of 3)' }),
     ).toBeInTheDocument();

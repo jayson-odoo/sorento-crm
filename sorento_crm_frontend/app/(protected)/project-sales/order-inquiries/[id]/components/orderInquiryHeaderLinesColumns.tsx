@@ -17,6 +17,7 @@ import {
   ItemCodeCell,
   LocationCell,
   orderInquirySoLineColumn,
+  orderInquirySuggestedColumn,
   orderInquiryTakenRemainingColumns,
   QtyCell,
   SupplierCell,
@@ -351,6 +352,8 @@ export function useOrderInquiryHeaderLinesColumns({
         meta: { headerTitle: 'SPO' },
         cell: ({ row }) => <DocumentCell row={row.original} kind="spo" />,
       },
+      // AC-LT-07: the SAME Suggested column the worklist carries, right after SPO.
+      orderInquirySuggestedColumn(),
       {
         accessorKey: 'location',
         header: ({ column }) => <DataGridColumnHeader title="Location" column={column} />,

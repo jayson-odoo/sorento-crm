@@ -41,6 +41,7 @@ import type {
   OrderInquiryWorklistRow,
 } from '../../_shared/types/orderInquiry.types';
 import { OrderInquiryBackingDocumentsDialog } from './OrderInquiryBackingDocumentsDialog';
+import { OrderInquiryDocumentLink } from './OrderInquiryDocumentDialog';
 import { OrderInquiryQtyAnnotationDialog } from './OrderInquiryQtyAnnotationDialog';
 
 function Muted({ children }: { children: React.ReactNode }) {
@@ -438,6 +439,70 @@ function DocumentsCell({ row, kind }: { row: OrderInquiryWorklistRow; kind: 'po'
       ) : null}
     </span>
   );
+}
+
+/**
+ * The Suggested column (`PLAN-oi-links-autocount-truth-24sep.md` section 3.5, AC-LT-01
+ * to 03): a document the cascade SUGGESTS for this row - never a real link, never read by
+ * the PO/SPO cells or the State pill above. ONE LINE: a kind badge (the merged column
+ * covers both books, unlike the split PO/SPO cells), the document number as the SAME
+ * lightbox trigger the PO/SPO cells use, its location and qty, `late Nd` when the
+ * suggested document lands after the row's own required date, and the one amber word
+ * `suggested` - the shared `WorklistPill` S1b's `reallocate` mark already uses (warning
+ * token, no icon). `-` when the row carries none (AC-LT-03).
+ */
+function SuggestedCell({ row }: { row: OrderInquiryWorklistRow }) {
+  const suggestions = row.suggested_links ?? [];
+  if (suggestions.length === 0) return <Muted>-</Muted>;
+  const [first, ...rest] = suggestions;
+  const locationQty = [first.location, formatInquiryQty(first.qty)].filter(Boolean).join(' ');
+  return (
+    <span className="flex min-w-0 items-center gap-1">
+      <WorklistPill testId={`suggested-kind-${row.id}`}>
+        {first.kind === 'po' ? 'PO' : 'SPO'}
+      </WorklistPill>
+      <OrderInquiryDocumentLink
+        kind={first.kind}
+        document={first.document}
+        poId={first.po_id}
+        poLineId={first.po_line_id}
+      />
+      {locationQty ? (
+        <span
+          className="shrink-0 truncate text-xs tabular-nums text-muted-foreground"
+          title={locationQty}
+        >
+          {locationQty}
+        </span>
+      ) : null}
+      {first.late_days ? (
+        <WorklistPill testId={`suggested-late-${row.id}`}>late {first.late_days} d</WorklistPill>
+      ) : null}
+      <WorklistPill warning testId={`suggested-mark-${row.id}`}>
+        suggested
+      </WorklistPill>
+      {rest.length ? (
+        <Badge asChild size="sm" variant="secondary" appearance="light">
+          <span data-testid={`suggested-pill-${row.id}`} className="shrink-0 tabular-nums">
+            +{rest.length}
+          </span>
+        </Badge>
+      ) : null}
+    </span>
+  );
+}
+
+/** The Suggested column def, shared between the worklist and the OI detail Lines tab
+ * (AC-LT-07) - same reasons `orderInquirySoLineColumn` is factored out below. */
+export function orderInquirySuggestedColumn(): ColumnDef<OrderInquiryWorklistRow> {
+  return {
+    id: 'suggested',
+    accessorFn: (row) => row.suggested_links?.[0]?.document ?? '',
+    header: ({ column }) => <DataGridColumnHeader title="Suggested" column={column} />,
+    size: 220,
+    meta: { headerTitle: 'Suggested', skeleton: <Skeleton className="h-4 w-24" /> },
+    cell: ({ row }) => <SuggestedCell row={row.original} />,
+  };
 }
 
 /**
@@ -1093,6 +1158,9 @@ export function useOrderInquiryWorklistColumns({
           return <DocumentsCell row={row.original} kind="spo" />;
         },
       },
+      // AC-LT-01 to 03/08: the Suggested column, right after SPO - never merged into the
+      // PO/SPO cells above, which read real links only.
+      orderInquirySuggestedColumn(),
       {
         accessorKey: 'agent_code',
         header: ({ column }) => <DataGridColumnHeader title="Agent" column={column} />,

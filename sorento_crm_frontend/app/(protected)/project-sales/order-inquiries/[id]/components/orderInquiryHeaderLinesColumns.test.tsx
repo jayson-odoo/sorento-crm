@@ -1,9 +1,11 @@
 /**
  * S3 (`PLAN-board-oi-mechanical-22sep.md`, AC-B3-1): the Lines tab's own columns - Product,
- * Qty, Taken, Remaining, Delivery date, Supplier, PO, SPO, Location, Instruction, State -
- * with Taken/Remaining hideable through Columns like the rest of the grid. `SO line` is S6
- * (AC-B6-1), also asserted here since it sits in this same list; its own href/label
+ * Qty, Taken, Remaining, Delivery date, Supplier, PO, SPO, Suggested, Location, Instruction,
+ * State - with Taken/Remaining hideable through Columns like the rest of the grid. `SO line`
+ * is S6 (AC-B6-1), also asserted here since it sits in this same list; its own href/label
  * behaviour is `orderInquiryWorklist.test.ts`'s and `orderInquiryWorklistColumns.test.tsx`'s.
+ * `Suggested`, after SPO, is `PLAN-oi-links-autocount-truth-24sep.md` AC-LT-07 - reuses the
+ * worklist's own `orderInquirySuggestedColumn()`.
  *
  * Column-order list updated at the #1119 x oi-request-cs-reserve merge (22 Sep, cross-lane):
  * main's own version of this assertion predates a column this lane already shipped in
@@ -41,6 +43,7 @@ describe('AC-B3-1: the Lines tab reads Product, Qty, Taken, Remaining, Delivery 
       'Supplier',
       'PO',
       'SPO',
+      'Suggested',
       'Location',
       'Instruction',
       'State',

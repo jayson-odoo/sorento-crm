@@ -221,6 +221,78 @@ function AllocationsPanel({
   );
 }
 
+/**
+ * "Suggested for" (`PLAN-oi-links-autocount-truth-24sep.md` section 3.5, AC-LT-04): who
+ * the cascade suggests this document for - never a real link, sits below Allocated to as
+ * its own panel with its own explicit empty state. Same table shape as `AllocationsPanel`
+ * above (the wire reuses `OrderInquiryDocumentAllocation`), a separate panel rather than
+ * a merged list so a real allocation and a suggestion can never be read as the same fact.
+ */
+function SuggestedForPanel({
+  suggestions,
+}: {
+  suggestions?: OrderInquiryDocumentAllocation[] | null;
+}) {
+  return (
+    <section className="space-y-2" data-testid="suggested-for-panel">
+      <h3 className="text-sm font-semibold">Suggested for</h3>
+      {!suggestions || suggestions.length === 0 ? (
+        <p className="text-xs text-muted-foreground">Nothing suggested for this document.</p>
+      ) : (
+        <div className="overflow-x-auto overscroll-x-contain rounded-md border">
+          <table className="w-full min-w-[480px] text-xs tabular-nums">
+            <thead>
+              <tr className="border-b text-muted-foreground">
+                <th className="px-3 py-1.5 text-start font-medium uppercase tracking-wide">
+                  Order inquiry
+                </th>
+                <th className="px-3 py-1.5 text-start font-medium uppercase tracking-wide">
+                  S/O no
+                </th>
+                <th className="px-3 py-1.5 text-start font-medium uppercase tracking-wide">
+                  Item
+                </th>
+                <th className="px-2 py-1.5 text-end font-medium uppercase tracking-wide">
+                  Qty
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {suggestions.map((suggestion, index) => (
+                <tr
+                  key={`${suggestion.inquiry_no ?? 'suggested'}-${suggestion.item_code ?? ''}-${index}`}
+                  className="border-b last:border-b-0"
+                >
+                  <td className="px-3 py-1.5">
+                    {suggestion.inquiry_no || (
+                      <span className="text-muted-foreground">Not numbered</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-1.5">
+                    {suggestion.so_number || (
+                      <span className="text-muted-foreground">Not numbered</span>
+                    )}
+                  </td>
+                  <td className="max-w-[180px] px-3 py-1.5">
+                    <span className="block truncate" title={suggestion.item_code ?? ''}>
+                      {suggestion.item_code || (
+                        <span className="text-muted-foreground">Unresolved</span>
+                      )}
+                    </span>
+                  </td>
+                  <td className="px-2 py-1.5 text-end font-medium">
+                    {formatInquiryQty(suggestion.qty)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function SkuCellContent({ sku, name }: { sku?: string | null; name?: string | null }) {
   return (
     <div className="min-w-0">
@@ -506,6 +578,7 @@ function PoBody({
       />
 
       <AllocationsPanel allocations={data.allocations} />
+      <SuggestedForPanel suggestions={data.suggested_links} />
     </div>
   );
 }
@@ -548,6 +621,7 @@ function SpoBody({ spoNumber, open }: { spoNumber: string; open: boolean }) {
       />
 
       <AllocationsPanel allocations={data.allocations} />
+      <SuggestedForPanel suggestions={data.suggested_links} />
     </div>
   );
 }

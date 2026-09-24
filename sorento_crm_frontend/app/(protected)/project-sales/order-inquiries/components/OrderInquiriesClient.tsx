@@ -93,12 +93,12 @@ import type { OrderInquiryKind } from '../../_shared/lib/orderInquiryKinds';
 import { buildOrderInquiryMatrix } from '../../_shared/lib/orderInquiryMatrix';
 import { deliveryMonthLabel } from '../../_shared/lib/orderInquiryWorklist';
 import {
-  autoPlaceOrderInquiryRows,
   exportOrderInquiryWorklistXlsx,
+  linkSuggestedOrderInquiryRows,
   unplaceOrderInquiryRow,
 } from '../../_shared/services/orderInquiryService';
+import { linkSuggestedOutcomeText } from '../../_shared/lib/linkHorizon';
 import type {
-  OrderInquiryAckFields,
   OrderInquiryMatrixAxis,
   OrderInquiryMatrixCell,
   OrderInquiryMatrixGranularity,
@@ -125,31 +125,15 @@ function countLabel(base: string, eligible: number, ticked: number): string {
   return eligible === ticked ? `${base} (${ticked})` : `${base} (${eligible} of ${ticked})`;
 }
 
-/** A row this screen still owes a document to (S4, R-A/R-B): raised, partly linked or
- * placed, some quantity still unlinked, and not a row CS has already refused.
- *
- * The remainder is `qty - linked - BUNDLED` (SF-4), the row's own share of the server's
- * `_UNLINKED_QTY`: quantity that rides inside another row's line is not this row's to
- * place. Reading `qty - linked` alone counted a wholly bundled row as still needing a
- * document, so "Link selected" posted an id `auto_place_for_rows` has nothing to place
- * for. `remaining_open` is deliberately NOT read here - it is the LINE's remainder,
- * already net of every sibling row's links, so subtracting this row's links from it
- * again would take them off twice. */
-function isLinkable(
-  row: OrderInquiryAckFields & {
-    state: string;
-    qty: string;
-    linked_qty?: string;
-    bundled_qty?: string;
-  },
-): boolean {
-  if (!['raised', 'partly_linked', 'placed'].includes(row.state)) return false;
-  const unlinked =
-    Number(row.qty ?? '0') -
-    Number(row.linked_qty ?? '0') -
-    Number(row.bundled_qty ?? '0');
-  if (!(unlinked > 0)) return false;
-  return ackStateOf(row) !== 'rejected';
+/**
+ * A row this screen can turn real with "Link selected" (G1,
+ * `PLAN-oi-links-autocount-truth-24sep.md`): it holds at least one suggested link. The
+ * press no longer runs the cascade over whatever is still owed (the older `isLinkable`
+ * reading, S4 R-A/R-B) - it only writes what the cascade already suggested, so a row with
+ * nothing suggested has nothing for this press to do, whatever else it still owes.
+ */
+function hasSuggestedLink(row: { suggested_links?: unknown[] }): boolean {
+  return (row.suggested_links ?? []).length > 0;
 }
 
 /**
@@ -975,7 +959,7 @@ export function OrderInquiriesClient({
     //
     // R-A (S4, PLAN-scm-oi-worklist-excel-parity.md): every row except `cancelled` ticks,
     // fully linked rows included - there is no per-row disabled checkbox any more. Each
-    // Action counts its OWN eligible subset off the ticked rows instead (`selectedLinkable`
+    // Action counts its OWN eligible subset off the ticked rows instead (`selectedSuggested`
     // / `selectedLinked` / `selectedRejectable` below) and says so in its own label, so a
     // row ineligible for Link can still be ticked to Reject in the same batch.
     enableRowSelection: (row) => row.original.state !== 'cancelled',
@@ -996,9 +980,8 @@ export function OrderInquiriesClient({
   const selectedLinked = selectedRows.filter(
     (row) => row.state === 'placed' || row.state === 'partly_linked',
   );
-  // Still owed a document (S4, R-A/R-B): what "Link selected" acts on. `isLinkable`
-  // holds the same three tests the column header comment above states.
-  const selectedLinkable = selectedRows.filter((row) => isLinkable(row));
+  // AC-LT-05 (G1): what "Link selected" acts on - ticked rows holding a suggested link.
+  const selectedSuggested = selectedRows.filter((row) => hasSuggestedLink(row));
   // Every OWED row, linked or not (plan section 1): with drafts written at raise most
   // rows in front of purchasing are already `placed`, so a Reject that only took
   // unlinked ones would refuse almost nothing.
@@ -1085,26 +1068,19 @@ export function OrderInquiriesClient({
   }
 
   /**
-   * "Link selected" (S4, R-B): the cascade for exactly the ticked, still-linkable rows -
-   * `POST /order-inquiries/auto-place` with `row_ids`, distinct from "Auto link all…"
-   * which runs over every eligible row in the company. `skipped` is not on the wire
-   * (`AutoPlaceResult` carries `placed_rows` and `after_horizon` only) so it is read as
-   * the remainder of what was asked for - the cascade is idempotent, so nothing here is
-   * lost by not naming it, only summarised.
+   * "Link selected" (G1, `PLAN-oi-links-autocount-truth-24sep.md`): writes exactly the
+   * ticked rows' OWN suggested links as real links, in the buyer's own name - it no
+   * longer runs the cascade (that was S4, R-B, superseded here). `POST
+   * /order-inquiries/link-suggested` with `row_ids`, distinct from "Auto link all…",
+   * which still runs the cascade over every eligible row in the company.
    */
   async function linkSelected() {
-    if (selectedLinkable.length === 0) return;
+    if (selectedSuggested.length === 0) return;
     setLinkingSelected(true);
     try {
-      const rowIds = selectedLinkable.map((row) => row.id);
-      const result = await autoPlaceOrderInquiryRows({ row_ids: rowIds });
-      const placed = result.placed_rows ?? 0;
-      const afterHorizon = result.after_horizon ?? 0;
-      const skipped = Math.max(rowIds.length - placed - afterHorizon, 0);
-      const parts = [`${placed} linked`];
-      if (skipped > 0) parts.push(`${skipped} skipped`);
-      if (afterHorizon > 0) parts.push(`${afterHorizon} after the link horizon`);
-      toast.success(parts.join(', '));
+      const rowIds = selectedSuggested.map((row) => row.id);
+      const result = await linkSuggestedOrderInquiryRows(rowIds);
+      toast.success(linkSuggestedOutcomeText(result));
       setRowSelection({});
       void list.refetch();
       void summary.refetch();
@@ -1476,12 +1452,12 @@ export function OrderInquiriesClient({
               },
               {
                 key: 'link-selected',
-                label: countLabel('Link selected', selectedLinkable.length, selectedRows.length),
+                label: countLabel('Link selected', selectedSuggested.length, selectedRows.length),
                 icon: Wand2,
-                disabled: selectedLinkable.length === 0 || linkingSelected,
+                disabled: selectedSuggested.length === 0 || linkingSelected,
                 disabledReason:
-                  selectedLinkable.length === 0
-                    ? 'Tick rows still needing a document to link.'
+                  selectedSuggested.length === 0
+                    ? 'Tick rows holding a suggested link.'
                     : undefined,
                 onClick: () => void linkSelected(),
               },

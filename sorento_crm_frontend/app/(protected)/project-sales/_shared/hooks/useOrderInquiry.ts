@@ -23,6 +23,7 @@ import {
   listOrderInquiryHeaders,
   listOrderInquiryRows,
   linkNowOrderInquiryRows,
+  linkSuggestedOrderInquiryRows,
   listOrderInquiryWorklist,
   markOrderInquiryRows,
   rejectOrderInquiryRow,
@@ -44,7 +45,11 @@ import {
 import { getOrderInquiryMatrix } from '../services/orderInquiryMatrixService';
 import { PLANNING_BOARD_KEY } from './useFulfilmentPlanning';
 import type { LinkHorizonRequest } from '../lib/linkHorizon';
-import { acknowledgeOutcomeText, linkOutcomeText } from '../lib/linkHorizon';
+import {
+  acknowledgeOutcomeText,
+  linkOutcomeText,
+  linkSuggestedOutcomeText,
+} from '../lib/linkHorizon';
 import type {
   AutoPlaceRequest,
   OrderInquiryHeaderListParams,
@@ -547,6 +552,35 @@ export function useAutoPlaceOrderInquiryRows() {
       queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_HEADER_LINES_KEY] });
       queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_HEADER_RELATED_DOCUMENTS_KEY] });
       toast.success(linkOutcomeText(result));
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+}
+
+/**
+ * "Link selected" (G1, `PLAN-oi-links-autocount-truth-24sep.md`): writes each named
+ * row's own suggested links as real links in the caller's name - it no longer runs the
+ * cascade, so it invalidates the same families `useAutoPlaceOrderInquiryRows` does
+ * without sharing its mutation (a different route, a different result shape).
+ */
+export function useLinkSuggestedOrderInquiryRows() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (rowIds: string[]) => linkSuggestedOrderInquiryRows(rowIds),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_ROWS_KEY] });
+      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_SUMMARY_KEY] });
+      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_KEY] });
+      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_WORKLIST_KEY] });
+      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_WORKLIST_SUMMARY_KEY] });
+      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_PO_CANDIDATES_KEY] });
+      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_UNPLACE_ALL_PREVIEW_KEY] });
+      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_HEADERS_KEY] });
+      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_HEADER_KEY] });
+      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_HEADER_LINES_KEY] });
+      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_HEADER_RELATED_DOCUMENTS_KEY] });
+      toast.success(linkSuggestedOutcomeText(result));
     },
     onError: (error: Error) => toast.error(error.message),
   });
