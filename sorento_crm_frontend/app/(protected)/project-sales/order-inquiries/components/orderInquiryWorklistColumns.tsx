@@ -63,7 +63,7 @@ export const DEFAULT_HIDDEN_COLUMNS: string[] = ['inquiry_no'];
  * idiom the `+N` pill beside them already used (`size="sm" appearance="light" asChild`);
  * `warning` is the design system's own token for the amber marks, never a literal one.
  */
-function WorklistPill({
+export function WorklistPill({
   as = 'span',
   warning = false,
   testId,
