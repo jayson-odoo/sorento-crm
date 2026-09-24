@@ -249,7 +249,7 @@ Bot:
 "Add slow moving stock filter to dashboard"
 What's your proposed solution? (wording proposed)
 Dealer: do you have SRT5674, need 50?
-Bot: SRT5674 has 62 units on hand right now. (wording proposed; a different lane, stock)
+Bot: SRT5674 x 50: yes, we have stock, please refer to your salesman to proceed. (a different lane, stock)
 Dealer: ok back to my idea
 Bot:
 "Add slow moving stock filter to dashboard"

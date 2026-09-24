@@ -387,7 +387,11 @@ points, folded below.
 > F9 flagged, not a separate public tracking page; there is no other, public, tracking-only page
 > in the shared-service codebase today (its only other idea-facing surface, `/embed/ideas/{id}`,
 > also requires a signed embed assertion minted by a logged-in CRM host, not something a bare
-> WhatsApp contact holds). Proposal, pending the owner's confirmation with that fact in hand:
+> WhatsApp contact holds). Plainly: a link a WhatsApp-only dealer can open without a CRM login
+> does not exist today. If the owner wants one, that is a new small slice - a public, read-only
+> idea status page in the shared service - named `S-link` (proposed, not yet planned) in the
+> Dependencies section below, not something this proposal can hand them by reusing `link` as is.
+> Proposal, pending the owner's confirmation with that fact in hand:
 > stop forcing `link` to null for a WhatsApp source: send both the idea number and the link in
 > the `complete` confirmation, point form (R10) - line 1 the title, line 2 the idea number and
 > the WhatsApp-update line, line 3 "Track it here: <link>" when the product has one configured.
@@ -438,6 +442,12 @@ other-lane turns on its own.
 - Without either: the draft is intact, but the dealer resumes by naming the idea explicitly
   (e.g. "back to my idea about the slow moving stock filter") rather than a bare "ok back to my
   idea" being enough.
+- **`S-link` (proposed, not yet planned):** a public, read-only idea status page in the shared
+  service that a WhatsApp-only dealer could open without a CRM login - does not exist today (see
+  R11). Not this plan's tracking-link proposal, which reuses the existing SSO-gated `link`
+  field: a genuinely public page is a separate small slice, not scoped, not ticketed, only
+  named here because R11 raised the question. Needed only if the owner wants a dealer-openable
+  link rather than (or in addition to) R11's proposal.
 
 ## Out of scope
 
