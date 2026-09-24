@@ -15,12 +15,12 @@ import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { DatePicker } from '@/components/ui/date-picker';
+import { DateRangePicker, parseIsoDate } from '@/components/ui/date-range-picker';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { cn } from '@/lib/utils';
 import { toast } from '@/lib/toast';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
@@ -50,6 +50,14 @@ import { StockDebtExportPopover } from './StockDebtExportPopover';
  * footer over the WHOLE filtered set, Excel-style cell selection with a summary bar, and
  * an Export popover. The toolbar itself gets simpler (R13): Search, Filters, Export -
  * nothing else.
+ *
+ * Owner's hand-test round (R14-R19, same day): the single Cutoff date became a Due date
+ * RANGE (`dateFrom`/`dateTo`, R14); the single Supplier select became a multi-select
+ * (`supplierIds`, R15); the Ownership group control left the screen entirely, backend
+ * `group` support untouched (R16); the "No date"/"No location" columns left the screen
+ * and the workbook (R17, `Total` = months + TBA only); the TBA header reads "TBA"
+ * literally, the policy's own month living in the header's title tooltip (R18); Copy
+ * falls back to `document.execCommand('copy')` off a non-secure context (R19).
  */
 
 /** Cell tone as a CLASS, not a component (plan 3.4): three lines, no new file. */
@@ -105,23 +113,37 @@ interface OpenCell {
   balance: number;
 }
 
-/** `2026-11-30` <-> `Date`, for the cutoff `DatePicker` (which speaks `Date`, not ISO). */
-function isoToDate(value: string | null): Date | undefined {
-  if (!value) return undefined;
-  const [y, m, d] = value.split('-').map(Number);
-  return new Date(y, m - 1, d);
-}
-function dateToIso(value: Date | undefined): string | null {
-  if (!value) return null;
-  const y = value.getFullYear();
-  const m = String(value.getMonth() + 1).padStart(2, '0');
-  const d = String(value.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
-}
-function formatIsoForChip(value: string): string {
-  const date = isoToDate(value);
+/** `2026-11-30` -> `30 Nov 26` (R14 chip), the `DateRangePicker`'s own ISO parser reused
+ *  rather than a second one. */
+function formatDateChip(value: string): string {
+  const date = parseIsoDate(value);
   if (!date) return value;
-  return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: '2-digit' });
+}
+
+/** Copy without `navigator.clipboard` (R19/AC-30b): the owner reaches the stack over http
+ *  on a LAN hostname, a non-secure context where the Clipboard API does not exist at all.
+ *  A hidden, off-screen textarea is the standard fallback - select it, ask the browser to
+ *  copy the current selection, then remove it. */
+function copyViaExecCommand(text: string): boolean {
+  if (typeof document.execCommand !== 'function') return false;
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.top = '-1000px';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  let ok = false;
+  try {
+    ok = document.execCommand('copy');
+  } catch {
+    ok = false;
+  }
+  document.body.removeChild(textarea);
+  return ok;
 }
 
 const BOOK_LABEL: Record<StockDebtBook, string> = {
@@ -137,17 +159,14 @@ export function StockDebtClient() {
     debouncedValue: debounced,
     isSettling: debouncedSettling,
   } = useDebouncedSearch();
-  const [group, setGroup] = React.useState('');
   const [book, setBook] = React.useState<StockDebtBook>('all');
-  const [supplierId, setSupplierId] = React.useState('');
-  // The picked option's own name, kept alongside the id (reviewer round): the envelope's
-  // `suppliers` facet is the authoritative source once it answers, but a fresh pick can
-  // render for a moment before that response lands - the id must never stand in for the
-  // name on screen in the meantime (cursor rule: no UUIDs in the UI).
-  const [pickedSupplier, setPickedSupplier] = React.useState<{ id: string; name: string } | null>(
-    null,
-  );
-  const [cutoff, setCutoff] = React.useState<string | null>(null);
+  // R15: a MULTI select - a product matches when its last supplier is ANY of these.
+  const [supplierIds, setSupplierIds] = React.useState<string[]>([]);
+  // R14: the single Cutoff date became a Due date RANGE. '' is "no bound", matching the
+  // `DateRangePicker`'s own `string | null` contract (empty here rather than null, so the
+  // wire helpers' `dateFrom || undefined` guard has one falsy shape to check, not two).
+  const [dateFrom, setDateFrom] = React.useState('');
+  const [dateTo, setDateTo] = React.useState('');
   // Default ON (AC-S2-10): the whole catalogue is ~4,000 products and the answer the
   // planner came for is the short list that owes something.
   const [onlyDebt, setOnlyDebt] = React.useState(true);
@@ -161,48 +180,43 @@ export function StockDebtClient() {
   // (AC-24).
   React.useEffect(() => {
     setPagination((previous) => ({ ...previous, pageIndex: 0 }));
-  }, [debounced, group, onlyDebt, book, supplierId, cutoff]);
-
-  const handleBookChange = (next: StockDebtBook) => {
-    setBook(next);
-    // AC-20: Retail has no ownership groups of its own, so the select is hidden AND
-    // cleared - a stale group would otherwise silently narrow a span it no longer applies to.
-    if (next === 'retail') setGroup('');
-  };
+  }, [debounced, onlyDebt, book, supplierIds, dateFrom, dateTo]);
 
   const list = useStockDebtQuery({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     query: debounced,
-    group,
     onlyDebt,
     book,
-    supplierId,
-    cutoff,
+    supplierIds,
+    dateFrom,
+    dateTo,
   });
 
   const rows = React.useMemo(() => list.data?.data ?? [], [list.data]);
   const total = list.data?.pagination.total ?? 0;
   const months = React.useMemo(() => list.data?.months ?? [], [list.data]);
   const tbaMonth = list.data?.tba_month ?? null;
-  const groups = list.data?.groups ?? [];
   const suppliers = React.useMemo(() => list.data?.suppliers ?? [], [list.data]);
   const totals = list.data?.totals;
 
-  const supplierLabel = React.useMemo(() => {
-    if (supplierId === 'none') return 'No supplier';
-    if (!supplierId) return '';
-    const fromEnvelope = suppliers.find((entry) => entry.id === supplierId)?.name;
-    if (fromEnvelope) return fromEnvelope;
-    if (pickedSupplier?.id === supplierId) return pickedSupplier.name;
-    // Never the raw id (cursor rule: no UUIDs in the UI) - neither source has answered
-    // for this id yet.
-    return 'Selected supplier';
-  }, [supplierId, suppliers, pickedSupplier]);
+  // R15: two or more picked suppliers render as ONE chip "Suppliers: N" (AC-19c); one
+  // picked supplier prints its own name, resolved from the envelope's `suppliers` facet -
+  // never the raw id (cursor rule: no UUIDs in the UI).
+  const supplierChipLabel = React.useMemo(() => {
+    if (supplierIds.length === 0) return null;
+    if (supplierIds.length > 1) return `Suppliers: ${supplierIds.length}`;
+    const [id] = supplierIds;
+    if (id === 'none') return 'Supplier: No supplier';
+    const name = suppliers.find((entry) => entry.id === id)?.name;
+    return `Supplier: ${name ?? 'Selected supplier'}`;
+  }, [supplierIds, suppliers]);
 
   // ── Excel-style cell selection (R7, AC-25 to AC-32) ──────────────────────────────────
+  // R17: "No date" and "No location" are gone from the screen - neither is a selectable
+  // column any more (the row still carries `undated`/`unlocated` on the wire, unchanged).
   const valueColumnKeys = React.useMemo(
-    () => [...months.map((key) => `m:${key}`), 'tba', 'undated', 'unlocated', 'total'],
+    () => [...months.map((key) => `m:${key}`), 'tba', 'total'],
     [months],
   );
   const rowIds = React.useMemo(() => rows.map((row) => row.product_id), [rows]);
@@ -216,8 +230,6 @@ export function StockDebtClient() {
       const row = rowsById.get(rowId);
       if (!row) return null;
       if (columnKey === 'tba') return row.tba;
-      if (columnKey === 'undated') return row.undated;
-      if (columnKey === 'unlocated') return row.unlocated;
       if (columnKey === 'total') return row.total;
       const monthKey = columnKey.startsWith('m:') ? columnKey.slice(2) : null;
       if (!monthKey) return null;
@@ -230,6 +242,16 @@ export function StockDebtClient() {
     columnKeys: valueColumnKeys,
     getValue: getCellValue,
   });
+  // Read through a REF inside `columns` below, reassigned every render (diagnosed
+  // flicker fix): `columns` used to list `selection` itself as a dependency, and every
+  // drag step changes `selection.selected` - so `columns` rebuilt, TanStack's
+  // `flexRender` treated each fresh inline `cell` closure as a NEW component type, and
+  // ~400 cells remounted per pointer move (a button re-queried mid-drag was a different
+  // DOM node). `columns` now depends on the envelope alone; the cell/header renderers
+  // dereference `selectionRef.current` at RENDER time, which is always this render's
+  // latest selection since the assignment below runs before the JSX that reads it.
+  const selectionRef = React.useRef(selection);
+  selectionRef.current = selection;
   const cellRefs = React.useRef(new Map<string, HTMLButtonElement>());
   const registerCellRef = (rowId: string, columnKey: string) => (node: HTMLButtonElement | null) => {
     const key = `${rowId}::${columnKey}`;
@@ -239,23 +261,37 @@ export function StockDebtClient() {
   const tableContainerRef = React.useRef<HTMLDivElement>(null);
 
   // AC-29: a click OUTSIDE the table clears the selection (Escape is handled inside the
-  // hook itself, since it has nothing to do with where the pointer is).
+  // hook itself, since it has nothing to do with where the pointer is). Attached once
+  // (empty deps) and read through the ref for the same reason as `columns` above - a
+  // fresh `selection` every drag step is not a reason to re-subscribe the listener.
   React.useEffect(() => {
     function onPointerDown(e: PointerEvent) {
       if (!tableContainerRef.current) return;
       if (!(e.target instanceof Node)) return;
-      if (!tableContainerRef.current.contains(e.target)) selection.clear();
+      if (!tableContainerRef.current.contains(e.target)) selectionRef.current.clear();
     }
     document.addEventListener('pointerdown', onPointerDown);
     return () => document.removeEventListener('pointerdown', onPointerDown);
-  }, [selection]);
+  }, []);
 
+  // R19/AC-30b: `navigator.clipboard` does not exist at all off a secure context (the
+  // owner reaches the stack over http on a LAN hostname) - fall back to a hidden
+  // textarea + `document.execCommand('copy')`, and only toast an error when NEITHER
+  // exists.
   const handleCopy = async () => {
     const text = selection.copyText();
-    try {
-      await navigator.clipboard.writeText(text);
+    if (navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(text);
+        toast.success('Copied');
+        return;
+      } catch {
+        // Fall through to the execCommand fallback below.
+      }
+    }
+    if (copyViaExecCommand(text)) {
       toast.success('Copied');
-    } catch {
+    } else {
       toast.error('Could not copy to the clipboard');
     }
   };
@@ -292,19 +328,19 @@ export function StockDebtClient() {
       openDrill: boolean,
     ) => {
       const rowId = row.product_id;
-      const selected = selection.isSelected(rowId, columnKey);
+      const selected = selectionRef.current.isSelected(rowId, columnKey);
       return (
         <button
           type="button"
           ref={registerCellRef(rowId, columnKey)}
-          onPointerDown={(e) => selection.onCellPointerDown(rowId, columnKey, e)}
-          onPointerEnter={(e) => selection.onCellPointerEnter(rowId, columnKey, e)}
+          onPointerDown={(e) => selectionRef.current.onCellPointerDown(rowId, columnKey, e)}
+          onPointerEnter={(e) => selectionRef.current.onCellPointerEnter(rowId, columnKey, e)}
           onClick={(e) => {
-            const plain = selection.onCellClick(rowId, columnKey, e);
+            const plain = selectionRef.current.onCellClick(rowId, columnKey, e);
             if (plain && openDrill) openFor(row, month, label, balance);
           }}
           onKeyDown={(e) => {
-            const next = selection.onCellKeyDown(rowId, columnKey, e);
+            const next = selectionRef.current.onCellKeyDown(rowId, columnKey, e);
             if (next) cellRefs.current.get(`${next.rowId}::${next.columnKey}`)?.focus();
           }}
           title={`${row.product_code} - ${label}: ${signed(balance)}`}
@@ -323,7 +359,7 @@ export function StockDebtClient() {
     const columnHeader = (columnKey: string, label: React.ReactNode, titleText: string) => (
       <button
         type="button"
-        onClick={() => selection.onColumnHeaderClick(columnKey)}
+        onClick={() => selectionRef.current.onColumnHeaderClick(columnKey)}
         title={`Select the whole ${titleText} column`}
         className="block w-full truncate text-end hover:underline"
       >
@@ -393,11 +429,13 @@ export function StockDebtClient() {
       })),
       {
         id: 'tba',
-        // The policy's own TBA month is the label, so the column names the date the
-        // book actually uses rather than a hard-coded 2030.
-        header: () => columnHeader('tba', tbaMonth ?? 'TBA', tbaMonth ?? 'TBA'),
+        // R18: the HEADER reads "TBA" literally always - the policy's own TBA month is
+        // display-only, in the title tooltip. The CELL's own label (aria-label, dialog
+        // title) still names the actual month, exactly as the drill it opens does.
+        header: () =>
+          columnHeader('tba', 'TBA', tbaMonth ? `TBA (${monthLabel(tbaMonth)})` : 'TBA'),
         meta: {
-          headerTitle: tbaMonth ?? 'TBA',
+          headerTitle: tbaMonth ? `TBA (${monthLabel(tbaMonth)})` : 'TBA',
           headerClassName: 'text-end',
           skeleton: <Skeleton className="h-4 w-full" />,
         },
@@ -405,43 +443,6 @@ export function StockDebtClient() {
         footer: () => (totals ? signed(totals.tba) : '-'),
         cell: ({ row }) =>
           cell(row.original, 'tba', 'tba', tbaMonth ?? 'TBA', row.original.tba, NEUTRAL_CLASS, true),
-      },
-      {
-        id: 'undated',
-        header: () => columnHeader('undated', 'No date', 'No date'),
-        meta: {
-          headerTitle: 'No date',
-          headerClassName: 'text-end',
-          skeleton: <Skeleton className="h-4 w-full" />,
-        },
-        size: 104,
-        footer: () => (totals ? signed(totals.undated) : '-'),
-        cell: ({ row }) =>
-          cell(row.original, 'undated', 'undated', 'No date', row.original.undated, NEUTRAL_CLASS, true),
-      },
-      {
-        id: 'unlocated',
-        // Demand booked at no warehouse. It is in no group's pile, so it draws nothing and
-        // sits in no month - stated here rather than dropped, because a screen that lists
-        // what is owed and quietly omits it answers a narrower question than it is asked.
-        header: () => columnHeader('unlocated', 'No location', 'No location'),
-        meta: {
-          headerTitle: 'No location',
-          headerClassName: 'text-end',
-          skeleton: <Skeleton className="h-4 w-full" />,
-        },
-        size: 116,
-        footer: () => (totals ? signed(totals.unlocated) : '-'),
-        cell: ({ row }) =>
-          cell(
-            row.original,
-            'unlocated',
-            'unlocated',
-            'No location',
-            row.original.unlocated,
-            NEUTRAL_CLASS,
-            true,
-          ),
       },
       {
         id: 'total',
@@ -459,7 +460,11 @@ export function StockDebtClient() {
           cell(row.original, 'total', 'total', 'Total', row.original.total, TOTAL_CLASS, false),
       },
     ];
-  }, [months, tbaMonth, totals, selection]);
+    // `selection` deliberately NOT a dependency (diagnosed flicker fix, see the
+    // `selectionRef` note above): the renderers close over `selectionRef.current`
+    // instead, so `columns` - and the per-cell component identity TanStack's
+    // `flexRender` sees - stays stable across every drag step and click.
+  }, [months, tbaMonth, totals]);
 
   const table = useReactTable({
     data: rows,
@@ -478,26 +483,40 @@ export function StockDebtClient() {
     columnResizeMode: 'onChange',
   });
 
-  const filtered = Boolean(debounced || group || book !== 'all' || supplierId || cutoff);
+  const filtered = Boolean(
+    debounced || book !== 'all' || supplierIds.length > 0 || dateFrom || dateTo,
+  );
 
   // AC-19b: what the Filters button's badge counts. "Only in debt" is the SCREEN's
-  // default, so it counts only when the reader has turned it OFF (AC-19c).
+  // default, so it counts only when the reader has turned it OFF (AC-19c). R16: no more
+  // Ownership group to count.
   const activeFilterCount =
     (book !== 'all' ? 1 : 0) +
-    (group ? 1 : 0) +
-    (supplierId ? 1 : 0) +
-    (cutoff ? 1 : 0) +
+    (supplierIds.length > 0 ? 1 : 0) +
+    (dateFrom || dateTo ? 1 : 0) +
     (onlyDebt ? 0 : 1);
+
+  const dueDateChipLabel =
+    dateFrom || dateTo
+      ? `Due: ${dateFrom ? formatDateChip(dateFrom) : '…'} to ${dateTo ? formatDateChip(dateTo) : '…'}`
+      : null;
 
   const activeChips = [
     book !== 'all'
-      ? { label: `Book: ${BOOK_LABEL[book]}`, onClear: () => handleBookChange('all') }
+      ? { label: `Book: ${BOOK_LABEL[book]}`, onClear: () => setBook('all') }
       : null,
-    group ? { label: `Group ${group}`, onClear: () => setGroup('') } : null,
-    supplierId
-      ? { label: `Supplier: ${supplierLabel}`, onClear: () => setSupplierId('') }
+    supplierChipLabel
+      ? { label: supplierChipLabel, onClear: () => setSupplierIds([]) }
       : null,
-    cutoff ? { label: `Cutoff ${formatIsoForChip(cutoff)}`, onClear: () => setCutoff(null) } : null,
+    dueDateChipLabel
+      ? {
+          label: dueDateChipLabel,
+          onClear: () => {
+            setDateFrom('');
+            setDateTo('');
+          },
+        }
+      : null,
     !onlyDebt ? { label: 'Including covered products', onClear: () => setOnlyDebt(true) } : null,
   ].filter((chip): chip is { label: string; onClear: () => void } => chip !== null);
 
@@ -580,7 +599,7 @@ export function StockDebtClient() {
                       <RadioGroup
                         className="flex flex-wrap gap-3"
                         value={book}
-                        onValueChange={(value) => handleBookChange(value as StockDebtBook)}
+                        onValueChange={(value) => setBook(value as StockDebtBook)}
                       >
                         {(['all', 'project', 'retail'] as StockDebtBook[]).map((value) => (
                           <label key={value} className="flex items-center gap-1.5 text-sm">
@@ -591,38 +610,11 @@ export function StockDebtClient() {
                       </RadioGroup>
                     </div>
 
-                    {/* AC-20: no ownership groups of Retail's own. */}
-                    {book !== 'retail' && (
-                      <div className="space-y-1.5">
-                        <Label className="text-xs text-muted-foreground">
-                          Ownership group
-                        </Label>
-                        <SearchableSelect
-                          value={group}
-                          onChange={setGroup}
-                          clearable
-                          options={groups.map((entry) => ({
-                            value: entry,
-                            label: entry,
-                          }))}
-                          placeholder="Every group"
-                        />
-                      </div>
-                    )}
-
                     <div className="space-y-1.5">
                       <Label className="text-xs text-muted-foreground">Supplier</Label>
-                      <SearchableSelect
-                        value={supplierId}
-                        onChange={setSupplierId}
-                        onOptionChange={(option) =>
-                          setPickedSupplier(
-                            option && option.value !== 'none'
-                              ? { id: option.value, name: option.label }
-                              : null,
-                          )
-                        }
-                        clearable
+                      <SearchableMultiSelect
+                        value={supplierIds}
+                        onChange={setSupplierIds}
                         options={[
                           { value: 'none', label: 'No supplier' },
                           ...suppliers.map((entry) => ({ value: entry.id, label: entry.name })),
@@ -632,11 +624,15 @@ export function StockDebtClient() {
                     </div>
 
                     <div className="space-y-1.5">
-                      <Label className="text-xs text-muted-foreground">Cutoff date</Label>
-                      <DatePicker
-                        value={isoToDate(cutoff)}
-                        onChange={(date) => setCutoff(dateToIso(date))}
-                        ariaLabel="Cutoff date"
+                      <Label className="text-xs text-muted-foreground">Due date</Label>
+                      <DateRangePicker
+                        from={dateFrom || null}
+                        to={dateTo || null}
+                        onChange={(next) => {
+                          setDateFrom(next.from ?? '');
+                          setDateTo(next.to ?? '');
+                        }}
+                        aria-label="Due date"
                       />
                     </div>
 
@@ -656,7 +652,7 @@ export function StockDebtClient() {
               primaryAction={
                 <StockDebtExportPopover
                   envelope={list.data}
-                  filters={{ query: debounced, group, onlyDebt, book, supplierId, cutoff }}
+                  filters={{ query: debounced, onlyDebt, book, supplierIds, dateFrom, dateTo }}
                 />
               }
             />
@@ -737,8 +733,12 @@ export function StockDebtClient() {
           month={openCell.month}
           monthLabel={openCell.label}
           balance={openCell.balance}
-          group={group}
-          cutoff={cutoff}
+          // R16: the board no longer has an Ownership group of its own to echo. `dateTo`
+          // (R14) travels through the dialog's existing `cutoff` prop - the closest
+          // narrowing it already threads through to the drill; `dateFrom` has no slot of
+          // its own here yet (`StockDebtCellDialog` is unchanged this round).
+          group=""
+          cutoff={dateTo || undefined}
           book={book}
           onClose={() => setOpenCell(null)}
         />

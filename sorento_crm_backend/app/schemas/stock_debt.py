@@ -63,7 +63,9 @@ class StockDebtRow(BaseModel):
     #: `products.category_id` is mandatory, so "no category" is a BLANK code (`""`), the
     #: same convention `low_stock_report_service._master_map` already uses - never `None`.
     category_code: Optional[str] = None
-    #: Sum of every month's balance plus `tba` + `undated` + `unlocated` (R9/AC-5).
+    #: Sum of every month's balance plus `tba` ONLY (R17: "No date"/"No location" leave
+    #: the screen and the workbook both, so `undated`/`unlocated` are no longer folded in
+    #: here - they still ride on the row, unchanged, just not in this figure).
     total: float = 0.0
 
 
@@ -75,7 +77,12 @@ class StockDebtPagination(BaseModel):
 
 class StockDebtTotals(BaseModel):
     """The WHOLE filtered set's own totals (AC-6), never the page's - so the footer
-    prints the same figures on page 1 and on page 2."""
+    prints the same figures on page 1 and on page 2.
+
+    `total` sums `months` + `tba` ONLY (R17), the same rule each row's own `total`
+    follows - `undated`/`unlocated` still ride here for the two columns that still show
+    them, just not folded into `total`.
+    """
 
     months: Dict[str, float]
     tba: float
@@ -177,12 +184,20 @@ class StockDebtCell(BaseModel):
 class StockDebtExportIn(BaseModel):
     """The export route's body (AC-12): every list filter except `page`/`limit`, plus the
     workbook `split`. Every field optional/defaulted so `{"split": "none"}` alone is a
-    valid request - the same shape `list_stock_debt`'s own query params default to."""
+    valid request - the same shape `list_stock_debt`'s own query params default to.
+
+    `date_from`/`date_to` replace `cutoff` and `supplier_ids` replaces `supplier_id`
+    (R14/R15): both are REMOVED, not aliased - a caller still sending the old names sends
+    them into nothing, exactly as `group` sends into a param the export never reads (R16
+    leaves `group` itself alone on the BACKEND; the export body's own field is unaffected
+    by that ruling and stays for parity with `list()`'s own signature).
+    """
 
     query: Optional[str] = None
     group: Optional[str] = None
     only_debt: bool = True
-    cutoff: Optional[DateType] = None
-    supplier_id: Optional[str] = None
+    date_from: Optional[DateType] = None
+    date_to: Optional[DateType] = None
+    supplier_ids: List[str] = []
     book: Book = "all"
     split: ExportSplit = "none"

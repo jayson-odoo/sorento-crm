@@ -23,24 +23,29 @@
  * `projects.stock_debt.view` (AC-S2-8, R22; permission + grant sweep shipped in
  * migration 443 with S1).
  *
- * 1) The month x product board (AC-S2-6, extended AC-1 to AC-9)
+ * 1) The month x product board (AC-S2-6, extended AC-1 to AC-9; R14/R15/R16 owner round)
  *
  *      GET /api/v1/project-sales/stock-debt
  *          ?page=<1-based>      standard `buildDataGridParams` paging
  *          &limit=<n>
  *          &query=<text>        product code or name
- *          &group=<BB|IB|...>   ownership group; narrows the `project` half of
- *                               `book` only (AC-8, R1) - ignored under `book=retail`
  *          &only_debt=<bool>    drop rows with no negative month (default true on
  *                               the screen)
- *          &cutoff=<YYYY-MM-DD> drop demand due after this date; ends the axis
- *                               at its month (R2, A2, AC-1/AC-2/AC-3)
- *          &supplier_id=<uuid>|none  keep only products whose LAST supplier
- *                               (newest PO line, else the primary flag) is this
- *                               one; `none` keeps products with neither (R3, AC-4)
+ *          &date_from=<YYYY-MM-DD>  drop demand due before this date; the axis starts
+ *                               at `max(current month, this date's month)` (R14, AC-1b).
+ *                               Replaces `cutoff`, not an alias.
+ *          &date_to=<YYYY-MM-DD>    drop demand due after this date; ends the axis at
+ *                               its month (R14, A2, AC-1/AC-2/AC-3). Replaces `cutoff`.
+ *          &supplier_ids=<uuid>|none  REPEATABLE (R15, AC-4): keep only products whose
+ *                               LAST supplier (newest PO line, else the primary flag) is
+ *                               ANY of the values passed; `none` is one more value among
+ *                               the others. Replaces `supplier_id`, not an alias.
  *          &book=<all|project|retail>  `all` (default) = flagged project bins
  *                               PLUS the site pools, in one span; `project` is
  *                               today's view; `retail` is pools only (R1, AC-8)
+ *
+ *      No `group` param - the Ownership group filter left the screen entirely (R16). The
+ *      backend still accepts one; this service just never sends it.
  *
  *      -> 200 {
  *           data: [{
@@ -72,9 +77,10 @@
  *      or after `tba_date_from`, the demand with no date, and the demand booked at no
  *      warehouse at all. None of the three draws supply (R14), so they carry no tone and
  *      the screen renders them as informational.
- *      `total` (AC-5) sums every month's balance plus `tba` + `undated` + `unlocated` -
- *      it INCLUDES the three no-supply buckets (R9), so it is never the sum of `months`
- *      alone.
+ *      `total` (AC-5, R17) sums every month's balance plus `tba` ONLY - `undated` and
+ *      `unlocated` are NOT folded in any more (the "No date"/"No location" columns left
+ *      the screen and the workbook both); the row still carries `undated`/`unlocated`
+ *      themselves, unchanged.
  *      `product_name` is `null` when it equals `product_code`, case-sensitive and
  *      trimmed, so the board and the export agree without each re-deriving it (AC-9).
  *
@@ -84,17 +90,17 @@
  *      change under the reader as they page (AC-7b: page 2 states the same
  *      `sheet_counts` as page 1).
  *
- * 2) The cell drill (AC-S2-7, R28; extended AC-11)
+ * 2) The cell drill (AC-S2-7, R28; extended AC-11; R14 owner round)
  *
  *      GET /api/v1/project-sales/stock-debt/{product_id}/cell
  *          ?month=<YYYY-MM | tba | undated | unlocated>
- *          &group=<BB|IB|...>   the group the BOARD is narrowed to. Same meaning as on
- *                               the list: it narrows the span the balance is recomputed
- *                               from, so the drill foots with the cell that opened it.
- *                               Omitted = the whole book.
- *          &cutoff=<YYYY-MM-DD>  the board's own cutoff, echoed so the drill foots
- *                               with the cell that opened it.
+ *          &date_from=<YYYY-MM-DD>  the board's own `date_from`, echoed so the drill
+ *                               foots with the cell that opened it. Replaces `cutoff`.
+ *          &date_to=<YYYY-MM-DD>    the board's own `date_to`, same reason.
  *          &book=<all|project|retail>  the board's own book, same reason.
+ *
+ *      No `group` - the toolbar no longer has an Ownership group control to echo (R16);
+ *      the backend param itself is untouched.
  *
  *      -> 200 {
  *           demand: [{ so_number, agent_code, warehouse_code, required_date, open_qty,
@@ -117,10 +123,11 @@
  *      tab footers print. `short_qty` is what a line went short of on its own date, so a
  *      `late` line ends covered and still carries one.
  *
- * 3) Export (AC-12 to AC-18)
+ * 3) Export (AC-12 to AC-18; R14/R15/R16 owner round)
  *
  *      POST /api/v1/project-sales/stock-debt/export
- *          { query?, group?, only_debt?, cutoff?, supplier_id?, book?, split }
+ *          { query?, only_debt?, date_from?, date_to?, supplier_ids?, book?, split }
+ *          (never `group`, `cutoff` or `supplier_id` - all three retired, not aliased)
  *
  *      -> 201 MyDownload (`status: 'pending'`, `kind: 'stock_debt_xlsx'`) - a
  *         `user_downloads` row; `generate_stock_debt_xlsx` runs on the `imports`
@@ -166,31 +173,40 @@ import type {
  *  AC-18 shipped; kept declared, not deleted, so a regression is a one-line diff. */
 export const USE_STOCK_DEBT_FILTER_MOCKS = false;
 
-/** What the board asks for: a page, a needle, a group, the book, a supplier, a
- *  cutoff and the debt-only switch. */
+/**
+ * What the board asks for: a page, a needle, the book, the suppliers, a due date range
+ * and the debt-only switch.
+ *
+ * Owner's hand-test round (R14-R16): the single `cutoff` became a `dateFrom`/`dateTo`
+ * range, the single `supplierId` became a repeatable `supplierIds`, and the Ownership
+ * group filter left the screen entirely - there is no `group` field here any more, and
+ * this service never sends one (the backend's own `group` param and its tests stay,
+ * untouched and simply FE-unreachable).
+ */
 export interface StockDebtListParams {
   pageIndex: number;
   pageSize: number;
   query: string;
-  /** Ownership group, or '' for every group. Ignored while `book === 'retail'` (AC-8). */
-  group: string;
   onlyDebt: boolean;
   /** `all` (default) / `project` / `retail` (R1, AC-8). */
   book: StockDebtBook;
-  /** A supplier id, `'none'` for "no supplier", or '' for every supplier (R3, AC-4). */
-  supplierId: string;
-  /** `YYYY-MM-DD`, or null for no cutoff (R2, AC-1/AC-2/AC-3). */
-  cutoff: string | null;
+  /** Repeatable; `'none'` is one more value among the others, not a sentinel that
+   *  excludes them (R15, AC-4). Empty = every supplier. */
+  supplierIds: string[];
+  /** `YYYY-MM-DD`, or '' for no lower bound (R14, AC-1b). */
+  dateFrom: string;
+  /** `YYYY-MM-DD`, or '' for no upper bound (R14, AC-1). */
+  dateTo: string;
 }
 
 /** The list params minus paging, plus the workbook split - what `exportStockDebt` sends. */
 export interface StockDebtExportParams {
   query: string;
-  group: string;
   onlyDebt: boolean;
   book: StockDebtBook;
-  supplierId: string;
-  cutoff: string | null;
+  supplierIds: string[];
+  dateFrom: string;
+  dateTo: string;
   split: StockDebtExportSplit;
 }
 
@@ -205,13 +221,17 @@ export async function getStockDebtList(
       searchQuery: params.query,
     },
     {
-      group: params.group,
       only_debt: params.onlyDebt,
       book: params.book === 'all' ? '' : params.book,
-      supplier_id: params.supplierId,
-      cutoff: params.cutoff ?? '',
+      date_from: params.dateFrom || '',
+      date_to: params.dateTo || '',
     },
   );
+  // Repeatable, so `buildDataGridParams`'s scalar `extra` cannot carry it - appended
+  // directly (R15).
+  for (const id of params.supplierIds ?? []) {
+    if (id) search.append('supplier_ids', id);
+  }
   const res = await apiFetch(`/api/v1/project-sales/stock-debt?${search}`);
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load stock debt'));
   return (await res.json()) as StockDebtListResponse;
@@ -219,19 +239,20 @@ export async function getStockDebtList(
 
 /**
  * The demand and supply behind one cell (AC-S2-7, extended AC-11). `month` is `YYYY-MM`,
- * `tba`, `undated` or `unlocated`; `group`, `cutoff` and `book` are the board's own
- * narrowing, passed through so the drill is recomputed over the same span the cell was.
+ * `tba`, `undated` or `unlocated`; `dateFrom`/`dateTo` (R14) and `book` are the board's
+ * own narrowing, passed through so the drill is recomputed over the same span the cell
+ * was. Never sends `group` or `cutoff` (R14/R16 - both retired, not aliased).
  */
 export async function getStockDebtCell(
   productId: string,
   month: string,
-  group?: string,
-  cutoff?: string,
+  dateFrom?: string,
+  dateTo?: string,
   book?: StockDebtBook,
 ): Promise<StockDebtCell> {
   const search = new URLSearchParams({ month });
-  if (group) search.set('group', group);
-  if (cutoff) search.set('cutoff', cutoff);
+  if (dateFrom) search.set('date_from', dateFrom);
+  if (dateTo) search.set('date_to', dateTo);
   if (book && book !== 'all') search.set('book', book);
   const res = await apiFetch(
     `/api/v1/project-sales/stock-debt/${encodeURIComponent(productId)}/cell?${search}`,
@@ -252,11 +273,11 @@ export async function exportStockDebt(params: StockDebtExportParams): Promise<My
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       query: params.query || undefined,
-      group: params.group || undefined,
       only_debt: params.onlyDebt,
       book: params.book,
-      supplier_id: params.supplierId || undefined,
-      cutoff: params.cutoff ?? undefined,
+      supplier_ids: params.supplierIds ?? [],
+      date_from: params.dateFrom || undefined,
+      date_to: params.dateTo || undefined,
       split: params.split,
     }),
   });

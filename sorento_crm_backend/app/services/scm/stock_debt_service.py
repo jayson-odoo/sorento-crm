@@ -168,18 +168,21 @@ class StockDebtService:
         only_debt: bool = True,
         page: int = 1,
         limit: int = 50,
-        cutoff: Optional[date] = None,
-        supplier_id: Optional[str] = None,
+        date_from: Optional[date] = None,
+        date_to: Optional[date] = None,
+        supplier_ids: Optional[Sequence[str]] = None,
         book: str = "all",
     ) -> Dict[str, Any]:
-        """The month x product board (AC-S2-6, extended AC-1 to AC-9).
+        """The month x product board (AC-S2-6, extended AC-1 to AC-9; R14/R15 owner round).
 
-        `cutoff` (R2/A2/A3) drops demand due after it, in `_demand()`; TBA reads 0 once the
-        policy's `tba_date_from` sits after it, for free - every TBA line is dated on or
+        `date_from`/`date_to` (R14, replacing `cutoff` - REMOVED, not aliased) drop demand
+        due before/after them, in `_demand()`; TBA reads 0 once the policy's
+        `tba_date_from` sits after `date_to`, for free - every TBA line is dated on or
         after `tba_date_from`, so the same date filter drops the whole bucket without a
-        second rule. `supplier_id` (R3/A1) narrows to products whose LAST supplier (newest
-        PO line, else the primary flag) matches; `'none'` keeps products with neither.
-        `book` (R1/A4) chooses the span `_warehouses` reads.
+        second rule. `supplier_ids` (R15, replacing `supplier_id`) narrows to products
+        whose LAST supplier (newest PO line, else the primary flag) is ANY of the values
+        passed; `'none'` is one more value among the others, not a sentinel that excludes
+        them. `book` (R1/A4) chooses the span `_warehouses` reads.
 
         `totals`, `suppliers` and `sheet_counts` travel on the ENVELOPE, over the WHOLE
         filtered set rather than the page, for the same reason the axis already does:
@@ -191,7 +194,8 @@ class StockDebtService:
         assignments = self._assignments(
             [(pid, code, name) for pid, code, name, _cat in products],
             warehouses,
-            cutoff=cutoff,
+            date_from=date_from,
+            date_to=date_to,
         )
         supplier_map = self._last_supplier_map(product_ids)
 
@@ -203,32 +207,38 @@ class StockDebtService:
             supplier = supplier_map.get(product_id) or {"id": None, "name": None}
             pre_supplier.append((product_id, code, name, category_code, supplier, result))
 
-        # AC-7c: the supplier FACET is built from the set BEFORE the `supplier_id` filter
+        # AC-7c: the supplier FACET is built from the set BEFORE the `supplier_ids` filter
         # narrows it - the select can then switch supplier without first clearing itself,
         # rather than a narrowed board silently dropping every option but the one chosen.
         suppliers = self._suppliers_list(row[4] for row in pre_supplier)
 
+        wanted_suppliers = set(supplier_ids or [])
         filtered = []
         for entry in pre_supplier:
             supplier = entry[4]
-            if supplier_id == "none":
-                if supplier["id"] is not None:
-                    continue
-            elif supplier_id:
-                if supplier["id"] != supplier_id:
+            if wanted_suppliers:
+                # R15: a product matches when its last supplier is ANY of the values
+                # passed - `none` is one more value alongside real ids, never a sentinel
+                # that excludes them.
+                matches = ("none" in wanted_suppliers and supplier["id"] is None) or (
+                    supplier["id"] is not None and supplier["id"] in wanted_suppliers
+                )
+                if not matches:
                     continue
             filtered.append(entry)
 
-        axis = self._axis((row[5] for row in filtered), cutoff=cutoff)
+        axis = self._axis(
+            (row[5] for row in filtered), date_from=date_from, date_to=date_to
+        )
         filtered.sort(key=lambda row: self._sort_key(row[5], row[1]))
 
         data_rows = []
         for product_id, code, name, category_code, supplier, result in filtered:
             months = self._months_on_axis(result, axis, product_id)
-            total = (
-                sum(month["balance"] for month in months)
-                + result.tba + result.undated + result.unlocated
-            )
+            # R17: the row's `total` sums months + TBA ONLY - `undated`/`unlocated` are no
+            # longer folded in (the "No date"/"No location" columns leave the screen and
+            # the workbook both); the two still ride the row unchanged, just not here.
+            total = sum(month["balance"] for month in months) + result.tba
             data_rows.append(
                 {
                     "product_id": product_id,
@@ -271,7 +281,9 @@ class StockDebtService:
         product_id: str,
         month: str,
         group: Optional[str] = None,
-        cutoff: Optional[date] = None,
+        *,
+        date_from: Optional[date] = None,
+        date_to: Optional[date] = None,
         book: str = "all",
     ) -> Dict[str, Any]:
         """The demand and the supply behind one cell (AC-S2-7, R28; extended AC-11).
@@ -283,8 +295,9 @@ class StockDebtService:
         narrowing the BOARD was showing when the cell was pressed, and it is not optional
         detail: `group=BB` recomputes the balance from the BB span only, so a drill that read
         the whole book would answer a different question from the cell that opened it.
-        `cutoff` and `book` are the same two narrowings the list route takes, threaded
-        through for the same reason `group` already is (AC-11).
+        `date_from`/`date_to` (R14, replacing `cutoff`) and `book` are the same narrowings
+        the list route takes, threaded through for the same reason `group` already is
+        (AC-11).
         """
         if month not in BUCKET_KEYS and not self._is_month_key(month):
             raise AppException(
@@ -304,7 +317,7 @@ class StockDebtService:
             )
         products = [(str(product.id), product.product_code, product.product_name)]
         assignments = self._assignments(
-            products, warehouses, keep_events=True, cutoff=cutoff,
+            products, warehouses, keep_events=True, date_from=date_from, date_to=date_to,
         )
         result = assignments[str(product.id)]
         events = self._event_cache[str(product.id)]
@@ -571,13 +584,15 @@ class StockDebtService:
         *,
         keep_events: bool = False,
         as_of: Optional[date] = None,
-        cutoff: Optional[date] = None,
+        date_from: Optional[date] = None,
+        date_to: Optional[date] = None,
     ) -> Dict[str, Assignment]:
         """One `assign()` per product, off ONE read per input for the whole set.
 
-        `cutoff` (R2/A2/AC-1..AC-3) drops demand due after it in `_demand()` below - it
-        touches DEMAND only, never supply (AC-3: supply landing after a line's own due
-        date, but on or before the cutoff, still covers it - the walk itself is unchanged).
+        `date_from`/`date_to` (R14, replacing `cutoff`; AC-1/AC-1b/AC-3) drop demand due
+        before/after them in `_demand()` below - they touch DEMAND only, never supply
+        (AC-3: supply landing after a line's own due date, but on or before `date_to`,
+        still covers it - the walk itself is unchanged).
         """
         self._event_cache: Dict[str, List[SupplyEvent]] = {}
         self._lead_cache: Dict[str, int] = {}
@@ -601,7 +616,9 @@ class StockDebtService:
         # the dev copy.
         leads = self.supply.lead_times(product_ids)
         supply_rows = self._supply(product_ids, warehouse_ids, codes, pools, as_of=as_of)
-        demand_rows = self._demand(product_ids, warehouse_ids, codes, pools, cutoff=cutoff)
+        demand_rows = self._demand(
+            product_ids, warehouse_ids, codes, pools, date_from=date_from, date_to=date_to,
+        )
         holds = self._holds(
             product_ids,
             {line.key for lines in demand_rows.values() for line in lines},
@@ -744,17 +761,34 @@ class StockDebtService:
         codes: Dict[str, str],
         pools: set,
         *,
-        cutoff: Optional[date] = None,
+        date_from: Optional[date] = None,
+        date_to: Optional[date] = None,
     ) -> Dict[str, List[DemandLine]]:
         """Every open sales-order line at those bins, plus the ones at NO bin - the same
         `is_open_demand()` rule the ladder and `scm.committed_v` share, so the debt and the
         plan count one book. `_demand_span` is why an unlocated line is here.
 
-        `cutoff` (R2/A2/A3, AC-1/AC-2) drops a line due AFTER it; an undated line has no
-        date to test and always survives. Every TBA line is dated on or after the policy's
-        `tba_date_from`, so a cutoff earlier than that date drops the whole TBA bucket for
-        free, off this ONE clause - no second rule needed (AC-2).
+        `date_from`/`date_to` (R14, replacing `cutoff`; AC-1/AC-1b/AC-2) drop a line due
+        before `date_from` or after `date_to`; an undated line has no date to test and
+        always survives either bound. Every TBA line is dated on or after the policy's
+        `tba_date_from`, so a `date_to` earlier than that date drops the whole TBA bucket
+        for free, off this same clause - no second rule needed (AC-2).
         """
+        extra_clauses = []
+        if date_to is not None:
+            extra_clauses.append(
+                or_(
+                    SalesOrderLine.required_date.is_(None),
+                    SalesOrderLine.required_date <= date_to,
+                )
+            )
+        if date_from is not None:
+            extra_clauses.append(
+                or_(
+                    SalesOrderLine.required_date.is_(None),
+                    SalesOrderLine.required_date >= date_from,
+                )
+            )
         rows = (
             self.db.query(
                 SalesOrderLine.id,
@@ -781,16 +815,7 @@ class StockDebtService:
                 self._demand_span(warehouse_ids),
                 SalesOrder.status == "open",
                 is_open_demand(),
-                *(
-                    [
-                        or_(
-                            SalesOrderLine.required_date.is_(None),
-                            SalesOrderLine.required_date <= cutoff,
-                        )
-                    ]
-                    if cutoff is not None
-                    else []
-                ),
+                *extra_clauses,
             )
             .all()
         )
@@ -973,24 +998,33 @@ class StockDebtService:
         return (red is None, red or "", code or "")
 
     def _axis(
-        self, results: Iterable[Assignment], *, cutoff: Optional[date] = None
+        self,
+        results: Iterable[Assignment],
+        *,
+        date_from: Optional[date] = None,
+        date_to: Optional[date] = None,
     ) -> List[str]:
-        """The month columns of the whole filtered set: today to the last month anything is
-        dated in. One axis for every row, or the columns move as the reader pages.
+        """The month columns of the whole filtered set: today (or `date_from`'s month, if
+        later) to the last month anything is dated in (or `date_to`'s month, if earlier).
+        One axis for every row, or the columns move as the reader pages.
 
-        `cutoff` (A2) caps the LAST column at its own month - demand past it is already
-        dropped in `_demand()`, but a document arriving after the cutoff is still supply
-        (AC-3) and could otherwise stretch the axis past a month nothing due survives in.
-        Never below `first`: a cutoff in the past still leaves the current month on screen.
+        `date_from` (R14/AC-1b) raises the FIRST column to its own month, never below
+        today's. `date_to` (A2/AC-1) caps the LAST column at its own month - demand past
+        it is already dropped in `_demand()`, but a document arriving after `date_to` is
+        still supply (AC-3) and could otherwise stretch the axis past a month nothing due
+        survives in. Never below `first`: a `date_to` in the past still leaves the current
+        month (or `date_from`'s) on screen.
         """
         first = month_key(date.today())
+        if date_from is not None:
+            first = max(first, month_key(date_from))
         last = first
         for result in results:
             for month in result.months:
                 if month.key > last:
                     last = month.key
-        if cutoff is not None:
-            cutoff_month = month_key(cutoff)
+        if date_to is not None:
+            cutoff_month = month_key(date_to)
             last = max(first, min(last, cutoff_month))
         return month_axis(first, last)
 
@@ -1196,8 +1230,9 @@ class StockDebtService:
         query: Optional[str] = None,
         group: Optional[str] = None,
         only_debt: bool = True,
-        cutoff: Optional[date] = None,
-        supplier_id: Optional[str] = None,
+        date_from: Optional[date] = None,
+        date_to: Optional[date] = None,
+        supplier_ids: Optional[Sequence[str]] = None,
         book: str = "all",
         split: str = "none",
     ) -> Tuple[bytes, str, str, Dict[str, int]]:
@@ -1213,8 +1248,9 @@ class StockDebtService:
         that does not is refused before `data` is ever trusted to be complete.
         """
         listing = self.list(
-            query=query, group=group, only_debt=only_debt, cutoff=cutoff,
-            supplier_id=supplier_id, book=book, page=1, limit=MAX_LOW_STOCK_ROWS + 1,
+            query=query, group=group, only_debt=only_debt, date_from=date_from,
+            date_to=date_to, supplier_ids=supplier_ids, book=book, page=1,
+            limit=MAX_LOW_STOCK_ROWS + 1,
         )
         if listing["pagination"]["total"] > MAX_LOW_STOCK_ROWS:
             raise AppException(422, "Narrow the filters first")
@@ -1231,12 +1267,15 @@ class StockDebtService:
         axis: List[str] = listing["months"]
         rows: List[dict] = listing["data"]
 
+        # R17: "No date" and "No location" leave the workbook (they still leave the screen
+        # too - the row itself still carries `undated`/`unlocated`, just not as columns
+        # here or in `Total`).
         columns = (
             ["Product", "Name", "Category", "Supplier"]
             + [_export_month_label(key) for key in axis]
-            + ["TBA", "No date", "No location", "Total"]
+            + ["TBA", "Total"]
         )
-        widths = [16, 30, 14, 24] + [10] * len(axis) + [10, 10, 12, 12]
+        widths = [16, 30, 14, 24] + [10] * len(axis) + [10, 12]
         width_map = {
             get_column_letter(index + 1): width for index, width in enumerate(widths)
         }
@@ -1309,26 +1348,23 @@ class StockDebtService:
             _xlsx_safe_text(row["supplier_name"] or ""),
             *[balances.get(key, 0.0) for key in axis],
             row["tba"],
-            row["undated"],
-            row["unlocated"],
             row["total"],
         )
 
     @staticmethod
     def _export_total_row(rows: List[dict], axis: Sequence[str]) -> tuple:
         """The sheet's OWN Total footer (R5): summed over the rows THIS sheet carries, so
-        a buyer reading one supplier's tab foots it without opening the others."""
+        a buyer reading one supplier's tab foots it without opening the others. R17: no
+        "No date"/"No location" columns to foot any more."""
         month_sums = {key: 0.0 for key in axis}
-        tba = undated = unlocated = total = 0.0
+        tba = total = 0.0
         for row in rows:
             for month in row["months"]:
                 month_sums[month["key"]] += month["balance"]
             tba += row["tba"]
-            undated += row["undated"]
-            unlocated += row["unlocated"]
             total += row["total"]
         return (
             "Total", "", "", "",
             *[month_sums[key] for key in axis],
-            tba, undated, unlocated, total,
+            tba, total,
         )

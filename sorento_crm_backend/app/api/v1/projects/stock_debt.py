@@ -18,7 +18,7 @@ stock-debt` is a literal segment that `/projects/{project_id}` must not capture.
 from __future__ import annotations
 
 from datetime import date
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Body, Depends, Query
 from sqlalchemy.orm import Session
@@ -57,20 +57,30 @@ def list_stock_debt(
     only_debt: bool = Query(
         True, description="Drop products that owe nothing in any month."
     ),
-    cutoff: Optional[date] = Query(
+    date_from: Optional[date] = Query(
+        None,
+        description=(
+            "Drop demand lines with `required_date` before this date; the axis (columns) "
+            "starts at `max(current month, this date's month)`. Undated demand has no "
+            "date to test and always survives (R14). Replaces `cutoff`, not an alias."
+        ),
+    ),
+    date_to: Optional[date] = Query(
         None,
         description=(
             "Drop demand lines with `required_date` after this date; the axis (columns) "
             "ends at its month. Supply landing after a line's own due date, but on or "
-            "before the cutoff, still covers it - only demand is dropped."
+            "before `date_to`, still covers it - only demand is dropped (R14). Replaces "
+            "`cutoff`, not an alias."
         ),
     ),
-    supplier_id: Optional[str] = Query(
-        None,
+    supplier_ids: List[str] = Query(
+        [],
         description=(
-            "Keep only products whose LAST supplier (newest purchase-order line, else the "
-            "primary-flagged product supplier) is this one. `none` keeps products with "
-            "neither."
+            "Repeatable. Keep only products whose LAST supplier (newest purchase-order "
+            "line, else the primary-flagged product supplier) is ANY of these values. "
+            "`none` is one more value among the others, keeping products with neither. "
+            "Replaces `supplier_id`, not an alias (R15)."
         ),
     ),
     book: Book = Query(
@@ -96,8 +106,9 @@ def list_stock_debt(
             query=query,
             group=group,
             only_debt=only_debt,
-            cutoff=cutoff,
-            supplier_id=supplier_id,
+            date_from=date_from,
+            date_to=date_to,
+            supplier_ids=supplier_ids,
             book=book,
             page=page,
             limit=limit,
@@ -123,9 +134,19 @@ def stock_debt_cell(
             "cell that opened it."
         ),
     ),
-    cutoff: Optional[date] = Query(
+    date_from: Optional[date] = Query(
         None,
-        description="The BOARD's own cutoff, echoed so the drill foots with the cell that opened it.",
+        description=(
+            "The BOARD's own `date_from`, echoed so the drill foots with the cell that "
+            "opened it (R14). Replaces `cutoff`, not an alias."
+        ),
+    ),
+    date_to: Optional[date] = Query(
+        None,
+        description=(
+            "The BOARD's own `date_to`, echoed so the drill foots with the cell that "
+            "opened it (R14). Replaces `cutoff`, not an alias."
+        ),
     ),
     book: Book = Query(
         "all",
@@ -137,7 +158,9 @@ def stock_debt_cell(
     """The two tables behind one cell: what is DUE in that month and what is HELD for it."""
     try:
         validate_uuid_path(product_id, resource="Product")
-        return StockDebtService(db).cell(product_id, month, group, cutoff, book)
+        return StockDebtService(db).cell(
+            product_id, month, group, date_from=date_from, date_to=date_to, book=book
+        )
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
@@ -190,8 +213,9 @@ def export_stock_debt(
             query=payload.query,
             group=payload.group,
             only_debt=payload.only_debt,
-            cutoff=payload.cutoff,
-            supplier_id=payload.supplier_id,
+            date_from=payload.date_from,
+            date_to=payload.date_to,
+            supplier_ids=payload.supplier_ids,
             book=payload.book,
             page=1,
             limit=1,
