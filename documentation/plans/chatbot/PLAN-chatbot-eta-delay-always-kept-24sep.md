@@ -1,6 +1,6 @@
 # PLAN: chatbot incoming answer carries ETA delay silently (never a refusal line)
 
-Status: BUILDING - small fix track (24 Sep 2026)
+Status: READY - PR #1150, small fix track, reviewer clean (24 Sep 2026)
 Domain: chatbot / incoming stock
 UAC: `chatbot-eta-delay-always-kept-24sep-acceptance-criteria.md`
 
