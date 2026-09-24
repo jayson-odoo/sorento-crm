@@ -209,3 +209,26 @@ Every test in `FulfilmentBoardPanel.undo.test.tsx` ended with a Radix DropdownMe
 ## 114. A test that replays migration DDL against the REAL `scm` schema deadlocks another xdist worker's plan read, and `run_reorder` turns that into an empty plan four files away (18 Sep 2026)
 
 Four tests in `tests/scm/test_committed_v_migration_chain.py` replayed six view migrations (340, 346, 384, 423, 424, 426) inside `blank_session()`, which pins `search_path` to its scratch schemas - but a migration names `scm.committed_v` in full, so `search_path` cannot redirect it and `DROP VIEW IF EXISTS scm.committed_v CASCADE` landed on the SHARED database's own view, taking `scm.net_position_v` with it and holding an AccessExclusiveLock on both for the length of the test. `reorder_run_service._planning_rows` reads exactly those two (`keys` is `net_position_v UNION po_ordered_v`, and expanding `net_position_v` reaches `committed_v`), and the two take the pair in opposite orders, so under `-n auto --dist loadfile` Postgres killed one: CI run 35293438670 logged "Process 447: DROP VIEW IF EXISTS scm.committed_v CASCADE" deadlocked against the plan query. Because `run_reorder` RECORDS a failure on the run instead of raising (correct for the RQ worker), the victim - `tests/scm/test_reorder_committed_universe.py` - just read an empty plan and failed on "a named product with zero committed demand must still be planned", with nothing on screen naming the real cause; it passed alone every time, and blocking alone does NOT reproduce it (holding the DROP open for 90s makes the file 270s instead of 40s and all 15 still pass - the lock CYCLE is the failure, not the wait). Fix: the replays run on the session's own scratch `_scm` schema via an `alembic.op` proxy that rewrites each `op.execute` body, so the migration function is still what runs and only where its DDL lands moves; the proxy also ASSERTS that no `scm.` / `projects.` prefix survived the rewrite, because it only knows the two those six bodies use and 376's `_NET_POSITION_V` (`scm.net_position_v`, `scm.on_order_v`) is one statement away from being replayed there too. Rule: a rolled-back transaction is NOT isolation when the statement is DDL - it still holds an AccessExclusiveLock every other worker's reads must queue behind - so any schema-qualified name inside a replayed migration has to be rebound onto the scratch schema, and a swallow-and-record error path (`run_reorder`, any best-effort worker entry point) means the test that fails is not the test that is wrong; read the job's Postgres server log before the assertion message.
+
+## FastMCP pre-parses JSON-looking string arguments; a scalar-only param union rejects both shapes (22 Sep 2026)
+
+**Symptom:** the dealer stock verdict lane (#1118) was green on 4,000 chatbot tests, the replay
+corpus, the MCP suite and CI, and two reviews said READY; the single live journey pass failed 23
+of 28 turns. The trace showed the backend sending `requested_quantities` as a compact JSON string
+and the MCP tool failing with `Input should be a valid string ... input_type=dict`.
+
+**Cause:** `mcp/server/fastmcp/utilities/func_metadata.py::FuncMetadata.pre_parse_json` runs
+`json.loads` on any string argument whose annotation `is not str` (an identity check, so a union
+containing `str` still qualifies) before `model_validate`. `sorento_crm_mcp/server.py::_compile_tool`
+typed every query param from one scalar union with no dict case, so a string became a dict and
+the dict had no case: no caller shape could pass.
+
+**Fix:** declare JSON-object params in `TOOL_OBJECT_QUERY_PARAMS` (typed `dict[str, int] | str`)
+and let `_normalize_query_value` serialise a dict back to a compact JSON string for the backend
+query.
+
+**Rule:** a new MCP tool parameter gets a test that calls the COMPILED tool (`FastMCP.call_tool`)
+with the real value shape and asserts what reaches the backend query. A catalog-declaration test
+and a replay fixture that stubs the MCP call prove nothing about the schema. Keep a chatbot
+lane's one live pass at the end; it is the only gate that sees this class.
+

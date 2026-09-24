@@ -115,6 +115,12 @@ _STOCK_COMPACT_INTRO = "Stock summary for the requested products."
 # The dealer answer, verbatim. This IS the outbound WhatsApp text (n8n prints the
 # intro and nothing else for this mode), so the wording is the contract.
 _AVAILABILITY_ASK = "How many units do you need?"
+# D35 (review round 11): the dealer's stock ask named no product at all. The backend
+# answers with an EMPTY block and `stock_visibility.needs_product` rather than a
+# catalogue page of `needs_quantity` rows (D25: the server owns that rule), and this is
+# the one sentence that says so. Not "No matching results found" - nothing was asked
+# about, so there is nothing we do not have.
+_AVAILABILITY_NEEDS_PRODUCT = "Which product do you need? Send the product code and the quantity."
 _AVAILABILITY_YES = "Yes, we have stock."
 _AVAILABILITY_NO = "Sorry, we do not have enough stock for that quantity."
 _AVAILABILITY_MIXED = "Here is the stock availability for the requested products."
@@ -128,6 +134,15 @@ _PASSTHROUGH_KEYS = (
     "fallback_used",
     "alternatives",
     "relaxed_axis",
+    # Dealer stock verdict (D25), review round 6: the per-product `needs_quantity` /
+    # verdict block. The PRESENTER reads it to build the dealer's sentence, and the
+    # ENGINE reads it again to open, update and close the stock task
+    # (`turn/task.py::tasks_after_reply`) - so dropping it from the render envelope
+    # meant no task ever survived a turn in production, while the reply itself still
+    # looked right. Measured on `chatbot.turns` (turn `d18b2e6f`): the engine's
+    # envelope carried `stock_availability: []` on a turn whose own reply had just
+    # asked for two quantities.
+    "stock_availability",
     # Every company the backend actually searched, present only when the lookup
     # spanned more than one (see `stamp_lookup_companies` backend-side). A
     # single-company reply never carries it, so it stays byte-identical.
@@ -1384,17 +1399,159 @@ def _stock_compact(payload: dict, b: _Builder) -> None:
                 fields.append({"label": str(code), "value": qty})
         b.raw_item(entry.get("product_code"), fields, dict(entry.get("flags") or {}))
 
+def _availability_entries(payload: dict) -> list[dict]:
+    return [e for e in (payload.get("stock_availability") or []) if isinstance(e, dict)]
+
+
+def _is_legacy_availability(entries: list[dict]) -> bool:
+    """Is this payload from a backend that predates S1?
+
+    SEC-N1 (security review, round 1) corrects what this used to claim. It is NOT
+    about which PARAM the caller sent: S1's `_apply_stock_visibility` attaches
+    `verdict` / `running_low` / `disclaimer` to EVERY availability entry it builds,
+    scalar `requested_qty` and n8n included, so against this backend the branch is
+    unreachable and n8n reads the new wording too (which is correct - the verdict is
+    the answer, whoever asked).
+
+    It is kept for the one case that is real: a ROLLING DEPLOY, where this MCP process
+    is already the new build and the backend answering it is still the old one. Those
+    entries carry none of the three keys, and the old `_AVAILABILITY_*` wording is what
+    they can honestly be rendered with. Checked once per LIST rather than per entry: a
+    real payload is uniform, so one entry missing the key is read as the whole list
+    being the old shape.
+    """
+    return not entries or any("verdict" not in e for e in entries)
+
+
+def _format_eta_ddmmyyyy(iso_date: Optional[str]) -> str:
+    """D10: dd/mm/yyyy from an ISO `YYYY-MM-DD` string; "to be confirmed" when
+    there is no dated allocation to read. ISO already zero-pads month/day, so
+    reordering the three pieces needs no further padding."""
+    if not iso_date:
+        return "to be confirmed"
+    parts = str(iso_date).split("-")
+    if len(parts) != 3:
+        return "to be confirmed"
+    year, month, day = parts
+    return f"{day}/{month}/{year}"
+
+
+def _availability_label(entry: dict) -> Optional[str]:
+    """Review round 2. The frontend's own "no UUIDs in the UI" rule, here at the
+    presenter seam: a row with no `product_code` (a row the resolver only matched by
+    name) falls back to `product_name`, and a row with NEITHER has no way to be named
+    to a person at all - callers skip it rather than print `None`."""
+    return entry.get("product_code") or entry.get("product_name")
+
+
+def _availability_line(entry: dict) -> str:
+    """AC-1755/AC-1756: one line, `CODE x N: <verdict>.` D17 - the only integers
+    ever in it are the dealer's own asked quantity, the ETA date and the
+    lead-time days; never a quantity of ours."""
+    code = _availability_label(entry)
+    qty = entry.get("requested_qty")
+    if entry.get("verdict") == "available":
+        tail = "Yes, available, but running low." if entry.get("running_low") else "Yes, available."
+        return f"{code} x {qty}: {tail}"
+
+    tail = "Not available."
+    disclaimer = entry.get("disclaimer")
+    sources = disclaimer.get("sources") if isinstance(disclaimer, dict) else None
+    if sources:
+        limited = bool(disclaimer.get("limited"))
+        adjective = "limited " if limited else ""
+        clauses = []
+        for source in sources:
+            if source == "incoming":
+                eta = _format_eta_ddmmyyyy(disclaimer.get("incoming_eta"))
+                clauses.append(f"{adjective}incoming, ETA {eta}")
+            elif source == "purchase":
+                days = disclaimer.get("purchase_eta_days")
+                clauses.append(f"{adjective}purchase, ETA in {days} days")
+        if clauses:
+            tail = "Not available, but there is " + " and ".join(clauses) + "."
+    return f"{code} x {qty}: {tail}"
+
+
+#: How many products one sentence names before it counts the rest. The engine's own
+#: copy of this question has capped at ten since SEC-S2 (`turn/task.py::MAX_NAMED`);
+#: this side had no cap at all, so a reply built from a catalogue-wide stock call read
+#: FIFTY codes out to a dealer (live evidence Run 5, case F turn 3). One wording, one
+#: cap, whichever side says it - and it holds whatever the engine sends.
+_MAX_NAMED = 10
+
+
+def _named_codes(labels: list[str]) -> str:
+    """"A, B and C" up to the cap, then "A, ... , J and 40 others"."""
+    if len(labels) > _MAX_NAMED:
+        shown = labels[:_MAX_NAMED]
+        return f"{', '.join(shown)} and {len(labels) - _MAX_NAMED} others"
+    if len(labels) > 1:
+        return ", ".join(labels[:-1]) + " and " + labels[-1]
+    return labels[0] if labels else ""
+
+
+def _listed_codes(labels: list[str]) -> str:
+    """The same cap for the plain comma list the `Noted:` half prints."""
+    if len(labels) > _MAX_NAMED:
+        shown = labels[:_MAX_NAMED]
+        return f"{', '.join(shown)} and {len(labels) - _MAX_NAMED} others"
+    return ", ".join(labels)
+
+
+def _noted_and_missing_question(noted: list[dict], missing: list[dict]) -> str:
+    """AC-1757 (D14): what is noted, then one question for what is still
+    missing - never a verdict, for anybody, until every product has a quantity
+    or the dealer says to proceed (S3's job, not this presenter's).
+
+    Review round 2: a row with no `product_code` falls back to `product_name`
+    (`_availability_label`), and a row with neither is dropped from the sentence
+    entirely - there is no way to ask about it by name.
+
+    Review round 9: both lists are capped at `_MAX_NAMED`, the same cap and the same
+    wording the engine's own `turn/task.py::_named` / `_listed` already use."""
+    missing_codes = [label for label in (_availability_label(e) for e in missing) if label]
+    if not missing_codes:
+        return "How many units do you need?"
+    question = f"How many units do you need for {_named_codes(missing_codes)}?"
+    noted_pairs = [
+        (label, e.get("requested_qty"))
+        for e, label in ((e, _availability_label(e)) for e in noted)
+        if label
+    ]
+    if not noted_pairs:
+        return question
+    noted_text = _listed_codes([f"{code} x {qty}" for code, qty in noted_pairs])
+    return f"Noted: {noted_text}. {question}"
+
+
 def _stock_availability(payload: dict, b: _Builder) -> None:
     """`availability`: yes / no / ask, and nothing else.
 
     `fields` stays empty on purpose. This mode exists so a dealer is never told a
     quantity, and an empty field list is the only shape that cannot carry one.
+
+    Dealer stock verdict S2 (AC-1755 to AC-1757, D14): once every entry carries
+    the NEW keys (`verdict` / `running_low` / `disclaimer`, S1's contract) and
+    none is still missing its quantity, the item TITLE becomes the per-product
+    verdict sentence instead of the bare product code. While any product is
+    still missing a quantity, or for a caller on the legacy scalar-only shape,
+    the title stays the product code - no verdict is shown for anybody until
+    every product has one (D14).
     """
-    for entry in payload.get("stock_availability") or []:
-        if not isinstance(entry, dict):
+    entries = _availability_entries(payload)
+    legacy = _is_legacy_availability(entries)
+    show_verdict = not legacy and not any(e.get("needs_quantity") for e in entries)
+    for entry in entries:
+        label = _availability_label(entry)
+        if not label:
+            # Review round 2: neither `product_code` nor `product_name` - there is
+            # no way to name this row to a person, so it is dropped rather than
+            # rendered as `None`.
             continue
+        title = _availability_line(entry) if show_verdict else label
         b.raw_item(
-            entry.get("product_code"),
+            title,
             [],
             {
                 "needs_quantity": bool(entry.get("needs_quantity")),
@@ -1404,18 +1561,25 @@ def _stock_availability(payload: dict, b: _Builder) -> None:
 
 
 def _availability_intro(payload: dict) -> str:
-    """The whole reply, in one line.
+    """The whole reply, in one line - or, once any product still needs a
+    quantity under the NEW contract, the noted/missing question (D14).
 
     Several products can disagree. Any product still missing its quantity makes
     the turn a question, not an answer - so ask, and say nothing about the rest.
     Otherwise a shared yes or no speaks for all of them; a split verdict cannot,
-    so the intro steps back and the per-item flags carry it.
+    so the intro steps back and the per-item flags/titles carry it.
     """
-    entries = [
-        e for e in (payload.get("stock_availability") or []) if isinstance(e, dict)
-    ]
-    if any(e.get("needs_quantity") for e in entries):
+    entries = _availability_entries(payload)
+    legacy = _is_legacy_availability(entries)
+
+    if not legacy:
+        missing = [e for e in entries if e.get("needs_quantity")]
+        if missing:
+            noted = [e for e in entries if not e.get("needs_quantity")]
+            return _noted_and_missing_question(noted, missing)
+    elif any(e.get("needs_quantity") for e in entries):
         return _AVAILABILITY_ASK
+
     verdicts = {e.get("available") for e in entries}
     if verdicts == {True}:
         return _AVAILABILITY_YES
@@ -1629,8 +1793,18 @@ def present_response(tool_name: str, raw: str) -> str:
         seen.add(sig)
         attachments.append(a)
 
-    has_result = bool(b.items or attachments or b.action_links)
-    if attachments:
+    # D35: an availability reply that asks for the product code. Read before
+    # `has_result` is decided, because the answer IS the question - a turn with no rows
+    # is not a miss here, and the miss wording ("No matching results found") would claim
+    # we have nothing of a product nobody named.
+    needs_product = stock_mode == "availability" and bool(
+        isinstance(data.get("stock_visibility"), dict)
+        and data["stock_visibility"].get("needs_product") is True
+    )
+    has_result = bool(b.items or attachments or b.action_links or needs_product)
+    if needs_product:
+        intro = _AVAILABILITY_NEEDS_PRODUCT
+    elif attachments:
         intro = "I have attached the file(s) below."
     elif not has_result:
         # An empty answer over more than one company has to name the companies it

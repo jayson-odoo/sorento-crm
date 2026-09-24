@@ -1,0 +1,191 @@
+# Console cases for the dealer stock verdict (AC-1781).
+#
+# documentation/plans/chatbot/chatbot-dealer-stock-verdict-acceptance-criteria.md AC-1781, the
+# UAC Journey (steps 1-8) and rulings D6, D13-D26. PLAN
+# documentation/plans/chatbot/PLAN-chatbot-dealer-stock-verdict.md "The presenter (S2)" for the
+# exact reply sentences and "The engine (S3)" for ask/park/resume/proceed shapes.
+#
+# Written BEFORE the live pass (tester, S4 part 1) against base b38d19155 (S0-S3 implemented) -
+# NOT yet run. Run once, at the end of the lane, per documentation/agents/chatbot-verification.md:
+#
+#   venv/bin/python scripts/chatbot_console_check.py \
+#       tests/chatbot/console_cases/2026-09-22-dealer-stock-verdict.yaml \
+#       --base-url http://localhost:<lane-port> --sleep-seconds 8
+#
+# `--sleep-seconds 8` is not optional: this file makes 11 real OpenAI parser calls across 5 cases,
+# and the lessons log records a 429 (TPM) under a burst of back-to-back turns on a shared key.
+#
+# ═══ WHAT THIS FILE CAN AND CANNOT GRADE ═══
+# `scripts/chatbot_console_check.py::_grade` understands `branch_kind`, `reply_contains`,
+# `reply_not_contains`, `no_uuid`, `pending_kind` (and `parser`, unused here - no case pins
+# `--mock-parser`). It has no order-sensitive matcher and no session-state matcher, so "one line
+# per product in the asked order" (journey step 6) and "the task is parked, not lost" (D22) are
+# graded by EFFECT (the detour answers normally and the later fill still works), not directly -
+# read `chatbot.turns.trace` by eye if a case looks wrong.
+#
+# ═══ PREREQUISITE 1: THE DEALER TEST CONTACT ═══
+# respond_io_id 404285551 ("Jayden Loo" in sorento_ai_automation_rearch, respond_contacts.id
+# ef6744dc-7b9a-4a80-a63b-6c7d16d5977e). Chosen because it is not referenced by any other journey
+# or console case (grepped 22 Sep 2026) - unlike 437264483, the owner's own contact, used
+# elsewhere for stock asks in "compact" mode, which repurposing would break. Its policy row is
+# already a per-contact override (stock_visibility_policies.id ce7c5ddd-6a49-4ff5-9d76-fff47054c4de,
+# mode "compact" today), so flipping it touches only this one contact, never the "dealer"
+# access-type default (D12's real go-live step, left untouched here).
+#
+# SETUP SQL (once, against the lane's DATABASE_URL, before the run; BRW=
+# 21608757-0065-4ef2-bd05-1397452411eb, MWH=3632e6d8-f398-4f73-8a89-b71988f6f1da, measured 22 Sep
+# 2026 - re-verify the ids on the lane stack's own DB first):
+#
+#   UPDATE stock_visibility_policies SET mode = 'availability',
+#     warehouse_ids = ARRAY['21608757-0065-4ef2-bd05-1397452411eb',
+#                            '3632e6d8-f398-4f73-8a89-b71988f6f1da']::uuid[],
+#     excluded_warehouse_ids = NULL
+#   WHERE contact_id = 'ef6744dc-7b9a-4a80-a63b-6c7d16d5977e';
+#
+# REVERT after the pass:
+#
+#   UPDATE stock_visibility_policies SET mode = 'compact', warehouse_ids = NULL,
+#     excluded_warehouse_ids = NULL
+#   WHERE contact_id = 'ef6744dc-7b9a-4a80-a63b-6c7d16d5977e';
+#
+# The last case below uses an EXISTING detailed-mode contact, 423729473 ("Shahrul Sorento"),
+# read only - no setup needed.
+#
+# ═══ PREREQUISITE 2: THE PARSER PROMPT (D13) ═══
+# `entities[].quantity` / `proceed_anyway` are NEW parser schema keys (AC-1760). Checked 22 Sep
+# 2026 against sorento_ai_automation_rearch:
+#
+#   select v.version, v.template ilike '%proceed_anyway%' as has_proceed_anyway
+#   from ai_prompt_versions v join ai_prompt_labels l on l.version_id = v.id
+#   where v.name = 'chatbot_semantic_parser' and l.label = 'production';
+#   -> version 42, has_proceed_anyway = false
+#
+# The production prompt does NOT carry the new schema as of this writing. A turn that names ONE
+# product with an explicit quantity while nothing else is missing (the pre-existing `demand_qty`
+# single-product fallback, D13) needs no prompt change; a turn that must attach a quantity to ONE
+# OF SEVERAL open products in the same message, or that reads "just proceed" as `proceed_anyway`,
+# depends on the publish. Case 3 ("just proceed") is EXPECTED RED until then - it is deliberately
+# left WITHOUT `expected_red_until` because this lane owns it, not another lane; if the query
+# above still returns false right before the run, read its failure as environment-blocked, not a
+# defect, and say so in the evidence notes.
+#
+# ═══ PREREQUISITE 3: SETTINGS ═══
+# `system_settings.chatbot_stock_low_threshold_pct` must be 50 and
+# `default_product_standard_lead_time_days` must be 90 for the "ETA in 90 days" / running-low math
+# below to hold. Both already measured 50 / 90 (the server defaults) on sorento_ai_automation_rearch,
+# 22 Sep 2026 - re-check with `select chatbot_stock_low_threshold_pct,
+# default_product_standard_lead_time_days from system_settings;` before the run.
+#
+# ═══ PREREQUISITE 4: DATA IS LIVE, NOT A FIXTURE ═══
+# Product figures at BRW+MWH (avail = on hand minus open SO, incoming, purchase), measured 22 Sep
+# 2026 against sorento_ai_automation_rearch (company_id 00000000-0000-0000-0000-000000000001):
+# MWT5727SS-CR avail 0, incoming 0, purchase 177; MHS1028 avail 0, incoming 0, purchase 0;
+# MSK11A-QT avail 0, incoming 157 eta 2026-09-02 (a PAST date by the 22 Sep "today" - prints as-is
+# per D10, the book is trusted). ABC123 (the UAC's own fourth product code, kept verbatim) does
+# NOT resolve to a real product on this DB - no case asserts an exact verdict line for it; its
+# presence in the noted/missing list is an eyeball check, not a scored line. This is a shared prod
+# copy other lanes also touch - re-derive these four numbers with the SQL in
+# tests/chatbot/journeys/dealer-stock-verdict.json's own header before trusting a red result.
+#
+# ═══ RATE LIMIT ═══
+# No known per-contact rate limit applies to a plain stock ask (unlike the low-stock report's 5
+# asks / 10 minutes) - `--sleep-seconds 8` alone paces the OpenAI TPM budget.
+
+contact: '404285551'
+cases:
+- name: ask then noted-and-missing question (AC-1757, D14)
+  contact: '404285551'
+  cold: true
+  turns:
+  - text: stock for MWT5727SS-CR 5, MHS1028 60, MSK11A-QT and ABC123?
+    expect:
+      branch_kind: business_query
+      reply_contains:
+      - 'Noted:'
+      - MWT5727SS-CR x 5
+      - MHS1028 x 60
+      - How many units do you need for
+      reply_not_contains:
+      - Yes, available
+      - Not available
+      no_uuid: true
+- name: answer fills the task, one verdict line per product (AC-1762)
+  contact: '404285551'
+  cold: true
+  turns:
+  - text: stock for MHS1028 60 and MSK11A-QT?
+    expect:
+      branch_kind: business_query
+      reply_contains:
+      - 'Noted: MHS1028 x 60.'
+      - How many units do you need for MSK11A-QT?
+      no_uuid: true
+  - text: MSK11A-QT 110
+    expect:
+      branch_kind: business_query
+      reply_contains:
+      - Sorry, we do not have enough stock for that quantity.
+      - 'MHS1028 x 60: Not available.'
+      - 'MSK11A-QT x 110: Not available, but there is limited incoming, ETA 02/09/2026.'
+      reply_not_contains:
+      - 'Noted:'
+      - How many units do you need
+      no_uuid: true
+- name: just proceed answers noted and names not checked (AC-1763, D15)
+  contact: '404285551'
+  cold: true
+  turns:
+  - text: stock for MHS1028 60 and MSK11A-QT?
+    expect:
+      branch_kind: business_query
+      reply_contains:
+      - 'Noted: MHS1028 x 60.'
+      - How many units do you need for MSK11A-QT?
+  - text: just proceed
+    expect:
+      branch_kind: business_query
+      reply_contains:
+      - 'MHS1028 x 60: Not available.'
+      - 'Not checked: MSK11A-QT'
+      reply_not_contains:
+      - MSK11A-QT x
+      - How many units do you need
+      - 'Noted:'
+      no_uuid: true
+- name: detour parks silently, fill resumes and answers (AC-1771, D22)
+  contact: '404285551'
+  cold: true
+  turns:
+  - text: stock for MHS1028 and MSK11A-QT?
+    expect:
+      branch_kind: business_query
+      reply_contains:
+      - How many units do you need for MHS1028 and MSK11A-QT?
+  - text: any promotion on MSK11A-QT?
+    expect:
+      reply_not_contains:
+      - How many units do you need
+      - 'Noted:'
+      - stock check
+  - text: MHS1028 60, MSK11A-QT 110
+    expect:
+      branch_kind: business_query
+      reply_contains:
+      - 'MHS1028 x 60: Not available.'
+      - 'MSK11A-QT x 110: Not available, but there is limited incoming, ETA 02/09/2026.'
+      reply_not_contains:
+      - How many units do you need
+      - 'Noted:'
+- name: detailed contact unchanged - no loop, no verdict (AC-1767, D19)
+  contact: '423729473'
+  cold: true
+  turns:
+  - text: stock for MWT5727SS-CR 5, MHS1028 60, MSK11A-QT and ABC123?
+    expect:
+      branch_kind: business_query
+      reply_not_contains:
+      - 'Noted:'
+      - How many units do you need
+      - Yes, available
+      - Sorry, we do not have enough stock
+      - Yes, we have stock

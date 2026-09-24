@@ -32,6 +32,7 @@ import {
 import type { ChatbotMemorySettings, ChatbotSettings } from './services/chatbotSettingsService';
 import MemorySettingsCard from './components/MemorySettingsCard';
 import TierOrderCard from './components/TierOrderCard';
+import StockLowThresholdCard from './components/StockLowThresholdCard';
 import CrossDomainLadderCard, {
   DEFAULT_LADDER_DOMAIN,
 } from './components/CrossDomainLadderCard';
@@ -173,6 +174,11 @@ export default function ChatbotSettingsPage() {
         </CardContent>
       </Card>
 
+      <StockLowThresholdCard
+        value={draft.chatbot_stock_low_threshold_pct ?? null}
+        onChange={(next) => set('chatbot_stock_low_threshold_pct', next)}
+      />
+
       <Card>
         <CardHeader className="border-b border-border">
           <CardTitle>Domains the bot does not answer</CardTitle>
@@ -231,6 +237,9 @@ export default function ChatbotSettingsPage() {
           onClick={() => {
             // Re-seed each draft from what came back, not from what was typed: the
             // row the backend returns is what was actually persisted.
+            // No call-site `onError` (R-S1, reviewer round 1): `useSaveChatbotSettings`
+            // already toasts the extracted message, so a second handler here toasted the
+            // same failure twice.
             save.mutate(draft, { onSuccess: (saved) => setDraft(saved) });
             if (memoryDraft) {
               saveMemory.mutate(memoryDraft, { onSuccess: (saved) => setMemoryDraft(saved) });

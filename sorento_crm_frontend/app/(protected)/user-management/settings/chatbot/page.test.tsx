@@ -427,3 +427,79 @@ describe('ChatbotSettingsPage - loading and error states', () => {
     expect(screen.getByText(/could not be loaded/i)).toBeInTheDocument();
   });
 });
+
+// S0, AC-1732 (coordinator correction, 22 Sep 2026): the threshold joins the SAME
+// `ChatbotSettings` draft/save the Switches card already owns - not a private hook/service
+// pair, and not a card with its own Save button (the "one consolidated Save" rule this file
+// already pins above). `settings()` itself is left untouched here on purpose: the "Save
+// payload... exact current draft, snake_case" test above does an exact `toEqual` on an object
+// with exactly today's four keys, and giving the shared factory a default for the new field
+// would leak `chatbot_stock_low_threshold_pct` into that object too and break an existing,
+// unmodified case. So every case below builds its own settings object with the field added
+// explicitly instead.
+type SettingsWithThreshold = ChatbotSettings & { chatbot_stock_low_threshold_pct: number };
+
+function settingsWithThreshold(
+  pct: number,
+  overrides: Partial<ChatbotSettings> = {},
+): SettingsWithThreshold {
+  return { ...settings(overrides), chatbot_stock_low_threshold_pct: pct };
+}
+
+describe('ChatbotSettingsPage - stock low threshold (S0, AC-1732, D7)', () => {
+  it('shows the threshold from the settings response', () => {
+    mockSettingsQuery.mockReturnValue({
+      data: settingsWithThreshold(42),
+      isLoading: false,
+      isError: false,
+    });
+    renderPage();
+
+    const input = screen.getByRole('spinbutton', {
+      name: /stock low threshold/i,
+    }) as HTMLInputElement;
+    expect(input.value).toBe('42');
+  });
+
+  it('editing it and clicking the single Save posts a body containing chatbot_stock_low_threshold_pct: 40', () => {
+    const mutate = vi.fn();
+    mockMutation.mockReturnValue({ isPending: false, mutate });
+    mockSettingsQuery.mockReturnValue({
+      data: settingsWithThreshold(50),
+      isLoading: false,
+      isError: false,
+    });
+    renderPage();
+
+    const input = screen.getByRole('spinbutton', { name: /stock low threshold/i });
+    fireEvent.change(input, { target: { value: '40' } });
+
+    fireEvent.click(saveButton());
+
+    expect(mutate).toHaveBeenCalledTimes(1);
+    const [payload] = mutate.mock.calls[0];
+    expect(payload).toMatchObject({ chatbot_stock_low_threshold_pct: 40 });
+  });
+
+  it('Save passes no onError of its own - the hook owns the failure toast', () => {
+    // R-S1 (reviewer round 1): the call site used to pass an `onError` beside the one
+    // `useSaveChatbotSettings` already has, so a single failed save toasted the same
+    // message twice. The toast itself is asserted where it lives, in
+    // `hooks/useChatbotSettings.test.tsx`; what THIS layer owes is not to add a second
+    // one. RED before the fix: `options` carried an `onError` function.
+    const mutate = vi.fn();
+    mockMutation.mockReturnValue({ isPending: false, mutate });
+    mockSettingsQuery.mockReturnValue({
+      data: settingsWithThreshold(50),
+      isLoading: false,
+      isError: false,
+    });
+    renderPage();
+
+    fireEvent.click(saveButton());
+
+    const [, options] = mutate.mock.calls[0];
+    expect(options?.onError).toBeUndefined();
+    expect(options?.onSuccess).toBeTypeOf('function');
+  });
+});

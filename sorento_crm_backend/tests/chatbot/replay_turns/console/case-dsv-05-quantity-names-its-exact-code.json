@@ -1,0 +1,216 @@
+{
+  "turns": [
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "zzt-dsv-900000005",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-900000005",
+          "id": 900000005,
+          "lastName": "",
+          "phone": "+60900000005"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 900000005
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 900000005,
+            "message": {
+              "text": "stock for CB313 1200?",
+              "type": "text"
+            },
+            "messageId": "dsv-900000005-11001",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "dsv-tester"
+      },
+      "expected": {
+        "action_kinds": [],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [
+          "00000000-0000-0000-0000-0000000000b1"
+        ],
+        "pending": null,
+        "tools": []
+      },
+      "resolutions": {
+        "tokens": [
+          "CB313"
+        ],
+        "unresolved_tokens": [],
+        "resolutions": [
+          {
+            "token": "CB313",
+            "resolved": true,
+            "matches": [
+              {
+                "canonical_code": "CB313",
+                "entity_type": "product",
+                "uuid": "00000000-0000-0000-0000-0000000000b1"
+              },
+              {
+                "canonical_code": "CB313A-NL",
+                "entity_type": "product",
+                "uuid": "00000000-0000-0000-0000-0000000000b2"
+              },
+              {
+                "canonical_code": "CB313-NL",
+                "entity_type": "product",
+                "uuid": "00000000-0000-0000-0000-0000000000b3"
+              },
+              {
+                "canonical_code": "CB313-L",
+                "entity_type": "product",
+                "uuid": "00000000-0000-0000-0000-0000000000b4"
+              }
+            ]
+          }
+        ]
+      },
+      "source": {
+        "db": "dsv-tester-handwritten",
+        "expected_from": "hand_authored_red_fixture (review round 8, finding 1)",
+        "prompt_version": null,
+        "recorded_at": "2026-09-22T00:00:00+00:00",
+        "turn_id": "zzt-dsv-900000005"
+      },
+      "tool_results": [
+        {
+          "tool": "crm_inventory_stock_balance_list",
+          "args": {
+            "_diagnostics": null,
+            "access_levels": null,
+            "contact_id": null,
+            "date_mode": null,
+            "include_sellable": null,
+            "is_active": null,
+            "product_ids": null,
+            "space_id": null,
+            "view": null,
+            "requested_quantities": null
+          },
+          "envelope": {
+            "has_result": true,
+            "intro": "Sorry, we do not have enough stock for that quantity.",
+            "items": [
+              {
+                "title": "CB313 x 1200: Not available.",
+                "fields": [],
+                "flags": {
+                  "available": false,
+                  "needs_quantity": false
+                }
+              }
+            ],
+            "stock_availability": [
+              {
+                "product_id": "00000000-0000-0000-0000-0000000000b1",
+                "product_code": "CB313",
+                "product_name": "CB313",
+                "needs_quantity": false,
+                "requested_qty": 1200,
+                "available": false,
+                "verdict": "not_available",
+                "running_low": false,
+                "disclaimer": null
+              }
+            ]
+          }
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "broaden_to": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": 1200,
+        "domain_hint": "inventory",
+        "domain_in_message": null,
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "hint_confident": true,
+            "raw": "CB313",
+            "quantity": 1200
+          }
+        ],
+        "entity_op": null,
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_stock",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "proceed_anyway": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "sales_channel": null,
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "status": null,
+        "top_n": null,
+        "topic_reset": false,
+        "user_goal": "trying to check stock for CB313 1200"
+      }
+    }
+  ]
+}

@@ -25,8 +25,10 @@ from dataclasses import replace
 from typing import Any
 
 from app.services.chatbot import contracts
+from app.services.chatbot.turn import task as task_mod
 from app.services.chatbot.turn.decide import (
     ANSWER,
+    CARRY,
     DOCUMENT_BY_SCOPE,
     NEW_ASK,
     OUTSTANDING_KINDS,
@@ -1179,6 +1181,96 @@ def is_product_shaped_entity(entity: dict[str, Any]) -> bool:
 _REFUSES_EMPTY_SUBJECT: frozenset[str] = frozenset({"inventory"})
 
 
+def _stated_quantity(value: Any) -> int | None:
+    """A quantity the message stated, or None. Mirrors `turn/task.py::_number`."""
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str) and value.strip().lstrip("+").isdigit():
+        return int(value.strip())
+    return None
+
+
+def _row_codes(row: dict[str, Any]) -> set[str]:
+    out = set()
+    for name in ("canonical_code", "code", "raw"):
+        value = row.get(name)
+        if isinstance(value, str) and value.strip():
+            out.add(value.strip().casefold())
+    return out
+
+
+def _row_code(row: dict[str, Any]) -> str | None:
+    for name in ("canonical_code", "code"):
+        value = row.get(name)
+        if isinstance(value, str) and value.strip():
+            return value.strip().casefold()
+    return None
+
+
+def _in_family_of(row: dict[str, Any], code: str) -> bool:
+    """Is this resolved row the typed code itself, or one of the family the resolver
+    expanded it into? Prefix on the row's own code, case-blind (see D29 below)."""
+    return any(
+        value == code or value.startswith(code) for value in _row_codes(row) if value
+    )
+
+
+def _exact_code_when_a_quantity_is_named(plan: Plan, verdict: dict[str, Any], trace: Trace) -> None:
+    """D29 (review round 6 finding C, re-ruled in round 7): an inventory entity that
+    CARRIES A QUANTITY fetches its exact code and nothing else.
+
+    "stock for CB313 1200?" is one literal product code with one number attached to it.
+    The resolver groups product families, so it placed CB313, CB313A-NL, CB313-NL and
+    CB313-L - the reply then verdicted a product the dealer had asked about and ASKED
+    for quantities on three they had never mentioned (live trace e6459937). A quantity
+    is stated about a product, so it settles which product was meant.
+
+    Deliberately policy-blind, and deliberately not just the dealer's: a staff caller
+    typing a quantity beside a family-grouped code gets the exact code too. That is the
+    cost of one rule instead of two that could disagree, and the caller who wants the
+    family asks for it without a number.
+
+    An entity with NO quantity keeps today's expansion for everybody ("stock for CB313?"
+    still lists the family, and the stock task then collects a quantity per product).
+    When the typed token matches no exact code at all - a family PREFIX that is not a
+    product of its own - there is nothing to narrow to and the family stands.
+
+    Review round 8: a candidate row does NOT carry the token the customer typed.
+    `turn_runtime.candidates_by_kind` builds every row as `{"raw": code,
+    "canonical_code": code, ...}` off the resolver's own match, so the family is
+    recognised by the only link the rows still have to each other - the typed code is a
+    PREFIX of its siblings (CB313 -> CB313A-NL / CB313-NL / CB313-L; SRT392-24 ->
+    SRT392-24-NL). Round 7 grouped on "rows that mention the typed code", which under the
+    real row shape matched the exact row alone, so the rule never fired in production
+    (live trace 05ae3025: `product_ids` still carried all four).
+    """
+    wanted: set[str] = set()
+    for e in verdict.get("entities") or []:
+        if not isinstance(e, dict) or _stated_quantity(e.get("quantity")) is None:
+            continue
+        for name in ("canonical_code", "code", "raw"):
+            value = e.get(name)
+            if isinstance(value, str) and value.strip():
+                wanted.add(value.strip().casefold())
+    if not wanted:
+        return
+    for spec in plan.fetch:
+        if spec.domain != "inventory" or spec.filters.get("task") or not spec.entities:
+            continue
+        keep = list(spec.entities)
+        for code in wanted:
+            group = [row for row in keep if _in_family_of(row, code)]
+            exact = [row for row in group if _row_code(row) == code]
+            if not exact or len(exact) == len(group):
+                continue
+            dropped = {id(row) for row in group if row not in exact}
+            keep = [row for row in keep if id(row) not in dropped]
+            trace.rules_fired.append("quantity_names_its_exact_code")
+        spec.entities = keep
+
+
 def _narrow_and_plan(
     focus: Focus,
     policy: Policy,
@@ -1188,6 +1280,7 @@ def _narrow_and_plan(
     attributes: tuple[str, ...] = (),
     candidates: dict[str, list[dict[str, Any]]] | None = None,
     unplaced: frozenset[str] | set[str] | None = None,
+    refuse_empty_subject: bool = False,
 ) -> Plan:
     denied: list[str] = []
     ask: Pending | None = None
@@ -1311,7 +1404,7 @@ def _narrow_and_plan(
             row = policy.domain(name)
             date_window = focus.date_window if row and row.takes_date_filter else None
             if (
-                len(domains) > 1
+                (len(domains) > 1 or refuse_empty_subject)
                 and not entities
                 and not filters
                 and not date_window
@@ -1325,6 +1418,37 @@ def _narrow_and_plan(
                 # broad (`_REFUSES_EMPTY_SUBJECT`'s own docstring); the OTHER domains
                 # this turn asked about (D5(b)'s own incoming/PO, allowed broad by
                 # main's design) still fetch normally.
+                #
+                # `bare_quantity_only` (review round 9, finding 4) is the OTHER way a
+                # fetch can end up with nothing to scope it by, and the live evidence's
+                # most severe finding: a bare "60" typed after "never mind the stock
+                # check" had closed the task and cleared the products carried
+                # `demand_qty: 60`, `domain_hint: "inventory"` and no entities at all,
+                # `decide()` read it as a CARRY that answered nothing, and the inventory
+                # spec was planned with no product filter - so the tool's own "no filter
+                # = every product" default answered with a catalogue page and the dealer
+                # was asked to quantify fifty products (turn cfcca4a8). A number is not
+                # a subject: with nothing named, no task open and nothing carried on the
+                # focus there is nothing to look it up against, the same reading
+                # `idle_chat_plans_nothing` already takes of a greeting.
+                #
+                # A quantity is what makes this shape recognisable, and it is what keeps
+                # the rule off every ask that scopes itself by INTENT rather than by a
+                # product: "reorder report" is a CARRY with no entities either, and it
+                # carries no number (`handbuilt-lsr-*`, which this guard regressed to
+                # `low_signal` when it tested only for an empty subject).
+                #
+                # D34 (review round 11) is the OTHER trigger, and the same shape once
+                # more: "never mind the stock check" parses as `topic_reset: true` with
+                # `intent_hint: "check_stock"` and no entities at all (live turn
+                # 8c11d51d). Round 10 removed the ladder's escalate offer that used to
+                # intercept that turn, so it reached the planner, and the intent word
+                # alone planned an unscoped inventory fetch - a catalogue page, returned
+                # as a fifty-product question, in answer to a CANCEL. Closing the task
+                # is the whole turn (D23); a cancel is not an ask. A reset that names a
+                # product ("never mind, stock for A?") has a subject and is untouched,
+                # and a reset aimed at another domain is that domain's turn, not this
+                # refusal's - `_REFUSES_EMPTY_SUBJECT` is inventory's own list.
                 #
                 # `len(domains) > 1` deliberately excludes a SINGLE-domain inventory
                 # ask with nothing to scope by (a "low stock report" with no
@@ -1348,6 +1472,45 @@ def _narrow_and_plan(
     return Plan(domains=list(domains), fetch=fetch, ask=ask, denied=denied, trace=trace)
 
 
+def _normalise_demand_qty(verdict: dict[str, Any]) -> None:
+    """D13, review round 9 (finding 5): one statement, one shape.
+
+    The SAME sentence parses two ways one turn apart - "CB313 1200" put the number on
+    `entities[].quantity`, "CB313 361" put it on the top-level `demand_qty` (live traces
+    05ae3025 and 17bdb411, one turn apart, same phrasing). Every rule that reads a
+    quantity then has to know about both fields, and the one that did not - D29's
+    exact-code narrowing - fetched the whole product family again on the second shape.
+
+    With exactly ONE product code named, the top-level number can only be that
+    product's, so it is written onto the entity HERE, before the task step, the focus
+    rules, the narrowing or the fetch read anything. Two codes and it belongs to neither
+    (the boundary `StockQtyTask.fill`'s own single-slot fallback keeps for the same
+    reason). The entity dicts are the ones `turn_runtime.lane_parse_output` carries to
+    the fetch, which is why this is the one place it has to happen.
+    """
+    bare = _stated_quantity(verdict.get("demand_qty"))
+    if bare is None:
+        return
+    products = [
+        e
+        for e in (verdict.get("entities") or [])
+        if isinstance(e, dict) and e.get("hint") == "product"
+    ]
+    if not products:
+        return
+    # "Exactly one code" counts CODES, not rows: the same code named once is one
+    # product, and a code that resolves to two company rows is still one product to
+    # this reader (D27).
+    code_sets = {frozenset(_row_codes(e)) for e in products}
+    if len(code_sets) != 1 or not next(iter(code_sets)):
+        return
+    if any(_stated_quantity(e.get("quantity")) is not None for e in products):
+        # The parser said it per entity; that is already the shape everything reads.
+        return
+    for e in products:
+        e["quantity"] = bare
+
+
 def apply(
     state: State,
     verdict: dict[str, Any],
@@ -1355,11 +1518,21 @@ def apply(
     resolved: dict[str, dict[str, int]] | None = None,
     candidates: dict[str, list[dict[str, Any]]] | None = None,
     unplaced: frozenset[str] | set[str] | None = None,
+    ideation: dict[str, Any] | None = None,
 ):
     """`unplaced` is the resolver's own verdict about the tokens THIS message named and
     could not place (`turn_runtime.unplaced_tokens`, folded). It is read at one seam
-    only: a roster is never built out of a word that matched nothing."""
+    only: a roster is never built out of a word that matched nothing.
+
+    `ideation` is the session's own opaque ideation pointer (AC-1779), handed in beside
+    `resolved` / `candidates` for one reason: `IdeationTask.claims` has to know whether
+    a media menu is open before it claims a bare number off a turn that names nothing
+    else. It is READ, never written and never copied onto the state - the ideate lane
+    stays its single writer (D26) - so `apply()` is as pure with it as without it."""
     trace = Trace()
+    # Before ANY reader: the task step, the focus rules, the narrowing and the fetch all
+    # see one shape for "how many of this product" (D13, review round 9).
+    _normalise_demand_qty(verdict)
 
     if state.pending is not None and _fully_answered_roster(state.pending):
         # Defect 2 (owner hand pass 6, 17 Sep 2026): a roster every option of which is
@@ -1419,6 +1592,42 @@ def apply(
     decision = decide(verdict, state.focus, state.pending)
     trace.decision = decision.as_trace()
 
+    # The OPEN TASKS, before decide's four outcomes are acted on (D21 to D26). A task
+    # is filled by any turn whose verdict carries a value its kind claims, whatever the
+    # current subject, so this runs ahead of the arms that read the subject - and its
+    # result is written back onto the focus AFTER `_focus_rules`, which empties every
+    # other axis on a topic reset and would take the tasks with it.
+    task_outcome = task_mod.run(
+        tuple(state.focus.tasks or ()),
+        verdict,
+        decision_kind=decision.kind,
+        positions=list(decision.positions) if decision.answers else [],
+        pending=state.pending,
+        turn_no=state.turn_no,
+        ideation=ideation,
+    )
+    trace.rules_fired.extend(task_outcome.rules)
+    if task_outcome.tie_options:
+        # D24(b): neither kind's claim outranks the other and the parser named neither,
+        # so NOTHING moves and the dealer is asked which task the value is for. The
+        # value rides on the question's own payload, which is what the answering turn
+        # then applies - a second copy on the focus could disagree with it.
+        tie = pending_ask(
+            task_mod.TASK_PICK,
+            list(task_outcome.tie_options),
+            asked_at_turn=state.turn_no,
+            expects="pick",
+            payload={"value": task_outcome.tie_value},
+        )
+        asked = replace(state, pending=tie)
+        return asked, Plan(domains=[], fetch=[], ask=tie, denied=[], trace=trace)
+
+    if task_outcome.clears_pending:
+        # The tie is SETTLED, not still open: the pick named the task, the value it
+        # carried has been applied, and the generic roster path must never see it (its
+        # options are tasks, not entities to fetch with).
+        state = replace(state, pending=None)
+
     verdict_entities = list(verdict.get("entities") or [])
     entities, domain_override, reconcile_short_circuit = _reconcile_step(
         verdict_entities, resolved, policy, verdict, trace
@@ -1430,7 +1639,21 @@ def apply(
         state, decision, trace
     )
     if pending_short_circuit is not None:
-        unchanged = replace(state, pending=pending_after)
+        # D23, review round 8 (finding 3, live turn 15126963): "never mind the stock
+        # check" typed under an open escalation offer is BOTH a decline of the offer and
+        # a topic reset aimed at the task ("topic_reset": true, "domain_hint":
+        # "inventory", "is_affirmative": false - the verdict read off the trace). The
+        # decline owns the REPLY and returns here before the focus rules ever run, which
+        # threw the task step's own answer away with the rest of the turn: the task came
+        # out still open with both slots empty, and the bare "60" typed next re-opened
+        # the question the dealer had just closed. The task step has already decided;
+        # this carries that decision, and nothing else about the turn.
+        closed_focus = state.focus
+        if task_outcome.tasks != tuple(state.focus.tasks or ()):
+            closed_focus = replace(state.focus, tasks=task_outcome.tasks)
+            if "stock_qty" in task_outcome.closed_kinds:
+                _set_kind_field(closed_focus, "product", [])
+        unchanged = replace(state, focus=closed_focus, pending=pending_after)
         return unchanged, pending_short_circuit
 
     focus = _focus_rules(
@@ -1442,9 +1665,76 @@ def apply(
         domain_override=domain_override,
         trace=trace,
     )
+    # AFTER the focus rules, never before: a topic reset rebuilds the focus from
+    # `RESET_KEEPS` alone, and the tasks it KEEPS (the ones aimed elsewhere, parked by
+    # D23) are what the task step above already decided. One writer, one answer.
+    focus.tasks = task_outcome.tasks
+    if "stock_qty" in task_outcome.closed_kinds:
+        # D23, review round 6 (case F turn 3): "never mind the stock check" ends the
+        # task, and what the task was ABOUT ends with it. The reset already empties the
+        # focus, but the rules below it refill `products` from THIS message's entities -
+        # and the parser hands back the products it has been discussing, so the closed
+        # question's own products came straight back and the bare "60" typed next
+        # re-asked it.
+        _set_kind_field(focus, "product", [])
+        trace.rules_fired.append("task_close_clears_products")
+
+    # A task that just took a value re-runs its own domain's fetch. The domain is the
+    # TASK's, locked the same way a pick locks a turn (contract 121) - a detour left
+    # `focus.domains` pointing somewhere else entirely - and the SUBJECT is the task's
+    # own slots, every product it is still collecting for. `_set_kind_field` keeps only
+    # what THIS message named on `focus.products`, so the task is the one honest record
+    # of what the question is about.
+    #
+    # R-S2 (reviewer, round 1): the fetch is built by the NORMAL path below, never by an
+    # early return of its own. The tail every answering turn runs - the grant and
+    # `row.supported` gate inside `_narrow_and_plan`, the counted-set cursor clear, and
+    # `new_ask_closes_stale_roster` - is not optional for a turn that answers a task,
+    # and an early return skipped all three (a revoked inventory grant still fetched).
+    task_locked = task_outcome.fetch is not None
+    task_domain = (
+        (task_outcome.fetch_domain or task_outcome.fetch.domain) if task_locked else None
+    )
+    if task_locked:
+        focus.domains = [task_domain]
+        if task_outcome.fetch.entities:
+            _set_kind_field(focus, "product", list(task_outcome.fetch.entities))
+    if task_outcome.clears_pending:
+        pending_after = None
+
+    if task_outcome.question and not task_locked:
+        # A task RESUMED, or one a bare number could not be attributed inside: nothing
+        # is fetched and nothing is rostered - only what is still owed is asked, and
+        # nothing is asked twice (D22, AC-1765, AC-1772). `not task_locked` (review
+        # round 2): a kind that fills one task AND resumes a different one carries
+        # both `task_outcome.fetch` and `task_outcome.question` - the fetch is what
+        # this turn actually answered and must win, never dropped silently in favour
+        # of asking about the OTHER task instead.
+        trace.task_question = task_outcome.question
+        asked = State(
+            focus=focus,
+            pending=pending_after,
+            profile=state.profile,
+            turn_no=state.turn_no,
+        )
+        domain = task_outcome.question_domain
+        if domain:
+            focus.domains = [domain]
+        return asked, Plan(
+            domains=[domain] if domain else [],
+            fetch=[],
+            ask=None,
+            denied=[],
+            trace=trace,
+        )
 
     asks = verdict.get("asks") or []
-    if domain_locked and focus.domains and not asks:
+    if task_locked:
+        # The lock: this turn belongs to the task that just took a value, whatever the
+        # conversation was last about.
+        domains = [task_domain]
+        trace.rules_fired.append("domain_locked_by_task")
+    elif domain_locked and focus.domains and not asks:
         # Contract 121 / AC-1522: a pick never re-domains the turn. `_answer_pending`
         # put the domain the question was ASKED under onto the focus and `_focus_rules`
         # left it alone, and this is the second half of that: re-reading `asks` or
@@ -1543,8 +1833,69 @@ def apply(
         a for a in (verdict.get("requested_attributes") or []) if isinstance(a, str) and a
     )
     plan = _narrow_and_plan(
-        focus, policy, domains, new_state, trace, attributes, candidates, unplaced
+        focus,
+        policy,
+        domains,
+        new_state,
+        trace,
+        attributes,
+        candidates,
+        unplaced,
+        refuse_empty_subject=(
+            # A bare number with nothing open (review round 9, finding 4) ...
+            (
+                decision.kind == CARRY
+                and _stated_quantity(verdict.get("demand_qty")) is not None
+                and not entities
+                and not focus.tasks
+                and not _kind_field(focus, "product")
+            )
+            # ... or a CANCEL (D34, review round 11): a topic reset that names nothing
+            # and asks for no quantity.
+            or (
+                verdict.get("topic_reset") is True
+                and not entities
+                and _stated_quantity(verdict.get("demand_qty")) is None
+            )
+        ),
     )
+    _exact_code_when_a_quantity_is_named(plan, verdict, trace)
+
+    if task_locked and plan.ask is None:
+        # The narrower built a spec for the task's domain out of whatever THIS message
+        # resolved; the task's own spec replaces it, so the fetch carries every slot and
+        # the quantities the dealer gave on earlier turns. Replaced rather than merged:
+        # the task IS the question. If the narrower raised an ask, or the grant gate
+        # refused the domain (`plan.denied`), there is no spec to replace and the task
+        # simply stays open - which is the point of routing through it.
+        for index, spec in enumerate(plan.fetch):
+            if spec.domain == task_domain:
+                plan.fetch[index] = task_outcome.fetch
+                trace.rules_fired.append("task_drives_the_fetch")
+                break
+
+    # D26: the ideation task opens on the turn that routes to the ideate lane - the
+    # lane's own state already survives a detour, so the task adds the status and the
+    # parser hint and nothing else.
+    focus.tasks = task_mod.opened_for_domains(
+        focus.tasks,
+        domains,
+        turn_no=state.turn_no,
+        closed_kinds=task_outcome.closed_kinds,
+    )
+    if (
+        task_outcome.parked_kinds
+        and verdict.get("entities")
+        and unplaced
+        and not any(rows for rows in (candidates or {}).values())
+    ):
+        # AC-1773: this turn named a subject and the resolver could place NONE of it,
+        # so the turn is a miss - "I could not find SRTWC8610-SH" - and a miss is not
+        # another answer. Parking exists so the OTHER answer can be given silently
+        # (D22); there is no other answer here, so the task stays exactly as it was.
+        focus.tasks = task_mod.unpark(
+            focus.tasks, task_outcome.parked_kinds, tuple(state.focus.tasks or ())
+        )
 
     if trace.outstanding is not None:
         # Contract 38/39: this fetch is the ANSWERED question's own report re-running.

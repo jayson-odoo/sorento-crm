@@ -26,6 +26,10 @@ import { extractApiError } from '@/lib/api-client';
  * `ChatbotSettings`: they are their own cards with their own read/save pair,
  * kept out of the Switches card's payload (test contract: `ChatbotSettings` is
  * exactly the four switch/domain keys).
+ *
+ * `chatbot_stock_low_threshold_pct` (dealer stock verdict S0, D7) IS part of
+ * `ChatbotSettings` - it rides the same draft/save as the switches, through the
+ * `StockLowThresholdCard` on the page (no card of its own query/mutation/Save).
  */
 
 export interface ChatbotSettings {
@@ -35,6 +39,14 @@ export interface ChatbotSettings {
   /** S7 mode: the CRM orders turns per contact and owns the tail. */
   chatbot_ordering_enabled: boolean;
   chatbot_unsupported_domains: string[];
+  /**
+   * Dealer stock verdict S0 (D7), integer 1 to 100. Optional here on purpose: a real
+   * GET always supplies it (`pickChatbotSettings` below), but the page's own tests
+   * build `ChatbotSettings` objects by hand, and most of those predate this field -
+   * making it required would force every one of those literals to carry a value they
+   * were never meant to assert on.
+   */
+  chatbot_stock_low_threshold_pct?: number;
 }
 
 /**
@@ -57,6 +69,7 @@ const FALLBACKS: ChatbotSettings = {
   chatbot_business_lane_enabled: false,
   chatbot_ordering_enabled: false,
   chatbot_unsupported_domains: [],
+  chatbot_stock_low_threshold_pct: 50,
 };
 
 function pickChatbotSettings(row: Record<string, unknown> | null | undefined): ChatbotSettings {
@@ -67,6 +80,10 @@ function pickChatbotSettings(row: Record<string, unknown> | null | undefined): C
     chatbot_unsupported_domains: Array.isArray(row?.chatbot_unsupported_domains)
       ? (row.chatbot_unsupported_domains as string[])
       : FALLBACKS.chatbot_unsupported_domains,
+    chatbot_stock_low_threshold_pct:
+      typeof row?.chatbot_stock_low_threshold_pct === 'number'
+        ? row.chatbot_stock_low_threshold_pct
+        : FALLBACKS.chatbot_stock_low_threshold_pct,
   };
 }
 

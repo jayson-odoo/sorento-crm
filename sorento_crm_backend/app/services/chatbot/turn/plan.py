@@ -61,6 +61,13 @@ class Trace:
     # on the `apply` trace record so the console drawer prints the decision itself rather
     # than leaving an operator to infer it from the rules that fired.
     decision: dict[str, str] | None = None
+    # The OPEN TASK's own re-ask, when this turn resumes a task rather than filling it
+    # (D22, AC-1772): the question text, and nothing else. It lives on the Trace for
+    # the same reason `lane` and `outstanding` do - the Plan's own field set is the
+    # contract (AC-1528) - and it has two readers: `turn/route.py`, which keeps the
+    # turn on the task's own arm although nothing is being fetched, and `engine.py`,
+    # which composes it as the whole reply.
+    task_question: str | None = None
     # The entity kinds a NUMBERED PICK settled this turn. The narrower reads it and does
     # not re-ask them: a roster the customer has just answered is not a choice still on
     # the table, whatever the domain's policy would say about the same rows carried in

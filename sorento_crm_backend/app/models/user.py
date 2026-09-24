@@ -687,6 +687,14 @@ class SystemSetting(Base):
     chatbot_ordering_enabled = Column(
         Boolean, nullable=False, server_default="false", default=False
     )
+    # Dealer stock verdict S0 (D7, migration `dsv_0001`): the ONE threshold `verdict()`
+    # compares ask against available, incoming and purchase to decide `running_low` /
+    # `limited` - "make the T configurable" (owner, plan page). Integer percent, 1-100,
+    # default 50; bounded by `SystemSettingUpdate`, never by a raw column constraint,
+    # the way every other bounded setting on this table already is.
+    chatbot_stock_low_threshold_pct = Column(
+        Integer, nullable=False, server_default="50", default=50
+    )
 
 
 class UserQuickAccess(Base):
