@@ -13,15 +13,28 @@ below.
 1. Open **[System Management → Import Column Mappings](/system-management/import-field-aliases)**.
 2. Pick the **Document type**.
 3. The grid lists every **System field** for that document type and the **Headers on file**
-   already mapped to it, as chips.
+   already mapped to it, as chips. A chip mapped only for one supplier carries that supplier's
+   name as a second badge beside it; a chip with no supplier badge applies to every supplier. A
+   column somebody chose to skip on the upload mapper groups under **Ignored** instead of a
+   field name, so it can still be found and removed.
 4. Click **Add mapping**. Pick the **System field**, type the **Header** exactly as it appears on
    the supplier's sheet, and optionally its **Locale**. Click **Add mapping** again to save.
 5. To remove a mapping, click the chip's remove control - it's a deferred, reversible delete (a
    few seconds to cancel), the same as elsewhere in the CRM.
 
-Editing a mapping here is admin-only. A purchasing user who hits an unmapped header during upload
-maps it inline from the upload dialog's **Map to...** chip - that write lands here too and is
-remembered for every later upload.
+Adding a mapping here by hand is admin-only, and it's rarely needed anymore for **Proforma
+invoice** and **Packing list**. The first time a purchasing user drops one of those files on
+**Upload supplier documents**, a column-mapping panel on that dialog lets them pick the field for
+each column (or **Ignore**) right there; saving it there writes the same supplier-scoped rows
+this page lists, so this is where you review a supplier's saved layout afterwards, or delete a
+mapping (including an Ignore) that turned out to be wrong. See [Upload a proforma
+invoice](../purchasing/upload-proforma-invoice.md) for that inline mapper.
+
+**Plan a container**'s stock-list upload has the same kind of column-mapping panel (samples,
+header text, field picker, **Ignore**, a saved-layout fold, a **Header row** stepper) - see
+[Loading Plan - Start a plan](../supply-chain/loading-plan.md) - but its per-supplier column
+choices are not one of the **Document type** options here, so they aren't reviewed on this page;
+what this page does hold for a stock list is the separate **Stock list words** vocabulary below.
 
 ## Stock list words
 
