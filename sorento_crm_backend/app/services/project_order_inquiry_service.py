@@ -96,6 +96,7 @@ from app.models.project_so import (
     OrderInquiryLink,
     OrderInquiryRaise,
     OrderInquiryRow,
+    OrderInquirySuggestedLink,
     ProjectSalesOrder,
     ProjectSalesOrderLine,
     SOAmendment,
@@ -2063,6 +2064,10 @@ class ProjectOrderInquiryService:
         )
         row.note = f"{row.note}; {fragment}" if row.note else fragment
         row.redirected_to_pool = True
+        # AC-LT-18: released to stock is USED, not owed - the same reading
+        # `auto_place_for_products`'s own `redirected_to_pool` gate already applies to
+        # a fresh cascade; a guess still sitting on this row is stale the same way.
+        self._drop_suggested_links([row])
         # PLAN-oi-cancelled-line-used-confirm.md (AC-CL-12, C3): a used row is a fresh
         # fact for purchasing the same way a cancelled line is - flip it back to To
         # confirm the SAME shape `_settle_row_in_place` above uses for a row CS amends
@@ -5671,6 +5676,10 @@ class ProjectOrderInquiryService:
         row.rejected_by = actor_user_id
         row.rejected_at = datetime.utcnow()
         row.rejected_reason = reason
+        # AC-LT-18: a rejected row is nobody's to buy any more, and a suggestion left
+        # standing on it would still show on the Suggested column purchasing just
+        # refused.
+        self._drop_suggested_links([row])
         self.db.flush()
         self._refresh_inquiry_states({row.order_inquiry_id})
 
@@ -5887,6 +5896,12 @@ class ProjectOrderInquiryService:
         """
         for inquiry_id in {row.order_inquiry_id for row in rows if row.order_inquiry_id}:
             self.derive_bundles(inquiry_id)
+        # AC-LT-17/18: a suggested link means nothing once the row is no longer open
+        # for buying - a person's word about it (actioned, cancelled, rejected,
+        # redirected to pool) or full REAL coverage (`placed`, below). Collected and
+        # dropped in ONE call after the loop, so a pass over many rows costs one
+        # DELETE rather than one per row.
+        to_drop: List[OrderInquiryRow] = []
         for row in rows:
             if row.state in (INQUIRY_ACTIONED, INQUIRY_CANCELLED):
                 # The STATE is a person's word and is left alone, but the derived display
@@ -5896,6 +5911,7 @@ class ProjectOrderInquiryService:
                     row.po_ref = None
                     row.po_line_id = None
                     row.spo_ref = None
+                to_drop.append(row)
                 continue
             links = self._links_of(row.id)
             linked = sum((_dec(link.qty) for link in links), _ZERO)
@@ -5920,6 +5936,10 @@ class ProjectOrderInquiryService:
                 if first is not None and first.spo_allocation_id is not None
                 else None
             )
+            if row.state == INQUIRY_PLACED or row.ack_state == ACK_REJECTED or row.redirected_to_pool:
+                to_drop.append(row)
+        if to_drop:
+            self._drop_suggested_links(to_drop)
 
     @staticmethod
     def _coverage_state(qty: Decimal, linked: Decimal, bundled: Decimal) -> str:
@@ -7292,7 +7312,10 @@ class ProjectOrderInquiryService:
 
     @staticmethod
     def _cascade_take(
-        candidates: Sequence[Dict[str, Any]], need: Decimal
+        candidates: Sequence[Dict[str, Any]],
+        need: Decimal,
+        *,
+        held_by_others: Optional[Dict[str, Decimal]] = None,
     ) -> List[Tuple[Dict[str, Any], Decimal]]:
         """`min(what is left on this line, what is still needed)` off each CASCADABLE
         candidate in the order it was given, until the need is covered - or NOTHING at all,
@@ -7309,6 +7332,15 @@ class ProjectOrderInquiryService:
         re-deal, a book re-upload, or a manual partial taken by hand in the Link dialog -
         none of which calls this method (`place_on_po_allocations` walks `by_target`
         directly and is never routed through the cascade).
+
+        `held_by_others` (AC-LT-14, G2) is the walk's own suggestion-path addition: what
+        OTHER rows already suggested on each target, this pass or an earlier one. The
+        ALL-OR-NOTHING gate above stays read off the document's raw capacity - a line
+        that can genuinely cover the need is never refused outright over a scarcity
+        another row's own GUESS created - but the per-candidate take below is netted
+        against it, so two rows are never offered the very same units. `None` (every
+        caller before this parameter existed, and the Link dialog's own preview) is a
+        no-op and leaves this exactly as it always was.
         """
         cascadable_total = sum(
             (
@@ -7334,6 +7366,10 @@ class ProjectOrderInquiryService:
             if not candidate.get("cascadable", True):
                 continue
             remaining = candidate["remaining"]
+            if held_by_others:
+                remaining = max(
+                    remaining - held_by_others.get(candidate["target_id"], _ZERO), _ZERO
+                )
             take = remaining if remaining < still else still
             if take > _ZERO:
                 takes.append((candidate, take))
@@ -7600,6 +7636,154 @@ class ProjectOrderInquiryService:
         self.db.flush()
         self._invalidate_link_cache()
         return link
+
+    def _suggested_of_row(self, row_id: str) -> List[OrderInquirySuggestedLink]:
+        """This row's own suggested links, oldest first - the shape `_same_placement`
+        (reused below) does not care about, but a stable order beats none for a test
+        reading `_suggested_of` back."""
+        return (
+            self.db.query(OrderInquirySuggestedLink)
+            .filter(OrderInquirySuggestedLink.row_id == row_id)
+            .order_by(OrderInquirySuggestedLink.suggested_at.asc())
+            .all()
+        )
+
+    def _suggested_totals_by_target(
+        self, *, exclude_row_id: Optional[str] = None
+    ) -> Dict[str, Decimal]:
+        """Every OTHER row's suggested total, PO and SPO merged into one dict keyed by
+        target id (AC-LT-14, G2): what the walk's own take-sizing nets a candidate's
+        `remaining` against, on top of the real links `_linked_by_target` already nets.
+
+        Read FRESH every row rather than cached like `_linked_by_target`'s own memo:
+        this SAME pass writes a suggestion for an earlier row before asking about a
+        later one, and a stale total would offer the same units twice
+        (`_write_suggested_links` flushes, so the next query here sees it). `exclude_
+        row_id` is this row's own OLD suggestions - about to be replaced, not a claim
+        against itself, exactly as `credit_own_links` already excludes a row's own real
+        links from the same netting for the manual dialog.
+        """
+        totals: Dict[str, Decimal] = {}
+        po_query = self.db.query(
+            OrderInquirySuggestedLink.po_line_id, func.sum(OrderInquirySuggestedLink.qty)
+        ).filter(OrderInquirySuggestedLink.po_line_id.isnot(None))
+        spo_query = self.db.query(
+            OrderInquirySuggestedLink.spo_allocation_id,
+            func.sum(OrderInquirySuggestedLink.qty),
+        ).filter(OrderInquirySuggestedLink.spo_allocation_id.isnot(None))
+        if exclude_row_id:
+            po_query = po_query.filter(OrderInquirySuggestedLink.row_id != exclude_row_id)
+            spo_query = spo_query.filter(OrderInquirySuggestedLink.row_id != exclude_row_id)
+        for target_id, qty in po_query.group_by(OrderInquirySuggestedLink.po_line_id).all():
+            totals[str(target_id)] = totals.get(str(target_id), _ZERO) + _dec(qty)
+        for target_id, qty in spo_query.group_by(
+            OrderInquirySuggestedLink.spo_allocation_id
+        ).all():
+            totals[str(target_id)] = totals.get(str(target_id), _ZERO) + _dec(qty)
+        return totals
+
+    def _write_suggested_links(
+        self,
+        row: OrderInquiryRow,
+        takes: Sequence[Tuple[Dict[str, Any], Decimal]],
+        trigger: str,
+    ) -> None:
+        """The cascade walk's OWN terminal write (plan 3.4) - never a real link, never
+        `scm.order_link_claim`, nobody's name on it. REPLACES this row's suggested
+        links with today's answer, unless the answer is unchanged: `_same_placement`
+        (S4 of the draft-links plan) already compares a multiset of (target, qty), and
+        an `OrderInquirySuggestedLink` carries the same `po_line_id` / `spo_
+        allocation_id` / `qty` attributes a real link does, so it is reused as-is
+        rather than writing a second comparison (AC-LT-16).
+
+        Writes NOTHING onto the row itself - no note, no `actioned_by`, no state
+        change: `po_ref` / `spo_ref` / `state` stay exactly what they were before this
+        pass (AC-LT-10), because a guess is not a placement.
+        """
+        existing = self._suggested_of_row(row.id)
+        if existing and self._same_placement(existing, takes):
+            return
+        if existing:
+            for suggestion in existing:
+                self.db.delete(suggestion)
+            self.db.flush()
+        now = datetime.utcnow()
+        for candidate, qty in takes:
+            self.db.add(
+                OrderInquirySuggestedLink(
+                    company_id=row.company_id,
+                    row_id=row.id,
+                    po_line_id=candidate["po_line_id"],
+                    spo_allocation_id=candidate["spo_allocation_id"],
+                    document=candidate["document"],
+                    qty=qty,
+                    trigger=trigger,
+                    suggested_at=now,
+                )
+            )
+        self.db.flush()
+
+    def _drop_suggested_links(self, rows: Sequence[OrderInquiryRow]) -> None:
+        """Delete every suggested link on these rows (AC-LT-17/18): full real coverage,
+        or a state no longer open for buying - cancelled, actioned, rejected,
+        redirected to pool. Plural and explicit, not folded silently into a bigger
+        method, because Link selected (S4) calls it on a ticked batch and the state
+        writers each call it on their own single-row list.
+        """
+        wanted = [row.id for row in rows if row is not None]
+        if not wanted:
+            return
+        self.db.query(OrderInquirySuggestedLink).filter(
+            OrderInquirySuggestedLink.row_id.in_(wanted)
+        ).delete(synchronize_session=False)
+        self.db.flush()
+
+    def _trim_suggested_links_to_room(
+        self, candidate: Dict[str, Any], room: Decimal
+    ) -> None:
+        """AC-LT-15 (G2, "a real link always wins"): once a real link lands on this
+        target, shrink what is left of the suggested links sitting on it - lowest
+        priority first, latest `delivery_date` on the suggestion's OWN row, then
+        newest `suggested_at` - until they fit `room`. Never touches the real link
+        itself and never refuses one: the caller computes `room` from what was left
+        BEFORE its own write, so this only ever removes or shrinks a guess.
+        """
+        po_line_id = candidate.get("po_line_id")
+        spo_allocation_id = candidate.get("spo_allocation_id")
+        if not po_line_id and not spo_allocation_id:
+            return
+        column = (
+            OrderInquirySuggestedLink.po_line_id
+            if po_line_id
+            else OrderInquirySuggestedLink.spo_allocation_id
+        )
+        target_id = po_line_id or spo_allocation_id
+        suggestions = (
+            self.db.query(OrderInquirySuggestedLink)
+            .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquirySuggestedLink.row_id)
+            .filter(column == target_id)
+            .order_by(
+                OrderInquiryRow.delivery_date.desc().nullslast(),
+                OrderInquirySuggestedLink.suggested_at.desc(),
+            )
+            .all()
+        )
+        if not suggestions:
+            return
+        over = sum((_dec(s.qty) for s in suggestions), _ZERO) - room
+        if over <= _ZERO:
+            return
+        for suggestion in suggestions:
+            if over <= _ZERO:
+                break
+            qty = _dec(suggestion.qty)
+            if qty <= over:
+                self.db.delete(suggestion)
+                over -= qty
+            else:
+                suggestion.qty = qty - over
+                over = _ZERO
+        self.db.flush()
 
     def place_supply_borrow(
         self,
@@ -7960,6 +8144,21 @@ class ProjectOrderInquiryService:
             self._write_link(
                 row, candidate, qty, actor_user_id=actor_user_id, auto_trigger=auto_trigger
             )
+
+        # AC-LT-15 (G2): a real link always wins over a suggestion on the SAME target -
+        # trimmed here, once per target this call actually wrote to, not inside
+        # `_write_link` (which runs once per allocation and would trim the same target
+        # twice for two allocations on it). `raw_remaining` is what was left on the
+        # line BEFORE this call's own writes (net of real links only), so subtracting
+        # this call's own total take off it is exactly what is left for a suggestion.
+        trimmed_targets: set = set()
+        for candidate, _qty in resolved:
+            target_id = candidate["target_id"]
+            if target_id in trimmed_targets:
+                continue
+            trimmed_targets.add(target_id)
+            room = candidate["raw_remaining"] - taken_within_call.get(target_id, _ZERO)
+            self._trim_suggested_links_to_room(candidate, max(room, _ZERO))
 
         self.refresh_link_state([row])
         self.db.flush()
@@ -8718,7 +8917,12 @@ class ProjectOrderInquiryService:
             candidates = self._within_window(row, candidates, lead_days)
             if not candidates:
                 continue
-            takes = self._cascade_take(candidates, need)
+            # AC-LT-14/G2: what OTHER rows already suggest on each target, read fresh
+            # right before this row's own take is sized - never cached the way
+            # `_linked_by_target` is, because THIS pass may already have written a
+            # suggestion for an earlier row onto the very same target.
+            held_by_others = self._suggested_totals_by_target(exclude_row_id=str(row.id))
+            takes = self._cascade_take(candidates, need, held_by_others=held_by_others)
             if not takes:
                 continue
             if drafts and self._same_placement(drafts, takes):
@@ -8730,19 +8934,10 @@ class ProjectOrderInquiryService:
                 continue
             if drafts:
                 self._unplace_drafts([row], trigger=trigger)
-            self.place_on_po_allocations(
-                row.id,
-                [
-                    {
-                        "po_line_id": candidate["po_line_id"],
-                        "spo_allocation_id": candidate["spo_allocation_id"],
-                        "qty": qty,
-                    }
-                    for candidate, qty in takes
-                ],
-                actor_user_id=actor_user_id,
-                auto_trigger=trigger,
-            )
+            # PLAN-oi-links-autocount-truth-24sep.md 3.4: the walk's own terminal write
+            # is a SUGGESTION, never a real link - the book step above (real links,
+            # untouched) already had first go at every row in this pass.
+            self._write_suggested_links(row, takes, trigger)
             # One ROW touched, however many documents it took: the row is never split any
             # more, so counting the rows the call returned would always have said 1.
             placed_rows += 1

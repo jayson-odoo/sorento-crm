@@ -1253,6 +1253,72 @@ class OrderInquiryLink(Base, CompanyScopedMixin):
     )
 
 
+class OrderInquirySuggestedLink(Base, CompanyScopedMixin):
+    """A guess the cascade walk made, never a placement (`PLAN-oi-links-autocount-truth-
+    24sep.md` section 3.3, the owner's ruling on issue #1215: "the suggested link
+    shouldn't be counted as real link").
+
+    Same one-target CHECK shape as `OrderInquiryLink` above, minus the reserve target (a
+    CS reserve is always a person's act, never a guess) - and minus `claim_id` /
+    `linked_by`: a suggestion holds no `scm.order_link_claim` and nobody's name is on it.
+    CASCADE on BOTH the row and the target, unlike a real link's `SET NULL` on the
+    target: a real link keeps its display once its document is gone because it is
+    evidence of something that happened, while a suggestion of a line that no longer
+    exists means nothing and should simply vanish.
+
+    Written and replaced only by `ProjectOrderInquiryService._write_suggested_links`,
+    one pass at a time, and trimmed by `place_on_po_allocations` the moment a real link
+    lands on the same target (AC-LT-15). `qty` follows the row's own priority through
+    the walk, so `suggested_at` and the row's `delivery_date` (read via the row, not
+    duplicated here) are what a later trim reads to decide which suggestion goes first.
+    """
+
+    __tablename__ = "order_inquiry_suggested_links"
+    __audit_entity_type__ = "project_order_inquiry_suggested_links"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    row_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.order_inquiry_rows.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    po_line_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("purchase_order_lines.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    spo_allocation_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey(
+            "spo_allocations.id",
+            ondelete="CASCADE",
+            name="fk_order_inquiry_suggested_links_spo_allocation",
+        ),
+        nullable=True,
+    )
+    #: Denormalised the same way `OrderInquiryLink.document` is - see that column's own
+    #: comment. Here it is display only: nothing reads it to decide coverage.
+    document = Column(String(80), nullable=True)
+    qty = Column(Numeric(15, 4), nullable=False)
+    #: Why the walk offered this - `raise`, `worklist`, `link_now`, `acknowledge`,
+    #: `po_confirm`, `decision_confirm` - the same trigger vocabulary a real link's
+    #: `auto` note already carries, so "why is this suggested" is answerable the same way.
+    trigger = Column(String(32), nullable=True)
+    suggested_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "(po_line_id IS NOT NULL)::int + (spo_allocation_id IS NOT NULL)::int = 1",
+            name="ck_order_inquiry_suggested_links_one_target",
+        ),
+        CheckConstraint("qty > 0", name="ck_order_inquiry_suggested_links_qty_positive"),
+        Index("ix_order_inquiry_suggested_links_row", "row_id"),
+        Index("ix_order_inquiry_suggested_links_po_line", "po_line_id"),
+        Index("ix_order_inquiry_suggested_links_spo_allocation", "spo_allocation_id"),
+        {"schema": "projects"},
+    )
+
+
 #: PLAN-oi-request-cs-reserve.md (R1-R11): purchasing asks CS to cover part of a row from
 #: own or pool stock before buying the balance. Two tables: the REQUEST (one per ask,
 #: `OI-2609-0678 request #2`, addressed by ordinal within the inquiry rather than its own
