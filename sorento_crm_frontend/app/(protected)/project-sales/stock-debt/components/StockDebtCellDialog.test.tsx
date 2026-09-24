@@ -107,15 +107,12 @@ function renderDialog(cell: StockDebtCell = CELL) {
         month="2026-10"
         monthLabel="Oct 26"
         balance={-16}
-        // R16 retires the ownership group entirely - the board narrows the drill with a
-        // due date range and a book now, never a group. `group=""` is the CURRENT prop's
-        // own "no narrowing" value; `dateFrom`/`dateTo` are not on the dialog's props
-        // interface yet (`StockDebtClient.tsx`'s own comment: "StockDebtCellDialog is
-        // unchanged this round") - injected via an untyped spread so this test states
-        // the WIRE contract the coder is renaming the props towards, not today's shape.
-        group=""
+        // R16 retired the ownership group entirely - the board narrows the drill with a
+        // due date range and a book now, never a group; `dateFrom`/`dateTo`/`book` are
+        // real props on the dialog (the coder's rename landed).
+        dateFrom="2026-11-01"
+        dateTo="2026-11-30"
         book="retail"
-        {...({ dateFrom: '2026-11-01', dateTo: '2026-11-30' } as Record<string, unknown>)}
         onClose={() => {}}
       />
     </QueryClientProvider>,
@@ -135,9 +132,7 @@ describe('StockDebtCellDialog', () => {
   it('asks for the cell it was opened on', async () => {
     renderDialog();
     // AC-11/AC-11b/R14: the drill carries the board's due date range and book - never an
-    // ownership group, which R16 retired. RED today: the dialog still forwards
-    // `(productId, month, group, cutoff, book)` internally, so `dateFrom`/`dateTo` never
-    // reach `getStockDebtCell` at all.
+    // ownership group, which R16 retired.
     await waitFor(() =>
       expect(getStockDebtCell).toHaveBeenCalledWith(
         'p1', '2026-10', '2026-11-01', '2026-11-30', 'retail',

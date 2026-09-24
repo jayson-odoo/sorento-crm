@@ -9,7 +9,7 @@ import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { StockDebtListResponse, StockDebtRow } from '../types/stockDebt.types';
+import type { StockDebtListResponse, StockDebtMonth, StockDebtRow } from '../types/stockDebt.types';
 
 if (!window.matchMedia) {
   (window as unknown as { matchMedia: unknown }).matchMedia = () => ({
@@ -99,7 +99,7 @@ function row(overrides: Partial<StockDebtRow> = {}): StockDebtRow {
       { key: '2026-08', balance: 55, tone: 'green' },
       { key: '2026-09', balance: -16, tone: 'red' },
       { key: '2026-10', balance: -652, tone: 'amber' },
-    ],
+    ] as StockDebtMonth[],
     tba: -100,
     undated: -12,
     unlocated: -7,
