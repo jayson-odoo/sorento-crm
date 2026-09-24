@@ -2,7 +2,7 @@
 
 import React, { use, useEffect, useMemo, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Boxes,
   Download,
@@ -12,6 +12,7 @@ import {
   Files,
   History,
   Info,
+  Printer,
   Settings,
   Trash2,
   Upload,
@@ -32,7 +33,9 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { formatDate } from '@/lib/helpers';
-import { downloadPackingListExport } from '@/app/(protected)/scm/services/fulfilmentService';
+import { enqueuePackingListExport } from '@/app/(protected)/scm/services/fulfilmentService';
+import { EntityDownloadsButton } from '@/components/my-downloads/EntityDownloadsButton';
+import { ENTITY_DOWNLOADS_QUERY_KEY, MY_DOWNLOADS_QUERY_KEY } from '@/services/myDownloadsService';
 import DetailActions from '@/components/common/DetailActions';
 import BackToList, { useBackToListHref } from '@/components/common/BackToList';
 import { packingListsPagerQuery } from '../hooks/usePackingLists';
@@ -91,17 +94,21 @@ function PackingListToolbar({ id }: { id: string }) {
   } = usePackingListRecord();
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [downloadsOpen, setDownloadsOpen] = useState(false);
+  const queryClient = useQueryClient();
 
-  const exportWorkbook = useMutation({
-    // The name the file falls back to is the container, never the shipment id: a workbook
-    // in a downloads folder called after a UUID cannot be told from any other one.
-    mutationFn: () =>
-      downloadPackingListExport(
-        id,
-        packingList?.shipping_container_number ??
-          packingList?.shipment_number ??
-          'container',
-      ),
+  /** E1/E2: "Download packing list" enqueues rather than downloads a blob straight from
+   *  the click - same shape as a complaint's PDF export - and the file shows up in My
+   *  Downloads / this record's own Download history instead. */
+  const enqueueExport = useMutation({
+    mutationFn: () => enqueuePackingListExport(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: MY_DOWNLOADS_QUERY_KEY });
+      queryClient.invalidateQueries({
+        queryKey: [...ENTITY_DOWNLOADS_QUERY_KEY, 'inbound_shipment', id],
+      });
+      toast.success('Added to My Downloads');
+    },
     onError: (e: Error) => toast.error(e.message),
   });
 
@@ -172,11 +179,15 @@ function PackingListToolbar({ id }: { id: string }) {
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   <DropdownMenuItem
-                    onClick={() => exportWorkbook.mutate()}
-                    disabled={exportWorkbook.isPending || !packingList}
+                    onClick={() => enqueueExport.mutate()}
+                    disabled={enqueueExport.isPending || !packingList}
                   >
                     <Download className="size-4" />
                     Download packing list
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setDownloadsOpen(true)}>
+                    <Printer className="size-4" />
+                    Download history
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => setImportOpen(true)}>
                     <Upload className="size-4" />
@@ -213,6 +224,13 @@ function PackingListToolbar({ id }: { id: string }) {
         />
       )}
       <ContainerStatusImportDialog open={importOpen} onOpenChange={setImportOpen} />
+      <EntityDownloadsButton
+        entityType="inbound_shipment"
+        entityId={id}
+        label={title}
+        open={downloadsOpen}
+        onOpenChange={setDownloadsOpen}
+      />
     </>
   );
 }

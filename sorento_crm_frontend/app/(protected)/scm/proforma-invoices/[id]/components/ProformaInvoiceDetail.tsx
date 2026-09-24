@@ -1194,14 +1194,16 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
   // attachment behind it, so that row is still printed, without buttons it cannot honour.
   // The packing workbook needs no such fallback: `packing_file` is DERIVED from these same
   // links server-side, so a packing file with no link cannot reach this screen at all.
+  //
+  // D1 (PLAN-pi-header-fields-convert-fixes-24sep.md): shown only when there is NO linked
+  // source file at all - matched on whether a link EXISTS, never on whether its name
+  // happens to equal `source_ref`'s. `sanitize_storage_filename` strips characters like
+  // `（1）` on the way into the link's own name, so the same upload's link and its raw
+  // `source_ref` can legitimately spell the name two different ways (AC-S1) - a name
+  // comparison read that as "two different files" and printed the one upload twice.
   const sourceFiles = invoice.source_files ?? [];
-  const linkedNames = new Set(
-    sourceFiles.map((f) => (f.name ?? '').trim()).filter(Boolean),
-  );
   const unlinkedSourceRef =
-    invoice.source_ref && !linkedNames.has(invoice.source_ref.trim())
-      ? invoice.source_ref
-      : null;
+    invoice.source_ref && sourceFiles.length === 0 ? invoice.source_ref : null;
 
   /** The placement, as one chip in the header - "Not converted", "Split", or the container. */
   const placementBadge =
@@ -1555,11 +1557,7 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
           {/* Which containers this invoice's goods went into (ruling 26). One row per
               packing list and nothing else: what is still to place is the convert dialog's
               own table, and why a line cannot go is the Lines tab's Matched column. */}
-          <ProformaInvoicePackingListsTab
-            invoice={invoice}
-            onConvert={showConvert ? () => setConvertOpen(true) : undefined}
-            convertLabel={convertLabel}
-          />
+          <ProformaInvoicePackingListsTab invoice={invoice} />
         </TabsContent>
       </Tabs>
 

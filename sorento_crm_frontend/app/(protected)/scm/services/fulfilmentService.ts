@@ -1526,6 +1526,24 @@ export async function downloadPackingListExport(
 }
 
 /**
+ * E1/E2 MOCK (Phase 1, frontend-first against mocks - L2-S5/#1214): the real async route
+ * (`POST .../inbound-shipments/{id}/packing-list/export` ->
+ * `DownloadService.create(kind="packing_list_xlsx", ...)` + `enqueue_job(...)`, same shape
+ * as `exportComplaintPdf`) does not exist yet - Phase 2 wires it
+ * (PLAN-pi-header-fields-convert-fixes-24sep.md E1). Until then this resolves immediately
+ * so the gear's "enqueues and toasts" flow (E2) is demonstrable; the packing list's own
+ * "Download history" (`EntityDownloadsButton entityType="inbound_shipment"`) reads real
+ * `user_downloads` rows either way and shows none until Phase 2 actually writes one.
+ * `downloadPackingListExport` above is untouched and keeps serving the GET route (kept one
+ * release for MCP/n8n callers, E1). Remove this mock the moment the real POST lands - grep
+ * this comment.
+ */
+export async function enqueuePackingListExport(shipmentId: string): Promise<void> {
+  void shipmentId;
+  await Promise.resolve();
+}
+
+/**
  * Supplier photos on a shipment line (R25/R26, purchasing consolidation batch 6 Sep
  * 2026, section 12, lane C, slice C3).
  *

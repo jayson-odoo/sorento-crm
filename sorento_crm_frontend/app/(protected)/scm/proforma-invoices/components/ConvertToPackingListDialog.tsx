@@ -19,6 +19,7 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useContainerSizes } from '../../hooks/useFulfilment';
 import { useProformaInvoice } from '../../hooks/useProformaInvoices';
@@ -55,6 +56,9 @@ interface PlacementRow {
  *  while the invoice is still loading. */
 const NO_ROWS: PlacementRow[] = [];
 
+/** B2/R-B MOCK (Phase 1) - see `carryPreview` below. */
+const MOCK_CONSIGNEE_COMPANY_NAME = 'Sorento';
+
 export function ConvertToPackingListDialog({
   open,
   onOpenChange,
@@ -85,6 +89,10 @@ export function ConvertToPackingListDialog({
   // checked (placed), the same default the plan rules for "default all unplaced" rows on
   // a PI nothing has convertED yet.
   const [placedRowIds, setPlacedRowIds] = useState<Set<string>>(new Set());
+  // C4: client-side filter over the placement table - the list a long PI shows (DAFUYUAN:
+  // 15 rows) is never big enough to warrant a server round trip, so this is the same "type
+  // to narrow what's on screen" a table search box does, not a debounced query.
+  const [search, setSearch] = useState('');
 
   // Re-read on every open: a remainder typed last time describes an invoice that has since
   // moved, and a stale figure here places the wrong quantity silently. The size resets to
@@ -94,6 +102,7 @@ export function ConvertToPackingListDialog({
     if (!open) return;
     setQuantities({});
     setContainerSizeId(null);
+    setSearch('');
   }, [open]);
 
   // Rows default to placed the moment they arrive - a checkbox nobody has touched yet
@@ -103,15 +112,27 @@ export function ConvertToPackingListDialog({
     setPlacedRowIds(new Set(packingRows.filter((r) => r.match_state === 'matched').map((r) => r.id)));
   }, [open, packingRows]);
 
-  /** Container / seal / BL carried onto the draft (AC-D2c), read off the INVOICE's own
-   *  header - the packing document already filled those three there at apply, and the
-   *  convert reads the same fields. Nothing is derived here: a second rule on this screen
-   *  would be a second answer, and where several invoices disagree it is the convert's own
-   *  `header_conflicts` that says so (the response, on the page behind this dialog). */
-  const headerCarryOver = {
+  /**
+   * Container / seal / SO / consignee the draft will actually receive (AC-C5/AC-C6, B3) -
+   * MOCKED (Phase 1, frontend-first against mocks, L2-S3/#1212): a real convert preview
+   * endpoint does not exist yet, so this stands in for the field it will answer with,
+   * shaped exactly like B1/B2 write it rather than echoing the PI's own field names. A
+   * caller asking the real server later reads the same four names off its response instead
+   * of this local computation - remove this block then (grep this comment).
+   *
+   * B1: seal and the SO (the PI's `bl_no`, R-A - it lands on the packing list under SO,
+   * `forwarder_order_ref`, never "BL") carry ONLY when the container is known - this
+   * dialog handles ONE invoice, so "exactly one container known" is just `container_no`
+   * being set. B2/R-B: consignee is ALWAYS the PI's own company, never read off the sheet -
+   * hardcoded here (rather than `useCompany()`, which several detail pages already read)
+   * so this dialog's existing test harnesses, none of which wrap `<CompanyProvider>`, are
+   * unaffected; Phase 2 reads the real name off the server response instead.
+   */
+  const carryPreview = {
     container: invoice?.container_no ?? null,
-    seal: invoice?.seal_no ?? null,
-    bl: invoice?.bl_no ?? null,
+    seal: invoice?.container_no ? (invoice?.seal_no ?? null) : null,
+    so: invoice?.container_no ? (invoice?.bl_no ?? null) : null,
+    consignee: MOCK_CONSIGNEE_COMPANY_NAME,
   };
 
   const defaultSize = useMemo(
@@ -175,6 +196,19 @@ export function ConvertToPackingListDialog({
     }
     return out;
   }, [placeable, packingRows]);
+
+  /** C4: what the search box narrows the TABLE to - never what totals sum or what
+   *  Convert writes (`placeable`/`packingRows` stay untouched), the same "find, not
+   *  select" contract every other list search box in this codebase carries. */
+  const visibleRows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return placementRows;
+    return placementRows.filter((r) => {
+      const code = r.line.item_code?.toLowerCase() ?? '';
+      const product = (r.line.product_code ?? r.line.description ?? '').toLowerCase();
+      return code.includes(q) || product.includes(q);
+    });
+  }, [placementRows, search]);
 
   /** Footer totals over what is on screen. Read through a ref by the footer cells, the
    *  same way the Packing tab's own footers do: listing the rows as a `columns` dependency
@@ -316,7 +350,7 @@ export function ConvertToPackingListDialog({
 
   const table = useReactTable({
     columns,
-    data: placementRows.length ? placementRows : NO_ROWS,
+    data: visibleRows.length ? visibleRows : NO_ROWS,
     getRowId: (row) => row.key,
     getCoreRowModel: getCoreRowModel(),
     columnResizeMode: 'onChange',
@@ -356,12 +390,15 @@ export function ConvertToPackingListDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
+      {/* C4: bounded, non-scrolling shell - the table scrolls INSIDE the body (DialogBody's
+          own `overflow-y-auto`), so the search box above it and the Convert/Cancel footer
+          below it never move, even at a short (800px) window. */}
+      <DialogContent className="max-h-[85vh] w-full max-w-2xl overflow-hidden">
         <DialogHeader>
           <DialogTitle>Convert to a packing list</DialogTitle>
         </DialogHeader>
 
-        <DialogBody className="space-y-4">
+        <DialogBody className="max-h-[55vh] space-y-4 overflow-y-auto">
           <div className="space-y-1.5">
             <Label htmlFor="convert-container-size" className="text-xs">
               Container size
@@ -389,26 +426,41 @@ export function ConvertToPackingListDialog({
 
           {single && invoice ? (
             <div className="space-y-2">
-              {/* Carried onto the draft (AC-D2c), one compact line - a fact about the
-                  invoice's own header, so it is stated whether or not anything is left to
-                  place. */}
-              {headerCarryOver.container || headerCarryOver.seal || headerCarryOver.bl ? (
+              {/* Carried onto the draft (AC-C5/AC-C6, B3) - one compact line naming
+                  exactly what the packing list will receive, a fact stated whether or not
+                  anything is left to place. */}
+              {carryPreview.container ||
+              carryPreview.seal ||
+              carryPreview.so ||
+              carryPreview.consignee ? (
                 <p className="text-2xs text-muted-foreground">
                   <span className="font-medium text-foreground">Carried onto the draft: </span>
-                  Container {headerCarryOver.container ?? EM_DASH}
-                  {headerCarryOver.seal ? ` · Seal ${headerCarryOver.seal}` : ''}
-                  {headerCarryOver.bl ? ` · BL ${headerCarryOver.bl}` : ''}
+                  Container {carryPreview.container ?? EM_DASH}
+                  {carryPreview.seal ? ` · Seal ${carryPreview.seal}` : ''}
+                  {carryPreview.so ? ` · SO ${carryPreview.so}` : ''}
+                  {carryPreview.consignee ? ` · Consignee ${carryPreview.consignee}` : ''}
                 </p>
+              ) : null}
+              {placementRows.length ? (
+                <ListSearchInput
+                  value={search}
+                  onChange={setSearch}
+                  placeholder="Search code or product..."
+                  aria-label="Search lines by code or product"
+                  className="w-full sm:w-72"
+                />
               ) : null}
               <DataGrid
                 table={table}
-                recordCount={placementRows.length}
+                recordCount={visibleRows.length}
                 isLoading={false}
                 tableLayout={{ width: 'fixed', columnsResizable: true }}
                 emptyMessage={
                   alreadyPlaced.length > 0
                     ? `Every line of ${invoice.pi_number} is already in a packing list.`
-                    : `No line of ${invoice.pi_number} can go on a container yet.`
+                    : placementRows.length > 0
+                      ? 'No line matches that search.'
+                      : `No line of ${invoice.pi_number} can go on a container yet.`
                 }
               >
                 <DataGridTable />
