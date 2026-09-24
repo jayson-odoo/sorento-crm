@@ -8,7 +8,9 @@ purchasing](order-inquiry-documents.md#reserve-for-purchasing-cs).
 
 ## What purchasing sends, and what CS sends back
 
-One email each way, never one per row inside a request.
+One email each way, never one per row and never one per line - purchasing's **Send request**
+sends one mail for the whole request, and each of CS's own **Reserve** clicks on the order
+inquiry sends one mail naming only the lines that click reserved or amended.
 
 **Reserve request mail** - sent the moment purchasing presses **Send request**. Subject `Reserve
 request: <OI number> #<n> - <S/O number>`, for example `Reserve request: OI-2609-0678 #1 -
@@ -16,12 +18,15 @@ SO402757`. Body: who is asking, a table with **ITEM CODE**, **DELIVERY DATE**, *
 **REMAINING**, **REQUESTED**, **LOCATION**, the note if one was left, who requested it and when,
 and an **Open in Order Inquiries** link straight to the order inquiry.
 
-**Reserved mail** - sent once CS presses **Confirm reserved** on the last open row of that
-request. Subject `Reserved: <OI number> #<n> - <S/O number>`. Body: who reserved it, a table with
-**ITEM CODE**, **QTY**, **REQUESTED**, **RESERVED**, **BALANCE**, **LOCATION**, **REASON** -
-**BALANCE** is what's left for purchasing to buy after this reserve - and the same link.
+**Reserved mail** - sent every time CS presses **Reserve** in the order inquiry's page header,
+whether that click reserves fresh lines, amends an existing reservation, or both. Subject
+`Reserved: <OI number> #<n> - <S/O number>`. Body: who reserved it, a table with **ITEM CODE**,
+**QTY**, **REQUESTED**, **RESERVED**, **BALANCE**, **LOCATION**, **REASON** - **BALANCE** is
+what's left for purchasing to buy after this reserve - naming only the lines that click touched,
+and the same link. If other lines of the request are still untouched, the mail adds a line, for
+example `1 line still to reserve.`
 
-Cancelling a request and unreserving stock later never send an email either way.
+Cancelling a request never sends an email either way.
 
 ## How to manage it
 
@@ -53,12 +58,12 @@ Reserving stock needs the **Reserve Stock for Order Inquiries** permission
 (`projects.order_inquiries.reserve`) - separate from **Acknowledge Order Inquiry Rows**, which is
 what lets purchasing send a request in the first place. Grant it to the CS role from [Create or
 edit a role](../user-management/manage-users-and-roles.md#create-or-edit-a-role-and-choose-its-permissions).
-Anyone without it can still open a row's Reserve dialog to read **History**, but the **Reserve**
-tab stays read-only and **Unreserve** doesn't show.
+Without it, the Lines tab shows no reserve icons and no **Reserve** button at all - a line only
+shows its plain state pill (**Request to reserve**, **Reserved** or **Not reserved**).
 
 ## See also
 
 * [Order inquiries: the Documents view and the OI detail page](order-inquiry-documents.md) - Ask
-  CS to reserve stock, Reserve for purchasing, History and Unreserve.
+  CS to reserve stock, Reserve for purchasing, Amend reserve and History.
 * [The order inquiry handover email](order-inquiry-handover-email.md)
 * [Manage users and roles](../user-management/manage-users-and-roles.md)
