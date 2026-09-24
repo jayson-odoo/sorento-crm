@@ -705,7 +705,10 @@ class TestIdeateBranchCallsMcpTool:
         # #1179 AC-6: a live turn says so, so the idea lands on the board.
         assert call_kwargs["is_test"] is False
 
-        expected_text = "Idea IDEA-42 recorded. Thank you!\n\nhttps://outline.example/IDEA-42"
+        # AC-1216: no raw link append - the composed reply (S3's compose_ideate_reply,
+        # or its template fallback) already carries the link itself via the facts
+        # block, so this lane relays reply_text verbatim.
+        expected_text = "Idea IDEA-42 recorded. Thank you!"
         assert result.reply["text"] == expected_text
         assert result.reply["manualResponse"] is True
         assert result.reply["includeResponse"] is True
