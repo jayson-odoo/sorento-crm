@@ -1495,10 +1495,11 @@ def _product_with_category(db, code: str, category_id):
 
 
 def test_cutoff_drops_demand_due_after_it(scm_app):
-    """AC-1/R2/A2: a cutoff on the SALES ORDER's required date drops every line due after
+    """AC-1/R14: `date_to` on the SALES ORDER's required date drops every line due after
     it - not folded into TBA, not shown at all. A product whose only open line falls after
-    the cutoff owes nothing under it, so `only_debt=true` drops the whole row, and the axis
-    (a property of the filtered set) never reaches into a month nothing in it needs."""
+    `date_to` owes nothing under it, so `only_debt=true` drops the whole row, and the axis
+    (a property of the filtered set) never reaches into a month nothing in it needs. `cutoff`
+    is REMOVED (R14), not aliased - passing it does nothing."""
     app, db = _client(scm_app)
     marker = f"ZZTSD{_u()[:6]}".upper()
     warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
@@ -1512,15 +1513,15 @@ def test_cutoff_drops_demand_due_after_it(scm_app):
         db, outside, warehouse, qty=10, required_date=date(2026, 12, 5),
         so_number=f"{marker}-SO2",
     )
-    # AC-1 (reviewer round): supply landing well past the cutoff is still supply (AC-3)
-    # and would otherwise stretch a row's own `months` past it - the axis cap must clamp
-    # the COLUMN, not merely rely on there being no later demand to draw one out.
+    # AC-1 (reviewer round): supply landing well past date_to is still supply (AC-3) and
+    # would otherwise stretch a row's own `months` past it - the axis cap must clamp the
+    # COLUMN, not merely rely on there being no later demand to draw one out.
     _spo(db, inside, warehouse, qty=5, arrives=date(2027, 1, 15))
     db.flush()
 
     with TestClient(app) as c:
         body = c.get(
-            BASE, params={"query": marker, "cutoff": "2026-11-30", "only_debt": True}
+            BASE, params={"query": marker, "date_to": "2026-11-30", "only_debt": True}
         ).json()
 
     codes = [row["product_code"] for row in body["data"]]
@@ -1529,10 +1530,43 @@ def test_cutoff_drops_demand_due_after_it(scm_app):
     assert body["months"][-1] == "2026-11"
 
 
+def test_date_from_drops_demand_due_before_it(scm_app):
+    """AC-1b/R14: `date_from` drops every line due BEFORE it, the mirror of `date_to`. A
+    line due 20 Oct 2026 is dropped under `date_from=2026-11-01`, and the axis (a property
+    of the whole filtered set) STARTS at `date_from`'s month rather than the current
+    month - `max(current month, date_from's month)`, so a range that starts in the future
+    does not draw an empty run of months nothing in it needs."""
+    app, db = _client(scm_app)
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    early = _product(db, f"{marker}-EARLY")
+    late = _product(db, f"{marker}-LATE")
+    _demand(
+        db, early, warehouse, qty=10, required_date=date(2026, 10, 20),
+        so_number=f"{marker}-SO1",
+    )
+    _demand(
+        db, late, warehouse, qty=10, required_date=date(2026, 11, 10),
+        so_number=f"{marker}-SO2",
+    )
+    db.flush()
+
+    with TestClient(app) as c:
+        body = c.get(
+            BASE, params={"query": marker, "date_from": "2026-11-01", "only_debt": True}
+        ).json()
+
+    codes = [row["product_code"] for row in body["data"]]
+    assert early.product_code not in codes
+    assert late.product_code in codes
+    assert body["months"][0] == "2026-11"
+
+
 def test_cutoff_keeps_undated_and_unlocated(scm_app):
-    """AC-2/A3: a cutoff has no date to test an undated or unlocated line against, so both
-    survive it unchanged; TBA reads 0 once the policy's `tba_date_from` (2029-01-01 by
-    default) sits after the cutoff, because every TBA line is dated on or after it."""
+    """AC-2/A3/R14: a `date_from`/`date_to` range has no date to test an undated or
+    unlocated line against, so both survive it unchanged; TBA reads 0 once the policy's
+    `tba_date_from` (2029-01-01 by default) sits after `date_to`, because every TBA line
+    is dated on or after it."""
     app, db = _client(scm_app)
     marker = f"ZZTSD{_u()[:6]}".upper()
     warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
@@ -1553,7 +1587,7 @@ def test_cutoff_keeps_undated_and_unlocated(scm_app):
 
     with TestClient(app) as c:
         body = c.get(
-            BASE, params={"query": marker, "cutoff": "2026-11-30", "only_debt": False}
+            BASE, params={"query": marker, "date_to": "2026-11-30", "only_debt": False}
         ).json()
 
     row = _row_of(body, product.product_code)
@@ -1563,12 +1597,12 @@ def test_cutoff_keeps_undated_and_unlocated(scm_app):
 
 
 def test_cutoff_supply_after_due_still_covers(scm_app):
-    """AC-3/A2: a line due 10 Nov, covered by an SPO landing 20 Nov, ends `late` - R37
+    """AC-3/A2/R14: a line due 10 Nov, covered by an SPO landing 20 Nov, ends `late` - R37
     books the shortfall in the line's OWN month regardless of the fact it is eventually
     covered (`test_supply_arriving_after_the_debt_is_spare_in_its_own_month` proves the
-    same rule), so November reads -20 whether or not a cutoff is applied. AC-3's actual
-    claim is narrower than "the month reads 0": the cutoff must not change how the walk
-    ASSIGNS - the SPO still covers the line, and the cutoff leaves the Nov balance exactly
+    same rule), so November reads -20 whether or not `date_to` is applied. AC-3's actual
+    claim is narrower than "the month reads 0": `date_to` must not change how the walk
+    ASSIGNS - the SPO still covers the line, and the range leaves the Nov balance exactly
     as it is without one."""
     app, db = _client(scm_app)
     marker = f"ZZTSD{_u()[:6]}".upper()
@@ -1582,23 +1616,24 @@ def test_cutoff_supply_after_due_still_covers(scm_app):
     db.flush()
 
     with TestClient(app) as c:
-        with_cutoff = c.get(
-            BASE, params={"query": marker, "cutoff": "2026-11-30", "only_debt": False}
+        with_date_to = c.get(
+            BASE, params={"query": marker, "date_to": "2026-11-30", "only_debt": False}
         ).json()
-        without_cutoff = c.get(
+        without_date_to = c.get(
             BASE, params={"query": marker, "only_debt": False}
         ).json()
         cell = c.get(
             f"{BASE}/{product.id}/cell",
-            params={"month": "2026-11", "cutoff": "2026-11-30"},
+            params={"month": "2026-11", "date_to": "2026-11-30"},
         ).json()
 
     balances_with = {
-        m["key"]: m["balance"] for m in _row_of(with_cutoff, product.product_code)["months"]
+        m["key"]: m["balance"]
+        for m in _row_of(with_date_to, product.product_code)["months"]
     }
     balances_without = {
         m["key"]: m["balance"]
-        for m in _row_of(without_cutoff, product.product_code)["months"]
+        for m in _row_of(without_date_to, product.product_code)["months"]
     }
     assert balances_with["2026-11"] == -20
     assert balances_without["2026-11"] == -20
@@ -1613,10 +1648,12 @@ def test_cutoff_supply_after_due_still_covers(scm_app):
 
 
 def test_supplier_filter_reads_newest_po_line(scm_app):
-    """AC-4/A1: the LAST supplier is the one on the product's newest PURCHASE ORDER line -
-    newest by issue date - never the SPO's, whatever it names. A product with no PO falls
-    back to its primary-flagged product supplier; a product with neither files under
-    `supplier_id=none`."""
+    """AC-4/A1/R15: the LAST supplier is the one on the product's newest PURCHASE ORDER
+    line - newest by issue date - never the SPO's, whatever it names. A product with no PO
+    falls back to its primary-flagged product supplier; a product with neither files under
+    `supplier_ids=none`. `supplier_ids` is a MULTI select (R15): a product matches when its
+    last supplier is ANY of the values passed, and `none` is one more value alongside real
+    ids, not a sentinel that excludes them."""
     app, db = _client(scm_app)
     from app.models.procurement import ProductSupplier
 
@@ -1663,23 +1700,51 @@ def test_supplier_filter_reads_newest_po_line(scm_app):
         db, product_c, warehouse, qty=5, required_date=date(2026, 11, 10),
         so_number=f"{marker}-SOC",
     )
+
+    # A fourth product whose own LAST supplier is s2 - the "third, dropped" product for
+    # the multi-select case below (s2 is otherwise only the OLDER, outranked PO on
+    # product_a, never anyone's actual last supplier until now).
+    product_d = _product(db, f"{marker}-D")
+    _demand(
+        db, product_d, warehouse, qty=5, required_date=date(2026, 11, 10),
+        so_number=f"{marker}-SOD",
+    )
+    _po(db, product_d, warehouse, s2, issue_date=date(2026, 1, 1))
     db.flush()
 
     with TestClient(app) as c:
         under_s1 = c.get(
-            BASE, params={"query": marker, "supplier_id": s1.id, "only_debt": False}
+            BASE, params={"query": marker, "supplier_ids": [s1.id], "only_debt": False}
         ).json()
         under_s2 = c.get(
-            BASE, params={"query": marker, "supplier_id": s2.id, "only_debt": False}
+            BASE, params={"query": marker, "supplier_ids": [s2.id], "only_debt": False}
         ).json()
         under_s3 = c.get(
-            BASE, params={"query": marker, "supplier_id": s3.id, "only_debt": False}
+            BASE, params={"query": marker, "supplier_ids": [s3.id], "only_debt": False}
         ).json()
         under_primary = c.get(
-            BASE, params={"query": marker, "supplier_id": primary.id, "only_debt": False}
+            BASE,
+            params={"query": marker, "supplier_ids": [primary.id], "only_debt": False},
         ).json()
         under_none = c.get(
-            BASE, params={"query": marker, "supplier_id": "none", "only_debt": False}
+            BASE, params={"query": marker, "supplier_ids": ["none"], "only_debt": False}
+        ).json()
+        # R15: two ids selected together keeps BOTH their products, and drops the third
+        # (product_d, last supplier s2, which is in neither set).
+        under_multi = c.get(
+            BASE,
+            params={
+                "query": marker, "supplier_ids": [s1.id, primary.id],
+                "only_debt": False,
+            },
+        ).json()
+        # R15: `none` alongside a real id keeps BOTH the no-supplier product and that
+        # id's product.
+        under_none_and_s1 = c.get(
+            BASE,
+            params={
+                "query": marker, "supplier_ids": ["none", s1.id], "only_debt": False,
+            },
         ).json()
 
     assert [r["product_code"] for r in under_s1["data"]] == [product_a.product_code]
@@ -1687,6 +1752,15 @@ def test_supplier_filter_reads_newest_po_line(scm_app):
     assert product_a.product_code not in [r["product_code"] for r in under_s3["data"]]
     assert [r["product_code"] for r in under_primary["data"]] == [product_b.product_code]
     assert [r["product_code"] for r in under_none["data"]] == [product_c.product_code]
+
+    assert sorted(r["product_code"] for r in under_multi["data"]) == sorted(
+        [product_a.product_code, product_b.product_code]
+    )
+    assert product_d.product_code not in [r["product_code"] for r in under_multi["data"]]
+
+    assert sorted(r["product_code"] for r in under_none_and_s1["data"]) == sorted(
+        [product_a.product_code, product_c.product_code]
+    )
 
 
 def test_last_supplier_stays_within_company_scope(scm_app):
@@ -1778,9 +1852,12 @@ def test_last_supplier_stays_within_company_scope(scm_app):
 
 
 def test_row_carries_supplier_category_total(scm_app):
-    """AC-5/A5: every row carries `supplier_id`, `supplier_name`, `category_code` and a
-    `total` that sums the row's own months plus its three buckets - the same total the
-    footer and the export agree with."""
+    """AC-5/A5/R17: every row carries `supplier_id`, `supplier_name`, `category_code` and
+    a `total` that sums the row's own months plus `tba` ONLY - `undated` and `unlocated`
+    are dropped from `total` (R17, since the "No date" and "No location" columns leave
+    the screen and the workbook); the row still carries `undated`/`unlocated` themselves,
+    unchanged. This test seeds an undated line specifically so a `total` that still folds
+    it in is caught."""
     app, db = _client(scm_app)
     from app.models.procurement import ProductSupplier
 
@@ -1811,16 +1888,16 @@ def test_row_carries_supplier_category_total(scm_app):
     assert row["supplier_id"] == str(supplier.id)
     assert row["supplier_name"] == supplier.supplier_name
     assert row["category_code"] == _REF_CATEGORY_CODE
-    expected_total = (
-        sum(m["balance"] for m in row["months"])
-        + row["tba"] + row["undated"] + row["unlocated"]
-    )
+    assert row["undated"] == -5, "undated itself is unchanged by R17"
+    expected_total = sum(m["balance"] for m in row["months"]) + row["tba"]
     assert row["total"] == expected_total
 
 
 def test_totals_are_whole_set_and_stable_across_pages(scm_app):
-    """AC-6/A6: the envelope's `totals` sum the WHOLE filtered set, not the page, so a
-    reader turning the page sees the same totals twice."""
+    """AC-6/A6/R17: the envelope's `totals` sum the WHOLE filtered set, not the page, so a
+    reader turning the page sees the same totals twice; `totals.total` sums months + tba
+    ONLY (R17), never `undated`/`unlocated` - one of the three seeded products carries an
+    undated line specifically so a `totals.total` that still folds it in is caught."""
     app, db = _client(scm_app)
     marker = f"ZZTSD{_u()[:6]}".upper()
     warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
@@ -1831,6 +1908,11 @@ def test_totals_are_whole_set_and_stable_across_pages(scm_app):
             db, product, warehouse, qty=10 + index, required_date=date(2026, 11, 10),
             so_number=f"{marker}-SO{code[-1]}",
         )
+        if index == 0:
+            _demand(
+                db, product, warehouse, qty=3, required_date=None,
+                so_number=f"{marker}-SO{code[-1]}-NODATE",
+            )
     db.flush()
 
     with TestClient(app) as c:
@@ -1854,10 +1936,7 @@ def test_totals_are_whole_set_and_stable_across_pages(scm_app):
         expected_tba += row["tba"]
         expected_undated += row["undated"]
         expected_unlocated += row["unlocated"]
-        expected_total += (
-            sum(m["balance"] for m in row["months"])
-            + row["tba"] + row["undated"] + row["unlocated"]
-        )
+        expected_total += sum(m["balance"] for m in row["months"]) + row["tba"]
 
     for body in (page1, page2):
         totals = body["totals"]
@@ -1922,7 +2001,8 @@ def test_suppliers_on_envelope_distinct_sorted_by_name(scm_app):
         under_s1 = c.get(
             BASE,
             params={
-                "query": marker, "only_debt": False, "supplier_id": str(supplier_a.id),
+                "query": marker, "only_debt": False,
+                "supplier_ids": [str(supplier_a.id)],
             },
         ).json()
 
@@ -1932,7 +2012,7 @@ def test_suppliers_on_envelope_distinct_sorted_by_name(scm_app):
     ]
 
     # AC-7c (reviewer round): `suppliers` is computed off the set BEFORE the
-    # `supplier_id` filter narrows it, so the select can switch supplier without first
+    # `supplier_ids` filter narrows it, so the select can switch supplier without first
     # clearing itself - narrowing to Alpha must not make Zeta vanish from the options,
     # even though Zeta's own product is dropped from `data`. Every entry keeps a real
     # name, never an id standing in for one.
@@ -2202,9 +2282,9 @@ def test_new_fields_survive_response_model(scm_app):
 
 
 def test_cell_drill_takes_cutoff_and_book(scm_app):
-    """AC-11: the cell drill accepts `cutoff` and `book`, and its lines foot with them - a
-    line dropped by the cutoff is not listed, and `book=retail` lists the pool line
-    only."""
+    """AC-11/R14: the cell drill accepts `date_from`/`date_to` and `book`, and its lines
+    foot with them - a line dropped by the range is not listed, and `book=retail` lists
+    the pool line only."""
     app, db = _client(scm_app)
     marker = f"ZZTSD{_u()[:6]}".upper()
     bb = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
@@ -2213,26 +2293,26 @@ def test_cell_drill_takes_cutoff_and_book(scm_app):
     db.flush()
     product = _product(db, f"{marker}-A")
     due = date(2026, 11, 10)
-    after_cutoff = date(2026, 12, 5)
+    after_range = date(2026, 12, 5)
     _demand(db, product, bb, qty=10, required_date=due, so_number=f"{marker}-SO-INSIDE")
     _demand(
-        db, product, bb, qty=10, required_date=after_cutoff,
+        db, product, bb, qty=10, required_date=after_range,
         so_number=f"{marker}-SO-OUTSIDE",
     )
     _demand(db, product, pool, qty=5, required_date=due, so_number=f"{marker}-SO-POOL")
     db.flush()
 
     with TestClient(app) as c:
-        cutoff_cell = c.get(
+        date_to_cell = c.get(
             f"{BASE}/{product.id}/cell",
-            params={"month": month_key(after_cutoff), "cutoff": "2026-11-30"},
+            params={"month": month_key(after_range), "date_to": "2026-11-30"},
         ).json()
         retail_cell = c.get(
             f"{BASE}/{product.id}/cell",
             params={"month": month_key(due), "book": "retail"},
         ).json()
 
-    assert cutoff_cell["demand"] == []
+    assert date_to_cell["demand"] == []
     assert [line["so_number"] for line in retail_cell["demand"]] == [
         f"{marker}-SO-POOL"
     ]

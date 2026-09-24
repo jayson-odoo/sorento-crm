@@ -335,10 +335,11 @@ def test_generate_stock_debt_xlsx_marks_failed_when_export_raises(monkeypatch):
 
 
 def test_export_split_none_one_sheet_with_total_row(scm_app):
-    """AC-13: `split=none` writes ONE sheet, "Stock debt" - Product, Name, Category,
-    Supplier, one column per axis month (`Sep 26` style), TBA, No date, No location,
-    Total - with a `Total` footer row summing every column. A name equal to its code
-    prints blank."""
+    """AC-13/R17: `split=none` writes ONE sheet, "Stock debt" - Product, Name, Category,
+    Supplier, one column per axis month (`Sep 26` style), TBA, Total - with a `Total`
+    footer row summing every column. "No date" and "No location" are GONE from the
+    workbook (R17: they leave the screen and the export both), and the Total footer sums
+    without them. A name equal to its code prints blank."""
     app, db = _client(scm_app)
     from app.services.scm.stock_debt_service import StockDebtService
 
@@ -371,9 +372,11 @@ def test_export_split_none_one_sheet_with_total_row(scm_app):
     ws = wb["Stock debt"]
     header = [cell.value for cell in ws[1]]
     assert header[:4] == ["Product", "Name", "Category", "Supplier"], header
-    assert header[-4:] == ["TBA", "No date", "No location", "Total"], header
-    assert len(header) == 8 + len(listing["months"]), header
-    month_labels = header[4:-4]
+    assert header[-2:] == ["TBA", "Total"], header
+    assert "No date" not in header, header
+    assert "No location" not in header, header
+    assert len(header) == 6 + len(listing["months"]), header
+    month_labels = header[4:-2]
     assert len(month_labels) == len(listing["months"])
     for label in month_labels:
         assert re.match(r"^[A-Za-z]{3} \d{2}$", str(label)), label
@@ -605,9 +608,9 @@ def test_export_split_pair_titles_sanitised(scm_app):
 
 
 def test_export_honours_list_filters(scm_app):
-    """AC-17: the export's rows are exactly the list's rows for the same filters,
-    unpaged - a cutoff that drops a product from the list drops it from the workbook
-    too."""
+    """AC-17/R14: the export's rows are exactly the list's rows for the same filters,
+    unpaged - a `date_from`/`date_to` range that drops a product from the list drops it
+    from the workbook too."""
     app, db = _client(scm_app)
     from app.services.scm.stock_debt_service import StockDebtService
 
@@ -626,7 +629,7 @@ def test_export_honours_list_filters(scm_app):
     db.flush()
 
     svc = StockDebtService(db)
-    filters = dict(query=marker, only_debt=True, cutoff=date(2026, 11, 30))
+    filters = dict(query=marker, only_debt=True, date_to=date(2026, 11, 30))
     listing = svc.list(**filters, limit=50)
     blob, _ct, _fn, counts = svc.export(**filters, split="none")
 

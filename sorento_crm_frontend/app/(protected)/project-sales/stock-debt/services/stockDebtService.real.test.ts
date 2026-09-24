@@ -1,19 +1,18 @@
 /**
  * stockDebtService - the REAL (Phase 2) backend contract, from the PHASE-2 BACKEND
- * CONTRACT header of `stockDebtService.ts` (PLAN-stock-debt-filters-totals-export-24sep.md,
- * AC-1 to AC-18).
+ * CONTRACT header of `stockDebtService.ts` (PLAN-stock-debt-filters-totals-export-24sep.md).
  *
- * `stockDebtService.test.ts` already pins the Phase-1 MOCK branch (`USE_STOCK_DEBT_FILTER_
- * MOCKS === true` today) - including that it never touches the network. This file pins the
- * branch the header says Phase 2 ships: "Phase 2 flips the flag to `false` and deletes the
- * mock branch - a one-line swap ... not a rewrite of its callers." `USE_STOCK_DEBT_FILTER_
- * MOCKS` is declared LOCALLY in `stockDebtService.ts` (not a separate mock-store module the
- * way `coverageService.ts` / `USE_COVERAGE_MOCKS` is), so there is no live binding to flip
- * from outside it - these tests call the exported functions exactly as a real caller would
- * and assert the request `apiFetch` receives. RED today because the mock branch intercepts
- * before `apiFetch` is ever called (`getStockDebtList` / `exportStockDebt`) or because the
- * function does not yet accept the new params at all (`getStockDebtCell`); GREEN once the
- * mock branch is deleted and the params are wired through, with no change needed here.
+ * Owner's hand-test round (R14-R19, 24 Sep 2026) replaces the single `cutoff` with a
+ * `date_from`/`date_to` range (R14) and the single `supplier_id` with a repeatable
+ * `supplier_ids` (R15), and drops `group` from the wire entirely (R16 - the Ownership
+ * group filter leaves the screen, so the FE service never sends it again). The OLD
+ * cutoff/supplier_id assertions are REPLACED here, not kept alongside the new ones - the
+ * old wire shape no longer exists.
+ *
+ * The exact JS param names (`dateFrom`/`dateTo`/`supplierIds`) are not fixed by the
+ * contract header, only the WIRE names are (`date_from`, `date_to`, `supplier_ids`) -
+ * assumed here consistent with the existing camelCase convention (`onlyDebt`,
+ * `supplierId`).
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -33,21 +32,28 @@ const LIST_PARAMS: StockDebtListParams = {
   pageIndex: 0,
   pageSize: 25,
   query: 'SRTWB242',
-  group: 'BB',
   onlyDebt: true,
   book: 'retail',
-  supplierId: 'sup-guangdong',
-  cutoff: '2026-11-30',
-};
+  supplierIds: ['sup-guangdong', 'sup-foshan'],
+  dateFrom: '2026-11-01',
+  dateTo: '2026-11-30',
+} as unknown as StockDebtListParams;
 
 const EXPORT_PARAMS: StockDebtExportParams = {
   query: 'SRTWB242',
-  group: 'BB',
   onlyDebt: true,
   book: 'retail',
-  supplierId: 'sup-guangdong',
-  cutoff: '2026-11-30',
+  supplierIds: ['sup-guangdong', 'sup-foshan'],
+  dateFrom: '2026-11-01',
+  dateTo: '2026-11-30',
   split: 'supplier',
+} as unknown as StockDebtExportParams;
+
+const EMPTY_ENVELOPE = {
+  data: [], pagination: { total: 0, page: 1, limit: 25 }, months: [],
+  tba_month: '2029-01', groups: [],
+  totals: { months: {}, tba: 0, total: 0 },
+  suppliers: [], sheet_counts: { supplier: 0, category: 0, supplier_category: 0 },
 };
 
 function ok(body: unknown): Response {
@@ -66,47 +72,30 @@ function calledUrl(callIndex = 0): URL {
 
 beforeEach(() => vi.clearAllMocks());
 
-describe('getStockDebtList - real backend (AC-1 to AC-9)', () => {
-  it('calls apiFetch (not the Phase-1 mock) at all', async () => {
-    mockedFetch.mockResolvedValue(
-      ok({
-        data: [], pagination: { total: 0, page: 1, limit: 25 }, months: [],
-        tba_month: '2029-01', groups: [], totals: { months: {}, tba: 0, undated: 0, unlocated: 0, total: 0 },
-        suppliers: [], sheet_counts: { supplier: 0, category: 0, supplier_category: 0 },
-      }),
-    );
-    await getStockDebtList(LIST_PARAMS);
-    expect(mockedFetch).toHaveBeenCalledTimes(1);
-  });
-
-  it('sends group, only_debt, book, supplier_id and cutoff on the query string', async () => {
-    mockedFetch.mockResolvedValue(
-      ok({
-        data: [], pagination: { total: 0, page: 1, limit: 25 }, months: [],
-        tba_month: '2029-01', groups: [], totals: { months: {}, tba: 0, undated: 0, unlocated: 0, total: 0 },
-        suppliers: [], sheet_counts: { supplier: 0, category: 0, supplier_category: 0 },
-      }),
-    );
+describe('getStockDebtList - real backend, due date range + multi supplier (R14/R15/R16)', () => {
+  it('sends date_from, date_to and repeated supplier_ids, never cutoff/supplier_id/group', async () => {
+    mockedFetch.mockResolvedValue(ok(EMPTY_ENVELOPE));
     await getStockDebtList(LIST_PARAMS);
 
     const url = calledUrl();
     expect(url.pathname).toBe('/api/v1/project-sales/stock-debt');
     expect(url.searchParams.get('query')).toBe('SRTWB242');
-    expect(url.searchParams.get('group')).toBe('BB');
     expect(url.searchParams.get('only_debt')).toBe('true');
     expect(url.searchParams.get('book')).toBe('retail');
-    expect(url.searchParams.get('supplier_id')).toBe('sup-guangdong');
-    expect(url.searchParams.get('cutoff')).toBe('2026-11-30');
+    expect(url.searchParams.get('date_from')).toBe('2026-11-01');
+    expect(url.searchParams.get('date_to')).toBe('2026-11-30');
+    expect(url.searchParams.getAll('supplier_ids')).toEqual([
+      'sup-guangdong', 'sup-foshan',
+    ]);
+
+    // R14/R16: the retired params must never reach the wire at all.
+    expect(url.searchParams.has('cutoff')).toBe(false);
+    expect(url.searchParams.has('supplier_id')).toBe(false);
+    expect(url.searchParams.has('group')).toBe(false);
   });
 
   it('omits book from the query when it is "all" (the default, per the header)', async () => {
-    mockedFetch.mockResolvedValue(
-      ok({
-        data: [], pagination: { total: 0, page: 1, limit: 25 }, months: [],
-        tba_month: '2029-01', groups: [], totals: { months: {}, tba: 0, undated: 0, unlocated: 0, total: 0 },
-        suppliers: [], sheet_counts: { supplier: 0, category: 0, supplier_category: 0 },
-      }),
-    );
+    mockedFetch.mockResolvedValue(ok(EMPTY_ENVELOPE));
     await getStockDebtList({ ...LIST_PARAMS, book: 'all' });
     const url = calledUrl();
     expect(url.searchParams.get('book')).toBeFalsy();
@@ -127,36 +116,33 @@ describe('getStockDebtList - real backend (AC-1 to AC-9)', () => {
   });
 });
 
-describe('getStockDebtCell - real backend (AC-11)', () => {
-  it('passes cutoff and book alongside group and month', async () => {
+describe('getStockDebtCell - real backend, due date range (AC-11/R14)', () => {
+  it('passes date_from/date_to and book, never cutoff or group', async () => {
     mockedFetch.mockResolvedValue(ok({ demand: [], supply: [] }));
 
-    // AC-11: the drill foots with the cell that opened it, so it must be able to carry the
-    // SAME cutoff/book the board was narrowed to. The exact JS call shape is not fixed by
-    // the contract header (only the wire params are) - this assumes the coder extends the
-    // existing positional signature `(productId, month, group?)` with two more optional
-    // positional args, `cutoff?` then `book?`, consistent with how `group` was added.
     await (
       getStockDebtCell as unknown as (
         productId: string,
         month: string,
-        group?: string,
-        cutoff?: string,
+        dateFrom?: string,
+        dateTo?: string,
         book?: string,
       ) => Promise<unknown>
-    )('prod-1', '2026-11', 'BB', '2026-11-30', 'retail');
+    )('prod-1', '2026-11', '2026-11-01', '2026-11-30', 'retail');
 
     const url = calledUrl();
     expect(url.pathname).toBe('/api/v1/project-sales/stock-debt/prod-1/cell');
     expect(url.searchParams.get('month')).toBe('2026-11');
-    expect(url.searchParams.get('group')).toBe('BB');
-    expect(url.searchParams.get('cutoff')).toBe('2026-11-30');
+    expect(url.searchParams.get('date_from')).toBe('2026-11-01');
+    expect(url.searchParams.get('date_to')).toBe('2026-11-30');
     expect(url.searchParams.get('book')).toBe('retail');
+    expect(url.searchParams.has('cutoff')).toBe(false);
+    expect(url.searchParams.has('group')).toBe(false);
   });
 });
 
-describe('exportStockDebt - real backend (AC-12 to AC-18)', () => {
-  it('POSTs the filters and split to /stock-debt/export and returns the download row', async () => {
+describe('exportStockDebt - real backend, due date range + multi supplier (R14/R15/R16)', () => {
+  it('POSTs date_from, date_to and supplier_ids: [] to /stock-debt/export, never cutoff/supplier_id/group', async () => {
     const download = {
       id: 'dl-1', kind: 'stock_debt_xlsx', status: 'pending',
       filename: 'stock-debt-24092026.xlsx', created_at: '2026-09-24T00:00:00Z', ready_at: null,
@@ -172,13 +158,16 @@ describe('exportStockDebt - real backend (AC-12 to AC-18)', () => {
     const body = JSON.parse((init as RequestInit).body as string);
     expect(body).toMatchObject({
       query: 'SRTWB242',
-      group: 'BB',
       only_debt: true,
       book: 'retail',
-      supplier_id: 'sup-guangdong',
-      cutoff: '2026-11-30',
+      supplier_ids: ['sup-guangdong', 'sup-foshan'],
+      date_from: '2026-11-01',
+      date_to: '2026-11-30',
       split: 'supplier',
     });
+    expect(body.cutoff).toBeUndefined();
+    expect(body.supplier_id).toBeUndefined();
+    expect(body.group).toBeUndefined();
     expect(result).toEqual(download);
   });
 

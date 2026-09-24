@@ -39,6 +39,13 @@ vi.mock('@/lib/listing-column-preferences/listColumnPreferencesService', () => (
 
 import { getUserListColumnConfig } from '@/lib/listing-column-preferences/listColumnPreferencesService';
 
+// R19: the Copy fallback is asserted against these spies, not real sonner DOM output -
+// no `<Toaster>` is mounted in this render tree.
+vi.mock('@/lib/toast', () => ({
+  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
+}));
+import { toast } from '@/lib/toast';
+
 const getStockDebtList = vi.fn();
 const getStockDebtCell = vi.fn();
 const exportStockDebt = vi.fn();
@@ -185,21 +192,26 @@ describe('StockDebtClient', () => {
     expect(await screen.findByText('SRTWB242')).toBeInTheDocument();
   });
 
-  it('takes its month columns from the payload, and the TBA header from tba_month', async () => {
+  it('takes its month columns from the payload, and reads the TBA header literally (R18)', async () => {
+    // R18 (owner's hand test, closes the addendum on the old design): the TBA column
+    // header reads "TBA" always - the policy's own month is display-only, in the
+    // header's `title` tooltip, never the visible column text. The old assertion here
+    // (`getByText('2030-01')`) is the red half of R18, not a separate defect.
     renderBoard();
 
     expect(await screen.findByText('Aug 26')).toBeInTheDocument();
     expect(screen.getByText('Sep 26')).toBeInTheDocument();
     expect(screen.getByText('Oct 26')).toBeInTheDocument();
-    // The policy's own TBA month, never a hard-coded 2030.
-    expect(screen.getByText('2030-01')).toBeInTheDocument();
-    expect(screen.getByText('No date')).toBeInTheDocument();
-    expect(screen.getByText('No location')).toBeInTheDocument();
+    expect(screen.getByText('TBA')).toBeInTheDocument();
+    expect(screen.queryByText('2030-01')).not.toBeInTheDocument();
+    // R17: "No date" and "No location" leave the screen entirely.
+    expect(screen.queryByText('No date')).not.toBeInTheDocument();
+    expect(screen.queryByText('No location')).not.toBeInTheDocument();
     // A month the payload does not carry is not a column.
     expect(screen.queryByText('Nov 26')).not.toBeInTheDocument();
   });
 
-  it('renders every cell as a press, signed, TBA and No date included', async () => {
+  it('renders every cell as a press, signed, and no longer offers No date / No location cells (R17)', async () => {
     renderBoard();
 
     const surplus = await screen.findByRole('button', {
@@ -213,14 +225,14 @@ describe('StockDebtClient', () => {
     expect(
       screen.getByRole('button', { name: 'SRTWB242, 2030-01, balance -100' }),
     ).toBeInTheDocument();
+    // R17: the row still carries `undated`/`unlocated` on the wire (unchanged), but
+    // neither is a column on the screen any more - no cell button for either exists.
     expect(
-      screen.getByRole('button', { name: 'SRTWB242, No date, balance -12' }),
-    ).toBeInTheDocument();
-    // Demand booked at no warehouse. It draws nothing and sits in no month, so it is
-    // stated here or it is silently missing from the one screen that lists what is owed.
+      screen.queryByRole('button', { name: 'SRTWB242, No date, balance -12' }),
+    ).not.toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: 'SRTWB242, No location, balance -7' }),
-    ).toBeInTheDocument();
+      screen.queryByRole('button', { name: 'SRTWB242, No location, balance -7' }),
+    ).not.toBeInTheDocument();
   });
 
   it('tones a month by what the payload says, and leaves TBA and No date untoned', async () => {
@@ -275,11 +287,13 @@ describe('StockDebtClient', () => {
     });
   });
 
-  it('keeps the calendar as the axis when the board arrives after the columns are built', async () => {
-    // The list resolves AFTER mount, so at mount the only columns are Product and the three
-    // that carry no supply. That snapshot is exactly what a persisted order used to be
-    // reconciled against: TBA, No date and No location walked up next to Product and stayed
-    // there, and every month column the board later built was warned about as non-existent.
+  it('keeps the calendar as the axis when the board arrives after the columns are built (R17/R18)', async () => {
+    // The list resolves AFTER mount, so at mount the only columns are Product and TBA.
+    // That snapshot is exactly what a persisted order used to be reconciled against: TBA
+    // walked up next to Product and stayed there, and every month column the board later
+    // built was warned about as non-existent. R17 drops "No date"/"No location" from this
+    // list entirely (they are no longer columns at all); R18 reads the TBA header
+    // literally, never the raw `tba_month` key.
     renderBoard();
     await screen.findByText('SRTWB242');
 
@@ -290,9 +304,7 @@ describe('StockDebtClient', () => {
       'Aug 26',
       'Sep 26',
       'Oct 26',
-      '2030-01',
-      'No date',
-      'No location',
+      'TBA',
       'Total',
     ]);
     // The board is `listingKey={null}`, so there is no config to read in the first place.
@@ -358,5 +370,116 @@ describe('StockDebtClient', () => {
     expect(first.className).toMatch(/ring-1 ring-primary/);
     expect(second.className).toMatch(/ring-1 ring-primary/);
     expect(third.className).toMatch(/ring-1 ring-primary/);
+  });
+
+  /**
+   * Radix's `DropdownMenu` trigger (what the "Filters" button is) opens on POINTERDOWN,
+   * never a plain `click` - the same gotcha `PurchaseOrdersList.test.tsx`'s own
+   * `openFilters()` documents. `fireEvent.click` alone leaves the panel closed and every
+   * query inside it absent, which would make an ABSENCE assertion (R16) pass for the
+   * wrong reason - vacuously, because nothing in the panel rendered at all.
+   */
+  async function openFilters() {
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Filters' }), { button: 0 });
+    await screen.findByText('Book');
+  }
+
+  it('offers a Due date RANGE, not a single Cutoff date (R14)', async () => {
+    renderBoard();
+    await screen.findByText('SRTWB242');
+    await openFilters();
+
+    expect(screen.getByText('Due date')).toBeInTheDocument();
+    expect(screen.queryByText('Cutoff date')).not.toBeInTheDocument();
+  });
+
+  it('has no Ownership group filter left on the screen (R16)', async () => {
+    renderBoard();
+    await screen.findByText('SRTWB242');
+    await openFilters();
+
+    expect(screen.queryByText('Ownership group')).not.toBeInTheDocument();
+  });
+
+  it('offers a MULTI-select for Supplier, not the old single select (R15)', async () => {
+    renderBoard();
+    await screen.findByText('SRTWB242');
+    await openFilters();
+
+    // `SearchableMultiSelect` renders its own `data-slot`, distinct from the single
+    // `SearchableSelect` the OLD single-supplier control used - unambiguous either way.
+    expect(
+      document.querySelector('[data-slot="searchable-multi-select-trigger"]'),
+    ).not.toBeNull();
+  });
+
+  it('two suppliers picked together show one chip "Suppliers: 2" (R15)', async () => {
+    getStockDebtList.mockResolvedValue({
+      ...envelope(),
+      suppliers: [
+        { id: 'sup-alpha', name: 'Alpha supplier' },
+        { id: 'sup-beta', name: 'Beta supplier' },
+      ],
+    });
+    renderBoard();
+    await screen.findByText('SRTWB242');
+    await openFilters();
+
+    const trigger = document.querySelector(
+      '[data-slot="searchable-multi-select-trigger"]',
+    ) as HTMLElement | null;
+    expect(trigger).not.toBeNull();
+    fireEvent.click(trigger as HTMLElement);
+    fireEvent.click(screen.getByRole('option', { name: 'Alpha supplier' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Beta supplier' }));
+
+    expect(screen.getByText('Suppliers: 2')).toBeInTheDocument();
+  });
+
+  describe('Copy without navigator.clipboard (R19 - jsdom has no Clipboard API by default, matching the owner\'s http/LAN report)', () => {
+    async function selectTwoCells() {
+      // Every selection-state change remounts the grid's cell buttons rather than
+      // patching them in place (measured directly: a button queried again after a
+      // click is a DIFFERENT node, `===` fails) - so each cell is RE-QUERIED fresh
+      // right before its own click, the way a real pointer hit-tests at the current
+      // DOM on every event rather than reusing a stale JS reference.
+      await screen.findByRole('button', { name: 'SRTWB242, Aug 26, balance +55' });
+      fireEvent.click(
+        screen.getByRole('button', { name: 'SRTWB242, Aug 26, balance +55' }),
+        { ctrlKey: true },
+      );
+      fireEvent.click(
+        screen.getByRole('button', { name: 'SRTWB242, Sep 26, balance -16' }),
+        { ctrlKey: true },
+      );
+      await screen.findByRole('button', { name: 'Copy' });
+    }
+
+    it('falls back to document.execCommand("copy") and toasts success when clipboard is missing', async () => {
+      renderBoard();
+      await selectTwoCells();
+
+      const execCommand = vi.fn(() => true);
+      document.execCommand = execCommand as unknown as typeof document.execCommand;
+
+      fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
+
+      await waitFor(() => expect(execCommand).toHaveBeenCalledWith('copy'));
+      expect(toast.success).toHaveBeenCalled();
+    });
+
+    it('toasts an error when neither clipboard nor execCommand exists', async () => {
+      renderBoard();
+      await selectTwoCells();
+
+      // Neither `navigator.clipboard` nor `document.execCommand` exists in this jsdom
+      // environment by default - the exact "owner reaches the stack over http on a LAN
+      // hostname" non-secure-context case R19 names.
+      expect(navigator.clipboard).toBeUndefined();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
+
+      await waitFor(() => expect(toast.error).toHaveBeenCalled());
+    });
   });
 });
