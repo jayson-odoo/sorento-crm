@@ -32,6 +32,7 @@ import {
   IGNORE_FIELD,
   type ImportMappingColumn,
   type ImportMappingField,
+  type ImportMappingHeaderField,
   type ImportMappingProbe,
 } from './ImportColumnMapper';
 
@@ -43,8 +44,14 @@ const FIELDS: ImportMappingField[] = [
 function probeWith(
   columns: ImportMappingColumn[],
   headerRow: number | null = 1,
+  headerFields?: ImportMappingHeaderField[],
 ): ImportMappingProbe {
-  return { header_row: headerRow, columns, required_fields: ['item_code', 'qty'] };
+  return {
+    header_row: headerRow,
+    columns,
+    required_fields: ['item_code', 'qty'],
+    ...(headerFields ? { header_fields: headerFields } : {}),
+  };
 }
 
 function renderMapper(probe: ImportMappingProbe) {
@@ -158,5 +165,95 @@ describe('ImportColumnMapper', () => {
 
     const node = screen.getByText(/No header row was found/);
     expect(node.textContent?.trim()).toBe('No header row was found.');
+  });
+
+  // ------------------------------------------------------------------- //
+  // Header fields section (F1/F2, PLAN-pi-header-fields-convert-fixes-24sep.md, R-D)
+  // ------------------------------------------------------------------- //
+
+  it('renders a header-field row with its sample and exactly the six block fields plus Ignore', () => {
+    renderMapper(
+      probeWith(
+        [{ position: 0, header: 'ITEM', samples: [], field: 'item_code', source: 'supplier' }],
+        14,
+        [{ row: 13, label: '提单号', sample: 'OOLU2339207730', field: null, source: 'none' }],
+      ),
+    );
+
+    expect(screen.getByText('Header fields')).toBeInTheDocument();
+    expect(screen.getByTitle('提单号')).toBeInTheDocument();
+    expect(screen.getByTitle('OOLU2339207730')).toBeInTheDocument();
+
+    const selects = screen.getAllByRole('combobox');
+    // The LAST combobox on screen is the header field's own (the column section renders
+    // first) - open it and check its exact option set.
+    openSelect(selects[selects.length - 1]);
+    for (const label of [
+      'Ignore',
+      'PI number',
+      'Invoice date',
+      'BL',
+      'Container',
+      'Seal',
+      'Currency',
+    ]) {
+      expect(screen.getByText(label)).toBeInTheDocument();
+    }
+    // Consignee is never offered (R-B).
+    expect(screen.queryByText('Consignee')).toBeNull();
+  });
+
+  it('folds the header fields section when every pair already resolves (F2: same fold rule as columns)', () => {
+    renderMapper(
+      probeWith(
+        [{ position: 0, header: 'ITEM', samples: [], field: 'item_code', source: 'supplier' }],
+        14,
+        [
+          { row: 13, label: '提单号', sample: 'OOLU2339207730', field: 'bl_no', source: 'supplier' },
+          { row: 13, label: '柜号', sample: 'FSCU9304169', field: 'container_no', source: 'supplier' },
+        ],
+      ),
+    );
+
+    expect(
+      screen.getByText('2 of 2 header fields mapped from saved layout'),
+    ).toBeInTheDocument();
+    // Folded: the individual label rows are not on screen.
+    expect(screen.queryByTitle('提单号')).toBeNull();
+  });
+
+  it('opens the header fields section when one label is unknown', () => {
+    renderMapper(
+      probeWith(
+        [{ position: 0, header: 'ITEM', samples: [], field: 'item_code', source: 'supplier' }],
+        14,
+        [
+          { row: 13, label: '提单号', sample: 'OOLU2339207730', field: 'bl_no', source: 'supplier' },
+          { row: 13, label: '柜号', sample: 'FSCU9304169', field: null, source: 'none' },
+        ],
+      ),
+    );
+
+    expect(screen.queryByText(/header fields mapped from saved layout/)).toBeNull();
+    expect(screen.getByTitle('柜号')).toBeInTheDocument();
+  });
+
+  it('emitChange (onChange) includes a header-field pick with the label as `header`', () => {
+    const { onChange } = renderMapper(
+      probeWith(
+        [{ position: 0, header: 'ITEM', samples: [], field: 'item_code', source: 'supplier' }],
+        14,
+        [{ row: 13, label: '柜号', sample: 'FSCU9304169', field: null, source: 'none' }],
+      ),
+    );
+    onChange.mockClear();
+
+    const selects = screen.getAllByRole('combobox');
+    openSelect(selects[selects.length - 1]);
+    fireEvent.click(screen.getByText('Container'));
+
+    expect(onChange).toHaveBeenCalledWith(
+      expect.arrayContaining([{ header: '柜号', field: 'container_no' }]),
+    );
   });
 });
