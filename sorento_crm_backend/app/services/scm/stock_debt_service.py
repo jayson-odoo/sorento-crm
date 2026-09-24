@@ -1192,7 +1192,7 @@ class StockDebtService:
             supplier_id=supplier_id, book=book, page=1, limit=MAX_LOW_STOCK_ROWS + 1,
         )
         if listing["pagination"]["total"] > MAX_LOW_STOCK_ROWS:
-            raise AppException(422, "Narrow the plan first")
+            raise AppException(422, "Narrow the filters first")
         return self._render_workbook(listing, split=split)
 
     def _render_workbook(
@@ -1232,10 +1232,18 @@ class StockDebtService:
                     key = f"{supplier_label} - {category_label}"
                 groups.setdefault(key, []).append(row)
 
+        # Sorted by the CLEANED title, case-insensitive (reviewer round) - not the raw
+        # key, which may carry mixed case or characters the title itself never shows.
+        ordered_keys = (
+            list(groups)
+            if split == "none"
+            else sorted(groups, key=lambda raw: _sanitize_sheet_title(raw).lower())
+        )
+
         wb = Workbook()
         used_titles: Set[str] = set()
         sheet_count = 0
-        for index, key in enumerate(sorted(groups)):
+        for index, key in enumerate(ordered_keys):
             group_rows = groups[key]
             ws = wb.active if index == 0 else wb.create_sheet()
             ws.title = key if split == "none" else _unique_sheet_title(key, used_titles)
@@ -1257,13 +1265,23 @@ class StockDebtService:
     def _export_row(row: dict, axis: Sequence[str]) -> tuple:
         """One product, in the export's own column order (AC-13). `Name` prints blank when
         `list()` has already nulled it (AC-9); every other blank prints as `""`, never a
-        bare 0 that would read as a fact somebody measured."""
+        bare 0 that would read as a fact somebody measured.
+
+        Every text cell goes through `_xlsx_safe_text` (AC-13b, security review) - a
+        supplier or a product code is free text off somebody else's document, and a
+        leading `=`/`+`/`-`/`@` reaches openpyxl unescaped otherwise, which a spreadsheet
+        reads as a formula the moment the file is opened. The same guard
+        `low_stock_report_service._sheet_row` already applies to every one of ITS text
+        cells.
+        """
+        from app.services.scm.proforma_invoice_service import _xlsx_safe_text
+
         balances = {month["key"]: month["balance"] for month in row["months"]}
         return (
-            row["product_code"],
-            row["product_name"] or "",
-            row["category_code"] or "",
-            row["supplier_name"] or "",
+            _xlsx_safe_text(row["product_code"]),
+            _xlsx_safe_text(row["product_name"] or ""),
+            _xlsx_safe_text(row["category_code"] or ""),
+            _xlsx_safe_text(row["supplier_name"] or ""),
             *[balances.get(key, 0.0) for key in axis],
             row["tba"],
             row["undated"],

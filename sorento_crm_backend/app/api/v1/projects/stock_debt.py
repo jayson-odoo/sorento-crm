@@ -24,11 +24,15 @@ from fastapi import APIRouter, Body, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.dependencies import require_permission_with_api_key
+from app.dependencies import require_permission, require_permission_with_api_key
 from app.schemas.common import MAX_PAGE_LIMIT
 from app.schemas.download import DownloadResponse
 from app.schemas.stock_debt import Book, StockDebtCell, StockDebtExportIn, StockDebtList
 from app.services.error_handler import AppException, handle_internal_error
+# Reused, not reinvented (AC-18): the same cap `StockDebtService.export()` itself refuses
+# above - the route checks it FIRST, before any `user_downloads` row exists, the same
+# "every guard runs before the row" shape `order_summary.py`'s export route applies.
+from app.services.scm.low_stock_report_service import MAX_LOW_STOCK_ROWS
 from app.services.scm.stock_debt_service import StockDebtService
 from app.services.uuid_path_param import validate_uuid_path
 
@@ -141,7 +145,12 @@ def stock_debt_cell(
 @router.post("/stock-debt/export", response_model=DownloadResponse, status_code=201)
 def export_stock_debt(
     payload: StockDebtExportIn = Body(default_factory=StockDebtExportIn),
-    current_user: dict = Depends(require_permission_with_api_key(VIEW)),
+    # `require_permission`, NOT `_with_api_key` (security review, fix-before-merge):
+    # creating a download row and enqueuing a worker job is a WRITE, not the read that
+    # dependency's own docstring says it is for - an API-key-only principal (no JWT)
+    # must not reach it, however its act-as user's role is granted. The two GETs above
+    # stay on the API-key variant; they are the read.
+    current_user: dict = Depends(require_permission(VIEW)),
     db: Session = Depends(get_db),
 ):
     """Queue the workbook through My Downloads (R10/R12, AC-12), the same pipeline the low
@@ -153,6 +162,12 @@ def export_stock_debt(
 
     Filters travel as the ROUTE's own body (`StockDebtExportIn`), not a `run_id`: this
     screen has no reorder run underneath it, only the board's own current filters.
+
+    Two guards run BEFORE any `user_downloads` row exists (AC-12d/AC-18, `order_summary.
+    py`'s own export route runs its guards the same way): one in-flight export per user
+    per kind (`DownloadService.has_in_flight`, the same guard `export_order_inquiry_
+    worklist_async` runs), and the row-count cap - a single `list(..., limit=1)` read,
+    whose `pagination.total` is the WHOLE filtered set regardless of the limit used.
     """
     from app.api.v1.projects._common import acting_company_id
     from app.services.download_service import DownloadService
@@ -161,6 +176,29 @@ def export_stock_debt(
 
     try:
         filters = payload.model_dump()
+
+        if DownloadService(db).has_in_flight(
+            user_id=str(current_user["id"]), kind="stock_debt_xlsx",
+        ):
+            raise AppException(
+                status_code=409,
+                message="A stock debt export is already being prepared - check My "
+                        "Downloads.",
+            )
+
+        guard = StockDebtService(db).list(
+            query=payload.query,
+            group=payload.group,
+            only_debt=payload.only_debt,
+            cutoff=payload.cutoff,
+            supplier_id=payload.supplier_id,
+            book=payload.book,
+            page=1,
+            limit=1,
+        )
+        if guard["pagination"]["total"] > MAX_LOW_STOCK_ROWS:
+            raise AppException(status_code=422, message="Narrow the filters first")
+
         # The worker has no request-scoped company (AC-12b): snapshot the enqueuing
         # request's own single-company scope so the task can adopt it - same shape
         # `export_order_inquiry_worklist_async` uses for the same reason (reuse, not
