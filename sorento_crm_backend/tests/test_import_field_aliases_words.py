@@ -262,20 +262,49 @@ def test_ac_w2_the_migration_seeds_exactly_the_d7_rows_shared():
         assert expected <= pairs, pairs
 
 
-def test_ac_w2_the_original_triple_constraint_stands_and_supplier_id_was_added():
-    """Round 3 ruling: the partial unique indexes are gone - `uq_import_field_alias_triple`
-    on (doc_type, field, alias) is the ORIGINAL constraint, restored, and `supplier_id` is
-    an added nullable column, not part of any uniqueness key. Two rows for the exact same
-    (field, alias) pair - whatever their `supplier_id` - collide on this constraint; that
-    behaviour is covered by the 409 test above, which exercises it through the route rather
-    than a raw insert."""
+def test_ac_w2_the_alias_uniqueness_is_per_supplier():
+    """Owner ruling A (24 Sep 2026, PLAN-import-column-mapper-24sep.md review round 2)
+    SUPERSEDES the round 3 ruling this test used to assert: the single
+    `uq_import_field_alias_triple` on (doc_type, field, alias) - which had no
+    `supplier_id` in it at all - is gone. A second supplier saving a header an earlier
+    supplier had already saved was losing the `ON CONFLICT` race entirely and never got a
+    row of its own, so uniqueness split in two (migration `ifa_supplier_uniq`, commit
+    `fdeec235b`): `uq_import_field_alias_shared`, a PARTIAL unique index on
+    (doc_type, field, alias) WHERE supplier_id IS NULL, so shared rows still collide with
+    each other exactly as the old triple did; and `uq_import_field_alias_supplier`, a
+    plain unique index on (doc_type, field, alias, supplier_id), so two DIFFERENT
+    suppliers saving the identical (field, alias) pair now land two separate rows, one
+    each. `supplier_id` remains a nullable column (NULL = shared), unchanged by the
+    split. AC-W2's downgrade half is still not covered here, for the same reason the
+    module docstring gives for the constraint this replaces."""
     with pg_session() as db:
-        constraint_exists = db.execute(
+        old_constraint_gone = db.execute(
             text(
                 "SELECT 1 FROM pg_constraint WHERE conname = 'uq_import_field_alias_triple'"
             )
         ).scalar()
-        assert constraint_exists == 1
+        assert old_constraint_gone is None
+
+        shared_index = db.execute(
+            text(
+                "SELECT indexdef FROM pg_indexes "
+                "WHERE tablename = 'import_field_alias' "
+                "AND indexname = 'uq_import_field_alias_shared'"
+            )
+        ).scalar()
+        assert shared_index is not None
+        assert "(doc_type, field, alias)" in shared_index
+        assert "supplier_id IS NULL" in shared_index
+
+        supplier_index = db.execute(
+            text(
+                "SELECT indexdef FROM pg_indexes "
+                "WHERE tablename = 'import_field_alias' "
+                "AND indexname = 'uq_import_field_alias_supplier'"
+            )
+        ).scalar()
+        assert supplier_index is not None
+        assert "(doc_type, field, alias, supplier_id)" in supplier_index
 
         column_exists = db.execute(
             text(
