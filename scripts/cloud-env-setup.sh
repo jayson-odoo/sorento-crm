@@ -217,6 +217,23 @@ else
 fi
 run "$VENV_DIR/bin/pip" install -r "$BACKEND_DIR/requirements.txt"
 
+# Python 3.12's `venv` writes no .gitignore into the venv (3.13+ does), and the
+# repo's .gitignore does not cover sorento_crm_backend/venv - on a VM with no
+# global excludes the venv then shows as thousands of untracked files and a
+# `git add -A` sweeps it into a commit (seen on the first Linux e2e run).
+if [ "$DRY_RUN" -eq 1 ]; then
+  echo "+ write $VENV_DIR/.gitignore"
+elif [ ! -f "$VENV_DIR/.gitignore" ]; then
+  printf '# Created by scripts/cloud-env-setup.sh - keep the venv out of git status.\n*\n' > "$VENV_DIR/.gitignore"
+fi
+
+# Before bootstrap_env: its "mcp tool catalog" seeder imports
+# `sorento_crm_mcp.catalog`, so with the package installed afterwards the
+# seeder logs "No module named 'sorento_crm_mcp'" and the catalogue rows are
+# never written (seen on the first Linux e2e run).
+log "installing the MCP package (editable) into the backend venv"
+run "$VENV_DIR/bin/pip" install -e "$MCP_DIR"
+
 log "bootstrapping the database schema (scripts.bootstrap_env) if not already at alembic head"
 NEED_BOOTSTRAP=1
 if [ "$DRY_RUN" -eq 0 ] && [ -x "$VENV_DIR/bin/alembic" ]; then
@@ -235,9 +252,6 @@ if [ "$NEED_BOOTSTRAP" -eq 1 ]; then
   run env SORENTO_ENV_FILE=.env.ci-tests DATABASE_URL="$DATABASE_URL" \
     bash -c "cd '$BACKEND_DIR' && '$VENV_DIR/bin/python' -m scripts.bootstrap_env"
 fi
-
-log "installing the MCP package (editable) into the backend venv"
-run "$VENV_DIR/bin/pip" install -e "$MCP_DIR"
 
 log "frontend dependencies"
 NEED_NPM_CI=1
