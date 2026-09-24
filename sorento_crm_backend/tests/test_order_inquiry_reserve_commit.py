@@ -51,6 +51,7 @@ this one uses):
 """
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal
 
 import sqlalchemy as sa
@@ -61,7 +62,9 @@ from app.models.project_so import (
     INQUIRY_PARTLY_LINKED,
     INQUIRY_PLACED,
     INQUIRY_RAISED,
+    OrderInquiry,
     OrderInquiryLink,
+    OrderInquiryReserveRequest,
     OrderInquiryRow,
 )
 
@@ -81,7 +84,16 @@ from .test_order_inquiry_reserve import (
     _reserved_calls,
     api as reserve_api,  # noqa: F401  (re-exported fixture: both permissions)
 )
-from .test_order_inquiry_worklist import LIST
+from .test_order_inquiry_worklist import (
+    LIST,
+    MARKER as WL_MARKER,
+    _line_on_authored_order,
+    _row,
+    _uid,
+    _user,
+    api as worklist_api,  # noqa: F401  (re-exported fixture; header lines + worklist reader)
+)
+from .test_planning_changes import _warehouse
 
 MARKER = "zzt-oi-reserve-commit"
 
@@ -199,6 +211,97 @@ def test_AC_RS_76_commit_two_of_three_rows_one_dispatch(reserve_api, monkeypatch
             f"qty_reserved/balance/reason: {entry}"
         )
         assert "reason" in entry, entry
+
+
+# --------------------------------------------------------------------------------- #
+# AC-RS-76b (fix, not in the tester's original list): a partial `commit_request` call #
+# must not leave the ALREADY-answered row reading `requested`.                        #
+# --------------------------------------------------------------------------------- #
+
+
+def test_AC_RS_76b_partial_commit_answered_row_reads_reserved(worklist_api):
+    """`PLAN-oi-request-cs-reserve.md` 6e.1 / AC-RS-76: committing ONE row of a two-row
+    request must not leave the ALREADY-answered row reading `requested` on the header
+    lines / worklist just because its sibling keeps the whole request `requested`.
+    `_HAS_OPEN_RESERVE_REQUEST`/`_OPEN_REQUEST_QTY` (`order_inquiry_worklist_service.py`)
+    used to key off the request's own `state` alone, an accurate proxy while rounds 1-3's
+    per-row route answered every row of a request in lockstep; `commit_request` breaks
+    that lockstep (a partial commit answers SOME rows while the request stays
+    `requested` until its LAST row is done), so the two need the row's OWN `qty_reserved
+    IS NULL` on top of the request state. Runs `commit_request` itself (the route the
+    Lines grid now calls), not the legacy `reserve_row` `test_reserve_state_derived`
+    (above, in `test_order_inquiry_reserve.py`) already covers.
+    """
+    client, db, company_id, seeded = worklist_api
+    inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)
+    line_a = _line_on_authored_order(db, company_id, seeded, qty="50", day=8)
+    line_b = _line_on_authored_order(db, company_id, seeded, qty="30", day=9)
+    row_a = _row(
+        db,
+        company_id,
+        inquiry,
+        so_line_id=line_a.id,
+        item_code=f"{WL_MARKER}-PARTIAL-A",
+        qty="50",
+        state=INQUIRY_RAISED,
+        delivery_date=date(2026, 4, 8),
+    )
+    row_b = _row(
+        db,
+        company_id,
+        inquiry,
+        so_line_id=line_b.id,
+        item_code=f"{WL_MARKER}-PARTIAL-B",
+        qty="30",
+        state=INQUIRY_RAISED,
+        delivery_date=date(2026, 4, 9),
+    )
+    db.commit()
+
+    warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}".upper())
+    from app.services.order_inquiry_reserve_service import OrderInquiryReserveService
+
+    requester_id = _user(db, f"{WL_MARKER} requester3")
+    service = OrderInquiryReserveService(db)
+    request = service.create_request(
+        inquiry_id=inquiry.id,
+        rows=[
+            {"row_id": row_a.id, "qty_requested": Decimal("50"), "warehouse_id": warehouse.id},
+            {"row_id": row_b.id, "qty_requested": Decimal("30"), "warehouse_id": warehouse.id},
+        ],
+        note=None,
+        actor_user_id=requester_id,
+    )
+    db.commit()
+
+    reserver_id = _user(db, f"{WL_MARKER} reserver3")
+    service.commit_request(
+        request_id=request.id,
+        reserves=[{"row_id": row_a.id, "warehouse_id": warehouse.id, "qty_reserved": Decimal("50")}],
+        amendments=[],
+        actor_user_id=reserver_id,
+    )
+    db.commit()
+
+    db.expire_all()
+    reloaded_request = (
+        db.query(OrderInquiryReserveRequest).filter(OrderInquiryReserveRequest.id == request.id).one()
+    )
+    assert reloaded_request.state == "requested", "row_b is still open, the request must stay open"
+
+    body = client.get(LIST, params={"delivery_month": "2026-04"}).json()
+    entry_a = next(e for e in body["data"] if e["id"] == row_a.id)
+    entry_b = next(e for e in body["data"] if e["id"] == row_b.id)
+
+    assert entry_a["reserve_state"] == "reserved", (
+        "row_a is already answered - it must read reserved, not requested, even though "
+        f"its sibling row_b keeps the request itself requested: {entry_a}"
+    )
+    assert entry_a["requested_qty"] == "0", entry_a
+    assert entry_a["reserved_qty"] == "50", entry_a
+
+    assert entry_b["reserve_state"] == "requested", entry_b
+    assert entry_b["requested_qty"] == "30", entry_b
 
 
 # --------------------------------------------------------------------------------- #

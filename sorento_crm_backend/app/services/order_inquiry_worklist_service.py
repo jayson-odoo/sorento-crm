@@ -395,10 +395,19 @@ _PO_LINKED_QTY = _linked_qty(OrderInquiryLink.po_line_id.isnot(None))
 #: link's `po_line_id`/`spo_allocation_id` are both null by the widened CHECK, so this is
 #: purely additive, not a re-split of the same links).
 _RESERVED_LINKED_QTY = _linked_qty(OrderInquiryLink.reserve_request_row_id.isnot(None))
-#: AC-RS-20: an OPEN reserve request row exists for this row (its parent request still
-#: `requested`) - the chip reads `requested` while this is true, whatever `_RESERVED_
-#: LINKED_QTY` above already holds from an earlier cycle (R5: reserved then requested
-#: again on the balance still reads `requested`).
+#: AC-RS-20: an OPEN reserve request row exists for THIS row - its own answer still
+#: unset AND its parent request still `requested` - the chip reads `requested` while
+#: this is true, whatever `_RESERVED_LINKED_QTY` above already holds from an earlier
+#: cycle (R5: reserved then requested again on the balance still reads `requested`).
+#:
+#: Round 4 fix (`PLAN-oi-request-cs-reserve.md` 6e.1, AC-RS-76): the row's own
+#: `qty_reserved IS NULL` check is NEW here - round 1-3's per-row route answered every
+#: row of a request in lockstep (the request's own `state` alone was an accurate proxy
+#: for "this row's own answer is still open"), but `commit_request` can now answer PART
+#: of a request in one click while the parent stays `requested` until its LAST row is
+#: done - without this, an ALREADY-answered row in that same still-open request kept
+#: reading `requested` (and the Lines grid kept offering `Reserve`/`Edit reserve`
+#: instead of `Amend reserve`/`History`) until every sibling row was also answered.
 _HAS_OPEN_RESERVE_REQUEST = (
     select(OrderInquiryReserveRequestRow.id)
     .select_from(OrderInquiryReserveRequestRow)
@@ -408,6 +417,7 @@ _HAS_OPEN_RESERVE_REQUEST = (
     )
     .where(
         OrderInquiryReserveRequestRow.row_id == OrderInquiryRow.id,
+        OrderInquiryReserveRequestRow.qty_reserved.is_(None),
         OrderInquiryReserveRequest.state == "requested",
     )
     .correlate(OrderInquiryRow)
@@ -426,6 +436,11 @@ _OPEN_REQUEST_QTY = (
     )
     .where(
         OrderInquiryReserveRequestRow.row_id == OrderInquiryRow.id,
+        # Round 4 fix - same reason `_HAS_OPEN_RESERVE_REQUEST` above needs it: an
+        # ALREADY-answered row in a request that stays `requested` because a SIBLING
+        # row is still open must not keep reading its own `qty_requested` back as if
+        # it were still open too.
+        OrderInquiryReserveRequestRow.qty_reserved.is_(None),
         OrderInquiryReserveRequest.state == "requested",
     )
     .correlate(OrderInquiryRow)
