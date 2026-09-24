@@ -1,109 +1,124 @@
-# UAC - Chatbot stock ask v2: X threshold, Y ETA offset, contact toggles, salesman notification, asks record
+# UAC - Chatbot stock ask v2: four-branch answer, X cap, Y ETA offset, contact toggles, salesman notification, asks record
 
-Status: DRAFT, pre-grill (24 Sep 2026). Plan: `PLAN-chatbot-stock-ask-v2-24sep.md`. Issue #1168.
-Numbering: AC-SA<slice><nn>. Tags: [BE] pytest, [FE] vitest, [E2E] recorded agent-browser or console evidence, [T] a test that exists only to pin a rule.
-Every AC below answers to a step in the Journey. Open owner questions are G1 to G8 in the plan; an AC that depends on one names it.
+Status: grilled 24 Sep 2026, ready for tickets. Plan: `PLAN-chatbot-stock-ask-v2-24sep.md`. Issue #1168. Rulings R1 to R11 (quoted in the plan) are binding.
+Numbering: AC-SA<slice><nn>, slices S0 to S6. Tags: [BE] pytest (Postgres), [FE] vitest, [E2E] recorded agent-browser or console evidence, [T] a test that exists only to pin a rule. The `tester` writes every [BE]/[FE] test red before the `coder` starts the slice.
 
 ## Journey
 
-Actor: a dealer contact on WhatsApp. The system already knows: which customer they act for (`respond_contact_customers`), that customer's sales agent (#1177) and stock location (S3), the product's X and Y (S1), and whether this contact's salesman wants to hear about asks and whether the packing list may go out (S2). The dealer is asked for exactly one thing they alone know: the quantity.
+Actor: a dealer contact on WhatsApp whose stock visibility policy mode is "Availability only" (R1). The system knows the contact's policy locations (R3), the customer they act for, that customer's sales agent (#1177), each product's X and Y (S1), and the contact's two toggles (S2).
 
-1. **Ask.** The dealer writes "do you have MSK11A-QT, 150 pcs". (If no quantity: the bot asks "Please specify your demand quantity" once and waits; nothing else changes.)
-2. **Decide.** The bot reads Q = 150, X and Y for the product, on hand at the customer's location, and the next dated incoming shipment into that location. It picks one of four answers. No number of ours is ever composed into the reply.
-3. **Answer.** One sentence per product, fixed wording (rewordable on Settings > AI Prompts), sent as the turn's reply.
-4. **Notify.** If the contact's "Notify salesman" is on and the answer was too big / in stock / no incoming, the customer's sales agent gets one WhatsApp line through their Respond contact: text inside the 24h window, the mapped template outside it. Sent after the customer's reply, never blocking it.
-5. **Record.** Every decision is a row on the customer: what was asked, when, what was answered, whether the salesman was told, follow-up open.
-6. **Work it.** The office opens the customer, sees "Stock asks", marks a row done with a note.
-7. **Configure (once).** An admin with the stock-rules permission sets X and Y on a category (and overrides on a product); a contacts editor flips the two toggles on the contact; the customer editor sets the stock location and the sales agent.
+1. **Ask.** The dealer names one or more products. #1118's stock task collects a quantity per product (unchanged, R1).
+2. **Decide.** Per product with quantity Q: X and Y resolved (product, else own category, else 0); available = on hand in the policy locations minus open SO (R4); the earliest non-draft still-incoming shipment with a packing list, any location (R5).
+3. **Answer.** One R6 sentence per product in the order named. No number of ours except Q and the ETA date.
+4. **Attach.** B3 only, and only when "Packing list allowed" is on: the shipment's packing list is sent.
+5. **Notify.** B1, B2, B4 only, and only when "Notify salesman" is on: the customer's sales agent gets one WhatsApp message (template outside the window, text inside), logged in `integration_log`.
+6. **Record.** Every answered ask is a `stock_asks` row, state open.
+7. **Work it.** The office sets state and note on the customer's Asks tab; the sales agent does the same on the portal's Customer asks page.
+8. **Configure (once).** A holder of `master_data.chatbot_stock_limits.edit` sets X and Y on a category (and overrides on a product); a contacts editor flips the two toggles; an admin maps a template to `stock_ask_salesman`.
 
-## S1 - X and Y on categories and products
+## S0 - Rebase and merge #1118
 
-- **AC-SA101 [BE][T]** Given a product with `chatbot_max_qty = 200` in a category with `chatbot_max_qty = 50`, When `effective(product)` runs, Then `max_qty` is 200 (product overrides category).
-- **AC-SA102 [BE][T]** Given a product with NULL `chatbot_max_qty` in a category with 50, Then `max_qty` is 50; Given both NULL, Then `max_qty` is None. Same table for `eta_offset_days`. Zero is a value, not NULL.
-- **AC-SA103 [BE][T]** Given a product whose category has NULL X but whose parent category has X = 30, Then `max_qty` is None (no tree walk; pending G3).
-- **AC-SA104 [BE]** Given a user holding `master_data.products.chatbot_stock_rules`, When they PUT a category with new X and Y, Then 200 and the response carries both values.
-- **AC-SA105 [BE]** Given a user with `master_data.product_categories.edit` but not the stock-rules slug, When they PUT a category whose body changes X, Then 403 with an `AppException` message naming the permission; When their body carries the current X unchanged, Then 200.
-- **AC-SA106 [BE]** AC-SA104 and AC-SA105 hold for PUT product against `master_data.products.edit`.
-- **AC-SA107 [BE]** Given a product with NULL X in a category with X = 50, When GET product, Then the response carries `chatbot_max_qty: null`, `chatbot_max_qty_effective: 50`, and the two ETA fields likewise (asserted field by field; `response_model` drops what is undeclared).
-- **AC-SA108 [BE]** After the migration, `user_permissions` holds `master_data.products.chatbot_stock_rules`; every role holding `master_data.products.edit` holds it; a role whose slug starts with `integration_` does not; `admin` does.
-- **AC-SA109 [BE]** A negative X or Y is rejected at the API (422) and at the database (CHECK).
-- **AC-SA110 [FE]** `CategoryForm` renders "Max quantity the assistant answers" and "ETA offset (days)"; without the permission both inputs are disabled and show the stored value; with it they are editable. No helper text explaining the feature.
-- **AC-SA111 [FE]** `ProductForm` Basic Information shows the same two inputs beside the reorder fields, with the category's effective value as placeholder when the product value is empty; `ProductDetail` shows the two facts in the same section, same order, `-` when unknown.
-- **AC-SA112 [E2E]** Sidebar to Master Data > Product Categories, open a category, set X = 200, Y = 7, save, reopen: both persist; at 375px the modal scrolls to its Save.
+- **AC-SA001 [BE]** `feat/chatbot-dealer-stock-verdict` carries main, `alembic heads` shows one head with `dsv_0001` re-parented, and #1118's suites pass on the rebased head in CI.
+- **AC-SA002 [BE]** #1118 is merged to main before any S1 to S6 commit lands on the v2 lane.
 
-## S2 - per-contact toggles
+## S1 - X and Y columns, permission, forms
 
-- **AC-SA201 [BE]** Given a contact, When PUT `/contacts/{id}/chatbot` with `{"chatbot_notify_salesman": true}`, Then the response and a following GET carry `chatbot_notify_salesman: true` and `chatbot_packing_list_allowed` unchanged (absent = leave alone).
-- **AC-SA202 [BE]** Given a migrated row, Then both toggles read `false` (server default), and GET contact lists both keys (manual dict builder).
-- **AC-SA203 [BE]** Given a contact with both toggles on, When `turn_runtime.load_profile` runs (workspace-scoped and NULL-workspace fallback), Then `Profile.notify_salesman` and `Profile.packing_list_allowed` are true; an unknown contact yields false for both.
-- **AC-SA204 [BE]** PUT without `user_management.contacts.edit` is 403 (existing gate, re-pinned for the new fields).
-- **AC-SA205 [FE]** `ContactChatbotSection` renders "Notify salesman on stock asks" and "Packing list may be sent" switches; toggling one saves the whole profile with the other values unchanged.
-- **AC-SA206 [E2E]** Sidebar to User Management > Contacts, open a contact, Access > Chatbot, flip "Notify salesman on stock asks", reload: it stays on.
+- **AC-SA101 [BE][T]** `effective()`: product X = 200, category X = 50 -> 200; product NULL, category 50 -> 50; both NULL -> 0. Same for Y. Zero set explicitly is 0 and wins over the category.
+- **AC-SA102 [BE][T]** Product NULL, own category NULL, parent category X = 30 -> 0 (no parent walk, R2).
+- **AC-SA103 [BE]** After the migration the four columns exist, nullable, and a negative value is rejected by the DB CHECK.
+- **AC-SA104 [BE]** `user_permissions` holds `master_data.chatbot_stock_limits.{view,add,edit,delete}`; every role holding `master_data.products.edit` and `admin` hold `.view` and `.edit`; an `integration_*` role holds neither.
+- **AC-SA105 [BE]** With `.edit`, PUT category with X = 200, Y = 7 -> 200 and the response carries both.
+- **AC-SA106 [BE]** Without `.edit`, PUT category changing X -> 403 (`AppException`, message names the permission); carrying the unchanged X -> 200.
+- **AC-SA107 [BE]** AC-SA105 and AC-SA106 hold for PUT product.
+- **AC-SA108 [BE]** A negative X or Y at the API -> 422. GET category and GET product carry `chatbot_max_qty` and `chatbot_eta_offset_days` (asserted field by field).
+- **AC-SA109 [FE]** `CategoryForm` shows "Max quantity (assistant)" and "ETA offset (days)" only with `.view`; the inputs are disabled without `.edit`. No helper text.
+- **AC-SA110 [FE]** `ProductForm` Basic Information shows the two inputs beside the reorder fields, placeholder = the category value when empty; the product view shows the same fields in the same place and order, `-` when unset.
+- **AC-SA111 [E2E]** Sidebar to Master Data > Product Categories, open a category, set X and Y, save, reopen: persisted; at 375px the modal reaches Save; the product form shows the category placeholder.
 
-## S3 - the four-branch decision
+## S2 - Contact toggles
 
-Decision truth table (pending G3 for NULL X, G4 for the ETA source):
+- **AC-SA201 [BE]** PUT `/contacts/{id}/chatbot` `{"notify_salesman": true}` persists and returns it; `packing_list_allowed` unchanged (absent = leave alone).
+- **AC-SA202 [BE]** A migrated contact reads both false; GET contact lists both keys (dict builder).
+- **AC-SA203 [BE]** Without `user_management.contacts.edit` the PUT is 403.
+- **AC-SA204 [BE]** `load_profile` returns `notify_salesman` and `packing_list_allowed` for a workspace row and for the NULL-workspace fallback; an unknown contact yields false for both.
+- **AC-SA205 [FE]** `ContactChatbotSection` renders "Notify salesman" and "Packing list allowed" switches; toggling one saves the whole profile with the others unchanged. **[E2E]** Sidebar to User Management > Contacts, open a contact, flip "Notify salesman", reload: still on.
 
-| # | Q | X | available at location | ETA | Y | result | eta_told |
+## S3 - Four-branch verdict and the R5 ETA read
+
+Truth table for `branch()` (x and y already resolved; unset = 0):
+
+| # | Q | X | available | shipment (date) | Y | branch | told |
 |---|---|---|---|---|---|---|---|
-| 1 | 250 | 200 | 1000 | any | any | too_big | - |
-| 2 | 200 | 200 | 200 | any | any | in_stock | - |
-| 3 | 150 | 200 | 149 | 2026-10-12 | 7 | incoming | 2026-10-19 |
-| 4 | 150 | 200 | 0 | none | any | no_incoming | - |
-| 5 | 5000 | NULL | 1 | 2026-10-12 | 0 | incoming | 2026-10-12 |
-| 6 | 150 | 200 | 149 | 2026-10-28 | 5 | incoming | 2026-11-02 |
-| 7 | 150 | 200 | 149 | 2026-10-12 | NULL | incoming | 2026-10-12 |
+| 1 | 250 | 200 | 1000 | 2026-10-12 | 7 | too_big | - |
+| 2 | 5 | 0 (unset) | 1000 | none | 0 | too_big | - (cap_unset) |
+| 3 | 200 | 200 | 200 | none | 0 | in_stock | - |
+| 4 | 150 | 200 | 149 | 2026-10-12 | 7 | incoming | 19/10/2026 |
+| 5 | 150 | 200 | 149 | 2026-10-28 | 5 | incoming | 02/11/2026 |
+| 6 | 150 | 200 | 0 | none | 7 | no_incoming | - |
+| 7 | 150 | 200 | 0 | 2026-10-12 | 0 (unset) | incoming | 12/10/2026 |
+| 8 | 1 | 1 | -3 (SO over on hand) | none | 0 | no_incoming | - |
 
-- **AC-SA301 [BE][T]** `decide()` returns every row of the table above.
-- **AC-SA302 [BE]** Given the switch on and a contact with "Stock checks" off, and a turn "do you have MSK11A-QT" with no quantity, Then the turn routes to `demand_qty` and replies with the `demand_qty` copy; nothing is recorded, nothing notified.
-- **AC-SA303 [BE]** Given the same contact and "MSK11A-QT 250 pcs" with X = 200, Then the reply is the `stock_ask_too_big` copy rendered with product and quantity, `branch_kind` stays `stock_denied`, and no stock row is fetched (the MCP stock tool is not called).
-- **AC-SA304 [BE]** Given available 200 at the customer's location, Q = 200, Then `stock_ask_in_stock`.
-- **AC-SA305 [BE]** Given available 0 at the customer's location and 500 at another warehouse, Q = 10, Then NOT `in_stock` (location scope, ruling 2).
-- **AC-SA306 [BE]** Given no stock and a still-incoming shipment carrying the product into the customer's location with `estimated_arrival_date = 2026-10-12`, `eta_delay_date = 2026-10-20`, Y = 7, Then the reply is `stock_ask_incoming` with `27/10/2026` (the delay date wins, plus Y).
-- **AC-SA307 [BE]** Given no stock and the only incoming shipment goes to another warehouse, Then per G4's answer either `no_incoming` (recommended) or `incoming`; the test is written for the ruled answer and the other assertion is deleted, not skipped.
-- **AC-SA308 [BE]** Given no stock and a shipment with remaining quantity but neither ETA date, Then `no_incoming` (an undated shipment is not an ETA).
-- **AC-SA309 [BE]** Given no stock and no incoming, Then `stock_ask_no_incoming`.
-- **AC-SA310 [BE][T]** For every branch, the reply text contains no digit sequence other than the quantity asked and the ETA date (regex guard over the composed reply).
-- **AC-SA311 [BE]** Given the contact is linked to no customer, or the customer has NULL `stock_warehouse_id`, Then the reply is `stock_ask_unassigned` and the recorded outcome is `unassigned` with reason `no_customer` / `no_location` (pending G1).
-- **AC-SA312 [BE]** Given a contact with "Stock checks" ON, Then the turn never enters the arm and the existing stock answer is unchanged; Given the global switch off, likewise.
-- **AC-SA313 [BE]** Given a turn naming two products with Q = 100, Then the reply is two lines in the order named, each decided on its own X, stock and ETA.
-- **AC-SA314 [BE]** Given branch 3 and `Profile.packing_list_allowed` true, Then the turn's actions carry the shipment's packing-list attachment; false, no attachment (pending G8).
-- **AC-SA315 [BE]** The five `stock_ask_*` copy keys are registered in `CHATBOT_REPLY_COPY` with their tokens, seeded by the registry migration, and resolvable through `copy.resolve(db)`; an edited registry body is what the turn renders.
-- **AC-SA316 [BE]** `answer.validator` no longer prints "Total available quantity is N" for a denied contact; the parity test in `test_s6c_answer_lane.py` is flipped with the reason in its docstring.
-- **AC-SA317 [BE]** PUT customer with `stock_warehouse_id` of an active warehouse in scope persists and the response carries `stock_warehouse_id` + `stock_warehouse_code`; an unknown id is 422; an inactive warehouse is 422; null clears it.
-- **AC-SA318 [FE]** `CustomerForm` renders "Stock location" as a clearable `SearchableSelect` (code - name), preselected on edit; `CustomerDetail` Contact Information shows the code - name or `-`.
-- **AC-SA319 [E2E]** Sidebar to Order Management > Customers, open a customer, Edit, set Stock location, save: the detail shows it; at 375px nothing clips.
-- **AC-SA320 [BE]** Console dry run (`dry_run=True`) of any branch composes the reply and writes no ask row and enqueues no notification.
+- **AC-SA301 [BE][T]** `branch()` returns every row above.
+- **AC-SA302 [BE]** Available counts only the contact's policy locations: 0 in the policy set and 500 elsewhere, Q = 10, X = 100 -> not `in_stock`.
+- **AC-SA303 [BE]** Open sales order lines in the policy set are subtracted: on hand 100, open SO 60, Q = 50 -> not `in_stock`; Q = 40 -> `in_stock`.
+- **AC-SA304 [BE]** ETA shipment: of two qualifying shipments (non-draft, line not received, remaining > 0, `attachment_id` set) with `estimated_arrival_date` 2026-11-01 and 2026-10-12, the 2026-10-12 one is used.
+- **AC-SA305 [BE]** An earlier shipment WITHOUT `attachment_id` is ignored; a draft shipment is ignored; a line with `line_status = received` is ignored; a line with `quantity_received = quantity_shipped` is ignored. With no other shipment the branch is `no_incoming`.
+- **AC-SA306 [BE]** `eta_delay_date` is never read: a shipment with `estimated_arrival_date` 2026-10-12 and `eta_delay_date` 2026-10-20, Y = 0 -> told 12/10/2026.
+- **AC-SA307 [BE]** A qualifying shipment whose line is allocated to a warehouse OUTSIDE the policy set still yields `incoming` (ANY location, R5).
+- **AC-SA308 [BE]** Open `spo_allocations` and open purchase order lines alone produce `no_incoming` (never a source, R5).
+- **AC-SA309 [BE]** A qualifying shipment with NULL `estimated_arrival_date` sorts after dated ones; when it is the only one the branch is `incoming` with no `eta`, and the line reads "No stock at the moment, ETA to be confirmed." (plan risk; owner may re-rule).
+- **AC-SA310 [BE]** Entry shape: `branch`, `cap_unset`, `category_name`, `eta` (incoming only, dd/mm/yyyy), `packing_list` (see AC-SA311); `verdict`, `running_low`, `disclaimer`, `available` are gone; `needs_quantity` and `requested_qty` unchanged so `StockQtyTask` still opens, fills and closes (#1118 task suites green).
+- **AC-SA311 [BE]** `packing_list` (`filename`, `file_path`, `mime_type`) is present on an `incoming` entry only when the asking contact's `packing_list_allowed` is true; absent otherwise and on every other branch.
+- **AC-SA312 [BE][T]** No entry field and no presenter line carries a quantity of ours: a regex guard over the rendered reply finds no digits except Q and the date.
+- **AC-SA313 [BE]** MCP presenter renders, per entry in asked order: B1 "The quantity is more than what I can confirm here, please refer to your salesman."; B2 "Yes, we have stock for <code> x <Q>, please refer to your salesman to proceed."; B3 "No stock at the moment, ETA <dd/mm/yyyy>."; B4 "No stock and no incoming at the moment, please refer to your salesman." No "running low", no "purchase", no UUID.
+- **AC-SA314 [BE]** Engine: B3 with `packing_list` present emits one `send_attachments` action with that file; without it, no attachment action.
+- **AC-SA315 [BE]** `detailed` and `compact` payloads are unchanged (R10); the `stock_denied` / `demand_qty` suites on `chatbot_stock_denial_enabled` pass unchanged (R1).
+- **AC-SA316 [BE]** `stock_verdict.py` and `tests/test_stock_verdict.py` are gone; nothing imports `stock_verdict`.
+- **AC-SA317 [BE]** After `sa2_0003`, `system_settings.chatbot_stock_low_threshold_pct` does not exist and neither settings dict builder emits it. **[FE]** Settings > Chatbot renders without the threshold card.
+- **AC-SA318 [E2E]** Console check per `documentation/agents/chatbot-verification.md` against an "Availability only" dealer contact: one turn per branch (B1 via Q > X, B1 via unset X, B2, B3 with toggle on and off, B4); replies quoted in `documentation/plans/chatbot/evidence/`.
 
-## S4 - salesman notification
+## S4 - Agent notification + integration_log
 
-- **AC-SA401 [BE]** Given "Notify salesman" on and outcome `too_big`, When the turn completes, Then exactly one `notify_salesman` job is enqueued on the `respond_io` queue carrying the ask (or turn + product on S4 alone); Given the toggle off, none; Given outcome `incoming`, none (pending G5); Given a dry run, console or test turn, none.
-- **AC-SA402 [BE][T]** The task renders `message` and `outcome` per decision exactly as the plan's S4 table states, with `customer_name`, `product` (code - name) and `quantity` filled.
-- **AC-SA403 [BE]** Recipient chain, one test per missing link: contact with no customer, customer with no sales agent, sales agent with no `contact_id`, contact with no `respond_io_id`. Each yields no send, a warning log, and status `skipped` with that reason; nothing raises.
-- **AC-SA404 [BE]** Given the agent contact's window is open and no template is mapped, When the task runs, Then `send_text_or_template` is called with `use_case="stock_ask_salesman"` and the send is `sent_as: text` with the default message; the `integration_log` row is `respond_io` / outbound / `success` with that text as `request_payload`.
-- **AC-SA405 [BE]** Given the window is closed and an approved template is mapped to `stock_ask_salesman` with `message` and `contact_name` slots, Then the send is `sent_as: template` and the log row carries the template payload.
-- **AC-SA406 [BE]** Given the window is closed and no template is mapped, Then the send is skipped (`TemplateSendSkipped`), the log row is `failed` with the error message, and the ask's notify status is `failed`.
-- **AC-SA407 [BE]** Given Respond returns 401, Then the log row is `failed` with `status_code 401` and the response body, and the customer's own reply (already sent) is unaffected.
-- **AC-SA408 [BE]** `stock_ask_salesman` is accepted by `set_default` and listed by the defaults endpoint; **[FE]** the Set Default Template dialog lists it with a label.
-- **AC-SA409 [BE]** The notification is enqueued only after the turn row is written (`status = done`): a test that fails the tail before the write sees no job.
+- **AC-SA401 [BE]** `notify_salesman` on: B1, B2, B4 each enqueue exactly one `notify_salesman` job on `respond_io`; B3 enqueues none; toggle off enqueues none; dry run, console and test turns enqueue none.
+- **AC-SA402 [BE]** The job is enqueued only after the turn row is written: a turn that fails before the write enqueues nothing.
+- **AC-SA403 [BE][T]** Outcome phrase: B2 `in stock`, B1 with X set `too big`, B1 with `cap_unset` `no cap set for <category name>`, B4 `no stock no incoming`. Context vars carry `customer_name`, `contact_name`, `product` (code - name), `quantity`, `asked_at`.
+- **AC-SA404 [BE]** Recipient chain, one test per missing link (no customer, customer without `sales_agent_id`, agent without `contact_id`, agent contact without `respond_io_id`): no send, warning log, skip reason recorded, no raise.
+- **AC-SA405 [BE]** Window open: `send_text_or_template` called with `use_case="stock_ask_salesman"`, `sent_as == "text"`; one `integration_log` row, `respond_io` / outbound / success, payload = the text.
+- **AC-SA406 [BE]** Window closed + mapped template: `sent_as == "template"`, log row carries the template payload.
+- **AC-SA407 [BE]** Window closed + no mapped template: `TemplateSendSkipped`, log row failed with the message.
+- **AC-SA408 [BE]** Respond 401: log row failed with status and body; the dealer's reply is unaffected.
+- **AC-SA409 [BE]** `stock_ask_salesman` is in `TEMPLATE_DEFAULT_USE_CASES` and accepted by `set_default`. **[FE]** The Set Default Template dialog lists it with its label.
+- **AC-SA410 [E2E]** With a template mapped, a B2 console turn on a live contact with a linked agent delivers one message to the agent's Respond contact; the `integration_log` row is visible in the Respond outbox.
 
-## S5 - the asks record
+## S5 - Asks table + CRM Asks tab
 
-- **AC-SA501 [BE]** Given a live (non-test, non-console) turn that reached any of the five outcomes, Then one `customer_stock_asks` row exists per product with `customer_id`, `contact_id`, `sales_agent_id` (snapshot), `turn_id`, `product_id`, `product_code`, `quantity_asked`, `outcome`, `answer_text` equal to that product's reply line, `asked_at` = the turn's time, `follow_up_status = open`.
-- **AC-SA502 [BE]** `eta_told` is set on `incoming` only and equals the date told (already + Y); NULL on every other outcome.
-- **AC-SA503 [BE]** `notify_status` is `not_required` when the toggle is off or the outcome is `incoming`; `queued` when a job was enqueued; the task moves it to `sent` (+ `notified_at`), `failed` (+ reason head) or `skipped` (+ reason).
-- **AC-SA504 [BE]** The S4 `integration_log` row references `business_table = customer_stock_asks`, `business_id = ask.id`.
-- **AC-SA505 [BE]** GET `/customers/{id}/stock-asks` lists the rows newest first, paged, with `contact_name`, `sales_agent_code`, `product_code` and no bare ids; requires `order_management.customers.view`; a caller scoped to another company sees none.
-- **AC-SA506 [BE]** PATCH `/customers/{id}/stock-asks/{ask_id}` with `{"follow_up_status": "done", "follow_up_note": "called, quoted 150"}` stamps `followed_up_by` / `followed_up_at`; `done -> open` is allowed; without `order_management.customers.edit` it is 403; an ask belonging to another customer is 404.
-- **AC-SA507 [BE][T]** `test_schema_uuid_id_principle.py` passes with no new exemption; the `list_query_registry` entry serializes the row.
-- **AC-SA508 [FE]** `CustomerDetail` always renders a "Stock asks" section: a DataGrid (fixed layout, resizable, explicit sizes, truncate + title) with Asked at (absolute), Product, Qty, Outcome pill, ETA told, Notified pill, Follow-up pill and a Mark done action that flips the row in place; `-` when there are no rows.
-- **AC-SA509 [E2E]** Sidebar to Order Management > Customers, open the customer used in the console check: the four console turns appear as four rows with the right outcomes; Mark done flips one; at 375px the grid scrolls horizontally without clipping the page.
-- **AC-SA510 [E2E] Live console check (end of lane only).** Per `documentation/agents/chatbot-verification.md`: console case file `tests/chatbot/console_cases/<date>-stock-ask-v2.yaml` with five turns (no quantity; too big; in stock; incoming with the +Y date; no incoming) against a dealer contact with the switch on, "Stock checks" off, "Notify salesman" on, on the shared dev stack; the salesman contact receives three lines; evidence recorded under `documentation/plans/chatbot/evidence/`.
+- **AC-SA501 [BE]** A live turn answering N products writes N `stock_asks` rows with `customer_id`, `contact_id`, `product_id`, `product_code`, `quantity`, `branch`, `answer_summary` (the exact line sent), `state = open`; dry run and console write none.
+- **AC-SA502 [BE]** At write: B3 `notified_agent = false`, `notify_skip_reason = not_notified_branch`; toggle off `toggle_off`. The S4 task sets `notified_agent = true` on success, or the skip / failure reason.
+- **AC-SA503 [BE]** A contact with no resolvable customer still gets a row with `customer_id` NULL and reason `no_customer`.
+- **AC-SA504 [BE]** The S4 `integration_log` row has `business_table = stock_asks`, `business_id = ask.id`.
+- **AC-SA505 [BE]** GET `/order-management/customers/{id}/asks`: newest first, paged, `contact_name` and `product_code`, no bare ids; 403 without `order_management.customers.view`; a user scoped to another company sees none.
+- **AC-SA506 [BE]** PATCH `/order-management/customers/{id}/asks/{ask_id}` `{state: done, note}` persists; `done -> open` allowed; 403 without `order_management.customers.edit`; ask of another customer 404; state outside open / done 422.
+- **AC-SA507 [BE][T]** `test_schema_uuid_id_principle.py` passes with no exemption; the `list_query_registry` entry serializes a row.
+- **AC-SA508 [FE]** `CustomerDetail` has line tabs "Details" (the existing two cards, unchanged) and "Asks".
+- **AC-SA509 [FE]** Asks tab: DataGrid fixed layout, resizable, explicit sizes, truncate + title; columns Asked at, Contact, Product, Qty, Branch (Badge), Answer, Notified (Badge, reason in title), State, Note; empty state when no rows.
+- **AC-SA510 [FE]** With `.edit`, State (required `SearchableSelect`) and Note are editable in place and save through the mutation hook (invalidate + toast); without `.edit` the same cells render read-only values.
+- **AC-SA511 [E2E]** Sidebar to Order Management > Customers, open the console-check customer, Asks tab: the S3 console turns appear with the right branches; set one to done with a note, reload: persisted. 375px and 1280px: no page clipping.
+- **AC-SA512 [BE]** Deleting a customer removes its asks (CASCADE).
+
+## S6 - Portal "Customer asks" page
+
+- **AC-SA601 [BE]** `sales_agent_for_contact` is the single agent resolution used by both `lookup_debtors_for_agent` and the new routes; the existing debtor lookup tests pass unchanged.
+- **AC-SA602 [BE]** GET `/public/portal/customer-asks` as an agent's linked contact lists asks whose customer's `sales_agent_id` is that agent, newest first, paged; asks of other agents' customers and of customer-less rows are absent.
+- **AC-SA603 [BE]** A portal contact with no linked agent gets 403 `NOT_A_SALES_AGENT` on GET and PATCH.
+- **AC-SA604 [BE]** PATCH `/public/portal/customer-asks/{ask_id}` `{state, note}` persists for an in-scope ask; an out-of-scope ask is 404; a bad state is 422.
+- **AC-SA605 [FE]** `CustomerAsksList` renders the portal DataGrid (PortalLanding list pattern) with Asked at, Customer, Contact, Product, Qty, Branch, Answer, Notified, State, Note; empty state; State and Note editable in place.
+- **AC-SA606 [FE]** The portal nav shows "Customer asks" only for a linked agent contact.
+- **AC-SA607 [E2E]** Log into the portal as the agent's contact, open Customer asks, mark the S5 row done: the CRM Asks tab shows the same state and note; 375px usable.
 
 ## Definition of Done for the lane
 
-- Every AC above green or explicitly re-ruled by the owner in this file's decision table (to be added at grill).
-- Both migrations chain onto main's single head (`./scripts/alembic-reparent.sh`), `alembic heads` shows one.
-- New permission swept (AC-SA108). New columns on every manual dict builder (AC-SA107, AC-SA202).
-- Reviewer + security-reviewer (the diff touches RBAC and an outbound send surface) + browser pass at 375px and 1280px, once per lane.
-- PR body names the track (full), the plan created timestamp, and this file.
+- Every AC green, or re-ruled by the owner in this file.
+- All four migrations chain onto main's single head (`./scripts/alembic-reparent.sh`), `alembic heads` shows one.
+- New columns on every manual dict builder (AC-SA108, AC-SA202); dropped column off both settings builders (AC-SA317).
+- Reviewer + security-reviewer (RBAC, outbound send, per-contact attachment release, portal scope) + browser pass at 375px and 1280px, once per lane.
+- PR body names the track (full), this file and the plan.
