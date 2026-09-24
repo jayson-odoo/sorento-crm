@@ -26,16 +26,11 @@
  * net-new in Phase 2), so it is mocked unconditionally behind the same flag -
  * there is nothing for the flag to choose between until Phase 2 exists.
  *
- * OPEN QUESTION FOR PHASE 2 (flagged, not decided here): the export popover's
- * "212 rows, 14 sheets" preview (AC-33) reads `pagination.total` for rows
- * (already on the envelope) and a `categories` array this mock ADDS to the
- * envelope for the sheet count under `split=category` / `split=supplier_category`.
- * The plan's backend contract (AC-6/AC-7) only commits to `totals` and
- * `suppliers`, not `categories` - Phase 2 needs to either add it, serve the
- * preview a different way (a cheap dedicated read), or the popover drops the
- * sheet count for those two splits and states rows only. `categories` is
- * typed OPTIONAL for exactly this reason: a Phase-2 envelope that omits it is
- * still a valid `StockDebtListResponse`.
+ * The export popover's "212 rows, 14 sheets" preview (AC-33) reads
+ * `pagination.total` for rows and the envelope's `sheet_counts` (AC-7b) for
+ * sheets - both already committed, whole-filtered-set fields, not a Phase-1
+ * add-on, so `previewStockDebtExport()` needs no branch of its own once Phase 2
+ * lands: it already reads the real shape.
  *
  * ── PHASE-2 BACKEND CONTRACT ────────────────────────────────────────────────
  * Both routes live under the `projects` domain router and both require
@@ -76,6 +71,9 @@
  *                        unlocated, total }   over the WHOLE filtered set (AC-6)
  *           suppliers: [{ id, name }]      distinct last suppliers of the
  *                                          filtered set, sorted by name (AC-7)
+ *           sheet_counts: { supplier, category, supplier_category }
+ *                                          exact export sheet counts for the current
+ *                                          filtered set, none-buckets included (AC-7b)
  *         }
  *
  *      `data[].months` carries one entry per axis key, in axis order. A month states its
@@ -94,9 +92,11 @@
  *      `product_name` is `null` when it equals `product_code`, case-sensitive and
  *      trimmed, so the board and the export agree without each re-deriving it (AC-9).
  *
- *      The axis fields, `totals` and `suppliers` are envelope-level and NOT per row,
- *      because each is a property of the whole filtered set: derived per page, the
- *      columns (or the footer, or the select) would change under the reader as they page.
+ *      The axis fields, `totals`, `suppliers` and `sheet_counts` are envelope-level and
+ *      NOT per row, because each is a property of the whole filtered set: derived per
+ *      page, the columns (or the footer, or the select, or the export preview) would
+ *      change under the reader as they page (AC-7b: page 2 states the same
+ *      `sheet_counts` as page 1).
  *
  * 2) The cell drill (AC-S2-7, R28) - UNCHANGED in this lane's Phase 1; Phase 2 adds
  *    `cutoff` and `book` (AC-11) so the drill foots with a narrowed board.
@@ -529,12 +529,30 @@ function mockStockDebtList(params: StockDebtListParams): StockDebtListResponse {
     groups: MOCK_GROUPS,
     totals,
     suppliers,
-    // See the header's "OPEN QUESTION FOR PHASE 2": not part of the plan's backend
-    // contract, added here only so the export preview has something to count sheets
-    // with. Optional on the type, so a real Phase-2 envelope without it still parses.
-    categories: Array.from(new Set(filtered.map((row) => row.category_code))).sort(
-      (a, b) => (a ?? '').localeCompare(b ?? ''),
-    ),
+    sheet_counts: mockSheetCounts(filtered),
+  };
+}
+
+/**
+ * The exact export sheet counts over the WHOLE filtered set (AC-7b) - none-buckets
+ * ("No supplier" / "No category") counted only when at least one row actually has none,
+ * and `supplier_category` counted as the distinct PAIRS present, not suppliers times
+ * categories (a pair with no row does not get a sheet).
+ */
+function mockSheetCounts(filtered: StockDebtRow[]): {
+  supplier: number;
+  category: number;
+  supplier_category: number;
+} {
+  const supplierKeys = new Set(filtered.map((row) => row.supplier_id ?? '__none__'));
+  const categoryKeys = new Set(filtered.map((row) => row.category_code ?? '__none__'));
+  const pairKeys = new Set(
+    filtered.map((row) => `${row.supplier_id ?? '__none__'}||${row.category_code ?? '__none__'}`),
+  );
+  return {
+    supplier: supplierKeys.size,
+    category: categoryKeys.size,
+    supplier_category: pairKeys.size,
   };
 }
 
@@ -555,14 +573,10 @@ function mockExportStockDebt(params: StockDebtExportParams): Promise<MyDownload>
 }
 
 /**
- * The export popover's best-effort preview (AC-33) - never a network call of its own (see
- * the header's open question). `envelope` is whatever the board already has loaded for the
- * CURRENT filters; `rows` is exact (`pagination.total` is already whole-set). `sheets` is
- * exact for `none`. For `supplier`, `suppliers.length` is a LOWER bound: the envelope names
- * every supplier that owns at least one row but says nothing about whether any row has NO
- * supplier at all, so a "No supplier" sheet the real export would add is not counted here.
- * For `category` / `supplier_category`, `sheets` is exact when the envelope carries the
- * mock-only `categories` field and otherwise falls back to 1 (unknown).
+ * The export popover's preview (AC-33) - never a network call of its own: both fields are
+ * already whole-filtered-set, envelope-level values (`pagination.total`, AC-6; `sheet_counts`,
+ * AC-7b), so reading them here is exact, not a guess - `split=none` is the only case not
+ * carried on the envelope, because it is always exactly one sheet.
  */
 export function previewStockDebtExport(
   envelope: StockDebtListResponse | undefined,
@@ -571,18 +585,15 @@ export function previewStockDebtExport(
   const rows = envelope?.pagination.total ?? 0;
   if (!envelope || rows === 0) return { rows: 0, sheets: 0 };
 
-  const supplierBuckets = Math.max(1, envelope.suppliers.length);
-  const categoryBuckets = envelope.categories ? Math.max(1, envelope.categories.length) : 1;
-
   switch (split) {
     case 'none':
       return { rows, sheets: 1 };
     case 'supplier':
-      return { rows, sheets: supplierBuckets };
+      return { rows, sheets: envelope.sheet_counts.supplier };
     case 'category':
-      return { rows, sheets: categoryBuckets };
+      return { rows, sheets: envelope.sheet_counts.category };
     case 'supplier_category':
-      return { rows, sheets: supplierBuckets * categoryBuckets };
+      return { rows, sheets: envelope.sheet_counts.supplier_category };
     default:
       return { rows, sheets: 1 };
   }

@@ -81,6 +81,18 @@ export interface StockDebtSupplierOption {
 /** Which span `book` narrows to (R1). `group` only narrows the `project` half. */
 export type StockDebtBook = 'all' | 'project' | 'retail';
 
+/**
+ * The exact sheet count an export of the current filtered set would produce, one entry
+ * per non-`none` `StockDebtExportSplit` (AC-7b). Computed server-side over the WHOLE
+ * filtered set, none-buckets ("No supplier" / "No category") included - so the export
+ * popover's preview (AC-33) never has to guess at a bucket it cannot see from a page.
+ */
+export interface StockDebtSheetCounts {
+  supplier: number;
+  category: number;
+  supplier_category: number;
+}
+
 /** The list envelope: the repo's standard `{data, pagination}` plus the column axis. */
 export interface StockDebtListResponse {
   data: StockDebtRow[];
@@ -101,15 +113,8 @@ export interface StockDebtListResponse {
   totals: StockDebtTotals;
   /** Distinct last suppliers of the filtered set, sorted by name, for the toolbar's select (AC-7). */
   suppliers: StockDebtSupplierOption[];
-  /**
-   * Distinct `category_code`s of the filtered set (`null` folded in once for "No category"),
-   * sorted. NOT part of the plan's committed backend contract (AC-6/AC-7 only promise
-   * `totals` and `suppliers`) - it exists so the Phase-1 export popover's sheet-count
-   * preview (AC-33) has something to count with for `split=category` /
-   * `split=supplier_category`. Optional so a Phase-2 envelope that omits it (because the
-   * captain chose a different mechanism for the preview) still satisfies this type.
-   */
-  categories?: (string | null)[];
+  /** The export popover's exact sheet counts for the current filtered set (AC-7b). */
+  sheet_counts: StockDebtSheetCounts;
 }
 
 /** How a demand line ended up in a cell (AC-S2-7). */

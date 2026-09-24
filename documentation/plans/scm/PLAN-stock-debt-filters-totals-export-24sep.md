@@ -31,7 +31,7 @@ that is the SECOND case and the trigger to lift the export splitter, not part of
 | One styled openpyxl sheet writer already shared by two workbooks | `summary_order_service.write_sheet:1589` |
 | `DataGridTable` renders a footer row when a column declares `footer` | `components/ui/data-grid-table.tsx:895-907` |
 | DataGrid has no cell selection of any kind | grep `components/ui/data-grid*.tsx`, 24 Sep |
-| Stock Debt appears in TWO menu trees: `MENU_SIDEBAR` under Supply Chain > Project Demand (`:238`) and `MENU_MEGA` (`:1892`). The Procurement > Supply Chain submenu (Reorder Planning, Loading Plan, Order Inquiries, Purchase Orders, Proforma Invoices) is at `:302-330` | `config/menu.config.tsx` |
+| Corrected 24 Sep (coder, Phase 1): Stock Debt appears in `MENU_SIDEBAR` (`:238`) and in the unmounted `MENU_SIDEBAR_COMPACT` (`:1892`); `MENU_MEGA` has no entry at all. Only `MENU_SIDEBAR` is rendered - `Demo1Layout` (the app's one mounted layout) reads it everywhere, and never renders the `MegaMenu`/`Demo6`/`Demo10` components the other two exports serve. The Procurement > Supply Chain submenu (Reorder Planning, Loading Plan, Order Inquiries, Purchase Orders, Proforma Invoices) is at `:302-330` | `config/menu.config.tsx`; `app/(protected)/layout.tsx`; `app/components/layouts/demo1/components/sidebar-menu.tsx` |
 
 ## Rulings (owner, 24 Sep 2026)
 
@@ -77,6 +77,7 @@ Envelope gains:
 - `totals`: `{ months: { "2026-09": -812.0, ... }, tba, undated, unlocated, total }` over the whole filtered set (A6).
 - Each row gains `total` (A5), `supplier_id`, `supplier_name`, `category_code`.
 - `suppliers: [{id, name}]` the distinct last suppliers of the filtered set, for the toolbar select (same reason `groups` rides here).
+- `sheet_counts: {supplier, category, supplier_category}` the exact export sheet counts for the current filtered set (none-buckets included), for the export popover's preview (AC-7b).
 
 `product_name` is returned as `None` when it equals `product_code` (R8, done once at the source so the export and the grid agree).
 
@@ -105,7 +106,7 @@ Cell drill (`/cell`) takes `cutoff` and `book` so the drill foots with the cell 
   - Selected cells get a ring (`ring-1 ring-primary`), tone class kept.
   - A floating summary bar at the bottom of the card while >= 2 cells are selected: `N cells · Sum · Avg · Min · Max`, tabular, signed. Copy button puts the selected values on the clipboard as tab-separated rows (paste into Excel).
 - `Export` primary button at the right of the toolbar (R12) opens a small popover: split radio (None / Supplier / Category / Supplier x Category), a one-line count ("212 rows, 14 sheets"), and an Export button. Calls the export route with the current filters; on 201 toasts "Export queued, find it in My Downloads" with the drawer link the low stock export uses; disabled while a request is in flight; error via non-sticky toast. The file is downloaded from My Downloads once the worker marks it ready.
-- Menu: move the Stock Debt entry in `MENU_SIDEBAR` and `MENU_MEGA` out of Project Demand into Procurement > Supply Chain, after Reorder Planning. Breadcrumb on the page follows the menu.
+- Menu: move the Stock Debt entry in `MENU_SIDEBAR` only (the tree `Demo1Layout` renders) out of Project Demand into Procurement > Supply Chain, after Reorder Planning. Breadcrumb on the page follows the menu.
 
 ### Phase order
 

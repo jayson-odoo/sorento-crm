@@ -12,6 +12,7 @@ Owner rulings: 24 Sep 2026 (R1-R13, two lavish rounds folded in)
 - AC-5 Every row carries `supplier_id`, `supplier_name`, `category_code`, `total`. `total` = sum of the row's `months[].balance` + `tba` + `undated` + `unlocated`.
 - AC-6 Envelope carries `totals` = per-month sum over EVERY row of the filtered set (not the page), plus `tba`, `undated`, `unlocated`, `total`. Page 2 returns the same `totals` as page 1.
 - AC-7 Envelope carries `suppliers` = distinct `{id, name}` of the filtered set's last suppliers, sorted by name.
+- AC-7b Envelope carries `sheet_counts` = `{supplier, category, supplier_category}` sheet counts an export of the current filtered set would produce, none-buckets included. Page 2 returns the same values as page 1.
 - AC-8 `book=all` (default) spans flagged project bins AND site pools: a line booked at a pool bin and a line booked at a project bin both appear on the same product row, and pool stock never covers the project line nor project stock the pool line (two lines, two bins, stock only at the pool bin: project line short, pool line covered). `book=project` reproduces today's view exactly. `book=retail` shows only pool-booked demand and pool supply; `group` is ignored under `retail`.
 - AC-9 `product_name` is `null` when it equals `product_code` (case-sensitive, trimmed).
 - AC-10 Every new field is declared on `StockDebtRow` / `StockDebtList` and asserted by name through the route (response_model drops undeclared fields).
@@ -58,7 +59,7 @@ Owner rulings: 24 Sep 2026 (R1-R13, two lavish rounds folded in)
 
 ## Menu
 
-- AC-36 Stock Debt is listed under Procurement > Supply Chain, after Reorder Planning, in both `MENU_SIDEBAR` and `MENU_MEGA`, with the same path and permission; it no longer appears under Supply Chain > Project Demand.
+- AC-36 Stock Debt is listed under Procurement > Supply Chain, after Reorder Planning, in `MENU_SIDEBAR` (the only tree `Demo1Layout` renders; `MENU_SIDEBAR_COMPACT` and `MENU_MEGA` are unmounted template code and are left untouched), with the same path and permission; it no longer appears under Supply Chain > Project Demand.
 - AC-37 Navigating from `/` by sidebar clicks (Procurement > Supply Chain > Stock Debt) lands on the page; breadcrumb reads Procurement > Supply Chain > Stock Debt.
 
 ## Layout

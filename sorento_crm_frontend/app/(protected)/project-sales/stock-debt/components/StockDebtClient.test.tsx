@@ -105,6 +105,7 @@ function envelope(rows: StockDebtRow[] = [row()]): StockDebtListResponse {
       total: rows.reduce((sum, r) => sum + r.total, 0),
     },
     suppliers: [],
+    sheet_counts: { supplier: 0, category: 0, supplier_category: 0 },
   };
 }
 
