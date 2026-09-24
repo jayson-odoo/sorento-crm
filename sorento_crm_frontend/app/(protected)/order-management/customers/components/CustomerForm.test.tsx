@@ -123,4 +123,39 @@ describe('CustomerForm - Sales agent', () => {
     expect(await screen.findByRole('option', { name: 'SEAN I - Sean Tan' })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: 'LCL' })).toBeInTheDocument();
   });
+
+  it('narrows the list when a search term is typed', async () => {
+    getCustomer.mockResolvedValue({ ...CUSTOMER });
+    render(<CustomerForm customerId="cust-1" />);
+
+    const combo = await screen.findByRole('combobox', { name: 'Sales Agent' });
+    fireEvent.click(combo);
+    await screen.findByRole('option', { name: 'LCL' });
+
+    fireEvent.change(screen.getByPlaceholderText(/search/i), { target: { value: 'LCL' } });
+
+    expect(screen.getByRole('option', { name: 'LCL' })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: 'SEAN I - Sean Tan' })).not.toBeInTheDocument();
+  });
+
+  it('shows a customer\'s current agent, once deactivated, as a disabled preselected option - never a blank', async () => {
+    // The active-agents select (AGENTS) no longer carries this id - the agent was
+    // deactivated after assignment - but the customer record still names it.
+    const customerWithRetiredAgent = {
+      ...CUSTOMER,
+      sales_agent_id: 'agent-retired',
+      sales_agent_code: 'RETIRED',
+      sales_agent_name: 'Old Agent',
+    };
+    getCustomer.mockResolvedValue(customerWithRetiredAgent);
+    render(<CustomerForm customerId="cust-1" />);
+
+    const combo = await screen.findByRole('combobox', { name: 'Sales Agent' });
+    // Not the placeholder ("No sales agent") - the assignment is still visible.
+    await waitFor(() => expect(combo).toHaveTextContent(/RETIRED.*Old Agent/));
+
+    fireEvent.click(combo);
+    const option = await screen.findByRole('option', { name: /RETIRED.*Old Agent/ });
+    expect(option).toHaveAttribute('aria-disabled', 'true');
+  });
 });
