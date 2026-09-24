@@ -190,7 +190,7 @@ describe('AC-RS-83 / 83b / 83c: the reserve icons live inside the State cell', (
     expect(screen.getByLabelText('Edit reserve')).toBeInTheDocument();
   });
 
-  it('AC-RS-83c: with the permission the State column is at least 380 wide, so a saved narrower width cannot clip the icons', () => {
+  it('AC-RS-83c: with the permission the State column starts at 380 wide with no minSize, so it can be narrowed back down', () => {
     const { result } = renderHook(() =>
       useOrderInquiryHeaderLinesColumns({ canReserve: true } as never),
     );
@@ -198,7 +198,7 @@ describe('AC-RS-83 / 83b / 83c: the reserve icons live inside the State cell', (
       (column) => (column as { accessorKey?: string }).accessorKey === 'state',
     ) as { size?: number; minSize?: number };
     expect(stateColumn.size).toBe(380);
-    expect(stateColumn.minSize).toBe(380);
+    expect(stateColumn.minSize).toBeUndefined();
   });
 
   it('without the permission: the pill only, no icons', () => {
