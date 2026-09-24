@@ -190,8 +190,15 @@ class TestTheDraftYieldsToWhatTheMessageNames:
         [
             pytest.param({"entities": [entity("SRTWC286")]}, None, id="current_message_entity"),
             pytest.param({"domain_in_message": True}, None, id="domain_in_message"),
+            # Fix round 2 (B1-r2): an ask naming a domain (e.g. "inventory") also moves
+            # `focus.domains` in `_focus_rules` (`elif asks: focus.domains = [...]`), so
+            # the focus guard at `apply.py:1056` rejected the turn first and the asks
+            # guard at `:1067-1071` was never reached - the round 1 case went green for
+            # the wrong reason. An empty `domain` is filtered out of that list
+            # (`if a.get("domain")`), so `focus.domains` stays `["ideate"]` and only the
+            # asks guard stands between this verdict and `ideate`.
             pytest.param(
-                {"asks": [{"domain": "inventory", "intent": "check_stock"}]},
+                {"asks": [{"domain": "", "intent": "check_stock"}]},
                 None,
                 id="asks_non_ideate",
             ),
@@ -216,8 +223,15 @@ class TestTheDraftYieldsToWhatTheMessageNames:
         hard-coded lane name - exactly what B1 asks for, regardless of which lane each
         guard's own verdict shape would otherwise reach.
 
-        Kill-tested (B1's own method): removing any one of the six guards this
-        parametrization exercises turns exactly its own case red and no other.
+        Kill-tested (B1's own method, N5 wording fix round 2): five of the six guards
+        isolate on the `clarification` id - removing that guard alone turns exactly
+        that one case red. The confirmation cases for `current_message_entity`,
+        `requested_attributes` and `intent_hint_other_domain` are baseline-equality
+        checks, not guard isolations: a `confirmation` verdict carrying an entity, a
+        requested attribute or an intent hint is never idle chat, so `_lane` never
+        sends it to the casual lane in the first place, and it reaches the no-draft
+        branch by the ordinary carried-focus path regardless of whether the guard in
+        `_continues_open_draft` is there at all.
         """
         v = verdict_factory(**overrides)
         with_draft, with_plan = _branch(_state(pending=pending), v)
