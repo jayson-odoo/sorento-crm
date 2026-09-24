@@ -190,16 +190,23 @@ function TranslationRow({
   );
 }
 
-/** Rough figures for the Confirm label - block counts, split by what each file classified
- *  as. A `combined` file's blocks mix both kinds (rare in practice, neither real fixture
- *  produces one), so it is counted toward both rather than not counted at all. */
+/** Rough figures for the Confirm label - block counts, split by each block's OWN `part`
+ *  (owner hand-test round, 24 Sep evening), not by the file's `kind`. A `combined` file's
+ *  `blocks` list mixes both kinds (DAFUYUAN: one PI block, one packing-list block) - the
+ *  old `f.kind === 'combined'` shortcut added the WHOLE block count to both counters, so
+ *  DAFUYUAN's own 1+1 read "2 invoices, 2 draft packing lists". A plain PI file's blocks
+ *  are all `proforma_invoice` and a plain packing list's all `packing_list`, so counting
+ *  by `part` alone gives the same totals those already had - `kind` no longer needs to be
+ *  read here at all. */
 function confirmCounts(preview: SupplierDocumentsPreview | null): { invoices: number; packingLists: number } {
   if (!preview) return { invoices: 0, packingLists: 0 };
   let invoices = 0;
   let packingLists = 0;
   for (const f of preview.files) {
-    if (f.kind === 'proforma_invoice' || f.kind === 'combined') invoices += f.blocks.length;
-    if (f.kind === 'packing_list' || f.kind === 'combined') packingLists += f.blocks.length;
+    for (const b of f.blocks) {
+      if (b.part === 'proforma_invoice') invoices += 1;
+      else if (b.part === 'packing_list') packingLists += 1;
+    }
   }
   return { invoices, packingLists };
 }

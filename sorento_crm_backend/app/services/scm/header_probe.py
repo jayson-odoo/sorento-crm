@@ -21,8 +21,8 @@ anything (AC-M2):
     (DAFUYUAN's `箱子 CTN SIZE (CM)` merged over `L (长)` / `W (宽)` / `H (高)`) - every
     column IN that merge, including the merge's own anchor column, is spliced with its own
     sub-header text instead: `箱子 CTN SIZE (CM) L (长)`. The row below that then holds the
-    header's true SECOND row, and every column's own two samples come from the row(s)
-    after THAT, never from the sub-header text itself.
+    header's true SECOND row, and every column's own sample comes from the row(s) after
+    THAT, never from the sub-header text itself.
 """
 from __future__ import annotations
 
@@ -90,7 +90,8 @@ class HeaderColumn:
     position: int
     #: The full header text, line breaks and all - never re-typed, never truncated.
     header: str
-    #: Up to two sample values, the first non-blank cells below the header (R5).
+    #: One sample value, the first non-blank cell below the header (owner override, 24 Sep
+    #: evening - was up to two, R5). List shape kept (length <= 1).
     samples: list[str] = field(default_factory=list)
 
 
@@ -185,6 +186,9 @@ def probe(file_data: bytes, header_row: Optional[int] = None) -> HeaderProbe:
         else:
             header_text = ""
 
+        # One sample per column (owner override, 24 Sep evening - was up to two, R5): the
+        # FIRST non-blank cell below the header, list shape kept (length <= 1) so a
+        # caller iterating `samples` needs no special case for "none on file yet".
         samples: list[str] = []
         for data_row in rows[data_start_idx:]:
             if pos >= len(data_row):
@@ -193,8 +197,7 @@ def probe(file_data: bytes, header_row: Optional[int] = None) -> HeaderProbe:
             if value is None:
                 continue
             samples.append(value)
-            if len(samples) >= 2:
-                break
+            break
 
         columns.append(HeaderColumn(position=pos, header=header_text, samples=samples))
 

@@ -32,7 +32,8 @@ export interface ImportMappingColumn {
   position: number;
   /** The full header text, line breaks and all - never re-typed, never truncated. */
   header: string;
-  /** Up to two sample values, first non-blank cells below the header (R5). */
+  /** One sample value, the first non-blank cell below the header (owner override, 24 Sep
+   *  evening - was up to two, R5). List shape kept (length <= 1). */
   samples: string[];
   /** The resolver's current answer for this header, or null when nothing on file resolves
    *  it yet. `IGNORE_FIELD` counts as a known answer (AC-M7), never as unresolved. */
@@ -245,10 +246,10 @@ export function ImportColumnMapper({
               </div>
               <div
                 className="order-2 min-w-0 truncate text-2xs text-muted-foreground sm:order-1"
-                title={c.samples.join(' · ')}
+                title={c.samples[0] ?? ''}
               >
-                {c.samples.length ? (
-                  c.samples.join(' · ')
+                {c.samples[0] !== undefined ? (
+                  c.samples[0]
                 ) : (
                   <span className="italic">no sample</span>
                 )}

@@ -19,7 +19,7 @@ automatically; the admin page lists what was saved, per supplier.
 
 - AC-M1 Uploading any of the four sample files finds the table header row without any
   alias configured (rows 14, 15, 15, 2) and lists every column with its full header text,
-  line breaks included, and up to two sample values from the first non-blank data cells.
+  line breaks included, and one sample value from the first non-blank data cell.
 - AC-M2 A column with no header text under a merged header is listed as `<parent> [n]`
   (`外箱/木托尺寸 [2]`); a second header row under a merged parent is spliced into the
   parent (`箱子 CTN SIZE (CM) L (长)`). Both are mappable and resolve on the next upload.

@@ -73,8 +73,7 @@ them in; they are the test fixtures).
   reserved field `ignore`.
 - R4 One shared `ImportColumnMapper` component, used by both dialogs, reusable by any
   later upload.
-- R5 Two sample values per column (first two non-blank data cells), since the first data
-  row often has that cell blank (DAFUYUAN `规格` row 16).
+- R5 (owner 24 Sep evening): one sample value per column, the first non-blank cell.
 
 ## Grill rulings (owner, 24 Sep 2026)
 

@@ -229,6 +229,13 @@ def _pi_blocks(
             lines.append({"item_code": ln.item_code, "matched": matched, **item})
         out.append(
             {
+                # Owner hand-test round, 24 Sep evening: a COMBINED file's own blocks mix
+                # both kinds, and nothing on a display block said which - only the private
+                # `_pi_match`/`_pl_match` internals knew - so the Confirm label's count
+                # (`confirmCounts` in the FE dialog) double-counted every combined block
+                # toward BOTH invoices and packing lists. Named here so the count can tell
+                # them apart the same way the reader itself already does.
+                "part": "proforma_invoice",
                 "container_no": d.container_no,
                 "seal_no": d.seal_no,
                 "cartons": (sum(ln.cartons for ln in d.lines if ln.cartons is not None) or None),
@@ -281,6 +288,7 @@ def _pl_blocks(
         ]
         out.append(
             {
+                "part": "packing_list",
                 "container_no": b.container_no,
                 "seal_no": b.seal_no,
                 "cartons": b.total_cartons,

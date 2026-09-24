@@ -1194,6 +1194,12 @@ export interface SupplierDocumentLinePreview {
 }
 
 export interface SupplierDocumentBlock {
+  /** Which reader produced this block (owner hand-test round, 24 Sep evening) - a
+   *  `combined` file's own `blocks` list mixes both kinds (one PI block, one packing-list
+   *  block), and nothing else on a display block said which; `confirmCounts` in the
+   *  upload dialog needs this to count "1 invoice, 1 draft packing list" instead of
+   *  double-counting every combined block toward both. */
+  part: 'proforma_invoice' | 'packing_list';
   container_no: string | null;
   seal_no: string | null;
   cartons: number | null;
