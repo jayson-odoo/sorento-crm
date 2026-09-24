@@ -1265,34 +1265,32 @@ async def cancel_order_inquiry_reserve_request(
 
 
 @router.post(
-    "/order-inquiries/{inquiry_id}/reserve-requests/{request_id}/commit",
-    response_model=OrderInquiryReserveRequestOut,
+    "/order-inquiries/{inquiry_id}/reserve-commit",
+    response_model=List[OrderInquiryReserveRequestOut],
 )
-async def commit_order_inquiry_reserve_request(
+async def commit_order_inquiry_reserve(
     inquiry_id: str,
-    request_id: str,
     payload: CommitReserveRequestIn,
     current_user: dict = Depends(require_permission(RESERVE)),
     db: Session = Depends(get_db),
 ):
     """Eling's own Confirm, staged on the Lines grid and committed ONE CLICK at a time
-    (`PLAN-oi-request-cs-reserve.md` section 6e.1, owner round 4, 24 Sep - supersedes
-    the per-row 6c F2/F5 routes this replaces). `reserves` answers still-open rows,
-    `amendments` revises already-answered ones (R4-3); one transaction, one
-    `order_inquiry_reserved` dispatch naming only the rows this call touched (R4-1).
-    `projects.order_inquiries.reserve` alone (R1) - not `ACKNOWLEDGE`, which is
-    purchasing's own grant to raise the request in the first place."""
+    (`PLAN-oi-request-cs-reserve.md` 6e.1, re-keyed by 6e.4). The body names order-
+    inquiry rows only; the service resolves each to its open (`reserves`) or latest
+    answered (`amendments`) request row inside THIS inquiry, so a line of a finished
+    request can be amended while another request is open. One transaction, one
+    `order_inquiry_reserved` dispatch per request touched. Returns the touched
+    requests. `projects.order_inquiries.reserve` alone (R1)."""
     try:
         validate_uuid_path(inquiry_id, resource="Order inquiry")
-        validate_uuid_path(request_id, resource="Reserve request")
-        request = OrderInquiryReserveService(db).commit_request(
-            request_id=request_id,
+        requests = OrderInquiryReserveService(db).commit_request(
+            inquiry_id=inquiry_id,
             reserves=[row.model_dump() for row in payload.reserves],
             amendments=[row.model_dump() for row in payload.amendments],
             actor_user_id=current_user["id"],
         )
         db.commit()
-        return _serialize_reserve_request(db, request)
+        return [_serialize_reserve_request(db, request) for request in requests]
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))

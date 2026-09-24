@@ -444,7 +444,8 @@ class OrderInquiryWorklistRow(BaseModel):
     line_cancelled: bool = False
     #: PLAN-oi-request-cs-reserve.md 3.5 (AC-RS-20): `requested` while an open reserve
     #: request row exists, `reserved` once something has actually been reserved (and no
-    #: open request), else null. Declared here because `response_model` silently drops a
+    #: open request), `declined` when the latest answer was 0 (6e.4, AC-RS-78c), else
+    #: null. Declared here because `response_model` silently drops a
     #: field it has not been told about.
     reserve_state: Optional[str] = None
     #: 3.4 (AC-RS-12): the sum of the row's reserve links - a THIRD figure beside
@@ -1367,9 +1368,10 @@ class CommitAmendRowIn(BaseModel):
 
 
 class CommitReserveRequestIn(BaseModel):
-    """`POST .../reserve-requests/{request_id}/commit` (6e.1): one transaction, one
-    dispatch, `reserves` for still-open rows and `amendments` for already-answered ones -
-    at least one entry across the two lists."""
+    """`POST .../order-inquiries/{inquiry_id}/reserve-commit` (6e.1, re-keyed by 6e.4):
+    one transaction, `reserves` for rows with an open request row and `amendments` for
+    rows already answered - at least one entry across the two lists. Duplicates are the
+    service's own 422 (`reserve_commit_duplicate_row`)."""
 
     reserves: List[CommitReserveRowIn] = []
     amendments: List[CommitAmendRowIn] = []

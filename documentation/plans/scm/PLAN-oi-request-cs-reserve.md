@@ -542,6 +542,23 @@ Backend `tests/test_order_inquiry_reserve_commit.py`: AC-RS-76..82. Frontend: AC
 `orderInquiryHeaderLinesColumns.test.tsx`, `OrderInquiryLinesTab.test.tsx`.
 
 
+### 6e.4 Review round (24 Sep, reviewer + security-reviewer on Opus): NOT READY, one fix round
+
+Rulings folded (captain):
+
+- **Route keyed by inquiry, rows resolved server-side.** `POST /api/v1/project-sales/order-inquiries/{inquiry_id}/reserve-commit` replaces `.../reserve-requests/{request_id}/commit`. `reserves[].row_id` resolves to the OI row's OPEN request row (unique by the partial index), `amendments[].row_id` to its LATEST answered request row, both within `inquiry_id` (404 otherwise). One transaction; one `order_inquiry_reserved` dispatch per REQUEST touched (normally one), each naming only its own touched rows. Reason: a line from a finished request is amended while another request is open (reviewer B2), and the URL's `inquiry_id` was validated then ignored (security S1).
+- **Amend-up cap** = `min(qty_requested, current_link_qty + live remaining of the row)`; 422 naming the row (reviewer B1 / security B2: links exceeded row qty with a PO covering the balance).
+- **Duplicate `row_id`** across `reserves + amendments` = 422 before any read; the reserve link insert keeps its IntegrityError -> 409 wrapper (security B1 / reviewer S3).
+- **Locks**: `with_for_update()` on the request(s) in commit and in `cancel_request`; row locks ordered by id (security S2 / reviewer S6).
+- **Cancel semantics** (security S3): cancel stays allowed on a partly answered request and withdraws only the still-open rows; answered rows keep their links and may still be amended (`amendments` accepted on a cancelled request, `reserves` 409).
+- **Declined lines**: a row whose latest answered request row has `qty_reserved = 0` reads `reserve_state = declined`; pill `Not reserved` (neutral), actions Amend + History, so the "0 -> up" path is reachable (reviewer S5). Reserve 0 writes a `reserved` event with qty 0 so History shows the decision (security N3).
+- **No-op amendment** (delta 0) is skipped: not touched, no event, no mail, reason untouched (security N2).
+- `_open_request_row_ids` gains `qty_reserved IS NULL` (reviewer S4); `_OPEN_REQUEST_QTY` takes `.limit(1)`.
+- `reserve_row` is deleted; `commit_request` owns validation through one shared validator; tests that called it move to `commit_request` (reviewer S9).
+- Frontend: amend prefill = the anchor request row's own qty, clamped to its requested (B3); form reason rule = `qty < requested`, in both modes (S1); the form renders after the pool options load so the prefill is never 0 (S2); a staged reserve without a warehouse is sent without one (server defaults) (S8); the action column only renders when the inquiry has an open request or a reserved / declined line, and its header carries no grip (nit); the State filter drops `Cancelled` and its empty state reads `No line matches the filter.`; `?reserve=` removal gets its own test (B5).
+- Measured while building (coder, 24 Sep): the events table's `ck_order_inquiry_reserve_events_qty_positive` was `qty > 0`, so the Reserve 0 event needed one migration, `oirs_0004_reserve_event_zero` (`qty >= 0`). There is no DB constraint behind "one open request row per line" (the parent state lives on another table); `create_request`'s `_open_request_row_ids` is the rule, and the readers take the newest open row.
+- Evidence rerun of the AC-RS-90 script in full (request three lines, follow the link, preselect shown); the Next dev "1 Issue" badge in two captures is explained or fixed; outbox rows are never sent from the lane (`ENABLE_SCHEDULER=false`, 0 sent, captain-verified 24 Sep).
+
 ## 7. Out of scope (recorded, not built)
 
 - AutoCount stock transfer creation / transfer number on the reserve row. Trigger: the FoundryX

@@ -120,9 +120,7 @@ ROW_HISTORY_URL = lambda request_id, row_id: (  # noqa: E731
 #: is retired (`test_order_inquiry_reserve_commit.py::test_AC_RS_79_...` pins the 404).
 #: Every test below that used to answer a row through it now goes through the commit
 #: route instead - the same underlying validation, batched.
-COMMIT_URL = lambda inquiry_id, request_id: (  # noqa: E731
-    f"{LIST}/{inquiry_id}/reserve-requests/{request_id}/commit"
-)
+COMMIT_URL = lambda inquiry_id: f"{LIST}/{inquiry_id}/reserve-commit"  # noqa: E731
 
 
 # --------------------------------------------------------------------------------- #
@@ -457,7 +455,7 @@ def test_second_request_after_reserved_allowed(api):
         .one()
     )
     reserve_resp = client.post(
-        COMMIT_URL(world.inquiry.id, request_id),
+        COMMIT_URL(world.inquiry.id),
         json={
             "reserves": [
                 {
@@ -538,12 +536,17 @@ def test_taken_remaining_include_reserved(worklist_api):
         .one()
     )
     reserver_id = _user(db, f"{WL_MARKER} reserver")
-    service.reserve_row(
-        request_id=request.id,
-        row_id=row.id,
-        warehouse_id=warehouse.id,
-        qty_reserved=Decimal("50"),
-        reason="BRW only has 50 in stock",
+    service.commit_request(
+        inquiry_id=inquiry.id,
+        reserves=[
+            {
+                "row_id": row.id,
+                "warehouse_id": warehouse.id,
+                "qty_reserved": Decimal("50"),
+                "reason": "BRW only has 50 in stock",
+            }
+        ],
+        amendments=[],
         actor_user_id=reserver_id,
     )
     db.commit()
@@ -647,12 +650,12 @@ def test_committed_v_owed_nets_reserved_link(handshake_world):
         .filter(OrderInquiryReserveRequestRow.request_id == request.id)
         .one()
     )
-    service.reserve_row(
-        request_id=request.id,
-        row_id=row.id,
-        warehouse_id=world.warehouse.id,
-        qty_reserved=Decimal("50"),
-        reason=None,
+    service.commit_request(
+        inquiry_id=row.order_inquiry_id,
+        reserves=[
+            {"row_id": row.id, "warehouse_id": world.warehouse.id, "qty_reserved": Decimal("50")}
+        ],
+        amendments=[],
         actor_user_id=world.cs_user,
     )
     db.commit()
@@ -1058,7 +1061,7 @@ def test_cancel_request_only_while_requested(api, monkeypatch):
         .one()
     )
     client.post(
-        COMMIT_URL(world.inquiry.id, request_b["id"]),
+        COMMIT_URL(world.inquiry.id),
         json={"reserves": [{"row_id": row_b.id, "warehouse_id": world.site.id, "qty_reserved": "20"}]},
     )
     world.db.commit()
@@ -1120,12 +1123,17 @@ def test_reserve_state_derived(worklist_api):
     # 40 remaining - the fixture this test's own next step needs to prove "reserved then
     # requested again reads requested" ON THE SAME ROW, rather than reaching for a fresh
     # one with nothing to do with the transition being pinned.
-    service.reserve_row(
-        request_id=request.id,
-        row_id=row.id,
-        warehouse_id=warehouse.id,
-        qty_reserved=Decimal("50"),
-        reason="BRW only has 50",
+    service.commit_request(
+        inquiry_id=inquiry.id,
+        reserves=[
+            {
+                "row_id": row.id,
+                "warehouse_id": warehouse.id,
+                "qty_reserved": Decimal("50"),
+                "reason": "BRW only has 50",
+            }
+        ],
+        amendments=[],
         actor_user_id=reserver_id,
     )
     db.commit()
@@ -1327,7 +1335,7 @@ def test_request_and_reserve_reject_bad_warehouse(api):
     world.db.commit()
 
     bad_reserve = client.post(
-        COMMIT_URL(world.inquiry.id, req["id"]),
+        COMMIT_URL(world.inquiry.id),
         json={
             "reserves": [
                 {"row_id": row_reserve.id, "warehouse_id": inactive.id, "qty_reserved": "50"}
@@ -1419,7 +1427,7 @@ def test_reserve_recheck_remaining_after_new_po_link(api):
     )
 
     over = client.post(
-        COMMIT_URL(world.inquiry.id, request["id"]),
+        COMMIT_URL(world.inquiry.id),
         json={"reserves": [{"row_id": row.id, "warehouse_id": world.site.id, "qty_reserved": "100"}]},
     )
     assert over.status_code == 422, over.text
@@ -1427,7 +1435,7 @@ def test_reserve_recheck_remaining_after_new_po_link(api):
     world.db.commit()
 
     ok = client.post(
-        COMMIT_URL(world.inquiry.id, request["id"]),
+        COMMIT_URL(world.inquiry.id),
         json={"reserves": [{"row_id": row.id, "warehouse_id": world.site.id, "qty_reserved": "40"}]},
     )
     assert ok.status_code == 200, ok.text
@@ -1471,7 +1479,7 @@ def test_body_ids_malformed_are_422(api):
     # rows in one call), so a malformed one is `CommitReserveRowIn.row_id`'s own
     # `pattern=UUID_PATTERN` field validator, 422, never a 500.
     bad_reserve = client.post(
-        COMMIT_URL(world.inquiry.id, created.json()["id"]),
+        COMMIT_URL(world.inquiry.id),
         json={
             "reserves": [
                 {"row_id": "not-a-uuid", "warehouse_id": world.site.id, "qty_reserved": "50"}
@@ -1534,7 +1542,7 @@ def test_note_and_reason_length_capped(api):
 
     too_long_reason = "y" * 2001
     resp_reason = client.post(
-        COMMIT_URL(world.inquiry.id, request["id"]),
+        COMMIT_URL(world.inquiry.id),
         json={
             "reserves": [
                 {
@@ -1550,7 +1558,7 @@ def test_note_and_reason_length_capped(api):
 
     ok_reason = "y" * 2000
     resp_reason_ok = client.post(
-        COMMIT_URL(world.inquiry.id, request["id"]),
+        COMMIT_URL(world.inquiry.id),
         json={
             "reserves": [
                 {
@@ -1596,7 +1604,7 @@ def test_po_ref_skips_reserve_link(api):
         .one()
     )
     reserve_resp = client.post(
-        COMMIT_URL(world.inquiry.id, request["id"]),
+        COMMIT_URL(world.inquiry.id),
         json={"reserves": [{"row_id": row.id, "warehouse_id": world.site.id, "qty_reserved": "50"}]},
     )
     assert reserve_resp.status_code == 200, reserve_resp.text

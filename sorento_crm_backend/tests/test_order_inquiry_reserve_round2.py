@@ -110,9 +110,7 @@ ROW_HISTORY_URL = lambda request_id, row_id: (  # noqa: E731
 #: Round 4 (`PLAN-oi-request-cs-reserve.md` 6e.1): every test below that used to answer
 #: a row through the (now retired, AC-RS-79) per-row `/reserve` route goes through the
 #: batched commit route instead.
-COMMIT_URL = lambda inquiry_id, request_id: (  # noqa: E731
-    f"{LIST}/{inquiry_id}/reserve-requests/{request_id}/commit"
-)
+COMMIT_URL = lambda inquiry_id: f"{LIST}/{inquiry_id}/reserve-commit"  # noqa: E731
 
 _UUID_RE = re.compile(
     r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE
@@ -302,7 +300,7 @@ def test_unlink_never_touches_a_reserve_link(reserve_api):
     world.db.commit()
     request_id = created.json()["id"]
     reserved = client.post(
-        COMMIT_URL(world.inquiry.id, request_id),
+        COMMIT_URL(world.inquiry.id),
         json={
             "reserves": [
                 {
@@ -380,7 +378,7 @@ def test_unplace_whole_row_with_no_link_id_skips_reserve_link_removes_po_link(re
     world.db.commit()
     request_id = created.json()["id"]
     reserved = client.post(
-        COMMIT_URL(world.inquiry.id, request_id),
+        COMMIT_URL(world.inquiry.id),
         json={
             "reserves": [
                 {
@@ -443,7 +441,7 @@ def test_reserve_row_history(reserve_api):
     request_id = created.json()["id"]
 
     reserved = client.post(
-        COMMIT_URL(world.inquiry.id, request_id),
+        COMMIT_URL(world.inquiry.id),
         json={
             "reserves": [
                 {
@@ -461,7 +459,7 @@ def test_reserve_row_history(reserve_api):
     # Round 4: "unreserve" is no longer its own action - a LOWER amendment (R4-3) writes
     # the equivalent `unreserved` event.
     unreserved = client.post(
-        COMMIT_URL(world.inquiry.id, request_id),
+        COMMIT_URL(world.inquiry.id),
         json={
             "amendments": [
                 {"row_id": row.id, "qty_reserved": "20", "reason": "transferred back"}
@@ -518,7 +516,7 @@ def test_reserve_row_history_spans_every_request_that_ever_touched_the_row(reser
     second_request_id = second.json()["id"]
 
     reserved = client.post(
-        COMMIT_URL(world.inquiry.id, second_request_id),
+        COMMIT_URL(world.inquiry.id),
         json={"reserves": [{"row_id": row.id, "warehouse_id": world.site.id, "qty_reserved": "50"}]},
     )
     assert reserved.status_code == 200, reserved.text
@@ -602,7 +600,11 @@ def _columns_of(db, table_name: str) -> set[str]:
 
 
 def test_round2_migration_creates_events_table_with_downgrade():
-    events_path = _find_migration_mentioning("order_inquiry_reserve_events")
+    # The CREATE statement itself, not the bare table name: `oirs_0004_reserve_event_zero`
+    # (6e.4) also names the table to relax its qty CHECK.
+    events_path = _find_migration_mentioning(
+        'CREATE TABLE IF NOT EXISTS "{projects}".order_inquiry_reserve_events'
+    )
     assert events_path is not None, (
         "no alembic migration creates projects.order_inquiry_reserve_events (plan 6c "
         "F3, AC-RS-60) - the coder must add one, either amending "
@@ -765,12 +767,17 @@ def test_reserve_row_lost_update_caught_by_unique_index_even_past_the_orm_guard(
     world.db.commit()
 
     with pytest.raises(AppException) as excinfo:
-        OrderInquiryReserveService(world.db).reserve_row(
-            request_id=request_id,
-            row_id=row.id,
-            warehouse_id=world.site.id,
-            qty_reserved="20",
-            reason="the group is short",
+        OrderInquiryReserveService(world.db).commit_request(
+            inquiry_id=world.inquiry.id,
+            reserves=[
+                {
+                    "row_id": row.id,
+                    "warehouse_id": world.site.id,
+                    "qty_reserved": "20",
+                    "reason": "the group is short",
+                }
+            ],
+            amendments=[],
             actor_user_id=world.reserver,
         )
     assert excinfo.value.status_code == 409, excinfo.value.message
@@ -826,7 +833,7 @@ def test_reserve_row_rejects_non_finite_qty(reserve_api, bad_qty):
     request_id = created.json()["id"]
 
     response = client.post(
-        COMMIT_URL(world.inquiry.id, request_id),
+        COMMIT_URL(world.inquiry.id),
         json={"reserves": [{"row_id": row.id, "warehouse_id": world.site.id, "qty_reserved": bad_qty}]},
     )
     assert response.status_code == 422, response.text
@@ -881,12 +888,12 @@ def _foreign_reserve_request(db):
         db.add(request_row)
         db.flush()
     db.commit()
-    return request.id, row.id
+    return request.id, row.id, inquiry.id
 
 
 def test_reserve_row_404_on_a_foreign_company_request_or_row(reserve_api):
     client, world = reserve_api
-    foreign_request_id, foreign_row_id = _foreign_reserve_request(world.db)
+    _foreign_request_id, foreign_row_id, foreign_inquiry_id = _foreign_reserve_request(world.db)
 
     own_row = _open_row(world, qty="10")
     own_created = client.post(
@@ -895,24 +902,31 @@ def test_reserve_row_404_on_a_foreign_company_request_or_row(reserve_api):
     )
     assert own_created.status_code == 201, own_created.text
     world.db.commit()
-    own_request_id = own_created.json()["id"]
 
-    wrong_request = client.post(
-        COMMIT_URL(world.inquiry.id, foreign_request_id),
+    # 6e.4: the route is keyed by inquiry - a foreign-company inquiry in the URL is 404
+    # even with the caller's own row in the body, and a foreign row under the caller's
+    # own inquiry is 404 too (AC-RS-77b).
+    wrong_inquiry = client.post(
+        COMMIT_URL(foreign_inquiry_id),
         json={"reserves": [{"row_id": own_row.id, "warehouse_id": world.site.id, "qty_reserved": "10"}]},
     )
-    assert wrong_request.status_code == 404, wrong_request.text
+    assert wrong_inquiry.status_code == 404, wrong_inquiry.text
 
     wrong_row = client.post(
-        COMMIT_URL(world.inquiry.id, own_request_id),
+        COMMIT_URL(world.inquiry.id),
         json={"reserves": [{"row_id": foreign_row_id, "warehouse_id": world.site.id, "qty_reserved": "10"}]},
     )
     assert wrong_row.status_code == 404, wrong_row.text
 
+    world.db.expire_all()
+    assert (
+        world.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == own_row.id).count() == 0
+    ), "a 404 must write nothing"
+
 
 def test_history_for_row_404_on_a_foreign_company_request_or_row(reserve_api):
     client, world = reserve_api
-    foreign_request_id, foreign_row_id = _foreign_reserve_request(world.db)
+    foreign_request_id, foreign_row_id, _foreign_inquiry_id = _foreign_reserve_request(world.db)
 
     own_row = _open_row(world, qty="10")
     own_created = client.post(

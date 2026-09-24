@@ -18,8 +18,9 @@ NAMED ASSUMPTIONS (per the tester's brief - the plan leaves several exact shapes
 and a test-first suite IS what pins them, same convention every reserve suite before
 this one uses):
 
-1. Route: `POST {LIST}/{inquiry_id}/reserve-requests/{request_id}/commit` (plan 6e.1's
-   own words), gated by `projects.order_inquiries.reserve` alone - the same grant the
+1. Route: `POST {LIST}/{inquiry_id}/reserve-commit` (plan 6e.4 re-keyed it from 6e.1's
+   request-keyed path: rows resolve server-side to their open / latest answered request
+   row inside `{inquiry_id}`), gated by `projects.order_inquiries.reserve` alone - the same grant the
    retired per-row `.../reserve` route used, never `ACKNOWLEDGE` (that stays purchasing's
    own grant to raise a request).
 2. Payload: `{ "reserves": [{row_id, warehouse_id, qty_reserved, reason}],
@@ -37,7 +38,7 @@ this one uses):
    (AC-RS-57's `test_reserve_one_row_endpoint_answers_row_by_row`, "no email until EVERY
    row of the request is answered").
 4. The service exposes ONE orchestration method for this, `OrderInquiryReserveService.
-   commit_request(request_id, reserves, amendments, actor_user_id)`, matching the
+   commit_request(inquiry_id, reserves, amendments, actor_user_id)`, matching the
    existing request-level naming family (`create_request`, `cancel_request`) rather than
    the row-level one (`reserve_row`, `unreserve_row`) - this call spans every row of ONE
    request in ONE transaction, the same shape `create_request` already has. Needed only
@@ -51,13 +52,16 @@ this one uses):
 """
 from __future__ import annotations
 
+import uuid
 from datetime import date
 from decimal import Decimal
 
+import pytest
 import sqlalchemy as sa
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 
+from app.models.base import company_scope
 from app.models.project_so import (
     INQUIRY_PARTLY_LINKED,
     INQUIRY_PLACED,
@@ -65,11 +69,14 @@ from app.models.project_so import (
     OrderInquiry,
     OrderInquiryLink,
     OrderInquiryReserveRequest,
+    OrderInquiryReserveRequestRow,
     OrderInquiryRow,
 )
+from app.services.error_handler import AppException
 
 from ._pg_fixture import blank_session
 from .test_order_inquiry_reserve import (
+    CANCEL_URL,
     REQUESTER_PERMISSIONS,
     REQUEST_URL,
     ROW_HISTORY_URL,
@@ -79,6 +86,7 @@ from .test_order_inquiry_reserve import (
     _captured_dispatches,
     _load_reserve_seed_migration,
     _open_row,
+    _pso,
     _register,
     _reserve_fixture_context,
     _reserved_calls,
@@ -86,8 +94,10 @@ from .test_order_inquiry_reserve import (
 )
 from .test_order_inquiry_worklist import (
     LIST,
+    _inquiry_for,
     MARKER as WL_MARKER,
     _line_on_authored_order,
+    _purchase_order,
     _row,
     _uid,
     _user,
@@ -97,9 +107,7 @@ from .test_planning_changes import _warehouse
 
 MARKER = "zzt-oi-reserve-commit"
 
-COMMIT_URL = lambda inquiry_id, request_id: (  # noqa: E731
-    f"{LIST}/{inquiry_id}/reserve-requests/{request_id}/commit"
-)
+COMMIT_URL = lambda inquiry_id: f"{LIST}/{inquiry_id}/reserve-commit"  # noqa: E731
 
 
 # --------------------------------------------------------------------------------- #
@@ -131,7 +139,7 @@ def test_AC_RS_76_commit_two_of_three_rows_one_dispatch(reserve_api, monkeypatch
     request_id = created.json()["id"]
 
     response = client.post(
-        COMMIT_URL(world.inquiry.id, request_id),
+        COMMIT_URL(world.inquiry.id),
         json={
             "reserves": [
                 {"row_id": row_a.id, "warehouse_id": world.site.id, "qty_reserved": "50"},
@@ -276,7 +284,7 @@ def test_AC_RS_76b_partial_commit_answered_row_reads_reserved(worklist_api):
 
     reserver_id = _user(db, f"{WL_MARKER} reserver3")
     service.commit_request(
-        request_id=request.id,
+        inquiry_id=inquiry.id,
         reserves=[{"row_id": row_a.id, "warehouse_id": warehouse.id, "qty_reserved": Decimal("50")}],
         amendments=[],
         actor_user_id=reserver_id,
@@ -321,7 +329,7 @@ def test_AC_RS_77_completes_conflict_404_422_and_atomicity(reserve_api):
     request_id = created.json()["id"]
 
     completed = client.post(
-        COMMIT_URL(world.inquiry.id, request_id),
+        COMMIT_URL(world.inquiry.id),
         json={"reserves": [{"row_id": row.id, "warehouse_id": world.site.id, "qty_reserved": "50"}]},
     )
     assert completed.status_code == 200, completed.text
@@ -341,7 +349,7 @@ def test_AC_RS_77_completes_conflict_404_422_and_atomicity(reserve_api):
 
     # Committing again with an already-answered row -> 409 naming it.
     again = client.post(
-        COMMIT_URL(world.inquiry.id, request_id),
+        COMMIT_URL(world.inquiry.id),
         json={"reserves": [{"row_id": row.id, "warehouse_id": world.site.id, "qty_reserved": "10"}]},
     )
     assert again.status_code == 409, again.text
@@ -349,15 +357,22 @@ def test_AC_RS_77_completes_conflict_404_422_and_atomicity(reserve_api):
         f"the 409 must NAME the offending row, not a generic message: {again.text}"
     )
 
-    # A row belonging to ANOTHER request -> 404.
-    other_row = _open_row(world, qty="10", item_code=f"{MARKER}-OTHER")
+    # A row of ANOTHER inquiry (same company) -> 404 (AC-RS-77b): the route is keyed by
+    # inquiry and resolves every row inside it, never a row of a sibling header.
+    other_inquiry = _inquiry_for(world.db, world.company_id, _pso(world.db, world.company_id))
+    world.db.commit()
+    other_row = _row(
+        world.db, world.company_id, other_inquiry, qty="10", item_code=f"{MARKER}-OTHER",
+        state=INQUIRY_RAISED, stock_location=world.site.warehouse_code,
+    )
+    world.db.commit()
     other_request = client.post(
-        REQUEST_URL(world.inquiry.id), json={"rows": [{"row_id": other_row.id, "qty_requested": "10"}]}
+        REQUEST_URL(other_inquiry.id), json={"rows": [{"row_id": other_row.id, "qty_requested": "10"}]}
     )
     assert other_request.status_code == 201, other_request.text
     world.db.commit()
     wrong = client.post(
-        COMMIT_URL(world.inquiry.id, request_id),
+        COMMIT_URL(world.inquiry.id),
         json={
             "reserves": [
                 {"row_id": other_row.id, "warehouse_id": world.site.id, "qty_reserved": "10"}
@@ -367,7 +382,7 @@ def test_AC_RS_77_completes_conflict_404_422_and_atomicity(reserve_api):
     assert wrong.status_code == 404, wrong.text
 
     # An empty payload is 422.
-    empty = client.post(COMMIT_URL(world.inquiry.id, request_id), json={})
+    empty = client.post(COMMIT_URL(world.inquiry.id), json={})
     assert empty.status_code == 422, empty.text
 
     # Atomicity: a short row without a reason in a batch of two leaves BOTH unwritten.
@@ -387,7 +402,7 @@ def test_AC_RS_77_completes_conflict_404_422_and_atomicity(reserve_api):
     batch_request_id = batch_request.json()["id"]
 
     batch = client.post(
-        COMMIT_URL(world.inquiry.id, batch_request_id),
+        COMMIT_URL(world.inquiry.id),
         json={
             "reserves": [
                 {"row_id": row_x.id, "warehouse_id": world.site.id, "qty_reserved": "50"},
@@ -445,7 +460,7 @@ def test_AC_RS_78_amendments_lower_raise_zero_reason_and_open_row_guard(reserve_
 
     # Initial reserve (full 50 of 50) via the commit route's own `reserves` list.
     first = client.post(
-        COMMIT_URL(world.inquiry.id, request_id),
+        COMMIT_URL(world.inquiry.id),
         json={
             "reserves": [
                 {"row_id": row.id, "warehouse_id": world.site.id, "qty_reserved": "50"}
@@ -490,7 +505,7 @@ def test_AC_RS_78_amendments_lower_raise_zero_reason_and_open_row_guard(reserve_
     # Lowering 50 -> 30 (short of requested 50): reason required, one unreserved
     # event of 20.
     lower = client.post(
-        COMMIT_URL(world.inquiry.id, request_id),
+        COMMIT_URL(world.inquiry.id),
         json={
             "amendments": [
                 {"row_id": row.id, "qty_reserved": "30", "reason": "transferred back"}
@@ -506,7 +521,7 @@ def test_AC_RS_78_amendments_lower_raise_zero_reason_and_open_row_guard(reserve_
     # Raising 30 -> 45 (<= requested 50, still short so a reason is required): one
     # reserved event of 15.
     raise_ = client.post(
-        COMMIT_URL(world.inquiry.id, request_id),
+        COMMIT_URL(world.inquiry.id),
         json={
             "amendments": [
                 {"row_id": row.id, "qty_reserved": "45", "reason": "more became available"}
@@ -521,7 +536,7 @@ def test_AC_RS_78_amendments_lower_raise_zero_reason_and_open_row_guard(reserve_
 
     # 0: deletes the link, writes one unreserved event of the net (45).
     zero = client.post(
-        COMMIT_URL(world.inquiry.id, request_id),
+        COMMIT_URL(world.inquiry.id),
         json={"amendments": [{"row_id": row.id, "qty_reserved": "0", "reason": "none left"}]},
     )
     assert zero.status_code == 200, zero.text
@@ -537,14 +552,14 @@ def test_AC_RS_78_amendments_lower_raise_zero_reason_and_open_row_guard(reserve_
 
     # Above qty_requested (50) is 422.
     above = client.post(
-        COMMIT_URL(world.inquiry.id, request_id),
+        COMMIT_URL(world.inquiry.id),
         json={"amendments": [{"row_id": row.id, "qty_reserved": "51"}]},
     )
     assert above.status_code == 422, above.text
 
     # Short of requested with no reason is 422.
     short_no_reason = client.post(
-        COMMIT_URL(world.inquiry.id, request_id),
+        COMMIT_URL(world.inquiry.id),
         json={"amendments": [{"row_id": row.id, "qty_reserved": "10"}]},
     )
     assert short_no_reason.status_code == 422, short_no_reason.text
@@ -557,12 +572,19 @@ def test_AC_RS_78_amendments_lower_raise_zero_reason_and_open_row_guard(reserve_
     )
     assert open_request.status_code == 201, open_request.text
     world.db.commit()
-    open_request_id = open_request.json()["id"]
+    # Reviewer B4: a reason is sent so the reason rule cannot be what rejects it - the
+    # open-row guard alone must, and the error code proves which rule fired.
     on_open = client.post(
-        COMMIT_URL(world.inquiry.id, open_request_id),
-        json={"amendments": [{"row_id": open_row.id, "qty_reserved": "5"}]},
+        COMMIT_URL(world.inquiry.id),
+        json={
+            "amendments": [
+                {"row_id": open_row.id, "qty_reserved": "5", "reason": "only 5 on hand"}
+            ]
+        },
     )
     assert on_open.status_code == 422, on_open.text
+    assert on_open.json()["code"] == "reserve_amend_not_reserved", on_open.text
+    assert open_row.item_code in on_open.text, on_open.text
 
     # Taken/Remaining follow - the worklist reader, the same field set AC-RS-12's own
     # `test_taken_remaining_include_reserved` reads (`reserved_qty`).
@@ -590,7 +612,7 @@ def test_AC_RS_79_permission_retired_routes_deferred_action_and_history(reserve_
     # 403 without the reserve permission.
     with _as(world.db, world.requester, REQUESTER_PERMISSIONS) as stranger:
         forbidden = stranger.post(
-            COMMIT_URL(world.inquiry.id, request_id),
+            COMMIT_URL(world.inquiry.id),
             json={
                 "reserves": [
                     {"row_id": row.id, "warehouse_id": world.site.id, "qty_reserved": "50"}
@@ -616,11 +638,25 @@ def test_AC_RS_79_permission_retired_routes_deferred_action_and_history(reserve_
         "6e.1: the per-row unreserve deferred action is removed with the retired route"
     )
 
-    # History still lists events, newest first.
+    # History still lists requested / reserved / unreserved / cancelled, newest first.
+    reserved = client.post(
+        COMMIT_URL(world.inquiry.id),
+        json={"reserves": [{"row_id": row.id, "warehouse_id": world.site.id, "qty_reserved": "50"}]},
+    )
+    assert reserved.status_code == 200, reserved.text
+    world.db.commit()
+    lowered = client.post(
+        COMMIT_URL(world.inquiry.id),
+        json={"amendments": [{"row_id": row.id, "qty_reserved": "40", "reason": "10 went back"}]},
+    )
+    assert lowered.status_code == 200, lowered.text
+    world.db.commit()
     history = client.get(ROW_HISTORY_URL(request_id, row.id))
     assert history.status_code == 200, history.text
     kinds = [entry["kind"] for entry in history.json()]
-    assert "requested" in kinds, history.json()
+    assert kinds == ["unreserved", "reserved", "requested"], history.json()
+    qtys = [entry["qty"] for entry in history.json()]
+    assert qtys == ["10", "50", "50"], history.json()
 
 
 # --------------------------------------------------------------------------------- #
@@ -692,7 +728,7 @@ def test_AC_RS_81_two_sequential_commits_send_two_mails_each_own_rows(reserve_ap
     request_id = created.json()["id"]
 
     first = client.post(
-        COMMIT_URL(world.inquiry.id, request_id),
+        COMMIT_URL(world.inquiry.id),
         json={
             "reserves": [
                 {"row_id": row_a.id, "warehouse_id": world.site.id, "qty_reserved": "50"}
@@ -704,11 +740,12 @@ def test_AC_RS_81_two_sequential_commits_send_two_mails_each_own_rows(reserve_ap
 
     first_matches = _reserved_calls(calls)
     assert len(first_matches) == 1, first_matches
+    assert first_matches[0]["source_id"] == request_id, first_matches
     first_rows = first_matches[0]["context"]["reserve"]["rows"]
     assert {r["item_code"] for r in first_rows} == {row_a.item_code}, first_rows
 
     second = client.post(
-        COMMIT_URL(world.inquiry.id, request_id),
+        COMMIT_URL(world.inquiry.id),
         json={
             "reserves": [
                 {"row_id": row_b.id, "warehouse_id": world.site.id, "qty_reserved": "30"}
@@ -747,7 +784,7 @@ def test_AC_RS_82_rollback_dispatches_nothing(reserve_api, monkeypatch):
     savepoint = world.db.begin_nested()
     service = OrderInquiryReserveService(world.db)
     service.commit_request(
-        request_id=request_id,
+        inquiry_id=world.inquiry.id,
         reserves=[{"row_id": row.id, "warehouse_id": world.site.id, "qty_reserved": "50"}],
         amendments=[],
         actor_user_id=world.reserver,
@@ -770,3 +807,453 @@ def test_AC_RS_82_rollback_dispatches_nothing(reserve_api, monkeypatch):
         .one()
     )
     assert rr.qty_reserved is None, "the rolled-back reserve must not exist either"
+
+
+# --------------------------------------------------------------------------------- #
+# Review round (plan 6e.4): AC-RS-76c, 77b, 78b, 78c, 79b and the coverage the       #
+# retired `reserve_row` tests carried                                                #
+# --------------------------------------------------------------------------------- #
+
+
+def _request(client, world, *rows):
+    """`rows` = `(row, qty_requested)` pairs; returns the request id."""
+    created = client.post(
+        REQUEST_URL(world.inquiry.id),
+        json={"rows": [{"row_id": row.id, "qty_requested": qty} for row, qty in rows]},
+    )
+    assert created.status_code == 201, created.text
+    world.db.commit()
+    return created.json()["id"]
+
+
+def _rr(world, request_id, row):
+    world.db.expire_all()
+    return (
+        world.db.query(OrderInquiryReserveRequestRow)
+        .filter(
+            OrderInquiryReserveRequestRow.request_id == request_id,
+            OrderInquiryReserveRequestRow.row_id == row.id,
+        )
+        .one()
+    )
+
+
+def _events(world, rr_id):
+    return world.db.execute(
+        sa.text(
+            "SELECT kind, qty FROM order_inquiry_reserve_events "
+            "WHERE reserve_request_row_id = :rr ORDER BY created_at"
+        ),
+        {"rr": rr_id},
+    ).all()
+
+
+def test_AC_RS_76c_duplicate_row_is_422_before_any_read(reserve_api):
+    client, world = reserve_api
+    # Ids that name NO row at all: a 404 would prove the service read before refusing.
+    ghost = str(uuid.uuid4())
+
+    twice_in_reserves = client.post(
+        COMMIT_URL(world.inquiry.id),
+        json={
+            "reserves": [
+                {"row_id": ghost, "qty_reserved": "1"},
+                {"row_id": ghost, "qty_reserved": "2"},
+            ]
+        },
+    )
+    assert twice_in_reserves.status_code == 422, twice_in_reserves.text
+    assert twice_in_reserves.json()["code"] == "reserve_commit_duplicate_row", twice_in_reserves.text
+
+    in_both_lists = client.post(
+        COMMIT_URL(world.inquiry.id),
+        json={
+            "reserves": [{"row_id": ghost, "qty_reserved": "1"}],
+            "amendments": [{"row_id": ghost, "qty_reserved": "1"}],
+        },
+    )
+    assert in_both_lists.status_code == 422, in_both_lists.text
+    assert in_both_lists.json()["code"] == "reserve_commit_duplicate_row", in_both_lists.text
+
+
+def test_AC_RS_77b_row_resolution_404_409_422(reserve_api):
+    from .test_order_inquiry_reserve_round2 import _foreign_reserve_request
+
+    client, world = reserve_api
+    _foreign_request_id, foreign_row_id, foreign_inquiry_id = _foreign_reserve_request(world.db)
+
+    row = _open_row(world, qty="20", item_code=f"{MARKER}-RESOLVE")
+    _request(client, world, (row, "20"))
+
+    # A foreign-company inquiry in the URL: 404, nothing written.
+    foreign_inquiry = client.post(
+        COMMIT_URL(foreign_inquiry_id),
+        json={"reserves": [{"row_id": row.id, "qty_reserved": "20"}]},
+    )
+    assert foreign_inquiry.status_code == 404, foreign_inquiry.text
+
+    # A foreign-company row under the caller's own inquiry: 404.
+    foreign_row = client.post(
+        COMMIT_URL(world.inquiry.id),
+        json={"reserves": [{"row_id": foreign_row_id, "qty_reserved": "10"}]},
+    )
+    assert foreign_row.status_code == 404, foreign_row.text
+
+    # `reserves` on a row nobody ever requested: no open request row, 409 naming it.
+    never_requested = _open_row(world, qty="20", item_code=f"{MARKER}-NEVER")
+    no_open = client.post(
+        COMMIT_URL(world.inquiry.id),
+        json={"reserves": [{"row_id": never_requested.id, "qty_reserved": "20"}]},
+    )
+    assert no_open.status_code == 409, no_open.text
+    assert never_requested.item_code in no_open.text, no_open.text
+
+    # `amendments` on a row with no answered request row: 422 naming it.
+    no_answer = client.post(
+        COMMIT_URL(world.inquiry.id),
+        json={"amendments": [{"row_id": never_requested.id, "qty_reserved": "5", "reason": "x"}]},
+    )
+    assert no_answer.status_code == 422, no_answer.text
+    assert no_answer.json()["code"] == "reserve_amend_not_reserved", no_answer.text
+    assert never_requested.item_code in no_answer.text, no_answer.text
+
+    world.db.expire_all()
+    assert (
+        world.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row.id).count() == 0
+    ), "every refusal above must write nothing"
+
+
+def test_AC_RS_78b_amend_up_cap_declined_row_and_no_op(reserve_api, monkeypatch):
+    client, world = reserve_api
+    _register()
+    calls = _captured_dispatches(monkeypatch)
+
+    # Row qty 100, requested in full, reserved 10; a PO link then covers 80 more, so the
+    # row's live remaining is 10 and the amend-up cap is 10 + 10 = 20.
+    row = _open_row(world, qty="100", item_code=f"{MARKER}-CAP")
+    request_id = _request(client, world, (row, "100"))
+    first = client.post(
+        COMMIT_URL(world.inquiry.id),
+        json={"reserves": [{"row_id": row.id, "qty_reserved": "10", "reason": "BRW has 10"}]},
+    )
+    assert first.status_code == 200, first.text
+    world.db.commit()
+    po_line = _purchase_order(world.db, world.company_id)["line"]
+    world.db.add(
+        OrderInquiryLink(
+            id=_uid(), company_id=world.company_id, row_id=row.id,
+            po_line_id=po_line.id, document="ZZT-PO-80", qty=Decimal("80"),
+        )
+    )
+    world.db.commit()
+
+    over = client.post(
+        COMMIT_URL(world.inquiry.id),
+        json={"amendments": [{"row_id": row.id, "qty_reserved": "100"}]},
+    )
+    assert over.status_code == 422, over.text
+    assert over.json()["code"] == "reserve_amend_qty_out_of_range", over.text
+    assert row.item_code in over.text and "20" in over.text, over.text
+
+    up_to_cap = client.post(
+        COMMIT_URL(world.inquiry.id),
+        json={"amendments": [{"row_id": row.id, "qty_reserved": "20", "reason": "10 more found"}]},
+    )
+    assert up_to_cap.status_code == 200, up_to_cap.text
+    world.db.commit()
+    rr = _rr(world, request_id, row)
+    link = (
+        world.db.query(OrderInquiryLink)
+        .filter(OrderInquiryLink.reserve_request_row_id == rr.id)
+        .one()
+    )
+    assert link.qty == Decimal("20"), link.qty
+    total = (
+        world.db.query(sa.func.sum(OrderInquiryLink.qty))
+        .filter(OrderInquiryLink.row_id == row.id)
+        .scalar()
+    )
+    assert Decimal(str(total)) == Decimal("100"), "links never exceed the row's own qty"
+
+    # No-op: the same qty again touches nothing - no event, no mail, reason untouched.
+    events_before = len(_events(world, rr.id))
+    calls.clear()
+    no_op = client.post(
+        COMMIT_URL(world.inquiry.id),
+        json={"amendments": [{"row_id": row.id, "qty_reserved": "20", "reason": "changed my mind"}]},
+    )
+    assert no_op.status_code == 200, no_op.text
+    world.db.commit()
+    rr = _rr(world, request_id, row)
+    assert len(_events(world, rr.id)) == events_before, _events(world, rr.id)
+    assert rr.reason == "10 more found", rr.reason
+    assert _reserved_calls(calls) == [], "a no-op amendment sends no mail"
+
+    # A declined row (Reserve 0) amended up to 15 re-creates the link and writes a
+    # `reserved` event of 15.
+    declined = _open_row(world, qty="50", item_code=f"{MARKER}-DECL")
+    declined_request_id = _request(client, world, (declined, "50"))
+    zero = client.post(
+        COMMIT_URL(world.inquiry.id),
+        json={"reserves": [{"row_id": declined.id, "qty_reserved": "0", "reason": "none on hand"}]},
+    )
+    assert zero.status_code == 200, zero.text
+    world.db.commit()
+    up = client.post(
+        COMMIT_URL(world.inquiry.id),
+        json={"amendments": [{"row_id": declined.id, "qty_reserved": "15", "reason": "15 came in"}]},
+    )
+    assert up.status_code == 200, up.text
+    world.db.commit()
+    declined_rr = _rr(world, declined_request_id, declined)
+    assert declined_rr.qty_reserved == Decimal("15")
+    declined_link = (
+        world.db.query(OrderInquiryLink)
+        .filter(OrderInquiryLink.reserve_request_row_id == declined_rr.id)
+        .one()
+    )
+    assert declined_link.qty == Decimal("15")
+    assert [(kind, Decimal(str(qty))) for kind, qty in _events(world, declined_rr.id)] == [
+        ("reserved", Decimal("0")),
+        ("reserved", Decimal("15")),
+    ]
+
+
+def test_AC_RS_78c_declined_state_and_reserve_zero_event(worklist_api):
+    client, db, company_id, seeded = worklist_api
+    inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)
+    line = _line_on_authored_order(db, company_id, seeded, qty="40", day=11)
+    row = _row(
+        db, company_id, inquiry, so_line_id=line.id, item_code=f"{WL_MARKER}-DECLINED",
+        qty="40", state=INQUIRY_RAISED, delivery_date=date(2026, 4, 11),
+    )
+    db.commit()
+    warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}".upper())
+    from app.services.order_inquiry_reserve_service import OrderInquiryReserveService
+
+    service = OrderInquiryReserveService(db)
+    requester_id = _user(db, f"{WL_MARKER} requester-decl")
+    request = service.create_request(
+        inquiry_id=inquiry.id,
+        rows=[{"row_id": row.id, "qty_requested": Decimal("40"), "warehouse_id": warehouse.id}],
+        note=None,
+        actor_user_id=requester_id,
+    )
+    db.commit()
+    service.commit_request(
+        inquiry_id=inquiry.id,
+        reserves=[{"row_id": row.id, "qty_reserved": "0", "reason": "nothing on hand"}],
+        amendments=[],
+        actor_user_id=_user(db, f"{WL_MARKER} reserver-decl"),
+    )
+    db.commit()
+
+    rr = (
+        db.query(OrderInquiryReserveRequestRow)
+        .filter(OrderInquiryReserveRequestRow.request_id == request.id)
+        .one()
+    )
+    events = db.execute(
+        sa.text(
+            "SELECT kind, qty FROM order_inquiry_reserve_events WHERE reserve_request_row_id = :rr"
+        ),
+        {"rr": rr.id},
+    ).all()
+    assert [(kind, Decimal(str(qty))) for kind, qty in events] == [("reserved", Decimal("0"))], (
+        f"Reserve 0 writes one `reserved` event of 0 so History shows the decision: {events}"
+    )
+
+    body = client.get(LIST, params={"delivery_month": "2026-04"}).json()
+    entry = next(e for e in body["data"] if e["id"] == row.id)
+    assert entry["reserve_state"] == "declined", entry
+
+    # An open request row still wins over the declined answer.
+    service.create_request(
+        inquiry_id=inquiry.id,
+        rows=[{"row_id": row.id, "qty_requested": Decimal("40"), "warehouse_id": warehouse.id}],
+        note=None,
+        actor_user_id=requester_id,
+    )
+    db.commit()
+    body = client.get(LIST, params={"delivery_month": "2026-04"}).json()
+    entry = next(e for e in body["data"] if e["id"] == row.id)
+    assert entry["reserve_state"] == "requested", entry
+
+
+def test_AC_RS_79b_cancel_partly_answered_two_requests_and_rerequest(reserve_api, monkeypatch):
+    client, world = reserve_api
+    _register()
+    calls = _captured_dispatches(monkeypatch)
+
+    # Cancel a partly answered request: open rows withdrawn, answered rows keep links.
+    row_a = _open_row(world, qty="50", item_code=f"{MARKER}-CXA")
+    row_b = _open_row(world, qty="30", item_code=f"{MARKER}-CXB")
+    request_id = _request(client, world, (row_a, "50"), (row_b, "30"))
+    answered = client.post(
+        COMMIT_URL(world.inquiry.id),
+        json={"reserves": [{"row_id": row_a.id, "qty_reserved": "50"}]},
+    )
+    assert answered.status_code == 200, answered.text
+    world.db.commit()
+    cancelled = client.post(CANCEL_URL(request_id))
+    assert cancelled.status_code == 200, cancelled.text
+    world.db.commit()
+    world.db.expire_all()
+    assert (
+        world.db.query(OrderInquiryReserveRequest)
+        .filter(OrderInquiryReserveRequest.id == request_id)
+        .one()
+        .state
+        == "cancelled"
+    )
+    assert _rr(world, request_id, row_b).qty_reserved is None
+    rr_a = _rr(world, request_id, row_a)
+    assert (
+        world.db.query(OrderInquiryLink)
+        .filter(OrderInquiryLink.reserve_request_row_id == rr_a.id)
+        .count()
+        == 1
+    ), "the answered row keeps its link through the cancel"
+
+    amend_after_cancel = client.post(
+        COMMIT_URL(world.inquiry.id),
+        json={"amendments": [{"row_id": row_a.id, "qty_reserved": "40", "reason": "10 back"}]},
+    )
+    assert amend_after_cancel.status_code == 200, amend_after_cancel.text
+    world.db.commit()
+    assert _rr(world, request_id, row_a).qty_reserved == Decimal("40")
+
+    reserve_after_cancel = client.post(
+        COMMIT_URL(world.inquiry.id),
+        json={"reserves": [{"row_id": row_b.id, "qty_reserved": "30"}]},
+    )
+    assert reserve_after_cancel.status_code == 409, reserve_after_cancel.text
+    assert row_b.item_code in reserve_after_cancel.text, reserve_after_cancel.text
+
+    # One commit touching rows of TWO open requests: one dispatch per request, each
+    # naming its own rows only.
+    row_c = _open_row(world, qty="10", item_code=f"{MARKER}-TWOC")
+    row_d = _open_row(world, qty="10", item_code=f"{MARKER}-TWOD")
+    request_c = _request(client, world, (row_c, "10"))
+    request_d = _request(client, world, (row_d, "10"))
+    calls.clear()
+    both = client.post(
+        COMMIT_URL(world.inquiry.id),
+        json={
+            "reserves": [
+                {"row_id": row_c.id, "qty_reserved": "10"},
+                {"row_id": row_d.id, "qty_reserved": "10"},
+            ]
+        },
+    )
+    assert both.status_code == 200, both.text
+    world.db.commit()
+    matches = _reserved_calls(calls)
+    assert len(matches) == 2, matches
+    by_source = {m["source_id"]: {r["item_code"] for r in m["context"]["reserve"]["rows"]} for m in matches}
+    assert by_source == {request_c: {row_c.item_code}, request_d: {row_d.item_code}}, by_source
+
+    # Re-requesting the balance of a row answered inside a STILL-OPEN request.
+    row_e = _open_row(world, qty="50", item_code=f"{MARKER}-REQE")
+    row_f = _open_row(world, qty="50", item_code=f"{MARKER}-REQF")
+    _request(client, world, (row_e, "50"), (row_f, "50"))
+    partial = client.post(
+        COMMIT_URL(world.inquiry.id),
+        json={"reserves": [{"row_id": row_e.id, "qty_reserved": "20", "reason": "20 only"}]},
+    )
+    assert partial.status_code == 200, partial.text
+    world.db.commit()
+    again = client.post(
+        REQUEST_URL(world.inquiry.id), json={"rows": [{"row_id": row_e.id, "qty_requested": "30"}]}
+    )
+    assert again.status_code == 201, again.text
+    world.db.commit()
+    ordinals = [
+        r.ordinal
+        for r in world.db.query(OrderInquiryReserveRequest)
+        .filter(OrderInquiryReserveRequest.order_inquiry_id == world.inquiry.id)
+        .all()
+    ]
+    assert again.json()["ordinal"] == max(ordinals), (again.json(), ordinals)
+
+    # `reserves` on row_e now resolves to the NEW request's open row.
+    second_answer = client.post(
+        COMMIT_URL(world.inquiry.id),
+        json={"reserves": [{"row_id": row_e.id, "qty_reserved": "30"}]},
+    )
+    assert second_answer.status_code == 200, second_answer.text
+    world.db.commit()
+    assert _rr(world, again.json()["id"], row_e).qty_reserved == Decimal("30")
+
+
+def test_commit_reserve_validation_carried_from_reserve_row(reserve_api):
+    """The coverage the retired per-row `reserve_row` tests carried (6e.4, reviewer S9):
+    over requested, foreign / inactive warehouse, non-finite qty reaching the service
+    directly, Reserve 0, history newest first."""
+    from app.models.company import Company
+    from app.models.inventory import Warehouse
+
+    client, world = reserve_api
+    row = _open_row(world, qty="100", item_code=f"{MARKER}-VALID")
+    request_id = _request(client, world, (row, "50"))
+
+    over_requested = client.post(
+        COMMIT_URL(world.inquiry.id),
+        json={"reserves": [{"row_id": row.id, "qty_reserved": "60"}]},
+    )
+    assert over_requested.status_code == 422, over_requested.text
+    assert over_requested.json()["code"] == "reserve_qty_out_of_range", over_requested.text
+
+    inactive = _warehouse(world.db, f"ZZT-{_uid()[:6]}".upper())
+    inactive.is_active = False
+    other_company_id = _uid()
+    with company_scope(world.db, None):
+        world.db.add(Company(id=other_company_id, name=f"{MARKER} Other", code=f"ZZ{_uid()[:6]}"))
+        world.db.flush()
+        foreign_wh = Warehouse(
+            id=_uid(), company_id=other_company_id, warehouse_code=f"ZZT{_uid()[:6]}",
+            warehouse_name=f"{MARKER} foreign", is_active=True,
+        )
+        world.db.add(foreign_wh)
+        world.db.flush()
+    world.db.commit()
+    for warehouse_id in (inactive.id, foreign_wh.id):
+        bad = client.post(
+            COMMIT_URL(world.inquiry.id),
+            json={"reserves": [{"row_id": row.id, "warehouse_id": warehouse_id, "qty_reserved": "50"}]},
+        )
+        assert bad.status_code == 422, bad.text
+        assert bad.json()["code"] == "reserve_bad_warehouse", bad.text
+
+    from app.services.order_inquiry_reserve_service import OrderInquiryReserveService
+
+    for bad_qty in ("nan", "inf", "abc"):
+        with pytest.raises(AppException) as excinfo:
+            OrderInquiryReserveService(world.db).commit_request(
+                inquiry_id=world.inquiry.id,
+                reserves=[{"row_id": row.id, "qty_reserved": bad_qty, "reason": "x"}],
+                amendments=[],
+                actor_user_id=world.reserver,
+            )
+        assert excinfo.value.status_code == 422, excinfo.value.message
+        world.db.rollback()
+
+    zero = client.post(
+        COMMIT_URL(world.inquiry.id),
+        json={"reserves": [{"row_id": row.id, "qty_reserved": "0", "reason": "none on hand"}]},
+    )
+    assert zero.status_code == 200, zero.text
+    world.db.commit()
+    rr = _rr(world, request_id, row)
+    assert rr.qty_reserved == Decimal("0")
+    assert (
+        world.db.query(OrderInquiryLink).filter(OrderInquiryLink.reserve_request_row_id == rr.id).count()
+        == 0
+    ), "Reserve 0 writes no link"
+
+    history = client.get(ROW_HISTORY_URL(request_id, row.id))
+    assert history.status_code == 200, history.text
+    assert [(e["kind"], e["qty"]) for e in history.json()] == [
+        ("reserved", "0"),
+        ("requested", "50"),
+    ], history.json()

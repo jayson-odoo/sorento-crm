@@ -444,6 +444,29 @@ _OPEN_REQUEST_QTY = (
         OrderInquiryReserveRequest.state == "requested",
     )
     .correlate(OrderInquiryRow)
+    # 6e.4: one open request row per line is `create_request`'s own rule (no DB
+    # constraint spans the two tables), so this reads one row rather than trusting it.
+    .order_by(OrderInquiryReserveRequest.ordinal.desc())
+    .limit(1)
+    .scalar_subquery()
+)
+#: 6e.4 (AC-RS-78c): the LATEST answered request row's own `qty_reserved` for this
+#: row - `0` means CS declined it (`Reserve 0`, or amended down to 0), which the Lines
+#: grid reads as `Not reserved` with Amend + History. NULL when nothing was answered.
+_LATEST_ANSWERED_QTY = (
+    select(OrderInquiryReserveRequestRow.qty_reserved)
+    .select_from(OrderInquiryReserveRequestRow)
+    .join(
+        OrderInquiryReserveRequest,
+        OrderInquiryReserveRequest.id == OrderInquiryReserveRequestRow.request_id,
+    )
+    .where(
+        OrderInquiryReserveRequestRow.row_id == OrderInquiryRow.id,
+        OrderInquiryReserveRequestRow.qty_reserved.isnot(None),
+    )
+    .correlate(OrderInquiryRow)
+    .order_by(OrderInquiryReserveRequest.ordinal.desc())
+    .limit(1)
     .scalar_subquery()
 )
 #: What the row's own SALES ORDER LINE still owes, over the core line `_base` already
@@ -791,6 +814,8 @@ _COLUMNS = (
     _HAS_OPEN_RESERVE_REQUEST.label("has_open_reserve_request"),
     # PLAN-oi-request-cs-reserve.md 6e.2: the open request row's own `qty_requested`.
     _OPEN_REQUEST_QTY.label("requested_qty"),
+    # 6e.4 (AC-RS-78c): the latest answer, so a declined line reads `declined`.
+    _LATEST_ANSWERED_QTY.label("latest_answered_qty"),
     # PLAN-oi-worklist-split-customer-project.md, Slice 2: the Raised at column's own
     # tooltip. `_write_sheet` never reads this key, but `_EXPORT_COLUMNS` below drops the
     # label outright (S2, review round 1) - the export runs this `json_agg` for every row
@@ -2067,6 +2092,22 @@ class OrderInquiryWorklistService:
             result[row.id] = f"{_qty_str(linked_qty)} of {_qty_str(_dec(row.qty))}"
         return result
 
+    @staticmethod
+    def _reserve_state(row) -> Optional[str]:
+        """PLAN-oi-request-cs-reserve.md 3.5 + 6e.4 (AC-RS-20, AC-RS-78c): `requested`
+        while an open request row exists (it always wins, R5), else `reserved` once
+        something is actually reserved, else `declined` when the latest answer was 0,
+        else null. A line still holding stock from an earlier request reads `reserved`
+        even if a later answer was 0 - the pill never hides a live reservation."""
+        if getattr(row, "has_open_reserve_request", False):
+            return "requested"
+        if _dec(getattr(row, "reserved_qty", None)) > _ZERO:
+            return "reserved"
+        latest = getattr(row, "latest_answered_qty", None)
+        if latest is not None and _dec(latest) == _ZERO:
+            return "declined"
+        return None
+
     def _bundled_po_number(
         self, row, bundle_map: Optional[Dict[str, List[str]]] = None
     ) -> Optional[str]:
@@ -2142,11 +2183,7 @@ class OrderInquiryWorklistService:
             # an open request row exists, else `reserved` once something has actually
             # been reserved, else null - an open request always wins (R5: reserved then
             # requested again on the balance reads `requested`, never `reserved`).
-            "reserve_state": (
-                "requested"
-                if getattr(row, "has_open_reserve_request", False)
-                else ("reserved" if _dec(getattr(row, "reserved_qty", None)) > _ZERO else None)
-            ),
+            "reserve_state": self._reserve_state(row),
             "reserved_qty": _qty_str(_dec(getattr(row, "reserved_qty", None))),
             # 6e.2: "0" when there is no open request row, same default shape as
             # `reserved_qty` above.
