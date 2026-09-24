@@ -16,6 +16,13 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { FileDropzone } from '@/components/common/FileDropzone';
+import {
+  ImportColumnMapper,
+  unresolvedRequiredFields,
+  type ImportMappingField,
+  type ImportMappingProbe,
+  type ImportMappingSelection,
+} from '@/components/common/ImportColumnMapper';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
@@ -47,6 +54,11 @@ import {
   type RevisionSelection,
 } from '../../services/proformaInvoiceService';
 import { verdictFromPreview } from '../../proforma-invoices/components/ProformaUploadDialog';
+import {
+  probeImportMapping,
+  saveImportMapping,
+  type ImportMappingDocType,
+} from '../../services/importMappingService';
 
 /**
  * "Plan a container" - the ONE way onto a loading plan (R4, AC-A4/A5).
@@ -211,6 +223,87 @@ export function PlanContainerDialog({
       docKind === 'proforma' ? ((preview as ProformaInvoicePreview | null) ?? null) : null;
   }, [preview, docKind]);
 
+  // The column mapper (PLAN-import-column-mapper-24sep.md F2): one doc type per file kind
+  // here (never "none", which has no file to map). `null` keeps the mapper off the "No
+  // file" and mid-fetch states, rather than a truthy `''` reading as a real doc type.
+  const mapDocType: ImportMappingDocType | null =
+    docKind === 'proforma' ? 'proforma_invoice' : docKind === 'stock_list' ? 'supplier_inventory' : null;
+  const [mapResult, setMapResult] = useState<{
+    probe: ImportMappingProbe;
+    fields: ImportMappingField[];
+  } | null>(null);
+  const [mapSelections, setMapSelections] = useState<ImportMappingSelection[]>([]);
+  const [mapping, setMapping] = useState(false);
+  const [mapError, setMapError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      setMapResult(null);
+      setMapSelections([]);
+      setMapError(null);
+    }
+  }, [open]);
+
+  // Probe the file's headers the moment it lands (F2: "after a file lands ... call
+  // probe"), ahead of Test rather than waiting for it - the whole point of an inline
+  // mapper is that mapping happens before the operator asks the file to be read for real.
+  useEffect(() => {
+    if (!upload.file || !mapDocType || !supplierId) {
+      setMapResult(null);
+      setMapSelections([]);
+      return;
+    }
+    let cancelled = false;
+    setMapping(true);
+    setMapError(null);
+    void probeImportMapping({ file: upload.file, supplierId, docTypes: [mapDocType] })
+      .then((res) => {
+        if (!cancelled) setMapResult(res);
+      })
+      .catch((e) => {
+        if (!cancelled) setMapError(e instanceof Error ? e.message : "Failed to read the file's columns.");
+      })
+      .finally(() => {
+        if (!cancelled) setMapping(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [upload.file, mapDocType, supplierId]);
+
+  /** The header-row stepper (AC-M3, grill G3): re-probe at the new row rather than
+   *  reshuffling columns locally - the probe is the one source for "what is under this
+   *  row now". */
+  const changeHeaderRow = (row: number) => {
+    if (!upload.file || !mapDocType || !supplierId) return;
+    setMapping(true);
+    setMapError(null);
+    void probeImportMapping({ file: upload.file, supplierId, docTypes: [mapDocType], headerRow: row })
+      .then(setMapResult)
+      .catch((e) => setMapError(e instanceof Error ? e.message : "Failed to read the file's columns."))
+      .finally(() => setMapping(false));
+  };
+
+  const mapUnresolved = mapResult ? unresolvedRequiredFields(mapResult.probe, mapSelections) : [];
+  const mapFieldLabel = (field: string) =>
+    mapResult?.fields.find((f) => f.field === field)?.label ?? field;
+
+  /** Test = save the mapping, then read the file (grill G1, one click) - a Cancel after
+   *  keeps the saved rows; a re-map replaces them (B5). Phase 2 (B6) threads the chosen
+   *  `header_row` into the preview/apply calls below this component - not yet wired,
+   *  since those endpoints do not read it today. */
+  const runTestWithMapping = async () => {
+    if (mapDocType && mapResult) {
+      try {
+        await saveImportMapping({ supplierId, docTypes: [mapDocType], mappings: mapSelections });
+      } catch (e) {
+        setMapError(e instanceof Error ? e.message : 'Failed to save the column mapping.');
+        return;
+      }
+    }
+    await upload.runTest();
+  };
+
   // The verdict card. The stock list has its own `?validate_only=true` endpoint (the hook
   // runs it alongside the preview); the proforma channel derives the same shape from the
   // read it already took, rather than costing the operator a second press.
@@ -229,6 +322,12 @@ export function PlanContainerDialog({
   const verdict = proformaVerdict ?? stockVerdict;
 
   const needsFile = docKind !== 'none';
+  // Deliberately NOT gated on `mapping` (the header probe in flight): Testing is never
+  // mandatory (`useTwoStepUpload`'s own rule) and a probe that has not landed yet is not
+  // evidence of anything unresolved - `mapUnresolved` below reads the LANDED probe, and is
+  // what actually blocks Test/Confirm once a required field is known to be unmapped
+  // (AC-M9). Blocking the whole dialog on a brief fetch would make "drop a file, press
+  // Test" a race against the network for every upload, not just ones that need mapping.
   const busy = starting || applying || previewing || upload.testing || create.isPending;
   // Same class of mistake RunPlanningModal.tsx:142-147 guards - a To before From nets
   // nothing, silently, rather than refusing outright.
@@ -239,6 +338,7 @@ export function PlanContainerDialog({
     !!supplierId &&
     !busy &&
     !windowInvalid &&
+    mapUnresolved.length === 0 &&
     (needsFile ? upload.canConfirm && (!proformaVerdict || proformaVerdict.valid) : true);
 
   return (
@@ -368,15 +468,31 @@ export function PlanContainerDialog({
             />
           ) : null}
 
+          {mapping && !mapResult ? (
+            <p className="flex items-center gap-2 text-xs text-muted-foreground">
+              <LoaderCircle className="size-3.5 animate-spin" /> Reading the file&apos;s columns...
+            </p>
+          ) : null}
+
+          {mapResult ? (
+            <ImportColumnMapper
+              probe={mapResult.probe}
+              fields={mapResult.fields}
+              onChange={setMapSelections}
+              onHeaderRowChange={changeHeaderRow}
+              busy={mapping || previewing || applying}
+            />
+          ) : null}
+
           {previewing ? (
             <p className="flex items-center gap-2 text-xs text-muted-foreground">
               <LoaderCircle className="size-3.5 animate-spin" /> Reading the file...
             </p>
           ) : null}
 
-          {error || startError ? (
+          {error || startError || mapError ? (
             <Alert variant="destructive">
-              <AlertDescription>{error ?? startError}</AlertDescription>
+              <AlertDescription>{error ?? startError ?? mapError}</AlertDescription>
             </Alert>
           ) : null}
 
@@ -412,9 +528,15 @@ export function PlanContainerDialog({
           {needsFile ? (
             <Button
               variant="outline"
-              onClick={() => void upload.runTest()}
-              disabled={!supplierId || !upload.file || busy}
-              title={!supplierId ? 'Choose a supplier first' : undefined}
+              onClick={() => void runTestWithMapping()}
+              disabled={!supplierId || !upload.file || busy || mapUnresolved.length > 0}
+              title={
+                !supplierId
+                  ? 'Choose a supplier first'
+                  : mapUnresolved.length > 0
+                    ? `Map ${mapUnresolved.map(mapFieldLabel).join(', ')} before testing`
+                    : undefined
+              }
             >
               {upload.testing ? (
                 <LoaderCircle className="size-4 animate-spin" />
@@ -427,7 +549,13 @@ export function PlanContainerDialog({
           <Button
             onClick={() => void (needsFile ? upload.confirm() : startPlan())}
             disabled={!canStart}
-            title={!supplierId ? 'Choose a supplier first' : undefined}
+            title={
+              !supplierId
+                ? 'Choose a supplier first'
+                : mapUnresolved.length > 0
+                  ? `Map ${mapUnresolved.map(mapFieldLabel).join(', ')} before confirming`
+                  : undefined
+            }
             data-testid="plan-container-confirm"
           >
             {busy ? <LoaderCircle className="size-4 animate-spin" /> : null}

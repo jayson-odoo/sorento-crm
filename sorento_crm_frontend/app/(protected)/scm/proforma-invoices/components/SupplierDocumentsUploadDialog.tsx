@@ -15,6 +15,13 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { FileDropzone } from '@/components/common/FileDropzone';
+import {
+  ImportColumnMapper,
+  unresolvedRequiredFields,
+  type ImportMappingField,
+  type ImportMappingProbe,
+  type ImportMappingSelection,
+} from '@/components/common/ImportColumnMapper';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -33,9 +40,10 @@ import {
 } from '@/app/(protected)/scm/services/fulfilmentService';
 import { listProformaInvoices } from '@/app/(protected)/scm/services/proformaInvoiceService';
 import {
-  createImportFieldAlias,
-  type ImportFieldAliasDocType,
-} from '@/app/(protected)/system-management/import-field-aliases/services/importFieldAliasService';
+  probeImportMapping,
+  saveImportMapping,
+  type ImportMappingDocType,
+} from '@/app/(protected)/scm/services/importMappingService';
 
 /**
  * Upload supplier documents: a proforma invoice, a packing list, or both at once (R12-R14,
@@ -197,19 +205,16 @@ function confirmCounts(preview: SupplierDocumentsPreview | null): { invoices: nu
   return { invoices, packingLists };
 }
 
-/** The reader assumed when a preview does not say which one missed a header - the shape
- *  the plan measured the unmapped headers on (Jinbaichuan's `尺寸（mm）`, `孔距`,
- *  `认证编码`). A current backend says (`unmapped_header_doc_types`, ruling 24). */
-const IMPORT_DOC_TYPE: ImportFieldAliasDocType = 'packing_list';
-
-/** Which readers could not place this header on this file (ruling 24). */
-function docTypesFor(
-  file: SupplierDocumentFilePreview,
-  header: string,
-): ImportFieldAliasDocType[] {
-  const stated = file.unmapped_header_doc_types?.[header];
-  return stated?.length ? (stated as ImportFieldAliasDocType[]) : [IMPORT_DOC_TYPE];
-}
+/**
+ * Every file dropped here probes against BOTH doc types (PLAN-import-column-mapper-24sep.md
+ * F3/G4), never one picked ahead of time - a file's `kind` (proforma invoice / packing list
+ * / combined) is only known once the real preview classifies it, and the mapper has to
+ * render "once a file lands, before Test" (AC-M9), i.e. before that classification exists.
+ * The union is exactly what a genuinely combined file needs anyway (G4), so a plain
+ * invoice or packing list just sees a few fields it will never pick - never a UUID, never a
+ * blocked flow, and the same doc types the mapper's own `saveImportMapping` records under.
+ */
+const SUPPLIER_DOCUMENT_MAP_DOC_TYPES: ImportMappingDocType[] = ['proforma_invoice', 'packing_list'];
 
 /** Ours and theirs, in that order - the operator recognises the supplier's own reference,
  *  and our number is what the invoice is filed under. */
@@ -266,8 +271,22 @@ export function SupplierDocumentsUploadDialog({
   // keyed `file name::block index`. Sent back with the next Test and with Confirm, so the
   // SERVER resolves attachment either way - this only records the override.
   const [attachPicks, setAttachPicks] = useState<Record<string, string>>({});
-  // Which file is being re-read after a "Map to..." (AC-E4) or an Attaches-to change.
+  // Which file is being re-read after an Attaches-to change.
   const [repreviewing, setRepreviewing] = useState<string | null>(null);
+  // The column mapper (F3), one entry per file, keyed by name like `attachPicks` above -
+  // `probe: null` while the read is in flight or has not started.
+  const [mapByFile, setMapByFile] = useState<
+    Record<
+      string,
+      {
+        probe: ImportMappingProbe | null;
+        fields: ImportMappingField[];
+        selections: ImportMappingSelection[];
+        mapping: boolean;
+        error: string | null;
+      }
+    >
+  >({});
 
   // Cleared on every open, like every other upload dialog here: a file, a verdict or a
   // currency left over from the last upload must never silently apply to the next one.
@@ -283,8 +302,72 @@ export function SupplierDocumentsUploadDialog({
     setTranslationEdits({});
     setAttachPicks({});
     setRepreviewing(null);
+    setMapByFile({});
     if (selfServe) setInternalSupplier(null);
   }, [open, selfServe]);
+
+  // Probe every file's headers the moment it lands (F3/AC-M9: "before Test"), and drop the
+  // entry for a file the operator removed from the drop zone.
+  useEffect(() => {
+    if (!supplierId) return;
+    const names = new Set(files.map((f) => f.name));
+    setMapByFile((prev) => {
+      let changed = false;
+      const next: typeof prev = {};
+      for (const [name, v] of Object.entries(prev)) {
+        if (names.has(name)) next[name] = v;
+        else changed = true;
+      }
+      return changed ? next : prev;
+    });
+    files.forEach((file) => {
+      if (mapByFile[file.name]) return;
+      setMapByFile((prev) => ({
+        ...prev,
+        [file.name]: { probe: null, fields: [], selections: [], mapping: true, error: null },
+      }));
+      void probeImportMapping({ file, supplierId, docTypes: SUPPLIER_DOCUMENT_MAP_DOC_TYPES })
+        .then((res) => {
+          setMapByFile((prev) => ({
+            ...prev,
+            [file.name]: {
+              probe: res.probe,
+              fields: res.fields,
+              selections: res.probe.columns
+                .filter((c) => c.field != null)
+                .map((c) => ({ header: c.header, field: c.field as string })),
+              mapping: false,
+              error: null,
+            },
+          }));
+        })
+        .catch((e) => {
+          setMapByFile((prev) => ({
+            ...prev,
+            [file.name]: {
+              ...(prev[file.name] ?? { probe: null, fields: [], selections: [] }),
+              mapping: false,
+              error: e instanceof Error ? e.message : "Failed to read that file's columns.",
+            },
+          }));
+        });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [files, supplierId]);
+
+  const mapUnresolvedByFile = (fileName: string): string[] => {
+    const st = mapByFile[fileName];
+    return st?.probe ? unresolvedRequiredFields(st.probe, st.selections) : [];
+  };
+  const anyMapUnresolved = files.some((f) => mapUnresolvedByFile(f.name).length > 0);
+  const anyMapUnresolvedFields = [...new Set(files.flatMap((f) => mapUnresolvedByFile(f.name)))];
+  const mapFieldLabel = (field: string): string => {
+    for (const f of files) {
+      const label = mapByFile[f.name]?.fields.find((x) => x.field === field)?.label;
+      if (label) return label;
+    }
+    return field;
+  };
 
   /** The supplier's invoices for a block's Attaches-to picker - server-searched, so a
    *  supplier with a year of invoices is still reachable by typing. */
@@ -326,12 +409,78 @@ export function SupplierDocumentsUploadDialog({
     }
   };
 
+  /** Test = save every file's column mapping, then read the files (grill G1, one click) -
+   *  a Cancel after keeps the saved rows; a re-map replaces them (B5). */
+  const runTestWithMapping = async () => {
+    if (supplierId) {
+      try {
+        await Promise.all(
+          files
+            .map((f) => mapByFile[f.name])
+            .filter((st): st is NonNullable<typeof st> => !!st?.probe)
+            .map((st) =>
+              saveImportMapping({
+                supplierId,
+                docTypes: SUPPLIER_DOCUMENT_MAP_DOC_TYPES,
+                mappings: st.selections,
+              }),
+            ),
+        );
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Failed to save the column mapping.');
+        return;
+      }
+    }
+    await runTest();
+  };
+
+  const updateMapSelections = (fileName: string, selections: ImportMappingSelection[]) => {
+    setMapByFile((prev) =>
+      prev[fileName] ? { ...prev, [fileName]: { ...prev[fileName], selections } } : prev,
+    );
+  };
+
+  /** The header-row stepper (AC-M3, grill G3) for one file - re-probes rather than
+   *  reshuffling columns locally, the same as `PlanContainerDialog`. */
+  const changeMapHeaderRow = (fileName: string, row: number) => {
+    const file = files.find((f) => f.name === fileName);
+    if (!file || !supplierId) return;
+    setMapByFile((prev) => ({ ...prev, [fileName]: { ...prev[fileName], mapping: true, error: null } }));
+    void probeImportMapping({
+      file,
+      supplierId,
+      docTypes: SUPPLIER_DOCUMENT_MAP_DOC_TYPES,
+      headerRow: row,
+    })
+      .then((res) =>
+        setMapByFile((prev) => ({
+          ...prev,
+          [fileName]: {
+            probe: res.probe,
+            fields: res.fields,
+            selections: res.probe.columns
+              .filter((c) => c.field != null)
+              .map((c) => ({ header: c.header, field: c.field as string })),
+            mapping: false,
+            error: null,
+          },
+        })),
+      )
+      .catch((e) =>
+        setMapByFile((prev) => ({
+          ...prev,
+          [fileName]: {
+            ...prev[fileName],
+            mapping: false,
+            error: e instanceof Error ? e.message : "Failed to read that file's columns.",
+          },
+        })),
+      );
+  };
+
   /**
-   * Test again for ONE file (AC-E4, AC-B13) - after a header is mapped, and after an
-   * Attaches-to pick. The file is re-READ, so a mapping that names a real column fills it
-   * in and the chip goes because the server no longer reports it, not because this screen
-   * decided to hide it. The other files' rows, and every translation the operator has
-   * typed, are left exactly as they are.
+   * Test again for ONE file (AC-B13) - after an Attaches-to pick. The other files' rows,
+   * and every translation the operator has typed, are left exactly as they are.
    */
   const repreviewFile = async (fileName: string, picks: SupplierDocumentBlockAttach[]) => {
     const file = files.find((f) => f.name === fileName);
@@ -400,41 +549,6 @@ export function SupplierDocumentsUploadDialog({
     }
   };
 
-  /**
-   * "Map to..." on an unmapped header chip (S5, AC-E4): write the alias, then read that
-   * file again with it. The chip goes because the reader placed the column this time -
-   * and the figures under it appear in the same pass, which is the point.
-   */
-  const mapHeader = async (
-    fileName: string,
-    header: string,
-    field: string,
-    docTypes: ImportFieldAliasDocType[],
-  ) => {
-    // One create per reader that missed the header (ruling 24). A combined sheet is read
-    // as an invoice AND as a packing list, so mapping it once left half the file still
-    // ignoring the column. A 409 means one of them already had it, which is the outcome
-    // asked for, not a failure; only "not one of them landed" is worth saying.
-    const outcomes = await Promise.all(
-      docTypes.map(async (docType) => {
-        try {
-          await createImportFieldAlias({ doc_type: docType, field, alias: header });
-          return null;
-        } catch (e) {
-          const status = (e as { status?: number })?.status;
-          if (status === 409) return null;
-          return e instanceof Error ? e.message : 'Failed to map that header.';
-        }
-      }),
-    );
-    const failures = outcomes.filter((m): m is string => m !== null);
-    if (failures.length === docTypes.length && failures.length > 0) {
-      setError(failures[0]);
-      return;
-    }
-    await repreviewFile(fileName, blockAttachments(fileName));
-  };
-
   const unreadable = preview?.files.filter((f) => f.kind === 'unreadable') ?? [];
   // One refused BLOCK is enough to hold Confirm: half a packing list is not an outcome
   // anybody asked for (AC-B13).
@@ -445,6 +559,7 @@ export function SupplierDocumentsUploadDialog({
     files.length > 0 &&
     !applying &&
     !repreviewing &&
+    !anyMapUnresolved &&
     unreadable.length === 0 &&
     refused.length === 0;
   const counts = confirmCounts(preview);
@@ -507,6 +622,48 @@ export function SupplierDocumentsUploadDialog({
             aria-label="Supplier document files"
           />
 
+          {/* One mapper per file (F3/AC-M13), named by the file it maps - the
+              "Map to..." chip is retired (G5); this is what replaces it, before Test
+              rather than after a first read reports what it could not place. "Columns
+              for" rather than the bare name: the dropzone above already lists the name
+              once, on its own line. Skipped once the latest Test says the file is
+              unreadable: there is no header row to map on a file the reader could not
+              even open, and the section would otherwise repeat the name the
+              "unreadable" card below already carries. */}
+          {supplierId
+            ? files
+                .filter((f) => preview?.files.find((pf) => pf.name === f.name)?.kind !== 'unreadable')
+                .map((f) => {
+                  const st = mapByFile[f.name];
+                  return (
+                    <div key={f.name} className="space-y-1">
+                      <p
+                        className="truncate text-2xs font-medium text-muted-foreground"
+                        title={f.name}
+                      >
+                        Columns for {f.name}
+                      </p>
+                      {st?.mapping && !st.probe ? (
+                        <p className="flex items-center gap-2 text-xs text-muted-foreground">
+                          <LoaderCircle className="size-3.5 animate-spin" /> Reading the
+                          file&apos;s columns...
+                        </p>
+                      ) : st?.probe ? (
+                        <ImportColumnMapper
+                          probe={st.probe}
+                          fields={st.fields}
+                          onChange={(selections) => updateMapSelections(f.name, selections)}
+                          onHeaderRowChange={(row) => changeMapHeaderRow(f.name, row)}
+                          busy={st.mapping || previewing || applying}
+                        />
+                      ) : st?.error ? (
+                        <p className="text-2xs text-destructive">{st.error}</p>
+                      ) : null}
+                    </div>
+                  );
+                })
+            : null}
+
           <div>
             <Label htmlFor="supplier-documents-currency" className="mb-1 block text-xs">
               Currency
@@ -541,10 +698,6 @@ export function SupplierDocumentsUploadDialog({
           {preview && !result ? (
             <div className="divide-y divide-border rounded-lg border">
               {preview.files.map((f) => {
-                // Straight off the server's last read of this file: a header stops being
-                // unmapped when the READER places it, never because this screen hid it
-                // (AC-E4).
-                const unmappedHeaders = f.unmapped_headers ?? [];
                 return (
                 <div key={f.name} className="space-y-1 p-2.5">
                   <div className="flex items-center justify-between gap-2">
@@ -645,23 +798,6 @@ export function SupplierDocumentsUploadDialog({
                       )}
                     </div>
                   ))}
-                  {unmappedHeaders.length ? (
-                    <div className="space-y-1 pt-1">
-                      <p className="text-2xs font-medium text-foreground">Unmapped headers</p>
-                      <div className="flex flex-wrap gap-1.5">
-                        {unmappedHeaders.map((header) => (
-                          <UnmappedHeaderChip
-                            key={header}
-                            header={header}
-                            docTypes={docTypesFor(f, header)}
-                            onMap={(fieldValue, forDocTypes) =>
-                              void mapHeader(f.name, header, fieldValue, forDocTypes)
-                            }
-                          />
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
                   {f.kind !== 'unreadable' && translationItems(f).length > 0 ? (
                     <div className="space-y-1 rounded-md border border-dashed p-2">
                       <p className="text-2xs font-medium text-foreground">
@@ -719,9 +855,15 @@ export function SupplierDocumentsUploadDialog({
         <DialogFooter>
           <Button
             variant="outline"
-            onClick={() => void runTest()}
-            disabled={!supplierId || !files.length || previewing || applying}
-            title={!supplierId ? 'Choose a supplier first' : undefined}
+            onClick={() => void runTestWithMapping()}
+            disabled={!supplierId || !files.length || previewing || applying || anyMapUnresolved}
+            title={
+              !supplierId
+                ? 'Choose a supplier first'
+                : anyMapUnresolvedFields.length
+                  ? `Map ${anyMapUnresolvedFields.map(mapFieldLabel).join(', ')} before testing`
+                  : undefined
+            }
           >
             {previewing ? (
               <LoaderCircle className="size-4 animate-spin" />
@@ -740,13 +882,15 @@ export function SupplierDocumentsUploadDialog({
               title={
                 !supplierId
                   ? 'Choose a supplier first'
-                  : unreadable.length
-                    ? `Could not read ${unreadable.map((f) => f.name).join(', ')}`
-                    : refused.length
-                      ? `No proforma invoice to attach ${refused
-                          .map((b) => b.container_no || `block ${b.block_index + 1}`)
-                          .join(', ')} to`
-                      : undefined
+                  : anyMapUnresolvedFields.length
+                    ? `Map ${anyMapUnresolvedFields.map(mapFieldLabel).join(', ')} before confirming`
+                    : unreadable.length
+                      ? `Could not read ${unreadable.map((f) => f.name).join(', ')}`
+                      : refused.length
+                        ? `No proforma invoice to attach ${refused
+                            .map((b) => b.container_no || `block ${b.block_index + 1}`)
+                            .join(', ')} to`
+                        : undefined
               }
             >
               {applying ? <LoaderCircle className="size-4 animate-spin" /> : null}
@@ -756,86 +900,6 @@ export function SupplierDocumentsUploadDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
-}
-
-/** One unmapped header (S5, AC-E4): the header text, and "Map to..." over the doc type's
- *  own field list (E1). Picking a field maps it at once - no explanation text on screen. */
-function UnmappedHeaderChip({
-  header,
-  docTypes,
-  onMap,
-}: {
-  header: string;
-  /** The readers that could not place this header (ruling 24) - a combined sheet is read
-   *  twice, and mapping it for one of them leaves the other still ignoring the column. */
-  docTypes: ImportFieldAliasDocType[];
-  onMap: (field: string, forDocTypes: ImportFieldAliasDocType[]) => void;
-}) {
-  const [mapping, setMapping] = useState(false);
-  const [fields, setFields] = useState<{ value: string; label: string }[]>([]);
-  // Which readers actually ASK for each field. A field only one of them declares is
-  // written for that one alone - the other would refuse it, and rightly: an alias naming
-  // a field its reader never reads can resolve nothing.
-  const [fieldOwners, setFieldOwners] = useState<Record<string, ImportFieldAliasDocType[]>>({});
-  const [loadingFields, setLoadingFields] = useState(false);
-
-  const startMapping = async () => {
-    setMapping(true);
-    setLoadingFields(true);
-    try {
-      const { listImportFieldAliasFields } = await import(
-        '@/app/(protected)/system-management/import-field-aliases/services/importFieldAliasService'
-      );
-      const owners: Record<string, ImportFieldAliasDocType[]> = {};
-      const options: { value: string; label: string }[] = [];
-      for (const docType of docTypes) {
-        const list = await listImportFieldAliasFields(docType);
-        for (const f of list) {
-          if (!owners[f.field]) {
-            owners[f.field] = [];
-            options.push({ value: f.field, label: f.label });
-          }
-          owners[f.field].push(docType);
-        }
-      }
-      setFieldOwners(owners);
-      setFields(options);
-    } finally {
-      setLoadingFields(false);
-    }
-  };
-
-  if (!mapping) {
-    return (
-      <Badge variant="secondary" appearance="light" size="sm" className="gap-1">
-        {header}
-        <button
-          type="button"
-          className="ms-1 text-primary underline-offset-2 hover:underline"
-          onClick={() => void startMapping()}
-        >
-          Map to...
-        </button>
-      </Badge>
-    );
-  }
-
-  return (
-    <div className="flex items-center gap-1">
-      <span className="text-2xs text-muted-foreground">{header}</span>
-      <SearchableSelect
-        size="sm"
-        className="w-40"
-        value=""
-        onChange={(v: string) => v && onMap(v, fieldOwners[v] ?? docTypes)}
-        options={fields}
-        // Names WHAT is loading rather than the bare word with an ellipsis (M5-02): the
-        // reader is waiting on the field list, and the bare form says nothing about which.
-        placeholder={loadingFields ? 'Loading fields' : 'Choose a field'}
-        disabled={loadingFields}
-      />
-    </div>
   );
 }
 
