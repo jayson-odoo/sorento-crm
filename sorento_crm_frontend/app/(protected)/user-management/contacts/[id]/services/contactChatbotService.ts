@@ -16,11 +16,28 @@
  * exist on the real contact - the backend has no signal distinguishing a value a pick
  * set from one typed here, so `tier` is edited directly like `language`, same as every
  * other profile field on this card.
+ *
+ * ---- PHASE 1 MOCK - notify_salesman / packing_list_allowed -----------------------
+ * (PLAN-chatbot-stock-ask-v2-24sep.md S2, R7). Backend contract, not built yet:
+ *   respond_contacts.notify_salesman        boolean NOT NULL DEFAULT false
+ *   respond_contacts.packing_list_allowed   boolean NOT NULL DEFAULT false
+ * Both are plain siblings of `chatbot_stock_allowed` (not nested in
+ * `chatbot_profile`) and ride the same GET contact / PUT .../chatbot payload once
+ * S2 lands. Until then the real contact carries neither field, so this file
+ * overlays them in memory, keyed by contact id, on top of the real response -
+ * enough for the two new switches to be exercised end to end. Phase 2 deletes
+ * this overlay once the fields ride the real payload.
  */
 
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
 import { getContact } from './contactService';
+
+interface ContactChatbotTogglesMock {
+  notify_salesman: boolean;
+  packing_list_allowed: boolean;
+}
+const contactChatbotTogglesMock = new Map<string, ContactChatbotTogglesMock>();
 
 export interface ContactChatbotProfile {
   recall_enabled: boolean;
@@ -32,19 +49,30 @@ export interface ContactChatbotProfile {
   always_full_report: boolean;
   /** S6: stock checks allowed for this contact (`chatbot_stock_allowed`), default on. */
   stock_allowed: boolean;
+  /** R7: the customer's sales agent gets one WhatsApp line per answered ask. Default off. */
+  notify_salesman: boolean;
+  /** R7: the shipment's packing list is attached on a B3 answer. Default off. */
+  packing_list_allowed: boolean;
 }
 
-function fromContact(contact: {
-  chatbot_profile?: {
-    tier?: string | null;
-    language?: string | null;
-    default_ledgers?: string[] | null;
-    always_full_report?: boolean | null;
-  } | null;
-  chatbot_recall_enabled?: boolean;
-  chatbot_stock_allowed?: boolean;
-}): ContactChatbotProfile {
+function fromContact(
+  contact: {
+    id?: string;
+    chatbot_profile?: {
+      tier?: string | null;
+      language?: string | null;
+      default_ledgers?: string[] | null;
+      always_full_report?: boolean | null;
+    } | null;
+    chatbot_recall_enabled?: boolean;
+    chatbot_stock_allowed?: boolean;
+    notify_salesman?: boolean;
+    packing_list_allowed?: boolean;
+  },
+  contactId: string,
+): ContactChatbotProfile {
   const profile = contact.chatbot_profile ?? null;
+  const mock = contactChatbotTogglesMock.get(contactId);
   return {
     recall_enabled: Boolean(contact.chatbot_recall_enabled),
     tier: profile?.tier ?? null,
@@ -52,12 +80,14 @@ function fromContact(contact: {
     default_ledgers: profile?.default_ledgers ?? [],
     always_full_report: Boolean(profile?.always_full_report),
     stock_allowed: contact.chatbot_stock_allowed !== false,
+    notify_salesman: mock?.notify_salesman ?? Boolean(contact.notify_salesman),
+    packing_list_allowed: mock?.packing_list_allowed ?? Boolean(contact.packing_list_allowed),
   };
 }
 
 export async function getContactChatbotProfile(contactId: string): Promise<ContactChatbotProfile> {
   const contact = await getContact(contactId);
-  return fromContact(contact);
+  return fromContact(contact, contactId);
 }
 
 export type ContactChatbotSaveInput = ContactChatbotProfile;
@@ -80,10 +110,17 @@ export async function saveContactChatbotProfile(
       },
       chatbot_recall_enabled: input.recall_enabled,
       chatbot_stock_allowed: input.stock_allowed,
+      // Not read by the real route yet (Phase 1 mock, see file header).
+      notify_salesman: input.notify_salesman,
+      packing_list_allowed: input.packing_list_allowed,
     }),
   });
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Failed to save chatbot settings'));
   }
-  return fromContact(await response.json());
+  contactChatbotTogglesMock.set(contactId, {
+    notify_salesman: input.notify_salesman,
+    packing_list_allowed: input.packing_list_allowed,
+  });
+  return fromContact(await response.json(), contactId);
 }
