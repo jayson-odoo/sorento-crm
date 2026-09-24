@@ -1,6 +1,6 @@
 # PLAN - Order inquiry: Request CS to reserve stock (+ stock grid on OI lines and board list)
 
-Status: **SHIPPED #1120 (9fc93c90a, 23 Sep 2026); round 3 (section 6d, AC-RS-65..72) BUILDING on `fix/oi-reserve-round3`.** UAC: `oi-request-cs-reserve-acceptance-criteria.md`.
+Status: **SHIPPED #1120 (9fc93c90a, 23 Sep 2026); round 3 (6d) built on PR #1149; round 4 (section 6e, AC-RS-76..90, line-by-line staging) BUILDING on the same branch.** UAC: `oi-request-cs-reserve-acceptance-criteria.md`.
 Track: full three-phase lane (migration, new permission, email). One lane, one PR (R-E).
 Lavish marks folded: same `CellStockTable` component; reserved mail carries BALANCE; board list view
 opens the grid view's dialog from the row (Q3 accepted with the go). Branch `feat/oi-request-cs-reserve`.
@@ -460,6 +460,87 @@ when absent); `OrderInquiryDetail.tsx`'s `reserveRowOptionsEntries` covers every
 `reserveDialogRowIds` (not just the primary), and each row's own resolved entry is threaded into
 its own `ReserveRowDialogRow`. History / Cancel request / Unreserve stay off the primary row only
 (single-row mode). AC-RS-65b/AC-RS-66b.
+
+## 6e. Round 4 (owner hand test of round 3 on :3080, 24 Sep): CS reserves line by line, like the board
+
+Owner words: "I shouldn't need to confirm line by line, just enter the quantity I want to reserve and
+confirm all ... the decision is not committed until I click confirm at the bottom, and I can always
+revise my decision, be it unreserve or change quantity ... can our experience be similar to
+fulfilment planning because the one doing is CS ... at each line it writes request to reserve, then
+once I click a tick icon it pops up the location and quantity ... I can undo also before I click the
+CTA ... when CS clicks the link it just sees those that require reserving, so we should have a
+filter ... for CS they see 'Reserve' ... after clicking Reserve the button should be grayed out."
+
+**Rulings (owner, 24 Sep):** R4-1 the reserved mail goes out on every `Reserve` click, naming the
+lines committed in that click; the request stays open for untouched lines. R4-2 icons on a
+requested line: **tick** = reserve the full requested qty at the default pool (no form); **pencil**
+= form (Location, Reserved 0..requested, Reason required when short; 0 = no reserving at all);
+**undo** drops the staged decision. R4-3 amend after commit is allowed: pencil on a reserved line
+stages a new qty (0..requested, location locked), committed by the same CTA. R4-4 no header
+badge, no multi-row dialog, no `Confirm all`: the Lines grid is the surface.
+
+### 6e.1 Backend: one commit call per `Reserve` click
+
+`POST /api/v1/project-sales/order-inquiries/{inquiry_id}/reserve-requests/{request_id}/commit`
+(permission `projects.order_inquiries.reserve`), payload
+
+```
+{ "reserves":   [{ "row_id", "warehouse_id", "qty_reserved", "reason" }],   // open rows
+  "amendments": [{ "row_id", "qty_reserved", "reason" }] }                   // answered rows
+```
+
+One transaction. `reserves` reuse `reserve_row` (validation per 3.3 / AC-RS-56, `dispatch=False`);
+`amendments` set the row's net reserved to `qty_reserved` (0..qty_requested; location locked to
+the answered row's `warehouse_id`): a decrease reuses `unreserve_row` for the delta, an increase
+raises the reserve link qty by the delta (re-creating the link when it was deleted at 0) and writes
+one `reserved` event for the delta; `reason` required whenever the new qty is short of requested.
+Empty payload = 422. Any invalid row = 422 naming it, nothing written. After the batch: request
+`state = reserved` when every row is answered, else stays `requested`; ONE
+`order_inquiry_reserved` dispatch per call whose `reserve.rows` are the rows touched in this call
+(reserved / amended, each with `qty_reserved`, `balance`, `reason`), plus `reserve.row_count` for
+the request and `reserve.open_row_count` remaining. The per-row `.../rows/{row_id}/reserve` and
+`.../unreserve` routes are retired (404); the deferred action `order_inquiry_reserve_row.unreserve`
+is removed from the registry; `history` and the request GET stay. The reserved-mail template gets
+a line `N line(s) still to reserve` when `open_row_count > 0`.
+
+### 6e.2 Frontend: staged decisions on the Lines grid, one `Reserve` CTA
+
+- `ReserveRowDialog.tsx` (multi-row grid, `Confirm all`, single-row tabs) is deleted. Two small
+  pieces replace it: `ReserveLineForm` (dialog: item code title, Location `SearchableSelect`,
+  Reserved number, Reason shown when short; primary **Stage**, nothing posted) and
+  `ReserveLineHistoryDialog` (the former History tab content, read-only).
+- Lines grid State cell (AC-RS-68 kept): `Request to reserve N` (N = qty_requested) amber,
+  `Reserved N` + tick green. The pill is no longer a button.
+- New `reserve` action cell (after State; only rendered when the viewer holds the reserve
+  permission AND the inquiry has an open request or a reserved line; icon buttons with
+  aria-labels): requested line -> **Reserve** (tick: stages `{qty: requested, warehouse: default
+  pool}`) and **Edit reserve** (pencil: opens `ReserveLineForm`); reserved line -> **Amend reserve**
+  (pencil: form with location locked, qty prefilled net) and **History** (info). A staged line
+  shows a dashed outline chip `Reserve N @ BRW` (or `Reserve 0`, or `Amend to N`) in place of the
+  icons plus **Undo** (drops it). Staged state lives in `OrderInquiryDetail` (`Record<rowId,
+  StagedReserve>`), cleared on commit; a reload loses it (trigger for server drafts: CS asks to
+  stage across sessions).
+- Header CTA: beside `Confirm`, a **Reserve** button (visible with the reserve permission while a
+  request is open or anything is staged; enabled only when staged count > 0; label `Reserve (N)`).
+  Click -> POST commit with the staged rows split into `reserves` / `amendments`; toast
+  `Reserved, <requester> notified`; invalidate lines + requests; staged cleared; button greys.
+  `Cancel request` (deferred countdown, requester or permission holder) moves to the Actions menu.
+- Filter: a `SearchableMultiSelect` **State** filter beside the product search on the Lines tab
+  (options = `STATE_LABEL` values + `Request to reserve` + `Reserved`, clearable). `?reserve=<id>`
+  no longer opens anything: it preselects `Request to reserve` in the filter and is removed from
+  the URL on the first filter change; the header badge is gone.
+- Purchasing `ReserveRequestDialog` grid (G6) stays; it gets `columnsDraggable: false`, loses the
+  inert outer `overflow-x-auto` wrapper, and the `data` identity comment is corrected (review 24 Sep).
+- Deleted with the dialog: `useReserveOrderInquiryRow`, `unreserveOrderInquiryRow`,
+  `reserveRequestCompletes` (the server decides), the `?reserve=` latch, AC-RS-65..67, 73, 74 and
+  the round-2/3 dialog tests (superseded rows marked in the UAC).
+
+### 6e.3 Tests (tester-first)
+
+Backend `tests/test_order_inquiry_reserve_commit.py`: AC-RS-76..82. Frontend: AC-RS-83..90 in
+`OrderInquiryDetail.reserveStaging.test.tsx`, `ReserveLineForm.test.tsx`,
+`orderInquiryHeaderLinesColumns.test.tsx`, `OrderInquiryLinesTab.test.tsx`.
+
 
 ## 7. Out of scope (recorded, not built)
 
