@@ -445,19 +445,23 @@ jobs:
           echo "excluding $(echo "$IGNORES" | wc -w) path(s) plus the serial_ddl tests; shard ${{ matrix.shard }} of 3"
           python -m pytest -q -p no:cacheprovider -n auto --dist loadfile --durations=30 \
             --splits 3 --group ${{ matrix.shard }} \
-            --store-durations --durations-path .test_durations.shard${{ matrix.shard }}.json \
+            --store-durations --durations-path .test_durations \
             -m "not serial_ddl" $IGNORES tests/scm/
 
-      # Feeds `.test_durations` (see test-backend): pytest-split writes only the
-      # durations of the tests THIS shard ran, so each shard's artifact is a
-      # partial file - merged into one committed file by hand, same as the
-      # main suite's.
+      # Feeds `.test_durations` (see test-backend): the checked-out committed
+      # file is what `duration_based_chunks` reads to balance the 3 groups,
+      # and `--store-durations` then overwrites it with that same history
+      # plus fresh numbers for the tests THIS shard ran, so every shard's
+      # artifact carries the full file, not just its own slice - merged by
+      # hand (any shard's value for a key it did not run is unchanged from
+      # the committed baseline, so any shard's copy is a safe base to
+      # overwrite with the values from the shards that did run each test).
       - name: Upload SCM shard durations artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: scm-durations-${{ matrix.shard }}
-          path: sorento_crm_backend/.test_durations.shard${{ matrix.shard }}.json
+          path: sorento_crm_backend/.test_durations
           retention-days: 7
           # The durations file is a dotfile; upload-artifact excludes those by
           # default and silently uploads nothing ("No files were found").
@@ -517,6 +521,14 @@ jobs:
     # own 4 cores, is 6x the CPU. pytest-split assigns every collected test to
     # exactly one group, so the six groups together are the full suite and no
     # test runs twice or is dropped.
+    #
+    # Shards are balanced by the committed `sorento_crm_backend/.test_durations`
+    # (see the "Run backend suite under xdist" step below), not by test count -
+    # a count-based split measured 6:10 to 22:08 across 6 shards (run
+    # 35951319369, 2026-09-24). A test missing from the file gets the average
+    # duration, so a brand-new test does not need a manual refresh to be
+    # balanced correctly. Refresh the committed file when the longest shard
+    # drifts more than ~3 min above the shortest.
     strategy:
       fail-fast: false
       matrix:
@@ -627,23 +639,34 @@ jobs:
           echo "excluding $(echo "$IGNORES" | wc -w) path(s) plus tests/scm, tests/test_migration_*.py and the serial_ddl tests; shard ${{ matrix.shard }} of 6"
           python -m pytest -q -p no:cacheprovider -n auto --dist loadfile --durations=30 \
             --splits 6 --group ${{ matrix.shard }} \
-            --store-durations --durations-path .test_durations.shard${{ matrix.shard }}.json \
+            --store-durations --durations-path .test_durations \
             --ignore-glob='tests/test_migration_*.py' \
             -m "not serial_ddl" \
             $IGNORES --ignore=tests/scm tests/
 
-      # Feeds the committed `.test_durations` file below: each shard's own
-      # `--store-durations` output is a PARTIAL file (only the tests IT ran),
-      # merged by hand into one file after downloading every shard's artifact
-      # (`gh run download <run id>`, then a small script sums them into one
-      # sorted dict keyed by nodeid). Refresh when the longest shard drifts
-      # more than ~3 min above the shortest.
+      # Balances the 6 groups by the checked-out committed `.test_durations`
+      # (`duration_based_chunks`, pytest-split's default algorithm - not
+      # overridden to `least_duration`), instead of the old count-based split
+      # that measured 6:10 to 22:08 across shards (run 35951319369,
+      # 2026-09-24). A test missing from the file gets the average duration,
+      # so a brand-new test needs no manual refresh before it is balanced
+      # correctly.
+      #
+      # `--store-durations` then overwrites `.test_durations` with that same
+      # committed history plus fresh numbers for the tests THIS shard ran, so
+      # every shard's artifact carries the FULL file, not just its own slice.
+      # Refreshing the committed file is therefore: download every shard's
+      # artifact from a run, merge them (any shard's copy is a safe base -
+      # for a key it did not run, its value is still the unchanged committed
+      # baseline, identical across all shards' copies), and commit the
+      # result. Refresh when the longest shard drifts more than ~3 min above
+      # the shortest; a small drift is not worth the churn.
       - name: Upload backend shard durations artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: test-durations-${{ matrix.shard }}
-          path: sorento_crm_backend/.test_durations.shard${{ matrix.shard }}.json
+          path: sorento_crm_backend/.test_durations
           retention-days: 7
           # The durations file is a dotfile; upload-artifact excludes those by
           # default and silently uploads nothing ("No files were found").
