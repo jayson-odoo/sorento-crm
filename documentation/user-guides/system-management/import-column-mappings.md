@@ -1,8 +1,8 @@
 # Import column mappings
 
-Every supplier upload (proforma invoice, packing list) reads its Excel headers against a table of
-known column names per system field, in Chinese and English. This page is where those mappings
-live, and where a header the readers don't yet recognise gets added.
+Every supplier upload (proforma invoice, packing list, stock list) reads its Excel headers
+against a table of known column names per system field, in Chinese and English. This page is
+where those mappings live, and where a header the readers don't yet recognise gets added.
 
 The same page also holds the **Stock list words** vocabulary a stock-list upload uses to build a
 product code when a supplier's own 型号 column is a bare model number - see "Stock list words"
@@ -13,15 +13,29 @@ below.
 1. Open **[System Management → Import Column Mappings](/system-management/import-field-aliases)**.
 2. Pick the **Document type**.
 3. The grid lists every **System field** for that document type and the **Headers on file**
-   already mapped to it, as chips.
+   already mapped to it, as chips. A chip mapped only for one supplier carries that supplier's
+   name as a second badge beside it; a chip with no supplier badge applies to every supplier. A
+   column somebody chose to skip on the upload mapper groups under **Ignored** instead of a
+   field name, so it can still be found and removed.
 4. Click **Add mapping**. Pick the **System field**, type the **Header** exactly as it appears on
    the supplier's sheet, and optionally its **Locale**. Click **Add mapping** again to save.
 5. To remove a mapping, click the chip's remove control - it's a deferred, reversible delete (a
    few seconds to cancel), the same as elsewhere in the CRM.
 
-Editing a mapping here is admin-only. A purchasing user who hits an unmapped header during upload
-maps it inline from the upload dialog's **Map to...** chip - that write lands here too and is
-remembered for every later upload.
+Adding a mapping here by hand is admin-only, and it's rarely needed anymore. The first time a
+purchasing user drops a supplier's file on **Upload supplier documents** (proforma invoice or
+packing list) or on **Plan a container** (stock list, **Document type** = **Stock list** here), a
+column-mapping panel on that dialog lets them pick the field for each column (or **Ignore**)
+right there; saving it there writes the same supplier-scoped rows this page lists, so this is
+where you review a supplier's saved layout afterwards, or delete a mapping (including an Ignore)
+that turned out to be wrong. See [Upload a proforma
+invoice](../purchasing/upload-proforma-invoice.md) and [Loading Plan - Start a
+plan](../supply-chain/loading-plan.md) for that inline mapper.
+
+Don't confuse **Stock list** with **Stock list words** below - **Stock list** holds the column
+picks (which header is item code, quantity, and so on) the same way **Proforma invoice** and
+**Packing list** do; **Stock list words** is the separate brand/product-type/model vocabulary a
+stock list uses to build our product code out of a supplier's bare model number.
 
 ## Stock list words
 
