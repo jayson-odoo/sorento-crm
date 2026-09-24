@@ -1280,6 +1280,17 @@ def test_purchasing_actions_do_not_dispatch(api, monkeypatch):
     assert _handover_calls(calls) == [], "link now / place on PO must not dispatch the handover"
 
     # unplace
+    # S3 reversal: the PO line above carries no book match, so `link_now`'s cascade
+    # only SUGGESTED it (no real link to unplace) - seeded directly here, the same
+    # manual-link path a buyer's own press takes, so unplace's own non-dispatch is
+    # still exercised against a genuine placement.
+    _po, po_line = _open_po_line(world, qty=50)
+    ProjectOrderInquiryService(world.db).place_on_po_allocations(
+        str(link_fixture["row"].id),
+        [{"po_line_id": str(po_line.id), "qty": "10"}],
+        actor_user_id=world.buyer,
+    )
+    world.db.commit()
     calls.clear()
     ProjectOrderInquiryService(world.db).unplace(
         str(link_fixture["row"].id), actor_user_id=world.buyer

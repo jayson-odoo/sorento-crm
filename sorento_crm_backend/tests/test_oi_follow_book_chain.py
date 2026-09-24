@@ -42,6 +42,7 @@ from app.models.project_so import (
     OrderInquiry,
     OrderInquiryLink,
     OrderInquiryRow,
+    OrderInquirySuggestedLink,
     ProjectSalesOrder,
     ProjectSalesOrderLine,
 )
@@ -297,6 +298,19 @@ def _existing_link(
 
 def _links_of(db, row_id):
     return db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_id).all()
+
+
+def _suggested_of(db, row_id):
+    """S3 (`PLAN-oi-links-autocount-truth-24sep.md`): the cascade walk's own guesses,
+    read the same way `test_order_inquiry_suggested_links.py`'s own `_suggested_of`
+    does - defined locally rather than imported from there, which imports fixtures
+    FROM this module and would otherwise be a circular import."""
+    return (
+        db.query(OrderInquirySuggestedLink)
+        .filter(OrderInquirySuggestedLink.row_id == row_id)
+        .order_by(OrderInquirySuggestedLink.suggested_at.asc())
+        .all()
+    )
 
 
 # ============================================================== Group A - the rule
@@ -705,7 +719,9 @@ class TestFollowBookForRows:
         """AC-FB-11 + AC-FB-20: the book covers part of the need (a CLOSED PO line the
         ordinary cascade - `line_status == "open"` only - can never reach on its own);
         the cascade deals the rest against an unrelated, open document of the same
-        product. Both lands from ONE `auto_place_for_products` call."""
+        product. Both lands from ONE `auto_place_for_products` call - the book's own
+        share for real, the cascade's own share as a suggestion (S3 reversal: the
+        cascade walk no longer writes a real link)."""
         db = ctx.db
         product = _seed_product(db, company_id=ctx.company_a)
         ref = _ref("SOL")
@@ -743,8 +759,13 @@ class TestFollowBookForRows:
         links = _links_of(db, row.id)
         by_po = {l.po_line_id: Decimal(str(l.qty)) for l in links if l.po_line_id}
         assert by_po.get(book_po_line.id) == Decimal("2"), links
-        assert by_po.get(other_po_line.id) == Decimal("3"), links
-        assert sum(Decimal(str(l.qty)) for l in links) == Decimal("5")
+        assert other_po_line.id not in by_po, links
+        assert sum(Decimal(str(l.qty)) for l in links) == Decimal("2")
+
+        suggested = _suggested_of(db, row.id)
+        by_suggested_po = {s.po_line_id: Decimal(str(s.qty)) for s in suggested}
+        assert by_suggested_po.get(other_po_line.id) == Decimal("3"), suggested
+        assert sum(Decimal(str(s.qty)) for s in suggested) == Decimal("3")
 
 
 # ===================================================== AC-FB-24, cascade caller
@@ -1008,10 +1029,17 @@ class TestRedealNeverTakesBookLink:
         assert "Re-dealt" not in note, note
 
     def test_redeal_still_redeals_a_genuine_cascade_draft(self, ctx):
-        """Guard (may already pass): a draft that is NOT book-named - an
-        ordinary open line the cascade picked on its own, with a nearer document
-        arriving later - is still eligible for redeal. Only a BOOK-named target
-        is protected."""
+        """Guard (may already pass): an ordinary open line the cascade picked on its
+        own, with a nearer document arriving later, is still eligible to move to it
+        on a further pass. Only a BOOK-named target is protected.
+
+        S3 reversal: what the cascade picks is a SUGGESTION now, never a real link,
+        so there is nothing here for `redeal_drafts` itself to move - a suggestion is
+        always freely replaced by `_write_suggested_links` on every pass regardless
+        of that flag (`drafts` only ever comes from a REAL link the row holds). The
+        guard still holds in its own terms: the row's suggestion re-derives cleanly
+        once a second, nearer document exists, and lands on one of the two lines.
+        """
         db = ctx.db
         product = _seed_product(db, company_id=ctx.company_a)
         ref = _ref("SOL")
@@ -1032,7 +1060,8 @@ class TestRedealNeverTakesBookLink:
             None, actor_user_id=None, trigger="raise", row_ids=[str(row.id)],
             include_awaiting=True,
         )
-        assert {l.po_line_id for l in _links_of(db, row.id)} == {far_line.id}
+        assert _links_of(db, row.id) == []
+        assert {s.po_line_id for s in _suggested_of(db, row.id)} == {far_line.id}
 
         _near_po, near_line = _seed_po_line(
             db, company_id=ctx.company_a, product_id=product.id,
@@ -1045,10 +1074,11 @@ class TestRedealNeverTakesBookLink:
             redeal_drafts=True, include_awaiting=True,
         )
 
-        links_after = _links_of(db, row.id)
-        assert {l.po_line_id for l in links_after} == {near_line.id} or {
-            l.po_line_id for l in links_after
-        } == {far_line.id}, links_after
+        assert _links_of(db, row.id) == []
+        suggested_after = _suggested_of(db, row.id)
+        assert {s.po_line_id for s in suggested_after} == {near_line.id} or {
+            s.po_line_id for s in suggested_after
+        } == {far_line.id}, suggested_after
 
 
 # ==================================================== Review round: redirected rows

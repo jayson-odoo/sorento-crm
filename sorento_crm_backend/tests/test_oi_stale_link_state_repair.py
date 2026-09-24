@@ -190,7 +190,13 @@ def test_auto_place_for_products_self_heal_issues_no_extra_query_on_a_healthy_pa
 
 def test_auto_place_for_products_leaves_a_genuinely_placed_row_untouched(api):
     """The guard must not be a no-op that ALSO clobbers a row that is placed for real -
-    only a row whose own links (and bundle) disagree with its stored state moves."""
+    only a row whose own links (and bundle) disagree with its stored state moves.
+
+    S3: the PO line carries no book match for this row, so a bare cascade pass no
+    longer places it for real (it would only suggest) - seeded directly here through
+    `place_on_po_allocations`, the same manual-link path a buyer's own press takes,
+    so the guard is exercised against a genuinely real placement either way.
+    """
     _client, db, world, user_id = api
     from .test_order_inquiry_place_on_po import _po_line
 
@@ -202,6 +208,13 @@ def test_auto_place_for_products_leaves_a_genuinely_placed_row_untouched(api):
     db.commit()
 
     with company_scope(db, frozenset({world["company_id"]})):
+        ProjectOrderInquiryService(db).place_on_po_allocations(
+            str(row.id), [{"po_line_id": str(line.id), "qty": "5"}], actor_user_id=user_id,
+        )
+        db.commit()
+        db.refresh(row)
+        assert row.state == INQUIRY_PLACED, "fixture check: the row must be genuinely placed"
+
         ProjectOrderInquiryService(db).auto_place_for_products(
             None, actor_user_id=user_id, trigger="worklist",
             redeal_drafts=True, include_awaiting=True,
