@@ -15,7 +15,7 @@ import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { DateRangePicker, parseIsoDate } from '@/components/ui/date-range-picker';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -58,6 +58,14 @@ import { StockDebtExportPopover } from './StockDebtExportPopover';
  * and the workbook (R17, `Total` = months + TBA only); the TBA header reads "TBA"
  * literally, the policy's own month living in the header's title tooltip (R18); Copy
  * falls back to `document.execCommand('copy')` off a non-secure context (R19).
+ *
+ * Hand-test round 2 (R14b): the `DateRangePicker` R14 introduced could not be driven at
+ * all inside this screen's Filters `DropdownMenu` - its month arrows never advanced (a
+ * pointerdown anywhere in the Filters panel's OWN popovers was mistaken for "outside the
+ * table" by the cell-selection-clear listener below, AC-29, and the resulting re-render
+ * landed between the arrow's own mousedown and mouseup) - and it offered no typed input
+ * at all. Due date is now two typeable `DatePicker`s (the same component the original
+ * Cutoff field used, DD/MM/YYYY plus a calendar button), labelled "From" and "To".
  */
 
 /** Cell tone as a CLASS, not a component (plan 3.4): three lines, no new file. */
@@ -113,10 +121,26 @@ interface OpenCell {
   balance: number;
 }
 
-/** `2026-11-30` -> `30 Nov 26` (R14 chip), the `DateRangePicker`'s own ISO parser reused
- *  rather than a second one. */
+/** `2026-11-30` <-> local `Date`, for the two typed `DatePicker`s (R14b) - the same pair
+ *  the single Cutoff field used before R14, brought back verbatim now that a `DatePicker`
+ *  is what drives this filter again. */
+function isoToDate(value: string): Date | undefined {
+  if (!value) return undefined;
+  const [y, m, d] = value.split('-').map(Number);
+  if (!y || !m || !d) return undefined;
+  const date = new Date(y, m - 1, d);
+  return Number.isNaN(date.getTime()) ? undefined : date;
+}
+function dateToIso(value: Date | undefined): string {
+  if (!value) return '';
+  const m = String(value.getMonth() + 1).padStart(2, '0');
+  const d = String(value.getDate()).padStart(2, '0');
+  return `${value.getFullYear()}-${m}-${d}`;
+}
+
+/** `2026-11-30` -> `30 Nov 26` (R14 chip). */
 function formatDateChip(value: string): string {
-  const date = parseIsoDate(value);
+  const date = isoToDate(value);
   if (!date) return value;
   return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: '2-digit' });
 }
@@ -264,11 +288,29 @@ export function StockDebtClient() {
   // hook itself, since it has nothing to do with where the pointer is). Attached once
   // (empty deps) and read through the ref for the same reason as `columns` above - a
   // fresh `selection` every drag step is not a reason to re-subscribe the listener.
+  //
+  // Owner hand-test round diagnosis: a pointerdown anywhere in the Filters panel's OWN
+  // popovers (Due date, Supplier, ...) - or the Export popover - lands outside
+  // `tableContainerRef` (Radix portals them to `document.body`) and used to count as
+  // "outside the table" too, clearing a selection the reader was never touching. Beyond
+  // being wrong on its own terms, that `clear()` call - even a no-op one before the fix
+  // in `useCellSelection` - re-rendered this component BETWEEN a real click's own
+  // mousedown and mouseup, which is what silently swallowed clicks on the Due date
+  // calendar's month arrows. Excluded here by the one marker every Radix popper content
+  // wrapper carries, so tweaking a filter never touches a selection the reader is mid-way
+  // through building elsewhere on the same screen.
   React.useEffect(() => {
     function onPointerDown(e: PointerEvent) {
       if (!tableContainerRef.current) return;
       if (!(e.target instanceof Node)) return;
-      if (!tableContainerRef.current.contains(e.target)) selectionRef.current.clear();
+      if (tableContainerRef.current.contains(e.target)) return;
+      if (
+        e.target instanceof Element &&
+        e.target.closest('[data-radix-popper-content-wrapper]')
+      ) {
+        return;
+      }
+      selectionRef.current.clear();
     }
     document.addEventListener('pointerdown', onPointerDown);
     return () => document.removeEventListener('pointerdown', onPointerDown);
@@ -496,10 +538,16 @@ export function StockDebtClient() {
     (dateFrom || dateTo ? 1 : 0) +
     (onlyDebt ? 0 : 1);
 
+  // R14b: both ends reads "Due: 1 Nov 26 to 30 Nov 26"; either end alone reads "from" or
+  // "to" rather than padding the other side with a placeholder.
   const dueDateChipLabel =
-    dateFrom || dateTo
-      ? `Due: ${dateFrom ? formatDateChip(dateFrom) : '…'} to ${dateTo ? formatDateChip(dateTo) : '…'}`
-      : null;
+    dateFrom && dateTo
+      ? `Due: ${formatDateChip(dateFrom)} to ${formatDateChip(dateTo)}`
+      : dateFrom
+        ? `Due: from ${formatDateChip(dateFrom)}`
+        : dateTo
+          ? `Due: to ${formatDateChip(dateTo)}`
+          : null;
 
   const activeChips = [
     book !== 'all'
@@ -625,15 +673,40 @@ export function StockDebtClient() {
 
                     <div className="space-y-1.5">
                       <Label className="text-xs text-muted-foreground">Due date</Label>
-                      <DateRangePicker
-                        from={dateFrom || null}
-                        to={dateTo || null}
-                        onChange={(next) => {
-                          setDateFrom(next.from ?? '');
-                          setDateTo(next.to ?? '');
-                        }}
-                        aria-label="Due date"
-                      />
+                      {/* R14b: two typeable `DatePicker`s, not the `DateRangePicker` R14
+                          introduced - its calendar could not be driven inside this
+                          screen's Filters dropdown at all (see the file header) and
+                          offered no typed input. One column at 375px, two on desktop. */}
+                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                        <div className="space-y-1">
+                          <Label
+                            htmlFor="stock-debt-due-date-from"
+                            className="text-2xs text-muted-foreground"
+                          >
+                            From
+                          </Label>
+                          <DatePicker
+                            id="stock-debt-due-date-from"
+                            ariaLabel="From"
+                            value={isoToDate(dateFrom)}
+                            onChange={(date) => setDateFrom(dateToIso(date))}
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label
+                            htmlFor="stock-debt-due-date-to"
+                            className="text-2xs text-muted-foreground"
+                          >
+                            To
+                          </Label>
+                          <DatePicker
+                            id="stock-debt-due-date-to"
+                            ariaLabel="To"
+                            value={isoToDate(dateTo)}
+                            onChange={(date) => setDateTo(dateToIso(date))}
+                          />
+                        </div>
+                      </div>
                     </div>
 
                     <div className="flex items-center gap-2 border-t pt-3">

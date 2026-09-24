@@ -136,7 +136,18 @@ export function useCellSelection({
     };
   }, []);
 
-  const clear = React.useCallback(() => setSelected(new Set()), []);
+  // A no-op when nothing is selected (owner hand-test round, R14b diagnosis): a fresh
+  // `new Set()` never satisfies `Object.is` against the previous one even when both are
+  // EMPTY, so an unconditional `setSelected(new Set())` re-rendered the caller on every
+  // outside pointerdown regardless of whether there was ever anything to clear - and
+  // that re-render, landing between a real click's own mousedown and mouseup, is what
+  // silently swallowed clicks on controls portalled outside the table (the Due date
+  // calendar's month arrows chief among them). The updater form reads the CURRENT
+  // `selected` at call time without needing it in this callback's own deps.
+  const clear = React.useCallback(
+    () => setSelected((previous) => (previous.size ? new Set() : previous)),
+    [],
+  );
 
   const isSelected = React.useCallback(
     (rowId: string, columnKey: string) => selected.has(cellKey(rowId, columnKey)),
