@@ -525,7 +525,7 @@ describe('AC-RS-88: the State SearchableMultiSelect filter, and ?reserve= presel
     // Scoped to the listbox, not the whole screen: a row's own State pill (e.g. "To
     // buy") carries the same text as its matching filter option.
     const listbox = await screen.findByRole('listbox');
-    const options = ['To buy', 'Partly on PO/SPO', 'On PO/SPO', 'Done', 'Request to reserve', 'Reserved'];
+    const options = ['To buy', 'Partly on PO/SPO', 'On PO/SPO', 'Done', 'Request to reserve', 'Reserved', 'Not reserved'];
     for (const label of options) {
       expect(within(listbox).getByRole('option', { name: label })).toBeInTheDocument();
     }
@@ -536,6 +536,19 @@ describe('AC-RS-88: the State SearchableMultiSelect filter, and ?reserve= presel
 
     await waitFor(() => expect(screen.queryByText('ZZT-PLAIN')).not.toBeInTheDocument());
     expect(screen.getByText('ZZT-REQUESTED')).toBeInTheDocument();
+  });
+
+  it('AC-RS-85c: Not reserved filters to declined lines only', async () => {
+    renderDetail();
+    await screen.findByText('ZZT-DECLINED');
+
+    fireEvent.click(document.querySelector('[data-slot="searchable-multi-select-trigger"]') as Element);
+    const listbox = await screen.findByRole('listbox');
+    fireEvent.click(within(listbox).getByRole('option', { name: 'Not reserved' }));
+
+    await waitFor(() => expect(screen.queryByText('ZZT-RESERVED')).not.toBeInTheDocument());
+    expect(screen.queryByText('ZZT-REQUESTED')).not.toBeInTheDocument();
+    expect(screen.getAllByText('ZZT-DECLINED').length).toBeGreaterThan(0);
   });
 
   it('?reserve=<id> preselects Request to reserve and opens no dialog', async () => {
@@ -650,7 +663,7 @@ describe('6e.4 review round: declined lines, the action column gate, amend prefi
     expect((screen.getByLabelText('Reserved') as HTMLInputElement).value).toBe('107');
   });
 
-  it('AC-RS-85b: amend prefill is the anchor request row own reserved qty, not the line aggregate', async () => {
+  it('AC-RS-85c: amend prefills the line net (the pill figure), not one request row', async () => {
     vi.mocked(getOrderInquiryHeaderLines).mockResolvedValue([
       PLAIN_ROW,
       REQUESTED_ROW,
@@ -661,8 +674,58 @@ describe('6e.4 review round: declined lines, the action column gate, amend prefi
 
     fireEvent.click(within(gridRowFor('ZZT-RESERVED')).getByLabelText('Amend reserve'));
     await screen.findByRole('dialog', { name: /ZZT-RESERVED/i });
-    expect((screen.getByLabelText('Reserved') as HTMLInputElement).value).toBe('30');
+    expect((screen.getByLabelText('Reserved') as HTMLInputElement).value).toBe('45');
     expect(screen.getByText('DC1')).toBeInTheDocument();
+  });
+
+  it('AC-RS-85c: a line answered by two requests reads Requested 50 across 2 requests; reason below 50', async () => {
+    const SECOND_ANSWER: OrderInquiryReserveRequest = {
+      ...ANSWERED_REQUEST,
+      id: 'rr-9',
+      ordinal: 3,
+      rows: [
+        {
+          ...ANSWERED_REQUEST.rows[0],
+          id: 'reqrow-9',
+          qty_requested: '20',
+          qty_reserved: '0',
+          reason: 'none left',
+        },
+      ],
+    };
+    getReserveRequestsMock.mockResolvedValue([
+      OPEN_REQUEST,
+      {
+        ...ANSWERED_REQUEST,
+        rows: [{ ...ANSWERED_REQUEST.rows[0], qty_requested: '30', qty_reserved: '30' }],
+      },
+      SECOND_ANSWER,
+    ]);
+    renderDetail();
+    await screen.findByText('ZZT-RESERVED');
+
+    fireEvent.click(within(gridRowFor('ZZT-RESERVED')).getByLabelText('Amend reserve'));
+    const dialog = await screen.findByRole('dialog', { name: /ZZT-RESERVED/i });
+    expect(within(dialog).getByText('Requested 50 across 2 requests')).toBeInTheDocument();
+    expect((screen.getByLabelText('Reserved') as HTMLInputElement).value).toBe('30');
+    // 40 is below the 50 requested in total: a reason is needed.
+    fireEvent.change(screen.getByLabelText('Reserved'), { target: { value: '40' } });
+    expect(screen.getByRole('button', { name: /^stage$/i })).toBeDisabled();
+  });
+
+  it('a commit whose response touched no request toasts Nothing to change', async () => {
+    commitReserveSpy.mockResolvedValueOnce([]);
+    renderDetail();
+    await screen.findByText('ZZT-RESERVED');
+
+    fireEvent.click(within(gridRowFor('ZZT-RESERVED')).getByLabelText('Amend reserve'));
+    await screen.findByRole('dialog', { name: /ZZT-RESERVED/i });
+    fireEvent.change(screen.getByLabelText(/reason/i), { target: { value: 'same' } });
+    fireEvent.click(screen.getByRole('button', { name: /^stage$/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^reserve \(1\)$/i }));
+
+    await waitFor(() => expect(toastSuccessSpy).toHaveBeenCalledWith('Nothing to change'));
+    expect(toastSuccessSpy).not.toHaveBeenCalledWith(expect.stringMatching(/notified/i));
   });
 
   it('AC-RS-85b: a staged reserve with no location is sent without warehouse_id', async () => {

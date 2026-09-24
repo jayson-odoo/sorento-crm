@@ -136,6 +136,26 @@ describe('AC-RS-86: amend mode - Location is locked read-only text, Reserved pre
     expect(screen.getByRole('button', { name: /^stage$/i })).toBeEnabled();
   });
 
+  it('6e.4: amend mode edits the line net - may go above one request, up to maxQty; sub-label for several requests', async () => {
+    const { onStage } = renderForm({
+      mode: 'amend',
+      lockedLocationLabel: 'BRW',
+      initialQty: '30',
+      requestedQty: '50',
+      maxQty: '60',
+      answeredRequestCount: 2,
+    });
+
+    expect(screen.getByText('Requested 50 across 2 requests')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Reserved'), { target: { value: '55' } });
+    expect((screen.getByLabelText('Reserved') as HTMLInputElement).value).toBe('55');
+    expect(screen.queryByLabelText(/reason/i)).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Reserved'), { target: { value: '90' } });
+    expect((screen.getByLabelText('Reserved') as HTMLInputElement).value).toBe('60');
+    fireEvent.click(screen.getByRole('button', { name: /^stage$/i }));
+    expect(onStage).toHaveBeenCalledWith({ qty_reserved: 60, reason: null });
+  });
+
   it('Stage in amend mode calls onStage with no warehouse_id change, only the new qty', async () => {
     const { onStage } = renderForm({
       mode: 'amend',

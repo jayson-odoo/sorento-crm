@@ -48,6 +48,7 @@ function lineMatches(row: OrderInquiryWorklistRow, needle: string): boolean {
 // `cancelled` is not offered (6e.4, AC-RS-88b): this grid never shows a cancelled line.
 const RESERVE_REQUESTED_FILTER_VALUE = 'reserve:requested';
 const RESERVE_RESERVED_FILTER_VALUE = 'reserve:reserved';
+const RESERVE_DECLINED_FILTER_VALUE = 'reserve:declined';
 
 const STATE_FILTER_OPTIONS: SearchableMultiSelectOption[] = [
   { value: 'raised', label: STATE_LABEL.raised },
@@ -56,6 +57,7 @@ const STATE_FILTER_OPTIONS: SearchableMultiSelectOption[] = [
   { value: 'actioned', label: STATE_LABEL.actioned },
   { value: RESERVE_REQUESTED_FILTER_VALUE, label: 'Request to reserve' },
   { value: RESERVE_RESERVED_FILTER_VALUE, label: 'Reserved' },
+  { value: RESERVE_DECLINED_FILTER_VALUE, label: 'Not reserved' },
 ];
 
 function matchesStateFilter(row: OrderInquiryWorklistRow, selected: string[]): boolean {
@@ -63,6 +65,7 @@ function matchesStateFilter(row: OrderInquiryWorklistRow, selected: string[]): b
   return selected.some((value) => {
     if (value === RESERVE_REQUESTED_FILTER_VALUE) return row.reserve_state === 'requested';
     if (value === RESERVE_RESERVED_FILTER_VALUE) return row.reserve_state === 'reserved';
+    if (value === RESERVE_DECLINED_FILTER_VALUE) return row.reserve_state === 'declined';
     return row.state === value;
   });
 }

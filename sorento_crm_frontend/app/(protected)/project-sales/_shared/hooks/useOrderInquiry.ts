@@ -213,8 +213,13 @@ export function useCommitOrderInquiryReserve(inquiryId: string | undefined) {
       /** The requester's own name, for the toast alone - never read by `mutationFn`. */
       requesterName?: string | null;
     }) => commitOrderInquiryReserve(inquiryId as string, payload),
-    onSuccess: (_data, variables) => {
-      toast.success(`Reserved, ${variables.requesterName ?? 'the requester'} notified`);
+    onSuccess: (data, variables) => {
+      // Every staged line was a no-op on the server: nothing was written or mailed.
+      toast.success(
+        data.length === 0
+          ? 'Nothing to change'
+          : `Reserved, ${variables.requesterName ?? 'the requester'} notified`,
+      );
       queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_HEADER_LINES_KEY, inquiryId] });
       queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_RESERVE_REQUESTS_KEY, inquiryId] });
     },

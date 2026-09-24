@@ -64,6 +64,12 @@ export interface ReserveLineFormProps {
    * own net reserved qty to prefill Reserved with. */
   lockedLocationLabel?: string;
   initialQty?: string;
+  /** Amend mode: the input's ceiling - the line's net plus what it still has open
+   * (6e.4, "Amend edits the LINE's net"). Defaults to `requestedQty`. */
+  maxQty?: string;
+  /** Amend mode: how many answered requests the line's `requestedQty` sums; above 1
+   * the form states it. */
+  answeredRequestCount?: number;
   onStage: (payload: ReserveLineFormStagePayload | ReserveLineFormAmendPayload) => void;
 }
 
@@ -78,9 +84,12 @@ export function ReserveLineForm({
   defaultLocationId = null,
   lockedLocationLabel,
   initialQty,
+  maxQty,
+  answeredRequestCount = 1,
   onStage,
 }: ReserveLineFormProps) {
   const requested = Number(requestedQty || '0');
+  const max = maxQty != null ? Number(maxQty) : requested;
 
   // What Reserved auto-sets to, on mount and on every Location switch: the request,
   // capped at what the chosen pool actually has (0 when that pool reports nothing). No
@@ -109,7 +118,7 @@ export function ReserveLineForm({
 
   function handleQtyChange(event: React.ChangeEvent<HTMLInputElement>) {
     const raw = Number(event.target.value);
-    setQty(Math.min(Math.max(Number.isFinite(raw) ? raw : 0, 0), requested));
+    setQty(Math.min(Math.max(Number.isFinite(raw) ? raw : 0, 0), max));
   }
 
   // AC-RS-85 / 6e.4: Reason appears, and is required, whenever Reserved < Requested.
@@ -170,6 +179,11 @@ export function ReserveLineForm({
             <div className="space-y-1">
               <Label>Location</Label>
               <div className="text-sm">{lockedLocationLabel || '-'}</div>
+              {answeredRequestCount > 1 ? (
+                <div className="text-xs text-muted-foreground">
+                  Requested {requested} across {answeredRequestCount} requests
+                </div>
+              ) : null}
             </div>
           )}
           <div className="space-y-1">
@@ -178,7 +192,7 @@ export function ReserveLineForm({
               id="reserve-line-qty"
               type="number"
               min={0}
-              max={requested}
+              max={max}
               step="any"
               value={qty}
               onChange={handleQtyChange}

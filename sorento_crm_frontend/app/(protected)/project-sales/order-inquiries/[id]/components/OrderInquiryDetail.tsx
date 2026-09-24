@@ -123,19 +123,6 @@ function reserveIneligibleReason(row: OrderInquiryWorklistRow): string | null {
   return null;
 }
 
-/** 6e.4 (B3): the amend prefill is the anchor request row's OWN reserved qty (the row
- * the server amends), clamped to what that request asked for - never the line's
- * aggregate `reserved_qty`, which also counts other requests. */
-function amendPrefill(
-  anchor: { rowQtyReserved: string | null; qtyRequested: string } | null,
-  row: OrderInquiryWorklistRow,
-): string {
-  if (!anchor) return row.reserved_qty ?? '0';
-  const own = Number(anchor.rowQtyReserved || '0');
-  const requested = Number(anchor.qtyRequested || '0');
-  return String(Math.min(own, requested));
-}
-
 /** A ticked line still owed a document (mirrors `OrderInquiriesClient.tsx`'s own
  * `isLinkable`, kept smaller here on purpose: a single header's lines carry none of the
  * worklist's cross-header bundling, so the extra tests that function runs have nothing
@@ -437,6 +424,21 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   const editingRowOptions = editingRow ? editingRowOptionsResolved[editingRow.row.id] : undefined;
   const editingOpenRequest = editingRow ? openRequestForRow(editingRow.row.id) : null;
   const editingAnsweredRow = editingRow ? answeredRequestRowFor(editingRow.row.id) : null;
+  // 6e.4 "Amend edits the LINE's net": the form edits the pill's figure; the reason
+  // threshold is the total requested across every answered request of the line.
+  const editingAnsweredRows = useMemo(
+    () =>
+      editingRow
+        ? (reserveRequestsQuery.data ?? []).flatMap((r) =>
+            r.rows.filter((row) => row.row_id === editingRow.row.id && row.qty_reserved != null),
+          )
+        : [],
+    [editingRow, reserveRequestsQuery.data],
+  );
+  const editingRequestedTotal = editingAnsweredRows.reduce(
+    (sum, row) => sum + Number(row.qty_requested || '0'),
+    0,
+  );
 
   function handleStage(payload: { warehouse_id?: string; qty_reserved: number; reason: string | null }) {
     if (!editingRow) return;
@@ -917,15 +919,26 @@ export function OrderInquiryDetail({ id }: { id: string }) {
           requestedQty={
             editingRow.mode === 'reserve'
               ? (editingOpenRequest?.qtyRequested ?? '0')
-              : (editingAnsweredRow?.qtyRequested ?? editingRow.row.reserved_qty ?? '0')
+              : editingAnsweredRows.length > 0
+                ? String(editingRequestedTotal)
+                : (editingRow.row.reserved_qty ?? '0')
           }
+          maxQty={
+            editingRow.mode === 'amend'
+              ? String(
+                  Number(editingRow.row.reserved_qty || '0') +
+                    Math.max(0, rowRemaining(editingRow.row)),
+                )
+              : undefined
+          }
+          answeredRequestCount={editingAnsweredRows.length}
           locationOptions={editingRowOptions?.options ?? []}
           availableQtyByLocation={editingRowOptions?.availableQtyByWarehouseId ?? {}}
           defaultLocationId={
             editingOpenRequest?.warehouseId ?? editingRowOptions?.defaultWarehouseId ?? null
           }
           lockedLocationLabel={editingAnsweredRow?.location ?? editingRow.row.location ?? ''}
-          initialQty={amendPrefill(editingAnsweredRow, editingRow.row)}
+          initialQty={editingRow.row.reserved_qty ?? '0'}
           onStage={handleStage}
         />
       ) : null}
