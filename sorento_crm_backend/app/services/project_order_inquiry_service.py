@@ -7635,7 +7635,68 @@ class ProjectOrderInquiryService:
         self.db.add(link)
         self.db.flush()
         self._invalidate_link_cache()
+        # AC-LT-15 (G2, "a real link always wins"): the ONE link writer, so this is
+        # the one place a real link's own arrival can trim what is left of the
+        # suggestions on the SAME target - whichever caller reached here, `place_on_
+        # po_allocations`'s own loop or `follow_book_for_rows`'s (fix round, 24 Sep:
+        # the book never calls `place_on_po_allocations`, so a trim that only ran
+        # there missed every book-named real link entirely).
+        room = self._room_for_suggestions_after_real_link(candidate)
+        if room is not None:
+            self._trim_suggested_links_to_room(candidate, room)
         return link
+
+    def _room_for_suggestions_after_real_link(
+        self, candidate: Dict[str, Any]
+    ) -> Optional[Decimal]:
+        """What is left for a SUGGESTION on this target, read fresh right after a real
+        link just landed on it - the document's own capacity minus every real link now
+        sitting on it (this one included). A live query rather than a value the caller
+        already had (`raw_remaining`, computed BEFORE this write): `_write_link` is the
+        one choke point every real-link writer reaches, and a caller offering several
+        allocations on the SAME target in one call would otherwise need to thread a
+        running total through - a query is one extra cost per real link, and a target
+        rarely holds more than a couple of suggestions to begin with.
+
+        `None` when the target itself is gone (row already `SET NULL`led) - nothing to
+        trim against, and the caller leaves the suggestions alone rather than reading
+        a missing line as zero capacity.
+        """
+        po_line_id = candidate.get("po_line_id")
+        spo_allocation_id = candidate.get("spo_allocation_id")
+        if po_line_id:
+            line = (
+                self.db.query(PurchaseOrderLine)
+                .filter(PurchaseOrderLine.id == po_line_id)
+                .one_or_none()
+            )
+            if line is None:
+                return None
+            capacity = _dec(line.qty_ordered) - _dec(line.qty_received)
+            real_total = _dec(
+                self.db.query(func.sum(OrderInquiryLink.qty))
+                .filter(OrderInquiryLink.po_line_id == po_line_id)
+                .scalar()
+            )
+        elif spo_allocation_id:
+            allocation = (
+                self.db.query(SPOAllocation)
+                .filter(SPOAllocation.id == spo_allocation_id)
+                .one_or_none()
+            )
+            if allocation is None:
+                return None
+            capacity = _dec(allocation.allocated_quantity) - _dec(
+                allocation.quantity_received
+            )
+            real_total = _dec(
+                self.db.query(func.sum(OrderInquiryLink.qty))
+                .filter(OrderInquiryLink.spo_allocation_id == spo_allocation_id)
+                .scalar()
+            )
+        else:
+            return None
+        return max(capacity - real_total, _ZERO)
 
     def _suggested_of_row(self, row_id: str) -> List[OrderInquirySuggestedLink]:
         """This row's own suggested links, oldest first - the shape `_same_placement`
@@ -7744,9 +7805,9 @@ class ProjectOrderInquiryService:
         """AC-LT-15 (G2, "a real link always wins"): once a real link lands on this
         target, shrink what is left of the suggested links sitting on it - lowest
         priority first, latest `delivery_date` on the suggestion's OWN row, then
-        newest `suggested_at` - until they fit `room`. Never touches the real link
-        itself and never refuses one: the caller computes `room` from what was left
-        BEFORE its own write, so this only ever removes or shrinks a guess.
+        newest `suggested_at` - until they fit `room`. Never touches a real link and
+        never refuses one: `room` is what the real link left behind, AFTER it, so
+        this only ever removes or shrinks a guess.
         """
         po_line_id = candidate.get("po_line_id")
         spo_allocation_id = candidate.get("spo_allocation_id")
@@ -8140,25 +8201,13 @@ class ProjectOrderInquiryService:
                 code="order_inquiry_over_allocated",
             )
 
+        # AC-LT-15 (G2): a real link always wins over a suggestion on the SAME target -
+        # `_write_link` itself trims it (fix round, 24 Sep), the one choke point every
+        # real-link writer reaches, book included.
         for candidate, qty in resolved:
             self._write_link(
                 row, candidate, qty, actor_user_id=actor_user_id, auto_trigger=auto_trigger
             )
-
-        # AC-LT-15 (G2): a real link always wins over a suggestion on the SAME target -
-        # trimmed here, once per target this call actually wrote to, not inside
-        # `_write_link` (which runs once per allocation and would trim the same target
-        # twice for two allocations on it). `raw_remaining` is what was left on the
-        # line BEFORE this call's own writes (net of real links only), so subtracting
-        # this call's own total take off it is exactly what is left for a suggestion.
-        trimmed_targets: set = set()
-        for candidate, _qty in resolved:
-            target_id = candidate["target_id"]
-            if target_id in trimmed_targets:
-                continue
-            trimmed_targets.add(target_id)
-            room = candidate["raw_remaining"] - taken_within_call.get(target_id, _ZERO)
-            self._trim_suggested_links_to_room(candidate, max(room, _ZERO))
 
         self.refresh_link_state([row])
         self.db.flush()

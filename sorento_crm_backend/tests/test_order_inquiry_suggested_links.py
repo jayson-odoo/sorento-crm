@@ -551,6 +551,79 @@ class TestACLT15ARealLinkTrimsSuggestedLinksFirst:
         assert len(c_links) == 1
         assert c_links[0].qty == Decimal("5"), "the real link was never refused"
 
+    def test_ac_lt_15_a_book_named_real_link_trims_suggestions_too(self, ctx):
+        """AC-LT-15 says "book or manual" - fix round, 24 Sep: `_write_link` is the
+        ONE choke point every real-link writer reaches (`place_on_po_allocations`'s
+        own loop AND `follow_book_for_rows`'s), so a BOOK-named real link trims the
+        same way the test above proves a manual one does. The earlier build only
+        trimmed from `place_on_po_allocations`, which the book never calls - this is
+        the exact same fixture shape, the real link just arrives through the book."""
+        db = ctx.db
+        product = _seed_product(db, company_id=ctx.company_a)
+
+        ref_c = _ref("SOL")
+        _so_c, core_line_c = _seed_so_line(
+            db, company_id=ctx.company_a, product_id=product.id, source_ref=ref_c, qty="5"
+        )
+        po, po_line = _seed_po_line(
+            db,
+            company_id=ctx.company_a,
+            product_id=product.id,
+            from_so_line_ref=ref_c,
+            qty_ordered="8",
+            header_status="active",
+        )
+
+        ref_a = _ref("SOL")
+        _so_a, core_line_a = _seed_so_line(
+            db, company_id=ctx.company_a, product_id=product.id, source_ref=ref_a, qty="6"
+        )
+        _pso_a, _mirror_a, _inquiry_a, row_a = _seed_row_and_mirror(
+            db, company_id=ctx.company_a, core_line=core_line_a, product_id=product.id, qty="6"
+        )
+        row_a.delivery_date = date(2026, 7, 1)
+
+        ref_b = _ref("SOL")
+        _so_b, core_line_b = _seed_so_line(
+            db, company_id=ctx.company_a, product_id=product.id, source_ref=ref_b, qty="2"
+        )
+        _pso_b, _mirror_b, _inquiry_b, row_b = _seed_row_and_mirror(
+            db, company_id=ctx.company_a, core_line=core_line_b, product_id=product.id, qty="2"
+        )
+        row_b.delivery_date = date(2026, 7, 20)
+
+        _pso_c, _mirror_c, _inquiry_c, row_c = _seed_row_and_mirror(
+            db, company_id=ctx.company_a, core_line=core_line_c, product_id=product.id, qty="5"
+        )
+        db.flush()
+
+        _seed_suggested(
+            db, company_id=ctx.company_a, row_id=row_a.id, po_line_id=po_line.id,
+            document=po.po_number, qty="6",
+            suggested_at=datetime.utcnow() - timedelta(hours=2),
+        )
+        _seed_suggested(
+            db, company_id=ctx.company_a, row_id=row_b.id, po_line_id=po_line.id,
+            document=po.po_number, qty="2",
+            suggested_at=datetime.utcnow() - timedelta(hours=1),
+        )
+        db.commit()
+
+        ProjectOrderInquiryService(db).follow_book_for_rows(
+            [str(row_c.id)], trigger="autocount_ingest", company_id=ctx.company_a,
+            actor_user_id=None,
+        )
+
+        c_links = _links_of(db, row_c.id)
+        assert len(c_links) == 1
+        assert c_links[0].po_line_id == po_line.id
+        assert c_links[0].qty == Decimal("5"), "the book's own real link was never refused"
+
+        assert _suggested_of(db, row_b.id) == [], "B (later, lower priority) goes first"
+        remaining_a = _suggested_of(db, row_a.id)
+        assert len(remaining_a) == 1
+        assert remaining_a[0].qty == Decimal("3"), "A keeps only what is left"
+
 
 # ============================================================== AC-LT-16
 class TestACLT16IdempotentReplace:
