@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
   ExpandedState,
   PaginationState,
@@ -18,9 +19,18 @@ import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
+import { Label } from '@/components/ui/label';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
+import {
+  SearchableMultiSelect,
+  type SearchableMultiSelectOption,
+} from '@/components/common/SearchableMultiSelect';
 import { useTableDeepLinkHighlight } from '@/hooks/useTableDeepLinkHighlight';
-import { useOrderInquiryHeaderLinesColumns } from './orderInquiryHeaderLinesColumns';
+import { STATE_LABEL } from '../../../_shared/components/OrderInquiryVerbPill';
+import {
+  StagedReserveEntry,
+  useOrderInquiryHeaderLinesColumns,
+} from './orderInquiryHeaderLinesColumns';
 import type { OrderInquiryWorklistRow } from '../../../_shared/types/orderInquiry.types';
 
 /** `PLAN-oi-header-list-detail.md`, AC-DP-03. */
@@ -32,30 +42,107 @@ function lineMatches(row: OrderInquiryWorklistRow, needle: string): boolean {
   return haystack.includes(needle.toLowerCase());
 }
 
+// AC-RS-88 (`PLAN-oi-request-cs-reserve.md` 6e.2): the two reserve-state values ride
+// beside the plain `STATE_LABEL` ones in the SAME filter, never a second control, under
+// their own namespaced values so they collide with nothing a real `state` holds.
+// `cancelled` is not offered (6e.4, AC-RS-88b): this grid never shows a cancelled line.
+const RESERVE_REQUESTED_FILTER_VALUE = 'reserve:requested';
+const RESERVE_RESERVED_FILTER_VALUE = 'reserve:reserved';
+const RESERVE_DECLINED_FILTER_VALUE = 'reserve:declined';
+
+const STATE_FILTER_OPTIONS: SearchableMultiSelectOption[] = [
+  { value: 'raised', label: STATE_LABEL.raised },
+  { value: 'partly_linked', label: STATE_LABEL.partly_linked },
+  { value: 'placed', label: STATE_LABEL.placed },
+  { value: 'actioned', label: STATE_LABEL.actioned },
+  { value: RESERVE_REQUESTED_FILTER_VALUE, label: 'Request to reserve' },
+  { value: RESERVE_RESERVED_FILTER_VALUE, label: 'Reserved' },
+  { value: RESERVE_DECLINED_FILTER_VALUE, label: 'Not reserved' },
+];
+
+function matchesStateFilter(row: OrderInquiryWorklistRow, selected: string[]): boolean {
+  if (selected.length === 0) return true;
+  return selected.some((value) => {
+    if (value === RESERVE_REQUESTED_FILTER_VALUE) return row.reserve_state === 'requested';
+    if (value === RESERVE_RESERVED_FILTER_VALUE) return row.reserve_state === 'reserved';
+    if (value === RESERVE_DECLINED_FILTER_VALUE) return row.reserve_state === 'declined';
+    return row.state === value;
+  });
+}
+
 export function OrderInquiryLinesTab({
   lines,
   isLoading,
   rowSelection,
   onRowSelectionChange,
-  onReserveClick,
+  canReserve,
+  stagedByRowId,
+  onTickReserve,
+  onEditReserve,
+  onAmendReserve,
+  onHistoryClick,
+  onUndoStaged,
 }: {
   lines: OrderInquiryWorklistRow[];
   isLoading: boolean;
   rowSelection: RowSelectionState;
   onRowSelectionChange: (next: RowSelectionState) => void;
-  /** `PLAN-oi-request-cs-reserve.md` section 6c F2: opens `ReserveRowDialog` for the row
-   * whose Reserve icon-button was clicked (`orderInquiryHeaderLinesColumns.tsx`). */
-  onReserveClick?: (row: OrderInquiryWorklistRow) => void;
+  /** AC-RS-83 (`PLAN-oi-request-cs-reserve.md` 6e.2): gates the Lines grid's own
+   * reserve icons inside the State cell (AC-RS-83c) - the rest are their callbacks,
+   * threaded straight through to `useOrderInquiryHeaderLinesColumns`. */
+  canReserve?: boolean;
+  stagedByRowId?: Record<string, StagedReserveEntry>;
+  onTickReserve?: (row: OrderInquiryWorklistRow) => void;
+  onEditReserve?: (row: OrderInquiryWorklistRow) => void;
+  onAmendReserve?: (row: OrderInquiryWorklistRow) => void;
+  onHistoryClick?: (row: OrderInquiryWorklistRow) => void;
+  onUndoStaged?: (rowId: string) => void;
 }) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
   const [sorting, setSorting] = useState<SortingState>([]);
   const [search, setSearch] = useState('');
   const [expanded, setExpanded] = useState<ExpandedState>({});
-  const columns = useOrderInquiryHeaderLinesColumns({ onReserveClick });
+  // AC-RS-88: `?reserve=<id>` preselects "Request to reserve" - never opens a dialog
+  // any more (round 3's own deep-link dialog is retired).
+  const [stateFilter, setStateFilter] = useState<string[]>(() =>
+    searchParams.get('reserve') ? [RESERVE_REQUESTED_FILTER_VALUE] : [],
+  );
+  const columns = useOrderInquiryHeaderLinesColumns({
+    canReserve,
+    stagedByRowId,
+    onTickReserve,
+    onEditReserve,
+    onAmendReserve,
+    onHistoryClick,
+    onUndoStaged,
+  });
+
+  function handleStateFilterChange(next: string[]) {
+    setStateFilter(next);
+    // The param is dropped the moment the reader touches the filter themselves - it
+    // has done its one job (preselecting) and must not keep re-forcing that selection
+    // back on every unrelated re-render.
+    if (searchParams.get('reserve')) {
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete('reserve');
+      const qs = params.toString();
+      router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+    }
+  }
 
   // Cancelled lines are hidden here, same as the worklist (S5) - they carry no
   // instruction left to confirm or link, only a history the raise-cancel already told.
-  const rows = useMemo(() => lines.filter((line) => line.state !== 'cancelled'), [lines]);
+  const rows = useMemo(
+    () =>
+      lines
+        .filter((line) => line.state !== 'cancelled')
+        .filter((line) => matchesStateFilter(line, stateFilter)),
+    [lines, stateFilter],
+  );
 
   const table = useReactTable({
     columns,
@@ -100,7 +187,11 @@ export function OrderInquiryLinesTab({
       isLoading={isLoading}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
       emptyMessage={
-        lines.length === 0 ? 'Nothing was raised on this order inquiry.' : 'No product matches that search.'
+        lines.length === 0
+          ? 'Nothing was raised on this order inquiry.'
+          : stateFilter.length > 0 && rows.length === 0
+            ? 'No line matches the filter.'
+            : 'No product matches that search.'
       }
       listingKey={LISTING_KEY}
       rowAttributes={deepLink.rowAttributes}
@@ -111,12 +202,27 @@ export function OrderInquiryLinesTab({
           <DataGridListToolbar
             table={table}
             searchSlot={
-              <ListSearchInput
-                value={search}
-                onChange={setSearch}
-                placeholder="Search product..."
-                className="w-56"
-              />
+              <div className="flex flex-wrap items-center gap-2">
+                <ListSearchInput
+                  value={search}
+                  onChange={setSearch}
+                  placeholder="Search product..."
+                  className="w-56"
+                />
+                <div className="flex items-center gap-1.5">
+                  <Label htmlFor="oi-lines-state-filter" className="sr-only">
+                    State
+                  </Label>
+                  <SearchableMultiSelect
+                    id="oi-lines-state-filter"
+                    value={stateFilter}
+                    onChange={handleStateFilterChange}
+                    options={STATE_FILTER_OPTIONS}
+                    placeholder="State"
+                    className="w-48"
+                  />
+                </div>
+              </div>
             }
             exportConfig={false}
           />

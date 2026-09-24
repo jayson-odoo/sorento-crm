@@ -1807,6 +1807,10 @@ class FulfilmentBoardService:
         pick the LIVE row when a refused row and the row CS raised in its place share a
         `created_at`. An answered refusal is therefore taken out of the running explicitly
         rather than left to lose the coin flip - see `_refusal_answered`.
+
+        A cancelled row is never a "last writer" either - it is skipped before it can seed
+        or overwrite an entry, so a withdrawn line falls back to whatever older row still
+        stands, or to no entry at all when none does.
         """
         if not core_line_ids:
             return {}
@@ -1909,6 +1913,13 @@ class FulfilmentBoardService:
                     "_row_id": str(row_id),
                     "redirected": bool(redirected_to_pool),
                 }
+            if state == INQUIRY_CANCELLED:
+                # A cancelled row never becomes the column's entry, not even to seed one
+                # over a blank cell - so a line whose only surviving row is cancelled reads
+                # "-" rather than a number nobody holds. `live_entry` above already excludes
+                # it; this excludes it from last-writer-wins too, so an older row that is
+                # still live (or still-open refusal) wins the cell instead.
+                continue
             answered_refusal = ack_state == ACK_REJECTED and _refusal_answered(
                 core_key, rejected_at
             )
@@ -3930,17 +3941,22 @@ class FulfilmentBoardService:
         that tells a planner why a group with stock coming still bought.
 
         R7: `own_arrival` is what THIS rung drew as own-arrival credit, said FIRST and by
-        its own PO - "20 landed for this line on PO ..., taken first" - ahead of whatever
-        the ordinary group-net sentence below it says, because the two are different facts
-        answering the same question.
+        the document it landed on - "20 landed for this line on ..., taken first" - ahead
+        of whatever the ordinary group-net sentence below it says, because the two are
+        different facts answering the same question.
+
+        R7 FOLLOW-UP (`PLAN-r7-landed-reads-spo-received.md`, R1/R3): that document is now
+        the SPO the goods physically landed on, never the PO - a PO line's own
+        `qty_received` is the AutoCount TRANSFER onto a shipping order, not a receipt - so
+        the noun in front of it is dropped rather than saying "PO" of an SPO number.
         """
         prefix = "".join(
             (
-                f"{qty_text(qty)} landed for this line on PO {po_number}, taken first. "
-                if po_number
+                f"{qty_text(qty)} landed for this line on {document}, taken first. "
+                if document
                 else f"{qty_text(qty)} landed for this line, taken first. "
             )
-            for qty, po_number in own_arrival
+            for qty, document in own_arrival
             if qty > _ZERO
         )
         if outcome == "none_needed":

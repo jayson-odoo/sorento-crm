@@ -44,7 +44,7 @@ import logging
 import re
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import event, func, or_, tuple_
@@ -789,6 +789,7 @@ class ProjectOrderInquiryService:
         actor_user_id: Optional[str] = None,
         borrow_shortfalls: Sequence[Dict[str, Any]] = (),
         settle_in_place_line_ids: Sequence[str] = (),
+        uncover_reason_by_line: Optional[Mapping[str, str]] = None,
     ) -> Dict[str, Any]:
         """The Buy-only handoff, written INSIDE the atomic confirmation (PLAN section 4).
 
@@ -842,6 +843,13 @@ class ProjectOrderInquiryService:
         ONE still-owed row: where it has two, this build has no way to say which of them
         the book moved, and inventing an answer is worse than the supersede it already
         does.
+
+        `uncover_reason_by_line` (S2/S3, `PLAN-board-reject-on-confirmed-line.md`, rework
+        fix round): the bare per-line reason for a line `ProjectSupplyService.confirm`'s
+        own `uncover_line_ids` dropped - passed straight through to `_retire_uncovered_
+        rows`, so a withdrawn line's row reads "Taken out of the confirmation: <its own
+        reason>" rather than the blanket "Superseded by revision N" every OTHER dropped
+        line (drift, a line no longer on the order) still gets.
         """
         inquiry = self._existing(order.id, None)
         if inquiry is None:
@@ -1403,7 +1411,13 @@ class ProjectOrderInquiryService:
                     }
                 )
 
-        self._retire_uncovered_rows(inquiry, decision, buy_lines, actor_user_id=actor_user_id)
+        self._retire_uncovered_rows(
+            inquiry,
+            decision,
+            buy_lines,
+            actor_user_id=actor_user_id,
+            reason_by_line=uncover_reason_by_line,
+        )
         shortfalls = self._raise_borrow_shortfalls(
             order,
             inquiry,
@@ -3579,6 +3593,9 @@ class ProjectOrderInquiryService:
         buy_lines: Sequence[Dict[str, Any]],
         *,
         actor_user_id: Optional[str] = None,
+        only_line_ids: Optional[Sequence[str]] = None,
+        reason: Optional[str] = None,
+        reason_by_line: Optional[Mapping[str, str]] = None,
     ) -> None:
         """Cancel still-raised rows of an EARLIER revision on lines this one dropped.
 
@@ -3599,22 +3616,86 @@ class ProjectOrderInquiryService:
         (`PLAN-oi-confirm-per-so.md` S1): linking never waits for confirm, so an unread
         row can hold a manual link just as a confirmed one can hold only the cascade's
         own guess).
+
+        `only_line_ids`/`reason` (owner case, 22 Sep 2026,
+        `PLAN-board-reject-on-confirmed-line.md`, fix round): `ProjectSupplyService
+        .uncover_lines`' whole-revision branch retires the very decision this call would
+        otherwise diff against - there is no SUCCESSOR revision to name a
+        `supply_decision_id != decision.id` row as belonging to an earlier one, so the
+        ordinary query above would exclude every row this call means to retire (it found
+        none, ever, for that branch - "one confirmed Buy line, reject it" left its raised
+        row in front of purchasing for ever). Given explicitly, the query scopes to just
+        these lines instead of diffing against a successor, reads `IV_ORDER_BACK` alongside
+        `IV_ORDER`/`IV_CANCEL_BALANCE` (a Buy CS marked "Order back" with no `covered_by`
+        document is not a step-3 placement - `retire_supply_borrow_rows` does not see it -
+        but it is exactly as much this method's "line dropped, raised row must go" case as
+        a plain ORDER row), and the note carries `reason` prefixed (B1/S4, review round 3):
+        purchasing reads the same `note` column for a superseded-revision cancellation and
+        for this one, and a bare reason fragment with no lead-in read as a glitch next to
+        "Superseded by revision N" above it.
+
+        `OrderInquiryRow.supply_decision_id == decision.id` (B1, review round 3): dropped
+        from the first cut of this mode, which scoped by `so_line_id` alone. A row with NO
+        `supply_decision_id` on the SAME line belongs to the amendment/book-change path
+        (`derive_for_book_change` writes such a row onto the order's OWN header, verbs
+        including `IV_ORDER`/`IV_CANCEL_BALANCE`, with no decision attached) - a different
+        instruction to purchasing this method has never been the one to cancel, in the
+        ordinary `else` branch below either. Without the predicate, rejecting a covered
+        line whose header also carried a planning-change reaction cancelled that reaction
+        alongside the decision's own row.
+
+        `reason_by_line` (S2/S3, `PLAN-board-reject-on-confirmed-line.md`, rework fix
+        round): the BARE reason CS gave for EACH withdrawn line, keyed by `so_line_id` -
+        read in preference to `reason` (which on the reject path is the JOINED "Line N
+        rejected: ...; Line M rejected: ..." sentence Confirm also stamps on the
+        superseded revision's own `superseded_reason`). Without this a two-line
+        withdrawal stamped every row with the WHOLE joined sentence, prefixed a second
+        time by "Taken out of the confirmation: " - a row's own note is one line's
+        reason, never every withdrawn line's. A row whose line is absent from the map
+        falls back to `reason`/the ordinary default, unchanged.
         """
         covered = {str(entry["line"].id) for entry in buy_lines}
-        stale = (
-            self.db.query(OrderInquiryRow)
-            .filter(
-                OrderInquiryRow.order_inquiry_id == inquiry.id,
-                OrderInquiryRow.state.in_(
-                    (INQUIRY_RAISED, INQUIRY_PARTLY_LINKED, INQUIRY_PLACED)
-                ),
+        query = self.db.query(OrderInquiryRow).filter(
+            OrderInquiryRow.order_inquiry_id == inquiry.id,
+            OrderInquiryRow.state.in_(
+                (INQUIRY_RAISED, INQUIRY_PARTLY_LINKED, INQUIRY_PLACED)
+            ),
+        )
+        if only_line_ids is not None:
+            query = query.filter(
+                OrderInquiryRow.verb.in_((IV_ORDER, IV_ORDER_BACK, IV_CANCEL_BALANCE)),
+                OrderInquiryRow.so_line_id.in_([str(x) for x in only_line_ids]),
+                OrderInquiryRow.supply_decision_id == decision.id,
+                # A row purchasing has ALREADY rejected is left exactly as it is (owner
+                # case, fix round, found by `test_the_summary_ack_facet_carries_all_four_
+                # keys_by_name`): `reject_row`/`reject_rows` calls `uncover_lines` on the
+                # very line it just refused, through this same whole-revision branch, and
+                # `row.state` still reads RAISED at that point (`_stamp_rejected` moves
+                # only `ack_state`) - so without this the retirement below would cancel
+                # the row purchasing just rejected, and the ack summary's "rejected" facet
+                # (`_acks`, `order_inquiry_worklist_service.py`) excludes CANCELLED rows by
+                # design, so the row purchasing was just told about vanished from it.
+                OrderInquiryRow.ack_state != ACK_REJECTED,
+            )
+        else:
+            query = query.filter(
                 OrderInquiryRow.verb.in_((IV_ORDER, IV_CANCEL_BALANCE)),
                 OrderInquiryRow.supply_decision_id.isnot(None),
                 OrderInquiryRow.supply_decision_id != decision.id,
             )
-            .all()
-        )
-        stamp = f"Superseded by revision {decision.revision_no}"
+        stale = query.all()
+
+        def _stamp_for(row: OrderInquiryRow) -> str:
+            """This ROW's own note (S2/S3): a per-line bare reason wins when the caller
+            gave one, else the method's own defaults - unchanged from before this
+            parameter existed."""
+            per_line = (reason_by_line or {}).get(str(row.so_line_id))
+            if per_line is not None:
+                return f"Taken out of the confirmation: {per_line}"
+            if only_line_ids is not None and reason is not None:
+                return f"Taken out of the confirmation: {reason}"
+            return reason if reason is not None else f"Superseded by revision {decision.revision_no}"
+
         # Batched (S6): one grouped load for every stale row's links, rather than one
         # query per row inside the loop below.
         stale_links = self._links_by_row([str(row.id) for row in stale])
@@ -3625,6 +3706,7 @@ class ProjectOrderInquiryService:
             # to whatever else the same commit raises - the qty it once asked for is
             # `was`, captured before either branch below touches the row.
             was_qty = row.qty
+            stamp = _stamp_for(row)
             if row.state == INQUIRY_RAISED:
                 row.state = INQUIRY_CANCELLED
                 row.note = stamp
@@ -3646,6 +3728,41 @@ class ProjectOrderInquiryService:
             self._record_handover(
                 row, kind="cancelled", was={"qty": was_qty}, actor_user_id=actor_user_id
             )
+
+    def retire_rows_for_dropped_lines(
+        self,
+        project_sales_order_id: str,
+        decision: Any,
+        line_ids: Sequence[str],
+        *,
+        reason: str,
+        actor_user_id: Optional[str] = None,
+        reason_by_line: Optional[Mapping[str, str]] = None,
+    ) -> None:
+        """Public entry to `_retire_uncovered_rows`'s `only_line_ids` mode, for
+        `ProjectSupplyService.uncover_lines`' whole-revision branch (owner case, 22 Sep
+        2026, `PLAN-board-reject-on-confirmed-line.md`, fix round): the confirm-based
+        branch reaches the SAME retirement through `refresh_for_decision`'s own call
+        inside `confirm()`; this branch writes no fresh decision to route a confirm
+        through, so it calls the retirement directly instead. No-op when the order has
+        never raised an inquiry at all.
+
+        `reason_by_line` (S2/S3, rework fix round): the per-line bare reason each row's
+        own note is stamped with; `reason` stays the JOINED sentence a row falls back to
+        when its own line is absent from the map.
+        """
+        inquiry = self._existing(project_sales_order_id, None)
+        if inquiry is None:
+            return
+        self._retire_uncovered_rows(
+            inquiry,
+            decision,
+            buy_lines=[],
+            actor_user_id=actor_user_id,
+            only_line_ids=line_ids,
+            reason=reason,
+            reason_by_line=reason_by_line,
+        )
 
     def derive_for_amendment(
         self, amendment: SOAmendment, *, actor_user_id: Optional[str] = None
