@@ -2328,6 +2328,25 @@ class OrderInquiryWorklistService:
         book_so_by_ref = order_link_service.book_so_numbers_by_ref(
             self.db, [line[-1] for line in lines if line[-1]]
         )
+        # Issue #1215 point 2: which LINE an order inquiry's placement sits on, not only
+        # which document - a PO with two lines of the same item made the "Allocated to"
+        # panel's Item column ambiguous. Summed here (never per-row in the loop below) so
+        # the grid's own Allocated column and the panel agree about what "linked" means,
+        # and left out of `_allocations_on`'s own real-time read of who holds a document
+        # (that reader answers a different question, per row).
+        allocated_by_line = {
+            str(po_line_id): _dec(total)
+            for po_line_id, total in self.db.query(
+                OrderInquiryLink.po_line_id, func.sum(OrderInquiryLink.qty)
+            )
+            .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquiryLink.row_id)
+            .filter(
+                OrderInquiryLink.po_line_id.in_(line_ids),
+                OrderInquiryRow.state != INQUIRY_CANCELLED,
+            )
+            .group_by(OrderInquiryLink.po_line_id)
+            .all()
+        }
         return {
             "id": po.id,
             "po_number": po.po_number,
@@ -2337,11 +2356,21 @@ class OrderInquiryWorklistService:
             "status": po.status,
             "lines": [
                 {
+                    # Issue #1215 point 2: the line's own identity, so the FE can
+                    # highlight the one line the opening row's link actually sits on -
+                    # the SKU alone is ambiguous the moment a PO carries two lines of the
+                    # same item.
+                    "id": str(line_id),
                     "sku": sku,
                     "product_name": product_name,
                     "qty_ordered": _qty_str(_dec(qty_ordered)),
                     "qty_received": _qty_str(_dec(qty_received)),
                     "remaining": _qty_str(_dec(qty_ordered) - _dec(qty_received)),
+                    # Every order inquiry row's own placement on THIS line, summed -
+                    # never netted against anything else, unlike the "Place on PO"
+                    # candidate walk's own `remaining`. Zero rather than absent when
+                    # nothing is linked here yet.
+                    "allocated": _qty_str(allocated_by_line.get(str(line_id), _ZERO)),
                     "location": warehouse_code,
                     # The book's own SO linkage, read off the line's OWN
                     # `from_so_line_ref` - three states, and the ref itself never leaves
@@ -2517,6 +2546,11 @@ class OrderInquiryWorklistService:
             self.db.query(
                 OrderInquiryLink.qty,
                 OrderInquiryLink.linked_at,
+                # Issue #1215 point 2: which LINE this allocation sits on - the panel
+                # named only the document before, and a PO with two lines of the same
+                # item could not say which one. `spo_allocation_id` is never sent: the
+                # SPO lightbox already addresses its own lines by number, not by id.
+                OrderInquiryLink.po_line_id,
                 OrderInquiryRow.item_code,
                 OrderInquiryRow.ack_state,
                 OrderInquiry.inquiry_no,
@@ -2547,10 +2581,12 @@ class OrderInquiryWorklistService:
                 "qty": _qty_str(_dec(qty)),
                 "ack_state": ack_state,
                 "linked_at": linked_at,
+                "po_line_id": str(po_line_id) if po_line_id else None,
             }
             for (
                 qty,
                 linked_at,
+                po_line_id,
                 item_code,
                 ack_state,
                 inquiry_no,

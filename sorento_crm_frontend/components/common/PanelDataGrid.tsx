@@ -53,6 +53,8 @@ export function PanelDataGrid<TRow extends object>({
   emptyBody,
   emptyAction,
   onRowClick,
+  rowClassName,
+  rowAttributes,
   searchPlaceholder,
   searchOf,
   renderGroupHeader,
@@ -92,6 +94,16 @@ export function PanelDataGrid<TRow extends object>({
   emptyBody?: string;
   emptyAction?: React.ReactNode;
   onRowClick?: (row: TRow) => void;
+  /**
+   * Extra classes layered onto a row (the same idiom `DataGrid`'s own `rowClassName`
+   * already gives the top-level listings, e.g. a picker tinting the rows a clicked
+   * week fell in) - the PO lightbox uses it to highlight the line an opening row's
+   * link actually sits on.
+   */
+  rowClassName?: (row: TRow) => string | undefined;
+  /** Extra DOM attributes for a row, alongside `rowClassName` - kept separate so a test
+   * asserting a row's identity does not have to assert a CSS class string to do it. */
+  rowAttributes?: (row: TRow) => Record<string, string | undefined>;
   /** Shown in the search box. Omit both search props for a list too short to need one. */
   searchPlaceholder?: string;
   /**
@@ -328,6 +340,8 @@ export function PanelDataGrid<TRow extends object>({
         scrollerMaxHeight,
       }}
       onRowClick={onRowClick}
+      rowClassName={rowClassName}
+      rowAttributes={rowAttributes}
       renderGroupHeader={renderGroupHeader as never}
     >
       <Card>

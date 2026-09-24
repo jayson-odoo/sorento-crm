@@ -44,6 +44,7 @@ export function OrderInquiryDocumentDialog({
   kind,
   document,
   poId,
+  poLineId,
   open,
   onOpenChange,
 }: {
@@ -52,6 +53,12 @@ export function OrderInquiryDocumentDialog({
   document: string;
   /** Addresses the purchase order. Null on an SPO, which is addressed by its number. */
   poId?: string | null;
+  /**
+   * Issue #1215 point 2: the line the OPENING row's own link sits on, so the PO lines
+   * grid can highlight it - a PO with two lines of the same item made the panel's Item
+   * column alone ambiguous about which one. Ignored on an SPO document.
+   */
+  poLineId?: string | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -66,7 +73,7 @@ export function OrderInquiryDocumentDialog({
         </DialogHeader>
         <DialogBody className="max-h-[70vh] overflow-y-auto">
           {kind === 'po' ? (
-            <PoBody poId={poId ?? null} open={open} />
+            <PoBody poId={poId ?? null} poLineId={poLineId ?? null} open={open} />
           ) : (
             <SpoBody spoNumber={document} open={open} />
           )}
@@ -85,10 +92,12 @@ export function OrderInquiryDocumentLink({
   kind,
   document,
   poId,
+  poLineId,
 }: {
   kind: 'po' | 'spo';
   document: string;
   poId?: string | null;
+  poLineId?: string | null;
 }) {
   const [open, setOpen] = React.useState(false);
   return (
@@ -110,6 +119,7 @@ export function OrderInquiryDocumentLink({
           kind={kind}
           document={document}
           poId={poId}
+          poLineId={poLineId}
           open
           onOpenChange={setOpen}
         />
@@ -290,6 +300,23 @@ const PO_LINE_COLUMNS: ColumnDef<OrderInquiryPoDetailLine>[] = [
     meta: { headerTitle: 'Remaining' },
   },
   {
+    // Issue #1215 point 2: every order inquiry row's own placement on this line,
+    // summed - the panel named only the DOCUMENT before, and a PO with two lines of
+    // the same item could not say which one held the quantity.
+    id: 'allocated',
+    accessorFn: (line) => line.allocated ?? '0',
+    header: ({ column }) => (
+      <DataGridColumnHeader title="Allocated" column={column} className="justify-end" />
+    ),
+    cell: ({ row }) => (
+      <span className="block text-end tabular-nums">
+        {formatInquiryQty(row.original.allocated ?? '0')}
+      </span>
+    ),
+    size: 100,
+    meta: { headerTitle: 'Allocated' },
+  },
+  {
     id: 'location',
     accessorFn: (line) => line.location ?? '',
     header: ({ column }) => <DataGridColumnHeader title="Location" column={column} />,
@@ -392,7 +419,15 @@ function searchOfLine(line: { sku?: string | null; product_name?: string | null;
   return `${line.sku ?? ''} ${line.product_name ?? ''} ${line.location ?? ''}`;
 }
 
-function PoBody({ poId, open }: { poId: string | null; open: boolean }) {
+function PoBody({
+  poId,
+  poLineId,
+  open,
+}: {
+  poId: string | null;
+  poLineId?: string | null;
+  open: boolean;
+}) {
   const { data, isLoading, isError, error } = useOrderInquiryPoDetail(poId ?? undefined, {
     enabled: open && Boolean(poId),
   });
@@ -461,6 +496,13 @@ function PoBody({ poId, open }: { poId: string | null; open: boolean }) {
         pageSize={10}
         // The DialogBody already owns the scroll viewport (overflow-y-auto).
         scrollerMaxHeight={false}
+        // Issue #1215 point 2: highlight the line the OPENING row's own link sits on -
+        // a PO with two lines of the same item is exactly the case the plain Item
+        // column could not tell apart.
+        rowClassName={(line) => (poLineId && line.id === poLineId ? 'bg-primary/10' : undefined)}
+        rowAttributes={(line) =>
+          poLineId && line.id === poLineId ? { 'data-linked-line': 'true' } : {}
+        }
       />
 
       <AllocationsPanel allocations={data.allocations} />

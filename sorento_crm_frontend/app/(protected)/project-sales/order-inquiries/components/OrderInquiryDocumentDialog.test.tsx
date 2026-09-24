@@ -385,6 +385,114 @@ describe('PO lightbox lines - the book\'s own S/O linkage, a third surface for s
   });
 });
 
+describe('PO lightbox lines - Allocated + the linked line highlight (issue #1215 point 2)', () => {
+  it('renders the Allocated column, summed from the links this line holds', async () => {
+    getOrderInquiryPoDetail.mockResolvedValue({
+      id: 'po-1',
+      po_number: '202607-S0105',
+      supplier_name: 'DAFUYUAN',
+      status: 'confirmed',
+      expected_date: '2026-09-01',
+      lines: [
+        {
+          id: 'line-taken',
+          sku: 'TPE-9204',
+          product_name: 'Basin',
+          qty_ordered: '20000',
+          qty_received: '13550',
+          remaining: '6450',
+          location: 'BRW',
+          allocated: '2',
+        },
+      ],
+      allocations: [],
+    });
+    renderNode(
+      <OrderInquiryDocumentDialog kind="po" document="202607-S0105" poId="po-1" open onOpenChange={vi.fn()} />,
+    );
+
+    const row = (await screen.findByText('TPE-9204')).closest('tr') as HTMLElement;
+    expect(within(row).getByText('2')).toBeInTheDocument();
+  });
+
+  it('highlights only the line the opening row own link sits on, when poLineId is given', async () => {
+    getOrderInquiryPoDetail.mockResolvedValue({
+      id: 'po-1',
+      po_number: '202607-S0105',
+      supplier_name: 'DAFUYUAN',
+      status: 'confirmed',
+      expected_date: '2026-09-01',
+      lines: [
+        {
+          id: 'line-taken',
+          sku: 'TPE-9204',
+          product_name: 'Basin',
+          qty_ordered: '20000',
+          qty_received: '13550',
+          remaining: '6450',
+          location: 'BRW',
+          allocated: '2',
+        },
+        {
+          id: 'line-other',
+          sku: 'TPE-9203',
+          product_name: 'Basin (other line)',
+          qty_ordered: '10000',
+          qty_received: '1500',
+          remaining: '8500',
+          location: 'BRW',
+          allocated: '0',
+        },
+      ],
+      allocations: [],
+    });
+    renderNode(
+      <OrderInquiryDocumentDialog
+        kind="po"
+        document="202607-S0105"
+        poId="po-1"
+        poLineId="line-taken"
+        open
+        onOpenChange={vi.fn()}
+      />,
+    );
+
+    const takenRow = (await screen.findByText('TPE-9204')).closest('tr') as HTMLElement;
+    const otherRow = screen.getByText('TPE-9203').closest('tr') as HTMLElement;
+    expect(takenRow).toHaveAttribute('data-linked-line', 'true');
+    expect(otherRow).not.toHaveAttribute('data-linked-line');
+  });
+
+  it('highlights nothing when no poLineId is given', async () => {
+    getOrderInquiryPoDetail.mockResolvedValue({
+      id: 'po-1',
+      po_number: '202607-S0105',
+      supplier_name: 'DAFUYUAN',
+      status: 'confirmed',
+      expected_date: '2026-09-01',
+      lines: [
+        {
+          id: 'line-taken',
+          sku: 'TPE-9204',
+          product_name: 'Basin',
+          qty_ordered: '20000',
+          qty_received: '13550',
+          remaining: '6450',
+          location: 'BRW',
+          allocated: '2',
+        },
+      ],
+      allocations: [],
+    });
+    renderNode(
+      <OrderInquiryDocumentDialog kind="po" document="202607-S0105" poId="po-1" open onOpenChange={vi.fn()} />,
+    );
+
+    const row = (await screen.findByText('TPE-9204')).closest('tr') as HTMLElement;
+    expect(row).not.toHaveAttribute('data-linked-line');
+  });
+});
+
 describe('SPO lightbox body (AC-D19)', () => {
   it('reads the shipment / container when an inbound shipment exists', async () => {
     getOrderInquirySpoDetail.mockResolvedValue({

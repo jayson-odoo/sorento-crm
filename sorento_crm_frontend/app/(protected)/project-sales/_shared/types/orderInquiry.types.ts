@@ -140,6 +140,11 @@ export interface OrderInquiryLink {
   /** Addresses the PO popover. Null on an SPO link - there is no purchase order to open. */
   po_id?: string | null;
   /**
+   * Issue #1215 point 2: which PO line this link sits on, so the lightbox can
+   * highlight it on the lines grid. Null on an SPO link.
+   */
+  po_line_id?: string | null;
+  /**
    * The purchase order an SPO link's allocation was raised FROM, per the AutoCount
    * feed's own statement (owner's 9 Sep feedback: "if we link by SPO, where do we see
    * the PO number of this SPO?"). Plain text, never a link yet - a later slice decides
@@ -1037,11 +1042,23 @@ export interface UnplaceAllPreview {
  * line's own balance - never netted against other rows' claims, which is a different
  * reading that belongs to the "Place on PO" candidates. */
 export interface OrderInquiryPoDetailLine {
+  /**
+   * Issue #1215 point 2: the line's own identity, so the lightbox can highlight the
+   * exact line an opening row's link sits on - the SKU alone is ambiguous the moment a
+   * PO carries two lines of the same item.
+   */
+  id?: string | null;
   sku?: string | null;
   product_name?: string | null;
   qty_ordered: string;
   qty_received: string;
   remaining: string;
+  /**
+   * Every order inquiry row's own placement on THIS line, summed - never netted
+   * against anything else, unlike the "Place on PO" candidate walk's own `remaining`.
+   * Optional only for a caller that predates this field.
+   */
+  allocated?: string | null;
   location?: string | null;
   /**
    * The AutoCount book's own sales-order linkage for this line - the SAME fact and the
@@ -1072,6 +1089,11 @@ export interface OrderInquiryDocumentAllocation {
    * field the endpoint sends.
    */
   linked_at?: string | null;
+  /**
+   * Issue #1215 point 2: which PO line this allocation sits on, so the lightbox can
+   * highlight it on the lines grid. Null on an SPO allocation.
+   */
+  po_line_id?: string | null;
 }
 
 export interface OrderInquiryPoDetail {

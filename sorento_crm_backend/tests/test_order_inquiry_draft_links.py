@@ -877,6 +877,55 @@ def test_the_shipping_order_lightbox_names_who_is_holding_it(api):
     assert body["allocations"][0]["item_code"] == row.item_code
 
 
+# ---------------------------------------------------------------------------
+# Issue #1215 point 2: the lightbox names WHICH line an allocation sits on, and
+# the PO lines grid states each line's own Allocated total.
+# ---------------------------------------------------------------------------
+
+
+def test_the_purchase_order_lightbox_allocation_names_the_line_its_own_qty_sits_on(api):
+    client, world = api
+    po, line = _open_po_line(world, qty=50)
+    _raise_one_row(api, qty="10")
+
+    body = client.get(f"{LIST}/po/{po.id}").json()
+
+    assert body["allocations"][0]["po_line_id"] == line.id
+    detail_line = body["lines"][0]
+    assert detail_line["id"] == line.id
+    assert detail_line["allocated"] == "10"
+
+
+def test_the_purchase_order_lines_grid_allocated_is_per_line_not_the_whole_document(api):
+    """A PO with two lines of the SAME item is exactly what made the OLD panel
+    ambiguous (diagnosis point 2: the Item column happened to identify the line only
+    because the PO had one line per product). Only the line an order inquiry row is
+    actually linked to reads a non-zero Allocated; the other line of the same item
+    reads zero."""
+    client, world = api
+    po, taken_line = _open_po_line(world, qty=50)
+    free_line = PurchaseOrderLine(
+        id=str(uuid.uuid4()),
+        company_id=world.company_id,
+        purchase_order_id=po.id,
+        product_id=world.product.id,
+        warehouse_id=world.warehouse.id,
+        qty_ordered=Decimal("30"),
+        qty_received=Decimal("0"),
+        expected_date=date(2026, 9, 1),
+        line_status="open",
+    )
+    world.db.add(free_line)
+    world.db.commit()
+    _raise_one_row(api, qty="10")
+
+    body = client.get(f"{LIST}/po/{po.id}").json()
+
+    lines_by_id = {line["id"]: line for line in body["lines"]}
+    assert lines_by_id[taken_line.id]["allocated"] == "10"
+    assert lines_by_id[free_line.id]["allocated"] == "0"
+
+
 def test_the_shipping_order_lightbox_404s_on_a_number_nobody_holds(api):
     client, _world = api
 

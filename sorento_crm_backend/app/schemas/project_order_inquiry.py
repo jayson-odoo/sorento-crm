@@ -117,6 +117,12 @@ class OrderInquiryLinkOut(BaseModel):
     #: WHO linked it, by name. Null on a cascade link, which nobody did by hand.
     linked_by_name: Optional[str] = None
     po_id: Optional[str] = None
+    #: Issue #1215 point 2 - `links_for_rows` has always computed this (the candidate
+    #: walk's own target id), but `response_model` silently drops a field it has not
+    #: been told about (same lesson as `ack_state` elsewhere) and this one never was.
+    #: Needed so the Lines tab / PO lightbox can highlight the exact line this link
+    #: sits on. Null on an SPO link.
+    po_line_id: Optional[str] = None
     #: The purchase order an SPO link's allocation was raised FROM, per AutoCount's own
     #: statement (`SPOAllocation.from_po_number`, migration 493 / contract 2.2) - a
     #: different question from `po_id` above, which addresses this link's OWN document.
@@ -1103,11 +1109,20 @@ class OrderInquiryPoDetailLine(BaseModel):
     against other rows' claims - that reading belongs to the "Place on PO" candidates,
     not to a plain look at what was ordered."""
 
+    #: Issue #1215 point 2 - the line's own identity, so the FE can highlight the line
+    #: an opening row's link actually sits on. The SKU alone is ambiguous the moment a
+    #: PO carries two lines of the same item.
+    id: Optional[str] = None
     sku: Optional[str] = None
     product_name: Optional[str] = None
     qty_ordered: str
     qty_received: str
     remaining: str
+    #: Every order inquiry row's own placement on THIS line, summed (never netted
+    #: against anything else - that reading belongs to the "Place on PO" candidates).
+    #: Optional only for a caller that predates this field; `get_po_detail` always
+    #: sends it.
+    allocated: Optional[str] = None
     location: Optional[str] = None
     #: The book's own linkage for this line - the SAME fact and the SAME shape the SCM
     #: purchase-order detail's Lines tab prints (`PurchaseOrderLine.book_so_number` /
@@ -1145,6 +1160,9 @@ class OrderInquiryDocumentAllocation(BaseModel):
     qty: str
     ack_state: Optional[str] = None
     linked_at: Optional[datetime] = None
+    #: Issue #1215 point 2 - which PO line this allocation sits on, so the FE can
+    #: highlight it on the lines grid. Null on an SPO allocation.
+    po_line_id: Optional[str] = None
 
 
 class OrderInquiryPoDetail(BaseModel):
