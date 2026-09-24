@@ -2589,6 +2589,29 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     expect(chips.textContent).not.toMatch(/ABC/);
   });
 
+  it('AC-23: the discontinued chip reads "Discontinued" and its title no longer says a Buy needs a reason', () => {
+    const cell = cellOf([demand({ qty: '100' })]);
+    const contribution = cell.contributions[0];
+    contribution.item_flags = {
+      dealer_hot_selling: false,
+      dealer_hot_selling_where: [],
+      project_hot_selling: false,
+      project_hot_selling_where: [],
+      dealer_classified: false,
+      project_classified: false,
+      discontinued: true,
+      retail_classification_available: true,
+    };
+    renderCell(cell);
+    openLines();
+    openTrail(contribution.key);
+
+    const chip = screen.getByTestId(`trail-flag-${contribution.key}-discontinued`);
+    expect(chip).toHaveTextContent('Discontinued');
+    expect(chip).toHaveAttribute('title', 'Discontinued');
+    expect(chip.getAttribute('title')).not.toMatch(/needs a reason/);
+  });
+
   it('shows a project hot-selling chip alongside the dealer one when both flags are set', () => {
     const cell = cellOf([demand({ qty: '100' })]);
     const contribution = cell.contributions[0];

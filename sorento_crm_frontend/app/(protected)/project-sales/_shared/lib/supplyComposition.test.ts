@@ -219,10 +219,12 @@ describe('lineBlockers', () => {
     ).toEqual([]);
   });
 
-  it('demands a reason for buying a discontinued product, and only while it is bought', () => {
+  it('AC-22: raises no blocker for buying a discontinued product with no reason, bought or not', () => {
+    // D2 (AC-22): the discontinued-buy-needs-a-reason blocker is removed entirely - a
+    // discontinued Buy with a BLANK `buy_reason` is no longer refused here.
     expect(
       lineBlockers(draft({ is_discontinued: true, open_qty: '100', buy_qty: '100' })),
-    ).toEqual(['Line 1, CB6633: buying a discontinued product needs a reason.']);
+    ).toEqual([]);
 
     expect(
       lineBlockers(
@@ -428,7 +430,10 @@ describe('lineBlockers', () => {
     ]);
   });
 
-  it('orders the blockers: below zero, then the imbalance, then the missing reasons', () => {
+  it('orders the blockers: below zero, then the imbalance, then the missing reason - AC-22: the discontinued cause no longer adds a fourth', () => {
+    // D2/AC-22: `is_discontinued: true` is kept on the draft (the line still carries the flag
+    // for the warning elsewhere) but no longer contributes a blocker of its own, so this list
+    // now ends at the borrow reason instead of a fourth "buying a discontinued product" entry.
     const blockers = lineBlockers(
       draft({
         is_discontinued: true,
@@ -443,7 +448,6 @@ describe('lineBlockers', () => {
       'Line 1, CB6633: a quantity is below zero.',
       'Line 1, CB6633: the components are short of the open quantity by 45.',
       'Line 1, CB6633: the borrow from HQ needs a reason.',
-      'Line 1, CB6633: buying a discontinued product needs a reason.',
     ]);
   });
 });

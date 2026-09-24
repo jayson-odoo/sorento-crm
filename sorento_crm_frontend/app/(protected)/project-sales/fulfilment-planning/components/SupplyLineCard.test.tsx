@@ -657,13 +657,16 @@ describe('SupplyLineCard', () => {
     expect(screen.queryByText('Options')).not.toBeInTheDocument();
   });
 
-  it('warns that a discontinued product is discontinued and takes its reason (AC-B11)', () => {
+  it('AC-22: still warns that a discontinued product is discontinued, but no longer says buying it takes a reason', () => {
     renderCard(line({ is_discontinued: true }));
 
+    // D2 drops "Buying it takes a reason." from the warning; the discontinued fact itself
+    // stays.
+    expect(screen.getByText('This product is discontinued.')).toBeInTheDocument();
     expect(
-      screen.getByText('This product is discontinued. Buying it takes a reason.'),
-    ).toBeInTheDocument();
-    expect(within(section('Buy')).getByRole('textbox')).toBeInTheDocument();
+      screen.queryByText('This product is discontinued. Buying it takes a reason.'),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/Buying it takes a reason/)).not.toBeInTheDocument();
   });
 
   it('asks for no buy reason on a product that is still made', () => {
