@@ -15,7 +15,7 @@ import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { DatePicker } from '@/components/ui/date-picker';
+import { DateRangePicker, parseIsoDate } from '@/components/ui/date-range-picker';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -59,13 +59,21 @@ import { StockDebtExportPopover } from './StockDebtExportPopover';
  * literally, the policy's own month living in the header's title tooltip (R18); Copy
  * falls back to `document.execCommand('copy')` off a non-secure context (R19).
  *
- * Hand-test round 2 (R14b): the `DateRangePicker` R14 introduced could not be driven at
- * all inside this screen's Filters `DropdownMenu` - its month arrows never advanced (a
- * pointerdown anywhere in the Filters panel's OWN popovers was mistaken for "outside the
- * table" by the cell-selection-clear listener below, AC-29, and the resulting re-render
- * landed between the arrow's own mousedown and mouseup) - and it offered no typed input
- * at all. Due date is now two typeable `DatePicker`s (the same component the original
- * Cutoff field used, DD/MM/YYYY plus a calendar button), labelled "From" and "To".
+ * Hand-test round 2 (R14b, superseded same day by R14c below): the `DateRangePicker` R14
+ * introduced could not be driven at all inside this screen's Filters `DropdownMenu` - its
+ * month arrows never advanced (a pointerdown anywhere in the Filters panel's OWN popovers
+ * was mistaken for "outside the table" by the cell-selection-clear listener below, AC-29,
+ * and the resulting re-render landed between the arrow's own mousedown and mouseup) - and
+ * it offered no typed input at all. R14b's own fix was two typeable `DatePicker`s
+ * labelled "From"/"To"; the AC-29 fix (the no-op `clear()` plus the
+ * `[data-radix-popper-content-wrapper]` guard) stays, it was never the thing R14c reverses.
+ *
+ * R14c (owner, same day, on sight: "use the same date range component but I can type; I
+ * don't want two different date fields; call it sales order delivery date"): back to ONE
+ * `DateRangePicker`, relabelled "Sales order delivery date" - the component itself now
+ * has a typeable `DD/MM/YYYY - DD/MM/YYYY` trigger (own file, own tests), so the AC-29 fix
+ * is what actually made it usable, not the two-field detour. Chip reads `Delivery:
+ * 1 Nov 26 to 30 Nov 26`.
  */
 
 /** Cell tone as a CLASS, not a component (plan 3.4): three lines, no new file. */
@@ -121,26 +129,10 @@ interface OpenCell {
   balance: number;
 }
 
-/** `2026-11-30` <-> local `Date`, for the two typed `DatePicker`s (R14b) - the same pair
- *  the single Cutoff field used before R14, brought back verbatim now that a `DatePicker`
- *  is what drives this filter again. */
-function isoToDate(value: string): Date | undefined {
-  if (!value) return undefined;
-  const [y, m, d] = value.split('-').map(Number);
-  if (!y || !m || !d) return undefined;
-  const date = new Date(y, m - 1, d);
-  return Number.isNaN(date.getTime()) ? undefined : date;
-}
-function dateToIso(value: Date | undefined): string {
-  if (!value) return '';
-  const m = String(value.getMonth() + 1).padStart(2, '0');
-  const d = String(value.getDate()).padStart(2, '0');
-  return `${value.getFullYear()}-${m}-${d}`;
-}
-
-/** `2026-11-30` -> `30 Nov 26` (R14 chip). */
+/** `2026-11-30` -> `30 Nov 26` (chip), the shared `DateRangePicker`'s own ISO parser
+ *  reused rather than a second one (R14c). */
 function formatDateChip(value: string): string {
-  const date = isoToDate(value);
+  const date = parseIsoDate(value);
   if (!date) return value;
   return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: '2-digit' });
 }
@@ -538,15 +530,15 @@ export function StockDebtClient() {
     (dateFrom || dateTo ? 1 : 0) +
     (onlyDebt ? 0 : 1);
 
-  // R14b: both ends reads "Due: 1 Nov 26 to 30 Nov 26"; either end alone reads "from" or
-  // "to" rather than padding the other side with a placeholder.
-  const dueDateChipLabel =
+  // R14c: both ends reads "Delivery: 1 Nov 26 to 30 Nov 26"; either end alone reads
+  // "from" or "to" rather than padding the other side with a placeholder.
+  const deliveryChipLabel =
     dateFrom && dateTo
-      ? `Due: ${formatDateChip(dateFrom)} to ${formatDateChip(dateTo)}`
+      ? `Delivery: ${formatDateChip(dateFrom)} to ${formatDateChip(dateTo)}`
       : dateFrom
-        ? `Due: from ${formatDateChip(dateFrom)}`
+        ? `Delivery: from ${formatDateChip(dateFrom)}`
         : dateTo
-          ? `Due: to ${formatDateChip(dateTo)}`
+          ? `Delivery: to ${formatDateChip(dateTo)}`
           : null;
 
   const activeChips = [
@@ -556,9 +548,9 @@ export function StockDebtClient() {
     supplierChipLabel
       ? { label: supplierChipLabel, onClear: () => setSupplierIds([]) }
       : null,
-    dueDateChipLabel
+    deliveryChipLabel
       ? {
-          label: dueDateChipLabel,
+          label: deliveryChipLabel,
           onClear: () => {
             setDateFrom('');
             setDateTo('');
@@ -672,41 +664,22 @@ export function StockDebtClient() {
                     </div>
 
                     <div className="space-y-1.5">
-                      <Label className="text-xs text-muted-foreground">Due date</Label>
-                      {/* R14b: two typeable `DatePicker`s, not the `DateRangePicker` R14
-                          introduced - its calendar could not be driven inside this
-                          screen's Filters dropdown at all (see the file header) and
-                          offered no typed input. One column at 375px, two on desktop. */}
-                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                        <div className="space-y-1">
-                          <Label
-                            htmlFor="stock-debt-due-date-from"
-                            className="text-2xs text-muted-foreground"
-                          >
-                            From
-                          </Label>
-                          <DatePicker
-                            id="stock-debt-due-date-from"
-                            ariaLabel="From"
-                            value={isoToDate(dateFrom)}
-                            onChange={(date) => setDateFrom(dateToIso(date))}
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <Label
-                            htmlFor="stock-debt-due-date-to"
-                            className="text-2xs text-muted-foreground"
-                          >
-                            To
-                          </Label>
-                          <DatePicker
-                            id="stock-debt-due-date-to"
-                            ariaLabel="To"
-                            value={isoToDate(dateTo)}
-                            onChange={(date) => setDateTo(dateToIso(date))}
-                          />
-                        </div>
-                      </div>
+                      <Label className="text-xs text-muted-foreground">
+                        Sales order delivery date
+                      </Label>
+                      {/* R14c: back to ONE shared `DateRangePicker` - it now has a
+                          typeable `DD/MM/YYYY - DD/MM/YYYY` trigger of its own (own file,
+                          own tests), which is what R14b's two-field detour was standing
+                          in for. */}
+                      <DateRangePicker
+                        from={dateFrom || null}
+                        to={dateTo || null}
+                        onChange={(next) => {
+                          setDateFrom(next.from ?? '');
+                          setDateTo(next.to ?? '');
+                        }}
+                        aria-label="Sales order delivery date"
+                      />
                     </div>
 
                     <div className="flex items-center gap-2 border-t pt-3">
