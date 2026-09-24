@@ -1,6 +1,6 @@
 # PLAN: inline import column mapper, remembered per supplier
 
-Status: GRILLED 24 Sep 2026 (R1-R5 + G1-G5 taken); lane opening via /feature.
+Status: BUILT 24 Sep 2026, PR open (review rounds 1-2 applied, ruling A migration ifa_supplier_uniq); awaiting merge go.
 UAC: `import-column-mapper-24sep-acceptance-criteria.md`.
 Track: full `/feature` (two dialogs, one migration-free schema reuse, resolver change).
 
@@ -88,6 +88,9 @@ them in; they are the test fixtures).
   rows under BOTH doc types (same sheet, same header, same meaning). Field list shown =
   union of both doc types' fields; a field only one doc type reads is saved for that one.
 - G5 The "Map to..." chip in Upload supplier documents is retired.
+- A (24 Sep, review round 2): alias uniqueness is per supplier - migration ifa_supplier_uniq
+  replaces uq_import_field_alias_triple with a shared partial index and a supplier index;
+  seeders name the shared predicate.
 
 ## Design
 
@@ -124,8 +127,8 @@ source: supplier|shared|none, required}], required_fields, missing_required, fie
 [{field,label}]}`. `field` is the resolver's answer; `source` says which row answered.
 Permission: the doc type's own upload permission (same guard as its preview endpoint).
 
-B5 `POST /api/v1/scm/import-mapping/save` `{supplier_id, doc_type, mappings:[{header,
-field}]}` - upserts supplier-scoped rows (`ON CONFLICT (doc_type, field, alias) DO
+B5 `POST /api/v1/scm/import-mapping/save` `{supplier_id, doc_types: [..], mappings:[{header,
+field}]}` (array, as the FE contract in importMappingService.ts already declares; G4) - upserts supplier-scoped rows (`ON CONFLICT (doc_type, field, alias) DO
 NOTHING`, then delete this supplier's other rows for the same normalised header so a
 re-map replaces, not accumulates). `field = "ignore"` allowed. Validates fields via
 `canonical_fields`. Permission as B4.
@@ -156,9 +159,9 @@ unresolved; Test / Confirm send `header_row`; Save mappings (B5) fires as part o
 so Test = save + preview, one click. No separate Save button.
 
 F3 `SupplierDocumentsUploadDialog`: same, one mapper per file (file name as the section
-title); the per-file `kind` (PI / packing list / combined) picks the doc type; `combined`
-probes both doc types (two mapper sections). The `UnmappedHeaderChip` is retired (the
-mapper replaces it).
+title). Kind (PI / packing list / combined) is only known after Test, so every file in this
+dialog probes the union of proforma_invoice + packing_list: one section per file, Save
+writes the rows under both doc types (G4). The `UnmappedHeaderChip` is retired (G5).
 
 F4 Admin page unchanged except: supplier chip already renders for supplier rows; `ignore`
 rows render under a synthetic "Ignored" field group so they can be deleted.
@@ -179,10 +182,10 @@ Backend (`tests/scm/test_import_column_mapper.py`, private clone via `_pg_fixtur
   is invisible; `ignore` resolves to None and is "known".
 - T4 save upserts, replaces a re-mapped header for the same supplier, rejects an unknown
   field, accepts `ignore`, refuses a supplier the caller's company cannot see.
-- T5 PI preview of FSCU8706420 with a saved NEW YANGGANG layout reads 3 lines, qty from
+- T5 PI preview of FSCU8706420 with a saved NEW YANGGANG layout reads 4 lines, qty from
   `总数量（个）`, cartons from `件数（件）`, unit price from `单价（元）`; without the layout
   `missing_required` names qty and `unmapped_headers` is NOT empty.
-- T6 stock-list preview of 吕生 with a saved layout reads 38 rows; `canonical_fields
+- T6 stock-list preview of 吕生 with a saved layout reads 44 rows; `canonical_fields
   ("supplier_inventory")` is non-empty and contains no internal names.
 - T7 probe `header_row` override moves the header.
 

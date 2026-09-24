@@ -64,9 +64,13 @@ automatically; the admin page lists what was saved, per supplier.
 
 - AC-E1 FSCU8706420 as NEW YANGGANG: map `客户型号`->item_code, `总数量（个）`->qty,
   `件数（件）`->cartons, `单价（元）`->unit_price, `金额（元）`->amount, `备注`->remark, ignore
-  the rest; Test reads 3 lines, qty 1262, total 220290; Confirm creates the PI.
+  the rest; Test reads 4 lines, qty 1262, cartons 257, total 220290 (row 20 is the file's own
+  合计 total row, not a line); Confirm creates the PI.
 - AC-E2 OOLU9610547 next: mapper collapsed, Test reads 3 lines, qty 251, total 79542.
 - AC-E3 吕生 stock list via Plan a container: map `客户型号`->item_code, `总数量（个）`->
-  qty_packed; Test reads 38 rows; Confirm starts the plan.
+  qty_packed; Test reads 44 rows (48 data rows on the sheet, row 47 unreadable, blanks skipped);
+  Confirm starts the plan.
 - AC-E4 DAFUYUAN PI: `单价 (RMB)`->unit_price, `总金额 TOTAL RMB`->amount, spliced L/W/H ->
-  carton dims; Test reads 15 lines, qty 903.
+  carton dims; the sheet names itself 装箱单 and carries cartons + CBM, so Test classifies it
+  combined: the PI block reads 15 lines, qty 903, total 110434; the packing block (cartons 744)
+  is offered as a draft packing list. One invoice, one draft packing list on Confirm.
