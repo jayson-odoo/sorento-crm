@@ -71,6 +71,7 @@ from app.models.project_so import (
     OrderInquiryReserveRequest,
     OrderInquiryReserveRequestRow,
     OrderInquiryRow,
+    OrderInquirySuggestedLink,
     ProjectSalesOrder,
     ProjectSalesOrderLine,
     SOSupplyDecision,
@@ -212,6 +213,11 @@ EXPORT_HEADINGS = (
     # place to the right.
     "TAKEN",
     "REMAINING",
+    # AC-LT-39 (G9, `PLAN-oi-links-autocount-truth-24sep.md` 3.5): the cascade's own
+    # guess, beside PO and SPO on every other surface - PO NO above stays real-links
+    # only. APPENDED for the same reason ACKNOWLEDGED/TAKEN/REMAINING were: their own
+    # filters are keyed on the columns before it being where they have always been.
+    "SUGGESTED",
 )
 
 # The two routes a row can be attributed by, joined ONCE through a coalesce rather than
@@ -881,6 +887,22 @@ def _export_remaining(row: Dict[str, Any]) -> str:
     return _qty_str(max(remaining, _ZERO))
 
 
+def _export_suggested(row: Dict[str, Any]) -> str:
+    """AC-LT-39 (G9): the export's own Suggested cell - the same document/qty the
+    worklist's Suggested column would print, kept simple for a spreadsheet cell
+    rather than the badge the screen shows. `-` on a row nothing has been guessed
+    for, several entries joined with `; ` on the rare row the walk offered more
+    than one document to.
+    """
+    entries = row.get("suggested_links") or []
+    if not entries:
+        return "-"
+    return "; ".join(
+        f"{entry.get('document') or entry.get('kind')} {_qty_str(_dec(entry.get('qty')))}"
+        for entry in entries
+    )
+
+
 def ack_label(row: Dict[str, Any]) -> str:
     """The handshake as one printed phrase, for the export (AC-H14).
 
@@ -1547,6 +1569,9 @@ class OrderInquiryWorklistService:
         links = ProjectOrderInquiryService(self.db).links_for_rows(
             [row.id for row in rows]
         )
+        suggested_links = ProjectOrderInquiryService(self.db).suggested_links_for_rows(
+            [row.id for row in rows]
+        )
         self._attach_link_suggestions(rows, links, product_by_row)
         bundle_map = self._bundle_map_for_rows(rows)
         anchor_headline_by_id = self._anchor_headline_by_id(rows, links)
@@ -1562,6 +1587,7 @@ class OrderInquiryWorklistService:
                     bundle_map,
                     anchor_headline_by_id,
                     host_changes_by_row_id,
+                    suggested_links,
                 )
                 for row in rows
             ],
@@ -2135,6 +2161,7 @@ class OrderInquiryWorklistService:
         bundle_map: Optional[Dict[str, List[str]]] = None,
         anchor_headline_by_id: Optional[Dict[str, str]] = None,
         host_changes_by_row_id: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+        suggested_links: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     ) -> Dict[str, Any]:
         line_flow = (flow or {}).get(row.so_line_id, {})
         row_links = (links or {}).get(row.id, [])
@@ -2191,6 +2218,9 @@ class OrderInquiryWorklistService:
             # WHERE this row's quantity sits (AC-I5), off the ONE reader the per-project
             # list and the SCM sales-order detail also use.
             "links": row_links,
+            # AC-LT-33: the cascade's own guesses, kept separate from `links` above,
+            # which carries nothing suggested.
+            "suggested_links": (suggested_links or {}).get(row.id, []),
             "linked_qty": _qty_str(linked_qty),
             "cited_document": row.cited_document,
             # PLAN-scm-supplied-with-companions.md S5. `response_model` drops what it is
@@ -2393,8 +2423,11 @@ class OrderInquiryWorklistService:
             ],
             # WHO is holding this document's quantity (AC-D18). Drafts included and marked
             # as such: they occupy the quantity, so a panel that hid them would tell the
-            # buyer a line is free when the next Confirm is going to take it.
+            # buyer a line is free when the next Confirm is going to take it. Real links
+            # only - a suggestion never appears here (AC-LT-34).
             "allocations": self._allocations_on(po_line_ids=line_ids),
+            # AC-LT-34: the "Suggested for" panel below Allocated to.
+            "suggested_links": self._suggested_links_on(po_line_ids=line_ids),
         }
 
     # -------------------------------------------------------------- spo detail
@@ -2516,6 +2549,10 @@ class OrderInquiryWorklistService:
             "allocations": self._allocations_on(
                 spo_allocation_ids=[str(allocation.id) for allocation in allocations]
             ),
+            # AC-LT-34: the "Suggested for" panel below Allocated to.
+            "suggested_links": self._suggested_links_on(
+                spo_allocation_ids=[str(allocation.id) for allocation in allocations]
+            ),
         }
 
     # ------------------------------------------------------- who holds a document
@@ -2592,6 +2629,87 @@ class OrderInquiryWorklistService:
                 inquiry_no,
                 autocount_doc_no,
                 provisional_ref,
+            ) in rows
+        ]
+
+    def _suggested_links_on(
+        self,
+        *,
+        po_line_ids: Optional[Sequence[str]] = None,
+        spo_allocation_ids: Optional[Sequence[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """AC-LT-34: the lightbox's own "Suggested for" panel, below Allocated to -
+        every row the cascade has guessed onto one of these document lines, never a
+        placement. Same shape `_allocations_on` returns (`ack_state`/`linked_at`
+        both stay null - a suggestion carries neither), so both panels render off
+        one wire contract.
+        """
+        targets = []
+        if po_line_ids:
+            targets.append(OrderInquirySuggestedLink.po_line_id.in_(list(po_line_ids)))
+        if spo_allocation_ids:
+            targets.append(
+                OrderInquirySuggestedLink.spo_allocation_id.in_(list(spo_allocation_ids))
+            )
+        if not targets:
+            return []
+        rows = (
+            self.db.query(
+                OrderInquirySuggestedLink.qty,
+                OrderInquirySuggestedLink.po_line_id,
+                OrderInquiry.inquiry_no,
+                ProjectSalesOrder.autocount_doc_no,
+                ProjectSalesOrder.provisional_ref,
+                # The PRODUCT the suggestion's own line names, not the row's own
+                # `item_code` column - the bulk of a row this table's own seed helpers
+                # write leaves that blank, and the target line is the fact that
+                # actually says what item this is.
+                Product.product_code,
+            )
+            .select_from(OrderInquirySuggestedLink)
+            .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquirySuggestedLink.row_id)
+            .join(OrderInquiry, OrderInquiry.id == OrderInquiryRow.order_inquiry_id)
+            .outerjoin(
+                ProjectSalesOrder,
+                ProjectSalesOrder.id == OrderInquiry.project_sales_order_id,
+            )
+            .outerjoin(
+                PurchaseOrderLine,
+                PurchaseOrderLine.id == OrderInquirySuggestedLink.po_line_id,
+            )
+            .outerjoin(
+                SPOAllocation,
+                SPOAllocation.id == OrderInquirySuggestedLink.spo_allocation_id,
+            )
+            .outerjoin(
+                Product,
+                Product.id
+                == func.coalesce(PurchaseOrderLine.product_id, SPOAllocation.product_id),
+            )
+            .filter(or_(*targets))
+            .order_by(
+                OrderInquirySuggestedLink.suggested_at.asc(),
+                OrderInquirySuggestedLink.id.asc(),
+            )
+            .all()
+        )
+        return [
+            {
+                "inquiry_no": inquiry_no,
+                "so_number": autocount_doc_no or provisional_ref,
+                "item_code": item_code,
+                "qty": _qty_str(_dec(qty)),
+                "ack_state": None,
+                "linked_at": None,
+                "po_line_id": str(po_line_id) if po_line_id else None,
+            }
+            for (
+                qty,
+                po_line_id,
+                inquiry_no,
+                autocount_doc_no,
+                provisional_ref,
+                item_code,
             ) in rows
         ]
 
@@ -3204,8 +3322,14 @@ class OrderInquiryWorklistService:
         # empty `links` dict for every row, and the export's new Taken/Remaining columns
         # would print "0"/the bare qty regardless of what is actually linked.
         links = ProjectOrderInquiryService(self.db).links_for_rows([row.id for row in rows])
+        suggested_links = ProjectOrderInquiryService(self.db).suggested_links_for_rows(
+            [row.id for row in rows]
+        )
         return [
-            self._serialize(row, bundle_map=bundle_map, links=links) for row in rows
+            self._serialize(
+                row, bundle_map=bundle_map, links=links, suggested_links=suggested_links
+            )
+            for row in rows
         ]
 
     def _write_sheet(
@@ -3256,6 +3380,7 @@ class OrderInquiryWorklistService:
                     ack_label(row),
                     _export_taken(row),
                     _export_remaining(row),
+                    _export_suggested(row),
                 ]
                 # `columns` may be a PREFIX of `EXPORT_HEADINGS` (Lane C's worksheet, no
                 # ACKNOWLEDGED / TAKEN / REMAINING) - cut the row to match so the sheet

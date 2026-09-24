@@ -149,6 +149,30 @@ class OrderInquiryLinkOut(BaseModel):
     suggestion: Optional[Dict[str, Any]] = None
 
 
+class OrderInquirySuggestedLinkOut(BaseModel):
+    """One guess the cascade walk made, never a placement
+    (`PLAN-oi-links-autocount-truth-24sep.md` 3.5, AC-LT-33) - kept off `links` above,
+    which carries real links only. Same vocabulary as `OrderInquiryLinkOut` where the
+    two overlap, minus everything only a real link has (no `id` to unlink by, no
+    `linked_by_name`, no `received`): a suggestion is not purchasing's word and there
+    is nothing on it to act on directly."""
+
+    #: `po` or `spo`.
+    kind: str
+    document: Optional[str] = None
+    po_id: Optional[str] = None
+    po_line_id: Optional[str] = None
+    spo_allocation_id: Optional[str] = None
+    location: Optional[str] = None
+    qty: str
+    expected_date: Optional[date] = None
+    late_days: Optional[int] = None
+    #: Why the walk offered this - `raise`, `worklist`, `link_now`, `acknowledge`,
+    #: `po_confirm`, `decision_confirm` - the same trigger vocabulary a real link's
+    #: `auto` note already carries.
+    trigger: Optional[str] = None
+
+
 class OrderInquiryRowOut(BaseModel):
     id: str
     order_inquiry_id: str
@@ -193,6 +217,9 @@ class OrderInquiryRowOut(BaseModel):
     cited_document: Optional[str] = None
     #: Every document this row's quantity sits on, oldest link first (AC-I5).
     links: List[OrderInquiryLinkOut] = []
+    #: AC-LT-33: the cascade's own guesses, never a placement - kept off `links`
+    #: above, which carries nothing suggested.
+    suggested_links: List[OrderInquirySuggestedLinkOut] = []
     #: The sum of `links[].qty` for the REAL links only - `links` also carries synthetic
     #: "via PO" entries (`derived: true`) for a linked PO's own open SPO allocations,
     #: which never wrote an `order_inquiry_links` row and are excluded from this sum.
@@ -405,6 +432,9 @@ class OrderInquiryWorklistRow(BaseModel):
     #: Every document this row's quantity sits on (AC-I5), the SAME reader the per-project
     #: list and the SCM sales-order detail use. Empty on a row nobody has linked.
     links: List[OrderInquiryLinkOut] = []
+    #: AC-LT-33: the cascade's own guesses, never a placement - kept off `links`
+    #: above, which carries nothing suggested.
+    suggested_links: List[OrderInquirySuggestedLinkOut] = []
     linked_qty: str = "0"
     #: The document CS cited on an order back, so the screen can say the walk honoured it.
     cited_document: Optional[str] = None
@@ -1015,6 +1045,13 @@ class AutoPlaceResult(BaseModel):
     placed_rows: int = 0
     allocations: int = 0
     products_touched: int = 0
+    #: AC-LT-37 (G4): the book step's own count, real links, distinct from the
+    #: cascade's own guesses below.
+    book_linked_rows: int = 0
+    #: AC-LT-37: rows the cascade walk offered a suggested link to this pass - never
+    #: a placement, and `placed_rows` above already counts them for backward
+    #: compatibility (the walk's own terminal write is a suggestion since S3).
+    suggested_rows: int = 0
     #: Rows still owed but due after `link_up_to`, left Not linked on purpose (AC-LH2).
     after_horizon: int = 0
     #: The horizon the pass ran under - the caller's own date, or the plan's own when they
@@ -1022,6 +1059,34 @@ class AutoPlaceResult(BaseModel):
     link_up_to: Optional[date] = None
     #: WHETHER a horizon was in force at all (S1). See `AcknowledgeResult.link_horizon`.
     link_horizon: Literal["date", "none"] = "none"
+
+
+class LinkSuggestedRequest(BaseModel):
+    """Link selected (N) (G1, `PLAN-oi-links-autocount-truth-24sep.md` 3.6): the
+    worklist's own ticked batch - each row's current suggestion, refreshed and
+    written for real in the buyer's own name, never the cascade's."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    row_ids: List[str] = Field(..., min_length=1, max_length=500)
+
+
+class LinkSuggestedRowResult(BaseModel):
+    """One row Link selected could not write for real - nothing suggested for it
+    after the refresh, or its suggestion's own target has since lost room (another
+    real link took it, or it closed)."""
+
+    row_id: str
+    reason: str
+
+
+class LinkSuggestedResult(BaseModel):
+    """What one Link selected press did (AC-LT-35): how many rows it wrote a real
+    link for and how many links that took, plus every row it left alone and why."""
+
+    linked_rows: int = 0
+    links: int = 0
+    skipped: List[LinkSuggestedRowResult] = []
 
 
 class UnplaceAllRequest(BaseModel):
@@ -1177,7 +1242,11 @@ class OrderInquiryPoDetail(BaseModel):
     status: str
     lines: List[OrderInquiryPoDetailLine] = []
     #: Who this purchase order's quantity is spoken for by, drafts included (AC-D18).
+    #: Real links only - a suggested link never appears here (AC-LT-34).
     allocations: List[OrderInquiryDocumentAllocation] = []
+    #: AC-LT-34: the "Suggested for" panel below Allocated to - every row the
+    #: cascade has guessed onto one of this document's lines, never a placement.
+    suggested_links: List[OrderInquiryDocumentAllocation] = []
 
 
 class OrderInquirySpoDetailLine(BaseModel):
@@ -1219,7 +1288,11 @@ class OrderInquirySpoDetail(BaseModel):
     shipment_ref: Optional[str] = None
     container_no: Optional[str] = None
     lines: List[OrderInquirySpoDetailLine] = []
+    #: Real links only - a suggested link never appears here (AC-LT-34).
     allocations: List[OrderInquiryDocumentAllocation] = []
+    #: AC-LT-34: the "Suggested for" panel below Allocated to - every row the
+    #: cascade has guessed onto one of this document's lines, never a placement.
+    suggested_links: List[OrderInquiryDocumentAllocation] = []
 
 
 # ---------------------------------------------------------------------------------

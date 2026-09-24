@@ -4618,6 +4618,7 @@ class ProjectOrderInquiryService:
         product_by_row = self._resolve_product_ids_bulk(rows)
         candidates = self.link_candidate_products(set(product_by_row.values()))
         links_by_row = self.links_for_rows([row.id for row in rows])
+        suggested_links_by_row = self.suggested_links_for_rows([row.id for row in rows])
         linked_by_row = self._linked_qty_by_row([row.id for row in rows])
         # PLAN-scm-supplied-with-companions.md S5: the anchor's own item code, for the
         # rows that carry a bundle - one query for the whole page rather than one per row.
@@ -4701,6 +4702,10 @@ class ProjectOrderInquiryService:
                     # WHERE the quantity actually sits (AC-I5/AC-I9). `po_ref` above is the
                     # first of these, kept for the older readers that print one number.
                     "links": links_by_row.get(row.id, []),
+                    # AC-LT-33 (`PLAN-oi-links-autocount-truth-24sep.md` 3.5): the
+                    # cascade's own guesses, kept separate from `links` above, which
+                    # carries nothing suggested.
+                    "suggested_links": suggested_links_by_row.get(row.id, []),
                     "linked_qty": _qty_str(linked_by_row.get(row.id, _ZERO)),
                     "has_link_candidate": self.has_link_candidate(
                         row.verb, product_by_row.get(row.id), candidates
@@ -5081,6 +5086,85 @@ class ProjectOrderInquiryService:
                 entries = by_pair.get(pair)
                 if entries:
                     out.setdefault(row_id, []).extend(entries)
+
+    def suggested_links_for_rows(
+        self, row_ids: Sequence[str]
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Every SUGGESTED link on these rows (`PLAN-oi-links-autocount-truth-24sep.md`
+        3.5, AC-LT-33) - a SEPARATE reader from `links_for_rows` above, because a
+        suggestion is never a placement: the cascade's own guess, not purchasing's
+        word. Same wire vocabulary as a real link where the two questions overlap
+        (`kind`, `document`, `po_line_id`, `spo_allocation_id`, `location`, `qty`,
+        `expected_date`, `late_days`), plus `trigger` (why the walk offered this) -
+        and none of what only a real link carries: no `id` that addresses an unlink,
+        no `linked_by`, no `received`, no claim.
+        """
+        wanted = [row_id for row_id in row_ids if row_id]
+        if not wanted:
+            return {}
+        rows = (
+            self.db.query(
+                OrderInquirySuggestedLink,
+                OrderInquiryRow.delivery_date,
+                PurchaseOrder.id,
+                PurchaseOrderLine.expected_date,
+                Warehouse.warehouse_code,
+                SPOAllocation.expected_date,
+                SPOAllocation.location_code,
+            )
+            .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquirySuggestedLink.row_id)
+            .outerjoin(
+                PurchaseOrderLine,
+                PurchaseOrderLine.id == OrderInquirySuggestedLink.po_line_id,
+            )
+            .outerjoin(
+                PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id
+            )
+            .outerjoin(
+                SPOAllocation,
+                SPOAllocation.id == OrderInquirySuggestedLink.spo_allocation_id,
+            )
+            .outerjoin(Warehouse, Warehouse.id == PurchaseOrderLine.warehouse_id)
+            .filter(OrderInquirySuggestedLink.row_id.in_(wanted))
+            .order_by(
+                OrderInquirySuggestedLink.suggested_at.asc(),
+                OrderInquirySuggestedLink.id.asc(),
+            )
+            .all()
+        )
+        out: Dict[str, List[Dict[str, Any]]] = {}
+        for (
+            suggestion,
+            row_needed_by,
+            po_id,
+            po_expected_date,
+            warehouse_code,
+            spo_expected_date,
+            spo_location_code,
+        ) in rows:
+            is_spo = suggestion.spo_allocation_id is not None
+            location = spo_location_code if is_spo else warehouse_code
+            arrives = spo_expected_date if is_spo else po_expected_date
+            late_days = (
+                (arrives - row_needed_by).days
+                if arrives and row_needed_by and arrives > row_needed_by
+                else None
+            )
+            out.setdefault(suggestion.row_id, []).append(
+                {
+                    "kind": "spo" if is_spo else "po",
+                    "document": suggestion.document,
+                    "po_id": None if is_spo else po_id,
+                    "po_line_id": suggestion.po_line_id,
+                    "spo_allocation_id": suggestion.spo_allocation_id,
+                    "location": location,
+                    "qty": _qty_str(_dec(suggestion.qty)),
+                    "expected_date": arrives,
+                    "late_days": late_days,
+                    "trigger": suggestion.trigger,
+                }
+            )
+        return out
 
     def _context_for(
         self, rows: Sequence[OrderInquiryRow]
@@ -5766,6 +5850,95 @@ class ProjectOrderInquiryService:
             redeal_drafts=True,
             include_awaiting=True,
         )
+
+    def link_suggested_rows(
+        self, row_ids: Sequence[str], *, actor_user_id: str
+    ) -> Dict[str, Any]:
+        """Link selected (N) (`PLAN-oi-links-autocount-truth-24sep.md` 3.6, G1,
+        AC-LT-35): for each ticked row, refresh its own suggested links with a
+        cascade pass scoped to exactly it - the answer may be stale by the moment
+        the buyer presses the button - then write what the cascade offers as a REAL
+        link, in the buyer's own name (`auto=False`, `linked_by` the user), delete
+        the suggestion and refresh the row's state.
+
+        A row with nothing suggested once the refresh has run is REPORTED, not
+        linked (G7: this never turns a suggestion into a placement on its own - the
+        buyer's press is the placement). A suggestion whose target line has lost
+        room since it was written - another real link took it, or it closed - is
+        skipped and named, never silently dropped: `place_on_po_allocations` raises
+        the same 409/422 the manual Link dialog would for the same shape, caught
+        here per row so one row's lost room never blocks the rest of the batch.
+        """
+        from app.services.project_service import resolve_user_names
+
+        wanted = [str(row_id) for row_id in row_ids if row_id]
+        names = resolve_user_names(self.db, [actor_user_id] if actor_user_id else [])
+        actor_name = names.get(actor_user_id) or "purchasing"
+
+        linked_rows = 0
+        links_written = 0
+        skipped: List[Dict[str, str]] = []
+        for row_id in wanted:
+            row = self.db.query(OrderInquiryRow).filter(OrderInquiryRow.id == row_id).first()
+            if row is None:
+                skipped.append({"row_id": row_id, "reason": "That row could not be found."})
+                continue
+            # G7: this never DISCOVERS a suggestion for a row that holds none - a
+            # row nobody has cascaded onto anything stays "nothing suggested" and
+            # is reported, never linked on the strength of a press that only
+            # ticked it. "Refresh" means what it says: re-derive what is ALREADY
+            # there, never conjure a fresh guess for a row with nothing to refresh.
+            if not self._suggested_of_row(row_id):
+                skipped.append(
+                    {"row_id": row_id, "reason": "Nothing is suggested for this row."}
+                )
+                continue
+            # A fresh cascade pass, scoped to exactly this row - the suggestion the
+            # worklist showed when the buyer ticked the row may already be stale
+            # (another row's real link has since taken the target, or it closed).
+            self.auto_place_for_products(
+                None,
+                actor_user_id=actor_user_id,
+                trigger="link_selected",
+                row_ids=[row_id],
+            )
+            self.db.flush()
+            suggestions = self._suggested_of_row(row_id)
+            if not suggestions:
+                skipped.append(
+                    {"row_id": row_id, "reason": "Nothing is suggested for this row."}
+                )
+                continue
+            allocations = [
+                {
+                    "po_line_id": suggestion.po_line_id,
+                    "spo_allocation_id": suggestion.spo_allocation_id,
+                    "qty": suggestion.qty,
+                }
+                for suggestion in suggestions
+            ]
+            try:
+                self.place_on_po_allocations(
+                    row_id, allocations, actor_user_id=actor_user_id,
+                )
+            except AppException as exc:
+                skipped.append({"row_id": row_id, "reason": exc.message})
+                continue
+            # The suggestion is spent - written for real above - so it is never a
+            # live answer any more.
+            self._drop_suggested_links([row])
+            note = f"Linked as suggested by {actor_name}"
+            row.note = f"{row.note}; {note}" if row.note else note
+            self.refresh_link_state([row])
+            self.db.flush()
+            linked_rows += 1
+            links_written += len(allocations)
+
+        return {
+            "linked_rows": linked_rows,
+            "links": links_written,
+            "skipped": skipped,
+        }
 
     def row_ids_of_decision(self, decision_id: str) -> List[str]:
         """The linkable rows THIS supply decision raised or carried (R6).
@@ -8839,6 +9012,7 @@ class ProjectOrderInquiryService:
         # told not to re-offer a SECOND time, so the chain is at most two real
         # book passes deep, never unbounded. `_skip_book_step` skips the book
         # step outright, for a caller that needs the ordinary cascade only.
+        book_linked_rows = 0
         if not _skip_book_step:
             book_rows_by_company: Dict[str, List[str]] = {}
             for row_id, row_company_id in query.with_entities(
@@ -8848,6 +9022,18 @@ class ProjectOrderInquiryService:
                     book_rows_by_company.setdefault(str(row_company_id), []).append(
                         str(row_id)
                     )
+            # AC-LT-37 (G4): how many of these rows the book step ITSELF links for
+            # real THIS pass - snapshot which already held a real link before the
+            # call, then again after, so the count names only what this press did,
+            # never a row that was already book-linked coming in.
+            all_book_row_ids = [
+                row_id for ids in book_rows_by_company.values() for row_id in ids
+            ]
+            linked_before = {
+                row_id
+                for row_id, links in self._links_by_row(all_book_row_ids).items()
+                if links
+            }
             for book_company_id, book_row_ids in book_rows_by_company.items():
                 self.follow_book_for_rows(
                     book_row_ids,
@@ -8856,6 +9042,12 @@ class ProjectOrderInquiryService:
                     actor_user_id=actor_user_id,
                     _may_reoffer=_book_step_may_reoffer,
                 )
+            linked_after = {
+                row_id
+                for row_id, links in self._links_by_row(all_book_row_ids).items()
+                if links
+            }
+            book_linked_rows = len(linked_after - linked_before)
 
         rows = query.all()
         # Self-heal (issue #1215 point 1): a row can read `placed`/`partly_linked` with
@@ -9023,6 +9215,13 @@ class ProjectOrderInquiryService:
             "placed_rows": placed_rows,
             "allocations": allocation_count,
             "products_touched": len(products_touched),
+            # AC-LT-37 (G4): the book step's own count, real links, distinct from
+            # `suggested_rows` below - `placed_rows` above stays as it was for a
+            # caller that read it before this slice, and is exactly what the
+            # cascade walk suggested this pass (its own terminal write is a
+            # suggestion, never a placement, since S3).
+            "book_linked_rows": book_linked_rows,
+            "suggested_rows": placed_rows,
             "after_horizon": after_horizon,
             "link_up_to": link_up_to,
             "link_horizon": self._horizon_mode(link_up_to),
@@ -9088,6 +9287,8 @@ class ProjectOrderInquiryService:
             "placed_rows": 0,
             "allocations": 0,
             "products_touched": 0,
+            "book_linked_rows": 0,
+            "suggested_rows": 0,
             "after_horizon": 0,
             "link_up_to": link_up_to,
             "link_horizon": ProjectOrderInquiryService._horizon_mode(link_up_to),
