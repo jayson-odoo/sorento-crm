@@ -190,6 +190,13 @@ class DemandLine:
     required_date: Optional[date]
     open_qty: float
     is_pool: bool = False
+    #: The drill's own Ordered/Delivered columns (R22, Stock Debt only - `open_qty` above
+    #: is what the WALK uses and stays as it is). `qty_ordered` is `plan_qty()`
+    #: (`coalesce(qty_required, qty_ordered)`), `qty_delivered` the sales-order book's own
+    #: column - both default 0.0 so every other `DemandLine(...)` call site in this module
+    #: and its tests, none of which states either, keeps compiling unchanged.
+    qty_ordered: float = 0.0
+    qty_delivered: float = 0.0
 
 
 @dataclass(frozen=True)

@@ -54,7 +54,7 @@ from app.services.company_scope import build_company_predicate
 from app.services.error_handler import AppException
 from app.services.project_supply_service import ProjectSupplyService, held_qty_expr
 from app.services.scm import sales_agent_service, spo_supply
-from app.services.scm.demand import demand_qty, is_open_demand
+from app.services.scm.demand import demand_qty, is_open_demand, plan_qty
 from app.services.scm.front_planning_engine import DEFAULT_LEAD_TIME_DAYS
 # Reused, not reinvented (AC-18): the low stock report's own cap. A read-only export off a
 # bounded catalogue does not need a cap of its own; it needs the SAME reason that one has -
@@ -337,6 +337,11 @@ class StockDebtService:
                 "warehouse_code": line.line.warehouse,
                 "required_date": line.line.required_date,
                 "open_qty": line.line.open_qty,
+                # R22: Ordered/Delivered beside the existing Outstanding (`open_qty`,
+                # unchanged) - `qty_ordered` is `plan_qty()` (CS's own `qty_required`
+                # when stated, else the book's `qty_ordered`).
+                "qty_ordered": line.line.qty_ordered,
+                "qty_delivered": line.line.qty_delivered,
                 "assigned_qty": round(sum(item.qty for item in line.assigned), 4),
                 "assigned_source": self._source_text(line),
                 "status": line.status,
@@ -803,6 +808,12 @@ class StockDebtService:
                 # Carried because a v7 borrow names the donor's line ("SO414285 line 4") and
                 # the ladder reads its donors out of this very list (AC-S3-2, AC-S3-11).
                 ProjectSalesOrderLine.line_no,
+                # R22: the drill's own Ordered/Delivered columns - `plan_qty()` is the
+                # SAME coalesce the board plans against (`coalesce(qty_required,
+                # qty_ordered)`), reused rather than re-derived so the two screens cannot
+                # come to disagree about what "Ordered" means for a line CS has stated.
+                plan_qty().label("qty_ordered"),
+                func.coalesce(SalesOrderLine.qty_delivered, 0).label("qty_delivered"),
             )
             .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
             .outerjoin(SalesAgent, SalesAgent.id == SalesOrder.sales_agent_id)
@@ -833,6 +844,8 @@ class StockDebtService:
                     required_date=row.required_date,
                     open_qty=_float(row.qty),
                     is_pool=warehouse_id in pools,
+                    qty_ordered=_float(row.qty_ordered),
+                    qty_delivered=_float(row.qty_delivered),
                 )
             )
         return out

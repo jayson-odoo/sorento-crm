@@ -133,6 +133,11 @@ class StockDebtDemandLine(BaseModel):
     warehouse_code: Optional[str] = None
     required_date: Optional[DateType] = None
     open_qty: float
+    #: R22: the drill's own Ordered/Delivered columns, beside Outstanding (`open_qty`,
+    #: unchanged). `qty_ordered` is `plan_qty()` - CS's own `qty_required` when the Order
+    #: Inquiry sheet states one, else the sales-order book's `qty_ordered`.
+    qty_ordered: float
+    qty_delivered: float
     assigned_qty: float
     assigned_source: Optional[str] = None
     status: DemandStatus

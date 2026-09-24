@@ -129,6 +129,16 @@ export interface StockDebtDemandLine {
   /** `YYYY-MM-DD`, or null for an undated line. */
   required_date: string | null;
   open_qty: number;
+  /**
+   * R22: the drill's own Ordered/Delivered columns, beside `open_qty` (Outstanding,
+   * unchanged) - `qty_ordered` is `plan_qty()` server-side (CS's own `qty_required` when
+   * the Order Inquiry sheet states one, else the sales-order book's `qty_ordered`).
+   * Optional on this TYPE only - the real wire always carries both - so a fixture built
+   * before this round (`states the short quantity a LATE line still books`, R37) still
+   * type-checks without adding fields it never asked to test.
+   */
+  qty_ordered?: number;
+  qty_delivered?: number;
   assigned_qty: number;
   /** Human source of the assignment: `On hand DC1-BB`, `SPO 2026/08-0063`, `PO ... line 3`. */
   assigned_source: string | null;

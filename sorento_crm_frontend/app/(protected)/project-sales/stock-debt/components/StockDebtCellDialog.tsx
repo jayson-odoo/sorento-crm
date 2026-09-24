@@ -1,9 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import Link from 'next/link';
 import { ColumnDef } from '@tanstack/react-table';
-import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogBody,
@@ -12,8 +10,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { STATUS_PILL_BASE } from '@/lib/status-pill';
 import { cn } from '@/lib/utils';
@@ -70,6 +70,11 @@ const KIND_LABEL: Record<StockDebtSupplyKind, string> = {
   po: 'PO',
 };
 
+/** A stable reference for "no rows yet" - `cell.data?.demand ?? []` would otherwise hand
+ *  the `filteredDemand` memo below a NEW empty array every render, invalidating it for
+ *  no reason. */
+const EMPTY_DEMAND: StockDebtDemandLine[] = [];
+
 function date(value: string | null): string {
   return value ? formatDateInMalaysia(value) : '-';
 }
@@ -112,7 +117,8 @@ export function StockDebtCellDialog({
     () => [
       {
         id: 'so_number',
-        header: 'Sales order',
+        accessorKey: 'so_number',
+        header: ({ column }) => <DataGridColumnHeader title="Sales order" column={column} />,
         size: 130,
         cell: ({ row }) => (
           <span className="truncate font-medium" title={row.original.so_number}>
@@ -122,7 +128,8 @@ export function StockDebtCellDialog({
       },
       {
         id: 'agent_code',
-        header: 'Agent',
+        accessorKey: 'agent_code',
+        header: ({ column }) => <DataGridColumnHeader title="Agent" column={column} />,
         size: 110,
         cell: ({ row }) => (
           <span className="truncate" title={row.original.agent_code ?? ''}>
@@ -134,7 +141,8 @@ export function StockDebtCellDialog({
         // Before the date, because "which bin" is what decides whether this line and the
         // supply beside it are even the same pile (the ownership group is the code's suffix).
         id: 'warehouse_code',
-        header: 'Bin',
+        accessorKey: 'warehouse_code',
+        header: ({ column }) => <DataGridColumnHeader title="Bin" column={column} />,
         size: 110,
         cell: ({ row }) => (
           <span className="truncate" title={row.original.warehouse_code ?? ''}>
@@ -144,14 +152,45 @@ export function StockDebtCellDialog({
       },
       {
         id: 'required_date',
-        header: 'Due',
+        accessorKey: 'required_date',
+        header: ({ column }) => <DataGridColumnHeader title="Due" column={column} />,
         size: 120,
         cell: ({ row }) => <span>{date(row.original.required_date)}</span>,
       },
       {
+        // R22: CS's own Order Inquiry statement when set, else the sales-order book's
+        // own `qty_ordered` - `plan_qty()` server-side, echoed here rather than
+        // re-derived. Optional on the wire TYPE (not on the real response, which always
+        // carries it) only so a fixture built before this round still type-checks.
+        id: 'qty_ordered',
+        accessorKey: 'qty_ordered',
+        header: ({ column }) => <DataGridColumnHeader title="Ordered" column={column} />,
+        size: 100,
+        meta: { headerClassName: 'text-end', cellClassName: 'text-end' },
+        cell: ({ row }) => (
+          <span className="tabular-nums">
+            {(row.original.qty_ordered ?? 0).toLocaleString()}
+          </span>
+        ),
+      },
+      {
+        id: 'qty_delivered',
+        accessorKey: 'qty_delivered',
+        header: ({ column }) => <DataGridColumnHeader title="Delivered" column={column} />,
+        size: 100,
+        meta: { headerClassName: 'text-end', cellClassName: 'text-end' },
+        cell: ({ row }) => (
+          <span className="tabular-nums">
+            {(row.original.qty_delivered ?? 0).toLocaleString()}
+          </span>
+        ),
+      },
+      {
+        // R22: renamed from "Open" - the same figure (`open_qty`), unchanged.
         id: 'open_qty',
-        header: 'Open',
-        size: 90,
+        accessorKey: 'open_qty',
+        header: ({ column }) => <DataGridColumnHeader title="Outstanding" column={column} />,
+        size: 100,
         meta: { headerClassName: 'text-end', cellClassName: 'text-end' },
         cell: ({ row }) => (
           <span className="tabular-nums">{row.original.open_qty.toLocaleString()}</span>
@@ -159,7 +198,8 @@ export function StockDebtCellDialog({
       },
       {
         id: 'assigned_qty',
-        header: 'Assigned',
+        accessorKey: 'assigned_qty',
+        header: ({ column }) => <DataGridColumnHeader title="Assigned" column={column} />,
         size: 100,
         meta: { headerClassName: 'text-end', cellClassName: 'text-end' },
         cell: ({ row }) => (
@@ -168,7 +208,8 @@ export function StockDebtCellDialog({
       },
       {
         id: 'assigned_source',
-        header: 'From',
+        accessorKey: 'assigned_source',
+        header: ({ column }) => <DataGridColumnHeader title="From" column={column} />,
         size: 190,
         cell: ({ row }) => (
           <span
@@ -181,7 +222,8 @@ export function StockDebtCellDialog({
       },
       {
         id: 'status',
-        header: 'Status',
+        accessorKey: 'status',
+        header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
         size: 120,
         cell: ({ row }) => {
           // `short_qty` is the SERVER's own figure - what the line went without ON ITS OWN
@@ -212,24 +254,6 @@ export function StockDebtCellDialog({
           }
           return <span className={pill}>{status}</span>;
         },
-      },
-      {
-        id: 'plan',
-        header: '',
-        size: 90,
-        cell: ({ row }) => (
-          <div className="flex justify-end">
-            <Button variant="outline" size="sm" asChild>
-              <Link
-                href={`/project-sales/fulfilment-planning?orders=${encodeURIComponent(
-                  row.original.so_number,
-                )}`}
-              >
-                Plan
-              </Link>
-            </Button>
-          </div>
-        ),
       },
     ],
     [],
@@ -335,8 +359,27 @@ export function StockDebtCellDialog({
     [],
   );
 
-  const demand = cell.data?.demand ?? [];
+  const demand = cell.data?.demand ?? EMPTY_DEMAND;
   const supply = cell.data?.supply ?? [];
+
+  // R20: the Demand grid's own search, by SO number / agent / bin. Client-side and
+  // filtered here (not via `PanelDataGrid`'s own `searchOf`) because the tab label needs
+  // to react to how many rows still match, which `searchOf`'s internal state does not
+  // expose to a caller.
+  const [demandSearch, setDemandSearch] = React.useState('');
+  const filteredDemand = React.useMemo(() => {
+    const needle = demandSearch.trim().toLowerCase();
+    if (!needle) return demand;
+    return demand.filter((line) =>
+      `${line.so_number} ${line.agent_code ?? ''} ${line.warehouse_code ?? ''}`
+        .toLowerCase()
+        .includes(needle),
+    );
+  }, [demand, demandSearch]);
+  const demandTabLabel = demandSearch.trim()
+    ? `Demand (${filteredDemand.length.toLocaleString()} of ${demand.length.toLocaleString()})`
+    : `Demand (${demand.length.toLocaleString()})`;
+
   const signedBalance = balance > 0 ? `+${balance.toLocaleString()}` : balance.toLocaleString();
   // The two halves of the cell (R37), summed here rather than on the server: the rows ARE
   // the month, so a reader can add the column up and land on the balance in the title.
@@ -378,15 +421,31 @@ export function StockDebtCellDialog({
           ) : (
             <Tabs defaultValue="demand">
               <TabsList>
-                <TabsTrigger value="demand">{`Demand (${demand.length})`}</TabsTrigger>
+                <TabsTrigger value="demand">{demandTabLabel}</TabsTrigger>
                 <TabsTrigger value="supply">{`Supply (${supply.length})`}</TabsTrigger>
               </TabsList>
 
               <TabsContent value="demand">
                 <PanelDataGrid<StockDebtDemandLine>
                   title="Demand"
+                  toolbar={
+                    <Input
+                      type="search"
+                      value={demandSearch}
+                      onChange={(e) => setDemandSearch(e.target.value)}
+                      placeholder="Search SO, agent or bin…"
+                      aria-label="Search"
+                      className="h-8 w-full sm:w-56"
+                    />
+                  }
                   columns={demandColumns}
-                  rows={demand}
+                  rows={filteredDemand}
+                  sortable
+                  // Page resets on every keystroke - `filteredDemand` is filtered OUTSIDE
+                  // `PanelDataGrid` (see the tab-label note above), so its own
+                  // `searchOf`-driven reset never runs; this is the `pageResetKey` an
+                  // external filter is documented to use instead.
+                  pageResetKey={demandSearch}
                   listingKey="projects.stock_debt.view::cell-demand"
                   error={cell.error}
                   emptyTitle="Nothing is due here"
