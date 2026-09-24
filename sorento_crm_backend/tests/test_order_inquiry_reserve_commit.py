@@ -1320,3 +1320,63 @@ def test_reserve_mail_dates_are_malaysia_calendar_days(reserve_api):
     for ctx in (requested_ctx, committed_ctx):
         assert ctx["reserve"]["requested_at"] == "24/09/2026", ctx["reserve"]
         assert ctx["today"] == today_malaysia().strftime("%d/%m/%Y"), ctx["today"]
+
+
+@pytest.mark.parametrize("bad_qty", ["1e-1000000", "0.00001", "123456789012"])
+def test_commit_refuses_qty_outside_numeric_15_4(reserve_api, bad_qty):
+    """Security re-review: a quantity the `Numeric(15,4)` columns cannot hold is a 422,
+    never a `NumericValueOutOfRange` 500 or a rounding-induced 409."""
+    client, world = reserve_api
+    row = _open_row(world, qty="20", item_code=f"{MARKER}-RANGE")
+    _request(client, world, (row, "20"))
+
+    response = client.post(
+        COMMIT_URL(world.inquiry.id),
+        json={"reserves": [{"row_id": row.id, "qty_reserved": bad_qty, "reason": "x"}]},
+    )
+    assert response.status_code == 422, response.text
+
+    from app.services.order_inquiry_reserve_service import OrderInquiryReserveService
+
+    with pytest.raises(AppException) as excinfo:
+        OrderInquiryReserveService(world.db).commit_request(
+            inquiry_id=world.inquiry.id,
+            reserves=[{"row_id": row.id, "qty_reserved": bad_qty, "reason": "x"}],
+            amendments=[],
+            actor_user_id=world.reserver,
+        )
+    assert excinfo.value.status_code == 422, excinfo.value.message
+    assert row.item_code in excinfo.value.message, excinfo.value.message
+    world.db.rollback()
+
+
+def test_commit_refuses_nul_in_reason(reserve_api):
+    client, world = reserve_api
+    row = _open_row(world, qty="20", item_code=f"{MARKER}-NUL")
+    _request(client, world, (row, "20"))
+
+    response = client.post(
+        COMMIT_URL(world.inquiry.id),
+        json={"reserves": [{"row_id": row.id, "qty_reserved": "10", "reason": "a\u0000b"}]},
+    )
+    assert response.status_code == 422, response.text
+
+
+def test_commit_500_never_echoes_the_exception(reserve_api, monkeypatch):
+    client, world = reserve_api
+    row = _open_row(world, qty="20", item_code=f"{MARKER}-500")
+    _request(client, world, (row, "20"))
+
+    def _boom(self, **kwargs):
+        raise RuntimeError("SELECT secret FROM somewhere")
+
+    monkeypatch.setattr(
+        "app.services.order_inquiry_reserve_service.OrderInquiryReserveService.commit_request",
+        _boom,
+    )
+    response = client.post(
+        COMMIT_URL(world.inquiry.id),
+        json={"reserves": [{"row_id": row.id, "qty_reserved": "20"}]},
+    )
+    assert response.status_code == 500, response.text
+    assert "SELECT" not in response.text, response.text

@@ -1299,6 +1299,18 @@ def _finite_qty(value: str) -> str:
         raise ValueError("must be a valid number") from None
     if not parsed.is_finite():
         raise ValueError("must be a finite number")
+    # Security re-review: the columns are `Numeric(15,4)` - more than 4 decimals would be
+    # rounded (a misleading 409 once 0.00001 reads 0) and more than 11 integer digits
+    # overflows (a `NumericValueOutOfRange` 500).
+    if parsed.adjusted() > 10 or parsed != parsed.quantize(Decimal("0.0001")):
+        raise ValueError("must have at most 11 digits before and 4 after the decimal point")
+    return value
+
+
+def _no_nul(value: Optional[str]) -> Optional[str]:
+    """Postgres text cannot hold NUL; psycopg raises a ValueError (a 500) on one."""
+    if value is not None and "\x00" in value:
+        raise ValueError("must not contain a NUL character")
     return value
 
 
@@ -1353,6 +1365,7 @@ class CommitReserveRowIn(BaseModel):
     reason: Optional[str] = Field(None, max_length=2000)
 
     _qty_reserved_finite = field_validator("qty_reserved")(_finite_qty)
+    _reason_no_nul = field_validator("reason")(_no_nul)
 
 
 class CommitAmendRowIn(BaseModel):
@@ -1365,6 +1378,7 @@ class CommitAmendRowIn(BaseModel):
     reason: Optional[str] = Field(None, max_length=2000)
 
     _qty_reserved_finite = field_validator("qty_reserved")(_finite_qty)
+    _reason_no_nul = field_validator("reason")(_no_nul)
 
 
 class CommitReserveRequestIn(BaseModel):

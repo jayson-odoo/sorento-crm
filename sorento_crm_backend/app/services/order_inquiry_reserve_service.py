@@ -206,10 +206,18 @@ def _strict_qty(value: Any, row: OrderInquiryRow) -> Decimal:
         parsed = value if isinstance(value, Decimal) else Decimal(str(value))
     except Exception:  # noqa: BLE001 - a malformed number is a 422, not a crash
         parsed = None
-    if parsed is None or not parsed.is_finite():
+    # Security re-review: `Numeric(15,4)` holds at most 11 integer digits and 4
+    # decimals; outside that the write would round (0.00001 reads 0) or overflow (a 500).
+    # `adjusted()` is checked first so `quantize` never sees a value it cannot hold.
+    if (
+        parsed is None
+        or not parsed.is_finite()
+        or parsed.adjusted() > 10
+        or parsed != parsed.quantize(Decimal("0.0001"))
+    ):
         raise AppException(
             422,
-            f"{_row_label(row)}: enter a valid quantity.",
+            f"{_row_label(row)}: enter a quantity with at most 4 decimal places.",
             code="reserve_qty_invalid",
         )
     return parsed
@@ -809,6 +817,10 @@ class OrderInquiryReserveService:
             prepared_amendments.append((rr, row, new_qty, reason_clean, link, current_qty))
 
         # ---- everything validated - now write ----
+        # Nit N-a: row id order, so two concurrent commits on one inquiry take the row
+        # locks `refresh_link_state` needs in the same order (no deadlock).
+        prepared_reserves.sort(key=lambda item: str(item[1].id))
+        prepared_amendments.sort(key=lambda item: str(item[1].id))
         refresher = ProjectOrderInquiryService(self.db)
         touched_by_request: Dict[str, List[Dict[str, Any]]] = {}
 

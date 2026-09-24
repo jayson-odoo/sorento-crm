@@ -1293,7 +1293,11 @@ async def commit_order_inquiry_reserve(
         return [_serialize_reserve_request(db, request) for request in requests]
     except Exception as exc:
         db.rollback()
-        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+        if hasattr(exc, "status_code"):
+            raise exc
+        # Security re-review: the detail goes to the log, never into the response.
+        logger.exception("Reserve commit failed for order inquiry %s", inquiry_id)
+        raise handle_internal_error()
 
 
 @router.get(
