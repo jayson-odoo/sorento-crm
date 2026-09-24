@@ -723,6 +723,84 @@ describe('SupplierDocumentsUploadDialog - inline column mapper (F3, G5)', () => 
     );
   });
 
+  // V6b (round 3): switching all the way back to a PREVIOUSLY-seen supplier must probe
+  // again too - the round-1 fix's `probedKeysRef` never expires an entry, so cycling
+  // A -> B -> A skips the third probe entirely and keeps showing B's stale columns.
+  it('probes again after cycling back to a previously-seen supplier', async () => {
+    probeImportMapping
+      .mockResolvedValueOnce(
+        probeFor(1, [{ position: 0, header: 'ITEM_A1', field: null, source: 'none' }]),
+      )
+      .mockResolvedValueOnce(
+        probeFor(1, [{ position: 0, header: 'ITEM_B', field: null, source: 'none' }]),
+      )
+      .mockResolvedValueOnce(
+        probeFor(1, [{ position: 0, header: 'ITEM_A2', field: null, source: 'none' }]),
+      );
+    getFulfilmentSuppliers.mockResolvedValue([
+      { value: 'sup-1', label: 'Kailu Hardware Factory' },
+      { value: 'sup-2', label: 'Second Supplier' },
+    ]);
+    openDialogSelfServe();
+    fireEvent.click(supplierSelect()!);
+    fireEvent.click(await screen.findByRole('option', { name: 'Kailu Hardware Factory' }));
+    pickFiles([xlsx('invoice.xls')]);
+    await waitFor(() => expect(probeImportMapping).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(supplierSelect()!);
+    fireEvent.click(await screen.findByRole('option', { name: 'Second Supplier' }));
+    await waitFor(() => expect(probeImportMapping).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText('ITEM_B')).toBeInTheDocument();
+
+    fireEvent.click(supplierSelect()!);
+    fireEvent.click(await screen.findByRole('option', { name: 'Kailu Hardware Factory' }));
+
+    await waitFor(() => expect(probeImportMapping).toHaveBeenCalledTimes(3));
+    expect(probeImportMapping).toHaveBeenLastCalledWith(
+      expect.objectContaining({ supplierId: 'sup-1' }),
+    );
+    expect(await screen.findByText('ITEM_A2')).toBeInTheDocument();
+  });
+
+  // V6b, second half: a SLOW probe response for a supplier the operator has since moved
+  // away from must never win the race against the CURRENT supplier's own, already-landed
+  // answer - there is no sequence guard on the effect's `.then()` today, so whichever
+  // response resolves LAST wins, stale or not.
+  it('ignores a stale probe response that resolves after the supplier already changed', async () => {
+    let resolveA: (value: unknown) => void = () => {};
+    const slowA = new Promise((resolve) => {
+      resolveA = resolve;
+    });
+    probeImportMapping.mockImplementation(
+      async ({ supplierId }: { supplierId: string }) => {
+        if (supplierId === 'sup-1') return slowA;
+        return probeFor(1, [{ position: 0, header: 'ITEM_B', field: null, source: 'none' }]);
+      },
+    );
+    getFulfilmentSuppliers.mockResolvedValue([
+      { value: 'sup-1', label: 'Kailu Hardware Factory' },
+      { value: 'sup-2', label: 'Second Supplier' },
+    ]);
+    openDialogSelfServe();
+    fireEvent.click(supplierSelect()!);
+    fireEvent.click(await screen.findByRole('option', { name: 'Kailu Hardware Factory' }));
+    pickFiles([xlsx('invoice.xls')]);
+    await waitFor(() => expect(probeImportMapping).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(supplierSelect()!);
+    fireEvent.click(await screen.findByRole('option', { name: 'Second Supplier' }));
+    await waitFor(() => expect(probeImportMapping).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText('ITEM_B')).toBeInTheDocument();
+
+    resolveA(
+      probeFor(1, [{ position: 0, header: 'ITEM_A_STALE', field: null, source: 'none' }]),
+    );
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(screen.queryByText('ITEM_A_STALE')).toBeNull();
+    expect(screen.getByText('ITEM_B')).toBeInTheDocument();
+  });
+
   // V7 (fix-round): Confirm must save the current mapping before it applies, the same way
   // Test does (grill G1) - today Confirm calls `applySupplierDocuments` directly with no
   // save at all, pressed or not.

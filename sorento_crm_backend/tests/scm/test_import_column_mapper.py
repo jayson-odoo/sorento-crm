@@ -1388,3 +1388,261 @@ def test_supplier_documents_preview_dafuyuan_single_block(scm_app):
     assert pi_block["line_count"] == 15, pi_block
     pl_block = next(b for b in f["blocks"] if b["cartons"] == 744)
     assert pl_block is not None
+
+
+# =============================================================================
+# Round 3 (final review pass, 24 Sep 2026): the coder's ruling-A migration is applied
+# (sorento_icm_ci), fix rounds 1-2 landed. Probing the landed implementation harder.
+# =============================================================================
+
+
+# --------------------------------------------------------------------------- #
+# R15 - the supplier notice / container-request sheet reads the SUPPLIER's own layout
+# --------------------------------------------------------------------------- #
+
+
+def test_supplier_notice_reads_supplier_layout(scm_app):
+    """`supplier_document_model._from_their_sheet` resolves the retained sheet's header
+    row via `AliasResolver.for_doc_type(db, DOC_TYPE)` (:388, :469) - the SHARED-only
+    resolver, never `for_supplier`. A supplier whose stock list uses a header with no
+    shared alias at all (measured: only 型号/MODEL are shared for supplier_inventory's
+    item_code) and only a SUPPLIER-scoped mapping (saved through the mapper, same as any
+    other layout) can never have `_header_row` find an item_code column - `build()`'s own
+    `except Exception` then falls back to `_from_our_data` (the generic, no-file
+    document), silently, for a supplier who very much HAS a retained sheet.
+    """
+    import openpyxl
+    from io import BytesIO
+
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    grant_permission(db, "purchasing", "scm.reorder.run")
+    supplier_id = _create_supplier(db, code_suffix="R15")
+    client = TestClient(app)
+
+    r_save = client.post(
+        "/api/v1/scm/import-mapping/save",
+        json={
+            "supplier_id": supplier_id,
+            "doc_types": ["supplier_inventory"],
+            "mappings": [{"header": "客户型号", "field": "item_code"}],
+        },
+    )
+    assert r_save.status_code == 200, r_save.text
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append([f"{MARKER} their title"])
+    ws.append(["客户型号", "品名"])
+    ws.append(["ABC-1", "widget"])
+    buf = BytesIO()
+    wb.save(buf)
+    sheet_bytes = buf.getvalue()
+
+    # `build()` reads its retained sheet through `_retained_stock_list`, which needs a
+    # real stored attachment - monkeypatched here to hand back OUR bytes directly instead
+    # (the same shortcut `tests/scm/test_supplier_document_model.py::_built` uses), so
+    # this test proves the RESOLVER gap, not the attachment-storage plumbing.
+    import app.services.scm.supplier_document_model as _sdmodel_module
+
+    original = _sdmodel_module._retained_stock_list
+    _sdmodel_module._retained_stock_list = lambda _db, _sid, **_kw: sheet_bytes
+    try:
+        model = _sdmodel_module.build(
+            db,
+            supplier_id=supplier_id,
+            lines=[{"item_code": "ABC-1", "product_name": "widget", "qty": 5, "product_id": None}],
+        )
+    finally:
+        _sdmodel_module._retained_stock_list = original
+
+    assert model.source is not None, (
+        "the document must have been built from the supplier's own retained sheet, not "
+        "the generic no-file fallback (`source` is only ever set on that path)"
+    )
+    assert "客户型号" in [c.label for c in model.columns], [c.label for c in model.columns]
+
+
+# --------------------------------------------------------------------------- #
+# R18 - a non-UUID supplier_id never reaches the uuid column comparison
+# --------------------------------------------------------------------------- #
+
+
+def test_for_supplier_non_uuid_supplier_is_none(scm_app):
+    from app.services.import_alias_service import AliasResolver
+
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    grant_permission(db, "purchasing", "scm.reorder.run")
+
+    # `WordList.for_supplier` (supplier_code_composer.py) already guards this
+    # (`is_uuid(supplier_id)`, review round 1 item 6); `AliasResolver.for_supplier` has no
+    # equivalent guard - a non-uuid string reaches `ImportFieldAlias.supplier_id == ...`
+    # unchecked and Postgres raises `InvalidTextRepresentation`, aborting the session.
+    resolver = AliasResolver.for_supplier(db, "supplier_inventory", "not-a-uuid")
+    assert resolver.field_for_header("型号") == "item_code", "the shared seed must still answer"
+
+    client = TestClient(app)
+    r = client.post(
+        "/api/v1/scm/supplier-inventory/preview",
+        files={"file": ("stock.xlsx", _fixture("ny_stock_20260921.xlsx"), _XLSX)},
+        data={"supplier_id": "not-a-uuid"},
+    )
+    assert 400 <= r.status_code < 500, r.text
+
+
+# --------------------------------------------------------------------------- #
+# R19 - the "identical to an existing shared row" redundancy check is normalised too
+# --------------------------------------------------------------------------- #
+
+
+def test_redundancy_check_uses_normalised_header(scm_app):
+    from sqlalchemy import text as _text
+
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    grant_permission(db, "purchasing", "scm.proforma_invoice.upload")
+    supplier_id = _create_supplier(db, code_suffix="R19")
+    client = TestClient(app)
+
+    # The shared seed already has `QTY` -> qty (measured, proforma_invoice). `save()`'s
+    # own "skip if a shared row already answers the same way" check
+    # (import_mapping_service.py, `shared_exists`) compares the LITERAL `alias` column
+    # against the posted header, not the normalised key - `Qty ` (different case,
+    # trailing space) means the SAME header to every reader here, but does not match
+    # `alias == 'Qty '` against the stored `'QTY'`, so the skip never fires and a
+    # redundant supplier row lands anyway.
+    r = client.post(
+        "/api/v1/scm/import-mapping/save",
+        json={
+            "supplier_id": supplier_id,
+            "doc_types": ["proforma_invoice"],
+            "mappings": [{"header": "Qty ", "field": "qty"}],
+        },
+    )
+    assert r.status_code == 200, r.text
+
+    own_rows = db.execute(
+        _text(
+            "SELECT count(*) FROM import_field_alias "
+            "WHERE supplier_id = :s AND doc_type = 'proforma_invoice'"
+        ),
+        {"s": supplier_id},
+    ).scalar()
+    assert own_rows == 0, "a header that normalises to an existing SHARED row must write no supplier row"
+
+
+# --------------------------------------------------------------------------- #
+# R20 - header_rows values must be plain integers, not bool/float coerced silently
+# --------------------------------------------------------------------------- #
+
+
+def test_header_rows_rejects_bool_and_float(scm_app):
+    import json as _json
+
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    grant_permission(db, "purchasing", "scm.reorder.run")
+    supplier_id = _create_supplier(db, code_suffix="R20")
+    client = TestClient(app)
+
+    # `fulfilment.py`'s `_header_rows` does `int(row)` inside a bare `try/except
+    # (TypeError, ValueError)` - Python's `int(True) == 1` and `int(2.7) == 2` both
+    # succeed silently (a bool is an int subtype; a float truncates), so neither is ever
+    # refused - the header row the operator's stepper never actually chose gets used
+    # anyway, with no sign anything was wrong with the request.
+    for bad_value in (True, 2.7):
+        r = client.post(
+            "/api/v1/scm/supplier-documents/preview",
+            files=[("files", ("f.xlsx", _fixture("ny_pi_FSCU8706420.xlsx"), _XLSX))],
+            data={
+                "supplier_id": supplier_id,
+                "header_rows": _json.dumps({"f.xlsx": bad_value}),
+            },
+        )
+        assert r.status_code == 422, (bad_value, r.text)
+
+
+# --------------------------------------------------------------------------- #
+# R17 - downgrade() when a supplier row is OLDER than a shared row on the same triple
+# --------------------------------------------------------------------------- #
+
+
+def test_downgrade_with_older_supplier_row():
+    """The reviewer's own method: a scratch SCHEMA (`blank_session`, `Base.metadata.
+    create_all`), never the real `import_field_alias` table. `blank_session`'s schema
+    already matches the CURRENT models - which already carry the split indexes
+    (`app/models/import_alias.py`) - so `downgrade()` is what actually changes the
+    schema shape here, same as `tests/test_migration_453_shared_brand_attach.py`'s own
+    pattern for a different migration.
+
+    `downgrade()`'s own DELETE keeps the OLDEST row per triple and removes a NEWER
+    SUPPLIER row - but only ever considers a SUPPLIER row for deletion
+    (`a.supplier_id IS NOT NULL`) and only when IT is the newer one
+    (`a.created_at > b.created_at`). A supplier row OLDER than a same-triple SHARED row
+    matches neither: it is never `a` (nothing is older than it to trigger the deletion),
+    and the shared row is never eligible as `a` at all (`supplier_id IS NOT NULL` filters
+    it out) - so both rows survive, and the immediately-following `ALTER TABLE ADD
+    CONSTRAINT UNIQUE (doc_type, field, alias)` fails on the still-duplicate triple.
+    """
+    import importlib.util
+    import uuid as _uuid
+    from pathlib import Path
+
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+    from sqlalchemy import text as _text
+
+    from tests._pg_fixture import blank_session
+
+    migration_path = (
+        Path(__file__).resolve().parents[2] / "alembic" / "versions" / "ifa_supplier_uniq.py"
+    )
+    spec = importlib.util.spec_from_file_location("m_ifa_supplier_uniq", migration_path)
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+
+    with blank_session() as db:
+        supplier_id = str(_uuid.uuid4())
+        db.execute(
+            _text(
+                "INSERT INTO suppliers (id, supplier_code, supplier_name, is_active) "
+                "VALUES (:id, :code, :name, true)"
+            ),
+            {"id": supplier_id, "code": f"{MARKER}-R17", "name": f"{MARKER} R17 supplier"},
+        )
+
+        older = "2020-01-01 00:00:00"
+        newer = "2026-01-01 00:00:00"
+        alias = f"{MARKER}R17"
+        db.execute(
+            _text(
+                "INSERT INTO import_field_alias (id, doc_type, field, alias, supplier_id, created_at) "
+                "VALUES (gen_random_uuid(), 'proforma_invoice', 'ignore', :a, :s, :ts)"
+            ),
+            {"a": alias, "s": supplier_id, "ts": older},
+        )
+        db.execute(
+            _text(
+                "INSERT INTO import_field_alias (id, doc_type, field, alias, supplier_id, created_at) "
+                "VALUES (gen_random_uuid(), 'proforma_invoice', 'ignore', :a, NULL, :ts)"
+            ),
+            {"a": alias, "ts": newer},
+        )
+        db.flush()
+
+        ctx = MigrationContext.configure(db.connection())
+        with Operations.context(ctx):
+            migration.downgrade()
+
+        remaining = db.execute(
+            _text(
+                "SELECT supplier_id FROM import_field_alias "
+                "WHERE doc_type = 'proforma_invoice' AND alias = :a"
+            ),
+            {"a": alias},
+        ).fetchall()
+        assert len(remaining) == 1, remaining
+        assert remaining[0][0] is None, (
+            "the older SUPPLIER row should be the one removed, the shared row kept"
+        )
