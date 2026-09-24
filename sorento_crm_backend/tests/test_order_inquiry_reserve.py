@@ -803,12 +803,12 @@ def _find_reserve_seed_migration_path() -> Path | None:
 def _load_reserve_seed_migration():
     """oirs_0001's own module, its `upgrade` WRAPPED to chain forward onto every later
     sibling in this migration family that exists on disk (`oirs_0002_reserve_round2`,
-    `oirs_0003_reserve_commit_template`, ...) - "upgrade the seed migration" reaching
+    `oirs_0003_reserve_commit_tmpl`, ...) - "upgrade the seed migration" reaching
     HEAD, the same thing a real `alembic upgrade head` against a fresh database does,
     and the same reasoning `_load_round2_migration`'s own docstring gives for chaining
     oirs_0002 onto oirs_0001 rather than amending oirs_0001 in place (round 4, AC-RS-80:
     a shipped migration's own SEED TEXT is never edited - the round-4 body fix is its
-    own file, `oirs_0003_reserve_commit_template.py`, an UPDATE chained on top). Every
+    own file, `oirs_0003_reserve_commit_tmpl.py`, an UPDATE chained on top). Every
     sibling's own `upgrade()` is idempotent (`IF NOT EXISTS` / `_set_template`'s own
     UPDATE), so `test_seed_migration_idempotent`'s own `module.upgrade()` twice, and its
     own explicit `_load_round2_migration().downgrade()` + `module.downgrade()` sequence
@@ -832,7 +832,7 @@ def _load_reserve_seed_migration():
 
     def _upgrade_to_head():
         original_upgrade()
-        for name in ("oirs_0002_reserve_round2", "oirs_0003_reserve_commit_template"):
+        for name in ("oirs_0002_reserve_round2", "oirs_0003_reserve_commit_tmpl"):
             sibling_path = versions_dir / f"{name}.py"
             if not sibling_path.exists():
                 continue

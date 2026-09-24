@@ -17,16 +17,22 @@ to deliver a body fix, not a fresh seed. Idempotent - running twice sets the sam
 both times. Downgrade restores round 1's own body verbatim (copied byte for byte from
 `oirs_0001_reserve_requests.py`).
 
-Revision ID: oirs_0003_reserve_commit_template
+Revision ID: oirs_0003_reserve_commit_tmpl
 Revises: oirs_0002_reserve_round2
 Create Date: 2026-09-24
+
+Coder note (finish-up slice, 24 Sep): renamed from `oirs_0003_reserve_commit_template`
+(33 chars) to fit alembic's own `alembic_version.version_num VARCHAR(32)`
+(LESSONS-LEARNT.md: "head revision id must be <= 32 chars, a fresh database cannot
+stamp a longer one") - the pre-push `alembic-heads` gate catches this on every push;
+this one had not been pushed far enough to trip it yet. No functional change.
 """
 from __future__ import annotations
 
 import sqlalchemy as sa
 from alembic import op
 
-revision = "oirs_0003_reserve_commit_template"
+revision = "oirs_0003_reserve_commit_tmpl"
 down_revision = "oirs_0002_reserve_round2"
 branch_labels = None
 depends_on = None
