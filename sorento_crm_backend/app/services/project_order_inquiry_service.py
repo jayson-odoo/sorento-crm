@@ -3160,6 +3160,15 @@ class ProjectOrderInquiryService:
         # column zeroed (that column is the record of what it once asked for) - the
         # handover line still has to say "0" (AC-H5), which no read of `row.qty` gives.
         qty_str = "0" if kind == "cancelled" else _qty_str(_dec(row.qty))
+        # AC-2 (24 Sep, owner ruling): the AutoCount SO line sequence this row's own
+        # line carries, read off `sales_order_lines.line_no` rather than
+        # `FulfilmentBoardService._line_numbers`'s positional renumbering (that
+        # sequence is a board display convenience for lines not all mirrored, not the
+        # book's own order) - `None` for a row with no `so_line_id` (an amendment
+        # exception row that names no line), which `_build_handover_context` sorts
+        # after every row of the same S/O that has one.
+        so_line = self.db.get(ProjectSalesOrderLine, row.so_line_id) if row.so_line_id else None
+        line_no = so_line.line_no if so_line is not None else None
         line = {
             "so_date": _handover_fmt_date(facts.get("so_date")),
             "so_number": so_number,
@@ -3168,6 +3177,10 @@ class ProjectOrderInquiryService:
             "item_code": row.item_code,
             "qty": qty_str,
             "delivery_date": _handover_fmt_date(row.delivery_date),
+            # AC-1: "very, very important" to the owner - blank, never the word "None",
+            # when the row carries no stock location (`_build_handover_context`'s own
+            # subject-scope reduction already treats a blank the same way).
+            "location": row.stock_location or "",
             "remark": handover_remark(kind, row, was),
             "was": _format_handover_was(was),
         }
@@ -3183,6 +3196,10 @@ class ProjectOrderInquiryService:
                 "customer": facts.get("customer"),
                 "project": facts.get("project"),
                 "stock_location": row.stock_location,
+                #: AC-2/AC-3: what `_build_handover_context` sorts the whole queue by -
+                #: `so_number` above, then these two.
+                "line_no": line_no,
+                "item_code": row.item_code,
                 "verb_keys": _handover_verb_keys(kind, row, was),
                 "line": line,
                 "actor": self._handover_actor(resolved_actor_id),
@@ -9471,6 +9488,20 @@ def confirmed_unplaced_buy_rows(
     return query.all()
 
 
+def _handover_sort_key(item: Dict[str, Any]) -> Tuple[str, bool, int, str]:
+    """AC-2/AC-3 (24 Sep, owner ruling): S/O no, then the AutoCount SO line sequence
+    ascending with a row that names no line (`line_no is None`) sorted LAST within its
+    own S/O, then item code - the order CS ticked lines in, or whether a line is the
+    confirm's own or a carried-forward amendment row, has no effect."""
+    line_no = item.get("line_no")
+    return (
+        item.get("so_number") or "",
+        line_no is None,
+        line_no if line_no is not None else 0,
+        item.get("item_code") or "",
+    )
+
+
 def _build_handover_context(
     pending: Sequence[Dict[str, Any]]
 ) -> Optional[Tuple[Dict[str, Any], str]]:
@@ -9478,11 +9509,21 @@ def _build_handover_context(
     dispatch it under - PURE aggregation over what `_record_handover` already resolved
     and formatted eagerly (see its own docstring for why: a fresh drain-time session
     cannot see a write that is still open under a savepoint). `None` on an empty queue.
+
+    AC-2/AC-3: the LINE TABLE is built off a copy sorted by `_handover_sort_key` -
+    a still-raised amendment row `_append_still_raised_amendment_rows` appends to this
+    same queue is not a special case, it sorts exactly like every other item. Every
+    OTHER read below (the SO summary table, the subject's `so_numbers`/location
+    aggregation, `first_inquiry_id`) stays over `pending` in QUEUE order, unchanged by
+    this lane: AC-4 pins the subject rule as-is, and re-deriving `so_numbers` off the
+    sorted copy would silently reorder it too.
     """
     if not pending:
         return None
 
-    lines: List[Dict[str, Any]] = []
+    lines: List[Dict[str, Any]] = [
+        item["line"] for item in sorted(pending, key=_handover_sort_key)
+    ]
     orders: List[Dict[str, Any]] = []
     seen_pso: set = set()
     so_numbers: List[str] = []
@@ -9522,7 +9563,6 @@ def _build_handover_context(
         if location:
             locations.add(location)
         verb_keys.update(item.get("verb_keys") or ())
-        lines.append(item["line"])
 
     # AC-H7 / AC-R2-14/15: one NAMED location (blanks ignored) -> "<location> @ <so
     # list>"; two or more named, or none at all, -> bare "<so list>".
