@@ -15,13 +15,17 @@ from __future__ import annotations
 #: to the field, not to the type - which pydantic reads as "this must be None" and every
 #: dated event then fails response validation.
 from datetime import date as DateType
-from typing import List, Literal, Optional
+from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel
 
 Tone = Literal["red", "amber", "green"]
 DemandStatus = Literal["covered", "late", "short", "pinned"]
 SupplyKind = Literal["on_hand", "spo", "po"]
+#: `book` (R1/AC-8): `all` (default) spans flagged project bins AND the site pools in one
+#: read; `project` reproduces the pre-24-Sep view (flagged bins only); `retail` is pools
+#: only and ignores `group`.
+Book = Literal["all", "project", "retail"]
 
 
 class StockDebtMonth(BaseModel):
@@ -49,6 +53,16 @@ class StockDebtRow(BaseModel):
     tba: float
     undated: float
     unlocated: float
+    #: The row's LAST supplier (R3/A1, AC-4/AC-5): the supplier on the product's newest
+    #: purchase-order line, falling back to the primary-flagged product supplier, else
+    #: `None`. Never rendered as an id on the FE - `supplier_name` is what prints.
+    supplier_id: Optional[str] = None
+    supplier_name: Optional[str] = None
+    #: `products.category_id` is mandatory, so "no category" is a BLANK code (`""`), the
+    #: same convention `low_stock_report_service._master_map` already uses - never `None`.
+    category_code: Optional[str] = None
+    #: Sum of every month's balance plus `tba` + `undated` + `unlocated` (R9/AC-5).
+    total: float = 0.0
 
 
 class StockDebtPagination(BaseModel):
@@ -57,11 +71,40 @@ class StockDebtPagination(BaseModel):
     limit: int
 
 
+class StockDebtTotals(BaseModel):
+    """The WHOLE filtered set's own totals (AC-6), never the page's - so the footer
+    prints the same figures on page 1 and on page 2."""
+
+    months: Dict[str, float]
+    tba: float
+    undated: float
+    unlocated: float
+    total: float
+
+
+class StockDebtSupplier(BaseModel):
+    """One entry of the toolbar's supplier select (AC-7) - never an id on screen."""
+
+    id: str
+    name: str
+
+
+class StockDebtSheetCounts(BaseModel):
+    """The exact export sheet counts for the CURRENT filtered set (AC-7b), none-buckets
+    ("No supplier" / "No category") included - so the export popover's preview never has
+    to guess at a bucket it cannot see from one page."""
+
+    supplier: int
+    category: int
+    supplier_category: int
+
+
 class StockDebtList(BaseModel):
     """The list envelope: the repo's `{data, pagination}` plus the column axis.
 
-    The axis is envelope-level because it belongs to the whole FILTERED SET: derived per
-    page, the columns would change under the reader as they page.
+    The axis, `totals`, `suppliers` and `sheet_counts` are envelope-level because each is a
+    property of the whole FILTERED SET: derived per page, they would change under the
+    reader as they page (AC-6/AC-7/AC-7b).
     """
 
     data: List[StockDebtRow]
@@ -69,6 +112,9 @@ class StockDebtList(BaseModel):
     months: List[str]
     tba_month: str
     groups: List[str]
+    totals: StockDebtTotals
+    suppliers: List[StockDebtSupplier]
+    sheet_counts: StockDebtSheetCounts
 
 
 class StockDebtDemandLine(BaseModel):

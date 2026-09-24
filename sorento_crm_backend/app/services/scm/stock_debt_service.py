@@ -32,8 +32,14 @@ from sqlalchemy.orm import Session
 
 from app.models.inventory import Stock, Warehouse
 from app.models.order import SalesOrder, SalesOrderLine
-from app.models.procurement import PurchaseOrder, PurchaseOrderLine, SPOAllocation
-from app.models.product import Product
+from app.models.procurement import (
+    ProductSupplier,
+    PurchaseOrder,
+    PurchaseOrderLine,
+    SPOAllocation,
+    Supplier,
+)
+from app.models.product import Product, ProductCategory
 from app.models.project_so import (
     INQUIRY_CANCELLED,
     OrderInquiryLink,
@@ -111,52 +117,104 @@ class StockDebtService:
         only_debt: bool = True,
         page: int = 1,
         limit: int = 50,
+        cutoff: Optional[date] = None,
+        supplier_id: Optional[str] = None,
+        book: str = "all",
     ) -> Dict[str, Any]:
-        """The month x product board (AC-S2-6).
+        """The month x product board (AC-S2-6, extended AC-1 to AC-9).
 
-        The three axis fields travel on the ENVELOPE rather than per row, because the axis is
-        a property of the whole filtered set: derived per page, the columns would change
-        under the reader as they page.
+        `cutoff` (R2/A2/A3) drops demand due after it, in `_demand()`; TBA reads 0 once the
+        policy's `tba_date_from` sits after it, for free - every TBA line is dated on or
+        after `tba_date_from`, so the same date filter drops the whole bucket without a
+        second rule. `supplier_id` (R3/A1) narrows to products whose LAST supplier (newest
+        PO line, else the primary flag) matches; `'none'` keeps products with neither.
+        `book` (R1/A4) chooses the span `_warehouses` reads.
+
+        `totals`, `suppliers` and `sheet_counts` travel on the ENVELOPE, over the WHOLE
+        filtered set rather than the page, for the same reason the axis already does:
+        derived per page, they would change under the reader as they page (AC-6/AC-7/AC-7b).
         """
-        warehouses = self._warehouses(group)
+        warehouses = self._warehouses(group, book)
         products = self._products(warehouses, query)
-        assignments = self._assignments(products, warehouses)
+        product_ids = [product_id for product_id, _code, _name, _cat in products]
+        assignments = self._assignments(
+            [(pid, code, name) for pid, code, name, _cat in products],
+            warehouses,
+            cutoff=cutoff,
+        )
+        supplier_map = self._last_supplier_map(product_ids)
 
-        rows = []
-        for product_id, code, name in products:
+        filtered = []
+        for product_id, code, name, category_code in products:
             result = assignments[product_id]
             if only_debt and not self._in_debt(result):
                 continue
-            rows.append((product_id, code, name, result))
+            supplier = supplier_map.get(product_id) or {"id": None, "name": None}
+            if supplier_id == "none":
+                if supplier["id"] is not None:
+                    continue
+            elif supplier_id:
+                if supplier["id"] != supplier_id:
+                    continue
+            filtered.append((product_id, code, name, category_code, supplier, result))
 
-        axis = self._axis(row[3] for row in rows)
-        rows.sort(key=lambda row: self._sort_key(row[3], row[1]))
+        axis = self._axis((row[5] for row in filtered), cutoff=cutoff)
+        filtered.sort(key=lambda row: self._sort_key(row[5], row[1]))
 
-        start = max(page - 1, 0) * limit
-        page_rows = rows[start : start + limit]
-        return {
-            "data": [
+        data_rows = []
+        for product_id, code, name, category_code, supplier, result in filtered:
+            months = self._months_on_axis(result, axis, product_id)
+            total = (
+                sum(month["balance"] for month in months)
+                + result.tba + result.undated + result.unlocated
+            )
+            data_rows.append(
                 {
                     "product_id": product_id,
                     "product_code": code,
-                    "product_name": name,
-                    "months": self._months_on_axis(result, axis, product_id),
+                    # AC-9/R8: null when it equals the code, trimmed of surrounding
+                    # whitespace, case-sensitively - done once here so the board and the
+                    # export agree without each re-deriving it.
+                    "product_name": (
+                        None if name is not None and name.strip() == code else name
+                    ),
+                    "months": months,
                     "tba": result.tba,
                     "undated": result.undated,
                     "unlocated": result.unlocated,
+                    "supplier_id": supplier["id"],
+                    "supplier_name": supplier["name"],
+                    "category_code": category_code,
+                    "total": total,
                 }
-                for product_id, code, name, result in page_rows
-            ],
-            "pagination": {"total": len(rows), "page": page, "limit": limit},
+            )
+
+        totals = self._totals(data_rows, axis)
+        suppliers = self._suppliers_list(data_rows)
+        sheet_counts = self._sheet_counts(data_rows)
+
+        start = max(page - 1, 0) * limit
+        page_rows = data_rows[start : start + limit]
+        return {
+            "data": page_rows,
+            "pagination": {"total": len(data_rows), "page": page, "limit": limit},
             "months": axis,
             "tba_month": month_key(self._tba_from()),
             "groups": self._groups(),
+            "totals": totals,
+            "suppliers": suppliers,
+            "sheet_counts": sheet_counts,
         }
 
     def cell(
-        self, product_id: str, month: str, group: Optional[str] = None
+        self,
+        product_id: str,
+        month: str,
+        group: Optional[str] = None,
+        cutoff: Optional[date] = None,
+        book: str = "all",
     ) -> Dict[str, Any]:
-        """The demand and the supply behind one cell (AC-S2-7, R28).
+        """The demand and the supply behind one cell (AC-S2-7, R28; extended AC-11).
 
         The same reads as the board, narrowed to one product, so the two tables foot with the
         cell that opened them by construction rather than by agreement: the drill's
@@ -165,6 +223,8 @@ class StockDebtService:
         narrowing the BOARD was showing when the cell was pressed, and it is not optional
         detail: `group=BB` recomputes the balance from the BB span only, so a drill that read
         the whole book would answer a different question from the cell that opened it.
+        `cutoff` and `book` are the same two narrowings the list route takes, threaded
+        through for the same reason `group` already is (AC-11).
         """
         if month not in BUCKET_KEYS and not self._is_month_key(month):
             raise AppException(
@@ -172,7 +232,7 @@ class StockDebtService:
                 message="month must be YYYY-MM, 'tba', 'undated' or 'unlocated'.",
                 code="stock_debt_bad_month",
             )
-        warehouses = self._warehouses(group)
+        warehouses = self._warehouses(group, book)
         product = (
             self.db.query(Product.id, Product.product_code, Product.product_name)
             .filter(Product.id == product_id)
@@ -183,7 +243,9 @@ class StockDebtService:
                 status_code=404, message="Product not found.", code="NOT_FOUND"
             )
         products = [(str(product.id), product.product_code, product.product_name)]
-        assignments = self._assignments(products, warehouses, keep_events=True)
+        assignments = self._assignments(
+            products, warehouses, keep_events=True, cutoff=cutoff,
+        )
         result = assignments[str(product.id)]
         events = self._event_cache[str(product.id)]
 
@@ -268,13 +330,36 @@ class StockDebtService:
 
     # ------------------------------------------------------------------ the reads
 
-    def _warehouses(self, group: Optional[str]) -> Dict[str, Warehouse]:
-        """The bins fulfilment planning reads, narrowed to one ownership group on request.
+    def _warehouses(
+        self, group: Optional[str], book: str = "all"
+    ) -> Dict[str, Warehouse]:
+        """The bins this read spans, narrowed to one ownership group and/or one `book`
+        (R1/A4, AC-8).
 
         `group=BB` narrows the SPAN of every read below it rather than filtering finished
         rows (AC-S2-6): the balance asked for is the BB group's own, and a row filtered after
-        the fact would still have let another group's stock cover a BB order.
+        the fact would still have let another group's stock cover a BB order. `group` only
+        ever narrows the PROJECT half - a site pool is nobody's ownership group.
+
+        `book`:
+        * `project` - flagged bins only (the pre-24-Sep span), narrowed by `group`.
+        * `retail` - site pools only; `group` is meaningless here and is ignored.
+        * `all` (default) - both, in ONE span. `assign()` already seals a pool's own
+          group (`POOL_GROUP`) off from every project group in both directions (A4), so
+          adding the pools to this dict is the whole change - the ladder's
+          `assignments_for` already relies on the same fact for its own pool step.
         """
+        project_bins = self._project_bins(group)
+        if book == "project":
+            return project_bins
+        pool_bins = dict(self.supply.site_pool_warehouses())
+        if book == "retail":
+            return pool_bins
+        return {**project_bins, **pool_bins}
+
+    def _project_bins(self, group: Optional[str]) -> Dict[str, Warehouse]:
+        """The flagged bins alone, narrowed by `group` - `_warehouses`'s own project half,
+        and the whole of `_groups`'s span (a site pool admits no ownership group)."""
         rows = self.db.query(Warehouse).filter(fulfilment_planning_predicate()).all()
         if group:
             wanted = group.strip().upper()
@@ -305,8 +390,10 @@ class StockDebtService:
 
     def _products(
         self, warehouses: Dict[str, Warehouse], query: Optional[str]
-    ) -> List[Tuple[str, str, Optional[str]]]:
-        """Every product with stock, demand or incoming at those bins, code and name.
+    ) -> List[Tuple[str, str, Optional[str], Optional[str]]]:
+        """Every product with stock, demand or incoming at those bins: id, code, name and
+        `category_code` (R4/AC-5) - one JOIN, not a second query, for the same reason the
+        rest of this file reads once for the whole set.
 
         Four id reads and one product read, because a product with nothing at a flagged bin
         has no debt to state and no row to render. The demand read reaches one step further
@@ -362,9 +449,16 @@ class StockDebtService:
         if not candidates:
             return []
 
-        rows = self.db.query(
-            Product.id, Product.product_code, Product.product_name
-        ).filter(Product.id.in_(candidates))
+        rows = (
+            self.db.query(
+                Product.id,
+                Product.product_code,
+                Product.product_name,
+                ProductCategory.category_code,
+            )
+            .outerjoin(ProductCategory, ProductCategory.id == Product.category_id)
+            .filter(Product.id.in_(candidates))
+        )
         if query:
             needle = f"%{query.strip()}%"
             rows = rows.filter(
@@ -374,7 +468,7 @@ class StockDebtService:
                 )
             )
         return [
-            (str(row.id), row.product_code or "", row.product_name)
+            (str(row.id), row.product_code or "", row.product_name, row.category_code)
             for row in rows.all()
         ]
 
@@ -417,8 +511,14 @@ class StockDebtService:
         *,
         keep_events: bool = False,
         as_of: Optional[date] = None,
+        cutoff: Optional[date] = None,
     ) -> Dict[str, Assignment]:
-        """One `assign()` per product, off ONE read per input for the whole set."""
+        """One `assign()` per product, off ONE read per input for the whole set.
+
+        `cutoff` (R2/A2/AC-1..AC-3) drops demand due after it in `_demand()` below - it
+        touches DEMAND only, never supply (AC-3: supply landing after a line's own due
+        date, but on or before the cutoff, still covers it - the walk itself is unchanged).
+        """
         self._event_cache: Dict[str, List[SupplyEvent]] = {}
         self._lead_cache: Dict[str, int] = {}
         product_ids = [product_id for product_id, _code, _name in products]
@@ -441,7 +541,7 @@ class StockDebtService:
         # the dev copy.
         leads = self.supply.lead_times(product_ids)
         supply_rows = self._supply(product_ids, warehouse_ids, codes, pools, as_of=as_of)
-        demand_rows = self._demand(product_ids, warehouse_ids, codes, pools)
+        demand_rows = self._demand(product_ids, warehouse_ids, codes, pools, cutoff=cutoff)
         holds = self._holds(
             product_ids,
             {line.key for lines in demand_rows.values() for line in lines},
@@ -583,10 +683,18 @@ class StockDebtService:
         warehouse_ids: Sequence[str],
         codes: Dict[str, str],
         pools: set,
+        *,
+        cutoff: Optional[date] = None,
     ) -> Dict[str, List[DemandLine]]:
         """Every open sales-order line at those bins, plus the ones at NO bin - the same
         `is_open_demand()` rule the ladder and `scm.committed_v` share, so the debt and the
-        plan count one book. `_demand_span` is why an unlocated line is here."""
+        plan count one book. `_demand_span` is why an unlocated line is here.
+
+        `cutoff` (R2/A2/A3, AC-1/AC-2) drops a line due AFTER it; an undated line has no
+        date to test and always survives. Every TBA line is dated on or after the policy's
+        `tba_date_from`, so a cutoff earlier than that date drops the whole TBA bucket for
+        free, off this ONE clause - no second rule needed (AC-2).
+        """
         rows = (
             self.db.query(
                 SalesOrderLine.id,
@@ -613,6 +721,16 @@ class StockDebtService:
                 self._demand_span(warehouse_ids),
                 SalesOrder.status == "open",
                 is_open_demand(),
+                *(
+                    [
+                        or_(
+                            SalesOrderLine.required_date.is_(None),
+                            SalesOrderLine.required_date <= cutoff,
+                        )
+                    ]
+                    if cutoff is not None
+                    else []
+                ),
             )
             .all()
         )
@@ -794,15 +912,26 @@ class StockDebtService:
         )
         return (red is None, red or "", code or "")
 
-    def _axis(self, results: Iterable[Assignment]) -> List[str]:
+    def _axis(
+        self, results: Iterable[Assignment], *, cutoff: Optional[date] = None
+    ) -> List[str]:
         """The month columns of the whole filtered set: today to the last month anything is
-        dated in. One axis for every row, or the columns move as the reader pages."""
+        dated in. One axis for every row, or the columns move as the reader pages.
+
+        `cutoff` (A2) caps the LAST column at its own month - demand past it is already
+        dropped in `_demand()`, but a document arriving after the cutoff is still supply
+        (AC-3) and could otherwise stretch the axis past a month nothing due survives in.
+        Never below `first`: a cutoff in the past still leaves the current month on screen.
+        """
         first = month_key(date.today())
         last = first
         for result in results:
             for month in result.months:
                 if month.key > last:
                     last = month.key
+        if cutoff is not None:
+            cutoff_month = month_key(cutoff)
+            last = max(first, min(last, cutoff_month))
         return month_axis(first, last)
 
     def _months_on_axis(
@@ -845,3 +974,143 @@ class StockDebtService:
             if label not in labels:
                 labels.append(label)
         return ", ".join(labels) if labels else None
+
+    # ------------------------------------------------------------------ last supplier (R3/A1)
+
+    def _last_supplier_map(
+        self, product_ids: Sequence[str]
+    ) -> Dict[str, Dict[str, Optional[str]]]:
+        """`{product_id: {"id": supplier_id | None, "name": supplier_name | None}}` -
+        the LAST supplier (AC-4/AC-5): the supplier on the product's newest purchase-order
+        LINE, falling back to the manually-flagged primary product supplier, else neither.
+
+        The window (newest `PurchaseOrder.issue_date`, `PurchaseOrderLine.created_at`
+        breaking a tie) is `po_last_cost_service.last_cost_rows`'s own pick key, reused
+        rather than re-derived - the same "which PO line answers for this product" question,
+        one PARTITION BY `product_id` instead of `(product_id, warehouse_id)` because the
+        board asks per PRODUCT, not per bin. Cancelled POs are skipped (A1); a cancelled
+        LINE is not, because A1 names only the PO's own status - an SPO's supplier is never
+        consulted here at all (A1: "we should look at PO, not SPO").
+        """
+        out: Dict[str, Dict[str, Optional[str]]] = {
+            str(pid): {"id": None, "name": None} for pid in product_ids
+        }
+        if not product_ids:
+            return out
+
+        rn = (
+            func.row_number()
+            .over(
+                partition_by=PurchaseOrderLine.product_id,
+                order_by=(
+                    PurchaseOrder.issue_date.desc().nulls_last(),
+                    PurchaseOrderLine.created_at.desc(),
+                ),
+            )
+            .label("rn")
+        )
+        numbered = (
+            self.db.query(
+                PurchaseOrderLine.product_id,
+                PurchaseOrder.supplier_id,
+                rn,
+            )
+            .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+            .filter(
+                PurchaseOrderLine.product_id.in_(product_ids),
+                PurchaseOrder.status != "cancelled",
+            )
+        ).subquery()
+        po_supplier: Dict[str, Optional[str]] = {
+            str(pid): (str(sid) if sid else None)
+            for pid, sid in self.db.query(numbered.c.product_id, numbered.c.supplier_id)
+            .filter(numbered.c.rn == 1)
+            .all()
+        }
+
+        primary_rows = (
+            self.db.query(ProductSupplier.product_id, ProductSupplier.supplier_id)
+            .filter(
+                ProductSupplier.product_id.in_(product_ids),
+                ProductSupplier.is_primary_supplier.is_(True),
+            )
+            .all()
+        )
+        primary_supplier: Dict[str, str] = {
+            str(pid): str(sid) for pid, sid in primary_rows
+        }
+
+        supplier_ids = {sid for sid in po_supplier.values() if sid} | set(
+            primary_supplier.values()
+        )
+        names: Dict[str, str] = {}
+        if supplier_ids:
+            names = {
+                str(row.id): row.supplier_name
+                for row in self.db.query(Supplier.id, Supplier.supplier_name)
+                .filter(Supplier.id.in_(supplier_ids))
+                .all()
+            }
+
+        for pid in out:
+            # The newest PO line's own answer wins WHENEVER one exists - even a PO line
+            # with no supplier stated - and only a product with NO live PO at all falls
+            # back to the primary flag (A1's "falling back to").
+            supplier_id = po_supplier[pid] if pid in po_supplier else primary_supplier.get(pid)
+            out[pid] = {
+                "id": supplier_id,
+                "name": names.get(supplier_id) if supplier_id else None,
+            }
+        return out
+
+    # ------------------------------------------------------------------ envelope aggregates
+
+    @staticmethod
+    def _totals(data_rows: List[dict], axis: Sequence[str]) -> Dict[str, Any]:
+        """The whole filtered set's totals (AC-6): summed here, over EVERY row already
+        built for this request, before the page is sliced off - never the page's own rows,
+        or the footer would change under the reader as they page."""
+        months = {key: 0.0 for key in axis}
+        tba = undated = unlocated = total = 0.0
+        for row in data_rows:
+            for month in row["months"]:
+                months[month["key"]] += month["balance"]
+            tba += row["tba"]
+            undated += row["undated"]
+            unlocated += row["unlocated"]
+            total += row["total"]
+        return {
+            "months": months, "tba": tba, "undated": undated, "unlocated": unlocated,
+            "total": total,
+        }
+
+    @staticmethod
+    def _suppliers_list(data_rows: List[dict]) -> List[Dict[str, str]]:
+        """Distinct last suppliers of the filtered set, sorted by name (AC-7)."""
+        seen: Dict[str, str] = {}
+        for row in data_rows:
+            supplier_id = row["supplier_id"]
+            if supplier_id and supplier_id not in seen:
+                seen[supplier_id] = row["supplier_name"] or ""
+        return [
+            {"id": supplier_id, "name": name}
+            for supplier_id, name in sorted(seen.items(), key=lambda pair: pair[1])
+        ]
+
+    @staticmethod
+    def _sheet_counts(data_rows: List[dict]) -> Dict[str, int]:
+        """The EXACT export sheet counts for the whole filtered set (AC-7b): distinct
+        supplier keys, distinct category keys and distinct (supplier, category) PAIRS
+        actually present - a pair with no row does not get a sheet, so this is never
+        `len(suppliers) * len(categories)`. `None`/blank folds into one "none" bucket each,
+        the same bucket the workbook titles "No supplier" / "No category" (AC-13..AC-16)."""
+        supplier_keys = {row["supplier_id"] or "" for row in data_rows}
+        category_keys = {row["category_code"] or "" for row in data_rows}
+        pair_keys = {
+            (row["supplier_id"] or "", row["category_code"] or "") for row in data_rows
+        }
+        return {
+            "supplier": len(supplier_keys),
+            "category": len(category_keys),
+            "supplier_category": len(pair_keys),
+        }
