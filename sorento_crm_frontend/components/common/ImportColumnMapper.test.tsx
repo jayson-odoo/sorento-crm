@@ -298,4 +298,30 @@ describe('ImportColumnMapper', () => {
     openSelect(selects[selects.length - 1]);
     expect(screen.queryByText('Currency')).toBeNull();
   });
+
+  it('renders the "Header fields" section ABOVE the columns grid, not below it', () => {
+    // The header block (BL/container/seal, often the FIRST thing a purchasing user
+    // recognises on the sheet) is what the operator reads first - the columns grid is
+    // long (DAFUYUAN alone has two dozen columns) and would otherwise push "Header
+    // fields" out of view below it, making an operator scroll past every column just to
+    // reach the three-field block they actually came to check.
+    renderMapper(
+      probeWith(
+        // Unresolved (`field: null`) so the columns section stays EXPANDED (the row-list
+        // shape, not the collapsed "N of N mapped" summary) and its own "ITEM" row
+        // actually renders onto the DOM this test inspects.
+        [{ position: 0, header: 'ITEM', samples: [], field: null, source: 'none' }],
+        14,
+        [{ row: 13, label: '提单号', sample: 'OOLU2339207730', field: null, source: 'none' }],
+      ),
+    );
+
+    const headerFieldsHeading = screen.getByText('Header fields');
+    const columnRow = screen.getByTitle('ITEM');
+
+    // `DOCUMENT_POSITION_FOLLOWING` (4) set on the result means `columnRow` comes AFTER
+    // `headerFieldsHeading` in document order - i.e. the heading precedes the columns.
+    const position = headerFieldsHeading.compareDocumentPosition(columnRow);
+    expect(position & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
 });
