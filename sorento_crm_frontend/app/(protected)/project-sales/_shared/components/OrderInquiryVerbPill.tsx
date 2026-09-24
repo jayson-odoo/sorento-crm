@@ -1,5 +1,6 @@
 'use client';
 
+import { Check } from 'lucide-react';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 
 /**
@@ -122,31 +123,50 @@ export function OrderInquiryStatePill({ state }: { state: string }) {
 /**
  * `PLAN-oi-request-cs-reserve.md` 3.5 (AC-RS-20/AC-RS-25): `requested` while an open
  * reserve request row exists, `reserved` once CS has actually reserved something (and no
- * open request). Rendered BESIDE the state pill, never merged with it - the same
- * "handshake beside state" split `OrderInquiryStatePill` already carries.
+ * open request). Rendered BESIDE the state pill on the worklist (its own read-only
+ * usage). Round 4 (section 6e.2, AC-RS-83/84): "The pill is no longer a button" - the
+ * Lines grid's reserve icons sit beside it in the same State cell (AC-RS-83c,
+ * `orderInquiryHeaderLinesColumns.tsx`); this pill is plain text everywhere now, amber
+ * `Request to reserve N` printing the OPEN request's own `qty_requested`, green
+ * `Reserved N` with the owner's own tick.
  */
 export function ReservePill({
   reserveState,
   reservedQty,
+  requestedQty,
 }: {
-  reserveState: 'requested' | 'reserved' | string | null | undefined;
+  reserveState: 'requested' | 'reserved' | 'declined' | string | null | undefined;
   reservedQty?: string | null;
+  /** AC-RS-83: the open request row's own `qty_requested` for this row - printed only
+   * when `reserveState === 'requested'`. */
+  requestedQty?: string | null;
 }) {
   if (!reserveState) return null;
   if (reserveState === 'requested') {
     return (
       <span className={`${STATUS_PILL_BASE} normal-case ${statusPillClass('pending')}`}>
-        Request to reserve
+        Request to reserve {requestedQty ?? ''}
       </span>
     );
   }
   if (reserveState === 'reserved') {
+    // Nit (review round): the GREEN key (`done`/`completed`), not `approved` (blue) -
+    // a reserve is a finished outcome, the same reading `done` carries everywhere
+    // else in `lib/status-pill.ts`.
     return (
-      // Nit (review round): the GREEN key (`done`/`completed`), not `approved` (blue) -
-      // a reserve is a finished outcome, the same reading `done` carries everywhere
-      // else in `lib/status-pill.ts`.
-      <span className={`${STATUS_PILL_BASE} normal-case ${statusPillClass('done')}`}>
+      <span className={`${STATUS_PILL_BASE} normal-case gap-1 ${statusPillClass('done')}`}>
+        {/* The owner's own tick ("after confirmed the product should have a ticked
+            icon", round 3 owner words). */}
+        <Check className="size-3" aria-hidden />
         Reserved {reservedQty ?? ''}
+      </span>
+    );
+  }
+  if (reserveState === 'declined') {
+    // 6e.4 (AC-RS-83b): CS answered "Reserve 0" - neutral, not an error and not done.
+    return (
+      <span className={`${STATUS_PILL_BASE} normal-case ${statusPillClass('draft')}`}>
+        Not reserved
       </span>
     );
   }

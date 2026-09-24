@@ -34,12 +34,12 @@ import {
   unplaceOrderInquiryRow,
 } from '../services/orderInquiryService';
 import {
+  commitOrderInquiryReserve,
   createOrderInquiryReserveRequest,
   getOrderInquiryReserveRequests,
   getOrderInquiryRowHistory,
-  reserveOrderInquiryRow,
+  type CommitReservePayload,
   type CreateReserveRequestPayload,
-  type ReserveRowPayload,
 } from '../services/orderInquiryReserveService';
 import { getOrderInquiryMatrix } from '../services/orderInquiryMatrixService';
 import { PLANNING_BOARD_KEY } from './useFulfilmentPlanning';
@@ -197,27 +197,30 @@ export function useCreateOrderInquiryReserveRequest(inquiryId: string | undefine
 }
 
 /**
- * S5: `ReserveRowDialog`'s own Confirm reserved, moved off a direct service call the
- * same way. Unreserve is NOT here - S2 makes it a server-deferred pending action
- * (`useDeferredAction`), which is its own hook already.
+ * `PLAN-oi-request-cs-reserve.md` section 6e.2, AC-RS-87: the Lines grid's own header
+ * `Reserve (N)` CTA - ONE commit call for every staged decision at once (supersedes
+ * the per-row `useReserveOrderInquiryRow`, whose own route is retired). Invalidates
+ * both the lines (the pills/chips move) and the reserve requests (the staged map's
+ * own source) on success.
  */
-export function useReserveOrderInquiryRow(inquiryId: string | undefined) {
+export function useCommitOrderInquiryReserve(inquiryId: string | undefined) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({
-      requestId,
-      rowId,
       payload,
     }: {
-      requestId: string;
-      rowId: string;
-      payload: ReserveRowPayload;
-      /** N1 (reviewer round, AC-RS-26 "toast wording kept"): the requester's own name,
-       * for the toast alone - never read by `mutationFn` itself. */
-      requestedByName?: string | null;
-    }) => reserveOrderInquiryRow(requestId, rowId, payload),
-    onSuccess: (_data, variables) => {
-      toast.success(`Reserved, ${variables.requestedByName ?? 'the requester'} notified`);
+      payload: CommitReservePayload;
+      /** The requester's own name, for the toast alone - never read by `mutationFn`. */
+      requesterName?: string | null;
+    }) => commitOrderInquiryReserve(inquiryId as string, payload),
+    onSuccess: (data, variables) => {
+      // Every staged line was a no-op on the server: nothing was written or mailed.
+      toast.success(
+        data.length === 0
+          ? 'Nothing to change'
+          : `Reserved, ${variables.requesterName ?? 'the requester'} notified`,
+      );
+      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_HEADER_LINES_KEY, inquiryId] });
       queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_RESERVE_REQUESTS_KEY, inquiryId] });
     },
     onError: (error: Error) => toast.error(error.message),
