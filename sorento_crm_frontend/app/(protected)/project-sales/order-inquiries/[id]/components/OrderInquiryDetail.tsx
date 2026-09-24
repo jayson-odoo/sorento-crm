@@ -786,6 +786,7 @@ export function OrderInquiryDetail({ id }: { id: string }) {
                       <Button
                         size="sm"
                         variant="outline"
+                        data-testid="reserve-cta"
                         onClick={commitStaged}
                         disabled={stagedCount === 0 || commitReserveMutation.isPending}
                       >

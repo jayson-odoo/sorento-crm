@@ -381,7 +381,11 @@ describe('AC-RS-87: header Reserve CTA, disabled while nothing staged, commits t
     renderDetail();
     await screen.findByText('ZZT-REQUESTED');
 
-    const reserveCta = await screen.findByRole('button', { name: /^reserve$/i });
+    // Scoped by testid, not accessible name: the row-level tick icon (AC-RS-83) also
+    // has the accessible name "Reserve", so `getByRole('button', { name: /^reserve$/i })`
+    // matches both this CTA and that icon at once.
+    const reserveCta = await screen.findByTestId('reserve-cta');
+    expect(reserveCta).toHaveAccessibleName(/^reserve$/i);
     expect(reserveCta).toBeDisabled();
 
     fireEvent.click(within(gridRowFor('ZZT-REQUESTED')).getByLabelText('Reserve'));
@@ -449,12 +453,15 @@ describe('AC-RS-88: the State SearchableMultiSelect filter, and ?reserve= presel
     expect(trigger).toBeTruthy();
     fireEvent.click(trigger as Element);
 
+    // Scoped to the listbox, not the whole screen: a row's own State pill (e.g. "To
+    // buy") carries the same text as its matching filter option.
+    const listbox = await screen.findByRole('listbox');
     const options = ['To buy', 'Partly on PO/SPO', 'On PO/SPO', 'Done', 'Cancelled', 'Request to reserve', 'Reserved'];
     for (const label of options) {
-      expect(await screen.findByText(label)).toBeInTheDocument();
+      expect(within(listbox).getByRole('option', { name: label })).toBeInTheDocument();
     }
 
-    fireEvent.click(screen.getByText('Request to reserve'));
+    fireEvent.click(within(listbox).getByRole('option', { name: 'Request to reserve' }));
 
     await waitFor(() => expect(screen.queryByText('ZZT-PLAIN')).not.toBeInTheDocument());
     expect(screen.getByText('ZZT-REQUESTED')).toBeInTheDocument();
@@ -485,7 +492,12 @@ describe('AC-RS-89: History opens a read-only events dialog; Cancel request sits
     renderDetail();
     await screen.findByText('ZZT-REQUESTED');
 
-    fireEvent.click(screen.getByRole('button', { name: /order inquiry options/i }));
+    // Radix's DropdownMenuTrigger needs a pointerdown to open in jsdom, the same
+    // interaction OrderInquiryDetail.test.tsx already uses on this exact trigger - a
+    // plain `fireEvent.click` never flips `aria-expanded`.
+    fireEvent.pointerDown(screen.getByRole('button', { name: /order inquiry options/i }), {
+      button: 0,
+    });
     expect(await screen.findByText(/cancel request/i)).toBeInTheDocument();
   });
 });
