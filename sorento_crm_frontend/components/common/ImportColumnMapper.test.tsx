@@ -324,4 +324,35 @@ describe('ImportColumnMapper', () => {
     const position = headerFieldsHeading.compareDocumentPosition(columnRow);
     expect(position & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
+
+  it('renders "Header fields" then "Line fields" section titles, with the header-row stepper living in the Line fields title row', () => {
+    // Two named sections, in reading order: the document-level facts (Header fields)
+    // first, then the per-line columns table - which needs its own title now that it
+    // sits below a named sibling section rather than being the mapper's only content.
+    // The "Header row N" stepper answers "which row is the COLUMN header", so it moves
+    // into the Line fields section's own title row rather than floating above both
+    // sections the way it does today.
+    renderMapper(
+      probeWith(
+        [{ position: 0, header: 'ITEM', samples: [], field: null, source: 'none' }],
+        14,
+        [{ row: 13, label: '提单号', sample: 'OOLU2339207730', field: null, source: 'none' }],
+      ),
+    );
+
+    const headerFieldsHeading = screen.getByText('Header fields');
+    // RED today: no "Line fields" title exists anywhere on the mapper - this throws
+    // before the rest of the test can run, which is itself the failure this test
+    // exists to catch.
+    const lineFieldsHeading = screen.getByText('Line fields');
+
+    const order = headerFieldsHeading.compareDocumentPosition(lineFieldsHeading);
+    expect(order & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    const stepper = screen.getByText(/Header row/);
+    const lineFieldsSection = lineFieldsHeading.closest('div') as HTMLElement;
+    const headerFieldsSection = headerFieldsHeading.closest('div') as HTMLElement;
+    expect(lineFieldsSection.contains(stepper)).toBe(true);
+    expect(headerFieldsSection.contains(stepper)).toBe(false);
+  });
 });
