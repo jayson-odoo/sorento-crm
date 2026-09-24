@@ -350,8 +350,6 @@ def test_save_upserts_replaces_rejects(scm_app):
 
 
 def test_pi_preview_uses_saved_layout_and_names_missing(scm_app):
-    from app.models.import_alias import ImportFieldAlias
-
     app, db, gcu, gcuk = scm_app
     as_company_user(app, db, gcu, gcuk)
     grant_permission(db, "purchasing", "scm.proforma_invoice.upload")
@@ -376,8 +374,13 @@ def test_pi_preview_uses_saved_layout_and_names_missing(scm_app):
         "AC-M4: every unresolved column must be named, even with required fields missing"
     )
 
-    # Save a NEW YANGGANG layout for this supplier, directly (the save endpoint is T4's
-    # concern) - this is a resolver-level proof, not a save-endpoint one.
+    # Save a NEW YANGGANG layout for this supplier THROUGH THE REAL ENDPOINT (T4 proves the
+    # endpoint's own upsert/replace/reject behaviour; this is a preview-reads-it proof).
+    # A direct ORM insert of a row the migrations already seed as SHARED (客户型号 ->
+    # item_code) hits `uq_import_field_alias_triple` - that triple has no `supplier_id`
+    # in it, by design (see the model's own comment: a supplier row that says the same
+    # thing as a shared row is redundant) - the save endpoint's `ON CONFLICT DO NOTHING`
+    # is what makes that a safe no-op instead of a 500.
     mapping = {
         "客户型号": "item_code",
         "总数量\n（个）": "qty",
@@ -385,13 +388,15 @@ def test_pi_preview_uses_saved_layout_and_names_missing(scm_app):
         "单价\n（元）": "unit_price",
         "金额\n（元）": "amount",
     }
-    for header, field in mapping.items():
-        db.add(
-            ImportFieldAlias(
-                doc_type="proforma_invoice", field=field, alias=header, supplier_id=supplier_id
-            )
-        )
-    db.flush()
+    r_save = client.post(
+        "/api/v1/scm/import-mapping/save",
+        json={
+            "supplier_id": supplier_id,
+            "doc_types": ["proforma_invoice"],
+            "mappings": [{"header": header, "field": field} for header, field in mapping.items()],
+        },
+    )
+    assert r_save.status_code == 200, r_save.text
 
     r_after = client.post(
         "/api/v1/scm/proforma-invoices/preview",
@@ -485,12 +490,29 @@ def test_probe_header_row_override():
 
 
 def test_probe_endpoint_shape(scm_app):
+    from app.services.import_alias_service import AliasResolver
+
     app, db, gcu, gcuk = scm_app
     as_company_user(app, db, gcu, gcuk)
     grant_permission(db, "purchasing", "scm.proforma_invoice.upload")
     supplier_id = _create_supplier(db, code_suffix="S8")
+    client = TestClient(app)
 
-    r = TestClient(app).post(
+    # One supplier-scoped mapping saved first, so at least one column comes back
+    # source="supplier" rather than every non-"none" column reading as one of the
+    # migrations' own SHARED seed rows (`客户型号 -> item_code`, `品名 -> description`,
+    # `单价(元)` / `单价` -> unit_price, ... - the private DB is not empty).
+    r_save = client.post(
+        "/api/v1/scm/import-mapping/save",
+        json={
+            "supplier_id": supplier_id,
+            "doc_types": ["proforma_invoice"],
+            "mappings": [{"header": "件数\n（件）", "field": "cartons"}],
+        },
+    )
+    assert r_save.status_code == 200, r_save.text
+
+    r = client.post(
         "/api/v1/scm/import-mapping/probe",
         files={"file": ("FSCU8706420.xlsx", _fixture("ny_pi_FSCU8706420.xlsx"), _XLSX)},
         data={"supplier_id": supplier_id, "doc_types": "proforma_invoice"},
@@ -506,12 +528,29 @@ def test_probe_endpoint_shape(scm_app):
     }
     assert body["header_row"] == 15
     assert body["columns"], body
+
+    # A supplier-agnostic resolver, to prove a "shared" column's answer really came from
+    # the migrations' seed rather than something this test itself planted.
+    shared_resolver = AliasResolver.for_doc_type(db, "proforma_invoice")
+    saw_supplier_source = False
     for col in body["columns"]:
         assert set(col.keys()) >= {"position", "header", "samples", "field", "source", "required"}
         assert col["source"] in ("supplier", "shared", "none")
-        # No layout saved for this fresh supplier: every column is unresolved.
-        assert col["field"] is None, col
-        assert col["source"] == "none", col
+        if col["source"] == "none":
+            assert col["field"] is None, col
+        elif col["source"] == "shared":
+            assert col["field"] is not None, col
+            assert shared_resolver.field_for_header(col["header"]) == col["field"], col
+        else:  # "supplier"
+            assert col["field"] is not None, col
+            if col["header"] == "件数\n（件）":
+                assert col["field"] == "cartons", col
+                saw_supplier_source = True
+    assert saw_supplier_source, "the saved supplier mapping must come back source='supplier'"
+
+    # 客户型号 (item_code) and 单价\n（元） (unit_price) resolve through the shared seed;
+    # 总数量\n（个） (qty) has no shared alias for this literal header text - the only
+    # required field still missing.
     assert body["required_fields"] == ["item_code", "qty", "unit_price"]
-    assert set(body["missing_required"]) == set(body["required_fields"])
+    assert body["missing_required"] == ["qty"], body["missing_required"]
     assert {"field": "item_code", "label": "Item code"} in body["fields"]
