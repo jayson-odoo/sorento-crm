@@ -1,6 +1,6 @@
 # PLAN: order inquiry handover email prints the stock location per line and sorts by AutoCount SO line sequence
 
-Status: small fix track, PR open (#1174). Issue #1166.
+Status: implemented, PR #1174 merged 24 Sep 2026 (1308f2bc0)
 Domain: scm (order inquiry handover email, `order_inquiry_handover` automation).
 UAC: `oi-handover-email-location-and-line-order-24sep-acceptance-criteria.md` alongside.
 
