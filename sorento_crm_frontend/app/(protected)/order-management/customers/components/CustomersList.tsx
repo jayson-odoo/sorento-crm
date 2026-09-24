@@ -127,6 +127,30 @@ export default function CustomersList() {
         meta: { headerTitle: 'Phone', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
+        accessorKey: 'sales_agent_code',
+        header: 'Sales Agent',
+        // Not in `_CUSTOMER_SORT_MAP` (backend) - it is a joined column and no other joined
+        // column on this list is sortable either, so this one is not the first to be.
+        enableSorting: false,
+        cell: ({ row }) => {
+          const { sales_agent_code, sales_agent_name } = row.original;
+          const label = sales_agent_code
+            ? sales_agent_name
+              ? `${sales_agent_code} - ${sales_agent_name}`
+              : sales_agent_code
+            : null;
+          return label ? (
+            <span className="truncate" title={label}>
+              {label}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          );
+        },
+        size: 180,
+        meta: { headerTitle: 'Sales Agent', skeleton: <Skeleton className="h-4 w-28" /> },
+      },
+      {
         accessorKey: 'is_active',
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
         cell: ({ row }) => (

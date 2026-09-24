@@ -5,8 +5,11 @@ from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
 from app.dependencies import get_current_user
+from app.models.base import get_company_scope
 from app.models.order import Customer
+from app.models.sales_agent import SalesAgent
 from app.services.error_handler import handle_internal_error
+from app.services.scm import sales_agent_service
 
 router = APIRouter()
 
@@ -79,6 +82,45 @@ async def get_customers_select(
                 "offset": offset,
             },
             "empty": len(customers) == 0
+        }
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.get("/sales-agents-select")
+async def get_customer_sales_agents_select(
+    query: Optional[str] = Query(None),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Sales agents for the customer form's "Sales agent" select, code + name, unscoped by
+    page (~38 active rows today, comfortably below one).
+
+    Served here rather than the sales-agents master's own list (`master_data.sales_agents.
+    view`) or the SCM one (`scm.dashboard.view`): a role that may edit a customer does not
+    necessarily hold either, the same reasoning `/scm/sales-orders/agents` already states for
+    itself. `query` matches the code OR the annotated person, since a customer edit picks the
+    agent by whichever one is remembered.
+    """
+    try:
+        q = db.query(SalesAgent).filter(SalesAgent.is_active.is_(True))
+        scope_pred = sales_agent_service.scope_filter(get_company_scope(db))
+        if scope_pred is not None:
+            q = q.filter(scope_pred)
+        if query:
+            needle = f"%{query.strip()}%"
+            q = q.filter(
+                or_(
+                    SalesAgent.sales_agent.ilike(needle),
+                    SalesAgent.person_label.ilike(needle),
+                )
+            )
+        agents = q.order_by(SalesAgent.sales_agent.asc()).all()
+        return {
+            "data": [
+                {"id": a.id, "sales_agent": a.sales_agent, "person_label": a.person_label}
+                for a in agents
+            ],
         }
     except Exception as e:
         raise handle_internal_error(str(e))

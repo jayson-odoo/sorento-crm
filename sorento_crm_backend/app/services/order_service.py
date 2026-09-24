@@ -13,15 +13,17 @@ from app.utils.chunking import chunked
 from app.models.order import Order, OrderStatus, Customer, OrderLine, Transporter
 from app.models.product import Product
 from app.models.inventory import Warehouse
+from app.models.sales_agent import SalesAgent
 from app.schemas.order import (
     OrderCreate, OrderUpdate, CustomerCreate, CustomerUpdate,
     OrderStatusCreate, OrderStatusUpdate,
     OrderLineCreate, OrderLineUpdate,
 )
-from app.services.error_handler import handle_not_found, handle_conflict
+from app.services.error_handler import handle_not_found, handle_conflict, handle_unprocessable
 from app.services.import_log_service import ImportLogService
 from app.services.calendar_service import CalendarService
 from app.services.identifier_resolver import resolve_identifier
+from app.services.scm import sales_agent_service
 from app.services.company_scope import (
     build_company_predicate,
     get_company_scope,
@@ -3441,6 +3443,23 @@ class CustomerService:
             raise handle_not_found("Customer", customer_id)
         return customer
     
+    def _resolve_sales_agent(self, agent_id: str) -> SalesAgent:
+        """The sales agent a create/update assigns, validated visible under company scope.
+
+        Raised as 422 (not 404): the request itself is well-formed, it is naming an agent
+        the caller's company may not use (`handle_unprocessable`, same status AC-2 asks for
+        on both an unknown id and one from another company - the id space is shared, so
+        "not found" and "not yours" read the same to whoever picked it in the select).
+        """
+        try:
+            uuid.UUID(str(agent_id))
+        except (ValueError, AttributeError, TypeError):
+            raise handle_unprocessable("Sales agent not found")
+        agent = self.db.get(SalesAgent, agent_id)
+        if not agent or not sales_agent_service.visible_to_scope(agent, get_company_scope(self.db)):
+            raise handle_unprocessable("Sales agent not found")
+        return agent
+
     def create_customer(self, customer_data: CustomerCreate):
         """Create a new customer.
 
@@ -3458,20 +3477,25 @@ class CustomerService:
         if existing:
             raise handle_conflict("Customer with this code + name already exists.")
 
+        if customer_data.sales_agent_id:
+            self._resolve_sales_agent(customer_data.sales_agent_id)
+
         customer = Customer(**customer_data.model_dump())
         self.db.add(customer)
         self.db.commit()
         self.db.refresh(customer)
         return customer
-    
+
     def update_customer(self, customer_id: str, customer_data: CustomerUpdate):
         """Update a customer."""
         customer = self.get_customer(customer_id)
-        
+
         update_data = customer_data.model_dump(exclude_unset=True)
+        if update_data.get("sales_agent_id"):
+            self._resolve_sales_agent(update_data["sales_agent_id"])
         for key, value in update_data.items():
             setattr(customer, key, value)
-        
+
         self.db.commit()
         self.db.refresh(customer)
         return customer

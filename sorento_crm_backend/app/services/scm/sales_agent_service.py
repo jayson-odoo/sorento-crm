@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 from typing import Iterable, Optional
 
-from sqlalchemy import func, text
+from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session
 
 from app.models.sales_agent import SalesAgent
@@ -324,3 +324,33 @@ def group_of_warehouse_code(code: Optional[str]) -> Optional[str]:
     _, _, suffix = text_code.partition("-")
     suffix = suffix.strip().upper()
     return suffix or None
+
+
+def visible_to_scope(agent: SalesAgent, scope) -> bool:
+    """Whether `agent` may be assigned/read under a caller's company scope.
+
+    `sales_agents` is deliberately NOT `CompanyScopedMixin` (see the model docstring) -
+    it is a shared master, `company_id` NULL for every one of the ~38 codes today, with a
+    tenant's own row a future possibility. So there is no `do_orm_execute` predicate to
+    lean on here; a plain `db.get` would let a customer in one company pick an agent
+    minted only for another. Visible = shared (`company_id` NULL), the caller's scope is
+    unrestricted (`None`, e.g. an X-API-Key/system caller), or the agent's own company is
+    inside the caller's scope. Same shape as the `or_(cls.company_id.is_(None), ...)`
+    predicates `rules/product_rules.py` and `product_predicate_service.py` already use for
+    a shared-vs-owned master.
+    """
+    if agent.company_id is None or scope is None:
+        return True
+    return isinstance(scope, frozenset) and agent.company_id in scope
+
+
+def scope_filter(scope):
+    """SQLAlchemy predicate for `sales_agents` rows visible under `scope` (see
+    `visible_to_scope`), for callers that list/search the master rather than check one row.
+    Returns `None` for "no predicate" (unrestricted scope).
+    """
+    if scope is None:
+        return None
+    if isinstance(scope, frozenset) and scope:
+        return or_(SalesAgent.company_id.is_(None), SalesAgent.company_id.in_(list(scope)))
+    return SalesAgent.company_id.is_(None)

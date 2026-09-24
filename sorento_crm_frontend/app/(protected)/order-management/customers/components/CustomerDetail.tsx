@@ -101,6 +101,16 @@ export default function CustomerDetail({ customerId }: CustomerDetailProps) {
               <p className="text-sm text-muted-foreground">Phone</p>
               <p className="font-medium">{customer.phone_number || '-'}</p>
             </div>
+            <div>
+              <p className="text-sm text-muted-foreground">Sales Agent</p>
+              <p className="font-medium">
+                {customer.sales_agent_code
+                  ? customer.sales_agent_name
+                    ? `${customer.sales_agent_code} - ${customer.sales_agent_name}`
+                    : customer.sales_agent_code
+                  : 'No sales agent assigned'}
+              </p>
+            </div>
           </CardContent>
         </Card>
 

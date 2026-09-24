@@ -18,7 +18,9 @@ import {
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useCreateCustomer, useUpdateCustomer, useCustomer } from '../hooks/useCustomers';
+import { useCustomerSalesAgentOptions } from '../hooks/useCustomerSalesAgentOptions';
 import { CustomerSchema, type CustomerSchemaType } from '../forms/customer-schema';
 import type { CustomerFormData } from '../types/customer.types';
 import ListPager from '@/components/common/ListPager';
@@ -35,6 +37,7 @@ export default function CustomerForm({ customerId, onSuccess }: CustomerFormProp
   const { data: customer, isLoading: isLoadingCustomer } = useCustomer(customerId || null);
   const createMutation = useCreateCustomer();
   const updateMutation = useUpdateCustomer();
+  const agentOptions = useCustomerSalesAgentOptions();
 
   const form = useForm<CustomerSchemaType>({
     resolver: zodResolver(CustomerSchema),
@@ -44,6 +47,7 @@ export default function CustomerForm({ customerId, onSuccess }: CustomerFormProp
       email: '',
       phone_number: '',
       is_active: true,
+      sales_agent_id: null,
     },
     mode: 'onTouched',
   });
@@ -60,6 +64,7 @@ export default function CustomerForm({ customerId, onSuccess }: CustomerFormProp
         email: customer.email || '',
         phone_number: customer.phone_number || '',
         is_active: customer.is_active,
+        sales_agent_id: customer.sales_agent_id || null,
       });
       setFormInitialized(true);
     }
@@ -79,6 +84,7 @@ export default function CustomerForm({ customerId, onSuccess }: CustomerFormProp
         email: data.email || undefined,
         phone_number: data.phone_number || undefined,
         is_active: data.is_active,
+        sales_agent_id: data.sales_agent_id || null,
       };
 
       if (isEditMode && customerId) {
@@ -197,6 +203,26 @@ export default function CustomerForm({ customerId, onSuccess }: CustomerFormProp
                   )}
                 />
               </div>
+
+              <FormField
+                control={form.control}
+                name="sales_agent_id"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Sales Agent</FormLabel>
+                    <FormControl>
+                      <SearchableSelect
+                        value={field.value || ''}
+                        onChange={(v) => field.onChange(v || null)}
+                        options={agentOptions.options}
+                        placeholder="No sales agent"
+                        clearable
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
             </div>
 
             {/* Status */}

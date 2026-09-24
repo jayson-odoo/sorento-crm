@@ -151,6 +151,27 @@ class Customer(Base, CompanyScopedMixin):
         back_populates="customer",
         cascade="all, delete-orphan",
     )
+    # The salesperson master row `sales_agent_id` points at. Eager, same as
+    # `SalesAgent.contact` (`app/models/sales_agent.py`): the customer list draws every
+    # row, and a lazy load would be one query per customer for a single code + name.
+    sales_agent = relationship("SalesAgent", lazy="joined")
+
+    @property
+    def sales_agent_code(self):
+        """The agent code (`sales_agents.sales_agent`), for `CustomerResponse`.
+
+        A UUID is never shown in the UI (Cursor rule), so the response carries this
+        alongside the id.
+        """
+        agent = self.sales_agent
+        return agent.sales_agent if agent else None
+
+    @property
+    def sales_agent_name(self):
+        """The person behind the code (`sales_agents.person_label`), same reason as
+        `sales_agent_code` - null until the captain annotates the agent."""
+        agent = self.sales_agent
+        return agent.person_label if agent else None
 
     __table_args__ = (
         Index("ix_customers_is_active", "is_active"),
