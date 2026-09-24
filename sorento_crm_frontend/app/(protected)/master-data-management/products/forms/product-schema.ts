@@ -90,12 +90,18 @@ export const ProductSchema = z.object({
   reorder_quantity: z.coerce.number().int().min(0, { message: 'Reorder quantity cannot be negative.' }),
   // Chatbot stock ask v2 (PLAN-chatbot-stock-ask-v2-24sep.md S1): X and Y,
   // beside the reorder fields since both drive the same stock-ask journey.
-  chatbot_max_qty: z
-    .union([z.coerce.number().int().min(0, { message: 'Max quantity cannot be negative.' }), z.null()])
-    .optional(),
-  chatbot_eta_offset_days: z
-    .union([z.coerce.number().int().min(0, { message: 'ETA offset cannot be negative.' }), z.null()])
-    .optional(),
+  // Empty/null must preprocess to null BEFORE z.coerce.number() runs: a bare
+  // z.union([z.coerce.number(), z.null()]) tries the coerce branch first, and
+  // Number(null) is 0, so null and '' both silently became an explicit 0
+  // (R2: unset must stay unset so the category can inherit).
+  chatbot_max_qty: z.preprocess(
+    (v) => (v === '' || v === null || v === undefined ? null : v),
+    z.coerce.number().int().min(0, { message: 'Max quantity cannot be negative.' }).nullable(),
+  ),
+  chatbot_eta_offset_days: z.preprocess(
+    (v) => (v === '' || v === null || v === undefined ? null : v),
+    z.coerce.number().int().min(0, { message: 'ETA offset cannot be negative.' }).nullable(),
+  ),
 
   // Tab 4: Unit of Measure
   base_uom_id: z.string().uuid({ message: 'Base unit of measure is required.' }),

@@ -11,7 +11,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
 if (!window.matchMedia) {
   (window as unknown as { matchMedia: unknown }).matchMedia = () => ({
@@ -110,5 +110,80 @@ describe('CategoryForm - chatbot stock-limit fields (AC-SA109)', () => {
 
     expect(screen.queryByText(/the highest quantity/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/days added to/i)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * Blocking 1 (reviewer pass, PR #1221, 85c2e9e7) - a bare
+ * `z.union([z.coerce.number(), z.null()])` tries the coerce branch first, and
+ * `Number(null)` is `0`, so leaving the two fields empty silently submitted an
+ * explicit `0` instead of `null`. R2: unset must stay unset so a category can
+ * still opt in later; an explicit `0` is a real value that overrides nothing.
+ */
+describe('CategoryForm - chatbot stock-limit submit payload (Blocking 1)', () => {
+  beforeEach(() => {
+    permissionState.view = true;
+    permissionState.edit = true;
+  });
+
+  it('create: leaving both fields empty submits null, not 0', async () => {
+    useCategoryMock.mockReturnValue({ data: undefined });
+
+    render(<CategoryForm open onOpenChange={() => {}} />);
+
+    fireEvent.change(screen.getByLabelText('Category Code *'), { target: { value: 'CAT2' } });
+    fireEvent.change(screen.getByLabelText('Category Name *'), { target: { value: 'Category 2' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+
+    await waitFor(() => expect(createMutateAsync).toHaveBeenCalled());
+    const payload = createMutateAsync.mock.calls[0][0];
+    expect(payload.chatbot_max_qty).toBeNull();
+    expect(payload.chatbot_eta_offset_days).toBeNull();
+  });
+
+  it('create: typing 0 in both fields submits 0, not null', async () => {
+    useCategoryMock.mockReturnValue({ data: undefined });
+
+    render(<CategoryForm open onOpenChange={() => {}} />);
+
+    fireEvent.change(screen.getByLabelText('Category Code *'), { target: { value: 'CAT3' } });
+    fireEvent.change(screen.getByLabelText('Category Name *'), { target: { value: 'Category 3' } });
+    fireEvent.change(screen.getByLabelText('Max quantity (assistant)'), { target: { value: '0' } });
+    fireEvent.change(screen.getByLabelText('ETA offset (days)'), { target: { value: '0' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+
+    await waitFor(() => expect(createMutateAsync).toHaveBeenCalled());
+    const payload = createMutateAsync.mock.calls[0][0];
+    expect(payload.chatbot_max_qty).toBe(0);
+    expect(payload.chatbot_eta_offset_days).toBe(0);
+  });
+
+  it('edit: clearing both fields on a category that had values submits null, not 0', async () => {
+    useCategoryMock.mockReturnValue({ data: LIVE_CATEGORY });
+
+    render(<CategoryForm open onOpenChange={() => {}} categoryId={CAT_ID} />);
+
+    fireEvent.change(screen.getByLabelText('Max quantity (assistant)'), { target: { value: '' } });
+    fireEvent.change(screen.getByLabelText('ETA offset (days)'), { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Update' }));
+
+    await waitFor(() => expect(updateMutateAsync).toHaveBeenCalled());
+    const payload = updateMutateAsync.mock.calls[0][0].data;
+    expect(payload.chatbot_max_qty).toBeNull();
+    expect(payload.chatbot_eta_offset_days).toBeNull();
+  });
+
+  it('edit: saving with the existing values untouched submits them unchanged (0 stays 0)', async () => {
+    useCategoryMock.mockReturnValue({
+      data: { ...LIVE_CATEGORY, chatbot_max_qty: 0, chatbot_eta_offset_days: 0 },
+    });
+
+    render(<CategoryForm open onOpenChange={() => {}} categoryId={CAT_ID} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Update' }));
+
+    await waitFor(() => expect(updateMutateAsync).toHaveBeenCalled());
+    const payload = updateMutateAsync.mock.calls[0][0].data;
+    expect(payload.chatbot_max_qty).toBe(0);
+    expect(payload.chatbot_eta_offset_days).toBe(0);
   });
 });

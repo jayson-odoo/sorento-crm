@@ -36,12 +36,18 @@ const CategorySchema = z.object({
   is_active: z.boolean(),
   is_searchable: z.boolean(),
   display_order: z.number().int().min(0),
-  chatbot_max_qty: z
-    .union([z.coerce.number().int().min(0, { message: 'Max quantity cannot be negative.' }), z.null()])
-    .optional(),
-  chatbot_eta_offset_days: z
-    .union([z.coerce.number().int().min(0, { message: 'ETA offset cannot be negative.' }), z.null()])
-    .optional(),
+  // Empty/null must preprocess to null BEFORE z.coerce.number() runs: a bare
+  // z.union([z.coerce.number(), z.null()]) tries the coerce branch first, and
+  // Number(null) is 0, so null and '' both silently became an explicit 0
+  // (R2: unset must stay unset so a category opts in, not out, by default).
+  chatbot_max_qty: z.preprocess(
+    (v) => (v === '' || v === null || v === undefined ? null : v),
+    z.coerce.number().int().min(0, { message: 'Max quantity cannot be negative.' }).nullable(),
+  ),
+  chatbot_eta_offset_days: z.preprocess(
+    (v) => (v === '' || v === null || v === undefined ? null : v),
+    z.coerce.number().int().min(0, { message: 'ETA offset cannot be negative.' }).nullable(),
+  ),
 });
 
 interface CategoryFormProps {
