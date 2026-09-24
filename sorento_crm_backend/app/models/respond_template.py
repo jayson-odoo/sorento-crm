@@ -117,6 +117,13 @@ TEMPLATE_DEFAULT_USE_CASES = (
     # seeded: connecting the WeChat channel and approving its template is a Respond.io task
     # with its own go, and until then an out-of-window send is refused with a reason.
     "supplier_request_chat",
+    # Ideation idle-draft reminder (PLAN-ideation-intake-redesign-24sep, S4). Sent
+    # once, 24h after the last turn on an open draft; due exactly when the 24h
+    # free-text window closes, so it will almost always go as a template. Map a
+    # slot to ``message`` at minimum - the body carries the fixed reminder text
+    # naming the idea's title. Unmapped -> the send is skipped and logged, the
+    # draft still closes on schedule (AC-1405).
+    "ideation_draft_reminder",
 )
 
 # Chat reply use cases - a *_chat / conversation_chat default MUST map a slot to the

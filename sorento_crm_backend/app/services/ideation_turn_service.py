@@ -23,7 +23,8 @@ from __future__ import annotations
 import json
 import logging
 import re
-from datetime import datetime, timezone
+import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
@@ -32,6 +33,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.models.access import RespondContact
 from app.services import ai_prompt_registry
 from app.services.ai_assistant_service import AIAssistantConfigService
 from app.services.conversation_variables_service import (
@@ -519,6 +521,7 @@ def handle_turn(
     prior_missing = ideation_state.get("missing") or []
     prior_next_field = ideation_state.get("next_field")
     prior_duplicate_candidate = ideation_state.get("duplicate_candidate") or None
+    prior_title = ideation_state.get("title")
     prior_transcript = ideation_state.get("transcript") or []
     pending_media = ideation_state.get("pending_media") or None
     seen_media_ids: set[str] = set(ideation_state.get("seen_media_ids") or [])
@@ -536,6 +539,7 @@ def handle_turn(
         prior_missing = []
         prior_next_field = None
         prior_duplicate_candidate = None
+        prior_title = None
         prior_transcript = []
         pending_media = None
         seen_media_ids = set()
@@ -695,6 +699,12 @@ def handle_turn(
             # extractor gets it as a hint (R17) and the reply composer (S3) can
             # read it from the pointer too.
             "next_field": result.get("next_field"),
+            # The stored title (S1) - latest value wins, kept from a prior turn
+            # when this one's response didn't carry one. Needed off the pointer
+            # itself (not only the response) so a later turn - and S4's idle
+            # sweep, which has no create_idea response to read - can name the
+            # idea in a reminder.
+            "title": result.get("title") or prior_title,
             # Persist the running transcript so the NEXT turn appends to it (WS-B).
             "transcript": transcript_list,
             "updated_at": _now_iso(),
@@ -725,3 +735,172 @@ def handle_turn(
     if link:
         response["link"] = link
     return response
+
+
+# =============================================================================
+# S4 - 24h idle reminder and close (plan section S4, AC-1401 to AC-1408)
+# =============================================================================
+
+_IDLE_REMINDER_AFTER = timedelta(hours=24)
+_IDLE_CLOSE_AFTER = timedelta(hours=24)
+
+
+def _parse_iso(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _ideation_reminder_text(title: str | None) -> str:
+    """Fixed wording (plan S4) - not the LLM: nobody's message to take a
+    language from, and a template has fixed wording anyway."""
+    if title:
+        return f'Your idea "{title}" is still open. Reply to finish it, or say cancel.'
+    return "Your idea is still open. Reply to finish it, or say cancel."
+
+
+def _send_ideation_reminder(db: Session, *, respond_io_id: str, title: str | None) -> None:
+    """AC-1401/AC-1405/AC-1406: best-effort. Any failure - outage, no template
+    mapped (``TemplateSendSkipped``), or the contact's outbound kill switch
+    (``assert_outbound_enabled``, asserted inside ``RespondClient`` itself) -
+    is logged to ``integration_logs`` and swallowed. The caller writes
+    ``reminded_at`` either way: the draft still closes on schedule."""
+    from app.services.respond_messaging_service import send_text_or_template
+
+    text_out = _ideation_reminder_text(title)
+    try:
+        send_text_or_template(
+            db, identifier=respond_io_id, text=text_out, use_case="ideation_draft_reminder"
+        )
+    except Exception as exc:  # noqa: BLE001 - never block reminded_at / the close schedule
+        logger.warning(
+            "ideation idle sweep: reminder send failed for respond_io_id=%s",
+            respond_io_id,
+            exc_info=True,
+        )
+        try:
+            from app.schemas.integration import IntegrationLogCreate
+            from app.services.integration_service import IntegrationLogService
+
+            IntegrationLogService(db).create_integration_log(
+                IntegrationLogCreate(
+                    integration_channel="respond_io",
+                    business_table="respond_contacts.session_vars",
+                    business_id=str(uuid.uuid4()),
+                    external_reference=respond_io_id,
+                    direction="outbound",
+                    endpoint="ideation_draft_reminder",
+                    http_method="POST",
+                    status="failed",
+                    error_message=str(exc)[:2000],
+                )
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("ideation idle sweep: could not log the failed reminder send")
+
+
+def _close_idle_ideation_draft(
+    db: Session, *, respond_io_id: str, phone_number: str, draft_id: str | None
+) -> bool:
+    """AC-1402/AC-1407: close the draft via the same ``cancel: true`` contract a
+    live turn uses (plan S4: ``{product_id, draft_id, cancel: true,
+    submitter_contact_id}``). Returns True on success (caller clears the
+    pointer); False on any shared-service outage or missing config (caller
+    KEEPS the pointer so the next tick retries)."""
+    config = _resolve_ideation_config(db)
+    if not config.is_ready:
+        return False
+    payload: dict[str, Any] = {
+        "product_id": config.product_id,
+        "submitter_contact_id": phone_number,
+        "cancel": True,
+    }
+    if draft_id:
+        payload["draft_id"] = draft_id
+    try:
+        call_create_idea(config.base_url, config.api_key, payload)
+    except IdeationServiceError:
+        logger.warning(
+            "ideation idle sweep: close outage for respond_io_id=%s", respond_io_id, exc_info=True
+        )
+        return False
+    return True
+
+
+def sweep_idle_ideation_drafts(db: Session, *, now: datetime | None = None) -> dict[str, int]:
+    """S4: one WhatsApp reminder at 24h idle, then close (R3).
+
+    Reads every contact with an open ``ideation`` pointer. A pointer with no
+    ``reminded_at`` whose ``updated_at`` is stale sends the one reminder and
+    stamps ``reminded_at`` - the idempotency key (AC-1404): a second sweep in
+    the same tick, or any tick before the NEXT 24h elapses, sees it already
+    set and does nothing. A pointer with a stale ``reminded_at`` closes the
+    draft. Test turns never reach here: #1182 stops a test turn from ever
+    writing the pointer, so a test draft never accumulates in
+    ``respond_contacts.session_vars``.
+
+    Never raises - each contact is independent, and one failure (a malformed
+    pointer, a single outage) must not stop the rest of the batch.
+    """
+    now = now or datetime.now(timezone.utc)
+    reminded = 0
+    closed = 0
+
+    rows = (
+        db.query(RespondContact)
+        .filter(RespondContact.session_vars.has_key("ideation"))
+        .all()
+    )
+    for contact in rows:
+        try:
+            session_vars = _coerce_to_dict(contact.session_vars)
+            ideation = session_vars.get("ideation") or {}
+            if not ideation:
+                continue
+            updated_at = _parse_iso(ideation.get("updated_at"))
+            reminded_at = _parse_iso(ideation.get("reminded_at"))
+
+            if reminded_at is None:
+                if updated_at is None or (now - updated_at) < _IDLE_REMINDER_AFTER:
+                    continue
+                _send_ideation_reminder(
+                    db, respond_io_id=contact.respond_io_id, title=ideation.get("title")
+                )
+                new_ideation = dict(ideation)
+                new_ideation["reminded_at"] = now.isoformat()
+                new_session_vars = dict(session_vars)
+                new_session_vars["ideation"] = new_ideation
+                overwrite_for_contact(
+                    db, respond_io_id=contact.respond_io_id, state=new_session_vars
+                )
+                reminded += 1
+                continue
+
+            if (now - reminded_at) < _IDLE_CLOSE_AFTER:
+                continue
+            closed_ok = _close_idle_ideation_draft(
+                db,
+                respond_io_id=contact.respond_io_id,
+                phone_number=contact.phone_number,
+                draft_id=ideation.get("draft_id"),
+            )
+            if closed_ok:
+                new_session_vars = dict(session_vars)
+                new_session_vars.pop("ideation", None)
+                overwrite_for_contact(
+                    db, respond_io_id=contact.respond_io_id, state=new_session_vars
+                )
+                closed += 1
+            # else: outage - keep the pointer, the next tick retries (AC-1407).
+        except Exception:  # noqa: BLE001 - one bad row must not sink the batch
+            logger.exception(
+                "ideation idle sweep: failed for respond_io_id=%s", contact.respond_io_id
+            )
+
+    return {"reminded": reminded, "closed": closed}
