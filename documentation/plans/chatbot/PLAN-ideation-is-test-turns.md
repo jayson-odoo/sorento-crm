@@ -6,7 +6,7 @@ fix 2, reviewer round 1): shared-service PR jayson-odoo/foundryx-shared-service#
 BEFORE #1182 - a live ideate turn deployed ahead of #84 would send `is_test: false`
 to a shared-service schema that does not know the field yet. Not merged by this
 session.
-Plan created: 2026-09-24T09:40:00Z
+Plan created: 2026-09-24T08:37:54Z
 Domain: chatbot / ideation
 Issue: #1179 (sorento side only; the shared-service side is a separate lane)
 UAC: `ideation-is-test-turns-acceptance-criteria.md`
