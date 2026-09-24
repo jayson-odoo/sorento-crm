@@ -984,6 +984,8 @@ def test_AC_RS_78b_amend_up_cap_declined_row_and_no_op(reserve_api, monkeypatch)
         json={"amendments": [{"row_id": row.id, "qty_reserved": "20", "reason": "changed my mind"}]},
     )
     assert no_op.status_code == 200, no_op.text
+    # Nothing touched: the response names no request (the page toasts "Nothing to change").
+    assert no_op.json() == [], no_op.json()
     world.db.commit()
     rr = _rr(world, request_id, row)
     assert len(_events(world, rr.id)) == events_before, _events(world, rr.id)

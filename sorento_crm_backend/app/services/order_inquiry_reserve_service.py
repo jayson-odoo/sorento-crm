@@ -959,9 +959,8 @@ class OrderInquiryReserveService:
             self.db.info.setdefault(_RESERVED_PENDING_KEY, []).append(
                 {"context": context, "source_id": str(request.id)}
             )
-        return touched_requests or sorted(
-            requests_by_id.values(), key=lambda request: request.ordinal
-        )
+        # Empty when every entry was a no-op: the page reads that as "Nothing to change".
+        return touched_requests
 
     def _add_event(
         self,
