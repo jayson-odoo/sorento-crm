@@ -1,6 +1,6 @@
 # PLAN: Stock Debt - cutoff + supplier + retail filters, totals, Excel-style cell summary, workbook export, menu move
 
-Status: in progress, Phase 1 (24 Sep 2026). Track: feature (three-phase). Lane branch: `feat/stock-debt-filters-export`, worktree `sorento_crm-stock-debt`. Plan created 24 Sep 2026, grilled + two lavish rounds same day.
+Status: in progress, Phase 3 (24 Sep 2026). Track: feature (three-phase). Lane branch: `feat/stock-debt-filters-export`, worktree `sorento_crm-stock-debt`. Plan created 24 Sep 2026, grilled + two lavish rounds same day.
 UAC: `stock-debt-filters-totals-export-24sep-acceptance-criteria.md`
 Domain: scm (Stock Debt view, `/project-sales/stock-debt`)
 Parent: `PLAN-scm-borrow-ladder-v7-stock-debt.md` S2 (the view this extends; its rulings R14, R22, R23, R28, R37 stand)
@@ -51,8 +51,8 @@ that is the SECOND case and the trigger to lift the export splitter, not part of
 
 ## Assumptions stated, not ruled
 
-- A1 (ruled R3) "Last supplier" = `purchase_orders.supplier_id` of the product's newest PO line, newest by `coalesce(purchase_orders.issue_date, purchase_orders.created_at) DESC, purchase_order_lines.created_at DESC`, any PO status except cancelled; falling back to the primary-flagged product supplier, else "No supplier".
-- A2 Cutoff also ends the AXIS: months after the cutoff month are not drawn. Supply landing after the cutoff still counts for lines due on or before it (a line due 10 Nov, cutoff 30 Nov, SPO 20 Nov: covered, as today).
+- A1 (ruled R3) "Last supplier" = `purchase_orders.supplier_id` of the product's newest PO line, newest by `purchase_orders.issue_date DESC NULLS LAST, purchase_order_lines.created_at DESC` (no coalesce - a PO with no `issue_date` sorts last, it does not borrow its own `created_at` to compete with a dated one), cancelled POs skipped (a cancelled line is not); falling back to the primary-flagged product supplier, else "No supplier".
+- A2 Cutoff also ends the AXIS: months after the cutoff month are not drawn. Supply landing after the cutoff still counts for lines due on or before it - a line due 10 Nov, covered by an SPO landing 20 Nov, still ends `late` under `cutoff=2026-11-30`, and November still reads -20 (R37 books the shortfall in the line's own month regardless of it being eventually covered, exactly as it would with no cutoff at all - see `test_supply_arriving_after_the_debt_is_spare_in_its_own_month`).
 - A3 Undated and unlocated demand are NOT dropped by the cutoff (they have no date to test). TBA is dropped when `tba_date_from` is after the cutoff, because every TBA line is dated on or after it.
 - A4 (ruled R1) Combined span. `assign()` already seals `POOL_GROUP` from every project group in both directions, and `_assignments` already passes the pool set to `_supply` and `_demand`, so adding the pool warehouses to `_warehouses()` is the whole change: a product's month balance becomes project groups plus pool, each covered only by its own supply and its own placement links.
 - A5 (ruled R9) The Total column = sum of month cells + TBA + No date + No location. Each keeps its own column too.
