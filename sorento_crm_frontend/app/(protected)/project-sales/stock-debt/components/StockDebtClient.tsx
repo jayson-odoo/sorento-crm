@@ -140,6 +140,13 @@ export function StockDebtClient() {
   const [group, setGroup] = React.useState('');
   const [book, setBook] = React.useState<StockDebtBook>('all');
   const [supplierId, setSupplierId] = React.useState('');
+  // The picked option's own name, kept alongside the id (reviewer round): the envelope's
+  // `suppliers` facet is the authoritative source once it answers, but a fresh pick can
+  // render for a moment before that response lands - the id must never stand in for the
+  // name on screen in the meantime (cursor rule: no UUIDs in the UI).
+  const [pickedSupplier, setPickedSupplier] = React.useState<{ id: string; name: string } | null>(
+    null,
+  );
   const [cutoff, setCutoff] = React.useState<string | null>(null);
   // Default ON (AC-S2-10): the whole catalogue is ~4,000 products and the answer the
   // planner came for is the short list that owes something.
@@ -184,8 +191,14 @@ export function StockDebtClient() {
 
   const supplierLabel = React.useMemo(() => {
     if (supplierId === 'none') return 'No supplier';
-    return suppliers.find((entry) => entry.id === supplierId)?.name ?? supplierId;
-  }, [supplierId, suppliers]);
+    if (!supplierId) return '';
+    const fromEnvelope = suppliers.find((entry) => entry.id === supplierId)?.name;
+    if (fromEnvelope) return fromEnvelope;
+    if (pickedSupplier?.id === supplierId) return pickedSupplier.name;
+    // Never the raw id (cursor rule: no UUIDs in the UI) - neither source has answered
+    // for this id yet.
+    return 'Selected supplier';
+  }, [supplierId, suppliers, pickedSupplier]);
 
   // ── Excel-style cell selection (R7, AC-25 to AC-32) ──────────────────────────────────
   const valueColumnKeys = React.useMemo(
@@ -241,7 +254,7 @@ export function StockDebtClient() {
     const text = selection.copyText();
     try {
       await navigator.clipboard.writeText(text);
-      toast.success('Copied - paste into a spreadsheet.');
+      toast.success('Copied');
     } catch {
       toast.error('Could not copy to the clipboard');
     }
@@ -602,6 +615,13 @@ export function StockDebtClient() {
                       <SearchableSelect
                         value={supplierId}
                         onChange={setSupplierId}
+                        onOptionChange={(option) =>
+                          setPickedSupplier(
+                            option && option.value !== 'none'
+                              ? { id: option.value, name: option.label }
+                              : null,
+                          )
+                        }
                         clearable
                         options={[
                           { value: 'none', label: 'No supplier' },

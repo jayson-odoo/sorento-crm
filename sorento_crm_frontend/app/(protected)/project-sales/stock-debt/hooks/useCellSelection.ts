@@ -111,6 +111,19 @@ export function useCellSelection({
   React.useEffect(() => {
     function finishDrag() {
       draggingRef.current = false;
+      // `draggedRef` is NOT cleared here synchronously (reviewer round): a genuine drag's
+      // own terminating `click` fires synchronously right after this `pointerup`, in the
+      // SAME task, and `onCellClick` still needs to see `draggedRef.current === true` to
+      // swallow that one click rather than treat it as a new gesture. Queued as a
+      // microtask instead - it runs once this task's synchronous work (pointerup then,
+      // if any, click) has finished, so a drag that ends with NO release click (many
+      // browsers do not fire one when the pointer is released over a different element)
+      // still clears in time for the NEXT distinct interaction - an immediate
+      // Shift+click - to extend the rectangle instead of being swallowed as the drag's
+      // own release.
+      queueMicrotask(() => {
+        draggedRef.current = false;
+      });
     }
     function onEscape(e: KeyboardEvent) {
       if (e.key === 'Escape') setSelected(new Set());
@@ -165,16 +178,21 @@ export function useCellSelection({
 
   const onCellClick = React.useCallback(
     (rowId: string, columnKey: string, e: React.MouseEvent) => {
-      if (draggedRef.current) {
-        // The drag already set the rectangle; this click just ends the gesture.
-        draggedRef.current = false;
-        return false;
-      }
+      // A MODIFIER click is always a fresh, deliberate gesture - checked BEFORE the
+      // drag-swallow branch below (reviewer round). A drag ends with no synthetic
+      // `click` at all in plenty of real pointer setups (only `pointerup` fires when the
+      // release lands over a different element than the press did), so `draggedRef` can
+      // still read `true` - left over from THAT drag - the moment an unrelated
+      // Shift/Cmd/Ctrl+click starts the NEXT gesture. Checking `draggedRef` first would
+      // swallow that click as if it were the drag's own release and never extend/toggle
+      // the selection at all.
       if (e.shiftKey && anchorRef.current) {
+        draggedRef.current = false;
         setSelected(rectangle(rowIds, columnKeys, anchorRef.current, { rowId, columnKey }));
         return false;
       }
       if (e.ctrlKey || e.metaKey) {
+        draggedRef.current = false;
         const key = cellKey(rowId, columnKey);
         setSelected((previous) => {
           const next = new Set(previous);
@@ -183,6 +201,11 @@ export function useCellSelection({
           return next;
         });
         anchorRef.current = { rowId, columnKey };
+        return false;
+      }
+      if (draggedRef.current) {
+        // The drag already set the rectangle; this PLAIN click just ends the gesture.
+        draggedRef.current = false;
         return false;
       }
       // A plain click: nothing lingers highlighted, and the caller opens its drill.
@@ -261,16 +284,37 @@ export function useCellSelection({
       .join('\n');
   }, [rowIds, columnKeys, selected, getValue]);
 
-  return {
-    isSelected,
-    selectedCount: selected.size,
-    summary,
-    copyText,
-    clear,
-    onCellPointerDown,
-    onCellPointerEnter,
-    onCellClick,
-    onColumnHeaderClick,
-    onCellKeyDown,
-  };
+  // Memoised (reviewer round): every value below is already individually stable unless
+  // something IT depends on changed, but returning a fresh object literal every render
+  // still handed the caller a new REFERENCE each time - and `StockDebtClient`'s own
+  // `columns` memo takes this whole object as a dependency, so a plain object literal
+  // here forced the grid's columns (and the outside-click listener built from them) to
+  // rebuild on every render this hook's OWN state touched, not only the ones that
+  // actually changed what a caller can see.
+  return React.useMemo(
+    () => ({
+      isSelected,
+      selectedCount: selected.size,
+      summary,
+      copyText,
+      clear,
+      onCellPointerDown,
+      onCellPointerEnter,
+      onCellClick,
+      onColumnHeaderClick,
+      onCellKeyDown,
+    }),
+    [
+      isSelected,
+      selected,
+      summary,
+      copyText,
+      clear,
+      onCellPointerDown,
+      onCellPointerEnter,
+      onCellClick,
+      onColumnHeaderClick,
+      onCellKeyDown,
+    ],
+  );
 }
