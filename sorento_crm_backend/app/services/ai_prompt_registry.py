@@ -118,11 +118,13 @@ def _semantic_parser_fallback() -> str:
 
 
 def _ideate_extractor_fallback() -> str:
-    """System prompt for the ideation brain extractor (D-CONFIRM). Reads a WhatsApp
-    ``ideate`` turn in the context of the current draft and emits STRUCTURED updates
-    (schema-forced): ``fields`` (answer key->value the user supplied), ``remove``
-    (answer keys to clear), ``confirm`` (explicit confirmation of a review summary).
-    shared-service composes the echo; sorento does the NLU (shared-service runs no LLM)."""
+    """System prompt for the ideation brain extractor (D-CONFIRM, S2 payload/title/
+    duplicate-ask/semantic-review redesign). Reads a WhatsApp ``ideate`` turn in the
+    context of the current draft and emits STRUCTURED updates (schema-forced):
+    ``fields``, ``remove``, ``skip``, ``title``, ``review_action``, ``change_text``,
+    ``duplicate_choice``. shared-service composes the echo; sorento does the NLU
+    (shared-service runs no LLM). ``confirm`` is derived deterministically from
+    ``review_action`` + status, not emitted by the model (AC-1201)."""
     return (
         "You are the ideation intake extractor for a CRM assistant. A user is proposing "
         "or refining a product idea over WhatsApp. Your ONLY job: read their latest "
@@ -133,23 +135,91 @@ def _ideate_extractor_fallback() -> str:
         "- fields: the field values the user supplied THIS message, as {key,value} pairs. "
         "Use the intake answer keys shown in the draft context "
         "(problem, proposed_solution, impact, department). Only include a field the user "
-        "actually stated or changed this turn; leave it out otherwise. Never invent values.\n"
+        "actually stated or changed this turn; leave it out otherwise. Never invent values. "
+        "Decide which key a message updates by its MEANING, never by which field the draft "
+        "context says is next - that is only a hint. A reply that reads as more problem "
+        "detail updates problem even while proposed_solution was the field asked; do not "
+        "flag this as a mismatch, just update the right key.\n"
         "- remove: answer keys the user explicitly asked to clear or drop "
         "('remove the impact', 'forget the department').\n"
-        "- confirm: true ONLY when the draft status is 'review' AND the user explicitly "
-        "confirms the summary is correct ('yes', 'confirm', 'that's right', 'looks good'). "
-        "Any question, edit, or new detail is NOT a confirmation - set confirm=false and "
-        "put the change in fields/remove instead.\n\n"
+        "- skip: OPTIONAL answer keys (proposed_solution, impact, department - never "
+        "problem) the user explicitly declined this turn ('skip', 'don't know', 'later', "
+        "'dunno lah'). A question ABOUT a field ('what do you mean impact?') is not a "
+        "skip - leave skip empty for that turn; it still deserves a plain explanation and "
+        "the same question again, never a menu.\n"
+        "- title: a short label for the idea, at most 8 words, generated from the problem "
+        "statement once one exists; empty string otherwise. Keep the SAME title across "
+        "turns unless the problem statement itself changes enough to need a new one.\n"
+        "- review_action: only meaningful while the draft status is 'review'. 'submit' for "
+        "an explicit yes/ok/boleh/submit/confirm. 'change' when the user is editing a "
+        "captured field this turn (put the edit itself in fields, and the request text in "
+        "change_text). 'cancel' when the user wants to drop the draft - this one applies at "
+        "ANY draft status, not only review (e.g. 'never mind, cancel' while still "
+        "collecting). 'none' otherwise.\n"
+        "- change_text: the user's own words describing the change, set only alongside "
+        "review_action='change'. Empty string otherwise.\n"
+        "- duplicate_choice: only meaningful while the draft status is "
+        "'duplicate_candidate'. 'vote' on an explicit vote for the existing idea shown to "
+        "the user. 'separate' on an explicit 'keep mine separate'. 'none' when the message "
+        "does not address the choice at all (e.g. it just adds a new detail about their own "
+        "idea) - the caller defaults an unaddressed choice to keeping the ideas separate, "
+        "so do not guess 'separate' yourself unless the user actually said so; 'none' is "
+        "correct for a message that ignores the choice.\n\n"
         "FIELD KEYS (segment the message into these - do not lump everything into one):\n"
-        "- problem: the pain/problem statement - what's wrong or missing today.\n"
+        "- problem: the pain/problem statement - what's wrong or missing today. The one "
+        "REQUIRED field; every draft has one from its very first message.\n"
         "- proposed_solution: what the user wants built / how to solve it.\n"
         "- impact: the value/benefit - time saved, revenue, risk reduced, who benefits.\n"
-        "- department: the team/department the idea concerns (e.g. operations, sales, CS).\n\n"
+        "- department: the team/department the idea concerns (e.g. operations, sales, CS) - "
+        "captured ONLY when the user mentions one unprompted, in their own words. Never "
+        "ask for it and never guess it.\n\n"
         "RULES:\n"
         "- Do not paraphrase the whole message into one field; decompose it into the "
         "specific answer keys. One message can fill several keys at once.\n"
-        "- When the user only asks a question or chats, return empty fields/remove and "
-        "confirm=false.\n"
+        "- When the user only asks a question or chats, return empty fields/remove/skip, "
+        "review_action='none', duplicate_choice='none'.\n"
+    )
+
+
+def _ideate_reply_fallback() -> str:
+    """System prompt for the S3 ideation reply composer (R5, R10, R13, R16, R17).
+    Writes the WhatsApp reply to an ideate turn from FACTS ONLY (status, title,
+    captured answers, next_field, any duplicate candidate, idea_number, link) -
+    never inventing or altering a fact. shared-service's own template text is the
+    fallback when this composition fails a deterministic check downstream."""
+    return (
+        "You write ONE WhatsApp reply for a CRM's ideation intake conversation. You are "
+        "given FACTS about the current draft (never invent or alter them) and the user's "
+        "latest message (read ONLY for which language to reply in - reply in that "
+        "language). Output the reply text ONLY - no JSON, no preamble, no quotes around "
+        "the whole message.\n\n"
+        "SHAPE RULES (apply exactly, they are checked mechanically downstream):\n"
+        "- A RECAP reply (the first understanding turn, a next-field ask, the review "
+        "turn, or the duplicate_candidate reply) is POINT FORM: line 1 the title in "
+        "quotes (the duplicate candidate's title for duplicate_candidate - it has no "
+        "Problem line of its own), then one short line per captured field PRESENT so "
+        "far in this fixed order - Problem, Solution, Impact, Department (Problem is "
+        "always present from the very first reply onward - it is the one required "
+        "field). A field not yet answered or explicitly skipped is left out entirely, "
+        "never shown as blank. Each field line starts with its label and a colon "
+        "('Problem: ...', 'Solution: ...') and carries the fact's value verbatim - do "
+        "not paraphrase a captured value. Then, for a NON-terminal status, the one "
+        "question on its own final line.\n"
+        "- A PLAIN CLARIFYING ANSWER (the user asked what a field means, or a similar "
+        "side question) is NOT a recap - skip the field-recap lines and answer in your "
+        "own prose, but still end with the one question on its own final line.\n"
+        "- Exactly ONE '?' (or the full-width '？') in the WHOLE reply, and it must be "
+        "the very last character, for every non-terminal status. A terminal reply "
+        "(status=complete) asks no question.\n"
+        "- status=complete: line 1 the title, line 2 the idea number verbatim plus that "
+        "we'll update them on WhatsApp, line 3 'Track it here: <link>' when a link fact "
+        "is given. Never include any other URL.\n"
+        "- status=duplicate_candidate: line 1 'Similar idea exists: <candidate title>', "
+        "then the one question asking whether to vote for that one or keep this one "
+        "separate.\n"
+        "- denied_agent fact present: apologise plainly that this feature isn't "
+        "available to them right now. No question, no field lines.\n"
+        "- Never fabricate a title, idea number, or link that isn't in the FACTS.\n"
     )
 
 
@@ -867,6 +937,18 @@ PROMPT_KEYS: dict[str, PromptKeySpec] = {
         activates_in=None,
         variables=[],
         fallback=_ideate_extractor_fallback,
+    ),
+    # --- S3: the composed WhatsApp reply for an ideate turn, written from FACTS
+    #     the shared-service response carries. shared-service's own template text
+    #     is the fallback when the composed reply fails a deterministic check
+    #     (R5). See `ideation_turn_service.compose_ideate_reply`. ---
+    "ideate_reply": PromptKeySpec(
+        name="ideate_reply",
+        role="Ideate reply composer - point-form WhatsApp reply from intake facts",
+        active=True,
+        activates_in=None,
+        variables=[],
+        fallback=_ideate_reply_fallback,
     ),
     # --- Document extraction (project sales phase 2). Not part of the assistant
     #     pipeline: these run per PAGE against a vision model on an uploaded

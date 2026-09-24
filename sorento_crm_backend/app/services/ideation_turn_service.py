@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -31,6 +32,8 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.services import ai_prompt_registry
+from app.services.ai_assistant_service import AIAssistantConfigService
 from app.services.conversation_variables_service import (
     _coerce_to_dict,
     overwrite_for_contact,
@@ -46,6 +49,7 @@ from app.services.ideation_media_service import (
     parse_selection,
     snapshot_and_caption,
 )
+from app.services.llm_provider import get_provider
 from app.services.respond_workspace_service import RespondWorkspaceService
 
 logger = logging.getLogger(__name__)
@@ -53,8 +57,9 @@ logger = logging.getLogger(__name__)
 _CREATE_IDEA_PATH = "/ideation/intake/create-idea"
 _TIMEOUT_SECONDS = 15
 
-# create_idea statuses that CLOSE the draft → clear the pointer (§5.2).
-_TERMINAL_STATUSES = {"complete", "duplicate"}
+# create_idea statuses that CLOSE the draft → clear the pointer (§5.2). `duplicate`
+# is retired (S1); `voted` and `cancelled` are its replacements (AC-1215).
+_TERMINAL_STATUSES = {"complete", "voted", "cancelled"}
 
 # Cap the accumulated transcript (WS-B) so a very long conversation can't bloat
 # session_vars / the create_idea payload. Keeps the most recent turns.
@@ -70,6 +75,200 @@ _IDEATION_FIELD_LABELS: dict[str, str] = {
     "department": "Department",
 }
 
+# S3 - point-form field order for a recap reply (R10, amended by R16 to put
+# Problem first): only present fields ever show; a skipped or not-yet-answered
+# field is left out, never shown as blank.
+_RECAP_FIELD_ORDER: tuple[tuple[str, str], ...] = (
+    ("problem", "Problem"),
+    ("proposed_solution", "Solution"),
+    ("impact", "Impact"),
+    ("department", "Department"),
+)
+
+_QUESTION_MARKS = "?？"  # ASCII ? and full-width ？ (AC-1302)
+
+
+def _ideate_reply_facts(result: dict[str, Any]) -> dict[str, Any]:
+    """The FACTS block for the S3 composer (R5) - status, title, captured
+    answers, the next field to ask, any duplicate candidate, the idea number and
+    the link. Never the model's own words: these are read straight off the
+    shared-service response."""
+    return {
+        "status": str(result.get("status") or ""),
+        "title": result.get("title") or "",
+        "captured": result.get("captured") or {},
+        "next_field": result.get("next_field"),
+        "duplicate_candidate": result.get("duplicate_candidate") or None,
+        "idea_number": result.get("idea_number"),
+        "link": result.get("link"),
+    }
+
+
+def _ends_in_one_question(text_out: str) -> bool:
+    """AC-1302: exactly one ``?``/``？`` as the last non-space character, no other."""
+    stripped = (text_out or "").rstrip()
+    if not stripped or stripped[-1] not in _QUESTION_MARKS:
+        return False
+    return sum(stripped.count(ch) for ch in _QUESTION_MARKS) == 1
+
+
+def _passes_reply_checks(text_out: str, facts: dict[str, Any]) -> bool:
+    """Deterministic acceptance gate for a composed reply (AC-1302 to AC-1304,
+    AC-1310, AC-1311). Facts never come from the model - if the number, title,
+    or link is missing or altered, this rejects the reply and the caller falls
+    back to the shared-service template (R5)."""
+    text_out = (text_out or "").strip()
+    if not text_out:
+        return False
+
+    # AC-1307: the access-denied composition has no facts to verify beyond "the
+    # LLM produced something" - the fallback template is the only shape rule.
+    if facts.get("denied"):
+        return True
+
+    lines = [line.strip() for line in text_out.splitlines() if line.strip()]
+    status = facts.get("status")
+
+    if status == "complete":
+        # AC-1311: line 1 the title, idea_number verbatim, at most the one URL
+        # named by link and no other (R6 as amended by R13).
+        title = facts.get("title")
+        if title and title not in lines[0]:
+            return False
+        idea_number = facts.get("idea_number")
+        if idea_number and idea_number not in text_out:
+            return False
+        link = facts.get("link")
+        urls = [u.rstrip(".,;:!！)。") for u in re.findall(r"https?://\S+", text_out)]
+        if link:
+            if link not in text_out or any(u != link for u in urls):
+                return False
+        elif urls:
+            return False
+        return True
+
+    if status == "duplicate_candidate":
+        # AC-1304: contains the candidate title verbatim; still non-terminal ->
+        # ends in the one question (AC-1302).
+        candidate = facts.get("duplicate_candidate") or {}
+        candidate_title = candidate.get("title")
+        if candidate_title and candidate_title not in text_out:
+            return False
+        return _ends_in_one_question(text_out)
+
+    # collecting / review / anything else non-terminal: AC-1310's point-form shape
+    # applies to a RECAP reply - detected here as one whose first line names the
+    # title (a plain clarifying answer, e.g. "what do you mean impact?", never
+    # opens with the title and is exempt from the field-recap lines, AC-1310).
+    title = facts.get("title")
+    if title and lines and title in lines[0]:
+        captured = facts.get("captured") or {}
+        for key, label in _RECAP_FIELD_ORDER:
+            value = captured.get(key)
+            if not value:
+                continue
+            if not any(line.startswith(f"{label}:") and value in line for line in lines):
+                return False
+    return _ends_in_one_question(text_out)
+
+
+def _call_ideate_reply_llm(db: Session, *, facts: dict[str, Any], user_message: str) -> str | None:
+    """The S3 LLM call: same provider plumbing as the extractor, prompt key
+    ``ideate_reply``. Returns ``None`` on any failure so the caller falls back to
+    the shared-service template (R5) - never raises."""
+    try:
+        config = AIAssistantConfigService(db).get()
+    except Exception:  # noqa: BLE001
+        logger.warning("ideate_reply: config read failed; falling back", exc_info=True)
+        return None
+
+    api_key = config.api_key_ciphertext or settings.openai_api_key
+    if not api_key:
+        return None
+
+    try:
+        system, _version = ai_prompt_registry.render(db, "ideate_reply")
+    except Exception:  # noqa: BLE001
+        logger.warning("ideate_reply: prompt render failed; falling back", exc_info=True)
+        return None
+
+    fact_lines = [f"status: {facts.get('status') or ''}"]
+    if facts.get("denied"):
+        fact_lines.append(f"denied_agent: {facts['denied']}")
+    if facts.get("title"):
+        fact_lines.append(f"title: {facts['title']}")
+    captured = facts.get("captured") or {}
+    for key, label in _RECAP_FIELD_ORDER:
+        value = captured.get(key)
+        if value:
+            fact_lines.append(f"{label}: {value}")
+    if facts.get("next_field"):
+        fact_lines.append(f"next_field (the ONE thing to ask next): {facts['next_field']}")
+    candidate = facts.get("duplicate_candidate") or None
+    if candidate:
+        fact_lines.append(f"duplicate_candidate_title: {candidate.get('title')}")
+    if facts.get("idea_number"):
+        fact_lines.append(f"idea_number: {facts['idea_number']}")
+    if facts.get("link"):
+        fact_lines.append(f"link: {facts['link']}")
+
+    user_block = (
+        "FACTS (never invent, never alter these):\n"
+        + "\n".join(fact_lines)
+        + f"\n\nUser's latest message (read for LANGUAGE only):\n{user_message or ''}"
+    )
+    messages_in = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user_block},
+    ]
+
+    try:
+        provider = get_provider(config.provider, api_key, config.model)
+        result = provider.chat(messages_in, temperature=0.3, model=config.model, max_tokens=400)
+        content = (result.content or "").strip()
+    except Exception:  # noqa: BLE001
+        logger.warning("ideate_reply: LLM call failed; falling back", exc_info=True)
+        return None
+    return content or None
+
+
+def _compose_ideate_reply_from_facts(
+    db: Session, *, facts: dict[str, Any], user_message: str, fallback_text: str
+) -> str:
+    """The composer core (S3, R5): LLM first, deterministic checks, fallback to
+    ``fallback_text`` (the shared-service template) on any failure or rejected
+    shape (AC-1305)."""
+    composed = _call_ideate_reply_llm(db, facts=facts, user_message=user_message)
+    if composed is None or not _passes_reply_checks(composed, facts):
+        return fallback_text
+    return composed
+
+
+def compose_ideate_reply(db: Session, *, result: dict[str, Any], user_message: str) -> str:
+    """S3: compose the WhatsApp reply for a ``create_idea`` response from its
+    FACTS (R5), falling back to the shared-service ``reply_text`` template on any
+    LLM failure or a reply that fails the deterministic checks (AC-1301 to
+    AC-1305, AC-1310, AC-1311)."""
+    fallback_text = str(result.get("reply_text") or "")
+    facts = _ideate_reply_facts(result)
+    return _compose_ideate_reply_from_facts(
+        db, facts=facts, user_message=user_message, fallback_text=fallback_text
+    )
+
+
+def compose_ideate_denial_reply(db: Session, *, user_message: str, fallback_text: str) -> str:
+    """S3/AC-1307: the ``ideation`` agent's access-denied reply goes through the
+    SAME composer, facts ``{denied: "ideation"}``, falling back to the existing
+    ``access_denied`` canned text on any failure. Called from
+    ``app.services.chatbot.lanes.canned.access_denied_text`` - the one named R18
+    seam outside the ideate lane itself."""
+    return _compose_ideate_reply_from_facts(
+        db,
+        facts={"status": "access_denied", "denied": "ideation"},
+        user_message=user_message,
+        fallback_text=fallback_text,
+    )
+
 
 class IdeationServiceError(Exception):
     """Raised when the shared-service ``create_idea`` call cannot be completed
@@ -78,19 +277,24 @@ class IdeationServiceError(Exception):
 
 
 class _ContactState:
-    __slots__ = ("phone_number", "session_vars", "display_name")
+    __slots__ = ("phone_number", "session_vars", "display_name", "submitter_tier")
 
     def __init__(
         self,
         phone_number: str,
         session_vars: dict[str, Any],
         display_name: str | None = None,
+        submitter_tier: str | None = None,
     ):
         self.phone_number = phone_number
         self.session_vars = session_vars
         # Human name from respond_contacts (WS-A). None when the CRM has no name
         # for this contact → handle_turn falls back to the n8n-supplied name.
         self.display_name = display_name
+        # R7/AC-1207: the code of the FIRST ContactAccessType in the contact's
+        # access_types relationship order (sort_order, then code). None when the
+        # contact holds no access type.
+        self.submitter_tier = submitter_tier
 
 
 def _derive_display_name(name: Any, first_name: Any, last_name: Any) -> str | None:
@@ -107,12 +311,24 @@ def _now_iso() -> str:
 
 
 def _get_contact_row(db: Session, respond_io_id: str) -> _ContactState:
-    """Load the contact's phone (E.164 submitter) + session_vars by respond_io_id.
-    404 when no contact matches (n8n only routes ideate turns for known contacts)."""
+    """Load the contact's phone (E.164 submitter), session_vars and submitter tier
+    by respond_io_id. 404 when no contact matches (n8n only routes ideate turns for
+    known contacts).
+
+    ``submitter_tier`` (R7/AC-1207) is the code of the FIRST ``ContactAccessType``
+    in the contact's ``access_types`` relationship order (``sort_order``, then
+    ``code``) - a correlated subquery rather than an ORM relationship load, so this
+    stays the single query it always was.
+    """
     row = db.execute(
         text(
-            "SELECT phone_number, name, first_name, last_name, session_vars "
-            "FROM respond_contacts WHERE respond_io_id = :cid"
+            "SELECT rc.phone_number, rc.name, rc.first_name, rc.last_name, "
+            "rc.session_vars, "
+            "(SELECT cat.code FROM respond_contact_access_types rcat "
+            " JOIN contact_access_types cat ON cat.code = rcat.access_type_code "
+            " WHERE rcat.contact_id = rc.id "
+            " ORDER BY cat.sort_order, cat.code LIMIT 1) AS submitter_tier "
+            "FROM respond_contacts rc WHERE rc.respond_io_id = :cid"
         ),
         {"cid": respond_io_id},
     ).first()
@@ -125,6 +341,7 @@ def _get_contact_row(db: Session, respond_io_id: str) -> _ContactState:
         row.phone_number,
         _coerce_to_dict(row.session_vars),
         display_name=_derive_display_name(row.name, row.first_name, row.last_name),
+        submitter_tier=row.submitter_tier,
     )
 
 
@@ -300,6 +517,8 @@ def handle_turn(
     draft_id = ideation_state.get("draft_id")
     prior_status = ideation_state.get("status")
     prior_missing = ideation_state.get("missing") or []
+    prior_next_field = ideation_state.get("next_field")
+    prior_duplicate_candidate = ideation_state.get("duplicate_candidate") or None
     prior_transcript = ideation_state.get("transcript") or []
     pending_media = ideation_state.get("pending_media") or None
     seen_media_ids: set[str] = set(ideation_state.get("seen_media_ids") or [])
@@ -315,6 +534,8 @@ def handle_turn(
         draft_id = None
         prior_status = None
         prior_missing = []
+        prior_next_field = None
+        prior_duplicate_candidate = None
         prior_transcript = []
         pending_media = None
         seen_media_ids = set()
@@ -385,11 +606,16 @@ def handle_turn(
             menu_text = build_menu_text(candidates)
 
     # (3) brain extraction (D-CONFIRM): structured update, never free text.
+    #     next_field / the duplicate candidate's title ride along as CONTEXT ONLY
+    #     (a hint, per R17) - the extractor decides which field a message updates
+    #     by its meaning, never by which field was just asked (AC-1219).
     extraction: IdeateExtraction = extract_ideate_turn(
         db,
         message_text=message_text,
         status=prior_status,
         missing=prior_missing,
+        next_field=prior_next_field,
+        duplicate_candidate_title=(prior_duplicate_candidate or {}).get("title"),
         field_labels=_IDEATION_FIELD_LABELS,
     )
 
@@ -406,18 +632,33 @@ def handle_turn(
         "raw_transcript": raw_transcript,
         "fields": extraction.fields,
         "remove": extraction.remove,
+        "skip": extraction.skip,
         "confirm": extraction.confirm,
         # Always present, true or false: the shared service keys its board filter on it.
         "is_test": bool(is_test),
     }
     if effective_submitter_name:
         payload["submitter_name"] = effective_submitter_name
+    if extraction.title:
+        payload["title"] = extraction.title
     if attachments:
         payload["attachments"] = attachments
     if draft_id:  # omitted on turn 1 (AC-12); passed through on continuation (AC-13/17)
         payload["draft_id"] = draft_id
     if discard_draft_id:  # is_new_idea restart (DC-10)
         payload["discard_draft_id"] = discard_draft_id
+    # AC-1211: cancel is honoured at ANY draft status, not only review - a user may
+    # drop a draft at any step.
+    if extraction.review_action == "cancel":
+        payload["cancel"] = True
+    # AC-1214: only meaningful while the pointer is a duplicate candidate; default
+    # to "separate" unless the extractor read an explicit vote (R4 default).
+    if prior_status == "duplicate_candidate":
+        payload["duplicate_choice"] = (
+            "vote" if extraction.duplicate_choice == "vote" else "separate"
+        )
+    if contact.submitter_tier:
+        payload["submitter_tier"] = contact.submitter_tier
 
     try:
         result = call_create_idea(base_url, api_key, payload)
@@ -431,7 +672,9 @@ def handle_turn(
 
     status_val = str(result.get("status") or "")
     result_draft_id = result.get("draft_id") or draft_id
-    reply_text = result.get("reply_text") or ""
+    # S3: the LLM composes the reply from the response's FACTS, in the user's
+    # language, falling back to the shared-service template on any failure (R5).
+    reply_text = compose_ideate_reply(db, result=result, user_message=message_text)
     link = result.get("link")
 
     # The media menu is appended to THIS reply (DC-8) - the create_idea echo first,
@@ -448,6 +691,10 @@ def handle_turn(
             "draft_id": result_draft_id,
             "status": status_val,
             "missing": list(result.get("missing") or []),
+            # The one optional field to ask next (S1), carried so the NEXT turn's
+            # extractor gets it as a hint (R17) and the reply composer (S3) can
+            # read it from the pointer too.
+            "next_field": result.get("next_field"),
             # Persist the running transcript so the NEXT turn appends to it (WS-B).
             "transcript": transcript_list,
             "updated_at": _now_iso(),
@@ -456,6 +703,10 @@ def handle_turn(
             # above).
             "is_test": bool(is_test),
         }
+        # AC-1212: while a similar idea is offered, keep the candidate on the
+        # pointer so the next turn's extractor/reply have its title to hand.
+        if status_val == "duplicate_candidate" and result.get("duplicate_candidate"):
+            ideation_blob["duplicate_candidate"] = result.get("duplicate_candidate")
         # Carry the media state (Group F): the outstanding menu + everything already
         # offered, so a later turn resolves the selection and we never re-nag.
         if pending_media:

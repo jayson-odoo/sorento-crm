@@ -3,20 +3,46 @@
 shared-service `create_idea` runs NO LLM: it composes the echo/summary and owns the
 durable draft, but it needs sorento to hand it STRUCTURED updates, never free text
 to parse. So each `ideate` turn we run one small, schema-forced LLM step that reads
-the user's message in the context of the current draft (its status + still-missing
-fields) and emits:
+the user's message in the context of the current draft (its status, still-missing
+required fields, the next optional field to ask, and any duplicate candidate) and
+emits:
 
-    { fields: {answer_key: value}, remove: [answer_key], confirm: bool }
+    { fields, remove, skip, title, review_action, change_text, duplicate_choice }
 
-- ``fields`` - answer-key -> value updates the user just supplied.
+- ``fields`` - answer-key -> value updates the user just supplied. R17 (owner ruling,
+  24 Sep 2026): the field a message updates is decided by the MEANING of the whole
+  draft so far, never by which field ``next_field`` happened to ask - the hint is
+  only a hint. A message that reads as more problem detail updates ``problem`` even
+  while ``proposed_solution`` was the one asked (AC-1219).
 - ``remove`` - answer keys the user asked to clear ("remove who", "forget the module").
-- ``confirm`` - ``true`` ONLY on an explicit confirmation of a ``review`` summary
-  (guarded deterministically below: confirm can never be true unless status=="review").
+- ``skip`` - OPTIONAL answer keys the user explicitly declined ("skip", "don't know",
+  "later", "dunno lah"). Never ``problem`` - the one required field can't be skipped
+  (deterministic guard below, AC-1205).
+- ``title`` - a short label (at most 8 words) generated from the idea text, cut
+  deterministically below if the model runs long (AC-1202). Empty string when the
+  draft has no problem statement yet.
+- ``review_action`` - ``"submit" | "change" | "cancel" | "none"``, meaningful only
+  while the draft is in ``review``: ``submit`` on an explicit "yes/ok/boleh/submit/
+  confirm"; ``change`` when the user is editing a captured field (the edit itself
+  goes in ``fields``, the request text in ``change_text``); ``cancel`` when the user
+  wants to drop the draft - honoured at ANY step, not only during review (AC-1211).
+- ``change_text`` - the user's own words describing the change, set only alongside
+  ``review_action == "change"``.
+- ``duplicate_choice`` - ``"vote" | "separate" | "none"``, meaningful only while the
+  draft is ``duplicate_candidate``: ``vote`` on an explicit vote for the existing
+  idea, ``separate`` on an explicit "keep mine separate", ``none`` when the message
+  does not address the choice at all (the caller defaults ``none`` to ``separate``
+  per R4 - AC-1214).
 
-Reuses the same provider plumbing as the semantic parser (``get_provider`` +
-``json_schema`` forced output) and the prompt registry (``ideate_extractor`` key).
-On any failure (no api key, provider/parse error) it degrades to an EMPTY extraction
-so the turn still calls ``create_idea`` with ``message_text`` - never raises.
+``confirm`` is no longer read from the model (AC-1201): it is DERIVED here from
+``review_action`` and the draft's status, so there is exactly one place (this
+function) that decides it - ``handle_turn`` just reads ``.confirm`` off the result,
+same as before this slice.
+
+Reuses the same provider plumbing as before (``get_provider`` + ``json_schema``
+forced output) and the prompt registry (``ideate_extractor`` key). On any failure
+(no api key, provider/parse error) it degrades to an EMPTY extraction so the turn
+still calls ``create_idea`` with ``message_text`` - never raises.
 """
 from __future__ import annotations
 
@@ -37,6 +63,13 @@ logger = logging.getLogger(__name__)
 
 IDEATE_EXTRACTION_SCHEMA_NAME = "ideate_extraction"
 
+# Only these answer keys can ever be skipped (AC-1205) - the one required field,
+# `problem`, cannot appear in `skip` no matter what the model emits.
+_SKIPPABLE_KEYS = {"proposed_solution", "impact", "department"}
+
+_REVIEW_ACTIONS = {"submit", "change", "cancel", "none"}
+_DUPLICATE_CHOICES = {"vote", "separate", "none"}
+
 # OpenAI strict-mode json_schema: every property required, additionalProperties
 # false, no open-ended object maps (``fields`` is an array of {key,value} pairs
 # so dynamic answer keys stay strict-compliant).
@@ -50,7 +83,11 @@ IDEATE_EXTRACTION_JSON_SCHEMA: dict[str, Any] = {
                 "Field updates the user supplied this turn, as {key,value} pairs. "
                 "key is the intake answer key (one of: problem, proposed_solution, "
                 "impact, department); value is the user's answer as plain text. "
-                "Empty when the turn adds nothing."
+                "Decide which key a message updates by its MEANING, never by which "
+                "field was just asked (next_field is only a hint) - e.g. a reply "
+                "that reads as more problem detail updates problem even while "
+                "proposed_solution was the one asked. Empty when the turn adds "
+                "nothing."
             ),
             "items": {
                 "type": "object",
@@ -67,15 +104,64 @@ IDEATE_EXTRACTION_JSON_SCHEMA: dict[str, Any] = {
             "description": "Answer keys the user asked to clear/remove this turn.",
             "items": {"type": "string"},
         },
-        "confirm": {
-            "type": "boolean",
+        "skip": {
+            "type": "array",
             "description": (
-                "true ONLY when the user explicitly confirms the review summary is "
-                "correct (e.g. 'yes', 'confirm', 'that's right'). false otherwise."
+                "OPTIONAL answer keys the user explicitly declined this turn "
+                "('skip', 'don't know', 'later', 'dunno lah'). Never include "
+                "problem - it is the one required field and cannot be skipped. "
+                "A question ABOUT a field ('what do you mean impact?') is not a "
+                "skip - leave skip empty for that turn."
+            ),
+            "items": {"type": "string"},
+        },
+        "title": {
+            "type": "string",
+            "description": (
+                "A short label for the idea, at most 8 words, generated from the "
+                "problem statement. Empty string when the draft has no problem "
+                "statement yet."
+            ),
+        },
+        "review_action": {
+            "type": "string",
+            "enum": sorted(_REVIEW_ACTIONS),
+            "description": (
+                "Only meaningful while the draft status is 'review'. 'submit' for "
+                "an explicit yes/ok/boleh/submit/confirm. 'change' when the user "
+                "is editing a captured field this turn (put the edit in fields and "
+                "the request in change_text). 'cancel' when the user wants to drop "
+                "the draft - this one is honoured at ANY draft status, not only "
+                "review. 'none' otherwise."
+            ),
+        },
+        "change_text": {
+            "type": "string",
+            "description": (
+                "The user's own words describing the change, set only alongside "
+                "review_action == 'change'. Empty string otherwise."
+            ),
+        },
+        "duplicate_choice": {
+            "type": "string",
+            "enum": sorted(_DUPLICATE_CHOICES),
+            "description": (
+                "Only meaningful while the draft status is 'duplicate_candidate'. "
+                "'vote' on an explicit vote for the existing idea. 'separate' on "
+                "an explicit 'keep mine separate'. 'none' when the message does "
+                "not address the choice at all (e.g. it just adds a new detail)."
             ),
         },
     },
-    "required": ["fields", "remove", "confirm"],
+    "required": [
+        "fields",
+        "remove",
+        "skip",
+        "title",
+        "review_action",
+        "change_text",
+        "duplicate_choice",
+    ],
 }
 
 
@@ -83,7 +169,18 @@ IDEATE_EXTRACTION_JSON_SCHEMA: dict[str, Any] = {
 class IdeateExtraction:
     fields: dict[str, str] = field(default_factory=dict)
     remove: list[str] = field(default_factory=list)
+    skip: list[str] = field(default_factory=list)
+    title: str = ""
+    review_action: str = "none"
+    change_text: str = ""
+    duplicate_choice: str = "none"
     confirm: bool = False
+
+
+def _cut_title(title: str) -> str:
+    """At most 8 words (AC-1202) - a longer model output is cut to its first 8."""
+    words = (title or "").split()
+    return " ".join(words[:8])
 
 
 def extract_ideate_turn(
@@ -92,13 +189,18 @@ def extract_ideate_turn(
     message_text: str,
     status: str | None = None,
     missing: list[str] | None = None,
+    next_field: str | None = None,
+    duplicate_candidate_title: str | None = None,
     field_labels: dict[str, str] | None = None,
 ) -> IdeateExtraction:
-    """Extract ``{ fields, remove, confirm }`` from ``message_text`` given the draft
-    context. Never raises - degrades to an empty extraction on any failure.
+    """Extract the ideate NLU output from ``message_text`` given the draft context.
 
-    ``confirm`` is force-cleared unless ``status == "review"`` (D-CONFIRM / AC-11b):
-    a confirmation only means anything once the draft is being reviewed.
+    Never raises - degrades to an empty extraction on any failure. ``confirm`` is
+    derived here (AC-1201): true only when ``review_action == "submit"`` AND
+    ``status == "review"`` (D-CONFIRM / AC-1208 / AC-1211) - a confirmation only
+    means anything once the draft is being reviewed. ``cancel`` has no such gate:
+    the caller reads ``review_action == "cancel"`` directly and honours it at any
+    status (AC-1211).
     """
     raw = (message_text or "").strip()
     if not raw:
@@ -124,6 +226,12 @@ def extract_ideate_turn(
     context_lines.append(f"Current draft status: {status or 'new'}")
     if missing:
         context_lines.append(f"Fields still missing: {', '.join(missing)}")
+    if next_field:
+        context_lines.append(
+            f"Next field the bot would ask (a HINT only, not a routing key): {next_field}"
+        )
+    if duplicate_candidate_title:
+        context_lines.append(f"Duplicate candidate title: {duplicate_candidate_title}")
     if field_labels:
         labels = ", ".join(f"{k} ({v})" for k, v in field_labels.items())
         context_lines.append(f"Known field keys: {labels}")
@@ -154,10 +262,34 @@ def extract_ideate_turn(
         if isinstance(pair, dict) and pair.get("key"):
             fields[str(pair["key"])] = str(pair.get("value", ""))
     remove = [str(k) for k in (data.get("remove") or []) if k]
-    confirm = bool(data.get("confirm", False))
 
-    # Deterministic guard: a confirmation only counts while reviewing (AC-11b).
-    if status != "review":
-        confirm = False
+    # AC-1205: only optional keys can ever be skipped - `problem` is dropped from
+    # `skip` no matter what the model emitted.
+    skip = [str(k) for k in (data.get("skip") or []) if k and str(k) in _SKIPPABLE_KEYS]
 
-    return IdeateExtraction(fields=fields, remove=remove, confirm=confirm)
+    title = _cut_title(str(data.get("title") or ""))
+
+    review_action = str(data.get("review_action") or "none")
+    if review_action not in _REVIEW_ACTIONS:
+        review_action = "none"
+    change_text = str(data.get("change_text") or "")
+
+    duplicate_choice = str(data.get("duplicate_choice") or "none")
+    if duplicate_choice not in _DUPLICATE_CHOICES:
+        duplicate_choice = "none"
+
+    # AC-1208/AC-1211: submit only counts while the draft is under review - the
+    # existing D-CONFIRM guard, moved here now that the model no longer emits
+    # `confirm` directly.
+    confirm = bool(review_action == "submit" and status == "review")
+
+    return IdeateExtraction(
+        fields=fields,
+        remove=remove,
+        skip=skip,
+        title=title,
+        review_action=review_action,
+        change_text=change_text,
+        duplicate_choice=duplicate_choice,
+        confirm=confirm,
+    )
