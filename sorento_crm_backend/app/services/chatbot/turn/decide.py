@@ -260,9 +260,16 @@ def picked_positions(pending: Pending, verdict: dict[str, Any]) -> tuple[list[in
         return positions, "positions"
     if positions:
         return positions, "positions"
-    labelled = _positions_by_label(pending, verdict)
-    if labelled:
-        return labelled, "label_match"
+    # Prod turns 339 and 342 (contact 487555417, 23 Sep 2026): "Photo srt446-RG" and
+    # "Srt446-RG list price" both label-matched an offered option even though the
+    # parser itself said `domain_in_message: true` - the message named its own
+    # question. The parser decides ask vs pick; this engine only resolves WHICH
+    # position a bare label names, so a label match counts only when this message
+    # did not also say what it was asking.
+    if domain_in_message(verdict) is not True:
+        labelled = _positions_by_label(pending, verdict)
+        if labelled:
+            return labelled, "label_match"
     if broadens and pending.options:
         # Contract 31, R21: "all" over a numbered menu is a pick of EVERY option, not a
         # widening of the search - the parser reads the word as a broaden (`entity_op:
