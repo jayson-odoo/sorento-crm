@@ -1,7 +1,8 @@
 # PLAN - Ideation intake redesign (issue #1172)
 
-**Status:** grilled 24 Sep 2026, ready for tickets. Track: full (shared-service migration for
-`ideas.title`, `ideas.submitter_tier`, the idea-number sequence; two repos).
+**Status:** grilled 24 Sep 2026, ready for tickets, lavish review round 1 folded 24 Sep 2026.
+Track: full (shared-service migration for `ideas.title`, `ideas.submitter_tier`, the idea-number
+sequence; two repos).
 **UAC:** `ideation-intake-redesign-24sep-acceptance-criteria.md` (this plan fulfils it; the
 Journey is there).
 **Evidence:** PR #1176, `documentation/plans/ideation/REVIEW-ideation-flow-ux-24sep.md`
@@ -184,9 +185,15 @@ real shared-service field names if they differ.
   - `submitter_tier`: first code of `RespondContact.access_types` (relationship already
     ordered by `sort_order, code`, `app/models/access.py`); read in `_get_contact_row`, which
     today selects only phone, names and session_vars (AC-1207);
-  - department: on a new draft, when the user gave none, the name of the customer on the
-    contact's `respond_contact_customers` row with `is_primary`, else nothing (AC-1206). One
-    query in `_get_contact_row`; no new service;
+  - department: captured as free text from the dealer's own words in the message when present,
+    stored as typed (no lookup against `respond_contact_customers`) - it is already one of the
+    keys the extractor's `fields` map carries, so no extractor change is needed beyond the
+    existing field extraction. It is NOT a second required question (the one required field
+    ruling stands), so when the dealer never mentions it the field stays blank and the bot does
+    not ask (reading proposed) (AC-1206). Open question this reading raises, not resolved here:
+    S1's `next_field` sequence today still nominates `department` as something to actively ask
+    about; if the bot is never to ask it, that sequence may need to drop it - flagged for the
+    owner alongside the reading above;
   - `_TERMINAL_STATUSES` becomes `{"complete", "voted", "cancelled"}` (AC-1215);
   - the pointer keeps `next_field` (the extractor's context next turn) alongside `missing`,
     and the candidate title while `duplicate_candidate`.
@@ -271,10 +278,6 @@ the fallback).
 - **P3 Tier is one code.** R7 says "the submitter's tier"; a contact can hold several access
   types, so sorento sends the first in the relationship's existing order. Trigger for a list:
   triage asks to filter on a second type.
-- **P4 Department source.** "The contact's company" is read as the primary
-  `respond_contact_customers` link's customer name, the only contact-to-company link in
-  sorento (no `department` column exists anywhere in `app/models`). If the owner meant
-  something else, S2's department bullet changes; nothing else does.
 - **P5 No new sorento module or table.** Reply composer and idle sweep sit in
   `ideation_turn_service.py`; state stays in `session_vars.ideation`.
 
@@ -320,6 +323,17 @@ the fallback).
 > idea number, tier); S2 sorento payload + title extraction + duplicate ask + semantic review;
 > S3 LLM replies with template fallback; S4 24h reminder and close. Each slice: pytest per
 > repo, console YAML case (possible once #1179 lands), live console at the end.
+
+Lavish review 24 Sep 2026: owner asked for sample conversations; added below the Journey.
+
+> **Lavish review 24 Sep 2026 - Department (amends R1):** owner, replying to the P4 assumption
+> that department comes from the linked customer name: "hmm department is just free text
+> thought." Department is free text captured from the dealer's own words when given, never
+> derived from `respond_contact_customers`; it stays optional and is not a second required
+> question, so when the dealer never mentions it the field simply stays blank and the bot does
+> not ask (reading proposed, S2's department bullet and AC-1206 above). This supersedes the
+> "inferred from the contact's company when known" clause in R1; R1 itself is left as originally
+> quoted above for the record.
 
 ## Review findings -> where they land
 

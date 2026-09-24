@@ -15,14 +15,15 @@ Actor: a business user (dealer staff or internal staff) on WhatsApp who holds th
 access agent. They know their idea; they do not know the intake's field names.
 
 1. **They say the idea in their own words**, in any language ("i have an idea, the price tag
-   should show promo price in red"). The system already knows who they are (phone, name, tier,
-   and, when linked, their company), so it never asks for any of that.
+   should show promo price in red"). The system already knows who they are (phone, name, tier),
+   so it never asks for any of that.
 2. **The bot confirms it understood** in the user's language, restates the idea under a short
    title it made itself, and asks ONE optional question (the proposed solution).
 3. **Each optional question is asked once.** The user may answer, or say "skip", "don't know",
    "later", "dunno lah"; either way the bot moves on. A question about the question ("what do
    you mean impact?") gets a plain explanation and the same question again, never a menu.
-   Department is not asked when their company is known.
+   Department is never asked directly - it is free text, recorded only if the dealer mentions
+   one unprompted (lavish review 24 Sep 2026, reading proposed).
 4. **If a similar idea already exists**, the bot names it ("Similar idea exists: <title>") and
    asks whether to vote for that one or keep this one separate. Saying anything else keeps it
    separate.
@@ -35,6 +36,123 @@ access agent. They know their idea; they do not know the intake's field names.
    not answer, the draft closes quietly.
 
 What they hold at the end: an idea number, and nothing to remember.
+
+## Sample conversations (for the owner to proof-read)
+
+WhatsApp-style transcripts, one dealer contact throughout: **Ah Seng (Hock Lee Trading)**. Lines
+are prefixed `Dealer:` and `Bot:`. Where the plan or a ruling fixes the bot's exact words, the
+line quotes it verbatim; everywhere else the wording is invented for this proof-read and marked
+**(wording proposed)**. Idea numbers are made up for illustration (`IDEA-0001` upward per
+AC-1111) and are not to be read as real. Per the lavish-review department ruling above,
+department is free text only, never asked directly - so most transcripts below never mention it;
+(b) is the one that does.
+
+### (a) First idea, one optional question, then submit
+
+Only `problem` is ever required (R1); everything after the opening line is optional. Ah Seng's
+opening message already carries the required field, so nothing required is ever asked.
+
+```
+Dealer: i have an idea, the price tag should show promo price in red
+Bot: Got it - "Show promo price in red on price tags". What's your proposed solution? (wording proposed)
+Dealer: a small red sticker with the discount price next to the normal price
+Bot: Thanks. What's the impact if we do this? (wording proposed)
+Dealer: sales team stops getting asked why the sticker price is different from the system price
+Bot: Here's "Show promo price in red on price tags" - solution: a red sticker with the discount price; impact: sales team stops getting asked. Submit it? (wording proposed)
+Dealer: yes
+Bot: Got it - idea IDEA-0182 is in. We'll update you on WhatsApp. (wording proposed)
+```
+
+### (b) Changing a detail mid-draft, in plain words (also: department as free text)
+
+Ah Seng names his department in passing in the opening message; it is captured and echoed back
+exactly as typed, never looked up against a customer record (lavish review 24 Sep 2026).
+
+```
+Dealer: i have an idea, add a filter for slow moving stock on the dashboard, our warehouse team keeps asking for it
+Bot: Got it - "Add slow moving stock filter to dashboard". What's your proposed solution? (wording proposed)
+Dealer: a toggle that hides anything that sold in the last 90 days
+Bot: Thanks. What's the impact if we do this? (wording proposed)
+Dealer: helps the warehouse team clear dead stock faster
+Bot: Here's "Add slow moving stock filter to dashboard" - solution: a 90-day sold toggle; impact: clears dead stock faster; department: warehouse team. Submit it? (wording proposed)
+Dealer: change the impact to freeing up warehouse floor space, not just clearing stock
+Bot: Updated - impact is now freeing up warehouse floor space. Still good to submit? (wording proposed)
+Dealer: ok
+Bot: Got it - idea IDEA-0183 is in. We'll update you on WhatsApp. (wording proposed)
+```
+
+### (c) A bare "confirm" and a question-shaped hesitation mid-draft
+
+"Confirm" is one of the plan's own accepted submit words (AC-1208), squarely in this plan. The
+turn 5-6 exchange - a question about a field staying in the ideate lane with a plain answer
+rather than falling out to a menu - assumes #1178's routing fix (landing separately) alongside
+this plan's S3 reply composer; it is shown here because the owner asked to see the whole
+experience, not because #1178 is part of this plan.
+
+```
+Dealer: i have an idea, chatbot should remember what a dealer already asked before
+Bot: Got it - "Chatbot remembers past dealer questions". What's your proposed solution? (wording proposed)
+Dealer: skip
+Bot: No problem. What's the impact if we do this? (wording proposed)
+Dealer: what do you mean impact?
+Bot: Impact just means what changes for us once this is done - fewer repeated questions, happier dealers, that sort of thing. What's the impact if we do this? (wording proposed)
+Dealer: fewer repeated questions for the support team
+Bot: Here's "Chatbot remembers past dealer questions" - solution: skipped; impact: fewer repeated questions for the support team. Submit it? (wording proposed)
+Dealer: confirm
+Bot: Got it - idea IDEA-0184 is in. We'll update you on WhatsApp. (wording proposed)
+```
+
+### (d) Cancel
+
+```
+Dealer: i have an idea for stock alerts
+Bot: Got it - "Stock alerts idea". What's your proposed solution? (wording proposed)
+Dealer: actually never mind, cancel
+Bot: No worries, I've dropped that idea. Say the word anytime you want to start again. (wording proposed)
+```
+
+### (e) A duplicate of an existing idea
+
+The bot names the earlier idea and asks; it never upvotes on its own. Anything other than an
+explicit vote - including moving straight on with a new detail - defaults to keep-separate (R4).
+
+```
+Dealer: i have an idea, the price tag should show promo price in red
+Bot: Similar idea exists: Show promo price in red on price tags. Vote for that one, or keep yours separate? [fixed template, S1]
+Dealer: keep mine separate, mine also covers the online store price
+Bot: Got it, I'll keep this as its own idea. What's your proposed solution? (wording proposed)
+```
+
+No vote is recorded anywhere in this exchange - the candidate's tally is untouched unless Ah Seng
+had said something like "vote for that one".
+
+### (f) The LLM reply fails; the template fallback speaks
+
+Same draft as (a), same idea, but on the submit turn the LLM composer fails (timeout, empty
+output, or fails one of the AC-1302 to AC-1304 checks) and the S1 fallback template is used
+unchanged (R5) - marked below with a bracketed note that would never appear on WhatsApp itself.
+
+```
+Dealer: yes
+Bot: [template fallback - LLM reply failed] Your idea IDEA-0182 has been captured. We will update you on WhatsApp.
+```
+
+### (g) A test turn from the console, hidden from the board
+
+Run from the chatbot console with `is_test: true` (#1179, landing separately). Ah Seng sees
+exactly the same conversation as (a) - the console has no way to tell him it is a test turn.
+
+```
+Dealer: i have an idea, the price tag should show promo price in red
+Bot: Got it - "Show promo price in red on price tags". What's your proposed solution? (wording proposed)
+Dealer: a small red sticker with the discount price next to the normal price
+Bot: Thanks. What's the impact if we do this? (wording proposed)
+Dealer: sales team stops getting asked why the sticker price is different from the system price
+Bot: Here's "Show promo price in red on price tags" - solution: a red sticker with the discount price; impact: sales team stops getting asked. Submit it? (wording proposed)
+Dealer: yes
+Bot: Got it - idea IDEA-0185 is in. We'll update you on WhatsApp. (wording proposed)
+[is_test: true - this idea is created and numbered like any other, but it stays off the board and is skipped by duplicate matching against other dealers' ideas (AC-1108)]
+```
 
 ## Group A - Shared-service contract (S1)
 
@@ -106,9 +224,10 @@ What they hold at the end: an idea number, and nothing to remember.
   ideate lane (F2 is #1178's; this AC pins only the extraction).
 - **AC-1205 [BE][T]** Given `skip` names `problem`, when the payload is built, then `problem`
   is dropped from `skip` (only optional fields can be skipped, deterministic guard).
-- **AC-1206 [BE][T]** Given the contact has a primary `respond_contact_customers` link, when
-  the first turn of a draft is built, then `fields.department` is the linked customer's name
-  unless the user supplied one; with no link, department is left to be asked (R1).
+- **AC-1206 [BE][T]** Given the dealer's own message names a department in passing, when the
+  payload is built, then `fields.department` is stored as typed (free text; no lookup against
+  `respond_contact_customers`); given the dealer never mentions one, the field stays blank and
+  the bot does not ask (R1, lavish review 24 Sep 2026, reading proposed).
 - **AC-1207 [BE][T]** Given the contact has access types, when any payload is built, then
   `submitter_tier` is the code of the first `ContactAccessType` in the relationship's order
   (`sort_order`, then `code`); with none, the key is omitted (R7).
