@@ -2150,6 +2150,49 @@ def test_r2_migration_inserts_when_row_absent():
         assert count == 1
 
 
+def test_r3_migration_downgrade_restores_r2_body_byte_for_byte():
+    """Nit (reviewer pass 1): the reviewer verified this by hand (loading both modules
+    and comparing `_R2_BODY_HTML`/`_R2_BODY_TEXT`/`_SUBJECT`/`_COLUMNS_IN_USE` against
+    `oihr_0001_handover_r2_layout`'s own strings); pinned here so a later edit to
+    `oihr_0003_location_column`'s copied-byte-for-byte r2 body cannot drift unnoticed."""
+    r2 = _load_r2_migration()
+    r3 = _load_r3_migration()
+    with blank_session() as db:
+        _run_upgrade(r2, db)
+        r2_row = db.execute(
+            sa.text(
+                "SELECT subject, body_html, body_text FROM email_templates WHERE code = "
+                "'order_inquiry_handover_default'"
+            )
+        ).mappings().one()
+
+        _run_upgrade(r3, db)
+        r3_row = db.execute(
+            sa.text(
+                "SELECT subject, body_html, body_text FROM email_templates WHERE code = "
+                "'order_inquiry_handover_default'"
+            )
+        ).mappings().one()
+        assert "LOCATION" in r3_row["body_html"] and "LOCATION" in r3_row["body_text"], (
+            "sanity: r3 must actually add LOCATION before this test compares downgrade"
+        )
+
+        _run_downgrade(r3, db)
+        restored = db.execute(
+            sa.text(
+                "SELECT subject, body_html, body_text FROM email_templates WHERE code = "
+                "'order_inquiry_handover_default'"
+            )
+        ).mappings().one()
+        assert restored["subject"] == r2_row["subject"]
+        assert restored["body_html"] == r2_row["body_html"], (
+            "r3's downgrade must restore the r2 body_html byte for byte"
+        )
+        assert restored["body_text"] == r2_row["body_text"], (
+            "r3's downgrade must restore the r2 body_text byte for byte"
+        )
+
+
 # --------------------------------------------------------------------------- #
 # AC-R2-01..05, 09: the r2 line table's own cells, per kind.                  #
 # --------------------------------------------------------------------------- #
@@ -2285,6 +2328,56 @@ def test_handover_r2_template_cells(kind_label, line_ctx, expected_cells):
         line_row = rows[-1]
         assert line_row == expected_cells, (
             f"AC-R2-0x ({kind_label}): {line_row} != {expected_cells}"
+        )
+
+
+def test_handover_r2_template_text_body_shows_location():
+    """AC-1 (reviewer pass 1, blocking K5): the plan's own test list says "LOCATION in
+    both html and text", but every other cell-shape test in this file renders
+    `body_html` only - `_BODY_TEXT` losing its LOCATION header or its per-line cell
+    would pass every one of them. Pinned here against `body_text` directly."""
+    from app.services.email_template_service import EmailTemplateService
+
+    with blank_session() as db:
+        template = _r2_template(db)
+        context = {
+            "handover": {
+                "subject_scope": "SO314594", "verbs": ["ORDER"], "headline": "ORDER",
+                "orders": [
+                    {"so_number": "SO314594", "customer": "BUIMACO", "project": "TUJU RESIDENCE"}
+                ],
+                "lines": [
+                    {
+                        "so_date": "01/09/2026", "so_number": "SO314594",
+                        "item_code": "CB9999", "qty": "214",
+                        "delivery_date": "01/09/2026", "remark": "ORDER 214",
+                        "location": "SRT-MAIN", "was": None,
+                    }
+                ],
+                "line_count": 1,
+                "link": "https://crm.test/project-sales/order-inquiries?query=SO314594",
+            },
+            "actor": {"name": "Eling", "email": "eling@sorento.com.my"},
+            "today": "18/09/2026",
+        }
+        rendered = EmailTemplateService(db).render(template, context)
+        text = rendered["body_text"]
+
+        header_line = next(
+            (line for line in text.splitlines() if line.startswith("SO DATE |")), None
+        )
+        assert header_line is not None, f"no line table header found in body_text: {text!r}"
+        assert "LOCATION" in header_line, (
+            f"AC-1: LOCATION header missing from body_text, got {header_line!r}"
+        )
+
+        line_row = next(
+            (line for line in text.splitlines() if line.startswith("01/09/2026 |")), None
+        )
+        assert line_row is not None, f"no line row found in body_text: {text!r}"
+        cells = [cell.strip() for cell in line_row.split("|")]
+        assert "SRT-MAIN" in cells, (
+            f"AC-1: LOCATION cell missing from body_text line, got {line_row!r}"
         )
 
 
@@ -3124,7 +3217,17 @@ def test_amendment_row_without_so_line_id_sorts_after_rows_with_one(api, monkeyp
     )
     db.commit()
 
-    other_product_z, other_product_a = _product(db), _product(db)
+    # Should fix 1 (reviewer pass 1): fixed, ordering-discriminating codes, not
+    # `_product`'s own random `ZZT-<uuid>` ones - a random pair only fails this test
+    # when the coin flip happens to land against it (measured: K1's mutation, dropping
+    # the sort entirely, went red only 2 of 6 runs). Queued in the OPPOSITE of
+    # alphabetical order (B first, at row_key "0"; A second, at row_key "1") so queue
+    # order and item-code order can never coincide by chance - only a correct sort
+    # can produce A before B here.
+    other_product_b, other_product_a = _product(db), _product(db)
+    other_product_b.product_code = f"ZZT-B-{_uid()[:8]}"
+    other_product_a.product_code = f"ZZT-A-{_uid()[:8]}"
+    db.flush()
     amendment = SOAmendment(
         company_id=world.company_id, project_sales_order_id=fixture["order"].id,
         from_version_kind="schedule", status=AMENDMENT_PUBLISHED,
@@ -3134,8 +3237,8 @@ def test_amendment_row_without_so_line_id_sorts_after_rows_with_one(api, monkeyp
                     # No "so_line_id" at all: the product this DELAY names is not one
                     # of the order's own lines (AC-3's own case).
                     "row_key": "0", "verb": "DELAY",
-                    "product_id": str(other_product_z.id),
-                    "product_code": other_product_z.product_code,
+                    "product_id": str(other_product_b.id),
+                    "product_code": other_product_b.product_code,
                     "qty": "5", "from_value": "2026-09-01", "to_value": "2026-10-01",
                 },
                 {
@@ -3167,9 +3270,9 @@ def test_amendment_row_without_so_line_id_sorts_after_rows_with_one(api, monkeyp
     assert with_line_no == [world.product.product_code], (
         f"AC-3: the row that has a so_line_id must print first, got {item_codes}"
     )
-    assert without_line_no == sorted(
-        [other_product_z.product_code, other_product_a.product_code]
-    ), (
+    # Deterministic expectation, A before B - a dropped item-code tiebreak would print
+    # the queue's own B-then-A order instead.
+    assert without_line_no == [other_product_a.product_code, other_product_b.product_code], (
         f"AC-3: rows with no so_line_id must sort after, in item code order, "
         f"got {item_codes}"
     )
