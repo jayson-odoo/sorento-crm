@@ -4,12 +4,11 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, require_permission
 from app.models.base import get_company_scope
 from app.models.order import Customer
-from app.models.sales_agent import SalesAgent
 from app.services.error_handler import handle_internal_error
-from app.services.scm import sales_agent_service
+from app.services.scm.sales_order_service import SalesOrderService
 
 router = APIRouter()
 
@@ -90,35 +89,28 @@ async def get_customers_select(
 @router.get("/sales-agents-select")
 async def get_customer_sales_agents_select(
     query: Optional[str] = Query(None),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("order_management.customers.view")),
     db: Session = Depends(get_db),
 ):
     """Sales agents for the customer form's "Sales agent" select, code + name, unscoped by
-    page (~38 active rows today, comfortably below one).
+    page (~38 active rows today, comfortably below one), restricted to the caller's company
+    scope (shared agents - `company_id IS NULL`, the ~38 real rows today - always included).
 
-    Served here rather than the sales-agents master's own list (`master_data.sales_agents.
-    view`) or the SCM one (`scm.dashboard.view`): a role that may edit a customer does not
-    necessarily hold either, the same reasoning `/scm/sales-orders/agents` already states for
-    itself. `query` matches the code OR the annotated person, since a customer edit picks the
-    agent by whichever one is remembered.
+    Gated on `order_management.customers.view` (review PR #1177, security item 1) rather
+    than left on the bare module guard every other route in this file carries: this one
+    hands back the whole agent roster (codes + person names), which is more than "pick a
+    customer" needs, so it earns its own permission check the siblings do not.
+
+    Delegates the query to `SalesOrderService.list_agents` (review PR #1177, blocking item
+    1) - the SAME function `/scm/sales-orders/agents` calls - so this select and the SCM one
+    can never drift about which agents exist. `query` matches the code OR the annotated
+    person, since a customer edit picks the agent by whichever one is remembered.
     """
     try:
-        q = db.query(SalesAgent).filter(SalesAgent.is_active.is_(True))
-        scope_pred = sales_agent_service.scope_filter(get_company_scope(db))
-        if scope_pred is not None:
-            q = q.filter(scope_pred)
-        if query:
-            needle = f"%{query.strip()}%"
-            q = q.filter(
-                or_(
-                    SalesAgent.sales_agent.ilike(needle),
-                    SalesAgent.person_label.ilike(needle),
-                )
-            )
-        agents = q.order_by(SalesAgent.sales_agent.asc()).all()
+        agents = SalesOrderService(db).list_agents(query, scope=get_company_scope(db))
         return {
             "data": [
-                {"id": a.id, "sales_agent": a.sales_agent, "person_label": a.person_label}
+                {"id": a["id"], "sales_agent": a["sales_agent"], "person_label": a["person_label"]}
                 for a in agents
             ],
         }

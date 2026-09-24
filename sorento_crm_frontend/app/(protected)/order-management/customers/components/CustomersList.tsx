@@ -128,7 +128,7 @@ export default function CustomersList() {
       },
       {
         accessorKey: 'sales_agent_code',
-        header: 'Sales Agent',
+        header: ({ column }) => <DataGridColumnHeader title="Sales Agent" column={column} />,
         // Not in `_CUSTOMER_SORT_MAP` (backend) - it is a joined column and no other joined
         // column on this list is sortable either, so this one is not the first to be.
         enableSorting: false,
@@ -140,7 +140,7 @@ export default function CustomersList() {
               : sales_agent_code
             : null;
           return label ? (
-            <span className="truncate" title={label}>
+            <span className="block truncate" title={label}>
               {label}
             </span>
           ) : (
@@ -191,6 +191,10 @@ export default function CustomersList() {
     manualPagination: true,
     manualSorting: true,
     manualFiltering: true,
+    // DataGrid rule (CLAUDE.md): a resizable grid needs its column resize mode set, or a
+    // drag never commits. This grid predates the rule; the column this PR adds is what
+    // surfaces it.
+    columnResizeMode: 'onChange',
   });
 
   // The one offer this listing makes, in both places it belongs: the

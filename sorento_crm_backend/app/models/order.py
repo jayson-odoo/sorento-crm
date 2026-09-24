@@ -151,10 +151,16 @@ class Customer(Base, CompanyScopedMixin):
         back_populates="customer",
         cascade="all, delete-orphan",
     )
-    # The salesperson master row `sales_agent_id` points at. Eager, same as
-    # `SalesAgent.contact` (`app/models/sales_agent.py`): the customer list draws every
-    # row, and a lazy load would be one query per customer for a single code + name.
-    sales_agent = relationship("SalesAgent", lazy="joined")
+    # The salesperson master row `sales_agent_id` points at. Eager (the customers list
+    # draws every row, and a per-row lazy load would be one query per customer for a
+    # single code + name), but `selectin` rather than `joined`: `joined` chains through
+    # `SalesAgent.contact` (also `lazy="joined"`, `app/models/sales_agent.py`), so it added
+    # TWO LEFT OUTER JOINs to every `Customer` load, including ones that never read an
+    # agent field at all - `/customers/select` (~6,397 rows, unpaged by default) and the
+    # importer's bulk `query(Customer)` (PR #1177 review, nit 5). `selectin` is still one
+    # extra query for the whole result set (never per-row), just not joined onto rows that
+    # do not ask for it.
+    sales_agent = relationship("SalesAgent", lazy="selectin")
 
     @property
     def sales_agent_code(self):

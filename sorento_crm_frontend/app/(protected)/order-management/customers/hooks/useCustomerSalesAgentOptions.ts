@@ -16,16 +16,15 @@ export function useCustomerSalesAgentOptions() {
     staleTime: 5 * 60 * 1000,
   });
 
+  // The server already orders by code (`sales_agent_service.list_active`); re-sorting here
+  // would only be needed if a caller could not trust that.
   const options = useMemo<SearchableSelectOption[]>(
     () =>
-      (query.data ?? [])
-        .slice()
-        .sort((a, b) => a.sales_agent.localeCompare(b.sales_agent))
-        .map((a) => ({
-          value: a.id,
-          label: a.person_label ? `${a.sales_agent} - ${a.person_label}` : a.sales_agent,
-          code: a.sales_agent,
-        })),
+      (query.data ?? []).map((a) => ({
+        value: a.id,
+        label: a.person_label ? `${a.sales_agent} - ${a.person_label}` : a.sales_agent,
+        code: a.sales_agent,
+      })),
     [query.data],
   );
 

@@ -326,31 +326,48 @@ def group_of_warehouse_code(code: Optional[str]) -> Optional[str]:
     return suffix or None
 
 
-def visible_to_scope(agent: SalesAgent, scope) -> bool:
-    """Whether `agent` may be assigned/read under a caller's company scope.
-
-    `sales_agents` is deliberately NOT `CompanyScopedMixin` (see the model docstring) -
-    it is a shared master, `company_id` NULL for every one of the ~38 codes today, with a
-    tenant's own row a future possibility. So there is no `do_orm_execute` predicate to
-    lean on here; a plain `db.get` would let a customer in one company pick an agent
-    minted only for another. Visible = shared (`company_id` NULL), the caller's scope is
-    unrestricted (`None`, e.g. an X-API-Key/system caller), or the agent's own company is
-    inside the caller's scope. Same shape as the `or_(cls.company_id.is_(None), ...)`
-    predicates `rules/product_rules.py` and `product_predicate_service.py` already use for
-    a shared-vs-owned master.
-    """
-    if agent.company_id is None or scope is None:
-        return True
-    return isinstance(scope, frozenset) and agent.company_id in scope
-
-
 def scope_filter(scope):
-    """SQLAlchemy predicate for `sales_agents` rows visible under `scope` (see
-    `visible_to_scope`), for callers that list/search the master rather than check one row.
-    Returns `None` for "no predicate" (unrestricted scope).
+    """SQLAlchemy predicate for `sales_agents` rows visible under a caller's company scope,
+    for a LISTING (what to offer in a picker) - not for validating a single write, which
+    must compare against the record actually being written to instead (see
+    `CustomerService._resolve_sales_agent`, PR #1177 review security item 3: a user scoped
+    to {A, B} must not be able to put a company-B agent onto a company-A customer, which a
+    caller-scope check alone would allow).
+
+    `sales_agents` is deliberately NOT `CompanyScopedMixin` (see the model docstring) - a
+    shared master, `company_id` NULL for every one of the ~38 codes today, with a tenant's
+    own row a future possibility - so there is no `do_orm_execute` predicate to lean on.
+    Visible = shared (`company_id IS NULL`) or the agent's own company is inside `scope`.
+    Same shape as the `or_(cls.company_id.is_(None), ...)` predicates `rules/product_rules.
+    py` and `product_predicate_service.py` already use for a shared-vs-owned master.
+
+    Returns `None` for "no predicate" (`scope is None`, e.g. an unrestricted X-API-Key
+    caller). `UNSET`/an empty frozenset fails closed to shared rows only.
     """
     if scope is None:
         return None
     if isinstance(scope, frozenset) and scope:
         return or_(SalesAgent.company_id.is_(None), SalesAgent.company_id.in_(list(scope)))
     return SalesAgent.company_id.is_(None)
+
+
+def list_active(db: Session, query: Optional[str] = None, scope=None) -> list[SalesAgent]:
+    """Every active `sales_agents` row, optionally text-matched on the code or the person
+    label, optionally restricted to a caller's company scope (`scope_filter`).
+
+    The ONE query both `SalesOrderService.list_agents` (`GET /scm/sales-orders/agents`) and
+    the customer form's select (`GET /customers/sales-agents-select`) read from - a router
+    building its own copy is a `PRINCIPLES.md` hard-fail (DB query in a router) and the two
+    copies had already started to disagree about scoping before this existed (PR #1177
+    review, blocking item 1).
+    """
+    qs = db.query(SalesAgent).filter(SalesAgent.is_active.is_(True))
+    predicate = scope_filter(scope)
+    if predicate is not None:
+        qs = qs.filter(predicate)
+    if query:
+        like = f"%{query.strip()}%"
+        qs = qs.filter(
+            or_(SalesAgent.sales_agent.ilike(like), SalesAgent.person_label.ilike(like))
+        )
+    return qs.order_by(SalesAgent.sales_agent.asc()).all()

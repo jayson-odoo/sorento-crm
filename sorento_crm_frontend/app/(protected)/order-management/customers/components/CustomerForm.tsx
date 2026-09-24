@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { useRouter } from 'next/navigation';
@@ -38,6 +38,21 @@ export default function CustomerForm({ customerId, onSuccess }: CustomerFormProp
   const createMutation = useCreateCustomer();
   const updateMutation = useUpdateCustomer();
   const agentOptions = useCustomerSalesAgentOptions();
+
+  // The select only offers ACTIVE agents (the backend rejects a fresh pick of an inactive
+  // one), but a customer already carrying one - assigned before it was deactivated - must
+  // still show it, or the trigger falls back to the placeholder and the next save silently
+  // clears the assignment (review PR #1177, should-fix item 2). Shown disabled: visible,
+  // not re-selectable once cleared.
+  const agentSelectOptions = useMemo(() => {
+    const base = agentOptions.options;
+    const currentId = customer?.sales_agent_id;
+    if (!currentId || base.some((o) => o.value === currentId)) return base;
+    const label = customer?.sales_agent_name
+      ? `${customer.sales_agent_code} - ${customer.sales_agent_name} (inactive)`
+      : `${customer?.sales_agent_code ?? ''} (inactive)`;
+    return [...base, { value: currentId, label, disabled: true }];
+  }, [agentOptions.options, customer]);
 
   const form = useForm<CustomerSchemaType>({
     resolver: zodResolver(CustomerSchema),
@@ -84,7 +99,9 @@ export default function CustomerForm({ customerId, onSuccess }: CustomerFormProp
         email: data.email || undefined,
         phone_number: data.phone_number || undefined,
         is_active: data.is_active,
-        sales_agent_id: data.sales_agent_id || null,
+        // Already null or a real id - `field.onChange` normalizes '' to null on every
+        // change, so there is nothing left here for `|| null` to catch.
+        sales_agent_id: data.sales_agent_id ?? null,
       };
 
       if (isEditMode && customerId) {
@@ -214,7 +231,7 @@ export default function CustomerForm({ customerId, onSuccess }: CustomerFormProp
                       <SearchableSelect
                         value={field.value || ''}
                         onChange={(v) => field.onChange(v || null)}
-                        options={agentOptions.options}
+                        options={agentSelectOptions}
                         placeholder="No sales agent"
                         clearable
                       />
