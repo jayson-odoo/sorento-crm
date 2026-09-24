@@ -213,6 +213,24 @@ changed it.
   - Supply columns unchanged in order, but Document = `OrderInquiryDocumentLink` kind
     `'spo'` plus muted " line N"; on hand rows keep plain text.
   - The Sales order cell keeps its page link (R29, unchanged).
+- R31 (owner, 25 Sep) supersedes R30's three Demand columns.
+  - R31a Demand grid: ONE column "Covered by" in place of From / SPO / OI. Content:
+    "On hand BRW-IB" plain text for on hand (no quantity suffix - R30's had one), the
+    `OrderInquiryDocumentLink` (document number only, no "line N (qty)" suffix - R30's
+    had one) for an SPO source, both when a line drew from both (on hand text then the
+    link), a dash when nothing. The OI column goes entirely; `oi_number`/`oi_id` stay on
+    the wire, unused by the drill. Supply's own Document cell drops its muted " line N"
+    suffix too - the link alone, matching the OI lines grid's own `DocumentCell` exactly.
+  - R31b When the document dialog opens from the drill, it INDICATES which of its lines
+    are linked to the SO line that opened it, and offers a one-click jump:
+    `OrderInquiryDocumentLink`/`OrderInquiryDocumentDialog` gain an optional
+    `highlightLines: number[]` (SPO line numbers) - the dialog marks those rows (a
+    "Linked" badge) and shows a "Go to linked line" button in its header that pages the
+    first highlighted row into view (reusing `PanelDataGrid`'s own `focusRowId`
+    mechanism, already built for exactly this "jump to the page holding a named row"
+    case - no new machinery). The OI lines grid keeps passing nothing, unchanged. The SPO
+    detail payload (`getOrderInquirySpoDetail`) gains each line's own `spo_line_number`,
+    declared on `OrderInquirySpoDetailLine` - it did not carry the field at all before.
 
 ## Test list (Phase 2, tester writes first)
 
