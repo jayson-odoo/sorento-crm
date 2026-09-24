@@ -19,42 +19,13 @@ import type {
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 
 /**
- * ============================================================================
- * PHASE 1 MOCK - chatbot stock limits, X / Y (PLAN-chatbot-stock-ask-v2-24sep.md S1)
- * ============================================================================
- * Backend contract (not built yet):
+ * Chatbot stock limits, X / Y (PLAN-chatbot-stock-ask-v2-24sep.md S1):
  *   products.chatbot_max_qty          integer | null  (X: overrides the
  *     product's category value when set; unset falls back to the category)
  *   products.chatbot_eta_offset_days  integer | null  (Y: same override rule)
- * Both ride the existing GET/PUT /api/v1/master-data/products/{id} payload once
- * S1 lands, gated the same way as the category columns (see categoryService.ts).
- * Until then this file overlays them in memory, keyed by product id, on top of
- * the real response, so ProductForm and the product view can be exercised end
- * to end. Phase 2 deletes this overlay once the fields ride the real payload.
+ * Both ride the GET/PUT /api/v1/master-data/products/{id} payload as plain
+ * fields, gated the same way as the category columns (see categoryService.ts).
  */
-interface ChatbotStockLimitsMock {
-  chatbot_max_qty: number | null;
-  chatbot_eta_offset_days: number | null;
-}
-const chatbotStockLimitsMock = new Map<string, ChatbotStockLimitsMock>();
-
-function withChatbotStockLimitsMock<T extends { id: string }>(product: T): T {
-  const mock = chatbotStockLimitsMock.get(product.id);
-  return mock ? { ...product, ...mock } : product;
-}
-
-function rememberChatbotStockLimitsMock(id: string, data: Partial<ProductFormData>): void {
-  if (data.chatbot_max_qty === undefined && data.chatbot_eta_offset_days === undefined) return;
-  const existing = chatbotStockLimitsMock.get(id);
-  chatbotStockLimitsMock.set(id, {
-    chatbot_max_qty:
-      data.chatbot_max_qty !== undefined ? data.chatbot_max_qty : (existing?.chatbot_max_qty ?? null),
-    chatbot_eta_offset_days:
-      data.chatbot_eta_offset_days !== undefined
-        ? data.chatbot_eta_offset_days
-        : (existing?.chatbot_eta_offset_days ?? null),
-  });
-}
 
 export interface GetProductsParams extends DataGridApiFetchParams {
   category_id?: string;
@@ -153,7 +124,7 @@ export async function getProduct(id: string): Promise<ProductDetail> {
     throw new Error(error.message || 'Failed to fetch product');
   }
 
-  return withChatbotStockLimitsMock(await response.json());
+  return response.json();
 }
 
 /**
@@ -177,9 +148,7 @@ export async function createProduct(
     throw new Error(error.message || 'Failed to create product');
   }
 
-  const created = await response.json();
-  rememberChatbotStockLimitsMock(created.id, data);
-  return withChatbotStockLimitsMock(created);
+  return response.json();
 }
 
 /**
@@ -204,8 +173,7 @@ export async function updateProduct(
     throw new Error(error.message || 'Failed to update product');
   }
 
-  rememberChatbotStockLimitsMock(id, data);
-  return withChatbotStockLimitsMock(await response.json());
+  return response.json();
 }
 
 /**

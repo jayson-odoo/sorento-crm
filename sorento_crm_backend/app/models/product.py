@@ -57,6 +57,13 @@ class ProductCategory(Base, CompanyScopedMixin):
     # False for categories with no class meaning (MISC, PROJECT, SRTPART, VD) so they
     # cannot masquerade as a searchable class.
     is_searchable = Column(Boolean, default=True, server_default=text("true"), nullable=False)
+    # Chatbot stock ask v2 S1 (PLAN-chatbot-stock-ask-v2-24sep.md, R2): X (max quantity
+    # the assistant may confirm) and Y (days added to a shipment ETA) for every product
+    # in this category, unless the product overrides them. NULL means "not opted in" -
+    # `app.services.stock_ask_limits.effective()` resolves it to 0. No parent-category
+    # walk: only a product's OWN category is ever consulted.
+    chatbot_max_qty = Column(Integer, nullable=True)
+    chatbot_eta_offset_days = Column(Integer, nullable=True)
     created_by = Column(UUID(as_uuid=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), nullable=True)
@@ -217,6 +224,13 @@ class Product(Base, CompanyScopedMixin):
     has_batch_tracking = Column(Boolean, default=False, server_default=text("false"), nullable=False)
     reorder_level = Column(Integer, nullable=True)
     reorder_quantity = Column(Integer, nullable=True)
+    # Chatbot stock ask v2 S1 (PLAN-chatbot-stock-ask-v2-24sep.md, R2): X (max quantity
+    # the assistant may confirm) and Y (days added to a shipment ETA). NULL means "not
+    # set on this product" - `app.services.stock_ask_limits.effective()` falls back to
+    # the product's own category, then to 0. Overrides the category value when set; no
+    # parent-category walk.
+    chatbot_max_qty = Column(Integer, nullable=True)
+    chatbot_eta_offset_days = Column(Integer, nullable=True)
     is_active = Column(Boolean, default=True, server_default=text("true"), nullable=False)
     # Whether the chatbot may answer with this product. Placeholder rows that exist
     # only for order / sample bookkeeping ("SORENTO", "SORENTOBAG") must stay

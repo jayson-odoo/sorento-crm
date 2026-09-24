@@ -9,6 +9,7 @@ from app.schemas.product import ProductCategoryCreate, ProductCategoryUpdate, Pr
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.services.error_handler import handle_internal_error
 from app.services.uuid_list_param import parse_uuid_list
+from app.services.stock_ask_limits import guard_chatbot_limits_edit
 
 router = APIRouter()
 
@@ -167,6 +168,10 @@ async def update_category(
     """Update a category."""
     try:
         service = ProductCategoryService(db)
+        existing = service.get_category(category_id)
+        guard_chatbot_limits_edit(
+            db, current_user["id"], existing, category_data.model_dump(exclude_unset=True)
+        )
         category = service.update_category(category_id, category_data)
         return category
     except HTTPException:

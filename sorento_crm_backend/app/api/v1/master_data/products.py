@@ -22,6 +22,7 @@ from app.schemas.product import (
 )
 from app.schemas.common import ListResponse, ErrorResponse, ValidateImportResponse
 from app.services.error_handler import handle_internal_error
+from app.services.stock_ask_limits import guard_chatbot_limits_edit
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -332,6 +333,10 @@ async def update_product(
     """Update a product."""
     try:
         service = ProductService(db)
+        existing = service.get_product(product_id)
+        guard_chatbot_limits_edit(
+            db, current_user["id"], existing, product_data.model_dump(exclude_unset=True)
+        )
         product = service.update_product(product_id, product_data, current_user["id"])
         return product
     except HTTPException:
