@@ -30,10 +30,12 @@ shows 0 of 5 rows for this OI in status `sent` (all `pending`).
 | AC-RS-90 step 2 | Filter cleared (URL loses `?reserve=`): line 1 `Reserved 36` and line 2 `Reserved 20` green with Amend + History, line 3 `Request to reserve 36` amber with tick + pencil; the action column header has no drag grip | `AC-RS-90-4-after-commit-green-amber-1280.png` | PASS |
 | AC-RS-80 | The commit's outbox row names lines 1 and 2 only, reason printed, and says `1 line still to reserve.` | `AC-RS-80-outbox-partial-commit-mail.png`, query below | PASS |
 | AC-RS-86 | Amend on line 2: Location locked (`BRW` text), Reserved prefilled 20 (the request row's own qty), Reason required below 36; staged `Amend to 10`, `Reserve (1)` committed, pill `Reserved 10` | `AC-RS-86-amend-form-1280.png`, `AC-RS-86-amend-form-375.png` | PASS |
-| AC-RS-89 | History on line 2, newest first through `formatDateTime`: `Unreserved 10 @ BRW` (reason), `Reserved 20 @ BRW` (reason), `Requested 36 @ BRW` | `AC-RS-89-history-reserve-then-amend-1280.png` | PASS |
+| AC-RS-89 | History on line 2, newest first, in Malaysia time (recaptured on the final head): `Unreserved 10 @ BRW` 12:25 pm (reason), `Reserved 20 @ BRW` 12:23 pm (reason), `Requested 36 @ BRW` 12:20 pm | `AC-RS-89-history-reserve-then-amend-1280.png` | PASS |
 | AC-RS-83b / 78c | Pencil on line 3, Reserved 0 with a reason, `Reserve (1)`: line 3 reads `Not reserved` (neutral) with Amend + History | `AC-RS-83b-declined-not-reserved-1280.png` | PASS |
-| AC-RS-78b | Amend on the declined line: prefilled 0, set 15 with a reason, `Reserve (1)`: pill `Reserved 15`; History `Reserved 15`, `Reserved 0` (the Reserve 0 decision), `Requested 36` | `AC-RS-90-5-declined-amended-up-1280.png`, `AC-RS-89-history-declined-then-amended-1280.png` | PASS |
+| AC-RS-78b | Amend on the declined line: prefilled 0, set 15 with a reason, `Reserve (1)`: pill `Reserved 15`; History `Reserved 15`, `Reserved 0` (the Reserve 0 decision), `Requested 36` | `AC-RS-90-5-declined-amended-up-1280.png`, `AC-RS-89-history-declined-then-amended-1280.png` (recaptured, Malaysia times 12:27 / 12:25 / 12:20 pm) | PASS |
 | AC-RS-88 / 88b | State options: To buy, Partly on PO/SPO, On PO/SPO, Done, Request to reserve, Reserved (no Cancelled); `Done` alone reads `No line matches the filter.` | `AC-RS-88-state-filter-1280.png`, `AC-RS-88b-no-line-matches-1280.png` | PASS |
+| AC-RS-85c | Final pass (session `oireserve-r4-final`, head `f2c4c1ef3`): Joey requested CB231SS-NL's balance (request #2, 26), Eling ticked it (net 36). Amend prefills the line's net 36 with max 36 (net + remaining 0) and reads `Requested 62 across 2 requests` | `AC-RS-85c-amend-line-net-1280.png` | PASS |
+| AC-RS-78d | Amend that line's net 36 -> 20 with a reason: pill `Reserved 20`; History shows `Unreserved 16` taken from request #2's link (newest first), request #1's 10 untouched | `AC-RS-78d-history-net-release-1280.png` | PASS |
 | AC-RS-90 (375px) | Detail page and Lines tab usable at 375, no clipping (the grid scrolls inside its card); amend form fits, Stage/Cancel full width | `AC-RS-90-6-mobile-375.png`, `AC-RS-86-amend-form-375.png` | PASS |
 
 ## Outbox rows (`email_outbox` on `sorento_oireserve_stack`)
@@ -68,9 +70,10 @@ origin/main` is empty for it). A pre-existing app-shell dev warning, not caused 
 feature; it does not show on every load, which is why some captures show the plain `N`
 button instead. Not fixed here (outside the lane).
 
-## Noted, not fixed
+## Timestamps
 
-- History times read `4:25 AM` for a write made at 12:25 MYT: reserve history
-  `created_at` is written with `datetime.utcnow()` (naive) and printed by
-  `formatDateTime` as if it were local time. Pre-existing since round 2 (events and
-  `requested_at` alike); flagged to the captain.
+Fixed in `1dd7283f6`: the reserve columns hold naive UTC, the API now sends them with a
+UTC offset, and the History dialog prints them in Malaysia time
+(`formatDateTimeInMalaysia`). The first walk's History captures read `4:25 AM` for a
+12:25 MYT write; the two History captures above were retaken on the final head and read
+`12:25 pm`. The reserve mails print dates in Malaysia time too (`7bf4f0697`).
