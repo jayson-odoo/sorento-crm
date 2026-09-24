@@ -8868,9 +8868,35 @@ class ProjectOrderInquiryService:
         # no better candidate to link it to - the one case `_write_link`/`_remove_links`
         # below never reaches, because nothing in this pass runs for it. Idempotent: a
         # row whose stored state already agrees with its links is untouched.
+        #
+        # Should-fix 3 (review of PR #1220): bounded to the SAME predicate the standalone
+        # repair script uses (`scripts/repair_oi_stale_link_state.find_stale_rows`) -
+        # `placed`/`partly_linked`, zero bundle, zero links - one grouped query over the
+        # ids this pass already loaded, rather than `refresh_link_state` (one `_links_of`
+        # query plus a `derive_bundles` reload) on every row it walks. On Auto link all /
+        # Link now the loaded set is every linkable row company wide, which brought back
+        # the per-row N+1 the S6 batching comment below says was removed on purpose. A
+        # healthy pass (the ordinary case) finds no stale row and issues no extra query
+        # at all.
         if rows:
-            self.refresh_link_state(rows)
-            self.db.flush()
+            stale_row_ids = {
+                str(stale_id)
+                for (stale_id,) in self.db.query(OrderInquiryRow.id)
+                .filter(
+                    OrderInquiryRow.id.in_([row.id for row in rows]),
+                    OrderInquiryRow.state.in_((INQUIRY_PLACED, INQUIRY_PARTLY_LINKED)),
+                    OrderInquiryRow.bundled_qty == 0,
+                    ~self.db.query(OrderInquiryLink.id)
+                    .filter(OrderInquiryLink.row_id == OrderInquiryRow.id)
+                    .exists(),
+                )
+                .all()
+            }
+            if stale_row_ids:
+                self.refresh_link_state(
+                    [row for row in rows if str(row.id) in stale_row_ids]
+                )
+                self.db.flush()
         rows = self._rank_raised_rows(rows)
         # `_resolve_product_id` costs one or two queries per row (review round 1 nit) -
         # resolved ONCE here and read everywhere else this pass needs it (the netting

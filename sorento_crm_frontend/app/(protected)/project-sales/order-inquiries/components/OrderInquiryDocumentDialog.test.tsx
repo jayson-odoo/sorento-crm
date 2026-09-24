@@ -84,7 +84,7 @@ describe('OrderInquiryDocumentLink: opens from either kind of document (AC-D18/A
 });
 
 describe('PO lightbox body', () => {
-  it('lists every allocated row - no Standing column any more (nit, review of PR #471)', async () => {
+  it('R13 (owner rulings, 24 Sep 2026): no "Allocated to" panel under the lines grid - the grid\'s own Allocated column is the whole answer', async () => {
     getOrderInquiryPoDetail.mockResolvedValue({
       id: 'po-1',
       po_number: '202607-S0105',
@@ -110,8 +110,10 @@ describe('PO lightbox body', () => {
       <OrderInquiryDocumentDialog kind="po" document="202607-S0105" poId="po-1" open onOpenChange={vi.fn()} />,
     );
 
-    expect(await screen.findByText('SO385126')).toBeInTheDocument();
-    expect(screen.getByText('SO386461')).toBeInTheDocument();
+    await screen.findByText('BRW-BB');
+    expect(screen.queryByText('Allocated to')).not.toBeInTheDocument();
+    expect(screen.queryByText('SO385126')).not.toBeInTheDocument();
+    expect(screen.queryByText('SO386461')).not.toBeInTheDocument();
     expect(screen.queryByText('Standing')).not.toBeInTheDocument();
     expect(screen.queryByText('Proposed')).not.toBeInTheDocument();
     expect(screen.queryByText('Confirmed')).not.toBeInTheDocument();
@@ -209,7 +211,7 @@ describe('PO lightbox body', () => {
     expect(screen.getByText(/1 - 2 of 2/)).toBeInTheDocument();
   });
 
-  it('reads an explicit empty state when no allocations exist yet', async () => {
+  it('reads an explicit empty state when the purchase order carries no lines', async () => {
     getOrderInquiryPoDetail.mockResolvedValue({
       id: 'po-2',
       po_number: '202607-S0200',
@@ -223,8 +225,7 @@ describe('PO lightbox body', () => {
       <OrderInquiryDocumentDialog kind="po" document="202607-S0200" poId="po-2" open onOpenChange={vi.fn()} />,
     );
 
-    expect(await screen.findByText('No allocations yet.')).toBeInTheDocument();
-    expect(screen.getByText('This purchase order carries no lines.')).toBeInTheDocument();
+    expect(await screen.findByText('This purchase order carries no lines.')).toBeInTheDocument();
     expect(screen.getAllByText('Not stated').length).toBeGreaterThan(0);
   });
 
@@ -415,7 +416,7 @@ describe('PO lightbox lines - Allocated + the linked line highlight (issue #1215
     expect(within(row).getByText('2')).toBeInTheDocument();
   });
 
-  it('highlights only the line the opening row own link sits on, when poLineId is given', async () => {
+  it('highlights only the line the opening row own link sits on, when poLineId is given - same SKU on both lines (nit 8, review of PR #1220)', async () => {
     getOrderInquiryPoDetail.mockResolvedValue({
       id: 'po-1',
       po_number: '202607-S0105',
@@ -434,9 +435,11 @@ describe('PO lightbox lines - Allocated + the linked line highlight (issue #1215
           allocated: '2',
         },
         {
+          // Same SKU as the row above (the exact case a PO with two lines of the same
+          // item makes ambiguous) - the highlight must key off `id`, never `sku`.
           id: 'line-other',
-          sku: 'TPE-9203',
-          product_name: 'Basin (other line)',
+          sku: 'TPE-9204',
+          product_name: 'Basin',
           qty_ordered: '10000',
           qty_received: '1500',
           remaining: '8500',
@@ -457,10 +460,112 @@ describe('PO lightbox lines - Allocated + the linked line highlight (issue #1215
       />,
     );
 
-    const takenRow = (await screen.findByText('TPE-9204')).closest('tr') as HTMLElement;
-    const otherRow = screen.getByText('TPE-9203').closest('tr') as HTMLElement;
+    const rows = (await screen.findAllByText('TPE-9204')).map(
+      (cell) => cell.closest('tr') as HTMLElement,
+    );
+    expect(rows).toHaveLength(2);
+    const [takenRow, otherRow] = rows;
     expect(takenRow).toHaveAttribute('data-linked-line', 'true');
     expect(otherRow).not.toHaveAttribute('data-linked-line');
+  });
+
+  it('R11 (owner rulings, 24 Sep 2026): highlights the suggested line, the same idiom as a linked line', async () => {
+    getOrderInquiryPoDetail.mockResolvedValue({
+      id: 'po-1',
+      po_number: '202607-S0105',
+      supplier_name: 'DAFUYUAN',
+      status: 'confirmed',
+      expected_date: '2026-09-01',
+      lines: [
+        {
+          id: 'line-taken',
+          sku: 'TPE-9204',
+          product_name: 'Basin',
+          qty_ordered: '20000',
+          qty_received: '13550',
+          remaining: '6450',
+          location: 'BRW',
+          allocated: '2',
+        },
+        {
+          id: 'line-suggested',
+          sku: 'TPE-9203',
+          product_name: 'Basin (other line)',
+          qty_ordered: '10000',
+          qty_received: '1500',
+          remaining: '8500',
+          location: 'BRW',
+          allocated: '0',
+        },
+      ],
+      allocations: [],
+    });
+    renderNode(
+      <OrderInquiryDocumentDialog
+        kind="po"
+        document="202607-S0105"
+        poId="po-1"
+        suggestedLineId="line-suggested"
+        open
+        onOpenChange={vi.fn()}
+      />,
+    );
+
+    const takenRow = (await screen.findByText('TPE-9204')).closest('tr') as HTMLElement;
+    const suggestedRow = screen.getByText('TPE-9203').closest('tr') as HTMLElement;
+    expect(suggestedRow).toHaveAttribute('data-suggested-line', 'true');
+    expect(suggestedRow).not.toHaveAttribute('data-linked-line');
+    expect(takenRow).not.toHaveAttribute('data-suggested-line');
+    expect(takenRow).not.toHaveAttribute('data-linked-line');
+  });
+
+  it('R11: a linked line and a suggested line highlight at once, on different lines', async () => {
+    getOrderInquiryPoDetail.mockResolvedValue({
+      id: 'po-1',
+      po_number: '202607-S0105',
+      supplier_name: 'DAFUYUAN',
+      status: 'confirmed',
+      expected_date: '2026-09-01',
+      lines: [
+        {
+          id: 'line-taken',
+          sku: 'TPE-9204',
+          product_name: 'Basin',
+          qty_ordered: '20000',
+          qty_received: '13550',
+          remaining: '6450',
+          location: 'BRW',
+          allocated: '2',
+        },
+        {
+          id: 'line-suggested',
+          sku: 'TPE-9203',
+          product_name: 'Basin (other line)',
+          qty_ordered: '10000',
+          qty_received: '1500',
+          remaining: '8500',
+          location: 'BRW',
+          allocated: '0',
+        },
+      ],
+      allocations: [],
+    });
+    renderNode(
+      <OrderInquiryDocumentDialog
+        kind="po"
+        document="202607-S0105"
+        poId="po-1"
+        poLineId="line-taken"
+        suggestedLineId="line-suggested"
+        open
+        onOpenChange={vi.fn()}
+      />,
+    );
+
+    const takenRow = (await screen.findByText('TPE-9204')).closest('tr') as HTMLElement;
+    const suggestedRow = screen.getByText('TPE-9203').closest('tr') as HTMLElement;
+    expect(takenRow).toHaveAttribute('data-linked-line', 'true');
+    expect(suggestedRow).toHaveAttribute('data-suggested-line', 'true');
   });
 
   it('highlights nothing when no poLineId is given', async () => {

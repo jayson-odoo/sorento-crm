@@ -109,6 +109,11 @@ export function OrderInquiryBackingDocumentsDialog({
                         kind={link.kind}
                         document={link.document}
                         poId={link.po_id}
+                        // Blocking 1 (review of PR #1220): a PO opened from the
+                        // worklist is the main way into this lightbox, and it never
+                        // named a line - only the OI detail Lines tab did. `po_line_id`
+                        // is already on the wire (schemas/project_order_inquiry.py).
+                        poLineId={link.po_line_id}
                       />
                       {/* S5, R-E: never a real link - the SAME "via" tag the cell itself
                           shows, so the lightbox and the cell can never disagree. */}

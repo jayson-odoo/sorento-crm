@@ -23,7 +23,6 @@ import {
 } from '../../_shared/hooks/useOrderInquiry';
 import { formatInquiryQty } from '../../_shared/lib/orderInquiryWorklist';
 import type {
-  OrderInquiryDocumentAllocation,
   OrderInquiryPoDetailLine,
   OrderInquirySpoDetailLine,
 } from '../../_shared/types/orderInquiry.types';
@@ -45,6 +44,7 @@ export function OrderInquiryDocumentDialog({
   document,
   poId,
   poLineId,
+  suggestedLineId,
   open,
   onOpenChange,
 }: {
@@ -54,11 +54,18 @@ export function OrderInquiryDocumentDialog({
   /** Addresses the purchase order. Null on an SPO, which is addressed by its number. */
   poId?: string | null;
   /**
-   * Issue #1215 point 2: the line the OPENING row's own link sits on, so the PO lines
-   * grid can highlight it - a PO with two lines of the same item made the panel's Item
-   * column alone ambiguous about which one. Ignored on an SPO document.
+   * Issue #1215 point 2: the line the OPENING row's own REAL link sits on, so the PO
+   * lines grid can highlight it - a PO with two lines of the same item made the panel's
+   * Item column alone ambiguous about which one. Ignored on an SPO document.
    */
   poLineId?: string | null;
+  /**
+   * R11 (owner rulings, 24 Sep 2026): the line a SUGGESTED link names
+   * (`OrderInquirySuggestedLink.po_line_id`), opened from the Suggested cell - the same
+   * highlight idiom as `poLineId`, and both can show at once (a row can hold a real
+   * link on one line and a suggestion for another on the same document).
+   */
+  suggestedLineId?: string | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -73,7 +80,12 @@ export function OrderInquiryDocumentDialog({
         </DialogHeader>
         <DialogBody className="max-h-[70vh] overflow-y-auto">
           {kind === 'po' ? (
-            <PoBody poId={poId ?? null} poLineId={poLineId ?? null} open={open} />
+            <PoBody
+              poId={poId ?? null}
+              poLineId={poLineId ?? null}
+              suggestedLineId={suggestedLineId ?? null}
+              open={open}
+            />
           ) : (
             <SpoBody spoNumber={document} open={open} />
           )}
@@ -93,11 +105,13 @@ export function OrderInquiryDocumentLink({
   document,
   poId,
   poLineId,
+  suggestedLineId,
 }: {
   kind: 'po' | 'spo';
   document: string;
   poId?: string | null;
   poLineId?: string | null;
+  suggestedLineId?: string | null;
 }) {
   const [open, setOpen] = React.useState(false);
   return (
@@ -120,6 +134,7 @@ export function OrderInquiryDocumentLink({
           document={document}
           poId={poId}
           poLineId={poLineId}
+          suggestedLineId={suggestedLineId}
           open
           onOpenChange={setOpen}
         />
@@ -149,148 +164,6 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 function NotStated() {
   return <span className="font-normal text-muted-foreground">Not stated</span>;
-}
-
-/**
- * Who this document's quantity is spoken for by (plan section 4.3). No Standing column
- * any more (nit, review of PR #471): a row is born acknowledged (S1), so every allocation
- * reads Confirmed and the column said nothing a person could act on.
- */
-function AllocationsPanel({
-  allocations,
-}: {
-  allocations?: OrderInquiryDocumentAllocation[] | null;
-}) {
-  return (
-    <section className="space-y-2">
-      <h3 className="text-sm font-semibold">Allocated to</h3>
-      {!allocations || allocations.length === 0 ? (
-        <p className="text-xs text-muted-foreground">No allocations yet.</p>
-      ) : (
-        <div className="overflow-x-auto overscroll-x-contain rounded-md border">
-          <table className="w-full min-w-[480px] text-xs tabular-nums">
-            <thead>
-              <tr className="border-b text-muted-foreground">
-                <th className="px-3 py-1.5 text-start font-medium uppercase tracking-wide">
-                  Order inquiry
-                </th>
-                <th className="px-3 py-1.5 text-start font-medium uppercase tracking-wide">
-                  S/O no
-                </th>
-                <th className="px-3 py-1.5 text-start font-medium uppercase tracking-wide">
-                  Item
-                </th>
-                <th className="px-2 py-1.5 text-end font-medium uppercase tracking-wide">
-                  Qty
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {allocations.map((allocation, index) => (
-                <tr
-                  key={`${allocation.inquiry_no ?? 'allocation'}-${allocation.item_code ?? ''}-${index}`}
-                  className="border-b last:border-b-0"
-                >
-                  <td className="px-3 py-1.5">
-                    {allocation.inquiry_no || (
-                      <span className="text-muted-foreground">Not numbered</span>
-                    )}
-                  </td>
-                  <td className="px-3 py-1.5">
-                    {allocation.so_number || (
-                      <span className="text-muted-foreground">Not numbered</span>
-                    )}
-                  </td>
-                  <td className="max-w-[180px] px-3 py-1.5">
-                    <span className="block truncate" title={allocation.item_code ?? ''}>
-                      {allocation.item_code || (
-                        <span className="text-muted-foreground">Unresolved</span>
-                      )}
-                    </span>
-                  </td>
-                  <td className="px-2 py-1.5 text-end font-medium">
-                    {formatInquiryQty(allocation.qty)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </section>
-  );
-}
-
-/**
- * "Suggested for" (`PLAN-oi-links-autocount-truth-24sep.md` section 3.5, AC-LT-04): who
- * the cascade suggests this document for - never a real link, sits below Allocated to as
- * its own panel with its own explicit empty state. Same table shape as `AllocationsPanel`
- * above (the wire reuses `OrderInquiryDocumentAllocation`), a separate panel rather than
- * a merged list so a real allocation and a suggestion can never be read as the same fact.
- */
-function SuggestedForPanel({
-  suggestions,
-}: {
-  suggestions?: OrderInquiryDocumentAllocation[] | null;
-}) {
-  return (
-    <section className="space-y-2" data-testid="suggested-for-panel">
-      <h3 className="text-sm font-semibold">Suggested for</h3>
-      {!suggestions || suggestions.length === 0 ? (
-        <p className="text-xs text-muted-foreground">Nothing suggested for this document.</p>
-      ) : (
-        <div className="overflow-x-auto overscroll-x-contain rounded-md border">
-          <table className="w-full min-w-[480px] text-xs tabular-nums">
-            <thead>
-              <tr className="border-b text-muted-foreground">
-                <th className="px-3 py-1.5 text-start font-medium uppercase tracking-wide">
-                  Order inquiry
-                </th>
-                <th className="px-3 py-1.5 text-start font-medium uppercase tracking-wide">
-                  S/O no
-                </th>
-                <th className="px-3 py-1.5 text-start font-medium uppercase tracking-wide">
-                  Item
-                </th>
-                <th className="px-2 py-1.5 text-end font-medium uppercase tracking-wide">
-                  Qty
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {suggestions.map((suggestion, index) => (
-                <tr
-                  key={`${suggestion.inquiry_no ?? 'suggested'}-${suggestion.item_code ?? ''}-${index}`}
-                  className="border-b last:border-b-0"
-                >
-                  <td className="px-3 py-1.5">
-                    {suggestion.inquiry_no || (
-                      <span className="text-muted-foreground">Not numbered</span>
-                    )}
-                  </td>
-                  <td className="px-3 py-1.5">
-                    {suggestion.so_number || (
-                      <span className="text-muted-foreground">Not numbered</span>
-                    )}
-                  </td>
-                  <td className="max-w-[180px] px-3 py-1.5">
-                    <span className="block truncate" title={suggestion.item_code ?? ''}>
-                      {suggestion.item_code || (
-                        <span className="text-muted-foreground">Unresolved</span>
-                      )}
-                    </span>
-                  </td>
-                  <td className="px-2 py-1.5 text-end font-medium">
-                    {formatInquiryQty(suggestion.qty)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </section>
-  );
 }
 
 function SkuCellContent({ sku, name }: { sku?: string | null; name?: string | null }) {
@@ -494,10 +367,12 @@ function searchOfLine(line: { sku?: string | null; product_name?: string | null;
 function PoBody({
   poId,
   poLineId,
+  suggestedLineId,
   open,
 }: {
   poId: string | null;
   poLineId?: string | null;
+  suggestedLineId?: string | null;
   open: boolean;
 }) {
   const { data, isLoading, isError, error } = useOrderInquiryPoDetail(poId ?? undefined, {
@@ -568,17 +443,25 @@ function PoBody({
         pageSize={10}
         // The DialogBody already owns the scroll viewport (overflow-y-auto).
         scrollerMaxHeight={false}
-        // Issue #1215 point 2: highlight the line the OPENING row's own link sits on -
-        // a PO with two lines of the same item is exactly the case the plain Item
-        // column could not tell apart.
-        rowClassName={(line) => (poLineId && line.id === poLineId ? 'bg-primary/10' : undefined)}
-        rowAttributes={(line) =>
-          poLineId && line.id === poLineId ? { 'data-linked-line': 'true' } : {}
+        // Issue #1215 point 2: highlight the line the OPENING row's own REAL link sits
+        // on - a PO with two lines of the same item is exactly the case the plain Item
+        // column could not tell apart. R13 (owner rulings, 24 Sep 2026): the lines grid
+        // is the WHOLE answer now - no panel underneath states it a second way. R11:
+        // a SUGGESTED line (`suggestedLineId`) gets the SAME highlight idiom, and both
+        // can be set at once - a row can hold a real link on one line and a suggestion
+        // for another on the same document.
+        rowClassName={(line) =>
+          (poLineId && line.id === poLineId) || (suggestedLineId && line.id === suggestedLineId)
+            ? 'bg-primary/10'
+            : undefined
         }
+        rowAttributes={(line) => ({
+          ...(poLineId && line.id === poLineId ? { 'data-linked-line': 'true' } : {}),
+          ...(suggestedLineId && line.id === suggestedLineId
+            ? { 'data-suggested-line': 'true' }
+            : {}),
+        })}
       />
-
-      <AllocationsPanel allocations={data.allocations} />
-      <SuggestedForPanel suggestions={data.suggested_links} />
     </div>
   );
 }
@@ -619,9 +502,6 @@ function SpoBody({ spoNumber, open }: { spoNumber: string; open: boolean }) {
         pageSize={10}
         scrollerMaxHeight={false}
       />
-
-      <AllocationsPanel allocations={data.allocations} />
-      <SuggestedForPanel suggestions={data.suggested_links} />
     </div>
   );
 }

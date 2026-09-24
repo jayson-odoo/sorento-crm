@@ -110,6 +110,66 @@ def test_auto_place_for_products_self_heals_a_stale_placed_row_even_with_no_cand
     assert _invariant_holds(db, row)
 
 
+def test_auto_place_for_products_self_heal_issues_no_extra_query_on_a_healthy_pass(api, monkeypatch):
+    """Should-fix 3 (review of PR #1220): the self-heal guard must cost NOTHING when
+    every row this pass loads is healthy - bounded to the same `placed`/`partly_linked`
+    + zero-bundle + zero-link predicate the repair script's own `find_stale_rows` uses,
+    rather than a `refresh_link_state` (one `_links_of` query plus a `derive_bundles`
+    reload) on every row it walks. `auto_place_for_products` calls `refresh_link_state`
+    from exactly one place - the self-heal block - so a spy on it during the pass proves
+    the bound: a healthy pass calls it zero times.
+
+    The row is seeded PLACED with a REAL link directly, never through the cascade walk
+    itself - S3 (`oi-links-autocount-truth`) changed the walk to suggest rather than
+    place, which is a separate concern from this bound and out of scope here."""
+    from decimal import Decimal
+
+    _client, db, world, user_id = api
+    from .test_order_inquiry_place_on_po import _po_line
+
+    line = _po_line(
+        db, world["company_id"], world["po"], world["product"], world["warehouse"],
+        qty_ordered="20",
+    )
+    row = _row(
+        db, world["company_id"], world["inquiry"], qty="5",
+        item_code=world["product"].product_code, state=INQUIRY_PLACED,
+        po_ref=world["po"].po_number,
+    )
+    db.commit()
+    db.add(
+        OrderInquiryLink(
+            company_id=world["company_id"], row_id=row.id, po_line_id=line.id,
+            document=world["po"].po_number, qty=Decimal("5"),
+        )
+    )
+    db.commit()
+    db.refresh(row)
+    assert row.state == INQUIRY_PLACED
+    assert len(_links_of(db, row.id)) == 1
+
+    calls = []
+    original = ProjectOrderInquiryService.refresh_link_state
+
+    def _spy(self, rows):
+        calls.append(list(rows))
+        return original(self, rows)
+
+    monkeypatch.setattr(ProjectOrderInquiryService, "refresh_link_state", _spy)
+
+    with company_scope(db, frozenset({world["company_id"]})):
+        # The row is already placed for real, so nothing about it is stale - the
+        # bounded self-heal query must find nothing and never call
+        # `refresh_link_state` at all.
+        ProjectOrderInquiryService(db).auto_place_for_products(
+            None, actor_user_id=user_id, trigger="worklist",
+            redeal_drafts=True, include_awaiting=True,
+        )
+        db.commit()
+
+    assert calls == []
+
+
 def test_auto_place_for_products_leaves_a_genuinely_placed_row_untouched(api):
     """The guard must not be a no-op that ALSO clobbers a row that is placed for real -
     only a row whose own links (and bundle) disagree with its stored state moves."""
