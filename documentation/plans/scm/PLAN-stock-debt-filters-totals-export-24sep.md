@@ -1,6 +1,6 @@
 # PLAN: Stock Debt - cutoff + supplier + retail filters, totals, Excel-style cell summary, workbook export, menu move
 
-Status: in progress, Phase 3 (24 Sep 2026). Track: feature (three-phase). Lane branch: `feat/stock-debt-filters-export`, worktree `sorento_crm-stock-debt`. Plan created 24 Sep 2026, grilled + two lavish rounds same day.
+Status: in progress, Phase 3 verified, PR #1165 (24 Sep 2026). Track: feature (three-phase). Lane branch: `feat/stock-debt-filters-export`, worktree `sorento_crm-stock-debt`. Plan created 24 Sep 2026, grilled + two lavish rounds same day.
 UAC: `stock-debt-filters-totals-export-24sep-acceptance-criteria.md`
 Domain: scm (Stock Debt view, `/project-sales/stock-debt`)
 Parent: `PLAN-scm-borrow-ladder-v7-stock-debt.md` S2 (the view this extends; its rulings R14, R22, R23, R28, R37 stand)
