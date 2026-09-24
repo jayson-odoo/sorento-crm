@@ -66,10 +66,14 @@ const CELL = {
       agent_code: 'JENNIFER',
       warehouse_code: 'BRW-BB',
       required_date: '2026-10-15',
+      // Ordered/Delivered/Outstanding/Assigned/Short are FIVE distinct numbers on
+      // purpose (20/8/12/5/0) - `open_qty` and `assigned_qty` both reading 12 made
+      // `within(row).getByText('12')` match two cells at once (the R22 fixture bug the
+      // "prints Ordered, Delivered and Outstanding" test caught).
       open_qty: 12,
       qty_ordered: 20,
       qty_delivered: 8,
-      assigned_qty: 12,
+      assigned_qty: 5,
       assigned_source: 'On hand BRW-BB',
       short_qty: 0,
       status: 'covered',
@@ -280,7 +284,7 @@ describe('StockDebtCellDialog', () => {
 
   it('shows a Total footer row on both grids, over ALL rows of the tab (R24)', async () => {
     // RED today: neither grid has a footer row at all. Demand totals Ordered/Delivered/
-    // Outstanding/Assigned (52/8/44/28, from `CELL.demand`'s own two rows); Supply
+    // Outstanding/Assigned (52/8/44/21, from `CELL.demand`'s own two rows: 5 + 16); Supply
     // totals Qty and Free - a dedicated fixture here, not the shared `CELL` (whose two
     // supply rows both carry `free_qty: 0` on purpose, for the R37 footing test above).
     renderDialog({
@@ -304,7 +308,9 @@ describe('StockDebtCellDialog', () => {
     expect(within(demandTotalRow).getByText('52')).toBeInTheDocument();
     expect(within(demandTotalRow).getByText('8')).toBeInTheDocument();
     expect(within(demandTotalRow).getByText('44')).toBeInTheDocument();
-    expect(within(demandTotalRow).getByText('28')).toBeInTheDocument();
+    // Assigned: 5 (SO390918, changed from 12 to keep this row's five numbers distinct) +
+    // 16 (SO375875) = 21.
+    expect(within(demandTotalRow).getByText('21')).toBeInTheDocument();
     // R24 addendum: Short (sum of `short_qty`, 0 + 16) sits in the Status column of the
     // Demand Total row - there is no separate "Uncovered" line under the grid any more.
     expect(within(demandTotalRow).getByText('Short 16')).toBeInTheDocument();
