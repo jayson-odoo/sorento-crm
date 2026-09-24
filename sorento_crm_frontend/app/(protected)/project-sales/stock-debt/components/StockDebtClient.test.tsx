@@ -39,34 +39,6 @@ vi.mock('@/lib/listing-column-preferences/listColumnPreferencesService', () => (
 
 import { getUserListColumnConfig } from '@/lib/listing-column-preferences/listColumnPreferencesService';
 
-// AC-11b: the real `DateRangePicker` is a Popover + react-day-picker Calendar with no
-// repo pattern for driving its grid under jsdom (same note `SalesOrdersList.filters.
-// test.tsx` carries for its own Due date range). Stood in for here with a single button
-// that fires `onChange` with both ends at once - the ONE-FACT contract the real widget
-// guarantees - so what this file asserts is that the board wires the range into the
-// drill, not that the calendar itself works.
-vi.mock('@/components/ui/date-range-picker', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/components/ui/date-range-picker')>();
-  return {
-    ...actual,
-    DateRangePicker: (props: {
-      from?: string | null;
-      to?: string | null;
-      onChange: (next: { from: string | null; to: string | null }) => void;
-      placeholder?: string;
-      'aria-label'?: string;
-    }) => (
-      <button
-        type="button"
-        aria-label={props['aria-label']}
-        onClick={() => props.onChange({ from: '2026-11-01', to: '2026-11-30' })}
-      >
-        {props.from && props.to ? `${props.from} - ${props.to}` : (props.placeholder ?? 'Pick a date range')}
-      </button>
-    ),
-  };
-});
-
 // R19: the Copy fallback is asserted against these spies, not real sonner DOM output -
 // no `<Toaster>` is mounted in this render tree.
 vi.mock('@/lib/toast', () => ({
@@ -421,17 +393,31 @@ describe('StockDebtClient', () => {
     expect(screen.queryByText('Cutoff date')).not.toBeInTheDocument();
   });
 
-  it('carries the due date range and book into the cell drill (AC-11b)', async () => {
-    // RED today: the client forwards only `dateTo` into the dialog's OLD `cutoff` slot
-    // and hardcodes `group=""` (see `StockDebtClient.tsx`'s own comment on the
-    // `StockDebtCellDialog` render, "dateFrom has no slot of its own here yet") - so
-    // `dateFrom` never reaches `getStockDebtCell` at all.
+  it('types a Due date range into From/To inputs, shows the range chip, and carries it into the list and the cell drill (R14b/AC-11b)', async () => {
+    // RED today: Due date is still the single `DateRangePicker` widget (a Popover +
+    // react-day-picker Calendar, aria-label "Due date") - there is no "From" or "To"
+    // TYPEABLE input on the screen at all (R14b, owner 24 Sep: the range widget's month
+    // arrow is dead inside the Filters panel and it cannot be typed). `getByLabelText`
+    // for either throws before any of the assertions below run.
     renderBoard();
     await screen.findByText('SRTWB242');
     await openFilters();
 
     fireEvent.click(screen.getByRole('radio', { name: 'Retail' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Due date' }));
+    // The same typeable `DatePicker` (`@/components/ui/date-picker`) the Cutoff field
+    // used earlier in this lane (see `PurchaseOrderDetail.test.tsx`'s own
+    // `fireEvent.change(screen.getByLabelText('Order date'), { target: { value: ... } })`
+    // pattern) - DD/MM/YYYY typing, no popover interaction needed to drive it.
+    fireEvent.change(screen.getByLabelText('From'), { target: { value: '01/11/2026' } });
+    fireEvent.change(screen.getByLabelText('To'), { target: { value: '30/11/2026' } });
+
+    await waitFor(() =>
+      expect(getStockDebtList).toHaveBeenCalledWith(
+        expect.objectContaining({ dateFrom: '2026-11-01', dateTo: '2026-11-30' }),
+      ),
+    );
+    expect(screen.getByText('Due: 1 Nov 26 to 30 Nov 26')).toBeInTheDocument();
+
     // The Filters dropdown (a Radix DropdownMenu) marks the rest of the page
     // `aria-hidden` while it is open, which is exactly right for a real reader but
     // means the grid's own cells are invisible to `getByRole` until the panel closes -
@@ -447,6 +433,36 @@ describe('StockDebtClient', () => {
         'p1', '2026-09', '2026-11-01', '2026-11-30', 'retail',
       ),
     );
+  });
+
+  it('shows a "from" only chip when just the From date is set (R14b)', async () => {
+    renderBoard();
+    await screen.findByText('SRTWB242');
+    await openFilters();
+
+    fireEvent.change(screen.getByLabelText('From'), { target: { value: '01/11/2026' } });
+
+    await waitFor(() =>
+      expect(getStockDebtList).toHaveBeenCalledWith(
+        expect.objectContaining({ dateFrom: '2026-11-01', dateTo: '' }),
+      ),
+    );
+    expect(screen.getByText('Due: from 1 Nov 26')).toBeInTheDocument();
+  });
+
+  it('shows a "to" only chip when just the To date is set (R14b)', async () => {
+    renderBoard();
+    await screen.findByText('SRTWB242');
+    await openFilters();
+
+    fireEvent.change(screen.getByLabelText('To'), { target: { value: '30/11/2026' } });
+
+    await waitFor(() =>
+      expect(getStockDebtList).toHaveBeenCalledWith(
+        expect.objectContaining({ dateFrom: '', dateTo: '2026-11-30' }),
+      ),
+    );
+    expect(screen.getByText('Due: to 30 Nov 26')).toBeInTheDocument();
   });
 
   it('has no Ownership group filter left on the screen (R16)', async () => {
