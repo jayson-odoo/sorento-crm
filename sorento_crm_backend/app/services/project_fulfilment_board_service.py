@@ -3873,17 +3873,22 @@ class FulfilmentBoardService:
         that tells a planner why a group with stock coming still bought.
 
         R7: `own_arrival` is what THIS rung drew as own-arrival credit, said FIRST and by
-        its own PO - "20 landed for this line on PO ..., taken first" - ahead of whatever
-        the ordinary group-net sentence below it says, because the two are different facts
-        answering the same question.
+        the document it landed on - "20 landed for this line on ..., taken first" - ahead
+        of whatever the ordinary group-net sentence below it says, because the two are
+        different facts answering the same question.
+
+        R7 FOLLOW-UP (`PLAN-r7-landed-reads-spo-received.md`, R1/R3): that document is now
+        the SPO the goods physically landed on, never the PO - a PO line's own
+        `qty_received` is the AutoCount TRANSFER onto a shipping order, not a receipt - so
+        the noun in front of it is dropped rather than saying "PO" of an SPO number.
         """
         prefix = "".join(
             (
-                f"{qty_text(qty)} landed for this line on PO {po_number}, taken first. "
-                if po_number
+                f"{qty_text(qty)} landed for this line on {document}, taken first. "
+                if document
                 else f"{qty_text(qty)} landed for this line, taken first. "
             )
-            for qty, po_number in own_arrival
+            for qty, document in own_arrival
             if qty > _ZERO
         )
         if outcome == "none_needed":

@@ -2735,32 +2735,41 @@ class ProjectSupplyService:
         product_id: Optional[str],
         company_id: Optional[str],
     ) -> Dict[str, Tuple[Decimal, Optional[str]]]:
-        """`source_ref -> (what has LANDED, the PO it came off)` for every
+        """`source_ref -> (what has LANDED, the SPO it came off)` for every
         `PurchaseOrderLine.from_so_line_ref` in `source_refs` - the raw figure R7's tier 1
         and tier 2 are both built from, before either is capped by anything.
+
+        R7 FOLLOW-UP (`PLAN-r7-landed-reads-spo-received.md`, R1): every PO in this
+        business is received through an SPO, so `PurchaseOrderLine.qty_received` is the
+        AutoCount TRANSFER of the line onto a shipping order, never a physical receipt.
+        What has actually landed is `SPOAllocation.quantity_received`, resolved off the
+        PO line's own `source_ref` via `SPOAllocation.from_po_line_ref`. A PO line with
+        no SPO row naming it contributes nothing - the join below is an inner join.
 
         ONE query for the whole sales order (review round, SF2): the caller asks about a
         line's own ref and every sibling's in one go, so a board walking ten lines of one
         order pays for one read rather than a hundred.
 
-        FILTERED BY PRODUCT (review round, MB3): `from_so_line_ref` is a TEXT column with
-        no unique constraint, so a collision - or a data-entry mistake - on it would
-        otherwise credit a line with a delivery of a completely different item. The
-        receiving purchase-order line has to be for the SAME product as the line being
-        credited, in both tiers.
+        FILTERED BY PRODUCT (review round, MB3, and the R7 follow-up's own AC-6): `from_
+        so_line_ref` is a TEXT column with no unique constraint, so a collision - or a
+        data-entry mistake - on it would otherwise credit a line with a delivery of a
+        completely different item. Both the receiving purchase-order line AND the SPO
+        row that landed against it have to be for the SAME product as the line being
+        credited.
 
-        FILTERED BY COMPANY (security review): `company_id` is stated explicitly rather
-        than left to the ORM-level scope alone, the same way
-        `project_order_inquiry_service._resolve_ref_line` states it when resolving the
-        very same `from_so_line_ref` text - an unscoped text match must not resolve
-        another company's purchase-order line as confidently as one of ours. Absent (a
-        line with no company stamped, the pre-isolation shape) means "do not narrow",
-        exactly as `_resolve_ref_line` reads it.
+        FILTERED BY COMPANY (security review, and the R7 follow-up's own AC-6):
+        `company_id` is stated explicitly rather than left to the ORM-level scope alone,
+        the same way `project_order_inquiry_service._resolve_ref_line` states it when
+        resolving the very same `from_so_line_ref` text - an unscoped text match must not
+        resolve another company's purchase-order line, or another company's SPO row, as
+        confidently as one of ours. Absent (a line with no company stamped, the
+        pre-isolation shape) means "do not narrow", exactly as `_resolve_ref_line` reads
+        it.
 
-        `po_number` is the first one found per ref (own-arrival fixtures never split one
-        SO line's buy across two purchase orders); a mixed real one still returns a true
-        total, only the SENTENCE and the amend refusal name one PO of it, which is what
-        R7 asks for.
+        `spo_number` is the first one found per ref (own-arrival fixtures never split
+        one SO line's buy across two shipping orders); a mixed real one still returns a
+        true total, only the SENTENCE and the amend refusal name one SPO of it, which is
+        what R7's follow-up (R3) asks for.
         """
         refs = [ref for ref in {str(r).strip() for r in source_refs if r} if ref]
         if not refs or not product_id:
@@ -2768,21 +2777,28 @@ class ProjectSupplyService:
         query = (
             self.db.query(
                 PurchaseOrderLine.from_so_line_ref,
-                PurchaseOrderLine.qty_received,
-                PurchaseOrder.po_number,
+                SPOAllocation.quantity_received,
+                SPOAllocation.spo_number,
             )
-            .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+            .join(
+                SPOAllocation,
+                SPOAllocation.from_po_line_ref == PurchaseOrderLine.source_ref,
+            )
             .filter(
                 PurchaseOrderLine.from_so_line_ref.in_(refs),
                 PurchaseOrderLine.product_id == product_id,
+                SPOAllocation.product_id == product_id,
             )
         )
         if company_id is not None:
-            query = query.filter(PurchaseOrderLine.company_id == company_id)
+            query = query.filter(
+                PurchaseOrderLine.company_id == company_id,
+                SPOAllocation.company_id == company_id,
+            )
         out: Dict[str, Tuple[Decimal, Optional[str]]] = {}
-        for ref, qty, po_number in query.all():
+        for ref, qty, spo_number in query.all():
             total, held = out.get(str(ref), (_ZERO, None))
-            out[str(ref)] = (total + _dec(qty), held or po_number)
+            out[str(ref)] = (total + _dec(qty), held or spo_number)
         return out
 
     def _prefetch_own_arrival(
@@ -2884,32 +2900,49 @@ class ProjectSupplyService:
         received_all: Dict[str, Dict[str, Tuple[Decimal, Optional[str]]]] = {}
         received_scoped: Dict[Tuple[str, str], Dict[str, Tuple[Decimal, Optional[str]]]] = {}
         if refs and product_ids:
+            # R7 follow-up (`PLAN-r7-landed-reads-spo-received.md`): the same SPO join
+            # `_po_received_by_so_line_ref` reads, batched. `SPOAllocation.product_id ==
+            # PurchaseOrderLine.product_id` AND `SPOAllocation.company_id ==
+            # PurchaseOrderLine.company_id` in the JOIN itself (not only `.in_(product_ids)`
+            # on each side) - the single-read seam gets this for free by comparing both
+            # tables to the SAME literal `product_id`/`company_id` parameters; the batched
+            # read has no single parameter, only the whole walk's product SET across every
+            # company it touches, so an SPO row for a DIFFERENT product or a DIFFERENT
+            # company that both happen to appear somewhere in that set would otherwise pair
+            # across the join without ever being compared to each other (AC-6, fix-round
+            # S2).
             rows = (
                 self.db.query(
                     PurchaseOrderLine.from_so_line_ref,
-                    PurchaseOrderLine.qty_received,
+                    SPOAllocation.quantity_received,
                     PurchaseOrderLine.product_id,
                     PurchaseOrderLine.company_id,
-                    PurchaseOrder.po_number,
+                    SPOAllocation.spo_number,
                 )
-                .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+                .join(
+                    SPOAllocation,
+                    (SPOAllocation.from_po_line_ref == PurchaseOrderLine.source_ref)
+                    & (SPOAllocation.product_id == PurchaseOrderLine.product_id)
+                    & (SPOAllocation.company_id == PurchaseOrderLine.company_id),
+                )
                 .filter(
                     PurchaseOrderLine.from_so_line_ref.in_(refs),
                     PurchaseOrderLine.product_id.in_(product_ids),
+                    SPOAllocation.product_id.in_(product_ids),
                 )
                 .all()
             )
-            for ref, qty, product_id, company_id, po_number in rows:
+            for ref, qty, product_id, company_id, spo_number in rows:
                 ref = str(ref)
                 bucket_all = received_all.setdefault(str(product_id), {})
                 total, held = bucket_all.get(ref, (_ZERO, None))
-                bucket_all[ref] = (total + _dec(qty), held or po_number)
+                bucket_all[ref] = (total + _dec(qty), held or spo_number)
                 if company_id is not None:
                     bucket_scoped = received_scoped.setdefault(
                         (str(product_id), str(company_id)), {}
                     )
                     total, held = bucket_scoped.get(ref, (_ZERO, None))
-                    bucket_scoped[ref] = (total + _dec(qty), held or po_number)
+                    bucket_scoped[ref] = (total + _dec(qty), held or spo_number)
 
         for key in keys:
             sales_order_id, product_id, company_id = key
@@ -2986,8 +3019,10 @@ class ProjectSupplyService:
           lines would each read the whole of one closed sibling's spare and both be
           credited off it.
 
-        Returns `(credit_qty, po_number)` - `po_number` is tier 1's own PO where there is
-        one, else the first tier-2 PO the credit actually drew from a spare on.
+        Returns `(credit_qty, document)` - `document` is tier 1's own SPO where there is
+        one (R7 follow-up, R1/R3: what landed is `spo_allocations.quantity_received`,
+        never `purchase_order_lines.qty_received`, so this names the SPO, not the PO),
+        else the first tier-2 SPO the credit actually drew a spare from.
 
         S5: this method charges `own_arrival_left` immediately with the credit it
         returns, because for THIS caller the credit IS the final draw (`_check_line`'s
@@ -3012,17 +3047,20 @@ class ProjectSupplyService:
         *,
         own_arrival_left: Optional[MutableMapping[str, Decimal]] = None,
     ) -> Tuple[Decimal, Optional[str], Decimal, List[Tuple[str, Decimal, Optional[str]]]]:
-        """S5: the READ-ONLY half of `own_arrival_credit_for` - tier 1's own PO receipt,
-        tier 2's sibling spare (netted against `own_arrival_left`'s own running balance,
-        MB2, via `setdefault` - a READ that seeds the ledger's starting point, not a
-        charge), and the THEORETICAL credit those two and the bin's on hand cap the
-        line's open qty to. Nothing is SPENT off `own_arrival_left` here - that is
+        """S5: the READ-ONLY half of `own_arrival_credit_for` - tier 1's own SPO receipt
+        (R7 follow-up, R1: what LANDED is `spo_allocations.quantity_received`, never
+        `purchase_order_lines.qty_received`, a TRANSFER, not a receipt), tier 2's
+        sibling spare (netted against `own_arrival_left`'s own running balance, MB2, via
+        `setdefault` - a READ that seeds the ledger's starting point, not a charge), and
+        the THEORETICAL credit those two and the bin's on hand cap the line's open qty
+        to. Nothing is SPENT off `own_arrival_left` here - that is
         `_charge_own_arrival_credit`'s job, called with whatever was actually drawn,
         which for `walk()`'s own caller can be less than what is returned here.
 
-        Returns `(credit_qty, po_number, tier1_qty, tier2)` - `tier2` is the
-        `(source_ref, spare, po_number)` list a deferred charge walks in the SAME order
+        Returns `(credit_qty, document, tier1_qty, tier2)` - `tier2` is the
+        `(source_ref, spare, document)` list a deferred charge walks in the SAME order
         this computed it, so tier 1 is always spent before any sibling's tier-2 spare.
+        `document` names the SPO the goods landed on, never the PO (R3).
         """
         core_line_id = fact.unit_core_line_ids[0] if fact.unit_core_line_ids else None
         if not core_line_id or not fact.own_code:
@@ -5491,7 +5529,7 @@ class ProjectSupplyService:
         #
         # Raised directly, the way `ReserveOverHand` above is - not folded into the
         # `invalid`/`stale` buckets, whose shared "N line(s) cannot be confirmed"
-        # sentence would drop the credited quantity and the PO this message names -
+        # sentence would drop the credited quantity and the document this message names -
         # and still `SupplyLinesRefused`, so `failing_lines` pins the same line the
         # sheet marks for every other refusal. "Nothing was written" holds because this
         # raises before `_write_decision` is ever reached (a draft save never calls
@@ -5513,8 +5551,11 @@ class ProjectSupplyService:
                 # S-1 (round-5): names the CREDITED quantity, the same figure
                 # `_refuse_buy_over_own_arrival` states for its own seam - not
                 # whatever a partial Reserve happened to leave uncovered of it.
+                # R7 follow-up (R3): `credit_po` is now the document goods actually
+                # LANDED on - an SPO number, never a PO number - so the sentence names
+                # it bare, with no "PO" noun in front of it.
                 message = (
-                    f"{qty_text(credit_qty)} landed for this line on PO {credit_po}; "
+                    f"{qty_text(credit_qty)} landed for this line on {credit_po}; "
                     "nothing to buy for it"
                     if credit_po
                     else f"{qty_text(credit_qty)} landed for this line; nothing to buy "
