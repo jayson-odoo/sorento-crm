@@ -11,7 +11,11 @@ import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { StockDebtCell, StockDebtDemandLine } from '../types/stockDebt.types';
+import type {
+  StockDebtCell,
+  StockDebtDemandLine,
+  StockDebtSupplyEvent,
+} from '../types/stockDebt.types';
 
 if (!window.matchMedia) {
   (window as unknown as { matchMedia: unknown }).matchMedia = () => ({
@@ -42,11 +46,20 @@ vi.mock('../services/stockDebtService', () => ({
 
 import { StockDebtCellDialog } from './StockDebtCellDialog';
 
-// R22: `qty_ordered` and `qty_delivered` are not on `StockDebtDemandLine` yet - the
-// coder's schema/type change this round. Cast per row (an `as` assertion, not a `:`
-// annotation) so the fixture states the WIRE shape the coder is adding without an
-// excess-property error blocking the whole file from compiling in the meantime.
-const CELL: StockDebtCell = {
+// R22/R25: `qty_ordered`/`qty_delivered` (on each demand line) and `demand_total_qty`/
+// `supply_total_qty` (on the envelope) are not on the types yet - the coder's
+// schema/type change this round. Cast (an `as` assertion, not a `:` annotation) so the
+// fixture states the WIRE shape the coder is adding without an excess-property error
+// blocking the whole file from compiling in the meantime.
+//
+// R23: the second supply row used to be a `kind: 'po'` (a PO's own `bought_for` date,
+// tested separately below) - Stock Debt's own walk never emits one any more ("got PO
+// doesn't mean got supply"), so the SHARED fixture carries only `on_hand`/`spo` kinds
+// now, matching what the real service actually sends. `free_qty` on BOTH rows stays 0:
+// the R37 footing test below (`Free 0`) depends on the shared fixture's total free
+// quantity being zero, so a Free-sum fixture with real free stock lives in its own
+// dedicated test instead of here.
+const CELL = {
   demand: [
     {
       so_number: 'SO390918',
@@ -88,18 +101,23 @@ const CELL: StockDebtCell = {
       assigned_to: [{ so_number: 'SO407114', qty: 40 }],
     },
     {
-      kind: 'po',
-      ref: 'PO 202605-S0072 line 5',
+      kind: 'spo',
+      ref: 'SPO 2026/07-0021',
       warehouse_code: 'BRW-BB',
       date: '2026-08-16',
-      bought_for: '2026-10-15',
+      bought_for: null,
       qty: 12,
       free_qty: 0,
       overdue: true,
       assigned_to: [],
     },
   ],
-};
+  // R25: the envelope's own quantity totals - sum of `open_qty` (44 = 12 + 32) and sum
+  // of `qty` (52 = 40 + 12) over these same rows, echoed rather than recomputed by the
+  // FE (`app/services/scm/stock_debt_service.py` owns the arithmetic).
+  demand_total_qty: 44,
+  supply_total_qty: 52,
+} as StockDebtCell;
 
 function renderDialog(cell: StockDebtCell = CELL) {
   getStockDebtCell.mockResolvedValue(cell);
@@ -214,34 +232,41 @@ describe('StockDebtCellDialog', () => {
     await waitFor(() => expect(firstRowSo()).toBe('SO-LATE'));
   });
 
-  it('searches the Demand grid by sales order, agent or bin, and the tab follows the filter (R20)', async () => {
+  it('searches the Demand grid by sales order, agent or bin, and the tab follows the filter BY QUANTITY (R20/R25)', async () => {
     // RED today: there is no search box on the dialog at all - `PanelDataGrid` is not
-    // given `searchOf`, so `getByRole('searchbox')` throws.
+    // given `searchOf`, so `getByRole('searchbox')` throws. R25 (folded in here rather
+    // than kept a record-count check that would go stale the moment R25 lands beside
+    // R20): the filtered half of the label is the SUM of Outstanding over the rows still
+    // matching, not how many rows there are - 7 and 3 are deliberately unequal so a
+    // record-count reading ("1 of 2") and a quantity reading ("7 of 10") cannot be
+    // confused for one another.
     renderDialog({
       demand: [
         {
           so_number: 'SO-A', agent_code: 'JUSTIN', warehouse_code: 'W1',
-          required_date: '2026-10-05', open_qty: 1, qty_ordered: 1, qty_delivered: 0,
-          assigned_qty: 1, assigned_source: null, short_qty: 0, status: 'covered',
+          required_date: '2026-10-05', open_qty: 7, qty_ordered: 7, qty_delivered: 0,
+          assigned_qty: 7, assigned_source: null, short_qty: 0, status: 'covered',
         } as StockDebtDemandLine,
         {
           so_number: 'SO-B', agent_code: 'MARIA', warehouse_code: 'W2',
-          required_date: '2026-10-06', open_qty: 1, qty_ordered: 1, qty_delivered: 0,
-          assigned_qty: 1, assigned_source: null, short_qty: 0, status: 'covered',
+          required_date: '2026-10-06', open_qty: 3, qty_ordered: 3, qty_delivered: 0,
+          assigned_qty: 3, assigned_source: null, short_qty: 0, status: 'covered',
         } as StockDebtDemandLine,
       ],
       supply: [],
-    });
+      demand_total_qty: 10,
+      supply_total_qty: 0,
+    } as StockDebtCell);
     await screen.findByText('SO-A');
     expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
-      'Demand (2)', 'Supply (0)',
+      'Demand (10)', 'Supply (0)',
     ]);
 
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'JUSTIN' } });
 
     await waitFor(() => expect(screen.queryByText('SO-B')).not.toBeInTheDocument());
     expect(screen.getByText('SO-A')).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'Demand (1 of 2)' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Demand (7 of 10)' })).toBeInTheDocument();
   });
 
   it('prints Ordered, Delivered and Outstanding from the fixture (R22)', async () => {
@@ -253,10 +278,48 @@ describe('StockDebtCellDialog', () => {
     expect(within(row).getByText('12')).toBeInTheDocument();
   });
 
+  it('shows a Total footer row on both grids, over ALL rows of the tab (R24)', async () => {
+    // RED today: neither grid has a footer row at all. Demand totals Ordered/Delivered/
+    // Outstanding/Assigned (52/8/44/28, from `CELL.demand`'s own two rows); Supply
+    // totals Qty and Free - a dedicated fixture here, not the shared `CELL` (whose two
+    // supply rows both carry `free_qty: 0` on purpose, for the R37 footing test above).
+    renderDialog({
+      demand: CELL.demand,
+      supply: [
+        {
+          kind: 'spo', ref: 'SPO A', warehouse_code: 'W1', date: '2026-10-01',
+          bought_for: null, qty: 40, free_qty: 10, overdue: false, assigned_to: [],
+        },
+        {
+          kind: 'spo', ref: 'SPO B', warehouse_code: 'W2', date: '2026-10-02',
+          bought_for: null, qty: 20, free_qty: 5, overdue: false, assigned_to: [],
+        },
+      ],
+      demand_total_qty: 44,
+      supply_total_qty: 60,
+    } as StockDebtCell);
+    await screen.findByText('SO390918');
+
+    const demandTotalRow = screen.getByText('Total').closest('tr') as HTMLElement;
+    expect(within(demandTotalRow).getByText('52')).toBeInTheDocument();
+    expect(within(demandTotalRow).getByText('8')).toBeInTheDocument();
+    expect(within(demandTotalRow).getByText('44')).toBeInTheDocument();
+    expect(within(demandTotalRow).getByText('28')).toBeInTheDocument();
+    // R24 addendum: Short (sum of `short_qty`, 0 + 16) sits in the Status column of the
+    // Demand Total row - there is no separate "Uncovered" line under the grid any more.
+    expect(within(demandTotalRow).getByText('Short 16')).toBeInTheDocument();
+
+    switchTab('Supply (60)');
+    const supplyTotalRow = (await screen.findByText('Total')).closest('tr') as HTMLElement;
+    expect(within(supplyTotalRow).getByText('60')).toBeInTheDocument();
+    // R24 addendum: Free (sum of `free_qty`, 10 + 5) sits in the Supply Total row itself.
+    expect(within(supplyTotalRow).getByText('Free 15')).toBeInTheDocument();
+  });
+
   it('lists the supply with its document, arrival and who holds it', async () => {
     renderDialog();
     await screen.findByText('SO390918');
-    switchTab('Supply (2)');
+    switchTab('Supply (52)');
 
     expect(await screen.findByText('SPO 2026/09-0088')).toBeInTheDocument();
     expect(screen.getByText('SO407114 (40)')).toBeInTheDocument();
@@ -265,9 +328,42 @@ describe('StockDebtCellDialog', () => {
   });
 
   it('says an overdue document counts as nothing, and only a PO says what it was bought for', async () => {
-    renderDialog();
+    // R23 retired `kind: 'po'` from Stock Debt's own SERVICE, not from the shared
+    // `SupplyKind` schema - a `po` event stays a legal shape for the dialog to render if
+    // one is ever passed, so this pins the DIALOG's own display rule on its own fixture
+    // rather than the shared `CELL` (which now carries only `on_hand`/`spo`, matching
+    // what the real service sends).
+    renderDialog({
+      demand: CELL.demand,
+      supply: [
+        {
+          kind: 'spo',
+          ref: 'SPO 2026/09-0088',
+          warehouse_code: 'MWH-BB',
+          date: '2026-10-12',
+          bought_for: null,
+          qty: 40,
+          free_qty: 0,
+          overdue: false,
+          assigned_to: [{ so_number: 'SO407114', qty: 40 }],
+        },
+        {
+          kind: 'po',
+          ref: 'PO 202605-S0072 line 5',
+          warehouse_code: 'BRW-BB',
+          date: '2026-08-16',
+          bought_for: '2026-10-15',
+          qty: 12,
+          free_qty: 0,
+          overdue: true,
+          assigned_to: [],
+        },
+      ],
+      demand_total_qty: 44,
+      supply_total_qty: 52,
+    } as StockDebtCell);
     await screen.findByText('SO390918');
-    switchTab('Supply (2)');
+    switchTab('Supply (52)');
 
     expect(await screen.findByText('overdue, not counted')).toBeInTheDocument();
     // R30: the PO's `expected_date` is the SO date it was typed against, so it is worded as
@@ -277,7 +373,9 @@ describe('StockDebtCellDialog', () => {
   });
 
   it('renders each tab own empty state rather than a blank table', async () => {
-    renderDialog({ demand: [], supply: [] });
+    renderDialog({
+      demand: [], supply: [], demand_total_qty: 0, supply_total_qty: 0,
+    } as StockDebtCell);
 
     expect(await screen.findByText('Nothing is due here')).toBeInTheDocument();
     switchTab('Supply (0)');
@@ -298,25 +396,88 @@ describe('StockDebtCellDialog', () => {
     expect(within(dialog).getByText('Sorento basin 242')).toBeInTheDocument();
   });
 
-  it('is two tabs, Demand first, each saying how many rows it holds', async () => {
+  it('never repeats the code as the muted description line when the name equals the code (R27)', async () => {
+    // RED today: the dialog renders `productName ?? productCode` unconditionally as the
+    // description - when the two are the same string, the code prints TWICE (once in the
+    // title, once again on the muted line under it). R27: the second line renders ONLY
+    // when `product_name` is set AND differs from `product_code` (the BE already nulls
+    // an equal name on LIST rows - AC-9 - the dialog must not reintroduce the repeat).
+    getStockDebtCell.mockResolvedValue({
+      demand: [], supply: [], demand_total_qty: 0, supply_total_qty: 0,
+    } as StockDebtCell);
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <StockDebtCellDialog
+          productId="p1"
+          productCode="SRTWB242"
+          productName="SRTWB242"
+          month="2026-10"
+          monthLabel="Oct 26"
+          balance={-16}
+          dateFrom="2026-11-01"
+          dateTo="2026-11-30"
+          book="retail"
+          onClose={() => {}}
+        />
+      </QueryClientProvider>,
+    );
+
+    const dialog = await screen.findByTestId('stock-debt-cell-dialog');
+    expect(within(dialog).getByText('Product · SRTWB242')).toBeInTheDocument();
+    const description = dialog.querySelector('[data-slot="dialog-description"]');
+    expect(description?.textContent?.trim() ?? '').toBe('');
+  });
+
+  it('is two tabs, Demand first, each saying the total QUANTITY the tab holds, not a record count (R25)', async () => {
+    // RED today: the tab label is `demand.length`/`supply.length` (a record count) - "2"
+    // either way regardless of the envelope's own `demand_total_qty`/`supply_total_qty`
+    // fields, which do not exist on the wire yet at all.
     renderDialog();
     await screen.findByText('SO390918');
 
     const tabs = screen.getAllByRole('tab');
-    expect(tabs.map((tab) => tab.textContent)).toEqual(['Demand (2)', 'Supply (2)']);
+    expect(tabs.map((tab) => tab.textContent)).toEqual(['Demand (44)', 'Supply (52)']);
     // Demand is what the reader came for: which orders go without.
     expect(tabs[0]).toHaveAttribute('data-state', 'active');
   });
 
-  it('foots with the cell that opened it: Free less Uncovered is the balance (R37)', async () => {
+  it('formats the tab quantity with thousands separators (R25)', async () => {
+    renderDialog({
+      demand: CELL.demand,
+      supply: CELL.supply,
+      demand_total_qty: 5619,
+      supply_total_qty: 1000,
+    } as StockDebtCell);
+    await screen.findByText('SO390918');
+
+    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
+      'Demand (5,619)', 'Supply (1,000)',
+    ]);
+  });
+
+  it('foots with the cell that opened it: Free less Short is the balance, both in the Total rows now (R37/R24 addendum)', async () => {
+    // R24 addendum (owner, 24 Sep): the standalone "Uncovered N" / "Free N" footer LINES
+    // under each grid retire - their numbers move INTO the Total row instead (Status
+    // column on Demand, sum of `short_qty`; the Supply Total row's own Free, sum of
+    // `free_qty`). RED today: `getByText('Uncovered 16')` still finds the old standalone
+    // line, and there is no Total row for either grid to carry "Short 16" / "Free 0"
+    // instead.
     renderDialog();
     await screen.findByText('SO390918');
 
     // The short line went without 16 on its own date; nothing in the month is free, so the
     // cell reads -16 - which is the balance in the title.
-    expect(screen.getByText('Uncovered 16')).toBeInTheDocument();
-    switchTab('Supply (2)');
-    expect(await screen.findByText('Free 0')).toBeInTheDocument();
+    expect(screen.queryByText('Uncovered 16')).not.toBeInTheDocument();
+    const demandTotalRow = screen.getByText('Total').closest('tr') as HTMLElement;
+    expect(within(demandTotalRow).getByText('Short 16')).toBeInTheDocument();
+
+    switchTab('Supply (52)');
+    expect(screen.queryByText('Free 0')).not.toBeInTheDocument();
+    const supplyTotalRow = (await screen.findByText('Total')).closest('tr') as HTMLElement;
+    expect(within(supplyTotalRow).getByText('Free 0')).toBeInTheDocument();
   });
 
   it('states the short quantity a LATE line still books, although it ends fully assigned (R37)', async () => {
@@ -349,5 +510,51 @@ describe('StockDebtCellDialog', () => {
     // ...but the status cell still states what it went without on its own date, not just
     // the word "late" with the figure that made it so left unsaid.
     expect(within(row).getByText('short 20')).toBeInTheDocument();
+  });
+
+  it('shows Qty, Received and Outstanding per SPO row, blank for an on-hand row, and all four in the Supply Total (R26)', async () => {
+    // RED today: the Supply columns are still Kind/Document/Bin/Arrival/Qty/Assigned to/
+    // Note - no Received or Outstanding column exists, and `qty` on a supply row is
+    // still the single netted figure (R26 splits it into three: Qty is the SPO line's
+    // raw ordered quantity, Received/Outstanding are new fields).
+    renderDialog({
+      demand: [],
+      supply: [
+        {
+          kind: 'on_hand', ref: null, warehouse_code: 'BRW-BB', date: '2026-10-01',
+          bought_for: null, qty: 40, free_qty: 40, overdue: false, assigned_to: [],
+        },
+        {
+          kind: 'spo', ref: 'SPO 2026/09-0088', warehouse_code: 'MWH-BB',
+          date: '2026-10-12', bought_for: null, qty: 100, received_qty: 30,
+          outstanding_qty: 70, free_qty: 20, overdue: false,
+          assigned_to: [{ so_number: 'SO390918', qty: 50 }],
+        } as StockDebtSupplyEvent,
+      ],
+      demand_total_qty: 0,
+      supply_total_qty: 110,
+    } as StockDebtCell);
+    await screen.findByText('Nothing is due here');
+    switchTab('Supply (110)');
+
+    const headers = screen.getAllByRole('columnheader').map((cell) => cell.textContent);
+    expect(headers).toEqual([
+      'Kind', 'Document', 'Bin', 'Arrival', 'Qty', 'Received', 'Outstanding',
+      'Assigned to', 'Note',
+    ]);
+
+    const onHandRow = screen.getByText('On hand').closest('tr') as HTMLElement;
+    expect(within(onHandRow).getByText('40')).toBeInTheDocument();
+
+    const spoRow = (await screen.findByText('SPO 2026/09-0088')).closest('tr') as HTMLElement;
+    expect(within(spoRow).getByText('100')).toBeInTheDocument();
+    expect(within(spoRow).getByText('30')).toBeInTheDocument();
+    expect(within(spoRow).getByText('70')).toBeInTheDocument();
+
+    const totalRow = screen.getByText('Total').closest('tr') as HTMLElement;
+    expect(within(totalRow).getByText('140')).toBeInTheDocument(); // Qty: 40 + 100
+    expect(within(totalRow).getByText('30')).toBeInTheDocument(); // Received: 0 + 30
+    expect(within(totalRow).getByText('70')).toBeInTheDocument(); // Outstanding: 0 + 70
+    expect(within(totalRow).getByText('Free 60')).toBeInTheDocument(); // Free: 40 + 20
   });
 });

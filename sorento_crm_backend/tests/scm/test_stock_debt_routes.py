@@ -185,7 +185,7 @@ def _demand(
     return order, line
 
 
-def _spo(db, product, warehouse, *, qty, arrives, spo_number=None):
+def _spo(db, product, warehouse, *, qty, arrives, spo_number=None, received=0):
     from app.models.procurement import SPOAllocation
 
     row = SPOAllocation(
@@ -195,7 +195,7 @@ def _spo(db, product, warehouse, *, qty, arrives, spo_number=None):
         product_id=product.id,
         warehouse_id=warehouse.id,
         allocated_quantity=qty,
-        quantity_received=0,
+        quantity_received=received,
         receipt_status="pending",
         line_status="open",
         expected_date=arrives,
@@ -617,12 +617,16 @@ def _order_back_link_on_po(db, project_order, so_line, *, po_line, qty):
     return row, link
 
 
-def test_a_po_line_hold_pins_the_quantity_to_the_askers_line(scm_app):
-    """R21/AC-S2-2 through `order_inquiry_links.po_line_id`: a placement link binds the
-    PO's quantity to the line it was made for, whatever first-come-by-date would otherwise
-    give it. The PO is made to arrive well AFTER the line's own required date - without the
-    pin the line would read `short` or `late`, never `pinned` - and the supply row's
-    `assigned_to` names the asking SO in the PO's own arrival month."""
+def test_a_po_line_hold_pins_nothing_in_stock_debt(scm_app):
+    """REWRITTEN for R23 (owner, 24 Sep): "got PO doesn't mean got supply." Before R23
+    this asserted the opposite - that a placement link (`order_inquiry_links.po_line_id`)
+    pinned the PO's quantity to the line and put a `kind: "po"` row in the drill's Supply
+    tab. Stock Debt's own walk now counts supply as on hand + SPO ONLY: a PO never enters
+    it, pinned or free, so this same placement link now pins NOTHING here (the fulfilment
+    board and ladder, plan v7 R29, still read PO and are untouched - this is Stock Debt's
+    own reading). The line reads `short` and the drill lists no PO row at all, in EITHER
+    month.
+    """
     app, db = _client(scm_app)
     marker = f"ZZTSD{_u()[:6]}".upper()
     warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
@@ -642,7 +646,6 @@ def test_a_po_line_hold_pins_the_quantity_to_the_askers_line(scm_app):
         [str(product.id)], [str(warehouse.id)]
     )
     arrival = po_rows[(str(product.id), str(warehouse.id))][0].arrival_date
-    assert arrival > due, "the PO must arrive after the line's own date, or the pin is untested"
 
     with TestClient(app) as c:
         cell = c.get(f"{BASE}/{product.id}/cell", params={"month": month_key(due)}).json()
@@ -653,12 +656,128 @@ def test_a_po_line_hold_pins_the_quantity_to_the_askers_line(scm_app):
     assert len(cell["demand"]) == 1
     demand_line = cell["demand"][0]
     assert demand_line["so_number"] == f"{marker}-SO1"
-    assert demand_line["status"] == "pinned"
-    assert demand_line["assigned_qty"] == 50
+    assert demand_line["status"] == "short"
+    assert demand_line["assigned_qty"] == 0
 
-    po_events = [event for event in supply_cell["supply"] if event["kind"] == "po"]
-    assert len(po_events) == 1
-    assert po_events[0]["assigned_to"] == [{"so_number": f"{marker}-SO1", "qty": 50}]
+    assert supply_cell["supply"] == []
+
+
+def test_a_line_covered_only_by_a_free_po_reads_short(scm_app):
+    """R23 (owner, 24 Sep, third red batch): a line whose only covering document is a
+    FREE (unpinned) PO - the ordinary first-come-by-date case, not the placement-link
+    case the previous test covers - still reads `short`, never `covered`/`late`, and the
+    PO's own arrival month lists no supply row at all.
+    """
+    app, db = _client(scm_app)
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    product = _product(db, f"{marker}-A")
+    due = _months_ahead(1)
+    _demand(db, product, warehouse, qty=50, required_date=due, so_number=f"{marker}-SO1")
+    _po_line_for_hold(db, product, warehouse, qty=50, issue_date=TODAY)
+    db.flush()
+
+    from app.services.project_supply_service import ProjectSupplyService
+
+    po_rows = ProjectSupplyService(db).po_by_location(
+        [str(product.id)], [str(warehouse.id)]
+    )
+    arrival = po_rows[(str(product.id), str(warehouse.id))][0].arrival_date
+
+    with TestClient(app) as c:
+        cell = c.get(f"{BASE}/{product.id}/cell", params={"month": month_key(due)}).json()
+        supply_cell = c.get(
+            f"{BASE}/{product.id}/cell", params={"month": month_key(arrival)}
+        ).json()
+
+    line = cell["demand"][0]
+    assert line["status"] == "short"
+    assert line["assigned_qty"] == 0
+    assert supply_cell["supply"] == []
+
+
+def test_a_line_covered_by_an_spo_reads_covered_as_before(scm_app):
+    """R23's other half: an SPO (not a PO) is still real supply, exactly as before this
+    ruling - the walk narrows to on hand + SPO, it does not stop covering with SPOs.
+    """
+    app, db = _client(scm_app)
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    product = _product(db, f"{marker}-A")
+    due = _months_ahead(1)
+    _demand(db, product, warehouse, qty=50, required_date=due, so_number=f"{marker}-SO1")
+    _spo(db, product, warehouse, qty=50, arrives=due)
+    db.flush()
+
+    with TestClient(app) as c:
+        cell = c.get(f"{BASE}/{product.id}/cell", params={"month": month_key(due)}).json()
+
+    line = cell["demand"][0]
+    assert line["status"] == "covered"
+    assert line["assigned_qty"] == 50
+
+
+def test_the_cell_envelope_carries_total_quantities_for_the_tab_labels(scm_app):
+    """R25 (owner, 24 Sep): the tab labels state total QUANTITY, not record count -
+    `demand_total_qty` (sum of `open_qty` over the cell's demand rows) and
+    `supply_total_qty` (sum of `qty` over its supply rows), so the FE does not sum on its
+    own. RED today: neither field exists on the envelope at all.
+    """
+    app, db = _client(scm_app)
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    product = _product(db, f"{marker}-A")
+    due = _months_ahead(1)
+    _demand(db, product, warehouse, qty=30, required_date=due, so_number=f"{marker}-SO1")
+    _demand(db, product, warehouse, qty=20, required_date=due, so_number=f"{marker}-SO2")
+    _spo(db, product, warehouse, qty=15, arrives=due)
+    _spo(db, product, warehouse, qty=25, arrives=due)
+    db.flush()
+
+    with TestClient(app) as c:
+        cell = c.get(f"{BASE}/{product.id}/cell", params={"month": month_key(due)}).json()
+
+    assert len(cell["demand"]) == 2
+    assert cell["demand_total_qty"] == 50
+    assert len(cell["supply"]) == 2
+    assert cell["supply_total_qty"] == 40
+
+
+def test_the_cell_states_spo_qty_received_and_outstanding(scm_app):
+    """R26 (owner, 24 Sep): the drill's Supply tab states Qty (the SPO line's ordered
+    quantity), Received (quantity received so far) and Outstanding (Qty minus Received) -
+    the walk itself counts ONLY Outstanding as incoming supply, so received goods are not
+    double-counted (they are already on hand at the bin).
+
+    `ProjectSupplyService._spo_rows` (the R7 lane, "PO qty_received = SPO transfer")
+    ALREADY nets `allocated_quantity - quantity_received` into the ONE `qty` the walk
+    uses for assignment - so the ASSIGNMENT half below (`assigned_qty == 70`, capped at
+    Outstanding, never the full 100) is a REGRESSION GUARD, not new behaviour. RED today
+    is the two NEW WIRE FIELDS only: the route's single `qty` on a supply row is already
+    the netted Outstanding value, not the SPO line's raw ordered quantity, and
+    `received_qty` does not exist on the schema at all.
+    """
+    app, db = _client(scm_app)
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    product = _product(db, f"{marker}-A")
+    due = _months_ahead(1)
+    _demand(db, product, warehouse, qty=100, required_date=due, so_number=f"{marker}-SO1")
+    _spo(db, product, warehouse, qty=100, received=30, arrives=due)
+    db.flush()
+
+    with TestClient(app) as c:
+        cell = c.get(f"{BASE}/{product.id}/cell", params={"month": month_key(due)}).json()
+
+    supply_row = cell["supply"][0]
+    assert supply_row["qty"] == 100
+    assert supply_row["received_qty"] == 30
+    assert supply_row["outstanding_qty"] == 70
+
+    demand_line = cell["demand"][0]
+    assert demand_line["assigned_qty"] == 70
+
+    assert cell["supply_total_qty"] == 70
 
 
 # --------------------------------------------------------------------------- AC-S2-7

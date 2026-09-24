@@ -138,6 +138,38 @@ changed it.
   Delivered = `qty_delivered`, Outstanding = today's `open_qty` (Ordered minus Delivered,
   floored at 0) - unchanged, just relabelled from "Open". The backend cell line gains
   `qty_ordered` and `qty_delivered`; `open_qty` stays.
+- R23 (owner, 24 Sep, third red batch) Stock Debt counts SUPPLY as on hand + SPO only.
+  Purchase orders are not supply ("got PO doesn't mean got supply"): no PO event enters
+  the stock debt walk, free or pinned, so a line covered only by a PO reads Short, its
+  month books the shortfall, and the drill's Supply tab lists no PO rows. The fulfilment
+  board and ladder are untouched (they still read PO per plan v7 R29) - this is the Stock
+  Debt view's own reading. The `SupplyKind` literal keeps `po` for the shared schema, but
+  the stock debt service never emits it.
+- R24 Both drill grids carry a Total footer row: Demand totals Ordered, Delivered,
+  Outstanding, Assigned; Supply totals Qty, Received, Outstanding and Free (R26 splits
+  Supply's own Qty into three fields; the Total row sums all four). Totals are over ALL
+  rows of the tab (not the page), and follow the search filter on the Demand tab.
+  Addendum (same day): the standalone "Uncovered N" / "Free N" footer LINES under each
+  grid retire; their numbers move INTO the Total row instead - Demand's Total carries a
+  Short total (sum of `short_qty`) in the Status column, Supply's Total carries Free (sum
+  of `free_qty`).
+- R25 The tab labels show total QUANTITY, not record count: "Demand (5,619)" = sum of
+  Outstanding over the tab's rows (filtered when a search is active,
+  "Demand (1,200 of 5,619)"); "Supply (1,000)" = sum of Outstanding (R26 renames Supply's
+  own incoming figure Qty to Outstanding once it splits from the raw ordered quantity).
+  Backend cell envelope gains `demand_total_qty` and `supply_total_qty` so the FE does not
+  sum on its own.
+- R26 The drill's Supply tab shows, per SPO row, Qty (the SPO line's ordered quantity),
+  Received (quantity received so far) and Outstanding (Qty minus Received). The walk
+  counts ONLY Outstanding as incoming supply (received goods are already on hand at the
+  bin, so counting them again double-counts) - `ProjectSupplyService._spo_rows` (the R7
+  lane, "PO qty_received = SPO transfer") already nets this for assignment, so only the
+  two new WIRE fields are new; an on hand row shows Qty only, Received/Outstanding blank.
+  Supply columns in order: Kind, Document, Bin, Arrival, Qty, Received, Outstanding,
+  Assigned to, Note.
+- R27 The drill header never repeats the code: the second line (product name) renders
+  only when `product_name` is set AND differs from `product_code` (the BE already nulls
+  an equal name on LIST rows, AC-9 - the dialog must not reintroduce the repeat).
 
 ## Test list (Phase 2, tester writes first)
 
