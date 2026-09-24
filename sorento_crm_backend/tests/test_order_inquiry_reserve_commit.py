@@ -1286,3 +1286,37 @@ def test_history_and_request_timestamps_serialize_as_utc(reserve_api):
 
     listed = client.get(REQUEST_URL(world.inquiry.id)).json()
     assert all(_is_utc_iso(item["requested_at"]) for item in listed), listed
+
+
+def test_reserve_mail_dates_are_malaysia_calendar_days(reserve_api):
+    """`requested_at` is naive UTC: 2026-09-23 17:30 UTC is 24/09/2026 01:30 in Malaysia,
+    so both reserve mails must print 24/09/2026, and `today` is Malaysia's today."""
+    from datetime import datetime
+
+    from app.services.certificate_service import today_malaysia
+    from app.services.order_inquiry_reserve_service import (
+        _build_commit_context,
+        _build_context,
+    )
+
+    client, world = reserve_api
+    row = _open_row(world, qty="10", item_code=f"{MARKER}-MYT")
+    request_id = _request(client, world, (row, "10"))
+    request = (
+        world.db.query(OrderInquiryReserveRequest)
+        .filter(OrderInquiryReserveRequest.id == request_id)
+        .one()
+    )
+    request.requested_at = datetime(2026, 9, 23, 17, 30, 0)
+    world.db.flush()
+    rr = _rr(world, request_id, row)
+    request = world.db.get(OrderInquiryReserveRequest, request_id)
+
+    requested_ctx = _build_context(world.db, request, [(rr, row)], actor_user_id=world.requester)
+    committed_ctx = _build_commit_context(
+        world.db, request, [{"rr": rr, "row": row}], open_row_count=0, row_count=1,
+        actor_user_id=world.reserver,
+    )
+    for ctx in (requested_ctx, committed_ctx):
+        assert ctx["reserve"]["requested_at"] == "24/09/2026", ctx["reserve"]
+        assert ctx["today"] == today_malaysia().strftime("%d/%m/%Y"), ctx["today"]

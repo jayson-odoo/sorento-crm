@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -56,6 +56,7 @@ from app.models.project_so import (
     RESERVE_REQUESTED,
     RESERVE_RESERVED,
 )
+from app.services.certificate_service import today_malaysia
 from app.services.error_handler import AppException
 
 logger = logging.getLogger(__name__)
@@ -102,10 +103,15 @@ def _qty_str(value: Any) -> str:
 
 
 def _fmt_date(value) -> Optional[str]:
+    """dd/mm/yyyy as the Malaysia calendar has it: a stored timestamp is naive UTC, so
+    it moves to Malaysia time first (`pdf_render.in_malaysia`, the shared reader); a
+    plain `date` (a delivery date) carries no instant and prints as written."""
+    from app.services.pdf_render import in_malaysia
+
     if value is None:
         return None
     if isinstance(value, datetime):
-        value = value.date()
+        value = in_malaysia(value).date()
     return value.strftime("%d/%m/%Y")
 
 
@@ -322,7 +328,7 @@ def _build_context(
         "actor": _person(db, actor_user_id),
         "raiser": _person(db, inquiry.raised_by) if inquiry is not None else None,
         "requester": _person(db, request.requested_by),
-        "today": date.today().strftime("%d/%m/%Y"),
+        "today": today_malaysia().strftime("%d/%m/%Y"),
     }
 
 
@@ -395,7 +401,7 @@ def _build_commit_context(
         "actor": _person(db, actor_user_id),
         "raiser": _person(db, inquiry.raised_by) if inquiry is not None else None,
         "requester": _person(db, request.requested_by),
-        "today": date.today().strftime("%d/%m/%Y"),
+        "today": today_malaysia().strftime("%d/%m/%Y"),
     }
 
 
