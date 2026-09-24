@@ -84,6 +84,59 @@ def generate_complaint_pdf(download_id: str, complaint_id: str, user_id: str) ->
         db.close()
 
 
+def generate_packing_list_xlsx(download_id: str, shipment_id: str) -> dict:
+    """Render the consolidated packing list workbook, store it, and update the download
+    row (E1/E2, PLAN-pi-header-fields-convert-fixes-24sep.md) - the SAME bytes the
+    synchronous GET export has always produced (`consolidated_packing_list.build` +
+    `to_xlsx`), just rendered on the worker instead of the request path.
+
+    Best-effort and self-contained: any failure marks the download 'failed' with a
+    readable message rather than raising into RQ's failed registry - same pattern
+    `generate_complaint_pdf` follows.
+    """
+    db = SessionLocal()
+    # A packing list belongs to a supplier's shipment, not one company's own data - run
+    # this export system-wide, same scope `generate_complaint_pdf` uses for a shared
+    # entity.
+    set_company_scope(db, None)
+    svc = DownloadService(db)
+    try:
+        svc.mark_processing(download_id)
+
+        from app.services.scm import consolidated_packing_list
+
+        payload = consolidated_packing_list.build(db, shipment_id)
+        xlsx_bytes = consolidated_packing_list.to_xlsx(payload)
+        filename = consolidated_packing_list.export_filename(payload)
+
+        provider = default_provider()
+        backend = get_backend(provider)
+        key = f"exports/packing-list-xlsx/{download_id}/{filename}"
+        stored_key, _signed = backend.upload_file(
+            file_content=xlsx_bytes,
+            file_path=key,
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+        svc.mark_ready(
+            download_id,
+            storage_provider=provider,
+            storage_key=stored_key,
+            filename=filename,
+        )
+        logger.info(
+            "generate_packing_list_xlsx: download %s ready (%d bytes)",
+            download_id, len(xlsx_bytes),
+        )
+        return {"download_id": download_id, "status": "ready", "bytes": len(xlsx_bytes)}
+    except Exception as e:  # noqa: BLE001 - mark failed, never poison the queue
+        logger.exception("generate_packing_list_xlsx failed for download %s", download_id)
+        _record_failure(db, svc, download_id, e, "generate_packing_list_xlsx")
+        return {"download_id": download_id, "status": "failed", "error": str(e)}
+    finally:
+        db.close()
+
+
 def generate_stock_inquiry_pdf(
     download_id: str,
     inquiry_id: str,

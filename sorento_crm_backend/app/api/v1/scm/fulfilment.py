@@ -1151,7 +1151,11 @@ def export_consolidated_packing_list(
     _user: dict = Depends(_READ),
     db: Session = Depends(get_db),
 ):
-    """The same list as a workbook, named after the container rather than after its id."""
+    """The same list as a workbook, named after the container rather than after its id.
+
+    DEPRECATED (E1, PLAN-pi-header-fields-convert-fixes-24sep.md) - the FE gear now enqueues
+    the async POST below instead of calling this synchronously. Kept mounted for one release
+    for callers outside the FE (MCP, n8n)."""
     payload = consolidated_packing_list.build(db, shipment_id)
     filename = consolidated_packing_list.export_filename(payload)
     return Response(
@@ -1159,6 +1163,53 @@ def export_consolidated_packing_list(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": content_disposition(filename)},
     )
+
+
+@router.post(
+    "/inbound-shipments/{shipment_id}/packing-list/export",
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def enqueue_packing_list_export(
+    shipment_id: str,
+    current_user: dict = Depends(_READ),
+    db: Session = Depends(get_db),
+):
+    """Queue an async xlsx export of the consolidated packing list (E1/E2) - same shape as
+    a complaint's PDF export: a `user_downloads` row now, the render on the worker. The
+    result appears in My Downloads and this shipment's own Download history."""
+    from app.models.procurement import InboundShipment
+    from app.schemas.download import DownloadResponse
+    from app.services.download_service import DownloadService
+    from app.services.queue_service import enqueue_job
+    from app.tasks.export_tasks import generate_packing_list_xlsx
+
+    shipment = db.query(InboundShipment).filter(InboundShipment.id == shipment_id).first()
+    if shipment is None:
+        raise AppException(404, "Packing list not found.")
+
+    download = DownloadService(db).create(
+        user_id=str(current_user["id"]),
+        kind="packing_list_xlsx",
+        source_entity_type="inbound_shipment",
+        source_entity_id=str(shipment_id),
+        filename=f"packing-list-{shipment.shipping_container_number or shipment.shipment_number or shipment_id}.xlsx",
+    )
+    try:
+        enqueue_job(
+            generate_packing_list_xlsx,
+            str(download.id),
+            str(shipment_id),
+            queue_name="imports",
+            job_timeout=600,
+        )
+    except Exception as e:  # noqa: BLE001 - enqueue failed (e.g. Redis down): mark the
+        # row failed so the drawer shows it rather than spinning forever.
+        DownloadService(db).mark_failed(
+            str(download.id), f"Could not queue packing list export: {e}"
+        )
+        raise AppException(500, "Could not queue packing list export. Please try again.") from e
+
+    return DownloadResponse.model_validate(DownloadService(db).get(str(download.id)))
 
 
 @router.get("/inbound-shipments/{shipment_id}/line-photos")
