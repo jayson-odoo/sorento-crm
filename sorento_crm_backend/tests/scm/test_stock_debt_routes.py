@@ -971,10 +971,16 @@ def test_the_cell_lists_the_demand_with_its_bin_and_the_supply_with_its_assignme
     assert current[0]["bought_for"] is None
     assert current[0]["overdue"] is False
     # `line_no` is the seeded core line's own AutoCount `Seq` - `None` here since `_demand`
-    # never sets one - and the service OMITS the key entirely rather than sending it as
-    # `null` (`stock_debt_service.py`: `**({"line_no": line_no} if line_no is not None
-    # else {})`), verified directly against the route's own JSON, not assumed.
-    assert current[0]["assigned_to"] == [{"so_number": f"{marker}-SO1", "qty": 40}]
+    # never sets one. RED on purpose (owner ruling, 25 Sep): every other field on this
+    # contract is ALWAYS present, null when unknown (`response_model` discipline) - a key
+    # that appears and disappears is what breaks FE typing. Today the service OMITS the
+    # key entirely instead (`stock_debt_service.py`:
+    # `**({"line_no": line_no} if line_no is not None else {})`) and the route carries
+    # `response_model_exclude_unset=True` to make that stick - the coder is to emit the
+    # key unconditionally and drop `exclude_unset`.
+    assert current[0]["assigned_to"] == [
+        {"so_number": f"{marker}-SO1", "qty": 40, "line_no": None},
+    ]
 
 
 def c_get_supply(app, product, month) -> list:
