@@ -165,6 +165,14 @@ export interface StockDebtSupplyEvent {
   /** PO only: the SO delivery date the line was typed against. Display only (R30). */
   bought_for: string | null;
   qty: number;
+  /**
+   * R26: an SPO's own Received/Outstanding - `qty` above is the RAW ordered quantity for
+   * an SPO row, `outstanding_qty` the walk's own netted balance. Both `null` for every
+   * other kind (on hand has no received/outstanding history to state), so the drill
+   * prints those two columns blank rather than a fabricated 0.
+   */
+  received_qty?: number | null;
+  outstanding_qty?: number | null;
   /** What nobody took by the end of the walk - the quantity its month credits (R37). */
   free_qty: number;
   /** Arrival passed with nothing received: listed, but counted as nothing (R31). */
@@ -181,6 +189,14 @@ export interface StockDebtSupplyEvent {
 export interface StockDebtCell {
   demand: StockDebtDemandLine[];
   supply: StockDebtSupplyEvent[];
+  /**
+   * R25: the tab labels' own quantity totals, over the WHOLE tab - never recomputed by
+   * the FE from a page of rows the server has already reduced. Optional on this TYPE
+   * only (the real wire always carries both) so a fixture built before this round still
+   * type-checks; the dialog falls back to summing its own rows when either is missing.
+   */
+  demand_total_qty?: number;
+  supply_total_qty?: number;
 }
 
 /** How the export workbook is split into sheets (R5). One sheet for `none`. */
