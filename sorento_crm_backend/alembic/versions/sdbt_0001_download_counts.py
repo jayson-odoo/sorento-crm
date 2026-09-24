@@ -12,13 +12,13 @@ Both columns are additive and nullable, so the downgrade is a plain drop and no 
 rewritten either way.
 
 Revision ID: sdbt_0001_download_counts
-Revises: oirs_0004_reserve_event_zero
+Revises: oihr_0003_location_column
 """
 from alembic import op
 import sqlalchemy as sa
 
 revision = "sdbt_0001_download_counts"
-down_revision = "oirs_0004_reserve_event_zero"
+down_revision = "oihr_0003_location_column"
 branch_labels = None
 depends_on = None
 
