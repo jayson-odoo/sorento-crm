@@ -306,4 +306,57 @@ describe('StockDebtClient', () => {
     expect(screen.getByText('Sorento basin 242')).toBeInTheDocument();
     expect(container.textContent).not.toContain('p1');
   });
+
+  it('opens the drill on a real pointerdown -> pointerup -> click at one cell, and leaves nothing selected (AC-25, browser-pass finding)', async () => {
+    // `it('opens the drill on the cell that was pressed', ...)` above only fires a bare
+    // `click` - it never runs `onCellPointerDown` at all, so it cannot catch a defect that
+    // lives in the INTERACTION between the pointerdown's optimistic single-cell select and
+    // the click's own decision. A real browser click is always pointerdown -> pointerup ->
+    // click at the same coordinates, which is what this dispatches.
+    renderBoard();
+    const cellButton = await screen.findByRole('button', {
+      name: 'SRTWB242, Sep 26, balance -16',
+    });
+
+    fireEvent.pointerDown(cellButton, { button: 0, clientX: 10, clientY: 10 });
+    fireEvent.pointerUp(cellButton, { button: 0, clientX: 10, clientY: 10 });
+    fireEvent.click(cellButton, { button: 0, clientX: 10, clientY: 10 });
+
+    await waitFor(() =>
+      expect(getStockDebtCell).toHaveBeenCalledWith('p1', '2026-09', '', undefined, 'all'),
+    );
+    expect(await screen.findByTestId('stock-debt-cell-dialog')).toBeInTheDocument();
+    // A plain click's own branch calls `clear()` - nothing should carry a selection ring
+    // once the drill has opened.
+    expect(cellButton.className).not.toMatch(/ring-1 ring-primary/);
+  });
+
+  it('grows the rectangle on a SECOND Shift+ArrowRight, focus moved to the new cell after the first (AC-32, browser-pass finding)', async () => {
+    renderBoard();
+    const first = await screen.findByRole('button', {
+      name: 'SRTWB242, Aug 26, balance +55',
+    });
+    const second = screen.getByRole('button', {
+      name: 'SRTWB242, Sep 26, balance -16',
+    });
+    const third = screen.getByRole('button', {
+      name: 'SRTWB242, Oct 26, balance -652',
+    });
+
+    first.focus();
+    expect(document.activeElement).toBe(first);
+
+    fireEvent.keyDown(first, { key: 'ArrowRight', shiftKey: true });
+    // The hook only returns the next coordinate; the CALLER (`StockDebtClient`) is the one
+    // that must move DOM focus there (`cellRefs.current.get(...)?.focus()`, line ~308) so a
+    // second consecutive key press has something focused to grow from.
+    expect(document.activeElement).toBe(second);
+
+    fireEvent.keyDown(second, { key: 'ArrowRight', shiftKey: true });
+    expect(document.activeElement).toBe(third);
+
+    expect(first.className).toMatch(/ring-1 ring-primary/);
+    expect(second.className).toMatch(/ring-1 ring-primary/);
+    expect(third.className).toMatch(/ring-1 ring-primary/);
+  });
 });
