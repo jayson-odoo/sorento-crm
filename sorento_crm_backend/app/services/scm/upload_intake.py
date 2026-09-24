@@ -18,6 +18,11 @@ from fastapi import HTTPException, UploadFile, status
 
 from app.config import settings
 
+#: Review round 1, security m2: every SCM upload channel reads through here, so one cap
+#: catches all of them - the FE already advertises "up to 25 MB" on every drop zone
+#: (`ImportColumnMapper`/the upload dialogs), this is what actually enforces it server-side.
+_MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+
 
 def allowed_extensions() -> tuple[str, ...]:
     """The spreadsheet extensions the SCM uploads accept, from `SCM_UPLOAD_EXTENSIONS`.
@@ -65,11 +70,27 @@ async def read_upload_retained(file: UploadFile) -> RetainedUpload:
             ),
         )
     source_name = file.filename or "upload.xlsx"
+    # Security review, round 3: `file.size` - Starlette's own running total from the
+    # multipart parse, set BEFORE this handler ever touches the body - is checked first
+    # when present, so an oversized upload 413s without this module also copying the whole
+    # body into a `bytes` object just to measure it. The `len(source_bytes)` check below
+    # stays as the real enforcement for the case `.size` is absent (an older client that
+    # never advertises it).
+    if file.size is not None and file.size > _MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail="The uploaded file exceeds the 25 MB limit.",
+        )
     source_bytes = await file.read()
     if not source_bytes:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="The uploaded file is empty",
+        )
+    if len(source_bytes) > _MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail="The uploaded file exceeds the 25 MB limit.",
         )
     if name.endswith(".xls"):
         # Legacy BIFF: openpyxl cannot open it at all, so there is nothing to strip.

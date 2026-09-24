@@ -65,6 +65,16 @@ vi.mock('@/app/(protected)/scm/services/proformaInvoiceService', () => ({
   listProformaInvoices: vi.fn(async () => ({ data: [], total: 0 })),
 }));
 
+// V4 (PLAN-import-column-mapper-24sep.md F3, AC-M13/AC-M15) - the inline mapper, one
+// section per file, which is what replaces the retired "Map to..." chip (G5).
+const probeImportMapping = vi.fn();
+const saveImportMapping = vi.fn();
+
+vi.mock('@/app/(protected)/scm/services/importMappingService', () => ({
+  probeImportMapping: (...a: unknown[]) => probeImportMapping(...a),
+  saveImportMapping: (...a: unknown[]) => saveImportMapping(...a),
+}));
+
 import { SupplierDocumentsUploadDialog } from './SupplierDocumentsUploadDialog';
 
 const PI_FILE_PREVIEW = {
@@ -72,6 +82,7 @@ const PI_FILE_PREVIEW = {
   kind: 'proforma_invoice',
   blocks: [
     {
+      part: 'proforma_invoice',
       container_no: 'WHSU6243088',
       seal_no: 'WHA4528193',
       cartons: null,
@@ -81,6 +92,7 @@ const PI_FILE_PREVIEW = {
       note_count: 0,
     },
     {
+      part: 'proforma_invoice',
       container_no: 'WHSU6356079',
       seal_no: 'WHA4528173',
       cartons: null,
@@ -106,6 +118,7 @@ const PL_FILE_PREVIEW = {
   kind: 'packing_list',
   blocks: [
     {
+      part: 'packing_list',
       container_no: 'WHSU6243088',
       seal_no: 'WHA4528193',
       cartons: 792,
@@ -115,6 +128,7 @@ const PL_FILE_PREVIEW = {
       note_count: 4,
     },
     {
+      part: 'packing_list',
       container_no: 'WHSU6356079',
       seal_no: 'WHA4528173',
       cartons: 1071,
@@ -194,6 +208,11 @@ beforeEach(() => {
   getFulfilmentSuppliers.mockReset().mockResolvedValue([]);
   createImportFieldAlias.mockReset();
   listImportFieldAliasFields.mockReset().mockResolvedValue([]);
+  probeImportMapping.mockReset().mockResolvedValue({
+    probe: { header_row: 1, columns: [], required_fields: [] },
+    fields: [],
+  });
+  saveImportMapping.mockReset().mockResolvedValue(undefined);
 });
 
 describe('SupplierDocumentsUploadDialog - the dialog now reads "Upload supplier documents"', () => {
@@ -278,6 +297,35 @@ describe('SupplierDocumentsUploadDialog - Confirm', () => {
     fireEvent.click(testButton());
 
     expect(await screen.findByRole('button', { name: /Confirm: 2 invoices, 2 draft packing lists/ })).toBeInTheDocument();
+  });
+
+  // Owner hand-test round (24 Sep evening): a COMBINED file's own blocks mix both kinds -
+  // nothing on a display block used to say which, so `confirmCounts` added every combined
+  // block's count toward BOTH invoices and packing lists. Each block now carries its own
+  // `part` (`_pi_blocks`/`_pl_blocks`, supplier_document_service.py) so the count can tell
+  // them apart the way the reader itself already does.
+  it('a combined file counts one invoice and one packing list, not both blocks toward both', async () => {
+    previewSupplierDocuments.mockResolvedValue({
+      files: [
+        {
+          ...PI_FILE_PREVIEW,
+          name: 'combined.xlsx',
+          kind: 'combined',
+          blocks: [PI_FILE_PREVIEW.blocks[0], PL_FILE_PREVIEW.blocks[0]],
+        },
+      ],
+      price_matches: [],
+    });
+    openDialog();
+    pickFiles([xlsx('combined.xlsx')]);
+    fireEvent.click(testButton());
+
+    expect(
+      await screen.findByRole('button', { name: /Confirm: 1 invoice, 1 draft packing list/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /Confirm: 2 invoices, 2 draft packing lists/ }),
+    ).toBeNull();
   });
 
   it('applies every file and reports what it created', async () => {
@@ -578,100 +626,237 @@ describe('SupplierDocumentsUploadDialog - server-resolved Attaches-to per block 
   });
 });
 
-describe('SupplierDocumentsUploadDialog - "Map to..." re-runs Test for that file automatically (AC-E4, ruling 20)', () => {
-  it('writes the alias, then re-previews the SAME file (not an optimistic hide of the chip)', async () => {
-    const withUnmapped = {
-      files: [{ ...PI_FILE_PREVIEW, name: 'jinbaichuan.xlsx', unmapped_headers: ['尺寸（mm）'] }],
-      price_matches: [],
-    };
-    const afterMapping = {
-      files: [{ ...PI_FILE_PREVIEW, name: 'jinbaichuan.xlsx', unmapped_headers: [] }],
-      price_matches: [],
-    };
-    previewSupplierDocuments.mockReset();
-    previewSupplierDocuments.mockResolvedValueOnce(withUnmapped).mockResolvedValueOnce(afterMapping);
-    listImportFieldAliasFields.mockResolvedValue([{ field: 'carton_dims', label: 'Carton dims' }]);
-    createImportFieldAlias.mockResolvedValue({});
 
+// V4 (PLAN-import-column-mapper-24sep.md F3, AC-M9/AC-M13/AC-M15). Replaces the retired
+// "Map to..." describe block above this line (sanctioned by the captain, 24 Sep 2026):
+// that flow no longer exists in the component - the inline mapper is what shows an
+// unmapped column now, before Test rather than after a first read reports it.
+describe('SupplierDocumentsUploadDialog - inline column mapper (F3, G5)', () => {
+  it('shows one mapper section per file, titled by the file name, and no "Map to..." anywhere (AC-M13, AC-M15)', async () => {
     openDialog();
-    pickFiles([xlsx('jinbaichuan.xlsx')]);
-    fireEvent.click(testButton());
+    pickFiles([xlsx('invoice.xls'), xlsx('packing-list.xls')]);
 
-    expect(await screen.findByText('尺寸（mm）')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Map to...' }));
-
-    // The field list is server-sourced (E1), not hand-typed.
-    expect(await screen.findByText('Choose a field')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('combobox'));
-    fireEvent.click(await screen.findByRole('option', { name: 'Carton dims' }));
-
-    await waitFor(() =>
-      expect(createImportFieldAlias).toHaveBeenCalledWith({
-        doc_type: 'packing_list',
-        field: 'carton_dims',
-        alias: '尺寸（mm）',
-      }),
-    );
-    // The SECOND preview call, for the SAME file - the re-run this AC is about, not just
-    // the mapping write.
-    await waitFor(() => expect(previewSupplierDocuments).toHaveBeenCalledTimes(2));
-    expect(previewSupplierDocuments.mock.calls[1][0][0].name).toBe('jinbaichuan.xlsx');
+    expect(await screen.findByText('Columns for invoice.xls')).toBeInTheDocument();
+    expect(screen.getByText('Columns for packing-list.xls')).toBeInTheDocument();
+    expect(screen.queryByText(/Map to\.\.\./)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Map to...' })).toBeNull();
   });
 
-  it('writes the alias for EVERY reader that missed the header on a combined file (ruling 24)', async () => {
-    // A combined sheet is read twice, so `尺寸（mm）` is unmapped for both readers and the
-    // preview says so. Mapping it once used to leave the invoice half of the file still
-    // ignoring the column.
-    const combined = {
-      files: [
-        {
-          ...PI_FILE_PREVIEW,
-          name: 'jinbaichuan.xlsx',
-          kind: 'combined',
-          unmapped_headers: ['尺寸（mm）'],
-          unmapped_header_doc_types: { '尺寸（mm）': ['proforma_invoice', 'packing_list'] },
-        },
+  function probeFor(
+    headerRow: number,
+    columns: { position: number; header: string; field: string | null; source: string }[],
+    requiredFields: string[] = ['item_code', 'qty'],
+  ) {
+    return {
+      probe: {
+        header_row: headerRow,
+        columns: columns.map((c) => ({ ...c, samples: [] })),
+        required_fields: requiredFields,
+      },
+      fields: [
+        { field: 'item_code', label: 'Item code' },
+        { field: 'qty', label: 'Quantity' },
+        { field: 'unit_price', label: 'Unit price' },
       ],
-      price_matches: [],
     };
-    previewSupplierDocuments.mockReset();
-    previewSupplierDocuments
-      .mockResolvedValueOnce(combined)
-      .mockResolvedValueOnce({
-        files: [{ ...combined.files[0], unmapped_headers: [], unmapped_header_doc_types: {} }],
-        price_matches: [],
-      });
-    listImportFieldAliasFields.mockResolvedValue([
-      { field: 'carton_dims', label: 'Carton dims' },
-    ]);
-    // The packing-list write lands; the invoice reader already had that spelling on file,
-    // which is a 409 and NOT an error for the chip.
-    createImportFieldAlias.mockImplementation(async ({ doc_type }: { doc_type: string }) => {
-      if (doc_type === 'proforma_invoice') {
-        const conflict = new Error('already mapped') as Error & { status?: number };
-        conflict.status = 409;
-        throw conflict;
-      }
-      return {};
+  }
+
+  // V5 (fix-round, B6/AC-M3): the probed header row per file must travel onto BOTH the
+  // read Test takes and the write Confirm makes - the service layer already carries a
+  // `headerRows` option (`fulfilmentService.ts`), but neither call here passes it.
+  it('sends header_rows {file name: probed row} to Test and to Confirm', async () => {
+    const resolvedColumns = [
+      { position: 0, header: 'ITEM', field: 'item_code', source: 'supplier' },
+      { position: 1, header: 'QTY', field: 'qty', source: 'supplier' },
+    ];
+    probeImportMapping.mockImplementation(async ({ file }: { file: File }) => {
+      if (file.name === 'invoice.xls') return probeFor(15, resolvedColumns);
+      return probeFor(2, resolvedColumns);
     });
-
+    applySupplierDocuments.mockResolvedValue({
+      proforma_invoice_ids: [], shipment_ids: [], links_written: 0, attachment_ids: [],
+    });
     openDialog();
-    pickFiles([xlsx('jinbaichuan.xlsx')]);
+    const files = pickFiles([xlsx('invoice.xls'), xlsx('packing-list.xls')]);
+    await waitFor(() => expect(probeImportMapping).toHaveBeenCalledTimes(2));
+
     fireEvent.click(testButton());
+    await waitFor(() =>
+      expect(previewSupplierDocuments).toHaveBeenCalledWith(
+        files,
+        expect.objectContaining({
+          headerRows: { 'invoice.xls': 15, 'packing-list.xls': 2 },
+        }),
+      ),
+    );
 
-    expect(await screen.findByText('尺寸（mm）')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Map to...' }));
-    expect(await screen.findByText('Choose a field')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('combobox'));
-    fireEvent.click(await screen.findByRole('option', { name: 'Carton dims' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Confirm/ }));
+    await waitFor(() =>
+      expect(applySupplierDocuments).toHaveBeenCalledWith(
+        files,
+        expect.objectContaining({
+          headerRows: { 'invoice.xls': 15, 'packing-list.xls': 2 },
+        }),
+      ),
+    );
+  });
 
-    await waitFor(() => expect(createImportFieldAlias).toHaveBeenCalledTimes(2));
-    expect(createImportFieldAlias.mock.calls.map((c) => c[0].doc_type).sort()).toEqual([
-      'packing_list',
-      'proforma_invoice',
+  // V5, second half: the mapper always probes the UNION of proforma_invoice + packing_list
+  // (G4) before a file's real kind is known, so `required_fields` always includes
+  // `unit_price` even for a file that turns out to be a pure packing list (which never
+  // needs it). Test must not block on a field THIS file will never be asked to resolve.
+  it('does not disable Test for a pure packing list missing only unit_price', async () => {
+    probeImportMapping.mockResolvedValue(
+      probeFor(
+        2,
+        [
+          { position: 0, header: 'ITEM', field: 'item_code', source: 'supplier' },
+          { position: 1, header: 'QTY', field: 'qty', source: 'supplier' },
+        ],
+        ['item_code', 'qty', 'unit_price'],
+      ),
+    );
+    openDialog();
+    pickFiles([xlsx('packing-list.xls')]);
+    await waitFor(() => expect(probeImportMapping).toHaveBeenCalled());
+
+    expect(testButton()).not.toBeDisabled();
+  });
+
+  // V6 (fix-round): the self-serve supplier picker changing supplier must re-probe every
+  // already-dropped file against the NEW supplier's own layout, not keep answering with
+  // the PREVIOUS supplier's resolved picks.
+  it('re-probes when the supplier changes, and does not keep the previous supplier\'s picks', async () => {
+    probeImportMapping
+      .mockResolvedValueOnce(
+        probeFor(1, [{ position: 0, header: 'ITEM', field: 'item_code', source: 'supplier' }]),
+      )
+      .mockResolvedValueOnce(
+        probeFor(1, [{ position: 0, header: 'ITEM', field: null, source: 'none' }]),
+      );
+    getFulfilmentSuppliers.mockResolvedValue([
+      { value: 'sup-1', label: 'Kailu Hardware Factory' },
+      { value: 'sup-2', label: 'Second Supplier' },
     ]);
-    // The 409 half is not an error, and the file is read again with the mapping.
-    await waitFor(() => expect(previewSupplierDocuments).toHaveBeenCalledTimes(2));
-    expect(screen.queryByText('already mapped')).not.toBeInTheDocument();
+    openDialogSelfServe();
+    fireEvent.click(supplierSelect()!);
+    fireEvent.click(await screen.findByRole('option', { name: 'Kailu Hardware Factory' }));
+    pickFiles([xlsx('invoice.xls')]);
+    await waitFor(() => expect(probeImportMapping).toHaveBeenCalledTimes(1));
+    expect(probeImportMapping).toHaveBeenCalledWith(
+      expect.objectContaining({ supplierId: 'sup-1' }),
+    );
+
+    fireEvent.click(supplierSelect()!);
+    fireEvent.click(await screen.findByRole('option', { name: 'Second Supplier' }));
+
+    await waitFor(() => expect(probeImportMapping).toHaveBeenCalledTimes(2));
+    expect(probeImportMapping).toHaveBeenLastCalledWith(
+      expect.objectContaining({ supplierId: 'sup-2' }),
+    );
+  });
+
+  // V6b (round 3): switching all the way back to a PREVIOUSLY-seen supplier must probe
+  // again too - the round-1 fix's `probedKeysRef` never expires an entry, so cycling
+  // A -> B -> A skips the third probe entirely and keeps showing B's stale columns.
+  it('probes again after cycling back to a previously-seen supplier', async () => {
+    probeImportMapping
+      .mockResolvedValueOnce(
+        probeFor(1, [{ position: 0, header: 'ITEM_A1', field: null, source: 'none' }]),
+      )
+      .mockResolvedValueOnce(
+        probeFor(1, [{ position: 0, header: 'ITEM_B', field: null, source: 'none' }]),
+      )
+      .mockResolvedValueOnce(
+        probeFor(1, [{ position: 0, header: 'ITEM_A2', field: null, source: 'none' }]),
+      );
+    getFulfilmentSuppliers.mockResolvedValue([
+      { value: 'sup-1', label: 'Kailu Hardware Factory' },
+      { value: 'sup-2', label: 'Second Supplier' },
+    ]);
+    openDialogSelfServe();
+    fireEvent.click(supplierSelect()!);
+    fireEvent.click(await screen.findByRole('option', { name: 'Kailu Hardware Factory' }));
+    pickFiles([xlsx('invoice.xls')]);
+    await waitFor(() => expect(probeImportMapping).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(supplierSelect()!);
+    fireEvent.click(await screen.findByRole('option', { name: 'Second Supplier' }));
+    await waitFor(() => expect(probeImportMapping).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText('ITEM_B')).toBeInTheDocument();
+
+    fireEvent.click(supplierSelect()!);
+    fireEvent.click(await screen.findByRole('option', { name: 'Kailu Hardware Factory' }));
+
+    await waitFor(() => expect(probeImportMapping).toHaveBeenCalledTimes(3));
+    expect(probeImportMapping).toHaveBeenLastCalledWith(
+      expect.objectContaining({ supplierId: 'sup-1' }),
+    );
+    expect(await screen.findByText('ITEM_A2')).toBeInTheDocument();
+  });
+
+  // V6b, second half: a SLOW probe response for a supplier the operator has since moved
+  // away from must never win the race against the CURRENT supplier's own, already-landed
+  // answer - there is no sequence guard on the effect's `.then()` today, so whichever
+  // response resolves LAST wins, stale or not.
+  it('ignores a stale probe response that resolves after the supplier already changed', async () => {
+    let resolveA: (value: unknown) => void = () => {};
+    const slowA = new Promise((resolve) => {
+      resolveA = resolve;
+    });
+    probeImportMapping.mockImplementation(
+      async ({ supplierId }: { supplierId: string }) => {
+        if (supplierId === 'sup-1') return slowA;
+        return probeFor(1, [{ position: 0, header: 'ITEM_B', field: null, source: 'none' }]);
+      },
+    );
+    getFulfilmentSuppliers.mockResolvedValue([
+      { value: 'sup-1', label: 'Kailu Hardware Factory' },
+      { value: 'sup-2', label: 'Second Supplier' },
+    ]);
+    openDialogSelfServe();
+    fireEvent.click(supplierSelect()!);
+    fireEvent.click(await screen.findByRole('option', { name: 'Kailu Hardware Factory' }));
+    pickFiles([xlsx('invoice.xls')]);
+    await waitFor(() => expect(probeImportMapping).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(supplierSelect()!);
+    fireEvent.click(await screen.findByRole('option', { name: 'Second Supplier' }));
+    await waitFor(() => expect(probeImportMapping).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText('ITEM_B')).toBeInTheDocument();
+
+    resolveA(
+      probeFor(1, [{ position: 0, header: 'ITEM_A_STALE', field: null, source: 'none' }]),
+    );
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(screen.queryByText('ITEM_A_STALE')).toBeNull();
+    expect(screen.getByText('ITEM_B')).toBeInTheDocument();
+  });
+
+  // V7 (fix-round): Confirm must save the current mapping before it applies, the same way
+  // Test does (grill G1) - today Confirm calls `applySupplierDocuments` directly with no
+  // save at all, pressed or not.
+  it('Confirm without a prior Test saves the mapping first', async () => {
+    probeImportMapping.mockResolvedValue(
+      probeFor(1, [
+        { position: 0, header: 'ITEM', field: 'item_code', source: 'supplier' },
+        { position: 1, header: 'QTY', field: 'qty', source: 'supplier' },
+      ]),
+    );
+    applySupplierDocuments.mockResolvedValue({
+      proforma_invoice_ids: [], shipment_ids: [], links_written: 0, attachment_ids: [],
+    });
+    openDialog();
+    pickFiles([xlsx('invoice.xls')]);
+    await waitFor(() => expect(probeImportMapping).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByRole('button', { name: /^Confirm/ }));
+
+    await waitFor(() => expect(applySupplierDocuments).toHaveBeenCalled());
+    expect(saveImportMapping).toHaveBeenCalled();
+    const saveOrder = saveImportMapping.mock.invocationCallOrder[0];
+    const applyOrder = applySupplierDocuments.mock.invocationCallOrder[0];
+    expect(saveOrder).toBeLessThan(applyOrder);
   });
 });

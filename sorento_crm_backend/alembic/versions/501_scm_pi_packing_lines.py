@@ -110,7 +110,7 @@ def upgrade() -> None:
         sa.text(
             "INSERT INTO import_field_alias (doc_type, field, alias, locale) "
             "VALUES (:d, :f, :a, :l) "
-            "ON CONFLICT (doc_type, field, alias) DO NOTHING"
+            "ON CONFLICT (doc_type, field, alias) WHERE supplier_id IS NULL DO NOTHING"
         ),
         {"d": doc_type, "f": field, "a": alias, "l": locale},
     )

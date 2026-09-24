@@ -62,7 +62,7 @@ def seed(bind) -> int:
                 """
                 INSERT INTO import_field_alias (doc_type, field, alias, locale)
                 VALUES (:d, :f, :a, 'en')
-                ON CONFLICT (doc_type, field, alias) DO NOTHING
+                ON CONFLICT (doc_type, field, alias) WHERE supplier_id IS NULL DO NOTHING
                 """
             ),
             {"d": DOC_TYPE, "f": field, "a": alias},

@@ -57,7 +57,7 @@ def upgrade() -> None:
         op.execute(sa.text(
             "INSERT INTO import_field_alias (doc_type, field, alias, locale) "
             "VALUES ('reorder_level', :f, :a, NULL) "
-            "ON CONFLICT (doc_type, field, alias) DO NOTHING"
+            "ON CONFLICT (doc_type, field, alias) WHERE supplier_id IS NULL DO NOTHING"
         ).bindparams(f=field, a=alias))
 
 
