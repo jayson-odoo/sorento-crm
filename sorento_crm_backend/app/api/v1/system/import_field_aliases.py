@@ -33,6 +33,7 @@ _DOC_TYPE_LABELS = {
     "proforma_invoice": "proforma invoices",
     "packing_list": "packing lists",
     "outstanding_so": "outstanding sales orders",
+    "supplier_inventory": "stock lists",
     "supplier_inventory_word": "stock list words",
 }
 
