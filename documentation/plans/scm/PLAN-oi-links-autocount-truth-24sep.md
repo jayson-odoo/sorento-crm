@@ -340,6 +340,34 @@ this branch. The suggested-link model starts at S2 and waits for the grill.
 | S5 | 2, script | conversion script, dry run on the 23 Sep copy, counts pasted into section 7 | AC-LT-41 to 45 |
 | S6 | 3 | browser evidence, reviewer + kill test; security-reviewer not expected (no auth, RBAC, ingest, upload or scoping change; the new route reuses the `auto-place` grant), said so in the PR | AC-LT-50, 51 |
 
+### S2 evidence (24 Sep 2026)
+
+Real-integration pass against a from-scratch stack in the coder's own sandbox (Postgres +
+Redis, `scripts/bootstrap_env.py`, every module enabled, one Super Admin login) - never a
+deep URL, sidebar clicks from `/`: Dashboards -> Procurement -> Supply Chain -> Order
+Inquiries -> Lines -> List. The Suggested column renders right after SPO in the exact
+column order (`PO`, `SPO`, `Suggested`, `Location`), `console`/`errors` clean at both
+1280x900 and 375x812, no horizontal page scroll. The sandbox database carries zero order
+inquiry rows (this lane adds no seed data), so the screen is verified in its empty state
+only - screenshots: `evidence/oi-links-autocount-truth/s2-worklist-lines-suggested-column-
+1280.png`, `...-375.png`.
+
+The POPULATED cell (amber `suggested` word, kind badge, `late N d`, the `+N` pill, the
+lightbox's "Suggested for" panel and its own empty state, and the Lines tab's shared column
+def) is verified by direct component rendering instead - `suggested_links` is a Phase 1
+mock field the real backend does not answer until S3/S4, so no live network call can
+populate it. AC-LT-01, AC-LT-03, AC-LT-04 (populated and empty), AC-LT-07 and AC-LT-08 all
+passed against `orderInquiryWorklistColumns.tsx` and `OrderInquiryDocumentDialog.tsx`
+directly (React Testing Library, `@tanstack/react-table`, a stub `QueryClient`) in a
+disposable, uncommitted harness, then discarded - Phase 2's tester writes the ACs' real,
+committed test suite once S3/S4 give the field live data. AC-LT-05/06 (Link selected's new
+count, its toast, and Auto link all's toast) are proven the same way `OrderInquiriesClient.
+test.tsx` already proves the rest of the toolbar: fixture rows carrying `suggested_links`,
+the service call mocked, the toast text read off `linkSuggestedOutcomeText`/`linkOutcomeText`
+directly - both fall back to today's wording when the backend answers neither
+`suggested_links` nor `book_linked_rows`/`suggested_rows`, so production is unaffected until
+S3/S4 land.
+
 ### Testing seams (agree before Phase 2)
 
 * Pytest on Postgres via `tests/_pg_fixture.py`; reuse `_seed_so_line`, `_po_line`,
