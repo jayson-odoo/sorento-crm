@@ -247,3 +247,47 @@ describe('AC-RS-75 (G6): the body is ONE DataGrid, not stacked cards', () => {
     expect(scrollWrapper).toBeInTheDocument();
   });
 });
+
+/**
+ * Round 4 (`PLAN-oi-request-cs-reserve.md` section 6e.2, `oi-request-cs-reserve-
+ * acceptance-criteria.md` AC-RS-89, review finding 24 Sep): this dialog's own grid
+ * gets `columnsDraggable: false` and loses the inert outer `overflow-x-auto` div -
+ * the DataGrid's OWN internal scroller (`tableLayout.width: 'fixed'` + `columnsResizable
+ * : true`) is the only scroll surface, so this dialog never wraps it a second time.
+ *
+ * TEST-FIRST (Phase 2): today `ReserveRequestDialog` passes no `tableLayout` at all,
+ * so `columnsDraggable` defaults to `true` (`data-grid.tsx`) - every header renders a
+ * `GripVertical` and an `aria-label="Drag column to reorder"` wrapper
+ * (`data-grid-table-dnd.header.test.tsx` pins that default elsewhere) - AND the body
+ * still wraps the grid in its own `<div className="overflow-x-auto">`
+ * (`ReserveRequestDialog.tsx` line ~248). A red here is exactly those two things still
+ * present, never a fixture bug.
+ *
+ * NOTE for the coder: this supersedes the "at 375px the grid scrolls sideways..." test
+ * directly above, which asserts the OUTER `.overflow-x-auto` wrapper IS present - that
+ * assertion needs updating (to assert the grid's own internal scroller instead) once
+ * the outer wrapper is removed; not touched here since Phase 2 only adds tests.
+ */
+describe('AC-RS-89: no drag grips, no outer overflow-x-auto wrapper', () => {
+  it('renders no GripVertical / "Drag column to reorder" wrapper on any header', async () => {
+    renderDialog();
+
+    await screen.findByRole('table');
+    expect(
+      document.querySelector('[aria-label="Drag column to reorder"]'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('the table carries exactly ONE overflow-x-auto ancestor (the DataGrid own scroller), never a second inert wrapper', async () => {
+    renderDialog();
+
+    const table = await screen.findByRole('table');
+    let ancestor: HTMLElement | null = table.parentElement;
+    let overflowWrapperCount = 0;
+    while (ancestor) {
+      if (ancestor.classList.contains('overflow-x-auto')) overflowWrapperCount += 1;
+      ancestor = ancestor.parentElement;
+    }
+    expect(overflowWrapperCount).toBe(1);
+  });
+});

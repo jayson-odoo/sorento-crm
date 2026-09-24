@@ -1,0 +1,134 @@
+/**
+ * `PLAN-oi-request-cs-reserve.md` section 6e.2 (round 4), `oi-request-cs-reserve-
+ * acceptance-criteria.md` AC-RS-85 (reserve mode) / AC-RS-86 (amend mode).
+ *
+ * `ReserveLineForm` is a brand-new component this round introduces to replace
+ * `ReserveRowDialog`'s per-row `ReserveRowSection` (`ReserveRowDialog.tsx`) - a small
+ * dialog whose ONLY job is to hand back a staged decision (`onStage`), never posting
+ * anything itself. It does not exist on disk yet.
+ *
+ * TEST-FIRST (Phase 2): today `./ReserveLineForm` does not resolve - a red here is
+ * that missing module (Vite's own "Failed to resolve import"), the plan's own stated
+ * component simply not built yet, never an import typo (the relative path matches
+ * where `ReserveRowDialog.tsx` already lives, its sibling per the plan).
+ */
+import React from 'react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { ReserveLineForm } from './ReserveLineForm';
+
+const LOCATION_OPTIONS = [
+  { value: 'wh-brw', label: 'BRW' },
+  { value: 'wh-dc1', label: 'DC1' },
+];
+const AVAILABLE_QTY_BY_LOCATION = { 'wh-brw': 107, 'wh-dc1': 20 };
+
+function renderForm(overrides: Partial<React.ComponentProps<typeof ReserveLineForm>> = {}) {
+  const onStage = vi.fn();
+  const onOpenChange = vi.fn();
+  const utils = render(
+    <ReserveLineForm
+      open
+      onOpenChange={onOpenChange}
+      itemCode="B2155-NL-BLUE"
+      mode="reserve"
+      requestedQty="107"
+      locationOptions={LOCATION_OPTIONS}
+      availableQtyByLocation={AVAILABLE_QTY_BY_LOCATION}
+      defaultLocationId="wh-brw"
+      onStage={onStage}
+      {...(overrides as never)}
+    />,
+  );
+  return { onStage, onOpenChange, ...utils };
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
+describe('AC-RS-85: reserve mode - title, Location prefilled, Reserved default, Reason gated, Stage', () => {
+  it('titles the dialog by the item code and prefills Location + Reserved from the default pool', async () => {
+    renderForm();
+
+    expect(await screen.findByRole('dialog', { name: /B2155-NL-BLUE/i })).toBeInTheDocument();
+    const reservedInput = screen.getByLabelText('Reserved') as HTMLInputElement;
+    // min(requested 107, available at BRW 107) = 107.
+    expect(reservedInput.value).toBe('107');
+  });
+
+  it('Reason appears only when Reserved < Requested, and Stage stays disabled until it is filled', async () => {
+    const { onStage } = renderForm();
+
+    expect(screen.queryByLabelText(/reason/i)).not.toBeInTheDocument();
+    const stageButton = screen.getByRole('button', { name: /^stage$/i });
+    expect(stageButton).toBeEnabled();
+
+    fireEvent.change(screen.getByLabelText('Reserved'), { target: { value: '20' } });
+
+    const reasonInput = await screen.findByLabelText(/reason/i);
+    expect(screen.getByRole('button', { name: /^stage$/i })).toBeDisabled();
+
+    fireEvent.change(reasonInput, { target: { value: 'only 20 available' } });
+    await waitFor(() => expect(screen.getByRole('button', { name: /^stage$/i })).toBeEnabled());
+
+    fireEvent.click(screen.getByRole('button', { name: /^stage$/i }));
+    expect(onStage).toHaveBeenCalledWith({
+      warehouse_id: 'wh-brw',
+      qty_reserved: 20,
+      reason: 'only 20 available',
+    });
+  });
+
+  it('choosing DC1 stages "Reserve 20 @ DC1" (via onStage), qty capped at that pool\'s availability', async () => {
+    const { onStage } = renderForm();
+
+    fireEvent.click(screen.getByLabelText('Location'));
+    fireEvent.click(await screen.findByText('DC1'));
+
+    await waitFor(() =>
+      expect((screen.getByLabelText('Reserved') as HTMLInputElement).value).toBe('20'),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /^stage$/i }));
+    expect(onStage).toHaveBeenCalledWith(
+      expect.objectContaining({ warehouse_id: 'wh-dc1', qty_reserved: 20 }),
+    );
+  });
+});
+
+describe('AC-RS-86: amend mode - Location is locked read-only text, Reserved prefilled with the net', () => {
+  it('renders the locked location as plain text, no SearchableSelect', async () => {
+    renderForm({
+      mode: 'amend',
+      lockedLocationLabel: 'BRW',
+      initialQty: '30',
+      requestedQty: '50',
+    });
+
+    expect(await screen.findByRole('dialog', { name: /B2155-NL-BLUE/i })).toBeInTheDocument();
+    expect(screen.queryByLabelText('Location')).not.toBeInTheDocument();
+    expect(screen.getByText('BRW')).toBeInTheDocument();
+
+    const reservedInput = screen.getByLabelText('Reserved') as HTMLInputElement;
+    expect(reservedInput.value).toBe('30');
+  });
+
+  it('Stage in amend mode calls onStage with no warehouse_id change, only the new qty', async () => {
+    const { onStage } = renderForm({
+      mode: 'amend',
+      lockedLocationLabel: 'BRW',
+      initialQty: '30',
+      requestedQty: '50',
+    });
+
+    fireEvent.change(screen.getByLabelText('Reserved'), { target: { value: '10' } });
+    fireEvent.change(await screen.findByLabelText(/reason/i), { target: { value: 'reduced' } });
+    fireEvent.click(screen.getByRole('button', { name: /^stage$/i }));
+
+    expect(onStage).toHaveBeenCalledWith(
+      expect.objectContaining({ qty_reserved: 10, reason: 'reduced' }),
+    );
+  });
+});

@@ -452,6 +452,11 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
   /** 3.4 (AC-RS-12): the sum of the row's reserve links - already included in
    * `taken_from_po`/`remaining_open`, both of which sum every link with no target filter. */
   reserved_qty?: string;
+  /** Round 4 (`PLAN-oi-request-cs-reserve.md` 6e.2): the OPEN reserve request row's
+   * own `qty_requested` for this row - "0" when `reserve_state` is not `requested`.
+   * The Lines grid's `Request to reserve N` pill and the tick's default stage both
+   * read N off this. */
+  requested_qty?: string;
   /** Who sold it (`sales_orders.sales_agent_id` -> `sales_agents`), off the same core
    * sales order the S/O no column reaches. Null when the row reaches no core order, or
    * that order carries no agent. */

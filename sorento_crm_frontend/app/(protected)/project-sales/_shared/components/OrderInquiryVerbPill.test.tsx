@@ -8,8 +8,8 @@
  * the board chips (`BoardCellBreakdownDialog` renders this same pill) - has to share.
  */
 import { readFileSync } from 'node:fs';
-import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { render, screen } from '@testing-library/react';
+import { describe, expect, it } from 'vitest';
 import { OrderInquiryStatePill, ReservePill, STATE_LABEL } from './OrderInquiryVerbPill';
 
 describe('AC-B5-1: the State pill reads the plain words', () => {
@@ -90,54 +90,25 @@ describe('AC-B5-2: no second spelling of the state word - one map, everywhere it
 });
 
 /**
- * Nit (`PLAN-oi-request-cs-reserve.md` section 6d, fix round 2 review finding). The
- * interactive `ReservePill` (a `role=button` pill that otherwise renders IDENTICAL
- * markup to the read-only span the worklist uses) carried no hover/focus affordance
- * at all - nothing on screen told a reader it was clickable, or showed keyboard focus.
- *
- * TEST-FIRST (fix round 2): today neither button variant carries `cursor-pointer` -
- * a red here is "the button's own className is missing it", never a fixture bug.
+ * Round 4 (`PLAN-oi-request-cs-reserve.md` section 6e.2, owner round 4, 24 Sep):
+ * "The pill is no longer a button" - `ReservePill` is plain text everywhere now, and
+ * the two fix-round-2 suites this file used to carry here (the interactive button's
+ * own hover/focus affordance classes, and `onClick` receiving the click event) are
+ * retired with the button itself. AC-RS-83 (`orderInquiryHeaderLinesColumns.test.tsx`)
+ * covers the replacement `reserve_actions` icon-button column instead.
  */
-describe('nit (fix round 2): the interactive ReservePill carries hover/focus affordance classes', () => {
-  it('the "requested" button carries cursor-pointer, hover and focus-visible classes', () => {
-    render(<ReservePill reserveState="requested" onClick={vi.fn()} />);
+describe('AC-RS-83 (round 4): ReservePill is plain text, never a role=button', () => {
+  it('prints the requested qty and carries no button role', () => {
+    render(<ReservePill reserveState="requested" requestedQty="107" />);
 
-    const button = screen.getByRole('button', { name: 'Reserve' });
-    expect(button.className).toMatch(/\bcursor-pointer\b/);
-    expect(button.className).toMatch(/\bhover:opacity-90\b/);
-    expect(button.className).toMatch(/\bfocus-visible:ring-2\b/);
+    expect(screen.getByText('Request to reserve 107')).toBeInTheDocument();
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
   });
 
-  it('the "reserved" button carries the same affordance classes', () => {
-    render(<ReservePill reserveState="reserved" reservedQty="3" onClick={vi.fn()} />);
+  it('prints the reserved qty and carries no button role', () => {
+    render(<ReservePill reserveState="reserved" reservedQty="3" />);
 
-    const button = screen.getByRole('button', { name: 'Reserve' });
-    expect(button.className).toMatch(/\bcursor-pointer\b/);
-    expect(button.className).toMatch(/\bhover:opacity-90\b/);
-    expect(button.className).toMatch(/\bfocus-visible:ring-2\b/);
-  });
-
-  it('the read-only (no onClick) span carries none of it', () => {
-    render(<ReservePill reserveState="requested" />);
-
-    const span = screen.getByText('Request to reserve');
-    expect(span.className).not.toMatch(/cursor-pointer/);
-  });
-});
-
-/**
- * Nit (fix round 2): `onClick` now receives the click EVENT, so the grid column call
- * site can `stopPropagation()` before a `rowHref` (or any other row-level click
- * handler) also fires.
- */
-describe('nit (fix round 2): onClick receives the click event', () => {
-  it('the handler is called with a MouseEvent', () => {
-    const onClick = vi.fn();
-    render(<ReservePill reserveState="requested" onClick={onClick} />);
-
-    fireEvent.click(screen.getByRole('button', { name: 'Reserve' }));
-
-    expect(onClick).toHaveBeenCalledTimes(1);
-    expect(onClick.mock.calls[0][0]).toMatchObject({ type: 'click' });
+    expect(screen.getByText(/reserved 3/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
   });
 });

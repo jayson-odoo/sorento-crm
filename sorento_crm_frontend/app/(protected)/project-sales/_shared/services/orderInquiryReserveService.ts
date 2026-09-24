@@ -87,17 +87,6 @@ export async function cancelOrderInquiryReserveRequest(
   return { ...body, first_to_name: body.notified_name ?? null };
 }
 
-export interface ReserveRowPayload {
-  warehouse_id: string;
-  qty_reserved: string | number;
-  reason?: string | null;
-}
-
-export interface UnreserveRowPayload {
-  qty: string | number;
-  note?: string | null;
-}
-
 export interface OrderInquiryReserveHistoryEntry {
   kind: 'requested' | 'reserved' | 'unreserved' | 'cancelled' | string;
   qty: string | null;
@@ -107,21 +96,46 @@ export interface OrderInquiryReserveHistoryEntry {
   created_at: string | null;
 }
 
+export interface CommitReserveRow {
+  row_id: string;
+  warehouse_id: string;
+  qty_reserved: string | number;
+  reason?: string | null;
+}
+
+export interface CommitAmendRow {
+  row_id: string;
+  qty_reserved: string | number;
+  reason?: string | null;
+}
+
+export interface CommitReservePayload {
+  reserves: CommitReserveRow[];
+  amendments: CommitAmendRow[];
+}
+
 /**
- * Eling's own Confirm, ONE ROW at a time (`PLAN-oi-request-cs-reserve.md` section 6c
- * F2 - supersedes the old all-rows `reserveOrderInquiryRequest`, whose own route is
- * deleted). Answers exactly one request row; the request itself stays `requested`
- * while any other row of it is still unanswered, `reserved` on the one that
- * completes it.
+ * CS's own line-by-line commit (`PLAN-oi-request-cs-reserve.md` section 6e.1, owner
+ * round 4, 24 Sep - supersedes the per-row `reserveOrderInquiryRow`/
+ * `unreserveOrderInquiryRow`, both retired with their own routes). One call per click
+ * of the Lines grid's own `Reserve (N)` CTA: `reserves` answers still-open request
+ * rows, `amendments` revises already-answered ones (R4-3). One transaction, one
+ * `order_inquiry_reserved` email naming only the rows this call touched.
  */
-export async function reserveOrderInquiryRow(
+export async function commitOrderInquiryReserve(
+  inquiryId: string,
   requestId: string,
-  rowId: string,
-  payload: ReserveRowPayload,
-): Promise<OrderInquiryReserveRequestRow> {
-  const requestBody = { ...payload, qty_reserved: String(payload.qty_reserved) };
+  payload: CommitReservePayload,
+): Promise<OrderInquiryReserveRequest> {
+  const requestBody = {
+    reserves: payload.reserves.map((row) => ({ ...row, qty_reserved: String(row.qty_reserved) })),
+    amendments: payload.amendments.map((row) => ({
+      ...row,
+      qty_reserved: String(row.qty_reserved),
+    })),
+  };
   const response = await apiFetch(
-    `${BASE}/order-inquiries/reserve-requests/${requestId}/rows/${rowId}/reserve`,
+    `${BASE}/order-inquiries/${inquiryId}/reserve-requests/${requestId}/commit`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -129,32 +143,12 @@ export async function reserveOrderInquiryRow(
     },
   );
   if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to confirm that reserve'));
-  return response.json();
+    throw new Error(await extractApiError(response, 'Failed to reserve those lines'));
+  const body = await response.json();
+  return { ...body, first_to_name: body.notified_name ?? null };
 }
 
-/** F5: gives back part (or all) of what was reserved on ONE row - its own action,
- * never Unlink. No email either way. */
-export async function unreserveOrderInquiryRow(
-  requestId: string,
-  rowId: string,
-  payload: UnreserveRowPayload,
-): Promise<OrderInquiryReserveRequestRow> {
-  const requestBody = { ...payload, qty: String(payload.qty) };
-  const response = await apiFetch(
-    `${BASE}/order-inquiries/reserve-requests/${requestId}/rows/${rowId}/unreserve`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody),
-    },
-  );
-  if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to unreserve that row'));
-  return response.json();
-}
-
-/** F3: one row's own history, newest first - the dialog's History tab. */
+/** F3: one row's own history, newest first - `ReserveLineHistoryDialog`'s own read. */
 export async function getOrderInquiryRowHistory(
   requestId: string,
   rowId: string,

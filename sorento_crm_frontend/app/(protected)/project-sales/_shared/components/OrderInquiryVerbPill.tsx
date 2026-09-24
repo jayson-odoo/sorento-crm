@@ -1,6 +1,5 @@
 'use client';
 
-import type { MouseEvent } from 'react';
 import { Check } from 'lucide-react';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 
@@ -125,45 +124,28 @@ export function OrderInquiryStatePill({ state }: { state: string }) {
  * `PLAN-oi-request-cs-reserve.md` 3.5 (AC-RS-20/AC-RS-25): `requested` while an open
  * reserve request row exists, `reserved` once CS has actually reserved something (and no
  * open request). Rendered BESIDE the state pill on the worklist (its own read-only
- * usage, no `onClick`); round 3 (section 6d G2, AC-RS-68) also reuses this same pill AS
- * the Lines grid's own "State" cell click target - `onClick` set turns it into a
- * `role=button` `aria-label="Reserve"`, and `reserved` gains the owner's own tick.
+ * usage). Round 4 (section 6e.2, AC-RS-83/84): "The pill is no longer a button" - the
+ * Lines grid's own reserve action moved to its own `reserve_actions` icon-button column
+ * (`orderInquiryHeaderLinesColumns.tsx`); this pill is plain text everywhere now, amber
+ * `Request to reserve N` printing the OPEN request's own `qty_requested`, green
+ * `Reserved N` with the owner's own tick.
  */
-/** Nit (fix round 2): the interactive pill's own affordance classes - a `role=button`
- * pill that looks exactly like the read-only one it replaces otherwise gives no visual
- * hint it is clickable. */
-const RESERVE_PILL_INTERACTIVE_CLASS =
-  'cursor-pointer hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
-
 export function ReservePill({
   reserveState,
   reservedQty,
-  onClick,
+  requestedQty,
 }: {
   reserveState: 'requested' | 'reserved' | string | null | undefined;
   reservedQty?: string | null;
-  /** AC-RS-68: opens `ReserveRowDialog` for this row - absent renders a plain span, the
-   * worklist's own read-only usage. Nit (fix round 2): receives the click EVENT, so a
-   * grid cell call site can `stopPropagation()` before the row's own click handler
-   * (a `rowHref` navigate, say) also fires. */
-  onClick?: (event: MouseEvent<HTMLButtonElement>) => void;
+  /** AC-RS-83: the open request row's own `qty_requested` for this row - printed only
+   * when `reserveState === 'requested'`. */
+  requestedQty?: string | null;
 }) {
   if (!reserveState) return null;
-  const interactive = Boolean(onClick);
   if (reserveState === 'requested') {
-    const content = <>Request to reserve</>;
-    return interactive ? (
-      <button
-        type="button"
-        aria-label="Reserve"
-        onClick={onClick}
-        className={`${STATUS_PILL_BASE} normal-case ${statusPillClass('pending')} ${RESERVE_PILL_INTERACTIVE_CLASS}`}
-      >
-        {content}
-      </button>
-    ) : (
+    return (
       <span className={`${STATUS_PILL_BASE} normal-case ${statusPillClass('pending')}`}>
-        {content}
+        Request to reserve {requestedQty ?? ''}
       </span>
     );
   }
@@ -171,26 +153,12 @@ export function ReservePill({
     // Nit (review round): the GREEN key (`done`/`completed`), not `approved` (blue) -
     // a reserve is a finished outcome, the same reading `done` carries everywhere
     // else in `lib/status-pill.ts`.
-    const content = (
-      <>
+    return (
+      <span className={`${STATUS_PILL_BASE} normal-case gap-1 ${statusPillClass('done')}`}>
         {/* The owner's own tick ("after confirmed the product should have a ticked
             icon", round 3 owner words). */}
         <Check className="size-3" aria-hidden />
         Reserved {reservedQty ?? ''}
-      </>
-    );
-    return interactive ? (
-      <button
-        type="button"
-        aria-label="Reserve"
-        onClick={onClick}
-        className={`${STATUS_PILL_BASE} normal-case gap-1 ${statusPillClass('done')} ${RESERVE_PILL_INTERACTIVE_CLASS}`}
-      >
-        {content}
-      </button>
-    ) : (
-      <span className={`${STATUS_PILL_BASE} normal-case gap-1 ${statusPillClass('done')}`}>
-        {content}
       </span>
     );
   }

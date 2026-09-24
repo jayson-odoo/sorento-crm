@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, History as HistoryIcon, Pencil } from 'lucide-react';
 import { ColumnDef } from '@tanstack/react-table';
 import { Button } from '@/components/ui/button';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
@@ -25,20 +25,35 @@ import { OrderInquiryDocumentLink } from '../../components/OrderInquiryDocumentD
 
 /**
  * The Lines tab's own columns (AC-DP-03): Expand, Product, SO line, Qty, Taken,
- * Remaining, Delivery date, Supplier, PO, SPO, Location, Instruction, State. Taken/
- * Remaining are S3 (`PLAN-board-oi-mechanical-22sep.md`, AC-B3-1); SO line is S6
- * (AC-B6-1). Product/Qty/Delivery date/Supplier/Location/Instruction reuse the
- * worklist's OWN cell renderers (`orderInquiryWorklistColumns.tsx`) so the same fact
- * reads the same way on both screens. PO/SPO are the ONE deliberate difference
+ * Remaining, Delivery date, Supplier, PO, SPO, Location, Instruction, State, Reserve
+ * actions. Taken/Remaining are S3 (`PLAN-board-oi-mechanical-22sep.md`, AC-B3-1); SO
+ * line is S6 (AC-B6-1). Product/Qty/Delivery date/Supplier/Location/Instruction reuse
+ * the worklist's OWN cell renderers (`orderInquiryWorklistColumns.tsx`) so the same
+ * fact reads the same way on both screens. PO/SPO are the ONE deliberate difference
  * (AC-DP-04): this single-header screen opens the simpler `OrderInquiryDocumentDialog`,
  * not the worklist's bundling/reallocate-aware `DocumentsCell` - a header's own lines
  * have no "which OTHER row is this bundled with" question to answer, since every row
  * here already belongs to the one document.
  *
- * Round 3 (section 6d G2, AC-RS-68): the separate `reserve` icon column round 2 added
- * is retired - the State cell itself carries the reserve state now (`ReservePill`
- * beside/instead of `OrderInquiryStatePill`), one fewer column on an already-wide grid.
+ * Round 4 (`PLAN-oi-request-cs-reserve.md` section 6e.2, owner round 4, 24 Sep,
+ * AC-RS-83): the State cell's own reserve pill is plain text again (round 3's
+ * click-target button is retired) - the reserve action moves to its own
+ * `reserve_actions` icon-button column, gated by `canReserve` and driven by the
+ * caller's own staged-decision map (`OrderInquiryDetail.tsx` owns that state; this
+ * column is a pure renderer over it).
  */
+
+/** One line's staged decision (6e.2) - not yet posted, held in `OrderInquiryDetail`'s
+ * own `Record<rowId, StagedReserveEntry>` and cleared on commit or Undo. */
+export interface StagedReserveEntry {
+  kind: 'reserve' | 'amend';
+  qty: number;
+  /** Only meaningful for `kind: 'reserve'` - the chip's own "@ CODE" suffix
+   * (AC-RS-84/85); an amend chip never names a location (its own is locked). */
+  locationLabel?: string | null;
+  warehouseId?: string | null;
+  reason?: string | null;
+}
 
 /** The first PO (or SPO) link this line carries, for a document trigger. `null` when the
  * line names none of that kind - the cell then reads a plain dash, same as the worklist. */
@@ -54,16 +69,138 @@ function DocumentCell({ row, kind }: { row: OrderInquiryWorklistRow; kind: 'po' 
   );
 }
 
-export function useOrderInquiryHeaderLinesColumns({
-  onReserveClick,
+function reserveChipText(staged: StagedReserveEntry): string {
+  if (staged.kind === 'amend') return `Amend to ${staged.qty}`;
+  if (staged.qty > 0) return `Reserve ${staged.qty} @ ${staged.locationLabel ?? ''}`;
+  return `Reserve ${staged.qty}`;
+}
+
+function ReserveActionsCell({
+  row,
+  staged,
+  onTickReserve,
+  onEditReserve,
+  onAmendReserve,
+  onHistoryClick,
+  onUndoStaged,
 }: {
-  /** `PLAN-oi-request-cs-reserve.md` section 6c F2: opens `ReserveRowDialog` for this
-   * row. Omitted -> the Reserve column renders nothing (a caller that never wires the
-   * dialog gets no dead button). */
-  onReserveClick?: (row: OrderInquiryWorklistRow) => void;
+  row: OrderInquiryWorklistRow;
+  staged?: StagedReserveEntry;
+  onTickReserve?: (row: OrderInquiryWorklistRow) => void;
+  onEditReserve?: (row: OrderInquiryWorklistRow) => void;
+  onAmendReserve?: (row: OrderInquiryWorklistRow) => void;
+  onHistoryClick?: (row: OrderInquiryWorklistRow) => void;
+  onUndoStaged?: (rowId: string) => void;
+}) {
+  if (staged) {
+    return (
+      <div className="flex min-w-0 items-center gap-1.5">
+        <span className="inline-flex items-center truncate rounded-full border border-dashed border-muted-foreground/50 px-2 py-0.5 text-xs text-muted-foreground">
+          {reserveChipText(staged)}
+        </span>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-6 px-1.5 text-xs"
+          onClick={() => onUndoStaged?.(row.id)}
+        >
+          Undo
+        </Button>
+      </div>
+    );
+  }
+  if (row.reserve_state === 'requested') {
+    return (
+      <div className="flex items-center gap-1">
+        <Button
+          type="button"
+          mode="icon"
+          variant="ghost"
+          size="sm"
+          className="size-6"
+          aria-label="Reserve"
+          title="Reserve the full requested qty at the default pool"
+          onClick={() => onTickReserve?.(row)}
+        >
+          <Check className="size-3.5" aria-hidden />
+        </Button>
+        <Button
+          type="button"
+          mode="icon"
+          variant="ghost"
+          size="sm"
+          className="size-6"
+          aria-label="Edit reserve"
+          title="Edit reserve"
+          onClick={() => onEditReserve?.(row)}
+        >
+          <Pencil className="size-3.5" aria-hidden />
+        </Button>
+      </div>
+    );
+  }
+  if (row.reserve_state === 'reserved') {
+    return (
+      <div className="flex items-center gap-1">
+        <Button
+          type="button"
+          mode="icon"
+          variant="ghost"
+          size="sm"
+          className="size-6"
+          aria-label="Amend reserve"
+          title="Amend reserve"
+          onClick={() => onAmendReserve?.(row)}
+        >
+          <Pencil className="size-3.5" aria-hidden />
+        </Button>
+        <Button
+          type="button"
+          mode="icon"
+          variant="ghost"
+          size="sm"
+          className="size-6"
+          aria-label="History"
+          title="History"
+          onClick={() => onHistoryClick?.(row)}
+        >
+          <HistoryIcon className="size-3.5" aria-hidden />
+        </Button>
+      </div>
+    );
+  }
+  return null;
+}
+
+export function useOrderInquiryHeaderLinesColumns({
+  canReserve,
+  stagedByRowId,
+  onTickReserve,
+  onEditReserve,
+  onAmendReserve,
+  onHistoryClick,
+  onUndoStaged,
+}: {
+  /** AC-RS-83: gates the WHOLE `reserve_actions` column - a viewer without
+   * `projects.order_inquiries.reserve` sees the pills only, no action cell at all. */
+  canReserve?: boolean;
+  /** 6e.2: this line's own staged (not yet committed) decision, keyed by row id -
+   * `OrderInquiryDetail.tsx` owns the map, this column only renders over it. */
+  stagedByRowId?: Record<string, StagedReserveEntry>;
+  /** AC-RS-84: the tick - stages the full requested qty at the default pool, no dialog. */
+  onTickReserve?: (row: OrderInquiryWorklistRow) => void;
+  /** AC-RS-85: the pencil on a requested line - opens `ReserveLineForm` in reserve mode. */
+  onEditReserve?: (row: OrderInquiryWorklistRow) => void;
+  /** AC-RS-86: the pencil on a reserved line - opens `ReserveLineForm` in amend mode. */
+  onAmendReserve?: (row: OrderInquiryWorklistRow) => void;
+  /** AC-RS-89: opens `ReserveLineHistoryDialog` for this row. */
+  onHistoryClick?: (row: OrderInquiryWorklistRow) => void;
+  /** Drops a staged decision, restoring the two icons. */
+  onUndoStaged?: (rowId: string) => void;
 } = {}): ColumnDef<OrderInquiryWorklistRow>[] {
-  return React.useMemo<ColumnDef<OrderInquiryWorklistRow>[]>(
-    () => [
+  return React.useMemo<ColumnDef<OrderInquiryWorklistRow>[]>(() => {
+    const columns: ColumnDef<OrderInquiryWorklistRow>[] = [
       // `PLAN-oi-request-cs-reserve.md` 3.9 (AC-RS-40): the board's own stock grid, a
       // chevron away - purchasing used to open the fulfilment board just to check BRW.
       {
@@ -196,12 +333,8 @@ export function useOrderInquiryHeaderLinesColumns({
         meta: { headerTitle: 'Instruction', skeleton: <Skeleton className="h-4 w-24" /> },
         cell: ({ row }) => <InstructionCell row={row.original} />,
       },
-      // `PLAN-oi-request-cs-reserve.md` section 6d G2 (AC-RS-68): the separate `reserve`
-      // icon column (round 2's own artefact) is gone - the State cell itself is the
-      // click target now, amber `Request to reserve` / green `Reserved N` with a tick
-      // while an open request or an actual reserve exists on the row, the plain state
-      // pill otherwise. `onReserveClick` absent -> `ReservePill` renders a read-only
-      // span, same as the worklist's own usage beside Instruction.
+      // `PLAN-oi-request-cs-reserve.md` section 6e.2 (AC-RS-83): plain text again - the
+      // reserve action itself lives in `reserve_actions` below, not this cell.
       {
         accessorKey: 'state',
         header: ({ column }) => <DataGridColumnHeader title="State" column={column} />,
@@ -214,24 +347,46 @@ export function useOrderInquiryHeaderLinesColumns({
               <ReservePill
                 reserveState={reserveState}
                 reservedQty={row.original.reserved_qty}
-                onClick={
-                  onReserveClick
-                    ? (event) => {
-                        // Nit (fix round 2): the row itself may carry its own click
-                        // handler (a `rowHref` navigate) - the pill's own click must
-                        // never also trigger it.
-                        event.stopPropagation();
-                        onReserveClick(row.original);
-                      }
-                    : undefined
-                }
+                requestedQty={row.original.requested_qty}
               />
             );
           }
           return <OrderInquiryStatePill state={row.original.state} />;
         },
       },
-    ],
-    [onReserveClick],
-  );
+    ];
+
+    // AC-RS-83: the WHOLE column is absent for a viewer without the reserve permission
+    // - "pills only, no action cell", never a column that exists but renders nothing.
+    if (canReserve) {
+      columns.push({
+        id: 'reserve_actions',
+        header: () => <span className="sr-only">Reserve actions</span>,
+        size: 90,
+        enableSorting: false,
+        enableResizing: false,
+        cell: ({ row }) => (
+          <ReserveActionsCell
+            row={row.original}
+            staged={stagedByRowId?.[row.original.id]}
+            onTickReserve={onTickReserve}
+            onEditReserve={onEditReserve}
+            onAmendReserve={onAmendReserve}
+            onHistoryClick={onHistoryClick}
+            onUndoStaged={onUndoStaged}
+          />
+        ),
+      });
+    }
+
+    return columns;
+  }, [
+    canReserve,
+    stagedByRowId,
+    onTickReserve,
+    onEditReserve,
+    onAmendReserve,
+    onHistoryClick,
+    onUndoStaged,
+  ]);
 }

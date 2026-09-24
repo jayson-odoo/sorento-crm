@@ -34,12 +34,12 @@ import {
   unplaceOrderInquiryRow,
 } from '../services/orderInquiryService';
 import {
+  commitOrderInquiryReserve,
   createOrderInquiryReserveRequest,
   getOrderInquiryReserveRequests,
   getOrderInquiryRowHistory,
-  reserveOrderInquiryRow,
+  type CommitReservePayload,
   type CreateReserveRequestPayload,
-  type ReserveRowPayload,
 } from '../services/orderInquiryReserveService';
 import { getOrderInquiryMatrix } from '../services/orderInquiryMatrixService';
 import { PLANNING_BOARD_KEY } from './useFulfilmentPlanning';
@@ -197,37 +197,27 @@ export function useCreateOrderInquiryReserveRequest(inquiryId: string | undefine
 }
 
 /**
- * S5: `ReserveRowDialog`'s own Confirm reserved, moved off a direct service call the
- * same way. Unreserve is NOT here - S2 makes it a server-deferred pending action
- * (`useDeferredAction`), which is its own hook already.
+ * `PLAN-oi-request-cs-reserve.md` section 6e.2, AC-RS-87: the Lines grid's own header
+ * `Reserve (N)` CTA - ONE commit call for every staged decision at once (supersedes
+ * the per-row `useReserveOrderInquiryRow`, whose own route is retired). Invalidates
+ * both the lines (the pills/chips move) and the reserve requests (the staged map's
+ * own source) on success.
  */
-export function useReserveOrderInquiryRow(inquiryId: string | undefined) {
+export function useCommitOrderInquiryReserve(inquiryId: string | undefined) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({
       requestId,
-      rowId,
       payload,
     }: {
       requestId: string;
-      rowId: string;
-      payload: ReserveRowPayload;
-      /** N1 (reviewer round, AC-RS-26 "toast wording kept"): the requester's own name,
-       * for the toast alone - never read by `mutationFn` itself. */
-      requestedByName?: string | null;
-      /** Nit (fix round 2, AC-RS-56): true only on the confirm that COMPLETES the
-       * request - the mail dispatches on completion (server side), so a non-final
-       * row's own toast must not claim the requester was already notified.
-       * Undefined behaves as `true` (every caller before this fix, and any that has
-       * not moved to per-confirm completion tracking, keeps today's wording). */
-      completes?: boolean;
-    }) => reserveOrderInquiryRow(requestId, rowId, payload),
+      payload: CommitReservePayload;
+      /** The requester's own name, for the toast alone - never read by `mutationFn`. */
+      requesterName?: string | null;
+    }) => commitOrderInquiryReserve(inquiryId as string, requestId, payload),
     onSuccess: (_data, variables) => {
-      toast.success(
-        variables.completes === false
-          ? 'Reserved'
-          : `Reserved, ${variables.requestedByName ?? 'the requester'} notified`,
-      );
+      toast.success(`Reserved, ${variables.requesterName ?? 'the requester'} notified`);
+      queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_HEADER_LINES_KEY, inquiryId] });
       queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_RESERVE_REQUESTS_KEY, inquiryId] });
     },
     onError: (error: Error) => toast.error(error.message),

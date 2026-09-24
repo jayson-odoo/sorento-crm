@@ -104,9 +104,12 @@ export function ReserveRequestDialog({
   // `fireEvent.change` are NOT `===`). `stateRef` carries the latest
   // `requested`/`location` for the (now permanently memoized) cell closures to read
   // at render time, so the identity a keystroke's own `setRequested` call produces
-  // never reaches `columns` itself. `data` (`rows`, the caller's own array) already
-  // stays stable independently of this - see `project_datagrid_inline_data_render_
-  // loop`, the identity that lesson is actually about.
+  // never reaches `columns` itself. Review round 24 Sep: `data` (`rows`) itself is NOT
+  // stable either (S4 above: the caller's `useReserveRowOptions` hands back a fresh
+  // object every render) - harmless here specifically because nothing this dialog
+  // renders keys focus off `data`'s own identity, only off `columns`', which IS now
+  // frozen; `project_datagrid_inline_data_render_loop` is the `columns` lesson, not a
+  // claim that `data` is stable too.
   const stateRef = React.useRef({ requested, location });
   stateRef.current = { requested, location };
 
@@ -245,21 +248,26 @@ export function ReserveRequestDialog({
           <DialogTitle>Request CS to reserve</DialogTitle>
         </DialogHeader>
         <DialogBody className="flex-1 space-y-4 overflow-y-auto">
-          <div className="overflow-x-auto">
-            <DataGrid
-              table={table}
-              recordCount={rows.length}
-              tableLayout={{
-                width: 'fixed',
-                columnsResizable: true,
-                // The DialogBody above already owns the scroll viewport
-                // (overflow-y-auto).
-                scrollerMaxHeight: false,
-              }}
-            >
-              <DataGridTable />
-            </DataGrid>
-          </div>
+          {/* Round 4 review (24 Sep, AC-RS-89): no outer `overflow-x-auto` wrapper - the
+              DataGrid's OWN internal scroller (`tableLayout.width: 'fixed'`) is the one
+              horizontal-scroll surface; a second one around it was inert (never
+              actually scrolled, `table.closest('.overflow-x-auto')` matched it purely
+              by coincidence of nesting), and `columnsDraggable: false` drops the grip
+              every header rendered by DEFAULT even though nothing here reorders. */}
+          <DataGrid
+            table={table}
+            recordCount={rows.length}
+            tableLayout={{
+              width: 'fixed',
+              columnsResizable: true,
+              columnsDraggable: false,
+              // The DialogBody above already owns the scroll viewport
+              // (overflow-y-auto).
+              scrollerMaxHeight: false,
+            }}
+          >
+            <DataGridTable />
+          </DataGrid>
           <div className="space-y-1">
             <Label htmlFor="reserve-request-note">Note (optional)</Label>
             <Textarea
