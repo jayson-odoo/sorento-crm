@@ -1,6 +1,6 @@
 # PLAN: an open ideation draft keeps short and question-shaped turns in the ideate lane
 
-Status: small fix track, PR open (#1185)
+Status: small fix track, PR open (#1185), fix round 1 addressed
 Plan created: 2026-09-24T08:35:54Z
 Domain: chatbot / ideation intake
 Issue: #1178 (evidence: PR #1176, `documentation/plans/ideation/REVIEW-ideation-flow-ux-24sep.md`
@@ -85,3 +85,27 @@ idea" line in `head/parser.py::build_user_block`, beside the existing `pending_k
 Small fix track: backend only, under 300 changed lines, no migration, no auth/RBAC change, no new
 ingest surface. One coder, tests first (red shown before green), one reviewer, no browser pass
 (no screen changed), `security-reviewer` not run (diff outside its surface).
+
+## Fix round 1 (reviewer pass at 5466562b)
+
+Two deviations from the version the reviewer read, both recorded here per coder.md ("update the
+contract doc + adjust both sides in the same change"):
+
+- **S1 narrowed the rule's message types (AC-4 superseded).** `_DRAFT_ABSORBS` keys on the LANE
+  `_lane()` returns, and `_lane()` sends `casual`, `unknown` and `confirmation`-typed turns to the
+  same "casual" lane - so the rule as written absorbed idle chat too, and the draft pointer has no
+  expiry. Added `_DRAFT_MESSAGE_TYPES = {"clarification", "confirmation"}`, checked beside the lane
+  in `_continues_open_draft`. AC-4 ("a hesitation stays in ideate") is superseded: a `casual`-typed
+  turn over an open draft now routes exactly as it would with no draft (`low_signal`), matching the
+  ruling's own wording ("short AND question-shaped turns" - confirm is short, a question is
+  question-shaped; a hesitation is neither).
+- **S3 dropped the `reference_positions` exemption.** `_DRAFT_OWN_KEYS` no longer carves it out;
+  the plan's own wording ("none of the subject signals `_IDLE_CHAT_DISQUALIFIERS` already lists")
+  already had no carve-out, and no test exercised the media-menu justification the code comment
+  gave for it. An actually-open roster's answer is unaffected - it is caught earlier by the
+  `decision.answers` guard.
+
+B1's AC-7b (parametrized, one case per guard, both a clarification and a confirmation verdict) and
+S2 (an `ideate` row with `intents: ["submit_idea"]` added to the test policy fixture,
+`_turn_helpers.py`) are additive - no behaviour change, coverage only. N1 and N2 are additive tests
+pinning existing behaviour. N3 and N4 are the reviewer's own call / pre-existing and out of scope.

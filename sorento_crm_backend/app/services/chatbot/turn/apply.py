@@ -986,13 +986,27 @@ _HELP_EXEMPT_DOMAINS = frozenset({"portal_link", IDEATE_DOMAIN})
 #: business lanes only arise when the message named another domain.
 _DRAFT_ABSORBS: frozenset[str] = frozenset({"clarification", "casual"})
 
+#: Within the "casual" lane, the message types issue #1178 actually names (S1,
+#: reviewer pass 1 on PR #1185): a bare "confirm" is `message_type: confirmation`, but
+#: `_lane` sends `casual` and `unknown` typed turns to the very same lane, and those are
+#: idle chat proper. The open draft pointer has no expiry - the intake keeps it on
+#: `collecting`/`review` until `complete`/`duplicate` - so a contact who abandoned a
+#: draft and later says "hi" or "thanks" must not have it resurrected and re-served
+#: "Still need: ...". Kept separate from `_DRAFT_ABSORBS` (which still has to tell
+#: `route()` a domain-menu turn from an idle-chat one for every OTHER lane) rather than
+#: folded into it.
+_DRAFT_MESSAGE_TYPES: frozenset[str] = frozenset({"clarification", "confirmation"})
+
 #: Of `_IDLE_CHAT_DISQUALIFIERS`, the keys that can name the IDEA ITSELF rather than
 #: another subject, so `_continues_open_draft` reads them on their own terms (the ideate
-#: domain and its intents pass, positions answer the draft's own media menu) instead of
-#: as evidence the message is about something else.
-_DRAFT_OWN_KEYS: frozenset[str] = frozenset(
-    {"entities", "intent_hint", "domain_hint", "asks", "reference_positions"}
-)
+#: domain and its own intents pass) instead of as evidence the message is about
+#: something else. `reference_positions` is deliberately NOT exempted (S3, reviewer
+#: pass 1): the plan's own wording is "none of the subject signals
+#: `_IDLE_CHAT_DISQUALIFIERS` already lists", with no carve-out, and an answer to an
+#: actually open roster is already caught earlier by the `decision.answers` guard - a
+#: stray position with no roster open is exactly the kind of thing the message named
+#: for itself.
+_DRAFT_OWN_KEYS: frozenset[str] = frozenset({"entities", "intent_hint", "domain_hint", "asks"})
 
 
 def open_ideation_draft(ideation: Any) -> bool:
@@ -1018,21 +1032,24 @@ def _continues_open_draft(
     collecting?
 
     Yes when a draft is open, the verdict placed the turn on a lane the draft absorbs
-    (`_DRAFT_ABSORBS`), the message names nothing of its own, and the standing subject
-    is still the idea (or nothing). "Names nothing of its own" is the same structured
-    reading `_is_idle_chat` makes - none of the parser's subject signals - with the
-    ideate domain, its own intents and a media-menu position allowed through, because
-    those name the draft, not a rival subject. A decisive term from another domain
-    (the prompt's own "asking stock/ETA/price mid-idea switches domain normally"), a
-    current-message entity, an answer to an open roster, or a focus that has already
-    moved to another domain all keep today's routing: the draft resumes by a fresh
-    ideate turn, as the prompt says it does.
+    (`_DRAFT_ABSORBS`) via a message type the ruling actually names
+    (`_DRAFT_MESSAGE_TYPES` - a question or a bare confirm, S1), the message names
+    nothing of its own, and the standing subject is still the idea (or nothing). "Names
+    nothing of its own" is the same structured reading `_is_idle_chat` makes - none of
+    the parser's subject signals - with the ideate domain and its own intents allowed
+    through, because those name the draft, not a rival subject. A decisive term from
+    another domain (the prompt's own "asking stock/ETA/price mid-idea switches domain
+    normally"), a current-message entity, an answer to an open roster, or a focus that
+    has already moved to another domain all keep today's routing: the draft resumes by
+    a fresh ideate turn, as the prompt says it does.
 
     Every input is the parser's structured verdict or persisted state (D1/AC-1520): no
     word of the message is read, and the parser's own domain is never overruled - the
     head is supplying the one fact the verdict could not carry, that a draft is open.
     """
     if lane not in _DRAFT_ABSORBS or not open_ideation_draft(ideation):
+        return False
+    if verdict.get("message_type") not in _DRAFT_MESSAGE_TYPES:
         return False
     if decision.answers:
         return False

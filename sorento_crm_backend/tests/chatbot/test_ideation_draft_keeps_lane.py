@@ -1,5 +1,6 @@
 """Issue #1178: an open ideation draft keeps short and question-shaped turns in the ideate
-lane (`documentation/plans/chatbot/PLAN-chatbot-ideation-draft-keeps-lane.md`, AC-1 to AC-11).
+lane (`documentation/plans/chatbot/PLAN-chatbot-ideation-draft-keeps-lane.md`, AC-1 to
+AC-11b).
 
 Evidence: `documentation/plans/ideation/REVIEW-ideation-flow-ux-24sep.md` findings 2 and 3.
 "what do you mean impact?" typed mid-draft answered with the eight-topic domain menu
@@ -13,15 +14,22 @@ Two seams, both after the parse and both reading structured state only:
 * the engine one, `engine.run_turn` on Postgres with the draft seeded on the contact's
   session and `lanes.ideate.call_ideation_tool` stubbed, so the assertion is that the
   customer's words reached the intake tool and nothing else answered them.
+
+Fix round 1 (reviewer pass at 5466562b on PR #1185) added AC-7b through AC-7e and AC-11b,
+and superseded AC-4 - see `PLAN-chatbot-ideation-draft-keeps-lane.md`'s "Fix round 1"
+section for the two behaviour changes (S1, S3).
 """
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
+from sqlalchemy import text
 
 from app.services.chatbot import engine as engine_mod
 from app.services.chatbot.turn.apply import apply
+from app.services.chatbot.turn.pending import ask as pending_ask
 from app.services.chatbot.turn.route import route
 from app.services.chatbot.turn.state import Focus, State
 from tests.chatbot._turn_helpers import build_policy, entity, verdict
@@ -46,9 +54,32 @@ OPEN_DRAFT: dict[str, Any] = {
 
 RULE = "open_idea_draft_keeps_lane"
 
+#: AC-7b's roster case: an open `product_pick` roster, so `reference_positions: [1]`
+#: is a real ANSWER (`decide()`'s ANSWER kind), not a stray position with nothing to
+#: answer (that is AC-7d, no pending at all).
+ROSTER_PENDING = pending_ask(
+    "product_pick",
+    [
+        {
+            "position": 1,
+            "label": "SRTWC286-SH-200",
+            "code": "SRTWC286-SH-200",
+            "uuid": "u1",
+            "uuids": ["u1"],
+            "entity_type": "product",
+            "payload": {},
+        }
+    ],
+    asked_at_turn=1,
+    expects="pick",
+    payload={},
+)
 
-def _state(ideation: Any = OPEN_DRAFT, domains: tuple[str, ...] = ("ideate",)) -> State:
-    return State(focus=Focus(domains=list(domains)), ideation=ideation)
+
+def _state(
+    ideation: Any = OPEN_DRAFT, domains: tuple[str, ...] = ("ideate",), pending: Any = None
+) -> State:
+    return State(focus=Focus(domains=list(domains)), ideation=ideation, pending=pending)
 
 
 def _branch(state: State, v: dict[str, Any]) -> tuple[str, Any]:
@@ -58,12 +89,16 @@ def _branch(state: State, v: dict[str, Any]) -> tuple[str, Any]:
 
 def _question_verdict(**overrides: Any) -> dict[str, Any]:
     """"what do you mean impact?" - a question about the intake's own question."""
-    return verdict(message_type="clarification", user_goal="asking what impact means", **overrides)
+    base = {"message_type": "clarification", "user_goal": "asking what impact means"}
+    base.update(overrides)
+    return verdict(**base)
 
 
 def _confirm_verdict(**overrides: Any) -> dict[str, Any]:
     """"confirm" - the parser's bare affirmative, no domain of its own."""
-    return verdict(message_type="confirmation", is_affirmative=True, **overrides)
+    base = {"message_type": "confirmation", "is_affirmative": True}
+    base.update(overrides)
+    return verdict(**base)
 
 
 class TestOpenDraftKeepsTheLane:
@@ -85,11 +120,6 @@ class TestOpenDraftKeepsTheLane:
         """AC-3."""
         branch, plan = _branch(_state(), _confirm_verdict())
         assert branch == "ideate", (plan.trace.lane, plan.trace.rules_fired)
-
-    def test_a_hesitation_stays_in_ideate(self) -> None:
-        """AC-4: "dunno lah, can skip this one?"."""
-        branch, _ = _branch(_state(), verdict(message_type="casual"))
-        assert branch == "ideate"
 
     def test_the_rule_is_named_on_the_trace(self) -> None:
         """AC-5."""
@@ -116,6 +146,26 @@ class TestNoDraftNothingChanges:
         assert RULE not in plan.trace.rules_fired
 
 
+class TestIdleChatIsNotAbsorbedIntoTheDraft:
+    """AC-4 (superseded, fix round 1, S1): "dunno lah, can skip this one?" is
+    `message_type: casual`, and `_lane` sends `casual`, `unknown` AND `confirmation`
+    turns to the very same "casual" lane - so keying the rule on the lane alone
+    absorbed idle chat too. The open draft pointer has no expiry (the intake keeps it
+    on `collecting`/`review` until `complete`/`duplicate`), so a contact who abandoned
+    a draft and later said "hi" would have had it resurrected and re-served
+    "Still need: ...". Narrowed to `_DRAFT_MESSAGE_TYPES`: a `casual` or `unknown` turn
+    over an open draft now routes exactly as it would with no draft at all.
+    """
+
+    @pytest.mark.parametrize("message_type", ["casual", "unknown"])
+    def test_idle_chat_types_are_not_absorbed(self, message_type: str) -> None:
+        v = verdict(message_type=message_type)
+        branch, plan = _branch(_state(), v)
+        no_draft_branch, _ = _branch(_state(ideation=None), v)
+        assert branch == no_draft_branch == "low_signal"
+        assert RULE not in plan.trace.rules_fired
+
+
 class TestTheDraftYieldsToWhatTheMessageNames:
     def test_a_decisive_domain_switch_still_wins(self) -> None:
         """AC-7: the prompt's own rule - asking stock mid-idea switches domain normally."""
@@ -131,6 +181,101 @@ class TestTheDraftYieldsToWhatTheMessageNames:
         assert branch == "business_query"
         assert plan.domains == ["inventory"]
         assert RULE not in plan.trace.rules_fired
+
+    @pytest.mark.parametrize(
+        "verdict_factory", [_question_verdict, _confirm_verdict], ids=["clarification", "confirmation"]
+    )
+    @pytest.mark.parametrize(
+        "overrides, pending",
+        [
+            pytest.param({"entities": [entity("SRTWC286")]}, None, id="current_message_entity"),
+            pytest.param({"domain_in_message": True}, None, id="domain_in_message"),
+            pytest.param(
+                {"asks": [{"domain": "inventory", "intent": "check_stock"}]},
+                None,
+                id="asks_non_ideate",
+            ),
+            pytest.param({"requested_attributes": ["price"]}, None, id="requested_attributes"),
+            pytest.param({"intent_hint": "check_stock"}, None, id="intent_hint_other_domain"),
+            # `is_affirmative: true` explicitly (redundant for `_confirm_verdict`,
+            # additive for `_question_verdict`) over an open pending: `decide()`'s
+            # "affirmative" path (`turn/decide.py`) makes this an ANSWER without
+            # touching `entities` or `reference_positions`, so it isolates the
+            # `decision.answers` guard - a positional pick would also trip the S3
+            # disqualifier guard below it, on the same verdict, for a different reason.
+            pytest.param({"is_affirmative": True}, ROSTER_PENDING, id="answers_open_roster"),
+        ],
+    )
+    def test_every_guard_one_at_a_time_matches_the_no_draft_baseline(
+        self, overrides: dict[str, Any], pending: Any, verdict_factory
+    ) -> None:
+        """AC-7b (reviewer B1): each guard that lets the message name something of its
+        own, tested in isolation, over both a question-shaped and a bare-confirm
+        verdict. The assertion is the branch WITH the draft open against the branch
+        for the IDENTICAL verdict (and pending) with no draft at all, rather than a
+        hard-coded lane name - exactly what B1 asks for, regardless of which lane each
+        guard's own verdict shape would otherwise reach.
+
+        Kill-tested (B1's own method): removing any one of the six guards this
+        parametrization exercises turns exactly its own case red and no other.
+        """
+        v = verdict_factory(**overrides)
+        with_draft, with_plan = _branch(_state(pending=pending), v)
+        without_draft, _ = _branch(_state(ideation=None, pending=pending), v)
+        assert with_draft == without_draft
+        assert RULE not in with_plan.trace.rules_fired
+
+    def test_submit_idea_intent_with_no_domain_hint_stays_in_ideate(self) -> None:
+        """AC-7c (S2): before `_turn_helpers.POLICY_DOMAIN_ROWS` carried an `ideate` row,
+        `policy.domain("ideate")` was `None` in every pure test and `own_intents` was
+        always empty, so `intent_hint: "submit_idea"` with no `domain_hint` (the ideate
+        row's own intent, named nowhere else in the fixture) could not be told apart
+        from an intent that names nothing at all - both passed by accident. The
+        fixture now carries `intents: ["submit_idea"]`, matching `policy_rows.py:273`.
+
+        `_question_verdict` only, not `_confirm_verdict`: a `confirmation` verdict
+        carrying its own `intent_hint` disqualifies `_is_idle_chat` before `_lane` ever
+        runs, so it reaches `ideate` by the ordinary carried-focus business path
+        (`trace.lane is None`) rather than by this rule - a real difference worth
+        keeping visible, not a case this guard needs to cover twice.
+        """
+        branch, plan = _branch(_state(), _question_verdict(intent_hint="submit_idea"))
+        assert branch == "ideate", (plan.trace.lane, plan.trace.rules_fired)
+        assert RULE in plan.trace.rules_fired
+
+    def test_a_stray_position_with_no_roster_open_still_disqualifies(self) -> None:
+        """AC-7d (S3): the `reference_positions` exemption is dropped - a position
+        naming nothing (no pending to answer at all) is read like any other
+        `_IDLE_CHAT_DISQUALIFIERS` key, matching the plan's own wording exactly ("none
+        of the subject signals `_IDLE_CHAT_DISQUALIFIERS` already lists"). An answer to
+        an actually open roster is unaffected: AC-7b's `answers_open_roster` case is
+        caught earlier, by the `decision.answers` guard.
+
+        `_question_verdict`, not `_confirm_verdict`: `reference_positions` is itself
+        one of `_is_idle_chat`'s own disqualifiers, so a bare confirm carrying it never
+        reaches the "casual" lane in the first place (`_lane` sees a carried, non-idle
+        `domains` and returns `None`, a business lane) - this guard is only reachable
+        through the `clarification` lane, which `_lane` sets from the message type
+        alone, with no idle-chat reading at all.
+        """
+        v = _question_verdict(reference_positions=[1])
+        with_draft, with_plan = _branch(_state(), v)
+        without_draft, _ = _branch(_state(ideation=None), v)
+        assert with_draft == without_draft
+        assert RULE not in with_plan.trace.rules_fired
+
+    def test_domain_hint_guard_agrees_with_the_focus_guard(self) -> None:
+        """AC-7e (N1): `domain_hint: "inventory"` already moves `focus.domains` to
+        `["inventory"]` in `_focus_rules`, so the focus-axis guard rejects this before
+        the explicit `domain_hint is not None` guard in `_continues_open_draft` ever
+        runs. Harmless as a second guard; this pins that both agree the parser's own
+        domain is never overruled.
+        """
+        v = _question_verdict(domain_hint="inventory")
+        with_draft, with_plan = _branch(_state(), v)
+        without_draft, _ = _branch(_state(ideation=None), v)
+        assert with_draft == without_draft
+        assert RULE not in with_plan.trace.rules_fired
 
     def test_an_escalation_still_wins(self) -> None:
         """AC-8."""
@@ -180,9 +325,34 @@ def _stub_ideation_tool(monkeypatch) -> list[dict[str, Any]]:
     return captured
 
 
-def _run(session_factory, system_settings_row, stub_parser, stub_access, monkeypatch, *, text: str, parser: dict):
+def _seed_flat_session_variables(session_factory, variables: dict[str, Any]) -> None:
+    """AC-11b (N2): the five keys directly at the top of `session_vars`, with no
+    `variables` wrapper - the OTHER shape `session_state.five_keys` reads
+    (`turn_runtime.py:325`). `_seed_session_variables` (reused above from
+    `test_s3_canned_and_ideate`) always wraps its argument under `"variables"`, which
+    is the n8n-nested shape AC-10/AC-11 already cover.
+    """
+    db = session_factory()
+    db.execute(
+        text("UPDATE respond_contacts SET session_vars = CAST(:sv AS jsonb) WHERE respond_io_id = :c"),
+        {"c": str(CONTACT_ID), "sv": json.dumps(variables)},
+    )
+    db.commit()
+
+
+def _run(
+    session_factory,
+    system_settings_row,
+    stub_parser,
+    stub_access,
+    monkeypatch,
+    *,
+    text: str,
+    parser: dict,
+    seed_fn=_seed_session_variables,
+):
     _seed_completed_lanes(session_factory, system_settings_row)
-    _seed_session_variables(session_factory, SEEDED_SESSION)
+    seed_fn(session_factory, SEEDED_SESSION)
     captured = _stub_ideation_tool(monkeypatch)
     stub_parser(parser)
     stub_access()
@@ -245,4 +415,33 @@ class TestEngineWithAnOpenDraft:
         assert result.branch_kind == "ideate", result.reply
         assert len(captured) == 1
         assert captured[0]["message_text"] == "confirm"
+        assert captured[0]["session_vars"] == {"ideation": OPEN_DRAFT}
+
+
+class TestEngineWithTheFlatSessionShape:
+    def test_a_question_reaches_the_ideation_tool_over_the_flat_shape(
+        self, session_factory, seeded, system_settings_row, stub_parser, stub_access, monkeypatch
+    ) -> None:
+        """AC-11b (N2)."""
+        result, captured = _run(
+            session_factory,
+            system_settings_row,
+            stub_parser,
+            stub_access,
+            monkeypatch,
+            text="what do you mean impact?",
+            parser=_parser_output(
+                message_type="clarification",
+                intent_hint=None,
+                domain_hint=None,
+                scope_intent=None,
+                user_goal="asking what impact means",
+                entities=[],
+                entity_op=None,
+            ),
+            seed_fn=_seed_flat_session_variables,
+        )
+        assert result.branch_kind == "ideate", result.reply
+        assert len(captured) == 1
+        assert captured[0]["message_text"] == "what do you mean impact?"
         assert captured[0]["session_vars"] == {"ideation": OPEN_DRAFT}
