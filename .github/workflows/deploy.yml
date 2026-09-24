@@ -459,6 +459,9 @@ jobs:
           name: scm-durations-${{ matrix.shard }}
           path: sorento_crm_backend/.test_durations.shard${{ matrix.shard }}.json
           retention-days: 7
+          # The durations file is a dotfile; upload-artifact excludes those by
+          # default and silently uploads nothing ("No files were found").
+          include-hidden-files: true
 
       - name: Run SCM serial_ddl tests serially (executing gate)
         if: matrix.shard == 1
@@ -642,6 +645,9 @@ jobs:
           name: test-durations-${{ matrix.shard }}
           path: sorento_crm_backend/.test_durations.shard${{ matrix.shard }}.json
           retention-days: 7
+          # The durations file is a dotfile; upload-artifact excludes those by
+          # default and silently uploads nothing ("No files were found").
+          include-hidden-files: true
 
       # Migration tests run serially, outside the xdist pool, on one shard only.
       #
