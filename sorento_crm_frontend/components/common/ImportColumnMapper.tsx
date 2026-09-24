@@ -262,94 +262,11 @@ export function ImportColumnMapper({
           No header row was found.
         </p>
       ) : null}
-      {allKnown && !expanded ? (
-        <div className="flex items-center justify-between gap-2 rounded-md border border-dashed p-2 text-xs text-muted-foreground">
-          <span>
-            {total} of {total} column{total === 1 ? '' : 's'} mapped from saved
-            layout
-          </span>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={() => setExpanded(true)}
-          >
-            Review
-          </Button>
-        </div>
-      ) : (
-        <>
-          {probe.columns.length ? (
-            <div
-              className="hidden gap-2 px-1.5 text-2xs uppercase tracking-wide text-muted-foreground/70 sm:grid sm:grid-cols-[1fr_1fr_1fr]"
-              aria-hidden
-            >
-              <span>Sample</span>
-              <span>Column</span>
-              <span>Field</span>
-            </div>
-          ) : null}
-          <div className="space-y-1.5">
-            {probe.columns.map((c) => {
-              const field = selections[c.header] ?? null;
-              // A column this supplier has never mapped before stands out among otherwise
-              // pre-filled columns (AC-M12) - `source: 'none'` is exactly that - UNTIL the
-              // operator gives it a pick IN THIS SAME SESSION: the highlight means "you have
-              // never decided this one", and it has to stop the moment that stops being true,
-              // not stay keyed off the probe's own immutable snapshot (review round 1).
-              const isNew = c.source === 'none' && !field;
-              return (
-                <div
-                  key={`${c.position}-${c.header}`}
-                  className={
-                    'grid grid-cols-1 gap-1.5 rounded-md p-1.5 sm:grid-cols-[1fr_1fr_1fr] sm:items-center sm:gap-2' +
-                    (isNew ? ' bg-primary/5 ring-1 ring-primary/20' : '')
-                  }
-                >
-                  {/* Mobile (< 640px, review round 1 item 18): stacked in READING order - the
-                      column's own name first, then its sample data, then the pick. Desktop
-                      (>= 640px) keeps the Sample | Column | Field order the header row above
-                      names, via the `sm:order-*` overrides below. */}
-                  <div
-                    className="order-1 min-w-0 whitespace-pre-line text-xs sm:order-2"
-                    title={c.header}
-                  >
-                    {c.header}
-                  </div>
-                  <div
-                    className="order-2 min-w-0 truncate text-2xs text-muted-foreground sm:order-1"
-                    title={c.samples[0] ?? ''}
-                  >
-                    {c.samples[0] !== undefined ? (
-                      c.samples[0]
-                    ) : (
-                      <span className="italic">no sample</span>
-                    )}
-                  </div>
-                  <div className="order-3 sm:order-3">
-                    <SearchableSelect
-                      size="sm"
-                      value={field ?? ''}
-                      onChange={(v: string) => pick(c.header, v)}
-                      options={selectOptions}
-                      selectedOption={
-                        field
-                          ? selectOptions.find((o) => o.value === field)
-                          : undefined
-                      }
-                      placeholder="Choose a field"
-                      clearable
-                      disabled={busy}
-                    />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </>
-      )}
       {headerFields.length ? (
-        <div className="space-y-2 border-t pt-2">
+        // Owner ruling (25 Sep): Header fields sits ABOVE the column grid - it has ~6 rows
+        // and holds the fields the buyer cares about (BL/container/seal/PI number/date),
+        // where the 20-row column grid used to bury it below the fold.
+        <div className="space-y-2">
           <p className="text-2xs font-medium text-muted-foreground">Header fields</p>
           {headerAllKnown && !headerExpanded ? (
             <div className="flex items-center justify-between gap-2 rounded-md border border-dashed p-2 text-xs text-muted-foreground">
@@ -425,6 +342,97 @@ export function ImportColumnMapper({
           )}
         </div>
       ) : null}
+      {allKnown && !expanded ? (
+        <div
+          className={
+            'flex items-center justify-between gap-2 rounded-md border border-dashed p-2 text-xs text-muted-foreground' +
+            (headerFields.length ? ' border-t pt-2' : '')
+          }
+        >
+          <span>
+            {total} of {total} column{total === 1 ? '' : 's'} mapped from saved
+            layout
+          </span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => setExpanded(true)}
+          >
+            Review
+          </Button>
+        </div>
+      ) : (
+        <div className={headerFields.length ? 'space-y-1.5 border-t pt-2' : 'space-y-1.5'}>
+          {probe.columns.length ? (
+            <div
+              className="hidden gap-2 px-1.5 text-2xs uppercase tracking-wide text-muted-foreground/70 sm:grid sm:grid-cols-[1fr_1fr_1fr]"
+              aria-hidden
+            >
+              <span>Sample</span>
+              <span>Column</span>
+              <span>Field</span>
+            </div>
+          ) : null}
+          <div className="space-y-1.5">
+            {probe.columns.map((c) => {
+              const field = selections[c.header] ?? null;
+              // A column this supplier has never mapped before stands out among otherwise
+              // pre-filled columns (AC-M12) - `source: 'none'` is exactly that - UNTIL the
+              // operator gives it a pick IN THIS SAME SESSION: the highlight means "you have
+              // never decided this one", and it has to stop the moment that stops being true,
+              // not stay keyed off the probe's own immutable snapshot (review round 1).
+              const isNew = c.source === 'none' && !field;
+              return (
+                <div
+                  key={`${c.position}-${c.header}`}
+                  className={
+                    'grid grid-cols-1 gap-1.5 rounded-md p-1.5 sm:grid-cols-[1fr_1fr_1fr] sm:items-center sm:gap-2' +
+                    (isNew ? ' bg-primary/5 ring-1 ring-primary/20' : '')
+                  }
+                >
+                  {/* Mobile (< 640px, review round 1 item 18): stacked in READING order - the
+                      column's own name first, then its sample data, then the pick. Desktop
+                      (>= 640px) keeps the Sample | Column | Field order the header row above
+                      names, via the `sm:order-*` overrides below. */}
+                  <div
+                    className="order-1 min-w-0 whitespace-pre-line text-xs sm:order-2"
+                    title={c.header}
+                  >
+                    {c.header}
+                  </div>
+                  <div
+                    className="order-2 min-w-0 truncate text-2xs text-muted-foreground sm:order-1"
+                    title={c.samples[0] ?? ''}
+                  >
+                    {c.samples[0] !== undefined ? (
+                      c.samples[0]
+                    ) : (
+                      <span className="italic">no sample</span>
+                    )}
+                  </div>
+                  <div className="order-3 sm:order-3">
+                    <SearchableSelect
+                      size="sm"
+                      value={field ?? ''}
+                      onChange={(v: string) => pick(c.header, v)}
+                      options={selectOptions}
+                      selectedOption={
+                        field
+                          ? selectOptions.find((o) => o.value === field)
+                          : undefined
+                      }
+                      placeholder="Choose a field"
+                      clearable
+                      disabled={busy}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

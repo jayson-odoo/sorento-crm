@@ -105,15 +105,13 @@ export async function probeImportMapping({
   const res = await apiFetch('/api/v1/scm/import-mapping/probe', { method: 'POST', body });
   if (!res.ok) throw new Error(await extractApiError(res, "Failed to read the file's columns"));
   const data = await res.json();
+  // Fix round 3 (owner hand test, 25 Sep): the whole response IS the probe - hand-picking
+  // keys here silently dropped `header_field_choices` (the mapper's Header fields section
+  // read [] and offered only Ignore) the moment the backend grew a field this list did not
+  // yet name. Spread every key through instead, so a future backend addition (or removal)
+  // never needs a matching edit here.
   return {
-    probe: {
-      header_row: data.header_row,
-      columns: data.columns,
-      required_fields: data.required_fields,
-      missing_required: data.missing_required,
-      row_count: data.row_count,
-      header_fields: data.header_fields,
-    },
+    probe: { ...data },
     fields: data.fields,
   };
 }

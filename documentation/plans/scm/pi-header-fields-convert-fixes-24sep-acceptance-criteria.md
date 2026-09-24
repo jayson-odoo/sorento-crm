@@ -23,9 +23,10 @@ the file to My Downloads and the download history sits on the packing list.
 
 ## Header fields in the mapper (R-D)
 
-- AC-F1 After a file lands, the mapper shows a "Header fields" section listing every
-  `label：value` pair found above the table (DAFUYUAN: 提单号, 柜号, 封条号, Date:, PI No.:) with the
-  value as sample and the label as-is; a pair already known for this supplier is pre-filled.
+- AC-F1 After a file lands, the mapper shows a "Header fields" section ABOVE the column grid
+  listing every `label：value` pair found above the table (DAFUYUAN: 提单号, 柜号, 封条号, Date:, PI
+  No.:) with the value as sample and the label as-is; a pair already known for this supplier is
+  pre-filled.
 - AC-F2 Field choices are PI number, Invoice date, BL, Container, Seal, Currency, Ignore;
   Consignee is not offered.
 - AC-F3 Test saves header-field picks together with the column picks; the next upload from the
