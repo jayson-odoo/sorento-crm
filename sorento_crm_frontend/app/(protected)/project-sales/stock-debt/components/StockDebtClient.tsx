@@ -718,6 +718,8 @@ export function StockDebtClient() {
           monthLabel={openCell.label}
           balance={openCell.balance}
           group={group}
+          cutoff={cutoff}
+          book={book}
           onClose={() => setOpenCell(null)}
         />
       )}

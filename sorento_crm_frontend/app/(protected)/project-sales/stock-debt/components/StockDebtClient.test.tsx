@@ -250,11 +250,12 @@ describe('StockDebtClient', () => {
       await screen.findByRole('button', { name: 'SRTWB242, Sep 26, balance -16' }),
     );
 
-    // The board's own group narrowing travels with the drill, so the two foot: '' here is
-    // the unnarrowed board. `StockDebtCellDialog.test.tsx` pins the narrowed case, and
-    // `stockDebtService.test.ts` pins what it puts on the wire.
+    // The board's own group/cutoff/book narrowing travels with the drill, so the two
+    // foot: '' and the defaults here are the unnarrowed board.
+    // `StockDebtCellDialog.test.tsx` pins the narrowed case, and `stockDebtService.
+    // real.test.ts` pins what it puts on the wire.
     await waitFor(() =>
-      expect(getStockDebtCell).toHaveBeenCalledWith('p1', '2026-09', ''),
+      expect(getStockDebtCell).toHaveBeenCalledWith('p1', '2026-09', '', undefined, 'all'),
     );
     expect(await screen.findByTestId('stock-debt-cell-dialog')).toBeInTheDocument();
   });

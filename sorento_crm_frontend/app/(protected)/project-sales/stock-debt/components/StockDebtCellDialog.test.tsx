@@ -126,7 +126,11 @@ beforeEach(() => vi.clearAllMocks());
 describe('StockDebtCellDialog', () => {
   it('asks for the cell it was opened on', async () => {
     renderDialog();
-    await waitFor(() => expect(getStockDebtCell).toHaveBeenCalledWith('p1', '2026-10', 'BB'));
+    // AC-11: the drill also carries the board's cutoff/book, undefined here since the
+    // dialog was not given either.
+    await waitFor(() =>
+      expect(getStockDebtCell).toHaveBeenCalledWith('p1', '2026-10', 'BB', undefined, undefined),
+    );
   });
 
   it('lists the demand with its bin, its due date and its status', async () => {

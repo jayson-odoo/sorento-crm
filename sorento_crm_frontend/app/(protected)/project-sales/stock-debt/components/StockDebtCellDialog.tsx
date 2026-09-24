@@ -20,6 +20,7 @@ import { cn } from '@/lib/utils';
 import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { useStockDebtCellQuery } from '../hooks/useStockDebtQuery';
 import type {
+  StockDebtBook,
   StockDebtDemandLine,
   StockDebtDemandStatus,
   StockDebtSupplyEvent,
@@ -81,6 +82,8 @@ export function StockDebtCellDialog({
   monthLabel,
   balance,
   group,
+  cutoff,
+  book,
   onClose,
 }: {
   productId: string;
@@ -93,12 +96,16 @@ export function StockDebtCellDialog({
   balance: number;
   /** The group the board is narrowed to, echoed so the figures are not read as the whole book. */
   group: string;
+  /** The board's own cutoff (AC-11), echoed so the drill foots with the cell that opened it. */
+  cutoff?: string | null;
+  /** The board's own book (AC-11), same reason. */
+  book?: StockDebtBook;
   onClose: () => void;
 }) {
   // The board's own narrowing travels with the request AND with the cache key: the same
-  // product and month answer differently under `group=BB`, so the drill has to be
-  // recomputed over the span the cell that opened it was.
-  const cell = useStockDebtCellQuery(productId, month, group);
+  // product and month answer differently under `group=BB` / a cutoff / a book, so the
+  // drill has to be recomputed over the span the cell that opened it was.
+  const cell = useStockDebtCellQuery(productId, month, group, cutoff, book);
 
   const demandColumns = React.useMemo<ColumnDef<StockDebtDemandLine>[]>(
     () => [

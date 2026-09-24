@@ -1,39 +1,25 @@
 /**
  * ============================================================================
  * Stock Debt - feature service (S2, AC-S2-6 / AC-S2-7; extended 24 Sep 2026,
- * PLAN-stock-debt-filters-totals-export-24sep.md, Phase 1)
+ * PLAN-stock-debt-filters-totals-export-24sep.md, Phase 2)
  * ============================================================================
  * Layering: UI -> hooks (`useStockDebtQuery`) -> THIS service -> lib/api-client
  * -> backend.
  *
- * ── PHASE-1 MOCK CONTRACT (24 Sep 2026 lane only) ───────────────────────────
- * `getStockDebtList` runs off `mockStockDebtList()` below while
- * `USE_STOCK_DEBT_FILTER_MOCKS` is `true` - the base board (S2) already calls
- * the real backend, but this lane's five new fields (`cutoff`, `supplier_id`,
- * `book` on the request; `totals`, `suppliers`, and per-row `supplier_id` /
- * `supplier_name` / `category_code` / `total` on the response) do not exist on
- * it yet (Phase 2, AC-1 to AC-11). Rather than half-call the real endpoint and
- * paper over the missing fields, the whole function is mocked, the same shape
- * `reorderRunService.ts`'s `USE_M4_MOCKS` and `summaryOrderMockStore.ts` use:
- * Phase 2 flips the flag to `false` and deletes the mock branch - a one-line
- * swap at this function's first statement, not a rewrite of its callers.
- *
- * `getStockDebtCell` is UNCHANGED and keeps calling the real backend: the cell
- * drill is not part of this lane's Phase 1 scope (extending it with `cutoff` /
- * `book`, AC-11, lands with the rest of the backend work in Phase 2).
- *
- * `exportStockDebt` has no real route to fall back to at all yet (AC-12 is
- * net-new in Phase 2), so it is mocked unconditionally behind the same flag -
- * there is nothing for the flag to choose between until Phase 2 exists.
+ * ── PHASE 2 (24 Sep 2026 lane) ───────────────────────────────────────────────
+ * All three functions call the real backend below - `USE_STOCK_DEBT_FILTER_MOCKS`
+ * stays declared and `false` rather than deleted outright, matching
+ * `reorderRunService.ts`'s own `USE_M4_MOCKS` convention: a later regression that
+ * flips it back to `true` is a one-line, reviewable diff rather than a
+ * from-scratch mock rewrite.
  *
  * The export popover's "212 rows, 14 sheets" preview (AC-33) reads
  * `pagination.total` for rows and the envelope's `sheet_counts` (AC-7b) for
- * sheets - both already committed, whole-filtered-set fields, not a Phase-1
- * add-on, so `previewStockDebtExport()` needs no branch of its own once Phase 2
- * lands: it already reads the real shape.
+ * sheets - both real, whole-filtered-set fields from the backend below, so
+ * `previewStockDebtExport()` needed no change at all once Phase 2 landed.
  *
  * ── PHASE-2 BACKEND CONTRACT ────────────────────────────────────────────────
- * Both routes live under the `projects` domain router and both require
+ * All three routes live under the `projects` domain router and all require
  * `projects.stock_debt.view` (AC-S2-8, R22; permission + grant sweep shipped in
  * migration 443 with S1).
  *
@@ -98,8 +84,7 @@
  *      change under the reader as they page (AC-7b: page 2 states the same
  *      `sheet_counts` as page 1).
  *
- * 2) The cell drill (AC-S2-7, R28) - UNCHANGED in this lane's Phase 1; Phase 2 adds
- *    `cutoff` and `book` (AC-11) so the drill foots with a narrowed board.
+ * 2) The cell drill (AC-S2-7, R28; extended AC-11)
  *
  *      GET /api/v1/project-sales/stock-debt/{product_id}/cell
  *          ?month=<YYYY-MM | tba | undated | unlocated>
@@ -107,6 +92,9 @@
  *                               the list: it narrows the span the balance is recomputed
  *                               from, so the drill foots with the cell that opened it.
  *                               Omitted = the whole book.
+ *          &cutoff=<YYYY-MM-DD>  the board's own cutoff, echoed so the drill foots
+ *                               with the cell that opened it.
+ *          &book=<all|project|retail>  the board's own book, same reason.
  *
  *      -> 200 {
  *           demand: [{ so_number, agent_code, warehouse_code, required_date, open_qty,
@@ -129,7 +117,7 @@
  *      tab footers print. `short_qty` is what a line went short of on its own date, so a
  *      `late` line ends covered and still carries one.
  *
- * 3) Export (AC-12 to AC-18, Phase 2 net-new)
+ * 3) Export (AC-12 to AC-18)
  *
  *      POST /api/v1/project-sales/stock-debt/export
  *          { query?, group?, only_debt?, cutoff?, supplier_id?, book?, split }
@@ -172,13 +160,11 @@ import type {
   StockDebtExportPreview,
   StockDebtExportSplit,
   StockDebtListResponse,
-  StockDebtRow,
-  StockDebtSupplierOption,
 } from '../types/stockDebt.types';
 
-/** Phase 1 -> Phase 2 switch (see the header). Flip to `false` once the backend in
- *  AC-1 to AC-18 ships, and delete the branch it guards below. */
-export const USE_STOCK_DEBT_FILTER_MOCKS = true;
+/** Phase 1 -> Phase 2 switch (see the header). `false` since the backend in AC-1 to
+ *  AC-18 shipped; kept declared, not deleted, so a regression is a one-line diff. */
+export const USE_STOCK_DEBT_FILTER_MOCKS = false;
 
 /** What the board asks for: a page, a needle, a group, the book, a supplier, a
  *  cutoff and the debt-only switch. */
@@ -208,15 +194,10 @@ export interface StockDebtExportParams {
   split: StockDebtExportSplit;
 }
 
-/**
- * The month x product board (AC-S2-6, AC-1 to AC-9). Phase 1: `mockStockDebtList` (see
- * the header's Phase-1 section).
- */
+/** The month x product board (AC-S2-6, AC-1 to AC-9). */
 export async function getStockDebtList(
   params: StockDebtListParams,
 ): Promise<StockDebtListResponse> {
-  if (USE_STOCK_DEBT_FILTER_MOCKS) return mockStockDebtList(params);
-
   const search = buildDataGridParams(
     {
       pageIndex: params.pageIndex,
@@ -237,20 +218,21 @@ export async function getStockDebtList(
 }
 
 /**
- * The demand and supply behind one cell (AC-S2-7). `month` is `YYYY-MM`, `tba`,
- * `undated` or `unlocated`; `group` is the board's own narrowing, passed through so the
- * drill is recomputed over the same span the cell was.
- *
- * NOT extended with `cutoff` / `book` in this lane's Phase 1 (see the header) - that is
- * AC-11, landing with the rest of the backend in Phase 2.
+ * The demand and supply behind one cell (AC-S2-7, extended AC-11). `month` is `YYYY-MM`,
+ * `tba`, `undated` or `unlocated`; `group`, `cutoff` and `book` are the board's own
+ * narrowing, passed through so the drill is recomputed over the same span the cell was.
  */
 export async function getStockDebtCell(
   productId: string,
   month: string,
   group?: string,
+  cutoff?: string,
+  book?: StockDebtBook,
 ): Promise<StockDebtCell> {
   const search = new URLSearchParams({ month });
   if (group) search.set('group', group);
+  if (cutoff) search.set('cutoff', cutoff);
+  if (book && book !== 'all') search.set('book', book);
   const res = await apiFetch(
     `/api/v1/project-sales/stock-debt/${encodeURIComponent(productId)}/cell?${search}`,
   );
@@ -260,14 +242,11 @@ export async function getStockDebtCell(
 
 /**
  * Starts the workbook export through My Downloads (R10/R12, AC-12 to AC-18, AC-33/AC-34).
- * Mocked unconditionally (see the header): AC-12's route does not exist until Phase 2, so
- * there is no real branch to fall back to yet. Returns a `MyDownload` row shaped exactly
- * like the low stock report's (`exportLowStockReport` in `summaryOrderService.ts`) so the
- * same drawer / toast plumbing serves both.
+ * Returns a `MyDownload` row shaped exactly like the low stock report's
+ * (`exportLowStockReport` in `summaryOrderService.ts`) so the same drawer / toast plumbing
+ * serves both.
  */
 export async function exportStockDebt(params: StockDebtExportParams): Promise<MyDownload> {
-  if (USE_STOCK_DEBT_FILTER_MOCKS) return mockExportStockDebt(params);
-
   const res = await apiFetch('/api/v1/project-sales/stock-debt/export', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -283,293 +262,6 @@ export async function exportStockDebt(params: StockDebtExportParams): Promise<My
   });
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to start the stock debt export'));
   return (await res.json()) as MyDownload;
-}
-
-// ============================================================================
-// Phase 1 mock data (see the header). Deleted, along with the two branches
-// above, once Phase 2 ships.
-// ============================================================================
-
-const MOCK_SUPPLIERS: StockDebtSupplierOption[] = [
-  { id: 'sup-guangdong', name: 'Guangdong Sanitary Co' },
-  { id: 'sup-foshan', name: 'Foshan Ceramics' },
-  { id: 'sup-kohler', name: 'Kohler Asia' },
-];
-
-const MOCK_GROUPS = ['BB', 'IB', 'PJ'];
-const MOCK_MONTHS = ['2026-09', '2026-10', '2026-11', '2026-12'];
-const MOCK_TBA_MONTH = '2027-06';
-
-interface MockRowSeed {
-  code: string;
-  name: string | null;
-  book: 'project' | 'retail';
-  group: string;
-  /** One balance per `MOCK_MONTHS` entry, in order. */
-  balances: number[];
-  tba: number;
-  undated: number;
-  unlocated: number;
-  supplierIndex: number | null;
-  category: string | null;
-}
-
-const MOCK_SEEDS: MockRowSeed[] = [
-  {
-    code: 'SRTWB242',
-    name: 'Sorento basin 242',
-    book: 'project',
-    group: 'BB',
-    balances: [55, -16, -652, 40],
-    tba: -100,
-    undated: -12,
-    unlocated: -7,
-    supplierIndex: 0,
-    category: 'BASIN',
-  },
-  {
-    code: 'SRTWC118',
-    name: null,
-    book: 'project',
-    group: 'IB',
-    balances: [-30, -18, 22, 0],
-    tba: 0,
-    undated: -5,
-    unlocated: 0,
-    supplierIndex: 1,
-    category: 'WC',
-  },
-  {
-    code: 'SRTTP305',
-    name: 'Sorento single lever tap',
-    book: 'project',
-    group: 'BB',
-    balances: [12, 8, -4, -9],
-    tba: -20,
-    undated: 0,
-    unlocated: 0,
-    supplierIndex: null,
-    category: 'TAP',
-  },
-  {
-    code: 'SRTAC090',
-    name: null,
-    book: 'retail',
-    group: 'PJ',
-    balances: [-2, -14, -6, 5],
-    tba: 0,
-    undated: 0,
-    unlocated: -3,
-    supplierIndex: 2,
-    category: 'ACC',
-  },
-  {
-    code: 'SRTWB255',
-    name: 'Sorento basin 255',
-    book: 'retail',
-    group: 'PJ',
-    balances: [0, 0, -1, 0],
-    tba: 0,
-    undated: 0,
-    unlocated: 0,
-    supplierIndex: 0,
-    category: 'BASIN',
-  },
-  {
-    code: 'SRTWC120',
-    name: 'Sorento close-couple WC',
-    book: 'project',
-    group: 'IB',
-    balances: [-8, -8, -8, -8],
-    tba: -40,
-    undated: -2,
-    unlocated: 0,
-    supplierIndex: 1,
-    category: 'WC',
-  },
-  {
-    code: 'SRTTP310',
-    name: null,
-    book: 'project',
-    group: 'BB',
-    balances: [3, 3, 3, 3],
-    tba: 0,
-    undated: 0,
-    unlocated: 0,
-    supplierIndex: null,
-    category: 'TAP',
-  },
-];
-
-function mockRowTotal(row: Omit<StockDebtRow, 'total'>): number {
-  return (
-    row.months.reduce((sum, month) => sum + month.balance, 0) +
-    row.tba +
-    row.undated +
-    row.unlocated
-  );
-}
-
-function toneFor(balance: number): 'red' | 'amber' | 'green' {
-  // The real tone depends on lead time (`supply_assignment.tone_for`); the mock only
-  // needs to exercise all three colours, so a fixed split is enough for Phase 1 screens.
-  if (balance >= 0) return 'green';
-  return balance <= -50 ? 'red' : 'amber';
-}
-
-function buildMockRow(seed: MockRowSeed, productId: string): StockDebtRow {
-  const months = MOCK_MONTHS.map((key, index) => ({
-    key,
-    balance: seed.balances[index] ?? 0,
-    tone: toneFor(seed.balances[index] ?? 0),
-  }));
-  const supplier = seed.supplierIndex === null ? null : MOCK_SUPPLIERS[seed.supplierIndex];
-  const base: Omit<StockDebtRow, 'total'> = {
-    product_id: productId,
-    product_code: seed.code,
-    // AC-9: null when it equals the code - none of the seeds above do, but the guard
-    // stays here rather than only in the UI, so the mock and the eventual backend agree.
-    product_name: seed.name === seed.code ? null : seed.name,
-    months,
-    tba: seed.tba,
-    undated: seed.undated,
-    unlocated: seed.unlocated,
-    supplier_id: supplier?.id ?? null,
-    supplier_name: supplier?.name ?? null,
-    category_code: seed.category,
-  };
-  return { ...base, total: mockRowTotal(base) };
-}
-
-/** `2026-11-30` -> `2026-11`, for trimming the axis and the demand at a cutoff (R2, A2). */
-function monthOf(dateIso: string): string {
-  return dateIso.slice(0, 7);
-}
-
-function mockStockDebtList(params: StockDebtListParams): StockDebtListResponse {
-  const cutoffMonth = params.cutoff ? monthOf(params.cutoff) : null;
-  const axis = cutoffMonth ? MOCK_MONTHS.filter((key) => key <= cutoffMonth) : MOCK_MONTHS;
-  const tbaMonth = MOCK_TBA_MONTH;
-  // A3: TBA is dated on or after `tba_date_from`, so a cutoff before it drops the whole
-  // bucket; undated and unlocated demand have no date to test and are never dropped.
-  const tbaDroppedByCutoff = Boolean(cutoffMonth && tbaMonth > cutoffMonth);
-
-  let rows = MOCK_SEEDS.map((seed, index) => buildMockRow(seed, `mock-${index + 1}`)).map(
-    (row, index) => {
-      const seed = MOCK_SEEDS[index];
-      const trimmedMonths = row.months.filter((month) => axis.includes(month.key));
-      const tba = tbaDroppedByCutoff ? 0 : row.tba;
-      const total =
-        trimmedMonths.reduce((sum, month) => sum + month.balance, 0) +
-        tba +
-        row.undated +
-        row.unlocated;
-      return { row: { ...row, months: trimmedMonths, tba, total }, seed };
-    },
-  );
-
-  if (params.book !== 'all') {
-    rows = rows.filter((entry) => entry.seed.book === params.book);
-  }
-  if (params.group && params.book !== 'retail') {
-    rows = rows.filter((entry) => entry.seed.book !== 'project' || entry.seed.group === params.group);
-  }
-  if (params.supplierId === 'none') {
-    rows = rows.filter((entry) => entry.row.supplier_id === null);
-  } else if (params.supplierId) {
-    rows = rows.filter((entry) => entry.row.supplier_id === params.supplierId);
-  }
-  if (params.query.trim()) {
-    const needle = params.query.trim().toLowerCase();
-    rows = rows.filter(
-      (entry) =>
-        entry.row.product_code.toLowerCase().includes(needle) ||
-        (entry.row.product_name ?? '').toLowerCase().includes(needle),
-    );
-  }
-  if (params.onlyDebt) {
-    rows = rows.filter(
-      (entry) =>
-        entry.row.months.some((month) => month.balance < 0) ||
-        entry.row.tba < 0 ||
-        entry.row.undated < 0 ||
-        entry.row.unlocated < 0,
-    );
-  }
-
-  rows.sort((a, b) => a.row.product_code.localeCompare(b.row.product_code));
-
-  const filtered = rows.map((entry) => entry.row);
-  const totalsMonths: Record<string, number> = {};
-  axis.forEach((key) => {
-    totalsMonths[key] = filtered.reduce(
-      (sum, row) => sum + (row.months.find((month) => month.key === key)?.balance ?? 0),
-      0,
-    );
-  });
-  const totals = {
-    months: totalsMonths,
-    tba: filtered.reduce((sum, row) => sum + row.tba, 0),
-    undated: filtered.reduce((sum, row) => sum + row.undated, 0),
-    unlocated: filtered.reduce((sum, row) => sum + row.unlocated, 0),
-    total: filtered.reduce((sum, row) => sum + row.total, 0),
-  };
-  const suppliers = MOCK_SUPPLIERS.filter((supplier) =>
-    filtered.some((row) => row.supplier_id === supplier.id),
-  ).sort((a, b) => a.name.localeCompare(b.name));
-
-  const start = params.pageIndex * params.pageSize;
-  const page = filtered.slice(start, start + params.pageSize);
-
-  return {
-    data: page,
-    pagination: { total: filtered.length, page: params.pageIndex + 1, limit: params.pageSize },
-    months: axis,
-    tba_month: tbaMonth,
-    groups: MOCK_GROUPS,
-    totals,
-    suppliers,
-    sheet_counts: mockSheetCounts(filtered),
-  };
-}
-
-/**
- * The exact export sheet counts over the WHOLE filtered set (AC-7b) - none-buckets
- * ("No supplier" / "No category") counted only when at least one row actually has none,
- * and `supplier_category` counted as the distinct PAIRS present, not suppliers times
- * categories (a pair with no row does not get a sheet).
- */
-function mockSheetCounts(filtered: StockDebtRow[]): {
-  supplier: number;
-  category: number;
-  supplier_category: number;
-} {
-  const supplierKeys = new Set(filtered.map((row) => row.supplier_id ?? '__none__'));
-  const categoryKeys = new Set(filtered.map((row) => row.category_code ?? '__none__'));
-  const pairKeys = new Set(
-    filtered.map((row) => `${row.supplier_id ?? '__none__'}||${row.category_code ?? '__none__'}`),
-  );
-  return {
-    supplier: supplierKeys.size,
-    category: categoryKeys.size,
-    supplier_category: pairKeys.size,
-  };
-}
-
-let mockDownloadSeq = 0;
-
-function mockExportStockDebt(params: StockDebtExportParams): Promise<MyDownload> {
-  mockDownloadSeq += 1;
-  const now = new Date().toISOString();
-  const download: MyDownload = {
-    id: `mock-stock-debt-download-${mockDownloadSeq}`,
-    kind: 'stock_debt_xlsx',
-    status: 'pending',
-    filename: `stock-debt-${params.split}.xlsx`,
-    created_at: now,
-    ready_at: null,
-  };
-  return Promise.resolve(download);
 }
 
 /**

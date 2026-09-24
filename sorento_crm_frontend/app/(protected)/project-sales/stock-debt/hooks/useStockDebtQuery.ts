@@ -9,6 +9,7 @@ import {
   getStockDebtList,
 } from '../services/stockDebtService';
 import type { StockDebtExportParams, StockDebtListParams } from '../services/stockDebtService';
+import type { StockDebtBook } from '../types/stockDebt.types';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 /**
@@ -63,21 +64,27 @@ export function useExportStockDebt() {
 }
 
 /**
- * One cell's demand and supply (AC-S2-7). Fires only while its lightbox is open:
- * a board is 4,000 rows x 15 columns, so nothing here is fetched up front.
+ * One cell's demand and supply (AC-S2-7, extended AC-11). Fires only while its lightbox
+ * is open: a board is 4,000 rows x 15 columns, so nothing here is fetched up front.
  *
- * `group` is part of the KEY, not just of the request: the same product and month
- * answer differently under `group=BB`, so a shared cache entry would hand the
- * narrowed board the whole book's drill.
+ * `group`, `cutoff` and `book` are part of the KEY, not just of the request: the same
+ * product and month answer differently under a narrowed board, so a shared cache entry
+ * would hand the narrowed board the whole book's drill.
  */
 export function useStockDebtCellQuery(
   productId: string | null,
   month: string | null,
   group?: string,
+  cutoff?: string | null,
+  book?: StockDebtBook,
 ) {
   return useQuery({
-    queryKey: ['project-sales', 'stock-debt', 'cell', productId, month, group ?? ''],
-    queryFn: () => getStockDebtCell(productId as string, month as string, group),
+    queryKey: [
+      'project-sales', 'stock-debt', 'cell', productId, month, group ?? '', cutoff ?? '',
+      book ?? 'all',
+    ],
+    queryFn: () =>
+      getStockDebtCell(productId as string, month as string, group, cutoff ?? undefined, book),
     enabled: Boolean(productId && month),
     staleTime: 60_000,
     retry: 1,
