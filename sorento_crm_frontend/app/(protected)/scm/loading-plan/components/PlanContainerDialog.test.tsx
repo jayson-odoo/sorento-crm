@@ -378,11 +378,32 @@ describe('PlanContainerDialog', () => {
       const previewOrder = previewProformaInvoice.mock.invocationCallOrder[0];
       expect(saveOrder).toBeLessThan(previewOrder);
 
-      // The probed header row (15) must travel onto the read Test takes - not wired today
-      // (PlanContainerDialog's own comment: "Phase 2 (B6) threads the chosen header_row
-      // into the preview/apply calls ... not yet wired").
+      // The probed header row (15) must travel onto the read Test takes.
       const previewCallArgs = previewProformaInvoice.mock.calls[0];
       expect(previewCallArgs).toContain(15);
+    });
+
+    // V7 (fix-round, review R1): Confirm must save the current mapping before it applies,
+    // the same way Test does (grill G1) - today Confirm calls `upload.confirm()`
+    // directly, with no save at all, pressed or not.
+    it('Confirm without a prior Test saves the mapping first', async () => {
+      const resolved = unresolvedQtyProbe();
+      resolved.probe.columns[1] = { ...resolved.probe.columns[1], field: 'qty', source: 'supplier' };
+      probeImportMapping.mockResolvedValue(resolved);
+      renderDialog();
+      await chooseSupplier();
+      await dropProformaFile();
+
+      const confirm = await screen.findByTestId('plan-container-confirm');
+      await waitFor(() => expect((confirm as HTMLButtonElement).disabled).toBe(false));
+
+      fireEvent.click(confirm);
+
+      await waitFor(() => expect(applyProformaInvoice).toHaveBeenCalled());
+      expect(saveImportMapping).toHaveBeenCalled();
+      const saveOrder = saveImportMapping.mock.invocationCallOrder[0];
+      const applyOrder = applyProformaInvoice.mock.invocationCallOrder[0];
+      expect(saveOrder).toBeLessThan(applyOrder);
     });
   });
 });

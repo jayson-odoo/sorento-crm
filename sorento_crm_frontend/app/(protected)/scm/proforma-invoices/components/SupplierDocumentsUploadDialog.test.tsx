@@ -608,4 +608,144 @@ describe('SupplierDocumentsUploadDialog - inline column mapper (F3, G5)', () => 
     expect(screen.queryByText(/Map to\.\.\./)).toBeNull();
     expect(screen.queryByRole('button', { name: 'Map to...' })).toBeNull();
   });
+
+  function probeFor(
+    headerRow: number,
+    columns: { position: number; header: string; field: string | null; source: string }[],
+    requiredFields: string[] = ['item_code', 'qty'],
+  ) {
+    return {
+      probe: {
+        header_row: headerRow,
+        columns: columns.map((c) => ({ ...c, samples: [] })),
+        required_fields: requiredFields,
+      },
+      fields: [
+        { field: 'item_code', label: 'Item code' },
+        { field: 'qty', label: 'Quantity' },
+        { field: 'unit_price', label: 'Unit price' },
+      ],
+    };
+  }
+
+  // V5 (fix-round, B6/AC-M3): the probed header row per file must travel onto BOTH the
+  // read Test takes and the write Confirm makes - the service layer already carries a
+  // `headerRows` option (`fulfilmentService.ts`), but neither call here passes it.
+  it('sends header_rows {file name: probed row} to Test and to Confirm', async () => {
+    const resolvedColumns = [
+      { position: 0, header: 'ITEM', field: 'item_code', source: 'supplier' },
+      { position: 1, header: 'QTY', field: 'qty', source: 'supplier' },
+    ];
+    probeImportMapping.mockImplementation(async ({ file }: { file: File }) => {
+      if (file.name === 'invoice.xls') return probeFor(15, resolvedColumns);
+      return probeFor(2, resolvedColumns);
+    });
+    applySupplierDocuments.mockResolvedValue({
+      proforma_invoice_ids: [], shipment_ids: [], links_written: 0, attachment_ids: [],
+    });
+    openDialog();
+    const files = pickFiles([xlsx('invoice.xls'), xlsx('packing-list.xls')]);
+    await waitFor(() => expect(probeImportMapping).toHaveBeenCalledTimes(2));
+
+    fireEvent.click(testButton());
+    await waitFor(() =>
+      expect(previewSupplierDocuments).toHaveBeenCalledWith(
+        files,
+        expect.objectContaining({
+          headerRows: { 'invoice.xls': 15, 'packing-list.xls': 2 },
+        }),
+      ),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /^Confirm/ }));
+    await waitFor(() =>
+      expect(applySupplierDocuments).toHaveBeenCalledWith(
+        files,
+        expect.objectContaining({
+          headerRows: { 'invoice.xls': 15, 'packing-list.xls': 2 },
+        }),
+      ),
+    );
+  });
+
+  // V5, second half: the mapper always probes the UNION of proforma_invoice + packing_list
+  // (G4) before a file's real kind is known, so `required_fields` always includes
+  // `unit_price` even for a file that turns out to be a pure packing list (which never
+  // needs it). Test must not block on a field THIS file will never be asked to resolve.
+  it('does not disable Test for a pure packing list missing only unit_price', async () => {
+    probeImportMapping.mockResolvedValue(
+      probeFor(
+        2,
+        [
+          { position: 0, header: 'ITEM', field: 'item_code', source: 'supplier' },
+          { position: 1, header: 'QTY', field: 'qty', source: 'supplier' },
+        ],
+        ['item_code', 'qty', 'unit_price'],
+      ),
+    );
+    openDialog();
+    pickFiles([xlsx('packing-list.xls')]);
+    await waitFor(() => expect(probeImportMapping).toHaveBeenCalled());
+
+    expect(testButton()).not.toBeDisabled();
+  });
+
+  // V6 (fix-round): the self-serve supplier picker changing supplier must re-probe every
+  // already-dropped file against the NEW supplier's own layout, not keep answering with
+  // the PREVIOUS supplier's resolved picks.
+  it('re-probes when the supplier changes, and does not keep the previous supplier\'s picks', async () => {
+    probeImportMapping
+      .mockResolvedValueOnce(
+        probeFor(1, [{ position: 0, header: 'ITEM', field: 'item_code', source: 'supplier' }]),
+      )
+      .mockResolvedValueOnce(
+        probeFor(1, [{ position: 0, header: 'ITEM', field: null, source: 'none' }]),
+      );
+    getFulfilmentSuppliers.mockResolvedValue([
+      { value: 'sup-1', label: 'Kailu Hardware Factory' },
+      { value: 'sup-2', label: 'Second Supplier' },
+    ]);
+    openDialogSelfServe();
+    fireEvent.click(supplierSelect()!);
+    fireEvent.click(await screen.findByRole('option', { name: 'Kailu Hardware Factory' }));
+    pickFiles([xlsx('invoice.xls')]);
+    await waitFor(() => expect(probeImportMapping).toHaveBeenCalledTimes(1));
+    expect(probeImportMapping).toHaveBeenCalledWith(
+      expect.objectContaining({ supplierId: 'sup-1' }),
+    );
+
+    fireEvent.click(supplierSelect()!);
+    fireEvent.click(await screen.findByRole('option', { name: 'Second Supplier' }));
+
+    await waitFor(() => expect(probeImportMapping).toHaveBeenCalledTimes(2));
+    expect(probeImportMapping).toHaveBeenLastCalledWith(
+      expect.objectContaining({ supplierId: 'sup-2' }),
+    );
+  });
+
+  // V7 (fix-round): Confirm must save the current mapping before it applies, the same way
+  // Test does (grill G1) - today Confirm calls `applySupplierDocuments` directly with no
+  // save at all, pressed or not.
+  it('Confirm without a prior Test saves the mapping first', async () => {
+    probeImportMapping.mockResolvedValue(
+      probeFor(1, [
+        { position: 0, header: 'ITEM', field: 'item_code', source: 'supplier' },
+        { position: 1, header: 'QTY', field: 'qty', source: 'supplier' },
+      ]),
+    );
+    applySupplierDocuments.mockResolvedValue({
+      proforma_invoice_ids: [], shipment_ids: [], links_written: 0, attachment_ids: [],
+    });
+    openDialog();
+    pickFiles([xlsx('invoice.xls')]);
+    await waitFor(() => expect(probeImportMapping).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByRole('button', { name: /^Confirm/ }));
+
+    await waitFor(() => expect(applySupplierDocuments).toHaveBeenCalled());
+    expect(saveImportMapping).toHaveBeenCalled();
+    const saveOrder = saveImportMapping.mock.invocationCallOrder[0];
+    const applyOrder = applySupplierDocuments.mock.invocationCallOrder[0];
+    expect(saveOrder).toBeLessThan(applyOrder);
+  });
 });

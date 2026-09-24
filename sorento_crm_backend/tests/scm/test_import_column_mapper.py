@@ -23,6 +23,13 @@ openpyxl, 24 Sep) rather than invented numbers - see the tester's handback for d
     given.
   - The `件数\n（件）` sample pair `["148", "55"]` the brief names "on FSCU" is actually
     OOLU9610547's data (FSCU's own column reads `["15", "54"]`). T2 asserts it on OOLU.
+
+Fix-round (review R1, second correction against the real bytes): the coordinator's R7
+carton width/height numbers (0.54, 0.31) are OOLU9610547's first line, not FSCU8706420's
+(FSCU's own first line reads 0.6/2.35; OOLU's second item happens to share FSCU's numbers,
+which is almost certainly what mixed the two up) - R7 asserts them on OOLU, same
+correction shape as T2's. ny_stock_20260921.xlsx holds 44 real data rows (序号 1-44, row
+47 the "总计：" total), not 38 as the ORIGINAL brief said - R9 uses the measured count.
 """
 from __future__ import annotations
 
@@ -44,6 +51,29 @@ FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "scm" / "import
 
 def _fixture(name: str) -> bytes:
     return (FIXTURE_DIR / name).read_bytes()
+
+
+def _packing_list_workbook() -> bytes:
+    """A synthetic packing-list-SHAPED file (R7): titled `装箱单` so `classify()` (title
+    cell, checked first) recognises it as a packing list without any alias resolving
+    anything - the only way to get a file that IS a packing list with its required set
+    genuinely unresolved for a fresh supplier, since header-shape classification itself
+    needs an alias to already answer (chicken-and-egg, same reason the mapper exists).
+    Every header is `{MARKER}`-prefixed so it cannot collide with a real shared alias.
+    """
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append([f"装箱单 {MARKER} R7"])
+    ws.append([f"{MARKER}型号", f"{MARKER}数量", f"{MARKER}箱数", f"{MARKER}净重", f"{MARKER}备注"])
+    ws.append(["ABC-1", 10, 2, 5.5, "n/a"])
+    ws.append(["ABC-2", 20, 4, 11.0, "n/a"])
+    from io import BytesIO
+
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
 
 
 def _create_supplier(db, *, code_suffix: str = "") -> str:
@@ -554,3 +584,538 @@ def test_probe_endpoint_shape(scm_app):
     assert body["required_fields"] == ["item_code", "qty", "unit_price"]
     assert body["missing_required"] == ["qty"], body["missing_required"]
     assert {"field": "item_code", "label": "Item code"} in body["fields"]
+
+
+# =============================================================================
+# Fix-round (review R1): the coder's now-landed implementation, probed harder.
+# =============================================================================
+
+
+# --------------------------------------------------------------------------- #
+# R1 - save refuses a doc_types shape it does not understand
+# --------------------------------------------------------------------------- #
+
+
+def test_save_rejects_unknown_doc_type(scm_app):
+    from sqlalchemy import text
+
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    grant_permission(db, "purchasing", "scm.proforma_invoice.upload")
+    grant_permission(db, "purchasing", "scm.reorder.run")
+    supplier_id = _create_supplier(db, code_suffix="R1")
+    client = TestClient(app)
+
+    # `ignore` bypasses save()'s "is this field known to any requested doc type" check
+    # entirely - it is written under EVERY doc_type asked for, unconditionally. Nothing
+    # today refuses a doc_type the mapper does not even serve, so this row would land in
+    # the table under a doc_type no reader will ever ask for.
+    r1 = client.post(
+        "/api/v1/scm/import-mapping/save",
+        json={
+            "supplier_id": supplier_id,
+            "doc_types": ["outstanding_so"],
+            "mappings": [{"header": f"{MARKER}osoh", "field": "ignore"}],
+        },
+    )
+    assert r1.status_code == 422, r1.text
+    written = db.execute(
+        text(
+            "SELECT count(*) FROM import_field_alias "
+            "WHERE supplier_id = :s AND doc_type = 'outstanding_so'"
+        ),
+        {"s": supplier_id},
+    ).scalar()
+    assert written == 0, "an unknown doc_type must write nothing"
+
+    r2 = client.post(
+        "/api/v1/scm/import-mapping/save",
+        json={"supplier_id": supplier_id, "doc_types": [], "mappings": []},
+    )
+    assert r2.status_code == 422, r2.text
+
+    r3 = client.post(
+        "/api/v1/scm/import-mapping/save",
+        json={
+            "supplier_id": supplier_id,
+            "doc_types": ["proforma_invoice", "packing_list", "supplier_inventory"],
+            "mappings": [],
+        },
+    )
+    assert r3.status_code == 422, r3.text
+
+
+# --------------------------------------------------------------------------- #
+# R2 - a permission grants ONLY the doc types its own upload endpoint covers
+# --------------------------------------------------------------------------- #
+
+
+def test_save_permission_per_doc_type(scm_app):
+    from app.models.user import UserRole
+
+    app, db, gcu, gcuk = scm_app
+
+    # A caller who can only upload proforma invoices / packing lists must not be able to
+    # save (or probe) a STOCK LIST layout through this back door - `require_any_permission`
+    # today grants either permission the RUN of doc types requested, not just the ones its
+    # own permission actually covers.
+    role_a = f"zzicm-role-a-{uuid.uuid4().hex[:8]}"
+    db.add(UserRole(id=str(uuid.uuid4()), slug=role_a, name=f"{MARKER} role A {role_a}"))
+    db.flush()
+    as_company_user(app, db, gcu, gcuk, role=role_a)
+    grant_permission(db, role_a, "scm.proforma_invoice.upload")
+    supplier_a = _create_supplier(db, code_suffix="R2A")
+    client = TestClient(app)
+
+    r1 = client.post(
+        "/api/v1/scm/import-mapping/save",
+        json={
+            "supplier_id": supplier_a,
+            "doc_types": ["supplier_inventory"],
+            "mappings": [{"header": f"{MARKER}h1", "field": "ignore"}],
+        },
+    )
+    assert r1.status_code == 403, r1.text
+
+    r1p = client.post(
+        "/api/v1/scm/import-mapping/probe",
+        files={"file": ("stock.xlsx", _fixture("ny_stock_20260921.xlsx"), _XLSX)},
+        data={"supplier_id": supplier_a, "doc_types": "supplier_inventory"},
+    )
+    assert r1p.status_code == 403, r1p.text
+
+    # `scm.reorder.run` already reaches `/supplier-documents/apply` (proforma invoice /
+    # packing list uploads), so saving those doc types with only that permission mirrors a
+    # capability this role already has today - the coordinator's own positive case.
+    role_b = f"zzicm-role-b-{uuid.uuid4().hex[:8]}"
+    db.add(UserRole(id=str(uuid.uuid4()), slug=role_b, name=f"{MARKER} role B {role_b}"))
+    db.flush()
+    as_company_user(app, db, gcu, gcuk, role=role_b)
+    grant_permission(db, role_b, "scm.reorder.run")
+    supplier_b = _create_supplier(db, code_suffix="R2B")
+
+    r2 = client.post(
+        "/api/v1/scm/import-mapping/save",
+        json={
+            "supplier_id": supplier_b,
+            "doc_types": ["proforma_invoice"],
+            "mappings": [{"header": f"{MARKER}h2", "field": "ignore"}],
+        },
+    )
+    assert r2.status_code == 200, r2.text
+
+    r2p = client.post(
+        "/api/v1/scm/import-mapping/probe",
+        files={"file": ("FSCU8706420.xlsx", _fixture("ny_pi_FSCU8706420.xlsx"), _XLSX)},
+        data={"supplier_id": supplier_b, "doc_types": "proforma_invoice"},
+    )
+    assert r2p.status_code == 200, r2p.text
+
+
+# --------------------------------------------------------------------------- #
+# R3 - save bounds: header length, a header that normalises to nothing, mapping count
+# --------------------------------------------------------------------------- #
+
+
+def test_save_bounds(scm_app):
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    grant_permission(db, "purchasing", "scm.proforma_invoice.upload")
+    supplier_id = _create_supplier(db, code_suffix="R3")
+    client = TestClient(app)
+
+    # `import_field_alias.alias` is `String(255)` - a 256-char header must be REFUSED
+    # (422), not left to crash the insert into a raw Postgres DataError (500).
+    long_header = "H" * 256
+    r1 = client.post(
+        "/api/v1/scm/import-mapping/save",
+        json={
+            "supplier_id": supplier_id,
+            "doc_types": ["proforma_invoice"],
+            "mappings": [{"header": long_header, "field": "ignore"}],
+        },
+    )
+    assert r1.status_code == 422, r1.text
+
+    for blank_header in ("   ", "()"):
+        r2 = client.post(
+            "/api/v1/scm/import-mapping/save",
+            json={
+                "supplier_id": supplier_id,
+                "doc_types": ["proforma_invoice"],
+                "mappings": [{"header": blank_header, "field": "ignore"}],
+            },
+        )
+        assert r2.status_code == 422, (blank_header, r2.text)
+
+    too_many = [{"header": f"{MARKER}bulk{i}", "field": "ignore"} for i in range(501)]
+    r3 = client.post(
+        "/api/v1/scm/import-mapping/save",
+        json={"supplier_id": supplier_id, "doc_types": ["proforma_invoice"], "mappings": too_many},
+    )
+    assert r3.status_code == 422, r3.text
+
+
+# --------------------------------------------------------------------------- #
+# R4 - probe refuses an unreadable file with a plain 422, not a raw 500
+# --------------------------------------------------------------------------- #
+
+
+def test_probe_unreadable_file_422(scm_app):
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    grant_permission(db, "purchasing", "scm.proforma_invoice.upload")
+    supplier_id = _create_supplier(db, code_suffix="R4")
+    client = TestClient(app)
+
+    r = client.post(
+        "/api/v1/scm/import-mapping/probe",
+        files={"file": ("not-a-workbook.xlsx", b"this is not a zip file at all", _XLSX)},
+        data={"supplier_id": supplier_id, "doc_types": "proforma_invoice"},
+    )
+    assert r.status_code == 422, r.text
+    text = str(r.json())
+    assert "Traceback" not in text
+    assert "BadZipFile" not in text
+    assert ".py" not in text
+
+
+# --------------------------------------------------------------------------- #
+# R5 - for_doc_type answers from SHARED rows only; the word composer is unaffected
+# --------------------------------------------------------------------------- #
+
+
+def test_for_doc_type_reads_shared_rows_only():
+    from app.models.import_alias import ImportFieldAlias
+    from app.services.import_alias_service import AliasResolver
+
+    with pg_session() as db:
+        supplier_id = _seed_supplier_with_company(db, code_suffix="R5")
+        # A marker-prefixed header guarantees no shared row already answers for it, so
+        # the assertion below is a deterministic proof of leakage, not a race against
+        # Postgres's own (unordered) row-return order the way re-using a header the
+        # shared seed ALSO answers (like the literal `QTY` the coordinator named) would
+        # have been - whichever of the two rows a sequential scan happened to visit
+        # first would win `AliasResolver.for_doc_type`'s `setdefault`, real bug or not.
+        marker_header = f"{MARKER}QTYR5"
+        db.add(
+            ImportFieldAlias(
+                doc_type="proforma_invoice", field="ignore", alias=marker_header, supplier_id=supplier_id
+            )
+        )
+        db.flush()
+
+        resolver = AliasResolver.for_doc_type(db, "proforma_invoice")
+        assert resolver.raw_field_for_header(marker_header) is None, (
+            "a supplier-scoped row must not answer for the shared, supplier-agnostic resolver"
+        )
+        # The real shared seed still answers normally - `for_doc_type` is not broken
+        # wholesale, only supplier-scoped leakage into it is the bug.
+        assert resolver.field_for_header("QTY") == "qty"
+
+        # `supplier_code_composer.WordList.for_supplier` does NOT go through
+        # `AliasResolver.for_doc_type` at all (checked: it runs its own
+        # `supplier_id == X OR supplier_id IS NULL` query directly against
+        # `ImportFieldAlias`) - so scoping `for_doc_type` to shared rows only cannot
+        # break it. Regression guard: a supplier-scoped word row is still reachable the
+        # way the composer actually reads it.
+        from app.services.scm.supplier_code_composer import WORD_DOC_TYPE, WordList
+
+        word_header = f"{MARKER}WORDR5"
+        db.add(
+            ImportFieldAlias(
+                doc_type=WORD_DOC_TYPE, field="SRT", alias=word_header, supplier_id=supplier_id
+            )
+        )
+        db.flush()
+        words = WordList.for_supplier(db, supplier_id)
+        assert words.lookup(word_header) == "SRT"
+
+
+# --------------------------------------------------------------------------- #
+# R6 - a re-map under a different literal spelling still replaces, not accumulates
+# --------------------------------------------------------------------------- #
+
+
+def test_remap_deletes_by_normalised_header(scm_app):
+    from sqlalchemy import text
+
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    grant_permission(db, "purchasing", "scm.proforma_invoice.upload")
+    supplier_id = _create_supplier(db, code_suffix="R6")
+    client = TestClient(app)
+
+    # Same normalised key (`normalize_header` strips whitespace/case), different literal
+    # text - `_write`'s own DELETE matches the literal `alias` column, not the normalised
+    # key, so a re-map spelled differently must still replace the earlier row.
+    header_a = f"{MARKER}Qty "
+    header_b = f"{MARKER}QTY"
+    r1 = client.post(
+        "/api/v1/scm/import-mapping/save",
+        json={
+            "supplier_id": supplier_id,
+            "doc_types": ["proforma_invoice"],
+            "mappings": [{"header": header_a, "field": "cartons"}],
+        },
+    )
+    assert r1.status_code == 200, r1.text
+    r2 = client.post(
+        "/api/v1/scm/import-mapping/save",
+        json={
+            "supplier_id": supplier_id,
+            "doc_types": ["proforma_invoice"],
+            "mappings": [{"header": header_b, "field": "qty"}],
+        },
+    )
+    assert r2.status_code == 200, r2.text
+
+    rows = db.execute(
+        text(
+            "SELECT field, alias FROM import_field_alias "
+            "WHERE supplier_id = :s AND doc_type = 'proforma_invoice'"
+        ),
+        {"s": supplier_id},
+    ).fetchall()
+    assert len(rows) == 1, rows
+    assert rows[0][0] == "qty", rows
+
+
+# --------------------------------------------------------------------------- #
+# R7 - the reader actually resolves the PROBE's synthesised header texts (kill-test hole)
+# --------------------------------------------------------------------------- #
+
+
+def test_reader_uses_probe_header_texts(scm_app):
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    grant_permission(db, "purchasing", "scm.proforma_invoice.upload")
+    grant_permission(db, "purchasing", "scm.reorder.run")
+    client = TestClient(app)
+
+    from app.services.import_alias_service import AliasResolver
+    from app.services.scm.proforma_invoice_reader import read_workbook
+
+    # NEW YANGGANG, OOLU9610547 (corrected against the real file - see module docstring):
+    # the first data LINE's own 外箱/木托尺寸 measurements are width 0.54, height 0.31 -
+    # both blank-merged columns the probe names `[2]`/`[3]` (AC-M2), which the raw sheet
+    # cell never spells at all. If the reader resolved headers off the raw cells instead
+    # of the probe's synthesised texts, neither could ever be mapped to anything.
+    supplier_a = _create_supplier(db, code_suffix="R7A")
+    mapping_a = {
+        "客户型号": "item_code",
+        "总数量\n（个）": "qty",
+        "单价\n（元）": "unit_price",
+        "外箱/木托尺寸 [2]": "carton_width_cm",
+        "外箱/木托尺寸 [3]": "carton_height_cm",
+    }
+    r_save_a = client.post(
+        "/api/v1/scm/import-mapping/save",
+        json={
+            "supplier_id": supplier_a,
+            "doc_types": ["proforma_invoice"],
+            "mappings": [{"header": h, "field": f} for h, f in mapping_a.items()],
+        },
+    )
+    assert r_save_a.status_code == 200, r_save_a.text
+
+    resolver_a = AliasResolver.for_supplier(db, "proforma_invoice", supplier_a)
+    oolu_bytes = _fixture("ny_pi_OOLU9610547.xlsx")
+    result_a = read_workbook(oolu_bytes, resolver=resolver_a, header_row=15)
+    assert result_a.ok, result_a.missing_columns
+    first_line_a = result_a.documents[0].lines[0]
+    assert first_line_a.carton_width_cm == 0.54, first_line_a
+    assert first_line_a.carton_height_cm == 0.31, first_line_a
+
+    # DAFUYUAN: 箱子 CTN SIZE (CM) L (长) is a SPLICED second-header-row column (B2/AC-M2) -
+    # same proof, the other synthesis shape.
+    supplier_b = _create_supplier(db, code_suffix="R7B")
+    mapping_b = {
+        "产品型号": "item_code",
+        "数量": "qty",
+        "单价 (RMB)": "unit_price",
+        "箱子 CTN SIZE (CM) L (长)": "carton_length_cm",
+    }
+    r_save_b = client.post(
+        "/api/v1/scm/import-mapping/save",
+        json={
+            "supplier_id": supplier_b,
+            "doc_types": ["proforma_invoice"],
+            "mappings": [{"header": h, "field": f} for h, f in mapping_b.items()],
+        },
+    )
+    assert r_save_b.status_code == 200, r_save_b.text
+
+    resolver_b = AliasResolver.for_supplier(db, "proforma_invoice", supplier_b)
+    dafuyuan_bytes = _fixture("dafuyuan_pi_20260922.xlsx")
+    result_b = read_workbook(dafuyuan_bytes, resolver=resolver_b, header_row=14)
+    assert result_b.ok, result_b.missing_columns
+    first_line_b = result_b.documents[0].lines[0]
+    assert first_line_b.carton_length_cm == 37.5, first_line_b
+
+    # AC-M4 guard, the other two upload channels (T5 already proves the PI single-file
+    # preview): unmapped_headers is populated for a packing list whose required fields
+    # are unresolved, and for the stock list preview with no layout at all.
+    r_pl = client.post(
+        "/api/v1/scm/supplier-documents/preview",
+        files=[("files", ("packing.xlsx", _packing_list_workbook(), _XLSX))],
+        data={"supplier_id": _create_supplier(db, code_suffix="R7C")},
+    )
+    assert r_pl.status_code == 200, r_pl.text
+    pl_file = r_pl.json()["files"][0]
+    # `classify()` alone already says "packing_list" (measured directly, no aliases
+    # needed - its own title cell says 装箱单); this endpoint's own `kind` downgrades to
+    # "unreadable" once the reader's required columns are unresolved (`errors` non-empty)
+    # - a DIFFERENT thing from "which document is this", so not asserted here. What AC-M4
+    # actually promises is that the unresolved columns are still NAMED regardless.
+    assert pl_file.get("unmapped_headers"), pl_file
+
+    r_stock = client.post(
+        "/api/v1/scm/supplier-inventory/preview",
+        files={"file": ("stock.xlsx", _fixture("ny_stock_20260921.xlsx"), _XLSX)},
+        data={"supplier_id": _create_supplier(db, code_suffix="R7D")},
+    )
+    assert r_stock.status_code == 200, r_stock.text
+    # Unlike the PI preview (T5), `supplier_inventory_service.preview()` does not expose
+    # `unmapped_headers` at the top level at all today - only `validate()`'s warning TEXT
+    # reads `parsed.unmapped_headers` internally. AC-M4 promises the unresolved columns
+    # are named; `.get(...)` keeps the failure a clean assertion (missing/empty) rather
+    # than a `KeyError` crash.
+    assert r_stock.json().get("unmapped_headers"), r_stock.json()
+
+
+# --------------------------------------------------------------------------- #
+# R8 - OOLU9610547 and DAFUYUAN's own numbers, end to end through the preview endpoint
+# --------------------------------------------------------------------------- #
+
+
+def test_pi_preview_oolu_and_dafuyuan_numbers(scm_app):
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    grant_permission(db, "purchasing", "scm.proforma_invoice.upload")
+    client = TestClient(app)
+
+    supplier_ny = _create_supplier(db, code_suffix="R8NY")
+    ny_mapping = {
+        "客户型号": "item_code",
+        "总数量\n（个）": "qty",
+        "件数\n（件）": "cartons",
+        "单价\n（元）": "unit_price",
+        "金额\n（元）": "amount",
+    }
+    r_ny = client.post(
+        "/api/v1/scm/import-mapping/save",
+        json={
+            "supplier_id": supplier_ny,
+            "doc_types": ["proforma_invoice"],
+            "mappings": [{"header": h, "field": f} for h, f in ny_mapping.items()],
+        },
+    )
+    assert r_ny.status_code == 200, r_ny.text
+
+    r_oolu = client.post(
+        "/api/v1/scm/proforma-invoices/preview",
+        files={"file": ("OOLU9610547.xlsx", _fixture("ny_pi_OOLU9610547.xlsx"), _XLSX)},
+        data={"supplier_id": supplier_ny, "header_row": "15"},
+    )
+    assert r_oolu.status_code == 200, r_oolu.text
+    oolu_body = r_oolu.json()
+    assert oolu_body["ok"] is True, oolu_body
+    assert oolu_body["line_count"] == 3, oolu_body
+    assert oolu_body["documents"][0]["qty"] == 251, oolu_body["documents"][0]
+    assert oolu_body["documents"][0]["total"] == 79542, oolu_body["documents"][0]
+
+    supplier_da = _create_supplier(db, code_suffix="R8DA")
+    da_mapping = {
+        "产品型号": "item_code",
+        "数量": "qty",
+        "单价 (RMB)": "unit_price",
+        "总金额 TOTAL RMB": "amount",
+    }
+    r_da = client.post(
+        "/api/v1/scm/import-mapping/save",
+        json={
+            "supplier_id": supplier_da,
+            "doc_types": ["proforma_invoice"],
+            "mappings": [{"header": h, "field": f} for h, f in da_mapping.items()],
+        },
+    )
+    assert r_da.status_code == 200, r_da.text
+
+    r_dafuyuan = client.post(
+        "/api/v1/scm/proforma-invoices/preview",
+        files={"file": ("dafuyuan.xlsx", _fixture("dafuyuan_pi_20260922.xlsx"), _XLSX)},
+        data={"supplier_id": supplier_da, "header_row": "14"},
+    )
+    assert r_dafuyuan.status_code == 200, r_dafuyuan.text
+    da_body = r_dafuyuan.json()
+    assert da_body["ok"] is True, da_body
+    assert da_body["line_count"] == 15, da_body
+    assert da_body["documents"][0]["qty"] == 903, da_body["documents"][0]
+    assert da_body["documents"][0]["total"] == 110434, da_body["documents"][0]
+
+
+# --------------------------------------------------------------------------- #
+# R9 - the stock list's own real row count (corrected: 44, not 38 - see module docstring)
+# --------------------------------------------------------------------------- #
+
+
+def test_stock_list_preview_reads_44_rows(scm_app):
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    grant_permission(db, "purchasing", "scm.reorder.run")
+    supplier_id = _create_supplier(db, code_suffix="R9")
+    client = TestClient(app)
+
+    mapping = {"客户型号": "item_code", "总数量（个）": "qty_packed"}
+    r_save = client.post(
+        "/api/v1/scm/import-mapping/save",
+        json={
+            "supplier_id": supplier_id,
+            "doc_types": ["supplier_inventory"],
+            "mappings": [{"header": h, "field": f} for h, f in mapping.items()],
+        },
+    )
+    assert r_save.status_code == 200, r_save.text
+
+    r = client.post(
+        "/api/v1/scm/supplier-inventory/preview",
+        files={"file": ("stock.xlsx", _fixture("ny_stock_20260921.xlsx"), _XLSX)},
+        data={"supplier_id": supplier_id, "header_row": "2"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["readable"] is True, body
+    assert body["summary"]["rows"] == 44, body["summary"]
+
+
+# --------------------------------------------------------------------------- #
+# R10 - a numeric sample is rounded, not Python's full float repr
+# --------------------------------------------------------------------------- #
+
+
+def test_probe_samples_are_rounded():
+    from app.services.scm.header_probe import probe
+
+    result = probe(_fixture("ny_pi_FSCU8706420.xlsx"))
+    fangshu_col = next(c for c in result.columns if c.header == "方数")
+    # Row 17's own 方数 value is the float `6.5085120000000005` (Excel's own computed
+    # figure, not a typo) - `str()` of it is 18 characters; a sample this long is not
+    # something a human is meant to read at a glance (R5's whole point).
+    assert fangshu_col.samples[1].startswith("6.5085"), fangshu_col.samples
+
+    # The 12-char cap is about NUMBERS, not text: a product name column (工厂型号,
+    # 品名, ...) legitimately carries long strings that must stay verbatim (R5's "never
+    # truncated" is about HEADER text, not a licence to truncate a real product name here
+    # too) - only samples that parse as a plain number are checked.
+    def _looks_numeric(s: str) -> bool:
+        try:
+            float(s)
+            return True
+        except ValueError:
+            return False
+
+    for col in result.columns:
+        for sample in col.samples:
+            if _looks_numeric(sample):
+                assert len(sample) <= 12, (col.header, sample)
