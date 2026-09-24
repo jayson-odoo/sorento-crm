@@ -1,7 +1,8 @@
 # PLAN: fulfilment planning - Decide on the ticked lines, and one reason box in the expanded row
 
-Status: DRAFT, awaiting owner grill (steps 1 to 3 of `/feature` done; step 4 prepared, see
-"Grill questions" at the end). Track: full (expected diff over ~300 changed lines across FE +
+Status: GRILLED 24 Sep 2026 (rulings R1 to R11 folded, mockups drawn under
+`documentation/plans/scm/mockups/fp-*.html`); ONE open question left for the owner (which supply
+ways are Decide items, see "Open question"). Implementation starts once it is ruled. Track: full (expected diff over ~300 changed lines across FE +
 tests; no migration, no auth/RBAC change, no new ingest surface). One lane, one branch, one PR.
 Issues: #1216 (Decide), #1217 (discontinued gate + one reason box).
 UAC: `fp-decide-and-one-reason-24sep-acceptance-criteria.md`.
@@ -57,23 +58,32 @@ Borrow at another location are proposed automatically on Confirm.
 
 1. **Scan and tick.** The planner reads the list and ticks the rows that should all go the
    same way (for example nine rows that should simply be bought). Decision: which rows.
-2. **Decide.** Presses **Decide** at the top right of the section and picks **Buy**,
-   **Reserve** or **Borrow**. Decision: which way, at full quantity.
-   - Buy: every ticked row becomes Buy the whole open quantity.
-   - Reserve: every ticked row is covered in full from its own reserve ladder (the locations
-     the engine already reserves from for that line), in the engine's order. No location is
+2. **Decide.** Presses **Decide** at the top right of the section (always there, greyed out
+   until a row is ticked, R4) and picks one way, in the board's own supply words (R2):
+   **As suggested** (the old Save as suggested, R1), then **Use own location**, **Borrow from
+   another order**, **Borrow other location**, **Use BRW**, **Buy** (the item list is the one
+   open question). Decision: which way, at full quantity.
+   - As suggested: every ticked row saves the engine's own suggestion, exactly what Save as
+     suggested did.
+   - Use own location: every ticked row is covered in full from its own location's rung of
+     the reserve ladder (own location, own group). No location is asked.
+   - Borrow from another order: the planner picks ONE donor order (a later order holding the
+     same item at the line's own location, R8); every ticked row that order can cover borrows
+     its whole open quantity from it.
+   - Borrow other location: the planner picks ONE other location; every ticked row that
+     location can cover borrows its whole open quantity from there.
+   - Use BRW: every ticked row is covered in full from the site pool (BRW). No location is
      asked.
-   - Borrow: the planner picks ONE other location from a searchable list of locations that
-     hold free stock of at least one ticked row's item. Every ticked row borrows its whole
-     open quantity from that location.
+   - Buy: every ticked row becomes Buy the whole open quantity.
 3. **Say why, only when it is needed.** When the pick differs from a row's suggestion or from
-   its confirmed decision, or when the pick is Borrow, one Reason box appears before saving.
+   its confirmed decision, or when the pick is a Borrow, one Reason box appears before saving.
    One reason covers every ticked row in this one decision. Decision: the reason text.
-   (Grill Q3, Q5.)
-4. **Read the outcome.** One toast: how many rows were saved, and which were skipped and why
-   (a row the chosen way cannot cover in full, for example "only 3 free at BRW-IB"). Saved
-   rows untick and read Saved; skipped rows stay ticked so the planner can pick another way
-   for them at once. No decision.
+   (R5, R7.)
+4. **Read the outcome.** One toast: how many rows were saved, and how many were skipped with
+   the first few named (a row the chosen way cannot cover in full, for example "only 3 free at
+   BRW"). Nothing blocks the batch and no error dialog opens (R10). Saved rows untick and read
+   Saved; skipped rows stay ticked so the planner can pick another way for them at once. No
+   decision.
 5. **Partial or unusual lines.** For a half-half split the planner expands that row as today.
    The expanded row now carries exactly ONE text box, **Reason**, which serves as the amend
    reason, the borrow reason and, when the product is discontinued and the line buys, the
@@ -202,52 +212,120 @@ no split button component in `components/ui`.
 
 ## Design
 
-### D1 - Decide control (#1216)
+### D1 - Decide control (#1216), revised after the grill (R1, R2, R4, R8, R10)
 
-- **Placement.** In the list view's selection strip (grid `toolbar`), after
-  `Save as suggested (n)` and before Clear: a Button **Decide** with a chevron, opening a
-  `DropdownMenu` (`align="end"`) with three items: **Buy**, **Reserve**, **Borrow**. It shows
-  while at least one row is ticked, like the rest of the strip (Grill Q2). Toolbar already
-  `flex-wrap`s at 375px.
+Mockups: `mockups/fp-decide-strip.html` (strip, menu open, and the same strip greyed with
+nothing ticked), `mockups/fp-decide-dialog.html` (the Borrow dialog and the result toast).
+
+- **Placement.** The list view's selection strip (grid `toolbar`), after the Expand all /
+  Collapse all icon buttons, reads: `${n} selected` Badge, Button **Decide** with a chevron,
+  ghost Clear. **`Save as suggested (n)` is gone from the strip**: it is Decide's first item,
+  As suggested (R1). The Decide button is ALWAYS rendered (R4): with nothing ticked it is
+  disabled, the `0 selected` Badge and Clear are not shown, and a `Tooltip` on the disabled
+  button reads "Tick the lines to decide". It opens a `DropdownMenu` (`align="end"`). Toolbar
+  already `flex-wrap`s at 375px.
+- **The menu, in the board's own supply words** (`SH/lib/supplyVocabulary.ts` `LABELS`, in
+  `ORDER`, R2). Recommended items (the open question below):
+  1. **As suggested** (the old Save as suggested), then a separator;
+  2. **Use own location** (`own`);
+  3. **Borrow from another order** (`borrow_order`), asks for the donor order;
+  4. **Borrow other location** (`borrow_other`), asks for the location;
+  5. **Use BRW** (`shared`);
+  6. **Buy** (`buy`).
+  `Use incoming` and `Borrow incoming` are NOT Decide items: they stay in the expanded row. The
+  labels are the vocabulary's own words ("the whole product says supply in these seven words
+  and no others"), so the menu reads "Borrow other location", not a new phrasing. There is no
+  item called Reserve any more: the owner's own point is that a reserve is either from the
+  line's own location or from BRW, and those are two different decisions (R2).
 - **Selectable rows.** `enableRowSelection` widens from `canQuickSave` to a new
   `canDecide(contribution)` = not unplannable and not cancelled. Confirmed and already-saved
-  rows become tickable (the owner's case is amendments). `Save as suggested (n)` counts only
-  the ticked rows `canQuickSave` accepts and hides at n = 0 (Grill Q1).
+  rows become tickable (the owner's case is amendments, R3). As suggested applies only to the
+  ticked rows `canQuickSave` accepts; the rest are skipped quietly and counted in the toast
+  ("already confirmed", "already saved").
 - **Composition, per ticked row, whole open quantity** (pure function
-  `decideComposition(contribution, way, locationId?)` in `SH/lib/boardAmend.ts`, beside
-  `suggestedDecisionFor`):
+  `decideComposition(contribution, way, pick?)` in `SH/lib/boardAmend.ts`, beside
+  `suggestedDecisionFor`). Each returns either a decision or a skip carrying a short why:
+  - As suggested: `suggestedDecisionFor(contribution)`, verdict `approved`, exactly today's
+    Save as suggested.
+  - Use own location: fill `open_qty` from the row's reserve sources whose role is `own` or
+    `group` (the own-location rung, the same rows `ReserveAddDialog` offers there,
+    `qty_free_remaining > 0`), in the engine's order; `borrow: []`, `timely_spo_qty: 0`,
+    `buy_qty: 0`. Short of the whole line: skip, why = `only ${free} free at own location`.
+  - Use BRW: the same, from the `site_pool` source rows only, bounded by the same pool-share
+    limit `poolShareLimitsOf` already applies (never re-implemented). Short: skip, why =
+    `only ${free} free at BRW`.
+  - Borrow from another order: one `borrow[]` component from the row's `borrow_candidates`
+    entry whose `donor_so_number` is the picked order (same item, the line's own location,
+    R8), for the whole `open_qty`; `buy_qty: 0`. No candidate on that order, or too little
+    free: skip, why = `${donor} holds only ${free}` or `${donor} holds none`.
+  - Borrow other location: one `borrow[]` component from the row's `other_location`
+    candidate at the picked warehouse for the whole `open_qty`; `buy_qty: 0`. None or too
+    little: skip, why = `only ${free} free at ${code}`.
   - Buy: `reserve: []`, `borrow: []`, `timely_spo_qty: 0`, `buy_qty: open_qty`,
-    `order_back: false`. Order back / Document cited stay in the expanded row (Grill Q8).
-  - Reserve: fill `open_qty` from the row's reserve ladder sources (the same free-stock rows
-    `ReserveAddDialog` offers, `qty_free_remaining > 0`), in the engine's own order, own
-    location first; `buy_qty: 0`. If the ladder cannot cover the whole line, the row is
-    SKIPPED with the free total stated (Grill Q4).
-  - Borrow: one `borrow[]` component from the picked location's candidate on that row
-    (`borrow_candidates`, free stock at another location, `source: other_location`) for the
-    whole `open_qty`; `buy_qty: 0`. A row with no candidate at that location, or too little
-    free there, is SKIPPED. Donor-project borrows stay in the expanded row (Grill Q6).
-  - Rows contesting the same free stock claim it in the list's current sort order, top
-    first; the running tally is kept across the ticked rows so the batch never
-    over-claims (Grill Q7).
-- **Verdict.** `approved` when the composition equals the row's suggestion (uncovered row)
-  and the reason is not needed; otherwise `amended` with the one reason. On a Confirmed row it
-  is always `amended` (the server refuses `approved` there), measured against the frozen
-  decision (`amendNeedsReason`'s own baseline). A row whose frozen decision already equals the
-  pick is skipped as "already decided that way" (Grill Q1).
-- **The Decide dialog.** Buy or Reserve where every applicable row matches its suggestion:
-  saves at once, no dialog. Otherwise (any row differs, or Borrow) a small `Dialog` titled
-  `Decide ${n} lines: ${Way}` opens with: for Borrow only, a `SearchableSelect` of locations
-  (options = locations that hold free stock for at least one ticked row, each labelled with
-  the code and `covers ${k} of ${n}`); one Reason `Textarea`, required when any row differs
-  or for Borrow; Save. One reason applies to every row in this decision (Grill Q3, Q5).
-- **Save.** Reuses Panel `decideMany`'s loop (chunks of 5, `decide(key, decision,
-  {quiet: true})`, per-row PUT, revert on failure). No new endpoint. One toast:
-  `${saved} saved as ${Way}` plus `· ${skipped} skipped: <item line (why)>, ...` capped like
-  `unpostableNotices` (5 names, then "and N more"). Saved rows untick; skipped and failed rows
-  stay ticked.
+    `order_back: false` (Order back and Document cited stay in the expanded row, R9). A row
+    whose suggestion carries a Reserve with `source: 'own_arrival'` (goods already landed for
+    it, which Confirm refuses to buy over, `planning_change_buy_over_own_arrival`) is skipped,
+    why = `stock already landed for it` (R10, grill Q16).
+  - Rows contesting the same free stock or the same donor claim it in the list's current sort
+    order, top first; a running tally across the ticked rows keeps the batch from
+    over-claiming (R9, grill Q7). A row that no longer fits is skipped like any other.
+- **Verdict.** `approved` when the composition equals the row's suggestion (uncovered row);
+  otherwise `amended` with the one reason. On a Confirmed row it is always `amended` (the
+  server refuses `approved` there), measured against the frozen decision (`amendNeedsReason`'s
+  own baseline). A row whose frozen decision already equals the pick is skipped, why =
+  `already decided that way` (R3).
+- **The Decide dialog, only when needed.** As suggested never opens one. Use own location,
+  Use BRW or Buy where every ticked row's suggestion already is that way: saves at once, no
+  dialog. Otherwise a small `Dialog` titled `Decide ${n} lines: ${Label}` opens with, top to
+  bottom:
+  - for the two Borrow items only, ONE `SearchableSelect` (required, so not clearable):
+    "Donor order" (options = donor orders offered on at least one ticked row, each labelled
+    `${so_number} · ${agent} · covers ${k} of ${n}`) or "Location" (options = other locations
+    with free stock for at least one ticked row, each `${code} · covers ${k} of ${n}`), sorted
+    by k descending, so the best pick is first;
+  - ONE Reason `Textarea`, required when any row differs or for a Borrow (R5, R7);
+  - for a donor order that shares the lines' own sales agent, the "Who authorised it" field
+    `BorrowAddDialog` asks today appears under the reason, folded into the stored reason as
+    today (it names a person, not a reason);
+  - Save (`Save ${k} lines`, k = rows the pick covers) and Cancel.
+  No explanatory copy in the dialog; the `covers k of n` label is the guidance.
+- **Save, lenient (R10).** Reuses Panel `decideMany`'s loop (chunks of 5, `decide(key,
+  decision, {quiet: true})`, per-row PUT, revert on failure). No new endpoint. Skipped rows are
+  never sent. A PUT that fails (any 4xx, for example a 409 on a row confirmed meanwhile) is
+  counted as skipped with the server's own sentence; the loop carries on. Nothing blocks the
+  batch, nothing opens an error dialog, no `window.alert`. One toast, success tone when
+  anything saved, neutral when nothing did:
+  `${saved} saved as ${Label}` plus `· ${skipped} skipped: <item line (why)>, ...`, at most 3
+  names then `and N more` (the owner asked for fewer errors, so the toast stays short; the
+  skipped rows stay ticked, which is where the rest are read). Saved rows untick.
 - **Existing drafts.** A Saved or Rejected draft on a ticked row is overwritten (PUT is an
-  upsert); Undo restores the suggestion as today (Grill Q9).
+  upsert); Undo restores the suggestion as today (R9).
 - **List view only.** The grid view's cell dialog keeps Approve / Reject selected unchanged.
+  The verdict column's per-row check (save as suggested) and X (reject) are unchanged.
+
+### Open question for the owner (the only one left)
+
+**Which supply ways are Decide items?** The board has six (`Use own location`, `Use incoming`,
+`Borrow from another order`, `Borrow incoming`, `Use BRW`, `Buy`, plus the vocabulary's
+`Borrow other location`).
+
+Recommendation: **As suggested, Use own location, Borrow from another order (pick the donor
+order), Borrow other location (pick the location), Use BRW, Buy**; `Use incoming` and
+`Borrow incoming` stay in the expanded row.
+
+Why:
+- Each recommended item covers a whole line from ONE pile the planner can name in one pick
+  (own location, one donor order, one location, BRW) or from none (Buy), so "full quantity"
+  is a real answer for it.
+- The two incoming ways rest on a document and a date: which SPO, arriving when, against which
+  required date. A whole-line incoming cover is rare, the right SPO differs per line, and
+  choosing one blind at full quantity is the "a single quantity applied to eleven different
+  owed quantities" decision the board refused before. They are the half-half case the owner
+  already sends to the expanded row.
+- Borrow other location is kept because it is the one the owner named first ("save as borrow
+  (select other location)"), even though ladder v7.1 no longer proposes it on its own; the
+  manual borrow candidates still carry `other_location` rows. If the owner prefers a shorter
+  menu, it is the first to drop.
 
 ### D2 - Discontinued gate removed (#1217, part 1)
 
@@ -264,6 +342,9 @@ no split button component in `components/ui`.
 - `PLAN-scm-front-planning.md` Q4 gets a dated amendment line pointing here.
 
 ### D3 - One reason box in the expanded row (#1217, part 2)
+
+Mockup: `mockups/fp-expanded-row-one-reason.html`. The left-out banner after D2:
+`mockups/fp-confirm-banner.html`.
 
 - `BoardLineDecisionPanel` keeps ONE `Textarea`, label **Reason**, in the right column where
   "Why this differs" is today (id `line-reason-{key}`). The Buy block's discontinued
@@ -298,6 +379,8 @@ ticked rows takes longer than ~3 s end to end.
 
 ### No-motion list (DESIGN-LANGUAGE frequency gate)
 
+- The Decide button's disabled state is a static style, no fade in when the first row is
+  ticked.
 - The Decide menu uses the existing `DropdownMenu` (`MENU_SPRING` in, `SURFACE_SPRING_EXIT`
   out); the Decide dialog uses the existing `Dialog` (`SURFACE_SPRING`). No new motion.
 - Nothing else animates: no row flash on save, no dimming of ticked rows, no animated count in
@@ -315,8 +398,9 @@ ticked rows takes longer than ~3 s end to end.
 - **S2 - One reason box (FE).** `BoardLineDecisionPanel` single Reason box + fan-out +
   seeding + Discontinued badge; `BorrowAddDialog` loses its reason; approving save carries the
   box; trail dedupe. Depends on S1 (the discontinued Reason input's asterisk is S1's rule).
-- **S3 - Decide (FE).** `canDecide`, `decideComposition`, the strip button + menu + dialog, the
-  claim tally, the toast, Save as suggested counting only its own rows. Depends on S2 (the
+- **S3 - Decide (FE).** `canDecide`, `decideComposition` for the six items, the always-on
+  strip button + menu + dialog (donor order or location picker), the claim tally, the lenient
+  toast, Save as suggested folded into the menu as As suggested. Depends on S2 (the
   Decide dialog's reason fans out through the same helper).
 - **S4 - Lane end.** Browser evidence run (agent-browser, sidebar nav, 375px + 1280px),
   reviewer + kill test, PR checklist. `security-reviewer`: not run, the diff is outside its
@@ -330,12 +414,46 @@ before the coder makes them green.
 
 ## Rulings
 
-(Left empty for the owner.)
+Owner grill, 24 Sep 2026. Quoted verbatim; the design above follows them.
+
+- **R1 (24 Sep 2026, the strip).** "wrap the save as suggested inside decide because this is
+  also a decision". Folded: Save as suggested leaves the strip and becomes Decide's first item,
+  As suggested (D1).
+- **R2 (24 Sep 2026, D1 Reserve).** "hmm if reserve is reserve from BRW is it? how about those
+  that use own location ya? is one of the decision?". Folded: no abstract Reserve item; the
+  menu uses the board's own words, Use own location and Use BRW as two separate items (D1).
+  Which of the board's ways are items is the open question.
+- **R3 (24 Sep 2026, Q01).** Accepted: a Confirmed row is tickable and Decide saves an
+  `amended` draft against its frozen decision; a row already decided that way is skipped.
+- **R4 (24 Sep 2026, Q02).** "should be always there but grayed out when nothing is selected".
+  Folded: Decide is always rendered, disabled with a tooltip when nothing is ticked (D1).
+- **R5 (24 Sep 2026, Q03).** Accepted: one Reason in the Decide dialog when any row differs
+  from its suggestion; no dialog when every row already matches.
+- **R6 (24 Sep 2026, Q04).** Accepted: Use own location and Use BRW ask no location; a row the
+  pile cannot cover in full is skipped.
+- **R7 (24 Sep 2026, Q05).** Accepted: a Borrow asks the one Reason, required.
+- **R8 (24 Sep 2026, Q06).** "borrow can be from own location but different order right?".
+  Folded: yes. Borrow from another order (same location, a later order's stock, pick the donor
+  order) is a Decide item beside Borrow other location (pick the location). This reverses the
+  original Q06 recommendation that kept donor orders in the expanded row (D1).
+- **R9 (24 Sep 2026, Q07 to Q15).** Accepted as recommended: list order claims contested
+  stock (Q7); Buy never sets Order back (Q8); the pick overwrites a saved or rejected draft
+  (Q9); the Borrow add dialog loses its reason field (Q10); the gate goes on the per-order
+  sheet too (Q11); the reason box is optional for a discontinued product (Q12); storage does
+  not change (Q13); the verdict column's Reject popover keeps its box (Q14); Decide never
+  Confirms (Q15).
+- **R10 (24 Sep 2026, Q16).** "try to be more lenient when processing this, don't too many
+  error". Folded: rows the chosen way cannot cover (including a Buy over stock already landed
+  for the line) are skipped quietly; a failed PUT counts as a skip; the toast names the count
+  and the first few; nothing blocks the batch; no error dialogs (D1).
+- **R11 (24 Sep 2026).** "i need mockups". Drawn: `mockups/fp-decide-strip.html`,
+  `mockups/fp-decide-dialog.html`, `mockups/fp-expanded-row-one-reason.html`,
+  `mockups/fp-confirm-banner.html`.
 
 ## Grill questions
 
-Each with a recommended answer and why. The owner rules; the answers above assume the
-recommendation until then.
+Kept as asked, for the record; the rulings above are what stands (Q2 became R4, Q6 became R8,
+Q16 became R10; the rest were accepted).
 
 1. **What does Decide do to a row already Confirmed?** Recommend: it is tickable and Decide
    saves an `amended` draft against the frozen decision (the server already accepts

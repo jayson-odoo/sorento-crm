@@ -1,8 +1,10 @@
 # UAC: fulfilment planning - Decide on the ticked lines, and one reason box
 
 Plan: `PLAN-fp-decide-and-one-reason-24sep.md`. Issues #1216, #1217.
-Status: DRAFT, assumes the plan's recommended grill answers until the owner rules; an AC whose
-answer changes is rewritten, not deleted silently.
+Status: GRILLED 24 Sep 2026, rulings R1 to R11 folded (AC-1, AC-3, AC-4, AC-6 to AC-12, AC-16,
+AC-17 rewritten; AC-51 to AC-55 added). The Decide item list (AC-4) assumes the plan's
+recommendation on its one open question; if the owner rules otherwise, AC-4 and the per-way
+ACs are rewritten, not deleted silently.
 
 Tags: `[BE]` pytest, `[FE]` vitest, `[E2E]` agent-browser evidence run (no new Playwright
 spec), `[T]` test-only guard / regression, `[UX]` measurable layout, motion or state.
@@ -13,12 +15,14 @@ Actor: CS planner on "Planning N sales orders together", List view, section "Eve
 contributing line".
 
 - **J1 Scan and tick** - ticks the rows that should all go the same way.
-- **J2 Decide** - presses Decide (top right of the section), picks Buy, Reserve or Borrow;
-  whole open quantity per row; Borrow asks one location.
+- **J2 Decide** - presses Decide (top right of the section, always there, greyed with nothing
+  ticked), picks As suggested, Use own location, Borrow from another order, Borrow other
+  location, Use BRW or Buy; whole open quantity per row; the two Borrows ask one donor order or
+  one location.
 - **J3 Say why, only when needed** - one Reason for the batch when the pick differs from a
   row's suggestion or confirmed decision, or for Borrow.
-- **J4 Read the outcome** - one toast: saved count, skipped rows named with why; saved rows
-  untick, skipped rows stay ticked.
+- **J4 Read the outcome** - one toast: saved count, skipped count with the first few named;
+  nothing blocks the batch, no error dialog; saved rows untick, skipped rows stay ticked.
 - **J5 Partial lines** - expands a row; exactly one Reason box, which is also the borrow and
   the discontinued reason.
 - **J6 Confirm** - a discontinued Buy with no reason confirms; the left-out banner remains for
@@ -28,42 +32,58 @@ contributing line".
 
 ### Decide control (J1, J2, J4)
 
-- **AC-1 [FE] (J1)** Given the list view with no row ticked, then no Decide button renders.
-  When one row is ticked, then Decide renders in the selection strip after
-  `Save as suggested (n)` and before Clear.
+- **AC-1 [FE] (J1) (R4)** Given the list view with no row ticked, then Decide renders,
+  disabled, with the tooltip "Tick the lines to decide", and neither a selected Badge nor Clear
+  renders. When one row is ticked, then Decide is enabled and the strip reads `1 selected`,
+  Decide, Clear, in that order.
 - **AC-2 [FE] (J1)** Given a Confirmed row and a Saved row, then both rows' checkboxes are
   enabled; an unplannable row and a cancelled row stay disabled with today's tooltips.
-- **AC-3 [FE] (J1)** Given 3 ticked rows of which 1 is Confirmed and 1 is Saved, then the strip
-  reads `3 selected` and `Save as suggested (1)`; given only Confirmed rows ticked, then Save
-  as suggested does not render and Decide does.
-- **AC-4 [FE] (J2)** Given rows ticked, when Decide is pressed, then a menu opens with exactly
-  three items in this order: Buy, Reserve, Borrow.
+- **AC-3 [FE] (J1) (R1)** No button labelled `Save as suggested` renders in the strip, with or
+  without ticked rows. Given 3 ticked rows of which 1 is Confirmed and 1 is Saved, when Decide >
+  As suggested is picked, then exactly 1 PUT is sent (the row `canQuickSave` accepts, verdict
+  `approved`, body = `suggestedDecisionFor`), no dialog opens, and the toast counts 2 skipped
+  ("already confirmed", "already saved").
+- **AC-4 [FE] (J2) (R1, R2, R8)** Given rows ticked, when Decide is pressed, then a menu opens
+  with exactly these items in this order: As suggested, a separator, Use own location, Borrow
+  from another order, Borrow other location, Use BRW, Buy. The labels equal
+  `supplyVocabulary.LABELS` for their kinds; no item reads Reserve, Use incoming or Borrow
+  incoming.
 - **AC-5 [FE] (J2)** `decideComposition(row, 'buy')` returns `reserve: []`, `borrow: []`,
   `timely_spo_qty: '0'`, `buy_qty = open_qty`, `order_back: false` for a row whose suggestion
   was Reserve, one whose suggestion was Borrow and one whose suggestion counted incoming SPO.
-- **AC-6 [FE] (J2)** `decideComposition(row, 'reserve')` on a row whose reserve ladder holds
-  at least `open_qty` free fills `reserve[]` from the ladder in the engine's order, own
-  location first, summing to `open_qty`, `buy_qty: '0'`; on a row whose ladder holds less, it
-  returns a skip carrying the free total.
-- **AC-7 [FE] (J2)** `decideComposition(row, 'borrow', loc)` on a row whose borrow candidates
-  include `loc` with free >= `open_qty` returns one `borrow[]` component at `loc`,
-  `source: 'other_location'`, qty `open_qty`, `buy_qty: '0'`; a row with no candidate at `loc`
-  or too little free returns a skip naming the free quantity at `loc`.
-- **AC-8 [FE] (J2)** Given two ticked rows of the same item whose Borrow location holds free
-  stock for only the first in list order, when Decide > Borrow at that location is saved,
-  then the top row is saved and the second is skipped (running tally), and the order follows
-  the list's current sort.
-- **AC-9 [FE] (J2)** Given Decide > Borrow, then a dialog titled `Decide n lines: Borrow`
-  opens with a `SearchableSelect` of locations, options = locations that are a free-stock
-  borrow candidate for at least one ticked row, each labelled with the code and
-  `covers k of n`; donor projects are not offered.
-- **AC-10 [FE] (J2, J3)** Given every ticked row's suggestion is Buy, when Decide > Buy is
-  picked, then no dialog opens and the rows save at once with verdict `approved`.
-- **AC-11 [FE] (J3)** Given at least one ticked row whose suggestion differs from the pick,
-  when Decide > Buy or Reserve is picked, then the dialog opens with one Reason box, and Save
-  stays disabled until the box is non-blank.
-- **AC-12 [FE] (J3)** Given Decide > Borrow, then the Reason box is required regardless of the
-  suggestion, and Save stays disabled until a location is picked and the reason is non-blank.
+- **AC-6 [FE] (J2) (R2, R6)** `decideComposition(row, 'own')` on a row whose `own` / `group`
+  reserve sources hold at least `open_qty` free fills `reserve[]` from those rows only, in the
+  engine's order, summing to `open_qty`, `buy_qty: '0'`, and never draws a `site_pool` row; on a
+  row whose own location holds less, it returns a skip reading `only <free> free at own
+  location`.
+- **AC-7 [FE] (J2) (R2, R6)** `decideComposition(row, 'shared')` fills `reserve[]` from the
+  `site_pool` rows only, within `poolShareLimitsOf`, summing to `open_qty`; short of the line it
+  returns a skip reading `only <free> free at BRW`.
+- **AC-8 [FE] (J2) (R8)** `decideComposition(row, 'borrow_order', donorSo)` on a row whose
+  `borrow_candidates` include `donorSo` with free >= `open_qty` returns one `borrow[]` component
+  from that donor line for `open_qty`, `buy_qty: '0'`; a row with no candidate on `donorSo` or
+  too little returns a skip naming the donor and its free quantity.
+- **AC-9 [FE] (J2)** `decideComposition(row, 'borrow_other', loc)` on a row whose
+  `other_location` candidates include `loc` with free >= `open_qty` returns one `borrow[]`
+  component at `loc`, `source: 'other_location'`, qty `open_qty`, `buy_qty: '0'`; otherwise a
+  skip naming the free quantity at `loc`.
+- **AC-10 [FE] (J2) (R9)** Given two ticked rows of the same item whose picked location (or
+  donor order) holds enough for only the first in list order, when saved, then the top row is
+  saved and the second is skipped (running tally), and the order follows the list's current
+  sort.
+- **AC-11 [FE] (J2) (R8)** Given Decide > Borrow from another order, then a dialog titled
+  `Decide n lines: Borrow from another order` opens with one required `SearchableSelect`
+  labelled Donor order, options = donor orders offered on at least one ticked row, each
+  labelled `<SO number> · <agent> · covers k of n`, sorted by k descending. Given Decide >
+  Borrow other location, then the select is labelled Location, options = other locations with
+  free stock for at least one ticked row, each `<code> · covers k of n`, sorted by k descending.
+- **AC-12 [FE] (J3) (R5, R7)** Given every ticked row's suggestion is Buy, when Decide > Buy is
+  picked, then no dialog opens and the rows save at once with verdict `approved`. Given at
+  least one ticked row whose suggestion differs, when Use own location, Use BRW or Buy is
+  picked, then the dialog opens with one Reason box and no picker, and Save stays disabled
+  until the box is non-blank. Given either Borrow, then the Reason box is required regardless
+  of the suggestion, and Save stays disabled until the picker has a value and the reason is
+  non-blank. The dialog's Save reads `Save k lines`, k = the rows the current pick covers.
 - **AC-13 [FE] (J3)** Given the dialog saved with reason "project handover", then every row
   saved as `amended` carries `reason: 'project handover'`, every borrow component carries
   `reason: 'project handover'`, and a discontinued row saved as Buy carries
@@ -73,11 +93,24 @@ contributing line".
   frozen decision already buys the whole line, then it is skipped as "already decided that way".
 - **AC-15 [FE] (J2)** Given a ticked row with a Saved or Rejected draft, when Decide saves,
   then one PUT replaces that draft and the pill reads Saved.
-- **AC-16 [FE] (J4)** Given 9 ticked rows of which 2 are skipped, when Decide saves, then one
-  toast reads `7 saved as <Way> · 2 skipped: <item> line <n> (<why>), ...` with at most 5 names
-  then `and N more`; the 7 rows untick; the 2 stay ticked.
-- **AC-17 [FE] (J4)** Given one row's PUT fails, then that row's draft reverts, it stays ticked,
-  and it is counted as not saved in the toast; the other rows keep their saves.
+- **AC-16 [FE] (J4) (R10)** Given 9 ticked rows of which 2 are skipped, when Decide saves,
+  then one toast reads `7 saved as <Label> · 2 skipped: <item> line <n> (<why>), ...` with at
+  most 3 names then `and N more`; the 7 rows untick; the 2 stay ticked. No dialog, alert or
+  banner opens.
+- **AC-17 [FE] (J4) (R10)** Given one row's PUT fails with a 409, then that row's draft
+  reverts, it stays ticked, it is counted among the skipped with the server's sentence, and the
+  remaining rows are still sent and keep their saves. Given every row is skipped, then no PUT
+  is sent and the toast reads `0 saved · n skipped: ...` in the neutral tone.
+- **AC-51 [FE] (J2) (R10, Q16)** Given a ticked row whose suggestion carries a Reserve with
+  `source: 'own_arrival'`, when Decide > Buy saves, then that row is skipped with why
+  `stock already landed for it` and no PUT is sent for it.
+- **AC-52 [FE] (J2) (R3)** Given a ticked Confirmed row whose frozen decision already reserves
+  the whole line from its own location, when Decide > Use own location saves, then it is
+  skipped as `already decided that way`.
+- **AC-53 [FE] (J2) (R8)** Given Decide > Borrow from another order on a donor that shares the
+  lines' own sales agent, then the dialog also asks "Who authorised it" (required) and the
+  saved borrow reason folds the name in as `BorrowAddDialog` does today; for any other donor
+  that field does not render.
 - **AC-18 [FE] (J2)** Decide issues one `PUT .../lines/{key}/draft` per saved row, in chunks
   of at most 5 in flight, and calls no other endpoint.
 
@@ -131,16 +164,22 @@ contributing line".
 
 - **AC-34 [UX] (J2)** At 375px the selection strip wraps (no horizontal page scroll) and
   Decide, its menu and the Decide dialog's Save are reachable; at 1280px Decide sits on the
-  section's top right beside Save as suggested.
+  section's top right, after the selected Badge and before Clear.
+- **AC-54 [UX] (J1) (R4)** The disabled Decide uses the Button's own disabled style (no custom
+  grey), keeps its size so the strip does not shift when the first row is ticked, and its
+  tooltip is reachable by keyboard focus.
+- **AC-55 [UX] (J2)** The Decide dialog holds at most: one picker (Borrows only), one Reason
+  box, the conditional "Who authorised it" field, Cancel and Save. No explanatory sentence
+  renders in the menu or the dialog.
 - **AC-35 [UX] (J2)** Decide's menu opens on the existing `DropdownMenu` presets and the dialog
   on the existing `Dialog` presets; no new animation, no `transition-all`, reduced motion
   collapses both as today.
-- **AC-36 [UX] (J2)** The location select is a `SearchableSelect` (required, so not clearable);
-  no raw `select`.
+- **AC-36 [UX] (J2)** The donor order and location selects are `SearchableSelect`s (required, so
+  not clearable); no raw `select`.
 - **AC-37 [UX] (J4)** No-motion list holds: no row flash on save, no dimming of ticked rows,
   no animated count, no transition on the Discontinued badge or on rows unticking.
 - **AC-38 [UX] (J2)** No UUID renders in the dialog, the menu or the toast (locations by
-  code, rows by item code and line number).
+  code, donor orders by SO number, rows by item code and line number).
 
 ## Phase 2 - backend (S1 BE half) and wiring
 
@@ -168,10 +207,11 @@ contributing line".
 
 ## Phase 3 - lane end
 
-- **AC-47 [E2E] (J1 to J4)** Sidebar nav from `/` to a board with at least 3 lines: tick 3,
-  Decide > Buy, reason if asked, Save; the 3 pills read Saved; Confirm; the lines read
+- **AC-47 [E2E] (J1 to J4)** Sidebar nav from `/` to a board with at least 3 lines: Decide
+  greyed with nothing ticked; tick 3, Decide > Buy, reason if asked, Save; the 3 pills read Saved; Confirm; the lines read
   Confirmed and the OI detail shows the Buy rows. Screenshots at 375px and 1280px.
-- **AC-48 [E2E] (J2)** Decide > Borrow on 2 ticked lines: location list shows `covers k of n`;
+- **AC-48 [E2E] (J2)** Decide > Borrow other location (or Borrow from another order, whichever
+  the seeded board offers) on 2 ticked lines: the picker shows `covers k of n`;
   save; the expanded row shows one borrow component at that location for the whole quantity
   and the Reason box holds the batch reason.
 - **AC-49 [E2E] (J6)** A discontinued line bought with the Reason box blank confirms with no
