@@ -413,6 +413,24 @@ _HAS_OPEN_RESERVE_REQUEST = (
     .correlate(OrderInquiryRow)
     .exists()
 )
+#: Round 4 (`PLAN-oi-request-cs-reserve.md` 6e.2): the OPEN request row's own
+#: `qty_requested` for this row - the Lines grid's `Request to reserve N` pill and the
+#: tick action's default stage both need the AMOUNT asked, not only the fact one is
+#: open. Same join as `_HAS_OPEN_RESERVE_REQUEST` above, one column instead of `exists`.
+_OPEN_REQUEST_QTY = (
+    select(OrderInquiryReserveRequestRow.qty_requested)
+    .select_from(OrderInquiryReserveRequestRow)
+    .join(
+        OrderInquiryReserveRequest,
+        OrderInquiryReserveRequest.id == OrderInquiryReserveRequestRow.request_id,
+    )
+    .where(
+        OrderInquiryReserveRequestRow.row_id == OrderInquiryRow.id,
+        OrderInquiryReserveRequest.state == "requested",
+    )
+    .correlate(OrderInquiryRow)
+    .scalar_subquery()
+)
 #: What the row's own SALES ORDER LINE still owes, over the core line `_base` already
 #: outer-joins (`scm/demand.py`'s own expression, so the worklist and reorder planning read
 #: one definition of outstanding). The `case` is not decoration: on a row whose mirror names
@@ -756,6 +774,8 @@ _COLUMNS = (
     # PLAN-oi-request-cs-reserve.md 3.4/3.5 (AC-RS-12/AC-RS-20).
     _RESERVED_LINKED_QTY.label("reserved_qty"),
     _HAS_OPEN_RESERVE_REQUEST.label("has_open_reserve_request"),
+    # PLAN-oi-request-cs-reserve.md 6e.2: the open request row's own `qty_requested`.
+    _OPEN_REQUEST_QTY.label("requested_qty"),
     # PLAN-oi-worklist-split-customer-project.md, Slice 2: the Raised at column's own
     # tooltip. `_write_sheet` never reads this key, but `_EXPORT_COLUMNS` below drops the
     # label outright (S2, review round 1) - the export runs this `json_agg` for every row
@@ -2113,6 +2133,9 @@ class OrderInquiryWorklistService:
                 else ("reserved" if _dec(getattr(row, "reserved_qty", None)) > _ZERO else None)
             ),
             "reserved_qty": _qty_str(_dec(getattr(row, "reserved_qty", None))),
+            # 6e.2: "0" when there is no open request row, same default shape as
+            # `reserved_qty` above.
+            "requested_qty": _qty_str(_dec(getattr(row, "requested_qty", None))),
             # WHERE this row's quantity sits (AC-I5), off the ONE reader the per-project
             # list and the SCM sales-order detail also use.
             "links": row_links,

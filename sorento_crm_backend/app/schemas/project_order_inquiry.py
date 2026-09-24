@@ -451,6 +451,12 @@ class OrderInquiryWorklistRow(BaseModel):
     #: `taken_from_po`/`remaining_open`, both of which already include it (they sum by
     #: `row_id` with no target filter).
     reserved_qty: str = "0"
+    #: Round 4 (`PLAN-oi-request-cs-reserve.md` 6e.2): the OPEN reserve request row's
+    #: own `qty_requested` for this row - "0" when `reserve_state` is not `requested`.
+    #: The Lines grid's `Request to reserve N` pill and the tick's default stage both
+    #: read N off this, not off a second lookup. Declared here because `response_model`
+    #: silently drops a field it has not been told about.
+    requested_qty: str = "0"
 
 
 class OrderInquiryMonthTotal(BaseModel):
@@ -1332,28 +1338,47 @@ class CreateReserveRequestIn(BaseModel):
         return self
 
 
-# --------------------------------------------------------- request CS to reserve, round 2
+# ------------------------------------------------- request CS to reserve, round 4 (6e.1)
 
 
-class ReserveRowIn(BaseModel):
-    """`POST .../reserve-requests/{request_id}/rows/{row_id}/reserve` (F2): answers ONE
-    request row. `row_id` is on the PATH (`OrderInquiryRow.id`, the id every other route
-    on this row already keys by), never repeated in the body."""
+class CommitReserveRowIn(BaseModel):
+    """One OPEN request row answered inside a commit call (6e.1's own `reserves` list).
+    `row_id` is `OrderInquiryRow.id`, the same id `ReserveRequestRowIn` already keys by;
+    `warehouse_id` omitted falls back to the request row's own default (R3)."""
 
-    warehouse_id: str = Field(..., pattern=UUID_PATTERN)
+    row_id: str = Field(..., pattern=UUID_PATTERN)
+    warehouse_id: Optional[str] = Field(None, pattern=UUID_PATTERN)
     qty_reserved: str
     reason: Optional[str] = Field(None, max_length=2000)
 
     _qty_reserved_finite = field_validator("qty_reserved")(_finite_qty)
 
 
-class UnreserveRowIn(BaseModel):
-    """`POST .../reserve-requests/{request_id}/rows/{row_id}/unreserve` (F5)."""
+class CommitAmendRowIn(BaseModel):
+    """One ALREADY-ANSWERED request row amended inside a commit call (6e.1's own
+    `amendments` list, R4-3). `warehouse_id` is never accepted here - the location is
+    locked to whatever the row was already answered with."""
 
-    qty: str
-    note: Optional[str] = Field(None, max_length=5000)
+    row_id: str = Field(..., pattern=UUID_PATTERN)
+    qty_reserved: str
+    reason: Optional[str] = Field(None, max_length=2000)
 
-    _qty_finite = field_validator("qty")(_finite_qty)
+    _qty_reserved_finite = field_validator("qty_reserved")(_finite_qty)
+
+
+class CommitReserveRequestIn(BaseModel):
+    """`POST .../reserve-requests/{request_id}/commit` (6e.1): one transaction, one
+    dispatch, `reserves` for still-open rows and `amendments` for already-answered ones -
+    at least one entry across the two lists."""
+
+    reserves: List[CommitReserveRowIn] = []
+    amendments: List[CommitAmendRowIn] = []
+
+    @model_validator(mode="after")
+    def _at_least_one_row(self) -> "CommitReserveRequestIn":
+        if not self.reserves and not self.amendments:
+            raise ValueError("Select at least one line to reserve or amend.")
+        return self
 
 
 class ReserveHistoryEntryOut(BaseModel):
