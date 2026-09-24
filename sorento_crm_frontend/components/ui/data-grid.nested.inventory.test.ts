@@ -165,11 +165,11 @@ const GRID_IN_FLOATING_SURFACE_SITES = new Map<string, string>([
     'Drilldown dialog, rendered BEFORE the list grid in OrderInquiriesClient, not inside it. Already scrollerMaxHeight={false}. (Line moved 57 -> 97 when the cell drilldown gained its `axis`/`axis_key` filters; the census is keyed by line, so a site that moves is a one-line diff here rather than a silent pass)',
   ],
   [
-    'app/(protected)/project-sales/stock-debt/components/StockDebtCellDialog.tsx:378',
+    'app/(protected)/project-sales/stock-debt/components/StockDebtCellDialog.tsx:385',
     'Demand tab, dialog rendered after the calendar grid closes. Already scrollerMaxHeight={false}',
   ],
   [
-    'app/(protected)/project-sales/stock-debt/components/StockDebtCellDialog.tsx:396',
+    'app/(protected)/project-sales/stock-debt/components/StockDebtCellDialog.tsx:403',
     'Supply tab, same dialog',
   ],
   [
