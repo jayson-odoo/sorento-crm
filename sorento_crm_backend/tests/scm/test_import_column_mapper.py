@@ -163,8 +163,10 @@ def test_probe_finds_header_and_data_row_per_fixture():
     from app.services.scm.header_probe import probe
 
     # Every one of these four files opens its table with a 序号 (row number) column whose
-    # first two data cells are always 1 then 2 - proving the DATA row was found (not just
-    # the header) without hardcoding a "data_row" field this contract does not promise.
+    # first data cell is always 1 - proving the DATA row was found (not just the header)
+    # without hardcoding a "data_row" field this contract does not promise. Owner ruling
+    # (24 Sep evening, after a hand test): ONE sample per column, not two (R5 overridden)
+    # - `samples` is a list of exactly one item now.
     cases = [
         ("dafuyuan_pi_20260922.xlsx", 14),
         ("ny_pi_FSCU8706420.xlsx", 15),
@@ -177,7 +179,7 @@ def test_probe_finds_header_and_data_row_per_fixture():
         assert result.columns, filename
         first_col = result.columns[0]
         assert first_col.header == "序号", (filename, first_col.header)
-        assert first_col.samples[:2] == ["1", "2"], (filename, first_col.samples)
+        assert first_col.samples == ["1"], (filename, first_col.samples)
 
 
 # --------------------------------------------------------------------------- #
@@ -197,9 +199,10 @@ def test_probe_names_blank_merged_columns_and_splices_second_row():
     assert "外箱/木托尺寸 [3]" in headers
 
     # Corrected against the real file (see module docstring): OOLU9610547's own 件数\n（件）
-    # column reads 148 then 55 on its first two data rows; FSCU8706420's reads 15 then 54.
+    # column reads 148 on its first data row (FSCU8706420's own reads 15). Owner ruling
+    # (24 Sep evening): one sample per column, not two.
     cartons_col = next(c for c in oolu.columns if c.header == "件数\n（件）")
-    assert cartons_col.samples[:2] == ["148", "55"]
+    assert cartons_col.samples == ["148"]
 
     # DAFUYUAN: 箱子 CTN SIZE (CM) is merged N14:P14 over a SECOND header row (L/W/H) at
     # row 15 - spliced into the parent, not left blank.
@@ -1097,12 +1100,19 @@ def test_stock_list_preview_reads_44_rows(scm_app):
 def test_probe_samples_are_rounded():
     from app.services.scm.header_probe import probe
 
-    result = probe(_fixture("ny_pi_FSCU8706420.xlsx"))
+    # Owner ruling (24 Sep evening): one sample per column, so the FIRST data cell is the
+    # only one that matters now - FSCU8706420's own first 方数 value (36.15) is already
+    # short, so this needs a fixture whose FIRST row states the long repr. ny_stock_
+    # 20260921's own row 3 (客户型号 CKS1050) states 方数 as the float
+    # `31.585774000000004` (Excel's own computed figure, not a typo) - `str()` of it is
+    # 18 characters; a sample this long is not something a human is meant to read at a
+    # glance (R5's whole point). `format(value, "g")` (6 significant digits) rounds it to
+    # `31.5858`, not truncates - the 7th significant digit (7 in ...774...) rounds the 8
+    # up to 8.
+    result = probe(_fixture("ny_stock_20260921.xlsx"))
     fangshu_col = next(c for c in result.columns if c.header == "方数")
-    # Row 17's own 方数 value is the float `6.5085120000000005` (Excel's own computed
-    # figure, not a typo) - `str()` of it is 18 characters; a sample this long is not
-    # something a human is meant to read at a glance (R5's whole point).
-    assert fangshu_col.samples[1].startswith("6.5085"), fangshu_col.samples
+    assert len(fangshu_col.samples) == 1, fangshu_col.samples
+    assert fangshu_col.samples[0] == "31.5858", fangshu_col.samples
 
     # The 12-char cap is about NUMBERS, not text: a product name column (工厂型号,
     # 品名, ...) legitimately carries long strings that must stay verbatim (R5's "never

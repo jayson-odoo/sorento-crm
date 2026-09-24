@@ -82,6 +82,7 @@ const PI_FILE_PREVIEW = {
   kind: 'proforma_invoice',
   blocks: [
     {
+      part: 'proforma_invoice',
       container_no: 'WHSU6243088',
       seal_no: 'WHA4528193',
       cartons: null,
@@ -91,6 +92,7 @@ const PI_FILE_PREVIEW = {
       note_count: 0,
     },
     {
+      part: 'proforma_invoice',
       container_no: 'WHSU6356079',
       seal_no: 'WHA4528173',
       cartons: null,
@@ -116,6 +118,7 @@ const PL_FILE_PREVIEW = {
   kind: 'packing_list',
   blocks: [
     {
+      part: 'packing_list',
       container_no: 'WHSU6243088',
       seal_no: 'WHA4528193',
       cartons: 792,
@@ -125,6 +128,7 @@ const PL_FILE_PREVIEW = {
       note_count: 4,
     },
     {
+      part: 'packing_list',
       container_no: 'WHSU6356079',
       seal_no: 'WHA4528173',
       cartons: 1071,
@@ -293,6 +297,35 @@ describe('SupplierDocumentsUploadDialog - Confirm', () => {
     fireEvent.click(testButton());
 
     expect(await screen.findByRole('button', { name: /Confirm: 2 invoices, 2 draft packing lists/ })).toBeInTheDocument();
+  });
+
+  // Owner hand-test round (24 Sep evening): a COMBINED file's own blocks mix both kinds -
+  // nothing on a display block used to say which, so `confirmCounts` added every combined
+  // block's count toward BOTH invoices and packing lists. Each block now carries its own
+  // `part` (`_pi_blocks`/`_pl_blocks`, supplier_document_service.py) so the count can tell
+  // them apart the way the reader itself already does.
+  it('a combined file counts one invoice and one packing list, not both blocks toward both', async () => {
+    previewSupplierDocuments.mockResolvedValue({
+      files: [
+        {
+          ...PI_FILE_PREVIEW,
+          name: 'combined.xlsx',
+          kind: 'combined',
+          blocks: [PI_FILE_PREVIEW.blocks[0], PL_FILE_PREVIEW.blocks[0]],
+        },
+      ],
+      price_matches: [],
+    });
+    openDialog();
+    pickFiles([xlsx('combined.xlsx')]);
+    fireEvent.click(testButton());
+
+    expect(
+      await screen.findByRole('button', { name: /Confirm: 1 invoice, 1 draft packing list/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /Confirm: 2 invoices, 2 draft packing lists/ }),
+    ).toBeNull();
   });
 
   it('applies every file and reports what it created', async () => {

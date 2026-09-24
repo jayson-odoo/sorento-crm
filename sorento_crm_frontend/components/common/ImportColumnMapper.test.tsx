@@ -68,17 +68,19 @@ function openSelect(trigger: HTMLElement) {
 }
 
 describe('ImportColumnMapper', () => {
-  it('renders the samples and the header text with its own line break kept (R5)', () => {
+  it('renders ONE sample value (no joiner) and the header text with its own line break kept (R5, owner override 24 Sep evening)', () => {
     // RTL's default text/title matchers COLLAPSE whitespace (including a newline) before
     // comparing, which would hide the exact bug this test exists to catch - reading the
     // raw DOM node's `textContent` directly (never normalised) instead.
     const { container } = renderMapper(
       probeWith([
-        { position: 0, header: '件数\n（件）', samples: ['120', '95'], field: null, source: 'none' },
+        { position: 0, header: '件数\n（件）', samples: ['120'], field: null, source: 'none' },
       ]),
     );
 
-    expect(screen.getByText('120 · 95')).toBeInTheDocument();
+    expect(screen.getByText('120')).toBeInTheDocument();
+    // No " · " joiner between two values - the mapper shows ONE sample per column now.
+    expect(screen.queryByText(/120 · /)).toBeNull();
     const headerNode = container.querySelector('.whitespace-pre-line');
     expect(headerNode?.textContent).toBe('件数\n（件）');
   });
