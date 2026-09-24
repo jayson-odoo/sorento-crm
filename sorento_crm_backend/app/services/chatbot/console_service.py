@@ -11,6 +11,10 @@ process here. The ad-hoc script instead posts to a URL, because ITS whole point 
 whichever backend PROCESS is actually serving traffic, local or remote - an in-process call
 there would silently stop testing the thing it exists to test.
 
+Two named exceptions to the "zero writes outside `chatbot.turns`" claim above exist, each
+stated at its own site rather than folded into this summary: media (below) and the
+`ideate` lane's test turns (#1179, below the media block).
+
 **Deliberately NOT shared code with `scripts/chatbot_console_check.py`.** The two modules'
 shapes look alike - both borrow an envelope, both force the two lane switches on for one
 call and restore them in a `finally`, both honour `previous_conversation_state` /
@@ -481,6 +485,21 @@ def run_console_turn(
 # monthly quota and writes a real ledger row, the same as a WhatsApp photo would.
 # Acceptable for a manual testing tool used sparingly; stated here so it is a known
 # trade-off, not a surprise.
+# --------------------------------------------------------------------------- #
+
+# **Deviation from D14, added #1179 (PR #1182).** A console turn that routes to the
+# `ideate` lane is not a zero-write dry run either, for the same reason media is not:
+# `crm_ideation_turn` is a real business tool, called with `is_test=True` rather than
+# stood in with a placeholder, so ideation is exercisable anywhere but live WhatsApp.
+# One console ideate turn writes: an idea row in the shared service (flagged `is_test`,
+# hidden from the board by default), an `integration_log` row from the
+# `/external/ideation/turn` endpoint, a storage upload when the turn is a media-selection
+# answer (`snapshot_and_caption`, the same real upload a WhatsApp photo pick makes), and
+# spends one real LLM extraction (`extract_ideate_turn`, never stubbed here). Unlike
+# media, the CONTACT's own `respond_contacts.session_vars` stays untouched on a test turn
+# (`ideation_turn_service.handle_turn`'s `is_test` guard) - only the shared-service side
+# writes. Acceptable for the same reason media's exception is: a manual testing tool used
+# sparingly, stated here so it is a known trade-off, not a surprise.
 # --------------------------------------------------------------------------- #
 
 # Console media never claims to BE a respond.io modality string. The real ledger's
