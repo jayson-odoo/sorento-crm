@@ -68,6 +68,10 @@ export interface ImportMappingProbe {
    *  (`unresolvedRequiredFields`), since a probe-time snapshot goes stale the moment the
    *  operator picks a field. */
   missing_required?: string[];
+  /** The sheet's own last row number (review round 1, item 12) - the stepper's ceiling.
+   *  Optional (a hand-built probe need not state it): absent, the stepper has no ceiling,
+   *  same as before this field existed. */
+  row_count?: number;
 }
 
 /** One header's pick, in the shape `onChange` reports it and `save` (B5) takes it -
@@ -185,6 +189,7 @@ export function ImportColumnMapper({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <HeaderRowStepper
           row={probe.header_row}
+          maxRow={probe.row_count}
           onChange={onHeaderRowChange}
           disabled={busy}
         />
@@ -198,17 +203,28 @@ export function ImportColumnMapper({
       {probe.header_row == null ? (
         <p className="flex items-center gap-1.5 text-2xs text-destructive">
           <TriangleAlert className="size-3.5 shrink-0" />
-          No header row was found. Move the stepper to the row that names the
-          columns.
+          No header row was found.
         </p>
+      ) : null}
+      {probe.columns.length ? (
+        <div
+          className="hidden gap-2 px-1.5 text-2xs uppercase tracking-wide text-muted-foreground/70 sm:grid sm:grid-cols-[1fr_1fr_1fr]"
+          aria-hidden
+        >
+          <span>Sample</span>
+          <span>Column</span>
+          <span>Field</span>
+        </div>
       ) : null}
       <div className="space-y-1.5">
         {probe.columns.map((c) => {
           const field = selections[c.header] ?? null;
           // A column this supplier has never mapped before stands out among otherwise
-          // pre-filled columns (AC-M12) - `source: 'none'` is exactly that, regardless of
-          // whether it happens to be picked already in this same session.
-          const isNew = c.source === 'none';
+          // pre-filled columns (AC-M12) - `source: 'none'` is exactly that - UNTIL the
+          // operator gives it a pick IN THIS SAME SESSION: the highlight means "you have
+          // never decided this one", and it has to stop the moment that stops being true,
+          // not stay keyed off the probe's own immutable snapshot (review round 1).
+          const isNew = c.source === 'none' && !field;
           return (
             <div
               key={`${c.position}-${c.header}`}
@@ -217,8 +233,18 @@ export function ImportColumnMapper({
                 (isNew ? ' bg-primary/5 ring-1 ring-primary/20' : '')
               }
             >
+              {/* Mobile (< 640px, review round 1 item 18): stacked in READING order - the
+                  column's own name first, then its sample data, then the pick. Desktop
+                  (>= 640px) keeps the Sample | Column | Field order the header row above
+                  names, via the `sm:order-*` overrides below. */}
               <div
-                className="min-w-0 truncate text-2xs text-muted-foreground"
+                className="order-1 min-w-0 whitespace-pre-line text-xs sm:order-2"
+                title={c.header}
+              >
+                {c.header}
+              </div>
+              <div
+                className="order-2 min-w-0 truncate text-2xs text-muted-foreground sm:order-1"
                 title={c.samples.join(' · ')}
               >
                 {c.samples.length ? (
@@ -227,26 +253,22 @@ export function ImportColumnMapper({
                   <span className="italic">no sample</span>
                 )}
               </div>
-              <div
-                className="min-w-0 whitespace-pre-line text-xs"
-                title={c.header}
-              >
-                {c.header}
+              <div className="order-3 sm:order-3">
+                <SearchableSelect
+                  size="sm"
+                  value={field ?? ''}
+                  onChange={(v: string) => pick(c.header, v)}
+                  options={selectOptions}
+                  selectedOption={
+                    field
+                      ? selectOptions.find((o) => o.value === field)
+                      : undefined
+                  }
+                  placeholder="Choose a field"
+                  clearable
+                  disabled={busy}
+                />
               </div>
-              <SearchableSelect
-                size="sm"
-                value={field ?? ''}
-                onChange={(v: string) => pick(c.header, v)}
-                options={selectOptions}
-                selectedOption={
-                  field
-                    ? selectOptions.find((o) => o.value === field)
-                    : undefined
-                }
-                placeholder="Choose a field"
-                clearable
-                disabled={busy}
-              />
             </div>
           );
         })}
@@ -260,14 +282,20 @@ export function ImportColumnMapper({
  *  found none (AC-M16). */
 function HeaderRowStepper({
   row,
+  maxRow,
   onChange,
   disabled,
 }: {
   row: number | null;
+  /** The sheet's own last row number (review round 1, item 12) - "move down" has nowhere
+   *  useful to go past it. Optional/absent (a caller with no probe yet, or an older probe
+   *  shape) leaves the ceiling off, same as before this bound existed. */
+  maxRow?: number;
   onChange: (next: number) => void;
   disabled: boolean;
 }) {
   const current = row ?? 1;
+  const atCeiling = maxRow != null && maxRow > 0 && current >= maxRow;
   return (
     <div className="flex items-center gap-1.5 text-xs">
       <span className="font-medium">Header row {current}</span>
@@ -287,7 +315,7 @@ function HeaderRowStepper({
         variant="outline"
         size="icon"
         className="size-6"
-        disabled={disabled}
+        disabled={disabled || atCeiling}
         onClick={() => onChange(current + 1)}
         aria-label="Move header row down"
       >

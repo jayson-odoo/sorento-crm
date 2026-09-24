@@ -180,7 +180,7 @@ async def preview_proforma_invoice(
         None, description="Only needed when neither the document nor the price list says"
     ),
     header_row: Optional[int] = Form(
-        None,
+        None, ge=1, le=1000,
         description="The import column mapper's stepper (AC-M3) - which row is the "
                     "header, overriding the guess.",
     ),
@@ -225,7 +225,7 @@ async def apply_proforma_invoice(
                     "supplier's.",
     ),
     header_row: Optional[int] = Form(
-        None,
+        None, ge=1, le=1000,
         description="The import column mapper's stepper (AC-M3) - which row is the "
                     "header, overriding the guess.",
     ),

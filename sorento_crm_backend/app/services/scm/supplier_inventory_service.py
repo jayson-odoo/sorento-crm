@@ -208,6 +208,10 @@ def preview(
     return {
         "readable": parsed.ok,
         "missing_columns": parsed.missing_columns,
+        # AC-M4 (review round 1, R7): named at the TOP LEVEL, same as the PI/packing-list
+        # channels - previously only `validate()`'s warning TEXT read this internally, so
+        # a stock-list preview with unresolved columns never told the mapper what they were.
+        "unmapped_headers": parsed.unmapped_headers,
         "problems": [{"row": p.row_number, "reason": p.reason} for p in parsed.problems[:50]],
         "supplier_id": supplier_id,
         "supplier_name": _supplier_label(db, supplier_id),

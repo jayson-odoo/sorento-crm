@@ -306,20 +306,34 @@ export function PlanContainerDialog({
   const mapFieldLabel = (field: string) =>
     mapResult?.fields.find((f) => f.field === field)?.label ?? field;
 
-  /** Test = save the mapping, then read the file (grill G1, one click) - a Cancel after
-   *  keeps the saved rows; a re-map replaces them (B5). Phase 2 (B6) threads the chosen
-   *  `header_row` into the preview/apply calls below this component - not yet wired,
-   *  since those endpoints do not read it today. */
-  const runTestWithMapping = async () => {
-    if (mapDocType && mapResult) {
-      try {
-        await saveImportMapping({ supplierId, docTypes: [mapDocType], mappings: mapSelections });
-      } catch (e) {
-        setMapError(e instanceof Error ? e.message : 'Failed to save the column mapping.');
-        return;
-      }
+  /** The current mapping, saved - shared by Test (grill G1, "save + preview, one click")
+   *  and Confirm (fix-round item 16): a Confirm pressed with no prior Test must still
+   *  write the operator's picks before it applies, never silently start the plan against
+   *  whatever the layout happened to be before this session's picks. A Cancel after
+   *  either keeps the saved rows; a re-map replaces them (B5). */
+  const saveMapping = async (): Promise<boolean> => {
+    if (!mapDocType || !mapResult) return true;
+    try {
+      await saveImportMapping({ supplierId, docTypes: [mapDocType], mappings: mapSelections });
+      return true;
+    } catch (e) {
+      setMapError(e instanceof Error ? e.message : 'Failed to save the column mapping.');
+      return false;
     }
+  };
+
+  const runTestWithMapping = async () => {
+    if (!(await saveMapping())) return;
     await upload.runTest();
+  };
+
+  const confirmWithMapping = async () => {
+    if (!(await saveMapping())) return;
+    if (needsFile) {
+      await upload.confirm();
+    } else {
+      await startPlan();
+    }
   };
 
   // The verdict card. The stock list has its own `?validate_only=true` endpoint (the hook
@@ -565,7 +579,7 @@ export function PlanContainerDialog({
             </Button>
           ) : null}
           <Button
-            onClick={() => void (needsFile ? upload.confirm() : startPlan())}
+            onClick={() => void confirmWithMapping()}
             disabled={!canStart}
             title={
               !supplierId

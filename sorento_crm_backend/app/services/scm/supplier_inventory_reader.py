@@ -144,11 +144,20 @@ def read_workbook(
             raise ValueError("read_workbook needs either a resolver or a session")
         resolver = AliasResolver.for_doc_type(db, DOC_TYPE)
 
+    # Memoised (review round 1, security m2, "once per read") - see the identical comment
+    # in `proforma_invoice_reader.read_workbook`.
+    _probed_cache: list = []
+
+    def _get_probed():
+        if not _probed_cache:
+            from app.services.scm.header_probe import probe as probe_headers
+
+            _probed_cache.append(probe_headers(file_data, header_row=header_row))
+        return _probed_cache[0]
+
     header_texts: Optional[list[str]] = None
     if header_row is not None:
-        from app.services.scm.header_probe import probe as probe_headers
-
-        header_texts = [c.header for c in probe_headers(file_data, header_row=header_row).columns]
+        header_texts = [c.header for c in _get_probed().columns]
 
     result = InventoryReadResult()
     try:
@@ -193,9 +202,7 @@ def read_workbook(
         result.missing_columns = list(_REQUIRED_COLUMNS)
         # B6/AC-M4: same note as the other two readers - name every unresolved column off
         # the alias-free probe even when nothing resolved enough to be seen as a header.
-        from app.services.scm.header_probe import probe as probe_headers
-
-        probed = probe_headers(file_data, header_row=header_row)
+        probed = _get_probed()
         result.unmapped_headers = [
             c.header for c in probed.columns
             if c.header and resolver.raw_field_for_header(c.header) is None

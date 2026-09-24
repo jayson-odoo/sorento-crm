@@ -43,6 +43,22 @@ def _text(value: Any) -> Optional[str]:
     return s or None
 
 
+def _sample_text(value: Any) -> Optional[str]:
+    """A sample cell's own display text (R10, review round 1): a NUMBER is formatted with
+    `format(value, "g")` - Excel's own computed float (`6.5085120000000005`, 18 characters,
+    a real value on row 17 of the NEW YANGGANG PI, not a typo) shortens to `6.50851`, which
+    is what R5's whole point ("something a human is meant to read at a glance") actually
+    needs. Text is returned AS IS - `_text`'s own job - never reformatted: a product name or
+    remark is not a number no matter how long it runs.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return format(value, "g")
+    s = str(value).strip()
+    return s or None
+
+
 def _is_number(value: Any) -> bool:
     if value is None or isinstance(value, bool):
         return False
@@ -85,6 +101,10 @@ class HeaderProbe:
     #: module is making on its behalf.
     header_row: Optional[int]
     columns: list[HeaderColumn] = field(default_factory=list)
+    #: The sheet's own last row number (review round 1, item 12) - the stepper's own
+    #: ceiling, so "move header row down" has somewhere to stop rather than stepping past
+    #: the last real row forever. `0` for a sheet with no rows at all.
+    row_count: int = 0
 
 
 def _guess_header_row(rows: list[tuple]) -> Optional[int]:
@@ -107,11 +127,11 @@ def probe(file_data: bytes, header_row: Optional[int] = None) -> HeaderProbe:
 
     resolved_row = header_row if header_row is not None else _guess_header_row(rows)
     if resolved_row is None:
-        return HeaderProbe(header_row=None, columns=[])
+        return HeaderProbe(header_row=None, columns=[], row_count=len(rows))
 
     header_idx = resolved_row - 1
     if header_idx < 0 or header_idx >= len(rows):
-        return HeaderProbe(header_row=resolved_row, columns=[])
+        return HeaderProbe(header_row=resolved_row, columns=[], row_count=len(rows))
     header_raw = rows[header_idx]
     width = len(header_raw)
 
@@ -169,7 +189,7 @@ def probe(file_data: bytes, header_row: Optional[int] = None) -> HeaderProbe:
         for data_row in rows[data_start_idx:]:
             if pos >= len(data_row):
                 continue
-            value = _text(data_row[pos])
+            value = _sample_text(data_row[pos])
             if value is None:
                 continue
             samples.append(value)
@@ -190,4 +210,4 @@ def probe(file_data: bytes, header_row: Optional[int] = None) -> HeaderProbe:
     while columns and not columns[-1].header:
         columns.pop()
 
-    return HeaderProbe(header_row=resolved_row, columns=columns)
+    return HeaderProbe(header_row=resolved_row, columns=columns, row_count=len(rows))

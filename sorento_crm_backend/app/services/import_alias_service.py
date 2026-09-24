@@ -77,9 +77,17 @@ class AliasResolver:
 
     @classmethod
     def for_doc_type(cls, db: Session, doc_type: str) -> "AliasResolver":
+        """SHARED rows only (`supplier_id IS NULL`) - review round 1, R5: unfiltered, a
+        supplier-scoped row (say, one supplier's own override) leaked into every caller
+        with no supplier chosen at all, which is exactly the "same header, different
+        meaning per supplier" case `for_supplier` exists to keep apart. A caller that
+        wants a supplier's own rows too calls `for_supplier`."""
         rows = (
             db.query(ImportFieldAlias.field, ImportFieldAlias.alias)
-            .filter(ImportFieldAlias.doc_type == doc_type)
+            .filter(
+                ImportFieldAlias.doc_type == doc_type,
+                ImportFieldAlias.supplier_id.is_(None),
+            )
             .all()
         )
         mapping: dict[str, str] = {}

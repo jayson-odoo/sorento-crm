@@ -138,7 +138,7 @@ async def preview_supplier_inventory(
                     "the supplier-wide snapshot (loading_plan_id IS NULL).",
     ),
     header_row: Optional[int] = Form(
-        None,
+        None, ge=1, le=1000,
         description="The import column mapper's stepper (AC-M3) - which row is the "
                     "header, overriding the guess.",
     ),
@@ -170,7 +170,7 @@ async def apply_supplier_inventory(
                     "supplier-wide snapshot is replaced as before.",
     ),
     header_row: Optional[int] = Form(
-        None,
+        None, ge=1, le=1000,
         description="The import column mapper's stepper (AC-M3) - which row is the "
                     "header, overriding the guess.",
     ),
@@ -870,9 +870,14 @@ def _header_rows(raw: Optional[str]) -> dict[str, int]:
     out: dict[str, int] = {}
     for name, row in parsed.items():
         try:
-            out[str(name)] = int(row)
+            value = int(row)
         except (TypeError, ValueError):
             continue
+        # Same bound as the single-file `header_row` Form field (security m2, review
+        # round 1) - a per-file JSON map bypasses FastAPI's own `ge`/`le` on that field,
+        # so the same range is enforced here by hand.
+        if 1 <= value <= 1000:
+            out[str(name)] = value
     return out
 
 

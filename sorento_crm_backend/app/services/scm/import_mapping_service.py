@@ -15,7 +15,12 @@ from sqlalchemy.orm import Session
 from app.models.import_alias import ImportFieldAlias
 from app.services.error_handler import AppException
 from app.services.field_access import field_label
-from app.services.import_alias_service import IGNORE_FIELD, AliasResolver, canonical_fields
+from app.services.import_alias_service import (
+    IGNORE_FIELD,
+    AliasResolver,
+    canonical_fields,
+    normalize_header,
+)
 from app.services.scm.header_probe import probe as probe_headers
 
 
@@ -72,7 +77,11 @@ def probe(
     same rows under both), so which one answers first only matters before that first
     save.
     """
-    probed = probe_headers(file_data, header_row=header_row)
+    try:
+        probed = probe_headers(file_data, header_row=header_row)
+    except Exception as exc:  # noqa: BLE001 - R4: a plain 422, never a raw 500 with a
+        # traceback and a module path leaked to whoever uploaded the wrong file.
+        raise AppException(422, "This file could not be read.", detail="file") from exc
     resolvers = [AliasResolver.for_supplier(db, doc_type, supplier_id) for doc_type in doc_types]
     required_fields = _merged_required(doc_types)
 
@@ -106,6 +115,9 @@ def probe(
         "required_fields": required_fields,
         "missing_required": [f for f in required_fields if f not in seen_fields],
         "fields": _merged_fields(doc_types),
+        # Review round 1, item 12: the stepper's own ceiling, so "move header row down"
+        # has somewhere to stop.
+        "row_count": probed.row_count,
     }
 
 
@@ -142,11 +154,26 @@ def save(
     known_by_doc_type = {doc_type: set(canonical_fields(doc_type)) for doc_type in doc_types}
 
     def _write(doc_type: str, header: str, field_value: str) -> None:
-        db.query(ImportFieldAlias).filter(
-            ImportFieldAlias.doc_type == doc_type,
-            ImportFieldAlias.supplier_id == supplier_id,
-            ImportFieldAlias.alias == header,
-        ).delete(synchronize_session=False)
+        # R6 (review round 1): matched by the NORMALISED key, not the literal `alias`
+        # column - a re-map spelled differently ("Qty " then "QTY") is still the SAME
+        # header to every reader here, and the old literal-string DELETE left the stale
+        # row in place, silently blocked by the unique triple ever landing the new one.
+        # Compared in Python (no raw SQL normalisation) so this stays the one place
+        # `normalize_header` is the single source of truth for "same header".
+        target_key = normalize_header(header)
+        existing = (
+            db.query(ImportFieldAlias.id, ImportFieldAlias.alias)
+            .filter(
+                ImportFieldAlias.doc_type == doc_type,
+                ImportFieldAlias.supplier_id == supplier_id,
+            )
+            .all()
+        )
+        stale_ids = [row.id for row in existing if normalize_header(row.alias) == target_key]
+        if stale_ids:
+            db.query(ImportFieldAlias).filter(ImportFieldAlias.id.in_(stale_ids)).delete(
+                synchronize_session=False
+            )
         stmt = (
             pg_insert(ImportFieldAlias)
             .values(doc_type=doc_type, field=field_value, alias=header, supplier_id=supplier_id)

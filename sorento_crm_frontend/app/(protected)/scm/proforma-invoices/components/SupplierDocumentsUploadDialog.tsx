@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { LoaderCircle, TestTube, TriangleAlert } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -17,7 +17,6 @@ import {
 import { FileDropzone } from '@/components/common/FileDropzone';
 import {
   ImportColumnMapper,
-  unresolvedRequiredFields,
   type ImportMappingField,
   type ImportMappingProbe,
   type ImportMappingSelection,
@@ -216,6 +215,16 @@ function confirmCounts(preview: SupplierDocumentsPreview | null): { invoices: nu
  */
 const SUPPLIER_DOCUMENT_MAP_DOC_TYPES: ImportMappingDocType[] = ['proforma_invoice', 'packing_list'];
 
+/** The Test GATE's own required set (fix-round item 14/V5): the INTERSECTION of what
+ *  `proforma_invoice` and `packing_list` each require (`item_code`, `qty` - B7's
+ *  `REQUIRED_COLUMNS`), not the probe's own `required_fields` (the UNION the mapper's
+ *  field list is built from, `unit_price` included). A file's real `kind` is not known
+ *  until Test classifies it (`classify()`, server-side) - gating Test itself on the
+ *  UNION would refuse a pure packing list over `unit_price` it will never be asked to
+ *  resolve. The server's own preview verdict, after Test runs, is what actually decides
+ *  whether a PI-shaped file is missing its price column. */
+const TEST_GATE_REQUIRED_FIELDS = ['item_code', 'qty'];
+
 /** Ours and theirs, in that order - the operator recognises the supplier's own reference,
  *  and our number is what the invoice is filed under. */
 function invoiceLabel(piNumber: string | null, supplierRef: string | null): string {
@@ -306,6 +315,16 @@ export function SupplierDocumentsUploadDialog({
     if (selfServe) setInternalSupplier(null);
   }, [open, selfServe]);
 
+  // Which `${supplierId}::${fileName}` pairs have already been probed - a REF, not state,
+  // so this effect never has to read `mapByFile` (a stale closure the moment supplierId
+  // changes without `files` also changing - fix-round item 15/V6: the self-serve picker
+  // changing supplier used to keep answering with the PREVIOUS supplier's resolved picks,
+  // because the guard below read `mapByFile[file.name]` from the render that scheduled
+  // THIS effect, which still held the old supplier's entry). Composite-keyed by supplier,
+  // so a supplier change is indistinguishable from a brand-new file to this guard: every
+  // current file re-probes the moment the key it would need has never been seen before.
+  const probedKeysRef = useRef<Set<string>>(new Set());
+
   // Probe every file's headers the moment it lands (F3/AC-M9: "before Test"), and drop the
   // entry for a file the operator removed from the drop zone.
   useEffect(() => {
@@ -315,13 +334,23 @@ export function SupplierDocumentsUploadDialog({
       let changed = false;
       const next: typeof prev = {};
       for (const [name, v] of Object.entries(prev)) {
-        if (names.has(name)) next[name] = v;
-        else changed = true;
+        if (names.has(name)) {
+          next[name] = v;
+        } else {
+          changed = true;
+          // A removed file's own probed-keys (any supplier) are forgotten too, so the
+          // SAME file name dropped back in later is treated as new, not skipped.
+          for (const key of Array.from(probedKeysRef.current)) {
+            if (key.endsWith(`::${name}`)) probedKeysRef.current.delete(key);
+          }
+        }
       }
       return changed ? next : prev;
     });
     files.forEach((file) => {
-      if (mapByFile[file.name]) return;
+      const key = `${supplierId}::${file.name}`;
+      if (probedKeysRef.current.has(key)) return;
+      probedKeysRef.current.add(key);
       setMapByFile((prev) => ({
         ...prev,
         [file.name]: { probe: null, fields: [], selections: [], mapping: true, error: null },
@@ -352,12 +381,19 @@ export function SupplierDocumentsUploadDialog({
           }));
         });
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [files, supplierId]);
 
   const mapUnresolvedByFile = (fileName: string): string[] => {
     const st = mapByFile[fileName];
-    return st?.probe ? unresolvedRequiredFields(st.probe, st.selections) : [];
+    if (!st?.probe) return [];
+    const picked = new Set(st.selections.map((s) => s.field));
+    // Only the fields BOTH the probe itself asks for AND the gate's own intersection
+    // names - a probe with nothing required yet (still loading, or a doc type this
+    // dialog never blocks on) stays unblocked, exactly as `probe.required_fields` alone
+    // used to decide before this gate existed.
+    return st.probe.required_fields
+      .filter((f) => TEST_GATE_REQUIRED_FIELDS.includes(f))
+      .filter((f) => !picked.has(f));
   };
   const anyMapUnresolved = files.some((f) => mapUnresolvedByFile(f.name).length > 0);
   const anyMapUnresolvedFields = [...new Set(files.flatMap((f) => mapUnresolvedByFile(f.name)))];
@@ -389,6 +425,28 @@ export function SupplierDocumentsUploadDialog({
       })
       .filter((entry) => !only || entry.file === only);
 
+  /** The mapper's own probed header row per file (B6/AC-M3, fix-round item 13/V5): the
+   *  read Test takes, the read Confirm writes, and a single-file re-preview must all use
+   *  the SAME row the mapper resolved, not the reader's own unmapped guess. Only files
+   *  the mapper has actually probed contribute - a file still reading, or one that
+   *  errored, is left for the backend's own guess exactly as before this existed. */
+  const mapHeaderRows = (): Record<string, number> => {
+    const out: Record<string, number> = {};
+    for (const [name, st] of Object.entries(mapByFile)) {
+      // A real header, not a placeholder: `columns.length` is what tells a genuinely
+      // probed file (real columns to map) apart from one nobody has read yet.
+      if (st.probe?.header_row != null && st.probe.columns.length > 0) out[name] = st.probe.header_row;
+    }
+    return out;
+  };
+  /** `{ headerRows }` when the mapper has actually read at least one file, or `{}`
+   *  otherwise - spread into the request options so a caller with nothing mapped sends
+   *  exactly the same shape it always has, `headerRows` key and all. */
+  const headerRowsOption = (): { headerRows: Record<string, number> } | Record<string, never> => {
+    const rows = mapHeaderRows();
+    return Object.keys(rows).length ? { headerRows: rows } : {};
+  };
+
   const runTest = async () => {
     if (!files.length || !supplierId) return;
     setPreviewing(true);
@@ -399,6 +457,7 @@ export function SupplierDocumentsUploadDialog({
         currency: trimmedCurrency,
         attachTo,
         attachToBlocks: blockAttachments(),
+        ...headerRowsOption(),
       });
       setPreview(read);
       setTranslationEdits({});
@@ -409,28 +468,39 @@ export function SupplierDocumentsUploadDialog({
     }
   };
 
+  /** Every probed file's current picks, saved (fix-round item 16/V7): shared by Test
+   *  (grill G1, "save + preview, one click") and Confirm - a Confirm with no prior Test
+   *  must still write the operator's picks before it applies, the same as Test does,
+   *  never silently apply against whatever the layout happened to be before this
+   *  session's picks. Idempotent (B5's own `ON CONFLICT DO NOTHING` plus its
+   *  normalised-header replace), so calling it again on Confirm after Test already saved
+   *  costs a redundant write, never a wrong one. */
+  const saveAllMappings = async (): Promise<boolean> => {
+    if (!supplierId) return true;
+    try {
+      await Promise.all(
+        files
+          .map((f) => mapByFile[f.name])
+          .filter((st): st is NonNullable<typeof st> => !!st?.probe)
+          .map((st) =>
+            saveImportMapping({
+              supplierId,
+              docTypes: SUPPLIER_DOCUMENT_MAP_DOC_TYPES,
+              mappings: st.selections,
+            }),
+          ),
+      );
+      return true;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to save the column mapping.');
+      return false;
+    }
+  };
+
   /** Test = save every file's column mapping, then read the files (grill G1, one click) -
    *  a Cancel after keeps the saved rows; a re-map replaces them (B5). */
   const runTestWithMapping = async () => {
-    if (supplierId) {
-      try {
-        await Promise.all(
-          files
-            .map((f) => mapByFile[f.name])
-            .filter((st): st is NonNullable<typeof st> => !!st?.probe)
-            .map((st) =>
-              saveImportMapping({
-                supplierId,
-                docTypes: SUPPLIER_DOCUMENT_MAP_DOC_TYPES,
-                mappings: st.selections,
-              }),
-            ),
-        );
-      } catch (e) {
-        setError(e instanceof Error ? e.message : 'Failed to save the column mapping.');
-        return;
-      }
-    }
+    if (!(await saveAllMappings())) return;
     await runTest();
   };
 
@@ -493,6 +563,7 @@ export function SupplierDocumentsUploadDialog({
         currency: trimmedCurrency,
         attachTo,
         attachToBlocks: picks,
+        ...headerRowsOption(),
       });
       const fresh = read.files[0];
       if (!fresh) return;
@@ -527,6 +598,7 @@ export function SupplierDocumentsUploadDialog({
 
   const runConfirm = async () => {
     if (!files.length || !supplierId) return;
+    if (!(await saveAllMappings())) return;
     setApplying(true);
     setError(null);
     try {
@@ -539,6 +611,7 @@ export function SupplierDocumentsUploadDialog({
         translations,
         attachTo,
         attachToBlocks: blockAttachments(),
+        ...headerRowsOption(),
       });
       setResult(applied);
       onImported?.(applied);

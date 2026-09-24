@@ -442,11 +442,22 @@ def read_workbook(
             raise ValueError("read_workbook needs either a resolver or a session")
         resolver = AliasResolver.for_doc_type(db, DOC_TYPE)
 
+    # Memoised (review round 1, security m2, "once per read"): `header_row` given needs it
+    # for `header_texts` below; a file with NO row recognised as a header needs it again
+    # further down for `unmapped_headers` (AC-M4) - the same probe answers both, computed
+    # at most once, not twice, for either reason alone.
+    _probed_cache: list = []
+
+    def _get_probed():
+        if not _probed_cache:
+            from app.services.scm.header_probe import probe as probe_headers
+
+            _probed_cache.append(probe_headers(file_data, header_row=header_row))
+        return _probed_cache[0]
+
     header_texts: Optional[list[str]] = None
     if header_row is not None:
-        from app.services.scm.header_probe import probe as probe_headers
-
-        header_texts = [c.header for c in probe_headers(file_data, header_row=header_row).columns]
+        header_texts = [c.header for c in _get_probed().columns]
 
     result = ProformaReadResult()
     try:
@@ -610,9 +621,7 @@ def read_workbook(
         # whole problem (a file needing the mapper most is exactly one with nothing to show
         # it). The alias-free probe (B2) finds a header row on shape alone and names every
         # column on it this resolver does not already know, required or not.
-        from app.services.scm.header_probe import probe as probe_headers
-
-        probed = probe_headers(file_data, header_row=header_row)
+        probed = _get_probed()
         result.unmapped_headers = [
             c.header for c in probed.columns
             if c.header and resolver.raw_field_for_header(c.header) is None
