@@ -13,7 +13,7 @@ from typing import Any
 from app.services.chatbot.turn.decide import OUTSTANDING_KINDS
 from app.services.chatbot.turn.fetch import envelope_missed
 from app.services.chatbot.turn.narrow import ledger_family_key, ledger_family_label
-from app.services.chatbot.turn.pending import ask as pending_ask, is_roster
+from app.services.chatbot.turn.pending import ask as pending_ask, is_roster, quick_replies_suppressed
 from app.services.chatbot.turn.policy import Policy
 from app.services.chatbot.turn.state import KIND_FIELD_MAP, State, focus_row_label
 
@@ -601,7 +601,12 @@ def compose_question(pending: Any, state: State | None = None) -> Answer:
     action: dict[str, Any] = {
         "kind": "send_message",
         "text": body,
-        "quick_replies": ", ".join(labels) if labels else None,
+        # AC-1866: a `member_offer` re-print keeps its numbered text list but not the
+        # names as quick-reply buttons (owner ruling 23 Sep 2026) - `result_set` below
+        # still carries the roster, so a numbered reply still resolves.
+        "quick_replies": None if quick_replies_suppressed(pending.kind) else (
+            ", ".join(labels) if labels else None
+        ),
         "result_set": list(pending.options),
     }
     return Answer(sections=[], question=pending, offer=None, canned=[], files=[], actions=[action], text=body)

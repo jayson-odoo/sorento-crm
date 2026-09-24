@@ -382,6 +382,29 @@ def _inject_harness_session(
     trace showed the contact's real memory while the lane ran on injected memory would be
     the worst kind of unreadable.
 
+    Fix 3 (console defect, contact 437264483, 23 Sep 2026): `session_state.five_keys`
+    returns the STORED top-level five keys whenever ANY of them is present on
+    `session_vars`, and only falls through to the `variables` nest when none is - so
+    writing the harness value into `variables` alone, leaving the stored row's own
+    top-level `focus`/`open_question`/etc untouched, meant injection silently did
+    nothing for any contact whose stored row was already in the new five-key shape
+    (every contact since #952). Two shapes the harness value can take, told apart by
+    `session_state.FIVE_KEYS` membership (the same membership rule `_harness_keys_
+    present` already uses: `{}` is a real instruction, not "nothing to do"):
+
+    * carries any of the five keys (the console's own echo of `result.session_vars`),
+      or is `{}` ("remembers nothing"): every one of the five keys is set from it
+      (`value.get(key)`, so an omitted key becomes `None`) - the harness state
+      REPLACES the memory for this turn, it does not merge with the stored row's.
+    * neither (the legacy flat shape, `contracts.LegacyVariables`): unchanged
+      behaviour - it is written to `variables`, and the five keys are stripped from
+      `session_vars` so `session_state.five_keys` falls through to its legacy
+      projection instead of reading the (now absent) stored top-level keys.
+
+    A harness value that is not a dict at all (e.g. JSON `null`) is treated the same
+    as `{}` - the memory is wiped for this turn. The console never sends one; this
+    only matters for a hand-built envelope.
+
     Nothing here writes: the head persists no session state at all (the tail does, at S2),
     and D14 already forbids that write on a dry run. The guarantee is asserted by
     `TestHarnessInjectionsG8::test_the_injected_state_is_never_written_back`.
@@ -391,7 +414,16 @@ def _inject_harness_session(
         return session_block
     session_vars = dict(jsc.get(session_block, "session_vars") or {})
     if "previous_conversation_state" in present:
-        session_vars["variables"] = _harness_value(envelope, "previous_conversation_state")
+        value = _harness_value(envelope, "previous_conversation_state")
+        value = value if isinstance(value, dict) else {}
+        session_vars.pop("variables", None)
+        for key in session_state.FIVE_KEYS:
+            session_vars.pop(key, None)
+        if value == {} or any(key in value for key in session_state.FIVE_KEYS):
+            for key in session_state.FIVE_KEYS:
+                session_vars[key] = value.get(key)
+        else:
+            session_vars["variables"] = value
     if "referenced_result_set" in present:
         session_vars["referenced_result_set"] = _harness_value(envelope, "referenced_result_set")
     return {**session_block, "session_vars": session_vars}
@@ -2782,9 +2814,7 @@ def _run_answer(
     """
     stage[0] = "replied"
     reply = {
-        "text": getattr(answer, "text", "") or None,
-        "quick_replies": _quick_replies_of(answer),
-        "result_set": list(answer.question.options) if answer.question is not None else [],
+        **_reply_of(answer),
         "attachments_src": answer.files or None,
     }
     turn_trace.record(
@@ -3035,9 +3065,7 @@ def _answer_actions(answer: Any, *, dry_run: bool) -> list[dict[str, Any]]:
         built.append(
             {
                 "kind": "send_message",
-                "text": words,
-                "quick_replies": _quick_replies_of(answer),
-                "result_set": list(answer.question.options) if answer.question is not None else [],
+                **_reply_of(answer),
                 "dry_run": dry_run,
             }
         )
@@ -3049,11 +3077,34 @@ def _answer_actions(answer: Any, *, dry_run: bool) -> list[dict[str, Any]]:
 
 
 def _quick_replies_of(answer: Any) -> str | None:
-    """n8n's own shape: a comma-joined string or null, never a list (AC-507)."""
+    """n8n's own shape: a comma-joined string or null, never a list (AC-507).
+
+    Owner ruling 23 Sep 2026 (AC-1866): a `member_offer`'s own numbered text list is
+    the offer - `turn_pending.quick_replies_suppressed` withholds ITS options from
+    this string; `result_set` (the roster a numbered reply resolves through) is a
+    separate read and is untouched here.
+    """
     if answer.question is None:
+        return None
+    if turn_pending.quick_replies_suppressed(getattr(answer.question, "kind", None)):
         return None
     labels = [str(o.get("label")) for o in answer.question.options if o.get("label")]
     return ", ".join(labels) if labels else None
+
+
+def _reply_of(answer: Any) -> dict[str, Any]:
+    """The three fields every `Answer`-shaped reply derives the same way: the text,
+    the quick replies (through `_quick_replies_of`, so a suppressed kind stays
+    suppressed at every caller), and the roster a numbered follow-up resolves
+    against. Shared by `_run_answer`'s persisted reply and `_answer_actions`'s own
+    `send_message` action, which each add their own remaining key(s) on top
+    (`attachments_src` vs `kind`/`dry_run`) - one seam, so a fix here reaches both.
+    """
+    return {
+        "text": getattr(answer, "text", "") or None,
+        "quick_replies": _quick_replies_of(answer),
+        "result_set": list(answer.question.options) if answer.question is not None else [],
+    }
 
 
 def _pending_option_labels(pending: Any) -> list[str] | None:

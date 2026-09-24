@@ -125,6 +125,25 @@ OFFER_KINDS: frozenset[str] = frozenset(PENDING_KINDS) - ROSTER_KINDS
 ESCALATION_OFFER_KINDS: frozenset[str] = frozenset({"team_pick", "member_offer", "company_pick"})
 
 
+def quick_replies_suppressed(kind: str | None) -> bool:
+    """Does this pending's own options get withheld from `quick_replies`?
+
+    Owner ruling 23 Sep 2026: a `member_offer` (the CS member picker) already prints
+    its numbered text list ("Please choose who to route to (reply with the number):
+    1. Maryam Ariffin ..."), and that is enough - the same names must NOT also go out
+    as WhatsApp quick-reply buttons (a wall of up to a dozen taps). `result_set` stays
+    populated (a numbered reply still resolves through it); only `quick_replies` is
+    suppressed, and only for this one kind - `team_pick`, `company_pick` and every
+    roster kind keep theirs. One kind does not need a table; the day a second one
+    needs this, it earns the set back.
+
+    One predicate, called from every seam that turns a pending's options into the
+    `quick_replies` string, so the rule lives in one place rather than being
+    reimplemented (and risking drift) at each site.
+    """
+    return kind == "member_offer"
+
+
 #: AC-816 rule 1: how many turns an unanswered escalation offer stays on the customer's
 #: screen. Three, the did-you-mean offer's own lifetime, because "unanswered" is not a
 #: licence to live forever - an offer the customer simply ignored used to be re-armed on
