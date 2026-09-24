@@ -56,11 +56,25 @@ def _uuid() -> str:
     return str(uuid.uuid4())
 
 
-def _parse(db: Session, data: bytes, supplier_id: Optional[str] = None) -> InventoryReadResult:
+def _parse(
+    db: Session,
+    data: bytes,
+    supplier_id: Optional[str] = None,
+    header_row: Optional[int] = None,
+) -> InventoryReadResult:
     """The read, with the CHOSEN supplier's own word list (D1-D6): a bare 型号 composes
-    through it, a letter-led one never consults it at all (D1/D2's regression guard)."""
+    through it, a letter-led one never consults it at all (D1/D2's regression guard).
+
+    `header_row` (B6, AC-M3) threads the mapper's stepper pick into the read. The
+    resolver is supplier-scoped (B1) whenever a supplier is chosen, same as every other
+    reader here - a shared-only resolver otherwise, matching the old behaviour.
+    """
+    from app.services.import_alias_service import AliasResolver
+    from app.services.scm.supplier_inventory_reader import DOC_TYPE
+
     words = WordList.for_supplier(db, supplier_id) if supplier_id else None
-    return read_workbook(data, db=db, words=words)
+    resolver = AliasResolver.for_supplier(db, DOC_TYPE, supplier_id)
+    return read_workbook(data, resolver=resolver, words=words, header_row=header_row)
 
 
 def _products_by_code(
@@ -163,7 +177,12 @@ def _summarise(
 
 
 def preview(
-    db: Session, data: bytes, *, supplier_id: str, loading_plan_id: Optional[str] = None
+    db: Session,
+    data: bytes,
+    *,
+    supplier_id: str,
+    loading_plan_id: Optional[str] = None,
+    header_row: Optional[int] = None,
 ) -> dict:
     """What the file says, and what it would replace, before anything is written.
 
@@ -175,7 +194,7 @@ def preview(
     before the plan it will apply into exists, so there is nothing of that plan's own to
     count) narrows to `loading_plan_id IS NULL`, exactly as `apply`'s own replace scope does.
     """
-    parsed = _parse(db, data, supplier_id)
+    parsed = _parse(db, data, supplier_id, header_row)
     summary = _summarise(db, parsed, supplier_id) if parsed.ok else {}
     held_scope = db.query(SupplierInventory).filter(
         SupplierInventory.supplier_id == supplier_id
@@ -208,9 +227,11 @@ def preview(
     }
 
 
-def validate(db: Session, data: bytes, *, supplier_id: str) -> dict:
+def validate(
+    db: Session, data: bytes, *, supplier_id: str, header_row: Optional[int] = None
+) -> dict:
     """The Test verdict: the same read `apply` performs, with nothing written."""
-    parsed = _parse(db, data, supplier_id)
+    parsed = _parse(db, data, supplier_id, header_row)
     if not parsed.ok:
         missing = ", ".join(parsed.missing_columns)
         reason = (
@@ -270,6 +291,7 @@ def apply(
     actor: Optional[str] = None,
     actor_label: Optional[str] = None,
     loading_plan_id: Optional[str] = None,
+    header_row: Optional[int] = None,
 ) -> dict:
     """Replace a snapshot with the file. Does not commit.
 
@@ -287,7 +309,7 @@ def apply(
     read straight off the screen by a buyer. Without the label the ladder fell back to the
     id and the Remembered table printed a UUID at her.
     """
-    parsed = _parse(db, data, supplier_id)
+    parsed = _parse(db, data, supplier_id, header_row)
     if not parsed.ok:
         return {
             "readable": False,

@@ -179,6 +179,11 @@ async def preview_proforma_invoice(
     currency: Optional[str] = Form(
         None, description="Only needed when neither the document nor the price list says"
     ),
+    header_row: Optional[int] = Form(
+        None,
+        description="The import column mapper's stepper (AC-M3) - which row is the "
+                    "header, overriding the guess.",
+    ),
     _user: dict = Depends(_UPLOAD),
     db: Session = Depends(get_db),
 ):
@@ -192,6 +197,7 @@ async def preview_proforma_invoice(
         supplier_id=supplier_id,
         currency=currency,
         source_ref=file.filename,
+        header_row=header_row,
     )
 
 
@@ -218,6 +224,11 @@ async def apply_proforma_invoice(
                     "blocks. 422 `invoice_supplier_mismatch` when the plan is another "
                     "supplier's.",
     ),
+    header_row: Optional[int] = Form(
+        None,
+        description="The import column mapper's stepper (AC-M3) - which row is the "
+                    "header, overriding the guess.",
+    ),
     validate_only: bool = Query(
         False,
         description="Test the file and write nothing. Returns {valid, errors, warnings, summary}.",
@@ -236,6 +247,7 @@ async def apply_proforma_invoice(
             supplier_id=supplier_id,
             currency=currency,
             source_ref=file.filename,
+            header_row=header_row,
         )
 
     out = await run_in_threadpool(
@@ -249,6 +261,7 @@ async def apply_proforma_invoice(
         revision_of=_revision_map(revision_of),
         file_as_new=_new_document_list(file_as_new),
         loading_plan_id=loading_plan_id,
+        header_row=header_row,
     )
     db.commit()
     return out

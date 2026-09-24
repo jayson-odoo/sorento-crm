@@ -54,6 +54,7 @@ from app.services.scm.container_capacity import container_sizes as _container_si
 from app.services.scm.container_capacity import fit as _fit
 from app.services.scm.currency_resolution import resolve_currency
 from app.services.scm.proforma_invoice_reader import (
+    DOC_TYPE,
     ProformaDocument,
     ProformaReadResult,
     read_workbook,
@@ -117,8 +118,20 @@ def _f(value: Any) -> Optional[float]:
     return None if value is None else float(value)
 
 
-def _parse(db: Session, data: bytes) -> ProformaReadResult:
-    return read_workbook(data, db=db)
+def _parse(
+    db: Session,
+    data: bytes,
+    *,
+    supplier_id: Optional[str] = None,
+    header_row: Optional[int] = None,
+) -> ProformaReadResult:
+    # B1/B6: a supplier-scoped resolver when there is a supplier to scope to - every
+    # caller here has one except the odd internal read with none picked yet, which keeps
+    # today's shared-only behaviour rather than refusing to parse at all.
+    from app.services.import_alias_service import AliasResolver
+
+    resolver = AliasResolver.for_supplier(db, DOC_TYPE, supplier_id)
+    return read_workbook(data, resolver=resolver, header_row=header_row)
 
 
 def supplier_ref_for(
@@ -746,9 +759,10 @@ def preview(
     supplier_id: str,
     currency: Optional[str] = None,
     source_ref: Optional[str] = None,
+    header_row: Optional[int] = None,
 ) -> dict:
     """What this file holds, and what it would create, before anything is written."""
-    parsed = _parse(db, data)
+    parsed = _parse(db, data, supplier_id=supplier_id, header_row=header_row)
     out = _summarise(
         db, parsed, supplier_id=supplier_id, source_ref=source_ref,
         requested_currency=currency,
@@ -767,9 +781,10 @@ def validate(
     supplier_id: str,
     currency: Optional[str] = None,
     source_ref: Optional[str] = None,
+    header_row: Optional[int] = None,
 ) -> dict:
     """The `{valid, errors, warnings, summary}` verdict a Test means everywhere here."""
-    parsed = _parse(db, data)
+    parsed = _parse(db, data, supplier_id=supplier_id, header_row=header_row)
     summary = _summarise(
         db, parsed, supplier_id=supplier_id, source_ref=source_ref,
         requested_currency=currency,
@@ -860,6 +875,7 @@ def apply(
     revision_of: Optional[dict] = None,
     file_as_new: Optional[list] = None,
     loading_plan_id: Optional[str] = None,
+    header_row: Optional[int] = None,
 ) -> dict:
     """Write one proforma invoice per document in the file. Idempotent by identity.
 
@@ -875,7 +891,7 @@ def apply(
     A superseded prior keeps the plan that took IT, so an older plan goes on reading its own.
     """
     _plan_of_this_supplier(db, loading_plan_id, supplier_id=supplier_id)
-    parsed = _parse(db, data)
+    parsed = _parse(db, data, supplier_id=supplier_id, header_row=header_row)
     if not parsed.ok:
         raise AppException(
             422,

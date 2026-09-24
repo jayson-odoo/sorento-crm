@@ -423,6 +423,7 @@ def _file_preview(
     supplier_id: Optional[str] = None,
     attach_to: Optional[str] = None,
     block_attach: Optional[dict[int, str]] = None,
+    header_row: Optional[int] = None,
 ) -> dict[str, Any]:
     kind = classify(data, db)
     if kind is None:
@@ -446,8 +447,8 @@ def _file_preview(
     known_pl: dict[str, Any] = {}
 
     if kind in ("proforma_invoice", "combined"):
-        pi_resolver = AliasResolver.for_doc_type(db, PI_DOC_TYPE)
-        pi_result = read_proforma_invoice(data, pi_resolver)
+        pi_resolver = AliasResolver.for_supplier(db, PI_DOC_TYPE, supplier_id)
+        pi_result = read_proforma_invoice(data, pi_resolver, header_row=header_row)
         if not pi_result.ok:
             errors.append(
                 "This file has no "
@@ -470,8 +471,8 @@ def _file_preview(
             )
 
     if kind in ("packing_list", "combined"):
-        pl_resolver = AliasResolver.for_doc_type(db, PL_DOC_TYPE)
-        pl_result = read_packing_list(data, pl_resolver)
+        pl_resolver = AliasResolver.for_supplier(db, PL_DOC_TYPE, supplier_id)
+        pl_result = read_packing_list(data, pl_resolver, header_row=header_row)
         if not pl_result.ok:
             errors.append(
                 "This file has no "
@@ -624,6 +625,7 @@ def preview(
     currency: Optional[str] = None,
     attach_to: Optional[str] = None,
     block_attach: Optional[dict[tuple[str, int], str]] = None,
+    header_rows: Optional[dict[str, int]] = None,
 ) -> dict[str, Any]:
     """What each file is, and what it would create - writes nothing.
 
@@ -641,6 +643,7 @@ def preview(
         assert_supplier(db, supplier_id)
 
     per_file = block_attach or {}
+    per_file_header_row = header_rows or {}
     out_files = [
         _file_preview(
             db,
@@ -653,6 +656,7 @@ def preview(
                 for (file_name, index), invoice_id in per_file.items()
                 if file_name == name
             },
+            header_row=per_file_header_row.get(name),
         )
         for name, data in files
     ]
@@ -726,6 +730,7 @@ def apply(
     translations: Optional[list[dict[str, Any]]] = None,
     attach_to: Optional[str] = None,
     block_attach: Optional[dict[tuple[str, int], str]] = None,
+    header_rows: Optional[dict[str, int]] = None,
 ) -> dict[str, Any]:
     """Proforma invoices first, then packing lists (S2). No shipment, no price links: the
     packing rows land on the invoice that prices them (AC-C1), and a packing list is born
@@ -785,13 +790,14 @@ def apply(
     # packing loop below attaches that file's blocks to them directly rather than running
     # AC-B5's resolution against a file that already says which invoice it is.
     invoice_ids_by_name: dict[str, list[str]] = {}
+    per_file_header_row = header_rows or {}
 
     for name, data, ctype, kind in kinds:
         if kind not in ("proforma_invoice", "combined"):
             continue
         result = proforma_invoice_service.apply(
             db, data, supplier_id=supplier_id, currency=currency, source_ref=name,
-            actor=actor_name,
+            actor=actor_name, header_row=per_file_header_row.get(name),
         )
         invoice_ids = [r["invoice_id"] for r in result.get("results", [])]
         proforma_invoice_ids += invoice_ids
@@ -809,11 +815,13 @@ def apply(
     # more (AC-C1, S3) - its rows are written onto the PI they price instead
     # (`replace_packing_rows`); a packing list (the receivable object) is born by convert
     # or by hand (S3, AC-C2).
-    pl_resolver = AliasResolver.for_doc_type(db, PL_DOC_TYPE)
     for name, data, ctype, kind in kinds:
         if kind not in ("packing_list", "combined"):
             continue
-        pl_result = read_packing_list(data, pl_resolver)
+        pl_resolver = AliasResolver.for_supplier(db, PL_DOC_TYPE, supplier_id)
+        pl_result = read_packing_list(
+            data, pl_resolver, header_row=per_file_header_row.get(name)
+        )
         if not pl_result.ok:
             continue
         combined_invoice_ids = invoice_ids_by_name.get(name, [])
