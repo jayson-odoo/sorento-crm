@@ -76,9 +76,20 @@ def _sizing_row(rows: list[dict]) -> dict:
 
 def test_no_level_product_row_buys_level_zero_gap(scm_app):
     """B2155's own figures. `need = project 493 + retail 170 + level 0 - SPO 0 = 663`;
-    `buy = 663 - on_hand 128 - PO 339 = 196`. Today's engine instead bypasses the trigger
-    on the confirmed Project Buy alone (issue #794) and buys 493 - the row this pins is
-    RED against 196, not merely against a different number by chance."""
+    `buy = 663 - on_hand 128 - PO 339 = 196` was the one-formula reading (issue #794's
+    bypass retired). Today's engine instead bypassed the trigger on the confirmed Project
+    Buy alone and bought 493 unconditionally - the row this originally pinned was RED
+    against 196, not merely against a different number by chance.
+
+    FLIPPED by Lane F (`PLAN-order-sheet-oi-reports-22sep.md`, owner ruling 23 Sep 2026 -
+    CB4702 x 493 hidden behind 702 on hand): a confirmed project Buy is bought IN FULL on
+    an All run again, this time DELIBERATELY (never netted against on-hand/PO), same as a
+    Project run already did (R1a). Retail's own share here (128 on hand + 339 PO - 170
+    retail = 297, well above a level-0 target) triggers nothing on its own, so the buy is
+    the confirmed 493 alone, with the SAME "project buy" reason `_emit_pool` already uses -
+    not the coincidental #794-shaped 493 the pre-one-formula bypass gave for a different,
+    wrong reason.
+    """
     _, db, _, _ = scm_app
     _use_level_basis(db)
     wid, wh_code = _wh(db, "B2155")
@@ -95,13 +106,14 @@ def test_no_level_product_row_buys_level_zero_gap(scm_app):
     row = _sizing_row(_recs(db, run_id, pid))
 
     assert row["rec_type"] == "buy", row
-    assert float(row["recommended_qty"]) == 196.0, row
-    assert float(row["rounded_qty"]) == 196.0, row
+    assert float(row["recommended_qty"]) == 493.0, row
+    assert float(row["rounded_qty"]) == 493.0, row
     assert row["inputs"]["reorder_level"] is None
     assert row["inputs"].get("needs_level") is True
     reason = (row["triggered_reason"] or "").lower()
-    assert "project buy" not in reason, (
-        f"the level-0 breach must name itself, not the retired project-buy bypass: {reason}"
+    assert "project buy" in reason, (
+        f"the confirmed project need is bought raw on top of Retail's own (untriggered) "
+        f"sizing - Lane F: {reason}"
     )
 
 
@@ -135,38 +147,34 @@ def test_level_row_nets_po_once(scm_app):
 
 # --- AC-3: project demand is inside the net, never added a second time -----------------
 
-def test_location_row_project_inside_net(scm_app):
+def test_location_row_project_row_is_bought_in_full_on_top_of_a_covered_net(scm_app):
     """A location-grain row (the default forecast/reorder_point basis - a `reorder_level`
     product is ALWAYS planned product-grain, `_is_product_level_basis`, so this is the
-    other basis a single-location product actually reaches `_emit_cell` under) with ample
-    stock against a modest confirmed Project Buy must read COVERED, not a buy for the
-    project amount.
+    other basis a single-location product actually reaches `_emit_cell` under).
 
-    Today's `_compute_cell` (~2215, `PLAN-reorder-one-formula.md`'s own line reference)
-    nets Retail alone against the position, and then bolts the WHOLE confirmed Project Buy
-    back on top unconditionally the moment Retail alone does not trigger - so a location
-    holding 10,000 against a mere 200 of confirmed project demand still buys 200 today,
-    even though the position is many times over both channels combined. The one formula
-    folds project into net once: nothing is bought at all.
+    Originally pinned COVERED (the one-formula reading, folding project into net once, so
+    10,000 on hand against a mere 200 of confirmed project demand bought nothing at all).
 
-    Tester's note for the coder/captain: AC-3's own wording ("recommended_qty = level -
-    net, level 0 when none") describes the `reorder_level` basis, which this codebase
-    routes to `_emit_product` (product grain) UNCONDITIONALLY, with no location-grain
-    entry point reachable through the public run pipeline today. This test instead pins
-    the identical PRINCIPLE - project is inside net, never added back on top of the
-    retail-only netting - on the basis that single-location rows actually reach
-    (`_emit_cell`, reorder_point/periodic_review). If the coder's fix keeps the two
-    channels split by design at this basis, escalate rather than silently reinterpreting
-    this test.
+    FLIPPED by Lane F (`PLAN-order-sheet-oi-reports-22sep.md`, owner ruling 23 Sep 2026 -
+    CB4702 x 493 hidden behind 702 on hand): a confirmed project Buy is bought IN FULL
+    again, never netted against on-hand, the SAME rule a Project run already applied
+    (R1a) - "should apply the same for both". Retail's own share here (10,000 on hand
+    against a rop of 0, no forecast demand) triggers nothing on its own, so the row's buy
+    is the confirmed 200 alone, with the SAME "project buy" reason `_emit_pool` already
+    uses when it adds a raw project need on top of an untriggered retail figure.
 
-    Captain's AC-3 ruling (coder round 2): `_covered_rec`'s "Buy anyway" committed-demand
-    figure on `rounded_qty` (the quantity buying the WHOLE outstanding commitment would
-    cost, regardless of whether stock already covers it) is pre-existing and out of this
-    plan's scope, so a covered row's `rounded_qty` still carries it BY DESIGN - this test
-    does not assert `rounded_qty` at all. What it pins instead: the row reads `covered`
-    (not a bolted-on project buy), its reason label says so, and `net_position` shows the
-    project channel was subtracted from the position exactly once (never split out and
-    bolted back on).
+    Tester's note for the coder/captain, preserved for context: AC-3's own wording
+    ("recommended_qty = level - net, level 0 when none") describes the `reorder_level`
+    basis, which this codebase routes to `_emit_product` (product grain)
+    UNCONDITIONALLY, with no location-grain entry point reachable through the public run
+    pipeline today. This test instead pins the identical PRINCIPLE on the basis that
+    single-location rows actually reach (`_emit_cell`, reorder_point/periodic_review).
+
+    `net_position` (`c["net"]`, the DISPLAY figure) is UNCHANGED by Lane F - only the
+    `retail_net`-keyed sizing/`recommended`/`rounded`/`triggered` changed - so 9,800 still
+    pins the SAME fact this test always pinned: the project channel sits inside
+    `net_position` exactly once, never split out and bolted back on top as a SECOND figure
+    that could disagree with it.
     """
     _, db, _, _ = scm_app
     from app.services.scm import reorder_engine as eng
@@ -191,13 +199,16 @@ def test_location_row_project_inside_net(scm_app):
     run_id = _run(db, [wh_code], code)
     row = _sizing_row(_recs(db, run_id, pid))
 
-    assert row["rec_type"] == "covered", (
-        f"10,000 on hand against 200 of confirmed project demand must read covered, "
-        f"not a bolted-on project buy: {row}"
+    assert row["rec_type"] == "buy", (
+        f"a confirmed project Buy must be bought in full on an All run (Lane F, 23 Sep "
+        f"2026), not read covered just because on hand happens to be large: {row}"
     )
-    assert "project buy" not in (row["triggered_reason"] or ""), (
-        f"a covered row must not carry the bolted-on project-buy reason label: {row}"
+    assert float(row["recommended_qty"]) == 200.0, row
+    assert float(row["rounded_qty"]) == 200.0, row
+    assert "project buy" in (row["triggered_reason"] or ""), (
+        f"the confirmed project need is bought raw on top of Retail's own (untriggered) "
+        f"sizing - Lane F: {row}"
     )
-    # on hand 10,000 + SPO 0 + PO 0 - project 200 - retail 0 = 9,800: the project channel
-    # is inside `net_position` exactly once, never split out and bolted back on top.
+    # on hand 10,000 + SPO 0 + PO 0 - project 200 - retail 0 = 9,800: the DISPLAY net is
+    # unaffected by Lane F - only the SIZING no longer reads it.
     assert float(row["net_position"]) == 9_800.0, row

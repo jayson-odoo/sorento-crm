@@ -1,6 +1,6 @@
 # PLAN: order sheet fixes, OI worksheet for a plan run, async OI export
 
-Status: APPROVED 22 Sep 2026 (owner "ok" after six grill rounds). Lane A IN PROGRESS - worktree `../sorento_crm-order-sheet-cells`, branch `fix/order-sheet-cells`, tests on `sorento_osc_ci`. B, C queued; D after #1122.
+Status: Lanes A-D BUILT (A + B merged; C + D re-land in #1144). Lane E (discontinued admission) + Lane F (OI need bought in full on All runs) IN PROGRESS 23 Sep, one PR #1148. Earlier: four PRs ready for review, awaiting owner go: #1134 (A), #1136 (B), #1138 (C, stacked on A), #1140 (D, stacked on A). Merge order A, C, D; B independent. Lane stack :3000/:8000 serves Lane D for hand-testing.
 UAC: `order-sheet-oi-reports-22sep-acceptance-criteria.md`.
 
 ## What the owner asked (22 Sep 2026, order sheet screenshot + OI report sample)
@@ -232,6 +232,96 @@ Tests: pytest on `_planning_rows` for an All run with `so_numbers` (project row 
 un-picked SO absent from `committed`; retail-only product still admitted by leg 2 and
 sized by level; picked SO's project need bought in full on top). Vitest: picker visible
 under All, payload carries `so_numbers` with `demand_class` absent.
+
+## Lane E - a discontinued product with a confirmed OI line enters the plan (owner ruling 23 Sep)
+
+Measured 23 Sep (0921 copy): OI-001332 / prod OI-2609-0228, SO420946 line 16, SRTWC193 x 8 due
+31/10/2026, raised, acknowledged, reconciled, no decision. The engine's own committed select
+(`demand.horizon_committed_select_sql`) returns `project_confirmed_committed = 8` for it, yet the
+plan of 23/09 10:25 (01/09 to 16/11, All) has no line: `_planning_rows`' admission WHERE
+(`reorder_run_service.py` ~873) is `p.is_active = true AND p.is_discontinued = false AND
+p.exclude_from_planning = false`, and SRTWC193 is `is_discontinued = true`. Owner: "we need to
+admit discontinued product".
+
+- E1 Admission: the `is_discontinued = false` predicate becomes `(p.is_discontinued = false OR
+  EXISTS (SELECT 1 FROM cv_all c WHERE c.product_id = p.id AND c.project_confirmed_committed
+  > 0))` - a discontinued product is admitted only by CONFIRMED project OI demand inside the
+  run's scope (picked orders, window). `is_active` and `exclude_from_planning` stay hard.
+  Leg 2 (below level, moved in 180 d) never admits a discontinued product.
+- E2 Sizing: a product admitted this way is sized PROJECT-ONLY on every run kind (the
+  `_project_only_cell` / `project_only` branches #1122 built), never a retail reorder-point
+  or level top-up - it is discontinued, nobody restocks it for the shelf. `_planning_rows`
+  stamps `discontinued_project_only = True` on its rows; `_emit_cell` / `_emit_pool` /
+  `_emit_product` read `project_only = demand_class == "project" or row.discontinued_project_only`.
+  A Dealer run has no project leg, so it never admits one. G10 (a product named in
+  `product_ids` at Start Plan, buyer intent, normally exempt from the committed-demand
+  gate) does not restore a discontinued product's retail sizing: `discontinued_project_only`
+  sits in the same `or` as G10's `committed_gate_exempt` check and wins outright, because a
+  discontinued product never gets its retail sizing back, named or not (review round 1, 23
+  Sep). On an All run the discontinued product's project need is bought IN FULL, not netted
+  against on hand (R1a applies here too) - a location holding 500 units with a confirmed
+  row for 8 still buys 8.
+- E3 The plan grid shows the row like any other; the sheet's Project qty and the OI worksheet
+  already carry the line (`run_scope_oi_rows` has no discontinued filter).
+
+Tests: pytest `_planning_rows` admits a discontinued product with a confirmed OI row in
+scope, not one outside the window / on an un-picked SO / awaiting ack; not admitted on a
+Dealer run; not admitted by leg 2 (below level, no OI); sizing = project need only on an All
+run even when below level, on the pooled (`_emit_pool`) and PROD-shape product-grain
+(`_emit_product`) bases too, and even when the product is named in `product_ids` (G10);
+`test_reorder_plan_project_only.py` and `test_reorder_window_start.py` unchanged. No FE
+change.
+
+Branch: from `fix/order-sheet-cells` (= #1144's head, same `_planning_rows` region); PR base
+retargeted to main by the captain right after #1144 merges and BEFORE the owner merges it.
+
+## Lane F - confirmed OI need is bought in full on an All run too (owner ruling 23 Sep)
+
+Measured 23 Sep (0921 copy, current code): OI-000749 CB4702 x 493 ORDER BACK, confirmed,
+22/09/2026, SO421985. The engine's committed select returns 493 inside the 01/09 to 16/11
+window, so the product is admitted; but on the All run (plan 23/09 10:51) the project need
+is netted against 702 on hand (326 BRW + 376 BRW-IR) by the one-formula sizing, comes out
+covered, and the row is hidden. On a Project run R1a buys the 493 in full. Owner: "should
+apply the same for both".
+
+- F1 On an All run, confirmed project OI need (`project_confirmed_committed`, the same
+  figure Lane A's Project qty prints) is bought IN FULL on top of the retail sizing, never
+  netted against on hand / open PO / SPO - R1a extended from Project runs to All runs. The
+  retail leg keeps today's netting: retail is sized on `retail_net` (net with the project
+  channel taken back out and confirmed project claims on stock removed), then the raw
+  project need is added. `project_supply_reduction` (a confirmed Reserve / Borrow decision
+  CS already recorded) still reduces the project need on EVERY path, including Project
+  runs and the network aggregate - that IS the stock case CS chose, so R1a's "not netted
+  against stock" carves it out rather than exempting it (fix round 3, captain ruling 23
+  Sep: the original cut left a Project run's own `_project_only_cell` and `_emit_pool`'s
+  project-only branch reading the raw figure, unreduced).
+- F2 Applies in all three sizing paths (`_emit_cell` single member, `_emit_pool`,
+  `_emit_product`) and to the network aggregate branch, which already added project need
+  on top of a retail-only sizing before this lane (reviewer-confirmed, fix round 3) and
+  now also applies the Reserve/Borrow reduction the same way. Dealer runs are untouched
+  (no project leg). `_emit_product`'s ALLOCATION (where the buy is sited, not how much)
+  must read the RETAIL aggregate's own per-location deficit plus each location's own
+  project need, never the combined (project-folded-in) net's deficit - the latter reads a
+  stock-covered OI location as un-short and sites the buy at an unrelated retail-short
+  sibling instead (fix round 3, reviewer NOT READY finding).
+- F3 The decision label and the Suggestion text keep reading "Stock: X / PO: Y / Buy: Z"
+  where Buy now includes the full project need; the demand drill's Project figure equals
+  the frozen `project_customers` sum (Lane A) and the OI worksheet's rows for that run.
+- F4 Consequence stated to the owner: a product with 702 on hand and a confirmed row for
+  493 buys 493 on an All run from now on, on every sizing path; purchasing pushes back
+  through Request CS to reserve (#1120) when stock should cover it instead - and that
+  Reserve then reduces the bought qty, wherever in the plan the row sizes.
+
+Tests: pytest, All run: product with on hand > confirmed OI qty -> Suggested >= OI qty
+(exactly the OI qty when retail trigger is off); ORDER BACK on a closed, delivered SO line
+-> bought in full (owed uncapped rule kept); a confirmed Reserve decision on that row ->
+reduced by the reserved qty, on every sizing path (single-member, pool, product-grain, a
+Project run); the product-grain buy is allocated to the OI row's own location, not a
+retail-short sibling; retail-only product unchanged; Dealer run unchanged;
+`test_reorder_plan_project_only.py`, `test_reorder_plan_all_picked_orders.py`,
+`test_reorder_window_start.py`, `test_reorder_one_formula*` updated where they pinned the
+netting on All runs (name each and cite this ruling). Lands in Lane E's worktree and PR
+#1148 as its second slice (same functions), after Lane E's review fixes.
 
 ## Sequencing
 

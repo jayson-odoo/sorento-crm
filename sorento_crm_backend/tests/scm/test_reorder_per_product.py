@@ -180,7 +180,17 @@ def test_one_net_across_every_location_leaves_an_overstocked_product_alone(scm_a
 
 def test_the_buy_is_the_gap_from_the_net_up_to_the_level(scm_app):
     """AC-R2, B2155-NL-BLUE's own figures: 10,860 + 860 on order - 150 project - 290
-    retail = 11,280 against a level of 12,000, so the buy is 720."""
+    retail = 11,280 against a level of 12,000, so the buy is 720.
+
+    UNCHANGED by Lane F (`PLAN-order-sheet-oi-reports-22sep.md`, owner ruling 23 Sep 2026):
+    Retail alone already triggers here (retail_net 11,430 against level 12,000), so adding
+    the raw confirmed 150 on top of Retail's own sizing (720 = (12,000 - 11,430) + 150)
+    lands on the SAME 720 the old combined-net formula gave - both readings agree the
+    instant Retail alone would already have bought. The two formulas only diverge in the
+    OTHER direction (Retail comfortably covered, a confirmed row still owed) - AC-F1's own
+    fixture, not this one; see `tests/scm/test_reorder_plan_oi_need_in_full.py`'s module
+    docstring, measurement (b), for the exact figures.
+    """
     _, db, _, _ = scm_app
     _use_level_basis(db)
     (a, a_code), (b, b_code), (c, c_code) = (_wh(db, s) for s in ("A", "B", "C"))
@@ -748,11 +758,17 @@ def test_a_confirmed_buy_with_no_linked_supplier_is_an_exception_not_dropped(scm
     assert float(summary["suggested_qty"]) == 914.0
 
 
-def test_a_level_sets_bypass_never_fires_when_stock_already_covers_the_confirmed_buy(scm_app):
-    """AC-5: byte-identical to today for a level-set product. 600 on hand less the 50
-    confirmed Buy nets 550, still above a level of 500 - no trigger, no buy - and the
-    no-level bypass this change adds must never force one here just because a confirmed
-    Buy exists."""
+def test_a_level_sets_bypass_fires_for_the_confirmed_buy_even_when_stock_covers_it(scm_app):
+    """AC-5, FLIPPED by Lane F (`PLAN-order-sheet-oi-reports-22sep.md`, owner ruling 23 Sep
+    2026 - CB4702 x 493 hidden behind 702 on hand): a confirmed project Buy is now bought
+    IN FULL on an All run, never netted against on-hand - the same rule a Project run
+    already applied (R1a). 600 on hand less the 50 confirmed Buy still nets 550
+    (`inputs["net"]`, the DISPLAY figure - unaffected, still `_emit_product`'s ONE-FORMULA
+    combined net) and stays above the level of 500, so RETAIL's own share of the buy is
+    genuinely 0 - but the confirmed 50 is owed to a customer regardless of what covers the
+    dealer level, and is added raw on top; only the no-level bypass this file's OTHER tests
+    pin (a product with no level at all) stays retired for RETAIL.
+    """
     _, db, _, _ = scm_app
     _use_level_basis(db)
     wid, wh_code = _wh(db, "LVLBYP")
@@ -765,7 +781,11 @@ def test_a_level_sets_bypass_never_fires_when_stock_already_covers_the_confirmed
 
     rows = _recs(db, _run(db, [wh_code], code), pid)
 
-    assert not _buys(rows), "net 550 against a level of 500 is not a shortage"
+    buys = _buys(rows)
+    assert buys, "a confirmed project Buy of 50 must be bought in full, not covered"
     row = _sizing_row(rows)
-    assert row["rec_type"] == "covered", "stock already covers it - a suggestion, not a gap"
-    assert float(row["inputs"]["net"]) == 550.0
+    assert row["rec_type"] == "buy", row
+    assert float(row["recommended_qty"]) == 50.0, row
+    assert float(row["rounded_qty"]) == 50.0, row
+    assert float(row["inputs"]["net"]) == 550.0, "the display net is unchanged - one formula"
+    assert "project buy" in (row["triggered_reason"] or ""), row
