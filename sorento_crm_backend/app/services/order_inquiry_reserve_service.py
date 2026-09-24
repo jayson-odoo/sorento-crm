@@ -822,7 +822,14 @@ class OrderInquiryReserveService:
                 continue
             # The line may grow by what it still has open, never past its own qty.
             cap = current_net + _remaining(self.db, row)
-            total_requested = sum((_dec(rr.qty_requested) for rr in answered), _ZERO)
+            # What the line has asked for, counting a later balance request once: the
+            # net kept on every earlier answered row plus the latest row's own ask,
+            # capped at the line's qty (36 asked / 10 got, then 26 asked = 36, not 62).
+            total_requested = min(
+                sum((_dec(rr.qty_reserved) for rr in answered[1:]), _ZERO)
+                + _dec(answered[0].qty_requested),
+                _dec(row.qty),
+            )
             new_net, reason_clean = _checked_answer(
                 row,
                 entry,

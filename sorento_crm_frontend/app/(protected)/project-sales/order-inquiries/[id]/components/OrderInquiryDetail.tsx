@@ -424,21 +424,32 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   const editingRowOptions = editingRow ? editingRowOptionsResolved[editingRow.row.id] : undefined;
   const editingOpenRequest = editingRow ? openRequestForRow(editingRow.row.id) : null;
   const editingAnsweredRow = editingRow ? answeredRequestRowFor(editingRow.row.id) : null;
-  // 6e.4 "Amend edits the LINE's net": the form edits the pill's figure; the reason
-  // threshold is the total requested across every answered request of the line.
+  // 6e.4 "Amend edits the LINE's net": the form edits the pill's figure. Its answered
+  // request rows, newest request first (the server's own order).
   const editingAnsweredRows = useMemo(
     () =>
       editingRow
-        ? (reserveRequestsQuery.data ?? []).flatMap((r) =>
-            r.rows.filter((row) => row.row_id === editingRow.row.id && row.qty_reserved != null),
-          )
+        ? [...(reserveRequestsQuery.data ?? [])]
+            .sort((a, b) => b.ordinal - a.ordinal)
+            .flatMap((r) =>
+              r.rows.filter((row) => row.row_id === editingRow.row.id && row.qty_reserved != null),
+            )
         : [],
     [editingRow, reserveRequestsQuery.data],
   );
-  const editingRequestedTotal = editingAnsweredRows.reduce(
-    (sum, row) => sum + Number(row.qty_requested || '0'),
-    0,
-  );
+  // What the line has asked for, a later balance request counted once (the server's
+  // own rule): net kept on every earlier answered row + the latest row's own ask,
+  // capped at the line's qty - 36 asked / 10 got, then 26 asked reads 36, not 62.
+  const editingRequestedTotal =
+    editingAnsweredRows.length === 0
+      ? 0
+      : Math.min(
+          editingAnsweredRows
+            .slice(1)
+            .reduce((sum, row) => sum + Number(row.qty_reserved || '0'), 0) +
+            Number(editingAnsweredRows[0].qty_requested || '0'),
+          Number(editingRow?.row.qty || '0'),
+        );
 
   function handleStage(payload: { warehouse_id?: string; qty_reserved: number; reason: string | null }) {
     if (!editingRow) return;

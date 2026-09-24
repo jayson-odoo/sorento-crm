@@ -713,6 +713,36 @@ describe('6e.4 review round: declined lines, the action column gate, amend prefi
     expect(screen.getByRole('button', { name: /^stage$/i })).toBeDisabled();
   });
 
+  it('AC-RS-85c: a later balance request counts once - 36 asked / 10 got, then 26 asked reads Requested 36', async () => {
+    getReserveRequestsMock.mockResolvedValue([
+      OPEN_REQUEST,
+      {
+        ...ANSWERED_REQUEST,
+        rows: [{ ...ANSWERED_REQUEST.rows[0], qty_requested: '36', qty_reserved: '10' }],
+      },
+      {
+        ...ANSWERED_REQUEST,
+        id: 'rr-9',
+        ordinal: 3,
+        rows: [{ ...ANSWERED_REQUEST.rows[0], id: 'reqrow-9', qty_requested: '26', qty_reserved: '26' }],
+      },
+    ]);
+    vi.mocked(getOrderInquiryHeaderLines).mockResolvedValue([
+      PLAIN_ROW,
+      REQUESTED_ROW,
+      row({ ...RESERVED_ROW, qty: '36', reserved_qty: '36' }),
+    ]);
+    renderDetail();
+    await screen.findByText('ZZT-RESERVED');
+
+    fireEvent.click(within(gridRowFor('ZZT-RESERVED')).getByLabelText('Amend reserve'));
+    const dialog = await screen.findByRole('dialog', { name: /ZZT-RESERVED/i });
+    expect(within(dialog).getByText('Requested 36 across 2 requests')).toBeInTheDocument();
+    // Net 36 = requested 36: nothing to explain.
+    expect(within(dialog).queryByLabelText(/reason/i)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^stage$/i })).toBeEnabled();
+  });
+
   it('a commit whose response touched no request toasts Nothing to change', async () => {
     commitReserveSpy.mockResolvedValueOnce([]);
     renderDetail();

@@ -1505,3 +1505,40 @@ def test_duplicate_row_422_names_the_item_code(reserve_api):
     assert dup.status_code == 422, dup.text
     assert dup.json()["code"] == "reserve_commit_duplicate_row", dup.text
     assert row.item_code in dup.text, dup.text
+
+
+def test_AC_RS_78d_balance_request_counts_once(reserve_api):
+    """T = net on every answered row except the latest + the latest row's own
+    qty_requested, capped at the line's qty: 36 asked / 10 got, then the balance 26
+    asked / 0 got is T = 10 + 26 = 36, never 62."""
+    client, world = reserve_api
+    row = _open_row(world, qty="36", item_code=f"{MARKER}-BALANCE")
+    _request(client, world, (row, "36"))
+    first = client.post(
+        COMMIT_URL(world.inquiry.id),
+        json={"reserves": [{"row_id": row.id, "qty_reserved": "10", "reason": "10 only"}]},
+    )
+    assert first.status_code == 200, first.text
+    world.db.commit()
+    _request(client, world, (row, "26"))
+    second = client.post(
+        COMMIT_URL(world.inquiry.id),
+        json={"reserves": [{"row_id": row.id, "qty_reserved": "0", "reason": "none yet"}]},
+    )
+    assert second.status_code == 200, second.text
+    world.db.commit()
+
+    short = client.post(
+        COMMIT_URL(world.inquiry.id),
+        json={"amendments": [{"row_id": row.id, "qty_reserved": "30"}]},
+    )
+    assert short.status_code == 422, short.text
+    assert short.json()["code"] == "reserve_reason_required", short.text
+
+    full = client.post(
+        COMMIT_URL(world.inquiry.id),
+        json={"amendments": [{"row_id": row.id, "qty_reserved": "36"}]},
+    )
+    assert full.status_code == 200, full.text
+    world.db.commit()
+    assert _net(world, row) == Decimal("36")
