@@ -30,6 +30,7 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 import pytest
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 import app.services.ideation_turn_service as svc
@@ -282,6 +283,157 @@ def test_close_outage_keeps_the_pointer_for_retry(db, monkeypatch):
     ideation = _reload_ideation(db, contact.id)
     assert ideation is not None
     assert ideation["draft_id"] == "d-1"
+
+
+# --------------------------------------------------------------------------- #
+# Reviewer Should fix 4 (round 1, PR #1222 at 720bb8f5): a 4xx close error     #
+# (the draft is already gone shared-service side) must clear the pointer      #
+# instead of retrying forever; a 5xx/transport error keeps retrying (AC-1407).#
+# --------------------------------------------------------------------------- #
+def test_close_with_4xx_clears_the_pointer_without_retry(db, monkeypatch):
+    def _boom(*_a, **_k):
+        raise IdeationServiceError("draft already closed", status_code=404)
+
+    monkeypatch.setattr(svc, "call_create_idea", _boom)
+    contact = _make_contact(
+        db,
+        ideation={
+            "draft_id": "d-1",
+            "status": "collecting",
+            "updated_at": _iso(NOW - timedelta(hours=49)),
+            "reminded_at": _iso(NOW - timedelta(hours=25)),
+        },
+    )
+
+    result = sweep_idle_ideation_drafts(db, now=NOW)
+
+    assert result == {"reminded": 0, "closed": 1}
+    assert _reload_ideation(db, contact.id) is None
+
+
+def test_close_with_5xx_keeps_the_pointer_for_retry(db, monkeypatch):
+    def _boom(*_a, **_k):
+        raise IdeationServiceError("shared-service error", status_code=500)
+
+    monkeypatch.setattr(svc, "call_create_idea", _boom)
+    contact = _make_contact(
+        db,
+        ideation={
+            "draft_id": "d-1",
+            "status": "collecting",
+            "updated_at": _iso(NOW - timedelta(hours=49)),
+            "reminded_at": _iso(NOW - timedelta(hours=25)),
+        },
+    )
+
+    result = sweep_idle_ideation_drafts(db, now=NOW)
+
+    assert result == {"reminded": 0, "closed": 0}
+    ideation = _reload_ideation(db, contact.id)
+    assert ideation is not None
+    assert ideation["draft_id"] == "d-1"
+
+
+# --------------------------------------------------------------------------- #
+# Reviewer Should fix 5 - the sweep must re-read session_vars fresh right      #
+# before writing, so a live turn landing between the read and the write is    #
+# never overwritten with the stale snapshot (plan S4: "reading the row        #
+# fresh"); and one row's DB error must not abort the rest of the batch.       #
+# --------------------------------------------------------------------------- #
+def test_reminder_send_does_not_clobber_a_concurrent_live_turn_write(db, monkeypatch):
+    contact = _make_contact(
+        db,
+        ideation={"draft_id": "d-1", "status": "collecting", "updated_at": _iso(NOW - timedelta(hours=25))},
+    )
+
+    def _send_and_race(*_a, **_kw):
+        # Simulate a live turn writing a fresh pointer WHILE the reminder send
+        # (a network call) is still in flight.
+        svc.overwrite_for_contact(
+            db,
+            respond_io_id=contact.respond_io_id,
+            state={
+                "ideation": {
+                    "draft_id": "d-1",
+                    "status": "review",
+                    "missing": [],
+                    "updated_at": _iso(NOW),
+                    "live_turn_marker": "written-mid-send",
+                }
+            },
+        )
+        return {"sent_as": "text"}
+
+    monkeypatch.setattr("app.services.respond_messaging_service.send_text_or_template", _send_and_race)
+
+    result = sweep_idle_ideation_drafts(db, now=NOW)
+
+    assert result == {"reminded": 1, "closed": 0}
+    ideation = _reload_ideation(db, contact.id)
+    assert ideation["status"] == "review"  # the live turn's write survives
+    assert ideation["live_turn_marker"] == "written-mid-send"
+    assert ideation["reminded_at"] is not None  # the reminder still stamped
+
+
+def test_close_re_reads_fresh_before_clearing_the_pointer(db, monkeypatch):
+    """A live turn starting a NEW draft while the close call is in flight must
+    not have its pointer cleared by a close that targeted the OLD draft_id."""
+    contact = _make_contact(
+        db,
+        ideation={
+            "draft_id": "d-1",
+            "status": "collecting",
+            "updated_at": _iso(NOW - timedelta(hours=49)),
+            "reminded_at": _iso(NOW - timedelta(hours=25)),
+        },
+    )
+
+    def _close_and_race(_base_url, _api_key, payload):
+        svc.overwrite_for_contact(
+            db,
+            respond_io_id=contact.respond_io_id,
+            state={
+                "ideation": {
+                    "draft_id": "d-2",
+                    "status": "collecting",
+                    "missing": [],
+                    "updated_at": _iso(NOW),
+                }
+            },
+        )
+        return {"status": "cancelled", "draft_id": payload.get("draft_id")}
+
+    monkeypatch.setattr(svc, "call_create_idea", _close_and_race)
+
+    result = sweep_idle_ideation_drafts(db, now=NOW)
+
+    assert result == {"reminded": 0, "closed": 1}
+    ideation = _reload_ideation(db, contact.id)
+    assert ideation is not None
+    assert ideation["draft_id"] == "d-2"  # the new draft survives the stale close
+
+
+def test_bad_row_error_does_not_leave_the_session_transaction_aborted(db, monkeypatch):
+    send_spy = MagicMock(return_value={"sent_as": "text"})
+    monkeypatch.setattr("app.services.respond_messaging_service.send_text_or_template", send_spy)
+    _make_contact(
+        db,
+        ideation={"draft_id": "d-1", "status": "collecting", "updated_at": _iso(NOW - timedelta(hours=25))},
+    )
+
+    def _boom(_db, *, respond_io_id, state):
+        _db.execute(text("SELECT 1/0"))
+
+    monkeypatch.setattr(svc, "overwrite_for_contact", _boom)
+
+    result = sweep_idle_ideation_drafts(db, now=NOW)
+    assert result == {"reminded": 0, "closed": 0}  # the one row failed
+
+    # The session must still be usable afterward - proves the sweep rolled
+    # back the aborted transaction instead of leaving it poisoned for the
+    # next row (or the next caller of this same session).
+    other = _make_contact(db, ideation=None)
+    assert other.id is not None
 
 
 # --------------------------------------------------------------------------- #

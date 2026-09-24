@@ -82,6 +82,8 @@ def _extraction(
     missing: list[str] | None = None,
     next_field: str | None = None,
     duplicate_candidate_title: str | None = None,
+    captured: dict[str, str] | None = None,
+    prior_title: str | None = None,
 ) -> IdeateExtraction:
     full_payload = {
         "fields": [],
@@ -104,6 +106,8 @@ def _extraction(
             missing=missing,
             next_field=next_field,
             duplicate_candidate_title=duplicate_candidate_title,
+            captured=captured,
+            prior_title=prior_title,
         )
 
 
@@ -296,6 +300,79 @@ def test_context_block_carries_next_field_and_candidate_hint(configured):
     user_content = captured_messages["messages"][1]["content"]
     assert "proposed_solution" in user_content
     assert "Show promo price in red" in user_content
+
+
+# --------------------------------------------------------------------------- #
+# Reviewer Blocking 2 (round 1, PR #1222 at 720bb8f5): the context must carry #
+# the draft's captured answers and the stored title so the model can EXTEND a #
+# field (rather than replace it, losing the earlier text) and keep the SAME   #
+# title stable across turns (AC-1219 extend part; title stability).          #
+# --------------------------------------------------------------------------- #
+def test_context_block_carries_captured_answers_and_prior_title(configured):
+    captured_messages = {}
+
+    class _CapturingProvider:
+        def chat(self, messages, *_a, **_k):
+            captured_messages["messages"] = messages
+            return ChatResult(
+                content=json.dumps(
+                    {
+                        "fields": [],
+                        "remove": [],
+                        "skip": [],
+                        "title": "",
+                        "review_action": "none",
+                        "change_text": "",
+                        "duplicate_choice": "none",
+                    }
+                ),
+                prompt_tokens=1,
+                completion_tokens=1,
+                total_tokens=2,
+            )
+
+    with patch(
+        "app.services.ideation_extractor.get_provider", return_value=_CapturingProvider()
+    ):
+        extract_ideate_turn(
+            configured,
+            message_text="it happens most during month end when we're busy with closing",
+            status="collecting",
+            next_field="proposed_solution",
+            captured={"problem": "dealers keep calling to check order status"},
+            prior_title="Dealers check order status by calling",
+        )
+
+    user_content = captured_messages["messages"][1]["content"]
+    assert "dealers keep calling to check order status" in user_content
+    assert "Dealers check order status by calling" in user_content
+
+
+def test_semantic_capture_extends_the_existing_field_using_context(configured):
+    """With the prior problem text in context, the model (stubbed here to act
+    like a cooperative one) returns the FULL extended value - not just the new
+    sentence - so nothing captured earlier is lost (AC-1219, Blocking 2)."""
+    out = _extraction(
+        configured,
+        {
+            "fields": [
+                {
+                    "key": "problem",
+                    "value": (
+                        "dealers keep calling to check order status, especially "
+                        "during month end when the team is busy with closing"
+                    ),
+                }
+            ]
+        },
+        message_text="it happens most during month end when we're busy with closing",
+        status="collecting",
+        next_field="proposed_solution",
+        captured={"problem": "dealers keep calling to check order status"},
+        prior_title="Dealers check order status by calling",
+    )
+    assert out.fields["problem"].startswith("dealers keep calling to check order status")
+    assert "month end" in out.fields["problem"]
 
 
 # --------------------------------------------------------------------------- #

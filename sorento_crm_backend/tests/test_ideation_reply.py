@@ -385,6 +385,329 @@ def test_clarifying_answer_is_exempt_from_recap_lines(configured):
 
 
 # --------------------------------------------------------------------------- #
+# Reviewer Blocking 1 (round 1, PR #1222 at 720bb8f5): the gate must reject a  #
+# fabricated IDEA-<digits> token, URL, or duplicate mention on EVERY status,   #
+# not only on complete. Probe table from the review comment.                  #
+# --------------------------------------------------------------------------- #
+def test_complete_reply_with_substring_idea_number_falls_back(configured):
+    """IDEA-0042 is a real fact; IDEA-00421 is NOT the same token (word-boundary,
+    never substring)."""
+    text = '"Title"\nIdea IDEA-00421 is in. We will update you on WhatsApp.\nTrack it here: https://x.test/ideas/tok'
+    result = {
+        "status": "complete",
+        "title": "Title",
+        "captured": {},
+        "next_field": None,
+        "duplicate_candidate": None,
+        "idea_number": "IDEA-0042",
+        "link": "https://x.test/ideas/tok",
+        "reply_text": "fallback",
+    }
+    with _patched(_StubProvider(text)):
+        out = compose_ideate_reply(configured, result=result, user_message="yes")
+    assert out == "fallback"
+
+
+def test_complete_reply_with_real_and_invented_idea_number_falls_back(configured):
+    text = (
+        '"Title"\nIdea IDEA-0042 is in, also known as IDEA-0099.\n'
+        "Track it here: https://x.test/ideas/tok"
+    )
+    result = {
+        "status": "complete",
+        "title": "Title",
+        "captured": {},
+        "next_field": None,
+        "duplicate_candidate": None,
+        "idea_number": "IDEA-0042",
+        "link": "https://x.test/ideas/tok",
+        "reply_text": "fallback",
+    }
+    with _patched(_StubProvider(text)):
+        out = compose_ideate_reply(configured, result=result, user_message="yes")
+    assert out == "fallback"
+
+
+def test_complete_reply_invents_idea_number_when_fact_missing_falls_back(configured):
+    text = '"Title"\nIdea IDEA-0777 is in. We will update you on WhatsApp.'
+    result = {
+        "status": "complete",
+        "title": "Title",
+        "captured": {},
+        "next_field": None,
+        "duplicate_candidate": None,
+        "idea_number": None,
+        "link": None,
+        "reply_text": "fallback",
+    }
+    with _patched(_StubProvider(text)):
+        out = compose_ideate_reply(configured, result=result, user_message="yes")
+    assert out == "fallback"
+
+
+def test_collecting_reply_with_url_when_no_link_fact_falls_back(configured):
+    text = 'Problem: x\nSee https://evil.test/x for more?'
+    result = {
+        "status": "collecting",
+        "title": "",
+        "captured": {},
+        "next_field": "impact",
+        "duplicate_candidate": None,
+        "idea_number": None,
+        "link": None,
+        "reply_text": "fallback",
+    }
+    with _patched(_StubProvider(text)):
+        out = compose_ideate_reply(configured, result=result, user_message="hi")
+    assert out == "fallback"
+
+
+def test_collecting_reply_invents_idea_number_falls_back(configured):
+    text = "Your idea is IDEA-0999. What's the impact?"
+    result = {
+        "status": "collecting",
+        "title": "",
+        "captured": {},
+        "next_field": "impact",
+        "duplicate_candidate": None,
+        "idea_number": None,
+        "link": None,
+        "reply_text": "fallback",
+    }
+    with _patched(_StubProvider(text)):
+        out = compose_ideate_reply(configured, result=result, user_message="hi")
+    assert out == "fallback"
+
+
+def test_collecting_reply_invents_duplicate_mention_falls_back(configured):
+    text = "Similar idea exists: Made up idea. Keep going?"
+    result = {
+        "status": "collecting",
+        "title": "",
+        "captured": {},
+        "next_field": "impact",
+        "duplicate_candidate": None,
+        "idea_number": None,
+        "link": None,
+        "reply_text": "fallback",
+    }
+    with _patched(_StubProvider(text)):
+        out = compose_ideate_reply(configured, result=result, user_message="hi")
+    assert out == "fallback"
+
+
+def test_duplicate_candidate_reply_with_invented_number_and_url_falls_back(configured):
+    text = (
+        "Similar idea exists: Show promo price in red on price tags (IDEA-5555, "
+        "see https://evil.test/x)\nVote for that one, or keep yours separate?"
+    )
+    result = {
+        "status": "duplicate_candidate",
+        "title": "",
+        "captured": {},
+        "next_field": None,
+        "duplicate_candidate": {"idea_number": "IDEA-0077", "title": "Show promo price in red on price tags"},
+        "idea_number": None,
+        "link": None,
+        "reply_text": "fallback",
+    }
+    with _patched(_StubProvider(text)):
+        out = compose_ideate_reply(configured, result=result, user_message="hi")
+    assert out == "fallback"
+
+
+def test_complete_reply_link_with_appended_path_falls_back(configured):
+    text = (
+        '"Title"\nIdea IDEA-0042 is in.\n'
+        "Track it here: https://x.test/ideas/tok/extra"
+    )
+    result = {
+        "status": "complete",
+        "title": "Title",
+        "captured": {},
+        "next_field": None,
+        "duplicate_candidate": None,
+        "idea_number": "IDEA-0042",
+        "link": "https://x.test/ideas/tok",
+        "reply_text": "fallback",
+    }
+    with _patched(_StubProvider(text)):
+        out = compose_ideate_reply(configured, result=result, user_message="yes")
+    assert out == "fallback"
+
+
+# --------------------------------------------------------------------------- #
+# Reviewer Should fix 1 - voted/cancelled are terminal, no question required   #
+# --------------------------------------------------------------------------- #
+def test_voted_reply_accepted_without_question(configured):
+    text = "Thanks, your vote for IDEA-0077 is counted."
+    result = {
+        "status": "voted",
+        "title": "",
+        "captured": {},
+        "next_field": None,
+        "duplicate_candidate": None,
+        "idea_number": "IDEA-0077",
+        "link": None,
+        "reply_text": "fallback",
+    }
+    with _patched(_StubProvider(text)):
+        out = compose_ideate_reply(configured, result=result, user_message="vote")
+    assert out == text
+
+
+def test_voted_reply_with_invented_idea_number_falls_back(configured):
+    text = "Thanks, your vote for IDEA-9999 is counted."
+    result = {
+        "status": "voted",
+        "title": "",
+        "captured": {},
+        "next_field": None,
+        "duplicate_candidate": None,
+        "idea_number": "IDEA-0077",
+        "link": None,
+        "reply_text": "fallback",
+    }
+    with _patched(_StubProvider(text)):
+        out = compose_ideate_reply(configured, result=result, user_message="vote")
+    assert out == "fallback"
+
+
+def test_cancelled_reply_accepted_without_question(configured):
+    text = "No worries, I've dropped that idea."
+    result = {
+        "status": "cancelled",
+        "title": "",
+        "captured": {},
+        "next_field": None,
+        "duplicate_candidate": None,
+        "idea_number": None,
+        "link": None,
+        "reply_text": "fallback",
+    }
+    with _patched(_StubProvider(text)):
+        out = compose_ideate_reply(configured, result=result, user_message="cancel")
+    assert out == text
+
+
+# --------------------------------------------------------------------------- #
+# Reviewer Should fix 2 - a recap that drops the title line still needs its    #
+# per-field lines (detected by captured VALUES appearing in the text, not by  #
+# line 1 alone)                                                               #
+# --------------------------------------------------------------------------- #
+def test_recap_reply_without_title_line_still_requires_field_lines(configured):
+    text = (
+        "Got it - problem is add a filter for slow moving stock on the dashboard "
+        "and solution is a toggle that hides anything that sold in the last 90 days. "
+        "What's the impact if we do this?"
+    )
+    result = {
+        "status": "collecting",
+        "title": "Add slow moving stock filter to dashboard",
+        "captured": {
+            "problem": "add a filter for slow moving stock on the dashboard",
+            "proposed_solution": "a toggle that hides anything that sold in the last 90 days",
+        },
+        "next_field": "impact",
+        "duplicate_candidate": None,
+        "idea_number": None,
+        "link": None,
+        "reply_text": "fallback",
+    }
+    with _patched(_StubProvider(text)):
+        out = compose_ideate_reply(configured, result=result, user_message="a toggle")
+    assert out == "fallback"
+
+
+# --------------------------------------------------------------------------- #
+# Reviewer Should fix 3 - the denial reply rejects an invented URL/question    #
+# --------------------------------------------------------------------------- #
+def test_denial_reply_with_url_falls_back(configured):
+    with _patched(_StubProvider("Not available. Try https://evil.test ?")):
+        out = compose_ideate_denial_reply(
+            configured, user_message="i have an idea", fallback_text="Sorry, you are not allowed to access ideation"
+        )
+    assert out == "Sorry, you are not allowed to access ideation"
+
+
+def test_denial_reply_with_question_falls_back(configured):
+    with _patched(_StubProvider("Sorry, would you like to try a different agent?")):
+        out = compose_ideate_denial_reply(
+            configured, user_message="i have an idea", fallback_text="Sorry, you are not allowed to access ideation"
+        )
+    assert out == "Sorry, you are not allowed to access ideation"
+
+
+# --------------------------------------------------------------------------- #
+# Reviewer Nit 1 - AC-1311 line positions (idea number on line 2, link on its  #
+# own "Track it here:" line), not just presence anywhere in the text          #
+# --------------------------------------------------------------------------- #
+def test_complete_reply_idea_number_not_on_its_own_line_falls_back(configured):
+    text = (
+        '"Title" - Idea IDEA-0042 is in. We will update you on WhatsApp.\n'
+        "Track it here: https://x.test/ideas/tok"
+    )
+    result = {
+        "status": "complete",
+        "title": "Title",
+        "captured": {},
+        "next_field": None,
+        "duplicate_candidate": None,
+        "idea_number": "IDEA-0042",
+        "link": "https://x.test/ideas/tok",
+        "reply_text": "fallback",
+    }
+    with _patched(_StubProvider(text)):
+        out = compose_ideate_reply(configured, result=result, user_message="yes")
+    assert out == "fallback"
+
+
+# --------------------------------------------------------------------------- #
+# Reviewer Should fix 6 - canned.access_denied_text itself, not only the      #
+# composer function it calls: the ideation branch routes through the         #
+# composer; every other agent's denial is unchanged with no LLM call         #
+# --------------------------------------------------------------------------- #
+def test_access_denied_text_ideation_routes_through_composer(monkeypatch):
+    from app.services.chatbot.copy import fallback_copy
+    from app.services.chatbot.lanes import canned
+
+    calls = []
+
+    def _fake_compose(db, *, user_message, fallback_text):
+        calls.append((user_message, fallback_text))
+        return "LLM-composed denial"
+
+    monkeypatch.setattr(
+        "app.services.ideation_turn_service.compose_ideate_denial_reply", _fake_compose
+    )
+    ctx = {
+        "parse": {"output": {"routing": {"suggested_agent": "ideation"}}},
+        "text": {"message": {"message": {"text": "i have an idea"}}},
+    }
+    out = canned.access_denied_text(None, ctx, fallback_copy())
+    assert out == "LLM-composed denial"
+    assert calls[0][0] == "i have an idea"
+
+
+def test_access_denied_text_other_agent_skips_composer(monkeypatch):
+    from app.services.chatbot.copy import fallback_copy
+    from app.services.chatbot.lanes import canned
+
+    calls = []
+    monkeypatch.setattr(
+        "app.services.ideation_turn_service.compose_ideate_denial_reply",
+        lambda *a, **k: calls.append(1),
+    )
+    ctx = {
+        "parse": {"output": {"routing": {"suggested_agent": "purchasing"}}},
+        "text": {"message": {"message": {"text": "need stock"}}},
+    }
+    out = canned.access_denied_text(None, ctx, fallback_copy())
+    assert calls == []
+    assert "purchasing" in out
+
+
+# --------------------------------------------------------------------------- #
 # AC-1307 - access-denied reply for the ideation agent                        #
 # --------------------------------------------------------------------------- #
 def test_denial_reply_uses_llm_output(configured):

@@ -31,14 +31,17 @@ harness (the deterministic ``confirm``-guard is tested here).
 """
 from __future__ import annotations
 
+import uuid
 from dataclasses import replace
 
 import httpx
 import pytest
 
 import app.services.ideation_turn_service as svc
+from app.models.access import ContactAccessType, RespondContact, respond_contact_access_types
 from app.services.ideation_extractor import IdeateExtraction
 from app.services.ideation_turn_service import IdeationServiceError, handle_turn
+from tests._pg_fixture import blank_session
 
 
 # --------------------------------------------------------------------------- #
@@ -739,6 +742,134 @@ def test_next_field_and_candidate_title_threaded_to_extractor(wired, monkeypatch
     )
     _turn(message_text="it happens most during month end")
     assert seen_kwargs["next_field"] == "proposed_solution"
+
+
+# --------------------------------------------------------------------------- #
+# Reviewer Blocking 2 (round 1, PR #1222 at 720bb8f5): the draft's captured    #
+# answers and the stored title must reach the extractor too (not only         #
+# next_field/candidate title), so the model can EXTEND a field instead of     #
+# losing the earlier text, and keep the title stable across turns.            #
+# --------------------------------------------------------------------------- #
+def test_captured_and_prior_title_threaded_to_extractor(wired, monkeypatch):
+    wired.set_session_vars(
+        {
+            "ideation": {
+                "draft_id": "d-1",
+                "status": "collecting",
+                "missing": [],
+                "next_field": "proposed_solution",
+                "title": "Dealers check order status by calling",
+                "captured": {"problem": "dealers keep calling to check order status"},
+                "updated_at": "t",
+            }
+        }
+    )
+    seen_kwargs = {}
+    real_fake = svc.extract_ideate_turn
+
+    def _capture(_db, **kw):
+        seen_kwargs.update(kw)
+        return real_fake(_db, **kw)
+
+    monkeypatch.setattr(svc, "extract_ideate_turn", _capture)
+    wired.set_create_idea(
+        {"draft_id": "d-1", "status": "collecting", "captured": {}, "missing": [], "reply_text": "ok"}
+    )
+    _turn(message_text="it happens most during month end")
+    assert seen_kwargs["captured"] == {"problem": "dealers keep calling to check order status"}
+    assert seen_kwargs["prior_title"] == "Dealers check order status by calling"
+
+
+def test_captured_answers_persisted_onto_the_pointer(wired):
+    """The pointer must carry `captured` forward (from the create_idea response)
+    so the NEXT turn can thread it to the extractor as context."""
+    wired.set_session_vars({})
+    wired.set_create_idea(
+        {
+            "draft_id": "d-1",
+            "status": "collecting",
+            "captured": {"problem": "dealers keep calling to check order status"},
+            "missing": [],
+            "next_field": "proposed_solution",
+            "reply_text": "ok",
+        }
+    )
+    out = _turn(message_text="dealers keep calling to check order status")
+    ideation = out["session_vars"]["ideation"]
+    assert ideation["captured"] == {"problem": "dealers keep calling to check order status"}
+
+
+# --------------------------------------------------------------------------- #
+# Reviewer Nit 3 - cancelling during duplicate_candidate omits duplicate_choice#
+# (precedence is shared-service's call; don't send a stale "separate" too)    #
+# --------------------------------------------------------------------------- #
+def test_cancel_during_duplicate_candidate_omits_duplicate_choice(wired):
+    wired.set_session_vars(
+        {
+            "ideation": {
+                "draft_id": "d-1",
+                "status": "duplicate_candidate",
+                "missing": [],
+                "updated_at": "t",
+                "duplicate_candidate": {"idea_number": "IDEA-0077", "title": "Existing"},
+            }
+        }
+    )
+    wired.set_extraction(review_action="cancel")
+    wired.set_create_idea(
+        {"draft_id": "d-1", "status": "cancelled", "captured": {}, "missing": [], "reply_text": "dropped"}
+    )
+    _turn(message_text="actually never mind, cancel")
+    assert wired.payloads[0]["cancel"] is True
+    assert "duplicate_choice" not in wired.payloads[0]
+
+
+# --------------------------------------------------------------------------- #
+# Reviewer Should fix 7 (round 1, PR #1222 at 720bb8f5): the submitter_tier    #
+# SQL (join + ORDER BY sort_order, code) must actually run against Postgres,  #
+# not just get set on a monkeypatched contact row (AC-1207).                  #
+# --------------------------------------------------------------------------- #
+def test_submitter_tier_sql_orders_by_sort_order_then_code():
+    with blank_session() as db:
+        db.add_all(
+            [
+                ContactAccessType(code="dealer", name="Dealer", sort_order=2),
+                ContactAccessType(code="end_user", name="End user", sort_order=1),
+            ]
+        )
+        db.flush()
+        contact = RespondContact(
+            id=str(uuid.uuid4()),
+            respond_io_id=str(uuid.uuid4()),
+            phone_number=f"+601{uuid.uuid4().int % 10**8:08d}",
+            session_vars={},
+        )
+        db.add(contact)
+        db.flush()
+        db.execute(
+            respond_contact_access_types.insert().values(
+                [
+                    {"contact_id": contact.id, "access_type_code": "dealer"},
+                    {"contact_id": contact.id, "access_type_code": "end_user"},
+                ]
+            )
+        )
+        db.commit()
+
+        state = svc._get_contact_row(db, contact.respond_io_id)
+        assert state.submitter_tier == "end_user"  # lower sort_order wins over dealer
+
+        contact_no_tier = RespondContact(
+            id=str(uuid.uuid4()),
+            respond_io_id=str(uuid.uuid4()),
+            phone_number=f"+601{uuid.uuid4().int % 10**8:08d}",
+            session_vars={},
+        )
+        db.add(contact_no_tier)
+        db.commit()
+
+        state_none = svc._get_contact_row(db, contact_no_tier.respond_io_id)
+        assert state_none.submitter_tier is None
 
 
 # --------------------------------------------------------------------------- #
