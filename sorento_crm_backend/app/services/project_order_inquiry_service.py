@@ -8610,6 +8610,19 @@ class ProjectOrderInquiryService:
                 )
 
         rows = query.all()
+        # Self-heal (issue #1215 point 1): a row can read `placed`/`partly_linked` with
+        # NONE of the links that state describes - the diagnosis found 17 such rows
+        # company wide, their links deleted by a path that bypassed `_remove_links` and
+        # never re-derived the state afterwards. This pass already loaded every row the
+        # query's own states allow (RAISED/PARTLY_LINKED, or also PLACED when
+        # `redeal_drafts` widens it), so re-deriving each one's state from its OWN links
+        # here means a row like that reads `raised` again even when the walk below finds
+        # no better candidate to link it to - the one case `_write_link`/`_remove_links`
+        # below never reaches, because nothing in this pass runs for it. Idempotent: a
+        # row whose stored state already agrees with its links is untouched.
+        if rows:
+            self.refresh_link_state(rows)
+            self.db.flush()
         rows = self._rank_raised_rows(rows)
         # `_resolve_product_id` costs one or two queries per row (review round 1 nit) -
         # resolved ONCE here and read everywhere else this pass needs it (the netting
