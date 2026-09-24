@@ -62,6 +62,10 @@ class ImportFieldAlias(Base):
         # (`supplier_id IS NULL`) is unique against every OTHER shared row on its own; a
         # supplier row is unique against every other row THAT SAME supplier has saved -
         # two different suppliers may each hold their own row for the same header.
+        # Every seeder inserting a shared row must name this index's own predicate -
+        # `ON CONFLICT (doc_type, field, alias) WHERE supplier_id IS NULL DO NOTHING` -
+        # a bare `ON CONFLICT (doc_type, field, alias) DO NOTHING` no longer matches any
+        # index at all (42P10).
         Index(
             "uq_import_field_alias_shared",
             "doc_type",

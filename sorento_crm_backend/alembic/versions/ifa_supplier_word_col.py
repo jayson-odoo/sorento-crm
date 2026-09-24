@@ -13,7 +13,8 @@ their own overrides it (D6, R3). Review round 3: `uq_import_field_alias_triple` 
 replaced with a per-supplier variant. Two reasons landed on that ruling:
 
   - 22 other call sites (every seeder, `scripts/bootstrap_env.py`, 9+ scm tests) `INSERT ...
-    ON CONFLICT (doc_type, field, alias) DO NOTHING` against this exact constraint by name.
+    ON CONFLICT (doc_type, field, alias) WHERE supplier_id IS NULL DO NOTHING` against this
+    exact constraint by name.
     Rounds 1-2 replaced it with two partial unique indexes, and Postgres has no unique index
     matching that column list once the plain triple is gone - every one of those sites 500s
     with "no unique or exclusion constraint matching the ON CONFLICT specification" (CI red
@@ -70,8 +71,9 @@ _SEED = [
 def seed_supplier_word_rows(bind) -> int:
     """The D7 seed (shared word rows). Returns rows inserted.
 
-    Idempotent (`ON CONFLICT (doc_type, field, alias) DO NOTHING`, against the triple
-    migration 311 created - see the module docstring), and pulled out to its own function
+    Idempotent (`ON CONFLICT (doc_type, field, alias) WHERE supplier_id IS NULL DO NOTHING`,
+    against the shared partial index migration `ifa_supplier_uniq` created - see the module
+    docstring), and pulled out to its own function
     so `upgrade()` and `scripts/bootstrap_env.py` run the SAME code rather than two copies
     that drift, mirroring migration 311's own `seed_import_field_aliases`. A database built
     by `create_all` + stamp (CI, `bootstrap_env`) never executes a migration body, so a seed
@@ -86,7 +88,7 @@ def seed_supplier_word_rows(bind) -> int:
                 """
                 INSERT INTO import_field_alias (doc_type, field, alias, supplier_id)
                 VALUES (:d, :f, :a, NULL)
-                ON CONFLICT (doc_type, field, alias) DO NOTHING
+                ON CONFLICT (doc_type, field, alias) WHERE supplier_id IS NULL DO NOTHING
                 """
             ),
             {"d": DOC_TYPE, "f": field, "a": alias},

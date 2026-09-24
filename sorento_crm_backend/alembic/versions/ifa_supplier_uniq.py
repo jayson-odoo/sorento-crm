@@ -34,13 +34,22 @@ targets `uq_import_field_alias_supplier` by column list, and only after confirmi
 SHARED row already answers the same way (`test_second_supplier_keeps_identical_mapping`'s
 kept half - an identical-to-shared save still writes no redundant supplier row).
 
-Every seeder that runs against a database THIS migration has already reached (four scm
-test files, `scripts/bootstrap_env.py`) has its `ON CONFLICT (doc_type, field, alias) DO
-NOTHING` narrowed to `... WHERE supplier_id IS NULL DO NOTHING` in the same change - every
-one of those inserts a shared (`supplier_id` NULL) row, so the target index changes but
-the row shape does not. Every migration under `alembic/versions/` that seeds this table
-runs BEFORE this one on a fresh database and is left untouched - the plain triple is still
-the correct, currently-live arbiter for their own `upgrade()` at the point they run.
+Every seeder of this table - every migration under `alembic/versions/` that writes a
+shared row here, `scripts/bootstrap_env.py`, and the scm/customer-import test files that
+build their world by calling those migrations' own `seed()` functions directly - has its
+`ON CONFLICT (doc_type, field, alias) DO NOTHING` narrowed to `... WHERE supplier_id IS
+NULL DO NOTHING` in the same change (follow-up commit `fix(alembic): alias seeders target
+the shared partial index...`, same day): every one of those inserts a shared (`supplier_id`
+NULL) row, so the target index changes but the row shape does not. Adding that predicate is
+safe on BOTH schema shapes a `seed()` function can run against - a genuine fresh-DB
+`alembic upgrade head`, where the migration in question runs BEFORE this one and the table
+still carries only the old plain (non-partial) `uq_import_field_alias_triple` (a predicate
+in the `ON CONFLICT` clause is satisfied by a non-partial index trivially, measured
+directly), and a database THIS migration has already reached, where the predicate is the
+exact partial index's own. Not left unpatched: a test calling e.g. migration 311's
+`seed_import_field_aliases()` directly runs it against whichever schema the test's own
+database already has, not necessarily in migration order, so "runs before this one on a
+fresh DB" does not hold for that call path.
 
 Revision ID: ifa_supplier_uniq
 Revises: oirs_0002_reserve_round2
