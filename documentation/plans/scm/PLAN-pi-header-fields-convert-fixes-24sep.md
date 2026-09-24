@@ -1,6 +1,6 @@
 # PLAN: PI header fields from one cell, convert-to-packing-list repeat products, source files, async PL download
 
-Status: GRILLED 24 Sep 2026 (R-A..R-D taken); lane opening, STACKED on feat/import-column-mapper (PR #1188) because F extends ImportColumnMapper; PR base = that branch until #1188 merges, then retarget to main.
+Status: BUILT 25 Sep 2026, PR open (review round 1 applied); stacked on #1188; awaiting merge go.
 UAC: `pi-header-fields-convert-fixes-24sep-acceptance-criteria.md`.
 Track: full `/feature`, one lane, one PR, stacked on #1188.
 
@@ -63,6 +63,10 @@ Track: full `/feature`, one lane, one PR, stacked on #1188.
   ignored for display and carry (kept in the column, unused).
 - R-C (owner): second lane; #1188 untouched.
 - R-D (owner 24 Sep): header-level fields ARE mapped in the import mapper, now (section F).
+- Fix-round rulings (25 Sep): ignore is a known label; note rows never split a document; a
+  line whose product has rows elsewhere never falls back; backfill sets scope None + rollup;
+  serialize carry reads packing rows; export task verifies its download row and the owner's
+  membership; failure text fixed; header-field choices come from the probe.
 
 ## Design
 
