@@ -23,7 +23,6 @@ import { OrderInquiryDocumentLink } from '../../order-inquiries/components/Order
 import { useStockDebtCellQuery } from '../hooks/useStockDebtQuery';
 import type {
   StockDebtAssignedFrom,
-  StockDebtAssignedFromDocument,
   StockDebtBook,
   StockDebtDemandLine,
   StockDebtDemandStatus,
@@ -85,16 +84,26 @@ function date(value: string | null): string {
 }
 
 /**
- * The first document (SPO/PO) entry of a demand line's `assigned_from` (R30) - the SPO
- * and OI columns both read off THIS one entry, so the two columns can never name two
- * different documents for the same row. `undefined` when the line drew only on hand,
- * which is what leaves both columns a dash.
+ * ONE `assigned_from` entry, as R31a's single "Covered by" column prints it: an on-hand
+ * bin is plain text with NO quantity suffix (R30's had one), a document is the SAME
+ * `OrderInquiryDocumentLink` the OI screens use with NO "line N (qty)" beside it (R30's
+ * had one too) - the drill states WHERE a line drew from, `Assigned` already states how
+ * much. `highlightLines` marks the document's own line when the dialog opens from here
+ * (R31b), so a reader can jump straight to it.
  */
-function firstDocumentEntry(
-  entries: StockDebtAssignedFrom[] | undefined,
-): StockDebtAssignedFromDocument | undefined {
-  return (entries ?? []).find(
-    (entry): entry is StockDebtAssignedFromDocument => entry.kind !== 'on_hand',
+function CoveredByEntry({ entry }: { entry: StockDebtAssignedFrom }) {
+  if (entry.kind === 'on_hand') {
+    return <span className="truncate text-muted-foreground">{entry.ref}</span>;
+  }
+  if (!entry.spo_number) {
+    return null;
+  }
+  return (
+    <OrderInquiryDocumentLink
+      kind={entry.kind}
+      document={entry.spo_number}
+      highlightLines={entry.spo_line_number != null ? [entry.spo_line_number] : undefined}
+    />
   );
 }
 
@@ -311,77 +320,26 @@ export function StockDebtCellDialog({
         ),
       },
       {
-        // R30 (supersedes R29's rendering): `From` narrows to ON HAND only, plain text -
-        // the document half moved out to its own SPO/OI columns below. A dash when the
-        // line drew no on-hand source at all (a pure-document line).
-        id: 'assigned_from',
-        header: ({ column }) => <DataGridColumnHeader title="From" column={column} />,
-        size: 190,
+        // R31a (owner, 25 Sep) supersedes R30's three columns (From/SPO/OI) with ONE:
+        // on-hand entries print plain text, a document entry the SAME
+        // `OrderInquiryDocumentLink` the OI screens use, both together when a line drew
+        // from both, and a dash when nothing did. Neither carries a quantity or line
+        // number any more - `Assigned` already states how much, and the document's own
+        // dialog (opened with `highlightLines`, R31b) is where a reader learns which line.
+        id: 'covered_by',
+        header: ({ column }) => <DataGridColumnHeader title="Covered by" column={column} />,
+        size: 220,
         cell: ({ row }) => {
-          const onHand = (row.original.assigned_from ?? []).filter(
-            (entry) => entry.kind === 'on_hand',
-          );
-          if (!onHand.length) {
-            return <span className="text-muted-foreground">-</span>;
-          }
-          const label = onHand
-            .map((entry) => `${entry.ref} (${entry.qty.toLocaleString()})`)
-            .join(', ');
-          return (
-            <span className="block truncate text-muted-foreground" title={label}>
-              {label}
-            </span>
-          );
-        },
-      },
-      {
-        // R30: the SAME `OrderInquiryDocumentLink` the OI screens use, for the first
-        // document entry of `assigned_from` - a trigger opening the document's own
-        // dialog in place, never a bespoke href. Muted "line N (qty)" beside it names
-        // which line and how much this row drew from it. A dash when the line drew no
-        // document at all (on hand only).
-        id: 'spo',
-        header: ({ column }) => <DataGridColumnHeader title="SPO" column={column} />,
-        size: 210,
-        cell: ({ row }) => {
-          const doc = firstDocumentEntry(row.original.assigned_from);
-          if (!doc?.spo_number) {
+          const entries = row.original.assigned_from ?? [];
+          if (!entries.length) {
             return <span className="text-muted-foreground">-</span>;
           }
           return (
-            <div className="flex min-w-0 items-center gap-1">
-              <OrderInquiryDocumentLink kind={doc.kind} document={doc.spo_number} />
-              {doc.spo_line_number != null && (
-                <span className="shrink-0 truncate text-muted-foreground">
-                  {`line ${doc.spo_line_number} (${doc.qty.toLocaleString()})`}
-                </span>
-              )}
+            <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
+              {entries.map((entry, index) => (
+                <CoveredByEntry key={`${entry.kind}:${entry.ref}:${index}`} entry={entry} />
+              ))}
             </div>
-          );
-        },
-      },
-      {
-        // R30: the order inquiry a PINNED document entry came through, its own column -
-        // no more inline "via ..." (R29's own rendering, superseded). A dash when the
-        // document entry (if any) named no order inquiry at all - a plain WALK draw.
-        id: 'oi',
-        header: ({ column }) => <DataGridColumnHeader title="OI" column={column} />,
-        size: 150,
-        cell: ({ row }) => {
-          const doc = firstDocumentEntry(row.original.assigned_from);
-          if (!doc?.oi_id) {
-            return <span className="text-muted-foreground">-</span>;
-          }
-          return (
-            <Link
-              href={`/project-sales/order-inquiries/${doc.oi_id}`}
-              target="_blank"
-              rel="noreferrer"
-              className="truncate font-medium text-primary hover:underline"
-              title={doc.oi_number ?? undefined}
-            >
-              {doc.oi_number}
-            </Link>
           );
         },
       },
@@ -439,21 +397,16 @@ export function StockDebtCellDialog({
         cell: ({ row }) => <span>{KIND_LABEL[row.original.kind]}</span>,
       },
       {
-        // R30: the SAME `OrderInquiryDocumentLink` the OI screens use, never a bespoke
-        // href. On hand names a bin, not a document, so it stays plain text.
+        // R31a (supersedes R30's own muted " line N"): the SAME `OrderInquiryDocumentLink`
+        // the OI screens use, never a bespoke href, the trigger alone - matching the OI
+        // lines grid's own `DocumentCell` exactly. On hand names a bin, not a document,
+        // so it stays plain text.
         id: 'ref',
         header: 'Document',
         size: 210,
         cell: ({ row }) =>
           row.original.spo_number ? (
-            <div className="flex min-w-0 items-center gap-1">
-              <OrderInquiryDocumentLink kind="spo" document={row.original.spo_number} />
-              {row.original.spo_line_number != null && (
-                <span className="shrink-0 truncate text-muted-foreground">
-                  {`line ${row.original.spo_line_number}`}
-                </span>
-              )}
-            </div>
+            <OrderInquiryDocumentLink kind="spo" document={row.original.spo_number} />
           ) : (
             <span className="block truncate" title={row.original.ref ?? ''}>
               {row.original.ref ?? '-'}

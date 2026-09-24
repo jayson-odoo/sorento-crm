@@ -165,12 +165,12 @@ const GRID_IN_FLOATING_SURFACE_SITES = new Map<string, string>([
     'Drilldown dialog, rendered BEFORE the list grid in OrderInquiriesClient, not inside it. Already scrollerMaxHeight={false}. (Line moved 57 -> 97 when the cell drilldown gained its `axis`/`axis_key` filters; the census is keyed by line, so a site that moves is a one-line diff here rather than a silent pass)',
   ],
   [
-    'app/(protected)/project-sales/stock-debt/components/StockDebtCellDialog.tsx:635',
-    "Demand tab, dialog rendered after the calendar grid closes. Already scrollerMaxHeight={false}. (Line moved 602 -> 635 when the dialog gained the R30 SPO/OI columns, which render the OI screens' own `OrderInquiryDocumentLink`.)",
+    'app/(protected)/project-sales/stock-debt/components/StockDebtCellDialog.tsx:588',
+    "Demand tab, dialog rendered after the calendar grid closes. Already scrollerMaxHeight={false}. (Line moved 635 -> 588 when R31a folded the R30 SPO/OI columns back into one Covered-by column, still rendering the OI screens' own `OrderInquiryDocumentLink`.)",
   ],
   [
-    'app/(protected)/project-sales/stock-debt/components/StockDebtCellDialog.tsx:666',
-    'Supply tab, same dialog. (Line moved 633 -> 666, same round.)',
+    'app/(protected)/project-sales/stock-debt/components/StockDebtCellDialog.tsx:619',
+    'Supply tab, same dialog. (Line moved 666 -> 619, same round.)',
   ],
   [
     'app/(protected)/scm/proforma-invoices/components/ConvertToPackingListDialog.tsx:403',
