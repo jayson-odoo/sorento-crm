@@ -1432,7 +1432,13 @@ def test_a_debt_stays_in_the_month_it_was_raised_in(scm_app):
     assert balances[after] == 0
     assert balances[month_key(_months_ahead(3))] == 0
     # The cell that reads 0 opens onto nothing, which is now the same statement twice.
-    assert drill == {"demand": [], "supply": []}
+    # Not exact-equality any more: R25 added `demand_total_qty` / `supply_total_qty` to
+    # every cell response, so this checks the two lists and the two new totals by name
+    # rather than pinning the whole envelope shape.
+    assert drill["demand"] == []
+    assert drill["supply"] == []
+    assert drill["demand_total_qty"] == 0
+    assert drill["supply_total_qty"] == 0
 
 
 def test_supply_arriving_after_the_debt_is_spare_in_its_own_month(scm_app):

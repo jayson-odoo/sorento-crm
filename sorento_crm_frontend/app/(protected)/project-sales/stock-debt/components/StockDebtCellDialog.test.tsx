@@ -481,7 +481,11 @@ describe('StockDebtCellDialog', () => {
     expect(within(demandTotalRow).getByText('Short 16')).toBeInTheDocument();
 
     switchTab('Supply (52)');
-    expect(screen.queryByText('Free 0')).not.toBeInTheDocument();
+    // Not a "the old line is gone" check here (unlike Demand's `Uncovered` above): the
+    // Supply Total row legitimately reads "Free 0" too (R24 addendum put Free there),
+    // and the tab content mounts synchronously with the tab switch, so a negative
+    // `queryByText('Free 0')` before the Total row assertion would contradict the very
+    // thing this test proves.
     const supplyTotalRow = (await screen.findByText('Total')).closest('tr') as HTMLElement;
     expect(within(supplyTotalRow).getByText('Free 0')).toBeInTheDocument();
   });
