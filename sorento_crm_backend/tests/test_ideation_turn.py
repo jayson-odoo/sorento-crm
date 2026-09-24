@@ -595,6 +595,54 @@ def test_test_turn_returns_the_pointer_but_never_persists_it(wired):
 
 
 # --------------------------------------------------------------------------- #
+# Reviewer Blocking A (PR #1182 round 2): the pointer the service RETURNS/     #
+# writes must itself carry the `is_test` stamp the round-1 guard reads, and   #
+# the guard must be exercised through that real written pointer - not a      #
+# hand-built one - or a dropped stamp shows green everywhere else.            #
+# --------------------------------------------------------------------------- #
+def test_test_turn_returns_a_pointer_stamped_is_test_true(wired):
+    wired.set_session_vars({})
+    wired.set_create_idea(dict(_COLLECTING))
+    out = _turn(is_test=True)
+    assert out["session_vars"]["ideation"]["is_test"] is True
+
+
+def test_live_turn_returns_a_pointer_stamped_is_test_false(wired):
+    wired.set_session_vars({})
+    wired.set_create_idea(dict(_COLLECTING))
+    out = _turn()
+    assert out["session_vars"]["ideation"]["is_test"] is False
+
+
+def test_two_test_turns_continue_through_the_real_written_pointer(wired):
+    """The round-1 guard must accept a MATCHING pointer that the service itself
+    wrote and returned - not one the test hand-built - or a dropped write-side
+    stamp would look identical to a matching one everywhere else."""
+    wired.set_session_vars({})
+    wired.set_create_idea(dict(_COLLECTING))
+    out1 = _turn(is_test=True)
+    assert out1["session_vars"]["ideation"]["draft_id"] == "d-test-1"
+
+    wired.set_create_idea(dict(_COLLECTING))
+    _turn(is_test=True, session_vars_in=out1["session_vars"])
+    assert wired.payloads[1]["draft_id"] == "d-test-1"
+
+
+def test_a_live_turn_does_not_continue_the_real_written_test_pointer(wired):
+    """Mismatch direction of the same guard, exercised through a REAL test-turn
+    pointer (not hand-built): a live turn must not pick up a genuinely-written
+    test draft_id."""
+    wired.set_session_vars({})
+    wired.set_create_idea(dict(_COLLECTING))
+    out1 = _turn(is_test=True)
+    assert out1["session_vars"]["ideation"]["draft_id"] == "d-test-1"
+
+    wired.set_create_idea(dict(_COLLECTING))
+    _turn(session_vars_in=out1["session_vars"])
+    assert "draft_id" not in wired.payloads[1]
+
+
+# --------------------------------------------------------------------------- #
 # Reviewer Blocking 2 (PR #1182 round 1): a pointer's `is_test` flag must      #
 # match the turn's, or a test turn can continue (and confirm) the contact's   #
 # LIVE draft - exactly the cross-contamination D14 exists to prevent.         #

@@ -293,9 +293,10 @@ covered by the "Composite / cascading chains" bucket above
 (`owner-15sep-chain-{...,006,...,018,...}`), so `test_turn_replay.py` skips them
 before the text comparison ever runs, and `expected.text` carries no `_pin_text`
 flag on either file regardless. `console/case-005-an-idea-reaches-the-ideate-
-lane.json` (this same fix round, `DIVERGENCES.md`'s note on the same subject)
-shows what the placeholder becomes once the case is actually re-recorded against
-the real `crm_ideation_turn` intake: a `tool_results` entry for the tool plus the
-real `reply_text`. When either chain is eventually pulled out of the composite
+lane.json` (this same fix round) shows what the placeholder becomes once the case
+is actually re-recorded against the real `crm_ideation_turn` intake: a
+`tool_results` entry for the tool plus the real `reply_text` - not a
+`DIVERGENCES.md` entry, since the re-recorded case passes clean with no mismatch
+to excuse. When either chain is eventually pulled out of the composite
 bucket for its own re-record (T4/cascade work, not this round's scope), its ideate
 step's placeholder line is owed the same treatment - re-record owed, not urgent.
