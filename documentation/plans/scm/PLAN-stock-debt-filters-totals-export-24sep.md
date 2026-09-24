@@ -52,11 +52,21 @@ that is the SECOND case and the trigger to lift the export splitter, not part of
 Owner's hand-test round, live stack, 24 Sep 2026 (folded into the AC ids in the UAC rather than kept separately - each AC line there already states which ruling changed it):
 
 - R14 Date RANGE replaces the single cutoff. Params `date_from` and `date_to` (both optional, `YYYY-MM-DD`, on the SO line's required date). A line due before `date_from` or after `date_to` is dropped; undated lines are kept; the axis runs from `max(current month, date_from's month)` to `date_to`'s month (no `date_to` = today's rule). `cutoff` is REMOVED, not aliased.
+- R14b (owner, 24 Sep, hand test round 2: the range widget's month arrow is dead inside the Filters panel and it cannot be typed) SUPERSEDED by R14c, same day, on sight - the owner reversed this ruling before it shipped. Due date is TWO typeable date inputs, labelled "From" and "To" - the same `DatePicker` component (`@/components/ui/date-picker`, DD/MM/YYYY typing plus a calendar button) the single Cutoff field used before R14, not the `DateRangePicker` R14 introduced. Chip reads `Due: 1 Nov 26 to 30 Nov 26` with both set, `Due: from 1 Nov 26` with only From set, `Due: to 30 Nov 26` with only To set. Clearing the chip clears both inputs. The wire is unchanged by this ruling: the service still sends `date_from` / `date_to` exactly as R14 defined them.
+- R14c (owner, 24 Sep, reversing R14b on sight: "use the same date range component but I can type; I don't want two different date fields; call it sales order delivery date") ONE range control again - the shared `DateRangePicker` (`components/ui/date-range-picker.tsx`, the same one Sales Orders' "Ordered" filter uses), relabelled "Sales order delivery date" (not "Due date"). The shared component itself gains a typeable trigger: the Popover/Button trigger becomes a text input showing `DD/MM/YYYY - DD/MM/YYYY` (placeholder unchanged), with the calendar icon button beside it, unchanged. Typing a full `DD/MM/YYYY - DD/MM/YYYY` and blurring or pressing Enter emits the range; typing a single `DD/MM/YYYY` emits `from = to` = that day; text that does not parse leaves the value unchanged and restores the previous label on blur; the calendar popover still works for click selection; Clear still empties both. Every existing caller (`SalesOrdersGrid`'s "Ordered" filter, `RegisterProjectDialog`) gets typing for free, no prop change - `from`/`to`/`onChange`/`placeholder`/`disabled`/`className`/`id`/`'aria-label'` are untouched. Chip on Stock Debt reads `Delivery: 1 Nov 26 to 30 Nov 26` (not `Due:`). The wire is unchanged by this ruling too: `date_from` / `date_to`.
 - R15 Supplier is a MULTI select. Param `supplier_ids` (repeatable query param; `none` allowed among the values). A product matches when its last supplier is in the set (or has none and `none` is in the set). Export body takes `supplier_ids: []`. `supplier_id` (singular) is REMOVED, not aliased.
 - R16 The Ownership group filter LEAVES the screen. No control, no chip, no `group` sent by the FE service. Backend `group` param and its own tests stay untouched - it is still a valid (if now FE-unreachable) narrowing.
 - R17 The "No date" and "No location" columns LEAVE the screen and the workbook. `total` = `months` + `TBA` only. The API row still carries `undated` and `unlocated` (unchanged), just not folded into `total` and not rendered as columns.
 - R18 The TBA column header reads "TBA" (its `title` tooltip may carry the month), never the raw `tba_month` key (e.g. `2029-01`).
 - R19 Copy works without `navigator.clipboard` (the owner reaches the stack over http on a LAN hostname, not a secure context): falls back to `document.execCommand('copy')`.
+- R20 (owner, 24 Sep, second red batch on the cell drill dialog) The Demand grid is sortable on every column (client-side over the drill's rows, click a header to toggle asc/desc) and carries a search box above it that filters rows by sales order number, agent or bin (case-insensitive substring). The tab count follows the filter ("Demand (12 of 56)"), and searching resets pagination to page 1.
+- R21 The Plan button column leaves the Demand grid entirely.
+- R22 Demand columns, in order: Sales order, Agent, Bin, Due, Ordered, Delivered, Outstanding, Assigned, From, Status. Ordered = `coalesce(qty_required, qty_ordered)` on the SO line (same rule as `plan_qty()`/`demand_qty()`, `app/services/scm/demand.py`), Delivered = `qty_delivered`, Outstanding = today's `open_qty` (Ordered minus Delivered, floored at 0) - unchanged, just relabelled from "Open". The backend cell line gains `qty_ordered` and `qty_delivered`; `open_qty` stays.
+- R23 (owner, 24 Sep, third red batch) Stock Debt counts SUPPLY as on hand + SPO only. Purchase orders are not supply ("got PO doesn't mean got supply"): no PO event enters the stock debt walk, free or pinned, so a line covered only by a PO reads Short, its month books the shortfall, and the drill's Supply tab lists no PO rows. The fulfilment board and ladder are untouched (they still read PO per plan v7 R29) - this is the Stock Debt view's own reading. The `SupplyKind` literal keeps `po` for the shared schema, but the stock debt service never emits it.
+- R24 Both drill grids carry a Total footer row: Demand totals Ordered, Delivered, Outstanding, Assigned; Supply totals Qty, Received, Outstanding and Free (R26 splits Supply's own Qty into three fields; the Total row sums all four). Totals are over ALL rows of the tab (not the page), and follow the search filter on the Demand tab. Addendum (same day): the standalone "Uncovered N" / "Free N" footer LINES under each grid retire; their numbers move INTO the Total row instead - Demand's Total carries a Short total (sum of `short_qty`) in the Status column, Supply's Total carries Free (sum of `free_qty`).
+- R25 The tab labels show total QUANTITY, not record count: "Demand (5,619)" = sum of Outstanding over the tab's rows (filtered when a search is active, "Demand (1,200 of 5,619)"); "Supply (1,000)" = sum of Outstanding (R26 renames Supply's own incoming figure Qty to Outstanding once it splits from the raw ordered quantity). Backend cell envelope gains `demand_total_qty` and `supply_total_qty` so the FE does not sum on its own.
+- R26 The drill's Supply tab shows, per SPO row, Qty (the SPO line's ordered quantity), Received (quantity received so far) and Outstanding (Qty minus Received). The walk counts ONLY Outstanding as incoming supply (received goods are already on hand at the bin, so counting them again double-counts) - `ProjectSupplyService._spo_rows` (the R7 lane, "PO qty_received = SPO transfer") already nets this for assignment, so only the two new WIRE fields are new; an on hand row shows Qty only, Received/Outstanding blank. Supply columns in order: Kind, Document, Bin, Arrival, Qty, Received, Outstanding, Assigned to, Note.
+- R27 The drill header never repeats the code: the second line (product name) renders only when `product_name` is set AND differs from `product_code` (the BE already nulls an equal name on LIST rows, AC-9 - the dialog must not reintroduce the repeat).
 
 ## Assumptions stated, not ruled
 
@@ -103,9 +113,42 @@ Where the pieces go in `stock_debt_service.py`:
 
 Cell drill (`/cell`) takes `date_from`, `date_to` (R14, replacing `cutoff`) and `book` so the drill foots with the cell that opened it.
 
+### Cell drill (dialog) - owner's third hand-test round, R20-R27
+
+`_supply()` (R23) reads on hand and SPO only - the `po_by_location()` read is DROPPED
+entirely from Stock Debt's own walk, so a line covered only by a PO reads `short` and the
+drill's Supply tab lists no PO row for it. `_holds()` drops the PO branch of a placement
+link the same way (a link naming `po_line_id` with no `spo_allocation_id` pins nothing);
+the SPO branch is unchanged. The ladder, the board and `ProjectSupplyService` are
+untouched - they still read PO (plan v7 R29) through their own calls.
+
+`StockDebtDemandLine` gains `qty_ordered` (`plan_qty()`: `coalesce(qty_required,
+qty_ordered)`) and `qty_delivered` (R22); `open_qty` (Outstanding) is unchanged.
+`StockDebtSupplyEvent` gains `received_qty`/`outstanding_qty` (R26): `qty` becomes an
+SPO's RAW ordered quantity, `outstanding_qty` the walk's own netted balance (what `qty`
+used to mean before this ruling), both `null` for every other kind. `StockDebtCell` gains
+`demand_total_qty` (sum of `open_qty` over the tab) and `supply_total_qty` (sum of each
+row's own Qty column - Outstanding for an SPO, the on-hand figure otherwise) (R25).
+
+FE (`StockDebtCellDialog.tsx`): Demand columns, in order - Sales order, Agent, Bin, Due,
+Ordered, Delivered, Outstanding, Assigned, From, Status; the Plan button column is gone
+(R21); every header is sortable via the shared `DataGridColumnHeader` (R20) and a search
+box above the grid filters by SO number / agent / bin, resetting to page 1. Supply
+columns, in order - Kind, Document, Bin, Arrival, Qty, Received, Outstanding, Assigned
+to, Note (R26); an on-hand row leaves Received/Outstanding blank. Both grids carry a
+Total footer row (a plain `footer` on the relevant `ColumnDef`s - `DataGridTable` already
+renders one for free, no `PanelDataGrid` change needed): Demand sums Ordered, Delivered,
+Outstanding, Assigned and states `Short <sum short_qty>` in the Status column; Supply
+sums Qty, Received, Outstanding and states `Free <sum free_qty>` in the Note column - the
+standalone "Uncovered N" / "Free N" lines under each grid retire (R24). The two tab
+labels read the envelope's `demand_total_qty`/`supply_total_qty` with thousands
+separators, never a record count, and "Demand (N of M)" by quantity while the search
+narrows the rows (R25). The dialog's muted description line renders only when
+`product_name` is set and differs from `product_code` (R27).
+
 ### Frontend (Stock Debt screen only)
 
-- Toolbar (R13): `Search` | `Filters` (count badge) | spacer | `Export` (primary). The refresh icon button and the "Only products in debt" switch leave the bar. Filters panel, top to bottom (R14/R15/R16 owner round supersedes the original list): Book (All / Project / Retail, default All), Supplier (`SearchableMultiSelect`, options from envelope `suppliers` plus "No supplier", R15), Due date (`DateRangePicker`, clearable, R14 - replaces the single Cutoff date), Only products in debt (switch, default on). The Ownership group control is GONE (R16) - no control, no chip, no `group` on the wire. Active filters render as the toolbar's existing summary chips, each with its own clear; two or more suppliers render as ONE chip "Suppliers: N"; a due-date range renders as one chip; "Only in debt" shows as a chip only when it is OFF (the default is not a filter the reader needs told about). Refresh happens on window focus through react-query as it does today; no button.
+- Toolbar (R13): `Search` | `Filters` (count badge) | spacer | `Export` (primary). The refresh icon button and the "Only products in debt" switch leave the bar. Filters panel, top to bottom (R14/R14c/R15/R16 owner round supersedes the original list, R14b's From/To pair superseded in turn same day): Book (All / Project / Retail, default All), Supplier (`SearchableMultiSelect`, options from envelope `suppliers` plus "No supplier", R15), Sales order delivery date (shared `DateRangePicker`, now typeable `DD/MM/YYYY - DD/MM/YYYY` - R14c, replaces R14b's From/To pair and, before that, the plain Cutoff date), Only products in debt (switch, default on). The Ownership group control is GONE (R16) - no control, no chip, no `group` on the wire. Active filters render as the toolbar's existing summary chips, each with its own clear; two or more suppliers render as ONE chip "Suppliers: N"; a delivery-date range renders as one chip "Delivery: 1 Nov 26 to 30 Nov 26" (R14c, not "Due:"); "Only in debt" shows as a chip only when it is OFF (the default is not a filter the reader needs told about). Refresh happens on window focus through react-query as it does today; no button.
 - Columns (R17 supersedes the original list): `Total` after TBA as the LAST column - "No date" and "No location" are GONE from the screen entirely (the row still carries `undated`/`unlocated` on the wire, unchanged, just not rendered). Every month column, TBA and Total declare `footer` reading from `totals`. Footer row labelled "Total" in the product column. The TBA header reads "TBA" literally (R18) - the policy's own `tba_month` is display-only, in the header's `title` tooltip.
 - Product cell: name line only when `product_name` is set (BE already nulls equals; FE keeps the guard).
 - Cell selection (`hooks/useCellSelection.ts`, local to the screen):
