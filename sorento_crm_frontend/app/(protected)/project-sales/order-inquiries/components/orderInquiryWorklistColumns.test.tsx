@@ -1951,3 +1951,81 @@ describe('AC-S5-2 (own arrival, Path B retained row): reads Received exactly as 
     expect(row.className).not.toContain('opacity-60');
   });
 });
+
+describe('the Suggested column: document number only (R11/R12, owner rulings 24 Sep 2026)', () => {
+  it('R11/R12: prints the document number and nothing else - no kind badge, no location, no qty, no late marker, no "suggested" word', () => {
+    renderRows(
+      [
+        worklistRow({
+          id: 'row-1',
+          suggested_links: [
+            {
+              kind: 'po',
+              document: '202609-S0090',
+              po_id: 'po-90',
+              po_line_id: 'line-90',
+              location: 'BRW-BB',
+              qty: '10',
+              late_days: 3,
+            },
+          ],
+        }),
+      ],
+      'suggested',
+    );
+
+    const row = screen.getByTestId('row-row-1');
+    expect(within(row).getByText('202609-S0090')).toBeInTheDocument();
+    expect(within(row).queryByText('PO')).not.toBeInTheDocument();
+    expect(within(row).queryByText('SPO')).not.toBeInTheDocument();
+    expect(within(row).queryByText(/BRW-BB/)).not.toBeInTheDocument();
+    expect(within(row).queryByText(/late/)).not.toBeInTheDocument();
+    expect(within(row).queryByText('suggested')).not.toBeInTheDocument();
+  });
+
+  it('R11: a plain +N pill when the row holds more than one suggestion, no badge and no word beside it', () => {
+    renderRows(
+      [
+        worklistRow({
+          id: 'row-multi',
+          suggested_links: [
+            { kind: 'po', document: '202609-S0090', po_id: 'po-90', qty: '10' },
+            { kind: 'spo', document: 'SPO-2026/09-0012', qty: '5' },
+          ],
+        }),
+      ],
+      'suggested',
+    );
+
+    const row = screen.getByTestId('row-row-multi');
+    expect(within(row).getByText('202609-S0090')).toBeInTheDocument();
+    expect(within(row).getByTestId('suggested-pill-row-multi')).toHaveTextContent('+1');
+    expect(within(row).queryByText('SPO-2026/09-0012')).not.toBeInTheDocument();
+  });
+
+  it('AC-LT-03: reads a plain dash when the row carries no suggestion', () => {
+    renderRows([worklistRow({ id: 'row-none', suggested_links: [] })], 'suggested');
+
+    const row = screen.getByTestId('row-row-none');
+    expect(within(row).getByText('-')).toBeInTheDocument();
+  });
+
+  it('R11: opening the document from this cell is the SAME lightbox trigger the PO/SPO cells use', () => {
+    renderRows(
+      [
+        worklistRow({
+          id: 'row-open',
+          suggested_links: [
+            { kind: 'po', document: '202609-S0090', po_id: 'po-90', po_line_id: 'line-90', qty: '10' },
+          ],
+        }),
+      ],
+      'suggested',
+    );
+
+    const row = screen.getByTestId('row-row-open');
+    expect(
+      within(row).getByTestId('document-detail-trigger-202609-S0090'),
+    ).toBeInTheDocument();
+  });
+});

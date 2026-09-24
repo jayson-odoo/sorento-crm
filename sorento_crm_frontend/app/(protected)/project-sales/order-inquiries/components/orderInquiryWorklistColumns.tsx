@@ -443,44 +443,32 @@ function DocumentsCell({ row, kind }: { row: OrderInquiryWorklistRow; kind: 'po'
 
 /**
  * The Suggested column (`PLAN-oi-links-autocount-truth-24sep.md` section 3.5, AC-LT-01
- * to 03): a document the cascade SUGGESTS for this row - never a real link, never read by
- * the PO/SPO cells or the State pill above. ONE LINE: a kind badge (the merged column
- * covers both books, unlike the split PO/SPO cells), the document number as the SAME
- * lightbox trigger the PO/SPO cells use, its location and qty, `late Nd` when the
- * suggested document lands after the row's own required date, and the one amber word
- * `suggested` - the shared `WorklistPill` S1b's `reallocate` mark already uses (warning
- * token, no icon). `-` when the row carries none (AC-LT-03).
+ * to 03; R11/R12, owner rulings 24 Sep 2026, superseding the section's original mock):
+ * a document the cascade SUGGESTS for this row - never a real link, never read by the
+ * PO/SPO cells or the State pill above.
+ *
+ * The cell carries the document number ONLY - one per row, a plain `+N` when the row
+ * holds more than one (R11: "don't need to show this, just make sure when i open the
+ * SPO document i can see the line being highlighted"). No kind badge, no location, no
+ * qty, no late marker, and no amber "suggested" word or pill (R12: "the suggested
+ * column is good enough"). Opening the document from this cell opens the SAME
+ * `OrderInquiryDocumentDialog` the PO/SPO cells use, and highlights the suggested line
+ * in the lines grid (`suggestedLineId`) with the same idiom the linked line already
+ * uses (issue #1215 point 2) - both able to show at once. `-` when the row carries none
+ * (AC-LT-03).
  */
 function SuggestedCell({ row }: { row: OrderInquiryWorklistRow }) {
   const suggestions = row.suggested_links ?? [];
   if (suggestions.length === 0) return <Muted>-</Muted>;
   const [first, ...rest] = suggestions;
-  const locationQty = [first.location, formatInquiryQty(first.qty)].filter(Boolean).join(' ');
   return (
     <span className="flex min-w-0 items-center gap-1">
-      <WorklistPill testId={`suggested-kind-${row.id}`}>
-        {first.kind === 'po' ? 'PO' : 'SPO'}
-      </WorklistPill>
       <OrderInquiryDocumentLink
         kind={first.kind}
         document={first.document}
         poId={first.po_id}
-        poLineId={first.po_line_id}
+        suggestedLineId={first.kind === 'po' ? first.po_line_id : first.spo_allocation_id}
       />
-      {locationQty ? (
-        <span
-          className="shrink-0 truncate text-xs tabular-nums text-muted-foreground"
-          title={locationQty}
-        >
-          {locationQty}
-        </span>
-      ) : null}
-      {first.late_days ? (
-        <WorklistPill testId={`suggested-late-${row.id}`}>late {first.late_days} d</WorklistPill>
-      ) : null}
-      <WorklistPill warning testId={`suggested-mark-${row.id}`}>
-        suggested
-      </WorklistPill>
       {rest.length ? (
         <Badge asChild size="sm" variant="secondary" appearance="light">
           <span data-testid={`suggested-pill-${row.id}`} className="shrink-0 tabular-nums">
