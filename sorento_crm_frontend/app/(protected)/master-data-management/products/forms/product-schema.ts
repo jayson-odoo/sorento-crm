@@ -88,6 +88,14 @@ export const ProductSchema = z.object({
   has_batch_tracking: z.boolean(),
   reorder_level: z.coerce.number().int().min(0, { message: 'Reorder level cannot be negative.' }),
   reorder_quantity: z.coerce.number().int().min(0, { message: 'Reorder quantity cannot be negative.' }),
+  // Chatbot stock ask v2 (PLAN-chatbot-stock-ask-v2-24sep.md S1): X and Y,
+  // beside the reorder fields since both drive the same stock-ask journey.
+  chatbot_max_qty: z
+    .union([z.coerce.number().int().min(0, { message: 'Max quantity cannot be negative.' }), z.null()])
+    .optional(),
+  chatbot_eta_offset_days: z
+    .union([z.coerce.number().int().min(0, { message: 'ETA offset cannot be negative.' }), z.null()])
+    .optional(),
 
   // Tab 4: Unit of Measure
   base_uom_id: z.string().uuid({ message: 'Base unit of measure is required.' }),

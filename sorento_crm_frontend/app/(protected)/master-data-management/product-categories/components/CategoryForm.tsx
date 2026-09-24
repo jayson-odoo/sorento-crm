@@ -22,6 +22,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
+import { useHasPermission } from '@/hooks/usePermissions';
 import { useCreateCategory, useUpdateCategory, useCategory } from '../hooks/useProductCategories';
 // The floor is project-sales pricing POLICY, not a category column, so the panel and its
 // rules live with the rest of that policy and are only surfaced here.
@@ -35,6 +36,12 @@ const CategorySchema = z.object({
   is_active: z.boolean(),
   is_searchable: z.boolean(),
   display_order: z.number().int().min(0),
+  chatbot_max_qty: z
+    .union([z.coerce.number().int().min(0, { message: 'Max quantity cannot be negative.' }), z.null()])
+    .optional(),
+  chatbot_eta_offset_days: z
+    .union([z.coerce.number().int().min(0, { message: 'ETA offset cannot be negative.' }), z.null()])
+    .optional(),
 });
 
 interface CategoryFormProps {
@@ -49,6 +56,8 @@ export default function CategoryForm({ open, onOpenChange, categoryId, copyFromC
   const { data: category } = useCategory(categoryId || null);
   const createMutation = useCreateCategory();
   const updateMutation = useUpdateCategory();
+  const canViewChatbotLimits = useHasPermission('master_data.chatbot_stock_limits.view');
+  const canEditChatbotLimits = useHasPermission('master_data.chatbot_stock_limits.edit');
 
   const form = useForm<z.infer<typeof CategorySchema>>({
     resolver: zodResolver(CategorySchema),
@@ -60,6 +69,8 @@ export default function CategoryForm({ open, onOpenChange, categoryId, copyFromC
       is_active: true,
       is_searchable: true,
       display_order: 0,
+      chatbot_max_qty: null,
+      chatbot_eta_offset_days: null,
     },
   });
 
@@ -73,6 +84,8 @@ export default function CategoryForm({ open, onOpenChange, categoryId, copyFromC
           is_active: category.is_active,
           is_searchable: category.is_searchable ?? true,
           display_order: category.display_order || 0,
+          chatbot_max_qty: category.chatbot_max_qty ?? null,
+          chatbot_eta_offset_days: category.chatbot_eta_offset_days ?? null,
         });
       } else if (copyFromCategory) {
         form.reset({
@@ -82,6 +95,8 @@ export default function CategoryForm({ open, onOpenChange, categoryId, copyFromC
           is_active: copyFromCategory.is_active,
           is_searchable: copyFromCategory.is_searchable ?? true,
           display_order: copyFromCategory.display_order ?? 0,
+          chatbot_max_qty: copyFromCategory.chatbot_max_qty ?? null,
+          chatbot_eta_offset_days: copyFromCategory.chatbot_eta_offset_days ?? null,
         });
       } else {
         form.reset({
@@ -91,6 +106,8 @@ export default function CategoryForm({ open, onOpenChange, categoryId, copyFromC
           is_active: true,
           is_searchable: true,
           display_order: 0,
+          chatbot_max_qty: null,
+          chatbot_eta_offset_days: null,
         });
       }
     }
@@ -105,6 +122,8 @@ export default function CategoryForm({ open, onOpenChange, categoryId, copyFromC
         is_active: data.is_active,
         is_searchable: data.is_searchable,
         display_order: data.display_order,
+        chatbot_max_qty: data.chatbot_max_qty ?? null,
+        chatbot_eta_offset_days: data.chatbot_eta_offset_days ?? null,
       };
       
       if (categoryId) {
@@ -191,6 +210,56 @@ export default function CategoryForm({ open, onOpenChange, categoryId, copyFromC
                 </FormItem>
               )}
             />
+
+            {canViewChatbotLimits && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <FormField
+                  control={form.control}
+                  name="chatbot_max_qty"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Max quantity (assistant)</FormLabel>
+                      <FormControl>
+                        <Input
+                          type="number"
+                          min={0}
+                          disabled={!canEditChatbotLimits}
+                          {...field}
+                          value={field.value ?? ''}
+                          onChange={(e) =>
+                            field.onChange(e.target.value ? parseInt(e.target.value, 10) : null)
+                          }
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="chatbot_eta_offset_days"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>ETA offset (days)</FormLabel>
+                      <FormControl>
+                        <Input
+                          type="number"
+                          min={0}
+                          disabled={!canEditChatbotLimits}
+                          {...field}
+                          value={field.value ?? ''}
+                          onChange={(e) =>
+                            field.onChange(e.target.value ? parseInt(e.target.value, 10) : null)
+                          }
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+            )}
 
             <FormField
               control={form.control}

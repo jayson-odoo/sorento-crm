@@ -66,6 +66,13 @@ export interface Product {
   has_batch_tracking: boolean;
   reorder_level: number;
   reorder_quantity: number;
+  // Chatbot stock ask v2 (PLAN-chatbot-stock-ask-v2-24sep.md S1): X, the highest
+  // quantity the assistant may confirm for this product; overrides the category
+  // value when set. Unset = falls back to the category (then 0, R2).
+  chatbot_max_qty?: number | null;
+  // Same plan, Y: days added to a shipment's ETA when the assistant answers
+  // "no stock, ETA ...". Unset = falls back to the category (then 0, R2).
+  chatbot_eta_offset_days?: number | null;
   item_type?: ProductItemType | null;
   is_active: boolean;
   // Whether the chatbot may answer with this product. Independent of is_active:
@@ -132,10 +139,18 @@ export interface ProductCategory {
   // product in them is hidden from the chatbot whatever its own flag says.
   is_searchable?: boolean;
   display_order: number;
+  // Chatbot stock ask v2 (PLAN-chatbot-stock-ask-v2-24sep.md S1): X, the highest
+  // quantity the assistant may confirm for a product in this category unless the
+  // product itself overrides it. Unset = the assistant cannot answer a quantity
+  // for this category at all (opt-in per category, R2).
+  chatbot_max_qty?: number | null;
+  // Same plan, Y: days added to a shipment's ETA for this category unless the
+  // product overrides it. Unset = 0 days.
+  chatbot_eta_offset_days?: number | null;
   created_at: Date;
   updated_at: Date;
   created_by?: string | null;
-  
+
   // Relations
   parent_category?: ProductCategory;
   children?: ProductCategory[];
@@ -215,6 +230,8 @@ export interface ProductFormData {
   has_batch_tracking: boolean;
   reorder_level: number;
   reorder_quantity: number;
+  chatbot_max_qty?: number | null;
+  chatbot_eta_offset_days?: number | null;
   item_type?: ProductItemType | null;
   is_active: boolean;
   is_searchable: boolean;
