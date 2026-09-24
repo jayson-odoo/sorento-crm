@@ -322,6 +322,10 @@ def load_state(session_block: Any, *, profile: Profile, turn_no: int) -> State:
         pending=tick_pending(from_wire(five.get("open_question"))),
         profile=profile,
         turn_no=turn_no,
+        # Issue #1178: the open idea draft rides in as state, read by `apply()`'s
+        # `_continues_open_draft`. Both session shapes, because `five_keys` already
+        # folds the n8n-nested `variables.ideation` onto the flat key.
+        ideation=five.get("ideation"),
     )
 
 
