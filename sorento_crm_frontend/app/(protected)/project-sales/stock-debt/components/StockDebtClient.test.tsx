@@ -41,16 +41,22 @@ import { getUserListColumnConfig } from '@/lib/listing-column-preferences/listCo
 
 const getStockDebtList = vi.fn();
 const getStockDebtCell = vi.fn();
+const exportStockDebt = vi.fn();
 
 vi.mock('../services/stockDebtService', () => ({
   getStockDebtList: (...args: unknown[]) => getStockDebtList(...args),
   getStockDebtCell: (...args: unknown[]) => getStockDebtCell(...args),
+  exportStockDebt: (...args: unknown[]) => exportStockDebt(...args),
+  // The Export popover's own rows/sheets line (AC-33) is exercised in
+  // `StockDebtExportPopover`'s own tests, not here - the board just needs the import
+  // to resolve so it does not crash while mounting the popover.
+  previewStockDebtExport: () => ({ rows: 0, sheets: 0 }),
 }));
 
 import { StockDebtClient } from './StockDebtClient';
 
 function row(overrides: Partial<StockDebtRow> = {}): StockDebtRow {
-  return {
+  const base = {
     product_id: 'p1',
     product_code: 'SRTWB242',
     product_name: 'Sorento basin 242',
@@ -62,17 +68,43 @@ function row(overrides: Partial<StockDebtRow> = {}): StockDebtRow {
     tba: -100,
     undated: -12,
     unlocated: -7,
+    supplier_id: null,
+    supplier_name: null,
+    category_code: null,
     ...overrides,
   };
+  // AC-5: sums months + tba + undated + unlocated - kept derived here rather than
+  // hard-coded, so an override to any one field cannot silently leave `total` stale.
+  const total =
+    base.months.reduce((sum, month) => sum + month.balance, 0) +
+    base.tba +
+    base.undated +
+    base.unlocated;
+  return { ...base, total: overrides.total ?? total };
 }
 
 function envelope(rows: StockDebtRow[] = [row()]): StockDebtListResponse {
+  const totalsMonths: Record<string, number> = {};
+  ['2026-08', '2026-09', '2026-10'].forEach((key) => {
+    totalsMonths[key] = rows.reduce(
+      (sum, r) => sum + (r.months.find((m) => m.key === key)?.balance ?? 0),
+      0,
+    );
+  });
   return {
     data: rows,
     pagination: { total: rows.length, page: 1, limit: 25 },
     months: ['2026-08', '2026-09', '2026-10'],
     tba_month: '2030-01',
     groups: ['BB', 'IB'],
+    totals: {
+      months: totalsMonths,
+      tba: rows.reduce((sum, r) => sum + r.tba, 0),
+      undated: rows.reduce((sum, r) => sum + r.undated, 0),
+      unlocated: rows.reduce((sum, r) => sum + r.unlocated, 0),
+      total: rows.reduce((sum, r) => sum + r.total, 0),
+    },
+    suppliers: [],
   };
 }
 
@@ -259,6 +291,7 @@ describe('StockDebtClient', () => {
       '2030-01',
       'No date',
       'No location',
+      'Total',
     ]);
     // The board is `listingKey={null}`, so there is no config to read in the first place.
     expect(getUserListColumnConfig).not.toHaveBeenCalled();

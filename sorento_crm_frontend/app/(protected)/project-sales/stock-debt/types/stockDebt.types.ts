@@ -45,7 +45,41 @@ export interface StockDebtRow {
    * owed and silently omits it answers a narrower question than the one it is asked.
    */
   unlocated: number;
+  /**
+   * The row's LAST supplier (R3, A1): the supplier on the product's newest purchase-order
+   * line, falling back to the manually-flagged primary supplier, else null. Never rendered
+   * as an id - `supplier_name` is what the Supplier column and filter chip print.
+   */
+  supplier_id: string | null;
+  supplier_name: string | null;
+  /** `products.item_type` reads NULL everywhere today (measured fact); this is the category
+   *  code instead (R4). Null prints as "No category" wherever the export splits on it. */
+  category_code: string | null;
+  /** Sum of every month's balance plus `tba` + `undated` + `unlocated` (R9, AC-5). */
+  total: number;
 }
+
+/**
+ * The whole filtered set's own totals (AC-6), never the page's: `totals.months['2026-09']`
+ * sums EVERY row's September balance, whether or not that row's page has been fetched yet -
+ * so the footer prints the same figures on page 1 and on page 2.
+ */
+export interface StockDebtTotals {
+  months: Record<string, number>;
+  tba: number;
+  undated: number;
+  unlocated: number;
+  total: number;
+}
+
+/** One entry of the toolbar's supplier select (AC-7): never an id on screen, only `name`. */
+export interface StockDebtSupplierOption {
+  id: string;
+  name: string;
+}
+
+/** Which span `book` narrows to (R1). `group` only narrows the `project` half. */
+export type StockDebtBook = 'all' | 'project' | 'retail';
 
 /** The list envelope: the repo's standard `{data, pagination}` plus the column axis. */
 export interface StockDebtListResponse {
@@ -63,6 +97,19 @@ export interface StockDebtListResponse {
   tba_month: string;
   /** Ownership groups the flag currently admits, for the toolbar's select. */
   groups: string[];
+  /** The whole filtered set's totals (AC-6), for the footer row. */
+  totals: StockDebtTotals;
+  /** Distinct last suppliers of the filtered set, sorted by name, for the toolbar's select (AC-7). */
+  suppliers: StockDebtSupplierOption[];
+  /**
+   * Distinct `category_code`s of the filtered set (`null` folded in once for "No category"),
+   * sorted. NOT part of the plan's committed backend contract (AC-6/AC-7 only promise
+   * `totals` and `suppliers`) - it exists so the Phase-1 export popover's sheet-count
+   * preview (AC-33) has something to count with for `split=category` /
+   * `split=supplier_category`. Optional so a Phase-2 envelope that omits it (because the
+   * captain chose a different mechanism for the preview) still satisfies this type.
+   */
+  categories?: (string | null)[];
 }
 
 /** How a demand line ended up in a cell (AC-S2-7). */
@@ -119,4 +166,15 @@ export interface StockDebtSupplyEvent {
 export interface StockDebtCell {
   demand: StockDebtDemandLine[];
   supply: StockDebtSupplyEvent[];
+}
+
+/** How the export workbook is split into sheets (R5). One sheet for `none`. */
+export type StockDebtExportSplit = 'none' | 'supplier' | 'category' | 'supplier_category';
+
+/** A rough count for the export popover's "212 rows, 14 sheets" line (AC-33). Best-effort:
+ *  built from what the board already has loaded (`pagination.total` + `suppliers`), not a
+ *  server round trip of its own - the real, exact counts are what the workbook itself carries. */
+export interface StockDebtExportPreview {
+  rows: number;
+  sheets: number;
 }

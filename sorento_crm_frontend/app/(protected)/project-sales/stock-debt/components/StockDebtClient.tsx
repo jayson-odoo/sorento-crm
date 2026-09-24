@@ -8,22 +8,28 @@ import {
   getPaginationRowModel,
   useReactTable,
 } from '@tanstack/react-table';
+import { Copy } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { cn } from '@/lib/utils';
+import { toast } from '@/lib/toast';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { useCellSelection } from '../hooks/useCellSelection';
 import { useStockDebtQuery } from '../hooks/useStockDebtQuery';
-import type { StockDebtRow, StockDebtTone } from '../types/stockDebt.types';
+import type { StockDebtBook, StockDebtRow, StockDebtTone } from '../types/stockDebt.types';
 import { StockDebtCellDialog } from './StockDebtCellDialog';
+import { StockDebtExportPopover } from './StockDebtExportPopover';
 
 /**
  * Stock Debt: one row per product, one column per month, and the cell is that MONTH's own
@@ -38,6 +44,12 @@ import { StockDebtCellDialog } from './StockDebtCellDialog';
  * The screen carries no explanation of what a colour means: the tone is a reading of
  * the number beside it, and a legend on a planner's daily screen is a paragraph they
  * read once (cursor rule: no feature explanations in the UI).
+ *
+ * Extended 24 Sep 2026 (PLAN-stock-debt-filters-totals-export-24sep.md, Phase 1): a
+ * Filters panel (Book / Group / Supplier / Cutoff / Only in debt), a `Total` column and
+ * footer over the WHOLE filtered set, Excel-style cell selection with a summary bar, and
+ * an Export popover. The toolbar itself gets simpler (R13): Search, Filters, Export -
+ * nothing else.
  */
 
 /** Cell tone as a CLASS, not a component (plan 3.4): three lines, no new file. */
@@ -53,6 +65,9 @@ const TONE_CLASS: Record<StockDebtTone, string> = {
  * nobody asked of them. Informational, per the plan's tone card.
  */
 const NEUTRAL_CLASS = 'bg-muted text-foreground';
+
+/** The Total column carries no tone at all (AC-21): it is a sum, not a reading. */
+const TOTAL_CLASS = 'font-semibold';
 
 /** `2026-08` -> `Aug 26`. Narrow on purpose: fifteen of these share one width. */
 function monthLabel(key: string): string {
@@ -90,6 +105,31 @@ interface OpenCell {
   balance: number;
 }
 
+/** `2026-11-30` <-> `Date`, for the cutoff `DatePicker` (which speaks `Date`, not ISO). */
+function isoToDate(value: string | null): Date | undefined {
+  if (!value) return undefined;
+  const [y, m, d] = value.split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
+function dateToIso(value: Date | undefined): string | null {
+  if (!value) return null;
+  const y = value.getFullYear();
+  const m = String(value.getMonth() + 1).padStart(2, '0');
+  const d = String(value.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+function formatIsoForChip(value: string): string {
+  const date = isoToDate(value);
+  if (!date) return value;
+  return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+const BOOK_LABEL: Record<StockDebtBook, string> = {
+  all: 'All',
+  project: 'Project',
+  retail: 'Retail',
+};
+
 export function StockDebtClient() {
   const {
     value: search,
@@ -98,6 +138,9 @@ export function StockDebtClient() {
     isSettling: debouncedSettling,
   } = useDebouncedSearch();
   const [group, setGroup] = React.useState('');
+  const [book, setBook] = React.useState<StockDebtBook>('all');
+  const [supplierId, setSupplierId] = React.useState('');
+  const [cutoff, setCutoff] = React.useState<string | null>(null);
   // Default ON (AC-S2-10): the whole catalogue is ~4,000 products and the answer the
   // planner came for is the short list that owes something.
   const [onlyDebt, setOnlyDebt] = React.useState(true);
@@ -107,10 +150,18 @@ export function StockDebtClient() {
     pageSize: 25,
   });
 
-  // Narrowing changes which rows exist, so page 3 of the old set is a page of nothing.
+  // Narrowing changes which rows exist, so page 3 of the old set is a page of nothing
+  // (AC-24).
   React.useEffect(() => {
     setPagination((previous) => ({ ...previous, pageIndex: 0 }));
-  }, [debounced, group, onlyDebt]);
+  }, [debounced, group, onlyDebt, book, supplierId, cutoff]);
+
+  const handleBookChange = (next: StockDebtBook) => {
+    setBook(next);
+    // AC-20: Retail has no ownership groups of its own, so the select is hidden AND
+    // cleared - a stale group would otherwise silently narrow a span it no longer applies to.
+    if (next === 'retail') setGroup('');
+  };
 
   const list = useStockDebtQuery({
     pageIndex: pagination.pageIndex,
@@ -118,13 +169,83 @@ export function StockDebtClient() {
     query: debounced,
     group,
     onlyDebt,
+    book,
+    supplierId,
+    cutoff,
   });
 
-  const rows = list.data?.data ?? [];
+  const rows = React.useMemo(() => list.data?.data ?? [], [list.data]);
   const total = list.data?.pagination.total ?? 0;
   const months = React.useMemo(() => list.data?.months ?? [], [list.data]);
   const tbaMonth = list.data?.tba_month ?? null;
   const groups = list.data?.groups ?? [];
+  const suppliers = React.useMemo(() => list.data?.suppliers ?? [], [list.data]);
+  const totals = list.data?.totals;
+
+  const supplierLabel = React.useMemo(() => {
+    if (supplierId === 'none') return 'No supplier';
+    return suppliers.find((entry) => entry.id === supplierId)?.name ?? supplierId;
+  }, [supplierId, suppliers]);
+
+  // ── Excel-style cell selection (R7, AC-25 to AC-32) ──────────────────────────────────
+  const valueColumnKeys = React.useMemo(
+    () => [...months.map((key) => `m:${key}`), 'tba', 'undated', 'unlocated', 'total'],
+    [months],
+  );
+  const rowIds = React.useMemo(() => rows.map((row) => row.product_id), [rows]);
+  const rowsById = React.useMemo(() => {
+    const map = new Map<string, StockDebtRow>();
+    rows.forEach((row) => map.set(row.product_id, row));
+    return map;
+  }, [rows]);
+  const getCellValue = React.useCallback(
+    (rowId: string, columnKey: string): number | null => {
+      const row = rowsById.get(rowId);
+      if (!row) return null;
+      if (columnKey === 'tba') return row.tba;
+      if (columnKey === 'undated') return row.undated;
+      if (columnKey === 'unlocated') return row.unlocated;
+      if (columnKey === 'total') return row.total;
+      const monthKey = columnKey.startsWith('m:') ? columnKey.slice(2) : null;
+      if (!monthKey) return null;
+      return row.months.find((month) => month.key === monthKey)?.balance ?? null;
+    },
+    [rowsById],
+  );
+  const selection = useCellSelection({
+    rowIds,
+    columnKeys: valueColumnKeys,
+    getValue: getCellValue,
+  });
+  const cellRefs = React.useRef(new Map<string, HTMLButtonElement>());
+  const registerCellRef = (rowId: string, columnKey: string) => (node: HTMLButtonElement | null) => {
+    const key = `${rowId}::${columnKey}`;
+    if (node) cellRefs.current.set(key, node);
+    else cellRefs.current.delete(key);
+  };
+  const tableContainerRef = React.useRef<HTMLDivElement>(null);
+
+  // AC-29: a click OUTSIDE the table clears the selection (Escape is handled inside the
+  // hook itself, since it has nothing to do with where the pointer is).
+  React.useEffect(() => {
+    function onPointerDown(e: PointerEvent) {
+      if (!tableContainerRef.current) return;
+      if (!(e.target instanceof Node)) return;
+      if (!tableContainerRef.current.contains(e.target)) selection.clear();
+    }
+    document.addEventListener('pointerdown', onPointerDown);
+    return () => document.removeEventListener('pointerdown', onPointerDown);
+  }, [selection]);
+
+  const handleCopy = async () => {
+    const text = selection.copyText();
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success('Copied - paste into a spreadsheet.');
+    } catch {
+      toast.error('Could not copy to the clipboard');
+    }
+  };
 
   const columns = React.useMemo<ColumnDef<StockDebtRow>[]>(() => {
     const openFor = (
@@ -142,25 +263,58 @@ export function StockDebtClient() {
         balance,
       });
 
-    /** Every cell is a press, TBA and No date included (R28). */
+    /**
+     * Every value cell: a press that opens the drill (R28) UNLESS the press was really a
+     * drag or a modifier-click building a selection (AC-25/AC-26), in which case
+     * `selection.onCellClick` says so by returning `false`. `openDrill=false` for the
+     * Total column - it sums three buckets that carry no drill of their own.
+     */
     const cell = (
       row: StockDebtRow,
+      columnKey: string,
       month: string,
       label: string,
       balance: number,
       toneClass: string,
-    ) => (
+      openDrill: boolean,
+    ) => {
+      const rowId = row.product_id;
+      const selected = selection.isSelected(rowId, columnKey);
+      return (
+        <button
+          type="button"
+          ref={registerCellRef(rowId, columnKey)}
+          onPointerDown={(e) => selection.onCellPointerDown(rowId, columnKey, e)}
+          onPointerEnter={(e) => selection.onCellPointerEnter(rowId, columnKey, e)}
+          onClick={(e) => {
+            const plain = selection.onCellClick(rowId, columnKey, e);
+            if (plain && openDrill) openFor(row, month, label, balance);
+          }}
+          onKeyDown={(e) => {
+            const next = selection.onCellKeyDown(rowId, columnKey, e);
+            if (next) cellRefs.current.get(`${next.rowId}::${next.columnKey}`)?.focus();
+          }}
+          title={`${row.product_code} - ${label}: ${signed(balance)}`}
+          aria-label={`${row.product_code}, ${label}, balance ${signed(balance)}`}
+          className={cn(
+            'block w-full rounded px-2 py-1 text-end text-sm tabular-nums transition-colors hover:brightness-95 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
+            toneClass,
+            selected && 'ring-1 ring-primary',
+          )}
+        >
+          {signed(balance)}
+        </button>
+      );
+    };
+
+    const columnHeader = (columnKey: string, label: React.ReactNode, titleText: string) => (
       <button
         type="button"
-        onClick={() => openFor(row, month, label, balance)}
-        title={`${row.product_code} - ${label}: ${signed(balance)}`}
-        aria-label={`${row.product_code}, ${label}, balance ${signed(balance)}`}
-        className={cn(
-          'block w-full rounded px-2 py-1 text-end text-sm tabular-nums transition-colors hover:brightness-95 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
-          toneClass,
-        )}
+        onClick={() => selection.onColumnHeaderClick(columnKey)}
+        title={`Select the whole ${titleText} column`}
+        className="block w-full truncate text-end hover:underline"
       >
-        {signed(balance)}
+        {label}
       </button>
     );
 
@@ -181,6 +335,7 @@ export function StockDebtClient() {
           skeleton: <Skeleton className="h-4 w-40" />,
         },
         size: 240,
+        footer: () => 'Total',
         cell: ({ row }) => {
           const label = row.original.product_name
             ? `${row.original.product_code} - ${row.original.product_name}`
@@ -201,22 +356,25 @@ export function StockDebtClient() {
       },
       ...months.map<ColumnDef<StockDebtRow>>((key) => ({
         id: `m:${key}`,
-        header: monthLabel(key),
+        header: () => columnHeader(`m:${key}`, monthLabel(key), monthLabel(key)),
         meta: {
           headerTitle: monthLabel(key),
           headerClassName: 'text-end',
           skeleton: <Skeleton className="h-4 w-full" />,
         },
         size: 96,
+        footer: () => (totals ? signed(totals.months[key] ?? 0) : '-'),
         cell: ({ row }) => {
           const month = row.original.months.find((entry) => entry.key === key);
           if (!month) return <span className="block text-end text-muted-foreground">-</span>;
           return cell(
             row.original,
+            `m:${key}`,
             key,
             monthLabel(key),
             month.balance,
             TONE_CLASS[month.tone],
+            true,
           );
         },
       })),
@@ -224,57 +382,71 @@ export function StockDebtClient() {
         id: 'tba',
         // The policy's own TBA month is the label, so the column names the date the
         // book actually uses rather than a hard-coded 2030.
-        header: tbaMonth ?? 'TBA',
+        header: () => columnHeader('tba', tbaMonth ?? 'TBA', tbaMonth ?? 'TBA'),
         meta: {
           headerTitle: tbaMonth ?? 'TBA',
           headerClassName: 'text-end',
           skeleton: <Skeleton className="h-4 w-full" />,
         },
         size: 104,
+        footer: () => (totals ? signed(totals.tba) : '-'),
         cell: ({ row }) =>
-          cell(
-            row.original,
-            'tba',
-            tbaMonth ?? 'TBA',
-            row.original.tba,
-            NEUTRAL_CLASS,
-          ),
+          cell(row.original, 'tba', 'tba', tbaMonth ?? 'TBA', row.original.tba, NEUTRAL_CLASS, true),
       },
       {
         id: 'undated',
-        header: 'No date',
+        header: () => columnHeader('undated', 'No date', 'No date'),
         meta: {
           headerTitle: 'No date',
           headerClassName: 'text-end',
           skeleton: <Skeleton className="h-4 w-full" />,
         },
         size: 104,
+        footer: () => (totals ? signed(totals.undated) : '-'),
         cell: ({ row }) =>
-          cell(row.original, 'undated', 'No date', row.original.undated, NEUTRAL_CLASS),
+          cell(row.original, 'undated', 'undated', 'No date', row.original.undated, NEUTRAL_CLASS, true),
       },
       {
         id: 'unlocated',
         // Demand booked at no warehouse. It is in no group's pile, so it draws nothing and
         // sits in no month - stated here rather than dropped, because a screen that lists
         // what is owed and quietly omits it answers a narrower question than it is asked.
-        header: 'No location',
+        header: () => columnHeader('unlocated', 'No location', 'No location'),
         meta: {
           headerTitle: 'No location',
           headerClassName: 'text-end',
           skeleton: <Skeleton className="h-4 w-full" />,
         },
         size: 116,
+        footer: () => (totals ? signed(totals.unlocated) : '-'),
         cell: ({ row }) =>
           cell(
             row.original,
             'unlocated',
+            'unlocated',
             'No location',
             row.original.unlocated,
             NEUTRAL_CLASS,
+            true,
           ),
       },
+      {
+        id: 'total',
+        // AC-21: the row's own total, right-aligned, signed, no tone, last column. AC-22:
+        // its footer is the WHOLE filtered set's total, not the page's.
+        header: () => columnHeader('total', 'Total', 'Total'),
+        meta: {
+          headerTitle: 'Total',
+          headerClassName: 'text-end',
+          skeleton: <Skeleton className="h-4 w-full" />,
+        },
+        size: 104,
+        footer: () => (totals ? signed(totals.total) : '-'),
+        cell: ({ row }) =>
+          cell(row.original, 'total', 'total', 'Total', row.original.total, TOTAL_CLASS, false),
+      },
     ];
-  }, [months, tbaMonth]);
+  }, [months, tbaMonth, totals, selection]);
 
   const table = useReactTable({
     data: rows,
@@ -293,7 +465,28 @@ export function StockDebtClient() {
     columnResizeMode: 'onChange',
   });
 
-  const filtered = Boolean(debounced || group);
+  const filtered = Boolean(debounced || group || book !== 'all' || supplierId || cutoff);
+
+  // AC-19b: what the Filters button's badge counts. "Only in debt" is the SCREEN's
+  // default, so it counts only when the reader has turned it OFF (AC-19c).
+  const activeFilterCount =
+    (book !== 'all' ? 1 : 0) +
+    (group ? 1 : 0) +
+    (supplierId ? 1 : 0) +
+    (cutoff ? 1 : 0) +
+    (onlyDebt ? 0 : 1);
+
+  const activeChips = [
+    book !== 'all'
+      ? { label: `Book: ${BOOK_LABEL[book]}`, onClear: () => handleBookChange('all') }
+      : null,
+    group ? { label: `Group ${group}`, onClear: () => setGroup('') } : null,
+    supplierId
+      ? { label: `Supplier: ${supplierLabel}`, onClear: () => setSupplierId('') }
+      : null,
+    cutoff ? { label: `Cutoff ${formatIsoForChip(cutoff)}`, onClear: () => setCutoff(null) } : null,
+    !onlyDebt ? { label: 'Including covered products', onClear: () => setOnlyDebt(true) } : null,
+  ].filter((chip): chip is { label: string; onClear: () => void } => chip !== null);
 
   return (
     // `min-w-0` so the grid's own horizontal scroll stays INSIDE the card: without it
@@ -329,7 +522,7 @@ export function StockDebtClient() {
             </p>
             <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
               {filtered
-                ? 'Clear the search and the group to see the whole book.'
+                ? 'Clear the search and the filters to see the whole book.'
                 : 'Every product covers its orders from stock already held or already on the way.'}
             </p>
             {onlyDebt && (
@@ -364,43 +557,88 @@ export function StockDebtClient() {
               }
               filters={{
                 kind: 'custom',
-                active: Boolean(group),
-                activeCount: group ? 1 : 0,
-                activeSummary: group
-                  ? { label: `Group ${group}`, onClear: () => setGroup('') }
-                  : undefined,
+                active: activeFilterCount > 0,
+                activeCount: activeFilterCount,
+                activeSummary: activeChips,
                 content: (
-                  <div className="space-y-1.5">
-                    <Label className="text-xs text-muted-foreground">
-                      Ownership group
-                    </Label>
-                    <SearchableSelect
-                      value={group}
-                      onChange={setGroup}
-                      clearable
-                      options={groups.map((entry) => ({
-                        value: entry,
-                        label: entry,
-                      }))}
-                      placeholder="Every group"
-                    />
+                  <div className="space-y-4">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs text-muted-foreground">Book</Label>
+                      <RadioGroup
+                        className="flex flex-wrap gap-3"
+                        value={book}
+                        onValueChange={(value) => handleBookChange(value as StockDebtBook)}
+                      >
+                        {(['all', 'project', 'retail'] as StockDebtBook[]).map((value) => (
+                          <label key={value} className="flex items-center gap-1.5 text-sm">
+                            <RadioGroupItem value={value} id={`book-${value}`} />
+                            {BOOK_LABEL[value]}
+                          </label>
+                        ))}
+                      </RadioGroup>
+                    </div>
+
+                    {/* AC-20: no ownership groups of Retail's own. */}
+                    {book !== 'retail' && (
+                      <div className="space-y-1.5">
+                        <Label className="text-xs text-muted-foreground">
+                          Ownership group
+                        </Label>
+                        <SearchableSelect
+                          value={group}
+                          onChange={setGroup}
+                          clearable
+                          options={groups.map((entry) => ({
+                            value: entry,
+                            label: entry,
+                          }))}
+                          placeholder="Every group"
+                        />
+                      </div>
+                    )}
+
+                    <div className="space-y-1.5">
+                      <Label className="text-xs text-muted-foreground">Supplier</Label>
+                      <SearchableSelect
+                        value={supplierId}
+                        onChange={setSupplierId}
+                        clearable
+                        options={[
+                          { value: 'none', label: 'No supplier' },
+                          ...suppliers.map((entry) => ({ value: entry.id, label: entry.name })),
+                        ]}
+                        placeholder="Every supplier"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <Label className="text-xs text-muted-foreground">Cutoff date</Label>
+                      <DatePicker
+                        value={isoToDate(cutoff)}
+                        onChange={(date) => setCutoff(dateToIso(date))}
+                        ariaLabel="Cutoff date"
+                      />
+                    </div>
+
+                    <div className="flex items-center gap-2 border-t pt-3">
+                      <Switch
+                        id="only-debt"
+                        checked={onlyDebt}
+                        onCheckedChange={setOnlyDebt}
+                      />
+                      <Label htmlFor="only-debt" className="text-sm whitespace-nowrap">
+                        Only products in debt
+                      </Label>
+                    </div>
                   </div>
                 ),
               }}
-              leftActions={
-                <div className="flex items-center gap-2">
-                  <Switch
-                    id="only-debt"
-                    checked={onlyDebt}
-                    onCheckedChange={setOnlyDebt}
-                  />
-                  <Label htmlFor="only-debt" className="text-sm whitespace-nowrap">
-                    Only products in debt
-                  </Label>
-                </div>
+              primaryAction={
+                <StockDebtExportPopover
+                  envelope={list.data}
+                  filters={{ query: debounced, group, onlyDebt, book, supplierId, cutoff }}
+                />
               }
-              onRefresh={() => void list.refetch()}
-              isRefreshing={list.isFetching && !list.isLoading}
             />
           </CardHeader>
           <CardTable>
@@ -430,7 +668,10 @@ export function StockDebtClient() {
               // keeps a sideways flick inside the grid, which is what stops the page body
               // scrolling horizontally at 375px (AC-S2-12); the same shape
               // `ContainerRequestScheduleMatrix` already uses for the same reason.
-              <div className="relative w-full overflow-x-auto overscroll-x-contain">
+              <div
+                ref={tableContainerRef}
+                className="relative w-full overflow-x-auto overscroll-x-contain"
+              >
                 <DataGridTable />
               </div>
             )}
@@ -440,6 +681,33 @@ export function StockDebtClient() {
           </CardFooter>
         </Card>
       </DataGrid>
+
+      {/* AC-28: the summary bar - Excel's own four numbers, plus a Copy that reproduces
+          the rectangle when pasted into a spreadsheet (AC-30). */}
+      {selection.summary && (
+        <div className="sticky bottom-4 z-10 flex flex-wrap items-center gap-x-6 gap-y-2 rounded-lg border bg-background/95 px-4 py-2.5 shadow-lg backdrop-blur">
+          <span className="text-sm font-medium">{selection.summary.count} cells</span>
+          <span className="text-sm tabular-nums">
+            Sum <span className="font-semibold">{signed(selection.summary.sum)}</span>
+          </span>
+          <span className="text-sm tabular-nums">
+            Avg{' '}
+            <span className="font-semibold">
+              {signed(Math.round(selection.summary.avg * 10) / 10)}
+            </span>
+          </span>
+          <span className="text-sm tabular-nums">
+            Min <span className="font-semibold">{signed(selection.summary.min)}</span>
+          </span>
+          <span className="text-sm tabular-nums">
+            Max <span className="font-semibold">{signed(selection.summary.max)}</span>
+          </span>
+          <Button variant="outline" size="sm" className="ms-auto gap-1.5" onClick={handleCopy}>
+            <Copy className="size-3.5" />
+            Copy
+          </Button>
+        </div>
+      )}
 
       {openCell && (
         <StockDebtCellDialog

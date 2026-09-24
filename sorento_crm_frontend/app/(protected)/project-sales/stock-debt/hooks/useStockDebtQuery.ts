@@ -1,12 +1,18 @@
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
-import { getStockDebtCell, getStockDebtList } from '../services/stockDebtService';
-import type { StockDebtListParams } from '../services/stockDebtService';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { toast } from '@/lib/toast';
+import { ENTITY_DOWNLOADS_QUERY_KEY, MY_DOWNLOADS_QUERY_KEY } from '@/services/myDownloadsService';
+import {
+  exportStockDebt,
+  getStockDebtCell,
+  getStockDebtList,
+} from '../services/stockDebtService';
+import type { StockDebtExportParams, StockDebtListParams } from '../services/stockDebtService';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 /**
- * The month x product board (AC-S2-6).
+ * The month x product board (AC-S2-6, extended AC-1 to AC-9).
  *
  * `keepPreviousData` so paging or flipping the debt toggle does not blank a wide
  * table back to skeletons - the columns would jump and the reader would lose the
@@ -24,10 +30,35 @@ export function useStockDebtQuery(params: StockDebtListParams) {
       params.query,
       params.group,
       params.onlyDebt,
+      params.book,
+      params.supplierId,
+      params.cutoff,
     ],
     queryFn: () => getStockDebtList(params),
     staleTime: 60_000,
     retry: 1,
+  });
+}
+
+/**
+ * Starts the workbook export through My Downloads (R10/R12, AC-33/AC-34). Same shape as
+ * `useExportLowStockReport` (`scm/reorder/hooks/useSummaryOrder.ts`): invalidates the
+ * drawer's feed on success and toasts where the file will show up - this mutation never
+ * returns or saves a file itself, the worker marks the row ready later.
+ */
+export function useExportStockDebt() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (params: StockDebtExportParams) => exportStockDebt(params),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: MY_DOWNLOADS_QUERY_KEY });
+      queryClient.invalidateQueries({
+        queryKey: [...ENTITY_DOWNLOADS_QUERY_KEY, 'stock_debt_xlsx'],
+      });
+      toast.success('Export queued - find it in My Downloads.');
+    },
+    onError: (error: Error) =>
+      toast.error(error.message || 'Failed to start the stock debt export'),
   });
 }
 
