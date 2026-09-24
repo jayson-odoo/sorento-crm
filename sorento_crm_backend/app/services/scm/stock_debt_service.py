@@ -412,19 +412,18 @@ class StockDebtService:
                         # supply until somebody re-dates it (R31).
                         "free_qty": result.free.get(event.key, 0.0) if counted else 0.0,
                         "overdue": not counted and event.at is not None,
-                        # R29: `line_no` is the CORE line's own AutoCount `Seq`, beside
-                        # `so_number` - sorted on the pair, `line_no or 0` so a line with
-                        # none sorts before a numbered one rather than raising on
-                        # `None < int`. The KEY itself is left off a line AutoCount has
-                        # never numbered, rather than sent `null`, matching the module's
-                        # own rule (`response_model` drops what it does not declare) -
-                        # `response_model_exclude_unset` on this route reads "not stated
-                        # at all" off exactly that omission.
+                        # R29 (owner ruling, 25 Sep): `line_no` is the CORE line's own
+                        # AutoCount `Seq`, beside `so_number` - ALWAYS present, `None` when
+                        # AutoCount has never numbered the line, the same "always present,
+                        # null when unknown" discipline every other field on this contract
+                        # already follows. Sorted on the pair, `line_no or 0` so a line
+                        # with none sorts before a numbered one rather than raising on
+                        # `None < int`.
                         "assigned_to": [
                             {
                                 "so_number": so_number,
-                                **({"line_no": line_no} if line_no is not None else {}),
                                 "qty": round(qty, 4),
+                                "line_no": line_no,
                             }
                             for (so_number, line_no), qty in sorted(
                                 assigned_to.get(event.key, {}).items(),
