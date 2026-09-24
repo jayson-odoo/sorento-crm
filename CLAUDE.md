@@ -220,16 +220,20 @@ The shape: journey → grill → UAC → plan → tickets → **Phase 1** fronte
 backend, no tests yet) → **Phase 2** tester-first backend wiring, test-FIRST (the `tester` agent
 writes the red tests from the UAC + captain's test list BEFORE the `coder` agent, one instance
 kept alive for the whole lane, makes them green; pytest + vitest land here, never deferred) →
-**Phase 3** `reviewer` + `security-reviewer` + browser verification in parallel, once per lane →
-`guide-writer` → DoD gate → PR.
+**Phase 3** `reviewer` + browser verification in parallel, once per lane (`security-reviewer`
+joins only when the diff touches auth, RBAC, external ingest, uploads or multi-company scoping;
+otherwise it is skipped and the PR body says so) → DoD gate → PR. `guide-writer` no longer runs
+per lane (owner ruling, 24 Sep 2026): it runs on-request or as a weekly batch over merged lanes -
+see `.claude/agents/guide-writer.md`.
 
 Skipping or reordering a phase is a process violation; if a phase genuinely cannot be done, say so
 in the PR description.
 
-**Small fix track** (`PRINCIPLES.md` "Small fix track", owner ruling 18 Sep 2026): one seam,
-under ~50 lines, no migration, no auth change - no DB clone, one coder writing tests + fix,
-one reviewer, browser pass only for a changed screen. Name the track in the plan's Status
-line.
+**Track is chosen by the diff, not by feel** (`PRINCIPLES.md` "Small fix track", owner rulings
+18 Sep 2026 + 24 Sep 2026): a lane whose expected diff is under ~300 changed lines, with no
+migration, no auth/RBAC/permission change, and no new external ingest surface, is the small fix
+track - no DB clone, one coder writing tests + fix, one reviewer, browser pass only for a
+changed screen. Name the track in the plan's Status line.
 
 ## Lane merge discipline (standing rule, 2026-09-02)
 
@@ -299,6 +303,11 @@ spawn a build "for handoff" on your own initiative.
   also drop clean worktrees already in `origin/main`, `--deep` for `node_modules`
   and `venv`), then `git worktree prune`. The script skips any worktree running
   `next dev` and never kills a process. This is `/feature` Step 11.
+- **Post-merge cleanup is pre-authorised, not owner-run** (`PRINCIPLES.md` "Post-merge cleanup",
+  owner ruling 24 Sep 2026): once a lane's PR merges, the captain removes the worktree, drops its
+  `.next`, and drops that lane's private `*_ci` DB + redis index without asking, subject to the
+  two standing guards there (grep every remaining worktree's `.env*` before any `DROP DATABASE`;
+  never touch a worktree that is a live process's cwd the captain did not start).
 - **Never `npm run build` while a `next start` serves that same `.next`** - the build replaces chunk
   files under the running server, which keeps its old manifests, so pages come back half-rendered.
   The tell looks like a code defect elsewhere: `tests/test_dealer_kit_pdf_render.py` failed 5 of 7
@@ -350,7 +359,10 @@ The main session (Fable) plans and briefs; execution subagents run on **Sonnet**
 `coder`, `tester`, `guide-writer` and `triage` declare `model: sonnet` in `.claude/agents/`;
 `reviewer`, `security-reviewer` and `planner` stay `model: opus` (the review is the quality gate
 before a PR, and it has caught merge-blocking defects the cheaper pass would risk missing -
-captain's call, 30 Aug 2026). The captain's job is to make the brief precise enough that Sonnet
+captain's call, 30 Aug 2026). This routing stands as of 24 Sep 2026: the `opus` alias currently
+resolves to Opus 5.5, whose default effort is `medium` (one step below Opus 5), but the review
+seat is still the quality gate, so neither this default nor the per-spawn escalation rules below
+change. The captain's job is to make the brief precise enough that Sonnet
 can execute it mechanically: measured facts, exact file paths, the test list, the contract
 shapes. A vague brief is the captain's defect, not a reason to upgrade the model.
 
