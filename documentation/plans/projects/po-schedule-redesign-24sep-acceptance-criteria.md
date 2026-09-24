@@ -12,20 +12,26 @@ Tags: `[BE]` pytest, `[FE]` vitest, `[E2E]` recorded agent-browser run (no new P
 Actor: a project salesperson (or their manager) at Sorento who has a customer PO or a delivery
 schedule PDF in hand, or who needs to clear what the system flagged.
 
-- **J1. First screen.** From `/`, they expand Project Sales and click **Needs attention**. They
-  see every PO, schedule and sales order, across projects, that is waiting on a human, with why.
-  Two clicks.
-- **J2. Upload.** They click **Upload PO** (or **Upload schedule**) on that list. The dialog asks
-  for the project first; everything else is today's dialog. The system already knows the company
-  and, once the project is picked, its POs and parties. They drop the PDF.
+Rewritten after the lavish review (24 Sep 2026): there is no cross-project Needs attention list
+(R17). Every upload and every review starts from the existing Project listing.
+
+- **J1. First screen.** From `/`, they expand Project Sales and click **Pipeline**. They click
+  **Start** on their project's row; a small menu offers **Upload PO** and **Upload delivery
+  schedule**, already scoped to that project. Two clicks to Pipeline, one more to Start.
+- **J2. Upload.** They click Upload PO (or Upload delivery schedule) from that row's Start menu.
+  The project is already fixed by the row, so the dialog has no project field; everything else is
+  today's dialog. They drop the PDF.
 - **J3. Review.** The upload lands them on the full-page review screen for that record (PO
-  confirm, or schedule review), laid out per the approved mockup: facts in the header, one
-  primary button, tabs with counts, the thing that needs a look shown first.
-- **J4. Findings.** Wherever findings exist (PO, schedule, sales order) they read one list in one
-  shape: three severities, one verb "Dismiss with a reason", duplicates collapsed.
+  review, or schedule review), laid out per the approved mockup: facts in the header, one primary
+  button, two tabs (the lines or matrix table, and Documents), the thing that needs a look shown
+  first. A Documents tab that cannot find its file renders a plain "This PDF is not available yet"
+  state, never an error code.
+- **J4. Findings.** Wherever findings exist (PO, schedule, sales order) they read them on the row
+  of the table they belong to: a Flag cell in the three severities, one verb "Dismiss with a
+  reason", duplicates collapsed. There is no separate Findings tab or list to cross-reference
+  against a line number.
 - **J5. Confirm and return.** They click Confirm (or Publish). They land back where they came from
-  (Needs attention or the project tab), with the row they opened restored, and that row gone once
-  nothing is left for a human.
+  (the Pipeline row they clicked Start on, or the project tab), with that row restored.
 - **J6. Words.** On every screen and in the docs they meet "Area" (never "Phase") and "AutoCount
   differences" (never "divergence").
 
@@ -51,50 +57,39 @@ schedule PDF in hand, or who needs to clear what the system flagged.
 - **S1-6 [E2E] (J6)** Browser pass at 1280 and 375 on the schedule review and PO version pages of
   PRJ-000001: no "Phase" visible, rejected notes show their reason.
 
-## S2. Needs attention list with uploads
+## S2. Start menu on the Project listing
 
-- **S2-1 [BE] (J1)** `GET /api/v1/project-sales/needs-attention` returns one row per record with
-  `type` (`po` | `schedule` | `sales_order`), a human number, project code and name, `status`,
-  `waiting_since`, and the counts behind "Why it is here". Response model declares every field
-  (a pytest asserts each, since `response_model` drops undeclared fields).
-- **S2-2 [BE] (J1)** A PO appears when its latest version has no `confirmed_at`, or when its
-  To check count (`model_mismatch_count + price_mismatch_count`, the POs tab's own sum) is above
-  zero. Status is "to_confirm" or "to_check" respectively (to_confirm wins). It disappears once
-  neither holds. One pytest per branch plus one for "gone".
-- **S2-3 [BE] (J1)** A schedule appears when its latest version has no `confirmed_at`, or has
-  `reconciled_columns < total_columns`. Status "to_confirm" or "unreconciled". A version still
-  being read (`extraction_state` queued or running) appears as "reading"; a failed read as
-  "failed". One pytest per branch.
-- **S2-4 [BE] (J1)** A sales order appears when its status is `blocked` or `draft` (the two
-  statuses `_refresh_status` sets while findings are open); `ready`, `published` and later do not
-  appear. The row carries its unacknowledged hard and warn counts.
-- **S2-5 [BE] (J1)** Company scope: a row from another company never appears (seed two companies,
-  assert). Reading stays open across owners inside the company, as `can_edit_project` documents.
-- **S2-6 [BE] (J1)** Filters `type`, `project_id`, `status`, `query` (number or project name) and
-  `page`/`limit` work; auth denial without `projects.projects.view` returns 403; a bad
-  `project_id` returns 422 or 404 per `validate_uuid_path`.
-- **S2-7 [FE] (J1)** The sidebar shows "Needs attention" under Project Sales, directly after
-  Pipeline, in BOTH `MENU_SIDEBAR` and `MENU_SIDEBAR_COMPACT` in `config/menu.config.tsx`, gated by
-  `projects.projects.view`. A vitest asserts both entries.
-- **S2-8 [FE] (J1)** The page is a `DataGrid` (`tableLayout: { width: 'fixed', columnsResizable:
-  true }`, explicit `size`, `truncate` + `title`), type and status as `Badge` pills, standard
-  pagination bar always shown, no Open column, row click opens the record's review page.
-- **S2-9 [FE] (J2)** "Upload PO" opens `POIntakeUploadDialog` with a required Project
-  `SearchableSelect` shown first; after a project is picked, the dialog posts to the existing
-  `POST /projects/{project_id}/purchase-orders/upload`. Opened from the project POs tab, the field
-  does not render and the dialog behaves exactly as today (existing tests stay green).
-- **S2-10 [FE] (J2)** "Upload schedule" does the same for `DeliveryScheduleUploadDialog`: project
-  first, then today's Purchase order / Revision of / Issued by fields narrowed to that project.
-- **S2-11 [FE] (J2)** The project picker offers only projects the user can edit (`can_edit` on the
-  project row); the upload endpoint's own edit check is unchanged and still decides.
-- **S2-12 [E2E] (J1, J2)** From `/`: expand Project Sales, click Needs attention (2 clicks), click
-  Upload PO, pick Setia Alam, see the dropzone. Same for Upload schedule. At 1280 and 375.
+Rewritten after the lavish review: the Needs attention list is dropped (R17); every upload starts
+from the existing Project listing (Project Sales > Pipeline).
 
-## S3. Shared findings component
+- **S2-1 [FE] (J1)** Every project row on Pipeline, in both the Board and the Grid view, carries a
+  "Start" button.
+- **S2-2 [FE] (J1)** Start opens a small menu with two items, "Upload PO" and "Upload delivery
+  schedule". A vitest asserts both items and that no project picker renders anywhere in the menu
+  or the dialogs it opens.
+- **S2-3 [FE] (J2)** "Upload PO" opens `POIntakeUploadDialog` scoped to that row's project id, and
+  posts to the existing `POST /projects/{project_id}/purchase-orders/upload`; the dialog has no
+  project field and behaves exactly as today's per-project dialog (existing tests stay green,
+  unedited).
+- **S2-4 [FE] (J2)** "Upload delivery schedule" does the same for `DeliveryScheduleUploadDialog`:
+  scoped to that row's project immediately, with today's Purchase order / Revision of / Issued by
+  fields already narrowed to it.
+- **S2-5 [FE] (J3)** A successful upload lands the user on that document's review page (PO review
+  or schedule review), exactly as today's per-project upload flow does.
+- **S2-6 [E2E] (J1, J2)** From `/`: expand Project Sales, click Pipeline, click a project row's
+  Start, click Upload PO, see the dropzone already scoped to that project. Same for Upload
+  delivery schedule. At 1280 and 375.
 
-- **S3-1 [FE] (J4)** One component, `FindingsList`, renders findings in three severities labelled
-  "Blocks publish" (hard), "Needs acknowledgement" (warn), "Info" (info), as filter chips with
-  counts plus "Dismissed".
+## S3. Inline row findings, one Dismiss per row, one list
+
+Rewritten after the lavish review: findings render on the row of the table they belong to, never
+a separate Findings tab, list or card (supersedes the "one shared `FindingsList` component" shape;
+R3's other terms -- one severity set, one verb, duplicates collapsed, the gate unchanged -- stand).
+
+- **S3-1 [FE] (J4)** On each review screen (the schedule matrix, the PO lines table, the SO lines
+  list), a row with an open finding carries a Flag cell in the three severities: "Blocks publish"
+  (hard), "Needs acknowledgement" (warn), "Info" (info), styled as the shared `Badge` `status`
+  pill.
 - **S3-2 [FE] (J4)** The only dismiss verb is "Dismiss with a reason". A text check asserts
   "Override with a reason", "Clear with a reason" and "Dismiss as false signal" appear nowhere
   in project-sales.
@@ -110,62 +105,96 @@ schedule PDF in hand, or who needs to clear what the system flagged.
   SO `draft` and publishable and hard findings leave it `blocked`; a hard finding's dismiss is
   still refused without `projects.projects.manage` (existing tests stay green, none edited).
 - **S3-6 [FE] (J4)** On the SO page, the sales-order findings and the schedule-level findings
-  (`GET /purchase-orders/{po_id}/schedule-findings`) render in ONE `FindingsList`, each row naming
-  its source. `ScheduleFindingsSection` and the three cards of `SalesOrderFindingsSection` are
-  removed, not left beside it.
-- **S3-7 [FE] (J4)** On the schedule review page, the per-column verdicts render through the same
-  component, blocked as "Blocks publish" and warning as "Needs acknowledgement", mirroring
-  `buildColumnStates`.
+  (`GET /purchase-orders/{po_id}/schedule-findings`) render as rows of the SAME Lines table, each
+  row naming its source. `ScheduleFindingsSection` and the three cards of
+  `SalesOrderFindingsSection`, plus the retired `FindingsList`, are removed, not left beside it.
+  There is no tab literally labelled "Findings" anywhere in project-sales.
+- **S3-7 [FE] (J4)** On the schedule review page, the per-column verdicts render as a Flag column
+  of the SAME Schedule tab's matrix, not a separate tab, blocked as "Blocks publish" and warning
+  as "Needs acknowledgement", mirroring `buildColumnStates`.
 
 ## S4. Return after Confirm
 
-- **S4-1 [FE] (J5)** A review page opened from Needs attention or a project tab carries a `from`
-  describing the origin (list state per `appendListState`, or `?tab=`).
-- **S4-2 [FE] (J5)** After a successful Confirm on the PO version page (today: stays on the page,
+Rewritten after the lavish review: the origin a review page returns to is the Pipeline row a
+Start-driven upload was launched from, or the originating project tab; there is no Needs
+attention list to return to.
+
+- **S4-1 [FE] (J5)** A review page opened via Start on a Pipeline row, or via a project tab,
+  carries a `from` describing the origin (list state per `appendListState` for the Pipeline grid,
+  or `?tab=` for the project).
+- **S4-2 [FE] (J5)** After a successful Confirm on the PO review page (today: stays on the page,
   toast only) the user is navigated to the origin. Same for Confirm schedule (today: closes the
   dialog, stays) and Publish on the SO page.
 - **S4-3 [FE] (J5)** With no origin (deep link, bookmark) the user stays on the page, as today.
-- **S4-4 [FE] (J5)** Back on Needs attention, the row named by `from` scrolls into view and
-  highlights (DESIGN-LANGUAGE section 7), or is gone if nothing is left for a human.
-- **S4-5 [FE] (J3)** After an upload from Needs attention, the review page's origin is Needs
-  attention, so the Confirm that follows returns there.
-- **S4-6 [E2E] (J5)** Needs attention -> PO version -> Confirm -> back on Needs attention.
+- **S4-4 [FE] (J5)** Back on Pipeline, the project row named by `from` scrolls into view and
+  highlights (DESIGN-LANGUAGE section 7).
+- **S4-5 [FE] (J3)** After an upload via Start on a Pipeline row, the review page's origin is that
+  Pipeline row, so the Confirm that follows returns there.
+- **S4-6 [E2E] (J5)** Pipeline -> Start -> Upload PO -> PO review -> Confirm -> back on Pipeline,
+  the row highlighted.
 
-## S5. Delivery schedule review screen (per approved mockup)
+## S5. Delivery schedule review screen (per approved `mockups/delivery-schedule-review.html`)
 
-- **S5-1 [FE] (J3)** Header per mockup 1: number and version, status pill, the meta line, record
-  navigation, one primary button; the "This schedule is confirmed, so nothing here can be changed"
-  sentence is gone.
-- **S5-2 [FE] (J3)** Line tabs Matrix / Findings / Changes since vN / Re-dating / Notes, each with
-  its count; tab strip scrolls at 375.
-- **S5-3 [FE] (J3)** The separate reconciliation table is gone; status is a matrix column, a row
-  click opens the column card with the full customer code, the product picker and Dismiss.
-- **S5-4 [FE] (J3)** While unconfirmed, the matrix opens filtered to columns to fix; "By area /
-  By date" toggle works as today's "By phase / By date".
-- **S5-5 [FE] (J3)** Every section renders when empty, with `-` per ADR 1e.
-- **S5-6 [E2E] (J3)** HQ/26/01/121 v2 at 1280 and 375 matches the approved mockup's callouts.
+Rewritten after the lavish review: two tabs only, no Findings tab (R20); Changes since vN,
+Re-dating and Notes move into a secondary History panel rather than tabs of their own.
 
-## S6. PO confirm screen (per approved mockup)
+- **S5-1 [FE] (J3)** Header per the mockup: number and version, status pill, the meta line,
+  record navigation, one primary button (Confirm schedule); the "This schedule is confirmed, so
+  nothing here can be changed" sentence is gone.
+- **S5-2 [FE] (J3)** Two tabs, Schedule (default) and Documents; no tab literally labelled
+  "Findings", "Changes", "Re-dating" or "Notes". A secondary "History" button on the Schedule
+  tab's toolbar opens those three (changes since the previous version, re-dating proposals,
+  document notes) in one panel.
+- **S5-3 [FE] (J3)** The separate reconciliation table is gone; a column with an open finding
+  carries a Flag cell and one "Dismiss with a reason" action on its own matrix row -- no click
+  needed to open a separate card to see or clear it.
+- **S5-4 [FE] (J3)** While unconfirmed, the matrix opens filtered to rows carrying a flag; "By
+  area / By date" toggle works as today's "By phase / By date".
+- **S5-5 [FE] (J3)** The Documents tab renders the schedule file, or, when it cannot be found, a
+  plain "This PDF is not available yet" state with an upload action -- never an error code or a
+  raw status number (R13).
+- **S5-6 [FE] (J3)** Every section renders when empty, with `-` per ADR 1e.
+- **S5-7 [E2E] (J3)** HQ/26/01/121 v2 at 1280 and 375 matches the approved mockup's callouts.
 
-- **S6-1 [FE] (J3)** Header per mockup 2: status trail pills Confirmed > Approved > Countersigned
+## S6. PO review screen (per approved `mockups/po-review.html`; page renamed from "PO confirm")
+
+Rewritten after the lavish review: two tabs only, no left/right split pane (R14(b)); the PDF and
+the rejected-note reasons move together into Documents, always present (R18).
+
+- **S6-1 [FE] (J3)** Header per the mockup: status trail pills Confirmed > Approved > Countersigned
   with who and when; document total vs our sum on one line; "Back to the project" removed.
-- **S6-2 [FE] (J3)** Right panel line tabs Lines / Findings / Header / Document notes with counts;
-  the PDF viewer stays left at 1280 and becomes a "Document" tab at 375.
-- **S6-3 [FE] (J3)** Lines open with today's "Show only these" filter on while unconfirmed.
-- **S6-4 [E2E] (J3)** HQ/26/01/121 v1 at 1280 and 375 matches the approved mockup.
+- **S6-2 [FE] (J3)** Two tabs, Lines (default) and Documents; the PDF viewer is never shown beside
+  the lines table, at 1280 or at 375 -- Lines takes the full page width in both.
+- **S6-3 [FE] (J3)** Lines opens on "Lines identified" (today's "Show only these" filter, on by
+  default while unconfirmed); "Show all lines (N)" is one click away.
+- **S6-4 [FE] (J3)** A line with an open finding carries a Flag cell and one "Dismiss with a
+  reason" action on its own row; there is no separate Findings tab or card.
+- **S6-5 [FE] (J3)** The Documents tab renders the PDF viewer, or, when it cannot be found, the
+  S5-5 empty state (R13), with the rejected-note reasons (R7, `POIntakeAnnotationsGrid`) directly
+  below it, both in the one tab, always present.
+- **S6-6 [E2E] (J3)** HQ/26/01/121 v1 at 1280 and 375 matches the approved mockup.
 
-## S7. Sales order findings screen (per approved mockup)
+## S7. Sales order review screen (per approved `mockups/sales-order-review.html`; page renamed
+from "SO findings")
 
-- **S7-1 [FE] (J4)** Header per mockup 3 with Area group and customer PO version in the meta
+Rewritten after the lavish review: one lines list, not a Lines tab plus a Findings tab (R16).
+
+- **S7-1 [FE] (J4)** Header per the mockup with Area group and customer PO version in the meta
   line; the "Publishing is refused" banner is replaced by the count under Publish.
-- **S7-2 [FE] (J4)** Line tabs Findings / Lines / AutoCount differences / Activity; Findings is
-  the default while any finding is open.
-- **S7-3 [FE] (J4)** Summary card renders `-` for unknown values (ADR 1e).
-- **S7-4 [E2E] (J4)** PSO-000003 at 1280 and 375 matches the approved mockup.
+- **S7-2 [FE] (J4)** Two tabs, Lines (default while any finding is open) and AutoCount
+  differences; Activity is a plain link in the meta line, not a tab.
+- **S7-3 [FE] (J4)** Lines is one `DataGrid`; a line with an open finding, from this sales order or
+  from the schedule it was split from, carries a Flag cell naming its source and one "Dismiss with
+  a reason" action on its own row. There is no tab literally labelled "Findings" and no separate
+  findings card.
+- **S7-4 [FE] (J4)** Summary card renders `-` for unknown values (ADR 1e).
+- **S7-5 [E2E] (J4)** PSO-000003 at 1280 and 375 matches the approved mockup.
 
 ## Out of scope (rulings)
 
 - **OOS-1** Any active-company indicator on lists (R8).
-- **OOS-2** A unified findings page, or moving findings off their entity (R3).
+- **OOS-2** A unified findings page, or moving findings off their entity (R3, R20).
 - **OOS-3** Any change to extraction, reconciliation, drafting or the publish gate services.
 - **OOS-4** The PDF viewer 404 (R9) until the owner has checked production.
+- **OOS-5** A cross-project pending list ("Needs attention"): dropped in full by R17, not
+  deferred.

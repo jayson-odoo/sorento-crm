@@ -1,20 +1,23 @@
 # PLAN: PO and delivery schedule redesign (issue #1167)
 
-Status: grilled 24 Sep 2026, mockups pending owner review. No code before the mockups are
-approved (R5). Track per slice: S1 small fix; S4 small fix; S2, S3, S5, S6, S7 full track.
+Status: grilled, mockups redrawn after lavish review round 1 to 3 (24 Sep 2026), awaiting owner
+approval of the redrawn mockups, no code. Track per slice: S1 small fix; S4 small fix; S2, S3,
+S5, S6, S7 full track.
 
 UAC: `documentation/plans/projects/po-schedule-redesign-24sep-acceptance-criteria.md`.
 Evidence: `documentation/plans/projects/AUDIT-po-schedule-flow-24sep.md` and 42 screenshots
 under `documentation/plans/projects/evidence/po-schedule-audit-24sep/` (PR #1183, branch
 `docs/po-schedule-ux-audit`). Mockups (open from a file, 1280 and 375 frames, numbered callouts
-tied to the audit friction list and the rulings):
+tied to the audit friction list and the rulings; redrawn after the lavish review, see the
+"Lavish review" rulings below -- `needs-attention.html` is retired, `po-confirm.html` and
+`so-findings.html` are renamed):
 
 | Mockup | Screen | Slice |
 | --- | --- | --- |
-| `mockups/needs-attention.html` | New Project Sales > Needs attention list, two upload buttons | S2 |
+| `mockups/project-listing-start.html` | Project Sales > Pipeline (Grid view), Start menu per row, Upload PO dialog | S2 |
 | `mockups/delivery-schedule-review.html` | `[projectId]/delivery-schedules/[versionId]` | S5 (and S3 first use) |
-| `mockups/po-confirm.html` | `[projectId]/purchase-orders/[versionId]` | S6 (and S1's R7 fix) |
-| `mockups/so-findings.html` | `[projectId]/sales-orders/[psoId]` | S7 (and S3) |
+| `mockups/po-review.html` | `[projectId]/purchase-orders/[versionId]` (renamed from `po-confirm.html`) | S6 (and S1's R7 fix) |
+| `mockups/sales-order-review.html` | `[projectId]/sales-orders/[psoId]` (renamed from `so-findings.html`) | S7 (and S3) |
 
 Core or module: part of the existing `projects` module (`moduleKey: 'projects'`). No new module,
 no new schema, no migration, no new permission.
@@ -22,9 +25,10 @@ no new schema, no migration, no new permission.
 ## Scope
 
 Screens and navigation only. The extraction, reconciliation, SO drafting and publish-gate
-services are not redesigned (task brief; R3 "the two-tier publish gate is unchanged"). The only
-backend addition is one read endpoint for the Needs attention list (S2), which reads columns the
-existing services already write.
+services are not redesigned (task brief; R3 "the two-tier publish gate is unchanged"). The lavish
+review (R17) drops the Needs attention list, which was this plan's only backend addition; there
+is no new endpoint, no new service and no new route anywhere in this plan. Every slice is
+frontend-only.
 
 ## Rulings (owner grill, 24 Sep 2026, binding, quoted)
 
@@ -65,6 +69,75 @@ existing services already write.
 > R10 Order of slices: S1 renames + R7 (small fix track), S2 Needs attention list with uploads, S3
 > shared findings component, S4 return-after-confirm, S5 to S7 the three review screens per
 > approved mockups (schedule matrix first, then PO confirm, then SO findings).
+
+### Lavish review, 24 Sep 2026 (binding, quoted)
+
+The owner reviewed the first mockup drawing in one lavish session (R5's method) and found it too
+complex; these rulings supersede R2 (the Needs attention page) and part of R3 (one shared findings
+component as a separate surface) and replace R5's un-numbered mockups with the four redrawn ones
+above. R10's slice order and R6/R7/R8/R9 stand unchanged.
+
+> R11 [round 1] "imo the mockups are way too complicated, it is very taxing for the users, please
+> simplify that."
+>
+> R12 [round 1, page defect, not a design ruling] "and I can't see them fully, they are shrunk,
+> please display them fully" -- fixed by re-rendering the mockups at full size for this review.
+>
+> R13 [R9 follow-up] "if 404 just show properly don't show too technical message" -- a missing PDF
+> renders a plain empty state ("This PDF is not available yet" plus an upload action), never a raw
+> error or status code, on every screen that embeds a PDF.
+>
+> R14 [round 2] "ok you see, this is going to be uploaded by project sales coordinator, okay, so by
+> that time, the project should be in already, so, as a project sales admin, what does he need to
+> do, he needs to upload PO right, so why don't he go to the project listing, and click Start as a
+> CTA, so for project sales coordinator access, it can select upload PO / upload delivery schedule
+> in the dropdown, so when he upload, he choose the project, then upload, then go to the PO
+> verification page, personally, i don't like our current page cause too narrow, 1 on the left 1,
+> 1 on the right, eat up too much space, we should just show what we have matched, and for its
+> documents, put it in another tab." Three rulings in one: (a) the entry point is the existing
+> Project listing, a Start button per row opening a small menu, Upload PO / Upload delivery
+> schedule, already scoped to that row's project; (b) no left/right split pane on the PO review
+> page, the lines table takes the full width, focused on what matched; (c) the PO document moves to
+> its own Documents tab.
+>
+> R15 [round 2] "the entry point of delivery schedule review should be from the project listing"
+> and "this page should comes from Project listing > Start > Upload PO, and I need it to be focused
+> on the lines identified" -- the schedule review page shares R14(a)'s entry point; "focused on the
+> lines identified" restated for the PO review page.
+>
+> R16 [round 2] "actually until today, I still dont know why we need two table for SO, why not just
+> 1 table sales order" -- the sales order page becomes one lines list, not a Lines tab plus a
+> Findings tab.
+>
+> R17 [round 3] "i don't really needs 'Needs attention', everything just come from pipeline" -- the
+> Needs attention sidebar page (R2) is dropped in full; every upload and every review starts from
+> the existing Project listing (R14(a)).
+>
+> R18 [round 3] "the PO document should always be at its own tab" -- restates R14(c) as an
+> absolute: the PO review page carries a Documents tab always, not only when the lines panel is
+> short of room.
+>
+> R19 [round 3] "i need the findings to be more tabulated, like in a list view where the user can
+> clear off 1 by 1" -- a finding is a row with one clear action, not a card.
+>
+> R20 [round 3] "i think using Lines will do, don't need findings"; "consolidate lines and findings
+> into 1 so the user don't need to look at two tabs" (PO review); "consolidate matrix and findings
+> into 1 so the user don't need to toggle tabs" (schedule review). Supersedes R3's "one shared
+> findings component" as its own surface: a finding now renders on the row of the table it belongs
+> to (the schedule matrix row, the PO line row, the SO line row), never a second table or a
+> Findings tab. R3's other terms stand as written: one severity set, one verb "Dismiss with a
+> reason", duplicates collapsed, the two-tier publish gate unchanged.
+
+Reading (the plan's own summary, not a quote): the Needs attention list is dropped; the entry
+point for every upload is a Start button on the existing Project listing row (Project Sales >
+Pipeline, Grid view), opening a small menu, Upload PO or Upload delivery schedule, already scoped
+to that row's project -- no project picker in the upload dialog. Each review screen is one page:
+the schedule matrix, the PO lines table, or the SO lines list, with the finding shown and cleared
+on its own row (a Flag cell plus one "Dismiss with a reason" action), plus a Documents tab (the
+uploaded file, and for the PO also the rejected-note reasons) that is always present. No Findings
+tab anywhere, no left/right split pane; the table takes the full page width. One primary button
+per page (Confirm schedule / Confirm this PO / Publish). A missing PDF is a plain empty state,
+never an error code.
 
 ## Facts this plan rests on (verified against the checkout, 24 Sep 2026)
 
@@ -162,106 +235,127 @@ Paths: `FE` = `sorento_crm_frontend`, `PS` = `FE/app/(protected)/project-sales`,
   `POIntakeAnnotationsGrid.test.tsx`; a string test for S1-1 / S1-2. Browser pass on the two
   changed screens.
 
-### S2. Needs attention list with uploads (full track)
+### S2. Start menu on the Project listing (full track)
 
-- **Backend seam:** one route, `GET /api/v1/project-sales/needs-attention`, in a new
-  `BE/app/api/v1/projects/needs_attention.py` mounted beside `divergences.py`, guarded by
-  `projects.projects.view`. One service function (a new `project_needs_attention_service.py`,
-  or a method on the existing PO service if the coder finds it cleaner) runs three plain queries
-  and merges them in Python, sorted by `waiting_since` ascending, then paginated:
-  POs whose latest `po_versions` row has no `confirmed_at` or whose mismatch count is above zero;
-  schedules whose latest `delivery_schedule_versions` row has no `confirmed_at` or
-  `reconciled_columns < total_columns`; sales orders with status `blocked` or `draft`, with their
-  unacknowledged hard and warn counts. Reuse the existing mismatch-count query in
-  `project_po_service.py` rather than a second copy. No registry entry, no view, no table: three
-  record types do not need a union abstraction (PRINCIPLES "simplest thing"). Trigger to revisit:
-  a fourth record type, or the list becoming slow on real data (measure first).
-- **Frontend seam:** new route `PS/needs-attention/page.tsx` (+ `loading.tsx` with
-  `ListPageSkeleton`); the menu item in both blocks of `menu.config.tsx`; service
-  `PS/_shared/services/needsAttentionService.ts` + hook `useNeedsAttention` via
-  `buildDataGridParams`. `POIntakeUploadDialog` gains an optional project picker, shown only when
-  no `projectId` is passed; `DeliveryScheduleUploadDialog` likewise loads the chosen project's
-  `Project` and schedules after the pick. Both keep their current call sites untouched. The
-  picker lists projects with `can_edit`.
-- **Tests:** pytest `tests/test_project_needs_attention.py` (on `tests/_pg_fixture.py`, seeding
-  its own chain; CI has no data): one test per inclusion branch (S2-2 to S2-4), one per
-  exclusion, company isolation, filters, 403 without view, response fields asserted. Vitest:
-  menu entries (both blocks), list renders pills and no Open column, both dialogs with and
-  without a preset project (existing dialog tests stay green unedited). Recorded agent-browser
-  run for S2-12.
+- **Backend seam:** none. `POIntakeUploadDialog` and `DeliveryScheduleUploadDialog` already accept
+  a `projectId` / `project` prop from their existing per-project call sites; Start reuses the same
+  props from a new call site, so there is nothing to add on the server.
+- **Frontend seam:** a Start button plus a small dropdown menu (Upload PO, Upload delivery
+  schedule) on each project row, in both Pipeline views: `PipelineBoard.tsx` (a card action) and
+  `ProjectsGrid.tsx` (a grid row action). Picking an option opens the existing upload dialog
+  scoped to that row's project; there is no project picker (superseding R2's "ask for the
+  project" -- the project is already fixed by which row's Start was clicked, R14/R17). On a
+  successful upload the dialog pushes straight to the version's review page (PO or schedule),
+  exactly as today's per-project upload already does.
+- **Tests:** vitest for the Start button and its menu on both Pipeline views (menu opens with two
+  items, each item opens the right dialog pre-scoped to that row's project, no project field
+  rendered); existing dialog tests stay green unedited (the dialogs' own behaviour is unchanged,
+  only a new call site). Recorded agent-browser run for S2-12: from `/`, expand Project Sales,
+  click Pipeline, click a project row's Start, click Upload PO, see the dropzone already scoped to
+  that project. Same for Upload delivery schedule. At 1280 and 375.
 
-### S3. Shared findings component (full track, FE only)
+### S3. Inline row findings, one Dismiss per row, one list (full track, mostly FE)
 
 - **Backend seam:** none. The acknowledge endpoints
   (`POST /sales-orders/{pso_id}/findings/{finding_id}/acknowledge`,
   `POST .../schedule-findings/{finding_id}/acknowledge`) and the column dismissal are called as
   today.
-- **Frontend seam:** one component, `PS/_shared/components/FindingsList.tsx`, taking a plain
-  array of `{ id, severity, code, text, source, subjectKey, acknowledged, onShow? }` plus a
-  `onDismiss(ids, reason)` callback. Each screen maps its own data into that array (SO findings,
-  schedule-level findings, schedule column verdicts); no adapter registry. Collapse key per UAC
-  S3-3. One reason dialog (reusing `SalesOrderAcknowledgeDialog`, renamed in place). It replaces
-  `SalesOrderFindingsSection` and `ScheduleFindingsSection` on the SO page in this slice (so
-  there is never a second findings UI live), and is mounted on the schedule page by S5 and the
-  PO page by S6.
-- **Tests:** vitest for `FindingsList` (severity chips and counts, collapse per key and no
-  collapse without one, dismiss fires once per underlying id with one reason, 3-character
-  minimum, verb text); the retired components' tests move to it. The existing pytest for
+- **Frontend seam:** no `FindingsList` component and no Findings tab anywhere (supersedes R3's
+  "one shared findings component" as its own surface, per R20). Two small shared pieces instead:
+  (1) a collapse utility, `collapseFindings(findings)` in `PS/_shared/lib/findings.ts`, the same
+  same-code/same-subject key from UAC S3-3, returning one row per distinct key with its member ids
+  and a count; (2) one dialog, `DismissReasonDialog.tsx` (renamed in place from
+  `SalesOrderAcknowledgeDialog`), a reason input (3-character minimum) and a button naming the
+  count, calling `onDismiss(ids, reason)`. Each screen's own table (the schedule matrix in S5, the
+  PO lines grid in S6, the SO lines list in S7) renders a Flag cell using the same three-severity
+  pill (`Agrees` / `Blocks publish` / `Needs acknowledgement`, a `Badge` `status`) and, on a
+  flagged row, one "Dismiss with a reason" action opening `DismissReasonDialog`. There is never a
+  second findings surface live beside the table it describes.
+- **Tests:** vitest for `collapseFindings` (collapse key precedence per S3-3, no collapse without
+  a key) and `DismissReasonDialog` (3-character minimum, the count in the button label, fires
+  `onDismiss` once per underlying id with one reason, verb text). The existing pytest for
   `_refresh_status`, `publish` and the manage-permission override run unedited (S3-5).
 
 ### S4. Return after Confirm (small fix track, FE only)
 
 - **Backend seam:** none.
-- **Frontend seam:** the Needs attention grid and the project tab panels already link rows;
-  their hrefs carry `from` through `appendListState` (list) or the originating `?tab=`. The PO
-  version page, schedule review and SO page read it with `useHrefWithListState`, and on a
-  successful Confirm / Confirm schedule / Publish `router.push` there; with no origin they stay
-  (today's behaviour). The upload dialogs forward the origin into the review URL they push to.
+- **Frontend seam:** the Project listing (a Start-driven upload) and the project tab panels
+  already link into a review page; their hrefs carry `from` through `appendListState` (list) or
+  the originating `?tab=`. The PO review page, schedule review and SO page read it with
+  `useHrefWithListState`, and on a successful Confirm / Confirm schedule / Publish `router.push`
+  there; with no origin they stay (today's behaviour). The upload dialogs (from Start, or from a
+  project's own tab) forward the origin into the review URL they push to.
 - **Tests:** vitest per page: confirm with origin navigates, without origin stays; upload
   forwards origin. Browser pass S4-6.
 
-### S5. Delivery schedule review screen (full track, FE only; first of the three)
+### S5. Delivery schedule review screen (full track, FE only; first of the three; per approved
+`mockups/delivery-schedule-review.html`)
 
 - **Backend seam:** none; same queries and mutations.
-- **Frontend seam:** `DeliveryScheduleReviewClient.tsx` recomposed per the approved
-  `mockups/delivery-schedule-review.html`: `PageHeader` with the meta line and
-  `RecordNavigation`; line `Tabs` (Matrix, Findings, Changes since vN, Re-dating, Notes) wrapping
-  the existing `DeliveryScheduleMatrix` / `DeliveryScheduleByDateMatrix`,
-  `DeliveryScheduleRevisionDiff`, `DeliveryScheduleRevisionProposals` and
-  `DeliveryScheduleNotes`; `DeliveryScheduleReconciliationList` folded into the matrix (status
-  column + inline column card using `DeliveryScheduleProductPicker`) and the Findings tab
-  (`FindingsList`). `DeliveryScheduleColumnCards` stays the 375 rendering.
-- **Tests:** vitest on the recomposed client (tabs and counts, default filter while
-  unconfirmed, column card shows the full code, no explanatory confirmed sentence); existing
-  matrix tests stay green. Browser pass S5-6 at 1280 and 375.
+- **Frontend seam:** `DeliveryScheduleReviewClient.tsx` recomposed: `PageHeader` with the meta
+  line and `RecordNavigation`; two tabs, Schedule (default) and Documents. Schedule is the
+  existing matrix (`DeliveryScheduleMatrix` / `DeliveryScheduleByDateMatrix`) with
+  `DeliveryScheduleReconciliationList` folded into it as a Flag column and an inline Dismiss
+  action per S3, using `DeliveryScheduleProductPicker` for the fix action on a flagged row; "Only
+  rows with a flag" is the default filter while the version is unconfirmed. `DeliveryScheduleRevisionDiff`,
+  `DeliveryScheduleRevisionProposals` and `DeliveryScheduleNotes` move into a secondary "History"
+  button on the Schedule tab's toolbar, opening a `Sheet`, instead of three separate tabs -- kept
+  reachable rather than removed, since the lavish review's ask (R20) was to stop toggling between
+  the matrix and its findings, not to drop revision history. Documents renders the schedule file
+  (the PDF viewer, or the R13 empty state) with an upload action.
+  `DeliveryScheduleColumnCards` stays the 375 rendering of the matrix.
+- **Tests:** vitest on the recomposed client (two tabs only, default filter while unconfirmed, a
+  flagged row shows the full customer code and a Dismiss action, the History sheet opens with the
+  three existing sections, the missing-PDF empty state on Documents); existing matrix tests stay
+  green. Browser pass S5-6 at 1280 and 375.
 
-### S6. PO confirm screen (full track, FE only)
-
-- **Backend seam:** none.
-- **Frontend seam:** `POIntakeConfirmClient.tsx` recomposed per the approved
-  `mockups/po-confirm.html`: header status trail replacing the three-cell stamp card, sum on
-  the meta line, right-panel line `Tabs` around the existing `POIntakeLinesGrid`, header card,
-  `FindingsList` and `POIntakeAnnotationsGrid`; the PDF viewer unchanged on the left, a tab at
-  375; "Show only these" on by default while unconfirmed.
-- **Tests:** vitest on the recomposed client (trail states, default filter, tabs); browser pass
-  S6-4.
-
-### S7. Sales order findings screen (full track, FE only)
+### S6. PO review screen (full track, FE only; renamed from "PO confirm"; per approved
+`mockups/po-review.html`)
 
 - **Backend seam:** none.
-- **Frontend seam:** `SalesOrderDetailClient.tsx` recomposed per the approved
-  `mockups/so-findings.html`: header meta with area group and PO version, gate count under
-  Publish replacing the refusal banner, line `Tabs` (Findings default while open, Lines,
-  AutoCount differences, Activity), summary facts with `-` for unknowns.
-- **Tests:** vitest on header and default tab; browser pass S7-4.
+- **Frontend seam:** `POIntakeConfirmClient.tsx` recomposed: header status trail (Confirmed /
+  Approved / Countersigned) and the document-total-vs-our-sum line replace the three-cell stamp
+  card and the banner; two tabs, Lines (default) and Documents -- no PDF beside the lines table
+  (R14(b)). Lines is the existing `POIntakeLinesGrid` with a Flag column and an inline Dismiss
+  action per S3, opening on "Lines identified" (today's "Show only these" filter, on by default
+  while unconfirmed) with "Show all lines (N)" one click away (R14(b)/R15). Documents holds the
+  PDF viewer (unchanged component, or the R13 "This PDF is not available yet" empty state with an
+  upload action instead of a raw 404) with `POIntakeAnnotationsGrid` (R7's full-text reason)
+  directly below it -- both concerns about the uploaded file in the one tab, always present, per
+  R18.
+- **Tests:** vitest on the recomposed client (trail states, two tabs only, default filter, Lines
+  identified vs Show all lines, Documents renders the PDF and the annotations grid together, the
+  R13 missing-PDF empty state renders no error code); browser pass S6-4.
 
-## Open questions for the mockup review (R5 session)
+### S7. Sales order review screen (full track, FE only; renamed from "SO findings"; per approved
+`mockups/sales-order-review.html`)
+
+- **Backend seam:** none.
+- **Frontend seam:** `SalesOrderDetailClient.tsx` recomposed: header meta with area group and PO
+  version, gate count under Publish replacing the refusal banner; two tabs, Lines (default while
+  anything is open) and AutoCount differences; Activity becomes a plain link in the meta line, not
+  a tab. R16 ("why not just 1 table sales order") is answered by merging Lines and Findings into
+  the one table this slice ships; AutoCount differences stays a separate tab because it compares
+  against a different system, not a duplicate of the line list. Lines is one `DataGrid` with a
+  Flag column and an inline Dismiss action per S3, rendering both the sales order's own findings
+  and the schedule-level findings (`GET /purchase-orders/{po_id}/schedule-findings`) as rows, each
+  naming its source; summary facts render `-` for unknowns.
+- **Tests:** vitest on header, default tab, and the merged Lines table (rows from both finding
+  sources, Flag column, Dismiss inline, AutoCount differences stays a separate tab); browser pass
+  S7-4.
+
+## Open questions for the mockup review
 
 1. Should a hard SO finding and the schedule finding that causes it (for example CB1178A "the
    schedule only places 0" and the unmapped column BUI-HB-CB1178ASS) also collapse, as two codes
-   for one cause? This plan collapses same code + same subject only.
-2. A confirmed schedule with columns still not reconciled (HQ/26/01/121 v2, 35 of 44): stay on
-   Needs attention until every column is reconciled or dismissed, or drop off at confirm?
+   for one cause? This plan collapses same code + same subject only; the owner was shown this
+   question in-page during the lavish review with a recommendation (collapse into one row, both
+   codes listed) and it is awaiting an explicit yes.
+2. There is no Needs attention list to drop off from any more (R17). A schedule confirmed with
+   columns still unreconciled (HQ/26/01/121 v2, 35 of 44) keeps its flagged rows in the Schedule
+   tab exactly as any other list row would: visible until a human fixes or dismisses each one,
+   with no separate "gone" state. This plan assumes that is the intended behaviour; it was not a
+   named ruling.
 3. Owner check R9 (PDF 404 in production) is owed before S6; if production is also broken it
    becomes its own bug lane, not part of S6.
 

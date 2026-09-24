@@ -5,7 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Schedule review mockup</title>
 <!-- Issue #1167. Annotated mockup, not shipped code. Plain inline CSS so it opens from a file.
-     Plan: documentation/plans/projects/PLAN-po-schedule-redesign-24sep.md -->
+     Plan: documentation/plans/projects/PLAN-po-schedule-redesign-24sep.md
+     Redrawn after the lavish review, 24 Sep 2026: one page, one table (the matrix), the finding
+     on the row it belongs to, cleared one by one. No Findings tab, no left/right split pane. -->
 <style>
 :root{
   --bg:#f6f7f9; --card:#ffffff; --fg:#111827; --muted:#6b7280; --line:#e5e7eb; --line-soft:#f1f2f4;
@@ -54,11 +56,7 @@ body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 var(--font)}
 .btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:#fff;border-radius:6px;padding:6px 12px;font:500 13px var(--font);color:var(--fg);white-space:nowrap}
 .btn.primary{background:var(--primary);border-color:var(--primary);color:#fff}
 .btn.sm{padding:3px 9px;font-size:12px}
-.btn.ghost{border-color:transparent;background:transparent;color:var(--primary)}
 .btn.icon{padding:6px 8px}
-.card{background:#fff;border:1px solid var(--line);border-radius:10px;margin-bottom:14px;position:relative}
-.card>.hd{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid var(--line-soft);font-weight:600}
-.card>.bd{padding:12px 16px}
 .facts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px 16px}
 .facts .k{color:var(--muted);font-size:12px}
 .facts .v{font-weight:500}
@@ -67,14 +65,9 @@ body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 var(--font)}
 .pill.red{background:var(--red-soft);color:var(--red)}
 .pill.amber{background:var(--amber-soft);color:var(--amber)}
 .pill.green{background:var(--green-soft);color:var(--green)}
-.pill.blue{background:var(--primary-soft);color:var(--primary)}
-.pill.violet{background:#f5f3ff;color:var(--violet)}
 .tabs{display:flex;gap:18px;border-bottom:1px solid var(--line);margin:0 0 14px;overflow-x:auto;white-space:nowrap;position:relative}
 .tabs span{padding:8px 0;color:var(--muted);font-weight:500;border-bottom:2px solid transparent;margin-bottom:-1px}
 .tabs span.on{color:var(--fg);border-bottom-color:var(--primary)}
-.tabs .co{padding:0;margin:0;border:0;color:#fff}
-.tabs .n{display:inline-block;margin-left:4px;font-size:11px;background:var(--grey-soft);border-radius:999px;padding:0 6px;color:var(--muted)}
-.tabs .n.red{background:var(--red-soft);color:var(--red)}
 .toggle{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden;font-size:12px}
 .toggle span{padding:4px 10px;background:#fff}
 .toggle span.on{background:var(--grey-soft);font-weight:600}
@@ -85,60 +78,40 @@ body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 var(--font)}
 .grid th{background:#fafafa;color:var(--muted);font-weight:500;text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .grid td{padding:8px 10px;border-bottom:1px solid var(--line-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;vertical-align:middle}
 .grid tr.hl td{background:var(--red-soft)}
+.grid tr.hlamber td{background:var(--amber-soft)}
 .grid td.num,.grid th.num{text-align:right;font-variant-numeric:tabular-nums}
 .grid .second{display:block;color:var(--muted);font-size:11px}
 .grid tfoot td{font-weight:600;background:#fafafa}
 .pager{display:flex;justify-content:space-between;align-items:center;padding:8px 10px;color:var(--muted);font-size:12px;background:#fff;flex-wrap:wrap;gap:6px}
 .toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
-.search{border:1px solid var(--line);border-radius:6px;padding:6px 10px;color:var(--muted);min-width:220px;background:#fff}
 .chip{border:1px dashed var(--line);border-radius:6px;padding:5px 10px;color:#374151;font-size:12px;background:#fff}
 .chip.on{border-style:solid;background:var(--primary-soft);border-color:#bfdbfe;color:var(--primary)}
-/* findings */
-.fnd{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--line);border-radius:8px;margin-bottom:8px;background:#fff}
-.fnd.block{border-color:var(--red-line);background:var(--red-soft)}
-.fnd.ack{border-color:var(--amber-line);background:var(--amber-soft)}
-.fnd .txt{flex:1;min-width:0}
-.fnd .src{color:var(--muted);font-size:12px;margin-top:2px}
-.fnd .x{display:inline-block;margin-left:6px;font-size:11px;font-weight:600;border-radius:999px;padding:0 7px;background:#fff;border:1px solid var(--line);color:#374151}
-.banner{border-radius:8px;padding:10px 14px;margin-bottom:14px;display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap}
-.banner.red{background:var(--red-soft);border:1px solid var(--red-line);color:var(--red)}
-.banner.amber{background:var(--amber-soft);border:1px solid var(--amber-line);color:var(--amber)}
-.banner.green{background:var(--green-soft);border:1px solid #bbf7d0;color:var(--green)}
 .muted{color:var(--muted)}
 .small{font-size:12px}
-.strike{text-decoration:line-through;color:var(--muted)}
 .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
-.two{display:grid;grid-template-columns:420px minmax(0,1fr);gap:14px;align-items:start}
-.pdf{border:1px solid var(--line);border-radius:10px;background:#fff;height:620px;display:flex;flex-direction:column}
-.pdf .bar{display:flex;justify-content:space-between;padding:8px 12px;border-bottom:1px solid var(--line-soft);font-size:12px;color:var(--muted)}
-.pdf .page{flex:1;margin:10px;background:repeating-linear-gradient(#fff 0 22px,#f3f4f6 22px 23px);border:1px solid var(--line-soft);border-radius:4px;position:relative}
-.pdf .page .mark{position:absolute;left:18px;right:40px;height:24px;border:2px solid var(--primary);border-radius:3px;background:rgba(27,132,255,.08)}
+.legend{display:flex;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin:6px 0 0}
+.emptypdf{border:1.5px dashed #cbd5e1;border-radius:10px;padding:48px 24px;text-align:center;color:var(--muted);background:#fafafa}
+.emptypdf .t{font-weight:600;color:var(--fg);margin-bottom:8px}
 /* phone */
 .phone .top{height:48px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 16px;font-weight:700}
 .phone .content{padding:14px 16px 20px}
-.phone .facts{grid-template-columns:repeat(2,minmax(0,1fr))}
 .rcard{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-bottom:8px;background:#fff;position:relative}
 .rcard .row1{display:flex;justify-content:space-between;gap:8px;align-items:center}
 .rcard .kv{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;margin-top:6px;font-size:12px}
 .rcard .kv .k{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.04em}
-.legend{display:flex;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin:6px 0 0}
-.dialog{position:absolute;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:4}
-.dialog .panel{background:#fff;border-radius:12px;width:480px;max-width:calc(100% - 32px);box-shadow:0 20px 40px rgba(0,0,0,.2)}
-.dialog .panel .hd{padding:14px 18px;border-bottom:1px solid var(--line-soft);font-weight:600;display:flex;justify-content:space-between}
-.dialog .panel .bd{padding:14px 18px}
-.dialog .panel .ft{padding:12px 18px;border-top:1px solid var(--line-soft);display:flex;justify-content:flex-end;gap:8px}
-.field{margin-bottom:12px}
-.field label{display:block;font-size:12px;font-weight:500;margin-bottom:4px}
-.select{border:1px solid var(--line);border-radius:6px;padding:7px 10px;display:flex;justify-content:space-between;color:var(--fg);background:#fff}
-.drop{border:1.5px dashed #cbd5e1;border-radius:8px;padding:22px;text-align:center;color:var(--muted);background:#fafafa}
 </style>
 </head>
 <body>
 <div class="doc">
-<h1>Mockup 1 of 4: Delivery schedule review</h1>
-<p class="sub">Issue #1167, slice S5 (first of the three review screens). The page at <span class="mono">project-sales/delivery-schedules/[versionId]</span> today stacks header, confirmed banner, notes, re-dating proposals, revision diff, a reconciliation table and the matrix in one long scroll. Redesign: one header that carries the facts, line tabs for the five concerns, the matrix first, and "Area" in place of "Phase". Same services, same data, same Confirm. Illustrative data: HQ/26/01/121 schedule v2, Setia Alam.</p>
+<h1>Mockup 2 of 4: Delivery schedule review</h1>
+<p class="sub">Issue #1167, slice S5. Redrawn after the lavish review (24 Sep 2026): one page, one
+table. The matrix is the whole page; a column with an open finding carries a flag and one
+"Dismiss with a reason" action on its own row, cleared one by one, instead of a separate Findings
+tab to toggle to. The schedule file lives on its own Documents tab, always. One primary button,
+Confirm schedule. Same services, same data, same Confirm. Illustrative data: HQ/26/01/121 schedule
+v2, Setia Alam.</p>
 
-<h2 class="frame-title">1280 wide, Matrix tab (default), unconfirmed version</h2>
+<h2 class="frame-title">1280 wide, Schedule tab (default), unconfirmed version</h2>
 <div class="layout">
 <div class="scroll"><div class="frame w1280"><div class="shell">
   <div class="side">
@@ -146,8 +119,6 @@ body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 var(--font)}
     <div class="grp">Sales</div>
     <div class="it">Project Sales</div>
     <div class="it sub">Pipeline</div>
-    <div class="it sub on">Needs attention</div>
-    <div class="it sub">Leads</div>
     <div class="it sub">AutoCount Differences</div>
   </div>
   <div class="main">
@@ -155,118 +126,86 @@ body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 var(--font)}
     <div class="content">
       <div class="phrow">
         <div class="ph" style="position:relative">
-          <div class="crumbs" style="margin:0 0 4px">Project Sales &rsaquo; Needs attention &rsaquo; Delivery schedule</div>
+          <div class="crumbs" style="margin:0 0 4px">Project Sales &rsaquo; Pipeline &rsaquo; Setia Alam</div>
           <h1>Schedule HQ/26/01/121 v2 &nbsp;<span class="pill amber">To confirm</span></h1>
-          <div class="meta">Setia Alam (PRJ-000001) &middot; Revision "1 - 23/7/2026" &middot; Dated 04/03/2026 &middot; Checked against PO v1 &middot; Read in 1m 46s</div>
-          <span class="pin co" style="left:-30px;top:22px">1</span>
+          <div class="meta">Setia Alam (PRJ-000001) &middot; Dated 04/03/2026 &middot; Checked against PO v1</div>
         </div>
-        <div class="actions" style="position:relative">
-          <span class="btn icon">&lsaquo;</span><span class="small muted">1 / 3</span><span class="btn icon">&rsaquo;</span>
-          <span class="btn icon">&#9881;</span>
-          <span class="btn primary">Confirm schedule</span>
-          <span class="pin co" style="right:-10px;top:-12px">2</span>
-        </div>
+        <div class="actions"><span class="btn primary">Confirm schedule</span></div>
       </div>
-      <div class="tabs">
-        <span class="on">Matrix</span>
-        <span>Findings <span class="n red">9</span></span>
-        <span>Changes since v1 <span class="n">20</span></span>
-        <span>Re-dating <span class="n">12</span></span>
-        <span>Notes <span class="n">1</span></span>
-        <span class="pin co" style="right:4px;top:6px">3</span>
+      <div class="tabs" style="position:relative">
+        <span class="on">Schedule</span>
+        <span>Documents</span>
+        <span class="pin co" style="right:4px;top:6px">1</span>
       </div>
       <div class="toolbar" style="justify-content:space-between;position:relative">
         <div class="actions"><span class="toggle"><span class="on">By area</span><span>By date</span></span>
-        <span class="chip on">Only columns to fix (9)</span><span class="chip">Re-dated cells (12)</span></div>
+        <span class="chip on">Only rows with a flag (9)</span></div>
         <div class="legend"><span><span class="pill green">Agrees</span></span><span><span class="pill amber">Needs acknowledgement</span></span><span><span class="pill red">Blocks publish</span></span></div>
-        <span class="pin co" style="left:-30px;top:4px">4</span>
       </div>
-      <div class="grid" style="position:relative">
-        <div class="scroller"><table style="width:1400px">
-          <colgroup><col style="width:260px"><col style="width:120px"><col style="width:90px"><col style="width:90px"><col style="width:90px"><col style="width:90px"><col style="width:90px"><col style="width:90px"><col style="width:90px"><col style="width:90px"><col style="width:100px"><col style="width:100px"></colgroup>
-          <thead>
-            <tr><th rowspan="2" style="vertical-align:bottom">Product (customer code)</th><th rowspan="2" style="vertical-align:bottom">Status</th><th colspan="3" style="text-align:center;border-left:1px solid var(--line)">Area group: Common area</th><th colspan="5" style="text-align:center;border-left:1px solid var(--line)">Area group: Tower</th><th class="num" rowspan="2" style="vertical-align:bottom;border-left:1px solid var(--line)">Schedule</th><th class="num" rowspan="2" style="vertical-align:bottom">PO</th></tr>
-            <tr><th style="border-left:1px solid var(--line)">Ph 1 <span class="second">24/06/2027</span></th><th>Ph 2 <span class="second">08/07/2027</span></th><th>Ph 3 <span class="second">22/07/2027</span></th><th style="border-left:1px solid var(--line)">L2 &amp; 7 <span class="second">23/07/2026</span></th><th>L8 &amp; 10 <span class="second">06/08/2026</span></th><th>L11-13 <span class="second">20/08/2026</span></th><th>L14-16 <span class="second">03/09/2026</span></th><th>L17-19 <span class="second">17/09/2026</span></th></tr>
-          </thead>
+      <div class="grid" style="position:relative;overflow:visible">
+        <span class="pin co" style="left:-24px;top:60px">2</span>
+        <div class="scroller"><table style="width:1500px">
+          <colgroup><col style="width:240px"><col style="width:150px"><col style="width:90px"><col style="width:90px"><col style="width:90px"><col style="width:90px"><col style="width:100px"><col style="width:100px"><col style="width:200px"></colgroup>
+          <thead><tr><th>Product (customer code)</th><th>Flag</th><th class="num">Ph 1</th><th class="num">Ph 2</th><th class="num">Ph 3</th><th class="num">L2 &amp; 7</th><th class="num">Schedule</th><th class="num">PO</th><th>Action</th></tr></thead>
           <tbody>
-            <tr class="hl"><td title="BUI-HB-SRTWC8608-RL">Not identified <span class="second mono">BUI-HB-SRTWC8608-RL</span></td><td><span class="pill red">Blocks publish</span></td><td class="num"></td><td class="num"></td><td class="num">44</td><td class="num">124</td><td class="num">66</td><td class="num">66</td><td class="num">66</td><td class="num">66</td><td class="num">894</td><td class="num">-</td></tr>
-            <tr class="hl"><td title="BUI-HB-SRTWC8840-RL">Not identified <span class="second mono">BUI-HB-SRTWC8840-RL</span></td><td><span class="pill red">Blocks publish</span></td><td class="num"></td><td class="num"></td><td class="num">9</td><td></td><td></td><td></td><td></td><td></td><td class="num">9</td><td class="num">-</td></tr>
-            <tr class="hl"><td title="BUI-HB-C-FH12">C-FH12 <span class="second mono">BUI-HB-C-FH12</span></td><td><span class="pill red">Blocks publish</span></td><td></td><td></td><td></td><td class="num">259</td><td class="num">138</td><td class="num">138</td><td class="num">138</td><td class="num">138</td><td class="num">3651</td><td class="num">1816</td></tr>
-            <tr><td title="BUI-HB-SRTFH15-CR">SRTFH15-CR <span class="second mono">BUI-HB-SRTFH15-CR</span></td><td><span class="pill amber">Needs ack.</span></td><td></td><td></td><td></td><td class="num">7</td><td class="num">4</td><td class="num">4</td><td class="num">4</td><td class="num">4</td><td class="num">53</td><td class="num">1777</td></tr>
-            <tr><td title="BUI-HB-SRTSSB9320">SRTSSB9320 <span class="second mono">BUI-HB-SRTSSB9320</span></td><td><span class="pill amber">Needs ack.</span></td><td></td><td></td><td></td><td class="num">1</td><td class="num">1</td><td class="num">1</td><td class="num">1</td><td class="num">1</td><td class="num">7</td><td class="num">1777</td></tr>
+            <tr class="hl"><td title="BUI-HB-SRTWC8608-RL">Not identified <span class="second mono">BUI-HB-SRTWC8608-RL</span></td><td><span class="pill red">Blocks publish</span></td><td class="num"></td><td class="num">44</td><td class="num">124</td><td class="num">66</td><td class="num">894</td><td class="num">-</td><td><span class="btn sm">Dismiss with a reason</span></td></tr>
+            <tr class="hl"><td title="BUI-HB-C-FH12">C-FH12 <span class="second mono">BUI-HB-C-FH12</span></td><td><span class="pill red">Blocks publish</span></td><td class="num"></td><td class="num"></td><td class="num">259</td><td class="num">138</td><td class="num">3651</td><td class="num">1816</td><td><span class="btn sm">Dismiss with a reason</span></td></tr>
+            <tr class="hlamber"><td title="BUI-HB-SRTFH15-CR">SRTFH15-CR <span class="second mono">BUI-HB-SRTFH15-CR</span></td><td><span class="pill amber">Needs ack.</span></td><td class="num"></td><td class="num">7</td><td class="num">4</td><td class="num">4</td><td class="num">53</td><td class="num">1777</td><td><span class="btn sm">Dismiss with a reason</span></td></tr>
+            <tr><td title="BUI-HB-SRTHM220">SRTHM220 <span class="second mono">BUI-HB-SRTHM220</span></td><td><span class="pill green">Agrees</span></td><td class="num">12</td><td class="num">12</td><td class="num">12</td><td class="num">12</td><td class="num">48</td><td class="num">48</td><td></td></tr>
           </tbody>
-          <tfoot><tr><td>9 of 44 columns shown</td><td></td><td colspan="8"></td><td class="num">5,444</td><td class="num">-</td></tr></tfoot>
+          <tfoot><tr><td>9 of 44 rows carry a flag</td><td></td><td colspan="4"></td><td class="num">5,444</td><td class="num">-</td><td></td></tr></tfoot>
         </table></div>
-        <span class="pin co" style="left:-12px;top:92px">5</span>
-        <span class="pin co" style="left:400px;top:4px">6</span>
-        <span class="pin co" style="left:1000px;top:4px">7</span>
-      </div>
-      <div class="card" style="margin-top:14px;position:relative">
-        <div class="hd">Not identified, BUI-HB-SRTWC8608-RL <span class="btn sm">Close</span></div>
-        <div class="bd">
-          <div class="facts"><div><div class="k">Customer code</div><div class="v mono">BUI-HB-SRTWC8608-RL</div></div><div><div class="k">Schedule qty</div><div class="v">894</div></div><div><div class="k">Reported total</div><div class="v">894</div></div><div><div class="k">PO qty</div><div class="v">Not on the PO</div></div></div>
-          <div style="margin-top:10px" class="fnd block"><div class="txt">BUI-HB-SRTWC8608-RL is not matched to a product. <div class="src">Schedule v2 &middot; column 7</div></div><span class="btn sm">Pick the product</span><span class="btn sm">Dismiss with a reason</span></div>
-        </div>
-        <span class="pin co" style="right:-10px;top:-10px">8</span>
+        <div class="pager"><span>1 - 4 of 44</span><span>Rows per page 25 &nbsp; &lsaquo; 1 &rsaquo;</span></div>
       </div>
     </div>
   </div>
 </div></div></div>
 <div class="notes"><ol>
-  <li><span class="co">1</span><div><b>PageHeader carries every read-only fact once.</b> Schedule number and version, status pill, project, revision, dated, PO version it was checked against, read time. The five stacked blocks at the top of today's page (screen 10) collapse into this header plus tabs. Breadcrumb follows where the user came from (Needs attention or the project).<span class="ref">Audit screen 10 ("five distinct concepts stacked in the first screen"). ADR "read-only metadata lives in the page header". Ruling R1(4).</span></div></li>
-  <li><span class="co">2</span><div><b>Record navigation plus one primary button.</b> Prev/next walks the other versions waiting in the same list; Confirm schedule is the single primary action. After Confirm the user returns to where they came from. When confirmed, the pill reads Confirmed with who and when, and the button goes away; the explanatory sentence "This schedule is confirmed, so nothing here can be changed" is removed.<span class="ref">Ruling R4 (slice S4). DESIGN-LANGUAGE D6. PRINCIPLES "no feature explanations inside the UI". Audit screen 11.</span></div></li>
-  <li><span class="co">3</span><div><b>Line tabs, one concern each, with counts.</b> Matrix, Findings, Changes since v1, Re-dating, Notes. Today these are five sections in one scroll and the reader cannot tell how many cards follow (screen 13). The count is in the tab, so "20 changes" is known before opening it.<span class="ref">Audit screens 10, 11, 13. DESIGN-LANGUAGE "Tabs with TabsList variant=line". Ruling R1(2), R1(4).</span></div></li>
-  <li><span class="co">4</span><div><b>View toggle, filter chips and one severity legend.</b> By area / By date is a pill toggle (a view switch, not navigation). "Only columns to fix" defaults ON while the version is unconfirmed, so the 9 problem columns are the first thing seen instead of 35 reconciled ones. Statuses use the shared three-level severity set from slice S3.<span class="ref">Audit friction #5 (severity words differ per surface). Ruling R3.</span></div></li>
-  <li><span class="co">5</span><div><b>Reconciliation merges into the matrix.</b> The separate 9-row reconciliation table (screen 11) is gone; its status is a column of the matrix and its detail opens in the row card (8). One grid instead of two grids that list the same columns.<span class="ref">Audit screens 11, 12, 14 (the "column card" was really the list row plus the highlighted matrix row). Ruling R1(4).</span></div></li>
-  <li><span class="co">6</span><div><b>"Area" replaces "Phase" in every label.</b> Each schedule column that today reads "Phase" (Phase 1, Level 2 &amp; 7) is an Area; the group above it is its Area group (Common area, Tower), shown as the column-group header so the two are visibly one hierarchy. The sales order's area group is copied from this same grouping, so mockup 3 uses the same words. "By phase" becomes "By area"; "0 phases moved" becomes "0 areas moved".<span class="ref">Audit friction #6 (phase vs area group never tied together). Ruling R6.</span></div></li>
-  <li><span class="co">7</span><div><b>Totals in the table, under their column.</b> Schedule and PO totals are DataGrid columns with a footer row, replacing the "Our total / Schedule / PO" figures repeated in each row card.<span class="ref">ADR 1d ("a total belongs in the table").</span></div></li>
-  <li><span class="co">8</span><div><b>Row click opens the column card inline, with the full customer code.</b> The customer code is never truncated here (it truncates in the grid with the full string on hover). The fix action is today's product picker; the dismissal is today's "Dismiss as false signal", renamed to the one verb "Dismiss with a reason" and rendered by the shared findings component.<span class="ref">Audit friction #9 (raw codes truncated with no way to read them). Ruling R3. Code: DeliveryScheduleProductPicker, DeliveryScheduleReconciliationList.</span></div></li>
+  <li><span class="co">1</span><div><b>Two tabs: Schedule and Documents.</b> No Findings tab, no Changes/Re-dating/Notes tabs to toggle between: the header carries the read-only facts (version, dated, checked against which PO), and the one table below is the whole page.<span class="ref">Lavish review round 3: "consolidate matrix and findings into 1 so the user don't need to toggle tabs." Ruling R1(4) (five stacked concepts on this page today).</span></div></li>
+  <li><span class="co">2</span><div><b>One table; the finding is on the row.</b> A flagged row carries a short Flag cell (the same three-severity pill as before: Agrees, Needs acknowledgement, Blocks publish) and one "Dismiss with a reason" action in the row itself, no separate list to open. "Only rows with a flag" is on by default while the version is unconfirmed, so the 9 rows that need a look come first; "By area / By date" is the same view toggle as today. The table takes the full page width; there is no side panel.<span class="ref">Lavish review round 3: "i need the findings to be more tabulated, like in a list view where the user can clear off 1 by 1"; "i think using Lines will do, don't need findings." Round 2: "too narrow, 1 on the left 1, 1 on the right, eat up too much space."</span></div></li>
 </ol></div>
 </div>
 
-<h2 class="frame-title">1280 wide, Findings tab</h2>
+<h2 class="frame-title">1280 wide, Documents tab</h2>
 <div class="layout">
 <div class="scroll"><div class="frame w1280"><div class="shell">
-  <div class="side"><div class="brand">Sorento</div><div class="grp">Sales</div><div class="it">Project Sales</div><div class="it sub on">Needs attention</div></div>
+  <div class="side"><div class="brand">Sorento</div><div class="grp">Sales</div><div class="it">Project Sales</div><div class="it sub">Pipeline</div></div>
   <div class="main"><div class="topbar"></div><div class="content">
-    <div class="phrow"><div class="ph"><h1>Schedule HQ/26/01/121 v2 &nbsp;<span class="pill amber">To confirm</span></h1><div class="meta">Setia Alam (PRJ-000001) &middot; Checked against PO v1</div></div><div class="actions"><span class="btn primary">Confirm schedule</span></div></div>
-    <div class="tabs"><span>Matrix</span><span class="on">Findings <span class="n red">9</span></span><span>Changes since v1 <span class="n">20</span></span><span>Re-dating <span class="n">12</span></span><span>Notes <span class="n">1</span></span></div>
-    <div style="position:relative">
-      <span class="pin co" style="left:-30px;top:6px">9</span>
-      <div class="toolbar"><span class="chip on">Blocks publish 5</span><span class="chip">Needs acknowledgement 4</span><span class="chip">Info 0</span><span class="chip">Dismissed 0</span></div>
-      <div class="fnd block"><div class="txt">BUI-HB-SRTWC8608-RL is not matched to a product, and the PO does not order it. <span class="x">&times; 2</span><div class="src">Column BUI-HB-SRTWC8608-RL &middot; 894 across 6 areas</div></div><span class="btn sm">Show in matrix</span><span class="btn sm">Dismiss with a reason</span></div>
-      <div class="fnd block"><div class="txt">C-FH12: the schedule asks for 3651 and the PO orders 1816. <div class="src">Column BUI-HB-C-FH12</div></div><span class="btn sm">Show in matrix</span><span class="btn sm">Dismiss with a reason</span></div>
-      <div class="fnd ack"><div class="txt">The schedule asks for 53 of the 1777 SRTFH15-CR on the PO. <div class="src">Column BUI-HB-SRTFH15-CR</div></div><span class="btn sm">Show in matrix</span><span class="btn sm">Dismiss with a reason</span></div>
+    <div class="phrow"><div class="ph"><h1>Schedule HQ/26/01/121 v2 &nbsp;<span class="pill amber">To confirm</span></h1><div class="meta">Setia Alam (PRJ-000001)</div></div><div class="actions"><span class="btn primary">Confirm schedule</span></div></div>
+    <div class="tabs"><span>Schedule</span><span class="on">Documents</span></div>
+    <div class="emptypdf" style="position:relative">
+      <div class="t">This PDF is not available yet</div>
+      <div>The source file for this schedule has not finished uploading, or could not be found in storage.</div>
+      <div style="margin-top:14px"><span class="btn primary">Upload the schedule again</span></div>
+      <span class="pin co" style="right:8px;top:8px">3</span>
     </div>
   </div></div>
 </div></div></div>
 <div class="notes"><ol>
-  <li><span class="co">9</span><div><b>The shared findings component (slice S3), first use.</b> One list, filtered by the three severities as chips with counts. It shows two existing sources through one shape: the per-column verdicts (a column that asks for more than the PO, or cannot be identified, blocks; a shortfall needs acknowledgement, the same split the server's _verdict makes) and the schedule-level rows of so_draft_findings. Duplicates collapse with a count. "Show in matrix" replaces "Go to X in the schedule". Findings stay on the schedule; there is no cross-record findings page.<span class="ref">Audit friction #5, screen 14. Ruling R3. Code: _verdict in project_schedule_service.py, buildColumnStates in scheduleTotals.ts.</span></div></li>
+  <li><span class="co">3</span><div><b>A missing PDF is a plain empty state, never an error code.</b> No "404" or "Object not found": a short sentence and the upload action to fix it. Shown here because the audit hit exactly this on a confirmed version; whether it also happens in production is owner check R9, separate from this redesign.<span class="ref">Lavish review: "if 404 just show properly don't show too technical message." Ruling R9. Audit friction #3.</span></div></li>
 </ol></div>
 </div>
 
-<h2 class="frame-title">375 wide, Matrix tab</h2>
+<h2 class="frame-title">375 wide, Schedule tab</h2>
 <div class="layout">
 <div class="frame w375 phone">
   <div class="top">Sorento <span class="muted" style="font-weight:400">&#9776;</span></div>
   <div class="content">
-    <div class="ph"><div class="crumbs">Needs attention &rsaquo; Delivery schedule</div><h1 style="font-size:18px">Schedule HQ/26/01/121 v2</h1><div style="margin-top:4px"><span class="pill amber">To confirm</span></div><div class="meta">Setia Alam &middot; Dated 04/03/2026 &middot; vs PO v1</div></div>
-    <div class="actions" style="margin:10px 0;position:relative"><span class="btn icon">&lsaquo;</span><span class="small muted">1 / 3</span><span class="btn icon">&rsaquo;</span><span class="btn icon">&#9881;</span><span class="btn primary" style="flex:1;justify-content:center">Confirm</span><span class="pin co" style="right:-8px;top:-10px">10</span></div>
-    <div class="tabs" style="position:relative"><span class="on">Matrix</span><span>Findings <span class="n red">9</span></span><span>Changes <span class="n">20</span></span><span>Re-dating</span></div>
-    <div class="toolbar"><span class="toggle"><span class="on">By area</span><span>By date</span></span><span class="chip on">To fix (9)</span></div>
+    <div class="ph"><div class="crumbs">Pipeline &rsaquo; Setia Alam</div><h1 style="font-size:18px">Schedule HQ/26/01/121 v2</h1><div style="margin-top:4px"><span class="pill amber">To confirm</span></div></div>
+    <div class="actions" style="margin:10px 0"><span class="btn primary" style="flex:1;justify-content:center">Confirm schedule</span></div>
+    <div class="tabs" style="position:relative"><span class="on">Schedule</span><span>Documents</span><span class="pin co" style="right:4px;top:6px">4</span></div>
+    <div class="toolbar"><span class="toggle"><span class="on">By area</span><span>By date</span></span><span class="chip on">Flagged (9)</span></div>
     <div class="rcard" style="border-color:var(--red-line);background:var(--red-soft)">
       <div class="row1"><b>Not identified</b><span class="pill red">Blocks publish</span></div>
       <div class="mono muted" style="word-break:break-all">BUI-HB-SRTWC8608-RL</div>
       <div class="kv"><div><div class="k">Schedule</div>894</div><div><div class="k">PO</div>-</div><div><div class="k">Areas</div>2</div></div>
-      <span class="pin co" style="right:-8px;top:-8px">11</span>
+      <div style="margin-top:8px"><span class="btn sm" style="width:100%;justify-content:center">Dismiss with a reason</span></div>
     </div>
-    <div class="rcard"><div class="row1"><b>C-FH12</b><span class="pill red">Blocks publish</span></div><div class="mono muted">BUI-HB-C-FH12</div><div class="kv"><div><div class="k">Schedule</div>3651</div><div><div class="k">PO</div>1816</div><div><div class="k">Areas</div>1</div></div></div>
-    <div class="rcard"><div class="row1"><b>SRTFH15-CR</b><span class="pill amber">Needs ack.</span></div><div class="mono muted">BUI-HB-SRTFH15-CR</div><div class="kv"><div><div class="k">Schedule</div>53</div><div><div class="k">PO</div>1777</div><div><div class="k">Areas</div>1</div></div></div>
+    <div class="rcard"><div class="row1"><b>C-FH12</b><span class="pill red">Blocks publish</span></div><div class="mono muted">BUI-HB-C-FH12</div><div class="kv"><div><div class="k">Schedule</div>3651</div><div><div class="k">PO</div>1816</div><div><div class="k">Areas</div>1</div></div><div style="margin-top:8px"><span class="btn sm" style="width:100%;justify-content:center">Dismiss with a reason</span></div></div>
   </div>
 </div>
 <div class="notes"><ol>
-  <li><span class="co">10</span><div><b>Header wraps; tabs scroll, never wrap.</b> Pager, gear and Confirm sit on one row under the title; the tab strip scrolls sideways.<span class="ref">DESIGN-LANGUAGE D6 and section 7.</span></div></li>
-  <li><span class="co">11</span><div><b>The matrix keeps today's stacked product cards at 375</b> (the one section the audit found already adapted), now with the full customer code wrapping instead of truncating, the shared severity pill, and the per-area quantities one tap away in the card.<span class="ref">Audit "Clipping or breakage at 375" (matrix adapted), friction #9.</span></div></li>
+  <li><span class="co">4</span><div><b>Same two tabs at 375, no wrap.</b> The matrix keeps its stacked product cards (the one section the audit found already adapted); each card now carries its own Dismiss action instead of opening a separate row.<span class="ref">Audit "Clipping or breakage at 375" (matrix adapted). DESIGN-LANGUAGE section 7.</span></div></li>
 </ol></div>
 </div>
 </div>
