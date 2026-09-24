@@ -206,6 +206,7 @@ Rewritten after the lavish review: one lines list, not a Lines tab plus a Findin
 - **OOS-1** Any active-company indicator on lists (R8).
 - **OOS-2** A unified findings page, or moving findings off their entity (R3, R20).
 - **OOS-3** Any change to extraction, reconciliation, drafting or the publish gate services.
-- **OOS-4** The PDF viewer 404 (R9) until the owner has checked production.
+- **OOS-4** a production check of the PDF viewer 404 is not owed (R22); the PO review page shows
+  the plain not-found state (S6-5) and that is the whole requirement.
 - **OOS-5** A cross-project pending list ("Needs attention"): dropped in full by R17, not
   deferred.
