@@ -1,7 +1,7 @@
 # PLAN - Ideation intake redesign (issue #1172)
 
-**Status:** grilled 24 Sep 2026, ready for tickets, lavish review round 1 folded 24 Sep 2026,
-lavish review round 2 folded 24 Sep 2026, lavish review round 3 folded 24 Sep 2026.
+**Status:** approved by the owner 24 Sep 2026 (lavish review, "ok cool, proceed"), R18 framework
+constraint binding; tickets pending; nothing built.
 Track: full (shared-service migration for `ideas.title`, `ideas.submitter_tier`,
 `ideas.status_token`, the idea-number sequence; two repos).
 **UAC:** `ideation-intake-redesign-24sep-acceptance-criteria.md` (this plan fulfils it; the
@@ -127,6 +127,9 @@ the end of the lane (AC-1501).
 
 ### S1 - Shared-service contract
 
+**Side (R18):** shared-service intake only (`intake_definitions.py`, `models.py`,
+`routers/intake.py`, `services/intake.py`). No sorento file touched. Engine: untouched.
+
 **Shared-service part** (branch in foundryx-shared-service):
 
 - `shared-service:service_backend/modules/ideation/services/intake_definitions.py`: `problem`
@@ -169,6 +172,11 @@ the end of the lane (AC-1501).
 real shared-service field names if they differ.
 
 ### S2 - Sorento payload, title extraction, duplicate ask, semantic review
+
+**Side (R18):** sorento ideate lane / `ideation_turn_service.py` (`ideation_extractor.py`,
+`ideation_turn_service.py::handle_turn`, `lanes/ideate.py::build_reply`) - all lane-side
+services the ideate lane already calls, none of it `app/services/chatbot/turn/*`. Engine:
+untouched.
 
 **Shared-service part:** none beyond S1 (S1 must be deployed first).
 
@@ -226,6 +234,11 @@ real shared-service field names if they differ.
 
 ### S3 - LLM replies with template fallback
 
+**Side (R18):** sorento `ideation_turn_service.py` plus one existing shared seam,
+`lanes/canned.py::access_denied_text` (a function every lane's denial already calls; this adds
+one `if agent == "ideation"` branch inside it, not a new engine concept). Not
+`app/services/chatbot/turn/*`. Engine: untouched, with that one named exception.
+
 **Shared-service part:** none beyond S1 (the facts are in the S1 response; the templates are
 the fallback).
 
@@ -257,6 +270,11 @@ the fallback).
   with Problem first (AC-1310), and the link line (AC-1311). Console cases AC-1308, AC-1309.
 
 ### S4 - 24h reminder and close
+
+**Side (R18):** sorento `ideation_turn_service.py` plus one new scheduler tick,
+`app/scheduler/task_scheduler.py::_ideation_idle_sweep_tick`, the same shape as the existing
+unrelated `_chatbot_delegated_sweep_tick` - a cron-style job outside the per-turn pipeline, not
+`app/services/chatbot/turn/*`. Engine: untouched.
 
 **Shared-service part:** none beyond S1 (`cancel: true`).
 
@@ -291,6 +309,10 @@ the fallback).
   stubbed send / create-idea: AC-1401 to AC-1408.
 
 ### S5 - Public idea status page (R13, "commit to public status page slice")
+
+**Side (R18):** shared-service only - a new model column + migration, a new public router, a
+new public frontend page. No sorento file touched beyond what S3 already reads (`link` is
+already a fact in the composer's facts block). Engine: untouched.
 
 Graduated from the Dependencies section's `S-link` placeholder to a real slice in this plan
 (lavish review round 3, 24 Sep 2026). Resolves F9 for good: a WhatsApp-only submitter gets a
@@ -488,6 +510,28 @@ folded below as R13 to R17.
 > updates the Problem line (even while `proposed_solution` was the one asked) and the bot asks
 > the same optional field again, or moves on once it is later answered or skipped - no
 > complaint, no "that wasn't what I asked" branch. See AC-1219 and sample (i).
+
+> **R18 Approval, framework constraint (owner, on the plan page, 24 Sep 2026):** "ok cool,
+> proceed, make sure we implement this with no too much customization of our chatbot engine,
+> the framework should still the same, to allow scalability."
+
+## Framework constraint (R18)
+
+The plan is approved to build. R18 is a hard constraint on HOW, not a new feature: the shared
+chatbot engine - `app/services/chatbot/turn/*` (the parser-only decider `decide.py`, `apply.py`,
+`route.py` and the rest of the turn pipeline), and the lanes registry that dispatches to
+`app/services/chatbot/lanes/*` - is not changed by this plan, except where a slice already names
+an existing seam in it (S3's `access_denied_text` branch is the one such seam, and it is one
+`if agent == "ideation"` case added to an existing function, not a new engine concept). Every
+other piece of behaviour in this plan lives in the ideate lane handler
+(`app/services/chatbot/lanes/ideate.py`) and `app/services/ideation_turn_service.py` on the
+sorento side, or in the shared-service intake and its frontend on the other. The point-form
+composer (S3), semantic field capture (S2, R17) and the public status page (S5) are all
+intake-side or lane-side, never engine-side: nothing here adds a new engine branch, a new
+`_LANE_BRANCH` entry, or an ideation-specific routing rule beyond the one general rule #1178
+already adds for every lane (an open draft/pending state keeps its own lane on a hesitation or a
+bare confirmation) - `ideate` is already a known lane in the engine's routing today
+(`app/services/chatbot/turn/route.py::_LANE_BRANCH`), so this plan adds no new lane either.
 
 ## Review findings -> where they land
 
