@@ -1,6 +1,6 @@
 # PLAN - Chatbot stock ask v2: four-branch answer on #1118's verdict step, X cap, Y ETA offset, salesman notification, asks record
 
-Status: grilled, lavish review round 1 folded 24 Sep 2026, ready for tickets, nothing built
+Status: approved by the owner 24 Sep 2026 (lavish review, "ok cool, good to go"); tickets S0 #1193, S1 #1194, S2 #1195, S3 #1196, S4 #1197, S5+S6 #1192; nothing built
 Issue: #1168. Grill: owner rulings R1 to R11 of 24 Sep 2026 (quoted below, binding; they override the pre-grill draft).
 UAC: `chatbot-stock-ask-v2-24sep-acceptance-criteria.md`
 Depends on: PR #1118 (`feat/chatbot-dealer-stock-verdict`, open) rebased onto main and merged (slice S0); PR #1177 (`feat/customer-sales-agent-assignment`, open, #1170 slice 1) merged before S4.
@@ -138,6 +138,8 @@ CWCX604 x 300: the quantity is more than what I can confirm here, please refer t
 ## Slices
 
 Every slice: migration, backend seam, frontend seam, tests (the `tester` agent writes them first, red, from this plan and the UAC; the `coder` makes them green), UAC ids. pytest on Postgres only (`tests/_pg_fixture.py`); CI has no data, every test seeds its own chain.
+
+Tickets: S0 #1193, S1 #1194, S2 #1195, S3 #1196, S4 #1197, S5 and S6 share one issue, #1192.
 
 ### S0 - Rebase and merge #1118
 
