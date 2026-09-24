@@ -36,7 +36,9 @@ from sqlalchemy.orm import Session
 import app.services.ideation_turn_service as svc
 from app.models.access import RespondContact
 from app.models.integration import IntegrationLog
+from app.services.error_handler import AppException
 from app.services.ideation_turn_service import IdeationServiceError, sweep_idle_ideation_drafts
+from app.services.respond_messaging_service import TemplateSendSkipped
 from tests._pg_fixture import blank_session
 
 
@@ -187,8 +189,12 @@ def test_second_sweep_in_the_same_tick_sends_no_second_reminder(db, monkeypatch)
 # AC-1405 - send failure: reminded_at still written, failure logged           #
 # --------------------------------------------------------------------------- #
 def test_reminder_send_failure_still_writes_reminded_at_and_logs(db, monkeypatch):
+    """Nit 2 (reviewer round 1): raises the REAL ``TemplateSendSkipped`` the
+    send path actually raises when no template is mapped, not a generic
+    RuntimeError - documents the intent, same ``except Exception`` behaviour."""
+
     def _boom(**_kw):
-        raise RuntimeError("TemplateSendSkipped: no template mapped for ideation_draft_reminder")
+        raise TemplateSendSkipped("ideation_draft_reminder", "no template mapped for use case")
 
     monkeypatch.setattr("app.services.respond_messaging_service.send_text_or_template", _boom)
     contact = _make_contact(
@@ -239,13 +245,15 @@ def test_send_failure_then_close_proceeds_on_schedule(db, monkeypatch):
 def test_outbound_disabled_handled_same_as_any_send_failure(db, monkeypatch):
     """No special case in the sweep: whatever raises out of send_text_or_template
     (assert_outbound_enabled included, since it fires inside RespondClient) is
-    caught the same generic way as AC-1405."""
-
-    class _OutboundDisabled(Exception):
-        pass
+    caught the same generic way as AC-1405. Nit 2: the REAL exception
+    ``assert_outbound_enabled`` raises (``AppException``, 403), not a local
+    stand-in class."""
 
     def _boom(**_kw):
-        raise _OutboundDisabled("outbound disabled for this contact")
+        raise AppException(
+            status_code=403,
+            message="Outbound messaging is switched off for this contact.",
+        )
 
     monkeypatch.setattr("app.services.respond_messaging_service.send_text_or_template", _boom)
     contact = _make_contact(
