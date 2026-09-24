@@ -1689,6 +1689,94 @@ def test_supplier_filter_reads_newest_po_line(scm_app):
     assert [r["product_code"] for r in under_none["data"]] == [product_c.product_code]
 
 
+def test_last_supplier_stays_within_company_scope(scm_app):
+    """AC-4b - a REGRESSION GUARD, not a red test. A security review raised the concern
+    that `_last_supplier_map`'s window query, wrapped in `.subquery()`, could lose the
+    company-scope predicate and let a newer purchase-order line from ANOTHER company
+    outrank the caller's own. Measured 24 Sep 2026 with a real two-company seed (a fresh
+    `Company` row, a `PurchaseOrder`/`PurchaseOrderLine` explicitly stamped to it) run
+    through the real `scm_app` harness, SQL traced via `before_cursor_execute`: on this
+    SQLAlchemy version, `do_orm_execute`'s `with_loader_criteria(..., include_aliases=
+    True)` DOES reach into the window subquery - the compiled SQL carries
+    `purchase_orders.company_id IN (...)` inside the JOIN, in both directions tried
+    (the other company owning the PO and its line; the other company owning only the
+    PO with the line re-stamped to the caller's own company). `_last_supplier_map`
+    already excludes the other company's newer PO correctly, so this test is GREEN
+    today - it exists to catch a REGRESSION (a SQLAlchemy upgrade, or a rewritten query
+    shape, that stops threading the criteria through the subquery), at which point an
+    explicit `company_id` predicate would need adding to the query itself and this test
+    would go red until it did.
+    """
+    app, db = _client(scm_app)
+    from app.models.company import Company
+    from app.models.procurement import PurchaseOrder, PurchaseOrderLine
+
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    product = _product(db, f"{marker}-A")
+    _demand(
+        db, product, warehouse, qty=5, required_date=date(2026, 11, 10),
+        so_number=f"{marker}-SO1",
+    )
+
+    supplier_s = _supplier(db, f"ZZTS{_u()[:6]}".upper())
+
+    other_company = Company(
+        id=_u(), code=f"ZZT{_u()[:8]}".upper()[:20], name=f"{marker} other company",
+    )
+    db.add(other_company)
+    db.flush()
+    supplier_other = _supplier(db, f"ZZTOTH{_u()[:5]}".upper())
+    # Explicitly stamped to the OTHER company - the auto-stamp leaves an already-set
+    # `company_id` alone (`app.services.company_scope._stamp_scope`), so this persists
+    # under `other_company` even though the active session scope is Sorento.
+    supplier_other.company_id = other_company.id
+    db.flush()
+
+    # The caller's OWN, older PO - the answer this guard says must win.
+    po_own = PurchaseOrder(
+        id=_u(), po_number=f"ZZTPO{_u()[:6]}".upper(), supplier_id=supplier_s.id,
+        issue_date=date(2026, 1, 1), status="active", company_id=SORENTO_COMPANY_ID,
+    )
+    db.add(po_own)
+    db.flush()
+    db.add(
+        PurchaseOrderLine(
+            id=_u(), purchase_order_id=po_own.id, product_id=product.id,
+            warehouse_id=warehouse.id, qty_ordered=Decimal("10"),
+            qty_received=Decimal("0"), line_status="open",
+            company_id=SORENTO_COMPANY_ID,
+        )
+    )
+
+    # A NEWER PO owned by the OTHER company, naming the SAME product - invisible to the
+    # caller's scope, and yet a broken window query could rank it first anyway.
+    po_other = PurchaseOrder(
+        id=_u(), po_number=f"ZZTPO{_u()[:6]}".upper(), supplier_id=supplier_other.id,
+        issue_date=date(2026, 6, 1), status="active", company_id=other_company.id,
+    )
+    db.add(po_other)
+    db.flush()
+    db.add(
+        PurchaseOrderLine(
+            id=_u(), purchase_order_id=po_other.id, product_id=product.id,
+            warehouse_id=warehouse.id, qty_ordered=Decimal("10"),
+            qty_received=Decimal("0"), line_status="open", company_id=other_company.id,
+        )
+    )
+    db.flush()
+
+    with TestClient(app) as c:
+        body = c.get(BASE, params={"query": marker, "only_debt": False}).json()
+
+    row = _row_of(body, product.product_code)
+    assert row["supplier_id"] == str(supplier_s.id), (
+        "the other company's newer PO must not outrank the caller's own"
+    )
+    assert row["supplier_name"] == supplier_s.supplier_name
+    assert body["suppliers"] == [{"id": str(supplier_s.id), "name": supplier_s.supplier_name}]
+
+
 def test_row_carries_supplier_category_total(scm_app):
     """AC-5/A5: every row carries `supplier_id`, `supplier_name`, `category_code` and a
     `total` that sums the row's own months plus its three buckets - the same total the
