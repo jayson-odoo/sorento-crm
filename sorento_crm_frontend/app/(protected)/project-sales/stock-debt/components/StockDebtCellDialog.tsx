@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import Link from 'next/link';
 import { ColumnDef } from '@tanstack/react-table';
 import {
   Dialog,
@@ -17,9 +18,11 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { STATUS_PILL_BASE } from '@/lib/status-pill';
 import { cn } from '@/lib/utils';
+import { spoDetailHref } from '@/lib/spo-detail';
 import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { useStockDebtCellQuery } from '../hooks/useStockDebtQuery';
 import type {
+  StockDebtAssignedFrom,
   StockDebtBook,
   StockDebtDemandLine,
   StockDebtDemandStatus,
@@ -78,6 +81,39 @@ const EMPTY_SUPPLY: StockDebtSupplyEvent[] = [];
 
 function date(value: string | null): string {
   return value ? formatDateInMalaysia(value) : '-';
+}
+
+/**
+ * One `assigned_from` entry (R29 + addendum): a document (SPO/PO) is a LINK to the SPO
+ * allocations page, an on-hand bin is plain text - and a PINNED source names the order
+ * inquiry it came through, "... via OI-2026/09-0012", the OI part its own link. A WALK-
+ * assigned or on-hand source carries no `oi_id` at all and renders with no "via".
+ */
+function AssignedFromEntry({ entry }: { entry: StockDebtAssignedFrom }) {
+  const label = `${entry.ref} (${entry.qty.toLocaleString()})`;
+  return (
+    <>
+      {entry.kind !== 'on_hand' && entry.spo_number ? (
+        <Link href={spoDetailHref(entry.spo_number)} target="_blank" rel="noreferrer">
+          {label}
+        </Link>
+      ) : (
+        <span>{label}</span>
+      )}
+      {entry.kind !== 'on_hand' && entry.oi_id && (
+        <>
+          {' via '}
+          <Link
+            href={`/project-sales/order-inquiries/${entry.oi_id}`}
+            target="_blank"
+            rel="noreferrer"
+          >
+            {entry.oi_number}
+          </Link>
+        </>
+      )}
+    </>
+  );
 }
 
 export function StockDebtCellDialog({
@@ -189,11 +225,24 @@ export function StockDebtCellDialog({
         // R24: the Total footer row's own label, in the leftmost column - the same
         // convention the board's own footer row uses.
         footer: () => 'Total',
-        cell: ({ row }) => (
-          <span className="truncate font-medium" title={row.original.so_number}>
-            {row.original.so_number}
-          </span>
-        ),
+        // R29: linked to the sales order's own page - new tab, so a reader keeps this
+        // drill open beside it.
+        cell: ({ row }) =>
+          row.original.sales_order_id ? (
+            <Link
+              href={`/scm/sales-orders/${row.original.sales_order_id}`}
+              target="_blank"
+              rel="noreferrer"
+              className="truncate font-medium text-primary hover:underline"
+              title={row.original.so_number}
+            >
+              {row.original.so_number}
+            </Link>
+          ) : (
+            <span className="truncate font-medium" title={row.original.so_number}>
+              {row.original.so_number}
+            </span>
+          ),
       },
       {
         id: 'agent_code',
@@ -280,18 +329,27 @@ export function StockDebtCellDialog({
         ),
       },
       {
-        id: 'assigned_source',
-        accessorKey: 'assigned_source',
+        // R29: `assigned_source` (free text) replaced by `assigned_from` - one LINKED
+        // entry per source, each with its own quantity.
+        id: 'assigned_from',
         header: ({ column }) => <DataGridColumnHeader title="From" column={column} />,
-        size: 190,
-        cell: ({ row }) => (
-          <span
-            className="block truncate text-muted-foreground"
-            title={row.original.assigned_source ?? 'Nothing assigned'}
-          >
-            {row.original.assigned_source ?? 'Nothing assigned'}
-          </span>
-        ),
+        size: 220,
+        cell: ({ row }) => {
+          const entries = row.original.assigned_from ?? [];
+          if (!entries.length) {
+            return <span className="text-muted-foreground">Nothing assigned</span>;
+          }
+          return (
+            <span className="block truncate text-muted-foreground">
+              {entries.map((entry, index) => (
+                <React.Fragment key={`${entry.kind}:${entry.ref}:${index}`}>
+                  {index > 0 && ', '}
+                  <AssignedFromEntry entry={entry} />
+                </React.Fragment>
+              ))}
+            </span>
+          );
+        },
       },
       {
         id: 'status',
@@ -350,11 +408,24 @@ export function StockDebtCellDialog({
         id: 'ref',
         header: 'Document',
         size: 190,
-        cell: ({ row }) => (
-          <span className="block truncate" title={row.original.ref ?? ''}>
-            {row.original.ref ?? '-'}
-          </span>
-        ),
+        // R29: linked to the SPO allocations page - new tab. On hand names a bin, not a
+        // document, so it stays plain text.
+        cell: ({ row }) =>
+          row.original.spo_number ? (
+            <Link
+              href={spoDetailHref(row.original.spo_number)}
+              target="_blank"
+              rel="noreferrer"
+              className="block truncate text-primary hover:underline"
+              title={row.original.ref ?? ''}
+            >
+              {row.original.ref ?? '-'}
+            </Link>
+          ) : (
+            <span className="block truncate" title={row.original.ref ?? ''}>
+              {row.original.ref ?? '-'}
+            </span>
+          ),
       },
       {
         id: 'warehouse_code',
@@ -419,9 +490,15 @@ export function StockDebtCellDialog({
         header: 'Assigned to',
         size: 190,
         cell: ({ row }) => {
+          // R29: `line_no` names the SO LINE itself, beside the SO number - "SO382618
+          // line 2 (100)" - null when the core line has no project-line number of its
+          // own, which keeps the pre-R29 "SO382618 (100)" shape.
           const label = row.original.assigned_to.length
             ? row.original.assigned_to
-                .map((entry) => `${entry.so_number} (${entry.qty.toLocaleString()})`)
+                .map(
+                  (entry) =>
+                    `${entry.so_number}${entry.line_no != null ? ` line ${entry.line_no}` : ''} (${entry.qty.toLocaleString()})`,
+                )
                 .join(', ')
             : 'Free';
           return (

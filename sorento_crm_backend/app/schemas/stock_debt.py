@@ -15,9 +15,9 @@ from __future__ import annotations
 #: to the field, not to the type - which pydantic reads as "this must be None" and every
 #: dated event then fails response validation.
 from datetime import date as DateType
-from typing import Dict, List, Literal, Optional
+from typing import Annotated, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 Tone = Literal["red", "amber", "green"]
 DemandStatus = Literal["covered", "late", "short", "pinned"]
@@ -126,6 +126,40 @@ class StockDebtList(BaseModel):
     sheet_counts: StockDebtSheetCounts
 
 
+class StockDebtAssignedFromOnHand(BaseModel):
+    """One `assigned_from` entry sourced from a bin - never a document, so it carries no
+    `oi_number`/`oi_id` at all (R29 addendum): an on-hand hold is a DECISION
+    (`so_line_allocations`), never a placement, and there is no order inquiry to name."""
+
+    kind: Literal["on_hand"]
+    ref: str
+    spo_number: Optional[str] = None
+    spo_line_number: Optional[int] = None
+    qty: float
+
+
+class StockDebtAssignedFromDocument(BaseModel):
+    """One `assigned_from` entry sourced from an SPO/PO document (R29). `oi_number`/
+    `oi_id` name the order inquiry a PINNED placement came through - both `None` for a
+    plain WALK draw, which came through no placement at all (R29 addendum)."""
+
+    kind: Literal["spo", "po"]
+    ref: str
+    spo_number: Optional[str] = None
+    spo_line_number: Optional[int] = None
+    qty: float
+    oi_number: Optional[str] = None
+    oi_id: Optional[str] = None
+
+
+#: Discriminated on `kind` (the same idiom `price_tag.TagLayerPropsDoc` already uses) so an
+#: on-hand entry's wire shape never grows the two OI keys a document entry always carries.
+StockDebtAssignedFrom = Annotated[
+    Union[StockDebtAssignedFromOnHand, StockDebtAssignedFromDocument],
+    Field(discriminator="kind"),
+]
+
+
 class StockDebtDemandLine(BaseModel):
     so_number: str
     agent_code: Optional[str] = None
@@ -139,21 +173,36 @@ class StockDebtDemandLine(BaseModel):
     qty_ordered: float
     qty_delivered: float
     assigned_qty: float
+    #: Retired by R29 for `assigned_from` below - kept declared only because
+    #: `_source_text` still computes it and nothing is served by dropping a harmless field.
     assigned_source: Optional[str] = None
     status: DemandStatus
     #: What the line went short of ON ITS OWN DATE - the quantity its month books (R37).
     #: A `late` line ends covered and still carries one.
     short_qty: float
+    #: R29: the sales order this line belongs to - the FE's own link target for the Sales
+    #: order cell (`/scm/sales-orders/<id>`).
+    sales_order_id: Optional[str] = None
+    #: R29: `assigned_source` (free text) replaced by one LINKED entry per source.
+    assigned_from: List[StockDebtAssignedFrom] = []
 
 
 class StockDebtAssignedTo(BaseModel):
     so_number: str
+    #: R29: the SO LINE's own number (the project mirror's `line_no`), beside `so_number` -
+    #: "SO382618 line 2". `None` when the core line has no project-line number of its own.
+    line_no: Optional[int] = None
     qty: float
 
 
 class StockDebtSupplyEvent(BaseModel):
     kind: SupplyKind
     ref: Optional[str] = None
+    #: R29: the SPO's own `spo_number`/`spo_line_number` off `spo_allocations` - the
+    #: Document cell's link target. `None` for on hand and for PO (never emitted here,
+    #: R23).
+    spo_number: Optional[str] = None
+    spo_line_number: Optional[int] = None
     warehouse_code: Optional[str] = None
     #: Arrival: today for on hand, the SPO's arrival, `issue + lead` for a PO line (R29).
     date: Optional[DateType] = None

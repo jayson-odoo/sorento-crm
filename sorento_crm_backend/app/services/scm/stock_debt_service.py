@@ -44,6 +44,7 @@ from app.models.procurement import (
 from app.models.product import Product, ProductCategory
 from app.models.project_so import (
     INQUIRY_CANCELLED,
+    OrderInquiry,
     OrderInquiryLink,
     OrderInquiryRow,
     ProjectSalesOrderLine,
@@ -321,13 +322,16 @@ class StockDebtService:
         result = assignments[str(product.id)]
         events = self._event_cache[str(product.id)]
 
-        assigned_to: Dict[str, Dict[str, float]] = {}
+        # R29: Supply's own "Assigned to" entries carry `line_no` (the CORE line's own
+        # AutoCount `Seq`, `DemandLine.core_line_no`) beside `so_number`, so keyed on the
+        # PAIR rather than `so_number` alone - two lines of the same SO could otherwise
+        # merge into one entry.
+        assigned_to: Dict[str, Dict[Tuple[str, Optional[int]], float]] = {}
         for line in result.lines:
             for item in line.assigned:
-                assigned_to.setdefault(item.event.key, {}).setdefault(
-                    line.line.so_number, 0.0
-                )
-                assigned_to[item.event.key][line.line.so_number] += item.qty
+                key = (line.line.so_number, line.line.core_line_no)
+                assigned_to.setdefault(item.event.key, {}).setdefault(key, 0.0)
+                assigned_to[item.event.key][key] += item.qty
 
         demand = [
             {
@@ -349,6 +353,10 @@ class StockDebtService:
                 # which is why the drill states it rather than leaving the reader to
                 # subtract Assigned from Open and get a different number from the cell.
                 "short_qty": line.short_at_date,
+                # R29: the Sales order cell's own link target.
+                "sales_order_id": line.line.sales_order_id,
+                # R29 + addendum: one LINKED entry per source, replacing `assigned_source`.
+                "assigned_from": self._assigned_from(line),
             }
             for line in result.lines
             if line.bucket == month
@@ -378,6 +386,9 @@ class StockDebtService:
                     {
                         "kind": event.kind,
                         "ref": event.ref,
+                        # R29: the Document cell's own link target.
+                        "spo_number": event.spo_number,
+                        "spo_line_number": event.spo_line_number,
                         "warehouse_code": event.warehouse,
                         # THE ASSUMED date where there is one (R-O), because that is what
                         # the walk planned against; the paperwork's own date travels beside
@@ -401,10 +412,23 @@ class StockDebtService:
                         # supply until somebody re-dates it (R31).
                         "free_qty": result.free.get(event.key, 0.0) if counted else 0.0,
                         "overdue": not counted and event.at is not None,
+                        # R29: `line_no` is the CORE line's own AutoCount `Seq`, beside
+                        # `so_number` - sorted on the pair, `line_no or 0` so a line with
+                        # none sorts before a numbered one rather than raising on
+                        # `None < int`. The KEY itself is left off a line AutoCount has
+                        # never numbered, rather than sent `null`, matching the module's
+                        # own rule (`response_model` drops what it does not declare) -
+                        # `response_model_exclude_unset` on this route reads "not stated
+                        # at all" off exactly that omission.
                         "assigned_to": [
-                            {"so_number": so_number, "qty": round(qty, 4)}
-                            for so_number, qty in sorted(
-                                assigned_to.get(event.key, {}).items()
+                            {
+                                "so_number": so_number,
+                                **({"line_no": line_no} if line_no is not None else {}),
+                                "qty": round(qty, 4),
+                            }
+                            for (so_number, line_no), qty in sorted(
+                                assigned_to.get(event.key, {}).items(),
+                                key=lambda item: (item[0][0], item[0][1] or 0),
                             )
                         ],
                     }
@@ -773,6 +797,9 @@ class StockDebtService:
                         is_pool=warehouse_id in pools,
                         ordered_qty=_float(ref.ordered_qty),
                         received_qty=_float(ref.received_qty),
+                        # R29: the wire fields the Document cell links off.
+                        spo_number=ref.spo_number,
+                        spo_line_number=ref.spo_line_no,
                     )
                 )
 
@@ -820,6 +847,11 @@ class StockDebtService:
                 SalesOrderLine.product_id,
                 SalesOrderLine.warehouse_id,
                 SalesOrderLine.required_date,
+                SalesOrderLine.sales_order_id,
+                # R29: the CORE line's own `line_no` (AutoCount's `Seq`) - Supply's own
+                # "Assigned to" entries name this, never the PROJECT mirror's `line_no`
+                # selected below (a different number, the ladder's own).
+                SalesOrderLine.line_no.label("core_line_no"),
                 demand_qty().label("qty"),
                 SalesOrder.so_number,
                 SalesAgent.sales_agent,
@@ -866,6 +898,9 @@ class StockDebtService:
                     is_pool=warehouse_id in pools,
                     qty_ordered=_float(row.qty_ordered),
                     qty_delivered=_float(row.qty_delivered),
+                    # R29: the Sales order cell's own link target.
+                    sales_order_id=str(row.sales_order_id) if row.sales_order_id else None,
+                    core_line_no=row.core_line_no,
                 )
             )
         return out
@@ -930,9 +965,16 @@ class StockDebtService:
                 OrderInquiryLink.po_line_id,
                 OrderInquiryLink.qty,
                 SPOAllocation.spo_number,
+                SPOAllocation.spo_line_number,
                 PurchaseOrder.po_number,
+                # R29 addendum: the order inquiry this placement came through - a
+                # placement is part of an OI ROW's quantity on one document line, and
+                # `_holds` already joins that row to get here.
+                OrderInquiry.inquiry_no,
+                OrderInquiry.id.label("order_inquiry_id"),
             )
             .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquiryLink.row_id)
+            .join(OrderInquiry, OrderInquiry.id == OrderInquiryRow.order_inquiry_id)
             .join(
                 ProjectSalesOrderLine,
                 ProjectSalesOrderLine.id == OrderInquiryRow.so_line_id,
@@ -980,6 +1022,12 @@ class StockDebtService:
                     qty=qty,
                     kind=kind,
                     ref=ref,
+                    spo_number=row.spo_number,
+                    spo_line_number=row.spo_line_number,
+                    # R29 addendum: this hold IS a placement (an `order_inquiry_links`
+                    # row), so it always names the order inquiry it came through.
+                    oi_number=row.inquiry_no,
+                    oi_id=str(row.order_inquiry_id),
                 )
             )
         return out
@@ -1084,6 +1132,50 @@ class StockDebtService:
                 }
             )
         return out
+
+    def _assigned_from(self, line) -> List[Dict[str, Any]]:
+        """R29 + addendum: one LINKED entry per source behind `line`'s `assigned_qty` -
+        a document (SPO/PO) or an on-hand bin, each with its OWN quantity, so the FE can
+        render "SPO-... line 4 (100)" / "On hand BRW-BB (14)" instead of one merged
+        sentence.
+
+        Grouped by event key - the same grouping `_source_text` already applied to its own
+        text label - so a line drawing from the same document across more than one walk
+        step still names it once, with the two quantities summed, rather than twice.
+
+        `oi_number`/`oi_id` (addendum) ride on the TAKE (`item.oi_number`/`oi_id`), not the
+        event: the event object is SHARED across every line that draws from it, and only a
+        PINNED placement names an order inquiry at all - a plain walk draw of the same
+        document, by another line, names none.
+        """
+        entries: Dict[str, Dict[str, Any]] = {}
+        order: List[str] = []
+        for item in line.assigned:
+            event = item.event
+            if event.key not in entries:
+                order.append(event.key)
+                if event.kind == KIND_ON_HAND:
+                    entries[event.key] = {
+                        "kind": KIND_ON_HAND,
+                        "ref": f"On hand {event.warehouse}",
+                        "spo_number": None,
+                        "spo_line_number": None,
+                        "qty": 0.0,
+                    }
+                else:
+                    entries[event.key] = {
+                        "kind": event.kind,
+                        "ref": event.ref or event.kind.upper(),
+                        "spo_number": event.spo_number,
+                        "spo_line_number": event.spo_line_number,
+                        "qty": 0.0,
+                        "oi_number": item.oi_number,
+                        "oi_id": item.oi_id,
+                    }
+            entries[event.key]["qty"] += item.qty
+        return [
+            {**entries[key], "qty": round(entries[key]["qty"], 4)} for key in order
+        ]
 
     def _source_text(self, line) -> Optional[str]:
         """What a demand row says it is covered FROM - `On hand BRW-BB`, `SPO ...`, `PO ...`.

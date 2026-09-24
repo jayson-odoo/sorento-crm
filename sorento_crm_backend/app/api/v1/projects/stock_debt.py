@@ -117,7 +117,16 @@ def list_stock_debt(
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
-@router.get("/stock-debt/{product_id}/cell", response_model=StockDebtCell)
+@router.get(
+    "/stock-debt/{product_id}/cell",
+    response_model=StockDebtCell,
+    # R29: a supply row's `assigned_to` entry OMITS `line_no` entirely for a line
+    # AutoCount has never numbered, rather than sending it `null` - `exclude_unset`
+    # is what turns "the service dict never set this key" into "absent on the wire".
+    # Every other field this route builds is always explicitly set (even to `None`),
+    # so this affects nothing else.
+    response_model_exclude_unset=True,
+)
 def stock_debt_cell(
     product_id: str,
     month: str = Query(

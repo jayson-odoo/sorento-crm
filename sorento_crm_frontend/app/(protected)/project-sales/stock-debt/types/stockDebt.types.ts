@@ -140,7 +140,9 @@ export interface StockDebtDemandLine {
   qty_ordered?: number;
   qty_delivered?: number;
   assigned_qty: number;
-  /** Human source of the assignment: `On hand DC1-BB`, `SPO 2026/08-0063`, `PO ... line 3`. */
+  /** Human source of the assignment: `On hand DC1-BB`, `SPO 2026/08-0063`, `PO ... line 3`.
+   *  R29 retires this for `assigned_from` below, kept only because it is still a
+   *  declared field on the wire. */
   assigned_source: string | null;
   status: StockDebtDemandStatus;
   /**
@@ -149,7 +151,47 @@ export interface StockDebtDemandLine {
    * promised, and that is the fact the month states.
    */
   short_qty: number;
+  /** The sales order this line belongs to - the Sales order cell's own link target
+   *  (`/scm/sales-orders/<id>`, R29). Optional on this TYPE only so a fixture built
+   *  before this round still type-checks; the real wire always carries it. */
+  sales_order_id?: string | null;
+  /**
+   * R29: `assigned_source` (free text) replaced by one LINKED entry per source, each
+   * with its own quantity. Optional on this TYPE only, same reason as `sales_order_id`
+   * above.
+   */
+  assigned_from?: StockDebtAssignedFrom[];
 }
+
+/**
+ * One source behind an assigned quantity (R29 + addendum): a document (SPO/PO) or an
+ * on-hand bin, each carrying its OWN quantity so the From cell can print one linked
+ * entry per source instead of one merged sentence.
+ *
+ * `oi_number`/`oi_id` name the order inquiry a PINNED placement came through - both
+ * `null` on a document source that was WALK-assigned (no placement behind it). An
+ * on-hand entry never carries either key at all: it never comes through a placement,
+ * so there is nothing to name (`response_model` drops what a kind never declares).
+ */
+export interface StockDebtAssignedFromOnHand {
+  kind: 'on_hand';
+  ref: string;
+  spo_number: null;
+  spo_line_number: null;
+  qty: number;
+}
+
+export interface StockDebtAssignedFromDocument {
+  kind: 'spo' | 'po';
+  ref: string;
+  spo_number: string | null;
+  spo_line_number: number | null;
+  qty: number;
+  oi_number: string | null;
+  oi_id: string | null;
+}
+
+export type StockDebtAssignedFrom = StockDebtAssignedFromOnHand | StockDebtAssignedFromDocument;
 
 /** What a supply event is: stock already held, a shipment arriving, or a PO on order. */
 export type StockDebtSupplyKind = 'on_hand' | 'spo' | 'po';
@@ -159,6 +201,10 @@ export interface StockDebtSupplyEvent {
   kind: StockDebtSupplyKind;
   /** Document reference. Null for on hand, which is a bin rather than a document. */
   ref: string | null;
+  /** R29: the SPO's own number/line off `spo_allocations` - the Document cell's link
+   *  target. Null for on hand and for the PO kind (never emitted here, R23). */
+  spo_number?: string | null;
+  spo_line_number?: number | null;
   warehouse_code: string | null;
   /** Arrival: today for on hand, the SPO's arrival, `issue + lead` for a PO line (R29). */
   date: string | null;
@@ -177,7 +223,11 @@ export interface StockDebtSupplyEvent {
   free_qty: number;
   /** Arrival passed with nothing received: listed, but counted as nothing (R31). */
   overdue: boolean;
-  assigned_to: { so_number: string; qty: number }[];
+  /** R29: `line_no` is the SO LINE's own number (the project mirror's `line_no`), beside
+   *  `so_number` - "SO382618 line 2 (100)". Optional/nullable on this TYPE only so a
+   *  fixture built before this round still type-checks; null when the core line has no
+   *  project-line number of its own. */
+  assigned_to: { so_number: string; line_no?: number | null; qty: number }[];
 }
 
 /**
