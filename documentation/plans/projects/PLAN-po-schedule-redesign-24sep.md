@@ -1,8 +1,8 @@
 # PLAN: PO and delivery schedule redesign (issue #1167)
 
-Status: grilled, mockups redrawn after lavish review round 1 to 3 (24 Sep 2026), awaiting owner
-approval of the redrawn mockups, no code. Track per slice: S1 small fix; S4 small fix; S2, S3,
-S5, S6, S7 full track.
+Status: approved by the owner 24 Sep 2026 (lavish review, "yeah all good for me"), R22 design
+constraint binding; tickets pending; nothing built. Track per slice: S1 small fix; S4 small fix;
+S2, S3, S5, S6, S7 full track.
 
 UAC: `documentation/plans/projects/po-schedule-redesign-24sep-acceptance-criteria.md`.
 Evidence: `documentation/plans/projects/AUDIT-po-schedule-flow-24sep.md` and 42 screenshots
@@ -76,8 +76,10 @@ The owner reviewed the first mockup drawing in one lavish session (R5's method) 
 complex; these rulings supersede R2 (the Needs attention page) and part of R3 (one shared findings
 component as a separate surface) and replace R5's un-numbered mockups with the four redrawn ones
 above. A follow-up ruling (R21) after seeing the redrawn `project-listing-start.html` moves Start
-from a per-row button (R14(a)) to one page-level button. R10's slice order and R6/R7/R8/R9 stand
-unchanged.
+from a per-row button (R14(a)) to one page-level button. The owner then approved the whole set
+(R22), closing R9's production check and setting a standing design constraint (its own section
+below). R23 closes the finding-collapse open question as a reading of that approval. R10's slice
+order and R6/R7/R8 stand unchanged.
 
 > R11 [round 1] "imo the mockups are way too complicated, it is very taxing for the users, please
 > simplify that."
@@ -140,6 +142,21 @@ unchanged.
 > (clearable, searchable, per the earlier ruling "when he upload, he choose the project, then
 > upload"), then the file, then straight to that document's review page, exactly as before. Rows
 > lose the Start button.
+>
+> R22 [approval, after R21] "yeah all good for me, just make sure we keep it as simple as
+> possible, as guided as possible when we are designing the UI, currently the UI for the entire
+> project management is too sloppy and messy, information overload, visual fatigue, the PDF check
+> is small matter, as long as the PDF shows and when it is not found we show a proper not found
+> page then is okay for me." Approves the four redrawn mockups and R21 as they stand. Sets a
+> standing design constraint for every screen this plan touches (own section below). Closes R9:
+> the R13 "This PDF is not available yet" empty state is enough, no separate production check is
+> owed.
+>
+> R23 [reading, not a direct quote] Closes the finding-collapse open question from the mockup
+> review: a hard SO finding and the schedule finding that causes it collapse into one row (one
+> card), naming both codes, with one Dismiss action. Reading of the owner's "all good" (R22),
+> which covered the in-page recommendation shown during the lavish review; revisit if the owner
+> objects.
 
 Reading (the plan's own summary, not a quote): the Needs attention list is dropped; the entry
 point for every upload is ONE Start button, top right of the Project listing (Project Sales >
@@ -152,6 +169,17 @@ with a reason" action), plus a Documents tab (the uploaded file, and for the PO 
 rejected-note reasons) that is always present. No Findings tab anywhere, no left/right split pane;
 the table takes the full page width. One primary button per page (Confirm schedule / Confirm this
 PO / Publish). A missing PDF is a plain empty state, never an error code.
+
+## Design constraint (R22)
+
+Every screen in this plan is built simple and guided: one table, one primary action, no
+explanatory text on screen, no information the user does not act on. This is not a new rule so
+much as R22 naming, in the owner's own words, the standard PRINCIPLES and DESIGN-LANGUAGE already
+set ("no feature explanations inside the UI", the frequency gate, one primary button per record)
+and holding this plan to it explicitly, because the owner named the wider project management UI as
+"too sloppy and messy, information overload, visual fatigue" today. Each slice's Definition of
+Done carries the line: reviewer checks the screen against R22: fewer elements than the mockup is
+fine, more is a defect.
 
 ## Facts this plan rests on (verified against the checkout, 24 Sep 2026)
 
@@ -248,6 +276,8 @@ Paths: `FE` = `sorento_crm_frontend`, `PS` = `FE/app/(protected)/project-sales`,
   SO table test the grep finds); new vitest for S1-4 / S1-5 in
   `POIntakeAnnotationsGrid.test.tsx`; a string test for S1-1 / S1-2. Browser pass on the two
   changed screens.
+- **DoD:** reviewer checks the screen against R22: fewer elements than the mockup is fine, more is
+  a defect.
 
 ### S2. One Start button on the Project listing (full track)
 
@@ -278,6 +308,8 @@ two uploads ask for the project since a page-level Start no longer has a row to 
   `projectId`" (the S2 call site never carries one). Recorded agent-browser run for S2-8: from `/`,
   expand Project Sales, click Pipeline, click Start (top right), click Upload PO, pick Setia Alam,
   see the dropzone. Same for Upload delivery schedule. At 1280 and 375.
+- **DoD:** reviewer checks the screen against R22: fewer elements than the mockup is fine, more is
+  a defect.
 
 ### S3. Inline row findings, one Dismiss per row, one list (full track, mostly FE)
 
@@ -300,6 +332,9 @@ two uploads ask for the project since a page-level Start no longer has a row to 
   a key) and `DismissReasonDialog` (3-character minimum, the count in the button label, fires
   `onDismiss` once per underlying id with one reason, verb text). The existing pytest for
   `_refresh_status`, `publish` and the manage-permission override run unedited (S3-5).
+- **DoD:** reviewer checks the screen against R22: fewer elements than the mockup is fine, more is
+  a defect. Includes R23: a hard SO finding and the schedule finding causing it collapse into one
+  row naming both codes, with one Dismiss.
 
 ### S4. Return after Confirm (small fix track, FE only)
 
@@ -313,6 +348,8 @@ two uploads ask for the project since a page-level Start no longer has a row to 
   origin into the review URL they push to.
 - **Tests:** vitest per page: confirm with origin navigates, without origin stays; upload
   forwards origin. Browser pass S4-6.
+- **DoD:** reviewer checks the screen against R22: fewer elements than the mockup is fine, more is
+  a defect.
 
 ### S5. Delivery schedule review screen (full track, FE only; first of the three; per approved
 `mockups/delivery-schedule-review.html`)
@@ -334,6 +371,8 @@ two uploads ask for the project since a page-level Start no longer has a row to 
   flagged row shows the full customer code and a Dismiss action, the History sheet opens with the
   three existing sections, the missing-PDF empty state on Documents); existing matrix tests stay
   green. Browser pass S5-6 at 1280 and 375.
+- **DoD:** reviewer checks the screen against R22: fewer elements than the mockup is fine, more is
+  a defect.
 
 ### S6. PO review screen (full track, FE only; renamed from "PO confirm"; per approved
 `mockups/po-review.html`)
@@ -352,6 +391,8 @@ two uploads ask for the project since a page-level Start no longer has a row to 
 - **Tests:** vitest on the recomposed client (trail states, two tabs only, default filter, Lines
   identified vs Show all lines, Documents renders the PDF and the annotations grid together, the
   R13 missing-PDF empty state renders no error code); browser pass S6-4.
+- **DoD:** reviewer checks the screen against R22: fewer elements than the mockup is fine, more is
+  a defect.
 
 ### S7. Sales order review screen (full track, FE only; renamed from "SO findings"; per approved
 `mockups/sales-order-review.html`)
@@ -369,21 +410,30 @@ two uploads ask for the project since a page-level Start no longer has a row to 
 - **Tests:** vitest on header, default tab, and the merged Lines table (rows from both finding
   sources, Flag column, Dismiss inline, AutoCount differences stays a separate tab); browser pass
   S7-4.
+- **DoD:** reviewer checks the screen against R22: fewer elements than the mockup is fine, more is
+  a defect. Includes R23's collapse for a blocking SO finding and its causing schedule finding.
 
 ## Open questions for the mockup review
 
-1. Should a hard SO finding and the schedule finding that causes it (for example CB1178A "the
-   schedule only places 0" and the unmapped column BUI-HB-CB1178ASS) also collapse, as two codes
-   for one cause? This plan collapses same code + same subject only; the owner was shown this
-   question in-page during the lavish review with a recommendation (collapse into one row, both
-   codes listed) and it is awaiting an explicit yes.
-2. There is no Needs attention list to drop off from any more (R17). A schedule confirmed with
-   columns still unreconciled (HQ/26/01/121 v2, 35 of 44) keeps its flagged rows in the Schedule
-   tab exactly as any other list row would: visible until a human fixes or dismisses each one,
-   with no separate "gone" state. This plan assumes that is the intended behaviour; it was not a
-   named ruling.
-3. Owner check R9 (PDF 404 in production) is owed before S6; if production is also broken it
-   becomes its own bug lane, not part of S6.
+The owner approved the redrawn mockups in full (R22, "yeah all good for me"), which closes two of
+the three questions below; one remains open.
+
+1. CLOSED by R23. Should a hard SO finding and the schedule finding that causes it (for example
+   CB1178A "the schedule only places 0" and the unmapped column BUI-HB-CB1178ASS) also collapse,
+   as two codes for one cause? This plan had collapsed same code + same subject only; R23 extends
+   S3-3's collapse rule for this specific pairing: one row (one card), both codes listed, one
+   Dismiss. This is a reading of the owner's blanket "all good", not a direct answer to the
+   in-page question; revisit if the owner objects.
+2. Still open. There is no Needs attention list to drop off from any more (R17). A schedule
+   confirmed with columns still unreconciled (HQ/26/01/121 v2, 35 of 44) keeps its flagged rows in
+   the Schedule tab exactly as any other list row would: visible until a human fixes or dismisses
+   each one, with no separate "gone" state. This plan assumes that is the intended behaviour; it
+   was not a named ruling.
+3. CLOSED by R22. Owner check on the PO HQ/26/01/121 v1 PDF viewer in production is no longer
+   owed: "the PDF check is small matter, as long as the PDF shows and when it is not found we show
+   a proper not found page then is okay for me." The R13 empty state (S5-5, S6-5) is the answer;
+   there is no separate bug lane to open even if production shows the same 404 the audit saw
+   locally.
 
 ## Deferred
 
