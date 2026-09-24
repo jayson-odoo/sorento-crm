@@ -117,6 +117,16 @@ export function ConvertToPackingListDialog({
   const carryPreview = invoice?.convert_carry ?? {
     container: null, seal: null, so: null, consignee: null,
   };
+  // V3 (fix round 1): the line names only what IS carried - a part with no value is
+  // dropped entirely rather than printed as "Container -".
+  const carryParts = useMemo(() => {
+    const parts: string[] = [];
+    if (carryPreview.container) parts.push(`Container ${carryPreview.container}`);
+    if (carryPreview.seal) parts.push(`Seal ${carryPreview.seal}`);
+    if (carryPreview.so) parts.push(`SO ${carryPreview.so}`);
+    if (carryPreview.consignee) parts.push(`Consignee ${carryPreview.consignee}`);
+    return parts;
+  }, [carryPreview.container, carryPreview.seal, carryPreview.so, carryPreview.consignee]);
 
   const defaultSize = useMemo(
     () => (containerSizes.data ?? []).find((s) => s.is_default) ?? null,
@@ -193,7 +203,9 @@ export function ConvertToPackingListDialog({
     });
   }, [placementRows, search]);
 
-  /** Footer totals over what is on screen. Read through a ref by the footer cells, the
+  /** Footer totals over the FULL placement set, never the search-filtered `visibleRows`
+   *  (C4: "find, not select" - a search narrows what the TABLE shows, not what Convert
+   *  will place or what the footer sums). Read through a ref by the footer cells, the
    *  same way the Packing tab's own footers do: listing the rows as a `columns` dependency
    *  rebuilds every cell renderer whenever the packing query resolves. */
   const totals = useMemo(
@@ -373,15 +385,16 @@ export function ConvertToPackingListDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      {/* C4: bounded, non-scrolling shell - the table scrolls INSIDE the body (DialogBody's
-          own `overflow-y-auto`), so the search box above it and the Convert/Cancel footer
-          below it never move, even at a short (800px) window. */}
+      {/* C4/V3 (fix round 1): bounded, non-scrolling shell - ONLY the table scrolls, in its
+          own inner region below, so the container-size picker, the carried-onto line, the
+          search box above and the Convert/Cancel footer below never move, even at a short
+          (800px) window. */}
       <DialogContent className="max-h-[85vh] w-full max-w-2xl overflow-hidden">
         <DialogHeader>
           <DialogTitle>Convert to a packing list</DialogTitle>
         </DialogHeader>
 
-        <DialogBody className="max-h-[55vh] space-y-4 overflow-y-auto">
+        <DialogBody className="flex max-h-[55vh] min-h-0 flex-1 flex-col space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="convert-container-size" className="text-xs">
               Container size
@@ -408,20 +421,16 @@ export function ConvertToPackingListDialog({
           ) : null}
 
           {single && invoice ? (
-            <div className="space-y-2">
+            <div className="flex min-h-0 flex-1 flex-col space-y-2">
               {/* Carried onto the draft (AC-C5/AC-C6, B3) - one compact line naming
                   exactly what the packing list will receive, a fact stated whether or not
-                  anything is left to place. */}
-              {carryPreview.container ||
-              carryPreview.seal ||
-              carryPreview.so ||
-              carryPreview.consignee ? (
+                  anything is left to place. V3 (fix round 1): a part that carries NOTHING
+                  is omitted entirely rather than printed as "Container -" - the line
+                  states what IS carried, never what is not. */}
+              {carryParts.length ? (
                 <p className="text-2xs text-muted-foreground">
                   <span className="font-medium text-foreground">Carried onto the draft: </span>
-                  Container {carryPreview.container ?? EM_DASH}
-                  {carryPreview.seal ? ` · Seal ${carryPreview.seal}` : ''}
-                  {carryPreview.so ? ` · SO ${carryPreview.so}` : ''}
-                  {carryPreview.consignee ? ` · Consignee ${carryPreview.consignee}` : ''}
+                  {carryParts.join(' · ')}
                 </p>
               ) : null}
               {placementRows.length ? (
@@ -433,21 +442,27 @@ export function ConvertToPackingListDialog({
                   className="w-full sm:w-72"
                 />
               ) : null}
-              <DataGrid
-                table={table}
-                recordCount={visibleRows.length}
-                isLoading={false}
-                tableLayout={{ width: 'fixed', columnsResizable: true }}
-                emptyMessage={
-                  alreadyPlaced.length > 0
-                    ? `Every line of ${invoice.pi_number} is already in a packing list.`
-                    : placementRows.length > 0
-                      ? 'No line matches that search.'
-                      : `No line of ${invoice.pi_number} can go on a container yet.`
-                }
-              >
-                <DataGridTable />
-              </DataGrid>
+              {/* C4/AC-C3 (fix round 1, V3): ONLY the table scrolls - the container-size
+                  picker, the carried-onto line and the search box above all stay fixed,
+                  so the Convert/Cancel footer never has to compete with them for a short
+                  window's vertical space. */}
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                <DataGrid
+                  table={table}
+                  recordCount={visibleRows.length}
+                  isLoading={false}
+                  tableLayout={{ width: 'fixed', columnsResizable: true }}
+                  emptyMessage={
+                    alreadyPlaced.length > 0
+                      ? `Every line of ${invoice.pi_number} is already in a packing list.`
+                      : placementRows.length > 0
+                        ? 'No line matches that search.'
+                        : `No line of ${invoice.pi_number} can go on a container yet.`
+                  }
+                >
+                  <DataGridTable />
+                </DataGrid>
+              </div>
             </div>
           ) : null}
 

@@ -11,6 +11,7 @@ this system.
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from datetime import date
 from typing import Annotated, Optional, Union
@@ -52,6 +53,7 @@ from app.services.scm.upload_intake import read_upload, read_upload_retained
 from app.utils.http import content_disposition
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # Same capability as the other upload channels: this rewrites what a container is planned
 # from, so it sits behind the operator permission rather than the read one.
@@ -1177,22 +1179,34 @@ def enqueue_packing_list_export(
     """Queue an async xlsx export of the consolidated packing list (E1/E2) - same shape as
     a complaint's PDF export: a `user_downloads` row now, the render on the worker. The
     result appears in My Downloads and this shipment's own Download history."""
-    from app.models.procurement import InboundShipment
+    import re
+
     from app.schemas.download import DownloadResponse
     from app.services.download_service import DownloadService
     from app.services.queue_service import enqueue_job
-    from app.tasks.export_tasks import generate_packing_list_xlsx
+    from app.services.scm.consolidated_packing_list import _shipment_or_404
+    from app.tasks.export_tasks import EXPORT_FAILURE_MESSAGE, generate_packing_list_xlsx
 
-    shipment = db.query(InboundShipment).filter(InboundShipment.id == shipment_id).first()
-    if shipment is None:
-        raise AppException(404, "Packing list not found.")
+    # R10 (review round 1): the SAME 404-on-non-UUID guard `build`/the task use, rather
+    # than a raw `== shipment_id` comparison against a UUID column, which Postgres
+    # refuses with `InvalidTextRepresentation` - an unhandled 500, not a 404.
+    shipment = _shipment_or_404(db, shipment_id)
+
+    # R10: the SAME filename sanitiser `export_filename` (the task) applies - the stem
+    # named here is not yet what the file is called (the task's own build recomputes the
+    # real one), but it fills the row until the render replaces it, and it must never
+    # carry whatever path-unsafe characters the container number states verbatim.
+    stem = re.sub(
+        r"[^A-Za-z0-9._-]", "",
+        str(shipment.shipping_container_number or shipment.shipment_number or shipment_id),
+    ) or str(shipment_id)
 
     download = DownloadService(db).create(
         user_id=str(current_user["id"]),
         kind="packing_list_xlsx",
         source_entity_type="inbound_shipment",
         source_entity_id=str(shipment_id),
-        filename=f"packing-list-{shipment.shipping_container_number or shipment.shipment_number or shipment_id}.xlsx",
+        filename=f"{stem}-packing-list.xlsx",
     )
     try:
         enqueue_job(
@@ -1204,10 +1218,11 @@ def enqueue_packing_list_export(
         )
     except Exception as e:  # noqa: BLE001 - enqueue failed (e.g. Redis down): mark the
         # row failed so the drawer shows it rather than spinning forever.
-        DownloadService(db).mark_failed(
-            str(download.id), f"Could not queue packing list export: {e}"
-        )
-        raise AppException(500, "Could not queue packing list export. Please try again.") from e
+        logger.exception("enqueue_packing_list_export: could not queue for shipment %s", shipment_id)
+        # R8 (security S3): a fixed sentence, never `str(e)` - the raw message could carry
+        # a broker URL, a stack fragment, or other detail this drawer shows the user.
+        DownloadService(db).mark_failed(str(download.id), EXPORT_FAILURE_MESSAGE)
+        raise AppException(500, EXPORT_FAILURE_MESSAGE) from e
 
     return DownloadResponse.model_validate(DownloadService(db).get(str(download.id)))
 

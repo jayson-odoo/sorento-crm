@@ -25,6 +25,24 @@ from app.services.scm.header_probe import probe as probe_headers
 from app.services.scm.outstanding_reader import all_sheet_rows
 from app.services.scm.packing_list_reader import header_field_candidates
 
+#: Header-block fields' own display wording (AC-F2: "PI number, Invoice date, BL,
+#: Container, Seal, Currency") - `field_label`'s generic `field_key.replace("_",
+#: " ").capitalize()` fallback would read "Bl no"/"Pi number" instead, so these six are
+#: spelled out rather than left to the generic rule the COLUMN section's labels use.
+_HEADER_FIELD_LABELS: dict[str, str] = {
+    "pi_number": "PI number",
+    "invoice_date": "Invoice date",
+    "bl_no": "BL",
+    "container_no": "Container",
+    "seal_no": "Seal",
+    "currency": "Currency",
+}
+
+
+def _header_field_label(field: str) -> str:
+    return _HEADER_FIELD_LABELS.get(field) or field_label(field)
+
+
 #: Doc types whose readers carry a header BLOCK at all (F1/R-D,
 #: PLAN-pi-header-fields-convert-fixes-24sep.md) - `supplier_inventory` is one row per
 #: line, nothing above it to scan.
@@ -133,17 +151,21 @@ def probe(
     # fields ACROSS every requested doc type, `consignee` excluded (R-B: always the PI's
     # own company, never a mapper pick) - resolved through whichever of THIS probe's own
     # resolvers answers for a relevant doc type, the same "first doc type wins" rule the
-    # columns above already follow.
+    # columns above already follow. Computed unconditionally (not gated on `header_fields`
+    # actually finding anything): `header_field_choices` (V2, review round 1) is the
+    # mapper's own field VOCABULARY for this doc type, independent of whether this
+    # particular file states any pairs at all.
+    block_fields: set[str] = set()
+    for dt in doc_types:
+        block_fields.update(_block_fields_for(dt))
+    block_fields.discard("consignee")
+
     header_fields: list[dict] = []
-    if probed.header_row and probed.header_row > 1:
-        block_fields: set[str] = set()
-        for dt in doc_types:
-            block_fields.update(_block_fields_for(dt))
-        block_fields.discard("consignee")
+    if probed.header_row and probed.header_row > 1 and block_fields:
         resolver = next(
             (r for r, dt in zip(resolvers, doc_types) if dt in _HEADER_FIELD_DOC_TYPES), None
         )
-        if resolver is not None and block_fields:
+        if resolver is not None:
             rows = all_sheet_rows(file_data)
             above_rows = rows[: probed.header_row - 1]
             if above_rows:
@@ -159,6 +181,12 @@ def probe(
         # has somewhere to stop.
         "row_count": probed.row_count,
         "header_fields": header_fields,
+        # V2 (review round 1): the "Header fields" section's own choices - the doc
+        # type(s)' block fields, `consignee` excluded, so a packing-list-only upload is
+        # never offered Currency (a proforma-invoice-only concept no reader for it saves).
+        "header_field_choices": [
+            {"field": f, "label": _header_field_label(f)} for f in sorted(block_fields)
+        ],
     }
 
 

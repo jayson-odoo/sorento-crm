@@ -69,19 +69,6 @@ export interface ImportMappingHeaderField {
   source: 'supplier' | 'shared' | 'none';
 }
 
-/** F2/AC-F2: the "Header fields" section's own field choices - fixed, unlike a column's
- *  (which come from the caller's doc-type `fields` prop), because a header-block pair is
- *  always one of these six regardless of doc type. `Ignore` is added the same way the
- *  columns section adds it, not carried here. Consignee is deliberately absent (R-B). */
-export const HEADER_FIELD_CHOICES: ImportMappingField[] = [
-  { field: 'pi_number', label: 'PI number' },
-  { field: 'invoice_date', label: 'Invoice date' },
-  { field: 'bl_no', label: 'BL' },
-  { field: 'container_no', label: 'Container' },
-  { field: 'seal_no', label: 'Seal' },
-  { field: 'currency', label: 'Currency' },
-];
-
 /** What `POST .../import-mapping/probe` (B4) answers for one file. `header_row` is null
  *  when no row satisfied the heuristic (AC-M16) - the stepper still has to start
  *  somewhere, and row 1 is that starting point, not a guess dressed up as one. */
@@ -107,6 +94,15 @@ export interface ImportMappingProbe {
    *  (`supplier_inventory`), and absent on a hand-built probe from before this field
    *  existed - the "Header fields" section below renders nothing either way. */
   header_fields?: ImportMappingHeaderField[];
+  /** V2 (fix round 1, review): the "Header fields" section's OWN field choices, driven by
+   *  the doc type(s) this probe was run for - the block fields (`_BLOCK_FIELDS`) that
+   *  doc type's reader actually resolves, minus `consignee` (R-B: always the PI's own
+   *  company, never read off the sheet) - never a hard-coded superset that offers
+   *  Currency on a packing-list-only upload, which has no such field at all. A combined
+   *  file's probe unions both doc types' choices. Absent on a hand-built probe from
+   *  before this field existed, or a doc type with no header block at all
+   *  (`supplier_inventory`) - the section then offers nothing to pick, same as before. */
+  header_field_choices?: ImportMappingField[];
 }
 
 /** One header's pick, in the shape `onChange` reports it and `save` (B5) takes it -
@@ -205,8 +201,8 @@ export function ImportColumnMapper({
     [fieldOptions],
   );
   const headerFieldOptions = useMemo(
-    () => [{ field: IGNORE_FIELD, label: 'Ignore' }, ...HEADER_FIELD_CHOICES],
-    [],
+    () => [{ field: IGNORE_FIELD, label: 'Ignore' }, ...(probe.header_field_choices ?? [])],
+    [probe.header_field_choices],
   );
   const headerSelectOptions = useMemo(
     () => headerFieldOptions.map((f) => ({ value: f.field, label: f.label })),

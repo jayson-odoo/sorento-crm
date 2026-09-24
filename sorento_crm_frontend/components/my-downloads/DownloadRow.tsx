@@ -47,6 +47,10 @@ export const KIND_LABEL: Record<string, string> = {
   order_sheet_pdf: 'Order sheet PDF',
   order_sheet_xlsx: 'Order sheet Excel',
   low_stock_xlsx: 'Low stock report',
+  // V1 (fix round 1, PLAN-pi-header-fields-convert-fixes-24sep.md): the async
+  // packing-list export (E1/E2) writes rows with this kind; without a label here a
+  // row with no filename yet falls back to the raw key.
+  packing_list_xlsx: 'Packing list Excel',
 };
 
 export function StatusBadge({ status }: { status: MyDownload['status'] }) {

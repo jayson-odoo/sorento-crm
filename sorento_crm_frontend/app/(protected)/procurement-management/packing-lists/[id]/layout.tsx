@@ -12,7 +12,6 @@ import {
   Files,
   History,
   Info,
-  Printer,
   Settings,
   Trash2,
   Upload,
@@ -186,7 +185,7 @@ function PackingListToolbar({ id }: { id: string }) {
                     Download packing list
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => setDownloadsOpen(true)}>
-                    <Printer className="size-4" />
+                    <History className="size-4" />
                     Download history
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => setImportOpen(true)}>

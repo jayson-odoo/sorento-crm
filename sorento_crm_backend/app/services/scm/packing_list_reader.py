@@ -30,7 +30,7 @@ from typing import Any, Optional
 
 from sqlalchemy.orm import Session
 
-from app.services.import_alias_service import AliasResolver, normalize_header
+from app.services.import_alias_service import AliasResolver, IGNORE_FIELD, normalize_header
 from app.services.scm.currency_resolution import price_column_currency
 from app.services.scm.outstanding_reader import RowProblem, sheet_rows
 
@@ -335,6 +335,19 @@ def _is_header(mapped: dict[int, str], required: tuple[str, ...] = _REQUIRED_COL
 #: A colon, either width - the only thing `_split_label_pairs` ever splits a cell on.
 _COLON_RE = re.compile(r"[：:]")
 
+#: R9 (review round 1, security S1): bounds against a pathological cell - a supplier
+#: field nobody sanitises before it reaches `_split_label_pairs`. Applied only to the
+#: mapper's `any_label=True` probe path, which (unlike the reader path, R3(a)) has no
+#: early exit of its own: a cell is cut to this many characters before any splitting is
+#: attempted, and the label-boundary lookback tries at most this many trailing tokens.
+_MAX_LABEL_CELL_CHARS = 500
+_MAX_LABEL_LOOKBACK_TOKENS = 4
+#: `header_field_candidates`' own response size cap (R9) - the mapper lists candidates
+#: for a human to map, not an unbounded dump of a malformed sheet.
+_MAX_HEADER_FIELD_CANDIDATES = 200
+#: Each candidate's own `label`/`sample` length cap (R9).
+_MAX_LABEL_FIELD_TEXT = 255
+
 
 def _split_label_pairs(
     text: str,
@@ -348,11 +361,17 @@ def _split_label_pairs(
     in a row: `提单号 ：OOLU2339207730          柜号 ：FSCU9304169          封条号：OOLLGZ7182`.
 
     A position counts as a label boundary when the run of non-whitespace text immediately
-    before its colon resolves, via `resolver`, to one of `fields` (the default, A1's reader
-    path - `_labelled` below) - an unrelated colon inside running text is never mistaken for
-    one, because nothing about it resolves. `any_label=True` (F1's mapper-probe path, ruling
-    5) accepts EVERY such run regardless of whether it resolves, so a label the alias table
-    has never seen still shows up for the operator to map; its `field` is then `None`.
+    before its colon resolves, via `resolver.raw_field_for_header` (R1/R3(b), review round
+    1: a label a supplier saved as `ignore` counts as KNOWN here too - it still ends the
+    preceding value and is reported as field `"ignore"`, never treated as unresolved text -
+    only `_labelled`'s own consumption of the pairs below drops it from what gets written),
+    to one of `fields` (the default, A1's reader path - `_labelled` below) - an unrelated
+    colon inside running text is never mistaken for one, because nothing about it resolves.
+    `any_label=True` (F1's mapper-probe path, ruling 5) accepts EVERY such run regardless of
+    whether it resolves, so a label the alias table has never seen still shows up for the
+    operator to map; its `field` is then `None`. The `any_label` path is also where R9's
+    bounds against a pathological cell apply - not the reader path, which R3(a) below
+    already exits early on an unresolved first colon.
 
     A value runs from just after its label's colon to the START of the next label (or the
     end of the string), trimmed - unknown text in between (a stray note, another colon that
@@ -364,11 +383,24 @@ def _split_label_pairs(
     The label's own trailing tokens are tried shortest-first, never everything back to the
     previous cut point (which would also carry the previous pair's whole value): the LAST
     whitespace-delimited run before the colon first (`柜号`, `封条号`), then two runs
-    (`INVOICE NO.` - Jiexia's own English label is two words), and so on, stopping at the
-    first span that resolves. A candidate that resolves at no width at all is not a label
-    boundary here (the default, non-`any_label` path) - an unrelated colon inside running
-    text never matches anything, so it is never mistaken for one.
+    (`INVOICE NO.` - Jiexia's own English label is two words), and so on up to
+    `_MAX_LABEL_LOOKBACK_TOKENS` (R9), stopping at the first span that resolves. A candidate
+    that resolves at no width at all is not a label boundary here (the default, non-
+    `any_label` path) - an unrelated colon inside running text never matches anything, so
+    it is never mistaken for one.
+
+    R3(a) (review round 1, note-row regression): in the READER path (`any_label=False`), a
+    label is accepted only at the START of the cell or immediately after the previous
+    accepted pair's value - the FIRST colon in the cell must resolve, or the whole cell is
+    abandoned (a mid-table note like `Note: see PI No.: 123` must never let a LATER,
+    unrelated colon resolve into a label once the leading text already failed to). Once one
+    label has been accepted, a later unresolved colon still merges into the running value as
+    before - only the very first one is a hard gate. `any_label=True` keeps the old,
+    permissive behaviour (an unresolved colon is simply skipped) so the mapper still lists
+    every unmapped label for the operator to answer.
     """
+    if any_label and len(text) > _MAX_LABEL_CELL_CHARS:
+        text = text[:_MAX_LABEL_CELL_CHARS]
     colon_positions = [m.start() for m in _COLON_RE.finditer(text)]
     if not colon_positions:
         return []
@@ -381,17 +413,22 @@ def _split_label_pairs(
         tokens = list(re.finditer(r"\S+", candidate))
         if not tokens:
             continue
+        lookback = tokens[-_MAX_LABEL_LOOKBACK_TOKENS:]
         label_start = None
         label_field = None
-        for k in range(1, len(tokens) + 1):
-            start = tokens[-k].start()
-            f = resolver.field_for_header(candidate[start:]) if resolver else None
-            if f in fields:
+        for k in range(1, len(lookback) + 1):
+            start = lookback[-k].start()
+            f = resolver.raw_field_for_header(candidate[start:]) if resolver else None
+            if f in fields or f == IGNORE_FIELD:
                 label_start = start
                 label_field = f
                 break
         if label_start is None:
             if not any_label:
+                if not boundaries:
+                    # R3(a): the cell's FIRST colon failed to resolve - a note, not a
+                    # header block. Nothing later in the same cell rescues it.
+                    return []
                 continue
             label_start = tokens[-1].start()
             label_field = None
@@ -448,12 +485,19 @@ def _labelled(
         label = _text(cell)
         if not label:
             continue
-        pairs = _split_label_pairs(label, resolver, fields)
-        if pairs:
-            for _, value, f in pairs:
-                if f:
-                    out.setdefault(f, value)
-            continue
+        # R2 (review round 1): a non-string cell (a raw `datetime`, a number) is never fed
+        # to the splitter - only its OWN stringified form ever grows spurious colons
+        # (`00:00:00`) that resolve to nothing; a genuine label is always text.
+        if isinstance(cell, str):
+            pairs = _split_label_pairs(label, resolver, fields)
+            if pairs:
+                for _, value, f in pairs:
+                    # R1: a pair whose label was saved as `ignore` still bounded the
+                    # PRECEDING value (that already happened inside `_split_label_pairs`)
+                    # but writes nothing of its own.
+                    if f and f != IGNORE_FIELD:
+                        out.setdefault(f, value)
+                continue
 
         f = resolver.field_for_header(label)
         if f in fields:
@@ -485,6 +529,17 @@ def _is_label(value: str, resolver: AliasResolver) -> bool:
     return False
 
 
+def _field_sample(value: Any) -> Optional[str]:
+    """The mapper's own display text for a header-field VALUE (R2, review round 1) - a raw
+    `datetime`/`date` cell formats as a plain ISO date, never Python's `str(datetime)`
+    (which carries a trailing `00:00:00` nobody typed on the sheet)."""
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    return _text(value)
+
+
 def header_field_candidates(
     rows: list, resolver: Optional[AliasResolver], fields: tuple[str, ...],
 ) -> list[dict]:
@@ -500,12 +555,46 @@ def header_field_candidates(
     cell whose value sits in the NEXT cell of the same row (`Date:` | `22/09/2026`) - the
     second shape stays resolver-gated (only a label `resolver` already knows anything about
     can be told apart from a genuine title cell with no answer anywhere near it).
+
+    R2 (review round 1): the cross-cell shape's VALUE cell is resolved FIRST and recorded as
+    consumed, before the inline pass runs, so that value cell is never ALSO fed to
+    `_split_label_pairs` on its own account - a raw `datetime` value's stringified form
+    (`2026-09-22 00:00:00`) would otherwise yield a spurious `"00"` label of its own. Only a
+    genuine text cell is ever split inline; a non-string cell can only ever be a cross-cell
+    VALUE, never a label.
+
+    R9: bounded against a pathological cell - at most `_MAX_HEADER_FIELD_CANDIDATES`
+    entries total, each `label`/`sample` cut to `_MAX_LABEL_FIELD_TEXT` characters.
     """
     out: list[dict] = []
     for row_idx, raw in enumerate(rows):
+        if len(out) >= _MAX_HEADER_FIELD_CANDIDATES:
+            break
         row_no = row_idx + 1
-        inline_positions: set[int] = set()
+        consumed: set[int] = set()
+        cross_cell: list[tuple[str, Any, str]] = []
+        if resolver is not None:
+            for pos, cell in enumerate(raw):
+                text = _text(cell)
+                if not text:
+                    continue
+                f = resolver.raw_field_for_header(text)
+                if f not in fields and f != IGNORE_FIELD:
+                    continue
+                for nxt_pos in range(pos + 1, len(raw)):
+                    nxt = raw[nxt_pos]
+                    val_text = _text(nxt)
+                    if val_text is None:
+                        continue
+                    if not _is_label(val_text, resolver):
+                        cross_cell.append((text, nxt, f))
+                        consumed.add(nxt_pos)
+                    break
+
+        inline_positions: set[int] = set(consumed)
         for pos, cell in enumerate(raw):
+            if pos in inline_positions or not isinstance(cell, str):
+                continue
             text = _text(cell)
             if not text:
                 continue
@@ -516,30 +605,34 @@ def header_field_candidates(
             for label, value, f in pairs:
                 source = (resolver.source_for_header(label) if (resolver and f) else None) or "none"
                 out.append(
-                    {"row": row_no, "label": label, "sample": value, "field": f, "source": source}
+                    {
+                        "row": row_no,
+                        "label": label[:_MAX_LABEL_FIELD_TEXT],
+                        "sample": value[:_MAX_LABEL_FIELD_TEXT],
+                        "field": f,
+                        "source": source,
+                    }
                 )
-        if resolver is None:
-            continue
-        for pos, cell in enumerate(raw):
-            if pos in inline_positions:
-                continue
-            text = _text(cell)
-            if not text:
-                continue
-            f = resolver.field_for_header(text)
-            if f not in fields:
-                continue
-            for nxt in raw[pos + 1:]:
-                val = _text(nxt)
-                if val is None:
-                    continue
-                if not _is_label(val, resolver):
-                    source = resolver.source_for_header(text) or "none"
-                    out.append(
-                        {"row": row_no, "label": text, "sample": val, "field": f, "source": source}
-                    )
+                if len(out) >= _MAX_HEADER_FIELD_CANDIDATES:
+                    break
+            if len(out) >= _MAX_HEADER_FIELD_CANDIDATES:
                 break
-    return out
+
+        for label, raw_value, f in cross_cell:
+            if len(out) >= _MAX_HEADER_FIELD_CANDIDATES:
+                break
+            source = resolver.source_for_header(label) or "none"
+            sample = _field_sample(raw_value) or ""
+            out.append(
+                {
+                    "row": row_no,
+                    "label": label[:_MAX_LABEL_FIELD_TEXT],
+                    "sample": sample[:_MAX_LABEL_FIELD_TEXT],
+                    "field": f,
+                    "source": source,
+                }
+            )
+    return out[:_MAX_HEADER_FIELD_CANDIDATES]
 
 
 def _line_from(raw: list, col_field: dict[int, str], row_number: int) -> Optional[PackingLine]:

@@ -335,10 +335,15 @@ def _summarise(
     known: Optional[dict[str, dict]] = None,
     resolved: Optional[dict[int, tuple[Optional[str], str]]] = None,
     revision_candidates: Optional[dict[int, dict]] = None,
+    company_id: Optional[str] = None,
 ) -> dict[str, Any]:
     """What the file holds, described. `known` and `resolved` are injectable so `apply`,
     which needs both to do the writing, does not pay for them a second time to describe
     what it wrote.
+
+    `company_id` names the consignee (R-B/B4): the summary always shows the invoice's OWN
+    company name, never the sheet's parsed `doc.consignee` - the same rule `serialize` and
+    `_convert_carry` follow for an applied row.
 
     `supplier_check` (AC-G3) rides along here rather than living only in `validate`, so
     `preview` and `apply`'s own summary agree with it too: `{letterhead,
@@ -358,6 +363,7 @@ def _summarise(
 
     documents = []
     priced_without_currency = 0
+    consignee_name = _company_name_for(db, company_id)
     for doc in parsed.documents:
         currency, source = resolved.get(doc.index, (None, "none"))
         if doc.priced_lines and not currency:
@@ -377,7 +383,7 @@ def _summarise(
                 # PI General tab now shows beside container/BL, so the preview already
                 # states what apply() is about to write (H1/H2).
                 "seal_no": doc.seal_no,
-                "consignee": doc.consignee,
+                "consignee": consignee_name,
                 "lines": len(doc.lines),
                 "qty": doc.total_qty,
                 "total": doc.line_total,
@@ -773,6 +779,7 @@ def preview(
         db, parsed, supplier_id=supplier_id, source_ref=source_ref,
         requested_currency=currency,
         revision_candidates=_revision_candidates(db, parsed, supplier_id=supplier_id),
+        company_id=resolve_write_company_id(get_company_scope(db), ambiguous=None),
     )
     out["ok"] = parsed.ok
     out["missing_columns"] = parsed.missing_columns
@@ -794,6 +801,7 @@ def validate(
     summary = _summarise(
         db, parsed, supplier_id=supplier_id, source_ref=source_ref,
         requested_currency=currency,
+        company_id=resolve_write_company_id(get_company_scope(db), ambiguous=None),
     )
 
     # NOT the row problems: `apply` refuses only an unreadable file or an unresolved
@@ -936,6 +944,7 @@ def apply(
     summary = _summarise(
         db, parsed, supplier_id=supplier_id, source_ref=source_ref,
         requested_currency=currency, known=known, resolved=resolved,
+        company_id=company_id,
     )
 
     created = updated = 0
@@ -1799,6 +1808,13 @@ def convert_to_draft_shipment(
     #: rows are matched (ACC-KT2001 dismissed BEFORE apply, AC-D3): a line whose only row
     #: is dismissed has nothing left to place, not "no packing list at all".
     lines_with_rows: set[str] = set()
+    #: R4 (review round 1): every (invoice_id, product_key) with at least one MATCHED
+    #: packing row anywhere on that invoice - a SIBLING line of the same product with no
+    #: row of its own must not ALSO fall back to the (product, supplier) grouping, or the
+    #: units the row already carries are counted a second time under the fallback's own
+    #: key (three lines of one product, one packing row boxing all of them - the fallback
+    #: is for a product the packing list never mentions at all, not this one).
+    matched_products_by_invoice: dict[str, set[str]] = {}
     for row in (
         db.query(ProformaInvoicePackingLine)
         .filter(ProformaInvoicePackingLine.proforma_invoice_id.in_(ids))
@@ -1810,6 +1826,11 @@ def convert_to_draft_shipment(
             lines_with_rows.add(str(row.proforma_invoice_line_id))
         if row.match_state == "matched" and row.proforma_invoice_line_id:
             packing_rows_by_line.setdefault(str(row.proforma_invoice_line_id), []).append(row)
+            product_key = str(row.product_id or row.product_set_id or "")
+            if product_key:
+                matched_products_by_invoice.setdefault(
+                    str(row.proforma_invoice_id), set()
+                ).add(product_key)
         elif row.match_state in ("dismissed", "unmatched"):
             # `description_en` before `description` (S2, text glossary lane, R4) - the
             # customs-facing note reads English wherever the glossary knows it.
@@ -1888,6 +1909,15 @@ def convert_to_draft_shipment(
                 placing_cbm = _f(row.cbm_total)
                 if placing_cbm is not None:
                     placing[str(ln.invoice_id)] = placing.get(str(ln.invoice_id), 0.0) + placing_cbm
+            continue
+
+        # R4: this line has no packing row of its OWN, but the same product already has
+        # a MATCHED row elsewhere on this invoice - the row-grouped shipment line above
+        # already carries this product's quantity; falling back here would double it.
+        line_product_key = str(ln.product_id or ln.product_set_id or "")
+        if line_product_key and line_product_key in matched_products_by_invoice.get(
+            str(ln.invoice_id), set()
+        ):
             continue
 
         if ln.product_id is None and ln.product_set_id is None:
@@ -3175,8 +3205,9 @@ def serialize(
         # The seal the packing list stated, carried onto the draft at convert (AC-D2c) and
         # shown beside the container it belongs to.
         "seal_no": invoice.seal_ref,
-        # Who the document bills (ruling 28), carried onto the draft with the other three.
-        "consignee": invoice.consignee_ref,
+        # R-B (24 Sep): the consignee is ALWAYS the invoice's own company, never the
+        # sheet's `consignee_ref` (kept on the row, unused for display - B4).
+        "consignee": _company_name_for(db, invoice.company_id),
         "bl_no": invoice.bl_ref,
         "total_amount": _f(invoice.total_amount),
         "line_count": invoice.line_count,
@@ -3192,17 +3223,31 @@ def serialize(
         "is_adjusted": invoice.adjusted_at is not None,
         "status": invoice.status or "current",
         "revision_no": int(invoice.revision_no or 1),
-        # B3/AC-C5: exactly what Convert (B1) will write onto the draft for THIS invoice
-        # alone - the dialog's "Carried onto the draft" line reads this instead of echoing
-        # the raw header fields above, which ignore the "one container known" condition.
-        "convert_carry": {
-            k: v for k, v in _convert_carry(db, [invoice]).items() if k != "conflict"
-        },
     }
 
     chain = _chain(db, invoice)
     out["revision_count"] = len(chain)
     if with_lines:
+        # B3/AC-C5: exactly what Convert (B1) will write onto the draft for THIS invoice
+        # alone - the dialog's "Carried onto the draft" line reads this instead of echoing
+        # the raw header fields above, which ignore the "one container known" condition.
+        # R6 (review round 1): passes this invoice's OWN packing rows so a container
+        # reassigned AFTER apply (the rows now say something the header never learned)
+        # carries the SAME value Convert itself would write, not the stale header one -
+        # one query, and only here (detail), never on the LIST payload's N invoices,
+        # which would otherwise be N extra queries for a line nothing there reads.
+        packing_rows = (
+            db.query(ProformaInvoicePackingLine)
+            .filter(ProformaInvoicePackingLine.proforma_invoice_id == invoice.id)
+            .all()
+        )
+        out["convert_carry"] = {
+            k: v
+            for k, v in _convert_carry(
+                db, [invoice], rows_by_invoice={str(invoice.id): packing_rows}
+            ).items()
+            if k != "conflict"
+        }
         out["revisions"] = [
             {
                 "id": str(r.id),
