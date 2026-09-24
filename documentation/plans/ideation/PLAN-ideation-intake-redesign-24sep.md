@@ -1,10 +1,9 @@
 # PLAN - Ideation intake redesign (issue #1172)
 
 **Status:** grilled 24 Sep 2026, ready for tickets, lavish review round 1 folded 24 Sep 2026,
-lavish review round 2 folded 24 Sep 2026 (R11 tracking link PROPOSED, awaiting owner
-confirmation before AC-1114/AC-1303 are rewritten).
-Track: full (shared-service migration for `ideas.title`, `ideas.submitter_tier`, the idea-number
-sequence; two repos).
+lavish review round 2 folded 24 Sep 2026, lavish review round 3 folded 24 Sep 2026.
+Track: full (shared-service migration for `ideas.title`, `ideas.submitter_tier`,
+`ideas.status_token`, the idea-number sequence; two repos).
 **UAC:** `ideation-intake-redesign-24sep-acceptance-criteria.md` (this plan fulfils it; the
 Journey is there).
 **Evidence:** PR #1176, `documentation/plans/ideation/REVIEW-ideation-flow-ux-24sep.md`
@@ -99,7 +98,7 @@ working against a new shared-service (AC-1117). **Deploy order: shared-service f
 | `captured` | {key: str} | new | S1 | the draft's current answers (skipped keys absent) |
 | `duplicate_candidate` | {idea_number, title}? | new | S1 | set only on `duplicate_candidate` |
 | `idea_number` | str? | new | S1 | `IDEA-0123` on `complete`; the candidate's on `voted` |
-| `link` | str? | yes | S1 | R6 said null for WhatsApp-source ideas; **round 2 (proposed, owner to confirm, see R11 below):** carries `mint_idea_link`'s existing `{product_domain_base}/ideas/{idea_id}` URL instead, same as every other source. Not rewritten as settled here - AC-1114 stands as originally written until the owner confirms. |
+| `link` | str? | yes | S5 | R6 originally said null for WhatsApp-source ideas; **R13 (lavish review round 3, confirmed):** carries the S5 public status-page URL for every idea regardless of source - `{product_domain_base}/public/ideas/{status_token}`, a signed per-idea token, no login, title/status/idea_number only. Not the old SSO-gated `/ideas/{id}` page. |
 
 No idea UUID is carried into any user-facing reply; sorento only ever shows `idea_number` and
 `title` (cursor rule: no UUIDs in UI, applied to WhatsApp copy too).
@@ -138,35 +137,33 @@ the end of the lane (AC-1501).
   response fields (Contract section); 422 for a title over 8 words.
 - `shared-service:service_backend/modules/ideation/services/intake.py`:
   - `next_field`: first optional key not answered and not skipped, fixed order
-    proposed_solution, impact, department; `review` when `problem` is set and `next_field`
-    is null.
+    proposed_solution, impact - **department is dropped from this sequence entirely (R15,
+    lavish review round 3: "i think don't need to ask department ba")**; it is never
+    nominated as `next_field`, only ever captured when the dealer volunteers it. `review` when
+    `problem` is set and both proposed_solution and impact are each answered or skipped,
+    regardless of whether department was ever mentioned.
   - Duplicate: same check as today (pg_trgm similarity), limited to `is_test = false`; returns
     `duplicate_candidate` and writes nothing else. `duplicate_choice: "vote"` upvotes the
     candidate and closes the draft (`voted`); `"separate"` records that this draft declined
     that candidate (so it is not offered again) and carries on.
   - `cancel: true` closes the draft (`cancelled`).
   - `confirm: true` in `review` captures and assigns `idea_number`.
-  - `link` null when the idea's source is `whatsapp` (R6), as originally ruled. **Round 2
-    (proposed, owner to confirm, R11):** `link` instead carries `mint_idea_link`'s existing
-    `{product_domain_base}/ideas/{idea_id}` URL, the same field the shared-service already
-    returns for every other source (found by reading `shared-service:
-    service_backend/modules/ideation/services/sinks.py::mint_idea_link` and
-    `services/intake.py`) - this is the SAME SSO-gated page F9 flagged
-    (`(protected)/ideation/ideas/[id]` in the shared-service frontend, login required), not a
-    separate public tracking page, so the owner's confirmation should weigh that. If confirmed,
-    AC-1114 and the "no URL" clause of AC-1303 both need rewriting in the same change (not done
-    here).
-  - All templates are point form (R10, lavish review round 2): `complete` becomes line 1 the
-    title, line 2 "Idea <idea_number> is in. We'll update you on WhatsApp.", line 3 (proposed,
-    only if R11 is confirmed) "Track it here: <link>"; `duplicate_candidate` becomes line 1
-    "Similar idea exists: <title>", line 2 "Vote for that one, or keep yours separate?"; each
-    `next_field` template becomes the title line, one line per field present (Solution, Impact,
-    Department order), then the field's question alone as the last line. All of them are the R5
-    fallback, so they must meet the same shape rules as the LLM reply (AC-1310).
+  - `link` carries the S5 public status-page URL for every idea, WhatsApp source included (R13,
+    confirmed - supersedes R6's "null for WhatsApp" and round 2's proposal; see S5 below for the
+    page itself).
+  - All templates are point form (R10, amended by R16 to put Problem first): `complete` becomes
+    line 1 the title, line 2 "Idea <idea_number> is in. We'll update you on WhatsApp.", line 3
+    "Track it here: <link>"; `duplicate_candidate` becomes line 1 "Similar idea exists:
+    <title>", line 2 "Vote for that one, or keep yours separate?"; each `next_field` template
+    becomes the title line, then one line per field present in the order Problem, Solution,
+    Impact, Department (Problem always present - it is the one required field), then the
+    field's question alone as the last line. All of them are the R5 fallback, so they must meet
+    the same shape rules as the LLM reply (AC-1310).
 - Board, ideas list and detail show `title`, falling back to `problem` when null (R2); triage
   views show `submitter_tier` (R7).
-- **Tests (pytest, shared-service):** AC-1101 to AC-1117, including a concurrency test for the
-  sequence (AC-1112) and the old-sorento request shape (AC-1117); AC-1118 once R11 is confirmed.
+- **Tests (pytest, shared-service):** AC-1101 to AC-1117 (AC-1102/AC-1104 updated for R15's
+  department drop), including a concurrency test for the sequence (AC-1112) and the
+  old-sorento request shape (AC-1117).
 
 **Sorento part:** none in code. The S1 ticket updates this plan's Contract section with the
 real shared-service field names if they differ.
@@ -187,6 +184,12 @@ real shared-service field names if they differ.
   - `review_action == "submit"` only counts in `review` (AC-1211, the existing guard moved).
   `IdeateExtraction` gains the new fields; `confirm` stays on it, derived, so
   `handle_turn` keeps one place that sets it.
+- **R17 (lavish review round 3, 24 Sep 2026):** the model decides which field a message
+  updates by the meaning of the whole draft-so-far, never by which field `next_field` hinted -
+  the hint is only a hint. A message that reads as more problem detail while `next_field` is
+  `proposed_solution` updates `fields.problem` (the extractor merges/extends it, not
+  `fields.proposed_solution`), and the next turn asks `proposed_solution` again - or moves on
+  if the user skips it on a later turn - without treating the mismatch as an error (AC-1219).
 - `app/services/ai_prompt_registry.py::_ideate_extractor_fallback`: rewritten for the new
   schema, with the review and skip examples from the review doc (yes / ok / boleh / submit;
   skip / don't know / later / dunno lah). **Before S2 ships:** check prod
@@ -205,21 +208,21 @@ real shared-service field names if they differ.
     keys the extractor's `fields` map carries, so no extractor change is needed beyond the
     existing field extraction. It is NOT a second required question (the one required field
     ruling stands), so when the dealer never mentions it the field stays blank and the bot does
-    not ask (reading proposed) (AC-1206). Open question this reading raises, not resolved here:
-    S1's `next_field` sequence today still nominates `department` as something to actively ask
-    about; if the bot is never to ask it, that sequence may need to drop it - flagged for the
-    owner alongside the reading above;
+    not ask (R14, confirmed - "yes"; R15, confirmed - dropped from S1's `next_field` sequence
+    too, so it is never actively asked in any turn) (AC-1206);
   - `_TERMINAL_STATUSES` becomes `{"complete", "voted", "cancelled"}` (AC-1215);
   - the pointer keeps `next_field` (the extractor's context next turn) alongside `missing`,
     and the candidate title while `duplicate_candidate`.
-- `app/services/chatbot/lanes/ideate.py::build_reply`: drop the link append (AC-1216).
+- `app/services/chatbot/lanes/ideate.py::build_reply`: drop the link append (AC-1216) - the
+  composed reply carries the link itself now (S3), not a raw string append.
 - `app/schemas/external/ideation.py` / MCP `crm_ideation_turn`: no change (the new fields are
-  between sorento and shared-service only; `IdeationTurnResponse.link` stays for shape but is
-  null).
+  between sorento and shared-service only; `IdeationTurnResponse.link` stays for shape, and now
+  carries the S5 URL like every other response - R13).
 - **Tests (pytest, sorento):** `tests/test_ideation_turn.py` (payload fields, terminal
   statuses, duplicate default, tier, department) and `tests/test_ideation_parser.py` or a new
-  `tests/test_ideation_extractor.py` (guards, with a stubbed provider). AC-1201 to AC-1216.
-  Console cases AC-1217, AC-1218.
+  `tests/test_ideation_extractor.py` (guards, with a stubbed provider, including R17's
+  semantic-field-capture guard, AC-1219). AC-1201 to AC-1216, AC-1219. Console cases AC-1217,
+  AC-1218.
 
 ### S3 - LLM replies with template fallback
 
@@ -231,18 +234,19 @@ the fallback).
 - One function, `compose_ideate_reply(db, *, result, user_message) -> str`, in
   `app/services/ideation_turn_service.py` (no new module: one caller today). Builds a facts
   block from `status`, `title`, `captured`, `next_field`, `duplicate_candidate`,
-  `idea_number`, and (proposed, round 2, R11) `link`, sends it with the user's message to the
-  same provider plumbing the extractor uses (`get_provider`, `AIAssistantConfigService`),
-  prompt key `ideate_reply` in `ai_prompt_registry` (fallback text in code, like
-  `ideate_extractor`).
+  `idea_number`, and `link` (R13, confirmed - the S5 status-page URL, on every response), sends
+  it with the user's message to the same provider plumbing the extractor uses (`get_provider`,
+  `AIAssistantConfigService`), prompt key `ideate_reply` in `ai_prompt_registry` (fallback text
+  in code, like `ideate_extractor`).
 - Checks, then fallback to `result["reply_text"]` on any failure (AC-1302 to AC-1305, AC-1310,
-  AC-1311): point form (R10) - the title (or the duplicate candidate's title) first, then one
-  line per captured field present, in order Solution, Impact, Department, skipped or unanswered
-  fields omitted, a reply that packs fields into one sentence fails; non-terminal ends in
-  exactly one `?`/`？` as its own final line; `complete` contains `idea_number` verbatim and, if
-  R11 is confirmed, at most the one URL named by `link` and no other `http`; `duplicate_candidate`
-  contains the candidate title. Facts never come from the model: if the number, title, or link
-  is missing or altered, the template wins.
+  AC-1311): point form (R10, amended by R16) - the title (or the duplicate candidate's title)
+  first, then one line per field present, in order Problem, Solution, Impact, Department
+  (Problem always present - it is the one required field, echoed back from the very first
+  reply), skipped or unanswered fields omitted, a reply that packs fields into one sentence
+  fails; non-terminal ends in exactly one `?`/`？` as its own final line; `complete` contains
+  `idea_number` verbatim and at most the one URL named by `link` and no other `http`;
+  `duplicate_candidate` contains the candidate title. Facts never come from the model: if the
+  number, title, or link is missing or altered, the template wins.
 - The media menu (`menu_text`) is still appended after the composed reply, as today.
 - Not-allowed: in `app/services/chatbot/lanes/canned.py::access_denied_text`, when the agent
   is `ideation`, compose through the same function with facts `{denied: "ideation"}`, falling
@@ -250,8 +254,7 @@ the fallback).
   case, one branch.
 - **Tests (pytest, sorento):** a new `tests/test_ideation_reply.py` with a stubbed provider:
   each status, each fallback trigger, the Malay case, the denial branch, the point-form shape
-  (AC-1310), and (once R11 is confirmed) the link line (AC-1311). Console cases AC-1308,
-  AC-1309.
+  with Problem first (AC-1310), and the link line (AC-1311). Console cases AC-1308, AC-1309.
 
 ### S4 - 24h reminder and close
 
@@ -286,6 +289,38 @@ the fallback).
   from scratch each turn, so this is a test, not a code change) (AC-1403).
 - **Tests (pytest, sorento):** a new `tests/test_ideation_idle_sweep.py` with frozen time and
   stubbed send / create-idea: AC-1401 to AC-1408.
+
+### S5 - Public idea status page (R13, "commit to public status page slice")
+
+Graduated from the Dependencies section's `S-link` placeholder to a real slice in this plan
+(lavish review round 3, 24 Sep 2026). Resolves F9 for good: a WhatsApp-only submitter gets a
+link they can open with no CRM login, showing only title, status and idea number - never any
+dealer or customer data, never another idea's data.
+
+**Shared-service part** (branch in foundryx-shared-service):
+
+- `shared-service:service_backend/modules/ideation/models.py` + migration: `ideas.status_token`
+  text, unique, a signed/random per-idea value (`secrets.token_urlsafe`-class generation, not
+  the sequential `idea_number` and not the row's UUID), minted once on capture (idempotent,
+  alongside `idea_number` in the same transition).
+- New PUBLIC route, mounted `"public": true` like the existing `/embed/session` family in
+  `shared-service:service_backend/modules/ideation/routers/` - no JWT, no `require_module`
+  gate, the token itself is the credential: `GET /public/ideas/{token}` returns `{title,
+  status, idea_number}` only. An unknown, malformed, or another idea's token returns 404 - no
+  enumeration hint, no distinguishing "wrong token" from "right token, no access".
+- New public, chrome-less frontend page, `service_frontend/app/public/ideas/[token]/page.tsx`
+  (no `(protected)` wrapper, no SSO exchange - the URL itself is the credential) rendering
+  those three fields; an unknown token renders a plain not-found page, never a stack trace or a
+  login prompt.
+- `mint_idea_link` (or its S5 replacement) returns this new page's URL -
+  `{product_domain_base}/public/ideas/{status_token}` - for `link` on every idea regardless of
+  source, WhatsApp included, and regardless of `is_test` (the tracking link already mints for a
+  test turn per #1179; S5 keeps that true for its own link).
+- **Tests (pytest, shared-service):** AC-1601 to AC-1604.
+
+**Sorento part:** none beyond S3 (already composes `link` into the point-form `complete` reply,
+R13; the URL shape changing from the old SSO page to the S5 public page is invisible to
+sorento - it is still just a string in the response).
 
 ## Decisions made in planning (beyond the rulings)
 
@@ -352,9 +387,9 @@ Lavish review 24 Sep 2026: owner asked for sample conversations; added below the
 > thought." Department is free text captured from the dealer's own words when given, never
 > derived from `respond_contact_customers`; it stays optional and is not a second required
 > question, so when the dealer never mentions it the field simply stays blank and the bot does
-> not ask (reading proposed, S2's department bullet and AC-1206 above). This supersedes the
-> "inferred from the contact's company when known" clause in R1; R1 itself is left as originally
-> quoted above for the record.
+> not ask (confirmed by R14; also see R15, S2's department bullet, and AC-1206 above). This
+> supersedes the "inferred from the contact's company when known" clause in R1; R1 itself is
+> left as originally quoted above for the record.
 
 Lavish review round 2, 24 Sep 2026: owner walked the sample conversations and raised three more
 points, folded below.
@@ -411,6 +446,49 @@ points, folded below.
 > resumes by naming the idea again rather than a bare "back to my idea" being enough. See sample
 > (h) and the Dependencies section below.
 
+Lavish review round 3, 24 Sep 2026: owner walked the round-2 fold and gave five more rulings,
+folded below as R13 to R17.
+
+> **R13 Commit to the public status page slice (amends R11, confirmed):** owner: "commit to
+> public status page slice." `S-link` (named as a not-yet-planned dependency in round 2) becomes
+> a real slice in this plan, S5: a public, read-only idea status page in the shared service,
+> reached by a signed, unguessable token link minted per idea, showing title, status and idea
+> number only - no dealer or customer data, and never another dealer's idea. The WhatsApp
+> confirmation carries that link alongside the idea number. This confirms R11 outright: AC-1118
+> and AC-1311 lose their PROPOSED tag, and AC-1114 and AC-1303 are rewritten to match (both
+> `link` no longer null for WhatsApp, and "no URL" narrowed to "no URL other than `link`"). See
+> S5 above and AC-1601 to AC-1604.
+
+> **R14 Department reading confirmed:** owner: "yes" (to the round-2 department reading). The
+> "(reading proposed)" tags on that reading are removed throughout - department is free text,
+> captured only when volunteered, never asked as its own question, settled.
+
+> **R15 Department dropped from the ask sequence:** owner: "i think don't need to ask department
+> ba." This resolves the open question S2's department bullet raised in round 1: `department` is
+> removed from S1's `next_field` sequence entirely (was proposed_solution, impact, department;
+> now proposed_solution, impact). It is never nominated as a field to actively ask about, in any
+> turn - captured only when the dealer says it unprompted, exactly as R14 already settled.
+
+> **R16 Problem first in every recap:** owner, on sample (a)'s review-turn recap: "need to
+> collect the problem statement, first one is the problem statement right." Correct, and this
+> plan's own point-form ordering (R10) missed it: the one required field is the problem
+> statement, and every point-form recap - including the very first understanding turn, right
+> after the opening message - lists a "Problem: ..." line as the FIRST field line under the
+> title, before Solution, Impact or Department (each still only shown when present). The
+> understanding turn that follows the dealer's opening message now always has this shape: title,
+> Problem (always present - it is what made the draft exist), then the first optional question.
+> Amends R10's field order; all sample conversations are rewritten accordingly.
+
+> **R17 Semantic field capture, not deterministic slot-filling:** owner: "what if the user answer
+> something that is like problem statement when we ask for solution, we should be able to cater
+> for that, our design for this information should be conversational, semantic and not too
+> deterministic." Ruling: the field a message updates is decided by the meaning of the whole
+> draft so far (the intake's LLM extraction), never by which field `next_field` happened to ask -
+> the asked field is only a hint, not a routing key. A reply that reads as more problem detail
+> updates the Problem line (even while `proposed_solution` was the one asked) and the bot asks
+> the same optional field again, or moves on once it is later answered or skipped - no
+> complaint, no "that wasn't what I asked" branch. See AC-1219 and sample (i).
+
 ## Review findings -> where they land
 
 | Finding (PR #1176) | Landed by |
@@ -423,7 +501,7 @@ points, folded below.
 | F6 `confirm` keyword gate | S2 `review_action` (R3) |
 | F7 orphan draft on duplicate | S1 (draft stays open, then voted / separate) |
 | F8 no way to disagree with duplicate | S1 + S2 (R4) |
-| F9 tracking link needs SSO | S1 `link` null + S2 no append (R6). Round 2 (R11, proposed): the owner asked for the link back in the confirmation with that SSO fact in hand - not resolved, pending confirmation. |
+| F9 tracking link needs SSO | Resolved by S5 (R13): a public, token-gated status page, no SSO, no CRM login, title/status/idea number only. Superseded the original S1 `link` null + S2 no append (R6) and round 2's proposal (R11). |
 | F10 no title | S1 column + S2 extraction (R2) |
 
 ## Dependencies
@@ -442,12 +520,8 @@ other-lane turns on its own.
 - Without either: the draft is intact, but the dealer resumes by naming the idea explicitly
   (e.g. "back to my idea about the slow moving stock filter") rather than a bare "ok back to my
   idea" being enough.
-- **`S-link` (proposed, not yet planned):** a public, read-only idea status page in the shared
-  service that a WhatsApp-only dealer could open without a CRM login - does not exist today (see
-  R11). Not this plan's tracking-link proposal, which reuses the existing SSO-gated `link`
-  field: a genuinely public page is a separate small slice, not scoped, not ticketed, only
-  named here because R11 raised the question. Needed only if the owner wants a dealer-openable
-  link rather than (or in addition to) R11's proposal.
+- ~~`S-link` (proposed, not yet planned)~~ - **graduated to S5 in this plan (R13, lavish review
+  round 3).** No longer a dependency; see the S5 slice above.
 
 ## Out of scope
 
