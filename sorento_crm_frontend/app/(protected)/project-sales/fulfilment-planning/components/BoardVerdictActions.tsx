@@ -94,9 +94,23 @@ export function BoardVerdictActions({
   const proposed = verdict === 'suggested' || verdict === 'change_proposed';
   // Something HAS been written for this line - here, or by another planner, or against a
   // suggestion the engine has since changed - so the one thing left is to unwrite it
-  // (AC-B3). A confirmed line has no session draft to shed, only a fresh decision to take
-  // in the row (AC-B4, R3).
+  // (AC-B3). A confirmed line has no session draft to shed - Reject on it is a fresh
+  // decision, not an undo (R3(b), `PLAN-board-reject-on-confirmed-line.md`).
   const undoable = verdict === 'saved' || verdict === 'rejected' || verdict === 'stale';
+  // AC-R1 (`board-reject-on-confirmed-line-acceptance-criteria.md`, R3(b) - replaces AC-B4
+  // of `PLAN-board-verdict-actions-chips.md`, "Confirmed line gets Change decision only"):
+  // rejecting a covered line is now a real action, not a dead button, so the X joins the
+  // pencil beside a `confirmed` pill too. Accept stays proposed-only - there is nothing to
+  // "accept" on a line already confirmed.
+  //
+  // N1 (fix round, `PLAN-board-reject-on-confirmed-line.md`): a `confirmed` pill also covers
+  // an INQUIRY-DECIDED line - a live order-inquiry row names it with no active decision at
+  // all (#875, migrated sheet lines) - and `Confirm` has nothing to withdraw there: no
+  // `SOSupplyDecision`, so no `line_snapshots` entry `rejected_line_ids` could ever name.
+  // The X is offered only where an ACTIVE decision covers the line (`contribution.decision`
+  // is the frozen decision object, non-null exactly then), not merely where the pill reads
+  // Confirmed.
+  const rejectable = proposed || (verdict === 'confirmed' && Boolean(contribution.decision));
 
   return (
     <>
@@ -129,7 +143,7 @@ export function BoardVerdictActions({
           for exactly as long as the write takes. Once the write settles, either the popover
           closed itself (success) or the draft reverted (failure), so a settled `Rejected`
           line shows no X: `rejecting` is false by then. */}
-      {proposed || rejecting ? (
+      {rejectable || rejecting ? (
         <Popover
           open={rejecting}
           onOpenChange={(next) => {

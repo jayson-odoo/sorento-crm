@@ -52,6 +52,17 @@ KEY_PARTS = 4
 ITEM_CODE_MAX = 100
 BUCKET_KEY_MAX = 32
 
+#: The 409 a covered line refuses every verdict but `amended`/`rejected` with (owner
+#: rework, 23 Sep 2026, `PLAN-board-reject-on-confirmed-line.md`: reject is now STAGED
+#: like every other board decision - the draft alone, written below, never a write against
+#: the confirmation itself). "reject it with a reason" (fix round 3, nit, still true after
+#: the rework): R3(b) gave a covered line a second way to leave a confirmation, and a
+#: sentence naming only Amend/undo was stale the moment Reject stopped refusing outright.
+CONFIRMED_LINE_MESSAGE = (
+    "This line is already confirmed. Amend it to change the decision, "
+    "reject it with a reason, or undo the confirmation."
+)
+
 #: The CORE sales order line a draft belongs to (C2, code review round 4). None of the
 #: contribution key's own four parts is durable - `line_no` is positional whenever the
 #: order's lines are not all mirrored, and `bucket_key` moves with the board's granularity
@@ -241,18 +252,41 @@ def save_draft(
     stored opaque and NEVER read here - see `SOSupplyDecisionDraft.proposed`'s own
     docstring for why it exists and why it is not `line_snapshot`. OMITTING it leaves the
     stored one alone; only a caller that has one replaces it.
+
+    R3(b) REWORK (owner ruling 23 Sep 2026, `PLAN-board-reject-on-confirmed-line.md`,
+    hand-test feedback: "we should confirm the rejection"): a `rejected` verdict on a
+    covered line is a STAGED decision now, exactly like every other board decision -
+    the draft is written here and NOTHING about the active confirmation moves. Confirm is
+    what carries the withdrawal (`ConfirmSupplyBody.rejected_line_ids`,
+    `app/api/v1/projects/fulfilment_planning.py::confirm_supply`), the same press that
+    commits every other decision on the board. `save_draft` NEVER calls `uncover_lines`
+    any more - that used to happen here, at click time, which is exactly what the owner's
+    ruling took back out. A reason is still required (422
+    `board_line_reject_reason_required`), because the reason is what the confirmation
+    stamps on the superseded revision, and there is nothing to stamp with a blank one.
     """
     sales_order_id, line_no, item_code, bucket_key = parse_contribution_key(key)
     core_line = _resolve_core_line(db, sales_order_id, line_no, item_code)
-    if decision.get("verdict") != "amended" and _covered_by_active_decision(db, core_line):
-        raise AppException(
-            status_code=409,
-            message=(
-                "This line is already confirmed. Amend it to change the decision, "
-                "or undo the confirmation."
-            ),
-            code="board_line_already_confirmed",
-        )
+    verdict = decision.get("verdict")
+    covered = None if verdict == "amended" else _active_coverage(db, core_line)
+    if covered is not None:
+        if verdict == "rejected":
+            reason = str(decision.get("reason") or "").strip()
+            if not reason:
+                raise AppException(
+                    status_code=422,
+                    message="Say why this line is being refused first.",
+                    code="board_line_reject_reason_required",
+                )
+            # Reason given: falls through to the ordinary draft upsert below, exactly as
+            # an uncovered line's rejection already saves. The line stays covered - its
+            # OI row stays raised - until Confirm is pressed.
+        else:
+            raise AppException(
+                status_code=409,
+                message=CONFIRMED_LINE_MESSAGE,
+                code="board_line_already_confirmed",
+            )
     row = _row_for(db, str(core_line.id), company_id=core_line.company_id)
     if row is None:
         row = SOSupplyDecisionDraft(
@@ -403,15 +437,28 @@ def is_stale(
     return snapshot.get("open_qty") != current_qty or snapshot.get("required_date") != current_date
 
 
-def _covered_by_active_decision(db: Session, core_line: SalesOrderLine) -> bool:
-    """R1 (SO314595, 17 Sep 2026): an outage lost the Confirm response, the planner re-saved
+def _active_coverage(
+    db: Session, core_line: SalesOrderLine
+) -> Optional[Tuple[ProjectSalesOrder, Dict[str, Any]]]:
+    """The mirror ORDER and the LINE SNAPSHOT an active decision covers this core line
+    with, or `None` when it is not covered.
+
+    R1 (SO314595, 17 Sep 2026): an outage lost the Confirm response, the planner re-saved
     every line, and the drafts printed Saved over an already-Confirmed line. Covered = an
-    ACTIVE `SOSupplyDecision` on the mirror order whose `line_snapshots` names this core line,
-    UNLESS the line sits in a planning-change batch nobody has applied yet (AC-B8/B9/B10/B11,
-    review round 2).
+    ACTIVE `SOSupplyDecision` on the mirror order whose `line_snapshots` names this core
+    line, UNLESS the line sits in a planning-change batch nobody has applied yet
+    (AC-B8/B9/B10/B11, review round 2).
+
+    Returns the ORDER AND SNAPSHOT rather than a bare bool (S1,
+    `PLAN-board-reject-on-confirmed-line.md`, 22 Sep 2026): kept as a pair even after the
+    23 Sep rework took the reject seam back out of `save_draft` (it no longer reads either
+    one off the snapshot) - `save_draft` only asks `is not None` of it now, and a caller
+    that DOES need the order or the snapshot (Confirm's own withdrawal handling,
+    `app/api/v1/projects/fulfilment_planning.py`) reads them off the decision it loads for
+    itself rather than this function, which stays board-draft-scoped.
     """
     decisions = (
-        db.query(SOSupplyDecision)
+        db.query(SOSupplyDecision, ProjectSalesOrder)
         .join(ProjectSalesOrder, ProjectSalesOrder.id == SOSupplyDecision.project_sales_order_id)
         .filter(
             ProjectSalesOrder.so_id == core_line.sales_order_id,
@@ -420,13 +467,13 @@ def _covered_by_active_decision(db: Session, core_line: SalesOrderLine) -> bool:
         .all()
     )
     core_line_id = str(core_line.id)
-    for decision in decisions:
+    for decision, order in decisions:
         for snapshot in decision.line_snapshots or []:
             if (snapshot or {}).get("core_line_id") == core_line_id:
-                return not _in_open_planning_change(
-                    db, core_line_id, decision.project_sales_order_id
-                )
-    return False
+                if _in_open_planning_change(db, core_line_id, decision.project_sales_order_id):
+                    return None
+                return order, snapshot
+    return None
 
 
 def _in_open_planning_change(
