@@ -23,11 +23,17 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 
 from app.services.error_handler import AppException
-from tests.scm.conftest import SORENTO_COMPANY_ID, requires_pg, seed_user
+from tests.scm.conftest import (
+    SORENTO_COMPANY_ID,
+    ensure_reference_data,
+    requires_pg,
+    seed_user,
+)
 from tests.scm.test_order_sheet_export_downloads import _NoCloseSession, _savepoint_session
 from tests.scm.test_stock_debt_routes import (
     BASE,
     TODAY,
+    VIEW,
     _client,
     _category,
     _demand,
@@ -116,6 +122,77 @@ def test_export_route_creates_download_and_enqueues(scm_app, monkeypatch):
     assert denied.status_code == 403, denied.text
     after = no_perm_db.execute(text("SELECT count(*) FROM user_downloads")).scalar()
     assert after == before, "a denied export left a download row behind"
+
+
+def test_export_route_refuses_api_key_principal(scm_app):
+    """AC-12c (security review, ruled fix-before-merge): the route is gated on
+    `require_permission_with_api_key`, whose own docstring says "primarily for read
+    endpoints" - creating a download row and enqueuing a worker job is not a read, and
+    nothing here re-checks a real end user's permission the way the two write actions
+    that DO legitimately use it (complaint close, PR approve/reject) do. An API-key-only
+    principal (no JWT) must not be able to create a stock-debt export, even holding the
+    view permission via its act-as user's role - `require_permission` (JWT-only, no
+    `_with_api_key`) is the fix, matching `order_summary.py`'s own `_EXPORT`. The GET
+    list stays reachable by the SAME key (`require_permission_with_api_key` is correct
+    there - it is the read).
+    """
+    from app.models.integration import Integration
+    from app.models.user import User, UserRoleAssignment
+    from app.services.integration_key_service import IntegrationKeyService
+    from tests.scm.conftest import _ensure_permission_row_committed
+
+    app, db, _gcu, _gcuak = scm_app
+    ensure_reference_data(db)
+
+    user = User(
+        id=_u(), email=f"{_u()}@integrations.local", name="ZZTSD integration",
+        status="ACTIVE", is_integration=True,
+    )
+    db.add(user)
+    db.flush()
+    role_id = _u()
+    db.execute(
+        text(
+            "INSERT INTO user_roles (id, slug, name, is_trashed, is_protected, "
+            "is_default, created_at) VALUES (:id, :slug, 'ZZT integration stock debt', "
+            "false, false, false, now())"
+        ),
+        {"id": role_id, "slug": f"zzt-sd-integration-{role_id[:8]}"},
+    )
+    _ensure_permission_row_committed(VIEW)
+    permission_id = db.execute(
+        text("SELECT id FROM user_permissions WHERE slug = :s"), {"s": VIEW}
+    ).scalar()
+    assert permission_id, f"{VIEW} must exist"
+    db.execute(
+        text(
+            "INSERT INTO user_role_permissions (id, role_id, permission_id, "
+            "assigned_at) VALUES (:id, :r, :p, now())"
+        ),
+        {"id": _u(), "r": role_id, "p": permission_id},
+    )
+    db.add(UserRoleAssignment(user_id=user.id, role_id=role_id))
+    integration = Integration(
+        name=f"ZZTSD-{_u()[:8]}", type="autocount_esb", act_as_user_id=user.id,
+        is_active=True,
+    )
+    db.add(integration)
+    db.flush()
+    key = IntegrationKeyService(db).issue_key(integration)
+    db.flush()
+
+    with TestClient(app) as c:
+        posted = c.post(
+            f"{BASE}/export", headers={"X-API-Key": key}, json={"split": "none"},
+        )
+        got = c.get(BASE, headers={"X-API-Key": key}, params={"only_debt": False})
+
+    assert posted.status_code in (401, 403), posted.text
+    count = db.execute(text("SELECT count(*) FROM user_downloads")).scalar()
+    assert count == 0, "an API-key-only caller was allowed to create a download row"
+    assert got.status_code == 200, (
+        f"the GET list must still answer the same key: {got.text}"
+    )
 
 
 # =========================================================================== #
@@ -275,6 +352,56 @@ def test_export_split_none_one_sheet_with_total_row(scm_app):
     total_row = [cell.value for cell in ws[ws.max_row]]
     assert total_row[0] == "Total", total_row
     assert total_row[-1] == row["total"], (total_row, row["total"])
+
+
+def test_export_escapes_formula_like_text(scm_app):
+    """AC-13b (security review, ruled fix-before-merge): `_export_row` writes
+    `product_code` and `supplier_name` raw - a supplier named `=HYPERLINK("x")` or a
+    product code starting with `+` reaches openpyxl unescaped, which a spreadsheet
+    application reads as a formula the moment the file is opened (CSV/xlsx injection).
+    Every text cell must go through the same `_xlsx_safe_text` guard the other xlsx
+    exports already apply (`proforma_invoice_service._xlsx_safe_text`: a leading
+    apostrophe on anything starting `=`/`+`/`-`/`@`) - `openpyxl` then stores it as a
+    plain string (`data_type == 's'`), never a formula (`'f'`)."""
+    from app.services.scm.proforma_invoice_service import _xlsx_safe_text
+    from app.services.scm.stock_debt_service import StockDebtService
+
+    app, db = _client(scm_app)
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+
+    product_code_value = f"+{marker}-A"
+    product = _product(db, product_code_value)
+    supplier = _supplier(db, f"ZZTFRM{_u()[:5]}".upper())
+    supplier.supplier_name = '=HYPERLINK("x")'
+    db.flush()
+    from app.models.procurement import ProductSupplier
+
+    db.add(
+        ProductSupplier(
+            id=_u(), product_id=product.id, supplier_id=supplier.id,
+            standard_lead_time_days=7, is_primary_supplier=True,
+            company_id=SORENTO_COMPANY_ID,
+        )
+    )
+    _demand(
+        db, product, warehouse, qty=5, required_date=date(2026, 11, 10),
+        so_number=f"{marker}-SO1",
+    )
+    db.flush()
+
+    svc = StockDebtService(db)
+    blob, _ct, _fn, _counts = svc.export(query=marker, only_debt=False, split="none")
+
+    wb = _sheets(blob)
+    ws = wb["Stock debt"]
+    product_cell = ws.cell(row=2, column=1)
+    supplier_cell = ws.cell(row=2, column=4)
+
+    assert product_cell.data_type == "s", (product_cell.value, product_cell.data_type)
+    assert product_cell.value == _xlsx_safe_text(product_code_value), product_cell.value
+    assert supplier_cell.data_type == "s", (supplier_cell.value, supplier_cell.data_type)
+    assert supplier_cell.value == _xlsx_safe_text('=HYPERLINK("x")'), supplier_cell.value
 
 
 def test_export_split_supplier_one_sheet_each_plus_no_supplier(scm_app):
