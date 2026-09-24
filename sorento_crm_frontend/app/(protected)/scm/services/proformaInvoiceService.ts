@@ -373,6 +373,18 @@ export interface ProformaInvoiceSourceFile {
   mime_type: string | null;
 }
 
+/** Container/seal/SO/consignee EXACTLY as Convert (B1) will write them onto the draft -
+ *  B3/AC-C5: computed server-side by the SAME function `convert_to_draft_shipment` uses,
+ *  so the dialog's "Carried onto the draft" line can never disagree with what Convert
+ *  itself does. `so` is the PI's own `bl_no` (提单号, R-A) - it lands on the packing list
+ *  under SO (`forwarder_order_ref`), never a "BL" field. */
+export interface ProformaInvoiceConvertCarry {
+  container: string | null;
+  seal: string | null;
+  so: string | null;
+  consignee: string | null;
+}
+
 export interface ProformaInvoiceDetail extends ProformaInvoiceListRow {
   lines: ProformaInvoiceLine[];
   converted_shipments: ConvertedShipmentRef[];
@@ -382,6 +394,10 @@ export interface ProformaInvoiceDetail extends ProformaInvoiceListRow {
   /** Optional while an older payload (or a record uploaded before the link existed) carries
    *  no links at all - the detail then names its files without offering to open them. */
   source_files?: ProformaInvoiceSourceFile[];
+  /** Optional so a fixture/test payload built before this field existed still type-checks -
+   *  the real endpoint always sends it (B3); the convert dialog falls back to an
+   *  all-`null` carry when it is absent. */
+  convert_carry?: ProformaInvoiceConvertCarry;
 }
 
 /** One PI's outcome inside a convert - always present, so the caller can name every

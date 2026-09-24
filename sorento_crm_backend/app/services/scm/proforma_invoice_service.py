@@ -28,6 +28,7 @@ from typing import Any, Optional
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session, joinedload
 
+from app.models.company import Company
 from app.models.procurement import InboundShipment, InboundShipmentLine, Supplier
 from app.models.product import Product
 from app.models.product_set import ProductSet, ProductSetMember
@@ -1572,6 +1573,62 @@ def _record_over_capacity(
     )
 
 
+def _company_name_for(db: Session, company_id: Optional[str]) -> Optional[str]:
+    if not company_id:
+        return None
+    company = db.query(Company).filter(Company.id == company_id).first()
+    return company.name if company else None
+
+
+def _convert_carry(
+    db: Session,
+    invoices: list[ProformaInvoice],
+    *,
+    rows_by_invoice: Optional[dict[str, list]] = None,
+) -> dict[str, Optional[str]]:
+    """Container/seal/SO/consignee exactly as `convert_to_draft_shipment` (B1) will write
+    them onto the draft - shared by it and `serialize` (B3), so the dialog's "Carried onto
+    the draft" line can never say something Convert itself would not (AC-C5).
+
+    AC-D2c/R-A: container/seal/SO carry ONLY when every invoice in `invoices` agrees on ONE
+    container - each invoice's own packing rows first (`rows_by_invoice`, a container can
+    differ from the header when a PI was applied before the real container was assigned),
+    else its header `container_ref`; `serialize` calls this for ONE invoice with no rows,
+    which is exactly that invoice's own header. `提单号` (`bl_ref`) lands in the SO field,
+    never a "BL" (6 Sep ruling, unchanged). R-B (24 Sep): consignee is ALWAYS the invoices'
+    OWN COMPANY name - never `consignee_ref`, which is read off the sheet and ignored here -
+    and carries regardless of whether the container agrees.
+    """
+    def _pi_container(inv: ProformaInvoice) -> Optional[str]:
+        if rows_by_invoice:
+            containers = {
+                r.container_no for r in rows_by_invoice.get(str(inv.id), []) if r.container_no
+            }
+            if len(containers) == 1:
+                return next(iter(containers))
+        return inv.container_ref
+
+    per_invoice_containers = {str(inv.id): _pi_container(inv) for inv in invoices}
+    distinct_containers = {v for v in per_invoice_containers.values() if v}
+    container = seal = so = None
+    if len(distinct_containers) == 1:
+        container = next(iter(distinct_containers))
+        seal = next((inv.seal_ref for inv in invoices if inv.seal_ref), None)
+        so = next((inv.bl_ref for inv in invoices if inv.bl_ref), None)
+
+    company_id = next((inv.company_id for inv in invoices if inv.company_id), None)
+    consignee = _company_name_for(db, company_id)
+    return {
+        "container": container,
+        "seal": seal,
+        "so": so,
+        "consignee": consignee,
+        # Named for the caller that reports it (`convert_to_draft_shipment`'s own
+        # `header_conflicts`) - several DIFFERENT containers named, not simply none at all.
+        "conflict": len(distinct_containers) > 1,
+    }
+
+
 def convert_to_draft_shipment(
     db: Session,
     invoice_ids: list[str],
@@ -2004,29 +2061,19 @@ def convert_to_draft_shipment(
 
     invoice_dates = [inv.invoice_date for inv in invoices if inv.invoice_date]
 
-    # AC-D2c: the header carries over when every selected PI names ONE container -
-    # its own packing rows first (a container can differ from the header when a PI was
-    # applied before the real container was assigned), else its header `container_ref`.
-    # Seal/BL live on the header alone (rows carry no seal/BL of their own).
-    def _pi_container(inv: ProformaInvoice) -> Optional[str]:
-        containers = {
-            r.container_no for r in rows_by_invoice.get(str(inv.id), []) if r.container_no
-        }
-        return next(iter(containers)) if len(containers) == 1 else inv.container_ref
-
-    per_invoice_containers = {str(inv.id): _pi_container(inv) for inv in invoices}
-    distinct_containers = {v for v in per_invoice_containers.values() if v}
+    # AC-D2c/B1: the header carries over when every selected PI names ONE container - its
+    # own packing rows first (a container can differ from the header when a PI was applied
+    # before the real container was assigned), else its header `container_ref`. Seal/SO
+    # live on the header alone (rows carry no seal/SO of their own); consignee is always
+    # the invoices' own company (R-B) regardless of whether the container agrees - see
+    # `_convert_carry`'s own docstring, shared with `serialize` (B3) so the two never
+    # disagree about what Convert is about to write.
+    carry = _convert_carry(db, invoices, rows_by_invoice=rows_by_invoice)
+    carry_container, carry_seal, carry_bl, carry_consignee = (
+        carry["container"], carry["seal"], carry["so"], carry["consignee"],
+    )
     header_conflicts: list[str] = []
-    carry_container = carry_seal = carry_bl = None
-    carry_consignee = None
-    if len(distinct_containers) == 1:
-        carry_container = next(iter(distinct_containers))
-        carry_seal = next((inv.seal_ref for inv in invoices if inv.seal_ref), None)
-        carry_bl = next((inv.bl_ref for inv in invoices if inv.bl_ref), None)
-        carry_consignee = next(
-            (inv.consignee_ref for inv in invoices if inv.consignee_ref), None
-        )
-    elif len(distinct_containers) > 1:
+    if carry["conflict"]:
         header_conflicts.append("container_number")
 
     # A NEW packing list, every time (Q6). "Add to an existing draft" is gone: a convert
@@ -3145,6 +3192,12 @@ def serialize(
         "is_adjusted": invoice.adjusted_at is not None,
         "status": invoice.status or "current",
         "revision_no": int(invoice.revision_no or 1),
+        # B3/AC-C5: exactly what Convert (B1) will write onto the draft for THIS invoice
+        # alone - the dialog's "Carried onto the draft" line reads this instead of echoing
+        # the raw header fields above, which ignore the "one container known" condition.
+        "convert_carry": {
+            k: v for k, v in _convert_carry(db, [invoice]).items() if k != "conflict"
+        },
     }
 
     chain = _chain(db, invoice)

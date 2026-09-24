@@ -56,9 +56,6 @@ interface PlacementRow {
  *  while the invoice is still loading. */
 const NO_ROWS: PlacementRow[] = [];
 
-/** B2/R-B MOCK (Phase 1) - see `carryPreview` below. */
-const MOCK_CONSIGNEE_COMPANY_NAME = 'Sorento';
-
 export function ConvertToPackingListDialog({
   open,
   onOpenChange,
@@ -112,27 +109,13 @@ export function ConvertToPackingListDialog({
     setPlacedRowIds(new Set(packingRows.filter((r) => r.match_state === 'matched').map((r) => r.id)));
   }, [open, packingRows]);
 
-  /**
-   * Container / seal / SO / consignee the draft will actually receive (AC-C5/AC-C6, B3) -
-   * MOCKED (Phase 1, frontend-first against mocks, L2-S3/#1212): a real convert preview
-   * endpoint does not exist yet, so this stands in for the field it will answer with,
-   * shaped exactly like B1/B2 write it rather than echoing the PI's own field names. A
-   * caller asking the real server later reads the same four names off its response instead
-   * of this local computation - remove this block then (grep this comment).
-   *
-   * B1: seal and the SO (the PI's `bl_no`, R-A - it lands on the packing list under SO,
-   * `forwarder_order_ref`, never "BL") carry ONLY when the container is known - this
-   * dialog handles ONE invoice, so "exactly one container known" is just `container_no`
-   * being set. B2/R-B: consignee is ALWAYS the PI's own company, never read off the sheet -
-   * hardcoded here (rather than `useCompany()`, which several detail pages already read)
-   * so this dialog's existing test harnesses, none of which wrap `<CompanyProvider>`, are
-   * unaffected; Phase 2 reads the real name off the server response instead.
-   */
-  const carryPreview = {
-    container: invoice?.container_no ?? null,
-    seal: invoice?.container_no ? (invoice?.seal_no ?? null) : null,
-    so: invoice?.container_no ? (invoice?.bl_no ?? null) : null,
-    consignee: MOCK_CONSIGNEE_COMPANY_NAME,
+  // Container / seal / SO / consignee the draft will actually receive (AC-C5/AC-C6, B3) -
+  // read straight off the server's own `convert_carry` (the PI payload field
+  // `proforma_invoice_service.serialize` computes with the SAME function `convert_to_
+  // draft_shipment` uses), never recomputed here: the dialog's line can then never say
+  // something Convert itself would not.
+  const carryPreview = invoice?.convert_carry ?? {
+    container: null, seal: null, so: null, consignee: null,
   };
 
   const defaultSize = useMemo(
