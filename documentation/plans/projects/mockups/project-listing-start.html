@@ -6,9 +6,11 @@
 <title>Project listing Start mockup</title>
 <!-- Issue #1167. Annotated mockup, not shipped code. Plain inline CSS so it opens from a file.
      Plan: documentation/plans/projects/PLAN-po-schedule-redesign-24sep.md
-     Redrawn after the lavish review, 24 Sep 2026: the Needs attention list is dropped. Every
-     upload now starts from the existing Project listing (Pipeline, Grid view), one Start
-     button per row. -->
+     Redrawn after the lavish review, 24 Sep 2026, R21: the Needs attention list is still
+     dropped, but Start is now ONE page-level button, top right of the Project listing, not one
+     per row. Its menu is Register a project, Upload PO, Upload delivery schedule, in that order.
+     Upload PO and Upload delivery schedule ask for the project first (a required
+     SearchableSelect), since a top-level Start no longer has a row to read the project from. -->
 <style>
 :root{
   --bg:#f6f7f9; --card:#ffffff; --fg:#111827; --muted:#6b7280; --line:#e5e7eb; --line-soft:#f1f2f4;
@@ -109,11 +111,11 @@ body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 var(--font)}
 .dialog .panel .ft{padding:12px 18px;border-top:1px solid var(--line-soft);display:flex;justify-content:flex-end;gap:8px}
 .field{margin-bottom:12px}
 .field label{display:block;font-size:12px;font-weight:500;margin-bottom:4px}
-.staticfield{border:1px solid var(--line-soft);border-radius:6px;padding:7px 10px;background:var(--grey-soft);color:var(--fg);font-weight:500}
-.select{border:1px solid var(--line);border-radius:6px;padding:7px 10px;display:flex;justify-content:space-between;color:var(--fg);background:#fff}
+.select{border:1px solid var(--line);border-radius:6px;padding:7px 10px;display:flex;justify-content:space-between;align-items:center;gap:8px;color:var(--fg);background:#fff}
+.select .clr{color:var(--muted);font-size:14px;line-height:1}
 .drop{border:1.5px dashed #cbd5e1;border-radius:8px;padding:22px;text-align:center;color:var(--muted);background:#fafafa}
 /* start menu */
-.menu{position:absolute;z-index:5;background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);min-width:200px;padding:4px}
+.menu{position:absolute;z-index:5;background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);min-width:210px;padding:4px}
 .menu .mi{padding:8px 10px;border-radius:6px;font-size:13px;color:var(--fg)}
 .menu .mi:hover{background:var(--grey-soft)}
 </style>
@@ -121,14 +123,13 @@ body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 var(--font)}
 <body>
 <div class="doc">
 <h1>Mockup 1 of 4: Project listing, Start</h1>
-<p class="sub">Issue #1167. Redrawn after the lavish review (24 Sep 2026): the separate Needs
-attention page is dropped ("everything just come from pipeline"). Every upload now starts on the
-existing Project listing (Project Sales &rsaquo; Pipeline, Grid view). Each row gets a Start
-button; for a project sales coordinator it opens a small menu, Upload PO or Upload delivery
-schedule, already scoped to that row's project. Illustrative data: PRJ-000001 Setia Alam is the
-project the audit walked; the other rows are illustrative.</p>
+<p class="sub">Issue #1167. Redrawn after the lavish review (24 Sep 2026, R21): the separate Needs
+attention page stays dropped ("everything just come from pipeline"), and Start is now one button,
+top right of the Project listing (Project Sales &rsaquo; Pipeline, Grid view), not one per row.
+Its menu offers Register a project, Upload PO, Upload delivery schedule, in that order. Illustrative
+data: PRJ-000001 Setia Alam is the project the audit walked; the other rows are illustrative.</p>
 
-<h2 class="frame-title">1280 wide, Start menu open on the Setia Alam row</h2>
+<h2 class="frame-title">1280 wide, Start menu open, top right</h2>
 <div class="layout">
 <div class="scroll"><div class="frame w1280"><div class="shell">
   <div class="side">
@@ -151,49 +152,48 @@ project the audit walked; the other rows are illustrative.</p>
     <div class="content">
       <div class="phrow">
         <div class="ph"><h1>Pipeline</h1><div class="crumbs">Dashboards &rsaquo; Project Sales &rsaquo; Pipeline</div></div>
-        <div class="actions"><span class="toggle"><span>Board</span><span class="on">Grid</span></span><span class="btn primary">Register a project</span></div>
+        <div class="actions" style="position:relative">
+          <span class="toggle"><span>Board</span><span class="on">Grid</span></span>
+          <span class="btn primary" style="position:relative">Start &#9662;<span class="pin co" style="right:-10px;top:-10px">1</span></span>
+          <div class="menu" style="top:34px;right:0">
+            <div class="mi">Register a project</div>
+            <div class="mi">Upload PO</div>
+            <div class="mi">Upload delivery schedule</div>
+          </div>
+        </div>
       </div>
       <div class="toolbar"><span class="search">Search code, project, developer</span><span class="chip">Stage</span><span class="chip">Owner</span></div>
-      <div class="grid" style="position:relative;overflow:visible">
-        <span class="pin co" style="left:-24px;top:40px">1</span>
+      <div class="grid" style="position:relative">
         <div class="scroller"><table>
-          <colgroup><col style="width:110px"><col style="width:180px"><col style="width:150px"><col style="width:130px"><col style="width:130px"><col style="width:130px"></colgroup>
-          <thead><tr><th>Code</th><th>Project</th><th>Developer</th><th>Stage</th><th>Owner</th><th></th></tr></thead>
+          <colgroup><col style="width:120px"><col style="width:200px"><col style="width:170px"><col style="width:150px"><col></colgroup>
+          <thead><tr><th>Code</th><th>Project</th><th>Developer</th><th>Stage</th><th>Owner</th></tr></thead>
           <tbody>
-            <tr class="hl" style="position:relative"><td>PRJ-000001</td><td>Setia Alam</td><td>Sime Darby Property</td><td><span class="pill blue">PO Received</span></td><td>Jayson Foundryx</td>
-              <td style="overflow:visible">
-                <span class="btn sm primary" style="position:relative">Start &#9662;<span class="pin co" style="right:-10px;top:-10px">2</span></span>
-                <div class="menu" style="top:30px;left:0">
-                  <div class="mi">Upload PO</div>
-                  <div class="mi">Upload delivery schedule</div>
-                </div>
-              </td>
-            </tr>
-            <tr><td>PRJ-000014</td><td>Bukit Jelutong</td><td>UEM Sunrise</td><td><span class="pill">Quoting</span></td><td>Mei Ling Tan</td><td><span class="btn sm">Start &#9662;</span></td></tr>
-            <tr><td>PRJ-000009</td><td>Cyberjaya Heights</td><td>Gamuda Land</td><td><span class="pill">Negotiation</span></td><td>Ahmad Rizal</td><td><span class="btn sm">Start &#9662;</span></td></tr>
+            <tr class="hl"><td>PRJ-000001</td><td>Setia Alam</td><td>Sime Darby Property</td><td><span class="pill blue">PO Received</span></td><td>Jayson Foundryx</td></tr>
+            <tr><td>PRJ-000014</td><td>Bukit Jelutong</td><td>UEM Sunrise</td><td><span class="pill">Quoting</span></td><td>Mei Ling Tan</td></tr>
+            <tr><td>PRJ-000009</td><td>Cyberjaya Heights</td><td>Gamuda Land</td><td><span class="pill">Negotiation</span></td><td>Ahmad Rizal</td></tr>
           </tbody>
         </table></div>
         <div class="pager"><span>1 - 3 of 3</span><span>Rows per page 25 &nbsp; &lsaquo; 1 &rsaquo;</span></div>
       </div>
-      <p class="small muted" style="margin-top:14px;position:relative">Start is the only new control on this page. Everything else (Board/Grid toggle, filters, row click into the project) works exactly as today. <span class="co" style="vertical-align:middle">3</span></p>
+      <p class="small muted" style="margin-top:14px;position:relative">Rows carry no Start button any more; a row click still opens that project, exactly as today. <span class="co" style="vertical-align:middle">3</span></p>
     </div>
   </div>
 </div></div></div>
 <div class="notes"><ol>
-  <li><span class="co">1</span><div><b>The project listing is the one entry point.</b> No separate Needs attention page: a project sales coordinator already knows which project they are uploading for, since they are the one who received the PO or schedule from that project's developer.<span class="ref">Lavish review, 24 Sep 2026: "i don't really needs 'Needs attention', everything just come from pipeline." Audit friction #1 (five clicks, no sidebar entry) is fixed by removing the extra hop, not by adding a second list.</span></div></li>
-  <li><span class="co">2</span><div><b>Start opens a small menu: Upload PO, Upload delivery schedule.</b> The project is the row's, so neither option asks for a project picker; picking an option opens today's upload dialog scoped to that row.<span class="ref">Lavish review round 2: "he go to the project listing, and click Start as a CTA, so for project sales coordinator access, it can select upload PO / upload delivery schedule in the dropdown."</span></div></li>
-  <li><span class="co">3</span><div><b>Nothing else on the page changes.</b> Board/Grid toggle, search, filters and the row's own click-through to the project stay as they are today; Start is one added button per row.<span class="ref">PRINCIPLES "simplest thing that works": one button on an existing list, not a second list.</span></div></li>
+  <li><span class="co">1</span><div><b>Start is one button, top right of the page header.</b> Not one per row: it opens a menu of three items, in this order, Register a project, Upload PO, Upload delivery schedule.<span class="ref">Lavish review, R21: "the start button should be at top right, so it is start -&gt; register a project, upload PO, upload delivery schedule."</span></div></li>
+  <li><span class="co">2</span><div><b>Register a project opens the existing project create flow, unchanged.</b> Today's separate "Register a project" button folds into the Start menu instead of sitting beside it as its own button.<span class="ref">R21. Code: RegisterProjectDialog, unchanged.</span></div></li>
+  <li><span class="co">3</span><div><b>Everything else on the page is as today.</b> Board/Grid toggle, search, filters, and a row click still opens that project; only the header action changes.<span class="ref">PRINCIPLES "simplest thing that works".</span></div></li>
 </ol></div>
 </div>
 
-<h2 class="frame-title">1280 wide, Upload PO chosen from that row</h2>
+<h2 class="frame-title">1280 wide, Upload PO chosen, project picker shown</h2>
 <div class="layout">
-<div class="scroll"><div class="frame w1280" style="height:460px">
-  <div class="shell" style="opacity:.55"><div class="side" style="height:460px"><div class="brand">Sorento</div></div><div class="main"><div class="topbar"></div><div class="content"><div class="ph"><h1>Pipeline</h1></div></div></div></div>
+<div class="scroll"><div class="frame w1280" style="height:480px">
+  <div class="shell" style="opacity:.55"><div class="side" style="height:480px"><div class="brand">Sorento</div></div><div class="main"><div class="topbar"></div><div class="content"><div class="ph"><h1>Pipeline</h1></div></div></div></div>
   <div class="dialog"><div class="panel">
     <div class="hd">Upload a customer PO <span class="muted">&times;</span></div>
     <div class="bd" style="position:relative">
-      <div class="field"><label>Project</label><div class="staticfield">Setia Alam <span class="muted">PRJ-000001</span></div></div>
+      <div class="field"><label>Project</label><div class="select"><span class="muted">Search a project</span><span class="clr">&times;</span></div></div>
       <div class="field"><label>PO number (optional)</label><div class="select"><span class="muted">Leave blank and the extraction fills it</span></div></div>
       <div class="drop">Drop the PO PDF here, or browse</div>
       <span class="pin co" style="right:-12px;top:-8px">4</span>
@@ -202,7 +202,7 @@ project the audit walked; the other rows are illustrative.</p>
   </div></div>
 </div></div>
 <div class="notes"><ol>
-  <li><span class="co">4</span><div><b>Project is shown, not asked for.</b> Setia Alam is already fixed by the row Start was clicked on, so the field is read-only context, not a picker. Upload lands the coordinator straight on the PO review page for that document (mockup 3); Upload delivery schedule works the same way, straight onto the schedule review page (mockup 2).<span class="ref">Lavish review round 2: "when he upload, he choose the project, then upload, then go to the PO verification page" (the choice already happened at Start, on the row). Services unchanged: same upload endpoint, same project id.</span></div></li>
+  <li><span class="co">4</span><div><b>Project is asked for again, since Start is no longer on a row.</b> A required Project `SearchableSelect`, clearable and searchable, shown first; picking it narrows the rest of the dialog exactly as today's per-project dialog does. Upload delivery schedule works the same way: Project first, then today's Purchase order, Revision of and Issued by fields, narrowed to that project. Upload lands the user straight on that document's review page (mockup 3 or mockup 2).<span class="ref">Lavish review, R21 and the earlier ruling it restates: "when he upload, he choose the project, then upload." Services unchanged: same upload endpoint, same project id, once chosen.</span></div></li>
 </ol></div>
 </div>
 
@@ -212,18 +212,17 @@ project the audit walked; the other rows are illustrative.</p>
   <div class="top">Sorento <span class="muted" style="font-weight:400">&#9776;</span></div>
   <div class="content">
     <div class="ph"><h1>Pipeline</h1><div class="crumbs">Project Sales &rsaquo; Pipeline</div></div>
-    <div class="toolbar" style="margin:10px 0"><span class="search" style="min-width:0;flex:1">Search</span><span class="chip">Filters</span></div>
-    <div class="rcard" style="position:relative">
+    <div class="actions" style="margin:10px 0;position:relative"><span class="btn primary" style="flex:1;justify-content:center">Start &#9662;</span><span class="pin co" style="right:-8px;top:-10px">5</span></div>
+    <div class="toolbar"><span class="search" style="min-width:0;flex:1">Search</span><span class="chip">Filters</span></div>
+    <div class="rcard">
       <div class="row1"><b>Setia Alam</b><span class="pill blue">PO Received</span></div>
       <div class="small muted">PRJ-000001 &middot; Sime Darby Property</div>
-      <div style="margin-top:8px"><span class="btn sm primary" style="width:100%;justify-content:center">Start &#9662;</span></div>
-      <span class="pin co" style="right:-8px;top:-8px">5</span>
     </div>
-    <div class="rcard"><div class="row1"><b>Bukit Jelutong</b><span class="pill">Quoting</span></div><div class="small muted">PRJ-000014 &middot; UEM Sunrise</div><div style="margin-top:8px"><span class="btn sm" style="width:100%;justify-content:center">Start &#9662;</span></div></div>
+    <div class="rcard"><div class="row1"><b>Bukit Jelutong</b><span class="pill">Quoting</span></div><div class="small muted">PRJ-000014 &middot; UEM Sunrise</div></div>
   </div>
 </div>
 <div class="notes"><ol>
-  <li><span class="co">5</span><div><b>Same Start button, full width on a card row.</b> The Grid view's rows become stacked cards at phone width, as the project listing already does; the menu opens the same two options in place.<span class="ref">DESIGN-LANGUAGE section 7 (usable and non-clipped at 375px).</span></div></li>
+  <li><span class="co">5</span><div><b>Same one Start button, full width under the title.</b> The menu opens the same three items in place; project rows stay plain cards with no per-row action.<span class="ref">DESIGN-LANGUAGE section 7 (usable and non-clipped at 375px).</span></div></li>
 </ol></div>
 </div>
 </div>

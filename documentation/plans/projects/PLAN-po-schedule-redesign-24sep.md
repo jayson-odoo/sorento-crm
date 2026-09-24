@@ -14,7 +14,7 @@ tied to the audit friction list and the rulings; redrawn after the lavish review
 
 | Mockup | Screen | Slice |
 | --- | --- | --- |
-| `mockups/project-listing-start.html` | Project Sales > Pipeline (Grid view), Start menu per row, Upload PO dialog | S2 |
+| `mockups/project-listing-start.html` | Project Sales > Pipeline (Grid view), one top-right Start menu (Register a project / Upload PO / Upload delivery schedule), Upload PO dialog | S2 |
 | `mockups/delivery-schedule-review.html` | `[projectId]/delivery-schedules/[versionId]` | S5 (and S3 first use) |
 | `mockups/po-review.html` | `[projectId]/purchase-orders/[versionId]` (renamed from `po-confirm.html`) | S6 (and S1's R7 fix) |
 | `mockups/sales-order-review.html` | `[projectId]/sales-orders/[psoId]` (renamed from `so-findings.html`) | S7 (and S3) |
@@ -75,7 +75,9 @@ frontend-only.
 The owner reviewed the first mockup drawing in one lavish session (R5's method) and found it too
 complex; these rulings supersede R2 (the Needs attention page) and part of R3 (one shared findings
 component as a separate surface) and replace R5's un-numbered mockups with the four redrawn ones
-above. R10's slice order and R6/R7/R8/R9 stand unchanged.
+above. A follow-up ruling (R21) after seeing the redrawn `project-listing-start.html` moves Start
+from a per-row button (R14(a)) to one page-level button. R10's slice order and R6/R7/R8/R9 stand
+unchanged.
 
 > R11 [round 1] "imo the mockups are way too complicated, it is very taxing for the users, please
 > simplify that."
@@ -127,17 +129,29 @@ above. R10's slice order and R6/R7/R8/R9 stand unchanged.
 > to (the schedule matrix row, the PO line row, the SO line row), never a second table or a
 > Findings tab. R3's other terms stand as written: one severity set, one verb "Dismiss with a
 > reason", duplicates collapsed, the two-tier publish gate unchanged.
+>
+> R21 [follow-up, after seeing the redrawn mockup] "the start button should be at top right, so it
+> is start -> register a project, upload PO, upload delivery schedule." Supersedes R14(a)/R17's
+> "Start button per row": Start is ONE page-level primary button, top right of the Project listing
+> (the `PageHeader` action slot), not one per row. Its menu has three items in this order: Register
+> a project, Upload PO, Upload delivery schedule. Register a project opens the existing project
+> create flow unchanged (folding today's separate button into the Start menu). Upload PO and
+> Upload delivery schedule open the upload dialog with a required project `SearchableSelect` first
+> (clearable, searchable, per the earlier ruling "when he upload, he choose the project, then
+> upload"), then the file, then straight to that document's review page, exactly as before. Rows
+> lose the Start button.
 
 Reading (the plan's own summary, not a quote): the Needs attention list is dropped; the entry
-point for every upload is a Start button on the existing Project listing row (Project Sales >
-Pipeline, Grid view), opening a small menu, Upload PO or Upload delivery schedule, already scoped
-to that row's project -- no project picker in the upload dialog. Each review screen is one page:
-the schedule matrix, the PO lines table, or the SO lines list, with the finding shown and cleared
-on its own row (a Flag cell plus one "Dismiss with a reason" action), plus a Documents tab (the
-uploaded file, and for the PO also the rejected-note reasons) that is always present. No Findings
-tab anywhere, no left/right split pane; the table takes the full page width. One primary button
-per page (Confirm schedule / Confirm this PO / Publish). A missing PDF is a plain empty state,
-never an error code.
+point for every upload is ONE Start button, top right of the Project listing (Project Sales >
+Pipeline, Grid view), opening a menu of three items, Register a project, Upload PO, Upload
+delivery schedule, in that order (R21). Upload PO and Upload delivery schedule ask for the project
+first, a required, clearable, searchable `SearchableSelect`, since Start no longer reads the
+project off a row. Each review screen is one page: the schedule matrix, the PO lines table, or the
+SO lines list, with the finding shown and cleared on its own row (a Flag cell plus one "Dismiss
+with a reason" action), plus a Documents tab (the uploaded file, and for the PO also the
+rejected-note reasons) that is always present. No Findings tab anywhere, no left/right split pane;
+the table takes the full page width. One primary button per page (Confirm schedule / Confirm this
+PO / Publish). A missing PDF is a plain empty state, never an error code.
 
 ## Facts this plan rests on (verified against the checkout, 24 Sep 2026)
 
@@ -235,24 +249,35 @@ Paths: `FE` = `sorento_crm_frontend`, `PS` = `FE/app/(protected)/project-sales`,
   `POIntakeAnnotationsGrid.test.tsx`; a string test for S1-1 / S1-2. Browser pass on the two
   changed screens.
 
-### S2. Start menu on the Project listing (full track)
+### S2. One Start button on the Project listing (full track)
+
+Rewritten per R21: Start is a page-level button, top right of the Project listing header, not one
+per row; its menu is Register a project, then Upload PO, then Upload delivery schedule, and the
+two uploads ask for the project since a page-level Start no longer has a row to read it from.
 
 - **Backend seam:** none. `POIntakeUploadDialog` and `DeliveryScheduleUploadDialog` already accept
-  a `projectId` / `project` prop from their existing per-project call sites; Start reuses the same
-  props from a new call site, so there is nothing to add on the server.
-- **Frontend seam:** a Start button plus a small dropdown menu (Upload PO, Upload delivery
-  schedule) on each project row, in both Pipeline views: `PipelineBoard.tsx` (a card action) and
-  `ProjectsGrid.tsx` (a grid row action). Picking an option opens the existing upload dialog
-  scoped to that row's project; there is no project picker (superseding R2's "ask for the
-  project" -- the project is already fixed by which row's Start was clicked, R14/R17). On a
-  successful upload the dialog pushes straight to the version's review page (PO or schedule),
-  exactly as today's per-project upload already does.
-- **Tests:** vitest for the Start button and its menu on both Pipeline views (menu opens with two
-  items, each item opens the right dialog pre-scoped to that row's project, no project field
-  rendered); existing dialog tests stay green unedited (the dialogs' own behaviour is unchanged,
-  only a new call site). Recorded agent-browser run for S2-12: from `/`, expand Project Sales,
-  click Pipeline, click a project row's Start, click Upload PO, see the dropzone already scoped to
-  that project. Same for Upload delivery schedule. At 1280 and 375.
+  an optional `projectId` / `project` prop; Start's page-level call site simply omits it, which is
+  the same "no `projectId` passed" branch the dialogs already need to support a project picker, so
+  there is nothing to add on the server.
+- **Frontend seam:** one Start button in the Pipeline page's `PageHeader` action slot (top right,
+  replacing today's standalone "Register a project" button), opening a `DropdownMenu` with three
+  items in order: Register a project, Upload PO, Upload delivery schedule. Register a project
+  opens the existing `RegisterProjectDialog` unchanged. Upload PO and Upload delivery schedule open
+  their existing dialogs with a required project `SearchableSelect` (clearable) shown first; once a
+  project is picked, the rest of each dialog behaves exactly as today's per-project call (schedule
+  upload's Purchase order / Revision of / Issued by fields narrow to the chosen project). The
+  picker lists projects with `can_edit` (same guard S2 always carried). `PipelineBoard.tsx` and
+  `ProjectsGrid.tsx` lose the per-row Start action drawn in the first pass of this slice; row
+  click still opens the project, unchanged. On a successful upload the dialog pushes straight to
+  the version's review page (PO or schedule), exactly as today's per-project upload already does.
+- **Tests:** vitest for the page-level Start button and its three-item menu (order asserted,
+  Register a project opens the existing dialog, Upload PO / Upload delivery schedule open their
+  dialogs with a required project field rendered this time, no project field only when the dialog
+  is opened from inside a project's own tab); existing dialog tests stay green unedited except the
+  ones asserting "no project field ever renders", which flip to "renders when opened without a
+  `projectId`" (the S2 call site never carries one). Recorded agent-browser run for S2-8: from `/`,
+  expand Project Sales, click Pipeline, click Start (top right), click Upload PO, pick Setia Alam,
+  see the dropzone. Same for Upload delivery schedule. At 1280 and 375.
 
 ### S3. Inline row findings, one Dismiss per row, one list (full track, mostly FE)
 
@@ -279,12 +304,13 @@ Paths: `FE` = `sorento_crm_frontend`, `PS` = `FE/app/(protected)/project-sales`,
 ### S4. Return after Confirm (small fix track, FE only)
 
 - **Backend seam:** none.
-- **Frontend seam:** the Project listing (a Start-driven upload) and the project tab panels
-  already link into a review page; their hrefs carry `from` through `appendListState` (list) or
-  the originating `?tab=`. The PO review page, schedule review and SO page read it with
-  `useHrefWithListState`, and on a successful Confirm / Confirm schedule / Publish `router.push`
-  there; with no origin they stay (today's behaviour). The upload dialogs (from Start, or from a
-  project's own tab) forward the origin into the review URL they push to.
+- **Frontend seam:** the Project listing (a Start-driven upload, R21) and the project tab panels
+  already link into a review page; their hrefs carry `from` through `appendListState` (list,
+  naming the row for whichever project was picked in the Start dialog) or the originating `?tab=`.
+  The PO review page, schedule review and SO page read it with `useHrefWithListState`, and on a
+  successful Confirm / Confirm schedule / Publish `router.push` there; with no origin they stay
+  (today's behaviour). The upload dialogs (from Start, or from a project's own tab) forward the
+  origin into the review URL they push to.
 - **Tests:** vitest per page: confirm with origin navigates, without origin stays; upload
   forwards origin. Browser pass S4-6.
 

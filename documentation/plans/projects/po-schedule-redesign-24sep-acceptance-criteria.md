@@ -13,14 +13,16 @@ Actor: a project salesperson (or their manager) at Sorento who has a customer PO
 schedule PDF in hand, or who needs to clear what the system flagged.
 
 Rewritten after the lavish review (24 Sep 2026): there is no cross-project Needs attention list
-(R17). Every upload and every review starts from the existing Project listing.
+(R17). Every upload and every review starts from the existing Project listing, via ONE Start
+button, top right of the page (R21), not one per row.
 
 - **J1. First screen.** From `/`, they expand Project Sales and click **Pipeline**. They click
-  **Start** on their project's row; a small menu offers **Upload PO** and **Upload delivery
-  schedule**, already scoped to that project. Two clicks to Pipeline, one more to Start.
-- **J2. Upload.** They click Upload PO (or Upload delivery schedule) from that row's Start menu.
-  The project is already fixed by the row, so the dialog has no project field; everything else is
-  today's dialog. They drop the PDF.
+  **Start**, top right of the page; a menu offers **Register a project**, **Upload PO** and
+  **Upload delivery schedule**, in that order. Two clicks to Pipeline, one more to Start.
+- **J2. Upload.** They click Upload PO (or Upload delivery schedule) from the Start menu. The
+  dialog asks for the project first (a required, clearable, searchable project field), since Start
+  is no longer tied to a row; everything else is today's dialog. They pick the project and drop
+  the PDF.
 - **J3. Review.** The upload lands them on the full-page review screen for that record (PO
   review, or schedule review), laid out per the approved mockup: facts in the header, one primary
   button, two tabs (the lines or matrix table, and Documents), the thing that needs a look shown
@@ -30,8 +32,8 @@ Rewritten after the lavish review (24 Sep 2026): there is no cross-project Needs
   of the table they belong to: a Flag cell in the three severities, one verb "Dismiss with a
   reason", duplicates collapsed. There is no separate Findings tab or list to cross-reference
   against a line number.
-- **J5. Confirm and return.** They click Confirm (or Publish). They land back where they came from
-  (the Pipeline row they clicked Start on, or the project tab), with that row restored.
+- **J5. Confirm and return.** They click Confirm (or Publish). They land back on Pipeline, or the
+  project tab they came from, with the project row they were working on restored.
 - **J6. Words.** On every screen and in the docs they meet "Area" (never "Phase") and "AutoCount
   differences" (never "divergence").
 
@@ -57,28 +59,34 @@ Rewritten after the lavish review (24 Sep 2026): there is no cross-project Needs
 - **S1-6 [E2E] (J6)** Browser pass at 1280 and 375 on the schedule review and PO version pages of
   PRJ-000001: no "Phase" visible, rejected notes show their reason.
 
-## S2. Start menu on the Project listing
+## S2. One Start button on the Project listing
 
 Rewritten after the lavish review: the Needs attention list is dropped (R17); every upload starts
-from the existing Project listing (Project Sales > Pipeline).
+from the existing Project listing (Project Sales > Pipeline), via ONE Start button top right of
+the page, not one per row (R21).
 
-- **S2-1 [FE] (J1)** Every project row on Pipeline, in both the Board and the Grid view, carries a
-  "Start" button.
-- **S2-2 [FE] (J1)** Start opens a small menu with two items, "Upload PO" and "Upload delivery
-  schedule". A vitest asserts both items and that no project picker renders anywhere in the menu
-  or the dialogs it opens.
-- **S2-3 [FE] (J2)** "Upload PO" opens `POIntakeUploadDialog` scoped to that row's project id, and
-  posts to the existing `POST /projects/{project_id}/purchase-orders/upload`; the dialog has no
-  project field and behaves exactly as today's per-project dialog (existing tests stay green,
-  unedited).
-- **S2-4 [FE] (J2)** "Upload delivery schedule" does the same for `DeliveryScheduleUploadDialog`:
-  scoped to that row's project immediately, with today's Purchase order / Revision of / Issued by
-  fields already narrowed to it.
-- **S2-5 [FE] (J3)** A successful upload lands the user on that document's review page (PO review
+- **S2-1 [FE] (J1)** Pipeline's `PageHeader` carries one "Start" button, top right, in both the
+  Board and the Grid view; today's separate "Register a project" button is gone (folded into the
+  Start menu). No project row carries a Start button.
+- **S2-2 [FE] (J1)** Start opens a menu with three items, in this order: "Register a project",
+  "Upload PO", "Upload delivery schedule". A vitest asserts the order.
+- **S2-3 [FE] (J2)** "Register a project" opens the existing `RegisterProjectDialog` unchanged
+  (existing tests stay green, unedited).
+- **S2-4 [FE] (J2)** "Upload PO" opens `POIntakeUploadDialog` with a required project
+  `SearchableSelect` (clearable) shown first; after a project is picked, the dialog posts to the
+  existing `POST /projects/{project_id}/purchase-orders/upload`. Opened from inside a project's
+  own POs tab (unchanged call site), the field does not render and the dialog behaves exactly as
+  today (existing tests for that call site stay green).
+- **S2-5 [FE] (J2)** "Upload delivery schedule" does the same for `DeliveryScheduleUploadDialog`:
+  project first, then today's Purchase order / Revision of / Issued by fields narrowed to that
+  project once picked.
+- **S2-6 [FE] (J2)** The project picker offers only projects the user can edit (`can_edit` on the
+  project row); the upload endpoint's own edit check is unchanged and still decides.
+- **S2-7 [FE] (J3)** A successful upload lands the user on that document's review page (PO review
   or schedule review), exactly as today's per-project upload flow does.
-- **S2-6 [E2E] (J1, J2)** From `/`: expand Project Sales, click Pipeline, click a project row's
-  Start, click Upload PO, see the dropzone already scoped to that project. Same for Upload
-  delivery schedule. At 1280 and 375.
+- **S2-8 [E2E] (J1, J2)** From `/`: expand Project Sales, click Pipeline, click Start (top right),
+  click Upload PO, pick Setia Alam, see the dropzone. Same for Upload delivery schedule. At 1280
+  and 375.
 
 ## S3. Inline row findings, one Dismiss per row, one list
 
@@ -115,23 +123,26 @@ R3's other terms -- one severity set, one verb, duplicates collapsed, the gate u
 
 ## S4. Return after Confirm
 
-Rewritten after the lavish review: the origin a review page returns to is the Pipeline row a
-Start-driven upload was launched from, or the originating project tab; there is no Needs
-attention list to return to.
+Rewritten after the lavish review: the origin a review page returns to is the Pipeline list a
+Start-driven upload was launched from (the project chosen in the dialog, per R21, is what names
+the row to restore), or the originating project tab; there is no Needs attention list to return
+to.
 
-- **S4-1 [FE] (J5)** A review page opened via Start on a Pipeline row, or via a project tab,
-  carries a `from` describing the origin (list state per `appendListState` for the Pipeline grid,
-  or `?tab=` for the project).
+- **S4-1 [FE] (J5)** A review page opened via Start (Upload PO or Upload delivery schedule), or
+  via a project tab, carries a `from` describing the origin (list state per `appendListState` for
+  the Pipeline grid, naming the row for the project picked in the dialog, or `?tab=` for the
+  project).
 - **S4-2 [FE] (J5)** After a successful Confirm on the PO review page (today: stays on the page,
   toast only) the user is navigated to the origin. Same for Confirm schedule (today: closes the
   dialog, stays) and Publish on the SO page.
 - **S4-3 [FE] (J5)** With no origin (deep link, bookmark) the user stays on the page, as today.
 - **S4-4 [FE] (J5)** Back on Pipeline, the project row named by `from` scrolls into view and
   highlights (DESIGN-LANGUAGE section 7).
-- **S4-5 [FE] (J3)** After an upload via Start on a Pipeline row, the review page's origin is that
-  Pipeline row, so the Confirm that follows returns there.
-- **S4-6 [E2E] (J5)** Pipeline -> Start -> Upload PO -> PO review -> Confirm -> back on Pipeline,
-  the row highlighted.
+- **S4-5 [FE] (J3)** After an upload via Start, the review page's origin is the Pipeline list and
+  the project picked in the dialog, so the Confirm that follows returns there with that row
+  highlighted.
+- **S4-6 [E2E] (J5)** Pipeline -> Start -> Upload PO -> pick Setia Alam -> PO review -> Confirm ->
+  back on Pipeline, the Setia Alam row highlighted.
 
 ## S5. Delivery schedule review screen (per approved `mockups/delivery-schedule-review.html`)
 
