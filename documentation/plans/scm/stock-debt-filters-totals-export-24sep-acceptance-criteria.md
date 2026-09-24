@@ -194,6 +194,25 @@ changed it.
     render "SO382618 line 2 (100)"; the Sales order cell on Demand links to
     `/scm/sales-orders/<sales_order_id>` (a new `sales_order_id` field on the demand
     line), new tab.
+- R30 (owner, 25 Sep: "I was expecting us to use the same component as OI") supersedes
+  R29's RENDERING of documents - the R29 WIRE fields (`assigned_from`, `spo_number`,
+  `spo_line_number`, `oi_number`, `oi_id`, `line_no`, `sales_order_id`) all stay, only how
+  the dialog draws them changes. The drill renders documents exactly the way the OI lines
+  grid does: `OrderInquiryDocumentLink` (`order-inquiries/components/
+  OrderInquiryDocumentDialog.tsx`, kind `'spo' | 'po'`, `document`, `poId`; opens the
+  document's lines in a dialog in place, testid `document-detail-trigger-<document>`),
+  the same cell shape `orderInquiryHeaderLinesColumns.tsx:DocumentCell` uses (dash when
+  none).
+  - Demand columns, in order: Sales order, Agent, Bin, Due, Ordered, Delivered,
+    Outstanding, Assigned, From, SPO, OI, Status. From now holds ONLY on-hand text
+    ("On hand BRW-BB (14)") or a dash - the document half moves out. SPO =
+    `OrderInquiryDocumentLink` for the FIRST spo entry in `assigned_from`, followed by
+    muted " line 4 (100)". OI = the OI number, linking to
+    `/project-sales/order-inquiries/<oi_id>` (the PAGE, since no OI dialog exists), a
+    dash when `oi_id` is null. No inline "via" anywhere any more.
+  - Supply columns unchanged in order, but Document = `OrderInquiryDocumentLink` kind
+    `'spo'` plus muted " line N"; on hand rows keep plain text.
+  - The Sales order cell keeps its page link (R29, unchanged).
 
 ## Test list (Phase 2, tester writes first)
 

@@ -44,6 +44,24 @@ vi.mock('../services/stockDebtService', () => ({
   getStockDebtCell: (...args: unknown[]) => getStockDebtCell(...args),
 }));
 
+// R30: the SPO cell is the SAME `OrderInquiryDocumentLink` the OI screens use, real, not
+// stood in for - it opens its own dialog off `getOrderInquirySpoDetail`
+// (`OrderInquiryDocumentDialog.test.tsx`'s own mock target), so this file mocks the
+// SERVICE call the dialog makes, not the component itself.
+const getOrderInquirySpoDetail = vi.fn();
+const getOrderInquiryPoDetail = vi.fn();
+
+vi.mock('../../_shared/services/orderInquiryService', async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import('../../_shared/services/orderInquiryService')
+  >();
+  return {
+    ...actual,
+    getOrderInquirySpoDetail: (...args: unknown[]) => getOrderInquirySpoDetail(...args),
+    getOrderInquiryPoDetail: (...args: unknown[]) => getOrderInquiryPoDetail(...args),
+  };
+});
+
 import { StockDebtCellDialog } from './StockDebtCellDialog';
 
 // R22/R25: `qty_ordered`/`qty_delivered` (on each demand line) and `demand_total_qty`/
@@ -186,20 +204,22 @@ describe('StockDebtCellDialog', () => {
     expect(screen.getByText('short 16')).toBeInTheDocument();
   });
 
-  it('lists the R22 Demand columns, in order, with no Plan button left (R21/R22)', async () => {
-    // R21 retires the Plan button column from the Demand grid entirely - RED today: the
-    // "hands the ORDER to the board on Plan" behaviour this test replaces is still there,
-    // and neither Ordered nor Delivered is a column yet ("Open" is still the header, not
-    // "Outstanding").
+  it('lists the R30 Demand columns, in order, with no Plan button and no inline "via" (R21/R22/R30)', async () => {
+    // R21 retires the Plan button column from the Demand grid entirely.
+    // R30 (owner, 25 Sep, "I was expecting us to use the same component as OI")
+    // supersedes R29's rendering: SPO and OI are now their OWN columns, split out of
+    // From - RED today because neither column exists yet (From still carries the
+    // document text/link itself, with an inline "via OI-..." for a pinned source).
     renderDialog();
     await screen.findByText('SO390918');
 
     const headers = screen.getAllByRole('columnheader').map((cell) => cell.textContent);
     expect(headers).toEqual([
       'Sales order', 'Agent', 'Bin', 'Due', 'Ordered', 'Delivered', 'Outstanding',
-      'Assigned', 'From', 'Status',
+      'Assigned', 'From', 'SPO', 'OI', 'Status',
     ]);
     expect(screen.queryByRole('link', { name: 'Plan' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/via/)).not.toBeInTheDocument();
   });
 
   it('sorts the Demand grid on every column, toggling asc/desc (R20)', async () => {
@@ -568,10 +588,19 @@ describe('StockDebtCellDialog', () => {
     expect(within(totalRow).getByText('Free 60')).toBeInTheDocument(); // Free: 40 + 20
   });
 
-  it('links the Sales order cell to its SO page, and the From cell to each linked source with its quantity (R29)', async () => {
-    // RED today: `so_number` is plain text (no link at all), and the "From" column
-    // still reads `assigned_source` (free text, e.g. "SPO 2026/09-0088, On hand BRW-BB")
-    // - there is no `assigned_from` list to render one linked entry per source from.
+  it('renders the SPO cell as the OI-style document link with the line number beside it, and opens the same document dialog on click (R30)', async () => {
+    // R30 (owner, 25 Sep, "I was expecting us to use the same component as OI")
+    // supersedes R29's plain `<Link>` to the SPO allocations page: the drill now uses
+    // `OrderInquiryDocumentLink` itself (same trigger testid, same in-place dialog),
+    // never a bespoke href. RED today: the SPO column does not exist, and the trigger's
+    // own testid is nowhere in the tree.
+    getOrderInquirySpoDetail.mockResolvedValue({
+      spo_number: 'SPO-2026/06-0131',
+      supplier_name: 'CHAOSHENG',
+      eta: '2026-09-15',
+      lines: [],
+      allocations: [],
+    });
     renderDialog({
       demand: [
         {
@@ -579,66 +608,44 @@ describe('StockDebtCellDialog', () => {
           agent_code: 'JENNIFER',
           warehouse_code: 'BRW-BB',
           required_date: '2026-10-15',
-          open_qty: 114,
-          qty_ordered: 114,
+          open_qty: 100,
+          qty_ordered: 100,
           qty_delivered: 0,
-          assigned_qty: 114,
-          // `assigned_source` is still a REQUIRED field on today's type (R29 retires it
-          // for `assigned_from` below) - kept `null` here so the cast states the new
-          // shape without an unrelated "insufficient overlap" error blocking the file.
+          assigned_qty: 100,
           assigned_source: null,
           status: 'covered',
           short_qty: 0,
           sales_order_id: 'so-id-1',
-          // Both sources are WALK-assigned (no placement) - `oi_number`/`oi_id` null,
-          // so neither entry renders a "via OI-..." suffix (its own dedicated test below).
           assigned_from: [
             {
               kind: 'spo', ref: 'SPO-2026/06-0131 line 4',
               spo_number: 'SPO-2026/06-0131', spo_line_number: 4, qty: 100,
               oi_number: null, oi_id: null,
             },
-            {
-              kind: 'on_hand', ref: 'On hand BRW-BB',
-              spo_number: null, spo_line_number: null, qty: 14,
-              oi_number: null, oi_id: null,
-            },
           ],
         } as StockDebtDemandLine,
       ],
       supply: [],
-      demand_total_qty: 114,
+      demand_total_qty: 100,
       supply_total_qty: 0,
     } as StockDebtCell);
+    await screen.findByText('SO382618');
 
-    const soLink = await screen.findByRole('link', { name: 'SO382618' });
-    expect(soLink).toHaveAttribute('href', '/scm/sales-orders/so-id-1');
-    expect(soLink).toHaveAttribute('target', '_blank');
+    const trigger = screen.getByTestId('document-detail-trigger-SPO-2026/06-0131');
+    expect(within(trigger.closest('td') as HTMLElement).getByText(/line 4 \(100\)/)).toBeInTheDocument();
 
-    const spoFromLink = screen.getByRole('link', { name: 'SPO-2026/06-0131 line 4 (100)' });
-    expect(spoFromLink).toHaveAttribute(
-      'href',
-      '/procurement-management/spo-allocations/SPO-2026%2F06-0131',
-    );
-    expect(spoFromLink).toHaveAttribute('target', '_blank');
-
-    // On hand rows are not links (R29) - the entry still prints, just as plain text.
-    expect(screen.getByText('On hand BRW-BB (14)')).toBeInTheDocument();
-    expect(
-      screen.queryByRole('link', { name: /On hand BRW-BB/ }),
-    ).not.toBeInTheDocument();
-    // R29 addendum: no "via OI-..." suffix for a WALK-assigned source (`oi_id: null`).
-    expect(screen.queryByText(/via/)).not.toBeInTheDocument();
+    fireEvent.click(trigger);
+    expect(await screen.findByText('CHAOSHENG')).toBeInTheDocument();
+    expect(getOrderInquirySpoDetail).toHaveBeenCalledWith('SPO-2026/06-0131');
   });
 
-  it('names the order inquiry a PINNED source came through, linked, in the From cell (R29 addendum)', async () => {
-    // RED today: `assigned_from` does not exist at all yet, so there is nothing to
-    // carry `oi_number`/`oi_id` in the first place - once it does, only an entry with a
-    // real `oi_id` gets the "via OI-..." suffix, and only that suffix is a link.
+  it('links the OI cell to the order inquiry page, dash when there is no order inquiry (R30)', async () => {
+    // RED today: the OI column does not exist - the OI number instead sits INLINE in
+    // the From cell as "... via OI-2026/09-0012" (R29's own rendering, superseded).
     renderDialog({
       demand: [
         {
-          so_number: 'SO382618',
+          so_number: 'SO-PINNED',
           agent_code: 'JENNIFER',
           warehouse_code: 'BRW-BB',
           required_date: '2026-10-15',
@@ -658,27 +665,129 @@ describe('StockDebtCellDialog', () => {
             },
           ],
         } as StockDebtDemandLine,
+        {
+          so_number: 'SO-FREE',
+          agent_code: 'JAY',
+          warehouse_code: 'BRW-BB',
+          required_date: '2026-10-16',
+          open_qty: 50,
+          qty_ordered: 50,
+          qty_delivered: 0,
+          assigned_qty: 50,
+          assigned_source: null,
+          status: 'covered',
+          short_qty: 0,
+          sales_order_id: 'so-id-2',
+          // BOTH a free (unpinned) SPO and an on-hand source, so the SPO and From columns
+          // both carry real content - isolating the OI column's own dash as the ONLY
+          // dash in this row.
+          assigned_from: [
+            {
+              kind: 'spo', ref: 'SPO-2026/07-0021 line 1',
+              spo_number: 'SPO-2026/07-0021', spo_line_number: 1, qty: 20,
+              oi_number: null, oi_id: null,
+            },
+            {
+              kind: 'on_hand', ref: 'On hand BRW-BB',
+              spo_number: null, spo_line_number: null, qty: 30,
+            },
+          ],
+        } as StockDebtDemandLine,
       ],
       supply: [],
-      demand_total_qty: 100,
+      demand_total_qty: 150,
       supply_total_qty: 0,
     } as StockDebtCell);
 
-    await screen.findByText('SO382618');
-    // The "via OI-..." part is its OWN link, so the combined sentence is split across
-    // elements - checked via the containing cell's full text, not one `getByText` node.
-    const oiLink = screen.getByRole('link', { name: 'OI-2026/09-0012' });
+    await screen.findByText('SO-PINNED');
+    const pinnedRow = screen.getByText('SO-PINNED').closest('tr') as HTMLElement;
+    const oiLink = within(pinnedRow).getByRole('link', { name: 'OI-2026/09-0012' });
     expect(oiLink).toHaveAttribute('href', '/project-sales/order-inquiries/oi-id-1');
     expect(oiLink).toHaveAttribute('target', '_blank');
+    // No inline "via" any more (R30) - the OI cell stands on its own.
+    expect(within(pinnedRow).queryByText(/via/)).not.toBeInTheDocument();
 
-    const fromCell = oiLink.closest('td') as HTMLElement;
-    expect(fromCell.textContent).toContain('SPO-2026/06-0131 line 4 (100)');
-    expect(fromCell.textContent).toContain('via');
+    const freeRow = screen.getByText('SO-FREE').closest('tr') as HTMLElement;
+    expect(within(freeRow).queryByRole('link', { name: /OI-/ })).not.toBeInTheDocument();
+    expect(within(freeRow).getByText('On hand BRW-BB (30)')).toBeInTheDocument();
+    expect(within(freeRow).getByText('-')).toBeInTheDocument();
   });
 
-  it('links the Document cell to the SPO allocations page, and Assigned to names the SO line (R29)', async () => {
-    // RED today: `ref` renders as plain text (no link), and `assigned_to` entries have
-    // no `line_no` to render "SO382618 line 2 (100)" - only the bare SO number.
+  it('shows only on-hand text in the From cell - a dash for a line covered purely by a document - and keeps the Sales order page link (R30)', async () => {
+    // R30: From narrows to on-hand ONLY (the document half moved to its own SPO column).
+    // RED today: `AssignedFromEntry` still renders the SPO entry (as a bespoke link) in
+    // the From cell, so a pure-document line's From cell is not a dash.
+    renderDialog({
+      demand: [
+        {
+          so_number: 'SO382618',
+          agent_code: 'JENNIFER',
+          warehouse_code: 'BRW-BB',
+          required_date: '2026-10-15',
+          open_qty: 114,
+          qty_ordered: 114,
+          qty_delivered: 0,
+          assigned_qty: 114,
+          assigned_source: null,
+          status: 'covered',
+          short_qty: 0,
+          sales_order_id: 'so-id-1',
+          // `oi_id` set (unrelated to what THIS test proves) so the OI column renders a
+          // link, not a second dash in the row - isolating the From column's own dash.
+          assigned_from: [
+            {
+              kind: 'spo', ref: 'SPO-2026/06-0131 line 4',
+              spo_number: 'SPO-2026/06-0131', spo_line_number: 4, qty: 100,
+              oi_number: 'OI-2026/09-0099', oi_id: 'oi-id-9',
+            },
+          ],
+        } as StockDebtDemandLine,
+        {
+          so_number: 'SO-ONHAND',
+          agent_code: 'JAY',
+          warehouse_code: 'BRW-BB',
+          required_date: '2026-10-16',
+          open_qty: 14,
+          qty_ordered: 14,
+          qty_delivered: 0,
+          assigned_qty: 14,
+          assigned_source: null,
+          status: 'covered',
+          short_qty: 0,
+          sales_order_id: 'so-id-2',
+          assigned_from: [
+            {
+              kind: 'on_hand', ref: 'On hand BRW-BB',
+              spo_number: null, spo_line_number: null, qty: 14,
+            },
+          ],
+        } as StockDebtDemandLine,
+      ],
+      supply: [],
+      demand_total_qty: 128,
+      supply_total_qty: 0,
+    } as StockDebtCell);
+
+    const soLink = await screen.findByRole('link', { name: 'SO382618' });
+    expect(soLink).toHaveAttribute('href', '/scm/sales-orders/so-id-1');
+    expect(soLink).toHaveAttribute('target', '_blank');
+
+    // Pure-SPO line: From (column index 8 - Sales order/Agent/Bin/Due/Ordered/Delivered/
+    // Outstanding/Assigned/From/SPO/OI/Status) is a dash, not the document text - scoped
+    // to the CELL, not the row, since the SPO column legitimately shows that same text.
+    const spoRow = screen.getByText('SO382618').closest('tr') as HTMLElement;
+    const fromCell = within(spoRow).getAllByRole('cell')[8];
+    expect(within(fromCell).getByText('-')).toBeInTheDocument();
+
+    // On-hand line: From still names the bin and quantity, plain text.
+    const onHandRow = screen.getByText('SO-ONHAND').closest('tr') as HTMLElement;
+    expect(within(onHandRow).getByText('On hand BRW-BB (14)')).toBeInTheDocument();
+  });
+
+  it('links the Supply Document cell with the same OI-style trigger, the line number beside it, and keeps Assigned to naming the SO line (R30)', async () => {
+    // RED today: `ref` is a bespoke `<Link>` to `/procurement-management/spo-allocations`
+    // rather than `OrderInquiryDocumentLink` - no `document-detail-trigger-...` testid on
+    // the Supply grid at all.
     renderDialog({
       demand: [],
       supply: [
@@ -695,11 +804,8 @@ describe('StockDebtCellDialog', () => {
           outstanding_qty: 100,
           free_qty: 0,
           overdue: false,
-          // `assigned_to`'s own element type has no `line_no` yet either (R29 adds it
-          // beside `so_number`/`qty`) - `unknown` first, matching tsc's own suggestion,
-          // since the nested literal's extra field blocks the single-step `as` above it.
           assigned_to: [{ so_number: 'SO382618', line_no: 2, qty: 100 }],
-        } as unknown as StockDebtSupplyEvent,
+        } as StockDebtSupplyEvent,
       ],
       demand_total_qty: 0,
       supply_total_qty: 100,
@@ -707,14 +813,9 @@ describe('StockDebtCellDialog', () => {
     await screen.findByText('Nothing is due here');
     switchTab('Supply (100)');
 
-    const documentLink = await screen.findByRole('link', {
-      name: 'SPO-2026/06-0131 line 4',
-    });
-    expect(documentLink).toHaveAttribute(
-      'href',
-      '/procurement-management/spo-allocations/SPO-2026%2F06-0131',
-    );
-    expect(documentLink).toHaveAttribute('target', '_blank');
+    const trigger = await screen.findByTestId('document-detail-trigger-SPO-2026/06-0131');
+    const documentCell = trigger.closest('td') as HTMLElement;
+    expect(within(documentCell).getByText(/line 4/)).toBeInTheDocument();
 
     expect(screen.getByText('SO382618 line 2 (100)')).toBeInTheDocument();
   });
