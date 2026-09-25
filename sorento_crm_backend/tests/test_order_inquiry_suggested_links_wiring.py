@@ -253,10 +253,20 @@ def test_ac_lt_33_suggested_links_on_the_worklist_and_detail_rows(api):
     entries = wire_row["suggested_links"]
     assert len(entries) == 1, entries
     entry = entries[0]
+    # Should fix 8 (review round 2): all ten `OrderInquirySuggestedLinkOut` fields
+    # pinned, not just the four this AC started with - the Suggested cell reads
+    # `spo_allocation_id` for the SPO highlight and `po_id` to open the PO, and a
+    # `response_model` silently dropping either is the lesson this branch hit twice.
     assert entry["kind"] == "po"
     assert entry["document"] == po.po_number
+    assert entry["po_id"] == str(po.id)
     assert entry["po_line_id"] == str(po_line.id)
+    assert entry["spo_allocation_id"] is None
+    assert entry["location"] is None
     assert Decimal(entry["qty"]) == Decimal("4")
+    assert entry["expected_date"] is None
+    assert entry["late_days"] is None
+    assert entry["trigger"] == "raise"
     assert wire_row.get("links") == [], "links must carry nothing suggested"
 
     detail = client.get(f"{BASE}/sales-orders/{pso.id}/order-inquiry").json()
@@ -679,6 +689,28 @@ class TestACLT39ExcelExportGetsASuggestedColumn:
         _filename, content = OrderInquiryWorklistService(db).export_xlsx()
         workbook = openpyxl.load_workbook(io.BytesIO(content))
         sheet = workbook[workbook.sheetnames[0]]
-        headings = [str(cell.value).strip().upper() for cell in sheet[2] if cell.value]
+        header_row = sheet[2]
+        headings = [str(cell.value).strip().upper() for cell in header_row if cell.value]
 
         assert "SUGGESTED" in headings, headings
+
+        # Review round 2 Should fix 9: the heading alone does not prove the document
+        # lands in the RIGHT column - a suggested-only bug could still print it under
+        # PO. Read the one data row by column position and check both cells.
+        po_col = next(
+            cell.column for cell in header_row if str(cell.value).strip().upper() == "PO NO"
+        )
+        suggested_col = next(
+            cell.column for cell in header_row
+            if str(cell.value).strip().upper() == "SUGGESTED"
+        )
+        data_row = sheet[3]
+        po_cell = str(data_row[po_col - 1].value or "")
+        suggested_cell = str(data_row[suggested_col - 1].value or "")
+
+        assert po_real.po_number in po_cell, (po_col, po_cell)
+        assert po_suggest.po_number not in po_cell, "the PO column stays real-only"
+        assert po_suggest.po_number in suggested_cell, (suggested_col, suggested_cell)
+        assert po_real.po_number not in suggested_cell, (
+            "the real link does not also print under Suggested"
+        )
