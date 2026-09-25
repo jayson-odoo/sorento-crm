@@ -960,17 +960,18 @@ def _push_low_stock_to_chat(db, download_id: str, *, provider: str, key: str) ->
 
 
 def generate_low_stock_report(download_id: str, run_id: str, user_id: str, *,
-                              include_supplier: bool = True) -> dict:
+                              include_supplier: bool = True, split: str = "none") -> dict:
     """Render the run's low stock workbook, store it, and update the download row.
 
-    PLAN-low-stock-report S3 (AC-36). `generate_order_sheet`'s twin, down to the company
-    dance: the worker has NO request-scoped company, so the run row is read under NO scope
-    (that row is the one thing that states which company the export belongs to), its own
-    company is adopted before anything company-scoped is touched, and the caller's scope is
-    restored in `finally` - a synchronous caller whose session this reuses did not ask to
-    have its scope changed underneath it.
+    PLAN-low-stock-report S3 (AC-36; `split` added PLAN-low-stock-export-split-25sep,
+    AC-14). `generate_order_sheet`'s twin, down to the company dance: the worker has NO
+    request-scoped company, so the run row is read under NO scope (that row is the one
+    thing that states which company the export belongs to), its own company is adopted
+    before anything company-scoped is touched, and the caller's scope is restored in
+    `finally` - a synchronous caller whose session this reuses did not ask to have its
+    scope changed underneath it.
 
-    Two things it does that the order sheet does not:
+    Three things it does that the order sheet does not:
 
     * `row_count_low` / `row_count_all` are stamped onto the download row at `mark_ready`,
       so S5's chat turn can answer "Low: 12 of 340 planned products" without opening the
@@ -978,6 +979,9 @@ def generate_low_stock_report(download_id: str, run_id: str, user_id: str, *,
       the sheets are built from, so the figures are the workbook's own.
     * `include_supplier=False` (S5, for a contact without the `purchase_orders.supplier`
       reveal key) drops the Supplier column from both sheets.
+    * `split` (default `"none"`, the chat route never sends one) is forwarded to
+      `export_low_stock` unchanged - the route's own guard already refused an unknown
+      value or a supplier split without the Supplier column before this job was enqueued.
 
     `_record_failure` on any exception, never raising into RQ: a poisoned job retries for
     ever and the buyer's row sits `processing` until it goes stale.
@@ -1014,10 +1018,11 @@ def generate_low_stock_report(download_id: str, run_id: str, user_id: str, *,
 
         # The counts come back WITH the bytes (reviewer item 4) - the builder already has
         # both row sets, and a second `row_counts()` call re-serialised the whole frozen
-        # run on the worker.
+        # run on the worker. `split` is always forwarded, `"none"` included (AC-14) - the
+        # task states its own contract plainly rather than varying its call shape by value.
         file_bytes, content_type, fallback_filename, counts = (
             low_stock_report_service.export_low_stock(
-                db, run_id=run_id, include_supplier=include_supplier,
+                db, run_id=run_id, include_supplier=include_supplier, split=split,
             )
         )
         filename = filename or fallback_filename
@@ -1042,8 +1047,10 @@ def generate_low_stock_report(download_id: str, run_id: str, user_id: str, *,
             row_count_all=counts["all"],
         )
         logger.info(
-            "generate_low_stock_report: download %s ready (%d bytes, %d low of %d)",
-            download_id, len(file_bytes), counts["low"], counts["all"],
+            "generate_low_stock_report: download %s ready (%d bytes, %d low of %d, "
+            "split=%s, %s sheets)",
+            download_id, len(file_bytes), counts["low"], counts["all"], split,
+            counts.get("sheets", 2),
         )
         ready = {"download_id": download_id, "status": "ready", "bytes": len(file_bytes),
                   "row_count_low": counts["low"], "row_count_all": counts["all"]}

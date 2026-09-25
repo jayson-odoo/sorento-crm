@@ -746,7 +746,7 @@ def _patch_task_render(monkeypatch, export_tasks):
         low_stock_report_service, "export_low_stock",
         # Four values since reviewer item 4: the builder returns the counts it already
         # has, so the task no longer re-reads the run to count rows.
-        lambda db_, *, run_id, include_supplier=True: (
+        lambda db_, *, run_id, include_supplier=True, split="none": (
             b"fake-workbook",
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             "low-stock-10092026.xlsx",

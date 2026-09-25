@@ -615,7 +615,7 @@ def test_export_low_stock_counts_are_the_visible_counts(db):
     _hide(db, run, hidden2)
 
     _blob, _ct, _fn, counts = lsr.export_low_stock(db, run_id=str(run.id))
-    assert counts == {"low": 1, "all": 3}, counts
+    assert counts == {"low": 1, "all": 3, "sheets": 2}, counts
 
 
 def test_low_stock_guard_uses_export_guard_stats(scm_app, monkeypatch):
@@ -732,7 +732,7 @@ def test_generate_low_stock_report_marks_ready_with_row_counts(scm_app, monkeypa
         lsr, "export_low_stock",
         # Four values since reviewer item 4: the builder returns the counts it already
         # has, so the task no longer re-reads the run to count rows.
-        lambda db_, *, run_id, include_supplier=True: (
+        lambda db_, *, run_id, include_supplier=True, split="none": (
             b"fake-workbook",
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             "low-stock-10092026.xlsx",
@@ -779,7 +779,7 @@ def test_generate_low_stock_report_marks_failed_when_render_raises(monkeypatch):
             source_entity_id=run_id, filename="low-stock-10092026.xlsx",
         )
 
-        def _boom(db_, *, run_id, include_supplier=True):
+        def _boom(db_, *, run_id, include_supplier=True, split="none"):
             raise RuntimeError("render exploded")
 
         monkeypatch.setattr(export_tasks, "SessionLocal", lambda: _NoCloseSession(db))
