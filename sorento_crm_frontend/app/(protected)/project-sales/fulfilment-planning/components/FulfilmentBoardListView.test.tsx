@@ -1797,6 +1797,62 @@ describe('FulfilmentBoardListView: the Verdict cell actions (AC-B1 to AC-C2)', (
   });
 });
 
+describe('FulfilmentBoardListView: the decision trail icon (AC-DT-5, PLAN-oi-decision-trail-ui.md, round 2)', () => {
+  it('shows the History icon, right after the verdict chip, for a line with a decision', async () => {
+    const row = contribution({
+      covered: true,
+      decision: { revision_no: 1, timely_spo_qty: '0', reserve: [], borrow: [], buy_qty: '43' },
+    });
+    renderView({ contributions: [row] });
+
+    await screen.findByTestId(`decision-pill-${row.key}`);
+    expect(screen.getByRole('button', { name: /decision trail/i })).toBeInTheDocument();
+  });
+
+  it('shows it for a line carrying only a draft, or only an order inquiry, too', async () => {
+    const draftRow = contribution({
+      key: 'so-1:line-draft',
+      draft: { decision: { verdict: 'approved' }, saved_by: 'Eling', saved_at: '2026-09-01T00:00:00' },
+    });
+    const { unmount } = renderView({ contributions: [draftRow] });
+    await screen.findByTestId(`decision-pill-${draftRow.key}`);
+    expect(screen.getByRole('button', { name: /decision trail/i })).toBeInTheDocument();
+    unmount();
+
+    const inquiryRow = contribution({
+      key: 'so-1:line-oi',
+      order_inquiry: { inquiry_no: 'OI-2609-0731', state: 'raised' },
+    });
+    renderView({ contributions: [inquiryRow] });
+    await screen.findByTestId(`decision-pill-${inquiryRow.key}`);
+    expect(screen.getByRole('button', { name: /decision trail/i })).toBeInTheDocument();
+  });
+
+  it('hides it for a bare suggested line - nothing decided, saved or raised yet', async () => {
+    const row = contribution();
+    renderView({ contributions: [row] });
+
+    await screen.findByTestId(`decision-pill-${row.key}`);
+    expect(screen.queryByRole('button', { name: /decision trail/i })).not.toBeInTheDocument();
+  });
+
+  /**
+   * N1 (review round 3): a fully-reserved / local-buy covered line can carry
+   * `covered: true` with no `decision` object of its own, no draft and no OI row - the
+   * sheet-migrated-inquiry-decided shape `BoardDecisionPill`'s own "sheet-covered line
+   * reads Confirmed" describe block already covers. The gate has to name `covered`
+   * itself, not just the three facts that usually come with it, or exactly this line
+   * loses its icon.
+   */
+  it('shows it for a covered line that carries none of the other three facts', async () => {
+    const row = contribution({ covered: true, decision: null });
+    renderView({ contributions: [row] });
+
+    await screen.findByTestId(`decision-pill-${row.key}`);
+    expect(screen.getByRole('button', { name: /decision trail/i })).toBeInTheDocument();
+  });
+});
+
 /**
  * S6 (AC-B6-14): the Sales order cell's own link now carries the target line, landing that
  * exact row highlighted on the sales-order detail (AC-B6-3).

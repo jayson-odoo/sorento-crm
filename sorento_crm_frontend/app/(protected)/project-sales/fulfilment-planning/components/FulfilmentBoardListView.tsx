@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { PanelDataGrid } from '@/components/common/PanelDataGrid';
+import { DecisionTrailButton } from '../../_shared/components/DecisionTrailButton';
 import { BoardCellBreakdownDialog } from './BoardCellBreakdownDialog';
 import { BoardDecidedMarker, decidedRevisions } from './BoardDecidedMarker';
 import {
@@ -611,15 +612,20 @@ export function FulfilmentBoardListView({
                 {contribution.qty_outstanding ?? contribution.qty}
               </button>
               {changeIcons(contribution, 'outstanding')}
-              {/* AC-RS-42: a labelled Stock button per row, opening the SAME dialog the
-                  grid view's cell strip does - purchasing used to leave this screen and
-                  open the grid just to check one line's own stock. */}
+              {/* AC-RS-42: a Stock icon-button per row, opening the SAME dialog the grid
+                  view's cell strip does - purchasing used to leave this screen and open
+                  the grid just to check one line's own stock. Icon only, ghost variant
+                  (round 2, owner ruling after hand-testing round 1) - matches the
+                  verdict-row pencil in `BoardVerdictActions.tsx`, never the labelled
+                  outline button this used to be. */}
               <Button
                 type="button"
+                mode="icon"
+                variant="ghost"
                 size="sm"
-                variant="outline"
-                className="h-6 gap-1 px-1.5"
+                className="shrink-0"
                 aria-label="Stock"
+                title="Stock"
                 data-testid={`board-list-stock-${contribution.key}`}
                 onClick={(event) => {
                   event.stopPropagation();
@@ -627,7 +633,6 @@ export function FulfilmentBoardListView({
                 }}
               >
                 <PackageSearch className="size-3.5" aria-hidden />
-                <span className="hidden xl:inline">Stock</span>
               </Button>
             </span>
           );
@@ -770,6 +775,23 @@ export function FulfilmentBoardListView({
           return (
             <div className="flex min-w-0 items-center gap-1">
               <BoardDecisionPill contribution={contribution} decision={draft[key] ?? null} />
+              {/* AC-DT-5 (`PLAN-oi-decision-trail-ui.md`, round 2): the History icon,
+                  right after the verdict chip - shown only once there is a trail worth
+                  opening (a decision, a draft, an OI row, OR the line simply being
+                  covered - N1, round 3: a fully-reserved / local-buy covered line can
+                  carry `covered: true` with no `decision` object of its own and no OI
+                  row, and still have a confirmed revision behind it worth tracing); a
+                  bare suggested line has none of the four and stays hidden. */}
+              {contribution.decision ||
+              contribution.draft ||
+              contribution.order_inquiry ||
+              contribution.covered ? (
+                <DecisionTrailButton
+                  coreLineId={contribution.line_id ?? null}
+                  itemCode={contribution.item_code}
+                  className="shrink-0"
+                />
+              ) : null}
               <BoardVerdictActions
                 contribution={contribution}
                 decision={draft[key] ?? null}

@@ -43,6 +43,10 @@ describe('AC-B3-1: the Lines tab reads Product, Qty, Taken, Remaining, Delivery 
       'SPO',
       'Location',
       'Instruction',
+      // AC-DT-6 (`PLAN-oi-decision-trail-ui.md`): the trail behind the instruction,
+      // right after it. "Raised via", not "Raised" - the worklist already has a
+      // "Raised by" column beside it (captain ruling, review round 1).
+      'Raised via',
       'State',
     ]);
   });
@@ -190,14 +194,16 @@ describe('AC-RS-83 / 83b / 83c: the reserve icons live inside the State cell', (
     expect(screen.getByLabelText('Edit reserve')).toBeInTheDocument();
   });
 
-  it('AC-RS-83c: with the permission the State column starts at 380 wide with no minSize, so it can be narrowed back down', () => {
+  it('AC-RS-83c: with the permission the State column starts at 410 wide with no minSize, so it can be narrowed back down', () => {
     const { result } = renderHook(() =>
       useOrderInquiryHeaderLinesColumns({ canReserve: true } as never),
     );
     const stateColumn = result.current.find(
       (column) => (column as { accessorKey?: string }).accessorKey === 'state',
     ) as { size?: number; minSize?: number };
-    expect(stateColumn.size).toBe(380);
+    // Round 2 (`PLAN-oi-decision-trail-ui.md`): 380 -> 410, room for the new Decision
+    // trail icon beside the pill and the reserve icons.
+    expect(stateColumn.size).toBe(410);
     expect(stateColumn.minSize).toBeUndefined();
   });
 
@@ -233,5 +239,186 @@ describe('AC-RS-83 / 83b / 83c: the reserve icons live inside the State cell', (
     );
     expect(screen.getByText('Reserve 107 @ BRW')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /undo/i })).toBeInTheDocument();
+  });
+});
+
+describe('AC-DT-6: the Raised via column (PLAN-oi-decision-trail-ui.md)', () => {
+  function raisedCell(row: OrderInquiryWorklistRow) {
+    const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns());
+    const raisedColumn = result.current.find(
+      (column) => (column as { id?: string }).id === 'raise_event',
+    ) as { cell: (context: unknown) => React.ReactNode } | undefined;
+    expect(raisedColumn).toBeDefined();
+    return raisedColumn!.cell({ row: { original: row } });
+  }
+
+  it('reads "Reconfirmed by <name> · <date time>" for a matched reconfirm event', () => {
+    render(
+      <>
+        {raisedCell(
+          linesRow({
+            raise_event_kind: 'reconfirmed',
+            raise_event_by_name: 'Nurain',
+            raise_event_at: '2026-09-25T01:20:34',
+          }),
+        )}
+      </>,
+    );
+    expect(screen.getByText(/Reconfirmed by Nurain/)).toBeInTheDocument();
+  });
+
+  it('reads "Raised by <name> · <date time>" for a matched raise event', () => {
+    render(
+      <>
+        {raisedCell(
+          linesRow({
+            raise_event_kind: 'raised',
+            raise_event_by_name: 'Johnson',
+            raise_event_at: '2026-09-20T03:22:00',
+          }),
+        )}
+      </>,
+    );
+    expect(screen.getByText(/Raised by Johnson/)).toBeInTheDocument();
+  });
+
+  it('reads "Sheet" for a row whose note starts with the sheet migration stamp, no event matched', () => {
+    render(
+      <>
+        {raisedCell(
+          linesRow({
+            raise_event_kind: null,
+            note: 'Migrated from order inquiry sheet, row 42',
+          }),
+        )}
+      </>,
+    );
+    expect(screen.getByText('Sheet')).toBeInTheDocument();
+  });
+
+  it('reads "Planning change" for a row whose note carries the date-move stamp, no event matched', () => {
+    render(
+      <>
+        {raisedCell(
+          linesRow({
+            raise_event_kind: null,
+            note: 'Was 2026-09-01',
+          }),
+        )}
+      </>,
+    );
+    expect(screen.getByText('Planning change')).toBeInTheDocument();
+  });
+
+  it('reads a dash when nothing at all is known about how the row was raised', () => {
+    render(<>{raisedCell(linesRow({ raise_event_kind: null, note: null }))}</>);
+    expect(screen.getByText('-')).toBeInTheDocument();
+  });
+
+  // Reviewer B1, round 1: on the 24 Sep prod copy 10,246 sheet-migrated rows also match
+  // migration 523's anonymous backfill `raised` event and 2,070 more latch onto a reconfirm
+  // hours later - the note's own sheet stamp is the fact, and it outranks any event.
+  it('reads a bare "Sheet" - no by, no date - for a sheet-migrated row even when an event matched it', () => {
+    render(
+      <>
+        {raisedCell(
+          linesRow({
+            raise_event_kind: 'reconfirmed',
+            raise_event_by_name: 'Jayson Foundryx',
+            raise_event_at: '2026-09-25T04:00:00',
+            note: 'Migrated from order inquiry sheet, row 42',
+          }),
+        )}
+      </>,
+    );
+    expect(screen.getByText('Sheet')).toBeInTheDocument();
+    expect(screen.queryByText(/Reconfirmed/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Jayson/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/2026/)).not.toBeInTheDocument();
+  });
+
+  // Reviewer S2, round 1: an ORDINARY raise/reconfirm note also starts with "Was" -
+  // `Was {qty} on {date}` / `Was {qty}, no previous delivery date`
+  // (project_order_inquiry_service.py, the import service). Only what
+  // planning_change_service.py itself writes reads Planning change.
+  it('does NOT read Planning change for an ordinary "Was 5 on 2026-09-01" raise note', () => {
+    render(<>{raisedCell(linesRow({ raise_event_kind: null, note: 'Was 5 on 2026-09-01' }))}</>);
+    expect(screen.queryByText('Planning change')).not.toBeInTheDocument();
+    expect(screen.getByText('-')).toBeInTheDocument();
+  });
+
+  it('does NOT read Planning change for "Was 5, no previous delivery date"', () => {
+    render(
+      <>
+        {raisedCell(
+          linesRow({ raise_event_kind: null, note: 'Was 5, no previous delivery date' }),
+        )}
+      </>,
+    );
+    expect(screen.queryByText('Planning change')).not.toBeInTheDocument();
+  });
+
+  it('reads Planning change for the date-move stamp "No previous delivery date"', () => {
+    render(
+      <>{raisedCell(linesRow({ raise_event_kind: null, note: 'No previous delivery date' }))}</>,
+    );
+    expect(screen.getByText('Planning change')).toBeInTheDocument();
+  });
+
+  it('reads Planning change for the qty-drop stamp "Was 5, now 3"', () => {
+    render(<>{raisedCell(linesRow({ raise_event_kind: null, note: 'Was 5, now 3' }))}</>);
+    expect(screen.getByText('Planning change')).toBeInTheDocument();
+  });
+
+  it('carries an `accessorFn` so the column picker can list and toggle it (`data-grid-column-visibility.tsx` only offers a column that has one)', () => {
+    const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns());
+    const raiseEventColumn = result.current.find(
+      (column) => (column as { id?: string }).id === 'raise_event',
+    );
+    expect(raiseEventColumn).toBeDefined();
+    expect(typeof (raiseEventColumn as { accessorFn?: unknown })?.accessorFn).toBe('function');
+  });
+
+  it('is hidden by default here too now (round 2 ruling), same as the worklist', async () => {
+    const { DEFAULT_HIDDEN_COLUMNS } = await import('../../components/orderInquiryWorklistColumns');
+    expect(DEFAULT_HIDDEN_COLUMNS).toContain('raise_event');
+  });
+});
+
+describe('AC-DT-5 (PLAN-oi-decision-trail-ui.md, round 2): the decision trail icon lives in the State cell', () => {
+  function stateCellFor(row: OrderInquiryWorklistRow, options: Record<string, unknown> = {}) {
+    const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns(options as never));
+    const stateColumn = result.current.find(
+      (column) => (column as { accessorKey?: string }).accessorKey === 'state',
+    ) as { cell: (context: unknown) => React.ReactNode } | undefined;
+    expect(stateColumn).toBeDefined();
+    return stateColumn!.cell({ row: { original: row } });
+  }
+
+  it('renders the icon for a plain (non-reserved) row that names a core sales-order line', () => {
+    render(<>{stateCellFor(linesRow({ id: 'row-plain', core_line_id: 'core-line-1' }))}</>);
+    expect(screen.getByRole('button', { name: /decision trail/i })).toBeInTheDocument();
+  });
+
+  it('renders the icon beside the reserve icons too, on a reserved line with the permission', () => {
+    render(
+      <>
+        {stateCellFor(
+          linesRow({
+            id: 'row-reserved',
+            reserve_state: 'reserved',
+            core_line_id: 'core-line-1',
+          }),
+          { canReserve: true },
+        )}
+      </>,
+    );
+    expect(screen.getByRole('button', { name: /decision trail/i })).toBeInTheDocument();
+    expect(screen.getByLabelText('Amend reserve')).toBeInTheDocument();
+  });
+
+  it('renders nothing for a row that names no core sales-order line', () => {
+    render(<>{stateCellFor(linesRow({ id: 'row-no-core-line' }))}</>);
+    expect(screen.queryByRole('button', { name: /decision trail/i })).not.toBeInTheDocument();
   });
 });

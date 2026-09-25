@@ -1338,6 +1338,15 @@ export interface BoardContribution {
   /** What was frozen, when the row is covered. Absent otherwise, never an empty object. */
   decision?: BoardLineDecision | null;
   /**
+   * AC-DT-2 (`PLAN-oi-decision-trail-ui.md`): who confirmed the ACTIVE decision that
+   * covers this line, and when, flattened onto the line for the Confirmed chip's own
+   * tooltip - `decision` above carries no confirmer, since it is shaped for re-posting
+   * an amendment. `null`/absent on an uncovered line.
+   */
+  decided_by_name?: string | null;
+  decided_at?: string | null;
+  decision_revision?: number | null;
+  /**
    * A decision SAVED here but not yet confirmed (S4, R-F): survives leaving the page,
    * another device, another planner. `null`/absent on a line nobody has saved.
    *
@@ -1347,6 +1356,13 @@ export interface BoardContribution {
    * (untouched, running on the suggestion).
    */
   draft?: BoardLineDraft | null;
+  /**
+   * AC-DT-2: the same saver facts as `draft.saved_by` / `draft.saved_at`, flattened
+   * onto the line under the trail's own names for the tooltip. `null`/absent when
+   * nobody has saved one, same as `draft` itself.
+   */
+  draft_saved_by_name?: string | null;
+  draft_saved_at?: string | null;
   /**
    * The order inquiry purchasing was given for this line, reached through the planning
    * record's mirror line, and the state that instruction is in.
@@ -1810,6 +1826,19 @@ export interface BoardUndo {
   mode: 'journal' | 'reconstructed';
 }
 
+/**
+ * AC-DT-1 (`PLAN-oi-decision-trail-ui.md`): the board panel's own "Revision N, confirmed
+ * by <name>, N lines" line. Distinct from `BoardUndo` above, which is gated to a
+ * journalled (or, admin-only, reconstructable) revision for the undo gear specifically -
+ * this is a plain read of the ACTIVE decision and is present whenever the order has one.
+ */
+export interface BoardOrderDecisionHeader {
+  revision_no: number;
+  confirmed_by_name?: string | null;
+  confirmed_at?: string | null;
+  line_count: number;
+}
+
 /** One selected order's standing, which is what makes the partial-decision reality visible. */
 export interface BoardOrderStanding {
   sales_order_id: string;
@@ -1851,6 +1880,11 @@ export interface BoardOrderStanding {
    * decision, or the active decision was never journalled.
    */
   undo?: BoardUndo | null;
+  /**
+   * AC-DT-1: the board panel's own "Revision N, confirmed by <name>, N lines" line.
+   * `null`/absent when the order has no active decision at all.
+   */
+  decision?: BoardOrderDecisionHeader | null;
 }
 
 /**

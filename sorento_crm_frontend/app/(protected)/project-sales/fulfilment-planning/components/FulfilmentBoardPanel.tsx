@@ -64,6 +64,7 @@ import {
   boardAxis,
   bucketLabelText,
   confirmSummaryFor,
+  decisionHeaderText,
   orderListRows,
   rowMatchesSearch,
   confirmLinesFor,
@@ -989,6 +990,17 @@ export function FulfilmentBoardPanel({
   );
 
   /**
+   * AC-DT-1/AC-DT-4 (`PLAN-oi-decision-trail-ui.md`): "Revision N, confirmed by <name>,
+   * N lines" beside the confirm summary, or "No decision yet" - one segment per order
+   * when several are planned together. Read off `board.data.orders` (never recomputed):
+   * `decision` is the server's own read of the active `so_supply_decisions` row.
+   */
+  const decisionHeader = React.useMemo(
+    () => decisionHeaderText(board.data?.orders ?? []),
+    [board.data?.orders],
+  );
+
+  /**
    * Decided lines this confirmation cannot carry, across the WHOLE board, each with why.
    *
    * It used to sit inside the per-order commit card that R13 removed. Named rather than
@@ -1715,16 +1727,27 @@ export function FulfilmentBoardPanel({
         className="flex flex-col gap-2 rounded-lg border border-border px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between"
       >
         {board.data && board.data.cells.length > 0 ? (
-          <span
-            data-testid="board-confirm-summary"
-            className="text-sm text-muted-foreground tabular-nums"
-          >
-            {`${confirmSummary.toConfirm} to confirm · ${confirmSummary.rejected} rejected`}
-            {/* C4 (code review round 3 batch 2): a saved line the engine has re-suggested
-                is dropped from Confirm with no trace beyond the pill itself - stated here
-                too, and only while it applies, the same rule the two figures beside it
-                follow. */}
-            {confirmSummary.changed > 0 ? ` · ${confirmSummary.changed} changed` : ''}
+          <span className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+            <span
+              data-testid="board-confirm-summary"
+              className="text-sm text-muted-foreground tabular-nums"
+            >
+              {`${confirmSummary.toConfirm} to confirm · ${confirmSummary.rejected} rejected`}
+              {/* C4 (code review round 3 batch 2): a saved line the engine has re-suggested
+                  is dropped from Confirm with no trace beyond the pill itself - stated here
+                  too, and only while it applies, the same rule the two figures beside it
+                  follow. */}
+              {confirmSummary.changed > 0 ? ` · ${confirmSummary.changed} changed` : ''}
+            </span>
+            {/* AC-DT-1/AC-DT-4 (`PLAN-oi-decision-trail-ui.md`): "Revision N, confirmed by
+                <name>, N lines" or "No decision yet" - wraps rather than truncates
+                (AC-DT-7), since a multi-order board's own text can run long. */}
+            <span
+              data-testid="board-decision-header"
+              className="whitespace-normal break-words text-sm text-muted-foreground"
+            >
+              {decisionHeader}
+            </span>
           </span>
         ) : (
           <span />
