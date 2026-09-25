@@ -282,9 +282,10 @@ describe('POIntakeConfirmClient', () => {
   });
 
   /**
-   * S6: no Header card and no separate Findings/notes card - a note naming a line lives on
-   * that line, inline, in the Lines tab; the PDF and the document-level notes live together
-   * in the Documents tab, always present (R18), reached with one click.
+   * S6: no Header card and no separate Findings card - a note naming a line lives on that
+   * line, inline, in the Lines tab; the PDF lives alone on the Documents tab (owner hand test
+   * 25 Sep 2026, item 4: the annotations grid that used to sit below it is gone), reached
+   * with one click.
    */
   it('puts the header, the lines and each note on its own line on one screen', async () => {
     getPOVersion.mockResolvedValue(version({ annotations: [annotation()] }));
@@ -313,7 +314,8 @@ describe('POIntakeConfirmClient', () => {
     fireEvent.click(documentsTab);
 
     expect(await screen.findByTitle('Purchase order page 1')).toBeInTheDocument();
-    expect(screen.getByText('No document-level notes')).toBeInTheDocument();
+    expect(screen.queryByText('No document-level notes')).toBeNull();
+    expect(screen.queryByRole('columnheader', { name: 'State' })).toBeNull();
     expect(screen.queryByLabelText('Quantity on line 1')).toBeNull();
   });
 
@@ -482,6 +484,25 @@ describe('POIntakeConfirmClient', () => {
     // The note names line 1, so "Review them" lands on the line, not on the (empty)
     // document-level card below.
     expect(screen.getByText('Line 1 in focus')).toBeInTheDocument();
+  });
+
+  /**
+   * Owner hand test 25 Sep 2026, item 4: the annotations grid (the only surface a
+   * document-level note ever had) is gone. A note naming no line - a signature, "Continue
+   * To Next Page", delivery instructions - has nowhere left to be reviewed, so it no longer
+   * blocks Confirm and is not counted in the header's unreviewed tally. A note naming a line
+   * still blocks Confirm exactly as before, through the row's own indicator.
+   */
+  it('does not let an unreviewed note naming no line block Confirm (F4)', async () => {
+    getPOVersion.mockResolvedValue(
+      version({ annotations: [annotation({ id: 'doc-note', refers_to_lines: [] })] }),
+    );
+
+    renderConfirm();
+
+    expect(await screen.findByRole('button', { name: /Confirm this PO/i })).toBeEnabled();
+    expect(screen.queryByText(/handwritten notes? still unreviewed/)).toBeNull();
+    expect(screen.queryByRole('button', { name: /Review them/i })).toBeNull();
   });
 
   it('confirms once every note has been looked at', async () => {
@@ -653,6 +674,29 @@ describe('POIntakeConfirmClient', () => {
     expect(screen.getByRole('tab', { name: 'Documents' })).toBeInTheDocument();
     expect(screen.queryByRole('tab', { name: /Findings/i })).toBeNull();
     expect(screen.queryByRole('tab', { name: /Header/i })).toBeNull();
+  });
+
+  /**
+   * Owner hand test 25 Sep 2026, item 4: "just show me the entire document" - the PDF viewer
+   * takes the Documents tab's full height, not a short strip, with every page scrollable.
+   */
+  it('gives the PDF viewer the Documents tab\'s full height, not a short strip', async () => {
+    getPOVersion.mockResolvedValue(version());
+
+    renderConfirm();
+
+    await screen.findByText('PO HQ/26/01/041 v1');
+    const documentsTab = screen.getByRole('tab', { name: 'Documents' });
+    documentsTab.focus();
+    fireEvent.click(documentsTab);
+
+    const iframe = await screen.findByTitle('Purchase order page 1');
+    // No short fixed-vh strip left on the viewer - it fills whatever height its tab gives it.
+    expect(iframe.className).not.toMatch(/h-\[45vh\]/);
+    expect(iframe.className).toMatch(/\bh-full\b/);
+    const tabPanel = iframe.closest('[role="tabpanel"]');
+    expect(tabPanel).not.toBeNull();
+    expect(tabPanel!.className).toMatch(/h-\[calc\(100dvh-14rem\)\]/);
   });
 
   /**

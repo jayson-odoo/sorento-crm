@@ -42,7 +42,7 @@ export function POIntakeDocumentViewer({
 
   return (
     <div
-      className={`flex min-w-0 flex-col rounded-lg border border-border ${className ?? ''}`}
+      className={`flex min-h-0 min-w-0 flex-col rounded-lg border border-border ${className ?? ''}`}
     >
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-3 py-2">
         <div className="flex items-center gap-1">
@@ -84,7 +84,7 @@ export function POIntakeDocumentViewer({
 
       <div className="min-h-0 flex-1 bg-muted/30 p-2">
         {!source ? (
-          <div className="flex h-[45vh] flex-col items-center justify-center gap-2 rounded border border-dashed border-border px-6 text-center lg:h-full">
+          <div className="flex h-full flex-col items-center justify-center gap-2 rounded border border-dashed border-border px-6 text-center">
             <FileWarning className="size-5 text-muted-foreground" aria-hidden />
             <p className="text-sm font-medium">The scan is not available to preview</p>
             <p className="max-w-xs text-xs text-muted-foreground">
@@ -95,14 +95,20 @@ export function POIntakeDocumentViewer({
           <img
             src={source}
             alt={`Purchase order page ${current}`}
-            className="h-[45vh] w-full rounded bg-white object-contain lg:h-full"
+            className="h-full w-full rounded bg-white object-contain"
           />
         ) : (
+          // The browser's own PDF viewer, not a single flattened page: `#page=` only sets
+          // where it OPENS, and the viewer it renders inside still scrolls through every
+          // page of the document on its own. Filling the tab's full height (the caller sets
+          // it via `className`) is what makes that scroll worth anything - the old short
+          // fixed-height strip left most of a multi-page document out of view (owner hand
+          // test 25 Sep 2026, item 4).
           <iframe
             key={current}
             src={`${source}#page=${current}&view=FitH`}
             title={`Purchase order page ${current}`}
-            className="h-[45vh] w-full rounded border-0 bg-white lg:h-full"
+            className="h-full w-full rounded border-0 bg-white"
           />
         )}
       </div>

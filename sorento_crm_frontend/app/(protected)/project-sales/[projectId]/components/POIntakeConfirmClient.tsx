@@ -14,7 +14,6 @@ import { usePOIntakeController } from '../../_shared/hooks/usePOIntake';
 import { useReviewOriginHref } from '../../_shared/hooks/useReviewOrigin';
 import type { POVersion, POVersionLine } from '../../_shared/types/poIntake.types';
 import { formatMyrExact, isMoneyZero, subtractMoney, sumMoney } from '../../_shared/lib/money';
-import { POIntakeAnnotationsGrid } from './POIntakeAnnotationsGrid';
 import { POIntakeDocumentViewer } from './POIntakeDocumentViewer';
 import {
   POIntakeExtractionFailed,
@@ -84,11 +83,12 @@ export function POIntakeConfirmClient({
   }, []);
 
   /**
-   * "Review them" reaches whichever surface still has something unreviewed: a note naming a
-   * line first (that is most of them, inline in the Lines tab), and only when none is left
-   * does it fall back to the document notes in the Documents tab. The Lines tab has to be
-   * mounted for the grid ref to answer, so a Documents-tab click switches tabs first and
-   * `attachGridRef` below finishes the job once Lines has actually mounted.
+   * "Review them" only ever shows while a note NAMING A LINE is still unreviewed (F4: a note
+   * naming no line has nowhere left to review since the Documents-tab annotations grid was
+   * removed, so it no longer counts toward `unreviewed` below) - so this always finds one, on
+   * the Lines tab, and opens its popover there (S6-4/S9). The Lines tab has to be mounted for
+   * the grid ref to answer, so a Documents-tab click switches tabs first and `attachGridRef`
+   * below finishes the job once Lines has actually mounted.
    */
   const reviewNextNote = React.useCallback(() => {
     if (activeTab !== 'lines') {
@@ -96,8 +96,7 @@ export function POIntakeConfirmClient({
       setActiveTab('lines');
       return;
     }
-    const foundOnALine = gridRef.current?.focusFirstUnreviewedAnnotation();
-    if (!foundOnALine) setActiveTab('documents');
+    gridRef.current?.focusFirstUnreviewedAnnotation();
   }, [activeTab]);
 
   // See the comment on `pendingFocusLineId` above: this callback ref, not a `useEffect` keyed
@@ -107,8 +106,7 @@ export function POIntakeConfirmClient({
     if (!instance) return;
     if (pendingReview.current) {
       pendingReview.current = false;
-      const foundOnALine = instance.focusFirstUnreviewedAnnotation();
-      if (!foundOnALine) setActiveTab('documents');
+      instance.focusFirstUnreviewedAnnotation();
     }
     if (pendingFocusLineId.current) {
       const id = pendingFocusLineId.current;
@@ -156,9 +154,12 @@ export function POIntakeConfirmClient({
   const countersignedAt =
     version.purchase_order?.countersigned_at ?? version.countersigned_at ?? null;
 
-  const unreviewed = version.annotations.filter((note) => note.state === 'proposed');
-  const documentAnnotations = version.annotations.filter(
-    (note) => note.refers_to_lines.length === 0,
+  // F4 (owner hand test 25 Sep 2026, item 4): a note naming no line - a signature, "Continue
+  // To Next Page", delivery instructions - had its only surface in the Documents-tab
+  // annotations grid, which is gone. With nowhere left to review it, it no longer blocks
+  // Confirm. A note naming a line still does, through that row's own indicator (F2).
+  const unreviewed = version.annotations.filter(
+    (note) => note.state === 'proposed' && note.refers_to_lines.length > 0,
   );
   const confirmed = Boolean(version.confirmed_at);
   const readOnly = !canEdit || confirmed;
@@ -317,7 +318,15 @@ export function POIntakeConfirmClient({
               )}
             </TabsContent>
 
-            <TabsContent value="documents" className="space-y-4">
+            {/* Owner hand test 25 Sep 2026, item 4: "just show me the entire document" - the
+                annotations grid that used to sit below the PDF is gone, and the viewer takes
+                the tab's own full height (the same 14rem margin the Lines tab's own grid
+                reserves) instead of a short fixed-height strip, so every page is reachable by
+                scrolling the viewer itself. `dvh`, not `vh` (M6-02/M6-03): this tab is verified
+                at 375px, and `vh` sits taller than what mobile Safari can actually show. The
+                R13 empty state stays as it was; it is a small dashed panel, not a document to
+                fill the tab with. */}
+            <TabsContent value="documents" className="flex h-[calc(100dvh-14rem)] flex-col">
               {version.document_url ? (
                 <POIntakeDocumentViewer
                   documentUrl={version.document_url}
@@ -325,22 +334,13 @@ export function POIntakeConfirmClient({
                   pageCount={version.page_count}
                   page={page}
                   onPageChange={setPage}
+                  className="flex-1"
                 />
               ) : (
                 <POIntakeDocumentEmptyState
                   onReupload={canEdit ? () => setUploading(true) : undefined}
                 />
               )}
-
-              <POIntakeAnnotationsGrid
-                annotations={documentAnnotations}
-                readOnly={readOnly}
-                savingAnnotationIds={intake.savingAnnotationIds}
-                onShowPage={showPage}
-                onAccept={intake.acceptAnnotation}
-                onEdit={intake.editAnnotation}
-                onReject={intake.rejectAnnotation}
-              />
             </TabsContent>
           </Tabs>
         </>

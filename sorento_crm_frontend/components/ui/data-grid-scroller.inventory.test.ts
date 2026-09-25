@@ -48,10 +48,11 @@ const EXEMPT = new Map<string, string>([
   // through `tableLayout.scrollerMaxHeight` as a plain string instead, which
   // is what `DataGridScroller` already reads a caller-supplied height off,
   // so it needs no exemption here any more.
-  [
-    'app/(protected)/project-sales/[projectId]/components/POIntakeAnnotationsGrid.tsx',
-    'bounded-height viewport (max-h)',
-  ],
+  //
+  // `POIntakeAnnotationsGrid.tsx` was here for the same reason too, and is
+  // gone for a different one: owner hand test 25 Sep 2026, item 4 removed
+  // the grid it wrapped entirely (the Documents tab shows only the PDF now),
+  // so the file carries no `DataGridTable` and no `ScrollArea` any more.
   // Same: the panel is embedded in a complaint record and takes a caller-set
   // `maxHeightClassName`.
   [
@@ -191,10 +192,6 @@ const SCROLLER_MAX_HEIGHT_FALSE_SITES = new Map<string, number>([
     // fulfilment board's cell breakdown the enclosing table is `CellStockTable`'s hand-rolled
     // `<table>` carve-out, not a DataGrid - so there is no grid context there to read.
     1,
-  ],
-  [
-    'app/(protected)/project-sales/[projectId]/components/POIntakeAnnotationsGrid.tsx',
-    1, // bounded-height viewport (max-h) - same reason as its ScrollArea exemption above
   ],
   [
     'app/(protected)/resource-management/attachments/components/AttachmentDetailModal.tsx',
