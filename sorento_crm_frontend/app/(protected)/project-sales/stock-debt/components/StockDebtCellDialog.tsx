@@ -3,7 +3,6 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { ColumnDef } from '@tanstack/react-table';
-import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogBody,
@@ -12,14 +11,19 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { STATUS_PILL_BASE } from '@/lib/status-pill';
 import { cn } from '@/lib/utils';
 import { PanelDataGrid } from '@/components/common/PanelDataGrid';
+import { OrderInquiryDocumentLink } from '../../order-inquiries/components/OrderInquiryDocumentDialog';
 import { useStockDebtCellQuery } from '../hooks/useStockDebtQuery';
 import type {
+  StockDebtAssignedFrom,
+  StockDebtBook,
   StockDebtDemandLine,
   StockDebtDemandStatus,
   StockDebtSupplyEvent,
@@ -69,8 +73,38 @@ const KIND_LABEL: Record<StockDebtSupplyKind, string> = {
   po: 'PO',
 };
 
+/** A stable reference for "no rows yet" - `cell.data?.demand ?? []` would otherwise hand
+ *  the `filteredDemand`/`demandTotals` memos below a NEW empty array every render,
+ *  invalidating them for no reason. */
+const EMPTY_DEMAND: StockDebtDemandLine[] = [];
+const EMPTY_SUPPLY: StockDebtSupplyEvent[] = [];
+
 function date(value: string | null): string {
   return value ? formatDateInMalaysia(value) : '-';
+}
+
+/**
+ * ONE `assigned_from` entry, as R31a's single "Covered by" column prints it: an on-hand
+ * bin is plain text with NO quantity suffix (R30's had one), a document is the SAME
+ * `OrderInquiryDocumentLink` the OI screens use with NO "line N (qty)" beside it (R30's
+ * had one too) - the drill states WHERE a line drew from, `Assigned` already states how
+ * much. `highlightLines` marks the document's own line when the dialog opens from here
+ * (R31b), so a reader can jump straight to it.
+ */
+function CoveredByEntry({ entry }: { entry: StockDebtAssignedFrom }) {
+  if (entry.kind === 'on_hand') {
+    return <span className="truncate text-muted-foreground">{entry.ref}</span>;
+  }
+  if (!entry.spo_number) {
+    return null;
+  }
+  return (
+    <OrderInquiryDocumentLink
+      kind={entry.kind}
+      document={entry.spo_number}
+      highlightLines={entry.spo_line_number != null ? [entry.spo_line_number] : undefined}
+    />
+  );
 }
 
 export function StockDebtCellDialog({
@@ -80,7 +114,9 @@ export function StockDebtCellDialog({
   month,
   monthLabel,
   balance,
-  group,
+  dateFrom,
+  dateTo,
+  book,
   onClose,
 }: {
   productId: string;
@@ -91,30 +127,118 @@ export function StockDebtCellDialog({
   /** What the column header said, so the dialog names the same thing the reader clicked. */
   monthLabel: string;
   balance: number;
-  /** The group the board is narrowed to, echoed so the figures are not read as the whole book. */
-  group: string;
+  /** The board's own due date range (AC-11/AC-11b, R14), echoed so the drill foots with
+   *  the cell that opened it. R16 retired the Ownership group this dialog used to take
+   *  instead - there is no `group` prop any more. */
+  dateFrom?: string;
+  dateTo?: string;
+  /** The board's own book (AC-11), same reason. */
+  book?: StockDebtBook;
   onClose: () => void;
 }) {
   // The board's own narrowing travels with the request AND with the cache key: the same
-  // product and month answer differently under `group=BB`, so the drill has to be
-  // recomputed over the span the cell that opened it was.
-  const cell = useStockDebtCellQuery(productId, month, group);
+  // product and month answer differently under a due date range / a book, so the
+  // drill has to be recomputed over the span the cell that opened it was.
+  const cell = useStockDebtCellQuery(productId, month, dateFrom, dateTo, book);
+
+  const demand = cell.data?.demand ?? EMPTY_DEMAND;
+  const supply = cell.data?.supply ?? EMPTY_SUPPLY;
+
+  // R20: the Demand grid's own search, by SO number / agent / bin. Client-side and
+  // filtered here (not via `PanelDataGrid`'s own `searchOf`) because the tab label needs
+  // to react to how many rows still match, which `searchOf`'s internal state does not
+  // expose to a caller.
+  const [demandSearch, setDemandSearch] = React.useState('');
+  const filteredDemand = React.useMemo(() => {
+    const needle = demandSearch.trim().toLowerCase();
+    if (!needle) return demand;
+    return demand.filter((line) =>
+      `${line.so_number} ${line.agent_code ?? ''} ${line.warehouse_code ?? ''}`
+        .toLowerCase()
+        .includes(needle),
+    );
+  }, [demand, demandSearch]);
+
+  // R25: the tab labels state total QUANTITY, never a record count - the envelope's own
+  // `demand_total_qty`/`supply_total_qty`, summed over the WHOLE tab server-side so the
+  // FE never re-derives it (and cannot disagree with the board's own arithmetic). Falls
+  // back to summing the rows on hand only for a fixture built before this round, which
+  // never carries either field.
+  const demandTotalQty =
+    cell.data?.demand_total_qty ?? demand.reduce((total, row) => total + row.open_qty, 0);
+  const supplyTotalQty =
+    cell.data?.supply_total_qty ?? supply.reduce((total, row) => total + row.qty, 0);
+  const filteredDemandQty = filteredDemand.reduce((total, row) => total + row.open_qty, 0);
+  const demandTabLabel = demandSearch.trim()
+    ? `Demand (${filteredDemandQty.toLocaleString()} of ${demandTotalQty.toLocaleString()})`
+    : `Demand (${demandTotalQty.toLocaleString()})`;
+  const supplyTabLabel = `Supply (${supplyTotalQty.toLocaleString()})`;
+
+  // R24: a Total FOOTER ROW on each grid replaces the standalone "Uncovered N"/"Free N"
+  // lines that used to sit under them - summed over the SAME rows the tab itself is
+  // showing (the filtered set on Demand while a search narrows it, never the unfiltered
+  // total the search left behind).
+  const demandTotals = React.useMemo(
+    () =>
+      filteredDemand.reduce(
+        (totals, row) => ({
+          ordered: totals.ordered + (row.qty_ordered ?? 0),
+          delivered: totals.delivered + (row.qty_delivered ?? 0),
+          outstanding: totals.outstanding + row.open_qty,
+          assigned: totals.assigned + row.assigned_qty,
+          short: totals.short + row.short_qty,
+        }),
+        { ordered: 0, delivered: 0, outstanding: 0, assigned: 0, short: 0 },
+      ),
+    [filteredDemand],
+  );
+  const supplyTotals = React.useMemo(
+    () =>
+      supply.reduce(
+        (totals, row) => ({
+          qty: totals.qty + row.qty,
+          received: totals.received + (row.received_qty ?? 0),
+          outstanding: totals.outstanding + (row.outstanding_qty ?? 0),
+          free: totals.free + row.free_qty,
+        }),
+        { qty: 0, received: 0, outstanding: 0, free: 0 },
+      ),
+    [supply],
+  );
 
   const demandColumns = React.useMemo<ColumnDef<StockDebtDemandLine>[]>(
     () => [
       {
         id: 'so_number',
-        header: 'Sales order',
+        accessorKey: 'so_number',
+        header: ({ column }) => <DataGridColumnHeader title="Sales order" column={column} />,
         size: 130,
-        cell: ({ row }) => (
-          <span className="truncate font-medium" title={row.original.so_number}>
-            {row.original.so_number}
-          </span>
-        ),
+        // R24: the Total footer row's own label, in the leftmost column - the same
+        // convention the board's own footer row uses.
+        footer: () => 'Total',
+        // R29: linked to the sales order's own page - new tab, so a reader keeps this
+        // drill open beside it.
+        cell: ({ row }) =>
+          row.original.sales_order_id ? (
+            <Link
+              href={`/scm/sales-orders/${row.original.sales_order_id}`}
+              target="_blank"
+              rel="noreferrer"
+              className="truncate font-medium text-primary hover:underline"
+              title={row.original.so_number}
+            >
+              {row.original.so_number}
+            </Link>
+          ) : (
+            <span className="truncate font-medium" title={row.original.so_number}>
+              {row.original.so_number}
+            </span>
+          ),
       },
       {
         id: 'agent_code',
-        header: 'Agent',
+        accessorKey: 'agent_code',
+        header: ({ column }) => <DataGridColumnHeader title="Agent" column={column} />,
         size: 110,
         cell: ({ row }) => (
           <span className="truncate" title={row.original.agent_code ?? ''}>
@@ -126,7 +250,8 @@ export function StockDebtCellDialog({
         // Before the date, because "which bin" is what decides whether this line and the
         // supply beside it are even the same pile (the ownership group is the code's suffix).
         id: 'warehouse_code',
-        header: 'Bin',
+        accessorKey: 'warehouse_code',
+        header: ({ column }) => <DataGridColumnHeader title="Bin" column={column} />,
         size: 110,
         cell: ({ row }) => (
           <span className="truncate" title={row.original.warehouse_code ?? ''}>
@@ -136,45 +261,97 @@ export function StockDebtCellDialog({
       },
       {
         id: 'required_date',
-        header: 'Due',
+        accessorKey: 'required_date',
+        header: ({ column }) => <DataGridColumnHeader title="Due" column={column} />,
         size: 120,
         cell: ({ row }) => <span>{date(row.original.required_date)}</span>,
       },
       {
-        id: 'open_qty',
-        header: 'Open',
-        size: 90,
+        // R22: CS's own Order Inquiry statement when set, else the sales-order book's
+        // own `qty_ordered` - `plan_qty()` server-side, echoed here rather than
+        // re-derived. Optional on the wire TYPE (not on the real response, which always
+        // carries it) only so a fixture built before this round still type-checks.
+        id: 'qty_ordered',
+        accessorKey: 'qty_ordered',
+        header: ({ column }) => <DataGridColumnHeader title="Ordered" column={column} />,
+        size: 100,
         meta: { headerClassName: 'text-end', cellClassName: 'text-end' },
+        footer: () => demandTotals.ordered.toLocaleString(),
+        cell: ({ row }) => (
+          <span className="tabular-nums">
+            {(row.original.qty_ordered ?? 0).toLocaleString()}
+          </span>
+        ),
+      },
+      {
+        id: 'qty_delivered',
+        accessorKey: 'qty_delivered',
+        header: ({ column }) => <DataGridColumnHeader title="Delivered" column={column} />,
+        size: 100,
+        meta: { headerClassName: 'text-end', cellClassName: 'text-end' },
+        footer: () => demandTotals.delivered.toLocaleString(),
+        cell: ({ row }) => (
+          <span className="tabular-nums">
+            {(row.original.qty_delivered ?? 0).toLocaleString()}
+          </span>
+        ),
+      },
+      {
+        // R22: renamed from "Open" - the same figure (`open_qty`), unchanged.
+        id: 'open_qty',
+        accessorKey: 'open_qty',
+        header: ({ column }) => <DataGridColumnHeader title="Outstanding" column={column} />,
+        size: 100,
+        meta: { headerClassName: 'text-end', cellClassName: 'text-end' },
+        footer: () => demandTotals.outstanding.toLocaleString(),
         cell: ({ row }) => (
           <span className="tabular-nums">{row.original.open_qty.toLocaleString()}</span>
         ),
       },
       {
         id: 'assigned_qty',
-        header: 'Assigned',
+        accessorKey: 'assigned_qty',
+        header: ({ column }) => <DataGridColumnHeader title="Assigned" column={column} />,
         size: 100,
         meta: { headerClassName: 'text-end', cellClassName: 'text-end' },
+        footer: () => demandTotals.assigned.toLocaleString(),
         cell: ({ row }) => (
           <span className="tabular-nums">{row.original.assigned_qty.toLocaleString()}</span>
         ),
       },
       {
-        id: 'assigned_source',
-        header: 'From',
-        size: 190,
-        cell: ({ row }) => (
-          <span
-            className="block truncate text-muted-foreground"
-            title={row.original.assigned_source ?? 'Nothing assigned'}
-          >
-            {row.original.assigned_source ?? 'Nothing assigned'}
-          </span>
-        ),
+        // R31a (owner, 25 Sep) supersedes R30's three columns (From/SPO/OI) with ONE:
+        // on-hand entries print plain text, a document entry the SAME
+        // `OrderInquiryDocumentLink` the OI screens use, both together when a line drew
+        // from both, and a dash when nothing did. Neither carries a quantity or line
+        // number any more - `Assigned` already states how much, and the document's own
+        // dialog (opened with `highlightLines`, R31b) is where a reader learns which line.
+        id: 'covered_by',
+        header: ({ column }) => <DataGridColumnHeader title="Covered by" column={column} />,
+        size: 220,
+        cell: ({ row }) => {
+          const entries = row.original.assigned_from ?? [];
+          if (!entries.length) {
+            return <span className="text-muted-foreground">-</span>;
+          }
+          return (
+            <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
+              {entries.map((entry, index) => (
+                <CoveredByEntry key={`${entry.kind}:${entry.ref}:${index}`} entry={entry} />
+              ))}
+            </div>
+          );
+        },
       },
       {
         id: 'status',
-        header: 'Status',
+        accessorKey: 'status',
+        header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
         size: 120,
+        // R24 addendum: the Total row's own Short - sum of `short_qty` - sits here rather
+        // than a standalone "Uncovered N" line under the grid (R37 still foots the SAME
+        // number, just relocated).
+        footer: () => `Short ${demandTotals.short.toLocaleString()}`,
         cell: ({ row }) => {
           // `short_qty` is the SERVER's own figure - what the line went without ON ITS OWN
           // DATE (R37), which is also what its month books and what the footer below sums.
@@ -205,26 +382,8 @@ export function StockDebtCellDialog({
           return <span className={pill}>{status}</span>;
         },
       },
-      {
-        id: 'plan',
-        header: '',
-        size: 90,
-        cell: ({ row }) => (
-          <div className="flex justify-end">
-            <Button variant="outline" size="sm" asChild>
-              <Link
-                href={`/project-sales/fulfilment-planning?orders=${encodeURIComponent(
-                  row.original.so_number,
-                )}`}
-              >
-                Plan
-              </Link>
-            </Button>
-          </div>
-        ),
-      },
     ],
-    [],
+    [demandTotals],
   );
 
   const supplyColumns = React.useMemo<ColumnDef<StockDebtSupplyEvent>[]>(
@@ -233,17 +392,26 @@ export function StockDebtCellDialog({
         id: 'kind',
         header: 'Kind',
         size: 90,
+        // R24: the Total footer row's own label, same convention as the Demand grid's.
+        footer: () => 'Total',
         cell: ({ row }) => <span>{KIND_LABEL[row.original.kind]}</span>,
       },
       {
+        // R31a (supersedes R30's own muted " line N"): the SAME `OrderInquiryDocumentLink`
+        // the OI screens use, never a bespoke href, the trigger alone - matching the OI
+        // lines grid's own `DocumentCell` exactly. On hand names a bin, not a document,
+        // so it stays plain text.
         id: 'ref',
         header: 'Document',
-        size: 190,
-        cell: ({ row }) => (
-          <span className="block truncate" title={row.original.ref ?? ''}>
-            {row.original.ref ?? '-'}
-          </span>
-        ),
+        size: 210,
+        cell: ({ row }) =>
+          row.original.spo_number ? (
+            <OrderInquiryDocumentLink kind="spo" document={row.original.spo_number} />
+          ) : (
+            <span className="block truncate" title={row.original.ref ?? ''}>
+              {row.original.ref ?? '-'}
+            </span>
+          ),
       },
       {
         id: 'warehouse_code',
@@ -262,12 +430,45 @@ export function StockDebtCellDialog({
         cell: ({ row }) => <span>{date(row.original.date)}</span>,
       },
       {
+        // R26: an SPO's own RAW ordered quantity; the on-hand figure, unchanged, for
+        // every other kind.
         id: 'qty',
         header: 'Qty',
         size: 90,
         meta: { headerClassName: 'text-end', cellClassName: 'text-end' },
+        footer: () => supplyTotals.qty.toLocaleString(),
         cell: ({ row }) => (
           <span className="tabular-nums">{row.original.qty.toLocaleString()}</span>
+        ),
+      },
+      {
+        // R26: an SPO's own quantity received so far - blank for every other kind (on
+        // hand has no received/outstanding history to state).
+        id: 'received_qty',
+        header: 'Received',
+        size: 100,
+        meta: { headerClassName: 'text-end', cellClassName: 'text-end' },
+        footer: () => supplyTotals.received.toLocaleString(),
+        cell: ({ row }) => (
+          <span className="tabular-nums">
+            {row.original.received_qty != null ? row.original.received_qty.toLocaleString() : ''}
+          </span>
+        ),
+      },
+      {
+        // R26: the walk's own NETTED balance for an SPO (Qty minus Received) - what the
+        // walk actually counts as incoming. Blank for every other kind, same reason.
+        id: 'outstanding_qty',
+        header: 'Outstanding',
+        size: 100,
+        meta: { headerClassName: 'text-end', cellClassName: 'text-end' },
+        footer: () => supplyTotals.outstanding.toLocaleString(),
+        cell: ({ row }) => (
+          <span className="tabular-nums">
+            {row.original.outstanding_qty != null
+              ? row.original.outstanding_qty.toLocaleString()
+              : ''}
+          </span>
         ),
       },
       {
@@ -275,9 +476,15 @@ export function StockDebtCellDialog({
         header: 'Assigned to',
         size: 190,
         cell: ({ row }) => {
+          // R29: `line_no` names the SO LINE itself, beside the SO number - "SO382618
+          // line 2 (100)" - null when the core line has no project-line number of its
+          // own, which keeps the pre-R29 "SO382618 (100)" shape.
           const label = row.original.assigned_to.length
             ? row.original.assigned_to
-                .map((entry) => `${entry.so_number} (${entry.qty.toLocaleString()})`)
+                .map(
+                  (entry) =>
+                    `${entry.so_number}${entry.line_no != null ? ` line ${entry.line_no}` : ''} (${entry.qty.toLocaleString()})`,
+                )
                 .join(', ')
             : 'Free';
           return (
@@ -291,6 +498,10 @@ export function StockDebtCellDialog({
         id: 'note',
         header: 'Note',
         size: 230,
+        // R24 addendum: the Total row's own Free - sum of `free_qty` - sits here rather
+        // than a standalone "Free N" line under the grid (R37 still foots the SAME
+        // number, just relocated).
+        footer: () => `Free ${supplyTotals.free.toLocaleString()}`,
         cell: ({ row }) => {
           // A PO line's `expected_date` is the SO date it was TYPED against, not an
           // arrival (R29), so it is stated as what it is and nothing reads it (R30).
@@ -324,19 +535,18 @@ export function StockDebtCellDialog({
         },
       },
     ],
-    [],
+    [supplyTotals],
   );
 
-  const demand = cell.data?.demand ?? [];
-  const supply = cell.data?.supply ?? [];
   const signedBalance = balance > 0 ? `+${balance.toLocaleString()}` : balance.toLocaleString();
-  // The two halves of the cell (R37), summed here rather than on the server: the rows ARE
-  // the month, so a reader can add the column up and land on the balance in the title.
-  const uncovered = demand.reduce((total, row) => total + row.short_qty, 0);
-  const free = supply.reduce((total, row) => total + row.free_qty, 0);
-  const context = [monthLabel, signedBalance, group ? `${group} group` : null]
-    .filter(Boolean)
-    .join(' · ');
+  // R16 retired the Ownership-group qualifier that used to sit here; no due-date-range /
+  // book qualifier has replaced it on this line yet, so it is just the month and balance.
+  const context = [monthLabel, signedBalance].filter(Boolean).join(' · ');
+  // R27: the muted description line under the title repeats nothing - it renders only
+  // when the name is SET and actually differs from the code, the same guard the board's
+  // own list rows apply server-side (AC-9) but this dialog was never given.
+  const distinctProductName =
+    productName && productName !== productCode ? productName : null;
 
   return (
     <Dialog open onOpenChange={(next) => !next && onClose()}>
@@ -354,8 +564,8 @@ export function StockDebtCellDialog({
             {`Product · ${productCode}`}
             <span className="ms-2 text-xs font-normal text-muted-foreground">{context}</span>
           </DialogTitle>
-          <DialogDescription className="truncate text-xs" title={productName ?? undefined}>
-            {productName ?? productCode}
+          <DialogDescription className="truncate text-xs" title={distinctProductName ?? undefined}>
+            {distinctProductName}
           </DialogDescription>
         </DialogHeader>
 
@@ -370,15 +580,31 @@ export function StockDebtCellDialog({
           ) : (
             <Tabs defaultValue="demand">
               <TabsList>
-                <TabsTrigger value="demand">{`Demand (${demand.length})`}</TabsTrigger>
-                <TabsTrigger value="supply">{`Supply (${supply.length})`}</TabsTrigger>
+                <TabsTrigger value="demand">{demandTabLabel}</TabsTrigger>
+                <TabsTrigger value="supply">{supplyTabLabel}</TabsTrigger>
               </TabsList>
 
               <TabsContent value="demand">
                 <PanelDataGrid<StockDebtDemandLine>
                   title="Demand"
+                  toolbar={
+                    <Input
+                      type="search"
+                      value={demandSearch}
+                      onChange={(e) => setDemandSearch(e.target.value)}
+                      placeholder="Search SO, agent or bin…"
+                      aria-label="Search"
+                      className="h-8 w-full sm:w-56"
+                    />
+                  }
                   columns={demandColumns}
-                  rows={demand}
+                  rows={filteredDemand}
+                  sortable
+                  // Page resets on every keystroke - `filteredDemand` is filtered OUTSIDE
+                  // `PanelDataGrid` (see the tab-label note above), so its own
+                  // `searchOf`-driven reset never runs; this is the `pageResetKey` an
+                  // external filter is documented to use instead.
+                  pageResetKey={demandSearch}
                   listingKey="projects.stock_debt.view::cell-demand"
                   error={cell.error}
                   emptyTitle="Nothing is due here"
@@ -387,9 +613,6 @@ export function StockDebtCellDialog({
                   // The DialogBody above already owns the scroll viewport (overflow-y-auto).
                   scrollerMaxHeight={false}
                 />
-                <p className="mt-2 border-t pt-2 text-2xs text-muted-foreground">
-                  {`Uncovered ${uncovered.toLocaleString()}`}
-                </p>
               </TabsContent>
 
               <TabsContent value="supply">
@@ -405,9 +628,6 @@ export function StockDebtCellDialog({
                   // The DialogBody above already owns the scroll viewport (overflow-y-auto).
                   scrollerMaxHeight={false}
                 />
-                <p className="mt-2 border-t pt-2 text-2xs text-muted-foreground">
-                  {`Free ${free.toLocaleString()}`}
-                </p>
               </TabsContent>
             </Tabs>
           )}

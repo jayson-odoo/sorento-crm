@@ -91,8 +91,14 @@ export type ListToolbarFilters =
        * from missing data (PLAN-listing-view-memory, AC-C1/AC-C2).
        *
        * The PAGE owns `label`: only it can put its own filter values into words.
+       *
+       * A single object renders one chip; an ARRAY renders one chip per entry, each with
+       * its own clear (Stock Debt's filters panel carries five independent filters, and
+       * one shared chip cannot say which of them is on - PLAN-stock-debt-filters-totals-
+       * export-24sep.md, AC-19c). Every existing single-object caller is unaffected: it is
+       * normalised to a one-entry array before rendering.
        */
-      activeSummary?: { label: string; onClear: () => void };
+      activeSummary?: { label: string; onClear: () => void } | { label: string; onClear: () => void }[];
       content: ReactNode;
     };
 
@@ -377,9 +383,15 @@ export function DataGridListToolbar<TData extends object>({
   };
 
   // Rendered only for a custom filter that is BOTH active and self-describing, so a
-  // listing that supplies no summary keeps exactly today's layout (AC-C3).
-  const activeFilterSummary =
+  // listing that supplies no summary keeps exactly today's layout (AC-C3). Normalised to
+  // an array so a single-chip caller and a multi-chip caller share one render path.
+  const rawActiveSummary =
     filters?.kind === 'custom' && filters.active ? filters.activeSummary : undefined;
+  const activeFilterChips = rawActiveSummary
+    ? Array.isArray(rawActiveSummary)
+      ? rawActiveSummary
+      : [rawActiveSummary]
+    : [];
 
   const exportButtonEl =
     exportConfig === false || !showExport ? null : exportEnabled ? (
@@ -584,29 +596,34 @@ export function DataGridListToolbar<TData extends object>({
           </div>
         </div>
 
-        {/* Active-filter chip (AC-C1). Its own row, so it neither competes with the
-            toolbar buttons for width at 375px nor disappears behind the bulk strip. */}
-        {activeFilterSummary ? (
+        {/* Active-filter chips (AC-C1). Their own row, so they neither compete with the
+            toolbar buttons for width at 375px nor disappear behind the bulk strip. */}
+        {activeFilterChips.length > 0 ? (
           <div className="flex w-full flex-wrap items-center gap-2">
-            <span className="inline-flex h-8 max-w-full items-center gap-1.5 rounded-full border border-border bg-muted/50 ps-3 pe-1 text-xs font-medium">
-              <Filter className="size-3.5 shrink-0 text-muted-foreground" />
-              <span className="truncate" title={activeFilterSummary.label}>
-                {activeFilterSummary.label}
-              </span>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                mode="icon"
-                shape="circle"
-                className="size-6 shrink-0 p-0"
-                onClick={activeFilterSummary.onClear}
-                aria-label={`Clear filter: ${activeFilterSummary.label}`}
-                title="Clear filter"
+            {activeFilterChips.map((chip) => (
+              <span
+                key={chip.label}
+                className="inline-flex h-8 max-w-full items-center gap-1.5 rounded-full border border-border bg-muted/50 ps-3 pe-1 text-xs font-medium"
               >
-                <X className="size-3.5" />
-              </Button>
-            </span>
+                <Filter className="size-3.5 shrink-0 text-muted-foreground" />
+                <span className="truncate" title={chip.label}>
+                  {chip.label}
+                </span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  mode="icon"
+                  shape="circle"
+                  className="size-6 shrink-0 p-0"
+                  onClick={chip.onClear}
+                  aria-label={`Clear filter: ${chip.label}`}
+                  title="Clear filter"
+                >
+                  <X className="size-3.5" />
+                </Button>
+              </span>
+            ))}
           </div>
         ) : null}
 

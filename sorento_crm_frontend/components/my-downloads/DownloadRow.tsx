@@ -51,6 +51,7 @@ export const KIND_LABEL: Record<string, string> = {
   // packing-list export (E1/E2) writes rows with this kind; without a label here a
   // row with no filename yet falls back to the raw key.
   packing_list_xlsx: 'Packing list Excel',
+  stock_debt_xlsx: 'Stock debt Excel',
 };
 
 export function StatusBadge({ status }: { status: MyDownload['status'] }) {
