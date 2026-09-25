@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import type { ProjectSalesOrderFinding } from '../../_shared/types/projectSalesOrder.types';
-import { SalesOrderAcknowledgeDialog } from './SalesOrderAcknowledgeDialog';
+import { DismissReasonDialog } from './DismissReasonDialog';
 
 /**
  * The (PO, schedule) pair's OWN findings - a schedule column for a product not on the PO
@@ -83,7 +83,7 @@ export function ScheduleFindingsSection({
                       className="shrink-0"
                       onClick={() => setAcknowledging(finding)}
                     >
-                      Clear with a reason
+                      Dismiss with a reason
                     </Button>
                   )}
                 </div>
@@ -94,10 +94,12 @@ export function ScheduleFindingsSection({
       </Card>
 
       {acknowledging && (
-        <SalesOrderAcknowledgeDialog
-          finding={acknowledging}
+        <DismissReasonDialog
+          severity={acknowledging.severity}
+          detail={acknowledging.detail}
+          ids={[acknowledging.id]}
           onDone={() => setAcknowledging(null)}
-          onConfirm={(reason) => onAcknowledge(acknowledging.id, reason)}
+          onDismiss={(_ids, reason) => onAcknowledge(acknowledging.id, reason)}
           submitting={false}
         />
       )}

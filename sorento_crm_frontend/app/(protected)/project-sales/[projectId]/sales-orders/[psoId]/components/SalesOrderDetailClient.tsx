@@ -49,7 +49,7 @@ import { SalesOrderStockLocationBulkApply } from './SalesOrderStockLocationBulkA
 import { useProject } from '../../../../_shared/hooks/useProjects';
 import { useOpenDivergenceForOrder } from '../../../../_shared/hooks/useSoDivergence';
 import type { ProjectSalesOrderFinding } from '../../../../_shared/types/projectSalesOrder.types';
-import { SalesOrderAcknowledgeDialog } from '../../../components/SalesOrderAcknowledgeDialog';
+import { DismissReasonDialog } from '../../../components/DismissReasonDialog';
 import { SalesOrderFindingsSection } from '../../../components/SalesOrderFindingsSection';
 import { SalesOrderLinesTable } from '../../../components/SalesOrderLinesTable';
 import { ScheduleFindingsSection } from '../../../components/ScheduleFindingsSection';
@@ -651,11 +651,13 @@ export function SalesOrderDetailClient({
       <AllocationPanel psoId={psoId} />
 
       {acknowledging && (
-        <SalesOrderAcknowledgeDialog
-          finding={acknowledging}
+        <DismissReasonDialog
+          severity={acknowledging.severity}
+          detail={acknowledging.detail}
+          ids={[acknowledging.id]}
           submitting={acknowledge.isPending}
           onDone={() => setAcknowledging(null)}
-          onConfirm={(reason) =>
+          onDismiss={(_ids, reason) =>
             acknowledge.mutateAsync({ findingId: acknowledging.id, reason })
           }
         />

@@ -326,21 +326,21 @@ describe('SalesOrderDetailClient', () => {
 
     renderDetail();
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Clear with a reason' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Dismiss with a reason' }));
 
     const dialog = await screen.findByRole('dialog');
-    const record = within(dialog).getByRole('button', { name: 'Record the reason' });
+    const record = within(dialog).getByRole('button', { name: 'Dismiss 1' });
     expect(record).toBeDisabled();
 
     // Whitespace is not a reason.
     fireEvent.change(within(dialog).getByLabelText(/Reason/), { target: { value: '   ' } });
-    expect(within(dialog).getByRole('button', { name: 'Record the reason' })).toBeDisabled();
+    expect(within(dialog).getByRole('button', { name: 'Dismiss 1' })).toBeDisabled();
     expect(acknowledgeFinding).not.toHaveBeenCalled();
 
     fireEvent.change(within(dialog).getByLabelText(/Reason/), {
       target: { value: 'Customer agreed the revised price on 01/04.' },
     });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Record the reason' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Dismiss 1' }));
 
     await waitFor(() =>
       expect(acknowledgeFinding).toHaveBeenCalledWith(
@@ -415,7 +415,7 @@ describe('SalesOrderDetailClient', () => {
     ).toBeInTheDocument();
   });
 
-  it('takes a hard override through a second, explicit confirmation', async () => {
+  it('dismisses a hard finding through the same one-step dialog as a warning', async () => {
     getProjectSalesOrder.mockResolvedValue(
       detail({ status: 'blocked', hard_findings: 1, findings: [HARD] }),
     );
@@ -423,19 +423,14 @@ describe('SalesOrderDetailClient', () => {
 
     renderDetail();
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Override with a reason' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Dismiss with a reason' }));
 
     const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Blocks publish')).toBeInTheDocument();
     fireEvent.change(within(dialog).getByLabelText(/Reason/), {
       target: { value: 'PO amount is a typo, confirmed by email 02/04.' },
     });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Override' }));
-
-    const confirm = await screen.findByRole('alertdialog');
-    expect(within(confirm).getByText('Publish past a hard stop?')).toBeInTheDocument();
-    expect(acknowledgeFinding).not.toHaveBeenCalled();
-
-    fireEvent.click(within(confirm).getByRole('button', { name: 'Override and record' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Dismiss 1' }));
 
     await waitFor(() =>
       expect(acknowledgeFinding).toHaveBeenCalledWith(
