@@ -30,10 +30,11 @@ vi.mock('@/lib/toast', () => ({
 }));
 
 const push = vi.fn();
+let originParam: string | null = null;
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push, replace: vi.fn() }),
   usePathname: () => '/project-sales/p1/sales-orders/so-1',
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => new URLSearchParams(originParam ? { from: originParam } : ''),
 }));
 
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
@@ -245,6 +246,7 @@ async function openGear() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  originParam = null;
   canEditProject = true;
   // Default: AutoCount agrees, so the amend path is open.
   listDivergences.mockResolvedValue({ data: [], total: 0, page: 1, limit: 100 });
@@ -400,6 +402,50 @@ describe('SalesOrderDetailClient', () => {
 
     await waitFor(() => expect(downloadSalesOrderImportFile).toHaveBeenCalledWith('so-1'));
     expect(saveBlobAs.mock.calls[0][1]).toBe('SO397450.csv');
+  });
+
+  it('returns to the origin once Done is clicked after a successful Publish, when it carries one (S4-2)', async () => {
+    originParam = '/project-sales/p1?tab=sales-orders';
+    getProjectSalesOrder.mockResolvedValue(detail());
+    publishSalesOrder.mockResolvedValue({
+      status: 'published',
+      provisional_ref: 'PSO-000123',
+      autocount_doc_no: 'SO397450',
+      can_export: true,
+    });
+
+    renderDetail();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Publish' }));
+    const dialog = await screen.findByRole('alertdialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Publish' }));
+
+    await waitFor(() => expect(publishSalesOrder).toHaveBeenCalledWith('so-1'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Done' }));
+
+    expect(push).toHaveBeenCalledWith('/project-sales/p1?tab=sales-orders');
+  });
+
+  it('stays on the page once Done is clicked with no origin (S4-3)', async () => {
+    originParam = null;
+    getProjectSalesOrder.mockResolvedValue(detail());
+    publishSalesOrder.mockResolvedValue({
+      status: 'published',
+      provisional_ref: 'PSO-000123',
+      autocount_doc_no: 'SO397450',
+      can_export: true,
+    });
+
+    renderDetail();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Publish' }));
+    const dialog = await screen.findByRole('alertdialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Publish' }));
+
+    await waitFor(() => expect(publishSalesOrder).toHaveBeenCalledWith('so-1'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Done' }));
+
+    expect(push).not.toHaveBeenCalled();
   });
 
   it('names the warnings that have no reason before an irreversible publish', async () => {

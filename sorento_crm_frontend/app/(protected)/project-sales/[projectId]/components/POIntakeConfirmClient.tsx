@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { ArrowLeft, CheckCircle2, Stamp } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -9,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useProject } from '../../_shared/hooks/useProjects';
 import { usePOIntakeController } from '../../_shared/hooks/usePOIntake';
+import { useReviewOriginHref } from '../../_shared/hooks/useReviewOrigin';
 import type { POVersion, POVersionLine } from '../../_shared/types/poIntake.types';
 import { describeReadingTime } from '../../_shared/lib/readingTime';
 import { POIntakeAnnotationsGrid } from './POIntakeAnnotationsGrid';
@@ -48,6 +50,8 @@ export function POIntakeConfirmClient({
   // that shows purchase-order money. Loading/empty/error states are pinned by the component
   // tests, which stub the service layer like every other test in the module.
   const intake = usePOIntakeController(versionId);
+  const router = useRouter();
+  const originHref = useReviewOriginHref();
 
   const project = useProject(projectId);
   const canEdit = project.data ? project.data.can_edit !== false : true;
@@ -98,6 +102,13 @@ export function POIntakeConfirmClient({
       version?.lines.find(lineNeedsAttention);
     if (target) gridRef.current?.focusLine(target.id);
   }, [version]);
+
+  // S4: Confirm returns the user to where they came from. With no origin (a deep link or a
+  // bookmark) it stays on the page, exactly as before this slice.
+  const handleConfirm = React.useCallback(async () => {
+    const confirmed = await intake.confirm();
+    if (confirmed && originHref) router.push(originHref);
+  }, [intake, originHref, router]);
 
   if (intake.isLoading) return <POIntakeSkeleton />;
 
@@ -187,7 +198,7 @@ export function POIntakeConfirmClient({
                   intake.isConfirming ||
                   version.lines.length === 0
                 }
-                onClick={() => void intake.confirm()}
+                onClick={() => void handleConfirm()}
               >
                 <CheckCircle2 className="size-4" aria-hidden />
                 {intake.isConfirming ? 'Confirming…' : 'Confirm this PO'}

@@ -12,10 +12,12 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { POVersion, POVersionLine } from '../../_shared/types/poIntake.types';
 
+const push = vi.fn();
+let originParam: string | null = null;
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  useRouter: () => ({ push, replace: vi.fn() }),
   usePathname: () => '/project-sales/p1/purchase-orders/v1',
-  useSearchParams: () => ({ get: () => null }),
+  useSearchParams: () => ({ get: (key: string) => (key === 'from' ? originParam : null) }),
 }));
 
 // The shared DataGrid holds its skeleton rows until the column-preferences query settles, and
@@ -156,6 +158,7 @@ function renderConfirm() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  originParam = null;
   getProject.mockResolvedValue({
     id: 'p1',
     project_code: 'PRJ-000001',
@@ -417,6 +420,39 @@ describe('POIntakeConfirmClient', () => {
     expect(confirmButton).toBeEnabled();
     fireEvent.click(confirmButton);
     await waitFor(() => expect(confirmPOVersion).toHaveBeenCalledWith('v1'));
+  });
+
+  it('returns to the origin after a successful Confirm, when the review page carries one (S4-2)', async () => {
+    originParam = '/project-sales/pipeline?from=p1';
+    getPOVersion.mockResolvedValue(
+      version({
+        annotations: [annotation({ state: 'accepted', actioned_by_name: 'Yana Abdullah' })],
+      }),
+    );
+    confirmPOVersion.mockResolvedValue(version());
+
+    renderConfirm();
+
+    fireEvent.click(await screen.findByRole('button', { name: /Confirm this PO/i }));
+
+    await waitFor(() => expect(push).toHaveBeenCalledWith('/project-sales/pipeline?from=p1'));
+  });
+
+  it('stays on the page after Confirm with no origin, a deep link or a bookmark (S4-3)', async () => {
+    originParam = null;
+    getPOVersion.mockResolvedValue(
+      version({
+        annotations: [annotation({ state: 'accepted', actioned_by_name: 'Yana Abdullah' })],
+      }),
+    );
+    confirmPOVersion.mockResolvedValue(version());
+
+    renderConfirm();
+
+    fireEvent.click(await screen.findByRole('button', { name: /Confirm this PO/i }));
+
+    await waitFor(() => expect(confirmPOVersion).toHaveBeenCalledWith('v1'));
+    expect(push).not.toHaveBeenCalled();
   });
 
   it('shows confirm, approve and countersign as three stamps, absent ones included', async () => {

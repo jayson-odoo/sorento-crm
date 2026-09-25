@@ -216,7 +216,8 @@ export interface POIntakeController {
   retryExtraction: () => Promise<void>;
   updateHeader: (body: Partial<POVersionHeader>) => Promise<void>;
   updateLine: (lineId: string, body: POLineUpdateBody) => Promise<void>;
-  confirm: () => Promise<void>;
+  /** True on success (S4): the caller navigates to the review page's origin, if it carries one. */
+  confirm: () => Promise<boolean>;
   acceptAnnotation: (annotationId: string, note?: string | null) => Promise<void>;
   editAnnotation: (annotationId: string, body: POAnnotationEditBody) => Promise<void>;
   rejectAnnotation: (annotationId: string, note: string) => Promise<void>;

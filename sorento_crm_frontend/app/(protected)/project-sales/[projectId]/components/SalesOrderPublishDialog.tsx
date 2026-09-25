@@ -49,7 +49,8 @@ export function SalesOrderPublishDialog({
   reference: string;
   blocking: ProjectSalesOrderFinding[];
   unacknowledgedWarnings: ProjectSalesOrderFinding[];
-  onDone: () => void;
+  /** `published` is true only when this closes the post-publish result view (S4). */
+  onDone: (published?: boolean) => void;
   onPublish: (body?: SalesOrderPublishBody) => Promise<SalesOrderPublishResult>;
   onDownloadImportFile: () => void;
   submitting: boolean;
@@ -172,7 +173,7 @@ export function SalesOrderPublishDialog({
 
   if (result) {
     return (
-      <AlertDialog open onOpenChange={(next) => !next && onDone()}>
+      <AlertDialog open onOpenChange={(next) => !next && onDone(true)}>
         <AlertDialogContent className="max-h-[90vh] overflow-y-auto">
           <AlertDialogHeader>
             <AlertDialogTitle>Published</AlertDialogTitle>
@@ -210,7 +211,7 @@ export function SalesOrderPublishDialog({
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogAction onClick={onDone}>Done</AlertDialogAction>
+            <AlertDialogAction onClick={() => onDone(true)}>Done</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

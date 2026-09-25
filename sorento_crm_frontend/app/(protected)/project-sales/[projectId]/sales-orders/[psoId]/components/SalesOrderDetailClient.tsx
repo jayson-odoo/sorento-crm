@@ -88,6 +88,9 @@ export function SalesOrderDetailClient({
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  // S4: Publish returns the user to where they came from. With no origin (a deep link or a
+  // bookmark) it stays on the page, as before this slice.
+  const originHref = searchParams.get('from');
   const project = useProject(projectId);
   const salesOrder = useProjectSalesOrder(psoId);
   const { acknowledge, save, regroup, publish, unpublish, reorderLines } = useSalesOrderMutations(
@@ -680,7 +683,10 @@ export function SalesOrderDetailClient({
           unacknowledgedWarnings={unacknowledgedWarnings}
           submitting={publish.isPending}
           downloading={importFile.isPending}
-          onDone={() => setPublishing(false)}
+          onDone={(published) => {
+            setPublishing(false);
+            if (published && originHref) router.push(originHref);
+          }}
           onPublish={(body) => publish.mutateAsync(body)}
           onDownloadImportFile={() => importFile.mutate(so.provisional_ref)}
         />

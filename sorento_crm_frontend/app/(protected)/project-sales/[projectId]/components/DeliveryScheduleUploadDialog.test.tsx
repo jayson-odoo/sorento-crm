@@ -95,7 +95,7 @@ const existing: DeliverySchedule = {
 
 function renderDialog(
   schedules: DeliverySchedule[] = [],
-  options: { project?: Project } = {},
+  options: { project?: Project; originHref?: string; pipelineListQuery?: string } = {},
 ) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -107,6 +107,8 @@ function renderDialog(
         project={'project' in options ? options.project : project}
         schedules={schedules}
         onDone={onDone}
+        originHref={options.originHref}
+        pipelineListQuery={options.pipelineListQuery}
       />
     </QueryClientProvider>,
   );
@@ -309,7 +311,46 @@ describe('DeliveryScheduleUploadDialog', () => {
 
     await waitFor(() => expect(uploadDeliverySchedule).toHaveBeenCalled());
     expect(uploadDeliverySchedule.mock.calls[0][0]).toBe('po1');
-    expect(push).toHaveBeenCalledWith('/project-sales/p1/delivery-schedules/v2');
+    // S4-5: a Start-driven upload's review page always carries the Pipeline list as its origin.
+    const [pushedUrl] = push.mock.calls[0];
+    expect(pushedUrl).toMatch(/^\/project-sales\/p1\/delivery-schedules\/v2\?from=/);
+    expect(new URLSearchParams(pushedUrl.split('?')[1]).get('from')).toBe(
+      '/project-sales/pipeline?from=p1',
+    );
     expect(push).not.toHaveBeenCalledWith(expect.stringContaining('/project-sales//'));
+  });
+
+  it('carries the Pipeline grid\'s own list state alongside the picked project (S4-1)', async () => {
+    renderDialog([], { project: undefined, pipelineListQuery: 'page=2&sort=created_at&dir=desc' });
+
+    fireEvent.click(screen.getByLabelText(/^Project/));
+    fireEvent.click(await screen.findByText('Tuju Residences'));
+    await waitFor(() =>
+      expect(screen.getByLabelText(/Purchase order/i)).toHaveTextContent('HQ/26/01/121'),
+    );
+    fireEvent.change(screen.getByLabelText(/^File/i), { target: { files: [pdf()] } });
+    fireEvent.click(screen.getByRole('button', { name: /^Upload$/ }));
+
+    await waitFor(() => expect(push).toHaveBeenCalled());
+    const [pushedUrl] = push.mock.calls[0];
+    expect(new URLSearchParams(pushedUrl.split('?')[1]).get('from')).toBe(
+      '/project-sales/pipeline?page=2&sort=created_at&dir=desc&from=p1',
+    );
+  });
+
+  it('forwards the given originHref when opened from a project tab with a fixed project (S4-1)', async () => {
+    renderDialog([], { originHref: '/project-sales/p1?tab=schedules' });
+
+    await waitFor(() =>
+      expect(screen.getByLabelText(/Purchase order/i)).toHaveTextContent('HQ/26/01/121'),
+    );
+    fireEvent.change(screen.getByLabelText(/^File/i), { target: { files: [pdf()] } });
+    fireEvent.click(screen.getByRole('button', { name: /^Upload$/ }));
+
+    await waitFor(() => expect(push).toHaveBeenCalled());
+    const [pushedUrl] = push.mock.calls[0];
+    expect(new URLSearchParams(pushedUrl.split('?')[1]).get('from')).toBe(
+      '/project-sales/p1?tab=schedules',
+    );
   });
 });
