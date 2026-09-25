@@ -385,7 +385,7 @@ def _from_their_sheet(
     if ws is None:
         raise ValueError("the retained workbook has no sheet")
 
-    resolver = AliasResolver.for_doc_type(db, DOC_TYPE)
+    resolver = AliasResolver.for_supplier(db, DOC_TYPE, supplier_id)
     header_row, fields = _header_row(ws, resolver)
     if header_row is None:
         raise ValueError("no item_code column in the retained stock list")
@@ -466,7 +466,7 @@ def _from_their_values(
 ) -> SheetModel:
     """Their rows out of a container openpyxl cannot open for writing (an old `.xls`)."""
     rows = [list(r) for r in all_sheet_rows(data)]
-    resolver = AliasResolver.for_doc_type(db, DOC_TYPE)
+    resolver = AliasResolver.for_supplier(db, DOC_TYPE, supplier_id)
     header_idx = None
     fields: dict[int, str] = {}
     for idx, raw in enumerate(rows):

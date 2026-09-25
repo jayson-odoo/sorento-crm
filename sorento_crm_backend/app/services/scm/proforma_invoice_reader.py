@@ -49,6 +49,9 @@ DOC_TYPE = "proforma_invoice"
 
 #: A proforma with no price is not a proforma. Quantity and item code are what a line is.
 _REQUIRED_COLUMNS = ("item_code", "qty", "unit_price")
+#: Public alias (B7, T6) - so the import-mapping probe (B4) can flag these without
+#: importing the private name.
+REQUIRED_COLUMNS = _REQUIRED_COLUMNS
 
 #: Fields describing the DOCUMENT rather than a line. Written as labelled cells above the
 #: table (`货单号：`, `日期：`) or, rarely, as columns in it. `seal_no` and `consignee` are R13
@@ -415,7 +418,11 @@ def _unreadable_qty(
 
 
 def read_workbook(
-    file_data: bytes, resolver: Optional[AliasResolver] = None, *, db: Optional[Session] = None
+    file_data: bytes,
+    resolver: Optional[AliasResolver] = None,
+    *,
+    db: Optional[Session] = None,
+    header_row: Optional[int] = None,
 ) -> ProformaReadResult:
     """Parse a workbook into proforma invoices.
 
@@ -425,11 +432,32 @@ def read_workbook(
     The document number is NOT derived here. A derived one is positional and needs the file's
     own name (`PI-<stem>-<index>`, AC-P2.5), which this function does not have - the service
     owns it (`proforma_invoice_service.pi_number_for`). What is stated is what is returned.
+
+    `header_row` (B6, AC-M3) - same convention as `packing_list_reader.read_workbook`: the
+    mapper's stepper names ONE row as the header, and only that row's mapping is built from
+    the probe's synthesised column texts (B3) rather than its own raw cells.
     """
     if resolver is None:
         if db is None:
             raise ValueError("read_workbook needs either a resolver or a session")
         resolver = AliasResolver.for_doc_type(db, DOC_TYPE)
+
+    # Memoised (review round 1, security m2, "once per read"): `header_row` given needs it
+    # for `header_texts` below; a file with NO row recognised as a header needs it again
+    # further down for `unmapped_headers` (AC-M4) - the same probe answers both, computed
+    # at most once, not twice, for either reason alone.
+    _probed_cache: list = []
+
+    def _get_probed():
+        if not _probed_cache:
+            from app.services.scm.header_probe import probe as probe_headers
+
+            _probed_cache.append(probe_headers(file_data, header_row=header_row))
+        return _probed_cache[0]
+
+    header_texts: Optional[list[str]] = None
+    if header_row is not None:
+        header_texts = [c.header for c in _get_probed().columns]
 
     result = ProformaReadResult()
     try:
@@ -500,7 +528,8 @@ def read_workbook(
                 footer_lines.append(text)
             continue
 
-        mapped = _header_map(raw, resolver)
+        override_texts = header_texts if header_texts is not None and row_number == header_row else None
+        mapped = _header_map(raw, resolver, header_texts=override_texts)
 
         if _is_header(mapped, _REQUIRED_COLUMNS):
             if not saw_header:
@@ -587,6 +616,16 @@ def read_workbook(
         result.missing_columns = [c for c in _REQUIRED_COLUMNS if c not in best_header] or list(
             _REQUIRED_COLUMNS
         )
+        # B6/AC-M4: no row resolved every required column, so the loop above never named a
+        # header row and `unmapped_headers` stayed empty - which used to be the mapper's
+        # whole problem (a file needing the mapper most is exactly one with nothing to show
+        # it). The alias-free probe (B2) finds a header row on shape alone and names every
+        # column on it this resolver does not already know, required or not.
+        probed = _get_probed()
+        result.unmapped_headers = [
+            c.header for c in probed.columns
+            if c.header and resolver.raw_field_for_header(c.header) is None
+        ]
         return result
 
     present = set(col_field.values())

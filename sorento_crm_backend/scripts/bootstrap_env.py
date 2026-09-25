@@ -500,7 +500,7 @@ def seed_scm_module_data() -> None:
             conn.execute(_text(
                 "INSERT INTO import_field_alias (doc_type, field, alias, locale) "
                 "VALUES ('reorder_level', :f, :a, NULL) "
-                "ON CONFLICT (doc_type, field, alias) DO NOTHING"
+                "ON CONFLICT (doc_type, field, alias) WHERE supplier_id IS NULL DO NOTHING"
             ), {"f": field, "a": alias})
             aliases += 1
     log.info("scm module data seeded -> aliases=%d priority_policy=%d", aliases, policies)

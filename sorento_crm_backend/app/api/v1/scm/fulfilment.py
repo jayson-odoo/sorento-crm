@@ -137,6 +137,11 @@ async def preview_supplier_inventory(
                     "takes. Stated, 'rows held now' counts only that plan's own rows; absent, "
                     "the supplier-wide snapshot (loading_plan_id IS NULL).",
     ),
+    header_row: Optional[int] = Form(
+        None, ge=1, le=1000,
+        description="The import column mapper's stepper (AC-M3) - which row is the "
+                    "header, overriding the guess.",
+    ),
     _user: dict = Depends(_WRITE),
     db: Session = Depends(get_db),
 ):
@@ -146,7 +151,11 @@ async def preview_supplier_inventory(
     quantities and no indication of who wrote it.
     """
     return supplier_inventory_service.preview(
-        db, await read_upload(file), supplier_id=supplier_id, loading_plan_id=loading_plan_id
+        db,
+        await read_upload(file),
+        supplier_id=supplier_id,
+        loading_plan_id=loading_plan_id,
+        header_row=header_row,
     )
 
 
@@ -160,6 +169,11 @@ async def apply_supplier_inventory(
                     "are replaced and the new ones are stamped with it; absent, the "
                     "supplier-wide snapshot is replaced as before.",
     ),
+    header_row: Optional[int] = Form(
+        None, ge=1, le=1000,
+        description="The import column mapper's stepper (AC-M3) - which row is the "
+                    "header, overriding the guess.",
+    ),
     validate_only: bool = Query(
         False,
         description="Test the file and write nothing. Returns {valid, errors, warnings, summary}.",
@@ -170,7 +184,9 @@ async def apply_supplier_inventory(
     """Replace a stock snapshot - this plan's own, or the supplier's."""
     upload = await read_upload_retained(file)
     if validate_only:
-        return supplier_inventory_service.validate(db, upload.data, supplier_id=supplier_id)
+        return supplier_inventory_service.validate(
+            db, upload.data, supplier_id=supplier_id, header_row=header_row
+        )
     plan = _plan_for_upload(db, loading_plan_id, supplier_id=supplier_id)
     out = supplier_inventory_service.apply(
         db,
@@ -183,6 +199,7 @@ async def apply_supplier_inventory(
         # buyer for as long as the id was the only thing handed down.
         actor_label=_actor(current_user),
         loading_plan_id=str(plan.id) if plan is not None else None,
+        header_row=header_row,
     )
     if not out.get("readable"):
         missing = ", ".join(out.get("missing_columns") or [])
@@ -838,6 +855,36 @@ class SpoCreateRequest(BaseModel):
     )
 
 
+def _header_rows(raw: Optional[str]) -> dict[str, int]:
+    """`{"<file name>": <row>}` (B6, AC-M3) - the mapper's stepper pick, per file, for a
+    multi-file upload. A JSON form field for the same reason `attach_to_blocks` is: the
+    dialog posts the whole map every time one file's row changes."""
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError) as exc:
+        raise AppException(422, "header_rows must be a JSON object", detail="header_rows") from exc
+    if not isinstance(parsed, dict):
+        raise AppException(422, "header_rows must be a JSON object", detail="header_rows")
+    out: dict[str, int] = {}
+    for name, row in parsed.items():
+        # Review round 3, R20: `int(row)` used to coerce silently - `int(True) == 1` and
+        # `int(2.7) == 2` both "succeed", so a bool or a float the stepper never actually
+        # produced was accepted with no sign anything was wrong. A plain `int` and nothing
+        # else (bool is an `int` subclass, excluded explicitly).
+        if isinstance(row, bool) or not isinstance(row, int):
+            raise AppException(
+                422, f"header_rows.{name} must be a whole number", detail="header_rows"
+            )
+        # Same bound as the single-file `header_row` Form field (security m2, review
+        # round 1) - a per-file JSON map bypasses FastAPI's own `ge`/`le` on that field,
+        # so the same range is enforced here by hand.
+        if 1 <= row <= 1000:
+            out[str(name)] = row
+    return out
+
+
 def _block_attach(raw: Optional[str]) -> dict[tuple[str, int], str]:
     """`[{"file": name, "block_index": 0, "invoice_id": "..."}]` as the service wants it
     (AC-B13): which invoice the operator picked for ONE packing-list block. A JSON form
@@ -883,6 +930,11 @@ async def preview_supplier_documents(
             "packing-list block (AC-B13)"
         ),
     ),
+    header_rows: Optional[str] = Form(
+        None,
+        description='JSON object {"<file name>": <row>} - the import column mapper\'s '
+                    "stepper pick, per file (B6, AC-M3).",
+    ),
     _user: dict = Depends(_WRITE),
     db: Session = Depends(get_db),
 ):
@@ -905,6 +957,7 @@ async def preview_supplier_documents(
         currency=currency,
         attach_to=attach_to,
         block_attach=_block_attach(attach_to_blocks),
+        header_rows=_header_rows(header_rows),
     )
     db.commit()
     return out
@@ -934,6 +987,11 @@ async def apply_supplier_documents(
             "packing-list block (AC-B13)"
         ),
     ),
+    header_rows: Optional[str] = Form(
+        None,
+        description='JSON object {"<file name>": <row>} - the import column mapper\'s '
+                    "stepper pick, per file (B6, AC-M3).",
+    ),
     current_user: dict = Depends(_WRITE),
     db: Session = Depends(get_db),
 ):
@@ -960,6 +1018,7 @@ async def apply_supplier_documents(
         translations=parsed_translations,
         attach_to=attach_to,
         block_attach=_block_attach(attach_to_blocks),
+        header_rows=_header_rows(header_rows),
     )
     db.commit()
     return out

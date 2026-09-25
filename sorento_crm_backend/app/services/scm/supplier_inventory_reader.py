@@ -39,6 +39,9 @@ DOC_TYPE = "supplier_inventory"
 
 #: Without an item code and a packed figure the row cannot be placed on a container at all.
 _REQUIRED_COLUMNS = ("item_code", "qty_packed")
+#: Public alias (B7, T6) - so the import-mapping probe (B4) can flag these without
+#: importing the private name.
+REQUIRED_COLUMNS = _REQUIRED_COLUMNS
 
 #: The supplier merges one row's text/volume over a family of models that share it - 品名,
 #: 商标, 规格, 备注 and 体积(cbm) per unit are all a BODY property, the same for every model in
@@ -121,6 +124,7 @@ def read_workbook(
     *,
     db: Optional[Session] = None,
     words: Optional[WordList] = None,
+    header_row: Optional[int] = None,
 ) -> InventoryReadResult:
     """Parse the first sheet of a supplier stock list.
 
@@ -130,11 +134,30 @@ def read_workbook(
     `words` is the supplier's word list (D1-D5, `supplier_code_composer.py`): a bare 型号
     (`^[-0-9]`) is composed through it into a candidate our own code; a letter-led 型号 never
     consults it at all, so a caller with no supplier chosen yet may pass `None`.
+
+    `header_row` (B6, AC-M3) - the mapper's own stepper naming exactly which row is the
+    header; only that row's mapping is built from the probe's synthesised column texts
+    (B2/B3) instead of its own raw cells.
     """
     if resolver is None:
         if db is None:
             raise ValueError("read_workbook needs either a resolver or a session")
         resolver = AliasResolver.for_doc_type(db, DOC_TYPE)
+
+    # Memoised (review round 1, security m2, "once per read") - see the identical comment
+    # in `proforma_invoice_reader.read_workbook`.
+    _probed_cache: list = []
+
+    def _get_probed():
+        if not _probed_cache:
+            from app.services.scm.header_probe import probe as probe_headers
+
+            _probed_cache.append(probe_headers(file_data, header_row=header_row))
+        return _probed_cache[0]
+
+    header_texts: Optional[list[str]] = None
+    if header_row is not None:
+        header_texts = [c.header for c in _get_probed().columns]
 
     result = InventoryReadResult()
     try:
@@ -151,8 +174,10 @@ def read_workbook(
     col_field: dict[int, str] = {}
     all_rows = list(rows)
     for idx, raw in enumerate(all_rows):
+        row_number = idx + 1
+        source = header_texts if header_texts is not None and row_number == header_row else raw
         mapped = {}
-        for pos, cell in enumerate(raw):
+        for pos, cell in enumerate(source):
             f = resolver.field_for_header(cell)
             if f:
                 mapped[pos] = f
@@ -175,6 +200,13 @@ def read_workbook(
 
     if header_idx is None:
         result.missing_columns = list(_REQUIRED_COLUMNS)
+        # B6/AC-M4: same note as the other two readers - name every unresolved column off
+        # the alias-free probe even when nothing resolved enough to be seen as a header.
+        probed = _get_probed()
+        result.unmapped_headers = [
+            c.header for c in probed.columns
+            if c.header and resolver.raw_field_for_header(c.header) is None
+        ]
         return result
 
     present = set(col_field.values())

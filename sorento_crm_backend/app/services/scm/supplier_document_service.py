@@ -86,7 +86,9 @@ def _link_source_file(
             continue
 
 
-def classify(data: bytes, db: Optional[Session] = None) -> Optional[str]:
+def classify(
+    data: bytes, db: Optional[Session] = None, *, supplier_id: Optional[str] = None
+) -> Optional[str]:
     """`'proforma_invoice' | 'packing_list' | 'combined' | None` (unreadable/unclassifiable),
     by the file's own title cell. `None` never blocks the OTHER files in a batch - only
     itself, named, in the preview and in `apply`'s refusal.
@@ -97,6 +99,20 @@ def classify(data: bytes, db: Optional[Session] = None) -> Optional[str]:
     the workbook (on different sheets, or a sheet nobody titled at all) is combined. Every
     sheet is read for this, not only the first 15 rows of sheet 1 - a titleless workbook is
     exactly the one most likely to bury its real table on a later tab.
+
+    Title markers corroborated against the header shape when BOTH fire (review round 1,
+    item 10, DAFUYUAN): the title scan is a blind substring match across up to
+    `_TITLE_SCAN_ROWS` rows, and a supplier's own REFERENCE label can carry the other
+    document's marker as pure noise - DAFUYUAN's own row 12 states
+    `SORENTO装箱单 20260922（1）`, literally the plan's own sample filename pasted into a cell
+    as a cross-reference, which spells `装箱单` with no packing-specific COLUMN anywhere in
+    the table to back it up at first. Measured against the real fixture: DAFUYUAN's header
+    row ALSO genuinely carries 箱数/体积 (shared aliases to `cartons`/`cbm_per_unit`), so an
+    unscoped header-shape check still agrees "combined" - correct for a supplier who has
+    never touched the mapper. Once that supplier explicitly Ignores those columns through
+    the mapper (a real per-supplier row, supplier-scoped resolution below), the SAME file
+    reads as a plain proforma invoice on every later upload - exactly the "operator settles
+    it once" promise the mapper is for.
     """
     try:
         rows = list(sheet_rows(data))
@@ -108,6 +124,10 @@ def classify(data: bytes, db: Optional[Session] = None) -> Optional[str]:
     is_pi = any(marker in text for marker in _PI_TITLE_MARKERS)
     is_pl = any(marker in text for marker in _PL_TITLE_MARKERS)
     if is_pi and is_pl:
+        if db is not None:
+            shape = _classify_by_header_shape(db, data, supplier_id=supplier_id)
+            if shape in ("proforma_invoice", "packing_list"):
+                return shape
         return "combined"
     if is_pi:
         return "proforma_invoice"
@@ -115,7 +135,7 @@ def classify(data: bytes, db: Optional[Session] = None) -> Optional[str]:
         return "packing_list"
     if db is None:
         return None
-    return _classify_by_header_shape(db, data)
+    return _classify_by_header_shape(db, data, supplier_id=supplier_id)
 
 
 #: Columns a plain proforma invoice never carries (Kailu's own PI header: 序号/品名/编号/
@@ -126,20 +146,32 @@ def classify(data: bytes, db: Optional[Session] = None) -> Optional[str]:
 _PACKING_SPECIFIC_FIELDS = ("cartons", "net_weight", "gross_weight", "cbm_total", "cbm_per_unit")
 
 
-def _classify_by_header_shape(db: Session, data: bytes) -> Optional[str]:
+def _classify_by_header_shape(
+    db: Session, data: bytes, *, supplier_id: Optional[str] = None
+) -> Optional[str]:
     """No title cell named either document - decide from the header row(s) instead. A PI's
     OWN required columns (item code, quantity, unit price - `proforma_invoice_reader`'s
     `_REQUIRED_COLUMNS`) are the stricter test, checked first: a header that satisfies them
     is proforma-invoice-shaped even though it would ALSO satisfy the packing list's own
     looser item-code-and-quantity test - UNLESS it also names a packing-specific column
     (`_PACKING_SPECIFIC_FIELDS`), which makes it combined instead (S2, AC-B3). Only a
-    header that fails the stricter test but passes the looser one is packing-list-shaped."""
+    header that fails the stricter test but passes the looser one is packing-list-shaped.
+
+    Supplier-scoped when a supplier is given (review round 1, item 10): a supplier's own
+    explicit Ignore on a packing-specific column (`AliasResolver.for_supplier`, B1) drops
+    that column from `_PACKING_SPECIFIC_FIELDS` for THIS supplier without touching the
+    shared alias every other supplier's file still resolves through - shared-only
+    (`for_doc_type`) when no supplier is chosen yet."""
     try:
         sheets = every_sheet_rows(data)
     except Exception:  # noqa: BLE001
         return None
-    pi_resolver = AliasResolver.for_doc_type(db, PI_DOC_TYPE)
-    pl_resolver = AliasResolver.for_doc_type(db, PL_DOC_TYPE)
+    if supplier_id:
+        pi_resolver = AliasResolver.for_supplier(db, PI_DOC_TYPE, supplier_id)
+        pl_resolver = AliasResolver.for_supplier(db, PL_DOC_TYPE, supplier_id)
+    else:
+        pi_resolver = AliasResolver.for_doc_type(db, PI_DOC_TYPE)
+        pl_resolver = AliasResolver.for_doc_type(db, PL_DOC_TYPE)
     saw_pi = saw_pl = False
     for rows in sheets:
         for raw in rows:
@@ -197,6 +229,13 @@ def _pi_blocks(
             lines.append({"item_code": ln.item_code, "matched": matched, **item})
         out.append(
             {
+                # Owner hand-test round, 24 Sep evening: a COMBINED file's own blocks mix
+                # both kinds, and nothing on a display block said which - only the private
+                # `_pi_match`/`_pl_match` internals knew - so the Confirm label's count
+                # (`confirmCounts` in the FE dialog) double-counted every combined block
+                # toward BOTH invoices and packing lists. Named here so the count can tell
+                # them apart the same way the reader itself already does.
+                "part": "proforma_invoice",
                 "container_no": d.container_no,
                 "seal_no": d.seal_no,
                 "cartons": (sum(ln.cartons for ln in d.lines if ln.cartons is not None) or None),
@@ -249,6 +288,7 @@ def _pl_blocks(
         ]
         out.append(
             {
+                "part": "packing_list",
                 "container_no": b.container_no,
                 "seal_no": b.seal_no,
                 "cartons": b.total_cartons,
@@ -423,8 +463,9 @@ def _file_preview(
     supplier_id: Optional[str] = None,
     attach_to: Optional[str] = None,
     block_attach: Optional[dict[int, str]] = None,
+    header_row: Optional[int] = None,
 ) -> dict[str, Any]:
-    kind = classify(data, db)
+    kind = classify(data, db, supplier_id=supplier_id)
     if kind is None:
         return {
             "name": name,
@@ -446,8 +487,8 @@ def _file_preview(
     known_pl: dict[str, Any] = {}
 
     if kind in ("proforma_invoice", "combined"):
-        pi_resolver = AliasResolver.for_doc_type(db, PI_DOC_TYPE)
-        pi_result = read_proforma_invoice(data, pi_resolver)
+        pi_resolver = AliasResolver.for_supplier(db, PI_DOC_TYPE, supplier_id)
+        pi_result = read_proforma_invoice(data, pi_resolver, header_row=header_row)
         if not pi_result.ok:
             errors.append(
                 "This file has no "
@@ -470,8 +511,8 @@ def _file_preview(
             )
 
     if kind in ("packing_list", "combined"):
-        pl_resolver = AliasResolver.for_doc_type(db, PL_DOC_TYPE)
-        pl_result = read_packing_list(data, pl_resolver)
+        pl_resolver = AliasResolver.for_supplier(db, PL_DOC_TYPE, supplier_id)
+        pl_result = read_packing_list(data, pl_resolver, header_row=header_row)
         if not pl_result.ok:
             errors.append(
                 "This file has no "
@@ -624,6 +665,7 @@ def preview(
     currency: Optional[str] = None,
     attach_to: Optional[str] = None,
     block_attach: Optional[dict[tuple[str, int], str]] = None,
+    header_rows: Optional[dict[str, int]] = None,
 ) -> dict[str, Any]:
     """What each file is, and what it would create - writes nothing.
 
@@ -641,6 +683,7 @@ def preview(
         assert_supplier(db, supplier_id)
 
     per_file = block_attach or {}
+    per_file_header_row = header_rows or {}
     out_files = [
         _file_preview(
             db,
@@ -653,6 +696,7 @@ def preview(
                 for (file_name, index), invoice_id in per_file.items()
                 if file_name == name
             },
+            header_row=per_file_header_row.get(name),
         )
         for name, data in files
     ]
@@ -726,6 +770,7 @@ def apply(
     translations: Optional[list[dict[str, Any]]] = None,
     attach_to: Optional[str] = None,
     block_attach: Optional[dict[tuple[str, int], str]] = None,
+    header_rows: Optional[dict[str, int]] = None,
 ) -> dict[str, Any]:
     """Proforma invoices first, then packing lists (S2). No shipment, no price links: the
     packing rows land on the invoice that prices them (AC-C1), and a packing list is born
@@ -760,7 +805,10 @@ def apply(
             )
         translation_service.remember(db, translations, user_id=actor_id)
 
-    kinds = [(name, data, ctype, classify(data, db)) for name, data, ctype in files]
+    kinds = [
+        (name, data, ctype, classify(data, db, supplier_id=supplier_id))
+        for name, data, ctype in files
+    ]
     unreadable = [name for name, _d, _c, kind in kinds if kind is None]
     if unreadable:
         raise AppException(
@@ -785,13 +833,14 @@ def apply(
     # packing loop below attaches that file's blocks to them directly rather than running
     # AC-B5's resolution against a file that already says which invoice it is.
     invoice_ids_by_name: dict[str, list[str]] = {}
+    per_file_header_row = header_rows or {}
 
     for name, data, ctype, kind in kinds:
         if kind not in ("proforma_invoice", "combined"):
             continue
         result = proforma_invoice_service.apply(
             db, data, supplier_id=supplier_id, currency=currency, source_ref=name,
-            actor=actor_name,
+            actor=actor_name, header_row=per_file_header_row.get(name),
         )
         invoice_ids = [r["invoice_id"] for r in result.get("results", [])]
         proforma_invoice_ids += invoice_ids
@@ -809,11 +858,13 @@ def apply(
     # more (AC-C1, S3) - its rows are written onto the PI they price instead
     # (`replace_packing_rows`); a packing list (the receivable object) is born by convert
     # or by hand (S3, AC-C2).
-    pl_resolver = AliasResolver.for_doc_type(db, PL_DOC_TYPE)
     for name, data, ctype, kind in kinds:
         if kind not in ("packing_list", "combined"):
             continue
-        pl_result = read_packing_list(data, pl_resolver)
+        pl_resolver = AliasResolver.for_supplier(db, PL_DOC_TYPE, supplier_id)
+        pl_result = read_packing_list(
+            data, pl_resolver, header_row=per_file_header_row.get(name)
+        )
         if not pl_result.ok:
             continue
         combined_invoice_ids = invoice_ids_by_name.get(name, [])
