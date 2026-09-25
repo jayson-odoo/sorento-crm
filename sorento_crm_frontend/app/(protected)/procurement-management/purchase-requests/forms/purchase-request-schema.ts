@@ -58,6 +58,14 @@ export const PurchaseRequestSchema = z.object({
   products: z.array(lineSchema),
 });
 
+/** A value cleared back to '' (e.g. quantity typed then erased) is not content -
+ *  matches the portal twin's own `lineHasContent` (`SubmissionForm.tsx`), which trims
+ *  strings rather than treating a non-null empty string as "has something in it". */
+function hasValue(v: number | string | null | undefined): boolean {
+  if (v == null) return false;
+  return typeof v === 'string' ? v.trim().length > 0 : true;
+}
+
 /** A line the user has actually touched - mirrors the portal's own
  *  `cleanLineItems` keep-predicate (`line-items.ts`), so a blank filler row from
  *  "Add item" never gets refused for a unit price it was never asked to carry. */
@@ -68,10 +76,10 @@ function lineHasContent(line: {
   total?: number | string | null;
 }): boolean {
   return (
-    line.item_code != null ||
-    line.quantity != null ||
-    line.unit_price != null ||
-    line.total != null
+    hasValue(line.item_code) ||
+    hasValue(line.quantity) ||
+    hasValue(line.unit_price) ||
+    hasValue(line.total)
   );
 }
 

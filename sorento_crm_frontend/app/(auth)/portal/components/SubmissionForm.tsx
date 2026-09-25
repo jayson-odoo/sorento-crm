@@ -1736,7 +1736,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
                     {kind === 'sponsorship_form' && (
                       <>
                         <th className="w-32 px-2 py-2 text-left">
-                          Unit price <span className="text-destructive">*</span>
+                          Unit price<span className="ml-0.5 text-destructive">*</span>
                         </th>
                         <th className="w-32 px-2 py-2 text-left">Total</th>
                       </>
@@ -1814,6 +1814,12 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
                                         ? { ...p, unit_price: e.target.value }
                                         : p,
                                     ),
+                                  );
+                                  // Nit 2 (review round 1, PR #1232): invalidFields clears as
+                                  // soon as the field is filled - this line-scoped error must
+                                  // do the same, or it survives every edit until the next submit.
+                                  setInvalidLineIndex((prev) =>
+                                    prev === index ? null : prev,
                                   );
                                 }}
                                 disabled={!editing}
