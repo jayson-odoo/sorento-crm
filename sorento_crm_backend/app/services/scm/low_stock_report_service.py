@@ -24,6 +24,10 @@ What is DIFFERENT from the order sheet, and why:
   morning belongs to today's sheet.
 * **Its own cap.** `MAX_LOW_STOCK_ROWS` is 5,000 against the order sheet's 2,000: one is a
   document a buyer prints and walks down, the other is a workbook they filter in Excel.
+* **A split, off the shared `workbook_split` module** (PLAN-low-stock-export-split-25sep
+  R2, the second case `stock_debt_service` named): `export_low_stock(split=...)` re-files
+  the SAME visible rows into a "<key> - Low" / "<key>" sheet pair per supplier, category or
+  both - the cap and the row counts stay whole-run figures, never per group.
 """
 from __future__ import annotations
 
@@ -230,30 +234,57 @@ def _sheet_row(row: dict, master: dict, *, include_supplier: bool) -> tuple:
 
 
 def export_low_stock(db: Session, *, run_id: Optional[str],
-                     include_supplier: bool = True) -> tuple[bytes, str, str, dict]:
-    """The workbook for one run: `(bytes, content_type, filename, {"low": n, "all": m})`.
+                     include_supplier: bool = True,
+                     split: str = "none") -> tuple[bytes, str, str, dict]:
+    """The workbook for one run: `(bytes, content_type, filename, {"low": n, "all": m,
+    "sheets": s})` (AC-10) - all three keys ALWAYS present, never a shape that varies by
+    branch (the drill rule from the Stock Debt lane).
 
     The counts ride back with the bytes (reviewer item 4) because this function has already
-    built both row sets: the task stamps them onto the download row at `mark_ready` so S5's
-    chat turn can say "Low: 12 of 340" without opening the workbook (AC-43), and reading
-    them from here rather than a second `row_counts()` call is what keeps a chat report to
-    ONE read of the frozen run.
+    built both row sets: the task stamps `low`/`all` onto the download row at `mark_ready`
+    so S5's chat turn can say "Low: 12 of 340" without opening the workbook (AC-43), and
+    reading them from here rather than a second `row_counts()` call is what keeps a chat
+    report to ONE read of the frozen run.
 
-    "Low stock" is written FIRST so `wb.active` is the sheet the file was opened for, then
-    "All". `include_supplier=False` (S5's chat route, for a contact without the
-    `purchase_orders.supplier` reveal key) DROPS the column from both sheets rather than
-    blanking it - a blank column still tells the reader a supplier exists and is being
-    withheld, which is the leak the reveal key exists to prevent (AC-47).
+    `split="none"` (the default) is today's workbook, byte-for-byte: "Low stock" written
+    FIRST so `wb.active` is the sheet the file was opened for, then "All", and `sheets` is
+    2 - the fixed pair, not a group count.
 
-    Refused above `MAX_LOW_STOCK_ROWS` on the "All" sheet (AC-35). The route refuses on the
-    same number before it creates a download row, so this is the backstop rather than how a
-    buyer finds out.
+    Any other `split` re-files the SAME visible rows (`workbook_split.split_rows`, keyed on
+    the frozen `supplier_name` and the master-data `category_code`) into ONE pair of sheets
+    per group, in sanitised-title order: `"<key> - Low"` (the group's rows below their
+    level - header only when none are, A3) then `"<key>"` (every row in the group). A key
+    longer than 25 characters is cut so the ` - Low` suffix still fits Excel's 31-char
+    limit (A4); a collision on the cut gets ` (2)` on BOTH sheets of the pair, because both
+    share the same `unique_sheet_title` call.
+
+    `include_supplier=False` (S5's chat route, for a contact without the
+    `purchase_orders.supplier` reveal key) DROPS the Supplier column from every sheet
+    rather than blanking it - a blank column still tells the reader a supplier exists and
+    is being withheld, which is the leak the reveal key exists to prevent (AC-47). A split
+    by supplier under that same withholding would leak the names through the sheet TITLES
+    instead, so `split in ("supplier", "supplier_category")` is refused 422 before any
+    sheet is written (R5).
+
+    Refused above `MAX_LOW_STOCK_ROWS` on the "All" sheet (AC-35) whatever the split - the
+    cap is checked against the total visible count, never a per-group figure. The route
+    refuses on the same number before it creates a download row, so this is the backstop
+    rather than how a buyer finds out.
     """
     from openpyxl import Workbook
     from openpyxl.utils import get_column_letter
 
-    split = _split(db, run_id)
-    if len(split["all_rows"]) > MAX_LOW_STOCK_ROWS:
+    from app.services.scm.workbook_split import SPLIT_VALUES, split_rows, unique_sheet_title
+
+    if split not in SPLIT_VALUES:
+        raise AppException(422, f"split must be one of {', '.join(SPLIT_VALUES)}.")
+    if split in ("supplier", "supplier_category") and not include_supplier:
+        raise AppException(
+            422, "Split by supplier is not available without the Supplier column",
+        )
+
+    frozen = _split(db, run_id)
+    if len(frozen["all_rows"]) > MAX_LOW_STOCK_ROWS:
         raise AppException(422, "Narrow the plan first")
 
     columns = list(LOW_STOCK_COLUMNS)
@@ -263,13 +294,9 @@ def export_low_stock(db: Session, *, run_id: Optional[str],
         widths.pop(_SUPPLIER_INDEX)
     width_map = {get_column_letter(i + 1): w for i, w in enumerate(widths)}
 
-    master = split["master"]
-    wb = Workbook()
-    for index, (title, rows) in enumerate(
-        (("Low stock", split["low_rows"]), ("All", split["all_rows"]))
-    ):
-        ws = wb.active if index == 0 else wb.create_sheet()
-        ws.title = title
+    master = frozen["master"]
+
+    def _write(ws, rows: list[dict]) -> None:
         svc.write_sheet(
             ws,
             columns,
@@ -278,11 +305,66 @@ def export_low_stock(db: Session, *, run_id: Optional[str],
             width_map,
         )
 
+    wb = Workbook()
+    counts: dict = {"low": len(frozen["low_rows"]), "all": len(frozen["all_rows"])}
+
+    if split == "none":
+        for index, (title, rows) in enumerate(
+            (("Low stock", frozen["low_rows"]), ("All", frozen["all_rows"]))
+        ):
+            ws = wb.active if index == 0 else wb.create_sheet()
+            ws.title = title
+            _write(ws, rows)
+        counts["sheets"] = 2
+    else:
+        groups = split_rows(
+            frozen["all_rows"], split,
+            supplier=lambda r: r.get("supplier_name"),
+            category=lambda r: master.get(r["product_code"], {}).get("category_code"),
+        )
+        used_titles: set[str] = set()
+        sheet_index = 0
+        for key, group_rows in groups:
+            base = unique_sheet_title(key, used_titles, limit=25, reserve=(" - Low",))
+            low_group = [r for r in group_rows if _is_low(r)]
+            for title, rows in ((f"{base} - Low", low_group), (base, group_rows)):
+                ws = wb.active if sheet_index == 0 else wb.create_sheet()
+                ws.title = title
+                _write(ws, rows)
+                sheet_index += 1
+        counts["sheets"] = sheet_index
+
     buf = BytesIO()
     wb.save(buf)
     return (
         buf.getvalue(),
         CONTENT_TYPE,
-        f"low-stock-{svc.compact_ddmmyyyy(split['as_of'])}.xlsx",
-        {"low": len(split["low_rows"]), "all": len(split["all_rows"])},
+        f"low-stock-{svc.compact_ddmmyyyy(frozen['as_of'])}.xlsx",
+        counts,
     )
+
+
+def low_stock_preview(db: Session, run_id: Optional[str]) -> dict:
+    """`{"rows": n, "sheet_counts": {"supplier": a, "category": b, "supplier_category": c}}`
+    (R4, AC-15b) - the split dialog's own courtesy read, off the SAME `_split()` and the
+    SAME `workbook_split.split_rows` the workbook itself is built from, so a group count
+    here is never a second guess at what `export_low_stock` would actually write.
+
+    `rows` is the visible row count (the workbook's own "All" count). Each `sheet_counts`
+    entry is the number of GROUPS that split would produce - none-buckets included, pairs
+    only when present - not the sheet count itself: the caller (the FE dialog) doubles a
+    group count into a sheet count (R2, `previewLowStockExport`).
+    """
+    from app.services.scm.workbook_split import split_rows
+
+    frozen = _split(db, run_id)
+    master = frozen["master"]
+    sheet_counts = {
+        key: len(split_rows(
+            frozen["all_rows"], key,
+            supplier=lambda r: r.get("supplier_name"),
+            category=lambda r: master.get(r["product_code"], {}).get("category_code"),
+        ))
+        for key in ("supplier", "category", "supplier_category")
+    }
+    return {"rows": len(frozen["all_rows"]), "sheet_counts": sheet_counts}

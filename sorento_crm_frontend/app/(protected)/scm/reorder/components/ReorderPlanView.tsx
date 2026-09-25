@@ -39,6 +39,7 @@ import {
   useExportOrderSheet,
 } from '../hooks/useSummaryOrder';
 import type { PlanTotals } from '../lib/planDecisions';
+import { LowStockExportDialog } from './LowStockExportDialog';
 import { PlanExceptionsView } from './PlanExceptionsView';
 import { PlanHeaderTab } from './PlanHeaderTab';
 import { PlanLinesSection } from './PlanLinesSection';
@@ -69,6 +70,7 @@ export function ReorderPlanView({ runId }: { runId: string }) {
   const [leaveOpen, setLeaveOpen] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
   const [resetting, setResetting] = useState(false);
+  const [lowStockOpen, setLowStockOpen] = useState(false);
   // S5: Header (Plan until, warehouse/product scope, cut-off, status, counts) + Lines
   // (the existing grid) - view and edit share the SAME layout (ADR-PRODUCT-STANDARDS).
   // Defaults to Lines: the deciding happens there, and that is what this page has always
@@ -98,12 +100,16 @@ export function ReorderPlanView({ runId }: { runId: string }) {
    */
   const exportOrderSheet = useExportOrderSheet(runId);
   /**
-   * The low stock report (PLAN-low-stock-report S4, AC-1/AC-2): the same run, printed with
-   * the client's own cut - every planned product below its raw reorder level on one sheet,
-   * the whole plan on the other. It sits directly under the two order sheet items because
-   * it is the third thing this run can be printed as, and it runs through the same async
-   * My Downloads pipeline. One pending flag covers all three (AC-1: "disabled while any
-   * export is pending"), so a second click while one render is queued starts nothing.
+   * The low stock report (PLAN-low-stock-report S4, AC-1/AC-2; split dialog added
+   * PLAN-low-stock-export-split-25sep R3): the same run, printed with the client's own cut -
+   * every planned product below its raw reorder level on one sheet, the whole plan on the
+   * other, or one such pair per supplier / category once a split is chosen. It sits
+   * directly under the two order sheet items because it is the third thing this run can be
+   * printed as, and it runs through the same async My Downloads pipeline. The Actions item
+   * opens `LowStockExportDialog` rather than exporting straight away - the split picker
+   * lives there, the "Reset planning" pattern below. One pending flag covers all three
+   * exports (AC-1: "disabled while any export is pending"), so a second click while one
+   * render is queued starts nothing.
    */
   const exportLowStock = useExportLowStockReport(runId);
   /**
@@ -114,10 +120,13 @@ export function ReorderPlanView({ runId }: { runId: string }) {
    * four disable while any export is pending").
    */
   const exportOiWorksheet = useExportOiWorksheet(runId);
+  // Shared by every export item's `disabled` AND the split dialog's own `pending` (AC-19:
+  // the dialog's Export button disables while ANY of the four exports is in flight, not
+  // just this one) - hoisted above the memo so both readers see the exact same flag.
+  const exportPending =
+    exportOrderSheet.isPending || exportLowStock.isPending || exportOiWorksheet.isPending;
 
   const actions = useMemo<ToolbarAction[]>(() => {
-    const exportPending =
-      exportOrderSheet.isPending || exportLowStock.isPending || exportOiWorksheet.isPending;
     return [
       {
         key: 'order_sheet_pdf',
@@ -137,7 +146,7 @@ export function ReorderPlanView({ runId }: { runId: string }) {
         key: 'low_stock_xlsx',
         label: 'Low stock report Excel',
         icon: FileSpreadsheet,
-        onClick: () => exportLowStock.mutate(),
+        onClick: () => setLowStockOpen(true),
         disabled: exportPending,
       },
       {
@@ -167,14 +176,7 @@ export function ReorderPlanView({ runId }: { runId: string }) {
         onClick: () => setResetOpen(true),
       },
     ];
-  }, [
-    exportOrderSheet.mutate,
-    exportOrderSheet.isPending,
-    exportLowStock.mutate,
-    exportLowStock.isPending,
-    exportOiWorksheet.mutate,
-    exportOiWorksheet.isPending,
-  ]);
+  }, [exportOrderSheet.mutate, exportOiWorksheet.mutate, exportPending]);
 
   const doReset = async () => {
     setResetting(true);
@@ -391,6 +393,16 @@ export function ReorderPlanView({ runId }: { runId: string }) {
         confirmLabel="Reset planning"
         onConfirm={() => void doReset()}
         isBusy={resetting}
+      />
+
+      <LowStockExportDialog
+        open={lowStockOpen}
+        onOpenChange={setLowStockOpen}
+        runId={runId}
+        pending={exportPending}
+        onExport={(split) =>
+          exportLowStock.mutate(split, { onSuccess: () => setLowStockOpen(false) })
+        }
       />
     </div>
   );
