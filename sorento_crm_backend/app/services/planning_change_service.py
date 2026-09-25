@@ -819,10 +819,17 @@ def _from_to(c) -> Tuple[dict, dict]:
 
 def _entry_differs_from_older_row(c, older: PlanningChangeRow) -> bool:
     """Whether a gate-failed change actually alters what an older pending row already
-    describes (S1, `PLAN-esb-change-row-refresh.md`) - qty, required_date or status. An
-    idempotent re-push carrying identical facts must not disturb the older row."""
+    describes (S1, `PLAN-esb-change-row-refresh.md`) - qty, required_date, status or the
+    product itself (review round 1, S6: a `PRODUCT_CHANGED` re-push, or one whose `item_code`
+    now differs from what the older row's `to_json` names, is never the SAME line description
+    a plain idempotent re-push would leave alone). An idempotent re-push carrying identical
+    facts must not disturb the older row."""
     _, to_json = _from_to(c)
     old_to = older.to_json or {}
+    if c.kind == PRODUCT_CHANGED:
+        return True
+    if to_json.get("item_code") != old_to.get("item_code"):
+        return True
     return any(to_json.get(key) != old_to.get(key) for key in ("qty", "required_date", "status"))
 
 
@@ -1032,19 +1039,29 @@ def build_batch(
     # THEM (a second edit of the SAME line) is told apart below from a row for a line the
     # open batch has never seen (which simply joins it).
     open_pending_lines_by_batch: Dict[str, Dict[str, PlanningChangeRow]] = {}
+    # S4 (review round 1): a pending `added` row commonly carries NO `project_line_id` at all
+    # (52 of 52 on the 24 Sep prod copy - a brand-new line has no mirror yet the moment it is
+    # added), so `open_pending_lines_by_batch` alone can never find it as `older` for a later
+    # push on that same core line. Keyed by `core_line_id` instead, from the SAME query
+    # (dropping the `project_line_id IS NOT NULL` filter), as the fallback below reaches for.
+    open_pending_by_core_by_batch: Dict[str, Dict[str, PlanningChangeRow]] = {}
     if open_batches_by_id:
         for r in (
             db.query(PlanningChangeRow)
             .filter(
                 PlanningChangeRow.batch_id.in_(list(open_batches_by_id.keys())),
                 PlanningChangeRow.applied_state == PLANNING_CHANGE_STATE_PENDING,
-                PlanningChangeRow.project_line_id.isnot(None),
             )
             .all()
         ):
-            open_pending_lines_by_batch.setdefault(str(r.batch_id), {})[
-                str(r.project_line_id)
-            ] = r
+            if r.project_line_id is not None:
+                open_pending_lines_by_batch.setdefault(str(r.batch_id), {})[
+                    str(r.project_line_id)
+                ] = r
+            if r.core_line_id is not None:
+                open_pending_by_core_by_batch.setdefault(str(r.batch_id), {})[
+                    str(r.core_line_id)
+                ] = r
 
     kept_orders: set = set()
     kept_rows: List[PlanningChangeRow] = []
@@ -1059,6 +1076,7 @@ def build_batch(
         order = group[0]["order"]
         open_batch_id = open_batch_id_by_order.get(pso_id)
         pending_lines = open_pending_lines_by_batch.get(open_batch_id or "", {})
+        pending_by_core = open_pending_by_core_by_batch.get(open_batch_id or "", {})
         active_decision = supply.active_decision(pso_id)
         latest_decision = supply.latest_decision(pso_id)
         revision_no = (
@@ -1099,7 +1117,14 @@ def build_batch(
             )
             entry_line = e.get("project_line")
             entry_line_id = str(entry_line.id) if entry_line is not None else None
-            older = pending_lines.get(entry_line_id) if entry_line_id else None
+            # S4 (review round 1): the `core_line_id` fallback is what an `added` row's own
+            # NULL `project_line_id` needs - `entry["core_line_id"]` is resolved for every
+            # entry regardless of kind, so it finds an older `added` row this project-line
+            # lookup alone never can.
+            older = (
+                (pending_lines.get(entry_line_id) if entry_line_id else None)
+                or pending_by_core.get(e["core_line_id"])
+            )
             if row is None:
                 # AC-G1/AC-G4: the line is neither held nor inquired, so it stays off the
                 # batch entirely - not a row worth counting. But a later push whose own

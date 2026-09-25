@@ -39,9 +39,15 @@ would raise 39 OIs at that date.
 In the per-entry loop, resolve `older = pending_lines.get(project_line_id)` BEFORE the
 `if row is None: continue` exit. When `row is None` and `older` exists: mark `older`
 `applied_state = superseded`, `applied_reason = "Line changed again; the row no longer
-describes it"`, count the order in `orders_appended`, and continue. When `row` is not None
-the existing replace-in-place path is unchanged. The `project_line_id` for the gate-failed
+describes it"`, and continue - `orders_appended` is not touched on this path (there is no new
+row to fold into an existing batch, only an older one retired in place). When `row` is not
+None the existing replace-in-place path is unchanged. The `project_line_id` for the gate-failed
 entry comes from `entry["project_line"]` (already resolved for every entry).
+
+Review round 1: a pending `added` row commonly has NO `project_line_id` (a brand-new line has
+no mirror yet), so `older` also falls back to a `core_line_id`-keyed map built from the same
+open-batch query. `_entry_differs_from_older_row` also returns true for a `PRODUCT_CHANGED`
+kind or an `item_code` that now differs from the older row's.
 
 Only when the change actually alters what the older row describes (kind, qty or date
 differ from `older.to_json`) - a re-push with identical facts must leave the row alone

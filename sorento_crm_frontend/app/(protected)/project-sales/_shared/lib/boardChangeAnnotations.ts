@@ -419,7 +419,7 @@ export function annotationsByCell(
 
   for (const order of batch.orders ?? []) {
     for (const row of order.rows ?? []) {
-      if (isSupersededRow(row)) continue;
+      if (isRetiredChangeRow(row)) continue;
       const proposal = (row.proposal ?? null) as BoardContribution | null;
       // The ROW's own line first, exactly as `annotationOf` and `proposalsByLine` read it.
       // A row the engine could compose nothing for carries no proposal, so reading the
@@ -457,7 +457,7 @@ export function annotationsByLine(
   const out = new Map<string, BoardChangeAnnotation[]>();
   for (const order of batch?.orders ?? []) {
     for (const row of order.rows ?? []) {
-      if (!isLiveChangeRow(row)) continue;
+      if (isRetiredChangeRow(row)) continue;
       const proposal = (row.proposal ?? null) as BoardContribution | null;
       const lineId = row.project_line_id ?? proposal?.project_line_id ?? null;
       // NO PLANNING LINE, STILL A CHANGE (R3). An order nobody has adopted has no mirror
@@ -480,30 +480,24 @@ export function lineKeyOf(soNumber: string, lineNo: number | null | undefined): 
 }
 
 /**
- * Whether a batch row is still a LIVE proposal a board overlay may read (S4,
- * `PLAN-esb-change-row-refresh.md`, issue #1240). `get_batch` returns every row a batch ever
- * carried, superseded and applied included - the append-only record, by design, so the batch
- * lightbox and history can still show them. A superseded or applied row is a fact about the
- * batch's own past, never a proposal still deciding a cell today; a re-push that retired an
- * older row (S1) left the board still printing the retired row's frozen date until this
- * predicate existed (measured on SO419122, 25 Sep 2026).
+ * A row another, later row in the same batch has already replaced (S1/S4,
+ * `PLAN-esb-change-row-refresh.md`, issue #1240) - never worth drawing on the board a second
+ * time, whatever the batch itself has been applied or not. `get_batch` returns every row a
+ * batch ever carried, superseded and applied included, the append-only record, by design, so
+ * the batch lightbox and history still show them; only the LIVE overlay (this file) drops one.
  *
- * Used by `proposalsByLine` (and through it `uncoverChangedLines`, `changedLineIds` and
- * `preMarkedKeys`) and by `annotationsByLine`. NOT by `annotationsByCell`: the change icon
- * deliberately keeps reading an APPLIED row (`isSupersededRow` below is what it uses instead)
- * so a deep link to an already-applied batch can still say what it applied
- * (`FulfilmentBoardPanel.tsx`'s own `openChangeBatchData` comment, and pinned by
- * `FulfilmentBoardPanel.change.test.tsx`'s "does not block Confirm ... even if a row says it
- * was") - only a SUPERSEDED row, whose facts another row in the same batch has already
- * replaced, is never worth drawing twice.
+ * ONE predicate, used everywhere a row feeds the board overlay - `proposalsByLine` (and
+ * through it `uncoverChangedLines`, `changedLineIds`, `preMarkedKeys`), `annotationsByLine`
+ * and `annotationsByCell` (review round 1, B1 ruling: the S2 list-vs-grid split this used to
+ * carry was a defect, not a feature). An APPLIED row is deliberately NOT retired here: a
+ * row's own `applied_state` must never gate the overlay, pre-mark or Confirm on its own - only
+ * the BATCH's own `applied_at` does, which none of these functions receive (they take
+ * `Pick<PlanningChangeBatch, 'orders'>`) - pinned by `FulfilmentBoardPanel.change.test.tsx`'s
+ * "does not block Confirm ... even if a row says it was" (R3, review round 3) and "AC-F7: the
+ * pill still reads Confirmed ..." (the latter via `preMarkedKeys`'s own separate `covered`
+ * guard below, which stays).
  */
-function isLiveChangeRow(row: PlanningChangeRow): boolean {
-  return row.applied_state === 'pending';
-}
-
-/** A row another, later row in the same batch has already replaced (S1/S4) - never worth
- * drawing on the board a second time, whether or not the batch itself has been applied. */
-function isSupersededRow(row: PlanningChangeRow): boolean {
+function isRetiredChangeRow(row: PlanningChangeRow): boolean {
   return row.applied_state === 'superseded';
 }
 
@@ -527,12 +521,17 @@ function isSupersededRow(row: PlanningChangeRow): boolean {
 
 /**
  * Composition-only fields a batch's own proposal may override on a contribution (S3,
- * `PLAN-esb-change-row-refresh.md`, AC-9). Everything else about the line - `required_date`,
- * `qty`, `qty_outstanding`, `is_past`, `order_inquiry`, whatever else the board states about
- * it - is the LIVE fact and stays the live contribution's own value: `proposal_json` is a
- * SNAPSHOT frozen the moment the batch was built, and a re-push that moved the line again
- * (SO419122) left the board printing that frozen snapshot's copies of fields the live row had
- * long since moved past.
+ * `PLAN-esb-change-row-refresh.md`, AC-9; review round 1 widened it to the whole ladder-walk
+ * shape). Everything else about the line - `required_date`, `qty`, `qty_outstanding`,
+ * `is_past`, `order_inquiry`, whatever else the board states about it - is the LIVE fact and
+ * stays the live contribution's own value: `proposal_json` is a SNAPSHOT frozen the moment the
+ * batch was built, and a re-push that moved the line again (SO419122) left the board printing
+ * that frozen snapshot's copies of fields the live row had long since moved past.
+ *
+ * `trail`, `rank_factors`, `rank_score`, `contested`, `available_to_this_line`,
+ * `so_qty_ahead` and `lines_ahead` describe HOW the proposal's own composition was arrived at
+ * - the ladder walked at the batch's new date, not a fact about the line itself - so they
+ * belong here beside `sources`, not left to leak the live board's own (stale, pre-change) walk.
  */
 function compositionOf(proposal: BoardContribution): Partial<BoardContribution> {
   return {
@@ -544,6 +543,13 @@ function compositionOf(proposal: BoardContribution): Partial<BoardContribution> 
     options: proposal.options,
     locations: proposal.locations,
     buy_origin: proposal.buy_origin,
+    trail: proposal.trail,
+    rank_factors: proposal.rank_factors,
+    rank_score: proposal.rank_score,
+    contested: proposal.contested,
+    available_to_this_line: proposal.available_to_this_line,
+    so_qty_ahead: proposal.so_qty_ahead,
+    lines_ahead: proposal.lines_ahead,
   };
 }
 
@@ -585,15 +591,15 @@ export function uncoverChangedLines<
   };
 }
 
-/** The planning lines a batch names, and the fresh proposal it holds for each. Superseded and
- * applied rows are not live proposals (S4) and are skipped. */
+/** The planning lines a batch names, and the fresh proposal it holds for each. A superseded
+ * row is skipped (S4/B1) - another row in the same batch already replaced it. */
 function proposalsByLine(
   batch: Pick<PlanningChangeBatch, 'orders'> | null | undefined,
 ): Map<string, { proposal: BoardContribution | null }> {
   const out = new Map<string, { proposal: BoardContribution | null }>();
   for (const order of batch?.orders ?? []) {
     for (const row of order.rows ?? []) {
-      if (!isLiveChangeRow(row)) continue;
+      if (isRetiredChangeRow(row)) continue;
       const proposal = (row.proposal ?? null) as BoardContribution | null;
       const lineId = row.project_line_id ?? proposal?.project_line_id ?? null;
       if (lineId) out.set(lineId, { proposal });
@@ -622,9 +628,10 @@ export function preMarkedKeys(
   contributions: BoardContribution[],
 ): string[] {
   if (!batch) return [];
-  // `changed` is scoped to LIVE (pending) rows only (S4, `isLiveChangeRow`) - a superseded or
-  // applied row's line is never pre-marked off it. The `covered` check below is a SEPARATE
-  // guard this function still needs: it takes `Pick<PlanningChangeBatch, 'orders'>`, never the
+  // `changed` drops a SUPERSEDED row's line only (S4/B1, `isRetiredChangeRow`) - an applied
+  // row's own `applied_state` is not a signal this function acts on (see that predicate's own
+  // doc). The `covered` check below is a SEPARATE guard this function still needs: it takes
+  // `Pick<PlanningChangeBatch, 'orders'>`, never the
   // batch's own `applied_at`, so a batch that resolves APPLIED after the board's contributions
   // are already on screen (AC-F7, `FulfilmentBoardPanel.change.test.tsx`) is indistinguishable
   // here from one still pending by row shape alone - `contribution.covered` (already current,

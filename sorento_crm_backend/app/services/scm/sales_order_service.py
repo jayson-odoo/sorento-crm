@@ -1618,6 +1618,14 @@ class SalesOrderService:
                 file_name=None,
             )
             if batch is None:
+                # S1 (`PLAN-esb-change-row-refresh.md`, review round 1): `build_batch` can
+                # supersede an OLDER pending row (a gate-failed change that still differs from
+                # what that row describes) even while returning `None` itself - there is
+                # nothing NEW to keep, but the older row's `applied_state` write is real and
+                # already sitting on this session. Committed here, not left for a later,
+                # unrelated commit to carry - the manual-edit request has no other write
+                # coming after this to flush it.
+                self.db.commit()
                 return None
             # `build_batch` takes no source-kind parameter - its only caller until now was
             # the SO-book upload, which is the column's own `server_default`. Stamp this
