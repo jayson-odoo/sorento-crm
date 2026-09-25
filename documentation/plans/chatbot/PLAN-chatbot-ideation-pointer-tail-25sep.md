@@ -1,6 +1,6 @@
 # PLAN: the tail keeps the ideate lane's draft pointer (regression since the turn re-architecture)
 
-Status: BUILDING - small fix track (owner go 25 Sep 2026, "yeap let's do the fix")
+Status: REVIEWED - small fix track, PR #1230 open, review round 1 addressed 25 Sep 2026
 Domain: chatbot / ideation
 Branch: `fix/chatbot-ideation-pointer-tail`
 UAC: `chatbot-ideation-pointer-tail-25sep-acceptance-criteria.md`
@@ -78,3 +78,28 @@ a follow-up lane.
   there: "i have an idea" then "the price tag should show promo in red" -> ONE idea row
   on `fx_shared_local`, second turn's MCP body carries the first turn's `draft_id`.
 - No screen changed: no browser pass.
+
+## Review round 1 (PR #1230)
+
+Two should-fix items addressed:
+
+- `app/services/ideation_turn_service.py`'s `_graceful` (the unconfigured and
+  create_idea-outage paths) returned the contact's raw DB `session_vars`, not the
+  pointer THIS turn actually read. With the tail fix above, a dry run carrying a TEST
+  pointer through `session_vars_in` therefore had `session_patch.ideation` come back as
+  the contact's REAL stored pointer (possibly `is_test: false`) on an outage, instead of
+  the carried test one. `_graceful` now takes the already is_test-guarded
+  `ideation_state` explicitly and folds it into the returned `session_vars`, absent when
+  there is none - the same "key present only when a draft is open" shape the
+  read-modify-write success path already keeps. New test:
+  `tests/test_ideation_turn.py::test_outage_on_a_dry_run_keeps_the_carried_pointer_not_the_db_one`
+  (red before the fix, green after).
+- `tests/chatbot/console_cases/2026-09-25-ideation-pointer-carries.yaml` now sets
+  `cold: true` on the case (so turn 1 does not start from the contact's stored memory)
+  and a header note that the stack this runs against needs ideation actually configured
+  and the shared service reachable, or the case fails for an unrelated reason.
+
+Nits 1 and 2 left as is: the switch on the tail item's shape (`"ideation" in item`)
+rather than on `branch_kind == "ideate"`, and the legacy nested `variables.ideation`
+pointer not being explicitly cleared on a terminal status (the flat top-level read
+already wins per `session_state.five_keys`, so both are cosmetic, not behavioural).

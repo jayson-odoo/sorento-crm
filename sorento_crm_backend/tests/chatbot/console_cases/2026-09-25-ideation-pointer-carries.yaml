@@ -22,11 +22,18 @@
 # the fix deterministically with no LLM call. Drop the flag to run the same two turns
 # through the live parser (`--sleep-seconds 8` per the OpenAI TPM 429 lesson; export
 # EXTERNAL_API_KEY from the backend .env first).
+#
+# The stack this runs against needs ideation actually configured (a default workspace row
+# with `ideation_product_id` set) and the ideation shared service reachable at
+# `IDEATION_SHARED_SERVICE_URL` - turn 1 calls the real intake tool, and an unconfigured or
+# unreachable service answers `unconfigured` / `error` instead of opening a draft, which
+# fails this case for an unrelated reason.
 
 contact: "437264483"
 
 cases:
   - name: a second ideate turn keeps the draft the first turn opened (owner console walk 25 Sep 2026)
+    cold: true
     turns:
       - text: "i have an idea"
         parser:

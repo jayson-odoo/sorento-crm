@@ -193,8 +193,26 @@ def call_create_idea(base_url: str, api_key: str, payload: dict[str, Any]) -> di
     return data
 
 
-def _graceful(reply_text: str, session_vars: dict[str, Any], *, status: str) -> dict[str, Any]:
-    return {"status": status, "reply_text": reply_text, "session_vars": session_vars}
+def _graceful(
+    reply_text: str, session_vars: dict[str, Any], *, status: str, ideation: dict[str, Any] | None
+) -> dict[str, Any]:
+    """A fail-soft reply carrying the POINTER THIS TURN READ, not the contact's raw DB
+    row (reviewer round 1, PR #1230). `session_vars` here is `contact.session_vars` -
+    the row as it stood BEFORE this turn - and on a dry run with a carried test pointer
+    that row is the customer's own LIVE draft, not the test one the caller supplied.
+    Echoing it back as `session_vars.ideation` on an outage handed the caller someone
+    else's real pointer instead of the one it asked to continue. `ideation` is the
+    already is_test-guarded `ideation_state` the caller read (see `handle_turn`), so
+    the shape matches what every other return path uses. Absent, not `None`, when
+    there is no pointer to carry - the same "key present only when a draft is open"
+    shape the success path's read-modify-write already keeps (AC-13c/14/15's `pop`).
+    """
+    new_session_vars = dict(session_vars)
+    if ideation:
+        new_session_vars["ideation"] = ideation
+    else:
+        new_session_vars.pop("ideation", None)
+    return {"status": status, "reply_text": reply_text, "session_vars": new_session_vars}
 
 
 def _default_fetch_recent_messages(db: Session, respond_io_id: str) -> dict[str, Any]:
@@ -346,6 +364,7 @@ def handle_turn(
             "again later or reach out to the team.",
             session_vars,
             status="unconfigured",
+            ideation=ideation_state,
         )
 
     # (2) multi-modal capture (Group F). Resolve this turn's media into three things:
@@ -427,6 +446,7 @@ def handle_turn(
             "Sorry, I couldn't save that idea just now - please try again in a moment.",
             session_vars,
             status="error",
+            ideation=ideation_state,
         )
 
     status_val = str(result.get("status") or "")
