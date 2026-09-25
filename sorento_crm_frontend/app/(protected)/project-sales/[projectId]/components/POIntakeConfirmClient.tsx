@@ -61,6 +61,13 @@ export function POIntakeConfirmClient({
   const [focusedLineId, setFocusedLineId] = React.useState<string | null>(null);
   const [uploading, setUploading] = React.useState(false);
   const pendingReview = React.useRef(false);
+  // A row named from the Documents tab (jumpToProblem) cannot be focused until the Lines tab's
+  // grid has mounted. Radix TabsContent remounts over more than one render pass, so a
+  // `useEffect` keyed on `activeTab` fires while `gridRef.current` is still null - verified with
+  // a debug log. The callback ref below (`attachGridRef`) runs exactly when the instance is
+  // actually attached, so it is the one place both pending jobs (a note review, a line focus)
+  // can be finished reliably.
+  const pendingFocusLineId = React.useRef<string | null>(null);
 
   const version = intake.version;
 
@@ -81,7 +88,7 @@ export function POIntakeConfirmClient({
    * line first (that is most of them, inline in the Lines tab), and only when none is left
    * does it fall back to the document notes in the Documents tab. The Lines tab has to be
    * mounted for the grid ref to answer, so a Documents-tab click switches tabs first and
-   * finishes the job once Lines has mounted (the effect below).
+   * `attachGridRef` below finishes the job once Lines has actually mounted.
    */
   const reviewNextNote = React.useCallback(() => {
     if (activeTab !== 'lines') {
@@ -93,12 +100,22 @@ export function POIntakeConfirmClient({
     if (!foundOnALine) setActiveTab('documents');
   }, [activeTab]);
 
-  React.useEffect(() => {
-    if (activeTab !== 'lines' || !pendingReview.current) return;
-    pendingReview.current = false;
-    const foundOnALine = gridRef.current?.focusFirstUnreviewedAnnotation();
-    if (!foundOnALine) setActiveTab('documents');
-  }, [activeTab]);
+  // See the comment on `pendingFocusLineId` above: this callback ref, not a `useEffect` keyed
+  // on `activeTab`, is what finishes a job that had to wait for the Lines tab's grid to mount.
+  const attachGridRef = React.useCallback((instance: POIntakeLinesGridHandle | null) => {
+    gridRef.current = instance;
+    if (!instance) return;
+    if (pendingReview.current) {
+      pendingReview.current = false;
+      const foundOnALine = instance.focusFirstUnreviewedAnnotation();
+      if (!foundOnALine) setActiveTab('documents');
+    }
+    if (pendingFocusLineId.current) {
+      const id = pendingFocusLineId.current;
+      pendingFocusLineId.current = null;
+      instance.focusLine(id);
+    }
+  }, []);
 
   // S4: Confirm returns the user to where they came from. With no origin (a deep link or a
   // bookmark) it stays on the page, exactly as before this slice.
@@ -153,10 +170,13 @@ export function POIntakeConfirmClient({
     const target =
       version.lines.find((line) => !line.is_cancelled && !line.arithmetic_ok) ??
       version.lines.find(lineNeedsAttention);
-    if (target) {
+    if (!target) return;
+    if (activeTab !== 'lines') {
+      pendingFocusLineId.current = target.id;
       setActiveTab('lines');
-      gridRef.current?.focusLine(target.id);
+      return;
     }
+    gridRef.current?.focusLine(target.id);
   };
 
   const crumbs = [
@@ -279,7 +299,7 @@ export function POIntakeConfirmClient({
                 <POIntakeNoLines onReupload={canEdit ? () => setUploading(true) : undefined} />
               ) : (
                 <POIntakeLinesGrid
-                  ref={gridRef}
+                  ref={attachGridRef}
                   lines={version.lines}
                   readOnly={readOnly}
                   savingLineIds={intake.savingLineIds}
@@ -411,7 +431,7 @@ function TotalsMetaLine({
         type="button"
         variant="link"
         size="sm"
-        className="h-auto p-0 text-xs font-medium text-amber-700 dark:text-amber-400"
+        className="h-auto p-0 text-sm font-medium text-amber-700 dark:text-amber-400"
         onClick={onJumpToProblem}
       >
         {text}

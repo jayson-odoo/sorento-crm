@@ -395,6 +395,36 @@ describe('POIntakeConfirmClient', () => {
     expect(screen.queryByLabelText('Amount on line 1')).toBeNull();
   });
 
+  it('still reaches the problem line when the mismatch link is clicked from the Documents tab (Nit)', async () => {
+    getPOVersion.mockResolvedValue(
+      version({
+        lines: [line(), line({ id: 'l2', line_no: 2, amount: '1.00', arithmetic_ok: false })],
+        totals: {
+          extracted_total: '728343.90',
+          lines_total: '364172.95',
+          arithmetic_passed: 1,
+          arithmetic_total: 2,
+        },
+      }),
+    );
+
+    renderConfirm();
+
+    const documentsTab = await screen.findByRole('tab', { name: 'Documents' });
+    documentsTab.focus();
+    fireEvent.click(documentsTab);
+
+    await screen.findByTitle('Purchase order page 1');
+
+    fireEvent.click(
+      screen.getByRole('button', { name: /below the total printed on the document/i }),
+    );
+
+    // Visibility of the row alone would pass on the default filter; "Line 2 in focus" only
+    // renders once focusLine actually ran.
+    expect(await screen.findByText('Line 2 in focus')).toBeInTheDocument();
+  });
+
   it('names an accepted cancellation as the reason for the gap, not a mismatch (S7)', async () => {
     getPOVersion.mockResolvedValue(
       version({

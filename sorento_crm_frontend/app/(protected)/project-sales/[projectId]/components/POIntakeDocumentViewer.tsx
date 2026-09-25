@@ -88,7 +88,7 @@ export function POIntakeDocumentViewer({
             <FileWarning className="size-5 text-muted-foreground" aria-hidden />
             <p className="text-sm font-medium">The scan is not available to preview</p>
             <p className="max-w-xs text-xs text-muted-foreground">
-              Upload the document again from the POs tab if you need it beside the lines.
+              Upload the document again from the POs tab if you need to see it.
             </p>
           </div>
         ) : kind === 'image' ? (
