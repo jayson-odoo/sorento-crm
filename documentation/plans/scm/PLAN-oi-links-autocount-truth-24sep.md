@@ -435,27 +435,30 @@ Nothing below changes, animates or moves:
 * The share of `auto` links the book names at all, which tells the owner how much of today's
   On PO/SPO is AutoCount and how much is the cascade.
 
-**Pending, 25 Sep 2026**: the script (`scripts/convert_oi_cascade_links.py`) is built and
-tester-first green on Postgres (`tests/test_convert_oi_cascade_links.py`, one seeded row per
-class), but the dry run itself has not run against the 23 Sep prod copy yet - that happens
-locally afterwards, not from this session (AC-LT-45). The table below is the skeleton the dry
-run's own output fills in.
+**Dry run done, 25 Sep 2026** (script at `3abf41549`, run locally with no `--apply` against
+the 23 Sep 19:00 prod copy `sorento_ai_automation_0923`, restored from the dump with no alembic
+run: the dry run reads only `order_inquiry_links` and its targets, so the missing
+`projects.order_inquiry_suggested_links` table was not needed and no throwaway clone was made;
+the copy holds 6,772 links, 2,427 of them on rows in a link state, one company). Verified after
+the run: link count unchanged, nothing written (AC-LT-45).
 
 | Class | Count | Notes |
 | --- | --- | --- |
-| (a) book | pending | |
-| (b) cascade, open target | pending | becomes a suggested link on `--apply` |
-| (c) cascade, closed/received/retired target | pending | removed on `--apply` |
-| (d) not auto | pending | |
-| (e) CS reserve | pending | |
+| (a) book | 1,818 | 74.9 percent of the 2,427 links on linkable rows; the book names most of today's On PO/SPO |
+| (b) cascade, open target | 157 | becomes a suggested link on `--apply` (e.g. OI-2609-0289 SRTWB7292 on SPO-2026/09-0044, OI-2609-0015 SRTPW0035-CR on 202607-S0081) |
+| (c) cascade, closed/received/retired target | 440 | removed on `--apply` (e.g. OI-2609-0015 CB6633 on 202608-S0091, OI-2609-0023 C-FHSS14 on SPO-2026/09-0036) |
+| (d) not auto | 10 | all on OI-2609-0010, 0011, 0013 (manual SPO links from the 20 Sep sheet import) |
+| (e) CS reserve | 2 | OI-2609-0007 CKS819 and CSK14A, Reserved @ BRW |
 
 | State transition | Rows | Notes |
 | --- | --- | --- |
-| placed -> raised | pending | |
-| placed -> partly_linked | pending | |
-| partly_linked -> raised | pending | |
+| placed -> raised | 319 | |
+| placed -> partly_linked | 35 | |
+| partly_linked -> raised | 0 | |
 
-To buy quantity delta: pending.
+Rows whose state would change: 354. To buy quantity delta: 17,490 units (the sum of the (b) and
+(c) link quantities the rows would stop counting as covered). The first 20 example rows per class
+are in the PR #1220 dry-run comment of 25 Sep 2026.
 
 Dry-run command (run locally against the restored 23 Sep prod copy, never the cloud):
 
