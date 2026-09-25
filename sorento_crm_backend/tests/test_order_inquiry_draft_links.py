@@ -1194,10 +1194,14 @@ def test_auto_link_all_drops_the_suggestion_when_the_document_has_since_closed(a
 
 
 def test_two_presses_of_auto_link_all_change_nothing_at_all(api):
-    """S4. The re-deal deleted and rewrote identical links on every press, and wrote
-    "Unlinked from X; Re-dealt by worklist" onto the row's note each time - so a buyer who
-    pressed the button twice read a row that looked like it had moved twice. The take is
-    computed first, and a take that matches what the row already holds is skipped."""
+    """S4, rewritten for review round 2 Should fix 7: since S3 the walk's own terminal
+    write is a SUGGESTION, never a real link (`_links_of(world, row)` is `[]` on both
+    presses, which made the old link-id assertion here vacuous, `[] == []` - it no
+    longer guarded anything). The idempotence this test was written for is
+    `_write_suggested_links`'s own `_same_placement` check: an unchanged answer is not
+    deleted and rewritten, so the suggestion carries the SAME id and `suggested_at`
+    across both presses, and the row's own note is never touched (a suggestion writes
+    nothing onto the row at all)."""
     _client, world = api
     _open_po_line(world, qty=50)
     row = _raise_one_row(api, qty="10")["row"]
@@ -1206,14 +1210,18 @@ def test_two_presses_of_auto_link_all_change_nothing_at_all(api):
         assert buyer.post(AUTO_PLACE, json={}).status_code == 200
         world.db.commit()
         world.db.refresh(row)
-        first = [str(link.id) for link in _links_of(world, row)]
+        assert _links_of(world, row) == [], "S3: the walk only ever suggests"
+        first = [(str(s.id), s.suggested_at) for s in _suggested_of(world, row)]
+        assert first, "the suggestion has to exist for the test to mean anything"
         note = row.note
         assert buyer.post(AUTO_PLACE, json={}).status_code == 200
     world.db.commit()
 
     world.db.refresh(row)
-    assert [str(link.id) for link in _links_of(world, row)] == first
-    assert row.note == note
+    assert _links_of(world, row) == []
+    second = [(str(s.id), s.suggested_at) for s in _suggested_of(world, row)]
+    assert second == first, "an unchanged answer is not deleted and rewritten"
+    assert row.note == note, "a suggestion writes nothing onto the row"
 
 
 # ---------------------------------------------------------------------------
