@@ -498,26 +498,40 @@ export async function fetchSubmission(
 }
 
 /**
- * Same shape `PriceTagRequestError` reads (`price-tag-request-service.ts`): the global
- * handler flattens `AppException` to `{message, detail, code}`, and `detail` on a
- * line-scoped refusal (D48/#1227: a sponsorship line submitted with no unit price) is a
- * CSV of `line:<index>` tokens. Attached to the thrown error as `.fields`/`.code` so a
- * caller can name the offending line the same way a price tag request line already does,
- * without changing what every other `saveDraft`/`submitDraft` caller already gets back.
+ * Same shape `PriceTagRequestError` reads (`price-tag-request-service.ts`'s
+ * `unwrapNamingFields`): the global handler flattens `AppException` to a FLAT
+ * top-level `{message, detail, code}` - not `{detail: {message, detail, code}}` -
+ * and `detail` on a line-scoped refusal (D48/#1227: a sponsorship line submitted
+ * with no unit price) is a CSV of `line:<index>` tokens. Attached to the thrown
+ * error as `.fields`/`.code` so a caller can name the offending line the same way
+ * a price tag request line already does, without changing what every other
+ * `saveDraft`/`submitDraft` caller already gets back.
+ *
+ * The body can only be consumed once, so it is cloned BEFORE `extractApiError`
+ * (which owns and consumes the original) - not after, or the clone throws on an
+ * already-consumed body and is silently swallowed. `message` reads the body's
+ * own top-level `message` directly rather than `extractApiError`'s return value:
+ * `extractApiError` returns the string `detail` whenever one is present (its own
+ * contract for a plain string `detail`), and `detail` here is the `line:<index>`
+ * token, not the human message - `extractApiError` is used only as the fallback
+ * for a body this handler did not shape (network/HTML/plain-`detail` errors).
  */
 async function throwSubmissionError(res: Response, fallback: string): Promise<never> {
-  const message = await extractApiError(res, fallback);
-  let body: { detail?: unknown } | null = null;
+  const spare = res.clone();
+  let body: { message?: unknown; detail?: unknown; code?: unknown } | null = null;
   try {
-    body = (await res.clone().json()) as { detail?: unknown };
+    body = (await spare.json()) as { message?: unknown; detail?: unknown; code?: unknown };
   } catch {
     body = null;
   }
-  const inner = body?.detail as { detail?: unknown; code?: unknown } | null | undefined;
-  const code = typeof inner?.code === 'string' ? inner.code : null;
+  const message =
+    typeof body?.message === 'string' && body.message
+      ? body.message
+      : await extractApiError(res, fallback);
+  const code = typeof body?.code === 'string' ? body.code : null;
   const fields =
-    typeof inner?.detail === 'string' && inner.detail
-      ? inner.detail.split(',').map((f) => f.trim()).filter(Boolean)
+    typeof body?.detail === 'string' && body.detail
+      ? body.detail.split(',').map((f) => f.trim()).filter(Boolean)
       : [];
   throw Object.assign(new Error(message), { code, fields });
 }
