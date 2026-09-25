@@ -758,7 +758,7 @@ export const POIntakeLinesGrid = React.forwardRef<POIntakeLinesGridHandle, Props
     return (
       <div className="min-w-0 space-y-2">
         {showFilterToggle && (
-          <div className="flex justify-end">
+          <div className="flex justify-start">
             <ToggleGroup
               type="single"
               variant="outline"
