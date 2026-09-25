@@ -1517,8 +1517,6 @@ async def auto_place_order_inquiries(
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
-
-
 @router.post(
     "/order-inquiry-rows/{row_id}/unplace", response_model=OrderInquiryRowOut
 )

@@ -1,9 +1,10 @@
 # UAC - Order inquiry links: AutoCount is the source of truth, the cascade only suggests
 
-Plan: `PLAN-oi-links-autocount-truth-24sep.md`. Issue #1215, points 3 and 4. Status: DRAFT
-24 Sep 2026, grill questions open (plan section "Grill questions"). An AC tagged `(Gn)` holds
-under the recommended answer to that grill question and changes if the owner rules otherwise;
-every other AC holds whatever the answers.
+Plan: `PLAN-oi-links-autocount-truth-24sep.md`. Issue #1215, points 3 and 4. Status: IN
+PROGRESS 26 Sep 2026 - every grill question answered by the owner (plan section "Rulings"),
+S1 to S5 built and merged, S6 (review + browser evidence) under way, review round 2 addressed.
+An AC tagged `(Gn)` holds under the recommended answer to that grill question unless a later
+ruling (`Rn`) supersedes it, noted inline where one does; every other AC holds as written.
 
 Owner rulings, 24 Sep 2026, verbatim:
 
@@ -39,12 +40,14 @@ reserved from stock.
    person applied, or a CS reserve. The State pill (To buy / Partly on PO/SPO / On PO/SPO) is
    read from those alone. Decision: none.
 2. **J2 - See the suggested link.** A row AutoCount has not tied to a document, where the
-   cascade found an open document with room, shows it in its own **Suggested** column
-   (document, location, qty, the word `suggested`), never in PO or SPO. The row still reads
-   To buy. Decision: none yet.
-3. **J3 - Look closer.** The suggested document number opens the same lightbox as a real one.
-   Its "Allocated to" panel lists real allocations; a separate "Suggested for" panel lists
-   the rows the document is suggested for. Decision: none.
+   cascade found an open document with room, shows it in its own **Suggested** column - the
+   document number only, a plain `+N` when there is more than one (R11/R12, owner rulings 24
+   Sep 2026, superseding this step's original mock: no location, qty, late marker or amber
+   word) - never in PO or SPO. The row still reads To buy. Decision: none yet.
+3. **J3 - Look closer.** The suggested document number opens the same lightbox as a real one,
+   which highlights the exact suggested line in the SAME lines grid "Allocated to" already
+   lists real allocations on (R13, owner ruling 24 Sep 2026, superseding this step's own
+   separate "Suggested for" panel - the lines grid is the whole answer now). Decision: none.
 4. **J4 - Act on it.** One decision: is this the document? Yes: tie the PO line to the sales
    order in AutoCount; the next push makes it a real link and the suggested link goes - the
    only way a suggestion becomes a link (R18, 25 Sep 2026, supersedes the G1 reading below).
@@ -82,18 +85,18 @@ screen leaves open: a guess never reads as bought.
 
 * **AC-LT-01 [FE] (J2)** Given a mocked worklist row with no links and one suggested link
   (`PO-2026/09-0023`, BRW, 2), when the worklist renders, then the PO and SPO cells read `-`,
-  the State pill reads To buy, and the Suggested cell reads `PO-2026/09-0023 BRW 2` followed
-  by the one amber word `suggested` (the shared pill S1b's `reallocate` mark uses, warning
-  token, no icon).
+  the State pill reads To buy, and the Suggested cell reads the document number alone
+  (R11/R12, owner rulings 24 Sep 2026, superseding this AC's original mock: no location, qty
+  or amber word).
 * **AC-LT-02 [FE] (J1, J2)** Given a row with one real SPO link and a suggested link for its
   unlinked remainder, when it renders, then the SPO cell shows the real link only and the
   Suggested cell shows the suggested link only; no document appears in both cells.
 * **AC-LT-03 [FE] (J2)** Given a row with no suggested link, when it renders, then the
   Suggested cell reads `-`.
 * **AC-LT-04 [FE] (J3)** Given the Suggested cell, when the document number is clicked, then
-  `OrderInquiryDocumentDialog` opens for that PO or SPO; "Allocated to" lists real
-  allocations only, and a "Suggested for" panel lists the suggested links (inquiry, S/O no,
-  item, qty, line), with an explicit empty state when there are none.
+  `OrderInquiryDocumentDialog` opens for that PO or SPO and highlights the exact suggested
+  line in the SAME lines grid "Allocated to" lists real allocations on (R13, owner ruling 24
+  Sep 2026, superseding this AC's original separate "Suggested for" panel).
 * **AC-LT-05 [FE] (J4) (R18, supersedes the G1 reading below)** Given ticked rows, when
   Actions opens, then Link selected (N) counts every ticked row, whatever it holds, and is
   disabled at 0; pressing it posts `auto-place` with those rows' ids; after it runs, the
@@ -170,8 +173,11 @@ PO line, SPO line and inquiry row. `[BE][T]` unless marked.
   po_id, po_line_id, spo_allocation_id, location, qty, expected_date, late_days, trigger}]` on
   the wire (response_model asserted), and `links` carries nothing suggested.
 * **AC-LT-34 [BE][T] (J3)** Given a PO or SPO with real links and suggested links, when its
-  lightbox endpoint is read, then `allocations` lists real links only and `suggested_links`
-  lists the suggested rows with inquiry number, S/O number, item, qty and line id.
+  lightbox endpoint is read, then `allocations` lists real links only and the response carries
+  no `suggested_links` field at all (amended, review round 2 Should fix 5, 26 Sep 2026: R13
+  retired the lightbox's own separate "Suggested for" panel this AC originally specified - the
+  Lines tab's Allocated/Suggested columns, AC-LT-33's own wire field, are the whole answer now,
+  so the field was dropped from the schema rather than left dead on the wire).
 * **AC-LT-35 [BE][T] (J4) (R18, supersedes the G1 reading below)** `POST
   /order-inquiries/link-suggested` no longer exists (404). Given a ticked row whose only
   candidate is a pool PO with no `from_so_line_ref`, when `POST /order-inquiries/auto-place`
@@ -222,9 +228,12 @@ PO line, SPO line and inquiry row. `[BE][T]` unless marked.
 
 * **AC-LT-50 [E2E] (J1 to J6)** agent-browser, sidebar clicks from `/`, on a seeded order:
   board Confirm raises a row the book does not name; Order Inquiries shows it To buy with a
-  Suggested cell and blank PO and SPO; the lightbox shows the "Suggested for" panel; Link
-  selected turns it On PO/SPO with the document in the PO column and the Suggested cell
-  empty; Auto link all's toast names both counts. Screens at 1280 and 375, `console` and
-  `errors` clean.
+  Suggested cell and blank PO and SPO; opening the Suggested cell's document highlights the
+  suggested line in the lightbox's lines grid (R13 - no separate panel); pressing Link
+  selected on the ticked row re-runs the AutoCount book step and refreshes its suggestions -
+  the toast names how many rows AutoCount linked, how many still hold a suggestion, and how
+  many changed (R18: it never itself turns the row On PO/SPO); Auto link all's toast names
+  its own book-linked and suggested counts. Screens at 1280 and 375, `console` and `errors`
+  clean.
 * **AC-LT-51 [E2E] (J1)** On the same stack, a row whose sales order line a PO line names in
   the book shows the document in the PO column and reads On PO/SPO with no Suggested cell.

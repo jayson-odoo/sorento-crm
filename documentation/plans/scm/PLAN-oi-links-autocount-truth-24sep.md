@@ -1,11 +1,15 @@
 # PLAN - Order inquiry links: AutoCount is the source of truth, the cascade only suggests
 
-Status: IN PROGRESS 24 Sep 2026. /feature step 1 (journey) and step 3 (UAC, plan) drafted; step
-2 (grill) answered by the owner on PR #1220 (see "Rulings" below) - every recommendation stands,
-G4 and G6 wording is being confirmed in chat but building to the recommendation. S2, Phase 1
-(frontend mock) under way. Track: full (new table,
-migration, a change to what the Buy card, stock debt and `scm.committed_v` count). Branch
-`fix/oi-links-24sep`, one lane, one PR with the S1 repair (issue #1215 points 1, 2, 5). UAC:
+Status: IN PROGRESS 26 Sep 2026. /feature steps 1 to 3 (journey, grill, UAC/plan) done - every
+grill question answered by the owner on PR #1220 (see "Rulings" below). S1 to S5 built and
+merged to this branch (S1 the stale-state repair, S2 the FE mock later reconciled against R11
+to R13, S3/S4 the suggested-link model, S5 the conversion script with its dry run applied to
+the 23 Sep prod copy, section 7). S6 (reviewer + browser evidence) is under way: review round 1
+addressed (PR comments 5820446777, 5820494222), the hand-test rulings R11 to R18 folded in,
+review round 2 (comment 5825004622, this session) addressed - every Blocking and Should-fix
+item fixed, tester-first where a test was named. Track: full (new table, migration, a change
+to what the Buy card, stock debt and `scm.committed_v` count). Branch `fix/oi-links-24sep`, one
+lane, one PR with the S1 repair (issue #1215 points 1, 2, 5) folded in. UAC:
 `oi-links-autocount-truth-24sep-acceptance-criteria.md`. Domain: SCM, order inquiries.
 Classification: CORE (the projects module's existing tables; no new module, no new
 permission: the Link selected route reuses the grant `auto-place` already requires).
@@ -36,12 +40,15 @@ Held in full in the UAC's `Journey` section (J1 to J7). In one paragraph: purcha
 Order Inquiries; the PO and SPO columns and the State pill show only what AutoCount ties to the
 sales order line, what a person linked, or what CS reserved; a row the cascade found a document
 for shows it in its own Suggested column and still reads To buy; the document opens the same
-lightbox, where suggested links sit in their own panel; the buyer makes it real in AutoCount
+lightbox, whose Lines tab carries the Allocated and Suggested facts on the grid itself (R13
+retired the lightbox's own separate "Suggested for" panel); the buyer makes it real in AutoCount
 (the next push links it) or, for a pool PO AutoCount never ties to a sales order, by ticking
-the row and pressing Link selected, which now means "link what is suggested, in my name";
-Confirm stays "I have read this row"; Auto link all follows AutoCount and refreshes the
-suggested links. At the end, On PO/SPO means bought, To buy means not bought, and every other
-screen and figure agrees because none of them ever reads a suggested link.
+the row and pressing Link selected, which re-runs the AutoCount book step for exactly those
+rows and refreshes their suggestions - it recalculates against AutoCount, it never writes a
+suggestion as a real link itself (R18); Confirm stays "I have read this row"; Auto link all
+follows AutoCount and refreshes the suggested links. At the end, On PO/SPO means bought, To buy
+means not bought, and every other screen and figure agrees because none of them ever reads a
+suggested link.
 
 ## 2. What exists today (measured)
 
@@ -198,7 +205,7 @@ there. The cascade only suggests.**
 | Book: `follow_book_for_rows`, `follow_book_repairing`, sheet importer `pair_needs` | real link, `auto = true` | real link, unchanged (D1, D3, D4 of `PLAN-oi-follow-book-chain.md` stand; G10) |
 | Cascade walk inside `auto_place_for_products`, after its book step, from every door in 2.5 (`worklist`, `link_now`, `acknowledge`, `po_confirm`, `raise`, `decision_confirm`, re-offer) | real link, `auto = true` | **suggested link**, not an `order_inquiry_links` row |
 | Choose document / Link PO (`LinkDocumentDialog`, `place-on-po`) | real link, `auto = false` | real link, unchanged (G3) |
-| Link selected (N) | the cascade, `auto = true` | writes each ticked row's suggested links as real links in the buyer's name, `auto = false` (G1) |
+| Link selected (N) | the cascade, `auto = true` | re-runs the AutoCount book step for the ticked rows only, then refreshes their suggestions the same way Auto link all does - never writes a suggestion as a real link (R18, supersedes G1) |
 | CS reserve commit | real link (reserve target) | unchanged |
 | Board borrow, planning-change reallocation and link shift, container planner ticks, importer `_move_received_links` | real link, `auto = false` | unchanged in this lane (G8) |
 
@@ -267,16 +274,23 @@ a suggestion of a line that no longer exists means nothing.
 
 ### 3.5 How a suggested link is shown
 
-* Worklist and OI detail Lines tab: a **Suggested** column after SPO. Cell: kind badge,
-  document number (opens the lightbox), location then qty (`BRW 2`), `late N d` when late,
-  then one amber word `suggested` (the shared pill S1b's `reallocate` mark uses, warning
-  token, no icon). `-` when none.
+* Worklist and OI detail Lines tab: a **Suggested** column after SPO (shared
+  `orderInquirySuggestedColumn()`). Cell: the document number only (opens the lightbox),
+  a plain `+N` badge when the row holds more than one - no kind badge, no location, no
+  qty, no late marker, and no amber `suggested` word or pill (R11/R12, owner rulings 24
+  Sep 2026, superseding this section's original mock: "don't need to show this, just make
+  sure when i open the SPO document i can see the line being highlighted" / "the suggested
+  column is good enough"). `-` when the row carries none.
 * PO and SPO columns, State pill, Taken / Remaining, Supplier, the three cards: real links
   only. A row with only a suggested link reads To buy with blank PO and SPO. Supplier stays
   blank on it (22 Sep ruling "NO default supplier on unlinked rows").
-* Lightbox (`OrderInquiryDocumentDialog.tsx`): "Allocated to" lists real links; a new
-  "Suggested for" panel below lists suggested links (inquiry, S/O no, item, qty, line), with
-  an explicit empty state. S1's Allocated column on the PO lines grid counts real links only.
+* Lightbox (`OrderInquiryDocumentDialog.tsx`): "Allocated to" lists real links. R13 (owner
+  rulings, 24 Sep 2026) retired the separate "Suggested for" panel this section originally
+  specified - the Lines tab grid is the WHOLE answer now: opening a suggested document from
+  the Suggested cell highlights the exact suggested line in the SAME lines grid
+  (`suggestedLineId`, the same highlight idiom a real link's line already uses), both able
+  to show at once. Review round 2 Should fix 5: the panel's own dead `suggested_links` wire
+  field on the PO/SPO detail payloads is removed (AC-LT-34, amended).
 * Row payload: `suggested_links: [{kind, document, po_id, po_line_id, spo_allocation_id,
   location, qty, expected_date, late_days, trigger}]`, separate from `links`. The existing
   `links[].suggestion` (S1b reallocate / unlink) is untouched and keeps its name.
@@ -293,7 +307,7 @@ a suggestion of a line that no longer exists means nothing.
   link any more. It is the SAME `auto-place` call "Auto link all" uses, `row_ids` naming
   exactly the ticked rows and nothing else - no separate route. Pressing it re-runs the
   AutoCount book step for the ticked rows only (`follow_book_for_rows`, writing only what
-  AutoCount names, `auto = true`, in AutoCount's own name, never the user's), then refreshes
+  AutoCount names, `auto = true`), then refreshes
   those rows' suggestions through the cascade the same way Auto link all does after its own
   book step. The result and toast state how many rows AutoCount linked (`book_linked_rows`),
   how many still hold a suggestion (`suggested_rows`), and how many of the ticked rows
@@ -301,7 +315,11 @@ a suggestion of a line that no longer exists means nothing.
   suggestion than the one they held coming in - the figure that says whether recalculating
   against AutoCount caught a mistake). Enabled state reads the ticked rows only, whatever
   they hold; there is no whole-OI fallback for it the way Auto link has one. Grant:
-  unchanged (the one `auto-place` already needs).
+  unchanged (the one `auto-place` already needs). Nit, review round 2 (26 Sep 2026): the
+  book link this press writes still stamps `linked_by`/`actioned_by` with whoever pressed
+  the button, exactly as every other door does (`_write_link`, unchanged) - no screen
+  renders `linked_by_name` on a book-named link, so nobody reads it as the user's own
+  choice either way, and there is nothing to fix in code, only in this sentence.
   ~~Superseded sentence (G1, no longer true): "For each ticked row it refreshes the row's
   suggested links (a cascade pass scoped to the row) and writes them as real links through
   `place_on_po_allocations` in the buyer's name (`auto = false`, `linked_by` the user, note
@@ -362,9 +380,9 @@ this branch. The suggested-link model starts at S2 and waits for the grill.
 
 | Slice | Phase | Holds | ACs |
 | --- | --- | --- | --- |
-| S2 | 1, FE mock | Suggested column (worklist + Lines tab), lightbox "Suggested for" panel, Link selected wording and result, Auto link all toast, service contract comment | AC-LT-01 to 08 |
+| S2 | 1, FE mock | Suggested column (worklist + Lines tab), lightbox "Suggested for" panel (retired by R13 - see 3.5), Link selected wording and result, Auto link all toast, service contract comment | AC-LT-01 to 08 |
 | S3 | 2, BE | migration, model, `_write_suggested_links`, capacity, trim on real link, drop on cover or state change, the cascade walk writes suggested links | AC-LT-10 to 22 |
-| S4 | 2, BE + wire | `suggested_links` on the row and lightbox payloads, `link-suggested` route, auto-place counts, readers pinned, mocks swapped | AC-LT-30 to 40 |
+| S4 | 2, BE + wire | `suggested_links` on the row payload, `link-suggested` route (retired by R18 - see 3.6), auto-place counts, readers pinned, mocks swapped | AC-LT-30 to 40 |
 | S5 | 2, script | conversion script, dry run on the 23 Sep copy, counts pasted into section 7 | AC-LT-41 to 45 |
 | S6 | 3 | browser evidence, reviewer + kill test; security-reviewer not expected (no auth, RBAC, ingest, upload or scoping change; the new route reuses the `auto-place` grant), said so in the PR | AC-LT-50, 51 |
 
@@ -402,7 +420,8 @@ S3/S4 land.
   `_spo_line` from `tests/test_ingest_documents_v5_so_po_links.py` and the settle harness in
   `tests/test_order_inquiry_draft_links.py`.
 * Service seam: `auto_place_for_products` and `follow_book_for_rows` directly. Route seams:
-  `POST /order-inquiries/auto-place`, `POST /order-inquiries/link-suggested`,
+  `POST /order-inquiries/auto-place` (Link selected's own route too, since R18 -
+  `link-suggested` never shipped as a separate route),
   `GET /order-inquiries`, `GET /order-inquiries/po/{id}`, `GET /order-inquiries/spo/{n}`,
   `POST /scm/purchase-orders/bulk-confirm`, the board confirm.
 * Suites that assert "the cascade writes a link" today go red on purpose. Each is rewritten
@@ -524,9 +543,12 @@ lane's review.
 Owner rulings from the hand test on stack C (25 Sep 2026, verbatim; PR #1220):
 
 **R15** (comment https://github.com/jayson-odoo/sorento-crm/pull/1220#issuecomment-5823949694,
-SPO lightbox, out of this lane's scope), **R16** (same comment, the jump-to-line button, out of
-this lane's scope) and **R17** (same comment, the via-SPO PO cell, out of this lane's scope) are
-recorded on the PR only; a separate fix lane covers them.
+SPO lightbox), **R16** (same comment, the jump-to-line button) and **R17** (same comment, the
+via-SPO PO cell): recorded here as out of scope on 25 Sep 2026, but in fact landed on this
+branch that same day (hand test round 1, PR comments 5824495599 and 5824637604) rather than in
+a separate lane. Review round 2 (26 Sep 2026) found and fixed one gap each: R16's second Go to
+press after paging away (Should fix 1), the Go to control's own primitive (Should fix 2), and
+R17's via-SPO PO number resolved on the server instead of a client scan (Should fix 3).
 
 **R18** (comment https://github.com/jayson-odoo/sorento-crm/pull/1220#issuecomment-5824001234,
 supersedes G1's "Link selected" answer). On hand-test step 4 ("Tick rows with a Suggested

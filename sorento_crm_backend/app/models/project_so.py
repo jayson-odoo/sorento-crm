@@ -1267,8 +1267,9 @@ class OrderInquirySuggestedLink(Base, CompanyScopedMixin):
     exists means nothing and should simply vanish.
 
     Written and replaced only by `ProjectOrderInquiryService._write_suggested_links`,
-    one pass at a time, and trimmed by `place_on_po_allocations` the moment a real link
-    lands on the same target (AC-LT-15). `qty` follows the row's own priority through
+    one pass at a time, and trimmed by `_write_link` (since `e5e3dd70`; `place_on_po_
+    allocations` calls it, but it is not the trim's own choke point) the moment a real
+    link lands on the same target (AC-LT-15). `qty` follows the row's own priority through
     the walk, so `suggested_at` and the row's `delivery_date` (read via the row, not
     duplicated here) are what a later trim reads to decide which suggestion goes first.
     """
