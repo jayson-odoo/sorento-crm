@@ -375,6 +375,26 @@ describe('POIntakeLinesGrid, showing only what needs attention', () => {
     expect(screen.queryByLabelText('Quantity on line 1')).toBeNull();
     expect(screen.queryByLabelText('Quantity on line 3')).toBeNull();
   });
+
+  it('stays on Lines identified when the header sends the reader to a note-only line (N1)', async () => {
+    const { gridRef } = renderGrid(threeLines(), {
+      annotations: [annotation({ id: 'a1', refers_to_lines: [2] })],
+      defaultFlaggedOnly: true,
+    });
+
+    expect(
+      await screen.findByRole('radio', { name: 'Lines identified 1' }),
+    ).toHaveAttribute('aria-checked', 'true');
+
+    act(() => {
+      gridRef.current?.focusFirstUnreviewedAnnotation();
+    });
+
+    expect(
+      screen.getByRole('radio', { name: 'Lines identified 1' }),
+    ).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByLabelText('Quantity on line 2')).toBeInTheDocument();
+  });
 });
 
 /**

@@ -241,15 +241,18 @@ export const POIntakeLinesGrid = React.forwardRef<POIntakeLinesGridHandle, Props
         onFocusLine(line);
         // The banner and the handwriting notes both point at specific lines, and a note can
         // name a perfectly healthy one. Landing on it has to work with the filter on, so the
-        // filter gives way rather than swallowing the jump.
-        if (flaggedOnly && !isFlaggedLine(line)) {
+        // filter gives way rather than swallowing the jump - but only when the line is not
+        // already one of the ones "Lines identified" shows (N1: a note-only line is already
+        // visible there, and flipping to "Show all lines" on its own call to action defeats
+        // the guided view).
+        if (flaggedOnly && !flagged.some((item) => item.id === lineId)) {
           pendingFocusId.current = lineId;
           setFlaggedOnly(false);
           return;
         }
         scrollToLine(lineId);
       },
-      [lines, onFocusLine, flaggedOnly, scrollToLine],
+      [lines, onFocusLine, flaggedOnly, flagged, scrollToLine],
     );
 
     // Where "clear the warning and move on" goes next: the first line, after the one just
