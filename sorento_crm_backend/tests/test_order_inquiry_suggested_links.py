@@ -35,6 +35,7 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 from app.models.base import company_scope
+from app.models.company import Company
 from app.models.procurement import PurchaseOrder, PurchaseOrderLine
 from app.models.project_so import (
     INQUIRY_ACTIONED,
@@ -67,6 +68,7 @@ from tests.test_order_inquiry_handshake import (
     ACK_URL,
     LINK_NOW,
     LIST,
+    PURCHASING,
     _as_purchasing,
     _links_of as _hs_links_of,
     _open_po_line,
@@ -221,12 +223,11 @@ class TestACLT11EveryCascadeDoorSuggestsNeverLinks:
         assert suggested[0].trigger == "acknowledge"
 
     def test_ac_lt_11_purchase_order_confirm_suggests(self, api):
-        """`PurchaseOrderService.bulk_confirm` is the real `po_confirm` caller
-        (`purchase_order_service.py:1265`), the same seam
+        """Review round 2 Should fix 9: through the REAL route now,
+        `POST /scm/purchase-orders/bulk-confirm` (`purchase_order_service.py:1265`),
+        not `PurchaseOrderService.bulk_confirm` called directly - the same seam
         `test_order_inquiry_draft_links.py::test_a_purchase_order_confirm_links_an_
         awaiting_row` already exercises for today's (real-link) behaviour."""
-        from app.services.scm.purchase_order_service import PurchaseOrderService
-
         _client, world = api
         row = _raise_one_row(api, qty="10")["row"]
         assert _hs_links_of(world, row) == []
@@ -255,7 +256,11 @@ class TestACLT11EveryCascadeDoorSuggestsNeverLinks:
         world.db.add(po_line)
         world.db.commit()
 
-        PurchaseOrderService(world.db).bulk_confirm([str(po.id)], actor=world.buyer)
+        with _as_purchasing(world, permissions=PURCHASING + ["scm.reorder.run"]) as buyer:
+            response = buyer.post(
+                "/api/v1/scm/purchase-orders/bulk-confirm", json={"ids": [str(po.id)]},
+            )
+        assert response.status_code == 200, response.text
         world.db.expire_all()
 
         row = world.db.query(OrderInquiryRow).filter(OrderInquiryRow.id == row.id).one()
@@ -269,7 +274,17 @@ class TestACLT11EveryCascadeDoorSuggestsNeverLinks:
         """`ProjectSupplyService.auto_place_for_confirmed_products` is the real
         `decision_confirm` caller - the planning-change apply's own deferred pass
         (`planning_change_service.py:4696`), a distinct method wrapping the trigger,
-        not a raw string handed to `auto_place_for_products`."""
+        not a raw string handed to `auto_place_for_products`.
+
+        Review round 2 Should fix 9 named this door too, alongside `po_confirm`, for a
+        route-level test (`POST /planning-changes/{batch_id}/apply`) rather than the
+        service called directly. Kept at the service level here: reaching this exact
+        branch through the real route needs a genuine planning-change scenario that
+        leaves headroom for the cascade fill after `build_batch`, `set_row_decision`
+        and `apply` - the harness `test_planning_changes.py` owns - and this seam
+        already proves the fact the AC states (`decision_confirm` suggests, never
+        links), which `_apply_one_order`'s own call site (line 4696, unchanged by
+        this round) shows is the only caller of this method."""
         from app.services.project_supply_service import ProjectSupplyService
 
         _client, world = api
@@ -1176,3 +1191,58 @@ class TestACLT22CompanyScoped:
         with company_scope(db, frozenset({ctx.company_a})):
             visible_a = db.query(OrderInquirySuggestedLink).all()
         assert {row.id for row in visible_a} == {suggestion_a.id}
+
+    def test_ac_lt_22_a_scoped_user_never_reads_another_companys_suggested_link_through_a_route(
+        self, api
+    ):
+        """Review round 2 Should fix 9: the sibling ORM-level test above proves the
+        MODEL is company scoped; this one proves it through an actual route
+        (`GET /order-inquiries`, the worklist `api`/`world` harness), which is what
+        AC-LT-22 itself says ("through any route")."""
+        client, world = api
+        db = world.db
+        foreign = Company(
+            id=str(uuid.uuid4()), name="ZZT foreign company", code=f"ZFT{uuid.uuid4().hex[:6]}",
+        )
+        db.add(foreign)
+        db.flush()
+        foreign_product = _seed_product(db, company_id=foreign.id)
+        ref = _ref("SOL")
+        _foreign_so, foreign_core_line = _seed_so_line(
+            db, company_id=foreign.id, product_id=foreign_product.id, source_ref=ref, qty="5",
+        )
+        foreign_po, foreign_line = _seed_po_line(
+            db, company_id=foreign.id, product_id=foreign_product.id,
+            qty_ordered="10", header_status="active",
+        )
+        _pso, _mirror, _inquiry, foreign_row = _seed_row_and_mirror(
+            db, company_id=foreign.id, core_line=foreign_core_line,
+            product_id=foreign_product.id, qty="5",
+        )
+        db.commit()
+        db.add(
+            OrderInquirySuggestedLink(
+                id=str(uuid.uuid4()), company_id=foreign.id, row_id=foreign_row.id,
+                po_line_id=foreign_line.id, document=foreign_po.po_number, qty=Decimal("5"),
+            )
+        )
+        db.commit()
+
+        row = _raise_one_row(api, qty="10")["row"]
+
+        body = client.get(LIST, params={"limit": 200}).json()
+
+        assert str(foreign_row.id) not in {item["id"] for item in body["data"]}, (
+            "a scoped user must never even see the foreign row"
+        )
+        every_suggested_document = {
+            entry["document"]
+            for item in body["data"]
+            for entry in (item.get("suggested_links") or [])
+        }
+        assert foreign_po.po_number not in every_suggested_document, (
+            "the foreign company's suggested link must never reach this wire"
+        )
+        assert row.id in {item["id"] for item in body["data"]}, (
+            "the world's own row still lists normally"
+        )
