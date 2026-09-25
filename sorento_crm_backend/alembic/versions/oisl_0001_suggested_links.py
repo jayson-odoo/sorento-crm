@@ -17,7 +17,7 @@ dev database converges through `create_all` rather than `alembic upgrade`
 reaching a database that already has the table.
 
 Revision ID: oisl_0001_suggested_links
-Revises: oihr_0003_location_column
+Revises: ifa_supplier_uniq
 Create Date: 2026-09-24
 """
 from __future__ import annotations
@@ -26,7 +26,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "oisl_0001_suggested_links"
-down_revision = "oihr_0003_location_column"
+down_revision = "ifa_supplier_uniq"
 branch_labels = None
 depends_on = None
 
