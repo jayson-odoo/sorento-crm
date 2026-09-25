@@ -68,12 +68,21 @@ _TERMINAL_STATUSES = {"complete", "voted", "cancelled"}
 # session_vars / the create_idea payload. Keeps the most recent turns.
 _TRANSCRIPT_MAX_TURNS = 50
 
-# Should fix 2 (reviewer, round 2): the S4 close's ONLY signal that a draft is
-# already gone shared-service side (safe to clear the pointer without a retry)
-# - not every 4xx. 401/403 (a rotated or wrong api_key) and 408/429 mean the
-# REQUEST failed, not that the draft is gone; treating them as "gone" would
-# orphan the draft on shared-service while sorento silently forgets it.
-_DRAFT_GONE_STATUS_CODES = {404, 409, 410, 422}
+# Should fix 2 (reviewer, round 2), narrowed by Fix round 3 (shared-service
+# contract facts, PR #87): the S4 close's ONLY signal that a draft is already
+# gone shared-service side (safe to clear the pointer without a retry) -
+# NOT every 4xx. 401/403 (a rotated or wrong api_key) and 408/429 mean the
+# REQUEST failed, not that the draft is gone. 409 (transition_blocked) means
+# the draft is still OPEN - the tenant's status set blocks draft -> rejected.
+# 422 means sorento sent a bad payload (a validation error or a title over 8
+# words) - never a gone draft. Treating any of those as "gone" would orphan
+# the draft on shared-service while sorento silently forgets it.
+_DRAFT_GONE_STATUS_CODES = {404, 410}
+
+# Fix round 3: a 422 (sorento payload bug) is retried at most once more before
+# the idle sweep stops attempting the close - the pointer is never cleared for
+# a 422, so a human has to look at the payload bug either way.
+_MAX_CLOSE_PAYLOAD_ERROR_ATTEMPTS = 2
 
 # Intake answer keys the brain extracts into (mirrors the shared-service intake
 # target_schema - problem / proposed_solution / impact / department; no module or
@@ -372,12 +381,22 @@ class IdeationServiceError(Exception):
     ``status_code`` (Should fix 4, reviewer round 1) carries the shared-service
     HTTP status when the failure was a response, not a transport/parse error -
     None for a timeout, connection failure, or malformed body. The S4 idle
-    sweep's close uses it to tell "the draft is already gone" (4xx - clear the
-    pointer) from "the service is down" (5xx/transport - keep retrying)."""
+    sweep's close reads it to tell "the draft is already gone" (404/410 -
+    clear the pointer) from "the tenant blocks this transition" (409), from
+    "sorento sent a bad payload" (422), from "the service is down" (5xx/
+    transport - keep retrying).
 
-    def __init__(self, message: str, *, status_code: int | None = None):
+    ``response_detail`` (Fix round 3, PR #1222: shared-service contract facts
+    from PR #87) carries the parsed response body when the failure was a
+    response - the idle sweep's 422 branch logs it as the sorento payload bug
+    it is."""
+
+    def __init__(
+        self, message: str, *, status_code: int | None = None, response_detail: Any = None
+    ):
         super().__init__(message)
         self.status_code = status_code
+        self.response_detail = response_detail
 
 
 class _ContactState:
@@ -506,8 +525,14 @@ def call_create_idea(base_url: str, api_key: str, payload: dict[str, Any]) -> di
             resp.raise_for_status()
             data = resp.json()
     except httpx.HTTPStatusError as exc:
+        try:
+            detail = exc.response.json()
+        except (ValueError, json.JSONDecodeError):
+            detail = exc.response.text
         raise IdeationServiceError(
-            f"create_idea request failed: {exc}", status_code=exc.response.status_code
+            f"create_idea request failed: {exc}",
+            status_code=exc.response.status_code,
+            response_detail=detail,
         ) from exc
     except httpx.HTTPError as exc:
         raise IdeationServiceError(f"create_idea request failed: {exc}") from exc
@@ -928,23 +953,40 @@ def _send_ideation_reminder(db: Session, *, respond_io_id: str, title: str | Non
             logger.exception("ideation idle sweep: could not log the failed reminder send")
 
 
+# Fix round 3 outcomes for _close_idle_ideation_draft. Plain strings, not an
+# Enum - the caller (sweep_idle_ideation_drafts) only ever compares them.
+_CLOSE_GONE = "gone"  # clear the pointer
+_CLOSE_BLOCKED = "blocked"  # 409 transition_blocked: keep, record the block, skip later ticks
+_CLOSE_PAYLOAD_ERROR = "payload_error"  # 422: keep, count the retry, log at error level
+_CLOSE_RETRY = "retry"  # everything else: keep, retry next tick as today
+
+
 def _close_idle_ideation_draft(
     db: Session, *, respond_io_id: str, phone_number: str, draft_id: str | None
-) -> bool:
+) -> str:
     """AC-1402/AC-1407: close the draft via the same ``cancel: true`` contract a
     live turn uses (plan S4: ``{product_id, draft_id, cancel: true,
-    submitter_contact_id}``). Returns True on success (caller clears the
-    pointer). Should fix 4 (reviewer round 1): a status in
-    ``_DRAFT_GONE_STATUS_CODES`` (the draft is already closed/gone
-    shared-service side) is ALSO treated as success - clearing the pointer
-    rather than re-POSTing the same dead draft_id every 15 minutes forever.
-    Should fix 2 (reviewer round 2): only those specific statuses mean "gone" -
-    a 401/403/408/429 is a request failure, not a gone draft, and returns
-    False like a transport/5xx failure (caller KEEPS the pointer so the next
-    tick retries, AC-1407)."""
+    submitter_contact_id}``). Returns one of the ``_CLOSE_*`` outcomes; the
+    caller decides what to do to the pointer.
+
+    Should fix 4 (reviewer round 1), narrowed by Fix round 3 (shared-service
+    contract facts, PR #87): 404/410 mean the draft is already gone
+    shared-service side - ``_CLOSE_GONE``, clearing the pointer rather than
+    re-POSTing the same dead draft_id every 15 minutes forever. 409
+    (``transition_blocked``) means the draft is still OPEN - the tenant's
+    status set blocks draft to rejected - so the pointer is kept
+    (``_CLOSE_BLOCKED``). 422 is a sorento payload bug, never a gone draft -
+    the pointer is kept and the failure logged at error level with the
+    response detail (``_CLOSE_PAYLOAD_ERROR``). Anything else (401/403/408/429,
+    5xx, transport) is a request failure, not a gone draft - ``_CLOSE_RETRY``,
+    same as today (AC-1407).
+
+    A 200 response always carries a terminal status per the contract (a
+    cancel call either closes the draft or 409s); the returned ``status`` is
+    still checked defensively rather than trusting any 200 blindly."""
     config = _resolve_ideation_config(db)
     if not config.is_ready:
-        return False
+        return _CLOSE_RETRY
     payload: dict[str, Any] = {
         "product_id": config.product_id,
         "submitter_contact_id": phone_number,
@@ -953,7 +995,7 @@ def _close_idle_ideation_draft(
     if draft_id:
         payload["draft_id"] = draft_id
     try:
-        call_create_idea(config.base_url, config.api_key, payload)
+        result = call_create_idea(config.base_url, config.api_key, payload)
     except IdeationServiceError as exc:
         if exc.status_code in _DRAFT_GONE_STATUS_CODES:
             logger.warning(
@@ -962,12 +1004,37 @@ def _close_idle_ideation_draft(
                 exc.status_code,
                 respond_io_id,
             )
-            return True
+            return _CLOSE_GONE
+        if exc.status_code == 409:
+            logger.warning(
+                "ideation idle sweep: close blocked (409 transition_blocked) for "
+                "respond_io_id=%s - the tenant blocks draft to rejected; recording "
+                "the block and skipping this draft until the pointer changes",
+                respond_io_id,
+            )
+            return _CLOSE_BLOCKED
+        if exc.status_code == 422:
+            logger.error(
+                "ideation idle sweep: close got 422 for respond_io_id=%s (sorento "
+                "payload bug, not a gone draft) - %s",
+                respond_io_id,
+                exc.response_detail,
+            )
+            return _CLOSE_PAYLOAD_ERROR
         logger.warning(
             "ideation idle sweep: close outage for respond_io_id=%s", respond_io_id, exc_info=True
         )
-        return False
-    return True
+        return _CLOSE_RETRY
+    status_val = str(result.get("status") or "")
+    if status_val in _TERMINAL_STATUSES:
+        return _CLOSE_GONE
+    logger.warning(
+        "ideation idle sweep: close got 200 with unexpected status=%r for "
+        "respond_io_id=%s - keeping the pointer for retry",
+        status_val,
+        respond_io_id,
+    )
+    return _CLOSE_RETRY
 
 
 def sweep_idle_ideation_drafts(db: Session, *, now: datetime | None = None) -> dict[str, int]:
@@ -1031,13 +1098,22 @@ def sweep_idle_ideation_drafts(db: Session, *, now: datetime | None = None) -> d
 
             if (now - reminded_at) < _IDLE_CLOSE_AFTER:
                 continue
-            closed_ok = _close_idle_ideation_draft(
+            # Fix round 3: a draft already recorded as blocked (409) or that
+            # spent its payload-error retry budget (422) is skipped without
+            # calling shared-service again - "not re-sent every tick" - until
+            # a live turn rebuilds the pointer from scratch (handle_turn never
+            # carries these fields forward).
+            if ideation.get("close_blocked_at") or (
+                int(ideation.get("close_retry_count") or 0) >= _MAX_CLOSE_PAYLOAD_ERROR_ATTEMPTS
+            ):
+                continue
+            outcome = _close_idle_ideation_draft(
                 db,
                 respond_io_id=contact.respond_io_id,
                 phone_number=contact.phone_number,
                 draft_id=ideation.get("draft_id"),
             )
-            if closed_ok:
+            if outcome == _CLOSE_GONE:
                 # Same race, same fix: re-read fresh, and only clear the
                 # pointer if it is still pointing at the draft we just closed -
                 # a live turn may have started a NEW draft while the close
@@ -1051,7 +1127,32 @@ def sweep_idle_ideation_drafts(db: Session, *, now: datetime | None = None) -> d
                         db, respond_io_id=contact.respond_io_id, state=new_session_vars
                     )
                 closed += 1
-            # else: outage - keep the pointer, the next tick retries (AC-1407).
+            elif outcome == _CLOSE_BLOCKED:
+                fresh_session_vars = get_for_contact(db, respond_io_id=contact.respond_io_id)
+                fresh_ideation = fresh_session_vars.get("ideation")
+                if fresh_ideation and fresh_ideation.get("draft_id") == ideation.get("draft_id"):
+                    new_ideation = dict(fresh_ideation)
+                    new_ideation["close_blocked_at"] = now.isoformat()
+                    new_session_vars = dict(fresh_session_vars)
+                    new_session_vars["ideation"] = new_ideation
+                    overwrite_for_contact(
+                        db, respond_io_id=contact.respond_io_id, state=new_session_vars
+                    )
+            elif outcome == _CLOSE_PAYLOAD_ERROR:
+                fresh_session_vars = get_for_contact(db, respond_io_id=contact.respond_io_id)
+                fresh_ideation = fresh_session_vars.get("ideation")
+                if fresh_ideation and fresh_ideation.get("draft_id") == ideation.get("draft_id"):
+                    new_ideation = dict(fresh_ideation)
+                    new_ideation["close_retry_count"] = (
+                        int(fresh_ideation.get("close_retry_count") or 0) + 1
+                    )
+                    new_session_vars = dict(fresh_session_vars)
+                    new_session_vars["ideation"] = new_ideation
+                    overwrite_for_contact(
+                        db, respond_io_id=contact.respond_io_id, state=new_session_vars
+                    )
+            # else _CLOSE_RETRY: outage/request failure - keep the pointer as
+            # is, the next tick retries (AC-1407).
         except Exception:  # noqa: BLE001 - one bad row must not sink the batch
             db.rollback()
             logger.exception(
