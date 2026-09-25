@@ -51,6 +51,16 @@ Every file in the archive is tagged with the type and processed individually.
 To create a packing list by hand (no file to read) instead, use **Create Packing List** in the
 toolbar's **Actions** menu.
 
+## Download a packing list
+
+Open a packing list and click the **gear** icon beside **Edit**:
+
+1. **Download packing list** queues the export and toasts *"Added to My Downloads"* - the same
+   pattern as downloading a complaint PDF: the workbook is built in the background, not the
+   instant you click.
+2. **Download history** opens this packing list's own downloads panel, listing every export
+   queued for it with its status, newest first; click a ready one to open or save it.
+
 ## Reading a supplier's own workbook instead
 
 Want the file's lines read and matched to a proforma invoice, rather than filed as-is? Upload it on
@@ -66,3 +76,5 @@ Invoices) rather than from an upload on this page.
   own workbook, read line by line and matched to an invoice
 * [Upload SPO](upload-spo.md) - the next step, once a packing list exists
 * [Manage folders and Quick Access](manage-resource-folders.md)
+* [Download a complaint as PDF](../technical-team/download-complaint-pdf.md) - the same
+  My Downloads pattern, on a different record

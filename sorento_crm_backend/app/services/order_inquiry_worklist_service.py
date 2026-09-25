@@ -2528,6 +2528,10 @@ class OrderInquiryWorklistService:
                     "id": str(allocation.id),
                     "sku": product_code,
                     "product_name": product_name,
+                    # R31b (stock debt lane): the document dialog's own `highlightLines`
+                    # names which line a demand line drew from - off this, not a second
+                    # lookup.
+                    "spo_line_number": allocation.spo_line_number,
                     "allocated": _qty_str(_dec(allocation.allocated_quantity)),
                     "received": _qty_str(_dec(allocation.quantity_received)),
                     "remaining": _qty_str(

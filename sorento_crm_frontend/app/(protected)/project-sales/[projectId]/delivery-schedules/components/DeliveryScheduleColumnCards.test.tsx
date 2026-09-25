@@ -109,10 +109,10 @@ describe('DeliveryScheduleColumnCards', () => {
     render(<DeliveryScheduleColumnCards controller={controller()} />);
     const cards = within(screen.getByTestId('schedule-columns-mobile'));
 
-    expect(cards.queryByLabelText('Phase 3, SRTFV1001')).toBeNull();
+    expect(cards.queryByLabelText('Area 3, SRTFV1001')).toBeNull();
 
     fireEvent.click(cards.getAllByRole('button', { expanded: false })[0]);
-    expect(cards.getByLabelText('Phase 3, SRTFV1001')).toHaveValue('8');
+    expect(cards.getByLabelText('Area 3, SRTFV1001')).toHaveValue('8');
     // A blank cell stays blank: TOWER does not take this product.
     expect(cards.getByLabelText('Level 2 & 7, SRTFV1001')).toHaveValue('');
   });
@@ -122,10 +122,10 @@ describe('DeliveryScheduleColumnCards', () => {
     const cards = within(screen.getByTestId('schedule-columns-mobile'));
 
     fireEvent.click(cards.getAllByRole('button', { expanded: false })[0]);
-    expect(cards.getByLabelText('Phase 3, SRTFV1001')).toBeInTheDocument();
+    expect(cards.getByLabelText('Area 3, SRTFV1001')).toBeInTheDocument();
 
     fireEvent.click(cards.getAllByRole('button', { expanded: false })[0]);
-    expect(cards.queryByLabelText('Phase 3, SRTFV1001')).toBeNull();
+    expect(cards.queryByLabelText('Area 3, SRTFV1001')).toBeNull();
   });
 
   it('locks an unidentified column and offers the picker with its blockers', () => {
@@ -176,7 +176,7 @@ describe('DeliveryScheduleColumnCards', () => {
         <DeliveryScheduleColumnCards controller={controller()} />,
       );
       const cards = within(screen.getByTestId('schedule-columns-mobile'));
-      expect(cards.queryByLabelText('Phase 3, SRTFV1001')).toBeNull();
+      expect(cards.queryByLabelText('Area 3, SRTFV1001')).toBeNull();
 
       rerender(
         <DeliveryScheduleColumnCards

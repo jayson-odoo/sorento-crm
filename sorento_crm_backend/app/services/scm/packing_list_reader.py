@@ -30,7 +30,7 @@ from typing import Any, Optional
 
 from sqlalchemy.orm import Session
 
-from app.services.import_alias_service import AliasResolver, normalize_header
+from app.services.import_alias_service import AliasResolver, IGNORE_FIELD, normalize_header
 from app.services.scm.currency_resolution import price_column_currency
 from app.services.scm.outstanding_reader import RowProblem, sheet_rows
 
@@ -49,7 +49,11 @@ REQUIRED_COLUMNS = _REQUIRED_COLUMNS
 #: number/date, when it states one - what the packing-list-alone attach resolution matches
 #: a proforma invoice by, same convention `proforma_invoice_reader._BLOCK_FIELDS` already
 #: uses for its own five.
-_BLOCK_FIELDS = ("container_no", "bl_no", "seal_no", "consignee", "pi_number", "invoice_date")
+#: `so_no` (R-E, owner ruling 25 Sep): the forwarder's booking/SO reference, distinct from
+#: `bl_no` now - no shared alias seeds it; the operator maps a label to it per supplier.
+_BLOCK_FIELDS = (
+    "container_no", "bl_no", "so_no", "seal_no", "consignee", "pi_number", "invoice_date",
+)
 
 #: A cell may state TWO block fields side by side (`箱号:WHSU6243088 / 封签号:WHA4528193`,
 #: the Jiexia sample). Split on the supplier's own separator BEFORE the label test, so both
@@ -172,6 +176,9 @@ class PackingBlock:
     index: int
     container_no: Optional[str] = None
     bl_no: Optional[str] = None
+    #: The forwarder's booking/SO reference (R-E, owner ruling 25 Sep) - distinct from
+    #: `bl_no` now, mapped per supplier. Per block, like `bl_no`/`container_no`.
+    so_no: Optional[str] = None
     #: The container's seal number (`封签号`, R13). Per block, never carried over: two
     #: containers in one file never share a seal.
     seal_no: Optional[str] = None
@@ -332,8 +339,150 @@ def _is_header(mapped: dict[int, str], required: tuple[str, ...] = _REQUIRED_COL
     return all(f in values for f in required)
 
 
+#: A colon, either width - the only thing `_split_label_pairs` ever splits a cell on.
+_COLON_RE = re.compile(r"[：:]")
+
+#: R9 (review round 1, security S1): bounds against a pathological cell - a supplier
+#: field nobody sanitises before it reaches `_split_label_pairs`. Applied only to the
+#: mapper's `any_label=True` probe path, which (unlike the reader path, R3(a)) has no
+#: early exit of its own: a cell is cut to this many characters before any splitting is
+#: attempted, and the label-boundary lookback tries at most this many trailing tokens.
+_MAX_LABEL_CELL_CHARS = 500
+_MAX_LABEL_LOOKBACK_TOKENS = 4
+#: `header_field_candidates`' own response size cap (R9) - the mapper lists candidates
+#: for a human to map, not an unbounded dump of a malformed sheet.
+_MAX_HEADER_FIELD_CANDIDATES = 200
+#: Each candidate's own `label`/`sample` length cap (R9).
+_MAX_LABEL_FIELD_TEXT = 255
+
+
+def _split_label_pairs(
+    text: str,
+    resolver: Optional[AliasResolver],
+    fields: tuple[str, ...] = (),
+    *,
+    any_label: bool = False,
+    strict: bool = False,
+) -> list[tuple[str, str, Optional[str]]]:
+    """Every `label：value` pair in ONE string (design A1,
+    PLAN-pi-header-fields-convert-fixes-24sep.md) - DAFUYUAN's own header cell states three
+    in a row: `提单号 ：OOLU2339207730          柜号 ：FSCU9304169          封条号：OOLLGZ7182`.
+
+    A position counts as a label boundary when the run of non-whitespace text immediately
+    before its colon resolves, via `resolver.raw_field_for_header` (R1/R3(b), review round
+    1: a label a supplier saved as `ignore` counts as KNOWN here too - it still ends the
+    preceding value and is reported as field `"ignore"`, never treated as unresolved text -
+    only `_labelled`'s own consumption of the pairs below drops it from what gets written),
+    to one of `fields` (the default, A1's reader path - `_labelled` below) - an unrelated
+    colon inside running text is never mistaken for one, because nothing about it resolves.
+    `any_label=True` (F1's mapper-probe path, ruling 5) accepts EVERY such run regardless of
+    whether it resolves, so a label the alias table has never seen still shows up for the
+    operator to map; its `field` is then `None`. The `any_label` path is also where R9's
+    bounds against a pathological cell apply - not the reader path, which R3(a) below
+    already exits early on an unresolved first colon.
+
+    A value runs from just after its label's colon to the START of the next label (or the
+    end of the string), trimmed - unknown text in between (a stray note, another colon that
+    never resolved) stays with the PRECEDING pair's value rather than splitting it further,
+    since a real value here (a B/L number, a container number) never itself contains a
+    colon. An EMPTY value (`提单号：` immediately followed by the next label) drops the pair
+    entirely (AC-H2) - a blank bill of lading is not a stated one.
+
+    The label's own trailing tokens are tried shortest-first, never everything back to the
+    previous cut point (which would also carry the previous pair's whole value): the LAST
+    whitespace-delimited run before the colon first (`柜号`, `封条号`), then two runs
+    (`INVOICE NO.` - Jiexia's own English label is two words), and so on up to
+    `_MAX_LABEL_LOOKBACK_TOKENS` (R9), stopping at the first span that resolves. A candidate
+    that resolves at no width at all is not a label boundary here (the default, non-
+    `any_label` path) - an unrelated colon inside running text never matches anything, so
+    it is never mistaken for one.
+
+    R3(a)/S2/S3 (review rounds 1-2, note-row regression): `strict=True` is the READER's
+    MID-TABLE call only (after the table header row) - a label is accepted only at the
+    START of the cell (nothing but whitespace before the resolving span) or immediately
+    after the previous accepted pair's value, so a passing mention of a real label mid-
+    sentence never opens a document: the FIRST colon must resolve AND that resolution
+    must start the cell (`Please refer PI No.: 123`'s "PI No." resolves via the lookback,
+    but "Please refer " sits in front of it - disqualified, same as `Note: see PI No.:
+    123`, whose first colon does not resolve at all). Once one label has been accepted,
+    a later unresolved colon still merges into the running value as before - only the
+    very first PAIR is gated this way.
+
+    `strict=False` (the READER's PRE-HEADER call, and the default) is permissive: an
+    unresolved colon is simply skipped, never disqualifies the cell - a genuine header-
+    block cell may carry an unmapped prefix ahead of a real label (`Ref: X  提单号：
+    OOLU1`, S3) and must still yield `bl_no`, the same way a letterhead block always
+    could before R3(a). `any_label=True` (the MAPPER's own probe path) is permissive too,
+    for the same reason, plus it keeps every unmapped label (`field` is then `None`) so
+    the operator can map it.
+    """
+    if any_label and len(text) > _MAX_LABEL_CELL_CHARS:
+        text = text[:_MAX_LABEL_CELL_CHARS]
+    colon_positions = [m.start() for m in _COLON_RE.finditer(text)]
+    if not colon_positions:
+        return []
+    # (label_start, colon_pos, field) - field is None for an any_label match that no
+    # resolver/fields combination answers.
+    boundaries: list[tuple[int, int, Optional[str]]] = []
+    cut = 0
+    for pos in colon_positions:
+        candidate = text[cut:pos].rstrip()
+        tokens = list(re.finditer(r"\S+", candidate))
+        if not tokens:
+            continue
+        lookback = tokens[-_MAX_LABEL_LOOKBACK_TOKENS:]
+        label_start = None
+        label_field = None
+        for k in range(1, len(lookback) + 1):
+            start = lookback[-k].start()
+            f = resolver.raw_field_for_header(candidate[start:]) if resolver else None
+            if f in fields or f == IGNORE_FIELD:
+                label_start = start
+                label_field = f
+                break
+        if label_start is None:
+            if not any_label:
+                if strict and not boundaries:
+                    # R3(a): the cell's FIRST colon failed to resolve - a note, not a
+                    # header block. Nothing later in the same cell rescues it.
+                    return []
+                continue
+            label_start = tokens[-1].start()
+            label_field = None
+        elif strict and not boundaries:
+            # S2/S3: the FIRST pair's label must START the cell - text ahead of it
+            # (beyond whitespace) means this is prose that happens to CONTAIN a known
+            # label, not a header line introducing one.
+            if text[: cut + label_start].strip():
+                return []
+        boundaries.append((cut + label_start, pos, label_field))
+        cut = pos + 1
+    if not boundaries:
+        return []
+
+    pairs: list[tuple[str, str, Optional[str]]] = []
+    for i, (label_start, colon_pos, f) in enumerate(boundaries):
+        value_start = colon_pos + 1
+        value_end = boundaries[i + 1][0] if i + 1 < len(boundaries) else len(text)
+        value = text[value_start:value_end].strip()
+        # A value immediately followed by ANOTHER label carries that label's own leading
+        # separator in its slice (`货柜号:ABCU1 / 提单号:BL-9` - the trailing " / " belongs
+        # to NEITHER pair) - trimmed only at the tail, and only a bare `/`/`／` with no
+        # second label of its OWN behind it (`_is_label`'s same distinction, AC-F9): a
+        # value that genuinely ends in a slash (no label follows) never reaches here
+        # because nothing after it gets sliced off in the first place.
+        if i + 1 < len(boundaries):
+            value = re.sub(r"\s*[/／]\s*$", "", value).strip()
+        if not value:
+            continue
+        label_text = text[label_start:colon_pos].strip()
+        pairs.append((label_text, value, f))
+    return pairs
+
+
 def _labelled(
-    raw: list, resolver: AliasResolver, fields: tuple[str, ...] = _BLOCK_FIELDS
+    raw: list, resolver: AliasResolver, fields: tuple[str, ...] = _BLOCK_FIELDS,
+    *, strict: bool = False,
 ) -> dict[str, str]:
     """Block-level values written as `label: value` or `label | value` in adjacent cells.
 
@@ -342,49 +491,44 @@ def _labelled(
     recorded as blank, because a blank container number and an absent one have to stay the
     same thing here (AC-G2).
 
-    A candidate value that is itself a LABEL - it resolves to a known header, or it simply
-    ends in a colon - is not a value, and ends the search for this field. The row
-    `提单号：` ... `Date 日期：` ... `31/07/2026` is a blank bill of lading followed by a
-    date; without this the scan walked past the second label and read the date as the B/L
-    number (AC-P2.4). The colon test is what corrects the PACKING-LIST channel, where
-    `Date 日期：` resolves to nothing at all and so would not be recognised as a label.
+    `strict` (S2/S3, review round 2) is the caller's own choice of which `_split_label_
+    pairs` gate applies: `True` for a MID-TABLE call (a note row's passing "PI No.:"
+    mention must never open a document), `False` (the default) for the PRE-HEADER
+    letterhead block, where an unmapped prefix ahead of a real label (`Ref: X  提单号：
+    OOLU1`) is common and must not throw the whole cell away. See `_split_label_pairs`'s
+    own docstring for the exact rule each mode applies.
 
-    A cell may ALSO state two of these fields side by side (`箱号:WHSU6243088 /
-    封签号:WHA4528193`, the Jiexia sample) - split on the supplier's own separator before the
-    inline colon test, so both land rather than only the first half of the cell (AC-F9).
+    Every `label：value` pair inside ONE cell is read by `_split_label_pairs` (A1) - this
+    also covers the two-fields-side-by-side shape (`箱号:WHSU6243088 / 封签号:WHA4528193`,
+    the Jiexia sample, AC-F9) with no separate handling: `_MULTI_SEP`'s own slash sits
+    between two labelled runs either way, and the split only ever fires where a KNOWN label
+    (one of `fields`) sits right before a colon, so `货柜号：ABCU1 / just a note` still reads
+    as the ONE value `ABCU1 / just a note` ("just a note" names no label of its own).
 
-    The split is refused unless what follows the separator carries a label of its own
-    (a colon): `_MULTI_SEP` only fires on a slash with whitespace either side now, but a
-    cell like `货柜号：ABCU1 / loaded first` would still match that shape without ALSO
-    checking for a second label, and "loaded first" is a note, not a second answer
-    (review round 1, purchasing consolidation batch lane C).
+    A cell holding no inline value at all - a bare label whose colon is followed by nothing,
+    or the next label immediately - falls through to the older cross-cell form: the label
+    alone, its value in the NEXT non-blank cell of the row, refused when that candidate
+    value is itself a label (`_is_label`) - `提单号：` ... `货柜号：ABCU1000009` must not read
+    the second label as the first field's value (AC-P2.4).
     """
     out: dict[str, str] = {}
     for pos, cell in enumerate(raw):
         label = _text(cell)
         if not label:
             continue
-        split = [p for p in _MULTI_SEP.split(label) if p.strip()]
-        if len(split) > 1 and any((":" in p or "：" in p) for p in split[1:]):
-            parts = split
-        else:
-            parts = [label]
-        matched_inline = False
-        for part in parts:
-            # `货柜号：XXXU123` in ONE cell is as common as two cells, so split on either colon.
-            inline = None
-            for sep in ("：", ":"):
-                if sep in part:
-                    head, _, tail = part.partition(sep)
-                    f = resolver.field_for_header(head)
-                    if f in fields and _text(tail):
-                        inline = (f, _text(tail))
-                    break
-            if inline:
-                out.setdefault(inline[0], inline[1])
-                matched_inline = True
-        if matched_inline:
-            continue
+        # R2 (review round 1): a non-string cell (a raw `datetime`, a number) is never fed
+        # to the splitter - only its OWN stringified form ever grows spurious colons
+        # (`00:00:00`) that resolve to nothing; a genuine label is always text.
+        if isinstance(cell, str):
+            pairs = _split_label_pairs(label, resolver, fields, strict=strict)
+            if pairs:
+                for _, value, f in pairs:
+                    # R1: a pair whose label was saved as `ignore` still bounded the
+                    # PRECEDING value (that already happened inside `_split_label_pairs`)
+                    # but writes nothing of its own.
+                    if f and f != IGNORE_FIELD:
+                        out.setdefault(f, value)
+                continue
 
         f = resolver.field_for_header(label)
         if f in fields:
@@ -414,6 +558,112 @@ def _is_label(value: str, resolver: AliasResolver) -> bool:
         if sep in value:
             return resolver.field_for_header(value.partition(sep)[0]) is not None
     return False
+
+
+def _field_sample(value: Any) -> Optional[str]:
+    """The mapper's own display text for a header-field VALUE (R2, review round 1) - a raw
+    `datetime`/`date` cell formats as a plain ISO date, never Python's `str(datetime)`
+    (which carries a trailing `00:00:00` nobody typed on the sheet)."""
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    return _text(value)
+
+
+def header_field_candidates(
+    rows: list, resolver: Optional[AliasResolver], fields: tuple[str, ...],
+) -> list[dict]:
+    """Every `label：value` pair the mapper's own "Header fields" section lists (F1,
+    PLAN-pi-header-fields-convert-fixes-24sep.md, R-D) - `rows` is normally every row ABOVE
+    the table's header row. Unlike `_labelled` (the reader's own A1 path, which only ever
+    accepts a KNOWN label), this accepts ANY `label：value`-shaped run so an unmapped label
+    still lands on screen for the operator to answer (ruling 5) - `field` is `None` for one
+    `resolver` cannot place among `fields` yet.
+
+    Two shapes, the same two `_labelled` reads: a cell stating the pair inline (DAFUYUAN's
+    `提单号 ：OOLU… 柜号 ：FSCU… 封条号：OOLLGZ7182`, three from ONE cell), and a bare label
+    cell whose value sits in the NEXT cell of the same row (`Date:` | `22/09/2026`) - the
+    second shape stays resolver-gated (only a label `resolver` already knows anything about
+    can be told apart from a genuine title cell with no answer anywhere near it).
+
+    R2 (review round 1): the cross-cell shape's VALUE cell is resolved FIRST and recorded as
+    consumed, before the inline pass runs, so that value cell is never ALSO fed to
+    `_split_label_pairs` on its own account - a raw `datetime` value's stringified form
+    (`2026-09-22 00:00:00`) would otherwise yield a spurious `"00"` label of its own. Only a
+    genuine text cell is ever split inline; a non-string cell can only ever be a cross-cell
+    VALUE, never a label.
+
+    R9: bounded against a pathological cell - at most `_MAX_HEADER_FIELD_CANDIDATES`
+    entries total, each `label`/`sample` cut to `_MAX_LABEL_FIELD_TEXT` characters.
+    """
+    out: list[dict] = []
+    for row_idx, raw in enumerate(rows):
+        if len(out) >= _MAX_HEADER_FIELD_CANDIDATES:
+            break
+        row_no = row_idx + 1
+        consumed: set[int] = set()
+        cross_cell: list[tuple[str, Any, str]] = []
+        if resolver is not None:
+            for pos, cell in enumerate(raw):
+                text = _text(cell)
+                if not text:
+                    continue
+                f = resolver.raw_field_for_header(text)
+                if f not in fields and f != IGNORE_FIELD:
+                    continue
+                for nxt_pos in range(pos + 1, len(raw)):
+                    nxt = raw[nxt_pos]
+                    val_text = _text(nxt)
+                    if val_text is None:
+                        continue
+                    if not _is_label(val_text, resolver):
+                        cross_cell.append((text, nxt, f))
+                        consumed.add(nxt_pos)
+                    break
+
+        inline_positions: set[int] = set(consumed)
+        for pos, cell in enumerate(raw):
+            if pos in inline_positions or not isinstance(cell, str):
+                continue
+            text = _text(cell)
+            if not text:
+                continue
+            pairs = _split_label_pairs(text, resolver, fields, any_label=True)
+            if not pairs:
+                continue
+            inline_positions.add(pos)
+            for label, value, f in pairs:
+                source = (resolver.source_for_header(label) if (resolver and f) else None) or "none"
+                out.append(
+                    {
+                        "row": row_no,
+                        "label": label[:_MAX_LABEL_FIELD_TEXT],
+                        "sample": value[:_MAX_LABEL_FIELD_TEXT],
+                        "field": f,
+                        "source": source,
+                    }
+                )
+                if len(out) >= _MAX_HEADER_FIELD_CANDIDATES:
+                    break
+            if len(out) >= _MAX_HEADER_FIELD_CANDIDATES:
+                break
+
+        for label, raw_value, f in cross_cell:
+            if len(out) >= _MAX_HEADER_FIELD_CANDIDATES:
+                break
+            source = resolver.source_for_header(label) or "none"
+            sample = _field_sample(raw_value) or ""
+            out.append(
+                {
+                    "row": row_no,
+                    "label": label[:_MAX_LABEL_FIELD_TEXT],
+                    "sample": sample[:_MAX_LABEL_FIELD_TEXT],
+                    "field": f,
+                    "source": source,
+                }
+            )
+    return out[:_MAX_HEADER_FIELD_CANDIDATES]
 
 
 def _line_from(raw: list, col_field: dict[int, str], row_number: int) -> Optional[PackingLine]:
@@ -608,6 +858,7 @@ def read_workbook(
                 index=len(result.blocks) + 1,
                 container_no=pending.get("container_no"),
                 bl_no=pending.get("bl_no"),
+                so_no=pending.get("so_no"),
                 seal_no=pending.get("seal_no"),
                 consignee=pending.get("consignee") or sticky_consignee,
                 pi_number=pending.get("pi_number"),
@@ -620,6 +871,8 @@ def read_workbook(
                 current.container_no = pending["container_no"]
             if pending.get("bl_no"):
                 current.bl_no = pending["bl_no"]
+            if pending.get("so_no"):
+                current.so_no = pending["so_no"]
             if pending.get("seal_no"):
                 current.seal_no = pending["seal_no"]
             if pending.get("consignee"):
@@ -662,6 +915,7 @@ def read_workbook(
                 index=len(result.blocks) + 1,
                 container_no=pending.get("container_no"),
                 bl_no=pending.get("bl_no"),
+                so_no=pending.get("so_no"),
                 seal_no=pending.get("seal_no"),
                 consignee=pending.get("consignee") or sticky_consignee,
                 pi_number=pending.get("pi_number"),
@@ -695,7 +949,7 @@ def read_workbook(
             # `pending` rather than acted on immediately: a REPEATED header row right after
             # this one is what actually starts the block (existing shape, above), and
             # deciding here too would create it twice.
-            found = _labelled(raw, resolver)
+            found = _labelled(raw, resolver, strict=True)
             if found:
                 pending.update(found)
                 if current is not None and current.lines:
@@ -770,6 +1024,7 @@ def _split_by_container_column(
                     index=0,
                     container_no=key or block.container_no,
                     bl_no=block.bl_no,
+                    so_no=block.so_no,
                     # The table carries ONE seal/consignee/note set, stated once above the
                     # whole table rather than per container column value - carried onto
                     # EVERY split-off block rather than only the first (S2, review round 1).

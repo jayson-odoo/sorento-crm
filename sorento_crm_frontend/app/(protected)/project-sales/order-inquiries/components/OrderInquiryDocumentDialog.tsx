@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { Badge } from '@/components/ui/badge';
 import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { statusPillClass } from '@/lib/status-pill';
@@ -50,6 +51,7 @@ export function OrderInquiryDocumentDialog({
   suggestedLineId,
   open,
   onOpenChange,
+  highlightLines,
 }: {
   kind: 'po' | 'spo';
   /** `202607-S0105` or `SPO-2026/08-0015`. Never an id: it is what the buyer quotes. */
@@ -78,6 +80,12 @@ export function OrderInquiryDocumentDialog({
   suggestedLineId?: string | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /**
+   * R31b (stock debt lane): the SPO line numbers a CALLER's own line drew from - marks
+   * the matching row with a "Linked" badge and offers a "Go to linked line" jump. SPO
+   * only (an SPO line's own number is what this names); the PO body ignores it.
+   */
+  highlightLines?: number[];
 }) {
   // R16 (owner rulings, 25 Sep 2026): "1 button to quickly jump to the linked line" -
   // a PO with 178 lines left the linked one, on page 7, unreachable without paging by
@@ -85,7 +93,14 @@ export function OrderInquiryDocumentDialog({
   // real link always wins the LABEL over a suggestion (the two callers never set both
   // at once in practice, but a row can hold both, R11).
   const linkedLineId = kind === 'po' ? (poLineId ?? null) : (spoLineId ?? null);
-  const highlightedLineId = linkedLineId ?? suggestedLineId ?? null;
+  // R31b (stock debt lane): `highlightLines` names a line by NUMBER, with no id of its
+  // own for the header button to hold yet - the real id is resolved once the SPO data
+  // loads (`SpoBody`'s own `highlightLineRowId`), but the button's enabled state can't
+  // wait for that, so a placeholder unblocks it as soon as the caller names a line at
+  // all. SPO only, matching `highlightLines` itself (the PO body ignores it).
+  const hasHighlightLines = kind === 'spo' && Boolean(highlightLines && highlightLines.length);
+  const highlightedLineId =
+    linkedLineId ?? suggestedLineId ?? (hasHighlightLines ? '__highlighted__' : null);
   // "Go to suggested line" only when the dialog was opened from the Suggested cell -
   // a real link, or nothing highlighted at all, both read the default label.
   const goToLabel = !linkedLineId && suggestedLineId ? 'Go to suggested line' : 'Go to linked line';
@@ -127,6 +142,7 @@ export function OrderInquiryDocumentDialog({
               goToLineId={highlightedLineId}
               goToNonce={goToNonce}
               open={open}
+              highlightLines={highlightLines}
             />
           )}
         </DialogBody>
@@ -225,6 +241,7 @@ export function OrderInquiryDocumentLink({
   poLineId,
   spoLineId,
   suggestedLineId,
+  highlightLines,
 }: {
   kind: 'po' | 'spo';
   document: string;
@@ -233,6 +250,7 @@ export function OrderInquiryDocumentLink({
   /** R15: the `spo_allocations` row this REAL link sits on. Ignored for kind `po`. */
   spoLineId?: string | null;
   suggestedLineId?: string | null;
+  highlightLines?: number[];
 }) {
   const [open, setOpen] = React.useState(false);
   return (
@@ -259,6 +277,7 @@ export function OrderInquiryDocumentLink({
           suggestedLineId={suggestedLineId}
           open
           onOpenChange={setOpen}
+          highlightLines={highlightLines}
         />
       ) : null}
     </>
@@ -405,19 +424,35 @@ const PO_LINE_COLUMNS: ColumnDef<OrderInquiryPoDetailLine>[] = [
   },
 ];
 
-const SPO_LINE_COLUMNS: ColumnDef<OrderInquirySpoDetailLine>[] = [
-  {
-    id: 'sku',
-    accessorFn: (line) => line.sku ?? '',
-    header: ({ column }) => <DataGridColumnHeader title="SKU" column={column} />,
-    cell: ({ row }) => (
-      <SkuCellContent sku={row.original.sku} name={row.original.product_name} />
-    ),
-    size: 220,
-    meta: { headerTitle: 'SKU' },
-  },
-  {
-    accessorKey: 'allocated',
+/**
+ * R31b: a FACTORY, not a module constant like `PO_LINE_COLUMNS` beside it - the SKU
+ * cell's own "Linked" badge depends on `highlightLines`, a prop, so the columns are
+ * rebuilt (memoized in `SpoBody`) whenever the caller's own set of linked lines changes.
+ */
+function buildSpoLineColumns(
+  linkedLineNumbers: Set<number>,
+): ColumnDef<OrderInquirySpoDetailLine>[] {
+  return [
+    {
+      id: 'sku',
+      accessorFn: (line) => line.sku ?? '',
+      header: ({ column }) => <DataGridColumnHeader title="SKU" column={column} />,
+      cell: ({ row }) => (
+        <div className="flex min-w-0 items-center gap-1.5">
+          <SkuCellContent sku={row.original.sku} name={row.original.product_name} />
+          {row.original.spo_line_number != null &&
+            linkedLineNumbers.has(row.original.spo_line_number) && (
+              <Badge size="sm" variant="secondary" appearance="light" className="shrink-0">
+                Linked
+              </Badge>
+            )}
+        </div>
+      ),
+      size: 220,
+      meta: { headerTitle: 'SKU' },
+    },
+    {
+      accessorKey: 'allocated',
     header: ({ column }) => (
       <DataGridColumnHeader title="Allocated" column={column} className="justify-end" />
     ),
@@ -479,7 +514,8 @@ const SPO_LINE_COLUMNS: ColumnDef<OrderInquirySpoDetailLine>[] = [
     size: 140,
     meta: { headerTitle: 'Source PO' },
   },
-];
+  ];
+}
 
 /** Both SKU and location, one input (AC-B2/AC-B3) - case-insensitive substring, client-side. */
 function searchOfLine(line: { sku?: string | null; product_name?: string | null; location?: string | null }) {
@@ -605,6 +641,19 @@ function PoBody({
   );
 }
 
+/** `getRowId`'s own id for one line - the row's own `id` when the book states one (the
+ *  usual case, and what `spoLineId`/`suggestedLineId` themselves are), else a stand-in
+ *  keyed by `spo_line_number` or by SKU/location - an R31b caller (stock debt) may know
+ *  only the line NUMBER, never the row's id. The SAME id `focusRowId` below names, so a
+ *  jump and a row can never disagree about which one they mean. Single parameter,
+ *  matching `PanelDataGrid`'s own `getRowId` signature exactly. */
+function spoLineRowId(line: OrderInquirySpoDetailLine): string {
+  if (line.id) return line.id;
+  return line.spo_line_number != null
+    ? `line-${line.spo_line_number}`
+    : `row-${line.sku ?? ''}-${line.location ?? ''}`;
+}
+
 function SpoBody({
   spoNumber,
   spoLineId,
@@ -612,6 +661,7 @@ function SpoBody({
   goToLineId,
   goToNonce = 0,
   open,
+  highlightLines,
 }: {
   spoNumber: string;
   /**
@@ -626,10 +676,31 @@ function SpoBody({
   goToLineId?: string | null;
   goToNonce?: number;
   open: boolean;
+  /**
+   * R31b (stock debt lane): the SPO line numbers a CALLER's own line drew from - marks
+   * the matching row with a "Linked" badge and rides the SAME go-to/highlight path a
+   * real `spoLineId` does (`highlightLineRowId` below), rather than a second mechanism.
+   * Ignored on the PO body.
+   */
+  highlightLines?: number[];
 }) {
   const { data, isLoading, isError } = useOrderInquirySpoDetail(spoNumber, { enabled: open });
   const containerRef = React.useRef<HTMLDivElement | null>(null);
   useGoToHighlightedLine(containerRef, goToNonce);
+
+  const linkedLineNumbers = React.useMemo(() => new Set(highlightLines ?? []), [highlightLines]);
+  const columns = React.useMemo(() => buildSpoLineColumns(linkedLineNumbers), [linkedLineNumbers]);
+  // R31b: resolve `highlightLines` (a NUMBER) to the matching row's own id, once the
+  // data is in, so it can ride the exact highlight/go-to path a real `spoLineId` does.
+  const highlightLineRowId = React.useMemo(() => {
+    if (!linkedLineNumbers.size) return null;
+    const match = (data?.lines ?? []).find(
+      (line) => line.spo_line_number != null && linkedLineNumbers.has(line.spo_line_number),
+    );
+    return match ? spoLineRowId(match) : null;
+  }, [data, linkedLineNumbers]);
+  const effectiveSpoLineId = spoLineId ?? highlightLineRowId;
+  const effectiveGoToLineId = spoLineId ?? suggestedLineId ?? highlightLineRowId ?? goToLineId ?? null;
 
   if (isLoading) return <LoadingBody />;
   if (isError || !data) {
@@ -655,9 +726,9 @@ function SpoBody({
 
       <PanelDataGrid<OrderInquirySpoDetailLine>
         title="Lines"
-        columns={SPO_LINE_COLUMNS}
+        columns={columns}
         rows={data.lines}
-        getRowId={(line) => line.id ?? ''}
+        getRowId={spoLineRowId}
         listingKey="projects.projects.view::order-inquiry-spo-lines"
         emptyTitle="This shipping order carries no lines."
         searchOf={searchOfLine}
@@ -666,20 +737,25 @@ function SpoBody({
         scrollerMaxHeight={false}
         // R16: same idiom as the PO lightbox - the grid's own pagination state, only
         // engaged once the reader presses Go to.
-        focusRowId={goToNonce ? (goToLineId ?? null) : null}
+        focusRowId={goToNonce ? effectiveGoToLineId : null}
         // Should fix 1 (review round 2): same reasoning as the PO lightbox above -
         // a second press must jump again even though `goToLineId` never changes.
         focusRequestKey={goToNonce}
-        // R15: the SPO lightbox highlights its own linked/suggested line exactly the
-        // way the PO lightbox already does - `spoLineId` is the OI row's real link's
-        // own `spo_allocation_id`, never a re-match by product or source PO number.
+        // R15/R31b: the SPO lightbox highlights its own linked/suggested/counted line
+        // exactly the way the PO lightbox already does - `spoLineId` is the OI row's
+        // real link's own `spo_allocation_id`; `highlightLineRowId` is the same idiom
+        // resolved from a caller's `highlightLines` line number (stock debt), never a
+        // re-match by product or source PO number.
         rowClassName={(line) =>
-          (spoLineId && line.id === spoLineId) || (suggestedLineId && line.id === suggestedLineId)
+          (effectiveSpoLineId && spoLineRowId(line) === effectiveSpoLineId) ||
+          (suggestedLineId && line.id === suggestedLineId)
             ? 'bg-primary/10'
             : undefined
         }
         rowAttributes={(line) => ({
-          ...(spoLineId && line.id === spoLineId ? { 'data-linked-line': 'true' } : {}),
+          ...(effectiveSpoLineId && spoLineRowId(line) === effectiveSpoLineId
+            ? { 'data-linked-line': 'true' }
+            : {}),
           ...(suggestedLineId && line.id === suggestedLineId
             ? { 'data-suggested-line': 'true' }
             : {}),

@@ -53,6 +53,22 @@ export interface ImportMappingField {
   label: string;
 }
 
+/** One `label：value` pair found ABOVE the table's header row (or in its footer rows) -
+ *  PLAN-pi-header-fields-convert-fixes-24sep.md F1/F2, R-D: the PI's own BL/container/seal
+ *  block, often three pairs in one cell (DAFUYUAN), rather than a table column. `field` is
+ *  the resolver's current answer, block fields only (`pi_number`, `invoice_date`, `bl_no`,
+ *  `container_no`, `seal_no`, `currency`) - `consignee` is never offered (R-B: always the
+ *  PI's own company, never read off the sheet). */
+export interface ImportMappingHeaderField {
+  row: number;
+  /** The label exactly as the sheet states it (AC-F1) - never re-typed, colon included or
+   *  not, whichever the sheet itself carries ("提单号" vs "Date:"). */
+  label: string;
+  sample: string;
+  field: string | null;
+  source: 'supplier' | 'shared' | 'none';
+}
+
 /** What `POST .../import-mapping/probe` (B4) answers for one file. `header_row` is null
  *  when no row satisfied the heuristic (AC-M16) - the stepper still has to start
  *  somewhere, and row 1 is that starting point, not a guess dressed up as one. */
@@ -73,6 +89,20 @@ export interface ImportMappingProbe {
    *  Optional (a hand-built probe need not state it): absent, the stepper has no ceiling,
    *  same as before this field existed. */
   row_count?: number;
+  /** F1/R-D: every header-block `label：value` pair this file carries, for a doc type that
+   *  has such a block (proforma_invoice / packing_list). Absent for a doc type with none
+   *  (`supplier_inventory`), and absent on a hand-built probe from before this field
+   *  existed - the "Header fields" section below renders nothing either way. */
+  header_fields?: ImportMappingHeaderField[];
+  /** V2 (fix round 1, review): the "Header fields" section's OWN field choices, driven by
+   *  the doc type(s) this probe was run for - the block fields (`_BLOCK_FIELDS`) that
+   *  doc type's reader actually resolves, minus `consignee` (R-B: always the PI's own
+   *  company, never read off the sheet) - never a hard-coded superset that offers
+   *  Currency on a packing-list-only upload, which has no such field at all. A combined
+   *  file's probe unions both doc types' choices. Absent on a hand-built probe from
+   *  before this field existed, or a doc type with no header block at all
+   *  (`supplier_inventory`) - the section then offers nothing to pick, same as before. */
+  header_field_choices?: ImportMappingField[];
 }
 
 /** One header's pick, in the shape `onChange` reports it and `save` (B5) takes it -
@@ -115,6 +145,29 @@ export function ImportColumnMapper({
     {},
   );
   const [expanded, setExpanded] = useState(true);
+  // F2/R-D: the "Header fields" section's own picks, keyed by `${row}::${label}` (a probe
+  // can carry the same label twice on different rows) - and its own fold state, independent
+  // of the columns section above (F2: "same folded/open rule", not the SAME fold).
+  const [headerSelections, setHeaderSelections] = useState<Record<string, string | null>>({});
+  const [headerExpanded, setHeaderExpanded] = useState(true);
+
+  const headerFields = probe.header_fields ?? [];
+  const headerFieldKey = (hf: ImportMappingHeaderField) => `${hf.row}::${hf.label}`;
+
+  /** Both sections' current picks, combined into the ONE selections array `onChange`
+   *  reports (F3: "writes label -> field rows exactly like column rows, same table"). */
+  const emitChange = (
+    columnPicks: Record<string, string | null>,
+    headerPicks: Record<string, string | null>,
+  ) => {
+    const columnSelections: ImportMappingSelection[] = probe.columns
+      .filter((c) => columnPicks[c.header])
+      .map((c) => ({ header: c.header, field: columnPicks[c.header] as string }));
+    const headerFieldSelections: ImportMappingSelection[] = headerFields
+      .filter((hf) => headerPicks[headerFieldKey(hf)])
+      .map((hf) => ({ header: hf.label, field: headerPicks[headerFieldKey(hf)] as string }));
+    onChange([...columnSelections, ...headerFieldSelections]);
+  };
 
   useEffect(() => {
     const seeded: Record<string, string | null> = {};
@@ -125,11 +178,16 @@ export function ImportColumnMapper({
     // Expanded the moment one column is not yet known (R3); collapsed only when every
     // column already resolved BEFORE the operator touched anything.
     setExpanded(probe.columns.some((c) => c.field == null));
-    onChange(
-      probe.columns
-        .filter((c) => c.field != null)
-        .map((c) => ({ header: c.header, field: c.field as string })),
-    );
+
+    const nextHeaderFields = probe.header_fields ?? [];
+    const seededHeader: Record<string, string | null> = {};
+    nextHeaderFields.forEach((hf) => {
+      seededHeader[headerFieldKey(hf)] = hf.field;
+    });
+    setHeaderSelections(seededHeader);
+    setHeaderExpanded(nextHeaderFields.some((hf) => hf.field == null));
+
+    emitChange(seeded, seededHeader);
     // Only the probe identity should reseed - `onChange` is a fresh closure every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [probe]);
@@ -142,15 +200,25 @@ export function ImportColumnMapper({
     () => fieldOptions.map((f) => ({ value: f.field, label: f.label })),
     [fieldOptions],
   );
+  const headerFieldOptions = useMemo(
+    () => [{ field: IGNORE_FIELD, label: 'Ignore' }, ...(probe.header_field_choices ?? [])],
+    [probe.header_field_choices],
+  );
+  const headerSelectOptions = useMemo(
+    () => headerFieldOptions.map((f) => ({ value: f.field, label: f.label })),
+    [headerFieldOptions],
+  );
 
   const pick = (header: string, field: string) => {
     const next = { ...selections, [header]: field || null };
     setSelections(next);
-    onChange(
-      probe.columns
-        .filter((c) => next[c.header])
-        .map((c) => ({ header: c.header, field: next[c.header] as string })),
-    );
+    emitChange(next, headerSelections);
+  };
+
+  const pickHeaderField = (key: string, field: string) => {
+    const next = { ...headerSelections, [key]: field || null };
+    setHeaderSelections(next);
+    emitChange(selections, next);
   };
 
   const total = probe.columns.length;
@@ -159,24 +227,11 @@ export function ImportColumnMapper({
   ).length;
   const allKnown = total > 0 && knownCount === total;
 
-  if (allKnown && !expanded) {
-    return (
-      <div className="flex items-center justify-between gap-2 rounded-md border border-dashed p-2 text-xs text-muted-foreground">
-        <span>
-          {total} of {total} column{total === 1 ? '' : 's'} mapped from saved
-          layout
-        </span>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={() => setExpanded(true)}
-        >
-          Review
-        </Button>
-      </div>
-    );
-  }
+  const headerTotal = headerFields.length;
+  const headerKnownCount = headerFields.filter(
+    (hf) => headerSelections[headerFieldKey(hf)] != null,
+  ).length;
+  const headerAllKnown = headerTotal > 0 && headerKnownCount === headerTotal;
 
   const currentSelections: ImportMappingSelection[] = probe.columns
     .filter((c) => selections[c.header])
@@ -186,94 +241,207 @@ export function ImportColumnMapper({
     fieldOptions.find((f) => f.field === field)?.label ?? field;
 
   return (
-    <div className="space-y-2 rounded-md border p-2.5">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <HeaderRowStepper
-          row={probe.header_row}
-          maxRow={probe.row_count}
-          onChange={onHeaderRowChange}
-          disabled={busy}
-        />
+    <div className="space-y-4 rounded-md border p-2.5">
+      {headerFields.length ? (
+        // Owner ruling (25 Sep): two VISUALLY DISTINCT titled sections, Header fields
+        // above Line fields - a small semibold label over a muted divider, same style
+        // both sections share, with enough gap between them (the outer `space-y-4`)
+        // that they never read as one table.
+        <section className="space-y-2">
+          <div className="border-b pb-1.5">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Header fields
+            </p>
+          </div>
+          {headerAllKnown && !headerExpanded ? (
+            <div className="flex items-center justify-between gap-2 rounded-md border border-dashed p-2 text-xs text-muted-foreground">
+              <span>
+                {headerTotal} of {headerTotal} header field{headerTotal === 1 ? '' : 's'} mapped
+                from saved layout
+              </span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setHeaderExpanded(true)}
+              >
+                Review
+              </Button>
+            </div>
+          ) : (
+            <>
+              <div
+                className="hidden gap-2 px-1.5 text-2xs uppercase tracking-wide text-muted-foreground/70 sm:grid sm:grid-cols-[1fr_1fr_1fr]"
+                aria-hidden
+              >
+                <span>Sample</span>
+                <span>Label</span>
+                <span>Field</span>
+              </div>
+              <div className="space-y-1.5">
+                {headerFields.map((hf) => {
+                  const key = headerFieldKey(hf);
+                  const field = headerSelections[key] ?? null;
+                  const isNew = hf.source === 'none' && !field;
+                  return (
+                    <div
+                      key={key}
+                      className={
+                        'grid grid-cols-1 gap-1.5 rounded-md p-1.5 sm:grid-cols-[1fr_1fr_1fr] sm:items-center sm:gap-2' +
+                        (isNew ? ' bg-primary/5 ring-1 ring-primary/20' : '')
+                      }
+                    >
+                      <div
+                        className="order-1 min-w-0 whitespace-pre-line text-xs sm:order-2"
+                        title={hf.label}
+                      >
+                        {hf.label}
+                      </div>
+                      <div
+                        className="order-2 min-w-0 truncate text-2xs text-muted-foreground sm:order-1"
+                        title={hf.sample}
+                      >
+                        {hf.sample || <span className="italic">no sample</span>}
+                      </div>
+                      <div className="order-3 sm:order-3">
+                        <SearchableSelect
+                          size="sm"
+                          value={field ?? ''}
+                          onChange={(v: string) => pickHeaderField(key, v)}
+                          options={headerSelectOptions}
+                          selectedOption={
+                            field
+                              ? headerSelectOptions.find((o) => o.value === field)
+                              : undefined
+                          }
+                          placeholder="Choose a field"
+                          clearable
+                          disabled={busy}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </section>
+      ) : null}
+      <section className="space-y-2">
+        {/* Owner ruling (25 Sep): the Header row stepper - it still drives the Header
+            fields scan above as well, unchanged - now lives in THIS section's own title
+            row, since the control belongs with the lines it paginates rather than
+            floating above both sections. */}
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-1.5">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Line fields
+          </p>
+          <HeaderRowStepper
+            row={probe.header_row}
+            maxRow={probe.row_count}
+            onChange={onHeaderRowChange}
+            disabled={busy}
+          />
+        </div>
         {missingRequired.length ? (
           <p className="flex items-center gap-1.5 text-2xs text-destructive">
             <TriangleAlert className="size-3.5 shrink-0" />
             Still needed: {missingRequired.map(requiredLabel).join(', ')}
           </p>
         ) : null}
-      </div>
-      {probe.header_row == null ? (
-        <p className="flex items-center gap-1.5 text-2xs text-destructive">
-          <TriangleAlert className="size-3.5 shrink-0" />
-          No header row was found.
-        </p>
-      ) : null}
-      {probe.columns.length ? (
-        <div
-          className="hidden gap-2 px-1.5 text-2xs uppercase tracking-wide text-muted-foreground/70 sm:grid sm:grid-cols-[1fr_1fr_1fr]"
-          aria-hidden
-        >
-          <span>Sample</span>
-          <span>Column</span>
-          <span>Field</span>
-        </div>
-      ) : null}
-      <div className="space-y-1.5">
-        {probe.columns.map((c) => {
-          const field = selections[c.header] ?? null;
-          // A column this supplier has never mapped before stands out among otherwise
-          // pre-filled columns (AC-M12) - `source: 'none'` is exactly that - UNTIL the
-          // operator gives it a pick IN THIS SAME SESSION: the highlight means "you have
-          // never decided this one", and it has to stop the moment that stops being true,
-          // not stay keyed off the probe's own immutable snapshot (review round 1).
-          const isNew = c.source === 'none' && !field;
-          return (
-            <div
-              key={`${c.position}-${c.header}`}
-              className={
-                'grid grid-cols-1 gap-1.5 rounded-md p-1.5 sm:grid-cols-[1fr_1fr_1fr] sm:items-center sm:gap-2' +
-                (isNew ? ' bg-primary/5 ring-1 ring-primary/20' : '')
-              }
+        {probe.header_row == null ? (
+          <p className="flex items-center gap-1.5 text-2xs text-destructive">
+            <TriangleAlert className="size-3.5 shrink-0" />
+            No header row was found.
+          </p>
+        ) : null}
+        {allKnown && !expanded ? (
+          <div className="flex items-center justify-between gap-2 rounded-md border border-dashed p-2 text-xs text-muted-foreground">
+            <span>
+              {total} of {total} column{total === 1 ? '' : 's'} mapped from saved
+              layout
+            </span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setExpanded(true)}
             >
-              {/* Mobile (< 640px, review round 1 item 18): stacked in READING order - the
-                  column's own name first, then its sample data, then the pick. Desktop
-                  (>= 640px) keeps the Sample | Column | Field order the header row above
-                  names, via the `sm:order-*` overrides below. */}
+              Review
+            </Button>
+          </div>
+        ) : (
+          <div className="space-y-1.5">
+            {probe.columns.length ? (
               <div
-                className="order-1 min-w-0 whitespace-pre-line text-xs sm:order-2"
-                title={c.header}
+                className="hidden gap-2 px-1.5 text-2xs uppercase tracking-wide text-muted-foreground/70 sm:grid sm:grid-cols-[1fr_1fr_1fr]"
+                aria-hidden
               >
-                {c.header}
+                <span>Sample</span>
+                <span>Column</span>
+                <span>Field</span>
               </div>
-              <div
-                className="order-2 min-w-0 truncate text-2xs text-muted-foreground sm:order-1"
-                title={c.samples[0] ?? ''}
-              >
-                {c.samples[0] !== undefined ? (
-                  c.samples[0]
-                ) : (
-                  <span className="italic">no sample</span>
-                )}
-              </div>
-              <div className="order-3 sm:order-3">
-                <SearchableSelect
-                  size="sm"
-                  value={field ?? ''}
-                  onChange={(v: string) => pick(c.header, v)}
-                  options={selectOptions}
-                  selectedOption={
-                    field
-                      ? selectOptions.find((o) => o.value === field)
-                      : undefined
-                  }
-                  placeholder="Choose a field"
-                  clearable
-                  disabled={busy}
-                />
-              </div>
+            ) : null}
+            <div className="space-y-1.5">
+              {probe.columns.map((c) => {
+                const field = selections[c.header] ?? null;
+                // A column this supplier has never mapped before stands out among otherwise
+                // pre-filled columns (AC-M12) - `source: 'none'` is exactly that - UNTIL the
+                // operator gives it a pick IN THIS SAME SESSION: the highlight means "you have
+                // never decided this one", and it has to stop the moment that stops being true,
+                // not stay keyed off the probe's own immutable snapshot (review round 1).
+                const isNew = c.source === 'none' && !field;
+                return (
+                  <div
+                    key={`${c.position}-${c.header}`}
+                    className={
+                      'grid grid-cols-1 gap-1.5 rounded-md p-1.5 sm:grid-cols-[1fr_1fr_1fr] sm:items-center sm:gap-2' +
+                      (isNew ? ' bg-primary/5 ring-1 ring-primary/20' : '')
+                    }
+                  >
+                    {/* Mobile (< 640px, review round 1 item 18): stacked in READING order - the
+                        column's own name first, then its sample data, then the pick. Desktop
+                        (>= 640px) keeps the Sample | Column | Field order the header row above
+                        names, via the `sm:order-*` overrides below. */}
+                    <div
+                      className="order-1 min-w-0 whitespace-pre-line text-xs sm:order-2"
+                      title={c.header}
+                    >
+                      {c.header}
+                    </div>
+                    <div
+                      className="order-2 min-w-0 truncate text-2xs text-muted-foreground sm:order-1"
+                      title={c.samples[0] ?? ''}
+                    >
+                      {c.samples[0] !== undefined ? (
+                        c.samples[0]
+                      ) : (
+                        <span className="italic">no sample</span>
+                      )}
+                    </div>
+                    <div className="order-3 sm:order-3">
+                      <SearchableSelect
+                        size="sm"
+                        value={field ?? ''}
+                        onChange={(v: string) => pick(c.header, v)}
+                        options={selectOptions}
+                        selectedOption={
+                          field
+                            ? selectOptions.find((o) => o.value === field)
+                            : undefined
+                        }
+                        placeholder="Choose a field"
+                        clearable
+                        disabled={busy}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-          );
-        })}
-      </div>
+          </div>
+        )}
+      </section>
     </div>
   );
 }
