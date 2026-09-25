@@ -274,6 +274,61 @@ def test_portal_submit_accepts_sponsorship_line_with_unit_price(db):
     assert header.status == "submitted"
 
 
+def test_portal_first_save_draft_with_priceless_sponsorship_line_is_not_blocked(db):
+    """Should fix 1 (review round 1, PR #1232): the CREATE branch of
+    `create_or_update_draft` (`submission_id=None`, a dealer's very first Save
+    Draft) must never be gated - that rule lives only in `submit_draft`. Prior
+    coverage of AC-P4 only exercised the UPDATE branch, and only as a
+    precondition step inside the submit-refusal test, never standalone."""
+    contact_id = str(uuid.uuid4())
+    contact = RespondContact(
+        id=contact_id,
+        phone_number="+6019" + uuid.uuid4().hex[:7],
+        name=f"{MARKER} first-save dealer",
+    )
+    token = PortalToken(
+        id=str(uuid.uuid4()),
+        token="tok_" + uuid.uuid4().hex,
+        contact_id=contact_id,
+        space_id="space-1",
+        expires_at=datetime.utcnow() + timedelta(days=1),
+    )
+    db.add_all([contact, token])
+    db.commit()
+
+    result = PortalService(db).create_or_update_draft(
+        token,
+        "sponsorship_form",
+        {"products": [{"item_code": f"{MARKER}-ITEM", "quantity": "2"}]},
+        submission_id=None,
+    )
+
+    header = (
+        db.query(PurchaseRequestHeader)
+        .filter(PurchaseRequestHeader.id == result["id"])
+        .one()
+    )
+    assert header.status == "draft"
+    assert header.lines[0].unit_price is None
+
+
+def test_portal_update_draft_with_priceless_sponsorship_line_is_not_blocked(db):
+    """Should fix 1: the UPDATE branch, standalone rather than nested as a
+    precondition inside `test_portal_submit_refuses_sponsorship_line_without_unit_price`."""
+    token, header = _seed_portal_draft(db, kind="sponsorship_form")
+
+    PortalService(db).create_or_update_draft(
+        token,
+        "sponsorship_form",
+        {"products": [{"item_code": f"{MARKER}-ITEM", "quantity": "2", "unit_price": None}]},
+        submission_id=str(header.id),
+    )
+
+    db.refresh(header)
+    assert header.status == "draft"
+    assert header.lines[0].unit_price is None
+
+
 def test_portal_submit_purchase_request_line_without_unit_price_is_unchanged(db):
     token, header = _seed_portal_draft(db, kind="purchase_request")
     svc = PortalService(db)
