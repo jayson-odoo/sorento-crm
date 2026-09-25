@@ -16,21 +16,37 @@ Invoices**, and our packing list is born later, when you convert.
 5. Drag in or browse to the file or files - a proforma invoice alone, a packing list alone (only
    when its invoice is already in the CRM), or both together, and a single sheet that carries both
    is fine too. (**Currency** only needs filling in when none of the files states one.)
-6. Choosing files reads nothing yet. Click **Test**. Each file comes back labelled **Proforma
-   invoice**, **Packing list**, or **Combined**, with its blocks, lines, and header read out. A
-   packing-list file also shows **Attaches to** - the invoice it will attach to, already picked
-   when the file states the invoice number or shares its date; change it yourself only if that
-   guess is wrong.
-7. If a header on the file could not be placed, it appears under **Unmapped headers** as a chip.
-   Click **Map to...** on the chip, pick the system field, and the file is read again with that
-   mapping - the mapping is then remembered for every later file (see
-   [System Management - Import column mappings](../system-management/import-column-mappings.md)).
-8. Click **Confirm**.
+6. Once a file lands, a **Columns for** *\<file name\>* panel appears for it: two sample values
+   from the sheet, the column's own header text exactly as written (line breaks kept), and a
+   field picker for each column, with an **Ignore** entry for columns that don't matter. Required
+   fields are marked, and **Test** stays disabled - naming what's still needed - until every one
+   has a field. A header written on two lines, or split by a merged cell (shown as `外箱/木托尺寸
+   [2]`), is picked the same way as any other column. If the guessed **Header row N** is wrong,
+   the stepper beside it nudges the row up or down and the columns re-read.
+
+   The first time this supplier's layout is seen, the panel is open. On a later upload of the
+   same layout it is folded to "N of N columns mapped from saved layout" with a **Review** link,
+   and it opens again only when a column this supplier has never had before turns up - already-
+   mapped columns, and any you marked **Ignore**, don't reopen it.
+7. Click **Test**. Test saves the column choices for this supplier and reads the file in the same
+   click. Each file comes back labelled **Proforma invoice**, **Packing list**, or **Combined**,
+   with its blocks, lines, and header read out. A packing-list file also shows **Attaches to** -
+   the invoice it will attach to, already picked when the file states the invoice number or
+   shares its date; change it yourself only if that guess is wrong. A sheet that names itself
+   装箱单 (packing list) but also carries prices, cartons and CBM together reads as **Combined**:
+   Test shows one proforma-invoice block and one draft packing-list block from the same file.
+8. Click **Confirm**. A **Combined** file's Confirm creates the proforma invoice and its packing
+   list together, from that one upload.
 
 Re-uploading the same supplier's invoice (same supplier and the same invoice number written on
 it) updates the existing proforma invoice in place and keeps its number; it does not create a
 duplicate. Uploading a fresh copy of a file that states no invoice number always creates a new
 proforma invoice.
+
+Column mappings you save here are remembered per supplier and apply the next time that supplier
+sends a file, on this dialog or on **Plan a container**. See [System Management - Import column
+mappings](../system-management/import-column-mappings.md) for where saved layouts live and how
+to remove one.
 
 ## Our PI number and the supplier's own reference
 
@@ -140,7 +156,8 @@ you convert (or create one by hand).
 
 Drop several files into the same upload - an invoice and its packing list together, or several
 suppliers' files across separate uploads - and Test reads each one on its own. There is no
-spreadsheet-of-many-invoices import; each supplier document is its own file.
+spreadsheet-of-many-invoices import; each supplier document is its own file. Each file gets its
+own **Columns for** panel, named by the file.
 
 ## See also
 

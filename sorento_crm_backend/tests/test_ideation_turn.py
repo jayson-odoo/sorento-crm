@@ -548,6 +548,142 @@ def test_outage_returns_graceful_reply(wired):
 
 
 # --------------------------------------------------------------------------- #
+# Issue #1179 - `is_test` rides the create_idea payload (AC-1..AC-3 of         #
+# `documentation/plans/chatbot/ideation-is-test-turns-acceptance-criteria.md`) #
+# --------------------------------------------------------------------------- #
+_COLLECTING = {
+    "draft_id": "d-test-1",
+    "status": "collecting",
+    "captured": {},
+    "missing": ["impact"],
+    "reply_text": "Here's what I've got so far",
+}
+
+
+def test_test_turn_payload_carries_is_test_true(wired):
+    """AC-1: a test turn tells the shared service so the idea is hidden from the board."""
+    wired.set_session_vars({})
+    wired.set_create_idea(dict(_COLLECTING))
+    _turn(is_test=True)
+    assert wired.payloads[0]["is_test"] is True
+
+
+def test_live_turn_payload_carries_is_test_false(wired):
+    """AC-2: the key is always present, false on a live turn (the default)."""
+    wired.set_session_vars({})
+    wired.set_create_idea(dict(_COLLECTING))
+    _turn()
+    assert wired.payloads[0]["is_test"] is False
+
+
+def test_test_turn_returns_the_pointer_but_never_persists_it(wired):
+    """AC-3: the caller carries the draft pointer; the contact row is untouched.
+
+    A test pointer written to the real `respond_contacts` row would be read back by the
+    contact's next LIVE turn through the DB fallback in `handle_turn`, so a test idea
+    would silently continue as a live one."""
+    wired.set_session_vars({"other_key": "kept"})
+    wired.set_create_idea(dict(_COLLECTING))
+    out = _turn(is_test=True)
+
+    assert out["status"] == "collecting"
+    assert out["reply_text"] == "Here's what I've got so far"
+    assert out["session_vars"]["ideation"]["draft_id"] == "d-test-1"
+    assert out["session_vars"]["other_key"] == "kept"
+    assert wired.overwrites == [], "a test turn must not write respond_contacts.session_vars"
+    assert wired.store == {"other_key": "kept"}
+
+
+# --------------------------------------------------------------------------- #
+# Reviewer Blocking A (PR #1182 round 2): the pointer the service RETURNS/     #
+# writes must itself carry the `is_test` stamp the round-1 guard reads, and   #
+# the guard must be exercised through that real written pointer - not a      #
+# hand-built one - or a dropped stamp shows green everywhere else.            #
+# --------------------------------------------------------------------------- #
+def test_test_turn_returns_a_pointer_stamped_is_test_true(wired):
+    wired.set_session_vars({})
+    wired.set_create_idea(dict(_COLLECTING))
+    out = _turn(is_test=True)
+    assert out["session_vars"]["ideation"]["is_test"] is True
+
+
+def test_live_turn_returns_a_pointer_stamped_is_test_false(wired):
+    wired.set_session_vars({})
+    wired.set_create_idea(dict(_COLLECTING))
+    out = _turn()
+    assert out["session_vars"]["ideation"]["is_test"] is False
+
+
+def test_two_test_turns_continue_through_the_real_written_pointer(wired):
+    """The round-1 guard must accept a MATCHING pointer that the service itself
+    wrote and returned - not one the test hand-built - or a dropped write-side
+    stamp would look identical to a matching one everywhere else."""
+    wired.set_session_vars({})
+    wired.set_create_idea(dict(_COLLECTING))
+    out1 = _turn(is_test=True)
+    assert out1["session_vars"]["ideation"]["draft_id"] == "d-test-1"
+
+    wired.set_create_idea(dict(_COLLECTING))
+    _turn(is_test=True, session_vars_in=out1["session_vars"])
+    assert wired.payloads[1]["draft_id"] == "d-test-1"
+
+
+def test_a_live_turn_does_not_continue_the_real_written_test_pointer(wired):
+    """Mismatch direction of the same guard, exercised through a REAL test-turn
+    pointer (not hand-built): a live turn must not pick up a genuinely-written
+    test draft_id."""
+    wired.set_session_vars({})
+    wired.set_create_idea(dict(_COLLECTING))
+    out1 = _turn(is_test=True)
+    assert out1["session_vars"]["ideation"]["draft_id"] == "d-test-1"
+
+    wired.set_create_idea(dict(_COLLECTING))
+    _turn(session_vars_in=out1["session_vars"])
+    assert "draft_id" not in wired.payloads[1]
+
+
+# --------------------------------------------------------------------------- #
+# Reviewer Blocking 2 (PR #1182 round 1): a pointer's `is_test` flag must      #
+# match the turn's, or a test turn can continue (and confirm) the contact's   #
+# LIVE draft - exactly the cross-contamination D14 exists to prevent.         #
+# --------------------------------------------------------------------------- #
+def test_stored_live_pointer_is_not_continued_by_a_test_turn(wired):
+    """A live pointer already sitting in the contact's DB row (no `is_test` key,
+    i.e. written before this fix or by a live turn) must not be picked up by a
+    later test turn - it starts fresh instead of sending the live draft_id."""
+    wired.set_session_vars(
+        {"ideation": {"draft_id": "ZZT-live-draft-1", "status": "collecting", "missing": ["impact"]}}
+    )
+    wired.set_create_idea(dict(_COLLECTING))
+    _turn(is_test=True)
+    assert "draft_id" not in wired.payloads[0]
+
+
+def test_test_flagged_pointer_is_not_continued_by_a_live_turn(wired):
+    """The reverse direction: a pointer stamped `is_test: true` (from an earlier
+    test turn) must not be continued by a live turn - the customer's real turn
+    starts its own draft rather than resuming a test one."""
+    wired.set_session_vars(
+        {"ideation": {"draft_id": "ZZT-test-draft-1", "status": "collecting", "is_test": True}}
+    )
+    wired.set_create_idea(dict(_COLLECTING))
+    _turn()
+    assert "draft_id" not in wired.payloads[0]
+
+
+def test_console_reset_does_not_leak_the_stored_live_draft_into_a_test_turn(wired):
+    """The console Reset path: `session_vars_in={"ideation": None}` (an explicit
+    None, not an absent key - `engine._inject_harness_session` writes exactly this
+    shape) must not fall through to the contact's stored LIVE pointer either."""
+    wired.set_session_vars(
+        {"ideation": {"draft_id": "ZZT-live-draft-2", "status": "collecting", "missing": ["impact"]}}
+    )
+    wired.set_create_idea(dict(_COLLECTING))
+    _turn(is_test=True, session_vars_in={"ideation": None})
+    assert "draft_id" not in wired.payloads[0]
+
+
+# --------------------------------------------------------------------------- #
 # call_create_idea wraps httpx errors into IdeationServiceError (AC-19 layer)  #
 # --------------------------------------------------------------------------- #
 def test_call_create_idea_wraps_httpx_error(monkeypatch):
@@ -607,6 +743,29 @@ def test_endpoint_logs_on_success(api_client):
     assert logs[0].status == "success"
     assert logs[0].direction == "inbound"
     assert logs[0].external_reference == "rio-1"
+
+
+@pytest.mark.parametrize(
+    "body,expected",
+    [
+        ({**_TURN_BODY, "is_test": True}, True),
+        (_TURN_BODY, False),
+    ],
+    ids=["is_test-true", "absent-defaults-false"],
+)
+def test_endpoint_forwards_is_test_to_the_service(api_client, body, expected):
+    """AC-4 (#1179): the flag the MCP tool posts reaches `handle_turn`."""
+    client, _logs, mp = api_client
+    seen: list = []
+
+    def _capture(*a, **k):  # noqa: ANN001
+        seen.append(k)
+        return {"status": "collecting", "reply_text": "ok", "session_vars": {}}
+
+    mp.setattr("app.api.v1.external.ideation.handle_turn", _capture)
+    resp = client.post(_TURN_URL, json=body)
+    assert resp.status_code == 200
+    assert seen[0]["is_test"] is expected
 
 
 def test_endpoint_logs_on_failure(api_client):

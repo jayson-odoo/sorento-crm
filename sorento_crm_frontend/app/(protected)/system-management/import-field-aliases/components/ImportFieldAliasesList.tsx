@@ -17,6 +17,7 @@ import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { IGNORE_FIELD } from '@/components/common/ImportColumnMapper';
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import { pendingEntityKey, usePendingEntityKeys } from '@/lib/pending-entity-store';
 import {
@@ -72,7 +73,15 @@ export default function ImportFieldAliasesList() {
       {
         accessorKey: 'label',
         header: ({ column }) => <DataGridColumnHeader title="System field" column={column} />,
-        cell: ({ row }) => <span className="font-medium">{row.original.label}</span>,
+        cell: ({ row }) =>
+          // The mapper's own reserved field (F4, G2/AC-M7) surfaces here as a synthetic
+          // group so an ignored column can still be found and deleted - "Ignored" reads as
+          // a decision, where the field's own title-cased name ("Ignore") would not.
+          row.original.field === IGNORE_FIELD ? (
+            <span className="font-medium text-muted-foreground">Ignored</span>
+          ) : (
+            <span className="font-medium">{row.original.label}</span>
+          ),
         size: 200,
       },
       {

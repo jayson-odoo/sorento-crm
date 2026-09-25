@@ -134,6 +134,13 @@ class State:
     pending: Any = None
     profile: Profile = field(default_factory=Profile)
     turn_no: int = 0
+    # The five-key `ideation` pointer as the session holds it (issue #1178): the idea
+    # draft the intake tool is still collecting, or None. Read by `apply()` the way it
+    # reads `pending` - an open draft is a question the ideate lane is still asking, so a
+    # short or question-shaped turn that names nothing of its own belongs to that lane
+    # and not to the domain menu or the casual lane. Never written here: the intake tool
+    # owns the pointer and the tail persists whatever it answered.
+    ideation: Any = None
 
 
 # --------------------------------------------------------------------------- #
