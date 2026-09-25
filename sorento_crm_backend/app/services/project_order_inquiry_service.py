@@ -8890,9 +8890,15 @@ class ProjectOrderInquiryService:
 
           * `row_key`            <- the row's own id.
           * `required_date`      <- the row's `delivery_date` (`need_by_date`).
-          * `order_date`         <- the sales order's own document date, `published_at`
-            or `created_at` before publish - the identical fact `_context_for` already
-            surfaces as `so_date` for this same row set (`document_age`).
+          * `order_date`         <- `published_at` or `created_at` before publish. This
+            ranking input was never touched by
+            `PLAN-oi-handover-so-date-autocount-25sep.md`: `_context_for` and the
+            handover email now prefer the core `sales_orders.order_date` for the
+            `so_date` a person reads, while `scm/priority.py`'s own docstring
+            (`factors_for_demand_rows`) still documents `document_age <-
+            sales_orders.order_date` for the score a row is RANKED by - the two have
+            drifted apart, and pointing this cascade's `order_date` at the same core
+            column is a named follow-up, out of scope for that lane.
           * `demand_class`       <- always `"project"`: every row this cascade sees came
             off a project order inquiry.
           * `payment_terms_days` <- the resolved customer's terms
