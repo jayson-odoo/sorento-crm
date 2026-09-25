@@ -180,6 +180,28 @@ describe('SubmissionForm - sponsorship unit price required on submit (#1227)', (
   });
 });
 
+describe('SubmissionForm - Save as draft is never blocked by unit price (#1232 blocking 5, AC-P4)', () => {
+  /**
+   * AC-P4: "A draft save with an incomplete line is never blocked - only
+   * submit is gated." `handleSaveDraft` deliberately never calls
+   * `findMissingSponsorshipUnitPrice` - this is the FE guard for that (the
+   * reviewer's kill test 3 on the client: disabling the client gate on
+   * `handleSaveDraft` left every prior portal vitest test green, so the
+   * absence of THIS test was itself the gap).
+   */
+  it('saves a draft with a price-less sponsorship line: saveDraft is called and no error toast fires', async () => {
+    render(<SubmissionForm kind="sponsorship_form" />);
+    await screen.findByText(CONTACT.name as string);
+
+    await addLine();
+    fireEvent.click(screen.getByRole('button', { name: /Save as draft/i }));
+
+    await waitFor(() => expect(saveDraft).toHaveBeenCalled());
+    expect(toasts.error).not.toHaveBeenCalled();
+    expect(submitDraft).not.toHaveBeenCalled();
+  });
+});
+
 describe('SubmissionForm - sponsorship unit price required on revise (#1232 blocking 4)', () => {
   /**
    * A revise is a second submission path back into the approval flow
