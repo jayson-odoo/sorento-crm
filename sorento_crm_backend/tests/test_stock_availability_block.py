@@ -565,6 +565,27 @@ def test_detailed_and_compact_ignore_requested_quantities(db):
     assert staff_with_qty == staff_without
 
 
+def test_compact_stock_summary_stays_in_product_code_order(db):
+    """Blocking 2, review round 1 (R10/AC-SA315): the asked-order sort ported for
+    `availability` must not reach `compact` - `stock_summary` stays in `product_code`
+    order regardless of the order `product_ids` named the products in."""
+    brw = _wh(db, "ZZTBRW")
+    aaa = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("AAA"))
+    bbb = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("BBB"))
+    stock(db, company_id=DEFAULT_COMPANY_ID, product_id=aaa.id, warehouse_id=brw.id, on_hand=10)
+    stock(db, company_id=DEFAULT_COMPANY_ID, product_id=bbb.id, warehouse_id=brw.id, on_hand=20)
+    contact = _contact(db)
+    _policy_row(db, mode="compact", contact=contact)
+    db.flush()
+
+    result = StockService(db).list_stock(product_ids=[bbb.id, aaa.id], contact_id=contact.id)
+
+    assert [row["product_code"] for row in result["stock_summary"]] == [
+        aaa.product_code,
+        bbb.product_code,
+    ]
+
+
 # ============================================================================= route level
 
 

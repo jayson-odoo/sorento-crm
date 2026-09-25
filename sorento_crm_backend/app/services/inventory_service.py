@@ -1383,26 +1383,6 @@ class StockService:
         # paged on, so page 2 continues where page 1 stopped.
         ordered_ids = [pid for pid in page_ids if pid in products_by_id]
 
-        # Ported from PR #1118 (not merged), review round 6, finding B: when the
-        # CALLER named the products, that list is the order the answer is read out in -
-        # the dealer hears their own question back. `ordered_ids` above is
-        # `product_code` asc, which is the right order for the catalogue case ("what
-        # stock do you have?", nothing named) and the wrong one here: the reply noted
-        # "MHS1028 x 60, MWT5727SS-CR x 5" for a dealer who had asked the other way
-        # round. Anything the caller did not name (a product with stock that the page
-        # picked up) keeps its page position, after the named ones.
-        asked_order = [str(pid) for pid in (product_id_order or []) if pid]
-        if asked_order:
-            rank = {pid: index for index, pid in enumerate(asked_order)}
-            unranked = len(rank)
-            ordered_ids = [
-                pid
-                for _, pid in sorted(
-                    ((rank.get(pid, unranked), pid) for pid in ordered_ids),
-                    key=lambda pair: pair[0],
-                )
-            ]
-
         payload["data"] = []
         payload["pagination"] = {"total": total_products, "page": page, "limit": limit}
         # `empty` is what the MCP escalation hint reads. These modes clear `data`
@@ -1447,6 +1427,30 @@ class StockService:
                 for pid in ordered_ids
             ]
             return
+
+        # Ported from PR #1118 (not merged), review round 6, finding B: when the
+        # CALLER named the products, that list is the order the answer is read out in -
+        # the dealer hears their own question back. `ordered_ids` above is
+        # `product_code` asc, which is the right order for the catalogue case ("what
+        # stock do you have?", nothing named) and the wrong one here: the reply noted
+        # "MHS1028 x 60, MWT5727SS-CR x 5" for a dealer who had asked the other way
+        # round. Anything the caller did not name (a product with stock that the page
+        # picked up) keeps its page position, after the named ones.
+        # Chatbot stock ask v2 S3 fix round 1, Blocking 2 (R10/AC-SA315): this sort
+        # runs AFTER the `compact` return above, not before it - `compact`'s
+        # `stock_summary` order is product_code order (R10 "Compact mode ... unchanged
+        # by v2"), never the caller's asked order, which is availability-only.
+        asked_order = [str(pid) for pid in (product_id_order or []) if pid]
+        if asked_order:
+            rank = {pid: index for index, pid in enumerate(asked_order)}
+            unranked = len(rank)
+            ordered_ids = [
+                pid
+                for _, pid in sorted(
+                    ((rank.get(pid, unranked), pid) for pid in ordered_ids),
+                    key=lambda pair: pair[0],
+                )
+            ]
 
         # Ported from PR #1118 (not merged), D35, review round 11: a DEALER question is
         # always about a product, so a stock ask that names none is answered by asking
