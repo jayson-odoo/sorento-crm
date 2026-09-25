@@ -43,6 +43,7 @@ from app.models.project_so import (
     INQUIRY_PLACED,
     INQUIRY_RAISED,
     ACK_REJECTED,
+    OrderInquiry,
     OrderInquiryRow,
     OrderInquirySuggestedLink,
     ProjectSalesOrder,
@@ -52,14 +53,17 @@ from app.models.project_so import (
 from app.models.scm import OrderLinkClaim
 from app.models.user import User
 from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+from app.services.scm import order_link_service
 
 from tests.test_oi_follow_book_chain import (
     ctx,  # noqa: F401 - pytest fixture, imported for reuse
+    MARKER,
     _existing_link,
     _links_of,
     _ref,
     _seed_po_line,
     _seed_product,
+    _seed_row,
     _seed_row_and_mirror,
     _seed_so_line,
     _seed_spo_line,
@@ -505,6 +509,188 @@ class TestACLT14CapacityIsDealtInPriorityOrder:
             )
         )
         assert total_on_line == Decimal("8"), "never exceeds qty_ordered - qty_received"
+
+    def test_ac_lt_14_two_cited_rows_still_net_against_each_other(self, ctx):
+        """Review round 5 Blocking 1, probe (a). CS routinely writes the SAME document
+        onto several rows' `cited_document` (one SPO answering several inquiries). A
+        `cited` candidate is not an exception to AC-LT-14: at `7e18a786`, `_cascade_take`
+        skipped `held_by_others` netting for any `cited` candidate, so two rows citing
+        the same 8-unit PO line were both suggested their full 6 (12 total, over the
+        line). The fix nets a `cited` candidate exactly like an uncited shared-pool one -
+        this differs from `test_ac_lt_14_two_rows_never_suggested_the_same_units` only in
+        that both rows also cite the document."""
+        db = ctx.db
+        product = _seed_product(db, company_id=ctx.company_a)
+        po, po_line = _seed_po_line(
+            db,
+            company_id=ctx.company_a,
+            product_id=product.id,
+            qty_ordered="8",
+            header_status="active",
+        )
+
+        ref_a = _ref("SOL")
+        _so_a, core_line_a = _seed_so_line(
+            db, company_id=ctx.company_a, product_id=product.id, source_ref=ref_a, qty="6"
+        )
+        _pso_a, _mirror_a, _inquiry_a, row_a = _seed_row_and_mirror(
+            db, company_id=ctx.company_a, core_line=core_line_a, product_id=product.id, qty="6"
+        )
+        row_a.delivery_date = date(2026, 7, 1)
+        row_a.cited_document = po.po_number
+
+        ref_b = _ref("SOL")
+        _so_b, core_line_b = _seed_so_line(
+            db, company_id=ctx.company_a, product_id=product.id, source_ref=ref_b, qty="6"
+        )
+        _pso_b, _mirror_b, _inquiry_b, row_b = _seed_row_and_mirror(
+            db, company_id=ctx.company_a, core_line=core_line_b, product_id=product.id, qty="6"
+        )
+        row_b.delivery_date = date(2026, 7, 20)
+        row_b.cited_document = po.po_number
+        db.commit()
+
+        ProjectOrderInquiryService(db).auto_place_for_products(
+            None,
+            actor_user_id=None,
+            trigger="raise",
+            row_ids=[str(row_a.id), str(row_b.id)],
+        )
+
+        suggested_a = _suggested_of(db, row_a.id)
+        suggested_b = _suggested_of(db, row_b.id)
+        assert sum(Decimal(str(s.qty)) for s in suggested_a) == Decimal("6")
+        assert sum(Decimal(str(s.qty)) for s in suggested_b) == Decimal("2")
+        total_on_line = sum(
+            Decimal(str(s.qty))
+            for s in (
+                db.query(OrderInquirySuggestedLink)
+                .filter(OrderInquirySuggestedLink.po_line_id == po_line.id)
+                .all()
+            )
+        )
+        assert total_on_line == Decimal("8"), (
+            "two rows citing the same document are never offered its units twice"
+        )
+
+    def test_ac_lt_14_two_rows_of_one_so_never_suggested_more_than_the_line(self, ctx):
+        """Review round 5 Blocking 1, probe (b). Two order-inquiry rows of the SAME
+        sales order (two lines of one order needing the same product) both hold
+        `own_so_claim` on the same PO line, because `_reserved_for_netting` always
+        skips the row's OWN SO's claim - so at `7e18a786` neither row's `remaining` was
+        ever reduced for the other, and the `own_so_claim` exemption in `_cascade_take`
+        let both take the line's full 100 units (200 total). Unlike the two-different-SO
+        case, there is no other SO's claim to net through `_reserved_for_netting` here,
+        so the two rows must net against EACH OTHER's suggestion the same way two
+        unclaimed shared-pool rows already do.
+
+        Built by hand rather than through `_seed_row_and_mirror` twice: that helper
+        mints a NEW `ProjectSalesOrder` per call, and `uq_projects_so_core_order`
+        allows only one mirror per core sales order. Two lines of ONE order is exactly
+        the ordinary shape this bug needs - one core `SalesOrder`, one
+        `ProjectSalesOrder` naming it, two `ProjectSalesOrderLine`s, one `OrderInquiry`
+        (`uq_project_order_inquiry_per_sales_order` allows only one per PSO), two
+        `OrderInquiryRow`s. The claim's `so_line_id` needs a REAL core line - a claim
+        whose so_line_id resolves to nothing reads `outstanding == 0` and `own_so_claim`
+        stays false whatever the claim row itself says, which would silently turn this
+        into a no-claim scenario and never exercise the exemption at all."""
+        db = ctx.db
+        product = _seed_product(db, company_id=ctx.company_a)
+        po, po_line = _seed_po_line(
+            db,
+            company_id=ctx.company_a,
+            product_id=product.id,
+            qty_ordered="100",
+            header_status="active",
+        )
+
+        ref_a = _ref("SOL")
+        so, core_line_a = _seed_so_line(
+            db, company_id=ctx.company_a, product_id=product.id, source_ref=ref_a, qty="60"
+        )
+        so_number = so.so_number
+
+        pso = ProjectSalesOrder(
+            company_id=ctx.company_a,
+            project_id=None,
+            so_id=so.id,
+            provisional_ref=f"{MARKER}-PSO-{uuid.uuid4().hex[:8]}",
+            autocount_doc_no=so_number,
+            status="adopted",
+        )
+        db.add(pso)
+        db.flush()
+        mirror_a = ProjectSalesOrderLine(
+            company_id=ctx.company_a,
+            project_sales_order_id=pso.id,
+            line_no=1,
+            core_sales_order_line_id=core_line_a.id,
+            product_id=product.id,
+            description=f"{MARKER} mirror a",
+            qty=Decimal("60"),
+            uom="UNIT",
+            unit_price=Decimal("10.00"),
+            amount=Decimal("0"),
+        )
+        mirror_b = ProjectSalesOrderLine(
+            company_id=ctx.company_a,
+            project_sales_order_id=pso.id,
+            line_no=2,
+            product_id=product.id,
+            description=f"{MARKER} mirror b",
+            qty=Decimal("60"),
+            uom="UNIT",
+            unit_price=Decimal("10.00"),
+            amount=Decimal("0"),
+        )
+        db.add_all([mirror_a, mirror_b])
+        db.flush()
+        inquiry = OrderInquiry(company_id=ctx.company_a, project_sales_order_id=pso.id)
+        db.add(inquiry)
+        db.flush()
+
+        row_a = _seed_row(
+            db, company_id=ctx.company_a, inquiry_id=inquiry.id, so_line_id=mirror_a.id, qty="60",
+        )
+        row_a.delivery_date = date(2026, 7, 1)
+        row_b = _seed_row(
+            db, company_id=ctx.company_a, inquiry_id=inquiry.id, so_line_id=mirror_b.id, qty="60",
+        )
+        row_b.delivery_date = date(2026, 7, 1)
+        db.commit()
+
+        so_number, item_code, core_line_id = ProjectOrderInquiryService(db).claim_identity(row_a)
+        order_link_service.claim_placed_on_po(
+            db,
+            company_id=ctx.company_a,
+            so_number=so_number,
+            po_number=po.po_number,
+            item_code=item_code,
+            so_line_id=core_line_id,
+            po_line_id=po_line.id,
+            source=order_link_service.SOURCE_CRM_SUPPLY,
+        )
+        db.commit()
+
+        ProjectOrderInquiryService(db).auto_place_for_products(
+            None,
+            actor_user_id=None,
+            trigger="raise",
+            row_ids=[str(row_a.id), str(row_b.id)],
+        )
+
+        total_on_line = sum(
+            Decimal(str(s.qty))
+            for s in (
+                db.query(OrderInquirySuggestedLink)
+                .filter(OrderInquirySuggestedLink.po_line_id == po_line.id)
+                .all()
+            )
+        )
+        assert total_on_line <= Decimal("100"), (
+            "two rows of one SO both claim-dedicated to this line must split it, "
+            "never double-take it"
+        )
 
 
 # ============================================================== AC-LT-15 / G2
@@ -1118,6 +1304,63 @@ class TestACLT19TargetGoesAwayDropsAndReplaces:
             qty_ordered="1",
             header_status="active",
         )
+        db.commit()
+
+        result = service.auto_place_for_products(
+            None,
+            actor_user_id=None,
+            trigger="worklist",
+            row_ids=[str(row.id)],
+            redeal_drafts=True,
+            include_awaiting=True,
+        )
+
+        assert _suggested_of(db, row.id) == []
+        assert result["changed_rows"] == 1
+
+    def test_ac_lt_19_a_candidate_pushed_outside_the_window_is_dropped_and_counted(
+        self, ctx
+    ):
+        """Review round 5 Nit 1: `15ffd552` added `changed_suggestion_row_ids.add` on
+        BOTH no-candidate branches, but only the "no candidate at all" branch
+        (`test_ac_lt_19_a_closed_target_with_no_alternative_line_is_dropped_not_kept`)
+        got a test. This pins the sibling branch: `_candidates_for_row` still returns
+        the line (it never closed), but `_within_window` filters it out once the row's
+        OWN delivery date moves far enough out that the line arrives more than a lead
+        time early - the same held suggestion must be dropped and Link selected's own
+        call must report it in `changed_rows`, not "nothing changed"."""
+        db = ctx.db
+        product = _seed_product(db, company_id=ctx.company_a)
+        ref = _ref("SOL")
+        _so, core_line = _seed_so_line(
+            db, company_id=ctx.company_a, product_id=product.id, source_ref=ref, qty="3"
+        )
+        _po, line = _seed_po_line(
+            db,
+            company_id=ctx.company_a,
+            product_id=product.id,
+            qty_ordered="10",
+            header_status="active",
+        )
+        line.expected_date = date(2026, 10, 1)
+        _pso, _mirror, _inquiry, row = _seed_row_and_mirror(
+            db, company_id=ctx.company_a, core_line=core_line, product_id=product.id, qty="3"
+        )
+        row.delivery_date = date(2026, 10, 1)
+        db.commit()
+
+        service = ProjectOrderInquiryService(db)
+        service.auto_place_for_products(
+            None, actor_user_id=None, trigger="raise", row_ids=[str(row.id)],
+        )
+        before = _suggested_of(db, row.id)
+        assert len(before) == 1
+        assert before[0].po_line_id == line.id
+
+        # A full lead time (90 days, no product-specific override seeded) plus more
+        # between the line's own expected date and this row's delivery date - the
+        # line now arrives far too early for this row.
+        row.delivery_date = date(2027, 6, 1)
         db.commit()
 
         result = service.auto_place_for_products(

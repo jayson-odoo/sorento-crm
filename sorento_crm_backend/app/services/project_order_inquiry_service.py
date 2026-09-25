@@ -7604,19 +7604,28 @@ class ProjectOrderInquiryService:
         caller before this parameter existed, and the Link dialog's own preview) is a
         no-op and leaves this exactly as it always was.
 
-        Review round 4 (found alongside Blocking 1's `test_write_time_supply_claim.py`
-        rewrite): a G12 write-time-CLAIMED candidate (`own_so_claim`/`cited`) is skipped
-        here. Its `remaining` is already an EXCLUSIVE per-row share - netted against every
-        OTHER sales order's own claim on the same line by `_candidates_for_row` itself
-        (`reservations_by_target`) - not a slice of one shared pool several rows race for
-        this pass. Netting `held_by_others` on TOP of that double-subtracted a second
-        claimant's own dedicated suggestion from the first claimant's remaining: two rows
-        each claim-dedicated 30 and 84 of one 114 line suggested 84 and 0 instead of 30
-        and 84, because the second row's OWN 84 (already excluded from the first row's
-        `remaining` by the claim netting) was subtracted from it again here. A shared-pool
-        candidate (neither flag set) is unaffected - `held_by_others` is exactly the
-        mechanism that keeps two such rows off the same units, which the claim already
-        does for a dedicated one.
+        Review round 4 found that netting `held_by_others` UNCONDITIONALLY double-
+        subtracted a claim-dedicated candidate's share: `remaining` is already reduced by
+        `_reserved_for_netting` for every OTHER sales order's claim on the line, so
+        subtracting that same other claimant's suggestion again on top read two rows
+        each claim-dedicated 30 and 84 of one 114 line as 84 and 0 instead of 30 and 84.
+        Round 4's fix over-corrected: exempting every `own_so_claim`/`cited` candidate
+        from `held_by_others` outright let two rows CITING the same document take its
+        full capacity twice (`test_ac_lt_14_two_cited_rows_still_net_against_each_
+        other`), and let two rows of the SAME sales order - `_reserved_for_netting`
+        skips a row's OWN SO, so neither row's `remaining` was reduced for the other -
+        each take the line's full amount
+        (`test_ac_lt_14_two_rows_of_one_so_never_suggested_more_than_the_line`).
+
+        Review round 5: only the SLICE of `held_by_others` that `_reserved_for_netting`
+        already reserved for another SO's claim is exempt, never the whole thing, and
+        never on the say-so of `cited` alone (a citation is not a claim). That slice is
+        `raw_remaining - remaining` - exactly what `_reserved_for_netting` subtracted
+        when this candidate's `remaining` was built - so a held total that MATCHES it
+        (the two-claimants case: the other claimant's own suggestion is exactly its
+        reserved share) nets to zero here, same as before, while any held total ABOVE it
+        (a cited or same-SO row's actual take, which is not backed by a reservation this
+        candidate's own `remaining` already accounts for) still nets in full.
         """
         cascadable_total = sum(
             (
@@ -7642,12 +7651,15 @@ class ProjectOrderInquiryService:
             if not candidate.get("cascadable", True):
                 continue
             remaining = candidate["remaining"]
-            if held_by_others and not (
-                candidate.get("own_so_claim") or candidate.get("cited")
-            ):
-                remaining = max(
-                    remaining - held_by_others.get(candidate["target_id"], _ZERO), _ZERO
+            if held_by_others:
+                already_reserved = max(
+                    candidate["raw_remaining"] - candidate["remaining"], _ZERO
                 )
+                excess_held = max(
+                    held_by_others.get(candidate["target_id"], _ZERO) - already_reserved,
+                    _ZERO,
+                )
+                remaining = max(remaining - excess_held, _ZERO)
             take = remaining if remaining < still else still
             if take > _ZERO:
                 takes.append((candidate, take))
