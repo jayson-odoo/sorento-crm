@@ -67,6 +67,7 @@ from app.services.scm.supply_assignment import (
     BUCKET_UNDATED,
     BUCKET_UNLOCATED,
     KIND_ON_HAND,
+    KIND_PO,
     KIND_SPO,
     Assignment,
     DemandLine,
@@ -617,6 +618,7 @@ class StockDebtService:
         warehouses: Dict[str, Warehouse],
         *,
         as_of: Optional[date] = None,
+        include_po: bool = True,
     ) -> Dict[str, Assignment]:
         """The same assignment, for a caller that holds product ids and a span of its own.
 
@@ -624,9 +626,18 @@ class StockDebtService:
         the two surfaces disagree about what is free. The ladder's span is this one plus the
         site pools, because it has a pool step and the view has not (see
         `ProjectSupplyService.planning_assignments`).
+
+        `include_po` defaults `True` here: R23 ("got PO doesn't mean got supply") is the
+        STOCK DEBT VIEW's own reading, not the shared assignment's - the board and the
+        ladder still net a PO as supply (plan v7 R29), and `planning_assignments` is
+        exactly this caller, so its own default has to keep doing that without having to
+        say so at every call site.
         """
         return self._assignments(
-            [(str(pid), "", None) for pid in product_ids], warehouses, as_of=as_of
+            [(str(pid), "", None) for pid in product_ids],
+            warehouses,
+            as_of=as_of,
+            include_po=include_po,
         )
 
     def _assignments(
@@ -638,6 +649,7 @@ class StockDebtService:
         as_of: Optional[date] = None,
         date_from: Optional[date] = None,
         date_to: Optional[date] = None,
+        include_po: bool = False,
     ) -> Dict[str, Assignment]:
         """One `assign()` per product, off ONE read per input for the whole set.
 
@@ -645,6 +657,10 @@ class StockDebtService:
         before/after them in `_demand()` below - they touch DEMAND only, never supply
         (AC-3: supply landing after a line's own due date, but on or before `date_to`,
         still covers it - the walk itself is unchanged).
+
+        `include_po` defaults `False`: `list()`/`cell()` (the Stock Debt VIEW, R23) never
+        pass it, so a PO is neither supply nor a hold's own document there. `assignments_for`
+        (the board/ladder's own path) passes `True`.
         """
         self._event_cache: Dict[str, List[SupplyEvent]] = {}
         self._lead_cache: Dict[str, int] = {}
@@ -667,13 +683,16 @@ class StockDebtService:
         # states no lead paid its own round trip - ~1,900 extra queries per list request on
         # the dev copy.
         leads = self.supply.lead_times(product_ids)
-        supply_rows = self._supply(product_ids, warehouse_ids, codes, pools, as_of=as_of)
+        supply_rows = self._supply(
+            product_ids, warehouse_ids, codes, pools, as_of=as_of, include_po=include_po,
+        )
         demand_rows = self._demand(
             product_ids, warehouse_ids, codes, pools, date_from=date_from, date_to=date_to,
         )
         holds = self._holds(
             product_ids,
             {line.key for lines in demand_rows.values() for line in lines},
+            include_po=include_po,
         )
 
         settings = self.supply._fulfilment_settings()
@@ -722,8 +741,11 @@ class StockDebtService:
         pools: set,
         *,
         as_of: Optional[date] = None,
+        include_po: bool = False,
     ) -> Dict[str, List[SupplyEvent]]:
         """On hand and SPO for the whole page - two reads, neither of them per product.
+        A THIRD, PO, joins them when `include_po` is set (the board/ladder's own path,
+        `assignments_for` - plan v7 R29).
 
         On hand is `quantity_on_hand - quantity_reserved`, the same arithmetic
         `_free_stock` states: reserved stock is spoken for by a picking or despatch that is
@@ -738,11 +760,15 @@ class StockDebtService:
         simulated at a past date read its own floor as arriving late.
 
         R23 (owner, 24 Sep, third red batch): "got PO doesn't mean got supply." Stock
-        Debt's own reading counts on hand and SPO only - a PO is a plan to buy, not stock
-        anybody has or a shipment already moving, and reading it as supply here let a line
-        read `covered`/`pinned` off a document that could still fall through. NOT a
-        `po_by_location()` read at all any more; the ladder and the board, which still
-        read PO (plan v7 R29), call that method directly and are untouched.
+        Debt's own reading (`include_po=False`, `list()`/`cell()`'s own default) counts on
+        hand and SPO only - a PO is a plan to buy, not stock anybody has or a shipment
+        already moving, and reading it as supply here let a line read `covered`/`pinned`
+        off a document that could still fall through.
+
+        Fix round (CI, 25 Sep): R23 is the VIEW's own reading, not the shared assignment's
+        - the board and the ladder still net a PO as supply (plan v7 R29,
+        `test_ladder_v7_po_never_supplies.py`/`test_ladder_v7_incoming_spo_only.py`'s own
+        guards), which is `assignments_for`'s `include_po=True` default reaching here.
         """
         as_of = as_of or date.today()
         out: Dict[str, List[SupplyEvent]] = {}
@@ -802,7 +828,25 @@ class StockDebtService:
                     )
                 )
 
-        # R23: PO is no longer read as supply here at all - see the docstring above.
+        # R23 (VIEW only, `include_po=False` by default) / plan v7 R29 (board and ladder,
+        # `include_po=True`): see the docstring above.
+        if include_po:
+            for (product_id, warehouse_id), lines in self.supply.po_by_location(
+                product_ids, warehouse_ids
+            ).items():
+                for line in lines:
+                    out.setdefault(product_id, []).append(
+                        SupplyEvent(
+                            key=f"po:{line.line_id}",
+                            kind=KIND_PO,
+                            warehouse=codes.get(warehouse_id),
+                            at=line.arrival_date,
+                            qty=_float(line.qty),
+                            ref=f"PO {line.po_number} line {line.po_line_no}",
+                            bought_for=line.bought_for,
+                            is_pool=warehouse_id in pools,
+                        )
+                    )
         return out
 
     def _demand(
@@ -904,8 +948,19 @@ class StockDebtService:
             )
         return out
 
-    def _holds(self, product_ids: Sequence[str], line_keys: set) -> List[Hold]:
+    def _holds(
+        self,
+        product_ids: Sequence[str],
+        line_keys: set,
+        *,
+        include_po: bool = False,
+    ) -> List[Hold]:
         """What is already promised: confirmed allocations and placement links (R21).
+
+        `include_po` (fix round, CI, 25 Sep): `False` is the Stock Debt VIEW's own reading
+        (R23) - a placement link naming a PO line pins nothing here, the same way a PO is
+        not a supply event in `_supply` above. `True` (the board/ladder's own path,
+        `assignments_for`) restores the PO branch exactly as it read before R23.
 
         Two shapes, one meaning. A `so_line_allocations` row is a decision holding STOCK at a
         bin; an `order_inquiry_links` row is a placement holding a DOCUMENT. Both bind before
@@ -1007,10 +1062,23 @@ class StockDebtService:
             if qty <= 0:
                 continue
             if not row.spo_allocation_id:
-                # R23: a placement link to a PO line pins nothing in Stock Debt any more -
-                # PO is not supply here at all, so there is no PO-kind event left in this
-                # read's span for it to bind to (AC-S2-1b's "stand an event up from the
-                # hold's own fields" branch would otherwise manufacture one).
+                # R23 (VIEW only): a placement link to a PO line pins nothing in Stock
+                # Debt's own reading - PO is not supply here at all, so there is no
+                # PO-kind event left in this read's span for it to bind to (AC-S2-1b's
+                # "stand an event up from the hold's own fields" branch would otherwise
+                # manufacture one). `include_po` (board/ladder, plan v7 R29) restores
+                # exactly the pre-R23 PO branch.
+                if not include_po or not row.po_line_id:
+                    continue
+                out.append(
+                    Hold(
+                        line_key=str(row[0]),
+                        supply_key=f"po:{row.po_line_id}",
+                        qty=qty,
+                        kind=KIND_PO,
+                        ref=f"PO {row.po_number}" if row.po_number else "PO",
+                    )
+                )
                 continue
             supply_key = f"spo:{row.spo_allocation_id}"
             kind, ref = KIND_SPO, _spo_ref(row.spo_number)
