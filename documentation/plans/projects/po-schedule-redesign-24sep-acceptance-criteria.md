@@ -182,8 +182,17 @@ the rejected-note reasons move together into Documents, always present (R18).
   with who and when; document total vs our sum on one line; "Back to the project" removed.
 - **S6-2 [FE] (J3)** Two tabs, Lines (default) and Documents; the PDF viewer is never shown beside
   the lines table, at 1280 or at 375 -- Lines takes the full page width in both.
+
+  Owner hand test 25 Sep: the Lines grid was cut off at the right edge at 1280 with no way to
+  reach the Amount column. It now scrolls horizontally inside its own container (the grid's
+  shared `DataGridTable` scroller, not a one-off wrapper) at both 1280 and 375; the two-tabs,
+  full-page-width contract itself is unchanged.
 - **S6-3 [FE] (J3)** Lines opens on "Lines identified" (today's "Show only these" filter, on by
   default while unconfirmed); "Show all lines (N)" is one click away.
+
+  Owner hand test 25 Sep: renamed to "Need attention (N)" / "All lines (N)" -- "this should be
+  Need attention and All lines, simple as that." Default-on-while-unconfirmed behaviour
+  unchanged.
 - **S6-4 [FE] (J3)** A line with an open finding carries a Flag cell and the row's own corrective
   action (edit the line, cancel it, or accept/reject the handwritten note); there is no separate
   Findings tab or card, and no Dismiss action on a PO line.
@@ -195,10 +204,37 @@ the rejected-note reasons move together into Documents, always present (R18).
   (migration + PATCH), contradicting "Backend seam: none", and the later hard finding would still
   stand unless the draft service learned to skip it (OOS-3). No seam is the smallest correct
   answer.
+
+  Owner hand test 25 Sep: the handwritten-note cards that used to stay expanded under a flagged
+  line ("Amend code / Page 1", "Amend description / Page 2", "Cancel line", plus "Skip to the
+  next unreviewed line") read as "messy and bulky, like so many expanded sections." A line's
+  notes are now one compact indicator in the Flag cell -- a note icon with the count, amber
+  while unreviewed -- that opens a popover on click with the same accept/edit/reject actions in
+  one line each, page included. Row height stays one line. The header's "Review them" link opens
+  the first unreviewed line's popover directly rather than merely scrolling to it. The
+  "Skip to the next unreviewed line" link inside the old card is gone; accepting or rejecting a
+  note still auto-advances the reader to the next unreviewed line.
 - **S6-5 [FE] (J3)** The Documents tab renders the PDF viewer, or, when it cannot be found, the
   S5-5 empty state (R13), with the rejected-note reasons (R7, `POIntakeAnnotationsGrid`) directly
   below it, both in the one tab, always present.
+
+  Owner hand test 25 Sep: "why does this exist? just show me the entire document." The
+  annotations grid (#, State, Reading, Note, Handwriting) is removed; the Documents tab shows
+  only the PDF viewer, which now takes the tab's full height (was a short fixed-height strip) so
+  every page is reachable by scrolling the viewer itself. The R13 empty state is unchanged.
+  `POIntakeAnnotationsGrid` itself is trimmed to the `describeAnnotationEffect` helper the S6-4
+  popover still uses; the grid component and its own test file are deleted as dead code.
+
+  Assumption flagged for the owner to overrule: a note naming no line (a signature, "Continue To
+  Next Page", delivery instructions) had its only surface in the grid just removed. With nowhere
+  left to review it, it no longer blocks Confirm and is not counted in the header's unreviewed
+  tally. A note naming a line still blocks Confirm exactly as before, through that line's S6-4
+  indicator.
 - **S6-6 [E2E] (J3)** HQ/26/01/121 v1 at 1280 and 375 matches the approved mockup.
+
+  Owner hand test 25 Sep 2026 stands in place of this AC for this fix round: the owner's own
+  screenshots on HQ/26/01/121 v2 named the four defects S6-2 through S6-5 amend above. A fresh
+  E2E capture against the mockup is still owed once this round lands.
 
 ## S7. Sales order review screen (per approved `mockups/sales-order-review.html`; page renamed
 from "SO findings")
