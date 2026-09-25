@@ -385,6 +385,77 @@ def test_update_request_and_reply_refuses_priceless_line_when_request_type_omitt
     db.rollback()
 
 
+def _revise_sponsorship_form(db, *, products):
+    """Uses `tests/_revision_harness.py`'s own seeding (not a test module itself -
+    see its docstring - so importable here) for the config/contact/token/entity a
+    revise needs, rather than reinventing it."""
+    from app.services.portal_revision_service import PortalRevisionService
+    from tests._revision_harness import seed_config, seed_contact, seed_entity, seed_system_settings, seed_token
+
+    seed_system_settings(db, cap=3)
+    seed_config(db, "sponsorship_form")
+    contact = seed_contact(db)
+    row = seed_entity(db, "sponsorship_form", contact)
+    token = seed_token(contact)
+    return PortalRevisionService(db).revise(
+        token,
+        "sponsorship_form",
+        str(row.id),
+        {"project_title": "Revised project", "products": products},
+        "Corrected the price",
+        row.revision_no,
+    ), row
+
+
+def _revise_purchase_request(db, *, products):
+    from app.services.portal_revision_service import PortalRevisionService
+    from tests._revision_harness import seed_config, seed_contact, seed_entity, seed_system_settings, seed_token
+
+    seed_system_settings(db, cap=3)
+    seed_config(db, "purchase_request")
+    contact = seed_contact(db)
+    row = seed_entity(db, "purchase_request", contact)
+    token = seed_token(contact)
+    return PortalRevisionService(db).revise(
+        token,
+        "purchase_request",
+        str(row.id),
+        {"project_title": "Revised project", "products": products},
+        "Corrected the quantity",
+        row.revision_no,
+    ), row
+
+
+def test_portal_revise_refuses_sponsorship_line_without_unit_price(db):
+    with pytest.raises(AppException) as ei:
+        _revise_sponsorship_form(
+            db, products=[{"item_code": f"{MARKER}-ITEM", "quantity": "2"}]
+        )
+
+    _assert_line_refusal(ei.value)
+
+
+def test_portal_revise_accepts_sponsorship_line_with_unit_price(db):
+    _, row = _revise_sponsorship_form(
+        db,
+        products=[{"item_code": f"{MARKER}-ITEM", "quantity": "2", "unit_price": "15"}],
+    )
+
+    db.refresh(row)
+    assert row.revision_no == 1
+
+
+def test_portal_revise_purchase_request_line_without_unit_price_is_unchanged(db):
+    """The gate only ever fires for sponsorship_form - a purchase request revise
+    with the same price-less products payload must go through unaffected."""
+    _, row = _revise_purchase_request(
+        db, products=[{"item_code": f"{MARKER}-ITEM", "quantity": "2"}]
+    )
+
+    db.refresh(row)
+    assert row.revision_no == 1
+
+
 def test_update_request_with_no_products_key_is_unaffected_by_effective_type(db):
     """An edit that never touches lines (`products` omitted) is a no-op for this
     rule regardless of whether request_type is sent - matches

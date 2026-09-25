@@ -25,6 +25,8 @@ vi.mock('../lib/portal-client', async (importOriginal) => {
     fetchMe: vi.fn(),
     fetchSubmission: vi.fn(),
     fetchSubmissionNeighbours: vi.fn(),
+    fetchRevisions: vi.fn(),
+    reviseSubmission: vi.fn(),
     saveDraft: vi.fn(),
     submitDraft: vi.fn(),
     deleteDraftSubmission: vi.fn(),
@@ -36,11 +38,15 @@ vi.mock('../lib/portal-client', async (importOriginal) => {
 
 import {
   fetchMe,
+  fetchRevisions,
+  fetchSubmission,
   fetchSubmissionNeighbours,
+  reviseSubmission,
   saveDraft,
   submitDraft,
 } from '../lib/portal-client';
 import { SubmissionForm } from './SubmissionForm';
+import { waitForSectionLoaded } from '@/test-utils';
 
 const asMock = (fn: unknown) => fn as ReturnType<typeof vi.fn>;
 
@@ -171,5 +177,92 @@ describe('SubmissionForm - sponsorship unit price required on submit (#1227)', (
       expect(toasts.error).toHaveBeenCalledWith('Line 1: Unit price is required.'),
     );
     expect(await screen.findByText('Unit price is required.')).toBeInTheDocument();
+  });
+});
+
+describe('SubmissionForm - sponsorship unit price required on revise (#1232 blocking 4)', () => {
+  /**
+   * A revise is a second submission path back into the approval flow
+   * (`handleRevise` sends `cleanedProducts` the same way `handleSubmit` does),
+   * so `openReviseConfirm` must run the same `findMissingSponsorshipUnitPrice`
+   * check `handleSubmit` does - reusing `collectMissingRequired`'s own
+   * reasoning ("Shared by submit and revise so the two can never disagree").
+   */
+  async function renderRevisableSponsorshipForm() {
+    asMock(fetchSubmission).mockResolvedValue({
+      id: 'sf-1',
+      kind: 'sponsorship_form',
+      title: 'Sponsorship form',
+      reference: 'SF-26-0001',
+      status: 'submitted',
+      is_editable: false,
+      is_draft: false,
+      created_at: '2026-07-20T00:00:00Z',
+      attachments: [],
+      revision: {
+        enabled: true,
+        allowed: true,
+        used: 0,
+        max: 3,
+        remaining: 3,
+        blocked_reason: null,
+      },
+      project_title: 'Community Fun Run',
+      purpose: 'Sponsorship',
+      requested_by_contact_id: 'contact-1',
+      requested_by: 'Darren Lee',
+      products: [{ item_code: 'ITEM-A', quantity: '2', unit_price: '10' }],
+    });
+    asMock(fetchSubmissionNeighbours).mockResolvedValue({
+      prev_id: null,
+      next_id: null,
+      position: 1,
+      total: 1,
+    });
+    asMock(fetchRevisions).mockResolvedValue([]);
+    render(<SubmissionForm kind="sponsorship_form" submissionId="sf-1" />);
+    await waitForSectionLoaded();
+    await waitFor(() =>
+      expect(asMock(fetchSubmission).mock.calls.length).toBeGreaterThanOrEqual(2),
+    );
+  }
+
+  async function enterReviseMode() {
+    const gear = await screen.findByRole('button', { name: 'Submission actions' });
+    fireEvent.pointerDown(gear, { button: 0, pointerId: 1 });
+    fireEvent.pointerUp(gear, { button: 0, pointerId: 1 });
+    fireEvent.click(gear);
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Revise' }));
+    fireEvent.change(screen.getByLabelText(/what changed, and why\?/i), {
+      target: { value: 'Corrected the price' },
+    });
+  }
+
+  it('blocks Send revision client-side and names the line when a price is cleared', async () => {
+    await renderRevisableSponsorshipForm();
+    await enterReviseMode();
+
+    const table = screen.getByRole('table');
+    const spinbuttons = within(table).getAllByRole('spinbutton');
+    // Row order: Quantity, Unit price, Total - clear the seeded price.
+    fireEvent.change(spinbuttons[1], { target: { value: '' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send revision' }));
+
+    await waitFor(() =>
+      expect(toasts.error).toHaveBeenCalledWith('Line 1: Unit price is required.'),
+    );
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(reviseSubmission).not.toHaveBeenCalled();
+  });
+
+  it('opens the confirm dialog once every line still has a unit price', async () => {
+    await renderRevisableSponsorshipForm();
+    await enterReviseMode();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send revision' }));
+
+    expect(await screen.findByRole('alertdialog')).toBeInTheDocument();
+    expect(toasts.error).not.toHaveBeenCalled();
   });
 });

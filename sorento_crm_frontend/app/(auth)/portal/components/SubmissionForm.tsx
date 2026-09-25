@@ -1064,11 +1064,23 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
   };
 
   /** Gate before the confirm dialog: the reason is the one thing the journey
-   *  asks for, so an empty one never reaches the dialog. */
+   *  asks for, so an empty one never reaches the dialog.
+   *
+   *  #1232 blocking 4: a revise is a second submission path back into the
+   *  approval flow (`handleRevise` below sends `cleanedProducts` the same way
+   *  `handleSubmit` does), so it must run the SAME sponsorship unit-price
+   *  check as submit or a dealer could clear a price on revise and have it
+   *  reach the office unchecked. */
   const openReviseConfirm = () => {
     const missing = collectMissingRequired();
     if (missing.length > 0) {
       reportMissingRequired(missing);
+      return;
+    }
+    const missingPrice = findMissingSponsorshipUnitPrice();
+    if (missingPrice) {
+      setInvalidLineIndex(missingPrice.rawIndex);
+      toast.error(`Line ${missingPrice.cleanedIndex + 1}: Unit price is required.`);
       return;
     }
     const trimmed = reason.trim();
