@@ -6,8 +6,10 @@ merged to this branch (S1 the stale-state repair, S2 the FE mock later reconcile
 to R13, S3/S4 the suggested-link model, S5 the conversion script with its dry run RUN against
 the 23 Sep prod copy, `--apply` never run, section 7). S6 (reviewer + browser evidence) is under way: review round 1
 addressed (PR comments 5820446777, 5820494222), the hand-test rulings R11 to R18 folded in,
-review round 2 (comment 5825004622, this session) addressed - every Blocking and Should-fix
-item fixed, tester-first where a test was named. Track: full (new table, migration, a change
+review round 2 (comment 5825004622, this session) addressed, review round 3 (comment
+5826588258) addressed - every Blocking and Should-fix item fixed, tester-first where a test
+was named; Blocking 2 (S6 browser evidence, AC-LT-50/51) is captured on the owner's own local
+stack, not this session's. Track: full (new table, migration, a change
 to what the Buy card, stock debt and `scm.committed_v` count). Branch `fix/oi-links-24sep`, one
 lane, one PR with the S1 repair (issue #1215 points 1, 2, 5) folded in. UAC:
 `oi-links-autocount-truth-24sep-acceptance-criteria.md`. Domain: SCM, order inquiries.
