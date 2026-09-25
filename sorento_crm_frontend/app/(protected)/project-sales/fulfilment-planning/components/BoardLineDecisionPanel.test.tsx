@@ -13,6 +13,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { BoardDecisionPill } from './BoardDecisionPill';
 import { BoardLineDecisionPanel } from './BoardLineDecisionPanel';
 import type {
+  BoardBorrowCandidate,
   BoardCellLocation,
   BoardContribution,
   BoardDecision,
@@ -646,6 +647,154 @@ describe('BoardLineDecisionPanel: a hand-added same-agent borrow keeps its autho
     fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'Stock held for handover.' },
     });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
+    });
+
+    expect(onDecide).toHaveBeenCalledWith(
+      expect.objectContaining({
+        borrow: expect.arrayContaining([
+          expect.objectContaining({
+            warehouse_id: 'wh-mwh-bb',
+            reason:
+              'Authorised by agent JEREMY: Agreed on the phone, 25 Aug. Stock held for handover.',
+          }),
+        ]),
+      }),
+    );
+  });
+});
+
+/**
+ * Review round 2, Blocking 1: the round 1 fix above kept the seeded "Authorised by" sentence
+ * and appended the box text unconditionally, so re-saving a reopened line with nothing edited
+ * appended the SAME box text a second time - `foldBorrowReason` never checked whether the
+ * seeded reason already carried it. The fix rebuilds the reason from the authorisation
+ * sentence plus the current box text every time, instead of appending onto whatever was
+ * stored last, so an unedited re-save reproduces the same string rather than growing it.
+ */
+const BORROW_CANDIDATE_JEREMY: BoardBorrowCandidate = {
+  source: 'other_location',
+  warehouse_code: 'MWH-BB',
+  warehouse_id: 'wh-mwh-bb',
+  free_qty: '90',
+  donor_impact: {
+    free_before: '90',
+    free_after_full_borrow: '0',
+    committed_qty: '0',
+  },
+  donor_agent_code: 'JEREMY',
+  donor_core_line_id: 'core-line-1',
+  same_agent: true,
+  location: {
+    location: 'MWH-BB',
+    where: 'other_group',
+    product_id: 'prod-1',
+    warehouse_id: 'wh-mwh-bb',
+    qty: '0',
+    qty_on_hand: '90',
+    so_qty: '0',
+    spo_qty: '0',
+    available_qty: '90',
+    po_open_qty: '0',
+    incoming: [],
+  },
+};
+
+describe('BoardLineDecisionPanel: re-saving a reopened same-agent borrow line (review round 2, Blocking 1)', () => {
+  it('does not double the box text when the reopened line is saved again unedited', async () => {
+    const onDecide = vi.fn().mockResolvedValue(true);
+    const first = render(
+      <BoardLineDecisionPanel
+        contribution={contributionOf({ borrow_candidates: [BORROW_CANDIDATE_JEREMY] })}
+        decision={null}
+        locations={LOCATIONS}
+        onDecide={onDecide}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
+      target: { value: '6' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Add a borrow' }));
+    fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '9' } });
+    fireEvent.change(screen.getByLabelText(/^Authorised by agent JEREMY/), {
+      target: { value: 'Agreed on the phone, 25 Aug' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Add the borrow' }));
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
+      target: { value: 'Stock held for handover.' },
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
+    });
+
+    const firstDecision = onDecide.mock.calls[0][0] as BoardDecision;
+    expect(firstDecision.borrow?.[0]?.reason).toBe(
+      'Authorised by agent JEREMY: Agreed on the phone, 25 Aug. Stock held for handover.',
+    );
+
+    first.unmount();
+
+    render(
+      <BoardLineDecisionPanel
+        contribution={contributionOf({ borrow_candidates: [BORROW_CANDIDATE_JEREMY] })}
+        decision={firstDecision}
+        locations={LOCATIONS}
+        onDecide={onDecide}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Save decision' })).toBeEnabled();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
+    });
+
+    const secondDecision = onDecide.mock.calls[1][0] as BoardDecision;
+    expect(secondDecision.borrow?.[0]?.reason).toBe(firstDecision.borrow?.[0]?.reason);
+  });
+
+  it('does not double the box text when the box was seeded from a Decide-saved reason that already carries the whole "Authorised by" sentence', async () => {
+    const onDecide = vi.fn().mockResolvedValue(true);
+    // D3/R9: a Decide save folds the whole "Authorised by ...: <name>. <reason>" sentence into
+    // BOTH the top-level `reason` (what `seedReason` reads first) and every borrow row's own
+    // `reason` (`BoardDecideControl.tsx`), so on reopen the box seeds with the whole sentence,
+    // not just the typed reason.
+    const decideSavedDecision: BoardDecision = {
+      verdict: 'amended',
+      reserve: [
+        { warehouse_id: 'wh-BRW-AM', location: 'BRW-AM', qty: '9' },
+        { warehouse_id: 'wh-BRW', location: 'BRW', qty: '6' },
+      ],
+      borrow: [
+        {
+          source: 'other_location',
+          warehouse_id: 'wh-mwh-bb',
+          warehouse_code: 'MWH-BB',
+          qty: '9',
+          reason:
+            'Authorised by agent JEREMY: Agreed on the phone, 25 Aug. Stock held for handover.',
+        },
+      ],
+      timely_spo_qty: '0',
+      buy_qty: '0',
+      reason:
+        'Authorised by agent JEREMY: Agreed on the phone, 25 Aug. Stock held for handover.',
+    };
+
+    render(
+      <BoardLineDecisionPanel
+        contribution={contributionOf({ borrow_candidates: [BORROW_CANDIDATE_JEREMY] })}
+        decision={decideSavedDecision}
+        locations={LOCATIONS}
+        onDecide={onDecide}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Save decision' })).toBeEnabled();
 
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));

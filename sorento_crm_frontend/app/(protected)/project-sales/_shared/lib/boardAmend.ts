@@ -391,12 +391,27 @@ export function foldReasonIntoDraft(draft: DraftLine, reason: string): DraftLine
  * outright, or the authorisation the server requires (`_check_borrow`) is silently dropped
  * (review round 1, Blocking 2). Matches the shape `BoardDecideControl` already builds fresh
  * for the same case.
+ *
+ * REBUILT every call, never appended to whatever is already stored (review round 2, Blocking
+ * 1): `seeded` is the row's LAST saved reason, which already carries the authorisation sentence
+ * plus a previous box text once the line has been saved once, so appending onto it doubled the
+ * box text on every unedited re-save. The authorisation sentence is pulled fresh out of
+ * `seeded` and the current box text is placed after it, so re-saving with the same box text
+ * reproduces the same string instead of growing it. When the box text itself already starts
+ * with `Authorised by` (`BoardDecideControl`'s own fold, D1), it already carries the whole
+ * sentence, so it is used as-is with nothing appended.
  */
+const AUTHORISATION_SENTENCE = /^Authorised by [^.]*\./;
+
 function foldBorrowReason(seeded: string, boxText: string): string {
-  if (seeded.startsWith('Authorised by')) {
-    return boxText ? `${seeded} ${boxText}` : seeded;
+  if (boxText.startsWith('Authorised by')) {
+    return boxText;
   }
-  return boxText || seeded;
+  const authorisation = seeded.match(AUTHORISATION_SENTENCE)?.[0];
+  if (!authorisation) {
+    return boxText || seeded;
+  }
+  return boxText ? `${authorisation} ${boxText}` : authorisation;
 }
 
 /**
