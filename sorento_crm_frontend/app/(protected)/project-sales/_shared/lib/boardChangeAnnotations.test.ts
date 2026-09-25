@@ -607,7 +607,7 @@ describe('uncoverChangedLines', () => {
    * the composition (`sources`, `qty_proposed_*`) should come from the proposal; the live
    * facts must survive the merge unchanged.
    */
-  it('T7/AC-9: keeps the live required_date, qty_outstanding, is_past and qty_delivered, and only takes the composition from the proposal', () => {
+  it('T7/AC-9: keeps the live required_date, qty_outstanding, is_past and qty_delivered, and only takes the composition (including trail and rank_score) from the proposal', () => {
     const live = contribution({
       key: 'k1',
       project_line_id: 'pl-1',
@@ -617,7 +617,12 @@ describe('uncoverChangedLines', () => {
       qty_delivered: '5',
       covered: true,
       decision: { revision_no: 2, components: [] },
+      rank_score: 1,
+      trail: [],
     } as unknown as Partial<BoardContribution>);
+    const proposedTrail = [
+      { step: 1, kind: 'reserve_own', question: 'Any reserved stock at BRW?', answer: 'yes', took: '5' },
+    ];
     const frozenProposalBatch = batchOf([
       row({
         proposal: {
@@ -628,6 +633,8 @@ describe('uncoverChangedLines', () => {
           qty_delivered: '39',
           sources: [{ kind: 'buy', qty: '39' }],
           qty_proposed_buy: '39',
+          rank_score: 9,
+          trail: proposedTrail,
         } as BoardContribution,
       }),
     ]);
@@ -644,11 +651,17 @@ describe('uncoverChangedLines', () => {
     expect(merged.decision).toBeNull();
     expect(merged.sources).toEqual([{ kind: 'buy', qty: '39' }]);
     expect(merged.qty_proposed_buy).toBe('39');
+    // The composition's OWN facts - what the ladder walk found and how it scored - come
+    // from the proposal too, exactly like `sources` and `qty_proposed_buy` above.
+    expect(merged.rank_score).toBe(9);
+    expect(merged.trail).toEqual(proposedTrail);
     // Same on the cell copy - the two must never disagree.
     const cellMerged = out.cells[0].contributions[0];
     expect(cellMerged.required_date).toBe('2026-12-01');
     expect(cellMerged.qty_outstanding).toBe('5');
     expect(cellMerged.qty_delivered).toBe('5');
+    expect(cellMerged.rank_score).toBe(9);
+    expect(cellMerged.trail).toEqual(proposedTrail);
   });
 
   /**

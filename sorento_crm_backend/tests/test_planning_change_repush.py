@@ -30,6 +30,10 @@ import uuid
 from datetime import date
 from decimal import Decimal
 
+from sqlalchemy import text
+from sqlalchemy.orm import Session as OrmSession
+
+from app.models.order import SalesOrderLine
 from app.models.planning_change import PlanningChangeRow
 from app.models.project_so import (
     IV_ORDER,
@@ -41,7 +45,7 @@ from app.models.project_so import (
 )
 from app.schemas.scm_orders import SalesOrderUpdate
 from app.services import planning_change_service
-from app.services.scm.outstanding_diff import ADDED, DATE_MOVED, Change, Diff, Line
+from app.services.scm.outstanding_diff import ADDED, DATE_MOVED, PRODUCT_CHANGED, Change, Diff, Line
 from app.services.scm.sales_order_service import SalesOrderService
 
 from tests.scm.test_planning_change_diff_parity import (  # noqa: F401 - fixtures reused
@@ -84,6 +88,24 @@ def _moved_change(so_number: str, item_code: str, location: str, core_line_id, *
         after=Line(
             doc_number=so_number, item_code=item_code, location=location,
             qty=qty, required_date=new_date, row_ref=str(core_line_id),
+        ),
+    )
+
+
+def _product_changed(so_number: str, old_item_code: str, new_item_code: str, location: str,
+                      core_line_id, *, qty=10.0, required_date) -> Change:
+    """A `PRODUCT_CHANGED` change on the SAME core line - same qty, same date, only the
+    item code differs. `Change.item_code` is the AFTER side (`_from_to`'s own comment:
+    "Change.item_code is built from the after side")."""
+    return Change(
+        PRODUCT_CHANGED, so_number, new_item_code, location,
+        before=Line(
+            doc_number=so_number, item_code=old_item_code, location=location,
+            qty=qty, required_date=required_date, row_ref=str(core_line_id),
+        ),
+        after=Line(
+            doc_number=so_number, item_code=new_item_code, location=location,
+            qty=qty, required_date=required_date, row_ref=str(core_line_id),
         ),
     )
 
@@ -295,6 +317,144 @@ def test_repush_moving_an_inquired_line_still_replaces_in_place(api):
     assert new_row.to_json["required_date"] == D2.isoformat()
 
 
+def test_repush_supersedes_via_the_core_line_id_fallback_when_push_1_had_no_mirror(api):
+    """Reviewer coverage residual (round 3): the SO419122 shape at its most literal - push 1
+    ADDS a line with NO mirror yet at all, so the `added` row lands with `project_line_id`
+    NULL (`build_batch`'s ADDED branch never resolves one). The mirror is only created
+    AFTERWARDS, between push 1 and push 2 (the ordinary front-planning reconciliation
+    timing). Push 2 then moves the line: the per-line gate fails, and `older` can only be
+    found through the `core_line_id` fallback (`open_pending_by_core_by_batch`,
+    `planning_change_service.py` ~1126) - the `project_line_id` lookup alone would miss it,
+    since the OLDER row never had one.
+    """
+    world, project = api
+    db = world.db
+    core_so, held_core_line, held_product, order, held_mirror = _linked_line(
+        world, project, qty_ordered=72,
+    )
+    _freeze_with_a_full_buy(db, world, order, held_mirror)
+
+    new_product = _product(db)
+    new_core_line = _core_line(
+        db, core_so, new_product, world.own_wh, qty_ordered="10", required_date=D1,
+    )
+    # NO mirror yet - push 1 ADDS a line the project side has never heard of.
+    db.commit()
+
+    push1_change = _added_change(
+        core_so.so_number, new_product.product_code, world.own_wh.warehouse_code,
+        qty=10, required_date=D1,
+    )
+    batch1 = planning_change_service.build_batch(
+        db, Diff(scope_documents=(core_so.so_number,), changes=[push1_change]),
+        applied_line_ids={id(push1_change): str(new_core_line.id)},
+        order_ids={core_so.so_number: str(core_so.id)},
+        actor=world.actor, import_job_id=None, file_name="push1.xlsx",
+    )
+    db.commit()
+    assert batch1 is not None
+    added_row = [
+        r for r in _rows_for(db, batch1.id) if r.item_code == new_product.product_code
+    ][0]
+    assert added_row.project_line_id is None, (
+        "the premise: push 1 has no mirror to resolve, so the row is stored with no "
+        "project_line_id at all - only core_line_id can ever find it again"
+    )
+
+    # Reconciliation runs between the two pushes and gives the line its mirror.
+    _project_line(db, order, line_no=2, product=new_product, core_line=new_core_line)
+    db.commit()
+
+    new_core_line.required_date = D2
+    db.flush()
+    push2_change = _moved_change(
+        core_so.so_number, new_product.product_code, world.own_wh.warehouse_code,
+        new_core_line.id, old_date=D1, new_date=D2,
+    )
+    planning_change_service.build_batch(
+        db, Diff(scope_documents=(core_so.so_number,), changes=[push2_change]),
+        applied_line_ids={id(push2_change): str(new_core_line.id)},
+        order_ids={core_so.so_number: str(core_so.id)},
+        actor=world.actor, import_job_id=None, file_name="push2.xlsx",
+    )
+    db.commit()
+
+    db.expire_all()
+    stale = db.get(PlanningChangeRow, added_row.id)
+    assert stale.applied_state == "superseded", (
+        "the core_line_id fallback must find the older row even though it never carried "
+        "a project_line_id"
+    )
+    assert stale.applied_reason == "Line changed again; the row no longer describes it"
+    still_for_l = [
+        r for r in _rows_for(db, batch1.id) if r.item_code == new_product.product_code
+    ]
+    assert len(still_for_l) == 1
+
+
+def test_repush_with_a_product_change_supersedes_the_stale_added_row(api):
+    """Reviewer coverage residual (round 3): push 2 changes the PRODUCT on the same core
+    line (same qty, same date) rather than the date - `_entry_differs_from_older_row`
+    treats `PRODUCT_CHANGED` as always different from what the older row describes
+    (review round 1, S6), so this must supersede exactly like a date move does.
+    """
+    world, project = api
+    db = world.db
+    core_so, held_core_line, held_product, order, held_mirror = _linked_line(
+        world, project, qty_ordered=72,
+    )
+    _freeze_with_a_full_buy(db, world, order, held_mirror)
+
+    old_product = _product(db)
+    new_core_line = _core_line(
+        db, core_so, old_product, world.own_wh, qty_ordered="10", required_date=D1,
+    )
+    _project_line(db, order, line_no=2, product=old_product, core_line=new_core_line)
+    db.commit()
+
+    push1_change = _added_change(
+        core_so.so_number, old_product.product_code, world.own_wh.warehouse_code,
+        qty=10, required_date=D1,
+    )
+    batch1 = planning_change_service.build_batch(
+        db, Diff(scope_documents=(core_so.so_number,), changes=[push1_change]),
+        applied_line_ids={id(push1_change): str(new_core_line.id)},
+        order_ids={core_so.so_number: str(core_so.id)},
+        actor=world.actor, import_job_id=None, file_name="push1.xlsx",
+    )
+    db.commit()
+    assert batch1 is not None
+    added_row = [
+        r for r in _rows_for(db, batch1.id) if r.item_code == old_product.product_code
+    ][0]
+    assert added_row.applied_state == "pending"
+
+    # Write-first: the book renames this line's product, same qty, same date.
+    new_product = _product(db)
+    new_core_line.product_id = new_product.id
+    db.flush()
+    push2_change = _product_changed(
+        core_so.so_number, old_product.product_code, new_product.product_code,
+        world.own_wh.warehouse_code, new_core_line.id, qty=10.0, required_date=D1,
+    )
+    planning_change_service.build_batch(
+        db, Diff(scope_documents=(core_so.so_number,), changes=[push2_change]),
+        applied_line_ids={id(push2_change): str(new_core_line.id)},
+        order_ids={core_so.so_number: str(core_so.id)},
+        actor=world.actor, import_job_id=None, file_name="push2.xlsx",
+    )
+    db.commit()
+
+    db.expire_all()
+    stale = db.get(PlanningChangeRow, added_row.id)
+    assert stale.applied_state == "superseded", (
+        "a PRODUCT_CHANGED re-push must retire the older row too, even with the same qty "
+        "and date - `_entry_differs_from_older_row` treats a product swap as always "
+        "different from what the older row describes"
+    )
+    assert stale.applied_reason == "Line changed again; the row no longer describes it"
+
+
 def test_apply_after_a_gate_failed_repush_raises_no_oi_for_the_confirmed_stale_row(api):
     """T6 (AC-11), made real (reviewer S5): a row staying `pending` with no decision ever
     reaches `apply` in the first place - `_apply_one_order`'s own `accepted` filter already
@@ -463,3 +623,101 @@ def test_manual_edit_updates_the_mirror_lines_required_date_and_qty(api):
     assert refreshed.qty == Decimal("40"), (
         "AC-7: a manual SO edit that changes qty_ordered must update the mirror too"
     )
+
+
+def test_manual_edit_commits_the_supersede_even_when_the_second_call_keeps_no_new_row(api):
+    """Reviewer coverage residual (round 3), `sales_order_service.py` ~1628: when
+    `build_batch` keeps no new row (the moved line is still undecided, so `update()` returns
+    `planning_change_batch: None`), the OLDER row's supersede - real work `build_batch` did
+    on this session - still has to be committed rather than left for whatever the caller
+    does next. `_propagate_planning_change`'s own `if batch is None: self.db.commit()`
+    (right after the `build_batch` call) is what makes that stick.
+
+    A plain `db.expire_all()` on the SAME session the write went through cannot tell a real
+    commit apart from a mutation merely sitting on this session's own pending work - the
+    session autoflushes, so even an uncommitted change already reads back as superseded
+    through its own identity map. What actually distinguishes a commit under
+    `blank_session`'s `join_transaction_mode="create_savepoint"` is whether it SURVIVES a
+    later `rollback()` on the same session (a released savepoint does; a pending one is
+    undone) - checked here two ways: an explicit `db.rollback()` right after `update()`
+    returns, simulating an unrelated later failure in the same request, and then a
+    genuinely SEPARATE `Session` on the same connection, bypassing `db`'s own identity map
+    entirely, reading the row fresh.
+    """
+    world, project = api
+    db = world.db
+    core_so, held_core_line, held_product, order, held_mirror = _linked_line(
+        world, project, qty_ordered=72,
+    )
+    _freeze_with_a_full_buy(db, world, order, held_mirror)
+
+    new_product = _product(db)
+    result1 = SalesOrderService(db).update(
+        core_so.id,
+        SalesOrderUpdate(lines=[
+            {"id": held_core_line.id, "sku": held_product.product_code, "qty_ordered": 72},
+            {"sku": new_product.product_code, "qty_ordered": 10,
+             "required_date": D1.isoformat()},
+        ]),
+        user_id=world.actor,
+    )
+    batch1_envelope = result1["planning_change_batch"]
+    assert batch1_envelope is not None
+    batch1_id = batch1_envelope["id"]
+    added_row = next(
+        r for r in _rows_for(db, batch1_id) if r.item_code == new_product.product_code
+    )
+    assert added_row.kind == "added"
+    added_row_id = added_row.id
+
+    new_core_line_id = next(
+        ln["id"] for ln in result1["lines"] if str(ln["id"]) != str(held_core_line.id)
+    )
+    # Reconciliation runs between the two edits and gives the new line its mirror - the
+    # same premise the core-id-fallback test above uses, and needed for the SAME reason:
+    # a non-ADDED entry with no mirror at all is dropped before `build_batch` ever asks
+    # about an older row for it.
+    new_core_line = db.query(SalesOrderLine).filter(SalesOrderLine.id == new_core_line_id).one()
+    _project_line(db, order, line_no=2, product=new_product, core_line=new_core_line)
+    db.commit()
+
+    result2 = SalesOrderService(db).update(
+        core_so.id,
+        SalesOrderUpdate(lines=[
+            {"id": held_core_line.id, "sku": held_product.product_code, "qty_ordered": 72},
+            {"id": new_core_line_id, "sku": new_product.product_code, "qty_ordered": 10,
+             "required_date": D2.isoformat()},
+        ]),
+        user_id=world.actor,
+    )
+    assert result2["planning_change_batch"] is None, (
+        "the moved line is still undecided, so no NEW row is kept - only the older one's "
+        "supersede, which is what this test is about"
+    )
+
+    # A later, unrelated failure elsewhere in the SAME request rolls the session back to
+    # its last commit - exactly why the supersede has to be committed here rather than left
+    # for whatever the caller writes next. If `_propagate_planning_change`'s own commit
+    # were missing, this would undo the supersede along with it.
+    db.rollback()
+
+    # A genuinely SEPARATE session on the same connection, reading with plain SQL rather
+    # than through the ORM: `CompanyScopedMixin`'s scope is stored ON THE SESSION INSTANCE
+    # (`set_company_scope`/`company_scope`, `app/models/base.py`), so a brand-new `Session`
+    # object carries none and an ORM query on it would see nothing at all, whatever the
+    # database actually holds - raw SQL is what genuinely proves the DATABASE's own state,
+    # independent of both sessions' identity maps and scoping.
+    fresh = OrmSession(bind=db.connection())
+    try:
+        row = fresh.execute(
+            text("select applied_state, applied_reason from planning_change_rows where id = :i"),
+            {"i": added_row_id},
+        ).mappings().first()
+        assert row is not None, "the row must still exist after the rollback"
+        assert row["applied_state"] == "superseded", (
+            "the supersede from a gate-failed manual edit must be committed, not left "
+            "pending for whatever the caller does next"
+        )
+        assert row["applied_reason"] == "Line changed again; the row no longer describes it"
+    finally:
+        fresh.close()
