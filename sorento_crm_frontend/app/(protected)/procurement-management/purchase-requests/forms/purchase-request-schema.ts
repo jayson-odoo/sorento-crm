@@ -58,10 +58,35 @@ export const PurchaseRequestSchema = z.object({
   products: z.array(lineSchema),
 });
 
+/** A value cleared back to '' (e.g. quantity typed then erased) is not content -
+ *  matches the portal twin's own `lineHasContent` (`SubmissionForm.tsx`), which trims
+ *  strings rather than treating a non-null empty string as "has something in it". */
+function hasValue(v: number | string | null | undefined): boolean {
+  if (v == null) return false;
+  return typeof v === 'string' ? v.trim().length > 0 : true;
+}
+
+/** A line the user has actually touched - mirrors the portal's own
+ *  `cleanLineItems` keep-predicate (`line-items.ts`), so a blank filler row from
+ *  "Add item" never gets refused for a unit price it was never asked to carry. */
+function lineHasContent(line: {
+  item_code?: string | null;
+  quantity?: number | string | null;
+  unit_price?: number | string | null;
+  total?: number | string | null;
+}): boolean {
+  return (
+    hasValue(line.item_code) ||
+    hasValue(line.quantity) ||
+    hasValue(line.unit_price) ||
+    hasValue(line.total)
+  );
+}
+
 /**
  * Form-resolver schema: the base object + a conditional rule making `sales_type`
- * mandatory on a Purchase Request (it drives CS routing). Sponsorship Forms share
- * this schema and do not require it. Kept separate from `PurchaseRequestSchema`
+ * mandatory on a Purchase Request (it drives CS routing) and `unit_price` mandatory
+ * on every real Sponsorship Form line (#1227). Kept separate from `PurchaseRequestSchema`
  * so the base object still exposes `.shape` for field-level unit tests.
  */
 export const PurchaseRequestFormSchema = PurchaseRequestSchema.superRefine(
@@ -74,6 +99,21 @@ export const PurchaseRequestFormSchema = PurchaseRequestSchema.superRefine(
         code: z.ZodIssueCode.custom,
         path: ['sales_type'],
         message: 'Sales type is required.',
+      });
+    }
+    // #1227: sponsorship forms only, mandatory unit price on every real line - purchase
+    // requests are unchanged. Same idiom as the sales_type rule above.
+    if (data.request_type === 'sponsorship_form') {
+      data.products.forEach((line, index) => {
+        if (!lineHasContent(line)) return;
+        const num = line.unit_price == null || line.unit_price === '' ? NaN : Number(line.unit_price);
+        if (Number.isNaN(num) || num < 0) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['products', index, 'unit_price'],
+            message: 'Unit price is required.',
+          });
+        }
       });
     }
   },

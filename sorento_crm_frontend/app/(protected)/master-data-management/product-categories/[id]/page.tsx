@@ -17,6 +17,7 @@ import { PageHeader } from '@/components/common/PageHeader';
 import BackToList, { useBackToListHref } from '@/components/common/BackToList';
 import DetailActions from '@/components/common/DetailActions';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
+import { useHasPermission } from '@/hooks/usePermissions';
 import type { RecordAction } from '@/components/common/recordActions';
 import {
   useCategoriesTree,
@@ -47,6 +48,8 @@ interface Draft {
   is_active: boolean;
   is_searchable: boolean;
   display_order: string;
+  chatbot_max_qty: string;
+  chatbot_eta_offset_days: string;
 }
 
 const Empty = ({ children = 'Not set' }: { children?: string }) => (
@@ -88,6 +91,8 @@ export default function ProductCategoryDetailPage({
   const { data: category, isLoading } = useCategory(id);
   const { data: tree = [] } = useCategoriesTree();
   const update = useUpdateCategory();
+  const canViewChatbotLimits = useHasPermission('master_data.chatbot_stock_limits.view');
+  const canEditChatbotLimits = useHasPermission('master_data.chatbot_stock_limits.edit');
 
   // Delete asks nothing (D7): the countdown replaces the primary button and the
   // server applies it when the window lapses. A category still carrying products
@@ -163,6 +168,9 @@ export default function ProductCategoryDetailPage({
       is_active: category.is_active,
       is_searchable: category.is_searchable ?? true,
       display_order: String(category.display_order ?? 0),
+      chatbot_max_qty: category.chatbot_max_qty != null ? String(category.chatbot_max_qty) : '',
+      chatbot_eta_offset_days:
+        category.chatbot_eta_offset_days != null ? String(category.chatbot_eta_offset_days) : '',
     });
     setEditing(true);
   };
@@ -183,6 +191,10 @@ export default function ProductCategoryDetailPage({
         is_active: draft.is_active,
         is_searchable: draft.is_searchable,
         display_order: Number(draft.display_order) || 0,
+        chatbot_max_qty: draft.chatbot_max_qty.trim() ? Number(draft.chatbot_max_qty) : null,
+        chatbot_eta_offset_days: draft.chatbot_eta_offset_days.trim()
+          ? Number(draft.chatbot_eta_offset_days)
+          : null,
       },
     });
     cancelEdit();
@@ -314,6 +326,46 @@ export default function ProductCategoryDetailPage({
                     (category.display_order ?? 0)
                   )}
                 </Field>
+
+                {canViewChatbotLimits && (
+                  <>
+                    <Field label="Max quantity (assistant)" htmlFor="category-chatbot-max-qty">
+                      {editing && draft ? (
+                        <Input
+                          id="category-chatbot-max-qty"
+                          type="number"
+                          min={0}
+                          disabled={!canEditChatbotLimits}
+                          value={draft.chatbot_max_qty}
+                          onChange={(e) => setDraft({ ...draft, chatbot_max_qty: e.target.value })}
+                        />
+                      ) : category.chatbot_max_qty != null ? (
+                        category.chatbot_max_qty
+                      ) : (
+                        <Empty>-</Empty>
+                      )}
+                    </Field>
+
+                    <Field label="ETA offset (days)" htmlFor="category-chatbot-eta-offset">
+                      {editing && draft ? (
+                        <Input
+                          id="category-chatbot-eta-offset"
+                          type="number"
+                          min={0}
+                          disabled={!canEditChatbotLimits}
+                          value={draft.chatbot_eta_offset_days}
+                          onChange={(e) =>
+                            setDraft({ ...draft, chatbot_eta_offset_days: e.target.value })
+                          }
+                        />
+                      ) : category.chatbot_eta_offset_days != null ? (
+                        category.chatbot_eta_offset_days
+                      ) : (
+                        <Empty>-</Empty>
+                      )}
+                    </Field>
+                  </>
+                )}
 
                 <Field label="Status" htmlFor="category-active">
                   {editing && draft ? (

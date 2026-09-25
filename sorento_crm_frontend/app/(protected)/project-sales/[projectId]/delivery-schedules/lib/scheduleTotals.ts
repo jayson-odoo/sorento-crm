@@ -454,7 +454,7 @@ export function buildColumnStates(
           code: 'po_mismatch',
           detail:
             `The schedule asks for ${ourTotal} and the PO orders ${poQty}${gap}. ` +
-            'Correct a phase quantity, or amend the PO.',
+            'Correct an area quantity, or amend the PO.',
         });
       }
     }
@@ -462,7 +462,7 @@ export function buildColumnStates(
       blockers.push({
         code: 'reported_mismatch',
         detail:
-          `The phases add up to ${ourTotal} but the schedule's own TOTAL QTY row says ` +
+          `The areas add up to ${ourTotal} but the schedule's own TOTAL QTY row says ` +
           `${reportedTotal}. One of the two was misread, so check the cells against the paper.`,
       });
     }
@@ -565,7 +565,7 @@ export function phaseRowLabel(phase: {
   sequence: number;
 }): string {
   const label = phase.label?.trim();
-  return label ? label : `Phase ${phase.sequence}`;
+  return label ? label : `Area ${phase.sequence}`;
 }
 
 // ------------------------------------------------------------------ revision diff (section 9.1)

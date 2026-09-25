@@ -231,6 +231,10 @@ class ContactChatbotUpdate(BaseModel):
     chatbot_recall_enabled: bool | None = None
     # S6: absent = leave alone, same rule as the two above.
     chatbot_stock_allowed: bool | None = None
+    # Chatbot stock ask v2 S2 (PLAN-chatbot-stock-ask-v2-24sep.md, R7): absent = leave
+    # alone, same rule as every other field on this card.
+    notify_salesman: bool | None = None
+    packing_list_allowed: bool | None = None
 
 
 @router.put("/{contact_id}/chatbot", response_model=RespondContactResponse)
@@ -259,6 +263,10 @@ async def update_contact_chatbot(
             contact.chatbot_recall_enabled = body.chatbot_recall_enabled
         if body.chatbot_stock_allowed is not None:
             contact.chatbot_stock_allowed = body.chatbot_stock_allowed
+        if body.notify_salesman is not None:
+            contact.notify_salesman = body.notify_salesman
+        if body.packing_list_allowed is not None:
+            contact.packing_list_allowed = body.packing_list_allowed
         # `get_db` never commits (it only closes), so a flush here rolled back on
         # return: PUT 200, row untouched. Main's convention is the commit in the route.
         db.commit()

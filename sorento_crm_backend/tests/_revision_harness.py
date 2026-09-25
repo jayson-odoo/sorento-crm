@@ -161,6 +161,10 @@ def seed_entity(
                 purchase_request_id=entity_id,
                 item_code="ITEM-A",
                 quantity=2,
+                # #1227: a sponsorship line needs a unit price to submit - unrelated to
+                # what this harness is for (revision plumbing), so it just needs a
+                # valid line, not a test of the rule itself.
+                unit_price=10 if source_entity_type == "sponsorship_form" else None,
                 sort_order=0,
             )
         )

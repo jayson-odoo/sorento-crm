@@ -468,6 +468,17 @@ def seed_scm_module_data() -> None:
     module_483 = importlib.util.module_from_spec(spec_483)
     spec_483.loader.exec_module(module_483)
 
+    # 506 adds the Jinbaichuan spellings (`Customer Name 客户名` / `客户名` / `Customer Name`
+    # for `consignee`, `封条号` for `seal_no`) to BOTH `packing_list` and `proforma_invoice`.
+    # Same create_all gap as every alias migration above: without this row a combined
+    # Jinbaichuan-style header ("封条号：OOLLGZ7182") resolves no label at all, so the
+    # container value it follows never gets split off (test_pi_header_cells_and_convert.py).
+    spec_506 = importlib.util.spec_from_file_location(
+        "_scm_seed_506", versions / "506_scm_pi_consignee_ref.py"
+    )
+    module_506 = importlib.util.module_from_spec(spec_506)
+    spec_506.loader.exec_module(module_506)
+
     # `ifa_supplier_word_col` adds the `supplier_inventory_word` doc type: the D7 word list
     # (`SORENTO` -> `SRT`, `连体马桶` -> `WC`, ...) a bare stock-list model number composes
     # through. Same create_all gap as every alias migration above - without the replay a
@@ -479,6 +490,16 @@ def seed_scm_module_data() -> None:
     )
     module_ifa_word = importlib.util.module_from_spec(spec_ifa_word)
     spec_ifa_word.loader.exec_module(module_ifa_word)
+
+    # `ifa_bare_container_seal` adds the bare `柜号` (container_no) / `封条` (seal_no) shared
+    # aliases DAFUYUAN and NEW YANGGANG's combined-file headers need to split past their first
+    # pair. Same create_all gap as every alias migration above; its own unique partial index
+    # (`WHERE supplier_id IS NULL`) makes the replay idempotent.
+    spec_ifa_bare = importlib.util.spec_from_file_location(
+        "_scm_seed_ifa_bare", versions / "ifa_bare_container_seal.py"
+    )
+    module_ifa_bare = importlib.util.module_from_spec(spec_ifa_bare)
+    spec_ifa_bare.loader.exec_module(module_ifa_bare)
 
     with engine.begin() as conn:
         aliases = module.seed_import_field_aliases(conn)
@@ -494,7 +515,9 @@ def seed_scm_module_data() -> None:
         aliases += module_436.seed(conn)
         aliases += module_459.seed(conn)
         aliases += module_483.seed(conn)
+        module_506.seed(conn)
         aliases += module_ifa_word.seed_supplier_word_rows(conn)
+        module_ifa_bare.seed(conn)
         module_440.seed_inbound_shipment_draft_rule(conn)
         for field, alias in module_347._ALIASES:
             conn.execute(_text(

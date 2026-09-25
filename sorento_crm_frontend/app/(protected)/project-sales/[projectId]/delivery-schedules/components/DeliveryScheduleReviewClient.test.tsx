@@ -136,7 +136,7 @@ const SHORTFALL_WARNING =
   'The schedule asks for 8 of the 16 on the purchase order; the remaining 8 is expected ' +
   'on a later schedule.';
 const REPORTED_MISMATCH_MESSAGE =
-  "The phases add up to 8 but the schedule's own TOTAL QTY row says 16. " +
+  "The areas add up to 8 but the schedule's own TOTAL QTY row says 16. " +
   'One of the two was misread, so check the cells against the paper.';
 const NOT_ON_PO_MESSAGE =
   'The PO version does not order this item, but the schedule asks for 927. ' +
@@ -527,7 +527,7 @@ describe('DeliveryScheduleReviewClient', () => {
       })[0],
     );
 
-    // The flush valve takes nothing at Level 2 & 7 and 8 at Phase 3, and BOTH are typeable,
+    // The flush valve takes nothing at Level 2 & 7 and 8 at Area 3, and BOTH are typeable,
     // so the first cell of the column is where the cursor belongs.
     await waitFor(() =>
       expect(matrix().getByLabelText('Level 2 & 7, SRTFV1001')).toHaveFocus(),
@@ -542,7 +542,7 @@ describe('DeliveryScheduleReviewClient', () => {
       '2 columns still to fix.',
     );
 
-    fireEvent.change(matrix().getByLabelText('Phase 3, SRTFV1001'), {
+    fireEvent.change(matrix().getByLabelText('Area 3, SRTFV1001'), {
       target: { value: '16' },
     });
 
@@ -625,7 +625,7 @@ describe('DeliveryScheduleReviewClient', () => {
     renderReview();
     await screen.findByTestId('schedule-matrix');
 
-    const cell = matrix().getByLabelText('Phase 3, SRTFV1001');
+    const cell = matrix().getByLabelText('Area 3, SRTFV1001');
     expect(cell).toHaveValue('8');
 
     fireEvent.change(cell, { target: { value: '16' } });
@@ -647,7 +647,7 @@ describe('DeliveryScheduleReviewClient', () => {
     renderReview();
     await screen.findByTestId('schedule-matrix');
 
-    const cell = matrix().getByLabelText('Phase 3, SRTFV1001');
+    const cell = matrix().getByLabelText('Area 3, SRTFV1001');
     fireEvent.change(cell, { target: { value: '' } });
     fireEvent.blur(cell);
 
@@ -662,7 +662,7 @@ describe('DeliveryScheduleReviewClient', () => {
     renderReview();
     await screen.findByTestId('schedule-matrix');
 
-    const cell = matrix().getByLabelText('Phase 3, SRTFV1001');
+    const cell = matrix().getByLabelText('Area 3, SRTFV1001');
     fireEvent.change(cell, { target: { value: '8' } });
     fireEvent.blur(cell);
 
@@ -771,7 +771,7 @@ describe('DeliveryScheduleReviewClient', () => {
 
     expect(await screen.findByText(/Confirmed .* by Eling Tan/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Confirm schedule$/ })).toBeNull();
-    expect(matrix().getByLabelText('Phase 3, SRTFV1001')).toBeDisabled();
+    expect(matrix().getByLabelText('Area 3, SRTFV1001')).toBeDisabled();
   });
 
   it('renders a phone view of the same columns alongside the matrix', async () => {
@@ -791,10 +791,10 @@ describe('DeliveryScheduleReviewClient', () => {
     await screen.findByTestId('schedule-matrix');
 
     const phone = within(screen.getByTestId('schedule-columns-mobile'));
-    expect(phone.queryByLabelText('Phase 3, SRTFV1001')).toBeNull();
+    expect(phone.queryByLabelText('Area 3, SRTFV1001')).toBeNull();
 
     fireEvent.click(phone.getAllByRole('button', { expanded: false })[1]);
-    expect(phone.getByLabelText('Phase 3, SRTFV1001')).toHaveValue('8');
+    expect(phone.getByLabelText('Area 3, SRTFV1001')).toHaveValue('8');
     expect(phone.getByText(REPORTED_MISMATCH_MESSAGE)).toBeInTheDocument();
   });
 });
@@ -899,8 +899,8 @@ describe('DeliveryScheduleReviewClient revision diff and amendment banner', () =
     await screen.findByTestId('schedule-matrix');
 
     expect(await screen.findByText('Changes since the previous version')).toBeInTheDocument();
-    // The phase moved (01/01/2026 -> 01/07/2026) and the WC's quantity grew (900 -> 927).
-    expect(await screen.findByText(/1 phase moved/)).toBeInTheDocument();
+    // The area moved (01/01/2026 -> 01/07/2026) and the WC's quantity grew (900 -> 927).
+    expect(await screen.findByText(/1 area moved/)).toBeInTheDocument();
     expect(screen.getByText(/1 quantit(y|ies) changed/)).toBeInTheDocument();
   });
 
@@ -1009,7 +1009,7 @@ describe('DeliveryScheduleReviewClient notes and revision proposals', () => {
 
     expect(screen.getByText('Re-dating proposals')).toBeInTheDocument();
     expect(
-      screen.getByText(/SRTFV1001 - re-date 1 phase from 23\/07\/2026/),
+      screen.getByText(/SRTFV1001 - re-date 1 area from 23\/07\/2026/),
     ).toBeInTheDocument();
   });
 
@@ -1082,9 +1082,9 @@ describe('DeliveryScheduleReviewClient notes and revision proposals', () => {
   });
 });
 
-/** Section 9.8 - By phase / By date, and the hint chip that offers the switch. */
-describe('DeliveryScheduleReviewClient, By phase / By date', () => {
-  it('defaults to By phase, and switches renderer when the toggle is pressed', async () => {
+/** Section 9.8 - By area / By date, and the hint chip that offers the switch. */
+describe('DeliveryScheduleReviewClient, By area / By date', () => {
+  it('defaults to By area, and switches renderer when the toggle is pressed', async () => {
     renderReview();
     await screen.findByTestId('schedule-matrix');
     expect(screen.queryByTestId('schedule-by-date-matrix')).toBeNull();
@@ -1094,7 +1094,7 @@ describe('DeliveryScheduleReviewClient, By phase / By date', () => {
     expect(await screen.findByTestId('schedule-by-date-matrix')).toBeInTheDocument();
     expect(screen.queryByTestId('schedule-matrix')).toBeNull();
 
-    fireEvent.click(screen.getByRole('radio', { name: 'By phase' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'By area' }));
     expect(await screen.findByTestId('schedule-matrix')).toBeInTheDocument();
   });
 
@@ -1127,7 +1127,7 @@ describe('DeliveryScheduleReviewClient, By phase / By date', () => {
     fireEvent.click(chip);
 
     expect(await screen.findByTestId('schedule-by-date-matrix')).toBeInTheDocument();
-    // Once switched to By date, the hint (a By phase affordance) is gone.
+    // Once switched to By date, the hint (a By area affordance) is gone.
     expect(screen.queryByText(/re-dated - view by date/)).toBeNull();
   });
 });
