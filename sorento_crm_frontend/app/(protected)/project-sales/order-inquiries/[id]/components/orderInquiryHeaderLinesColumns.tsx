@@ -18,6 +18,7 @@ import {
   orderInquirySoLineColumn,
   orderInquiryTakenRemainingColumns,
   QtyCell,
+  RaisedCell,
   SupplierCell,
 } from '../../components/orderInquiryWorklistColumns';
 import type { OrderInquiryWorklistRow } from '../../../_shared/types/orderInquiry.types';
@@ -339,6 +340,17 @@ export function useOrderInquiryHeaderLinesColumns({
         size: 200,
         meta: { headerTitle: 'Instruction', skeleton: <Skeleton className="h-4 w-24" /> },
         cell: ({ row }) => <InstructionCell row={row.original} />,
+      },
+      {
+        // AC-DT-6 (`PLAN-oi-decision-trail-ui.md`): the same Raised column the worklist
+        // carries (hidden there by default), visible here - `RaisedCell` is shared so
+        // the same row reads the same way on both screens.
+        id: 'raise_event',
+        header: ({ column }) => <DataGridColumnHeader title="Raised" column={column} />,
+        size: 220,
+        enableSorting: false,
+        meta: { headerTitle: 'Raised', skeleton: <Skeleton className="h-4 w-24" /> },
+        cell: ({ row }) => <RaisedCell row={row.original} />,
       },
       // `PLAN-oi-request-cs-reserve.md` 6e.2 (AC-RS-83): the pill is plain text.
       {

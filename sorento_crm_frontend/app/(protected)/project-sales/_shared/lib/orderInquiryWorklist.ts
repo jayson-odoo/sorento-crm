@@ -32,6 +32,35 @@ const MONTH_WORD = [
   'DEC',
 ];
 
+/**
+ * The exact stamp `project_order_inquiry_import_service.py` writes at the front of a
+ * migrated row's note (`_MIGRATION_STAMP`). Matched by prefix, not equality: the import
+ * service appends its own "Was N on D" correction fragment after it.
+ */
+const SHEET_MIGRATION_NOTE_PREFIX = 'Migrated from order inquiry sheet';
+
+/**
+ * AC-DT-6 (`PLAN-oi-decision-trail-ui.md`): the Raised column's own KIND word.
+ *
+ * Read off `raise_event_kind` when the server matched an actual `order_inquiry_raises`
+ * event (AC-DT-3) - `Raised` or `Reconfirmed`. A row with none matched carries no event
+ * at all (migrated before raises were recorded, or raised by a planning change, which
+ * writes no event of its own), so the fallback reads the row's own `note`: the sheet
+ * importer's own stamp, or the "Was <date>" / "Was <qty>, now <qty>" wording
+ * `planning_change_service.py` writes for a date move or a quantity drop. `null` when
+ * neither matches - a row this column has nothing to say about.
+ */
+export function raisedKindLabel(
+  row: Pick<OrderInquiryWorklistRow, 'raise_event_kind' | 'note'>,
+): 'Raised' | 'Reconfirmed' | 'Sheet' | 'Planning change' | null {
+  if (row.raise_event_kind === 'raised') return 'Raised';
+  if (row.raise_event_kind === 'reconfirmed') return 'Reconfirmed';
+  const note = row.note ?? '';
+  if (note.startsWith(SHEET_MIGRATION_NOTE_PREFIX)) return 'Sheet';
+  if (note.startsWith('Was ')) return 'Planning change';
+  return null;
+}
+
 /** `2026-01` to `JAN 26`. Anything that is not a month answers null rather than guessing. */
 export function deliveryMonthLabel(month?: string | null): string | null {
   if (!month) return null;

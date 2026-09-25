@@ -402,7 +402,8 @@ class _Row:
         "outside_reserve_window",
         "project_sales_order_id", "project_line_id", "warehouse_ids", "project_key",
         "so_qty_ahead", "lines_ahead", "available_to_this_line",
-        "decision", "draft", "item_flags", "order_inquiry", "inquiry_decided", "lent_to",
+        "decision", "decided_by_name", "draft", "item_flags", "order_inquiry",
+        "inquiry_decided", "lent_to",
         "unit_qty", "unit_line_count",
         "outside_planning",
         #: R3 (13 Sep browser walk): the book CANCELLED this line and it still has a
@@ -463,6 +464,10 @@ class _Row:
         self.available_to_this_line: Optional[Decimal] = _ZERO
         # What the order's ACTIVE revision froze for this line, when it covers it (13.4).
         self.decision: Optional[Dict[str, Any]] = None
+        # AC-DT-2 (`PLAN-oi-decision-trail-ui.md`): who confirmed the decision that
+        # covers this line, by name - never an id. `None` on an uncovered line, the
+        # same as `decision` itself.
+        self.decided_by_name: Optional[str] = None
         # What somebody SAVED on this line without confirming it yet (S4, R-F), read off
         # `projects.so_supply_decision_drafts` by `_attach_drafts` once the ladder has run -
         # `stale` is judged against the proposal this build has just computed. None when
@@ -703,6 +708,13 @@ class FulfilmentBoardService:
         from app.services.project_supply_undo_service import board_undo_map
 
         undo_by_so = board_undo_map(self.db, adopted_by_so, actor_user_id=actor_user_id)
+        # AC-DT-1 (`PLAN-oi-decision-trail-ui.md`): the board header's own "Revision N,
+        # confirmed by <name>" line, one per order. A SEPARATE read from `undo_by_so`
+        # above on purpose: that one is gated to journalled (or admin-reconstructable)
+        # revisions for the undo gear specifically, and a header built off it would read
+        # "No decision yet" on most confirmed orders - a pre-lane revision, or one
+        # minted outside the board's own confirm routes, still gets a header.
+        decision_headers_by_so = self._decision_headers(adopted_by_so)
         rows = self._demand_rows(numbers, reopened_by_change=pending_core_lines)
         # R3 (13 Sep browser walk): a cancelled line with a still-PENDING change row, read
         # separately from ordinary demand and added to `contributions` alone, below - never
@@ -851,7 +863,9 @@ class FulfilmentBoardService:
                 [self._contribution(row) for row in rows]
                 + [self._contribution(row) for row in cancelled_rows]
             ),
-            "orders": self._standings(rows, adopted_by_so, pending_by_so, undo_by_so),
+            "orders": self._standings(
+                rows, adopted_by_so, pending_by_so, undo_by_so, decision_headers_by_so
+            ),
             # SELECTION-scoped totals, counted over every contributing line before any window
             # is applied - never over the cells on screen.
             #
@@ -1487,8 +1501,9 @@ class FulfilmentBoardService:
         self._addressing = self._mirror_addressing([str(line.id) for line, *_r in records])
         line_numbers = self._line_numbers(records)
         # What an active revision already froze, per CORE line: the decision, and beside it
-        # the proposal the engine had made at that moment (AC-D1). One read for both.
-        frozen, frozen_proposals = self._frozen_decisions()
+        # the proposal the engine had made at that moment (AC-D1), and (AC-DT-2) who
+        # confirmed it. One read for all three.
+        frozen, frozen_proposals, frozen_decided_by = self._frozen_decisions()
         # What purchasing was already TOLD, per CORE line. One read for the whole board too.
         # The active decisions go in with it: a refusal is only news until CS answers it
         # (see `_order_inquiries`).
@@ -1559,6 +1574,9 @@ class FulfilmentBoardService:
             # Covered or not, and by what. A line an active decision covers is not planned
             # again: it states the composition that was frozen for it (13.4).
             row.decision = frozen.get(str(line.id))
+            # AC-DT-2: who confirmed the decision that covers this line, by name. None
+            # on an uncovered line, same as `row.decision` itself.
+            row.decided_by_name = frozen_decided_by.get(str(line.id))
             # What the engine had suggested for it when that decision was taken - the
             # STARTING value only. `_allocate` replaces it with the live ladder on every
             # line: the uncovered ones from the board's own walk, the covered ones from a
@@ -2011,11 +2029,16 @@ class FulfilmentBoardService:
 
     def _frozen_decisions(
         self,
-    ) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Optional[List[Dict[str, Any]]]]]:
+    ) -> Tuple[
+        Dict[str, Dict[str, Any]],
+        Dict[str, Optional[List[Dict[str, Any]]]],
+        Dict[str, Optional[str]],
+    ]:
         """What each ACTIVE revision froze, keyed by the CORE line it covers.
 
-        Two maps off one read: the DECISION, and the PROPOSAL the engine had made when that
-        decision was taken (AC-D1). The second is `None` for a revision written before the
+        Three maps off one read: the DECISION, the PROPOSAL the engine had made when that
+        decision was taken (AC-D1), and (AC-DT-2, `PLAN-oi-decision-trail-ui.md`) who
+        confirmed it, by name. The second is `None` for a revision written before the
         proposal was frozen - which is "not recorded", not "the engine suggested nothing".
 
         The core line id is the key because that is what a snapshot names a covered line by,
@@ -2032,7 +2055,7 @@ class FulfilmentBoardService:
             if entry.get("project_sales_order_id")
         }
         if not pso_ids:
-            return {}, {}
+            return {}, {}, {}
         decisions = (
             self.db.query(SOSupplyDecision)
             .filter(
@@ -2041,8 +2064,14 @@ class FulfilmentBoardService:
             )
             .all()
         )
+        from app.services.project_service import resolve_user_names
+
+        confirmer_names = resolve_user_names(
+            self.db, {d.confirmed_by for d in decisions if d.confirmed_by}
+        )
         out: Dict[str, Dict[str, Any]] = {}
         proposals: Dict[str, Optional[List[Dict[str, Any]]]] = {}
+        decided_by_name: Dict[str, Optional[str]] = {}
         for decision in decisions:
             frozen = self.supply.frozen_lines_of(decision)
             for snapshot in decision.line_snapshots or []:
@@ -2051,13 +2080,18 @@ class FulfilmentBoardService:
                 if not core_line_id or line_id not in frozen:
                     continue
                 out[str(core_line_id)] = self._line_decision(decision, frozen[line_id])
+                decided_by_name[str(core_line_id)] = (
+                    confirmer_names.get(decision.confirmed_by)
+                    if decision.confirmed_by
+                    else None
+                )
                 proposed = frozen[line_id].get("proposed_components")
                 proposals[str(core_line_id)] = (
                     None
                     if proposed is None
                     else [self._frozen_source(component) for component in proposed]
                 )
-        return out, proposals
+        return out, proposals, decided_by_name
 
     @staticmethod
     def _frozen_source(component: Dict[str, Any]) -> Dict[str, Any]:
@@ -5053,11 +5087,23 @@ class FulfilmentBoardService:
             #: is not proposed for again: everything above states what was DECIDED.
             "covered": row.covered,
             "decision": row.decision,
+            #: AC-DT-2 (`PLAN-oi-decision-trail-ui.md`): the same three facts flattened
+            #: onto the line itself - the Confirmed chip's tooltip reads these rather
+            #: than reaching into `decision`, which is shaped for re-posting an
+            #: amendment and carries no confirmer at all. `None` on an uncovered line.
+            "decided_by_name": row.decided_by_name,
+            "decided_at": (row.decision or {}).get("confirmed_at"),
+            "decision_revision": (row.decision or {}).get("revision_no"),
             #: A decision SAVED on this line and not yet confirmed (S4, R-F). Beside
             #: `decision` rather than instead of it: that is what an ACTIVE revision froze,
             #: this is what somebody has settled but not committed, and a line can carry
             #: either, both or neither. Null when nobody has saved one.
             "draft": row.draft,
+            #: The same saver facts flattened, for the tooltip (AC-DT-2) - `row.draft`
+            #: already carries `saved_by`/`saved_at`, in the shape the draft PUT/GET
+            #: round-trips; these are the same values under the trail's own names.
+            "draft_saved_by_name": (row.draft or {}).get("saved_by") or None,
+            "draft_saved_at": (row.draft or {}).get("saved_at"),
             #: What ANOTHER sales order borrowed off this line (AC-L6): "71 lent to
             #: SO415472". Empty when nothing was lent, never absent.
             "lent_to": row.lent_to or [],
@@ -5200,6 +5246,7 @@ class FulfilmentBoardService:
         adopted_by_so: Optional[Dict[str, str]] = None,
         pending_by_so: Optional[Dict[str, str]] = None,
         undo_by_so: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
+        decision_headers_by_so: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
     ) -> List[Dict[str, Any]]:
         """Per order: how much of it is on this board, and how much of it can never be decided.
 
@@ -5219,6 +5266,7 @@ class FulfilmentBoardService:
         adopted_by_so = adopted_by_so or {}
         pending_by_so = pending_by_so or {}
         undo_by_so = undo_by_so or {}
+        decision_headers_by_so = decision_headers_by_so or {}
         by_order: Dict[str, Dict[str, Any]] = {}
         for row in rows:
             standing = by_order.setdefault(
@@ -5239,12 +5287,69 @@ class FulfilmentBoardService:
                     #: S1 (#978): whether the order's newest confirm can be undone from
                     #: the gear, and why not when it cannot. `board_undo_map`'s own read.
                     "undo": undo_by_so.get(row.sales_order_id),
+                    #: AC-DT-1 (`PLAN-oi-decision-trail-ui.md`): the ACTIVE decision's
+                    #: own header facts - revision, confirmer, when, how many lines -
+                    #: for the board panel's "Revision N, confirmed by <name>" line.
+                    #: Null when the order has no active decision. `_decision_headers`'s
+                    #: own read.
+                    "decision": decision_headers_by_so.get(row.sales_order_id),
                 },
             )
             standing["line_count"] += 1
             if row.unplannable:
                 standing["unplannable_count"] += 1
         return sorted(by_order.values(), key=lambda s: s["so_number"] or "")
+
+    def _decision_headers(
+        self, adopted_by_so: Dict[str, str]
+    ) -> Dict[str, Optional[Dict[str, Any]]]:
+        """AC-DT-1 (`PLAN-oi-decision-trail-ui.md`): the ACTIVE decision's own header
+        facts per selected order - revision, confirmer, when, how many lines - so the
+        board panel can print "Revision 1, confirmed by Nurain, 25 Sep 2026 09:20, 11
+        lines" beside "N to confirm - N rejected", or "No decision yet".
+
+        Read straight off `so_supply_decisions`, never through `board_undo_map`: that
+        read is gated to a JOURNALLED revision (or, admin-only, a reconstructable one)
+        for the undo gear specifically, and a header built off it would read "No
+        decision yet" on most confirmed orders - a pre-lane revision, or one minted
+        outside the board's own confirm routes, still gets a header here.
+
+        One query for the whole board's selection, keyed the same way `adopted_by_so`
+        is - by the CORE `sales_orders.id`. `None` for an order with no active decision.
+        """
+        out: Dict[str, Optional[Dict[str, Any]]] = {so_id: None for so_id in adopted_by_so}
+        pso_ids = {pso_id for pso_id in adopted_by_so.values() if pso_id}
+        if not pso_ids:
+            return out
+        decisions = (
+            self.db.query(SOSupplyDecision)
+            .filter(
+                SOSupplyDecision.project_sales_order_id.in_(list(pso_ids)),
+                SOSupplyDecision.state == DECISION_ACTIVE,
+            )
+            .all()
+        )
+        if not decisions:
+            return out
+        from app.services.project_service import resolve_user_names
+
+        names = resolve_user_names(
+            self.db, {d.confirmed_by for d in decisions if d.confirmed_by}
+        )
+        by_pso = {str(d.project_sales_order_id): d for d in decisions}
+        for so_id, pso_id in adopted_by_so.items():
+            decision = by_pso.get(pso_id) if pso_id else None
+            if decision is None:
+                continue
+            out[so_id] = {
+                "revision_no": decision.revision_no,
+                "confirmed_by_name": (
+                    names.get(decision.confirmed_by) if decision.confirmed_by else None
+                ),
+                "confirmed_at": decision.confirmed_at,
+                "line_count": len(decision.line_snapshots or []),
+            }
+        return out
 
     def _order_plan_status(
         self, so_numbers: Sequence[str]

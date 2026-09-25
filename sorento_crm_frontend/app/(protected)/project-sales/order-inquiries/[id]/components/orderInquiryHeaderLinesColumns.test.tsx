@@ -43,6 +43,9 @@ describe('AC-B3-1: the Lines tab reads Product, Qty, Taken, Remaining, Delivery 
       'SPO',
       'Location',
       'Instruction',
+      // AC-DT-6 (`PLAN-oi-decision-trail-ui.md`): the trail behind the instruction,
+      // right after it.
+      'Raised',
       'State',
     ]);
   });
@@ -233,5 +236,79 @@ describe('AC-RS-83 / 83b / 83c: the reserve icons live inside the State cell', (
     );
     expect(screen.getByText('Reserve 107 @ BRW')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /undo/i })).toBeInTheDocument();
+  });
+});
+
+describe('AC-DT-6: the Raised column (PLAN-oi-decision-trail-ui.md)', () => {
+  function raisedCell(row: OrderInquiryWorklistRow) {
+    const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns());
+    const raisedColumn = result.current.find(
+      (column) => (column as { id?: string }).id === 'raise_event',
+    ) as { cell: (context: unknown) => React.ReactNode } | undefined;
+    expect(raisedColumn).toBeDefined();
+    return raisedColumn!.cell({ row: { original: row } });
+  }
+
+  it('reads "Reconfirmed by <name> · <date time>" for a matched reconfirm event', () => {
+    render(
+      <>
+        {raisedCell(
+          linesRow({
+            raise_event_kind: 'reconfirmed',
+            raise_event_by_name: 'Nurain',
+            raise_event_at: '2026-09-25T01:20:34',
+          }),
+        )}
+      </>,
+    );
+    expect(screen.getByText(/Reconfirmed by Nurain/)).toBeInTheDocument();
+  });
+
+  it('reads "Raised by <name> · <date time>" for a matched raise event', () => {
+    render(
+      <>
+        {raisedCell(
+          linesRow({
+            raise_event_kind: 'raised',
+            raise_event_by_name: 'Johnson',
+            raise_event_at: '2026-09-20T03:22:00',
+          }),
+        )}
+      </>,
+    );
+    expect(screen.getByText(/Raised by Johnson/)).toBeInTheDocument();
+  });
+
+  it('reads "Sheet" for a row whose note starts with the sheet migration stamp, no event matched', () => {
+    render(
+      <>
+        {raisedCell(
+          linesRow({
+            raise_event_kind: null,
+            note: 'Migrated from order inquiry sheet, row 42',
+          }),
+        )}
+      </>,
+    );
+    expect(screen.getByText('Sheet')).toBeInTheDocument();
+  });
+
+  it('reads "Planning change" for a row whose note carries the date-move stamp, no event matched', () => {
+    render(
+      <>
+        {raisedCell(
+          linesRow({
+            raise_event_kind: null,
+            note: 'Was 2026-09-01',
+          }),
+        )}
+      </>,
+    );
+    expect(screen.getByText('Planning change')).toBeInTheDocument();
+  });
+
+  it('reads a dash when nothing at all is known about how the row was raised', () => {
+    render(<>{raisedCell(linesRow({ raise_event_kind: null, note: null }))}</>);
+    expect(screen.getByText('-')).toBeInTheDocument();
   });
 });

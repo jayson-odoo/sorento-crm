@@ -9,6 +9,7 @@ import {
   PopoverPortal,
   PopoverTrigger,
 } from '@/components/ui/popover';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type {
   BoardContribution,
   BoardDecision,
@@ -205,6 +206,37 @@ export function BoardDecisionPill({
 
   const savedBy = contribution.draft?.saved_by;
   const savedAt = contribution.draft?.saved_at;
+  /**
+   * AC-DT-5 (`PLAN-oi-decision-trail-ui.md`): the Confirmed chip's own tooltip - "Confirmed
+   * by <name>, <date time> (revision N)", and, only when a draft exists on this same line,
+   * a second line "Saved by <name>, <date time>". Only offered when nothing is already
+   * about to render the `savedBy` popover above (a rare confirmed-then-re-saved line keeps
+   * that existing affordance rather than gaining a second, competing one) - every OTHER
+   * verdict chip is unchanged (AC-DT-5).
+   */
+  const confirmedTooltipLines =
+    verdict === 'confirmed' &&
+    !savedBy &&
+    (contribution.decided_by_name || contribution.decided_at || contribution.decision_revision)
+      ? [
+          `Confirmed by ${contribution.decided_by_name ?? 'someone'}${
+            contribution.decided_at
+              ? `, ${formatDateTimeInMalaysia(contribution.decided_at)}`
+              : ''
+          }${
+            contribution.decision_revision
+              ? ` (revision ${contribution.decision_revision})`
+              : ''
+          }`,
+          contribution.draft_saved_by_name
+            ? `Saved by ${contribution.draft_saved_by_name}${
+                contribution.draft_saved_at
+                  ? `, ${formatDateTimeInMalaysia(contribution.draft_saved_at)}`
+                  : ''
+              }`
+            : null,
+        ].filter((line): line is string => Boolean(line))
+      : null;
   const pill = (
     <span
       data-testid={`decision-pill-${contribution.key}`}
@@ -257,6 +289,22 @@ export function BoardDecisionPill({
             </PopoverContent>
           </PopoverPortal>
         </Popover>
+      ) : confirmedTooltipLines ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span
+              data-testid={`decision-confirmed-trail-${contribution.key}`}
+              className="block min-w-0 overflow-hidden"
+            >
+              {pill}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent className="max-w-xs break-words">
+            {confirmedTooltipLines.map((line) => (
+              <p key={line}>{line}</p>
+            ))}
+          </TooltipContent>
+        </Tooltip>
       ) : (
         pill
       )}

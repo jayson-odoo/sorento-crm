@@ -4,7 +4,17 @@
  */
 import React from 'react';
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+// AC-DT-5 (`PLAN-oi-decision-trail-ui.md`): the Confirmed chip's own tooltip is asserted
+// on its CONTENT, the same way `RuleBuilder.test.tsx` bypasses Radix's hover/portal
+// mechanics for a `Tooltip` under test - a real hover interaction is Radix's own contract,
+// not this component's.
+vi.mock('@/components/ui/tooltip', () => ({
+  Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  TooltipTrigger: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  TooltipContent: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
 
 import { BoardDecisionPill } from './BoardDecisionPill';
 import type {
@@ -112,6 +122,60 @@ describe('BoardDecisionPill: no "rev" (R6)', () => {
     const pill = screen.getByTestId(`decision-pill-${KEY}`);
     expect(pill.textContent).toBe('Confirmed');
     expect(pill.textContent).not.toContain('rev');
+  });
+});
+
+describe('BoardDecisionPill: the Confirmed chip tooltip (AC-DT-5, PLAN-oi-decision-trail-ui.md)', () => {
+  it('reads "Confirmed by <name>, <date time> (revision N)" - one line, no draft on the line', () => {
+    render(
+      <BoardDecisionPill
+        contribution={contributionOf({
+          covered: true,
+          decision: { revision_no: 1, timely_spo_qty: '0', reserve: [], borrow: [], buy_qty: '10' },
+          decided_by_name: 'Nurain',
+          decided_at: '2026-09-25T01:20:34',
+          decision_revision: 1,
+        })}
+        decision={null}
+      />,
+    );
+    expect(screen.getByText(/Confirmed by Nurain,.*\(revision 1\)/)).toBeInTheDocument();
+    expect(screen.queryByText(/^Saved by/)).not.toBeInTheDocument();
+  });
+
+  it('adds a second "Saved by <name>, <date time>" line only when a draft also exists', () => {
+    render(
+      <BoardDecisionPill
+        contribution={contributionOf({
+          key: 'so-b|1|WESERP10B|2026-08-31',
+          covered: true,
+          decision: { revision_no: 1, timely_spo_qty: '0', reserve: [], borrow: [], buy_qty: '10' },
+          decided_by_name: 'Nurain',
+          decided_at: '2026-09-25T01:20:34',
+          decision_revision: 1,
+          draft_saved_by_name: 'Farah',
+          draft_saved_at: '2026-09-25T02:00:00',
+        })}
+        decision={null}
+      />,
+    );
+    expect(screen.getByText(/Confirmed by Nurain,.*\(revision 1\)/)).toBeInTheDocument();
+    expect(screen.getByText(/Saved by Farah,/)).toBeInTheDocument();
+  });
+
+  it('leaves every other verdict chip unchanged - Saved carries none of this tooltip', () => {
+    render(
+      <BoardDecisionPill
+        contribution={contributionOf({
+          decided_by_name: 'Nurain',
+          decided_at: '2026-09-25T01:20:34',
+          decision_revision: 1,
+        })}
+        decision={{ verdict: 'approved' }}
+      />,
+    );
+    expect(screen.getByTestId(`decision-pill-${KEY}`)).toHaveTextContent('Saved');
+    expect(screen.queryByText(/^Confirmed by/)).not.toBeInTheDocument();
   });
 });
 

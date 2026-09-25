@@ -37,6 +37,7 @@ import {
   confirmLineFrom,
   suggestionWithReasons,
 } from './boardAmend';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { fromMinor, toMinor } from './supplyComposition';
 
 /**
@@ -53,6 +54,37 @@ import { fromMinor, toMinor } from './supplyComposition';
  */
 export function bucketLabelText(label: string): string {
   return label.replace(/^w\/c\s+/i, '');
+}
+
+/**
+ * AC-DT-1/AC-DT-4 (`PLAN-oi-decision-trail-ui.md`): the board header line beside "N to
+ * confirm - N rejected" - "Revision N - confirmed by <name>, <date time> - N lines", or
+ * "No decision yet" when the order has no active decision. One segment per order, order
+ * number first, when several orders are planned together - a single-order board (the
+ * ordinary case) prints the bare sentence with no order number in front of it.
+ */
+export function decisionHeaderText(orders: BoardOrderStanding[]): string {
+  if (orders.length === 0) return 'No decision yet';
+  const segments = orders.map((order) => {
+    const decision = order.decision;
+    const body = decision
+      ? [
+          `Revision ${decision.revision_no}`,
+          decision.confirmed_by_name || decision.confirmed_at
+            ? `confirmed by ${decision.confirmed_by_name ?? 'someone'}${
+                decision.confirmed_at
+                  ? `, ${formatDateTimeInMalaysia(decision.confirmed_at)}`
+                  : ''
+              }`
+            : null,
+          `${decision.line_count} line${decision.line_count === 1 ? '' : 's'}`,
+        ]
+          .filter(Boolean)
+          .join(' · ')
+      : 'No decision yet';
+    return orders.length > 1 ? `${order.so_number}: ${body}` : body;
+  });
+  return segments.join('; ');
 }
 
 /**

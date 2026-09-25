@@ -35,6 +35,7 @@ import {
   orderInquiryRowHref,
   orderInquirySoLineHref,
   orderInquirySoLineLabel,
+  raisedKindLabel,
 } from '../../_shared/lib/orderInquiryWorklist';
 import type {
   OrderInquiryLinkSuggestion,
@@ -52,7 +53,7 @@ function Muted({ children }: { children: React.ReactNode }) {
  * applies and wins. The order inquiry number stays on the header, the email and the URL -
  * purchasing does not need it as a worklist column any more.
  */
-export const DEFAULT_HIDDEN_COLUMNS: string[] = ['inquiry_no'];
+export const DEFAULT_HIDDEN_COLUMNS: string[] = ['inquiry_no', 'raise_event'];
 
 /**
  * REV design (17 Sep review round): the row's own one-word marks - `via PO`/`via SPO`,
@@ -834,6 +835,26 @@ export function InstructionCell({ row }: { row: OrderInquiryWorklistRow }) {
 }
 
 /**
+ * AC-DT-6 (`PLAN-oi-decision-trail-ui.md`): `<Kind> by <name> · <date time>`, or the
+ * bare kind word when the server matched no event (`Sheet` / `Planning change`, which
+ * carry no `raise_event_by_name`/`raise_event_at`), or a dash when nothing at all is
+ * known about how the row was raised. Shared with the Lines tab
+ * (`orderInquiryHeaderLinesColumns.tsx`) so the same row reads the same way there.
+ */
+export function RaisedCell({ row }: { row: OrderInquiryWorklistRow }) {
+  const kind = raisedKindLabel(row);
+  if (!kind) return <Muted>-</Muted>;
+  const text = `${kind}${row.raise_event_by_name ? ` by ${row.raise_event_by_name}` : ''}${
+    row.raise_event_at ? ` · ${formatDateTimeInMalaysia(row.raise_event_at)}` : ''
+  }`;
+  return (
+    <span className="block truncate" title={text}>
+      {text}
+    </span>
+  );
+}
+
+/**
  * The worklist's columns, in the spreadsheet's own order (`JAN - DEC 2026 ORDER.xlsx`).
  *
  * Shared between the main list and the calendar's day drilldown, so a person reading
@@ -1175,6 +1196,19 @@ export function useOrderInquiryWorklistColumns({
             />
           </div>
         ),
+      },
+      {
+        // AC-DT-6 (`PLAN-oi-decision-trail-ui.md`): the trail behind the instruction -
+        // Raised, Reconfirmed, Sheet or Planning change, by whom, when. Hidden by
+        // default here (`DEFAULT_HIDDEN_COLUMNS`); the OI detail Lines tab shows the
+        // same column visible (`orderInquiryHeaderLinesColumns.tsx`). Unsortable: it is
+        // a derived, per-row match against `order_inquiry_raises`, not a plain column.
+        id: 'raise_event',
+        header: ({ column }) => <DataGridColumnHeader title="Raised" column={column} />,
+        size: 220,
+        enableSorting: false,
+        meta: { headerTitle: 'Raised', skeleton: <Skeleton className="h-4 w-24" /> },
+        cell: ({ row }) => <RaisedCell row={row.original} />,
       },
       {
         // WHO pushed this to purchasing. Sorted server-side on the person's name, which
