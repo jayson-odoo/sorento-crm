@@ -230,7 +230,7 @@ class BoardItemFlags(BaseModel):
     #: is hot too - the hot flag above already covers it.
     dealer_classified: bool = False
     project_classified: bool = False
-    #: `products.is_discontinued`: a Buy for it needs a reason at confirm, nothing more.
+    #: `products.is_discontinued`.
     discontinued: bool = False
     #: Somebody has classified this item - a NON-NULL letter on EITHER demand class - at all.
     #: False is the PLAN's "no classification" state (no delivered demand of either class in

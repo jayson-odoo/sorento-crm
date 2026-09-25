@@ -39,12 +39,22 @@ const exportOrderSheet = vi.fn();
 const exportLowStockReport = vi.fn();
 const exportOiWorksheet = vi.fn();
 const getOrderSummaryDemand = vi.fn();
-vi.mock('../services/summaryOrderService', () => ({
-  exportOrderSheet: (...args: unknown[]) => exportOrderSheet(...args),
-  exportLowStockReport: (...args: unknown[]) => exportLowStockReport(...args),
-  exportOiWorksheet: (...args: unknown[]) => exportOiWorksheet(...args),
-  getOrderSummaryDemand: (...args: unknown[]) => getOrderSummaryDemand(...args),
-}));
+// PLAN-low-stock-export-split-25sep: the page now always mounts `LowStockExportDialog`
+// (closed), which reads `getLowStockPreview`/`previewLowStockExport` off this same module -
+// `importActual` keeps those real rather than undefined, while the four functions this
+// file already controlled stay stubbed.
+vi.mock('../services/summaryOrderService', async () => {
+  const actual = await vi.importActual<typeof import('../services/summaryOrderService')>(
+    '../services/summaryOrderService',
+  );
+  return {
+    ...actual,
+    exportOrderSheet: (...args: unknown[]) => exportOrderSheet(...args),
+    exportLowStockReport: (...args: unknown[]) => exportLowStockReport(...args),
+    exportOiWorksheet: (...args: unknown[]) => exportOiWorksheet(...args),
+    getOrderSummaryDemand: (...args: unknown[]) => getOrderSummaryDemand(...args),
+  };
+});
 
 vi.mock('../services/reorderRunService', () => ({
   resetRunDecisions: vi.fn(),

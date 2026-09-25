@@ -596,7 +596,7 @@ export interface ConfirmLine {
   reserve: ConfirmReserveComponent[];
   borrow: ConfirmBorrowComponent[];
   buy_qty: string;
-  /** Mandatory when the product is discontinued and `buy_qty > 0` (AC-B11). */
+  /** Why this line still buys a discontinued product, when the product is discontinued and `buy_qty > 0`. Optional. */
   buy_reason?: string | null;
   /**
    * Why this composition is not the engine's, in the planner's own words. Frozen with the
@@ -1994,10 +1994,7 @@ export interface BoardDecision {
   reserve?: BoardReserveComponent[];
   borrow?: BoardBorrowComponent[];
   buy_qty?: string;
-  /**
-   * Mandatory when the product is discontinued and `buy_qty > 0` (AC-B11), the same rule the
-   * per-line card applies. The confirmation refuses the whole order without it.
-   */
+  /** Why this line still buys a discontinued product, when the product is discontinued and `buy_qty > 0`. Optional. */
   buy_reason?: string;
   /** The server's incoming cover, carried through unedited: it is dated supply, not a choice. */
   timely_spo_qty?: string;

@@ -5587,13 +5587,6 @@ class ProjectSupplyService:
         for item in entry.borrow or []:
             self._check_borrow(item, fact, borrow_left, refuse, stale, invalid, carried_holds)
 
-        if fact.is_discontinued and buy > _ZERO and not (entry.buy_reason or "").strip():
-            refuse(
-                invalid,
-                "This product is discontinued. Say why it is still being bought before "
-                "confirming.",
-            )
-
         total = timely + reserve_total + borrow_total + buy
         if total != fact.open_qty:
             refuse(
