@@ -14,6 +14,7 @@ import {
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { EXPORT_SPLIT_OPTIONS, type ExportSplit } from '@/components/common/export-split';
+import { fmtInt } from '../../lib/format';
 import { useLowStockPreview } from '../hooks/useSummaryOrder';
 import { previewLowStockExport } from '../services/summaryOrderService';
 
@@ -81,8 +82,8 @@ export function LowStockExportDialog({
             <p className="text-xs text-muted-foreground">...</p>
           ) : previewQuery.isError ? null : (
             <p className="text-xs text-muted-foreground">
-              {preview.rows.toLocaleString()} row{preview.rows === 1 ? '' : 's'},{' '}
-              {preview.sheets.toLocaleString()} sheet{preview.sheets === 1 ? '' : 's'}
+              {fmtInt(preview.rows)} row{preview.rows === 1 ? '' : 's'},{' '}
+              {fmtInt(preview.sheets)} sheet{preview.sheets === 1 ? '' : 's'}
             </p>
           )}
         </DialogBody>
