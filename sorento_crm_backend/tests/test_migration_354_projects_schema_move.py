@@ -66,6 +66,10 @@ BORN_AFTER_THE_MOVE = frozenset({
     # history row per reserve/unreserve on a reserve request row (F3), born straight into
     # `projects` the same way.
     "order_inquiry_reserve_events",
+    # PLAN-oi-links-autocount-truth-24sep.md (migration oisl_0001_suggested_links, issue
+    # #1215): a guess the cascade walk made, never a placement, born straight into
+    # `projects` the same way as its sibling `order_inquiry_links`.
+    "order_inquiry_suggested_links",
 })
 
 MIGRATION = (
