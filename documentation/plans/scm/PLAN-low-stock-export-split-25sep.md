@@ -1,6 +1,6 @@
 # PLAN: Low stock report - split the workbook by supplier / category, the Stock Debt way
 
-Status: in progress, Phase 3 reviews clean, DRAFT PR #1236 (25 Sep 2026); browser pass + owner hand test owed (stack slot). Owner ruled O1-O3 in the lavish round, 25 Sep. Track: feature (three-phase). Lane branch: `feat/low-stock-export-split`, worktree `sorento_crm-low-stock-split`.
+Status: in progress, Phase 3 verified (reviews clean, browser pass AC-16..AC-21 + AC-E2E-1 evidence in evidence/low-stock-export-split), PR #1236 READY, CI green (25 Sep 2026); owner hand test on :3000 owed before merge. Owner ruled O1-O3 in the lavish round, 25 Sep. Track: feature (three-phase). Lane branch: `feat/low-stock-export-split`, worktree `sorento_crm-low-stock-split`.
 UAC: `low-stock-export-split-25sep-acceptance-criteria.md`
 Domain: scm (Reorder Planning, `/scm/reorder/<id>`, Actions > "Low stock report Excel")
 Parent: `PLAN-low-stock-report.md` (S3 the workbook, S4 the menu item), `PLAN-low-stock-last-in-and-list-scope.md` (S2 "All" = the plan list). Second case of `PLAN-stock-debt-filters-totals-export-24sep.md` R5 / A7 ("the low stock report is the named second case; lift the split then").
