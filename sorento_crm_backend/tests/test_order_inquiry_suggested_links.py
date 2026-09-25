@@ -1060,6 +1060,65 @@ class TestACLT19TargetGoesAwayDropsAndReplaces:
 
         assert _suggested_of(db, row.id) == []
 
+    def test_ac_lt_19_remaining_lines_cannot_cover_in_full_drops_the_stale_suggestion(
+        self, ctx
+    ):
+        """Review round 3 Blocking 1: `_cascade_take` returns `[]` under the
+        all-or-nothing rule (the remaining candidates cannot cover `need` in full)
+        exactly as it does when every candidate is used up by other rows' own
+        suggestions - the walk's `if not takes: continue` branch used to leave the
+        row's stale suggestion on the now-closed line standing, the same issue #1215
+        point 3 defect the two no-candidate branches above were already fixed for.
+        Link selected must also report the change (`changed_rows`), not "nothing
+        changed", when it drops a suggestion this way."""
+        db = ctx.db
+        product = _seed_product(db, company_id=ctx.company_a)
+        ref = _ref("SOL")
+        _so, core_line = _seed_so_line(
+            db, company_id=ctx.company_a, product_id=product.id, source_ref=ref, qty="3"
+        )
+        _po, line = _seed_po_line(
+            db,
+            company_id=ctx.company_a,
+            product_id=product.id,
+            qty_ordered="10",
+            header_status="active",
+        )
+        _pso, _mirror, _inquiry, row = _seed_row_and_mirror(
+            db, company_id=ctx.company_a, core_line=core_line, product_id=product.id, qty="3"
+        )
+        db.commit()
+
+        service = ProjectOrderInquiryService(db)
+        service.auto_place_for_products(
+            None, actor_user_id=None, trigger="raise", row_ids=[str(row.id)],
+        )
+        before = _suggested_of(db, row.id)
+        assert len(before) == 1
+        assert before[0].po_line_id == line.id
+
+        line.line_status = "closed"
+        _po_small, small_line = _seed_po_line(
+            db,
+            company_id=ctx.company_a,
+            product_id=product.id,
+            qty_ordered="1",
+            header_status="active",
+        )
+        db.commit()
+
+        result = service.auto_place_for_products(
+            None,
+            actor_user_id=None,
+            trigger="worklist",
+            row_ids=[str(row.id)],
+            redeal_drafts=True,
+            include_awaiting=True,
+        )
+
+        assert _suggested_of(db, row.id) == []
+        assert result["changed_rows"] == 1
+
 
 # ============================================================== AC-LT-20 / G2
 class TestACLT20NoClaimForASuggestion:

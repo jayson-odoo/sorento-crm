@@ -9213,18 +9213,14 @@ class ProjectOrderInquiryService:
             need = self._unlinked_need(row)
             if need <= _ZERO:
                 continue
-            # The horizon, checked on a row that still has something to link and before any
-            # candidate is read: a row already covered is not one the buyer left behind, and
-            # counting it would put a number on the banner nobody could act on.
-            if self._after_horizon(row, link_up_to):
-                after_horizon += 1
-                continue
             # AC-LT-14/G2, Should fix 4 (review round 2): this row's OWN current
             # suggestions, fetched once and used three ways below - to net them OUT
             # of the shared `suggested_totals_by_target` (so the row never competes
             # against itself), to update that SAME shared total in memory afterward
             # (never a second full-table query), and handed to `_write_suggested_
-            # links` so it does not fetch them a second time.
+            # links` so it does not fetch them a second time. Fetched BEFORE the
+            # horizon check below (review round 3 Blocking 1) so that branch can drop
+            # a stale suggestion too, exactly as the no-candidate branches do.
             existing_suggestions = self._suggested_of_row(row.id)
             own_by_target: Dict[str, Decimal] = {}
             for suggestion in existing_suggestions:
@@ -9242,6 +9238,20 @@ class ProjectOrderInquiryService:
                         suggested_totals_by_target.get(target, _ZERO) - qty
                     )
 
+            # The horizon, checked on a row that still has something to link and before any
+            # candidate is read: a row already covered is not one the buyer left behind, and
+            # counting it would put a number on the banner nobody could act on. Review round
+            # 3 Blocking 1 asked this branch be decided the same way as the no-candidate ones
+            # below; the decision here is NOT to drop - B1's own rule
+            # (`test_auto_link_all_keeps_the_draft_of_a_row_that_is_now_past_the_cut_off`)
+            # already governs this exact branch: the cut off says "do not deal this row", not
+            # "take back what it holds". A row past the horizon is not re-walked at all - no
+            # candidate is even read for it - so there is no fresher answer to prefer over
+            # what it already has, unlike the no-candidate branches below, which DO walk the
+            # row and find nothing left to stand behind the suggestion it is holding.
+            if self._after_horizon(row, link_up_to):
+                after_horizon += 1
+                continue
             candidates = self._candidates_for_row(row, credit_own_links=bool(drafts))
             if not candidates:
                 # Review round 2 Blocking 5 (AC-LT-19): no candidate at all is the
@@ -9278,6 +9288,19 @@ class ProjectOrderInquiryService:
             }
             takes = self._cascade_take(candidates, need, held_by_others=held_by_others)
             if not takes:
+                # Review round 3 Blocking 1 (AC-LT-19's third branch): the ALL-OR-
+                # NOTHING gate above can return `[]` on a row that still HAS
+                # candidates - the remaining lines just cannot cover `need` in full,
+                # or every unit left is already held by other rows' own suggestions.
+                # Left alone this kept a stale suggestion pointing at a document
+                # that closed since the last pass - the same issue #1215 point 3
+                # defect the two no-candidate branches above are already fixed for.
+                # The honest outcome is the same: nothing to suggest is nothing
+                # suggested, not whatever was offered last time.
+                if existing_suggestions:
+                    self._drop_suggested_links([row])
+                    _release_own_contribution()
+                    changed_suggestion_row_ids.add(str(row.id))
                 continue
             if drafts and self._same_placement(drafts, takes):
                 # The best answer today is the one the row already holds. Deleting and
