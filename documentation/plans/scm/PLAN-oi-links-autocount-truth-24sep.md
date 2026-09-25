@@ -249,6 +249,21 @@ a suggestion of a line that no longer exists means nothing.
   links table holds no cascade guesses, "re-deal" is the replace in the first bullet.
   `_unplace_drafts` and `_cascade_only` stay for legacy links until S5 has run on prod
   (section 8).
+* **G5 guard, dated 25 Sep 2026 (review round 2 Blocking 3, no owner ruling needed - this
+  preserves G5 rather than changing it).** Until this guard, `auto_place_for_products`
+  still re-dealt a row's own `_cascade_only` real link when `redeal_drafts=True` (Auto
+  link all, Link selected): a link no better answer covers is, since S3, always a LEGACY
+  link from before S3 (the cascade itself writes no real link any more), and deleting it
+  to write a suggestion in its place is exactly the blind conversion G5 ruled out ("the
+  owner sees the delta first") - it would have moved an unknown number of the ~2,000
+  legacy rows from On PO/SPO to To buy on the next press, ahead of S5's own reviewed
+  delta. Fix: the walk's `drafts` is now always empty - no existing real link, book-named
+  or not, is ever re-dealt - and only the row's own unlinked remainder is offered a
+  suggestion. `redeal_drafts`, `_unplace_drafts` and `_cascade_only` are unchanged in
+  every other respect (the state-widening to `placed` rows, and `_retire_uncovered_rows`'s
+  own use of `_unplace_drafts`) and still leave via section 8's removal once S5 has
+  applied and a query shows zero legacy links left. Test:
+  `tests/test_oi_follow_book_chain.py::TestRedealNeverTakesALegacyRealLink`.
 
 ### 3.5 How a suggested link is shown
 
@@ -534,6 +549,13 @@ Open question for the owner, not yet answered: does "the user should always go t
 do linking" also retire the manual Choose document / Link PO by-hand actions (G3 said a manual
 link by purchasing stays real, in the buyer's name)? Until answered, G3 stands unchanged and
 only Link selected changes.
+
+**G5 guard, 25 Sep 2026 (review round 2 Blocking 3).** No owner ruling needed - this preserves
+G5 rather than reopening it. The reviewer found that `auto_place_for_products` was still
+re-dealing a row's own real cascade link when called with `redeal_drafts=True` (Auto link all,
+Link selected): since S3 the cascade writes no real link at all, so any such link is a LEGACY
+one from before S3, and re-dealing it deletes the real link and writes only a suggestion in its
+place - the blind conversion G5 already ruled out. Section 3.4 carries the fix and the test.
 
 ## Grill questions
 

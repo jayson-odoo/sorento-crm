@@ -9049,11 +9049,6 @@ class ProjectOrderInquiryService:
         # not seen, so a loop that met them one at a time would rebuild per row - three
         # queries each, over a growing product list, on a pass that names thousands.
         self._netting(list(product_id_by_row.values()))
-        # Batched (S6): one grouped load for the WHOLE pass - "a pass that names
-        # thousands" (the comment above) turned the old per-row `_links_of` +
-        # `_only_cascade_links` pair into a doubled N+1 across every row it walked.
-        # Only when there is a re-deal to measure; an ordinary pass never touches drafts.
-        redeal_links = self._links_by_row([str(row.id) for row in rows]) if redeal_drafts else {}
         # S2 (`PLAN-oi-cascade-skip-early-arrival.md`): the SAME two lead-time sources and
         # the SAME default the worklist's reallocate/unlink pill reads
         # (`order_inquiry_worklist_service._attach_link_suggestions`), fetched once for
@@ -9075,44 +9070,24 @@ class ProjectOrderInquiryService:
             product_id = product_id_by_row.get(row.id)
             if not product_id:
                 continue
-            # A DRAFT this pass may re-deal: its links come down only if the walk finds
-            # something better to write, so from here the row is measured as if it were
-            # holding nothing (B1, review round 28 Aug). Held per ROW rather than over the
-            # whole scope, because every guard below is a reason to leave a row exactly as
-            # it is - and a scope-wide unplace had already taken the answer away by then.
-            # `_cascade_only`, not `ack_state`: linking never waits for confirm, so a row
-            # born AWAITING (`PLAN-oi-confirm-per-so.md` S1) is no better a signal of a
-            # draft than a row born acknowledged used to be - whether a PERSON has ever
-            # manually linked the row is the fact underneath it that survives either way.
-            row_links = redeal_links.get(str(row.id), [])
-            # Review round item 2 (reviewer blocker 1, AC-FB-54): a link on a target
-            # the book names for this row's OWN core line is never a draft, in this
-            # call or any later one - decided from the book itself
-            # (`_book_names_target_for_line`, the same AC-FB-33 primitive, never a
-            # per-call memo or a new column), not from `_cascade_only` alone, which
-            # cannot tell a book link from an ordinary cascade guess (both are
-            # `auto=True`). A row holding even one book-protected link sits out of
-            # this pass's redeal entirely - the mixed case is not worth a partial
-            # rule nobody asked for.
-            book_protects_a_link = False
-            if row_links:
-                core_line_id = self._core_line_id_for_row(row)
-                core_line = self._core_line_by_id(core_line_id) if core_line_id else None
-                if core_line is not None:
-                    book_protects_a_link = any(
-                        self._book_names_target_for_line(
-                            core_line,
-                            po_line_id=link.po_line_id,
-                            spo_allocation_id=link.spo_allocation_id,
-                        )
-                        for link in row_links
-                    )
-            drafts = (
-                row_links
-                if redeal_drafts and not book_protects_a_link and self._cascade_only(row_links)
-                else []
-            )
-            need = _dec(row.qty) if drafts else self._unlinked_need(row)
+            # G5 guard (`PLAN-oi-links-autocount-truth-24sep.md` 3.4, dated 25 Sep 2026,
+            # review round 2 Blocking 3): this pass USED to re-deal a row's own
+            # `_cascade_only` real links - dropping them and writing a fresh real link
+            # in their place when it found a better candidate. Since S3 the cascade
+            # never writes a real link at all, so any `_cascade_only` real link on a
+            # row today is a LEGACY link from before S3, and re-dealing it here would
+            # delete that real link and replace it with only a suggestion - exactly
+            # the blind conversion G5 ruled out ("the owner sees the delta first"),
+            # ahead of the S5 script the owner reviews before it touches one of these.
+            # So `drafts` is always empty: every real link, book-named or not, stays
+            # exactly where it is, and the walk only ever offers a suggestion for the
+            # row's own UNLINKED remainder. `redeal_drafts` still widens the row scope
+            # above to `placed` rows (a re-deal may still find a placed row worth
+            # walking once S5 has run) and `_unplace_drafts`/`_cascade_only` still
+            # serve `_retire_uncovered_rows`; plan section 8 removes all three once a
+            # query shows zero legacy `_cascade_only` real links left on prod.
+            drafts: List[OrderInquiryLink] = []
+            need = self._unlinked_need(row)
             if need <= _ZERO:
                 continue
             # The horizon, checked on a row that still has something to link and before any

@@ -36,6 +36,7 @@ from app.models.project_so import (
     ACK_AWAITING,
     ACK_REJECTED,
     INQUIRY_CANCELLED,
+    INQUIRY_PARTLY_LINKED,
     INQUIRY_PLACED,
     INQUIRY_RAISED,
     IV_ORDER,
@@ -1079,6 +1080,83 @@ class TestRedealNeverTakesBookLink:
         assert {s.po_line_id for s in suggested_after} == {near_line.id} or {
             s.po_line_id for s in suggested_after
         } == {far_line.id}, suggested_after
+
+
+# ============================================ Review round 2: Blocking 3 (G5 guard)
+class TestRedealNeverTakesALegacyRealLink:
+    """Review round 2 Blocking 3 (`PLAN-oi-links-autocount-truth-24sep.md` 3.4, G5
+    guard dated 25 Sep 2026). A `_cascade_only` real link the row holds today is a
+    LEGACY link from before S3 - the cascade itself has written no real link since
+    S3 shipped. Before this guard, `auto_place_for_products(..., redeal_drafts=True)`
+    (Auto link all, Link selected) still treated such a link as a re-dealable draft:
+    when the walk found a different answer it deleted the real link and its claim
+    and wrote only a suggestion in its place, moving the row from On PO/SPO to To
+    buy for an unknown number of the legacy rows on prod - without the owner ever
+    reviewing the delta, exactly the blind conversion G5 ruled out ("the owner sees
+    the delta first"). Fix: `drafts` is now always empty in the walk, so no real
+    link is ever re-dealt; only the row's own unlinked remainder is offered a
+    suggestion.
+
+    The reviewer's own probe, reproduced here: a legacy link of 5 (half the row's
+    qty of 10) on a line that later closes, a second open line, and a call with
+    Auto link all's own arguments (`trigger='worklist', redeal_drafts=True,
+    include_awaiting=True`)."""
+
+    def test_a_legacy_real_link_survives_even_once_its_own_line_has_closed(self, ctx):
+        db = ctx.db
+        product = _seed_product(db, company_id=ctx.company_a)
+        ref = _ref("SOL")
+        _so, core_line = _seed_so_line(
+            db, company_id=ctx.company_a, product_id=product.id, source_ref=ref, qty="10",
+        )
+        # NOT book-named (no `from_so_line_ref`): open when the pre-S3 cascade linked
+        # it, closed by the time this pass runs.
+        _legacy_po, legacy_line = _seed_po_line(
+            db, company_id=ctx.company_a, product_id=product.id,
+            qty_ordered="5", header_status="active",
+        )
+        # A second, open line the walk may offer the row's unlinked remainder.
+        _other_po, other_line = _seed_po_line(
+            db, company_id=ctx.company_a, product_id=product.id,
+            qty_ordered="5", header_status="active",
+        )
+        _pso, _mirror, _inquiry, row = _seed_row_and_mirror(
+            db, company_id=ctx.company_a, core_line=core_line, product_id=product.id, qty="10",
+        )
+        legacy_link = _existing_link(
+            db, company_id=ctx.company_a, row_id=row.id, document=_legacy_po.po_number,
+            qty="5", po_line_id=legacy_line.id, auto=True,
+        )
+        db.commit()
+
+        svc = ProjectOrderInquiryService(db)
+        svc.refresh_link_state([row])
+        db.commit()
+        db.refresh(row)
+        assert row.state == INQUIRY_PARTLY_LINKED, "the legacy link already covers half"
+
+        # The legacy line closes (received) between the link being made and this pass -
+        # AC-EA-19's own reason a cascade-only link used to be re-dealt away.
+        legacy_line.qty_received = Decimal("5")
+        legacy_line.line_status = "closed"
+        db.commit()
+
+        result = svc.auto_place_for_products(
+            None, actor_user_id=None, trigger="worklist", row_ids=[str(row.id)],
+            redeal_drafts=True, include_awaiting=True,
+        )
+        db.commit()
+
+        links = _links_of(db, row.id)
+        assert [l.id for l in links] == [legacy_link.id], "the legacy real link stays put"
+        db.refresh(row)
+        assert row.state == INQUIRY_PARTLY_LINKED, "On PO/SPO for the half the legacy link covers"
+        suggested = _suggested_of(db, row.id)
+        assert {s.po_line_id for s in suggested} == {other_line.id}, (
+            "only the row's unlinked remainder is offered a suggestion"
+        )
+        assert sum(Decimal(str(s.qty)) for s in suggested) == Decimal("5")
+        assert result["changed_rows"] == 1, "a fresh suggestion for the remainder is still a change"
 
 
 # ==================================================== Review round: redirected rows
