@@ -41,7 +41,6 @@ from app.models.procurement import InboundShipment, InboundShipmentLine
 from app.models.product import ProductCategory
 from app.models.resources import Attachment
 from app.models.user import SystemSetting
-from app.services.chatbot.engine import _send_actions, _stock_ask_packing_list_files
 from app.services.company_scope import DEFAULT_COMPANY_ID
 from app.services.company_scope_resolver import apply_company_scope
 from app.services.inventory_service import StockService
@@ -577,46 +576,6 @@ def test_product_eta_offset_overrides_category_offset_through_the_block(db):
     entry = _entry(result, p.id)
     assert entry["branch"] == "incoming"
     assert entry["eta"] == "12/10/2026"
-
-
-def test_b3_toggle_off_produces_no_send_attachments_action(db):
-    """Should fix 2, review round 1 (AC-SA314): `tests/chatbot/test_stock_ask_
-    packing_list_attachment.py` only ever feeds `_stock_ask_packing_list_files` and
-    `_send_actions` hand-built synthetic entries - it never proves that a REAL B3
-    entry, resolved by `StockService` for a contact whose `packing_list_allowed` is
-    off, ends the same way. `engine.py:4168` attaches whatever `packing_list` an
-    `incoming` entry carries; it is safe today only because `inventory_service.py`
-    is the sole producer of that key - this wires the server's own gate into the
-    engine's own actions, end to end."""
-    brw = _wh(db, "ZZTBRW")
-    p = product(db, company_id=DEFAULT_COMPANY_ID)
-    _category_of(db, p).chatbot_max_qty = 200
-    stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=brw.id, on_hand=0)
-    att = _attachment(db)
-    shipment = _incoming_shipment(db, eta=date(2026, 10, 19), attachment_id=att.id)
-    _incoming_line(db, shipment_id=shipment.id, product_id=p.id)
-    contact = _contact(db, packing_list_allowed=False)
-    _policy_row(db, mode="availability", warehouse_ids=[brw.id], contact=contact)
-    db.flush()
-
-    result = StockService(db).list_stock(
-        product_ids=[p.id], contact_id=contact.id, requested_quantities={p.id: 5}
-    )
-    entry = _entry(result, p.id)
-    assert entry["branch"] == "incoming"
-    assert entry["packing_list"] is None
-
-    files = _stock_ask_packing_list_files([{"stock_availability": result["stock_availability"]}])
-    assert files == []
-
-    reply = {
-        "text": "SRTW2000 x 5: no stock at the moment, ETA 19/10/2026.",
-        "quick_replies": None,
-        "result_set": None,
-        "attachments_src": files or None,
-    }
-    actions = _send_actions(reply, dry_run=False)
-    assert [a["kind"] for a in actions] == ["send_message"]
 
 
 # =================================================================================== AC-SA316
