@@ -7,9 +7,14 @@ import { Button } from '@/components/ui/button';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { Skeleton } from '@/components/ui/skeleton';
+import { DecisionTrailButton } from '../../../_shared/components/DecisionTrailButton';
 import { OrderInquiryStatePill, ReservePill } from '../../../_shared/components/OrderInquiryVerbPill';
 import { OrderInquiryStockGrid } from '../../../_shared/components/OrderInquiryStockGrid';
-import { formatInquiryQty, inquiryFooterTotals } from '../../../_shared/lib/orderInquiryWorklist';
+import {
+  formatInquiryQty,
+  inquiryFooterTotals,
+  raisedKindLabel,
+} from '../../../_shared/lib/orderInquiryWorklist';
 import {
   DeliveryDateCell,
   InstructionCell,
@@ -18,6 +23,7 @@ import {
   orderInquirySoLineColumn,
   orderInquiryTakenRemainingColumns,
   QtyCell,
+  RaisedCell,
   SupplierCell,
 } from '../../components/orderInquiryWorklistColumns';
 import type { OrderInquiryWorklistRow } from '../../../_shared/types/orderInquiry.types';
@@ -340,6 +346,21 @@ export function useOrderInquiryHeaderLinesColumns({
         meta: { headerTitle: 'Instruction', skeleton: <Skeleton className="h-4 w-24" /> },
         cell: ({ row }) => <InstructionCell row={row.original} />,
       },
+      {
+        // AC-DT-6 (`PLAN-oi-decision-trail-ui.md`): the same Raised column the worklist
+        // carries - `RaisedCell` is shared so the same row reads the same way on both
+        // screens. Hidden by default on BOTH now (round 2 ruling); `accessorFn` is what
+        // the column picker keys "can this be listed" on
+        // (`data-grid-column-visibility.tsx`), so a bare `id` + `cell` made this column
+        // impossible to ever turn back on.
+        id: 'raise_event',
+        accessorFn: (row) => raisedKindLabel(row) ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Raised via" column={column} />,
+        size: 220,
+        enableSorting: false,
+        meta: { headerTitle: 'Raised via', skeleton: <Skeleton className="h-4 w-24" /> },
+        cell: ({ row }) => <RaisedCell row={row.original} />,
+      },
       // `PLAN-oi-request-cs-reserve.md` 6e.2 (AC-RS-83): the pill is plain text.
       {
         accessorKey: 'state',
@@ -349,7 +370,7 @@ export function useOrderInquiryHeaderLinesColumns({
         // saved column preferences appended after Location. Wide enough for the pill
         // plus a staged chip and Undo. No `minSize`: a user who drags it narrower than
         // the icons is choosing that, and can drag it back out again (owner, 24 Sep).
-        size: canReserve ? 380 : 190,
+        size: canReserve ? 410 : 220,
         meta: { headerTitle: 'State' },
         cell: ({ row }) => {
           const reserveState = row.original.reserve_state;
@@ -365,10 +386,30 @@ export function useOrderInquiryHeaderLinesColumns({
             ) : (
               <OrderInquiryStatePill state={row.original.state} />
             );
-          if (!canReserve) return pill;
+          // AC-DT-5 (`PLAN-oi-decision-trail-ui.md`, round 2): the decision trail icon,
+          // beside the State pill, on EVERY row - not gated on `canReserve` and not only
+          // a reserved line, unlike the reserve History icon inside `ReserveActionsCell`
+          // below (a DIFFERENT icon, for a DIFFERENT question: that one is the reserve
+          // request's own history, this one is the whole decision trail).
+          const trail = (
+            <DecisionTrailButton
+              coreLineId={row.original.core_line_id ?? null}
+              itemCode={row.original.item_code}
+              className="size-6"
+            />
+          );
+          if (!canReserve) {
+            return (
+              <div className="flex min-w-0 items-center gap-1">
+                <span className="shrink-0">{pill}</span>
+                {trail}
+              </div>
+            );
+          }
           return (
             <div className="flex min-w-0 items-center gap-1">
               <span className="shrink-0">{pill}</span>
+              {trail}
               <ReserveActionsCell
                 row={row.original}
                 staged={stagedByRowId?.[row.original.id]}

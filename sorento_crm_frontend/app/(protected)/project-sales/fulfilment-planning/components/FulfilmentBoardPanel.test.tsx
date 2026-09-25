@@ -852,6 +852,73 @@ describe('FulfilmentBoardPanel: no commit section (D5)', () => {
 });
 
 /**
+ * AC-DT-1/AC-DT-4 (`PLAN-oi-decision-trail-ui.md`): the board header's own "Revision N,
+ * confirmed by <name>, N lines" line, read off `board.data.orders[].decision` - never
+ * recomputed client-side, since it is the server's own read of `so_supply_decisions`.
+ */
+function withOrderDecision(
+  board: PlanningBoard,
+  soNumber: string,
+  decision: PlanningBoard['orders'][number]['decision'],
+): PlanningBoard {
+  return {
+    ...board,
+    orders: board.orders.map((order) =>
+      order.so_number === soNumber ? { ...order, decision } : order,
+    ),
+  };
+}
+
+describe('FulfilmentBoardPanel: the decision header (AC-DT-1/AC-DT-4, PLAN-oi-decision-trail-ui.md)', () => {
+  it('prints "No decision yet" for an order with no active decision', async () => {
+    getPlanningBoard.mockResolvedValue(boardOf([demand()]));
+
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    expect(screen.getByTestId('board-decision-header')).toHaveTextContent('No decision yet');
+  });
+
+  it('prints the revision, confirmer and line count for an order with an active decision', async () => {
+    getPlanningBoard.mockResolvedValue(
+      withOrderDecision(boardOf([demand()]), 'SO403340', {
+        revision_no: 1,
+        confirmed_by_name: 'Nurain',
+        confirmed_at: '2026-09-25T01:20:34',
+        line_count: 11,
+      }),
+    );
+
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    const header = screen.getByTestId('board-decision-header');
+    expect(header).toHaveTextContent('Revision 1');
+    expect(header).toHaveTextContent('confirmed by Nurain');
+    expect(header).toHaveTextContent('11 lines');
+  });
+
+  it('prints one segment per order, order number first, when several are planned together', async () => {
+    const board = withOrderDecision(
+      boardOf([
+        demand({ sales_order_id: 'so-a', so_number: 'SO403340', line_no: 1 }),
+        demand({ sales_order_id: 'so-b', so_number: 'SO398322', line_no: 2 }),
+      ]),
+      'SO403340',
+      { revision_no: 2, confirmed_by_name: 'Nurain', confirmed_at: '2026-09-25T01:20:34', line_count: 1 },
+    );
+    getPlanningBoard.mockResolvedValue(board);
+
+    renderPanel(['SO403340', 'SO398322']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    const header = screen.getByTestId('board-decision-header');
+    expect(header).toHaveTextContent('SO403340: Revision 2');
+    expect(header).toHaveTextContent('SO398322: No decision yet');
+  });
+});
+
+/**
  * The counter the captain asked to see (D1/D3), at the granularity that used to lie about it.
  *
  * The board-wide bar is built off `board.data.contributions` - the SELECTION, never `cells`,

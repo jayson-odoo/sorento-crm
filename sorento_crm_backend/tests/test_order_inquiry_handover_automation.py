@@ -32,7 +32,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import re
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
@@ -56,6 +56,9 @@ from app.models.project_so import (
     IV_ORDER_BACK,
     IV_PRE_ORDERED,
     IV_RESERVE_AND_ORDER,
+    SO_STATUS_ADOPTED,
+    SO_STATUS_DRAFT,
+    SO_STATUS_PUBLISHED,
     OrderInquiry,
     OrderInquiryLink,
     OrderInquiryRow,
@@ -1443,6 +1446,96 @@ def test_context_shape_and_formats(api, monkeypatch):
     assert handover["link"].endswith(f"/project-sales/order-inquiries/{header_id}")
     order = handover["orders"][0]
     assert order["so_number"] == fixture["core_so"].so_number
+
+
+# --------------------------------------------------------------------------- #
+# AC-SD-1..4 (`PLAN-oi-handover-so-date-autocount-25sep.md`): SO DATE is the   #
+# AutoCount document date, not the day the CRM pulled the order                #
+# --------------------------------------------------------------------------- #
+
+
+def test_handover_so_date_adopted_order_uses_core_order_date(api):
+    """AC-SD-1: an adopted order (`published_at` NULL by design) prints the core SO's
+    own `order_date`, not the project SO's own `created_at` - the day the CRM pulled
+    the order."""
+    client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)
+    core_so.order_date = date(2026, 9, 18)
+    db.flush()
+    order = _project_so(
+        db, world.project, status=SO_STATUS_ADOPTED, so_id=core_so.id,
+        autocount_doc_no=core_so.so_number,
+    )
+    order.created_at = datetime(2026, 9, 23)
+    db.flush()
+    assert order.published_at is None
+
+    facts = ProjectOrderInquiryService(db)._handover_order_facts(order.id)
+
+    assert facts["so_date"] == date(2026, 9, 18)
+
+
+def test_handover_so_date_published_order_prefers_core_order_date(api):
+    """AC-SD-2: a published (authored) order with `order_date` set on its core SO
+    prints the core `order_date`, not `published_at`."""
+    client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)
+    core_so.order_date = date(2026, 9, 18)
+    db.flush()
+    order = _project_so(
+        db, world.project, status=SO_STATUS_PUBLISHED, so_id=core_so.id,
+        autocount_doc_no=core_so.so_number,
+    )
+    order.published_at = datetime(2026, 9, 20)
+    db.flush()
+
+    facts = ProjectOrderInquiryService(db)._handover_order_facts(order.id)
+
+    assert facts["so_date"] == date(2026, 9, 18)
+
+
+def test_handover_so_date_falls_back_when_core_order_date_is_null(api):
+    """AC-SD-3: an order whose core SO has `order_date` NULL falls back to
+    `published_at`, then `created_at` - today's behaviour preserved."""
+    client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)  # order_date left NULL
+    db.flush()
+    order = _project_so(
+        db, world.project, status=SO_STATUS_PUBLISHED, so_id=core_so.id,
+        autocount_doc_no=core_so.so_number,
+    )
+    order.published_at = datetime(2026, 9, 20)
+    db.flush()
+
+    facts = ProjectOrderInquiryService(db)._handover_order_facts(order.id)
+    assert facts["so_date"] == datetime(2026, 9, 20)
+
+    order.published_at = None
+    order.created_at = datetime(2026, 9, 21)
+    db.flush()
+
+    # A fresh service instance: `_handover_order_facts` memoises per instance.
+    facts_no_publish = ProjectOrderInquiryService(db)._handover_order_facts(order.id)
+    assert facts_no_publish["so_date"] == datetime(2026, 9, 21)
+
+
+def test_handover_so_date_no_core_so_falls_back_and_never_raises(api):
+    """AC-SD-4: an order with no core SO (`so_id` NULL, a draft) still prints
+    `published_at or created_at`; nothing raises."""
+    client, world = api
+    db = world.db
+    order = _project_so(db, world.project, status=SO_STATUS_DRAFT)
+    order.created_at = datetime(2026, 9, 22)
+    db.flush()
+    assert order.so_id is None
+    assert order.published_at is None
+
+    facts = ProjectOrderInquiryService(db)._handover_order_facts(order.id)
+
+    assert facts["so_date"] == datetime(2026, 9, 22)
 
 
 # --------------------------------------------------------------------------- #

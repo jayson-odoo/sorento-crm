@@ -2,6 +2,9 @@
 
 Status: in review (18 Sep 2026). Track: small fix.
 Owner ruling 18 Sep 2026: the word is "Change proposed".
+Superseded in part by owner ruling 25 Sep 2026 (issue #1245, `PLAN-esb-change-row-refresh.md`
+S5): the pill stays as ruled here, but "the pre-mark still counts toward Confirm (N) exactly as
+today" below no longer holds - Confirm now counts and posts only a SAVED verdict.
 
 ## Today
 

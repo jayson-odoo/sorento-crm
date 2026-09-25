@@ -4079,4 +4079,27 @@ describe('AC-B1/AC-B11: the Decision column carries the same Verdict trio as the
       screen.queryByRole('button', { name: 'Reject SO403340 line 1' }),
     ).not.toBeInTheDocument();
   });
+
+  it('AC-DT-5 (round 2, PLAN-oi-decision-trail-ui.md): the Decision column carries the same History icon the list view does, for a covered line', () => {
+    const frozen = {
+      revision_no: 1,
+      timely_spo_qty: '0',
+      reserve: [],
+      borrow: [],
+      buy_qty: '43',
+    };
+    renderDialog([demand({ qty: '43', decision: frozen })]);
+    openLines();
+
+    expect(screen.getByRole('button', { name: /decision trail/i })).toBeInTheDocument();
+  });
+
+  it('hides it for a bare suggested line', () => {
+    renderDialog([demand()]);
+    openLines();
+
+    expect(
+      screen.queryByRole('button', { name: /decision trail/i }),
+    ).not.toBeInTheDocument();
+  });
 });
