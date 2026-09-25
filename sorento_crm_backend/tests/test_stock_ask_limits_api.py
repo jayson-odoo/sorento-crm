@@ -244,6 +244,88 @@ def test_negative_chatbot_eta_offset_days_rejected_on_products(db):
         db.flush()
 
 
+# --- Should fix 1 (reviewer pass round 2, PR #1221, 99d9670c): the model's own -------
+# --- CheckConstraint, not just the migration's ---------------------------------------
+
+# The two negative-value tests above call `_run_migration(db)` first, so they pass
+# whether or not `ProductCategory`/`Product` declare the CHECK themselves - the
+# migration's own `duplicate_object` DO block adds it either way (kill test 4, round 2
+# reviewer pass). `bootstrap_env`, every cloud lane and every `blank_session`-based test
+# fixture in this suite build the schema via `Base.metadata.create_all`, which never
+# runs that migration body, so a CHECK declared only there is invisible on `db` here.
+# These four insert straight into the `create_all` schema with no migration run at all,
+# pinning that the model's `__table_args__` CheckConstraint is what actually enforces it.
+
+def test_negative_chatbot_max_qty_rejected_on_product_categories_without_migration(db):
+    with pytest.raises(IntegrityError):
+        db.execute(
+            text(
+                "INSERT INTO product_categories (id, company_id, category_code, category_name, chatbot_max_qty) "
+                "VALUES (:id, :company_id, :code, :name, -1)"
+            ),
+            {"id": str(uuid.uuid4()), "company_id": SORENTO_ID, "code": unique_code(f"{STEM}-NOMIGCAT-X"), "name": "Neg"},
+        )
+        db.flush()
+
+
+def test_negative_chatbot_eta_offset_days_rejected_on_product_categories_without_migration(db):
+    with pytest.raises(IntegrityError):
+        db.execute(
+            text(
+                "INSERT INTO product_categories (id, company_id, category_code, category_name, chatbot_eta_offset_days) "
+                "VALUES (:id, :company_id, :code, :name, -1)"
+            ),
+            {"id": str(uuid.uuid4()), "company_id": SORENTO_ID, "code": unique_code(f"{STEM}-NOMIGCAT-Y"), "name": "Neg"},
+        )
+        db.flush()
+
+
+def test_negative_chatbot_max_qty_rejected_on_products_without_migration(db):
+    uom_id = str(uuid.uuid4())
+    cat_id = str(uuid.uuid4())
+    db.add(UnitOfMeasure(id=uom_id, uom_code=unique_code("U")[:20], uom_name="Each"))
+    db.add(ProductCategory(id=cat_id, category_code=unique_code("C")[:50], category_name="ZZT Neg Cat"))
+    db.flush()
+
+    with pytest.raises(IntegrityError):
+        db.execute(
+            text(
+                "INSERT INTO products (id, company_id, product_code, product_name, category_id, "
+                "base_uom_id, list_price, chatbot_max_qty) "
+                "VALUES (:id, :company_id, :code, :name, :cat, :uom, 10.00, -1)"
+            ),
+            {
+                "id": str(uuid.uuid4()), "company_id": SORENTO_ID,
+                "code": unique_code(f"{STEM}-NOMIGPRD-X"), "name": "Neg Product",
+                "cat": cat_id, "uom": uom_id,
+            },
+        )
+        db.flush()
+
+
+def test_negative_chatbot_eta_offset_days_rejected_on_products_without_migration(db):
+    uom_id = str(uuid.uuid4())
+    cat_id = str(uuid.uuid4())
+    db.add(UnitOfMeasure(id=uom_id, uom_code=unique_code("U")[:20], uom_name="Each"))
+    db.add(ProductCategory(id=cat_id, category_code=unique_code("C")[:50], category_name="ZZT Neg Cat"))
+    db.flush()
+
+    with pytest.raises(IntegrityError):
+        db.execute(
+            text(
+                "INSERT INTO products (id, company_id, product_code, product_name, category_id, "
+                "base_uom_id, list_price, chatbot_eta_offset_days) "
+                "VALUES (:id, :company_id, :code, :name, :cat, :uom, 10.00, -1)"
+            ),
+            {
+                "id": str(uuid.uuid4()), "company_id": SORENTO_ID,
+                "code": unique_code(f"{STEM}-NOMIGPRD-Y"), "name": "Neg Product",
+                "cat": cat_id, "uom": uom_id,
+            },
+        )
+        db.flush()
+
+
 # --- AC-SA104: permission slugs seeded, sweep onto products.edit + admin, ------------
 # --- integration_* excluded -----------------------------------------------------------
 
