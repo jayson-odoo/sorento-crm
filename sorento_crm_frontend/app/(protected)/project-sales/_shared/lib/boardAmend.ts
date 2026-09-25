@@ -32,6 +32,7 @@ import {
   type DraftLine,
   type DraftReserve,
 } from './supplyComposition';
+import { availableForProjectOf } from './poolShare';
 import { ORDER, SHORT_LABELS, rowOf, type SupplyKind } from './supplyVocabulary';
 
 /**
@@ -662,4 +663,194 @@ function sumSources(sources: BoardSource[], kind: string): number {
   return sources
     .filter((source) => source.kind === kind)
     .reduce((total, source) => total + toMinor(source.qty), 0);
+}
+
+/**
+ * S3 (D1): which rows the Decide strip may tick, widened from `canQuickSave` - a Confirmed or
+ * already-saved row is decidable here too (R3, the owner's own case is amendments), so only an
+ * unplannable line (no fulfilment location, `lineFor` returns null for it) or a cancelled one
+ * (the book removed it, R3) is refused.
+ */
+export function canDecide(contribution: BoardContribution): boolean {
+  return !contribution.unplannable && !contribution.cancelled;
+}
+
+/** The Decide menu's six items (R14), the vocabulary's own kinds plus the non-supply pick. */
+export type DecideWay =
+  | 'suggested'
+  | 'own'
+  | 'shared'
+  | 'borrow_order'
+  | 'borrow_other'
+  | 'buy';
+
+/**
+ * One ticked row's composition for a Decide pick, or why it is skipped (D1, R2, R6 to R10).
+ *
+ * `skip` set means the row cannot be covered in full by this pick; nothing else on the result
+ * means anything then. Otherwise the composition is exactly what `decisionFromAmendDraft`
+ * would need to post it, minus the reason - `borrow[].reason` is left `''` here on purpose:
+ * the Decide dialog's own Reason box fans its text onto every row after every ticked row's
+ * composition is known, the same one-box-many-fields shape `foldReasonIntoDraft` gives the
+ * expanded row (D3), so this function never has to know the reason at all.
+ */
+export interface DecideComposition {
+  skip?: string;
+  reserve?: BoardReserveComponent[];
+  borrow?: BoardBorrowComponent[];
+  timely_spo_qty?: string;
+  buy_qty?: string;
+  order_back?: boolean;
+}
+
+/**
+ * R9/AC-10: several ticked rows can contest the SAME pile (one location, one donor order, one
+ * donor location) - the list's current sort order claims it, top first. `claimed` is that
+ * running tally, in minor units, kept by the CALLER (the strip's save loop walks ticked rows in
+ * list order, threading one `Map` through every call) and both READ and WRITTEN here: a row
+ * reads what earlier rows already took off the same pile before deciding whether there is
+ * enough left for it, and a row this function composes successfully adds its own take before
+ * returning. Omitted, every row reads the pile's own full free figure - which is what AC-5 to
+ * AC-9 below are written against, one row at a time with nothing already claimed.
+ */
+export function decideComposition(
+  contribution: BoardContribution,
+  way: DecideWay,
+  pick?: string,
+  claimed?: Map<string, number>,
+): DecideComposition {
+  const openMinor = toMinor(contribution.qty);
+
+  if (way === 'suggested') {
+    const suggestion = suggestionDraftFrom(contribution);
+    return {
+      reserve: suggestion.reserve
+        .filter((row) => toMinor(row.qty) > 0)
+        .map((row) => ({
+          warehouse_id: row.warehouse_id,
+          location: row.location ?? null,
+          qty: fromMinor(toMinor(row.qty)),
+        })),
+      borrow: suggestion.borrow
+        .filter((row) => toMinor(row.qty) > 0)
+        .map((row) => ({
+          source: row.source,
+          warehouse_id: row.warehouse_id,
+          warehouse_code: row.warehouse_code,
+          donor_project_ref: row.donor_project_ref ?? null,
+          donor_project_id: row.donor_project_id ?? null,
+          qty: fromMinor(toMinor(row.qty)),
+          reason: row.reason,
+          ...borrowPassThrough(row),
+        })),
+      timely_spo_qty: fromMinor(toMinor(suggestion.timely_spo_qty)),
+      buy_qty: fromMinor(toMinor(suggestion.buy_qty)),
+    };
+  }
+
+  if (way === 'buy') {
+    // R10/Q16/AC-51: a Buy over stock the server has ALREADY landed for this line (an own
+    // arrival) is refused at Confirm (`planning_change_buy_over_own_arrival`); skipping it
+    // here is kinder than a 409 there. Read off the same flag the board's "Received" chip
+    // keys off (`BoardReserveComponent.source === 'own_arrival'`), never re-derived.
+    const landed = (contribution.proposed?.components ?? contribution.sources).some(
+      (source) =>
+        source.kind === 'reserve' &&
+        (source as { source?: string | null }).source === 'own_arrival' &&
+        toMinor(source.qty) > 0,
+    );
+    if (landed) return { skip: 'stock already landed for it' };
+    return {
+      reserve: [],
+      borrow: [],
+      timely_spo_qty: '0',
+      buy_qty: fromMinor(openMinor),
+      order_back: false,
+    };
+  }
+
+  if (way === 'own' || way === 'shared') {
+    // R2/R6: the own-location rung (own + group) or the site pool rows only - the same rows
+    // `ReserveAddDialog` offers there, in the engine's own order, never mixed.
+    const locations = (contribution.locations ?? []).filter((location) =>
+      way === 'own'
+        ? (location.where ?? 'own') === 'own' || location.where === 'group'
+        : location.where === 'site_pool',
+    );
+    const rows: BoardReserveComponent[] = [];
+    let takenMinor = 0;
+    for (const location of locations) {
+      if (!location.warehouse_id || takenMinor >= openMinor) continue;
+      const freeMinor = toMinor(location.qty_free_remaining ?? location.qty_free ?? '0');
+      // R6/D1: the same pool-share limit `poolShareLimitsOf` bounds a manual composition by,
+      // never re-implemented - `availableForProjectOf` is the identical per-row reading
+      // `CellStockTable` and `ReserveAddDialog` already offer on.
+      const bounded =
+        way === 'shared'
+          ? Math.min(freeMinor, toMinor(availableForProjectOf(location) ?? String(freeMinor)))
+          : freeMinor;
+      const claimKey = `${way}|${contribution.item_code ?? ''}|${location.warehouse_id}`;
+      const left = Math.max(bounded - (claimed?.get(claimKey) ?? 0), 0);
+      if (left <= 0) continue;
+      const take = Math.min(left, openMinor - takenMinor);
+      if (take <= 0) continue;
+      rows.push({
+        warehouse_id: location.warehouse_id,
+        location: location.location ?? null,
+        qty: fromMinor(take),
+      });
+      claimed?.set(claimKey, (claimed.get(claimKey) ?? 0) + take);
+      takenMinor += take;
+    }
+    if (takenMinor < openMinor) {
+      return {
+        skip: `only ${fromMinor(takenMinor)} free at ${way === 'shared' ? 'BRW' : 'own location'}`,
+      };
+    }
+    return { reserve: rows, borrow: [], timely_spo_qty: '0', buy_qty: '0' };
+  }
+
+  // way === 'borrow_order' | 'borrow_other' (R8): one donor, picked, for the whole line.
+  const candidates = borrowCandidatesOf(contribution).filter((candidate) =>
+    way === 'borrow_order'
+      ? candidate.donor_so_number === pick
+      : candidate.source === 'other_location' && candidate.warehouse_code === pick,
+  );
+  const donorLabel = pick ?? (way === 'borrow_order' ? 'the donor' : 'the location');
+  if (candidates.length === 0) {
+    return {
+      skip:
+        way === 'borrow_order' ? `${donorLabel} holds none` : `only 0 free at ${donorLabel}`,
+    };
+  }
+  const donor = candidates[0];
+  const claimKey = `${way}|${contribution.item_code ?? ''}|${pick ?? ''}`;
+  const freeMinor = candidates.reduce((total, entry) => total + toMinor(entry.free_qty), 0);
+  const left = Math.max(freeMinor - (claimed?.get(claimKey) ?? 0), 0);
+  if (left < openMinor) {
+    return {
+      skip:
+        way === 'borrow_order'
+          ? `${donorLabel} holds only ${fromMinor(left)}`
+          : `only ${fromMinor(left)} free at ${donorLabel}`,
+    };
+  }
+  claimed?.set(claimKey, (claimed.get(claimKey) ?? 0) + openMinor);
+  return {
+    reserve: [],
+    borrow: [
+      {
+        source: donor.source,
+        warehouse_id: donor.warehouse_id,
+        warehouse_code: donor.warehouse_code,
+        donor_project_ref: donor.donor_project_ref ?? null,
+        donor_project_id: donor.donor_project_id ?? null,
+        qty: fromMinor(openMinor),
+        reason: '',
+        ...borrowPassThrough(donor),
+      },
+    ],
+    timely_spo_qty: '0',
+    buy_qty: '0',
+  };
 }

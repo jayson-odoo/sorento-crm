@@ -957,7 +957,7 @@ describe('FulfilmentBoardPanel: the confirm counter is selection-scoped, not win
       }),
     );
     expandRow();
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'This line is being replaced.' },
     });
     // Reject is async now (mirrors Save): closing the dialog before the write settles would
@@ -991,7 +991,7 @@ describe('FulfilmentBoardPanel: the confirm counter is selection-scoped, not win
       }),
     );
     expandRow();
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'This line is being replaced.' },
     });
     // Reject is async now (mirrors Save): closing the dialog before the write settles would
@@ -2809,7 +2809,7 @@ describe('FulfilmentBoardPanel: pivoting the rows', () => {
     );
     openLinesTab();
     fireEvent.click(screen.getByText('SO000001'));
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'The tower plan changed.' },
     });
     // Reject is async now (mirrors Save): closing the dialog before the write settles would
@@ -3059,7 +3059,7 @@ describe('FulfilmentBoardPanel: one Confirm, not Approve all (D1, D4)', () => {
     );
     openLinesTab();
     fireEvent.click(screen.getByText('SO403340'));
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'Cancelled by the customer.' },
     });
     // Reject is async now (mirrors Save): closing the dialog before the write settles would
@@ -3663,7 +3663,7 @@ describe('FulfilmentBoardPanel: a rejection toasts too (owner, 22 Sep 2026)', ()
     fireEvent.click(screen.getByRole('button', { name: 'List' }));
 
     fireEvent.click(await screen.findByText('WESERP10B'));
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'The customer cancelled this line.' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Reject' }));

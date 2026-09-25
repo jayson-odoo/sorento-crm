@@ -869,6 +869,37 @@ export function FulfilmentBoardPanel({
   );
 
   /**
+   * S3 (D1): the Decide strip's own save - one PUT per row through the identical `decide()`
+   * chunked-of-5 loop `decideMany` already runs, but with a DECISION PER KEY the caller has
+   * already composed (`decideComposition`), rather than always the engine's own suggestion.
+   * No toast here (AC-16/AC-17): the caller (`BoardDecideControl`) already knows which rows
+   * it skipped WITHOUT a PUT (a pile a pick could not cover in full) and folds them into the
+   * SAME lenient toast beside whichever of these fail on the wire - two toasts for one press
+   * would be the "too many errors" the owner asked Decide to stop doing (R10).
+   */
+  const decideBatch = React.useCallback(
+    async (
+      entries: { key: string; decision: BoardDecision }[],
+    ): Promise<{ savedKeys: string[]; failed: { key: string; why: string }[] }> => {
+      const savedKeys: string[] = [];
+      const failed: { key: string; why: string }[] = [];
+      const CHUNK_SIZE = 5;
+      for (let i = 0; i < entries.length; i += CHUNK_SIZE) {
+        const chunk = entries.slice(i, i + CHUNK_SIZE);
+        await Promise.all(
+          chunk.map(async ({ key, decision }) => {
+            const ok = await decide(key, decision, { quiet: true });
+            if (ok) savedKeys.push(key);
+            else failed.push({ key, why: 'could not be saved' });
+          }),
+        );
+      }
+      return { savedKeys, failed };
+    },
+    [decide],
+  );
+
+  /**
    * The cell's own Undo and the list's per-row Undo already act on ONE line without a toast
    * (S4's per-line Undo carries none, on the reading that one line's undo is reversible with
    * another quick save). A GRID CELL's own undo icon can carry several lines at once, so it
@@ -2094,6 +2125,7 @@ export function FulfilmentBoardPanel({
                 draft={draft}
                 onDecide={decide}
                 onDecideMany={decideMany}
+                onDecideBatch={decideBatch}
                 annotations={changeAnnotationsByLine}
                 // S6 (PLAN-scm-oi-worklist-excel-parity.md R-J): the ONE search box,
                 // beside the title, drives Grid and List alike - the panel's own search
