@@ -832,6 +832,43 @@ describe('SPO lightbox body (AC-D19)', () => {
     // always renders - it merely stays disabled when nothing is highlighted.
     expect(screen.getByRole('button', { name: 'Go to linked line' })).toBeDisabled();
   });
+
+  it('Should fix 4 (review round 2): disables Go to when highlightLines names a line no row on the document carries', async () => {
+    // RED before the fix: `highlightedLineId` fell back to the placeholder
+    // `'__highlighted__'` the moment `highlightLines` was non-empty, whether or not
+    // `SpoBody` ever resolved a matching row - stock debt could open this lightbox
+    // with an ENABLED Go to that scrolled to nothing, since `highlightLineRowId`
+    // (and so `effectiveGoToLineId`) stayed null. Main's own #1165 rendered no
+    // button at all in that case; this lightbox must at least disable it rather
+    // than answer nothing on a press.
+    getOrderInquirySpoDetail.mockResolvedValue({
+      spo_number: 'SPO-2026/06-0131',
+      supplier_name: 'CHAOSHENG',
+      eta: '2026-09-15',
+      lines: [
+        {
+          sku: 'SRTWB242', product_name: 'Sorento basin 242', allocated: '100',
+          received: '0', remaining: '100', location: 'BRW-BB', spo_line_number: 4,
+        },
+      ],
+      allocations: [],
+    });
+    renderNode(
+      <OrderInquiryDocumentDialog
+        kind="spo"
+        document="SPO-2026/06-0131"
+        open
+        onOpenChange={vi.fn()}
+        {...({ highlightLines: [99] } as Record<string, unknown>)}
+      />,
+    );
+
+    await screen.findByText('SRTWB242');
+    expect(screen.queryByText('Linked')).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Go to linked line' })).toBeDisabled();
+    });
+  });
 });
 
 describe('SPO lightbox lines - the linked line highlight (R15, owner rulings 25 Sep 2026)', () => {

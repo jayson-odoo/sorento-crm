@@ -94,13 +94,17 @@ export function OrderInquiryDocumentDialog({
   // at once in practice, but a row can hold both, R11).
   const linkedLineId = kind === 'po' ? (poLineId ?? null) : (spoLineId ?? null);
   // R31b (stock debt lane): `highlightLines` names a line by NUMBER, with no id of its
-  // own for the header button to hold yet - the real id is resolved once the SPO data
-  // loads (`SpoBody`'s own `highlightLineRowId`), but the button's enabled state can't
-  // wait for that, so a placeholder unblocks it as soon as the caller names a line at
-  // all. SPO only, matching `highlightLines` itself (the PO body ignores it).
+  // own for the header button to hold until the SPO data loads and `SpoBody` resolves
+  // it against the document's own lines (its `highlightLineRowId`). Should fix 4
+  // (review round 3): a placeholder used to unblock the button the moment the caller
+  // named a line at all, whether or not any row on the document actually carried it -
+  // an enabled Go to that scrolls to nothing reads as broken. `SpoBody` reports what
+  // it resolved (`null` while loading or on no match) through `onHighlightResolved`
+  // below, so the button stays disabled until a real row backs it.
   const hasHighlightLines = kind === 'spo' && Boolean(highlightLines && highlightLines.length);
+  const [resolvedHighlightLineId, setResolvedHighlightLineId] = React.useState<string | null>(null);
   const highlightedLineId =
-    linkedLineId ?? suggestedLineId ?? (hasHighlightLines ? '__highlighted__' : null);
+    linkedLineId ?? suggestedLineId ?? (hasHighlightLines ? resolvedHighlightLineId : null);
   // "Go to suggested line" only when the dialog was opened from the Suggested cell -
   // a real link, or nothing highlighted at all, both read the default label.
   const goToLabel = !linkedLineId && suggestedLineId ? 'Go to suggested line' : 'Go to linked line';
@@ -143,6 +147,7 @@ export function OrderInquiryDocumentDialog({
               goToNonce={goToNonce}
               open={open}
               highlightLines={highlightLines}
+              onHighlightResolved={setResolvedHighlightLineId}
             />
           )}
         </DialogBody>
@@ -662,6 +667,7 @@ function SpoBody({
   goToNonce = 0,
   open,
   highlightLines,
+  onHighlightResolved,
 }: {
   spoNumber: string;
   /**
@@ -683,6 +689,13 @@ function SpoBody({
    * Ignored on the PO body.
    */
   highlightLines?: number[];
+  /**
+   * Should fix 4 (review round 3): reports what `highlightLineRowId` below resolved
+   * to - `null` while the document is still loading, or once it is in and no line on
+   * it carries any of `highlightLines` - so the header's Go to button (which mounts
+   * BEFORE this body's own data does) can stay disabled until a real row backs it.
+   */
+  onHighlightResolved?: (rowId: string | null) => void;
 }) {
   const { data, isLoading, isError } = useOrderInquirySpoDetail(spoNumber, { enabled: open });
   const containerRef = React.useRef<HTMLDivElement | null>(null);
@@ -699,6 +712,10 @@ function SpoBody({
     );
     return match ? spoLineRowId(match) : null;
   }, [data, linkedLineNumbers]);
+  React.useEffect(() => {
+    onHighlightResolved?.(highlightLineRowId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [highlightLineRowId]);
   const effectiveSpoLineId = spoLineId ?? highlightLineRowId;
   const effectiveGoToLineId = spoLineId ?? suggestedLineId ?? highlightLineRowId ?? goToLineId ?? null;
 
