@@ -25,7 +25,6 @@ import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
@@ -799,28 +798,19 @@ export const POIntakeLinesGrid = React.forwardRef<POIntakeLinesGridHandle, Props
             tableLayout={{
               width: 'fixed',
               columnsResizable: true,
-              // The ScrollArea below already bounds the vertical viewport
-              // (M5-05: DataGridScroller's own max-height default would
-              // double-bound it otherwise).
-              scrollerMaxHeight: false,
+              // The grid's OWN scroller (`data-grid-scroller`) carries both axes - a
+              // Radix `ScrollArea` wrapped around `DataGridTable` used to sit here
+              // instead, but that gives the table a `display: table` ancestor which
+              // shrink-fits, so the scroller never measured an overflow and the Amount
+              // column clipped with no way to reach it (owner hand test, 25 Sep 2026,
+              // item 1). A plain height string keeps the same vertical budget the
+              // ScrollArea's viewport used to cap at, with the horizontal scroll the
+              // scroller already brings for free.
+              scrollerMaxHeight: 'max-h-[calc(100vh-14rem)] overflow-y-auto',
             }}
           >
             <div className="min-w-0 rounded-lg border border-border">
-              {/* The cap goes on the scrolling VIEWPORT, never on the box around it. Radix
-                  gives the viewport `h-full`, and a percentage height against a parent
-                  that only has a max-height resolves to auto: the viewport grew to all 51
-                  rows and the root clipped it, so every row rendered and none below the
-                  fold could be reached. `type="auto"` enables the overflow from the
-                  content rather than from a pointer hover, so a wheel, a keyboard and a
-                  jump from the banner all reach the last line. */}
-              <ScrollArea
-                type="auto"
-                className="w-full"
-                viewportClassName="max-h-[calc(100vh-14rem)]"
-              >
-                <DataGridTable />
-                <ScrollBar orientation="horizontal" />
-              </ScrollArea>
+              <DataGridTable />
             </div>
           </DataGrid>
         )}

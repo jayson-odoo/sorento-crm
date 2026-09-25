@@ -245,6 +245,48 @@ describe('POIntakeLinesGrid', () => {
 });
 
 /**
+ * Owner hand test, 25 Sep 2026, item 1: the Lines tab grid at 1280 cut the Amount column off
+ * at the right edge with no way to reach it.
+ *
+ * jsdom does no real layout, so what this pins is structural, the same way
+ * `BoardCellBreakdownDialog.test.tsx`'s "the table scrolls inside its own container" test
+ * does: the table lives inside the grid's OWN horizontal scrollport
+ * (`data-grid-scroller`, `overflow-x-auto`), and nothing wraps it in a second one. A Radix
+ * `ScrollArea` around `DataGridTable` gives the table a `display: table` ancestor that
+ * shrink-fits, so `data-grid-scroller` measures `scrollWidth === clientWidth`, never
+ * overflows, and the horizontal `ScrollBar` never has anything to move - which is exactly
+ * what clipped the Amount column with no way to reach it. See
+ * `components/ui/data-grid-scroller.inventory.test.ts` for the tree-wide guard this grid used
+ * to be exempted from.
+ */
+describe('POIntakeLinesGrid: the grid scrolls horizontally inside its own container (owner hand test 25 Sep 2026, item 1)', () => {
+  it('puts the table in the grid\'s own scroller, with no second scrollport around it', async () => {
+    renderGrid([line()]);
+    await screen.findByLabelText('Code on line 1');
+
+    const scroller = document.querySelector('[data-slot="data-grid-scroller"]');
+    expect(scroller).not.toBeNull();
+    expect(scroller).toHaveClass('overflow-x-auto');
+    expect(scroller).toHaveClass('min-w-0');
+
+    const table = document.querySelector('[data-slot="data-grid-table"]') as HTMLElement | null;
+    expect(table).not.toBeNull();
+    expect(scroller!.contains(table!)).toBe(true);
+    for (let node = table!.parentElement; node && node !== scroller; node = node.parentElement) {
+      expect(node.hasAttribute('data-radix-scroll-area-viewport')).toBe(false);
+    }
+
+    // No second scrollport anywhere between the grid's own scroller and the document root.
+    let node: Element | null = scroller;
+    while (node) {
+      expect(node.getAttribute('data-slot')).not.toBe('scroll-area');
+      expect(node.hasAttribute('data-radix-scroll-area-viewport')).toBe(false);
+      node = node.parentElement;
+    }
+  });
+});
+
+/**
  * Reviewing exceptions instead of reading the whole document is the promise of this screen,
  * so the flagged lines can be shown on their own. The filter starts OFF: a total cannot be
  * reconciled against a table that is already hiding rows.
