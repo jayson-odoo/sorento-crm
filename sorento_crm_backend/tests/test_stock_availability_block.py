@@ -527,13 +527,17 @@ def test_product_eta_offset_overrides_category_offset_through_the_block(db):
     proven by S1's pure `stock_ask_limits.effective()` test - never through the full
     availability block, where `inventory_service.py` resolves `x, y = effective_limits(
     product, category)` itself. The category sets Y = 20 (would read 01/11/2026 off a
-    2026-10-12 shipment); the product overrides it to Y = 0 (told date stays 12/10/2026)."""
+    2026-10-12 shipment); the product overrides it to Y = 3 (told date 15/10/2026).
+
+    Round 2 review, Nit 1: a product Y of 0 stayed green even when the `+ Y` offset itself
+    was zeroed (Blocking 3's own kill test), so it guarded only the override, never the
+    offset. A non-zero product Y distinct from both 0 and the category's 20 guards both."""
     brw = _wh(db, "ZZTBRW")
     p = product(db, company_id=DEFAULT_COMPANY_ID)
     category = _category_of(db, p)
     category.chatbot_max_qty = 200
     category.chatbot_eta_offset_days = 20
-    p.chatbot_eta_offset_days = 0
+    p.chatbot_eta_offset_days = 3
     stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=brw.id, on_hand=0)
     att = _attachment(db)
     shipment = _incoming_shipment(db, eta=date(2026, 10, 12), attachment_id=att.id)
@@ -548,7 +552,7 @@ def test_product_eta_offset_overrides_category_offset_through_the_block(db):
 
     entry = _entry(result, p.id)
     assert entry["branch"] == "incoming"
-    assert entry["eta"] == "12/10/2026"
+    assert entry["eta"] == "15/10/2026"
 
 
 # =================================================================================== AC-SA316
