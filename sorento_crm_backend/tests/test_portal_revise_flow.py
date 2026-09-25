@@ -260,10 +260,19 @@ def test_request_revision_clears_the_approval_granted_to_the_old_version(db, kin
 def test_line_items_are_snapshotted_and_diffed(db, kind):
     _contact, token, row = _setup(db, kind)
     payload = dict(_revise_payload(kind))
-    payload["products"] = [
-        {"item_code": "ITEM-A", "quantity": "5"},
-        {"item_code": "ITEM-B", "quantity": "1"},
-    ]
+    # #1232 blocking 4: a sponsorship form revise is gated the same way submit is - a
+    # unit price on every line, unrelated to what this test is about (the snapshot/diff
+    # machinery), so both lines just need a valid one. Purchase requests are unaffected.
+    if kind == "sponsorship_form":
+        payload["products"] = [
+            {"item_code": "ITEM-A", "quantity": "5", "unit_price": "10"},
+            {"item_code": "ITEM-B", "quantity": "1", "unit_price": "20"},
+        ]
+    else:
+        payload["products"] = [
+            {"item_code": "ITEM-A", "quantity": "5"},
+            {"item_code": "ITEM-B", "quantity": "1"},
+        ]
     _revise(db, token, kind, row, payload=payload)
 
     revision = _revisions(db, kind, str(row.id))[1]

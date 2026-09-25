@@ -497,6 +497,45 @@ export async function fetchSubmission(
   return unwrap<PortalSubmissionDetail>(res, 'Failed to load submission.');
 }
 
+/**
+ * Same shape `PriceTagRequestError` reads (`price-tag-request-service.ts`'s
+ * `unwrapNamingFields`): the global handler flattens `AppException` to a FLAT
+ * top-level `{message, detail, code}` - not `{detail: {message, detail, code}}` -
+ * and `detail` on a line-scoped refusal (D48/#1227: a sponsorship line submitted
+ * with no unit price) is a CSV of `line:<index>` tokens. Attached to the thrown
+ * error as `.fields`/`.code` so a caller can name the offending line the same way
+ * a price tag request line already does, without changing what every other
+ * `saveDraft`/`submitDraft` caller already gets back.
+ *
+ * The body can only be consumed once, so it is cloned BEFORE `extractApiError`
+ * (which owns and consumes the original) - not after, or the clone throws on an
+ * already-consumed body and is silently swallowed. `message` reads the body's
+ * own top-level `message` directly rather than `extractApiError`'s return value:
+ * `extractApiError` returns the string `detail` whenever one is present (its own
+ * contract for a plain string `detail`), and `detail` here is the `line:<index>`
+ * token, not the human message - `extractApiError` is used only as the fallback
+ * for a body this handler did not shape (network/HTML/plain-`detail` errors).
+ */
+async function throwSubmissionError(res: Response, fallback: string): Promise<never> {
+  const spare = res.clone();
+  let body: { message?: unknown; detail?: unknown; code?: unknown } | null = null;
+  try {
+    body = (await spare.json()) as { message?: unknown; detail?: unknown; code?: unknown };
+  } catch {
+    body = null;
+  }
+  const message =
+    typeof body?.message === 'string' && body.message
+      ? body.message
+      : await extractApiError(res, fallback);
+  const code = typeof body?.code === 'string' ? body.code : null;
+  const fields =
+    typeof body?.detail === 'string' && body.detail
+      ? body.detail.split(',').map((f) => f.trim()).filter(Boolean)
+      : [];
+  throw Object.assign(new Error(message), { code, fields });
+}
+
 export async function saveDraft(
   kind: PortalSubmissionKind,
   fields: Record<string, unknown>,
@@ -511,7 +550,8 @@ export async function saveDraft(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ fields, products }),
   });
-  return unwrap<PortalSubmissionDetail>(res, 'Failed to save draft.');
+  if (!res.ok) return throwSubmissionError(res, 'Failed to save draft.');
+  return (await res.json()) as PortalSubmissionDetail;
 }
 
 export async function submitDraft(
@@ -532,7 +572,8 @@ export async function submitDraft(
       body,
     },
   );
-  return unwrap<PortalSubmissionDetail>(res, 'Failed to submit.');
+  if (!res.ok) return throwSubmissionError(res, 'Failed to submit.');
+  return (await res.json()) as PortalSubmissionDetail;
 }
 
 /** GET .../submissions/{kind}/{id}/revisions - the original plus every version
@@ -568,9 +609,13 @@ export interface ReviseSubmissionResult {
 /**
  * POST .../submissions/{kind}/{id}/revise - send a revision.
  *
- * 409 (someone revised it first / double tap) and 422 (policy refused it) both
- * carry one human sentence, surfaced verbatim through `unwrap` ->
- * `extractApiError`.
+ * 409 (someone revised it first / double tap) and most 422s (policy refused it)
+ * carry one human sentence. #1232 blocking 4: revise is a second submission path
+ * with the same sponsorship unit-price gate `submitDraft` has, so a refusal from
+ * it can carry the same `line:<index>` naming - routed through the same
+ * `throwSubmissionError` `submitDraft`/`saveDraft` use rather than the plain
+ * `unwrap` this used before (which would have read the flat body's `detail`
+ * token, e.g. "line:0", as the message - the exact bug already fixed there).
  */
 export async function reviseSubmission(
   kind: PortalLandingKind,
@@ -590,7 +635,8 @@ export async function reviseSubmission(
       }),
     },
   );
-  return unwrap<ReviseSubmissionResult>(res, 'Failed to send revision.');
+  if (!res.ok) return throwSubmissionError(res, 'Failed to send revision.');
+  return (await res.json()) as ReviseSubmissionResult;
 }
 
 export interface SaveRevisionDraftInput {
