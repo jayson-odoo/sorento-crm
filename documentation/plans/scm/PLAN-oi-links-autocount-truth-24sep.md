@@ -435,6 +435,34 @@ Nothing below changes, animates or moves:
 * The share of `auto` links the book names at all, which tells the owner how much of today's
   On PO/SPO is AutoCount and how much is the cascade.
 
+**Pending, 25 Sep 2026**: the script (`scripts/convert_oi_cascade_links.py`) is built and
+tester-first green on Postgres (`tests/test_convert_oi_cascade_links.py`, one seeded row per
+class), but the dry run itself has not run against the 23 Sep prod copy yet - that happens
+locally afterwards, not from this session (AC-LT-45). The table below is the skeleton the dry
+run's own output fills in.
+
+| Class | Count | Notes |
+| --- | --- | --- |
+| (a) book | pending | |
+| (b) cascade, open target | pending | becomes a suggested link on `--apply` |
+| (c) cascade, closed/received/retired target | pending | removed on `--apply` |
+| (d) not auto | pending | |
+| (e) CS reserve | pending | |
+
+| State transition | Rows | Notes |
+| --- | --- | --- |
+| placed -> raised | pending | |
+| placed -> partly_linked | pending | |
+| partly_linked -> raised | pending | |
+
+To buy quantity delta: pending.
+
+Dry-run command (run locally against the restored 23 Sep prod copy, never the cloud):
+
+```
+venv/bin/python scripts/convert_oi_cascade_links.py
+```
+
 ## 8. Follow-ups with their trigger
 
 * Remove `redeal_drafts` / `_unplace_drafts` and re-read `_cascade_only`'s callers
