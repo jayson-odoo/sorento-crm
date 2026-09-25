@@ -351,3 +351,61 @@ describe('BoardDecideControl: the lenient toast (AC-16, R10)', () => {
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
   });
 });
+
+/**
+ * Review round 2, Should fix 2: Should fix 4 (review round 1) - the throwaway probe that
+ * checks a covered row against its OWN frozen composition before it ever touches the real
+ * claim tally - shipped with no test. Disabling that probe left every existing test green,
+ * because none of them ticked a covered row ALREADY decided exactly the pick alongside another
+ * row contesting the SAME pile: without the probe, the covered row is saved again (a wasted
+ * re-save) AND claims the pile first, starving the row that genuinely needs it (R3/AC-52/AC-14).
+ */
+describe('BoardDecideControl: a covered row already decided exactly this way is skipped, without starving the pile (review round 2, Should fix 2)', () => {
+  it('skips the covered row as "already decided that way" and still saves the other row off the same pile', async () => {
+    const pool = {
+      location: 'BRW-BB',
+      where: 'own' as const,
+      warehouse_id: 'wh-own',
+      qty_free_remaining: '40',
+    };
+    const covered = row({
+      key: 'so-1:line-10',
+      covered: true,
+      decision: {
+        revision_no: 1,
+        timely_spo_qty: '0',
+        reserve: [{ warehouse_id: 'wh-own', location: 'BRW-BB', qty: '40' }],
+        borrow: [],
+        buy_qty: '0',
+      },
+      locations: [pool],
+    });
+    const other = row({
+      key: 'so-2:line-20',
+      so_number: 'SO397451',
+      line_no: 20,
+      locations: [pool],
+    });
+    const { onSave } = renderControl({
+      contributions: [covered, other],
+      selectedKeys: [covered.key, other.key],
+    });
+    openMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Use own location' }));
+
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText(/^Reason/), {
+      target: { value: 'Consolidating onto the own location.' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Save/ }));
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    const [entries] = onSave.mock.calls[0];
+    // ONLY the other row is actually saved - the covered row is skipped for taking nothing
+    // new, never re-saved, and never allowed to claim the pile ahead of it.
+    expect(entries).toEqual([expect.objectContaining({ key: 'so-2:line-20' })]);
+    expect(toast.success).toHaveBeenCalledWith(
+      expect.stringContaining('already decided that way'),
+    );
+  });
+});

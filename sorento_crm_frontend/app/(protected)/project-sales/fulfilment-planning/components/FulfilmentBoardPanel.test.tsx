@@ -3611,6 +3611,64 @@ describe('FulfilmentBoardPanel: Save all suggested (D15)', () => {
 });
 
 /**
+ * Review round 2, Should fix 2: `decideBatch`'s own `silentError`/`onFailure` wiring (review
+ * round 1, Should fix 1) shipped with no test - reverting it to a per-row `toast.error` plus
+ * the generic "could not be saved" left every existing test green, because none of them made a
+ * Decide save actually fail on the wire. A real PUT failure has to reach the Decide strip's OWN
+ * lenient toast (R10) with the server's own sentence, and nowhere else: a second toast off the
+ * mutation's own `onError` would be exactly the "too many errors" the owner asked Decide to stop
+ * doing.
+ */
+describe('FulfilmentBoardPanel: a failed Decide save toasts the server message once (review round 2, Should fix 2)', () => {
+  it('toasts exactly once, carrying the server sentence, when one row of a Decide batch fails on the wire', async () => {
+    getPlanningBoard.mockResolvedValue(
+      boardOf([
+        demand({ sales_order_id: 'so-a', so_number: 'SO403340', line_no: 1 }),
+        demand({
+          sales_order_id: 'so-b',
+          so_number: 'SO398322',
+          line_no: 1,
+          item_code: 'WESERP20B',
+        }),
+      ]),
+    );
+
+    // Ticked in this order below, and `tickedRows`/`decideBatch` walk `contributions` in the
+    // same order the board lists them - SO403340 first, SO398322 second - so the two `Once`
+    // calls line up with which row they answer. `Once` rather than a persistent
+    // `mockImplementation` (B1): this file's `beforeEach` only `clearAllMocks`es, which does
+    // not touch a standing implementation, so a persistent override here would leak into
+    // every test that runs after this one in the file.
+    vi.mocked(putLineDraft)
+      .mockResolvedValueOnce({
+        decision: { verdict: 'approved' },
+        saved_by: 'Test Planner',
+        saved_at: '2026-09-03T00:00:00Z',
+      })
+      .mockRejectedValueOnce(new Error('Not enough free stock left.'));
+
+    renderPanel(['SO403340', 'SO398322']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+    await screen.findByRole('table');
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select SO403340 line 1' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select SO398322 line 1' }));
+    fireEvent.keyDown(await screen.findByTestId('board-decide-button'), { key: 'Enter' });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'As suggested' }));
+
+    await waitFor(() => expect(putLineDraft).toHaveBeenCalledTimes(2));
+    // Exactly ONE toast for the whole batch (R10) - not a second one off the mutation's own
+    // `onError`, which `silentError` exists to suppress.
+    expect(toast.success).toHaveBeenCalledTimes(1);
+    expect(toast.success).toHaveBeenCalledWith(
+      expect.stringContaining('Not enough free stock left.'),
+    );
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+});
+
+/**
  * D15: a grid cell's own undo icon, for a cell holding only drafted lines - `undoMany` deletes
  * every one of them and toasts once, rather than the per-line Undo's silent single delete.
  */
