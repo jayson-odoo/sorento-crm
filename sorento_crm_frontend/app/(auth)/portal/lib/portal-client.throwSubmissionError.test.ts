@@ -11,7 +11,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-import { saveDraft, submitDraft } from './portal-client';
+import { saveDraft, submitDraft, reviseSubmission } from './portal-client';
 
 const REAL_WIRE_BODY = {
   message: 'Unit price is required.',
@@ -67,6 +67,26 @@ describe('throwSubmissionError - real AppException wire body (#1232 blocking 3)'
     await expect(submitDraft('sponsorship_form', 'sub-1')).rejects.toMatchObject({
       message: 'Server error. Try again or contact support.',
       code: null,
+    });
+  });
+
+  it('reviseSubmission surfaces the server message, not the line:<index> detail token', async () => {
+    // reviseSubmission was routed through the plain `unwrap` helper, which
+    // reads the flat wire body's `detail` token as the message - the same bug
+    // already fixed here for saveDraft/submitDraft.
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(422, REAL_WIRE_BODY));
+
+    await expect(
+      reviseSubmission('sponsorship_form', 'sub-1', {
+        reason: 'Corrected the price',
+        expectedRevisionNo: 0,
+        fields: {},
+        products: [{ item_code: 'X', quantity: 2 }],
+      }),
+    ).rejects.toMatchObject({
+      message: 'Unit price is required.',
+      code: 'SPONSORSHIP_UNIT_PRICE_REQUIRED',
+      fields: ['line:0'],
     });
   });
 
