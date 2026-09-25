@@ -5079,17 +5079,23 @@ def apply(
     # their `failed` state and reasons, decisions stay editable, and this same call can
     # simply be retried once the cause is fixed.
     #
-    # AND only once no order this apply LEFT OUT is still pending. `applied_at` is the
-    # batch-wide lock (`set_row_decision` and a retry of this call both gate on it), so
-    # stamping it after a narrowed apply froze every other order of the same upload at
-    # `pending` with no way to decide or confirm them - the planner saw `Applied ...` and
-    # `pending: 2` on the same row. An apply that visited every order is unchanged: there
-    # is nothing left out, so the stamp lands exactly as it did before.
-    left_out_pending = wanted is not None and any(
-        str(r.project_sales_order_id) not in wanted
-        and r.applied_state == PLANNING_CHANGE_STATE_PENDING
-        for r in rows
-    )
+    # AND only once no row of the WHOLE BATCH is still pending (S5b, review round,
+    # `PLAN-esb-change-row-refresh.md`, issue #1245: a partial press must leave the batch
+    # reachable). Widened from "an order this apply LEFT OUT" to every row, because a row of
+    # an order this apply DID visit can stay pending too - a batch row `_apply_one_order`
+    # never accepted because nothing decided it (S5: a `Change proposed` line the board
+    # pre-marked but nobody saved, so its `project_line_id` was never in the confirm body,
+    # so `_confirm_a_planning_change` never called `set_row_decision` for it). `applied_at`
+    # is the batch-wide lock (`set_row_decision` and a retry of this call both gate on it),
+    # so stamping it while ANY row anywhere in the batch is still pending - an order left out
+    # of `only_pso_ids` entirely, or a row of a VISITED order the confirm body never named -
+    # froze that row behind a batch that reads "already applied" and refuses ever being
+    # retried (`refuse_if_applied`). `rows` are the SAME ORM objects `_apply_one_order`
+    # mutated above (queried once, at :4942, before the per-order loop), so this reads their
+    # POST-press state, not the pre-press snapshot. An apply that visited every order and
+    # every row was decided is unchanged: there is nothing left pending, so the stamp lands
+    # exactly as it did before.
+    left_out_pending = any(r.applied_state == PLANNING_CHANGE_STATE_PENDING for r in rows)
     if orders_revised and not left_out_pending:
         batch.applied_at = datetime.utcnow()
         batch.applied_by = actor
