@@ -395,6 +395,36 @@ describe('POIntakeConfirmClient', () => {
     expect(screen.queryByLabelText('Amount on line 1')).toBeNull();
   });
 
+  it('names an accepted cancellation as the reason for the gap, not a mismatch (S7)', async () => {
+    getPOVersion.mockResolvedValue(
+      version({
+        lines: [
+          line(),
+          line({
+            id: 'l2',
+            line_no: 7,
+            stock_code_raw: 'SRTFV1001',
+            amount: '4733.60',
+            is_cancelled: true,
+          }),
+        ],
+        totals: {
+          extracted_total: '368905.55',
+          lines_total: '364171.95',
+          arithmetic_passed: 2,
+          arithmetic_total: 2,
+        },
+      }),
+    );
+
+    renderConfirm();
+
+    expect(
+      await screen.findByRole('button', { name: /RM 4,733\.60 short, 1 cancelled line/i }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/below the total printed on the document/i)).toBeNull();
+  });
+
   it('refuses to confirm while a note is unreviewed, and "Review them" reaches its line', async () => {
     getPOVersion.mockResolvedValue(version({ annotations: [annotation()] }));
 

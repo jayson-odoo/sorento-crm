@@ -359,6 +359,22 @@ describe('POIntakeLinesGrid, showing only what needs attention', () => {
       screen.getByRole('radio', { name: /Lines identified 1/ }),
     ).toHaveAttribute('aria-checked', 'false');
   });
+
+  it('counts a line flagged only by an unreviewed note as identified (S7, judgment b)', async () => {
+    renderGrid(threeLines(), {
+      annotations: [annotation({ id: 'a1', refers_to_lines: [2] })],
+    });
+
+    expect(
+      await screen.findByRole('radio', { name: 'Lines identified 1' }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Lines identified 1' }));
+
+    expect(screen.getByLabelText('Quantity on line 2')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Quantity on line 1')).toBeNull();
+    expect(screen.queryByLabelText('Quantity on line 3')).toBeNull();
+  });
 });
 
 /**
