@@ -9,6 +9,11 @@ export interface Customer {
   updated_at?: Date | null;
   created_by?: string | null;
   orders_count?: number;
+  // Who sells to this customer. `sales_agent_id` addresses a write; the code + name are
+  // read-only, resolved server-side off the `sales_agents` master (no UUID in the UI).
+  sales_agent_id?: string | null;
+  sales_agent_code?: string | null;
+  sales_agent_name?: string | null;
   // Extended profile (added by commercial_core)
   registered_name?: string | null;
   trading_name?: string | null;
@@ -33,6 +38,8 @@ export interface CustomerFormData {
   email?: string;
   phone_number?: string;
   is_active: boolean;
+  // `null` clears the assignment; `undefined` leaves it alone (PUT reads `exclude_unset`).
+  sales_agent_id?: string | null;
   // Extended profile fields
   registered_name?: string;
   trading_name?: string;

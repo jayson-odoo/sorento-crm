@@ -13,18 +13,20 @@ from app.utils.chunking import chunked
 from app.models.order import Order, OrderStatus, Customer, OrderLine, Transporter
 from app.models.product import Product
 from app.models.inventory import Warehouse
+from app.models.sales_agent import SalesAgent
 from app.schemas.order import (
     OrderCreate, OrderUpdate, CustomerCreate, CustomerUpdate,
     OrderStatusCreate, OrderStatusUpdate,
     OrderLineCreate, OrderLineUpdate,
 )
-from app.services.error_handler import handle_not_found, handle_conflict
+from app.services.error_handler import handle_not_found, handle_conflict, handle_unprocessable
 from app.services.import_log_service import ImportLogService
 from app.services.calendar_service import CalendarService
 from app.services.identifier_resolver import resolve_identifier
 from app.services.company_scope import (
     build_company_predicate,
     get_company_scope,
+    pending_company_id,
     stamp_lookup_companies,
 )
 from app.services.embedding_change_listener import (
@@ -3441,6 +3443,45 @@ class CustomerService:
             raise handle_not_found("Customer", customer_id)
         return customer
     
+    def _resolve_sales_agent(
+        self,
+        agent_id: str,
+        *,
+        customer_company_id: Optional[str],
+        require_active: bool = True,
+    ) -> SalesAgent:
+        """The sales agent a create/update assigns.
+
+        Checked against the CUSTOMER's own `company_id` (shared agents, `company_id IS
+        NULL`, always allowed) - NOT the caller's scope. PR #1177 review, security item 3:
+        a user whose scope spans {A, B} must not be able to put a company-B-owned agent
+        onto a company-A customer just because both companies are in their own scope; the
+        question is whether the agent belongs to THIS record, not to the caller.
+
+        `require_active=False` lets an unrelated field edit on a customer already carrying
+        a since-deactivated agent go through without re-picking one (`update_customer`
+        passes this only when `agent_id` is unchanged from what the customer already has) -
+        a fresh assignment (create, or a genuine change on update) always requires active.
+
+        Raised as 422 (not 404): the request itself is well-formed, it is naming an agent
+        this customer may not use (`handle_unprocessable`, same status AC-2 asks for on an
+        unknown id, a malformed id, an inactive one, and one from another company alike -
+        the id space is shared, so none of these need to read differently to whoever picked
+        it in the select).
+        """
+        try:
+            uuid.UUID(str(agent_id))
+        except (ValueError, AttributeError, TypeError):
+            raise handle_unprocessable("Sales agent not found")
+        agent = self.db.get(SalesAgent, agent_id)
+        if not agent:
+            raise handle_unprocessable("Sales agent not found")
+        if agent.company_id is not None and str(agent.company_id) != str(customer_company_id or ""):
+            raise handle_unprocessable("Sales agent not found")
+        if require_active and not agent.is_active:
+            raise handle_unprocessable("Sales agent is inactive")
+        return agent
+
     def create_customer(self, customer_data: CustomerCreate):
         """Create a new customer.
 
@@ -3458,20 +3499,49 @@ class CustomerService:
         if existing:
             raise handle_conflict("Customer with this code + name already exists.")
 
-        customer = Customer(**customer_data.model_dump())
+        # `sales_agent_id` is held out of the constructor and set only AFTER it validates:
+        # `_resolve_sales_agent`'s `db.get(SalesAgent, ...)` autoflushes this row the moment
+        # it is added, and an unknown/inactive/cross-company id sitting on it already would
+        # autoflush an INSERT that violates the FK (or the company check) before the 422 is
+        # even raised - a 500 instead of the 422 AC-2 promises.
+        data = customer_data.model_dump()
+        agent_id = data.pop("sales_agent_id", None)
+        customer = Customer(**data)
         self.db.add(customer)
+        if agent_id is not None:
+            # `pending_company_id` resolves what `before_insert` is about to stamp on
+            # THIS row, from the very same single-company scope, so the agent is checked
+            # against the company the customer is actually about to join - not yet
+            # `customer.company_id` itself, which is still None before flush.
+            self._resolve_sales_agent(
+                agent_id,
+                customer_company_id=pending_company_id(customer),
+                require_active=True,
+            )
+            customer.sales_agent_id = agent_id
         self.db.commit()
         self.db.refresh(customer)
         return customer
-    
+
     def update_customer(self, customer_id: str, customer_data: CustomerUpdate):
         """Update a customer."""
         customer = self.get_customer(customer_id)
-        
+
         update_data = customer_data.model_dump(exclude_unset=True)
+        new_agent_id = update_data.get("sales_agent_id")
+        if new_agent_id is not None:
+            # Re-saving the SAME agent the customer already carries (any other field
+            # edit resubmits the whole form) must not require it to still be active -
+            # only an actual change of agent does.
+            changing = str(new_agent_id) != str(customer.sales_agent_id or "")
+            self._resolve_sales_agent(
+                new_agent_id,
+                customer_company_id=customer.company_id,
+                require_active=changing,
+            )
         for key, value in update_data.items():
             setattr(customer, key, value)
-        
+
         self.db.commit()
         self.db.refresh(customer)
         return customer

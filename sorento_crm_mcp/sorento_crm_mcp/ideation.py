@@ -31,8 +31,9 @@ contract (this catalog and n8n both reference it), so it stays and write-ness is
 declared instead: ``ai_assistant_service._WRITE_TOOL_NAMES`` lists it, and
 ``_WRITE_TOOL_PERMISSIONS`` requires ``ideation.board.view`` of the confirming
 user. The chatbot's ``ideate`` lane, which is what this exists for, calls it
-without a confirm because there is no user there to ask - its own guard is D14:
-a dry-run turn does not call it at all.
+without a confirm because there is no user there to ask - its own guard is
+``is_test`` (#1179): a dry-run turn calls it flagged as a test turn, so the idea
+is stored hidden from the board and the endpoint persists no session state.
 """
 
 from __future__ import annotations
@@ -64,6 +65,7 @@ def register_ideation_tools(mcp: Any, settings: Settings) -> None:
         submitter_name: str | None = None,
         media_selection: str | None = None,
         is_new_idea: bool | None = None,
+        is_test: bool | None = None,
     ) -> str:
         """Record or continue one turn of an idea a customer is submitting.
 
@@ -73,7 +75,9 @@ def register_ideation_tools(mcp: Any, settings: Settings) -> None:
         first). ``submitter_name`` is a display-name fallback used only when the
         contact row has no name. ``media_selection`` answers an OPEN photo menu
         ("1,3" or "all") and must be omitted when no menu is open.
-        ``is_new_idea`` starts a fresh draft over an open one.
+        ``is_new_idea`` starts a fresh draft over an open one. ``is_test`` marks
+        a test turn: the idea is stored but hidden from the board, and no
+        session state is persisted for the contact.
 
         Returns ``{status, reply_text, link?, session_vars}`` as JSON text.
         """
@@ -94,6 +98,8 @@ def register_ideation_tools(mcp: Any, settings: Settings) -> None:
             body["media_selection"] = media_selection
         if is_new_idea is not None:
             body["is_new_idea"] = is_new_idea
+        if is_test is not None:
+            body["is_test"] = is_test
         return await client.request(
             spec.method,
             spec.path,

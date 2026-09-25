@@ -115,7 +115,13 @@ async def test_session_vars_is_an_object_and_the_two_ids_are_required():
         "session_vars must be an object: the generic body-param template types it `str`, "
         "which would make the caller JSON-encode the ideation pointer by hand"
     )
-    for optional in ("session_vars", "submitter_name", "media_selection", "is_new_idea"):
+    for optional in (
+        "session_vars",
+        "submitter_name",
+        "media_selection",
+        "is_new_idea",
+        "is_test",
+    ):
         assert schema["properties"][optional].get("default", "missing") is None
     assert schema["properties"]["is_new_idea"] is not None
 
@@ -156,7 +162,7 @@ async def test_the_ideation_pointer_travels_as_an_object():
 
 
 @pytest.mark.parametrize(
-    "omitted", ["session_vars", "submitter_name", "media_selection", "is_new_idea"]
+    "omitted", ["session_vars", "submitter_name", "media_selection", "is_new_idea", "is_test"]
 )
 async def test_an_unset_optional_is_omitted_never_sent_as_null(omitted):
     mcp, ctx, client = _register()
@@ -175,6 +181,18 @@ async def test_is_new_idea_travels_as_a_boolean():
     )
     (call,) = client.calls
     assert call["body"]["is_new_idea"] is True
+
+
+@pytest.mark.parametrize("flag", [True, False])
+async def test_is_test_travels_as_a_boolean(flag):
+    """#1179 AC-9: the chatbot's dry run sends true, a live turn sends false; both reach
+    the endpoint as the boolean they were given."""
+    mcp, ctx, client = _register()
+    await mcp.tools["crm_ideation_turn"](
+        ctx, respond_io_id="42", message_text="an idea", is_test=flag
+    )
+    (call,) = client.calls
+    assert call["body"]["is_test"] is flag
 
 
 async def test_a_numeric_contact_id_is_coerced_to_a_string():

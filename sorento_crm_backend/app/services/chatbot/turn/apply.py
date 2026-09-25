@@ -971,8 +971,117 @@ def _reconcile_step(
 
 # The message types that carry no business question of their own (contract 49, 51).
 _CASUAL_TYPES = frozenset({"casual", "unknown", "confirmation"})
+#: The ideation domain's own name - the same literal `route._domain_branch` and
+#: `_HELP_EXEMPT_DOMAINS` already key on.
+IDEATE_DOMAIN = "ideate"
 # Domains that answer a request for help rather than escalating it (contract 21, 22).
-_HELP_EXEMPT_DOMAINS = frozenset({"portal_link", "ideate"})
+_HELP_EXEMPT_DOMAINS = frozenset({"portal_link", IDEATE_DOMAIN})
+
+#: The two lanes an OPEN IDEA DRAFT absorbs (issue #1178). `clarification` is contract
+#: 50's domain menu, which `route.py` reserves for "a turn with no domain at all", and
+#: `casual` is where `_is_idle_chat` sends a domainless "confirm" after emptying the
+#: carried domains - both answered a customer mid-draft with something unrelated to the
+#: idea (review of 24 Sep 2026, findings 2 and 3). Every other lane keeps its turn: an
+#: escalation or a request for a human is still a handover, `not_supported` and the
+#: business lanes only arise when the message named another domain.
+_DRAFT_ABSORBS: frozenset[str] = frozenset({"clarification", "casual"})
+
+#: Within the "casual" lane, the message types issue #1178 actually names (S1,
+#: reviewer pass 1 on PR #1185): a bare "confirm" is `message_type: confirmation`, but
+#: `_lane` sends `casual` and `unknown` typed turns to the very same lane, and those are
+#: idle chat proper. The open draft pointer has no expiry - the intake keeps it on
+#: `collecting`/`review` until `complete`/`duplicate` - so a contact who abandoned a
+#: draft and later says "hi" or "thanks" must not have it resurrected and re-served
+#: "Still need: ...". Kept separate from `_DRAFT_ABSORBS` (which still has to tell
+#: `route()` a domain-menu turn from an idle-chat one for every OTHER lane) rather than
+#: folded into it.
+_DRAFT_MESSAGE_TYPES: frozenset[str] = frozenset({"clarification", "confirmation"})
+
+#: Of `_IDLE_CHAT_DISQUALIFIERS`, the keys that can name the IDEA ITSELF rather than
+#: another subject, so `_continues_open_draft` reads them on their own terms (the ideate
+#: domain and its own intents pass) instead of as evidence the message is about
+#: something else. `reference_positions` is deliberately NOT exempted (S3, reviewer
+#: pass 1): the plan's own wording is "none of the subject signals
+#: `_IDLE_CHAT_DISQUALIFIERS` already lists", with no carve-out, and an answer to an
+#: actually open roster is already caught earlier by the `decision.answers` guard - a
+#: stray position with no roster open is exactly the kind of thing the message named
+#: for itself.
+_DRAFT_OWN_KEYS: frozenset[str] = frozenset({"entities", "intent_hint", "domain_hint", "asks"})
+
+
+def open_ideation_draft(ideation: Any) -> bool:
+    """Is an idea draft open on this contact's session?
+
+    The five-key `ideation` pointer with a `draft_id` on it. The intake tool is the
+    pointer's only writer and pops it the moment a draft closes (`complete`,
+    `duplicate` - `ideation_turn_service._TERMINAL_STATUSES`), so its presence IS the
+    open draft; nothing here reads a status word.
+    """
+    return isinstance(ideation, dict) and bool(ideation.get("draft_id"))
+
+
+def _continues_open_draft(
+    ideation: Any,
+    verdict: dict[str, Any],
+    decision: Decision,
+    focus: Focus,
+    lane: str | None,
+    policy: Policy,
+) -> bool:
+    """Issue #1178: does THIS turn belong to the idea draft the intake is still
+    collecting?
+
+    Yes when a draft is open, the verdict placed the turn on a lane the draft absorbs
+    (`_DRAFT_ABSORBS`) via a message type the ruling actually names
+    (`_DRAFT_MESSAGE_TYPES` - a question or a bare confirm, S1), the message names
+    nothing of its own, and the standing subject is still the idea (or nothing). "Names
+    nothing of its own" is the same structured reading `_is_idle_chat` makes - none of
+    the parser's subject signals - with the ideate domain and its own intents allowed
+    through, because those name the draft, not a rival subject. A decisive term from
+    another domain (the prompt's own "asking stock/ETA/price mid-idea switches domain
+    normally"), a current-message entity, an answer to an open roster, or a focus that
+    has already moved to another domain all keep today's routing: the draft resumes by
+    a fresh ideate turn, as the prompt says it does.
+
+    Every input is the parser's structured verdict or persisted state (D1/AC-1520): no
+    word of the message is read, and the parser's own domain is never overruled - the
+    head is supplying the one fact the verdict could not carry, that a draft is open.
+    """
+    if lane not in _DRAFT_ABSORBS or not open_ideation_draft(ideation):
+        return False
+    if verdict.get("message_type") not in _DRAFT_MESSAGE_TYPES:
+        return False
+    if decision.answers:
+        return False
+    if any(d != IDEATE_DOMAIN for d in focus.domains):
+        return False
+    if any(
+        isinstance(e, dict) and e.get("current_message") is True
+        for e in (verdict.get("entities") or [])
+    ):
+        return False
+    if any(verdict.get(key) for key in _IDLE_CHAT_DISQUALIFIERS if key not in _DRAFT_OWN_KEYS):
+        return False
+    if domain_in_message(verdict) is True:
+        return False
+    if any(
+        isinstance(a, dict) and a.get("domain") != IDEATE_DOMAIN
+        for a in (verdict.get("asks") or [])
+    ):
+        return False
+    domain_hint = verdict.get("domain_hint")
+    if domain_hint == IDEATE_DOMAIN:
+        # The parser named the draft's own domain (the prompt's IDEATION CONTINUATION
+        # rule); whatever intent rides beside it is that domain's.
+        return True
+    if domain_hint is not None:
+        return False
+    # No domain named: an intent of another domain's is a subject of its own, the
+    # ideate row's own intents (`chatbot_domains.intents`) and no intent at all are not.
+    row = policy.domain(IDEATE_DOMAIN)
+    own_intents = set(row.intents) if row is not None else set()
+    intent = verdict.get("intent_hint")
+    return intent is None or intent in own_intents
 
 
 #: Every structured signal that makes a message a QUESTION rather than idle chat. A
@@ -1502,8 +1611,29 @@ def apply(
             focus.domains = [by_kind]
             trace.rules_fired.append("help_request_names_its_own_ask")
 
-    new_state = State(focus=focus, pending=pending_after, profile=state.profile, turn_no=state.turn_no)
+    new_state = State(
+        focus=focus,
+        pending=pending_after,
+        profile=state.profile,
+        turn_no=state.turn_no,
+        ideation=state.ideation,
+    )
     trace.lane = _lane(verdict, domains, policy)
+
+    if _continues_open_draft(state.ideation, verdict, decision, focus, trace.lane, policy):
+        # Issue #1178: a question about the intake's own question ("what do you mean
+        # impact?") and the bare "confirm" its template asks for were leaving the
+        # ideate lane - the first for the domain menu (`_lane` reads the message type
+        # before the domain, so even a verdict carrying `domain_hint: ideate` landed on
+        # `clarify_menu`), the second for the casual lane (`_is_idle_chat` emptied the
+        # carried domain). The open draft is a question the ideate lane is still asking,
+        # so the turn is planned as that lane's, and `route()` reaches `ideate` the way
+        # it already does for a verdict that named the domain. The focus says so too, so
+        # the next parse still reads "Current subject: domain ideate".
+        domains = [IDEATE_DOMAIN]
+        focus.domains = [IDEATE_DOMAIN]
+        trace.lane = None
+        trace.rules_fired.append("open_idea_draft_keeps_lane")
 
     # A did-you-mean is PRODUCTION's now (AC-1693, reviewer B1): `_did_you_mean` used to
     # run here, ahead of the narrower and the lane, and mint a `{kind}_pick` whose only
