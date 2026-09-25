@@ -437,6 +437,10 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [contact, setContact] = useState<PortalContact | null>(null);
   const [invalidFields, setInvalidFields] = useState<Set<string>>(new Set());
+  // #1227: the raw `products` row (not the cleaned/filtered index) whose unit price
+  // failed the sponsorship-only check below, so the "Unit price" cell itself can show
+  // the inline message - same shape `invalidFields` gives every other required field.
+  const [invalidLineIndex, setInvalidLineIndex] = useState<number | null>(null);
   const [staffPreviewOpen, setStaffPreviewOpen] = useState(false);
   const [neighbours, setNeighbours] =
     useState<PortalSubmissionNeighbours | null>(null);
@@ -939,11 +943,56 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
     }, 50);
   };
 
+  /** Same "does this row have anything in it" test `cleanLineItems` filters on - a
+   *  fully blank row is not a line yet, so a required-unit-price check never names it. */
+  const lineHasContent = (l: ProductLine): boolean =>
+    Boolean(
+      (l.item_code ?? '').trim() ||
+        (l.quantity ?? '').trim() ||
+        (l.remark ?? '').trim() ||
+        (l.unit_price ?? '').trim() ||
+        (l.total ?? '').trim(),
+    );
+
+  /** `cleanedProducts` (what the server actually receives) numbers lines after that
+   *  same filter drops the blank ones, so a server `line:<index>` refusal and this
+   *  client check have to walk `products` the same way to land on the same row. */
+  const rawIndexForCleanedIndex = (cleanedIndex: number): number => {
+    let seen = -1;
+    for (let i = 0; i < products.length; i++) {
+      if (!lineHasContent(products[i])) continue;
+      seen += 1;
+      if (seen === cleanedIndex) return i;
+    }
+    return -1;
+  };
+
+  /** #1227: sponsorship forms only, mandatory unit price on every real line - purchase
+   *  requests are unchanged. Checked client-side before submit, same pattern
+   *  `PriceTagRequestForm` already uses (block, name the line, let the server be the
+   *  real gate). */
+  const findMissingSponsorshipUnitPrice = (): { rawIndex: number; cleanedIndex: number } | null => {
+    if (kind !== 'sponsorship_form' || !cleanedProducts) return null;
+    const cleanedIndex = cleanedProducts.findIndex((l) => {
+      const price = Number(l.unit_price);
+      return !l.unit_price || !Number.isFinite(price) || price < 0;
+    });
+    if (cleanedIndex === -1) return null;
+    return { rawIndex: rawIndexForCleanedIndex(cleanedIndex), cleanedIndex };
+  };
+
   const handleSubmit = async () => {
     const missing = collectMissingRequired();
     if (missing.length > 0) {
       setConfirmOpen(false);
       reportMissingRequired(missing);
+      return;
+    }
+    const missingPrice = findMissingSponsorshipUnitPrice();
+    setInvalidLineIndex(missingPrice ? missingPrice.rawIndex : null);
+    if (missingPrice) {
+      setConfirmOpen(false);
+      toast.error(`Line ${missingPrice.cleanedIndex + 1}: Unit price is required.`);
       return;
     }
     setSubmitting(true);
@@ -966,7 +1015,25 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
         router.replace(portalVerifyPath({ reason: 'expired' }));
         return;
       }
-      toast.error(e instanceof Error ? e.message : 'Failed to submit.');
+      // #1227: the server names a sponsorship unit-price refusal the same way it
+      // names a price tag request line (`fields: ['line:<index>']`) - surfaced the
+      // same way `lineErrorToast` does in PriceTagRequestForm: "Line N: <message>".
+      const errFields = (e as { fields?: unknown } | null)?.fields;
+      const lineField = Array.isArray(errFields)
+        ? errFields.find((f): f is string => typeof f === 'string' && f.startsWith('line:'))
+        : undefined;
+      const message = e instanceof Error ? e.message : 'Failed to submit.';
+      if (lineField) {
+        const cleanedIndex = Number(lineField.slice('line:'.length));
+        if (Number.isInteger(cleanedIndex)) {
+          setInvalidLineIndex(rawIndexForCleanedIndex(cleanedIndex));
+          toast.error(`Line ${cleanedIndex + 1}: ${message}`);
+        } else {
+          toast.error(message);
+        }
+      } else {
+        toast.error(message);
+      }
     } finally {
       setSubmitting(false);
       setConfirmOpen(false);
@@ -1656,7 +1723,9 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
                     <th className="w-28 px-2 py-2 text-left">Quantity</th>
                     {kind === 'sponsorship_form' && (
                       <>
-                        <th className="w-32 px-2 py-2 text-left">Unit price</th>
+                        <th className="w-32 px-2 py-2 text-left">
+                          Unit price <span className="text-destructive">*</span>
+                        </th>
                         <th className="w-32 px-2 py-2 text-left">Total</th>
                       </>
                     )}
@@ -1726,17 +1795,28 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
                                 min="0"
                                 step="0.01"
                                 value={line.unit_price ?? ''}
-                                onChange={(e) =>
+                                onChange={(e) => {
                                   setProducts((prev) =>
                                     prev.map((p, i) =>
                                       i === index
                                         ? { ...p, unit_price: e.target.value }
                                         : p,
                                     ),
-                                  )
-                                }
+                                  );
+                                }}
                                 disabled={!editing}
+                                aria-invalid={invalidLineIndex === index}
+                                className={
+                                  invalidLineIndex === index
+                                    ? 'border-destructive'
+                                    : undefined
+                                }
                               />
+                              {invalidLineIndex === index && (
+                                <p className="mt-1 text-xs text-destructive">
+                                  Unit price is required.
+                                </p>
+                              )}
                             </td>
                             <td className="px-2 py-2">
                               <Input

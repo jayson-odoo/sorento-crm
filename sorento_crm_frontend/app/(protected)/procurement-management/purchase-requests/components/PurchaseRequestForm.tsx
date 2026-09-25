@@ -260,7 +260,12 @@ export default function PurchaseRequestForm({
         ? [
             {
               id: "unit_price",
-              header: ({ column }) => <DataGridColumnHeader title="U/P" column={column} />,
+              header: ({ column }) => (
+                <DataGridColumnHeader
+                  title="U/P *"
+                  column={column}
+                />
+              ),
               cell: ({ row }) => (
                 <FormField
                   control={form.control}

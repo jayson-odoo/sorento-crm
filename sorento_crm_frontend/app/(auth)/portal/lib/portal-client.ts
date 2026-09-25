@@ -497,6 +497,31 @@ export async function fetchSubmission(
   return unwrap<PortalSubmissionDetail>(res, 'Failed to load submission.');
 }
 
+/**
+ * Same shape `PriceTagRequestError` reads (`price-tag-request-service.ts`): the global
+ * handler flattens `AppException` to `{message, detail, code}`, and `detail` on a
+ * line-scoped refusal (D48/#1227: a sponsorship line submitted with no unit price) is a
+ * CSV of `line:<index>` tokens. Attached to the thrown error as `.fields`/`.code` so a
+ * caller can name the offending line the same way a price tag request line already does,
+ * without changing what every other `saveDraft`/`submitDraft` caller already gets back.
+ */
+async function throwSubmissionError(res: Response, fallback: string): Promise<never> {
+  const message = await extractApiError(res, fallback);
+  let body: { detail?: unknown } | null = null;
+  try {
+    body = (await res.clone().json()) as { detail?: unknown };
+  } catch {
+    body = null;
+  }
+  const inner = body?.detail as { detail?: unknown; code?: unknown } | null | undefined;
+  const code = typeof inner?.code === 'string' ? inner.code : null;
+  const fields =
+    typeof inner?.detail === 'string' && inner.detail
+      ? inner.detail.split(',').map((f) => f.trim()).filter(Boolean)
+      : [];
+  throw Object.assign(new Error(message), { code, fields });
+}
+
 export async function saveDraft(
   kind: PortalSubmissionKind,
   fields: Record<string, unknown>,
@@ -511,7 +536,8 @@ export async function saveDraft(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ fields, products }),
   });
-  return unwrap<PortalSubmissionDetail>(res, 'Failed to save draft.');
+  if (!res.ok) return throwSubmissionError(res, 'Failed to save draft.');
+  return (await res.json()) as PortalSubmissionDetail;
 }
 
 export async function submitDraft(
@@ -532,7 +558,8 @@ export async function submitDraft(
       body,
     },
   );
-  return unwrap<PortalSubmissionDetail>(res, 'Failed to submit.');
+  if (!res.ok) return throwSubmissionError(res, 'Failed to submit.');
+  return (await res.json()) as PortalSubmissionDetail;
 }
 
 /** GET .../submissions/{kind}/{id}/revisions - the original plus every version
