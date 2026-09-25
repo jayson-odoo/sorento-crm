@@ -135,25 +135,28 @@ export function useOpenState(
 }
 
 /**
- * Pass as `onUpdate` on a `motion.div` animating `opacity`/`transform` to keep
- * motion/react on its own JS ticker instead of handing the animation to the
- * browser's native Web Animations API.
+ * Pass as `onUpdate` on a `motion.div` animating `opacity` to keep motion/react
+ * on its own JS ticker instead of handing the animation to the browser's
+ * native Web Animations API.
  *
  * motion-dom's `supportsBrowserAnimation` (node_modules/motion-dom/dist/es/animation/waapi/supports/waapi.mjs)
- * accelerates `opacity` and `transform` via WAAPI whenever nothing reads the
- * value every frame (`!onUpdate`). WAAPI's own `onfinish` handler
- * (node_modules/motion-dom/dist/es/animation/NativeAnimation.mjs) writes the
- * settled value through `motionValue.set()` - which only takes effect on
- * motion's next scheduled render tick - and THEN calls `this.animation.cancel()`
- * synchronously, which strips the WAAPI effect immediately. Cancelling before
- * the settled value has been flushed to the inline style leaves the element on
- * its un-animated style for that one frame - `opacity`'s CSS initial value,
- * i.e. fully opaque - which is exactly what a real-browser frame trace showed:
- * content flashed to `opacity: 1` moments before its exit reached 0, and the
- * overlay flashed to `opacity: 1` (darker than the surface was at any point
- * while open) on the frame before AnimatePresence unmounted it. It never
- * reproduces in jsdom, which has no WAAPI and always takes the JS path this
- * constant forces everywhere.
+ * accelerates `opacity` (and other values in its `acceleratedValues` set, but
+ * not `scale`/`x`/`y`, which motion tracks as their own motion values) via
+ * WAAPI whenever nothing reads the value every frame (`!onUpdate`). WAAPI's
+ * own `onfinish` handler (node_modules/motion-dom/dist/es/animation/NativeAnimation.mjs)
+ * writes the settled value through `motionValue.set()` - which only takes
+ * effect on motion's next scheduled render tick - and THEN calls
+ * `this.animation.cancel()` synchronously, which strips the WAAPI effect
+ * immediately. Cancelling before the settled value has been flushed to the
+ * inline style leaves the element on whatever inline opacity was set before
+ * this animation phase started, for that one frame: `0` (the pre-entrance
+ * value) on enter, `1` (the pre-exit, fully-open value) on exit - which is
+ * exactly what a real-browser frame trace showed: content dropped to
+ * `opacity: 0` moments after its enter reached 1, and both content and
+ * overlay flashed back to `opacity: 1` (darker than the surface was at any
+ * point while open) on the frame before AnimatePresence unmounted them. It
+ * never reproduces in jsdom, which has no WAAPI and always takes the JS path
+ * this constant forces everywhere.
  *
  * A live `onUpdate` disqualifies WAAPI acceleration outright (motion has no
  * way to read a WAAPI-driven value every frame), so a no-op callback is enough

@@ -4,13 +4,18 @@
  *
  * A real-browser frame trace (agent-browser, recorded against this file's
  * `main` ancestor) showed: right when the enter spring reached its target,
- * BOTH the overlay and the content dropped to `opacity: 0` for exactly one
- * frame before returning to `1`; right when the exit spring finished, BOTH
- * jumped BACK to `opacity: 1` for exactly one frame before AnimatePresence
- * unmounted them. The cause is motion/react handing `opacity`/`transform` off
- * to the browser's native Web Animations API whenever nothing reads the value
- * every frame (motion-dom's `supportsBrowserAnimation`,
- * node_modules/motion-dom/dist/es/animation/waapi/supports/waapi.mjs).
+ * both the overlay and the content dropped to `opacity: 0` for one frame
+ * (they share the same enter transition, so this landed on the same frame
+ * for both) before returning to `1`; right when each one's own exit spring
+ * finished, it jumped BACK to `opacity: 1` for one frame before
+ * AnimatePresence unmounted it - the overlay and the content exit on
+ * different transitions, so this happened on two separate frames, not
+ * together. The cause is motion/react handing `opacity` off to the
+ * browser's native Web Animations API whenever nothing reads the value every
+ * frame (motion-dom's `supportsBrowserAnimation`,
+ * node_modules/motion-dom/dist/es/animation/waapi/supports/waapi.mjs) -
+ * `scale`/`x`/`y` are their own motion values there, not `opacity`'s
+ * `transform`, so only `opacity` misbehaves on these two `motion.div`s.
  * WAAPI's own completion handler (NativeAnimation.mjs `onfinish`) writes the
  * settled value through the motion value - which only lands on motion's next
  * scheduled render tick - and THEN cancels the native animation immediately,
