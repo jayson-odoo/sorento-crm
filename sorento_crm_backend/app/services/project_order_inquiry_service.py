@@ -7963,6 +7963,8 @@ class ProjectOrderInquiryService:
         row: OrderInquiryRow,
         takes: Sequence[Tuple[Dict[str, Any], Decimal]],
         trigger: str,
+        *,
+        existing: Optional[Sequence[OrderInquirySuggestedLink]] = None,
     ) -> bool:
         """The cascade walk's OWN terminal write (plan 3.4) - never a real link, never
         `scm.order_link_claim`, nobody's name on it. REPLACES this row's suggested
@@ -7980,8 +7982,14 @@ class ProjectOrderInquiryService:
         `PLAN-oi-links-autocount-truth-24sep.md` 3.6): "Link selected" recalculates
         against AutoCount to catch a stale suggestion, and needs to say how many rows
         it actually moved, distinct from the rows it looked at and left alone.
+
+        `existing` (Should fix 4, review round 2): the row's own suggestions, when the
+        caller has already loaded them to net its own shared `_suggested_totals_by_
+        target` in memory (`auto_place_for_products`'s own pass) - never fetched a
+        second time in that case. Omitted (every other caller), this fetches them
+        itself exactly as before.
         """
-        existing = self._suggested_of_row(row.id)
+        existing = self._suggested_of_row(row.id) if existing is None else existing
         if existing and self._same_placement(existing, takes):
             return False
         if existing:
@@ -9175,6 +9183,12 @@ class ProjectOrderInquiryService:
         after_horizon = 0
         products_touched: set = set()
         changed_suggestion_row_ids: set = set()
+        # Should fix 4 (review round 2): ONE full-table aggregate for the WHOLE pass,
+        # not one per row - `_suggested_totals_by_target` used to run inside the loop
+        # below, so an Auto link all over ~2,000 rows ran ~2,000 GROUP BY queries,
+        # quadratic as the table grows. Updated in memory as the loop writes each
+        # row's own answer (see `_release_own_contribution` below), never re-queried.
+        suggested_totals_by_target = self._suggested_totals_by_target()
         for row in rows:
             product_id = product_id_by_row.get(row.id)
             if not product_id:
@@ -9205,6 +9219,29 @@ class ProjectOrderInquiryService:
             if self._after_horizon(row, link_up_to):
                 after_horizon += 1
                 continue
+            # AC-LT-14/G2, Should fix 4 (review round 2): this row's OWN current
+            # suggestions, fetched once and used three ways below - to net them OUT
+            # of the shared `suggested_totals_by_target` (so the row never competes
+            # against itself), to update that SAME shared total in memory afterward
+            # (never a second full-table query), and handed to `_write_suggested_
+            # links` so it does not fetch them a second time.
+            existing_suggestions = self._suggested_of_row(row.id)
+            own_by_target: Dict[str, Decimal] = {}
+            for suggestion in existing_suggestions:
+                target = str(suggestion.po_line_id or suggestion.spo_allocation_id)
+                own_by_target[target] = own_by_target.get(target, _ZERO) + _dec(
+                    suggestion.qty
+                )
+
+            def _release_own_contribution() -> None:
+                """This row is about to hold no suggestion (or a different one) - its
+                OLD contribution comes out of the shared total now, so a LATER row
+                this same pass sees the room it actually left behind."""
+                for target, qty in own_by_target.items():
+                    suggested_totals_by_target[target] = (
+                        suggested_totals_by_target.get(target, _ZERO) - qty
+                    )
+
             candidates = self._candidates_for_row(row, credit_own_links=bool(drafts))
             if not candidates:
                 # Review round 2 Blocking 5 (AC-LT-19): no candidate at all is the
@@ -9212,7 +9249,9 @@ class ProjectOrderInquiryService:
                 # standing - the row's own line may have closed since the last pass
                 # that offered it (issue #1215 point 3's own defect, back on a guess
                 # rather than a real link). A no-op when the row holds none.
-                self._drop_suggested_links([row])
+                if existing_suggestions:
+                    self._drop_suggested_links([row])
+                    _release_own_contribution()
                 continue
             # S2/S4 (`PLAN-oi-cascade-skip-early-arrival.md`): `_within_window` is the
             # SAME filter the Link dialog's own preview runs (`po_candidates_for_row`),
@@ -9225,13 +9264,18 @@ class ProjectOrderInquiryService:
             if not candidates:
                 # Same reasoning as the empty-candidates branch above: nothing left
                 # inside the lead-time window is nothing to keep suggesting.
-                self._drop_suggested_links([row])
+                if existing_suggestions:
+                    self._drop_suggested_links([row])
+                    _release_own_contribution()
                 continue
-            # AC-LT-14/G2: what OTHER rows already suggest on each target, read fresh
-            # right before this row's own take is sized - never cached the way
-            # `_linked_by_target` is, because THIS pass may already have written a
-            # suggestion for an earlier row onto the very same target.
-            held_by_others = self._suggested_totals_by_target(exclude_row_id=str(row.id))
+            # What OTHER rows already suggest on each target, netted from the ONE
+            # shared total built before this loop started - this row's own current
+            # suggestions (about to be replaced) come out first, exactly what
+            # `exclude_row_id` used to give a fresh GROUP BY query for.
+            held_by_others = {
+                target: qty - own_by_target.get(target, _ZERO)
+                for target, qty in suggested_totals_by_target.items()
+            }
             takes = self._cascade_take(candidates, need, held_by_others=held_by_others)
             if not takes:
                 continue
@@ -9247,8 +9291,18 @@ class ProjectOrderInquiryService:
             # PLAN-oi-links-autocount-truth-24sep.md 3.4: the walk's own terminal write
             # is a SUGGESTION, never a real link - the book step above (real links,
             # untouched) already had first go at every row in this pass.
-            if self._write_suggested_links(row, takes, trigger):
+            if self._write_suggested_links(
+                row, takes, trigger, existing=existing_suggestions
+            ):
                 changed_suggestion_row_ids.add(str(row.id))
+                # In memory (Should fix 4): this row's OLD contribution is gone, its
+                # NEW one now holds room against every row still to come this pass.
+                _release_own_contribution()
+                for candidate, qty in takes:
+                    target = candidate["target_id"]
+                    suggested_totals_by_target[target] = (
+                        suggested_totals_by_target.get(target, _ZERO) + qty
+                    )
             # One ROW touched, however many documents it took: the row is never split any
             # more, so counting the rows the call returned would always have said 1.
             placed_rows += 1
