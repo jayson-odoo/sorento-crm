@@ -361,18 +361,20 @@ def test_render_availability_ask():
 
 
 def test_render_availability_answer():
-    """Chatbot stock ask v2 S3, R14 (AC-SA313): the item title carries the whole
-    per-product sentence once every entry has a branch."""
+    """Chatbot stock ask v2 S3 fix round 1, Blocking 1 (R6/R14, AC-SA313): once every
+    entry has a branch, the item title carries the whole per-product sentence and the
+    intro says nothing at all - a shared intro cannot be true for every entry at once,
+    and for `too_big` it would be a statement about our stock, which R6 B1 forbids."""
     yes = env(_availability_payload([_entry("SRTBF11201-NEW", branch="in_stock")]))
     no = env(_availability_payload([_entry("SRTBF11201-NEW", branch="too_big")]))
 
-    assert yes["intro"] == "Yes, we have stock."
+    assert yes["intro"] == ""
     assert yes["items"][0]["title"] == (
         "SRTBF11201-NEW x 50: yes, we have stock, please refer to your salesman "
         "to proceed."
     )
     assert yes["items"][0]["flags"] == {"needs_quantity": False, "branch": "in_stock"}
-    assert no["intro"] == "Sorry, we do not have enough stock for that quantity."
+    assert no["intro"] == ""
     assert no["items"][0]["title"] == (
         "SRTBF11201-NEW x 50: the quantity is more than what I can confirm here, "
         "please refer to your salesman."
@@ -394,15 +396,15 @@ def test_render_availability_incoming_names_the_eta():
 
 def test_render_availability_several_products_that_disagree():
     """Two products, one in stock and one not: a single yes or no would be a
-    lie about one of them, so the intro stops answering and the items carry
-    their own titles/flags, in asked order."""
+    lie about one of them, so the intro stays empty (Blocking 1) and the items
+    carry their own titles/flags, in asked order."""
     out = env(
         _availability_payload(
             [_entry("SRTBF11201-NEW", branch="in_stock"), _entry("SRTWB7109", branch="no_incoming")]
         )
     )
 
-    assert out["intro"] == "Here is the stock availability for the requested products."
+    assert out["intro"] == ""
     assert [i["flags"]["branch"] for i in out["items"]] == ["in_stock", "no_incoming"]
 
 
@@ -567,7 +569,7 @@ def test_sanitized_availability_renders_end_to_end():
         )
     )
 
-    assert out["intro"] == "Sorry, we do not have enough stock for that quantity."
+    assert out["intro"] == ""
     assert out["items"][0]["flags"] == {"needs_quantity": False, "branch": "too_big"}
 
 

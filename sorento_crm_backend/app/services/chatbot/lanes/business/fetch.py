@@ -2397,6 +2397,27 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
             "please check with the office."
         )
 
+    # Chatbot stock ask v2 S3 fix round 1, Blocking 1 (R6/R14/AC-SA312): once every
+    # product in an `availability` reply has a branch, the presenter's per-item title
+    # (`sorento_crm_mcp.presenters._availability_line`) already carries the whole R14
+    # sentence - product, quantity, and the answer. A shared intro in front of it, or a
+    # position number ("1. ") on it, both say something the four fixed sentences never
+    # said: the old `_AVAILABILITY_NO` intro read as a statement about OUR stock even
+    # for a `too_big` entry with plenty on hand, which R6 B1 forbids ("never reveal
+    # stock"). So an answered `availability` reply gets no intro line and no numbering
+    # (plan sample (g)); the presenter itself already returns "" for `intro` in this
+    # case (see `_availability_intro`).
+    stock_availability_answered = bool(
+        jsc.js_string(e.get("result_type") or "") == "stock_availability"
+        and isinstance(e.get("items"), list)
+        and len(e["items"])
+        and not any(
+            jsc.truthy(jsc.get(jsc.get(it, "flags"), "needs_quantity"))
+            for it in e["items"]
+            if jsc.truthy(it)
+        )
+    )
+
     # The PRESENTER owns the intro whenever it emits `summary_items` - it states the page
     # geometry there, and this override would replace it with a sentence that says less.
     qs_presenter_owns_intro = bool(
@@ -2425,7 +2446,11 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
             else "Here are the delivered orders I found."
         )
 
-    msg = jsc.js_string(e.get("intro") or "Here are the results.").strip() + "\n\n"
+    msg = (
+        ""
+        if stock_availability_answered
+        else jsc.js_string(e.get("intro") or "Here are the results.").strip() + "\n\n"
+    )
 
     # The summary follows the ANSWER, not the rows: `has_result is True`, never truthiness,
     # because a boolean arriving as the STRING "false" is truthy and would print a summary
@@ -2462,7 +2487,7 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     if len(action_links):
         msg += "\n"
 
-    def _item_line(position: int, it: Any) -> str:
+    def _item_line(position: int, it: Any, *, numbered: bool = True) -> str:
         field_lines = "\n".join(
             f"*{jsc.js_string(jsc.get(f, 'label', jsc.UNDEFINED))}:* "
             f"{_fmt_value(jsc.get(f, 'value'))}"
@@ -2481,7 +2506,12 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
             title = jsc.get(it, "title")
             if jsc.truthy(title):
                 field_lines = jsc.js_string(title)
-        line = f"{position}. {field_lines}"
+        # Chatbot stock ask v2 S3 fix round 1, Blocking 1 (R14/AC-SA312): an
+        # answered `availability` item's title already starts "<code> x <Q>:" -
+        # a position number in front of it is a digit of OURS the AC-SA312 guard
+        # never anticipated, and the plan's sample (g) shows plain lines, not a
+        # numbered list.
+        line = field_lines if not numbered else f"{position}. {field_lines}"
         flags = jsc.get(it, "flags")
         if jsc.truthy(flags) and jsc.truthy(jsc.get(flags, "discontinued")):
             line += "\n⚠️  *(PRODUCT DISCONTINUED)*"
@@ -2539,7 +2569,7 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     for i, it in enumerate(
         [] if (qs_render or groups_render or stock_ask_render) else (e.get("items") or [])
     ):
-        msg += _item_line(i + 1, it) + "\n\n"
+        msg += _item_line(i + 1, it, numbered=not stock_availability_answered) + "\n\n"
     # Item 8: the product projection's miss lines, one per asked word, AFTER the items
     # (`_project_product_specs`). Byte-inert when the key is absent.
     for miss in e.get("spec_misses") or []:

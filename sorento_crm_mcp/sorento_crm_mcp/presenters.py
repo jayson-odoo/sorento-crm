@@ -115,9 +115,6 @@ _STOCK_COMPACT_INTRO = "Stock summary for the requested products."
 # The dealer answer, verbatim. This IS the outbound WhatsApp text (n8n prints the
 # intro and nothing else for this mode), so the wording is the contract.
 _AVAILABILITY_ASK = "How many units do you need?"
-_AVAILABILITY_YES = "Yes, we have stock."
-_AVAILABILITY_NO = "Sorry, we do not have enough stock for that quantity."
-_AVAILABILITY_MIXED = "Here is the stock availability for the requested products."
 
 # Passthrough keys preserved from the raw response into the envelope (e.g. the
 # escalation hint attached after sanitize). Kept so render mode loses nothing.
@@ -1464,22 +1461,23 @@ def _stock_availability(payload: dict, b: _Builder) -> None:
 
 
 def _availability_intro(payload: dict) -> str:
-    """The whole reply, in one line.
+    """The whole reply, in one line - or none.
 
-    Several products can disagree. Any product still missing its quantity makes
-    the turn a question, not an answer - so ask, and say nothing about the rest.
-    Otherwise a shared answer speaks for all of them; a split answer cannot, so
-    the intro steps back and the per-item titles (`_availability_line`) carry it.
+    Any product still missing its quantity makes the turn a question, not an
+    answer - so ask, and say nothing about the rest. Once every entry has a
+    branch (chatbot stock ask v2 S3 fix round 1, Blocking 1), the per-item
+    titles (`_availability_line`) already carry the whole R14 sentence, product
+    and quantity included - a shared intro on top of them cannot be true for
+    every entry at once: a too_big/no_incoming pairing spoke of "not enough
+    stock" even when one of the two entries had plenty, which is false and,
+    for `too_big`, a statement about our stock that R6 B1 forbids. So an
+    answered reply gets no intro at all; the plan's sample (g) shows the same
+    shape, one line per product and nothing before them.
     """
     entries = _availability_entries(payload)
     if any(e.get("needs_quantity") for e in entries):
         return _AVAILABILITY_ASK
-    branches = {e.get("branch") for e in entries}
-    if branches == {"in_stock"}:
-        return _AVAILABILITY_YES
-    if branches and branches <= {"too_big", "no_incoming"}:
-        return _AVAILABILITY_NO
-    return _AVAILABILITY_MIXED
+    return ""
 
 
 def _forms(rows: list[dict], b: _Builder) -> None:
