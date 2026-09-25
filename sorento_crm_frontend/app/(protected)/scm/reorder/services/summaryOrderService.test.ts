@@ -114,9 +114,10 @@ describe('summaryOrderService - exportOrderSheet (AC-19/AC-20)', () => {
   });
 });
 
-describe('summaryOrderService - exportLowStockReport (PLAN-low-stock-report AC-2)', () => {
-  it('POSTs the SAME export endpoint with format "low_stock_xlsx" and returns the '
-    + 'MyDownload row', async () => {
+describe('summaryOrderService - exportLowStockReport (PLAN-low-stock-report AC-2; split '
+  + 'added PLAN-low-stock-export-split-25sep AC-17)', () => {
+  it('POSTs the SAME export endpoint with format "low_stock_xlsx", defaults split to '
+    + '"none", and returns the MyDownload row', async () => {
     const download = { id: 'dl-9', kind: 'low_stock_xlsx', status: 'pending', filename: null };
     apiFetch.mockResolvedValue(ok(download));
 
@@ -129,6 +130,7 @@ describe('summaryOrderService - exportLowStockReport (PLAN-low-stock-report AC-2
     expect(JSON.parse(init.body as string)).toEqual({
       run_id: 'run-2026-w37',
       format: 'low_stock_xlsx',
+      split: 'none',
     });
     expect(result).toEqual(download);
   });
