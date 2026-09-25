@@ -480,6 +480,31 @@ def seed_scm_module_data() -> None:
     module_ifa_word = importlib.util.module_from_spec(spec_ifa_word)
     spec_ifa_word.loader.exec_module(module_ifa_word)
 
+    # 506 adds the Jinbaichuan consignee spellings (`Customer Name 客户名` / `客户名` /
+    # `Customer Name`) and `封条号` -> `seal_no` (Jiexia says `封签号` instead, seeded by 483
+    # above). Same create_all gap as every alias migration above: `consignee_ref` is an ORM
+    # column, so create_all produces it, but nothing resolves a header to it - or to
+    # `封条号` - without this replay.
+    spec_506 = importlib.util.spec_from_file_location(
+        "_scm_seed_506", versions / "506_scm_pi_consignee_ref.py"
+    )
+    module_506 = importlib.util.module_from_spec(spec_506)
+    spec_506.loader.exec_module(module_506)
+
+    # `ifa_bare_container_seal` adds the BARE `柜号` -> `container_no` and bare `封条` ->
+    # `seal_no` spellings (design A2, PLAN-pi-header-fields-convert-fixes-24sep.md) - DAFUYUAN
+    # and NEW YANGGANG both state a header cell with several `label：value` pairs in a row
+    # (`提单号 ：OOLU... 柜号 ：FSCU... 封条号：OOLLGZ7182`), and `_split_label_pairs`'s cell
+    # splitter can only ever cut at a label the resolver already knows. Same create_all gap
+    # as every alias migration above - without the replay a bootstrapped database never
+    # resolves 柜号/封条 at all, so the multi-label cell splitter finds only the FIRST pair
+    # and the rest of the cell stays glued onto its value.
+    spec_ifa_bare = importlib.util.spec_from_file_location(
+        "_scm_seed_ifa_bare", versions / "ifa_bare_container_seal.py"
+    )
+    module_ifa_bare = importlib.util.module_from_spec(spec_ifa_bare)
+    spec_ifa_bare.loader.exec_module(module_ifa_bare)
+
     with engine.begin() as conn:
         aliases = module.seed_import_field_aliases(conn)
         policies = module.seed_priority_policy(conn)
@@ -495,6 +520,10 @@ def seed_scm_module_data() -> None:
         aliases += module_459.seed(conn)
         aliases += module_483.seed(conn)
         aliases += module_ifa_word.seed_supplier_word_rows(conn)
+        # 506 and ifa_bare's own `seed()` return None (they predate the `int` convention
+        # `seed(bind) -> int` above follows) - called for the insert, not counted.
+        module_506.seed(conn)
+        module_ifa_bare.seed(conn)
         module_440.seed_inbound_shipment_draft_rule(conn)
         for field, alias in module_347._ALIASES:
             conn.execute(_text(
