@@ -488,7 +488,13 @@ function SuggestedCell({ row }: { row: OrderInquiryWorklistRow }) {
       />
       {rest.length ? (
         <Badge asChild size="sm" variant="secondary" appearance="light">
-          <span data-testid={`suggested-pill-${row.id}`} className="shrink-0 tabular-nums">
+          <span
+            data-testid={`suggested-pill-${row.id}`}
+            className="shrink-0 tabular-nums"
+            // Nit 1 (review round 2): the cell shows one document (R11); the rest
+            // are a hover away rather than hidden entirely.
+            title={rest.map((suggestion) => suggestion.document).join(', ')}
+          >
             +{rest.length}
           </span>
         </Badge>

@@ -576,6 +576,23 @@ describe('AC-D13/AC-D14: one toolbar row, Actions + Start, counts disabling at 0
     ).toBeInTheDocument();
   });
 
+  it('Should fix 9 (review round 2, AC-LT-05/06): Link selected (0) is disabled with the recalculate reason, and enables the moment a row is ticked', async () => {
+    renderClient();
+    await screen.findByText('SO385126');
+
+    openActionsMenu();
+    let item = screen.getByRole('menuitem', { name: 'Link selected (0)' });
+    expect(item).toHaveAttribute('aria-disabled', 'true');
+    expect(item).toHaveAttribute('title', 'Tick rows to recalculate against AutoCount.');
+    await closeMenu();
+
+    fireEvent.click(screen.getByLabelText('Select SRTWC8605-SC-RL on SO386461'));
+    openActionsMenu();
+    item = screen.getByRole('menuitem', { name: 'Link selected (1)' });
+    expect(item).not.toHaveAttribute('aria-disabled', 'true');
+    expect(item).not.toHaveAttribute('title');
+  });
+
   it('AC-T5: Choose document (1) is enabled ONLY with exactly one row ticked', async () => {
     renderClient();
     await screen.findByText('SO385126');
