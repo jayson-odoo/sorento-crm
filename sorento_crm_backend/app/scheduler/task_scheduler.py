@@ -501,6 +501,20 @@ def _chatbot_delegated_sweep_tick():
         logger.error("Chatbot delegated sweep tick failed: %s", e, exc_info=True)
 
 
+def _ideation_idle_sweep_tick():
+    """APScheduler tick: one WhatsApp reminder at 24h idle on an open ideation
+    draft, then close (S4, AC-1401 to AC-1408). Owns its own DB session;
+    best-effort and never raises - same shape as
+    `_chatbot_delegated_sweep_tick`."""
+    try:
+        from app.services.ideation_turn_service import sweep_idle_ideation_drafts
+
+        with scheduler_session() as db:
+            sweep_idle_ideation_drafts(db)
+    except Exception as e:
+        logger.error("Ideation idle sweep tick failed: %s", e, exc_info=True)
+
+
 def _autocount_pull_advance_tick():
     """APScheduler tick: drive the AutoCount pull build -> preview transition
     server-side (D27), so a snapshot that finishes building has its preview
@@ -638,6 +652,16 @@ def start_scheduler():
         trigger=IntervalTrigger(minutes=1),
         id="chatbot_delegated_sweep",
         name="Chatbot delegated turn sweep",
+        replace_existing=True,
+    )
+
+    # Ideation idle draft sweep (S4, AC-1408): every 15 minutes. One WhatsApp
+    # reminder at 24h idle on an open ideation draft, then close.
+    scheduler.add_job(
+        _ideation_idle_sweep_tick,
+        trigger=IntervalTrigger(minutes=15),
+        id="ideation_idle_sweep",
+        name="Ideation idle draft sweep",
         replace_existing=True,
     )
 
