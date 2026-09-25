@@ -4877,6 +4877,30 @@ def _apply_one_order(
             # retired by this apply is as much its work as a confirmed one.
             r.result_json["supply_decision_revision_no"] = revision_no
 
+    # B1 (review round 3, S5b, issue #1245): a leftover row of THIS SAME order, still
+    # pending because nothing named it in this press (a `Change proposed` line nobody
+    # saved), was held against the revision this press just replaced. Left alone,
+    # `_row_is_superseded` reads `held_json.revision_no` against the order's now-newer
+    # active revision and calls it superseded on the very next read - `set_row_decision`
+    # then refuses a SECOND press naming it with 409 "The board confirmed a newer
+    # revision", even though THIS press is what confirmed that newer revision, on this
+    # order's own batch. Re-based onto the new revision instead: this press carried every
+    # line it did not name forward with its hold intact (nothing here changed what the
+    # order's supply looks like for such a line), so the row's `held_json` still
+    # describes what is live, under the number that now names it. Rows held on any OTHER
+    # revision are untouched - an independent confirm elsewhere still supersedes them as
+    # today. Runs only when a new revision was actually minted (`supersede_for_material_
+    # change`'s own branch above leaves `revision_no == current_revision`, nothing to
+    # re-base onto).
+    if revised and revision_no != current_revision:
+        for r in order_rows:
+            if r.applied_state != PLANNING_CHANGE_STATE_PENDING:
+                continue
+            held = r.held_json or {}
+            if held.get("revision_no") != current_revision:
+                continue
+            r.held_json = {**held, "revision_no": revision_no}
+
     # Purchasing is notified by `apply()`, AFTER this order's savepoint has committed, not
     # here: `NotificationService.create_with_channel_preferences` commits on its own, and
     # calling it while still inside `db.begin_nested()` closes that savepoint's transaction,
