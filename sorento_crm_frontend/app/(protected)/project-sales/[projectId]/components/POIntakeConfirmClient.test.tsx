@@ -9,6 +9,7 @@
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { POVersion, POVersionLine } from '../../_shared/types/poIntake.types';
 
@@ -287,13 +288,21 @@ describe('POIntakeConfirmClient', () => {
    */
   it('puts the header, the lines and each note on its own line on one screen', async () => {
     getPOVersion.mockResolvedValue(version({ annotations: [annotation()] }));
+    const user = userEvent.setup();
 
     renderConfirm();
 
     expect(await screen.findByText('PO HQ/26/01/041 v1')).toBeInTheDocument();
     expect(screen.queryByLabelText('PO number')).toBeNull();
     expect(screen.getByLabelText('Quantity on line 1')).toHaveValue('927');
-    // The note names line 1, so it shows there, on the Lines tab.
+    // The note names line 1, so its compact indicator shows there, on the Lines tab -
+    // owner hand test 25 Sep 2026, item 2: the text itself is one click away in a popover,
+    // not always open under the row.
+    const notesIndicator = screen.getByRole('button', {
+      name: '1 note to review on line 1',
+    });
+    expect(screen.queryByText('cancel item (7), refer to new P/O HQ/26/05/087')).toBeNull();
+    await user.click(notesIndicator);
     expect(
       screen.getByText('cancel item (7), refer to new P/O HQ/26/05/087'),
     ).toBeInTheDocument();
@@ -310,10 +319,13 @@ describe('POIntakeConfirmClient', () => {
 
   it('moves the scan to the page a note was written on, and to the Documents tab that shows it', async () => {
     getPOVersion.mockResolvedValue(version({ annotations: [annotation()] }));
+    const user = userEvent.setup();
 
     renderConfirm();
 
-    await screen.findByText('cancel item (7), refer to new P/O HQ/26/05/087');
+    await user.click(
+      await screen.findByRole('button', { name: '1 note to review on line 1' }),
+    );
     expect(screen.queryByTitle(/Purchase order page/)).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Page 4' }));

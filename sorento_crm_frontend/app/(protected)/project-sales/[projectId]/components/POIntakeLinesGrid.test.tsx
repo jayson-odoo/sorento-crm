@@ -8,6 +8,7 @@
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { POAnnotation, POVersionLine } from '../../_shared/types/poIntake.types';
 
@@ -436,6 +437,11 @@ describe('POIntakeLinesGrid, showing only what needs attention', () => {
       screen.getByRole('radio', { name: 'Lines identified 1' }),
     ).toHaveAttribute('aria-checked', 'true');
     expect(screen.getByLabelText('Quantity on line 2')).toBeInTheDocument();
+    // Owner hand test 25 Sep 2026, item 2: "Review them" opens the note's popover directly,
+    // rather than only scrolling to a row the reader still has to click themselves.
+    expect(
+      await screen.findByRole('button', { name: 'Accept the note on line 2' }),
+    ).toBeInTheDocument();
   });
 
   it('states the flagged state once, as the two chips only, never a health sentence or handwriting strip (N3, R22)', async () => {
@@ -458,21 +464,44 @@ describe('POIntakeLinesGrid, showing only what needs attention', () => {
 });
 
 /**
- * The 19 Aug follow-up: a pencil note lives on the line it names, not in a card scrolled to
- * separately. Clearing it moves on to the next one on its own.
+ * Owner hand test, 25 Sep 2026, item 2: the always-expanded note cards under a flagged line
+ * ("looks messy and bulky like so many expanded sections") are gone. A line's handwritten
+ * notes are now one compact indicator in the Flag cell - an icon and a count - and clicking it
+ * opens a popover with the same three actions the card used to offer. Row height stays the
+ * grid's ordinary one line whether a line carries zero notes or several.
  */
-describe('POIntakeLinesGrid, handwriting reviewed on the line itself', () => {
-  it('marks the line, shows the note and offers the three actions right there', async () => {
+describe('POIntakeLinesGrid, handwriting reviewed from a compact indicator (owner hand test 25 Sep 2026, item 2)', () => {
+  it('marks the line with a compact indicator, not an always-open card', async () => {
     renderGrid(threeLines(), {
       annotations: [annotation({ refers_to_lines: [2], id: 'a1' })],
     });
 
+    const indicator = await screen.findByRole('button', {
+      name: '1 note to review on line 2',
+    });
+    expect(indicator).toBeInTheDocument();
+    // Collapsed by default: nothing about the note is on screen until it is clicked.
+    expect(screen.queryByText('Cancel line')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Accept the note on line 2' })).toBeNull();
+    // No indicator at all on the two lines nothing was written about.
+    expect(screen.queryByRole('button', { name: /note.*on line 1/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /note.*on line 3/ })).toBeNull();
+  });
+
+  it('opens the note and its three actions in a popover on click', async () => {
+    const user = userEvent.setup();
+    renderGrid(threeLines(), {
+      annotations: [annotation({ refers_to_lines: [2], id: 'a1' })],
+    });
+
+    await user.click(
+      await screen.findByRole('button', { name: '1 note to review on line 2' }),
+    );
+
     expect(
       await screen.findByRole('button', { name: 'Accept the note on line 2' }),
     ).toBeInTheDocument();
-    // Twice on purpose: the amber badge on the row itself, and again on the note panel
-    // opened under it, the same way a flagged line marks both the Check column and its cell.
-    expect(screen.getAllByText('Cancel line')).toHaveLength(2);
+    expect(screen.getByText('Cancel line')).toBeInTheDocument();
     expect(
       screen.getByText('cancel this, refer to new P/O HQ/26/05/087'),
     ).toBeInTheDocument();
@@ -483,11 +512,10 @@ describe('POIntakeLinesGrid, handwriting reviewed on the line itself', () => {
     expect(
       screen.getByRole('button', { name: 'Reject the note on line 2' }),
     ).toBeInTheDocument();
-    // Nothing to warn about on the other two lines.
-    expect(screen.queryByText('cancel this, refer')).toBeNull();
   });
 
   it('accepts through the confirm step, then moves focus to the next unreviewed line', async () => {
+    const user = userEvent.setup();
     const { rerenderWith } = renderGrid(threeLines(), {
       annotations: [
         annotation({ id: 'a1', refers_to_lines: [1] }),
@@ -495,6 +523,9 @@ describe('POIntakeLinesGrid, handwriting reviewed on the line itself', () => {
       ],
     });
 
+    await user.click(
+      await screen.findByRole('button', { name: '1 note to review on line 1' }),
+    );
     fireEvent.click(
       await screen.findByRole('button', { name: 'Accept the note on line 1' }),
     );
@@ -510,45 +541,40 @@ describe('POIntakeLinesGrid, handwriting reviewed on the line itself', () => {
     });
 
     expect(onFocusLine).toHaveBeenCalledWith(expect.objectContaining({ line_no: 2 }));
+    // The line just resolved has nothing left to show, so its own popover does not linger
+    // open behind the scroll to the next one.
+    expect(screen.queryByRole('button', { name: 'Accept the note on line 1' })).toBeNull();
   });
 
   it('shows a note naming several lines on each of them, and clears it everywhere', async () => {
+    const user = userEvent.setup();
     const { rerenderWith } = renderGrid(threeLines(), {
       annotations: [annotation({ id: 'a1', refers_to_lines: [1, 2] })],
     });
 
-    // Two lines, each carrying the row badge and the panel badge.
-    expect(await screen.findAllByText('Cancel line')).toHaveLength(4);
     expect(
-      screen.getByRole('button', { name: 'Accept the note on line 1' }),
+      await screen.findByRole('button', { name: '1 note to review on line 1' }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: 'Accept the note on line 2' }),
+      screen.getByRole('button', { name: '1 note to review on line 2' }),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '1 note to review on line 1' }));
+    expect(
+      screen.getByRole('button', { name: 'Accept the note on line 1' }),
     ).toBeInTheDocument();
 
     rerenderWith(threeLines(), {
       annotations: [annotation({ id: 'a1', refers_to_lines: [1, 2], state: 'accepted' })],
     });
 
-    expect(screen.queryByText('Cancel line')).toBeNull();
-    expect(
-      screen.queryByRole('button', { name: 'Accept the note on line 1' }),
-    ).toBeNull();
+    // Resolved everywhere it was named: neither line carries an indicator any more.
+    expect(screen.queryByRole('button', { name: /note.*on line 1/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /note.*on line 2/ })).toBeNull();
   });
 
-  it('lets "Skip to the next unreviewed line" reach a note without scrolling by hand', async () => {
-    renderGrid(threeLines(), {
-      annotations: [annotation({ id: 'a1', refers_to_lines: [3] })],
-    });
-
-    fireEvent.click(
-      await screen.findByRole('button', { name: 'Skip to the next unreviewed line' }),
-    );
-
-    expect(onFocusLine).toHaveBeenCalledWith(expect.objectContaining({ line_no: 3 }));
-  });
-
-  it('reads a rejected and an accepted note back as muted markers once confirmed, with no actions', async () => {
+  it('reads an accepted note back in the popover, muted and with no actions', async () => {
+    const user = userEvent.setup();
     renderGrid(threeLines(), {
       readOnly: true,
       annotations: [
@@ -558,11 +584,23 @@ describe('POIntakeLinesGrid, handwriting reviewed on the line itself', () => {
           state: 'accepted',
           interpretation: 'other',
         }),
-        annotation({ id: 'a2', refers_to_lines: [2], state: 'rejected' }),
       ],
     });
 
-    expect(await screen.findByText('Something else')).toBeInTheDocument();
+    await user.click(await screen.findByRole('button', { name: '1 note on line 1' }));
+    expect(screen.getByText('Something else')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Accept/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Reject/ })).toBeNull();
+  });
+
+  it('reads a rejected note back in the popover, muted and with no actions', async () => {
+    const user = userEvent.setup();
+    renderGrid(threeLines(), {
+      readOnly: true,
+      annotations: [annotation({ id: 'a2', refers_to_lines: [2], state: 'rejected' })],
+    });
+
+    await user.click(await screen.findByRole('button', { name: '1 note on line 2' }));
     expect(screen.getByText('Rejected: Cancel line')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Accept/ })).toBeNull();
     expect(screen.queryByRole('button', { name: /^Reject/ })).toBeNull();
@@ -572,37 +610,25 @@ describe('POIntakeLinesGrid, handwriting reviewed on the line itself', () => {
     renderGrid(threeLines());
 
     await screen.findByLabelText('Quantity on line 1');
-    expect(
-      screen.queryByRole('button', { name: 'Skip to the next unreviewed line' }),
-    ).toBeNull();
+    expect(screen.queryByRole('button', { name: /note.*on line/ })).toBeNull();
   });
 
-  it('shows a still-pending note as a muted badge in read-only, not hidden', async () => {
+  it('shows a still-pending note as a muted indicator in read-only, not hidden', async () => {
+    const user = userEvent.setup();
     renderGrid(threeLines(), {
       readOnly: true,
       annotations: [annotation({ id: 'a1', refers_to_lines: [2] })],
     });
 
-    expect(await screen.findByText('Pending: Cancel line')).toBeInTheDocument();
-    // Muted, no action panel: a viewer without edit rights has nothing to click here.
+    const indicator = await screen.findByRole('button', {
+      name: '1 note to review on line 2',
+    });
+    await user.click(indicator);
+
+    expect(screen.getByText('Cancel line')).toBeInTheDocument();
+    // No action panel: a viewer without edit rights has nothing to click here.
     expect(screen.queryByRole('button', { name: /^Accept/ })).toBeNull();
     expect(screen.queryByRole('button', { name: /^Reject/ })).toBeNull();
     expect(screen.queryByRole('button', { name: /^Edit/ })).toBeNull();
-  });
-
-  it('does not let Enter on a focused panel button also fire Accept on the row (S9)', async () => {
-    renderGrid(threeLines(), {
-      annotations: [annotation({ id: 'a1', refers_to_lines: [2] })],
-    });
-
-    const rejectButton = await screen.findByRole('button', {
-      name: 'Reject the note on line 2',
-    });
-    // The button already answers its own Enter (native activation). Before the guard,
-    // this keydown also bubbled to the panel's own handler and opened the Accept dialog
-    // on top of whatever Reject itself was doing.
-    fireEvent.keyDown(rejectButton, { key: 'Enter', bubbles: true });
-
-    expect(screen.queryByText('Accept this note?')).toBeNull();
   });
 });

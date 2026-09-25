@@ -1,13 +1,8 @@
 'use client';
 
 import * as React from 'react';
-import {
-  ColumnDef,
-  getCoreRowModel,
-  getExpandedRowModel,
-  useReactTable,
-} from '@tanstack/react-table';
-import { Ban, Check, Loader2, Pencil, RotateCcw, X } from 'lucide-react';
+import { ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
+import { Ban, Check, Loader2, Pencil, RotateCcw, StickyNote, X } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import {
   AlertDialog,
@@ -25,6 +20,12 @@ import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
+import {
+  Popover,
+  PopoverContent,
+  PopoverPortal,
+  PopoverTrigger,
+} from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
@@ -157,6 +158,11 @@ export const POIntakeLinesGrid = React.forwardRef<POIntakeLinesGridHandle, Props
     const [flaggedOnly, setFlaggedOnly] = React.useState(defaultFlaggedOnly ?? false);
     // A row asked for while it is filtered out cannot be scrolled to until it mounts.
     const pendingFocusId = React.useRef<string | null>(null);
+    // Which line's notes popover is open, if any - one at a time, and closed by default. Set
+    // from "Review them" (the header's call to action) landing on a note-only line, never on
+    // an ordinary row click, so a popover opens only when the reader asked to review notes.
+    const [openNotesLineId, setOpenNotesLineId] = React.useState<string | null>(null);
+    const pendingOpenNotesId = React.useRef<string | null>(null);
 
     // Accept / reject / edit dialogs are shared across every row, the same way the old
     // "Handwriting" card shared one set of dialogs across every note: a note naming three
@@ -234,7 +240,7 @@ export const POIntakeLinesGrid = React.forwardRef<POIntakeLinesGridHandle, Props
     }, []);
 
     const focusLineInternal = React.useCallback(
-      (lineId: string) => {
+      (lineId: string, options?: { openNotes?: boolean }) => {
         const line = lines.find((item) => item.id === lineId);
         if (!line) return;
         onFocusLine(line);
@@ -246,10 +252,12 @@ export const POIntakeLinesGrid = React.forwardRef<POIntakeLinesGridHandle, Props
         // the guided view).
         if (flaggedOnly && !flagged.some((item) => item.id === lineId)) {
           pendingFocusId.current = lineId;
+          if (options?.openNotes) pendingOpenNotesId.current = lineId;
           setFlaggedOnly(false);
           return;
         }
         scrollToLine(lineId);
+        if (options?.openNotes) setOpenNotesLineId(lineId);
       },
       [lines, onFocusLine, flaggedOnly, flagged, scrollToLine],
     );
@@ -274,7 +282,9 @@ export const POIntakeLinesGrid = React.forwardRef<POIntakeLinesGridHandle, Props
       focusLine: focusLineInternal,
       focusFirstUnreviewedAnnotation: () => {
         if (linesWithUnreviewedAnnotations.length === 0) return false;
-        focusLineInternal(linesWithUnreviewedAnnotations[0].id);
+        // "Review them" (the header link) opens the first unreviewed line's popover
+        // directly, rather than merely scrolling to a row the reader still has to click.
+        focusLineInternal(linesWithUnreviewedAnnotations[0].id, { openNotes: true });
         return true;
       },
     }));
@@ -284,6 +294,10 @@ export const POIntakeLinesGrid = React.forwardRef<POIntakeLinesGridHandle, Props
       if (!pending) return;
       pendingFocusId.current = null;
       scrollToLine(pending);
+      if (pendingOpenNotesId.current === pending) {
+        pendingOpenNotesId.current = null;
+        setOpenNotesLineId(pending);
+      }
     }, [flaggedOnly, scrollToLine]);
 
     // Runs after the parent's data confirms the note just accepted or rejected is no longer
@@ -299,6 +313,9 @@ export const POIntakeLinesGrid = React.forwardRef<POIntakeLinesGridHandle, Props
       const fromLineId = lastActionedLineId.current;
       lastActionedAnnotationId.current = null;
       lastActionedLineId.current = null;
+      // The just-resolved line's popover has nothing left to show - close it rather than
+      // leaving it open over an empty indicator while focus moves on to the next one.
+      setOpenNotesLineId(null);
       goToNextUnreviewed(fromLineId);
     }, [annotations, goToNextUnreviewed]);
 
@@ -557,37 +574,24 @@ export const POIntakeLinesGrid = React.forwardRef<POIntakeLinesGridHandle, Props
                     Matched by hand
                   </Badge>
                 )}
-                {readOnly
-                  ? // A viewer without edit rights gets no action panel (there is
-                    // nothing for them to do about it), but a note still awaiting
-                    // review must still show here, muted - otherwise a read-only
-                    // viewer sees no pending handwriting at all.
-                    lineNotes.map((note) => (
-                      <Badge
-                        key={note.id}
-                        variant="secondary"
-                        className="text-[11px] opacity-70"
-                        title={note.raw_text ?? undefined}
-                      >
-                        {note.state === 'rejected'
-                          ? `Rejected: ${annotationBadgeLabel(note)}`
-                          : note.state === 'proposed'
-                            ? `Pending: ${annotationBadgeLabel(note)}`
-                            : annotationBadgeLabel(note)}
-                      </Badge>
-                    ))
-                  : lineNotes
-                      .filter((note) => note.state === 'proposed')
-                      .map((note) => (
-                        <Badge
-                          key={note.id}
-                          variant="warning"
-                          className="text-[11px]"
-                          title={note.raw_text ?? undefined}
-                        >
-                          {annotationBadgeLabel(note)}
-                        </Badge>
-                      ))}
+                <LineNotesIndicator
+                  line={line}
+                  // A viewer without edit rights has nothing to do about a note, but it
+                  // must still show here, muted - otherwise a read-only viewer sees no
+                  // pending handwriting at all. An editor only ever needs the ones still
+                  // waiting on a decision; once resolved, a note has nothing left to show.
+                  notes={
+                    readOnly ? lineNotes : lineNotes.filter((note) => note.state === 'proposed')
+                  }
+                  readOnly={readOnly}
+                  open={openNotesLineId === line.id}
+                  onOpenChange={(next) => setOpenNotesLineId(next ? line.id : null)}
+                  savingAnnotationIds={savingAnnotationIds}
+                  onShowPage={onShowPage}
+                  onAccept={(note) => openAcceptAnnotation(note, line.id)}
+                  onEdit={(note) => setEditingAnnotation(note)}
+                  onReject={(note) => openRejectAnnotation(note, line.id)}
+                />
               </div>,
             );
           },
@@ -698,26 +702,6 @@ export const POIntakeLinesGrid = React.forwardRef<POIntakeLinesGridHandle, Props
           meta: {
             headerTitle: 'Actions',
             skeleton: <Skeleton className="h-4 w-6" />,
-            // Below the row, full width: the note the pencil left on this line, and the
-            // three ways to answer it, right where the warning badge already pointed.
-            expandedContent: (line: POVersionLine) => {
-              const unreviewed = (annotationsByLineNo.get(line.line_no) ?? []).filter(
-                (note) => note.state === 'proposed',
-              );
-              if (unreviewed.length === 0) return null;
-              return (
-                <LineAnnotationPanel
-                  line={line}
-                  notes={unreviewed}
-                  savingAnnotationIds={savingAnnotationIds}
-                  onShowPage={onShowPage}
-                  onAccept={(note) => openAcceptAnnotation(note, line.id)}
-                  onEdit={(note) => setEditingAnnotation(note)}
-                  onReject={(note) => openRejectAnnotation(note, line.id)}
-                  onSkip={() => goToNextUnreviewed(line.id)}
-                />
-              );
-            },
           },
         },
       ];
@@ -725,32 +709,21 @@ export const POIntakeLinesGrid = React.forwardRef<POIntakeLinesGridHandle, Props
       annotationsByLineNo,
       commit,
       fetchProducts,
-      goToNextUnreviewed,
       onFocusLine,
       onShowPage,
       openAcceptAnnotation,
+      openNotesLineId,
       openRejectAnnotation,
       readOnly,
       savingAnnotationIds,
       savingLineIds,
     ]);
 
-    // Every line with an unreviewed note is expanded on its own: the whole point is that
-    // there is nothing to click open, the answer is already sitting under the row.
-    const expandedState = React.useMemo(() => {
-      const state: Record<string, boolean> = {};
-      if (readOnly) return state;
-      for (const line of linesWithUnreviewedAnnotations) state[line.id] = true;
-      return state;
-    }, [linesWithUnreviewedAnnotations, readOnly]);
-
     const table = useReactTable({
       columns,
       data: visibleLines,
-      state: { expanded: expandedState },
       getRowId: (row) => row.id,
       getCoreRowModel: getCoreRowModel(),
-      getExpandedRowModel: getExpandedRowModel(),
       columnResizeMode: 'onChange',
     });
 
@@ -979,138 +952,159 @@ function describeLine(line: POVersionLine): string {
 }
 
 /**
- * The note itself, under the line it warns about, with the three ways to answer it. This is
- * the whole point of moving handwriting onto the grid: a person clears it here and the next
- * one is where they land, rather than scrolling to a separate card and back for every note.
- *
- * Enter answers with the confirm step Accept already asks for (the first note if there is
- * more than one); Escape skips to the next line without touching this one. Both live only on
- * this panel, never the row itself, so tabbing through a cell never accidentally does either.
+ * The line's handwritten notes, collapsed to one compact indicator (owner hand test 25 Sep
+ * 2026, item 2): the stacked note cards that used to sit under every flagged row read as
+ * noise ("looks messy and bulky, like so many expanded sections") once more than one or two
+ * lines carried a note. One icon-and-count button per row instead, opening a popover with the
+ * same three actions the card offered - row height stays the grid's ordinary one line whether
+ * a line has zero notes or five.
  */
-function LineAnnotationPanel({
+function LineNotesIndicator({
   line,
   notes,
+  readOnly,
+  open,
+  onOpenChange,
   savingAnnotationIds,
   onShowPage,
   onAccept,
   onEdit,
   onReject,
-  onSkip,
 }: {
   line: POVersionLine;
+  /** Already filtered to what this reader should see: every note for a viewer, only the
+   *  unreviewed ones for an editor (a resolved note has nothing left for them to do). */
   notes: POAnnotation[];
+  readOnly: boolean;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   savingAnnotationIds: string[];
   onShowPage: (page: number) => void;
   onAccept: (note: POAnnotation) => void;
   onEdit: (note: POAnnotation) => void;
   onReject: (note: POAnnotation) => void;
-  onSkip: () => void;
 }) {
   if (notes.length === 0) return null;
 
+  const unreviewedCount = notes.filter((note) => note.state === 'proposed').length;
+  const label = `${notes.length} note${notes.length === 1 ? '' : 's'}${
+    unreviewedCount > 0 ? ' to review' : ''
+  } on line ${line.line_no}`;
+
   return (
-    <div
-      className="space-y-2 border-t border-amber-500/30 bg-amber-50/60 px-4 py-3 dark:bg-amber-950/20"
-      onKeyDown={(event) => {
-        // A button inside this panel (Accept / Edit / Reject / Page N / Skip) already
-        // answers Enter itself - the native activate. Without this guard the keydown
-        // still bubbles up here afterwards, so pressing Enter on the focused Reject
-        // button both rejects it AND calls `onAccept(notes[0])`, opening the accept
-        // dialog on top of whatever the button's own click just did.
-        const target = event.target as HTMLElement;
-        if (target.closest('button')) return;
-        if (event.key === 'Enter') {
-          event.preventDefault();
-          onAccept(notes[0]);
-        } else if (event.key === 'Escape') {
-          event.preventDefault();
-          onSkip();
-        }
-      }}
-    >
-      {notes.map((note, index) => {
-        const saving = savingAnnotationIds.includes(note.id);
-        const noteLabel = notes.length > 1 ? `note ${index + 1} on` : 'the note on';
-        return (
-          <div
-            key={note.id}
-            className="flex flex-wrap items-start justify-between gap-3 rounded-md border border-amber-500/40 bg-white px-3 py-2 dark:bg-transparent"
-          >
-            <div className="min-w-0 flex-1 space-y-1">
-              <div className="flex flex-wrap items-center gap-1.5">
-                <Badge variant="warning" className="text-[11px]">
-                  {annotationBadgeLabel(note)}
-                </Badge>
-                {note.written_date && (
-                  <span className="text-xs text-muted-foreground">{note.written_date}</span>
+    <Popover open={open} onOpenChange={onOpenChange}>
+      {/* `cellWrap` (the caller) puts an onClick on the whole cell that focuses the line -
+          harmless on its own, but this trigger and everything in the portalled content below
+          are still part of the SAME REACT tree as that div (a portal only moves where a node
+          paints, not where its events bubble), so a plain click would also fire that outer
+          handler. That collided with the popover's own Page-N button: clicking it called
+          onShowPage(note's page) AND, via the bubble, onFocusLine(line) -> setPage(the LINE's
+          own page), and the second call always won. Stopped at the source instead of chasing
+          it through every action inside. */}
+      <PopoverTrigger asChild onClick={(event) => event.stopPropagation()}>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className={`h-6 gap-1 px-1.5 text-[11px] ${
+            unreviewedCount > 0
+              ? 'border-amber-500/50 bg-amber-50 text-amber-800 hover:bg-amber-100 dark:bg-amber-950/30 dark:text-amber-300'
+              : ''
+          }`}
+          aria-label={label}
+          title={label}
+        >
+          <StickyNote className="size-3" aria-hidden />
+          {notes.length}
+        </Button>
+      </PopoverTrigger>
+      <PopoverPortal>
+        <PopoverContent
+          align="start"
+          className="w-80 space-y-2"
+          onClick={(event) => event.stopPropagation()}
+        >
+          {notes.map((note, index) => {
+            const saving = savingAnnotationIds.includes(note.id);
+            const noteLabel = notes.length > 1 ? `note ${index + 1} on` : 'the note on';
+            return (
+              <div
+                key={note.id}
+                className="space-y-1.5 rounded-md border border-border px-3 py-2 last:mb-0"
+              >
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <Badge
+                    variant={note.state === 'proposed' ? 'warning' : 'secondary'}
+                    className="text-[11px]"
+                  >
+                    {note.state === 'rejected'
+                      ? `Rejected: ${annotationBadgeLabel(note)}`
+                      : annotationBadgeLabel(note)}
+                  </Badge>
+                  {note.written_date && (
+                    <span className="text-xs text-muted-foreground">{note.written_date}</span>
+                  )}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-6 px-2 text-[11px]"
+                    onClick={() => onShowPage(note.page_no)}
+                  >
+                    {`Page ${note.page_no}`}
+                  </Button>
+                </div>
+                <p className="text-sm break-words" title={note.raw_text ?? undefined}>
+                  {note.raw_text || (
+                    <span className="text-muted-foreground">Nothing legible was read</span>
+                  )}
+                </p>
+                {!readOnly && note.state === 'proposed' && (
+                  <div className="flex flex-wrap items-center gap-1 pt-0.5">
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={saving}
+                      aria-label={`Accept ${noteLabel} line ${line.line_no}`}
+                      onClick={() => onAccept(note)}
+                    >
+                      {saving ? (
+                        <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                      ) : (
+                        <Check className="size-3.5" aria-hidden />
+                      )}
+                      Accept
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={saving}
+                      aria-label={`Edit ${noteLabel} line ${line.line_no}`}
+                      onClick={() => onEdit(note)}
+                    >
+                      <Pencil className="size-3.5" aria-hidden />
+                      Edit
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={saving}
+                      aria-label={`Reject ${noteLabel} line ${line.line_no}`}
+                      onClick={() => onReject(note)}
+                    >
+                      <X className="size-3.5" aria-hidden />
+                      Reject
+                    </Button>
+                  </div>
                 )}
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-6 px-2 text-[11px]"
-                  onClick={() => onShowPage(note.page_no)}
-                >
-                  {`Page ${note.page_no}`}
-                </Button>
               </div>
-              <p className="text-sm break-words" title={note.raw_text ?? undefined}>
-                {note.raw_text || (
-                  <span className="text-muted-foreground">Nothing legible was read</span>
-                )}
-              </p>
-            </div>
-            <div className="flex shrink-0 flex-wrap items-center gap-1">
-              <Button
-                type="button"
-                size="sm"
-                disabled={saving}
-                aria-label={`Accept ${noteLabel} line ${line.line_no}`}
-                onClick={() => onAccept(note)}
-              >
-                {saving ? (
-                  <Loader2 className="size-3.5 animate-spin" aria-hidden />
-                ) : (
-                  <Check className="size-3.5" aria-hidden />
-                )}
-                Accept
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={saving}
-                aria-label={`Edit ${noteLabel} line ${line.line_no}`}
-                onClick={() => onEdit(note)}
-              >
-                <Pencil className="size-3.5" aria-hidden />
-                Edit
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={saving}
-                aria-label={`Reject ${noteLabel} line ${line.line_no}`}
-                onClick={() => onReject(note)}
-              >
-                <X className="size-3.5" aria-hidden />
-                Reject
-              </Button>
-            </div>
-          </div>
-        );
-      })}
-      <Button
-        type="button"
-        variant="ghost"
-        size="sm"
-        className="h-6 px-2 text-[11px]"
-        onClick={onSkip}
-      >
-        Skip to the next unreviewed line
-      </Button>
-    </div>
+            );
+          })}
+        </PopoverContent>
+      </PopoverPortal>
+    </Popover>
   );
 }
 
