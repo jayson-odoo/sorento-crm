@@ -13,9 +13,20 @@ const ORIGIN_PARAM = 'from';
  * off-site. Only a same-app relative path is a valid origin - one leading slash, no
  * scheme, no protocol-relative `//host` (the same guard `signin/page.tsx` and
  * `products/[id]/page.tsx`'s `worklistBackHref` already use for the same reason).
+ *
+ * N2 (round 2 review): a leading slash alone is not enough. WHATWG URL parsing treats a
+ * backslash the same as a forward slash, and strips ASCII control characters (tab,
+ * newline) before resolving, so `/\evil.test`, `/\tevil.test` and `/\nevil.test` all
+ * resolve to `https://evil.test/...` against the app origin even though `startsWith('/')`
+ * is true. Reject any backslash or control character too.
  */
 export function isSafeReviewOrigin(candidate: string | null | undefined): candidate is string {
-  return !!candidate && candidate.startsWith('/') && !candidate.startsWith('//');
+  return (
+    !!candidate &&
+    candidate.startsWith('/') &&
+    !candidate.startsWith('//') &&
+    !/[\\\x00-\x1f]/.test(candidate)
+  );
 }
 
 /** Appends the origin onto a URL an upload dialog is about to push the user to. */

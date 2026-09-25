@@ -23,6 +23,12 @@ describe('isSafeReviewOrigin', () => {
     expect(isSafeReviewOrigin('//elsewhere.test')).toBe(false);
   });
 
+  it('rejects a backslash or control character that WHATWG URL parsing resolves off-app (N2)', () => {
+    expect(isSafeReviewOrigin('/\\elsewhere.test')).toBe(false);
+    expect(isSafeReviewOrigin('/\telsewhere.test')).toBe(false);
+    expect(isSafeReviewOrigin('/\nelsewhere.test')).toBe(false);
+  });
+
   it('rejects an empty or absent origin', () => {
     expect(isSafeReviewOrigin(null)).toBe(false);
     expect(isSafeReviewOrigin(undefined)).toBe(false);
