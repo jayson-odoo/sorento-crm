@@ -157,6 +157,18 @@ describe('SubmissionForm - sponsorship unit price required on submit (#1227)', (
     expect(toasts.error).not.toHaveBeenCalled();
   });
 
+  it('submits when the unit price is exactly 0 (owner ruling 25 Sep 2026: 0 is accepted)', async () => {
+    render(<SubmissionForm kind="sponsorship_form" />);
+    await screen.findByText(CONTACT.name as string);
+
+    await addLine({ unitPrice: '0' });
+    openSubmitConfirm();
+    confirmSubmit();
+
+    await waitFor(() => expect(submitDraft).toHaveBeenCalled());
+    expect(toasts.error).not.toHaveBeenCalled();
+  });
+
   it('surfaces a server 422 naming line:<index> as "Line N: <message>" (mirrors lineErrorToast)', async () => {
     asMock(submitDraft).mockRejectedValue(
       Object.assign(new Error('Unit price is required.'), {

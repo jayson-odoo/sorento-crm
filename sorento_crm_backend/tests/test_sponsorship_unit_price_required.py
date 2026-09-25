@@ -468,11 +468,10 @@ def test_update_request_and_reply_refuses_priceless_line_when_request_type_omitt
     db.rollback()
 
 
-def _revise_sponsorship_form(db, *, products):
+def _seed_revisable_sponsorship_form(db):
     """Uses `tests/_revision_harness.py`'s own seeding (not a test module itself -
     see its docstring - so importable here) for the config/contact/token/entity a
     revise needs, rather than reinventing it."""
-    from app.services.portal_revision_service import PortalRevisionService
     from tests._revision_harness import seed_config, seed_contact, seed_entity, seed_system_settings, seed_token
 
     seed_system_settings(db, cap=3)
@@ -480,6 +479,13 @@ def _revise_sponsorship_form(db, *, products):
     contact = seed_contact(db)
     row = seed_entity(db, "sponsorship_form", contact)
     token = seed_token(contact)
+    return token, row
+
+
+def _revise_sponsorship_form(db, *, products):
+    from app.services.portal_revision_service import PortalRevisionService
+
+    token, row = _seed_revisable_sponsorship_form(db)
     return PortalRevisionService(db).revise(
         token,
         "sponsorship_form",
@@ -510,12 +516,39 @@ def _revise_purchase_request(db, *, products):
 
 
 def test_portal_revise_refuses_sponsorship_line_without_unit_price(db):
+    from app.services.portal_revision_service import PortalRevisionService
+
+    token, row = _seed_revisable_sponsorship_form(db)
+    original_lines = [
+        (line.item_code, str(line.quantity), str(line.unit_price)) for line in row.lines
+    ]
+    original_revision_no = row.revision_no
+
     with pytest.raises(AppException) as ei:
-        _revise_sponsorship_form(
-            db, products=[{"item_code": f"{MARKER}-ITEM", "quantity": "2"}]
+        PortalRevisionService(db).revise(
+            token,
+            "sponsorship_form",
+            str(row.id),
+            {
+                "project_title": "Revised project",
+                "products": [{"item_code": f"{MARKER}-ITEM", "quantity": "2"}],
+            },
+            "Corrected the price",
+            row.revision_no,
         )
 
     _assert_line_refusal(ei.value)
+
+    # #1232 round 2, nit 3: the gate sits after `apply_lines` + flush but before
+    # the only commit (portal_revision_service.py:1646), so a rollback here
+    # proves what a real request boundary would - the stored lines and
+    # revision_no are untouched, not merely that the exception was raised.
+    db.rollback()
+    stored_lines = [
+        (line.item_code, str(line.quantity), str(line.unit_price)) for line in row.lines
+    ]
+    assert stored_lines == original_lines
+    assert row.revision_no == original_revision_no
 
 
 def test_portal_revise_accepts_sponsorship_line_with_unit_price(db):

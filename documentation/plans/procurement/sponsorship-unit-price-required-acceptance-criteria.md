@@ -18,7 +18,7 @@ Plan: `PLAN-sponsorship-unit-price-required.md`. Track: small fix. Issue #1227.
   migrated).
 - **AC-P8** A unit price of exactly 0 is accepted, not refused - a sponsored item can
   legitimately be free. "Mandatory" means a value must be present; it does not mean the
-  value must be positive. Confirmed with the owner at the hand test (review round 1,
+  value must be positive. 0 is accepted, owner ruling 25 Sep 2026 (review round 1,
   Should fix 2).
 - **AC-P9** (review round 1, Blocking 4) Revise is gated the same way submit is: a
   price-less real line blocks `openReviseConfirm` client-side before the confirm dialog
