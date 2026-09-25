@@ -1163,6 +1163,47 @@ def test_the_version_reports_how_much_of_the_document_was_read(seeded):
     assert body["failed_pages"] == [2]
 
 
+def test_document_url_is_none_when_the_object_behind_the_attachment_is_gone(seeded, monkeypatch):
+    """B1 (PR #1237 review, R9/R13): an attachment ROW can outlive its OBJECT. Presigning
+    a URL for a missing object hands the FE a link that 404s inside an iframe it cannot
+    see past, so the R13 empty state - which only shows on a falsy document_url - never
+    fires. The object's existence has to gate the URL, not just the row's presence."""
+    from app.models.resources import Attachment
+    from app.services import storage_router
+
+    db, project, owner = seeded
+    service = ProjectPOExtractionService(db)
+    version = _version(db, _po(db, project, owner, "PO-MISSING-OBJECT"))
+    attachment = Attachment(
+        original_filename="po.pdf",
+        stored_filename="po.pdf",
+        file_path="project-po/some-version/po.pdf",
+        entity_type="project_po_version",
+        entity_id=version.id,
+        storage_provider="s3",
+    )
+    db.add(attachment)
+    db.flush()
+    version.attachment_id = attachment.id
+    db.flush()
+
+    class _FakeBackend:
+        def __init__(self, exists: bool):
+            self._exists = exists
+
+        def file_exists(self, key):
+            return self._exists
+
+        def get_signed_url(self, key, expires_in=3600):
+            return f"https://signed.example/{key}"
+
+    monkeypatch.setattr(storage_router, "get_backend", lambda provider: _FakeBackend(False))
+    assert service.serialize_version(version)["document_url"] is None
+
+    monkeypatch.setattr(storage_router, "get_backend", lambda provider: _FakeBackend(True))
+    assert service.serialize_version(version)["document_url"] is not None
+
+
 def test_run_extraction_commits_progress_once_per_page(seeded, monkeypatch):
     """B3 (19 Aug follow-up): a long read must not look frozen. ``run_extraction``
     wires ``on_page`` into ``extract_document`` so ``extracted_json`` (and so
