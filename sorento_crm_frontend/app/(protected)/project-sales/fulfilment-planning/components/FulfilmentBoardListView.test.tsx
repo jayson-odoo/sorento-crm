@@ -5,6 +5,7 @@
  */
 import React from 'react';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   BoardContribution,
@@ -1007,11 +1008,12 @@ describe('FulfilmentBoardListView: a pre-marked row can still be ticked and save
       await screen.findByTestId(`decision-pill-${row.key}`),
     ).toHaveTextContent('Change proposed');
     expect(
-      screen.getByRole('checkbox', { name: 'Select SO397450 line 10' }),
+      await screen.findByRole('checkbox', { name: 'Select SO397450 line 10' }),
     ).toBeEnabled();
   });
 
   it('ticking a pre-marked row and pressing "Save as suggested" turns it into a real saved decision', async () => {
+    const user = userEvent.setup();
     const row = contribution();
     const { onDecide, onDecideMany, rerender } = renderView({
       contributions: [row],
@@ -1019,14 +1021,27 @@ describe('FulfilmentBoardListView: a pre-marked row can still be ticked and save
     });
 
     await screen.findByText('SO397450');
-    fireEvent.click(
-      screen.getByRole('checkbox', { name: 'Select SO397450 line 10' }),
-    );
-    fireEvent.click(
-      await screen.findByRole('button', { name: 'Save as suggested (1)' }),
-    );
+    // Awaited and asserted enabled before the click (not assumed from a synchronous
+    // `getByRole`) - the same care `selectAll`'s own callers take with the toolbar button
+    // below, since a checkbox whose click has not yet committed on a slower box is a
+    // checkbox `userEvent` would otherwise be clicking too early.
+    const checkbox = await screen.findByRole('checkbox', {
+      name: 'Select SO397450 line 10',
+    });
+    expect(checkbox).toBeEnabled();
+    await user.click(checkbox);
 
-    expect(onDecideMany).toHaveBeenCalledWith([row.key]);
+    // The toolbar button is a SEPARATE render this row's selection state has to reach
+    // first - waited for on its own line, then clicked on its own line, rather than
+    // `fireEvent.click(await screen.findByRole(...))` in one statement: a bare `fireEvent`
+    // never yields to React the way `userEvent` does, and a slower CI box can still be
+    // mid-render when the click fires.
+    const saveButton = await screen.findByRole('button', {
+      name: 'Save as suggested (1)',
+    });
+    await user.click(saveButton);
+
+    await waitFor(() => expect(onDecideMany).toHaveBeenCalledWith([row.key]));
     expect(onDecide).toHaveBeenCalledWith(
       row.key,
       expect.objectContaining({ verdict: 'approved', buy_qty: '43' }),
