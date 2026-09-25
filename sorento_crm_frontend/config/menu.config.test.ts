@@ -410,12 +410,16 @@ describe('menu.config - Procurement > Supply Chain sub-group (AC-A1)', () => {
     ]);
   });
 
-  it('Supply Chain sub-group holds Reorder Planning, Loading Plan, Order Inquiries, Purchase Orders, Proforma Invoices in order, each gated correctly', () => {
+  it('Supply Chain sub-group holds Reorder Planning, Stock Debt, Loading Plan, Order Inquiries, Purchase Orders, Proforma Invoices in order, each gated correctly', () => {
     const procurement = findGroup(MENU_SIDEBAR, 'Procurement');
     const supplyChain = findSubGroup(procurement!, 'Supply Chain');
     expect(supplyChain).toBeDefined();
     expect(supplyChain!.children!.map((item) => item.title)).toEqual([
       'Reorder Planning',
+      // Moved from Supply Chain > Project Demand (PLAN-stock-debt-filters-totals-export-
+      // 24sep.md, R6/AC-36): beside the rest of purchasing's worklists, right after
+      // Reorder Planning, not under the board that decides.
+      'Stock Debt',
       'Loading Plan',
       'Order Inquiries',
       'Purchase Orders',
@@ -425,6 +429,10 @@ describe('menu.config - Procurement > Supply Chain sub-group (AC-A1)', () => {
       path: '/scm/reorder',
       permission: 'scm.reorder.run',
       moduleKey: 'scm',
+    });
+    expect(findLeaf(supplyChain!.children!, 'Stock Debt')).toMatchObject({
+      path: '/project-sales/stock-debt',
+      permission: 'projects.stock_debt.view',
     });
     expect(findLeaf(supplyChain!.children!, 'Loading Plan')).toMatchObject({
       path: '/scm/loading-plan',

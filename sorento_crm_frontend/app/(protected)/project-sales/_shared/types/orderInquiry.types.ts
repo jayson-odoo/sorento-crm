@@ -1114,6 +1114,11 @@ export interface OrderInquirySpoDetailLine {
    * no source.
    */
   source_po_number?: string | null;
+  /**
+   * This line's own `spo_allocations.spo_line_number` (R31b, stock debt lane) - what a
+   * caller's `highlightLines` names to mark and jump to a specific line.
+   */
+  spo_line_number?: number | null;
 }
 
 export interface OrderInquirySpoDetail {

@@ -110,6 +110,15 @@ describe('DownloadRow', () => {
     expect(screen.getAllByText('Report Excel').length).toBeGreaterThan(0);
   });
 
+  it('names the packing list export kind (V1, PLAN-pi-header-fields-convert-fixes-24sep)', () => {
+    // The async packing-list export (E1/E2) writes rows with kind packing_list_xlsx;
+    // KIND_LABEL has no entry for it yet, so a row with no filename falls back to the raw
+    // key - the same bug the quotation/report kinds above were added to fix.
+    render(<DownloadRow row={row({ kind: 'packing_list_xlsx', filename: null })} />);
+    expect(screen.getAllByText('Packing list Excel').length).toBeGreaterThan(0);
+    expect(screen.queryByText('packing_list_xlsx')).toBeNull();
+  });
+
   describe('preview', () => {
     it('opens the shared previewer on the resolved URL, alongside the download', async () => {
       // Preview is an ADDITION: the same row still downloads. What it resolves is both URLs the

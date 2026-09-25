@@ -1,16 +1,22 @@
 /**
  * S2 - stockDebtService, against the contract in its own header.
  *
- * Pins the two paths, the params the board sends (through `buildDataGridParams`, never a
- * hand-built query string), and that a failure surfaces the SERVER's message - which is what
- * the page's error state renders beside its Retry (AC-S2-12).
+ * Pins the `getStockDebtCell` paths, the params the board sends (through
+ * `buildDataGridParams`, never a hand-built query string), and that a failure surfaces the
+ * SERVER's message - which is what the page's error state renders beside its Retry
+ * (AC-S2-12).
+ *
+ * `getStockDebtList`'s own Phase-1-mock suite that used to live here is retired: Phase 2
+ * flipped `USE_STOCK_DEBT_FILTER_MOCKS` to `false` and deleted the mock branch, so
+ * `stockDebtService.real.test.ts` is the one pinning the AC-1 to AC-18 wire contract now
+ * (PLAN-stock-debt-filters-totals-export-24sep.md).
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/lib/api', () => ({ apiFetch: vi.fn() }));
 
 import { apiFetch } from '@/lib/api';
-import { getStockDebtCell, getStockDebtList } from './stockDebtService';
+import { getStockDebtCell } from './stockDebtService';
 
 const mockedFetch = vi.mocked(apiFetch);
 
@@ -35,104 +41,7 @@ function calledUrl(): URL {
   return new URL(mockedFetch.mock.calls[0][0] as string, 'http://localhost');
 }
 
-const EMPTY = {
-  data: [],
-  pagination: { total: 0, page: 1, limit: 25 },
-  months: [],
-  tba_month: '2029-01',
-  groups: [],
-};
-
 beforeEach(() => vi.clearAllMocks());
-
-describe('getStockDebtList', () => {
-  it('sends the page, the needle, the group and the debt switch', async () => {
-    mockedFetch.mockResolvedValue(okResponse(EMPTY));
-
-    await getStockDebtList({
-      pageIndex: 2,
-      pageSize: 25,
-      query: 'SRTWB',
-      group: 'BB',
-      onlyDebt: true,
-    });
-
-    const url = calledUrl();
-    expect(url.pathname).toBe('/api/v1/project-sales/stock-debt');
-    // 1-based on the wire: `buildDataGridParams` owns that translation, here and everywhere.
-    expect(url.searchParams.get('page')).toBe('3');
-    expect(url.searchParams.get('limit')).toBe('25');
-    expect(url.searchParams.get('query')).toBe('SRTWB');
-    expect(url.searchParams.get('group')).toBe('BB');
-    expect(url.searchParams.get('only_debt')).toBe('true');
-  });
-
-  it('drops an empty group and still states only_debt=false', async () => {
-    mockedFetch.mockResolvedValue(okResponse(EMPTY));
-
-    await getStockDebtList({
-      pageIndex: 0,
-      pageSize: 50,
-      query: '',
-      group: '',
-      onlyDebt: false,
-    });
-
-    const url = calledUrl();
-    expect(url.searchParams.get('group')).toBeNull();
-    expect(url.searchParams.get('query')).toBeNull();
-    // Not dropped: `false` is the answer, and an omitted flag would default back to true.
-    expect(url.searchParams.get('only_debt')).toBe('false');
-  });
-
-  it('returns the envelope as the backend states it', async () => {
-    const body = {
-      ...EMPTY,
-      months: ['2026-08', '2026-09'],
-      groups: ['BB', 'IB'],
-      pagination: { total: 1, page: 1, limit: 25 },
-      data: [
-        {
-          product_id: 'p1',
-          product_code: 'SRTWB242',
-          product_name: 'Basin',
-          months: [
-            { key: '2026-08', balance: 55, tone: 'green' },
-            { key: '2026-09', balance: -16, tone: 'red' },
-          ],
-          tba: -100,
-          undated: 0,
-          unlocated: -12,
-        },
-      ],
-    };
-    mockedFetch.mockResolvedValue(okResponse(body));
-
-    await expect(
-      getStockDebtList({
-        pageIndex: 0,
-        pageSize: 25,
-        query: '',
-        group: '',
-        onlyDebt: true,
-      }),
-    ).resolves.toEqual(body);
-  });
-
-  it('surfaces the server message', async () => {
-    mockedFetch.mockResolvedValue(failure('Stock debt is unavailable'));
-
-    await expect(
-      getStockDebtList({
-        pageIndex: 0,
-        pageSize: 25,
-        query: '',
-        group: '',
-        onlyDebt: true,
-      }),
-    ).rejects.toThrow('Stock debt is unavailable');
-  });
-});
 
 describe('getStockDebtCell', () => {
   it('addresses the product and the month key', async () => {
@@ -157,12 +66,18 @@ describe('getStockDebtCell', () => {
     expect(calledUrl().searchParams.get('month')).toBe('unlocated');
   });
 
-  it("carries the board's ownership group, so the drill foots with the cell", async () => {
+  it('carries the due date range and book, so the drill foots with the cell', async () => {
+    // R16 retires `group` from the wire entirely - the drill now foots with the cell
+    // via the board's due date range and book, never an ownership group.
     mockedFetch.mockResolvedValue(okResponse({ demand: [], supply: [] }));
 
-    await getStockDebtCell('p1', '2026-10', 'BB');
+    await getStockDebtCell('p1', '2026-10', '2026-10-01', '2026-10-31', 'retail');
 
-    expect(calledUrl().searchParams.get('group')).toBe('BB');
+    const url = calledUrl();
+    expect(url.searchParams.get('date_from')).toBe('2026-10-01');
+    expect(url.searchParams.get('date_to')).toBe('2026-10-31');
+    expect(url.searchParams.get('book')).toBe('retail');
+    expect(url.searchParams.has('group')).toBe(false);
   });
 
   it('omits the group when the board is showing the whole book', async () => {

@@ -1506,23 +1506,20 @@ export async function getConsolidatedPackingList(
 }
 
 /**
- * The same list as the file Ms Tee used to build by hand.
- *
- * The name comes from the server's `Content-Disposition` rather than being rebuilt here, so
- * the download and the sheet inside it agree on which container this is. `fallbackName` is
- * what the file is called if the header is missing - the container or shipment number, never
- * the shipment id, because a downloaded file named after a UUID tells its reader nothing.
+ * E1/E2: enqueue an async xlsx export of the consolidated packing list, same shape as
+ * `exportComplaintPdf` - `DownloadService.create(kind="packing_list_xlsx", ...)` +
+ * `enqueue_job(...)` on the server, the result appears in My Downloads and this
+ * shipment's own Download history (`EntityDownloadsButton entityType="inbound_shipment"`).
+ * The old synchronous `downloadPackingListExport` (a blob download off the GET route) had
+ * no caller left once the gear switched to this - retired (fix round 1, review). The GET
+ * route itself stays mounted server-side for one release (MCP/n8n callers), marked
+ * deprecated.
  */
-export async function downloadPackingListExport(
-  shipmentId: string,
-  fallbackName?: string | null,
-): Promise<void> {
-  const res = await apiFetch(`/api/v1/scm/inbound-shipments/${shipmentId}/packing-list/export`);
-  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to export the packing list'));
-  const filename =
-    filenameFromContentDisposition(res.headers.get('Content-Disposition')) ??
-    `${fallbackName || 'container'}-packing-list.xlsx`;
-  saveBlobAs(await res.blob(), filename);
+export async function enqueuePackingListExport(shipmentId: string): Promise<void> {
+  const res = await apiFetch(`/api/v1/scm/inbound-shipments/${shipmentId}/packing-list/export`, {
+    method: 'POST',
+  });
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to queue the packing list export'));
 }
 
 /**

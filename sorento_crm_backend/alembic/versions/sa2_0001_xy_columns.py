@@ -16,14 +16,14 @@ create_all` already created the ORM-mapped columns - the shape every blank-schem
 test fixture in this repo uses.
 
 Revision ID: sa2_0001_xy_columns
-Revises: ifa_supplier_uniq
+Revises: pi_so_ref
 Create Date: 2026-09-24
 """
 from alembic import op
 import sqlalchemy as sa
 
 revision = "sa2_0001_xy_columns"
-down_revision = "ifa_supplier_uniq"
+down_revision = "pi_so_ref"
 branch_labels = None
 depends_on = None
 

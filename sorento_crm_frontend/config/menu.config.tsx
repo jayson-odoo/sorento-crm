@@ -233,13 +233,6 @@ export const MENU_SIDEBAR: MenuConfig = [
             permission: 'projects.projects.view',
           },
           {
-            // Directly under the board (R15): the board decides, this shows what the
-            // decisions leave outstanding, month by month.
-            title: 'Stock Debt',
-            path: '/project-sales/stock-debt',
-            permission: 'projects.stock_debt.view',
-          },
-          {
             title: 'Plans',
             path: '/project-sales/plans',
             permission: 'projects.projects.view',
@@ -306,6 +299,13 @@ export const MENU_SIDEBAR: MenuConfig = [
             path: '/scm/reorder',
             permission: 'scm.reorder.run',
             moduleKey: 'scm',
+          },
+          {
+            // Moved from Supply Chain > Project Demand (R6, 24 Sep 2026): beside the
+            // rest of purchasing's own worklists, not under the board that decides.
+            title: 'Stock Debt',
+            path: '/project-sales/stock-debt',
+            permission: 'projects.stock_debt.view',
           },
           {
             title: 'Loading Plan',

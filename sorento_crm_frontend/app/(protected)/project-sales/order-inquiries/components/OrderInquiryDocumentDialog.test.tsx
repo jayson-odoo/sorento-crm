@@ -517,4 +517,106 @@ describe('SPO lightbox body (AC-D19)', () => {
     expect(rows).toHaveLength(2);
     expect(within(rows[1] as HTMLElement).getByText('-')).toBeInTheDocument();
   });
+
+  it('R31b: marks the line named in highlightLines with a Linked badge, and offers a jump', async () => {
+    // RED today: `OrderInquiryDocumentDialog` takes no `highlightLines` prop at all - it
+    // is dropped as an unknown prop, so neither a "Linked" badge nor the header's own
+    // jump button exists.
+    getOrderInquirySpoDetail.mockResolvedValue({
+      spo_number: 'SPO-2026/06-0131',
+      supplier_name: 'CHAOSHENG',
+      eta: '2026-09-15',
+      lines: [
+        {
+          sku: 'SRTWB242', product_name: 'Sorento basin 242', allocated: '100',
+          received: '0', remaining: '100', location: 'BRW-BB', spo_line_number: 4,
+        },
+        {
+          sku: 'ZZT-OTHER', product_name: 'Other item', allocated: '10',
+          received: '0', remaining: '10', location: 'BRW', spo_line_number: 5,
+        },
+      ],
+      allocations: [],
+    });
+    renderNode(
+      <OrderInquiryDocumentDialog
+        kind="spo"
+        document="SPO-2026/06-0131"
+        open
+        onOpenChange={vi.fn()}
+        {...({ highlightLines: [4] } as Record<string, unknown>)}
+      />,
+    );
+
+    const linkedRow = (await screen.findByText('SRTWB242')).closest('tr') as HTMLElement;
+    expect(within(linkedRow).getByText('Linked')).toBeInTheDocument();
+    const otherRow = screen.getByText('ZZT-OTHER').closest('tr') as HTMLElement;
+    expect(within(otherRow).queryByText('Linked')).not.toBeInTheDocument();
+
+    expect(screen.getByRole('button', { name: 'Go to linked line' })).toBeInTheDocument();
+  });
+
+  it('R31b: the jump button pages the highlighted line into view when it starts off the current page', async () => {
+    // Same 11-line/pageSize-10 shape AC-B6 above already proves pages with - line 11
+    // (index 10) carries `spo_line_number: 808` and starts on page 2, invisible until
+    // the jump runs. RED today for the same reason as the test above: no prop, no jump.
+    const lines = Array.from({ length: 11 }, (_, index) => ({
+      sku: index === 10 ? 'SRTWB242-LINKED' : `ZZT-${index}`,
+      product_name: 'Wall hung WC 7405',
+      allocated: '10',
+      received: '0',
+      remaining: '10',
+      location: 'BRW',
+      spo_line_number: index === 10 ? 808 : index + 1,
+    }));
+    getOrderInquirySpoDetail.mockResolvedValue({
+      spo_number: 'SPO-2026/06-0131',
+      supplier_name: 'CHAOSHENG',
+      eta: '2026-09-15',
+      lines,
+      allocations: [],
+    });
+    renderNode(
+      <OrderInquiryDocumentDialog
+        kind="spo"
+        document="SPO-2026/06-0131"
+        open
+        onOpenChange={vi.fn()}
+        {...({ highlightLines: [808] } as Record<string, unknown>)}
+      />,
+    );
+
+    await screen.findByText('ZZT-0');
+    expect(screen.queryByText('SRTWB242-LINKED')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Go to linked line' }));
+
+    expect(await screen.findByText('SRTWB242-LINKED')).toBeInTheDocument();
+    const linkedRow = screen.getByText('SRTWB242-LINKED').closest('tr') as HTMLElement;
+    expect(within(linkedRow).getByText('Linked')).toBeInTheDocument();
+  });
+
+  it('R31b: renders nothing new without highlightLines', async () => {
+    getOrderInquirySpoDetail.mockResolvedValue({
+      spo_number: 'SPO-2026/06-0131',
+      supplier_name: 'CHAOSHENG',
+      eta: '2026-09-15',
+      lines: [
+        {
+          sku: 'SRTWB242', product_name: 'Sorento basin 242', allocated: '100',
+          received: '0', remaining: '100', location: 'BRW-BB', spo_line_number: 4,
+        },
+      ],
+      allocations: [],
+    });
+    renderNode(
+      <OrderInquiryDocumentDialog kind="spo" document="SPO-2026/06-0131" open onOpenChange={vi.fn()} />,
+    );
+
+    await screen.findByText('SRTWB242');
+    expect(screen.queryByText('Linked')).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Go to linked line' }),
+    ).not.toBeInTheDocument();
+  });
 });

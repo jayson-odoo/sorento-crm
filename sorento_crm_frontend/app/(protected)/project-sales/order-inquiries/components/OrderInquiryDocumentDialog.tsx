@@ -14,6 +14,8 @@ import {
 } from '@/components/ui/dialog';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { statusPillClass } from '@/lib/status-pill';
@@ -46,6 +48,7 @@ export function OrderInquiryDocumentDialog({
   poId,
   open,
   onOpenChange,
+  highlightLines,
 }: {
   kind: 'po' | 'spo';
   /** `202607-S0105` or `SPO-2026/08-0015`. Never an id: it is what the buyer quotes. */
@@ -54,6 +57,12 @@ export function OrderInquiryDocumentDialog({
   poId?: string | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /**
+   * R31b (stock debt lane): the SPO line numbers a CALLER's own line drew from - marks
+   * the matching row with a "Linked" badge and offers a "Go to linked line" jump. SPO
+   * only (an SPO line's own number is what this names); the PO body ignores it.
+   */
+  highlightLines?: number[];
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -68,7 +77,7 @@ export function OrderInquiryDocumentDialog({
           {kind === 'po' ? (
             <PoBody poId={poId ?? null} open={open} />
           ) : (
-            <SpoBody spoNumber={document} open={open} />
+            <SpoBody spoNumber={document} open={open} highlightLines={highlightLines} />
           )}
         </DialogBody>
       </DialogContent>
@@ -85,10 +94,12 @@ export function OrderInquiryDocumentLink({
   kind,
   document,
   poId,
+  highlightLines,
 }: {
   kind: 'po' | 'spo';
   document: string;
   poId?: string | null;
+  highlightLines?: number[];
 }) {
   const [open, setOpen] = React.useState(false);
   return (
@@ -112,6 +123,7 @@ export function OrderInquiryDocumentLink({
           poId={poId}
           open
           onOpenChange={setOpen}
+          highlightLines={highlightLines}
         />
       ) : null}
     </>
@@ -311,19 +323,35 @@ const PO_LINE_COLUMNS: ColumnDef<OrderInquiryPoDetailLine>[] = [
   },
 ];
 
-const SPO_LINE_COLUMNS: ColumnDef<OrderInquirySpoDetailLine>[] = [
-  {
-    id: 'sku',
-    accessorFn: (line) => line.sku ?? '',
-    header: ({ column }) => <DataGridColumnHeader title="SKU" column={column} />,
-    cell: ({ row }) => (
-      <SkuCellContent sku={row.original.sku} name={row.original.product_name} />
-    ),
-    size: 220,
-    meta: { headerTitle: 'SKU' },
-  },
-  {
-    accessorKey: 'allocated',
+/**
+ * R31b: a FACTORY, not a module constant like `PO_LINE_COLUMNS` beside it - the SKU
+ * cell's own "Linked" badge depends on `highlightLines`, a prop, so the columns are
+ * rebuilt (memoized in `SpoBody`) whenever the caller's own set of linked lines changes.
+ */
+function buildSpoLineColumns(
+  linkedLineNumbers: Set<number>,
+): ColumnDef<OrderInquirySpoDetailLine>[] {
+  return [
+    {
+      id: 'sku',
+      accessorFn: (line) => line.sku ?? '',
+      header: ({ column }) => <DataGridColumnHeader title="SKU" column={column} />,
+      cell: ({ row }) => (
+        <div className="flex min-w-0 items-center gap-1.5">
+          <SkuCellContent sku={row.original.sku} name={row.original.product_name} />
+          {row.original.spo_line_number != null &&
+            linkedLineNumbers.has(row.original.spo_line_number) && (
+              <Badge size="sm" variant="secondary" appearance="light" className="shrink-0">
+                Linked
+              </Badge>
+            )}
+        </div>
+      ),
+      size: 220,
+      meta: { headerTitle: 'SKU' },
+    },
+    {
+      accessorKey: 'allocated',
     header: ({ column }) => (
       <DataGridColumnHeader title="Allocated" column={column} className="justify-end" />
     ),
@@ -385,7 +413,8 @@ const SPO_LINE_COLUMNS: ColumnDef<OrderInquirySpoDetailLine>[] = [
     size: 140,
     meta: { headerTitle: 'Source PO' },
   },
-];
+  ];
+}
 
 /** Both SKU and location, one input (AC-B2/AC-B3) - case-insensitive substring, client-side. */
 function searchOfLine(line: { sku?: string | null; product_name?: string | null; location?: string | null }) {
@@ -468,8 +497,49 @@ function PoBody({ poId, open }: { poId: string | null; open: boolean }) {
   );
 }
 
-function SpoBody({ spoNumber, open }: { spoNumber: string; open: boolean }) {
+/** `getRowId`'s own id for one line - keyed by its own `spo_line_number` where the book
+ *  states one (unique per document), else its SKU/location (a line `highlightLines` can
+ *  never name has no need of a perfectly unique fallback). The SAME id `focusRowId`
+ *  below names, so a jump and a row can never disagree about which one they mean. Single
+ *  parameter, matching `PanelDataGrid`'s own `getRowId` signature exactly. */
+function spoLineRowId(line: OrderInquirySpoDetailLine): string {
+  return line.spo_line_number != null
+    ? `line-${line.spo_line_number}`
+    : `row-${line.sku ?? ''}-${line.location ?? ''}`;
+}
+
+function SpoBody({
+  spoNumber,
+  open,
+  highlightLines,
+}: {
+  spoNumber: string;
+  open: boolean;
+  highlightLines?: number[];
+}) {
   const { data, isLoading, isError } = useOrderInquirySpoDetail(spoNumber, { enabled: open });
+  // R31b: the jump fires on CLICK, never on mount - a caller's own line may already sit
+  // on the page it opens to, and forcing a jump every time would fight a reader paging
+  // away from it on their own.
+  const [focusRowId, setFocusRowId] = React.useState<string | null>(null);
+
+  const linkedLineNumbers = React.useMemo(
+    () => new Set(highlightLines ?? []),
+    [highlightLines],
+  );
+  const columns = React.useMemo(
+    () => buildSpoLineColumns(linkedLineNumbers),
+    [linkedLineNumbers],
+  );
+  // The FIRST line this document carries that the caller named - `assigned_from` is one
+  // entry per source, so there is at most one document line a stock-debt row could ever
+  // point at, but "first" keeps this honest if that ever stops being true.
+  const linkedRowId = React.useMemo(() => {
+    const match = (data?.lines ?? []).find(
+      (line) => line.spo_line_number != null && linkedLineNumbers.has(line.spo_line_number),
+    );
+    return match ? spoLineRowId(match) : null;
+  }, [data, linkedLineNumbers]);
 
   if (isLoading) return <LoadingBody />;
   if (isError || !data) {
@@ -484,19 +554,34 @@ function SpoBody({ spoNumber, open }: { spoNumber: string; open: boolean }) {
 
   return (
     <div className="space-y-5">
-      <dl className="grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-4">
-        <Field label="Supplier">{data.supplier_name || <NotStated />}</Field>
-        <Field label="ETA">
-          {data.eta ? formatDateInMalaysia(data.eta) : <NotStated />}
-        </Field>
-        <Field label="Shipment">{data.shipment_ref || <NotStated />}</Field>
-        <Field label="Container">{data.container_no || <NotStated />}</Field>
-      </dl>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <dl className="grid min-w-0 flex-1 grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-4">
+          <Field label="Supplier">{data.supplier_name || <NotStated />}</Field>
+          <Field label="ETA">
+            {data.eta ? formatDateInMalaysia(data.eta) : <NotStated />}
+          </Field>
+          <Field label="Shipment">{data.shipment_ref || <NotStated />}</Field>
+          <Field label="Container">{data.container_no || <NotStated />}</Field>
+        </dl>
+        {linkedRowId && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="shrink-0"
+            onClick={() => setFocusRowId(linkedRowId)}
+          >
+            Go to linked line
+          </Button>
+        )}
+      </div>
 
       <PanelDataGrid<OrderInquirySpoDetailLine>
         title="Lines"
-        columns={SPO_LINE_COLUMNS}
+        columns={columns}
         rows={data.lines}
+        getRowId={spoLineRowId}
+        focusRowId={focusRowId}
         listingKey="projects.projects.view::order-inquiry-spo-lines"
         emptyTitle="This shipping order carries no lines."
         searchOf={searchOfLine}
