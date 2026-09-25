@@ -16,8 +16,19 @@ from app.services.storage_router import default_provider, get_backend
 
 logger = logging.getLogger(__name__)
 
+#: R8 (security S3, review round 1): the fixed sentence a caller passes to `_record_
+#: failure` via `message=` when the underlying exception's OWN text is not safe to show
+#: the requesting user verbatim (a SQL fragment, a column name, a file path). Public -
+#: the enqueuing ENDPOINT (`enqueue_packing_list_export`) stores the same sentence for
+#: its own queue-time failure, so the drawer never shows two different wordings for
+#: "this export did not work".
+EXPORT_FAILURE_MESSAGE = "Export failed. Please try again."
 
-def _record_failure(db, svc: DownloadService, download_id: str, error: Exception, label: str) -> None:
+
+def _record_failure(
+    db, svc: DownloadService, download_id: str, error: Exception, label: str,
+    *, message: Optional[str] = None,
+) -> None:
     """Write the failure onto the download row, whatever it was that failed.
 
     The rollback is the point. When the thing that failed was the DATABASE - a query against a
@@ -27,6 +38,10 @@ def _record_failure(db, svc: DownloadService, download_id: str, error: Exception
     rollback first it raises too, and the row is left sitting in 'processing' for good: the
     drawer polls it forever, and its sweeper only reaps rows in 'sent'. The user is told nothing.
 
+    `message`, when given, OVERRIDES what gets STORED on the row (R8) - the caller's own
+    `logger.exception` right before this call is where the real exception detail goes;
+    every other caller keeps storing `str(error)` unchanged, so this is opt-in per task.
+
     Marking the failure is itself best-effort - if even this cannot be written, log it and let
     the task return normally rather than poisoning RQ's failed registry.
     """
@@ -35,7 +50,7 @@ def _record_failure(db, svc: DownloadService, download_id: str, error: Exception
     except Exception:  # noqa: BLE001 - a session too broken to roll back is still worth trying
         logger.exception("%s: rollback before marking download %s failed", label, download_id)
     try:
-        svc.mark_failed(download_id, str(error))
+        svc.mark_failed(download_id, message if message is not None else str(error))
     except Exception:  # noqa: BLE001
         logger.exception("%s: could not mark download %s failed", label, download_id)
 
@@ -81,6 +96,121 @@ def generate_complaint_pdf(download_id: str, complaint_id: str, user_id: str) ->
         _record_failure(db, svc, download_id, e, "generate_complaint_pdf")
         return {"download_id": download_id, "status": "failed", "error": str(e)}
     finally:
+        db.close()
+
+
+def generate_packing_list_xlsx(download_id: str, shipment_id: str) -> dict:
+    """Render the consolidated packing list workbook, store it, and update the download
+    row (E1/E2, PLAN-pi-header-fields-convert-fixes-24sep.md) - the SAME bytes the
+    synchronous GET export has always produced (`consolidated_packing_list.build` +
+    `to_xlsx`), just rendered on the worker instead of the request path.
+
+    Best-effort and self-contained: any failure marks the download 'failed' with a
+    fixed, safe message rather than raising into RQ's failed registry - same pattern
+    `generate_complaint_pdf` follows.
+
+    R7 (security review round 1): `shipment_id` is an RQ job ARGUMENT - trusted input,
+    replayable and, on a compromised worker queue, spoofable - never cross-checked
+    against anything before this fix. Two checks, mirroring the fix already shipped for
+    `generate_order_inquiry_xlsx` (security review fix round 2, item 2, sha 002fd3d2e on
+    `fix/order-sheet-cells`):
+
+    (a) the download row is the ONLY thing that says which shipment this render is FOR -
+    it must name `source_entity_type="inbound_shipment"` and `source_entity_id ==
+    shipment_id`, or the render never starts (a mismatched pair would otherwise store
+    one shipment's data under a download that names a different one).
+
+    (b) an `InboundShipment` is company-scoped data (`CompanyScopedMixin`), not a shared
+    entity like a complaint - the OLD comment here claiming otherwise was simply wrong.
+    The shipment is resolved under `None` (every company, the same shape `generate_
+    order_inquiry_xlsx` uses to find a row before it knows the row's own company), then
+    the session is RE-SCOPED to that shipment's own company before anything else touches
+    it, and the render refuses outright unless the download's OWNING user
+    (`user_downloads.user_id`) is a member of that company - closing the gap `None`
+    would otherwise leave open for the rest of the render.
+    """
+    db = SessionLocal()
+    from app.models.base import UNSET, get_company_scope
+    from app.models.procurement import InboundShipment
+    from app.services.company_scope_resolver import resolve_user_grant_ids
+
+    caller_scope = get_company_scope(db)
+    svc = DownloadService(db)
+    try:
+        row = svc.get(download_id)
+        if (
+            row is None
+            or row.source_entity_type != "inbound_shipment"
+            or str(row.source_entity_id) != str(shipment_id)
+        ):
+            raise ValueError(
+                f"Download {download_id} does not name shipment {shipment_id}; "
+                "refusing to export."
+            )
+
+        set_company_scope(db, None)
+        shipment = db.get(InboundShipment, shipment_id)
+        company_id = getattr(shipment, "company_id", None) if shipment is not None else None
+        if company_id:
+            set_company_scope(db, frozenset({str(company_id)}))
+        else:
+            set_company_scope(db, UNSET)
+            raise ValueError(
+                f"Shipment {shipment_id} could not be found or carries no company; "
+                "refusing to export."
+            )
+
+        # S1 (review round 2, blocker): the PLATFORM'S OWN scope resolver, not a raw
+        # `UserCompany` lookup - `resolve_user_grant_ids` treats a superadmin/admin as a
+        # member of EVERY company (the same rule the active-company switcher and every
+        # other screen already honour), so an admin's export of a shipment they hold no
+        # explicit membership row for still renders, exactly as it would through the
+        # normal request path.
+        if str(company_id) not in resolve_user_grant_ids(db, str(row.user_id)):
+            raise ValueError(
+                f"User {row.user_id} is not a member of shipment {shipment_id}'s "
+                "company; refusing to export."
+            )
+
+        svc.mark_processing(download_id)
+
+        from app.services.scm import consolidated_packing_list
+
+        payload = consolidated_packing_list.build(db, shipment_id)
+        xlsx_bytes = consolidated_packing_list.to_xlsx(payload)
+        filename = consolidated_packing_list.export_filename(payload)
+
+        provider = default_provider()
+        backend = get_backend(provider)
+        key = f"exports/packing-list-xlsx/{download_id}/{filename}"
+        stored_key, _signed = backend.upload_file(
+            file_content=xlsx_bytes,
+            file_path=key,
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+        svc.mark_ready(
+            download_id,
+            storage_provider=provider,
+            storage_key=stored_key,
+            filename=filename,
+        )
+        logger.info(
+            "generate_packing_list_xlsx: download %s ready (%d bytes)",
+            download_id, len(xlsx_bytes),
+        )
+        return {"download_id": download_id, "status": "ready", "bytes": len(xlsx_bytes)}
+    except Exception as e:  # noqa: BLE001 - mark failed, never poison the queue
+        logger.exception("generate_packing_list_xlsx failed for download %s", download_id)
+        # R8: a fixed sentence stored on the row - never `str(e)`, which could carry a
+        # SQL fragment, a column name, or a file path this drawer shows the user.
+        _record_failure(
+            db, svc, download_id, e, "generate_packing_list_xlsx",
+            message=EXPORT_FAILURE_MESSAGE,
+        )
+        return {"download_id": download_id, "status": "failed", "error": EXPORT_FAILURE_MESSAGE}
+    finally:
+        set_company_scope(db, caller_scope)
         db.close()
 
 
