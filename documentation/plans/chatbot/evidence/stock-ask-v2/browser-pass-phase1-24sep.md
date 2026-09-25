@@ -3,9 +3,12 @@
 Plan: `documentation/plans/chatbot/PLAN-chatbot-stock-ask-v2-24sep.md`. UAC:
 `documentation/plans/chatbot/chatbot-stock-ask-v2-24sep-acceptance-criteria.md`.
 Per the "at most two screenshots per lane" rule in `documentation/agents/browser-verification.md`,
-this text log is the record of the walk; only two representative screenshots are committed
-alongside it (`s1-product-form-placeholder-inherit-1280.png`,
-`s2-contact-chatbot-toggles-375.png`).
+this text log is the record of the walk; two representative screenshots
+(`s1-product-form-placeholder-inherit-1280.png`, `s2-contact-chatbot-toggles-375.png`) were
+committed alongside it originally, then deleted in the round 3 final pre-merge pass once
+`browser-pass-round2-25sep.md` added its own two screenshots and the lane needed to stay within
+the two-PNG cap - see that document's "Screenshot count" section. This text log stands in for
+them below.
 
 Environment: a throwaway local Postgres + Redis + backend + frontend dev stack was stood up in
 this session (no `.env`, no seeded DB existed in the sandbox). The two new permission slugs
@@ -61,14 +64,16 @@ reading the code (PRINCIPLES.md "measure against real data").
 3. Placeholder check: with the category (`ZZT-STOCKASK`) carrying X=100/Y=14 (set above) and the
    product's own fields empty, the two inputs on the Specifications tab show `placeholder="100"`
    and `placeholder="14"` (confirmed both via a DOM inspection of the `placeholder` attribute and
-   the attached screenshot). Screenshot: `s1-product-form-placeholder-inherit-1280.png`.
+   the attached screenshot). Screenshot: `s1-product-form-placeholder-inherit-1280.png` (deleted
+   round 3, see this document's header note).
 
 ## S2 - ContactChatbotSection ("Access" tab, contact detail page)
 
 1. Sidebar: Users & Access > People > Internal Users > (seeded contact) > Access tab. The
    "Chatbot" card gained two Switch rows, "Notify salesman" and "Packing list allowed", both off
    by default, directly under the existing Tier select - screenshot
-   `s2-contact-chatbot-toggles-375.png` (375px, no clipping, consistent with the existing rows).
+   `s2-contact-chatbot-toggles-375.png` (375px, no clipping, consistent with the existing rows;
+   deleted round 3, see this document's header note).
 2. Toggled "Notify salesman" on: toast "Chatbot settings saved". Navigated to the contacts list
    and back into the same contact: "Notify salesman" reads `checked=true`, "Packing list
    allowed" still `checked=false` - confirms the PUT sends the whole profile and only the

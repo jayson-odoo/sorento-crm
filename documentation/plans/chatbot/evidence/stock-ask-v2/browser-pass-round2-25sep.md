@@ -84,10 +84,23 @@ committed: the 375px CategoryForm-modal-reaching-Save shot and the AC-SA205 relo
 1280px CategoryForm save and both product-form placeholder checks are recorded above as a text
 log (steps, URLs, network calls and outcomes) instead of additional PNGs - the same trade this
 lane's Phase 1 evidence document already made. `s1-product-form-placeholder-inherit-1280.png`
-and `s2-contact-chatbot-toggles-375.png` from the Phase 1 pass stay as they are; they cover a
-different pair of checks (S1's placeholder inherit and S2's toggle render, both pre-fix-round,
-against the mock overlays that have since been deleted) and are superseded in substance, not
-in file, by this document.
+and `s2-contact-chatbot-toggles-375.png` from the Phase 1 pass covered a different pair of
+checks (S1's placeholder inherit and S2's toggle render, both pre-fix-round, against the mock
+overlays that have since been deleted) and were superseded in substance, not in file, by this
+document - round 3 (final pre-merge nit) deleted both files so the lane holds at most two PNGs
+per `documentation/agents/browser-verification.md`; `browser-pass-phase1-24sep.md` above is the
+text record of what they showed.
+
+## Round 3: the Next dev "1 Issue" badge
+
+Both committed screenshots (`ac-sa111-categoryform-modal-375.png`,
+`ac-sa205-notify-salesman-reloaded-still-on.png`) show the Next.js dev-mode error overlay
+("1 Issue" badge, bottom-left) open. This is the pre-existing app-shell dev-only warning also
+documented in `documentation/plans/scm/evidence/oi-request-cs-reserve/round4/EVIDENCE.md`
+("Each child in a list should have a unique key prop", `Demo1Layout`), not something this lane
+introduced: `git diff origin/main` for this branch touches no file under
+`sorento_crm_frontend/app/components/layouts/`. It shows on any full page load in dev mode and
+is absent in a production build. Not fixed here (outside this lane's scope).
 
 ## Result
 
