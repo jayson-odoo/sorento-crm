@@ -1096,6 +1096,40 @@ def test_low_stock_split_supplier_category_title_cut_and_collision(db):
     assert _codes_of(wb[base2]) == [p2.product_code]
 
 
+def test_low_stock_split_supplier_case_insensitive_collision(db):
+    """Reviewer kill test (N5): "Acme" and "ACME" are the SAME sheet name to Excel even
+    though they differ in Python string equality (`workbook_split.unique_sheet_title`'s
+    own contract). `split="supplier"` must write FOUR distinct tabs, not two pairs whose
+    titles only differ by case - the second supplier's pair takes the ` (2)` suffix on
+    BOTH its sheets.
+
+    Same category on both products removes the category from the sort - `product_code`
+    alone decides which supplier's pair goes through `unique_sheet_title` first
+    ("CASEONE" sorts before "CASETWO"), so "Acme" is the un-suffixed pair and "ACME" is
+    the one that collides.
+    """
+    lsr = _lsr()
+    run = _run(db)
+    shared_cat = f"{MARKER}-CASECOL"
+    p1 = _product(db, stem="CASEONE", category_code=shared_cat)
+    p2 = _product(db, stem="CASETWO", category_code=shared_cat)
+    _summary_row(db, run, p1, pool_on_hand=10, reorder_level=100, supplier_name="Acme")
+    _summary_row(db, run, p2, pool_on_hand=10, reorder_level=100, supplier_name="ACME")
+
+    blob, _ct, _fn, _counts = lsr.export_low_stock(db, run_id=str(run.id), split="supplier")
+    wb = _sheets(blob)
+
+    assert len(wb.sheetnames) == 4, wb.sheetnames
+    assert len(set(wb.sheetnames)) == 4, "all four tabs must be distinct"
+    for title in wb.sheetnames:
+        assert len(title) <= 31, title
+    assert wb.sheetnames == ["Acme - Low", "Acme", "ACME (2) - Low", "ACME (2)"], (
+        wb.sheetnames
+    )
+    assert _codes_of(wb["Acme"]) == [p1.product_code]
+    assert _codes_of(wb["ACME (2)"]) == [p2.product_code]
+
+
 def test_low_stock_split_supplier_refused_without_supplier_column(db):
     """Test list item 10 (AC-8/R5): `split="supplier"` or `"supplier_category"` with
     `include_supplier=False` raises 422 BEFORE any sheet is written - the sheet titles
@@ -1330,24 +1364,37 @@ def test_generate_low_stock_report_forwards_split(scm_app, monkeypatch):
 
 
 def test_low_stock_preview_counts_match_the_workbook(db):
-    """Test list item 16b (AC-15b): `low_stock_report_service` answers a preview whose
-    GROUP counts equal each split's own sheet count / 2, and whose `rows` equals the
-    visible row count (the "All" count) - the SAME split the workbook is built from, not a
-    second guess at it.
+    """Test list item 16b (AC-15b, reviewer kill test S1/N5 - made DISCRIMINATING): a
+    preview whose `sheet_counts` are pinned to EXACT numbers, not just "however many the
+    workbook also says" (a preview and a workbook that are both wrong in the same way would
+    have passed the old assertion).
+
+    Three products name THREE supplier groups (two named, "Alpha co" / "Beta co", plus one
+    blank folding into "No supplier") and only TWO category groups (one named, one blank
+    folding into "No category") - a split whose category count silently used the wrong
+    field, or a supplier count off by the blank bucket, fails here even if the workbook
+    happens to still open. `supplier_category` pairs one-for-one with the three rows (no
+    two rows share a pair), so it is exactly 3, not `3 x 2`.
     """
     lsr = _lsr()
     run = _run(db)
     cat_a = f"{MARKER}-PVA"
-    cat_b = f"{MARKER}-PVB"
-    p1 = _product(db, stem="PVONE", category_code=cat_a)
-    p2 = _product(db, stem="PVTWO", category_code=cat_a)
-    p3 = _product(db, stem="PVTHREE", category_code=cat_b)
-    _summary_row(db, run, p1, pool_on_hand=10, reorder_level=100, supplier_name="Alpha co")
-    _summary_row(db, run, p2, pool_on_hand=150, reorder_level=100, supplier_name="Beta co")
-    _summary_row(db, run, p3, pool_on_hand=10, reorder_level=100, supplier_name="Alpha co")
+    p_alpha = _product(db, stem="PVALPHA", category_code=cat_a)
+    p_beta = _product(db, stem="PVBETA", category_code=cat_a)
+    p_blank = _product_in_category(db, stem="PVBLANK", cat=_blank_category(db))
+    _summary_row(
+        db, run, p_alpha, pool_on_hand=10, reorder_level=100, supplier_name="Alpha co",
+    )
+    _summary_row(
+        db, run, p_beta, pool_on_hand=150, reorder_level=100, supplier_name="Beta co",
+    )
+    _summary_row(db, run, p_blank, pool_on_hand=10, reorder_level=100, supplier_name=None)
 
     preview = lsr.low_stock_preview(db, str(run.id))
     assert preview["rows"] == 3, preview
+    assert preview["sheet_counts"] == {
+        "supplier": 3, "category": 2, "supplier_category": 3,
+    }, preview["sheet_counts"]
 
     for split in ("supplier", "category", "supplier_category"):
         blob, _ct, _fn, _counts = lsr.export_low_stock(db, run_id=str(run.id), split=split)
@@ -1393,3 +1440,96 @@ def test_low_stock_preview_route_404_on_invisible_run_and_fields_declared(scm_ap
             params={"run_id": str(uuid.uuid4())},
         )
         assert missing.status_code == 404, missing.text
+
+
+def test_export_route_409_while_low_stock_in_flight_with_split(scm_app, monkeypatch):
+    """AC-15 (reviewer kill test): the in-flight 409 guard is unchanged when `split` is
+    named - a second low stock export for the same user/run while one is pending answers
+    409 regardless of split, and no second `user_downloads` row is created."""
+    from app.services import queue_service
+
+    _task()
+    app, db = _client(scm_app, "purchasing")
+    run_id = _seed_run(db)
+    run = db.get(ReorderRun, run_id)
+    _summary_row(
+        db, run, _product(db, stem="INFLIGHTSPLIT"), pool_on_hand=40, reorder_level=100,
+    )
+    db.flush()
+
+    monkeypatch.setattr(queue_service, "enqueue_job",
+                        lambda *a, **k: type("J", (), {"id": "x"})())
+
+    with TestClient(app) as c:
+        first = c.post("/api/v1/scm/order-summary/export", json={
+            "run_id": run_id, "format": "low_stock_xlsx", "split": "supplier",
+        })
+        second = c.post("/api/v1/scm/order-summary/export", json={
+            "run_id": run_id, "format": "low_stock_xlsx", "split": "supplier",
+        })
+
+    assert first.status_code == 200, first.text
+    assert second.status_code == 409, second.text
+    count = db.execute(text(
+        "SELECT count(*) FROM user_downloads "
+        "WHERE source_entity_id = :r AND kind = 'low_stock_xlsx'"
+    ), {"r": run_id}).scalar()
+    assert count == 1, f"the guard let a second low stock row through: {count}"
+
+
+def test_low_stock_preview_route_run_id_omitted_uses_newest_completed_run(scm_app):
+    """AC-15b: `run_id` omitted answers the NEWEST completed run's counts - the same
+    `_run_for` rule the report/export already use - not the oldest, and not whichever of
+    two NULL-`started_at` rows Postgres happens to return first."""
+    app, db = _client(scm_app, "purchasing")
+    older_id = _seed_run(db)
+    newer_id = _seed_run(db)
+    db.execute(text(
+        "UPDATE scm.reorder_run SET started_at = :t WHERE id = :id"
+    ), {"t": datetime(2026, 9, 1, 8, 0, 0), "id": older_id})
+    db.execute(text(
+        "UPDATE scm.reorder_run SET started_at = :t WHERE id = :id"
+    ), {"t": datetime(2026, 9, 10, 8, 0, 0), "id": newer_id})
+    older = db.get(ReorderRun, older_id)
+    newer = db.get(ReorderRun, newer_id)
+    for stem in ("OLDA", "OLDB", "OLDC"):
+        _summary_row(db, older, _product(db, stem=stem), pool_on_hand=10, reorder_level=100)
+    _summary_row(db, newer, _product(db, stem="NEWA"), pool_on_hand=10, reorder_level=100)
+    db.flush()
+
+    with TestClient(app) as c:
+        resp = c.get("/api/v1/scm/order-summary/low-stock-preview")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["rows"] == 1, (
+        "run_id omitted must read the NEWER run (1 visible row), not the older one (3)"
+    )
+
+
+def test_low_stock_preview_route_404_for_another_companys_run(scm_app):
+    """AC-15b: a `run_id` that names a REAL run belonging to ANOTHER company answers 404 -
+    the same `assert_run_visible` gate the export route already uses, not a bare "not
+    found" that a malformed id would also (differently) produce.
+
+    `scm.reorder_run.company_id` is a real FK into `companies` (Postgres enforces it,
+    sqlite never did), so the other company has to be a real seeded row, not an invented
+    UUID.
+    """
+    from app.models.company import Company
+
+    app, db = _client(scm_app, "purchasing")
+    other_company = Company(
+        id=_u(), code=_code("OTHERCO")[:20], name=f"{MARKER} other company",
+    )
+    db.add(other_company)
+    db.flush()
+    other_company_run_id = _seed_run(db, company_id=other_company.id)
+    db.flush()
+
+    with TestClient(app) as c:
+        resp = c.get(
+            "/api/v1/scm/order-summary/low-stock-preview",
+            params={"run_id": other_company_run_id},
+        )
+
+    assert resp.status_code == 404, resp.text

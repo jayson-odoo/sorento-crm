@@ -124,3 +124,100 @@ def test_sanitize_and_unique_titles_with_limit():
     collided = wbs.unique_sheet_title("C" * 20, tight_used, limit=10)
     assert collided == "C" * 6 + " (2)", collided
     assert len(collided) <= 10
+
+
+# =========================================================================== #
+# Reviewer round (kill test): `unique_sheet_title` and `sanitize_sheet_title` gain three
+# behaviours the FIRST pass missed. WRITTEN BEFORE THE FIX LANDS - the current
+# `workbook_split.py` compares titles with plain Python string/set equality (case-
+# SENSITIVE) and has no `reserve` parameter, so these are RED until the coder's fix lands.
+# =========================================================================== #
+
+def test_unique_sheet_title_is_case_insensitive():
+    """Excel folds sheet TAB names case-insensitively - "Acme" and "ACME" are the SAME name
+    to Excel even though `"Acme" != "ACME"` in Python. A `used: set[str]` compared with
+    plain string equality lets both through as if they were different sheets; the second
+    one must collide and take the ` (2)` suffix, exactly as if the caller had asked for
+    "Acme" twice.
+    """
+    wbs = _wbs()
+    used: set[str] = set()
+
+    first = wbs.unique_sheet_title("Acme", used)
+    assert first == "Acme"
+    second = wbs.unique_sheet_title("ACME", used)
+    assert second == "ACME (2)", (
+        "a title that only differs in CASE from one already taken must still collide"
+    )
+
+
+def test_unique_sheet_title_reserve_blocks_every_suffixed_form():
+    """New keyword `reserve: tuple[str, ...] = ()` - the SUFFIXES a caller is about to
+    append to the SAME base (the low stock workbook's own `f"{base} - Low"` beside `base`
+    itself: one title-uniqueness budget shared by a pair, not two independent calls that
+    can each pick a name the other is about to collide with). A candidate is accepted only
+    when the candidate AND every `candidate + suffix` in `reserve` are free
+    (case-insensitive), and taking it marks ALL of them used.
+    """
+    wbs = _wbs()
+
+    # "Foo" is free standing alone, but the SAME pair is about to also claim "Foo - Low" -
+    # `reserve` must check that reservation before handing out the bare "Foo".
+    used: set[str] = set()
+    base = wbs.unique_sheet_title("Foo", used, limit=25, reserve=(" - Low",))
+    assert base == "Foo"
+    assert used >= {"Foo", "Foo - Low"}, used
+
+    # A LATER, genuinely different key that happens to equal the first pair's RESERVED
+    # form (not its base) must also be treated as taken.
+    second = wbs.unique_sheet_title("Foo - Low", used, limit=25, reserve=(" - Low",))
+    assert second == "Foo - Low (2)", (
+        "\"Foo - Low\" was already reserved by the first pair's own suffix - it must not "
+        "be handed out bare"
+    )
+
+    # And the reverse order: a prior pair's reserved suffix "X - Low" blocks a LATER bare
+    # candidate "X" from taking the name outright.
+    used2: set[str] = set()
+    wbs.unique_sheet_title("X - Low", used2, limit=25, reserve=(" - Low",))
+    third = wbs.unique_sheet_title("X", used2, limit=25, reserve=(" - Low",))
+    assert third == "X (2)", (
+        "a prior pair's reserved \"X - Low\" must block a later bare \"X\", not just an "
+        "exact repeat of \"X - Low\" itself"
+    )
+
+
+def test_sanitize_sheet_title_strips_control_chars_apostrophes_and_never_trails_a_space():
+    """`sanitize_sheet_title` gains three more Excel-tab rules beyond the forbidden-
+    punctuation set already covered above:
+
+    * C0 control characters (tab, `\\x01`, newline, ...) are stripped, not just
+      `[]:*?/\\`.
+    * A leading/trailing apostrophe is stripped - Excel itself refuses a sheet name that
+      starts or ends with one.
+    * The cut to `limit` is RSTRIPPED afterwards, so a cut that lands mid-word never
+      leaves a trailing space in the title Excel actually shows.
+    * The single reserved name "History" (Excel's own built-in change-log sheet, any
+      case) maps to "History sheet" rather than colliding with a sheet Excel will not let
+      exist under that name.
+    """
+    wbs = _wbs()
+
+    assert wbs.sanitize_sheet_title("\tA\x01B\n") == "AB", (
+        "C0 control characters must be stripped, not just the Excel-forbidden punctuation"
+    )
+    assert wbs.sanitize_sheet_title("'Quoted'") == "Quoted", (
+        "a leading/trailing apostrophe must be stripped"
+    )
+    assert wbs.sanitize_sheet_title(
+        "CHAOZHOU CHAOAN FENGTANG DAFUYUAN", limit=25,
+    ) == "CHAOZHOU CHAOAN FENGTANG", (
+        "raw[:25] lands exactly on the space after FENGTANG - the cut result must be "
+        "RSTRIPPED, not left ending in a trailing space"
+    )
+    assert wbs.sanitize_sheet_title("History") == "History sheet", (
+        "Excel reserves the literal name \"History\" for its own sheet"
+    )
+    assert wbs.sanitize_sheet_title("HISTORY") == "History sheet", (
+        "the reserved-name check is case-insensitive, like every other rule here"
+    )

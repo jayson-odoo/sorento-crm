@@ -137,6 +137,20 @@ describe('summaryOrderService - exportLowStockReport (PLAN-low-stock-report AC-2
     expect(result).toEqual(download);
   });
 
+  it('reviewer kill test B1: a non-default split rides through unchanged - the body is '
+    + 'exactly { run_id, format, split }, not the "none" every other case here happens to '
+    + 'send', async () => {
+    const download = { id: 'dl-11', kind: 'low_stock_xlsx', status: 'pending', filename: null };
+    apiFetch.mockResolvedValue(ok(download));
+
+    await exportLowStockReport('run-1', 'category');
+
+    const [, init] = apiFetch.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({
+      run_id: 'run-1', format: 'low_stock_xlsx', split: 'category',
+    });
+  });
+
   it('throws the extracted error message on a non-ok response', async () => {
     apiFetch.mockResolvedValue({
       ok: false,
