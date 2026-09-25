@@ -721,3 +721,114 @@ def test_manual_edit_commits_the_supersede_even_when_the_second_call_keeps_no_ne
         assert row["applied_reason"] == "Line changed again; the row no longer describes it"
     finally:
         fresh.close()
+
+
+# --------------------------------------------------------------------------- #
+# S5b: a partial apply (one row of a batch confirmed, the rest still pending)
+# leaves the batch itself open, issue #1245
+# --------------------------------------------------------------------------- #
+
+
+def test_partial_apply_leaves_the_batch_open_until_every_row_is_applied(api):
+    """S5b (`PLAN-esb-change-row-refresh.md`, review round, issue #1245): a book upload
+    moves many orders at once, and the board's own Confirm is pressed PER ORDER
+    (`_confirm_a_planning_change`, `fulfilment_planning.py` ~1020-1092: `set_row_decision`
+    on whichever rows the press decided, then `apply(..., only_pso_ids={this order})`).
+    ONE batch spanning TWO orders therefore has its rows applied by TWO SEPARATE calls -
+    the first names only order A's `only_pso_ids`, so order B's row is left out entirely,
+    still `pending`. Stamping `batch.applied_at` on that first press would lock the whole
+    batch (`set_row_decision` and a retry of `apply` both refuse once `applied_at` is set),
+    so B's press - pressed later, on its own board - would be refused as "already applied"
+    before it ever got to post anything for B. `apply` must leave `applied_at` NULL until
+    every row of the WHOLE BATCH has actually been applied, whichever order it belongs to.
+
+    Two ORDERS, not two rows of one order: two rows of the SAME order share one
+    `SOSupplyDecision` revision, so applying one bumps the revision under the OTHER row
+    too and `set_row_decision` correctly refuses it as superseded (`_row_is_superseded`) -
+    a real, separate guard this test is not about. Two different orders keep fully
+    independent revisions, which is the actual multi-order book-upload shape `apply`'s own
+    docstring and the `left_out_pending` comment both describe.
+    """
+    world, project = api
+    db = world.db
+    core_so_a, core_line_a, product_a, order_a, mirror_a = _linked_line(
+        world, project, qty_ordered=72,
+    )
+    _freeze_with_a_full_buy(db, world, order_a, mirror_a)
+    core_so_b, core_line_b, product_b, order_b, mirror_b = _linked_line(
+        world, project, qty_ordered=15,
+    )
+    _freeze_with_a_full_buy(db, world, order_b, mirror_b)
+
+    move_a = _moved_change(
+        core_so_a.so_number, product_a.product_code, world.own_wh.warehouse_code,
+        core_line_a.id, old_date=date(2026, 8, 20), new_date=D1, qty=72.0,
+    )
+    move_b = _moved_change(
+        core_so_b.so_number, product_b.product_code, world.own_wh.warehouse_code,
+        core_line_b.id, old_date=date(2026, 8, 20), new_date=D1, qty=15.0,
+    )
+    batch = planning_change_service.build_batch(
+        db, Diff(scope_documents=(core_so_a.so_number, core_so_b.so_number),
+                 changes=[move_a, move_b]),
+        applied_line_ids={id(move_a): str(core_line_a.id), id(move_b): str(core_line_b.id)},
+        order_ids={
+            core_so_a.so_number: str(core_so_a.id), core_so_b.so_number: str(core_so_b.id),
+        },
+        actor=world.actor, import_job_id=None, file_name="book.xlsx",
+    )
+    db.commit()
+    assert batch is not None
+    assert batch.order_count == 2
+    rows = _rows_for(db, batch.id)
+    assert len(rows) == 2, [r.kind for r in rows]
+    row_a = next(r for r in rows if r.project_line_id == str(mirror_a.id))
+    row_b = next(r for r in rows if r.project_line_id == str(mirror_b.id))
+    assert row_a.applied_state == "pending"
+    assert row_b.applied_state == "pending"
+
+    # Order A's own Confirm press: a decision on A's row alone, then apply narrowed to A.
+    # Order B is not even visited by this call.
+    planning_change_service.set_row_decision(db, batch.id, row_a.id, "confirm")
+    db.commit()
+    planning_change_service.apply(
+        db, batch.id, world.actor,
+        extra_confirm_lines={str(order_a.id): []},
+        refuse_if_applied=True,
+        only_pso_ids={str(order_a.id)},
+    )
+    db.commit()
+
+    db.expire_all()
+    stale_batch = db.get(type(batch), batch.id)
+    assert stale_batch.applied_at is None, (
+        "S5b: a batch with one order's row still pending must not be stamped applied - "
+        "that would lock set_row_decision and a retry of apply behind refuse_if_applied "
+        "for the order this press never even visited"
+    )
+    refreshed_row_a = db.get(PlanningChangeRow, row_a.id)
+    refreshed_row_b = db.get(PlanningChangeRow, row_b.id)
+    assert refreshed_row_a.applied_state == "applied"
+    assert refreshed_row_b.applied_state == "pending"
+
+    # Order B's own, LATER Confirm press - must succeed, not be refused as already applied
+    # (`refuse_if_applied` gates on `batch.applied_at`, which is still None).
+    planning_change_service.set_row_decision(db, batch.id, row_b.id, "confirm")
+    db.commit()
+    result = planning_change_service.apply(
+        db, batch.id, world.actor,
+        extra_confirm_lines={str(order_b.id): []},
+        refuse_if_applied=True,
+        only_pso_ids={str(order_b.id)},
+    )
+    db.commit()
+    assert not result.get("failed_orders"), result.get("failed_orders")
+
+    db.expire_all()
+    final_row_b = db.get(PlanningChangeRow, row_b.id)
+    assert final_row_b.applied_state == "applied"
+    final_batch = db.get(type(batch), batch.id)
+    assert final_batch.applied_at is not None, (
+        "S5b: only once every row of the WHOLE batch has actually been applied does the "
+        "batch itself stamp applied_at"
+    )
