@@ -30,8 +30,10 @@ Every code minted here carries a `ZZTSB` marker.
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import uuid
+from pathlib import Path
 
 import pytest
 from fastapi import Depends, FastAPI
@@ -1191,11 +1193,225 @@ class TestReadBackAC19:
 
 # =================================================================== AC-SB-20
 class TestFixturesAC20:
-    @pytest.mark.skip(reason="awaiting corrected Foundryx A7 fixtures")
-    def test_corrected_a7_fixtures_replay_against_seeded_chain(self, env):
-        # Fixtures land at tests/fixtures/stock_balances/*.json (source_ref,
-        # entity_id, diff, summary, deletions shape corrected per the
-        # tester brief: no fake entity_id, no diff on a created row, no
-        # warningCounts, no deletions `retryable` key). Loaded here once
-        # they exist; this test intentionally does no fixture loading yet.
-        pass
+    """Replays the corrected Foundryx A7 fixtures
+    (`tests/fixtures/stock_balances/`, copied verbatim from
+    `foundryx-shared-service` commit 1175bf82 - see that directory's own
+    README for the request/response mapping and the six 2026-09-25
+    corrections) against a chain seeded to match what each response implies:
+    an `updated` row exists beforehand (its current quantity matching the
+    dry-run fixture's own diff, or - where that diff is `{}` - the incoming
+    qty itself, since nothing changed); a `created` row does not.
+
+    `entity_id` is asserted PRESENT and null-vs-non-null only (README
+    correction 1: the fixture's own ids are placeholders, never a value
+    Sorento's real response would echo).
+
+    Two known fixture/plan disagreements, NOT bent around here (reported to
+    the captain instead, per brief item 4):
+
+    - `contract-2.5.json`'s `fields_added` is shaped `{"2.5": [...]}` - a
+      per-VERSION list. Every version before it in `app/api/v1/external/
+      contract.py::FIELDS_ADDED` (and AC-SB-1) is keyed per-ENTITY instead
+      (`"stock_balances": [...]`), which is what this codebase already
+      implements and what AC-SB-1 already pins - not replayed here.
+    - `stock_balances-deletions-error-422-invalid-body.json` collapses "pairs
+      is not an object" AND "pairs has over MAX_BATCH entries" into one 422
+      `INVALID_BODY`. D7 and `TestDeletionsValidationAC17::
+      test_pairs_over_max_batch_is_413` (already green) require the
+      over-limit case to answer 413 `BATCH_TOO_LARGE` instead - only the
+      "not an object" trigger is replayed against this fixture below.
+    """
+
+    _FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "stock_balances"
+
+    # Warehouses the ingest + deletions fixtures resolve against - every code
+    # the README's table names, minus BRW-VAR (deliberately never created:
+    # the "unknown location" case).
+    _ACTIVE_WAREHOUSE_CODES = ("BRW-BB", "BRW", "MWH", "WH3", "PJ-SR", "MAINTANC", "MBS")
+    _INACTIVE_WAREHOUSE_CODE = "CON"
+
+    # item_code -> product_code, every row EXCEPT SRT-NOTSYNCED-9001 (the
+    # "item Sorento lacks" case) and GHOST-ITEM (deletions-only, same case).
+    _PRODUCT_CODES = (
+        '1/2" ULTRA CIRCULAR',
+        "32MM TAIL PIECE COUPLING",
+        "ACC-CB8001",
+        "ACC-KS7001-YG",
+        "ACC-SRT1024",
+        "ACC-SRT6010",
+        "ACC-SRT8003",
+        "ACC-SRT9013",
+        "B2154-NL",
+    )
+
+    @classmethod
+    def _load(cls, name: str) -> dict:
+        return json.loads((cls._FIXTURES_DIR / name).read_text())
+
+    def _seed_chain(self, env) -> tuple[dict, dict]:
+        warehouses: dict[str, Warehouse] = {}
+        for code in self._ACTIVE_WAREHOUSE_CODES:
+            row = Warehouse(
+                warehouse_code=code,
+                warehouse_name=f"{MARKER} {code}",
+                is_active=True,
+                company_id=env.company_a,
+            )
+            env.db.add(row)
+            warehouses[code] = row
+        inactive = Warehouse(
+            warehouse_code=self._INACTIVE_WAREHOUSE_CODE,
+            warehouse_name=f"{MARKER} {self._INACTIVE_WAREHOUSE_CODE}",
+            is_active=False,
+            company_id=env.company_a,
+        )
+        env.db.add(inactive)
+        warehouses[self._INACTIVE_WAREHOUSE_CODE] = inactive
+        env.db.flush()
+
+        products = {
+            code: env._product(code, company_id=env.company_a) for code in self._PRODUCT_CODES
+        }
+
+        # `updated` rows only - the pairs the ingest-response fixture verdicts
+        # `created` (BRW-BB, MWH, PJ-SR) get no pre-existing row. Currents
+        # match the dry-run fixture's own diff, or (where that diff is `{}`)
+        # the same qty the request itself sends for that pair.
+        env.make_stock(
+            product_id=products["32MM TAIL PIECE COUPLING"].id,
+            warehouse_id=warehouses["BRW"].id,
+            quantity_on_hand=1216,
+        )
+        env.make_stock(
+            product_id=products["ACC-KS7001-YG"].id,
+            warehouse_id=warehouses["WH3"].id,
+            quantity_on_hand=1000,
+        )
+        env.make_stock(
+            product_id=products["ACC-SRT8003"].id,
+            warehouse_id=warehouses["MBS"].id,
+            quantity_on_hand=10,
+        )
+        env.make_stock(
+            product_id=products["B2154-NL"].id,
+            warehouse_id=warehouses["MAINTANC"].id,
+            quantity_on_hand=34,
+        )
+        return warehouses, products
+
+    @staticmethod
+    def _assert_records_match(got: list, expected: list) -> None:
+        """outcome, warnings, summary and diff match exactly (brief item 3);
+        `entity_id` is asserted present-and-null-vs-non-null, but ONLY where
+        the fixture itself carries an `entity_id` key - the deletions
+        fixtures never do (Foundryx's own README says nothing about it
+        there; the "assert presence only" instruction is about the ingest
+        side, where `RecordResult.as_dict()` always includes the key).
+
+        Paired by POSITION, not by `source_ref` keying into a dict - D5
+        guarantees request order, and the duplicate-pair fixture sends the
+        SAME `source_ref` twice, which a ref-keyed dict would collapse into
+        one entry and silently compare the wrong record against the wrong
+        expectation.
+        """
+        assert len(got) == len(expected), (got, expected)
+        for row, exp in zip(got, expected):
+            assert row["source_ref"] == exp["source_ref"], (row, exp)
+            assert row["outcome"] == exp["outcome"], (row, exp)
+            assert row.get("warnings", []) == exp.get("warnings", []), (row, exp)
+            if "diff" in exp:
+                assert row.get("diff") == exp["diff"], (row, exp)
+            if "entity_id" in exp:
+                assert "entity_id" in row, (row, exp)
+                if exp["entity_id"] is None:
+                    assert row["entity_id"] is None, (row, exp)
+                else:
+                    assert row["entity_id"] is not None, (row, exp)
+
+    def test_ingest_and_deletions_fixtures_replay_against_seeded_chain(self, env):
+        self._seed_chain(env)
+
+        request = self._load("stock_balances-ingest-request.json")
+
+        # Dry run FIRST - writes nothing, so the chain's currents are still
+        # exactly what `_seed_chain` set, matching the dry-run fixture's own
+        # diffs.
+        dry_expected = self._load("stock_balances-ingest-dry-run-response.json")
+        dry_res = env.client.post(f"{INGEST_SB}?dry_run=true", json=request)
+        assert dry_res.status_code == 200, dry_res.text
+        dry_body = dry_res.json()
+        assert dry_body["dry_run"] is True
+        assert dry_body["summary"] == dry_expected["summary"], dry_body["summary"]
+        self._assert_records_match(dry_body["records"], dry_expected["records"])
+
+        # Real run SECOND - the same request, now actually applied.
+        real_expected = self._load("stock_balances-ingest-response.json")
+        real_res = env.client.post(INGEST_SB, json=request)
+        assert real_res.status_code == 200, real_res.text
+        real_body = real_res.json()
+        assert real_body["dry_run"] is False
+        assert real_body["summary"] == real_expected["summary"], real_body["summary"]
+        self._assert_records_match(real_body["records"], real_expected["records"])
+
+        # Deletions - rows 1 and 10 now hold real stock from the real ingest
+        # above (`created`/`updated`), so they resolve and zero.
+        del_request = self._load("stock_balances-deletions-request.json")
+        del_expected = self._load("stock_balances-deletions-response.json")
+        del_res = env.client.post(DELETE_SB, json=del_request)
+        assert del_res.status_code == 200, del_res.text
+        del_body = del_res.json()
+        assert del_body["summary"] == del_expected["summary"], del_body["summary"]
+        self._assert_records_match(del_body["records"], del_expected["records"])
+
+        # A single malformed `pairs` ENTRY fails only that ref; the clean ref
+        # names the SAME pair the deletions fixture above already zeroed, and
+        # an already-zero row still reports `deleted` (D7/AC-SB-15).
+        malformed_request = self._load("stock_balances-deletions-malformed-entry-request.json")
+        malformed_expected = self._load("stock_balances-deletions-malformed-entry-response.json")
+        malformed_res = env.client.post(DELETE_SB, json=malformed_request)
+        assert malformed_res.status_code == 200, malformed_res.text
+        malformed_body = malformed_res.json()
+        assert malformed_body["summary"] == malformed_expected["summary"], malformed_body["summary"]
+        self._assert_records_match(malformed_body["records"], malformed_expected["records"])
+
+    def test_duplicate_pair_fixture_last_value_wins(self, env):
+        """Own, isolated chain: this pair must start with NO pre-existing
+        stock row, so its first occurrence in the 2-record batch below is
+        `created` - the main chained test above already claims this exact
+        pair by the time its own ingest fixture runs."""
+        warehouse = Warehouse(
+            warehouse_code="BRW-BB",
+            warehouse_name=f"{MARKER} BRW-BB",
+            is_active=True,
+            company_id=env.company_a,
+        )
+        env.db.add(warehouse)
+        env.db.flush()
+        env._product('1/2" ULTRA CIRCULAR', company_id=env.company_a)
+
+        request = self._load("stock_balances-ingest-duplicate-pair-request.json")
+        expected = self._load("stock_balances-ingest-duplicate-pair-response.json")
+
+        res = env.client.post(INGEST_SB, json=request)
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert body["summary"] == expected["summary"], body["summary"]
+        self._assert_records_match(body["records"], expected["records"])
+        # Both records name the SAME pair, so - unlike `_assert_records_match`,
+        # which is keyed by `source_ref` - the SAME entity_id has to appear on
+        # both entries here, in order, last value wins (D5/AC-SB-13).
+        assert body["records"][0]["outcome"] == "created", body
+        assert body["records"][1]["outcome"] == "updated", body
+        assert body["records"][0]["entity_id"] == body["records"][1]["entity_id"]
+
+    def test_malformed_pairs_body_is_422_invalid_body(self, env):
+        """Only the "pairs is not an object" trigger - see the class
+        docstring for why the fixture's OTHER trigger (over MAX_BATCH) is not
+        replayed here."""
+        expected = self._load("stock_balances-deletions-error-422-invalid-body.json")
+        res = env.client.post(
+            DELETE_SB,
+            json={"companyCode": env.company_a_code, "source_refs": [], "pairs": ["a", "b"]},
+        )
+        assert res.status_code == 422, res.text
+        assert res.json()["code"] == expected["code"]
