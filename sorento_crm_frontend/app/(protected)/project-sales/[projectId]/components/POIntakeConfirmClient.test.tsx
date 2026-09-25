@@ -389,7 +389,7 @@ describe('POIntakeConfirmClient', () => {
     renderConfirm();
 
     expect(
-      await screen.findByRole('radio', { name: 'Lines identified 1' }),
+      await screen.findByRole('radio', { name: 'Need attention (1)' }),
     ).toBeInTheDocument();
     // The old count in the card header is gone: two numbers on one card teaches people to
     // read neither.
@@ -402,7 +402,7 @@ describe('POIntakeConfirmClient', () => {
     );
     expect(screen.getByLabelText('Amount on line 2')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('radio', { name: /Lines identified 1/ }));
+    fireEvent.click(screen.getByRole('radio', { name: /Need attention \(1\)/ }));
     expect(screen.getByLabelText('Amount on line 2')).toBeInTheDocument();
     expect(screen.queryByLabelText('Amount on line 1')).toBeNull();
   });

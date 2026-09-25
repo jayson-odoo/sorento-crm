@@ -73,8 +73,8 @@ interface Props {
   onEditAnnotation: (annotationId: string, body: POAnnotationEditBody) => Promise<void>;
   onRejectAnnotation: (annotationId: string, note: string) => Promise<void>;
   /**
-   * S6-3: the grid opens on "Lines identified" while the version is unconfirmed, and on
-   * every line once it is - a confirmed PO is a record to check against, not a queue to work.
+   * S6-3: the grid opens on "Need attention" while the version is unconfirmed, and on every
+   * line once it is - a confirmed PO is a record to check against, not a queue to work.
    */
   defaultFlaggedOnly?: boolean;
 }
@@ -128,8 +128,8 @@ export function lineNeedsAttention(line: POVersionLine): boolean {
  *
  * The real task on this document is three exceptions out of fifty-two rows, so the flagged
  * lines can be shown on their own. That filter opens ON while the version is unconfirmed
- * (S6-3, `defaultFlaggedOnly`) - the exceptions are the work; "Show all lines" is one click
- * away for reconciling a total against the whole document.
+ * (S6-3, `defaultFlaggedOnly`) - the exceptions are the work; "All lines" is one click away
+ * for reconciling a total against the whole document.
  */
 export const POIntakeLinesGrid = React.forwardRef<POIntakeLinesGridHandle, Props>(
   function POIntakeLinesGrid(
@@ -247,9 +247,9 @@ export const POIntakeLinesGrid = React.forwardRef<POIntakeLinesGridHandle, Props
         // The banner and the handwriting notes both point at specific lines, and a note can
         // name a perfectly healthy one. Landing on it has to work with the filter on, so the
         // filter gives way rather than swallowing the jump - but only when the line is not
-        // already one of the ones "Lines identified" shows (N1: a note-only line is already
-        // visible there, and flipping to "Show all lines" on its own call to action defeats
-        // the guided view).
+        // already one of the ones "Need attention" shows (N1: a note-only line is already
+        // visible there, and flipping to "All lines" on its own call to action defeats the
+        // guided view).
         if (flaggedOnly && !flagged.some((item) => item.id === lineId)) {
           pendingFocusId.current = lineId;
           if (options?.openNotes) pendingOpenNotesId.current = lineId;
@@ -739,10 +739,10 @@ export const POIntakeLinesGrid = React.forwardRef<POIntakeLinesGridHandle, Props
               onValueChange={(next) => next && setFlaggedOnly(next === 'flagged')}
             >
               <ToggleGroupItem value="flagged" className="px-3">
-                {`Lines identified ${flagged.length}`}
+                {`Need attention (${flagged.length})`}
               </ToggleGroupItem>
               <ToggleGroupItem value="all" className="px-3">
-                {`Show all lines (${lines.length})`}
+                {`All lines (${lines.length})`}
               </ToggleGroupItem>
             </ToggleGroup>
           </div>
@@ -759,7 +759,7 @@ export const POIntakeLinesGrid = React.forwardRef<POIntakeLinesGridHandle, Props
               className="mt-4"
               onClick={() => setFlaggedOnly(false)}
             >
-              {`Show all lines (${lines.length})`}
+              {`All lines (${lines.length})`}
             </Button>
           </div>
         ) : (
