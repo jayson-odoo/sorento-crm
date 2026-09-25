@@ -7,6 +7,17 @@
 
 const ORIGIN_PARAM = 'from';
 
+/**
+ * S1 (PR #1237 review): `from` is read straight off the URL and later handed to
+ * `router.push`, so a crafted `?from=https://elsewhere` would send a confirmed user
+ * off-site. Only a same-app relative path is a valid origin - one leading slash, no
+ * scheme, no protocol-relative `//host` (the same guard `signin/page.tsx` and
+ * `products/[id]/page.tsx`'s `worklistBackHref` already use for the same reason).
+ */
+export function isSafeReviewOrigin(candidate: string | null | undefined): candidate is string {
+  return !!candidate && candidate.startsWith('/') && !candidate.startsWith('//');
+}
+
 /** Appends the origin onto a URL an upload dialog is about to push the user to. */
 export function withReviewOrigin(url: string, originHref?: string | null): string {
   if (!originHref) return url;

@@ -4,7 +4,31 @@
  * query string) to push back to. Absent means "stay", same as before this slice.
  */
 import { describe, expect, it } from 'vitest';
-import { pipelineOriginHref, projectTabOriginHref, withReviewOrigin } from './reviewOrigin';
+import {
+  isSafeReviewOrigin,
+  pipelineOriginHref,
+  projectTabOriginHref,
+  withReviewOrigin,
+} from './reviewOrigin';
+
+describe('isSafeReviewOrigin', () => {
+  it('accepts a same-app relative path', () => {
+    expect(isSafeReviewOrigin('/project-sales/pipeline?from=p1')).toBe(true);
+    expect(isSafeReviewOrigin('/project-sales/p1?tab=sales-orders')).toBe(true);
+  });
+
+  it('rejects a crafted external origin (S1, open redirect)', () => {
+    expect(isSafeReviewOrigin('https://elsewhere.test/steal-session')).toBe(false);
+    expect(isSafeReviewOrigin('http://elsewhere.test')).toBe(false);
+    expect(isSafeReviewOrigin('//elsewhere.test')).toBe(false);
+  });
+
+  it('rejects an empty or absent origin', () => {
+    expect(isSafeReviewOrigin(null)).toBe(false);
+    expect(isSafeReviewOrigin(undefined)).toBe(false);
+    expect(isSafeReviewOrigin('')).toBe(false);
+  });
+});
 
 describe('withReviewOrigin', () => {
   it('appends the origin as a `from` param on a URL with no query string yet', () => {

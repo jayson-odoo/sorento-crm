@@ -448,6 +448,28 @@ describe('SalesOrderDetailClient', () => {
     expect(push).not.toHaveBeenCalled();
   });
 
+  it('never navigates to a crafted external `from` (S1, open redirect)', async () => {
+    originParam = 'https://elsewhere.test/steal-session';
+    getProjectSalesOrder.mockResolvedValue(detail());
+    publishSalesOrder.mockResolvedValue({
+      status: 'published',
+      provisional_ref: 'PSO-000123',
+      autocount_doc_no: 'SO397450',
+      can_export: true,
+    });
+
+    renderDetail();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Publish' }));
+    const dialog = await screen.findByRole('alertdialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Publish' }));
+
+    await waitFor(() => expect(publishSalesOrder).toHaveBeenCalledWith('so-1'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Done' }));
+
+    expect(push).not.toHaveBeenCalled();
+  });
+
   it('names the warnings that have no reason before an irreversible publish', async () => {
     getProjectSalesOrder.mockResolvedValue(detail({ warn_findings: 1, findings: [WARN] }));
 
