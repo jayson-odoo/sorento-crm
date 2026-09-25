@@ -48,7 +48,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import event, func, or_, tuple_
-from sqlalchemy.orm import Session, aliased
+from sqlalchemy.orm import Session
 
 from app.models.base import company_scope, get_company_scope
 from app.models.inventory import Warehouse
@@ -4766,8 +4766,6 @@ class ProjectOrderInquiryService:
         wanted = [row_id for row_id in row_ids if row_id]
         if not wanted:
             return {}
-        SpoPOLine = aliased(PurchaseOrderLine)
-        SpoPO = aliased(PurchaseOrder)
         rows = (
             self.db.query(
                 OrderInquiryLink,
@@ -4788,7 +4786,16 @@ class ProjectOrderInquiryService:
                 SPOAllocation.expected_date,
                 SPOAllocation.location_code,
                 SPOAllocation.from_po_number,
-                SpoPO.id,
+                # R17 (owner rulings, 25 Sep 2026): the supply PO line this allocation
+                # draws down. Resolved to a header id through a FOLLOW-UP query
+                # (`_purchase_order_ids_for_supply_lines` below), never a second JOINED
+                # alias of `PurchaseOrderLine` in THIS query - that shape silently
+                # returned NULL here (the session's company-scope `with_loader_criteria`
+                # does not disambiguate two occurrences of the same mapped class inside
+                # one query the way `include_aliases=True` promises to), which is why
+                # `purchase_order_id` never reached the wire despite the L4 review item
+                # believing it already worked.
+                SPOAllocation.po_line_id,
                 # S1 (`PLAN-oi-replan-received-links.md`, AC-RL-17): the receipt figure
                 # every link states, and the fields the "fully received" test reads for
                 # whichever book this link names.
@@ -4808,8 +4815,6 @@ class ProjectOrderInquiryService:
             .outerjoin(
                 SPOAllocation, SPOAllocation.id == OrderInquiryLink.spo_allocation_id
             )
-            .outerjoin(SpoPOLine, SpoPOLine.id == SPOAllocation.po_line_id)
-            .outerjoin(SpoPO, SpoPO.id == SpoPOLine.purchase_order_id)
             .outerjoin(
                 Warehouse,
                 Warehouse.id
@@ -4857,6 +4862,10 @@ class ProjectOrderInquiryService:
         # has two pairs, and a dict of one pair per row silently kept the LAST link's
         # and showed only that purchase order's derived SPO.
         po_pairs_by_row: Dict[str, set] = {}
+        # R17: entries needing their `purchase_order_id` backfilled once the follow-up
+        # query below resolves `spo_supply_po_line_id -> purchase_order_id`, keyed by
+        # the supply PO line id so one query answers every link on the page.
+        entries_awaiting_purchase_order_id: Dict[str, List[Dict[str, Any]]] = {}
         for (
             link,
             stock_location,
@@ -4874,7 +4883,7 @@ class ProjectOrderInquiryService:
             spo_expected_date,
             spo_location_code,
             spo_from_po_number,
-            spo_purchase_order_id,
+            spo_supply_po_line_id,
             po_qty_ordered,
             po_qty_received,
             po_line_status,
@@ -4929,8 +4938,7 @@ class ProjectOrderInquiryService:
                     )
                 )
                 received_qty = _qty_str(_dec(po_qty_received))
-            out.setdefault(link.row_id, []).append(
-                {
+            entry = {
                     "id": link.id,
                     "kind": "spo" if is_spo else "po",
                     # S3 (`PLAN-oi-cascade-skip-early-arrival.md`): the target itself,
@@ -4963,12 +4971,11 @@ class ProjectOrderInquiryService:
                     "po_id": None if is_spo else po_id,
                     # L4 (review round): the header id EITHER kind's document lives on -
                     # a plain PO link's own `po_id`, or an SPO link's allocation traced
-                    # back to its SPO's own header.
-                    "purchase_order_id": (
-                        str(spo_purchase_order_id)
-                        if is_spo and spo_purchase_order_id
-                        else (str(po_id) if po_id else None)
-                    ),
+                    # back to its own supply PO line's header. The SPO half is filled in
+                    # below, AFTER the follow-up query resolves it (see
+                    # `entries_awaiting_purchase_order_id` above) - never here, where a
+                    # second joined alias of `PurchaseOrderLine` silently returned NULL.
+                    "purchase_order_id": None if is_spo else (str(po_id) if po_id else None),
                     # Owner's 9 Sep feedback against the running lane: "if we link by
                     # SPO, where do we see the PO number of this SPO?" - nowhere, before
                     # this. `from_po_number` is the raw AutoCount pass-through
@@ -4987,7 +4994,24 @@ class ProjectOrderInquiryService:
                     # treating it as a link this system made independently.
                     "derived_po": bool(is_spo and spo_from_po_number),
                 }
+            out.setdefault(link.row_id, []).append(entry)
+            if is_spo and spo_supply_po_line_id:
+                entries_awaiting_purchase_order_id.setdefault(
+                    str(spo_supply_po_line_id), []
+                ).append(entry)
+        if entries_awaiting_purchase_order_id:
+            supply_lines = (
+                self.db.query(PurchaseOrderLine.id, PurchaseOrderLine.purchase_order_id)
+                .filter(
+                    PurchaseOrderLine.id.in_(entries_awaiting_purchase_order_id.keys())
+                )
+                .all()
             )
+            for supply_line_id, purchase_order_id in supply_lines:
+                if not purchase_order_id:
+                    continue
+                for entry in entries_awaiting_purchase_order_id[str(supply_line_id)]:
+                    entry["purchase_order_id"] = str(purchase_order_id)
         self._append_derived_spo_entries(out, po_pairs_by_row)
         return out
 
@@ -5066,6 +5090,12 @@ class ProjectOrderInquiryService:
                     "kind": "spo",
                     "derived": True,
                     "document": spo_number,
+                    # This ONE entry is one specific `spo_allocations` row (the loop is
+                    # over allocations, not products), so its own id is unambiguous even
+                    # though WHICH allocations qualify as a candidate for this row is a
+                    # product/PO-number match (R-D/R-E, unchanged) - never used to pick
+                    # the entry, only to name the one it already is.
+                    "spo_allocation_id": str(allocation_id),
                     # 17 Sep prod 500: `sales_order_service._line_links` hard-indexes
                     # `line_label`/`late`/`late_days` on EVERY entry `links_for_rows`
                     # returns, and reads `purchase_order_id` via `.get`. A synthetic

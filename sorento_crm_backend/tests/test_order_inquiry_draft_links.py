@@ -1059,6 +1059,50 @@ def test_the_purchase_order_lines_grid_allocated_is_per_line_not_the_whole_docum
     assert lines_by_id[free_line.id]["allocated"] == "0"
 
 
+def test_the_shipping_order_lightbox_line_carries_its_own_id(api):
+    """R15 (owner rulings, 25 Sep 2026, hand test on stack C): the SPO lightbox never
+    highlighted its own linked line the way the PO lightbox does (issue #1215 point 2) -
+    `get_po_detail` sends each line's own `id`, `get_spo_detail` never did. Without it
+    the FE has no field to match a link's `spo_allocation_id` against."""
+    client, world = api
+    pool = _pooled(world)
+    allocation = _spo_line(world, qty=50, warehouse=pool)
+
+    body = client.get(f"{LIST}/spo/{quote(allocation.spo_number, safe='')}").json()
+
+    assert body["lines"][0]["id"] == allocation.id
+
+
+def test_the_shipping_order_lightbox_highlights_the_real_linked_line_not_by_product(api):
+    """R15: the SPO lightbox must highlight the SPO line the OI row's own real link
+    names - `OrderInquiryLink.spo_allocation_id`, the exact allocation the cascade or a
+    person resolved through the SO line / PO line chain - never a re-match by product or
+    by source PO number on the frontend. Two lines of the SAME product prove the
+    identity is the FK, not a product guess."""
+    client, world = api
+    pool = _pooled(world)
+    taken = _spo_line(world, qty=50, warehouse=pool, spo_number="SPO-2026/09-ZZT1", line_no=1)
+    _other = _spo_line(
+        world, qty=30, warehouse=pool, spo_number="SPO-2026/09-ZZT1", line_no=2,
+    )
+    row = _raise_one_row(api, qty="10")["row"]
+    ProjectOrderInquiryService(world.db).place_on_po_allocations(
+        str(row.id), [{"spo_allocation_id": str(taken.id), "qty": "10"}], actor_user_id=None,
+    )
+    world.db.commit()
+
+    body = client.get(f"{LIST}/spo/{quote(taken.spo_number, safe='')}").json()
+    wire_link = next(
+        link for link in _links_of(world, row) if link.spo_allocation_id == taken.id
+    )
+
+    assert wire_link.spo_allocation_id == taken.id
+    lines_by_id = {line["id"]: line for line in body["lines"]}
+    assert taken.id in lines_by_id
+    assert _other.id in lines_by_id
+    assert taken.id != _other.id
+
+
 def test_the_shipping_order_lightbox_404s_on_a_number_nobody_holds(api):
     client, _world = api
 

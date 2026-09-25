@@ -759,6 +759,107 @@ def test_the_links_payload_pins_po_line_id_for_highlighting_the_lightbox_line(ap
     assert link["po_line_id"] == po["line"].id
 
 
+def test_the_links_payload_pins_spo_allocation_id_for_highlighting_the_spo_lightbox_line(api):
+    """R15 (owner rulings, 25 Sep 2026, hand test on stack C): the SPO lightbox never
+    highlighted its own linked line because `spo_allocation_id` - the exact mirror of
+    `po_line_id` above, already computed by `links_for_rows` - never reached the wire
+    either. Same response_model silent-drop gap, same fix."""
+    client, db, company_id, seeded = api
+    supplier = Supplier(
+        id=_uid(), company_id=company_id, supplier_code=f"ZZT-{_uid()[:8]}",
+        supplier_name=f"{MARKER} SPO SUPPLIER",
+    )
+    db.add(supplier)
+    db.flush()
+    product = _product(db, f"ZZT-SPOLINE-{_uid()[:6]}", f"{MARKER} spo line item")
+    allocation = SPOAllocation(
+        id=_uid(), company_id=company_id, spo_number=f"ZZT-SPO-{_uid()[:8]}",
+        spo_line_number=1, product_id=product.id, allocated_quantity=40,
+        quantity_received=0, receipt_status="pending", line_status="open",
+        source_system="scm_upload", supplier_id=supplier.id,
+    )
+    db.add(allocation)
+    db.flush()
+    pso = ProjectSalesOrder(
+        id=_uid(), company_id=company_id, provisional_ref=f"ZZT-PSO-{_uid()[:8]}",
+    )
+    db.add(pso)
+    db.flush()
+    inquiry = _inquiry_for(db, company_id, pso)
+    row = OrderInquiryRow(
+        id=_uid(), company_id=company_id, order_inquiry_id=inquiry.id, verb=IV_ORDER,
+        state=INQUIRY_PLACED, qty=Decimal("5"), item_code=product.product_code,
+    )
+    db.add(row)
+    db.flush()
+    db.add(
+        OrderInquiryLink(
+            id=_uid(), company_id=company_id, row_id=row.id,
+            spo_allocation_id=allocation.id, document=allocation.spo_number, qty=row.qty,
+        )
+    )
+    db.commit()
+
+    body = client.get(LIST, params={"limit": 200}).json()
+    wire_row = next(r for r in body["data"] if r["id"] == row.id)
+    [link] = wire_row["links"]
+
+    assert link["spo_allocation_id"] == allocation.id
+    assert link["kind"] == "spo"
+
+
+def test_the_links_payload_pins_purchase_order_id_for_an_spo_link_with_a_resolved_supply_line(api):
+    """R17 (owner rulings, 25 Sep 2026): the Lines tab's "<number> via SPO" cell needs
+    the PO id an SPO allocation draws its supply from (`SPOAllocation.po_line_id` traced
+    to its own header), so it can open that PO directly instead of guessing by number.
+    `links_for_rows` already resolves this as `purchase_order_id`; nothing pinned that
+    it reaches the wire."""
+    client, db, company_id, seeded = api
+    po = _purchase_order(db, company_id)
+    supplier = Supplier(
+        id=_uid(), company_id=company_id, supplier_code=f"ZZT-{_uid()[:8]}",
+        supplier_name=f"{MARKER} SPO SUPPLIER 2",
+    )
+    db.add(supplier)
+    db.flush()
+    product = _product(db, f"ZZT-SPOLINE2-{_uid()[:6]}", f"{MARKER} spo line item 2")
+    allocation = SPOAllocation(
+        id=_uid(), company_id=company_id, spo_number=f"ZZT-SPO-{_uid()[:8]}",
+        spo_line_number=1, product_id=product.id, allocated_quantity=40,
+        quantity_received=0, receipt_status="pending", line_status="open",
+        source_system="scm_upload", supplier_id=supplier.id, po_line_id=po["line"].id,
+        from_po_number=po["order"].po_number,
+    )
+    db.add(allocation)
+    db.flush()
+    pso = ProjectSalesOrder(
+        id=_uid(), company_id=company_id, provisional_ref=f"ZZT-PSO-{_uid()[:8]}",
+    )
+    db.add(pso)
+    db.flush()
+    inquiry = _inquiry_for(db, company_id, pso)
+    row = OrderInquiryRow(
+        id=_uid(), company_id=company_id, order_inquiry_id=inquiry.id, verb=IV_ORDER,
+        state=INQUIRY_PLACED, qty=Decimal("5"), item_code=product.product_code,
+    )
+    db.add(row)
+    db.flush()
+    db.add(
+        OrderInquiryLink(
+            id=_uid(), company_id=company_id, row_id=row.id,
+            spo_allocation_id=allocation.id, document=allocation.spo_number, qty=row.qty,
+        )
+    )
+    db.commit()
+
+    body = client.get(LIST, params={"limit": 200}).json()
+    wire_row = next(r for r in body["data"] if r["id"] == row.id)
+    [link] = wire_row["links"]
+
+    assert link["purchase_order_id"] == po["order"].id
+    assert link["source_po_number"] == po["order"].po_number
+
+
 def test_supplier_reads_off_an_spo_only_links_own_supplier(api):
     """AC-FB-52 (measured on the prod copy: 5,156 SPO-only rows show "Not linked"
     under Supplier): a row whose ONLY link is an SPO allocation with no `po_line_id`

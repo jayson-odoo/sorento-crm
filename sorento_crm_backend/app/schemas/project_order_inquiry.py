@@ -123,6 +123,20 @@ class OrderInquiryLinkOut(BaseModel):
     #: Needed so the Lines tab / PO lightbox can highlight the exact line this link
     #: sits on. Null on an SPO link.
     po_line_id: Optional[str] = None
+    #: R15 (owner rulings, 25 Sep 2026, hand test on stack C): the same gap as
+    #: `po_line_id` above, mirrored for the other book - `links_for_rows` has always
+    #: computed this (the link's own target), but it never reached the wire. Needed so
+    #: the SPO lightbox can highlight the exact allocation line this link sits on, the
+    #: same way `po_line_id` already does for the PO lightbox. Null on a PO-kind link.
+    spo_allocation_id: Optional[str] = None
+    #: R17 (owner rulings, 25 Sep 2026): the purchase order an SPO link's allocation
+    #: draws down (`SPOAllocation.po_line_id` traced to its own PO header), so the Lines
+    #: tab's "<number> via SPO" cell can open that PO directly rather than guessing by
+    #: number. A different question from `po_id` above, which addresses THIS link's own
+    #: document. Null on a PO-kind link and on an SPO allocation with no resolved supply
+    #: PO line (`links_for_rows`' own `purchase_order_id`, review round 1's L4 item,
+    #: which never reached the wire either).
+    purchase_order_id: Optional[str] = None
     #: The purchase order an SPO link's allocation was raised FROM, per AutoCount's own
     #: statement (`SPOAllocation.from_po_number`, migration 493 / contract 2.2) - a
     #: different question from `po_id` above, which addresses this link's OWN document.
@@ -1238,6 +1252,11 @@ class OrderInquirySpoDetailLine(BaseModel):
     never take (R11): showing it is how a buyer learns why nothing was drafted onto it.
     """
 
+    #: R15 (owner rulings, 25 Sep 2026, hand test on stack C): the line's own identity
+    #: (`spo_allocations.id`), the same reason `OrderInquiryPoDetailLine.id` exists
+    #: (issue #1215 point 2) - without it the SPO lightbox has no field to highlight a
+    #: line by, unlike the PO lightbox next door.
+    id: Optional[str] = None
     sku: Optional[str] = None
     product_name: Optional[str] = None
     allocated: str

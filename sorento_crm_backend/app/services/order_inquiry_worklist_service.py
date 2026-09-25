@@ -2524,6 +2524,11 @@ class OrderInquiryWorklistService:
             "container_no": shipment.shipping_container_number if shipment else None,
             "lines": [
                 {
+                    # R15 (owner rulings, 25 Sep 2026, hand test on stack C): the line's
+                    # own identity, the same reason `get_po_detail` sends one for its own
+                    # lines (issue #1215 point 2) - without it the FE has no field to
+                    # highlight this exact allocation by.
+                    "id": str(allocation.id),
                     "sku": product_code,
                     "product_name": product_name,
                     "allocated": _qty_str(_dec(allocation.allocated_quantity)),
