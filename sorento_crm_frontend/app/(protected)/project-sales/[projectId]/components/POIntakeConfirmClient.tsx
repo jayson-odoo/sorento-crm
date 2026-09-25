@@ -194,7 +194,6 @@ export function POIntakeConfirmClient({
               {confirmed && !approvedAt && canEdit && (
                 <Button
                   type="button"
-                  variant="outline"
                   disabled={intake.isStamping}
                   onClick={() => void intake.approve()}
                 >
@@ -205,7 +204,6 @@ export function POIntakeConfirmClient({
               {approvedAt && !countersignedAt && canEdit && (
                 <Button
                   type="button"
-                  variant="outline"
                   disabled={intake.isStamping}
                   onClick={() => void intake.countersign()}
                 >
@@ -473,12 +471,8 @@ function StatusTrail({
         return (
           <React.Fragment key={stage.label}>
             {index > 0 && <span className="text-muted-foreground">&rsaquo;</span>}
-            <span
-              className={`inline-flex items-center rounded-full border px-2 py-0.5 font-medium ${
-                done
-                  ? 'border-emerald-500/40 bg-emerald-50 text-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-300'
-                  : 'border-border bg-muted text-muted-foreground'
-              }`}
+            <Badge
+              variant={done ? 'success' : 'secondary'}
               title={done ? `${stage.by ?? 'Recorded'} · ${formatDateTimeInMalaysia(stage.at as string)}` : 'Not yet'}
             >
               {stage.label}
@@ -487,7 +481,7 @@ function StatusTrail({
                   ? ` by ${stage.by ?? 'Recorded'} · ${formatDateTimeInMalaysia(stage.at as string)}`
                   : ' Not yet'}
               </span>
-            </span>
+            </Badge>
           </React.Fragment>
         );
       })}

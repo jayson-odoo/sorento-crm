@@ -476,7 +476,40 @@ describe('POIntakeConfirmClient', () => {
     expect(screen.getByText('Approved')).toBeInTheDocument();
     expect(screen.getByText('Countersigned')).toBeInTheDocument();
     expect(screen.getAllByText('Not yet')).toHaveLength(2);
-    expect(screen.getByRole('button', { name: /^Approve$/ })).toBeInTheDocument();
+    const approve = screen.getByRole('button', { name: /^Approve$/ });
+    expect(approve).toBeInTheDocument();
+    // S3: the next step is the one primary button, not an outline button.
+    expect(approve.className).not.toMatch(/\bborder-input\b/);
+  });
+
+  it('renders the status trail as Badge pills, not a hand-rolled coloured span (S4)', async () => {
+    getPOVersion.mockResolvedValue(
+      version({
+        confirmed_at: '2026-05-15T03:02:00',
+        confirmed_by_name: 'Yana Abdullah',
+        purchase_order: {
+          po_number: 'HQ/26/01/041',
+          status: 'approved',
+          approved_by_name: 'Yana Abdullah',
+          approved_at: '2026-05-15T03:05:00',
+          countersigned_by_name: null,
+          countersigned_at: null,
+        },
+      }),
+    );
+
+    renderConfirm();
+
+    // "Confirmed" appears twice - the header StatusPill and the trail - so the trail's
+    // own pill is the last one.
+    const confirmedPills = await screen.findAllByText('Confirmed');
+    const confirmedBadge = confirmedPills[confirmedPills.length - 1].closest('[data-slot="badge"]');
+    expect(confirmedBadge).not.toBeNull();
+    expect(confirmedBadge?.className).not.toMatch(/border-emerald/);
+
+    const approvedBadge = screen.getByText('Approved').closest('[data-slot="badge"]');
+    expect(approvedBadge).not.toBeNull();
+    expect(approvedBadge?.className).not.toMatch(/border-emerald/);
   });
 
   it('offers countersign only once the PO is approved, and stops editing after confirm', async () => {
@@ -498,6 +531,8 @@ describe('POIntakeConfirmClient', () => {
     renderConfirm();
 
     const countersign = await screen.findByRole('button', { name: /Countersign/i });
+    // S3: the next step is the one primary button, not an outline button.
+    expect(countersign.className).not.toMatch(/\bborder-input\b/);
     fireEvent.click(countersign);
     await waitFor(() => expect(countersignPurchaseOrder).toHaveBeenCalledWith('po1'));
 
