@@ -1,0 +1,110 @@
+# Console case for the tail-drops-the-pointer regression
+# (`documentation/plans/chatbot/PLAN-chatbot-ideation-pointer-tail-25sep.md`, AC-4/AC-5).
+#
+# Proves: two REAL turns, in order, with NO injected `previous_conversation_state` - turn 1
+# opens a draft, turn 2 is a question about a field the intake asked for, and turn 2 must
+# still be graded `ideate`. The 24 Sep case
+# (`2026-09-24-ideation-draft-keeps-lane.yaml`) injects the pointer by hand through
+# `previous_conversation_state`, so it never exercises the tail's own write between two
+# turns and cannot catch this bug: `run_tail` was writing `before.get("ideation")` (the
+# value the turn STARTED with, always null on a fresh contact) instead of the pointer the
+# ideate lane's own intake call just answered, so the second turn always arrived with no
+# open draft.
+#
+# NOT collected by pytest. Run against a lane stack:
+#
+#   cd sorento_crm_backend
+#   venv/bin/python scripts/chatbot_console_check.py \
+#       tests/chatbot/console_cases/2026-09-25-ideation-pointer-carries.yaml \
+#       --base-url http://127.0.0.1:<lane backend port> --mock-parser
+#
+# `--mock-parser` feeds each turn's `parser:` block below as the verdict, so the run grades
+# the fix deterministically with no LLM call. Drop the flag to run the same two turns
+# through the live parser (`--sleep-seconds 8` per the OpenAI TPM 429 lesson; export
+# EXTERNAL_API_KEY from the backend .env first).
+
+contact: "437264483"
+
+cases:
+  - name: a second ideate turn keeps the draft the first turn opened (owner console walk 25 Sep 2026)
+    turns:
+      - text: "i have an idea"
+        parser:
+          message_type: "business_query"
+          intent_hint: "submit_idea"
+          domain_hint: "ideate"
+          scope_intent: null
+          is_affirmative: null
+          user_goal: "submitting an idea"
+          continuation: null
+          access_levels: []
+          broaden_axis: null
+          broaden_to: null
+          date_mode: null
+          date_filter_start: null
+          date_filter_end: null
+          match_mode: null
+          demand_qty: null
+          entities: []
+          entity_op: null
+          domain_in_message: true
+          requested_attributes: []
+          contains_flyer: false
+          reference_positions: []
+          reference_target: null
+          person_mention: null
+          is_active: null
+          order_status: null
+          group_by: null
+          top_n: null
+          sales_channel: null
+          correction: false
+          routing: {suggested_team: null, suggested_agent: null}
+          escalation: {is_escalation_confirmation: null, company_pick: null}
+          document: null
+          status: null
+          asks: []
+          topic_reset: false
+          anaphora: {backward_reference: false}
+        expect:
+          branch_kind: ideate
+      - text: "what do you mean impact?"
+        parser:
+          message_type: "clarification"
+          intent_hint: null
+          domain_hint: null
+          scope_intent: null
+          is_affirmative: null
+          user_goal: "asking what impact means"
+          continuation: null
+          access_levels: []
+          broaden_axis: null
+          broaden_to: null
+          date_mode: null
+          date_filter_start: null
+          date_filter_end: null
+          match_mode: null
+          demand_qty: null
+          entities: []
+          entity_op: null
+          domain_in_message: false
+          requested_attributes: []
+          contains_flyer: false
+          reference_positions: []
+          reference_target: null
+          person_mention: null
+          is_active: null
+          order_status: null
+          group_by: null
+          top_n: null
+          sales_channel: null
+          correction: false
+          routing: {suggested_team: null, suggested_agent: null}
+          escalation: {is_escalation_confirmation: null, company_pick: null}
+          document: null
+          status: null
+          asks: []
+          topic_reset: false
+          anaphora: {backward_reference: false}
+        expect:
+          branch_kind: ideate
