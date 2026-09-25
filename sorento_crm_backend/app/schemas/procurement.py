@@ -1,10 +1,11 @@
 """Procurement schemas."""
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from typing import Optional, List
 from datetime import datetime, date
 from decimal import Decimal
 import uuid
 from app.schemas.resources import AttachmentTypeSimple
+from app.services.error_handler import AppException
 
 
 def _validate_uuid_format(v: Optional[str]) -> Optional[str]:
@@ -1133,6 +1134,17 @@ class PurchaseRequestLineBase(BaseModel):
     unit_price: Optional[Decimal] = None  # sponsorship form line
     total: Optional[Decimal] = None  # sponsorship form line (qty * unit_price)
 
+    @field_validator("unit_price", mode="before")
+    @classmethod
+    def _blank_unit_price_is_missing(cls, v: object) -> object:
+        # #1227: a blank string must read as "missing" (the same
+        # `refuse_missing_sponsorship_unit_prices` refusal), not pydantic's own
+        # decimal-parsing 422 - matches the external line's own blank coercion
+        # (`PurchaseRequestExternalLine.coerce_decimal`).
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
+
 
 class PurchaseRequestLineCreate(PurchaseRequestLineBase):
     pass
@@ -1146,6 +1158,27 @@ class PurchaseRequestLineResponse(PurchaseRequestLineBase):
 
     class Config:
         from_attributes = True
+
+
+def refuse_missing_sponsorship_unit_prices(request_type: Optional[str], products) -> None:
+    """#1227: a sponsorship form line must carry a usable unit price on create and edit -
+    purchase requests are unchanged (``products is None`` on an update that does not touch
+    lines is also a no-op). Raises with the same ``{message, detail, code}`` shape
+    ``price_tag_request_service`` uses for a line refusal (``detail=f"line:{index}"``), so a
+    caller (the portal's external create, or the system form) can name the offending line
+    exactly like it already does for a price tag request line.
+    """
+    if request_type != "sponsorship_form" or products is None:
+        return
+    for index, line in enumerate(products):
+        price = getattr(line, "unit_price", None)
+        if price is None or price < 0:
+            raise AppException(
+                status_code=422,
+                message="Unit price is required.",
+                detail=f"line:{index}",
+                code="SPONSORSHIP_UNIT_PRICE_REQUIRED",
+            )
 
 
 class PurchaseRequestHeaderBase(BaseModel):
@@ -1214,6 +1247,11 @@ class PurchaseRequestHeaderCreate(PurchaseRequestHeaderBase):
     def coerce_scope_ids(cls, v: object) -> Optional[str]:
         return _coerce_scope_id_to_string(v)
 
+    @model_validator(mode="after")
+    def _require_sponsorship_unit_prices(self) -> "PurchaseRequestHeaderCreate":
+        refuse_missing_sponsorship_unit_prices(self.request_type, self.products)
+        return self
+
 
 class PurchaseRequestHeaderUpdate(BaseModel):
     request_type: Optional[str] = None
@@ -1271,6 +1309,11 @@ class PurchaseRequestHeaderUpdate(BaseModel):
     @classmethod
     def coerce_scope_ids(cls, v: object) -> Optional[str]:
         return _coerce_scope_id_to_string(v)
+
+    @model_validator(mode="after")
+    def _require_sponsorship_unit_prices(self) -> "PurchaseRequestHeaderUpdate":
+        refuse_missing_sponsorship_unit_prices(self.request_type, self.products)
+        return self
 
 
 class PurchaseRequestUpdateAndReply(PurchaseRequestHeaderUpdate):

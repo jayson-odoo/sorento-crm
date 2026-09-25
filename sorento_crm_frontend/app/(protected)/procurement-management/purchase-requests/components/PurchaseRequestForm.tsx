@@ -260,7 +260,12 @@ export default function PurchaseRequestForm({
         ? [
             {
               id: "unit_price",
-              header: ({ column }) => <DataGridColumnHeader title="U/P" column={column} />,
+              header: ({ column }) => (
+                <DataGridColumnHeader
+                  title="U/P *"
+                  column={column}
+                />
+              ),
               cell: ({ row }) => (
                 <FormField
                   control={form.control}
@@ -285,7 +290,7 @@ export default function PurchaseRequestForm({
                           className="h-8 w-24"
                         />
                       </FormControl>
-                      <FormMessage />
+                      <FormMessage className="whitespace-normal" />
                     </FormItem>
                   )}
                 />
@@ -1173,6 +1178,14 @@ export default function PurchaseRequestForm({
                                   ? Number(p.quantity)
                                   : undefined,
                             remark: p.remark ?? undefined,
+                            unit_price:
+                              p.unit_price != null && p.unit_price !== ""
+                                ? Number(p.unit_price)
+                                : undefined,
+                            total:
+                              p.total != null && p.total !== ""
+                                ? Number(p.total)
+                                : undefined,
                           })),
                         },
                         reply_message: replyMessage.trim(),

@@ -8,7 +8,10 @@ from typing import Any, List, Optional, Union
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.schemas.procurement import InboundShipmentResponse
+from app.schemas.procurement import (
+    InboundShipmentResponse,
+    refuse_missing_sponsorship_unit_prices,
+)
 
 DateType = date
 
@@ -215,6 +218,11 @@ class PurchaseRequestExternalCreate(BaseModel):
         if s == "draft":
             return None
         return s
+
+    @model_validator(mode="after")
+    def _require_sponsorship_unit_prices(self) -> "PurchaseRequestExternalCreate":
+        refuse_missing_sponsorship_unit_prices(self.request_type, self.products)
+        return self
 
 
 class PurchaseRequestExternalResponse(BaseModel):
