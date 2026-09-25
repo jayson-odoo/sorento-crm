@@ -1147,10 +1147,19 @@ describe('FulfilmentBoardListView: a pre-marked row can still be ticked and save
     ).toBeEnabled();
   });
 
-  it('ticking a pre-marked row and pressing "Save as suggested" turns it into a real saved decision', async () => {
+  /**
+   * #1218 (main, merged 25 Sep 2026, 07:28Z) folded the board-wide "Save as suggested (N)"
+   * button into the Decide menu's first item, "As suggested" - there is no bare bulk-save
+   * button left to find (see this file's own "renders Decide disabled until a row is
+   * ticked, with no bare bulk-save button" pin). The save path underneath is the SAME
+   * `canQuickSave` gate either way, which is what a bare pre-mark already reads as eligible
+   * for (S5/N1) - so this drives the Decide menu instead of asserting a control #1218
+   * removed by design.
+   */
+  it('ticking a pre-marked row and choosing Decide > As suggested turns it into a real saved decision', async () => {
     const user = userEvent.setup();
     const row = contribution();
-    const { onDecide, onDecideMany, rerender } = renderView({
+    const { onDecide, onDecideMany, onDecideBatch, rerender } = renderView({
       contributions: [row],
       draft: { [row.key]: { verdict: 'approved', preMarked: true } },
     });
@@ -1166,17 +1175,16 @@ describe('FulfilmentBoardListView: a pre-marked row can still be ticked and save
     expect(checkbox).toBeEnabled();
     await user.click(checkbox);
 
-    // The toolbar button is a SEPARATE render this row's selection state has to reach
-    // first - waited for on its own line, then clicked on its own line, rather than
-    // `fireEvent.click(await screen.findByRole(...))` in one statement: a bare `fireEvent`
-    // never yields to React the way `userEvent` does, and a slower CI box can still be
-    // mid-render when the click fires.
-    const saveButton = await screen.findByRole('button', {
-      name: 'Save as suggested (1)',
-    });
-    await user.click(saveButton);
+    // The Decide button is a SEPARATE render this row's selection state has to reach
+    // first - waited for on its own line, then opened on its own line. Matches this
+    // file's own working precedent ("AC-3/D15: Decide > As suggested saves every ticked
+    // row..."): `keyDown Enter` opens the Radix dropdown trigger, then the menu item.
+    fireEvent.keyDown(await screen.findByTestId('board-decide-button'), { key: 'Enter' });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'As suggested' }));
 
-    await waitFor(() => expect(onDecideMany).toHaveBeenCalledWith([row.key]));
+    // S3: posts through `onDecideBatch` (the Decide strip's own chunked-PUT path) - the
+    // mock still forwards each entry to `onDecide` for the assertions below to read.
+    await waitFor(() => expect(onDecideBatch).toHaveBeenCalledTimes(1));
     expect(onDecide).toHaveBeenCalledWith(
       row.key,
       expect.objectContaining({ verdict: 'approved', buy_qty: '43' }),
@@ -1194,6 +1202,7 @@ describe('FulfilmentBoardListView: a pre-marked row can still be ticked and save
         draft={{ [row.key]: { verdict: 'approved' } }}
         onDecide={onDecide}
         onDecideMany={onDecideMany}
+        onDecideBatch={onDecideBatch}
       />,
     );
     expect(
