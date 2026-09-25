@@ -7535,6 +7535,20 @@ class ProjectOrderInquiryService:
         against it, so two rows are never offered the very same units. `None` (every
         caller before this parameter existed, and the Link dialog's own preview) is a
         no-op and leaves this exactly as it always was.
+
+        Review round 4 (found alongside Blocking 1's `test_write_time_supply_claim.py`
+        rewrite): a G12 write-time-CLAIMED candidate (`own_so_claim`/`cited`) is skipped
+        here. Its `remaining` is already an EXCLUSIVE per-row share - netted against every
+        OTHER sales order's own claim on the same line by `_candidates_for_row` itself
+        (`reservations_by_target`) - not a slice of one shared pool several rows race for
+        this pass. Netting `held_by_others` on TOP of that double-subtracted a second
+        claimant's own dedicated suggestion from the first claimant's remaining: two rows
+        each claim-dedicated 30 and 84 of one 114 line suggested 84 and 0 instead of 30
+        and 84, because the second row's OWN 84 (already excluded from the first row's
+        `remaining` by the claim netting) was subtracted from it again here. A shared-pool
+        candidate (neither flag set) is unaffected - `held_by_others` is exactly the
+        mechanism that keeps two such rows off the same units, which the claim already
+        does for a dedicated one.
         """
         cascadable_total = sum(
             (
@@ -7560,7 +7574,9 @@ class ProjectOrderInquiryService:
             if not candidate.get("cascadable", True):
                 continue
             remaining = candidate["remaining"]
-            if held_by_others:
+            if held_by_others and not (
+                candidate.get("own_so_claim") or candidate.get("cited")
+            ):
                 remaining = max(
                     remaining - held_by_others.get(candidate["target_id"], _ZERO), _ZERO
                 )
