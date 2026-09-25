@@ -1305,3 +1305,114 @@ class TestACLT22CompanyScoped:
         assert row.id in {item["id"] for item in body["data"]}, (
             "the world's own row still lists normally"
         )
+
+
+# ==================================================== Review round 3 Should fix 1
+class TestReviewRound3RetiredRowsNeverShowAStaleSuggestion:
+    def test_a_row_cancelled_by_retire_inquiry_rows_reads_no_suggestion(self, ctx):
+        """`_retire_inquiry_rows` (`planning_change_service.py`, a closed line's row)
+        cancels a RAISED row without calling `_drop_suggested_links` itself -
+        `_shift_links_off_retired_lines` right after it also skips any row with no
+        REAL link (`if not links: continue`), so a row holding only a suggestion is
+        never refreshed either. The reader `suggested_links_for_rows` used to have no
+        state filter at all, so the Suggested cell would keep showing a document for
+        a row the buyer has been told is cancelled. Fixed at the reader, the same
+        `_open_for_buying_clauses` every other suggestion reader already applies -
+        covers this writer and any future one without a drop call of its own."""
+        from app.services.planning_change_service import _retire_inquiry_rows
+
+        db = ctx.db
+        product = _seed_product(db, company_id=ctx.company_a)
+        ref = _ref("SOL")
+        _so, core_line = _seed_so_line(
+            db, company_id=ctx.company_a, product_id=product.id, source_ref=ref, qty="3"
+        )
+        _po, line = _seed_po_line(
+            db,
+            company_id=ctx.company_a,
+            product_id=product.id,
+            qty_ordered="10",
+            header_status="active",
+        )
+        _pso, mirror_line, _inquiry, row = _seed_row_and_mirror(
+            db, company_id=ctx.company_a, core_line=core_line, product_id=product.id, qty="3"
+        )
+        db.commit()
+
+        service = ProjectOrderInquiryService(db)
+        service.auto_place_for_products(
+            None, actor_user_id=None, trigger="raise", row_ids=[str(row.id)],
+        )
+        assert _suggested_of(db, row.id), "the suggestion has to exist for the test to mean anything"
+
+        cancelled = _retire_inquiry_rows(
+            db, str(mirror_line.id), "The line was closed by a planning change batch."
+        )
+        db.commit()
+        assert cancelled == [str(row.id)]
+
+        assert service.suggested_links_for_rows([str(row.id)]) == {}
+
+
+# ==================================================== Review round 3 Should fix 2
+class TestReviewRound3CapacityFilterHasItsOwnGuard:
+    def test_a_stale_suggestion_left_on_a_cancelled_row_holds_no_capacity(self, ctx):
+        """Review round 2's Blocking 4 fix (`_open_for_buying_clauses`, netted into
+        `_suggested_totals_by_target` and so into every row's `held_by_others`) had
+        no test that reached it directly: every AC-LT-18 test goes through a writer
+        that ALSO calls `_drop_suggested_links`, so a mutation that deleted the
+        filter entirely (`_open_for_buying_clauses` -> `()`) left all 100 tests in
+        this suite green. Here the cancelled row's state is set directly, with no
+        drop call at all - the exact K2a gap - so only the capacity FILTER, not a
+        drop, stands between it and blocking a second row's own suggestion."""
+        db = ctx.db
+        product = _seed_product(db, company_id=ctx.company_a)
+        _po, po_line = _seed_po_line(
+            db,
+            company_id=ctx.company_a,
+            product_id=product.id,
+            qty_ordered="8",
+            header_status="active",
+        )
+
+        ref_a = _ref("SOL")
+        _so_a, core_line_a = _seed_so_line(
+            db, company_id=ctx.company_a, product_id=product.id, source_ref=ref_a, qty="6"
+        )
+        _pso_a, _mirror_a, _inquiry_a, row_a = _seed_row_and_mirror(
+            db, company_id=ctx.company_a, core_line=core_line_a, product_id=product.id, qty="6"
+        )
+        db.commit()
+
+        service = ProjectOrderInquiryService(db)
+        service.auto_place_for_products(
+            None, actor_user_id=None, trigger="raise", row_ids=[str(row_a.id)],
+        )
+        assert sum(
+            Decimal(str(s.qty)) for s in _suggested_of(db, row_a.id)
+        ) == Decimal("6")
+
+        # Cancelled with NO drop call - the row's suggestion is left standing in the
+        # store, exactly the gap the reader-level fix (Should fix 1) and this test
+        # both target from the capacity side.
+        row_a.state = INQUIRY_CANCELLED
+        db.commit()
+
+        ref_b = _ref("SOL")
+        _so_b, core_line_b = _seed_so_line(
+            db, company_id=ctx.company_a, product_id=product.id, source_ref=ref_b, qty="8"
+        )
+        _pso_b, _mirror_b, _inquiry_b, row_b = _seed_row_and_mirror(
+            db, company_id=ctx.company_a, core_line=core_line_b, product_id=product.id, qty="8"
+        )
+        db.commit()
+
+        service.auto_place_for_products(
+            None, actor_user_id=None, trigger="raise", row_ids=[str(row_b.id)],
+        )
+
+        suggested_b = _suggested_of(db, row_b.id)
+        assert sum(Decimal(str(s.qty)) for s in suggested_b) == Decimal("8"), (
+            "row B draws the line's FULL room - a cancelled row's stale suggestion "
+            "must never hold capacity against it"
+        )

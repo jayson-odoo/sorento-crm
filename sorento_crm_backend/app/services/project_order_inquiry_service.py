@@ -5187,6 +5187,16 @@ class ProjectOrderInquiryService:
         `expected_date`, `late_days`), plus `trigger` (why the walk offered this) -
         and none of what only a real link carries: no `id` that addresses an unlink,
         no `linked_by`, no `received`, no claim.
+
+        Filtered to `_open_for_buying_clauses` (review round 3 Should fix 1): a row
+        `_retire_inquiry_rows` cancels never gets a `_drop_suggested_links` call of
+        its own (`_shift_links_off_retired_lines` right after it only ever moves a
+        REAL link, so a row holding just a suggestion is skipped there too), and any
+        future writer could make the same omission. The same clause already keeps a
+        cancelled row's suggestion out of `_suggested_totals_by_target`'s capacity
+        count; applying it here too means the Suggested cell can never show a
+        document for a row purchasing has been told is done, whether or not the
+        writer that moved it remembered the drop.
         """
         wanted = [row_id for row_id in row_ids if row_id]
         if not wanted:
@@ -5214,7 +5224,10 @@ class ProjectOrderInquiryService:
                 SPOAllocation.id == OrderInquirySuggestedLink.spo_allocation_id,
             )
             .outerjoin(Warehouse, Warehouse.id == PurchaseOrderLine.warehouse_id)
-            .filter(OrderInquirySuggestedLink.row_id.in_(wanted))
+            .filter(
+                OrderInquirySuggestedLink.row_id.in_(wanted),
+                *self._open_for_buying_clauses(),
+            )
             .order_by(
                 OrderInquirySuggestedLink.suggested_at.asc(),
                 OrderInquirySuggestedLink.id.asc(),
