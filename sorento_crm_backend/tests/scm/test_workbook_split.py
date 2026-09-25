@@ -115,7 +115,12 @@ def test_sanitize_and_unique_titles_with_limit():
     assert second == "Same title (2)", second
     third = wbs.unique_sheet_title("Same title", used)
     assert third == "Same title (3)", third
-    assert used == {"Same title", "Same title (2)", "Same title (3)"}
+    # The three RETURNED titles, not `used`'s own internal casing - `used` is documented
+    # to hold lowercased entries (case-insensitive collision tracking), which is an
+    # implementation detail this test must not pin.
+    assert {first, second, third} == {
+        "Same title", "Same title (2)", "Same title (3)",
+    }
 
     # Within a tight limit, the numbered suffix still fits - the base is cut to make room.
     tight_used: set[str] = set()
@@ -166,7 +171,10 @@ def test_unique_sheet_title_reserve_blocks_every_suffixed_form():
     used: set[str] = set()
     base = wbs.unique_sheet_title("Foo", used, limit=25, reserve=(" - Low",))
     assert base == "Foo"
-    assert used >= {"Foo", "Foo - Low"}, used
+    # `used` is documented to hold LOWERCASED entries (case-insensitive collision
+    # tracking) - compared lowercased here rather than pinning that internal casing as
+    # if it were the observable contract.
+    assert used >= {"foo", "foo - low"}, used
 
     # A LATER, genuinely different key that happens to equal the first pair's RESERVED
     # form (not its base) must also be treated as taken.
