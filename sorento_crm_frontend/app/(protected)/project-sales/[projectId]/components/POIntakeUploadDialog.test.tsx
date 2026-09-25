@@ -42,16 +42,30 @@ vi.mock('../../_shared/services/poIntakeService', () => ({
   rejectPOAnnotation: vi.fn(),
 }));
 
+const listProjects = vi.fn();
+const listEditableProjectOptions = vi.fn();
+vi.mock('../../_shared/services/projectService', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../../_shared/services/projectService')>();
+  return {
+    ...actual,
+    listProjects: (...args: unknown[]) => listProjects(...args),
+    listEditableProjectOptions: (...args: unknown[]) => listEditableProjectOptions(...args),
+  };
+});
+
 import { POIntakeUploadDialog } from './POIntakeUploadDialog';
 
-function renderDialog(props: { purchaseOrderId?: string | null } = {}) {
+function renderDialog(
+  props: { projectId?: string; purchaseOrderId?: string | null } = {},
+) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   return render(
     <QueryClientProvider client={client}>
       <POIntakeUploadDialog
-        projectId="p1"
+        projectId={'projectId' in props ? props.projectId : 'p1'}
         purchaseOrderId={props.purchaseOrderId ?? null}
         purchaseOrderNumber={props.purchaseOrderId ? 'HQ/26/01/041' : null}
         onDone={() => {}}
@@ -158,5 +172,46 @@ describe('POIntakeUploadDialog', () => {
 
     await waitFor(() => expect(toastError).toHaveBeenCalledWith('File is too large'));
     expect(push).not.toHaveBeenCalled();
+  });
+
+  it('renders no project field when opened for a known project (S2-4)', () => {
+    renderDialog();
+
+    expect(screen.queryByLabelText(/^Project/)).toBeNull();
+  });
+
+  it('renders a required project field, and refuses the upload without one, when opened with no project (S2-4)', async () => {
+    renderDialog({ projectId: undefined });
+
+    expect(screen.getByLabelText(/^Project/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('PO document'), { target: { files: [pdf()] } });
+    expect(screen.getByRole('button', { name: 'Upload' })).toBeDisabled();
+  });
+
+  it('routes to the review page under the project PICKED from Start, never a blank segment (S2-7)', async () => {
+    listEditableProjectOptions.mockResolvedValue([
+      { value: 'p-setia-alam', label: 'Setia Alam', description: 'PRJ-000009 · SP Setia' },
+    ]);
+    uploadPurchaseOrderDocument.mockResolvedValue({
+      purchase_order_id: 'po1',
+      po_version_id: 'v9',
+      version_no: 1,
+      extraction_state: 'queued',
+      page_count: 3,
+    });
+
+    renderDialog({ projectId: undefined });
+
+    fireEvent.click(screen.getByLabelText(/^Project/));
+    fireEvent.click(await screen.findByText('Setia Alam'));
+
+    fireEvent.change(screen.getByLabelText('PO document'), { target: { files: [pdf()] } });
+    fireEvent.click(screen.getByRole('button', { name: 'Upload' }));
+
+    await waitFor(() =>
+      expect(uploadPurchaseOrderDocument).toHaveBeenCalledWith('p-setia-alam', expect.any(Object)),
+    );
+    expect(push).toHaveBeenCalledWith('/project-sales/p-setia-alam/purchase-orders/v9');
+    expect(push).not.toHaveBeenCalledWith(expect.stringContaining('/project-sales//'));
   });
 });

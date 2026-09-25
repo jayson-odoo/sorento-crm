@@ -394,12 +394,12 @@ export function ConvertToPackingListDialog({
           own inner region below, so the container-size picker, the carried-onto line, the
           search box above and the Convert/Cancel footer below never move, even at a short
           (800px) window. */}
-      <DialogContent className="max-h-[85vh] w-full max-w-2xl overflow-hidden">
+      <DialogContent className="max-h-[85dvh] w-full max-w-2xl overflow-hidden">
         <DialogHeader>
           <DialogTitle>Convert to a packing list</DialogTitle>
         </DialogHeader>
 
-        <DialogBody className="flex max-h-[55vh] min-h-0 flex-1 flex-col space-y-4">
+        <DialogBody className="flex max-h-[55dvh] min-h-0 flex-1 flex-col space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="convert-container-size" className="text-xs">
               Container size

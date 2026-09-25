@@ -385,14 +385,33 @@ class TestTicketReleaseUnderS6cClosesAc705:
     def _second_turn_delegates_fast(session_factory, monkeypatch) -> tuple[Any, float]:
         """The follow-up message: business lane switched off so it cannot re-raise, only
         used to prove the ticket a moment earlier is free - `elapsed` is what AC-705's own
-        re-injected Retry depends on staying small."""
+        re-injected Retry depends on staying small.
+
+        `elapsed` is how long the follow-up's `wait_for_turn` blocked, NOT the whole turn:
+        a released ticket returns from the wait on its first Redis read, while a ticket
+        never released sits there for the whole `chatbot_queue_wait_seconds` budget (5 s
+        here) and raises `QueueWait`. The turn's own parser + DB work is not part of that
+        property - it took 3.2 s on a loaded four-worker xdist runner (CI run 36087026240)
+        with ticket 1 already released, which the old whole-turn clock read as a deadlock.
+        """
         set_chatbot_switches(session_factory, business_lane=False)
-        started = time.monotonic()
+        real_wait = dispatch.wait_for_turn
+        waited: list[float] = []
+
+        def _timed_wait(*args: Any, **kwargs: Any) -> None:
+            started = time.monotonic()
+            try:
+                real_wait(*args, **kwargs)
+            finally:
+                waited.append(time.monotonic() - started)
+
+        monkeypatch.setattr(dispatch, "wait_for_turn", _timed_wait)
         result = engine_mod.run_turn(
             _second_message_envelope(CONTACT_ID, "ZZT-msg-s6s7-followup"),
             session_factory=session_factory,
         )
-        return result, time.monotonic() - started
+        assert waited, "ordering is on, so the follow-up must take a ticket and wait on it"
+        return result, waited[0]
 
     def test_a_fetch_raise_outage_close_still_releases_the_ticket_ac705(
         self, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch, redis_client
