@@ -3402,6 +3402,7 @@ class ProjectOrderInquiryService:
                 Project.title,
                 Customer.customer_name,
                 SalesOrder.project_label,
+                SalesOrder.order_date,
             )
             .outerjoin(Project, Project.id == ProjectSalesOrder.project_id)
             .outerjoin(
@@ -3429,6 +3430,7 @@ class ProjectOrderInquiryService:
                 title,
                 customer_name,
                 project_label,
+                order_date,
             ) = row
             facts = {
                 "so_number": autocount_doc_no or provisional_ref,
@@ -3437,7 +3439,13 @@ class ProjectOrderInquiryService:
                 # NULL by design) falls back to the SO's own free-text label
                 # (PLAN-oi-project-label-from-so.md).
                 "project": title or project_label,
-                "so_date": published_at or created_at,
+                # The AutoCount SO DOCUMENT date (`sales_orders.order_date`) wins - an
+                # adopted order has `published_at` NULL by design, and the CRM's own pull
+                # date (`created_at`) is not the day the customer's order was raised
+                # (PLAN-oi-handover-so-date-autocount-25sep.md). `published_at` then
+                # `created_at` stay the fallback for an authored order whose core SO
+                # never carried a date, and for a draft with no core SO at all.
+                "so_date": order_date or published_at or created_at,
             }
         self._handover_order_facts_cache[pso_id] = facts
         return facts
@@ -5139,17 +5147,18 @@ class ProjectOrderInquiryService:
         """One query per fact the rows need, rather than one per row."""
         inquiry_ids = {row.order_inquiry_id for row in rows}
         joined = (
-            self.db.query(OrderInquiry, ProjectSalesOrder)
+            self.db.query(OrderInquiry, ProjectSalesOrder, SalesOrder.order_date)
             .join(
                 ProjectSalesOrder,
                 ProjectSalesOrder.id == OrderInquiry.project_sales_order_id,
             )
+            .outerjoin(SalesOrder, SalesOrder.id == ProjectSalesOrder.so_id)
             .filter(OrderInquiry.id.in_(list(inquiry_ids)))
             .all()
         )
-        labels = self._project_customer_labels({so.id for _inq, so in joined})
+        labels = self._project_customer_labels({so.id for _inq, so, _order_date in joined})
         context: Dict[str, Dict[str, Any]] = {}
-        for inquiry, order in joined:
+        for inquiry, order, order_date in joined:
             context[inquiry.id] = {
                 "project_sales_order_id": order.id,
                 # AC-B6-7 (`PLAN-board-oi-mechanical-22sep.md`, S6): the CORE
@@ -5162,7 +5171,10 @@ class ProjectOrderInquiryService:
                 # sales_order_ref prefers: they are two different documents and the buyer
                 # tracing a Buy back to a project needs the one this system minted.
                 "project_so_ref": order.provisional_ref,
-                "so_date": (order.published_at or order.created_at),
+                # The AutoCount SO DOCUMENT date wins over the CRM's own pull date, same
+                # rule as `_handover_order_facts`
+                # (PLAN-oi-handover-so-date-autocount-25sep.md).
+                "so_date": (order_date or order.published_at or order.created_at),
                 "project_customer": labels.get(order.id),
                 "is_amendment": bool(inquiry.amendment_id),
             }
