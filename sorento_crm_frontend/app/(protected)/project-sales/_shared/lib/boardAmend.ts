@@ -361,6 +361,30 @@ export function borrowCandidatesOf(contribution: BoardContribution): BorrowCandi
 }
 
 /**
+ * D3 (S2): the panel's ONE Reason box, fanned out onto the draft it is about to be saved
+ * from - `buy_reason` when the line is discontinued and buying, every borrow row's own
+ * `reason` when the box carries text.
+ *
+ * A blank box leaves `buy_reason` at `''` (unchanged/absent) and leaves each borrow row's own
+ * `reason` exactly as it was seeded - the engine's own sentence for a row `amendDraftFrom` /
+ * `suggestionDraftFrom` carried in, or whatever `BorrowAddDialog` folded a same-agent
+ * authorisation into for a row added by hand. `lineBlockers`'s own borrow-reason check (still
+ * shared with the per-order sheet) is what refuses a hand-added row while the box stays blank
+ * (AC-27), not this function - it only ever COPIES the box, it never validates it.
+ */
+export function foldReasonIntoDraft(draft: DraftLine, reason: string): DraftLine {
+  const trimmed = reason.trim();
+  return {
+    ...draft,
+    buy_reason: draft.is_discontinued && toMinor(draft.buy_qty) > 0 ? trimmed : '',
+    borrow: draft.borrow.map((row) => ({
+      ...row,
+      reason: trimmed || row.reason,
+    })),
+  };
+}
+
+/**
  * What the editor hands back to the draft: the WHOLE composition, not a summary of it.
  *
  * `reserve_qty` travels alongside because a decision taken before this editor existed carries

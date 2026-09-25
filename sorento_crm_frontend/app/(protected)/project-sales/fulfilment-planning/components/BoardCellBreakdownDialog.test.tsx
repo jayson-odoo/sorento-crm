@@ -834,7 +834,7 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
     const first = 'so-a|1|WESERP10B|2026-08-31';
 
     fireEvent.click(screen.getByText('SO403340'));
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'Typing, not yet saved.' },
     });
 
@@ -865,7 +865,7 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
     const key = 'so-a|1|WESERP10B|2026-08-31';
 
     fireEvent.click(screen.getByText('SO403340'));
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'Typing, not yet saved.' },
     });
 
@@ -926,7 +926,7 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
     openLines();
 
     fireEvent.click(screen.getByText('SO403340'));
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'Cancelled by the customer.' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
@@ -954,7 +954,7 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
     const save = screen.getByRole('button', { name: 'Save decision' });
     expect(save).toBeDisabled();
 
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: {
         value: 'The site wants new stock, not what is standing there.',
       },

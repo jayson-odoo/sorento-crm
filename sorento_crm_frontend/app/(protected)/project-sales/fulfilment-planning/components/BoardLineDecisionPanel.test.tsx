@@ -231,7 +231,7 @@ describe('BoardLineDecisionPanel: the two verbs (C9)', () => {
     fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
       target: { value: '19' },
     });
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'The site asked for less from BRW-AM.' },
     });
 
@@ -255,7 +255,7 @@ describe('BoardLineDecisionPanel: the two verbs (C9)', () => {
     const reject = screen.getByRole('button', { name: 'Reject' });
     expect(reject).toBeDisabled();
 
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'The customer cancelled this line.' },
     });
     expect(reject).toBeEnabled();
@@ -374,7 +374,7 @@ describe('BoardLineDecisionPanel: an approved draft carries the suggested compos
     fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
       target: { value: '19' },
     });
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'The site asked for less from BRW-AM.' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
@@ -620,7 +620,7 @@ describe('BoardLineDecisionPanel: the balance hint and Save gating (C7, D7)', ()
     const save = screen.getByRole('button', { name: 'Save decision' });
     expect(save).toBeDisabled();
 
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'Customer takes 5 now, the rest on the next shipment.' },
     });
     expect(save).toBeEnabled();
@@ -667,7 +667,7 @@ describe('BoardLineDecisionPanel: the balance hint and Save gating (C7, D7)', ()
     const save = screen.getByRole('button', { name: 'Save decision' });
     expect(save).toBeDisabled();
 
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'Agreed a smaller own-location share with the site.' },
     });
     expect(save).toBeEnabled();
@@ -719,7 +719,7 @@ describe('BoardLineDecisionPanel: the suspected-system-issue flag (C10)', () => 
     fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
       target: { value: '19' },
     });
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'The availability beside this line looks wrong.' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
@@ -736,7 +736,7 @@ describe('BoardLineDecisionPanel: the suspected-system-issue flag (C10)', () => 
     const { onDecide } = renderPanel();
 
     fireEvent.click(checkbox());
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'Cancelled by the customer.' },
     });
     await act(async () => {
@@ -1092,7 +1092,7 @@ describe('BoardLineDecisionPanel: a covered row opens locked with Amend (C11)', 
     fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
       target: { value: '14' },
     });
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'BRW-AM actually had more free stock than recorded.' },
     });
 
@@ -1177,7 +1177,7 @@ describe('BoardLineDecisionPanel: a covered line only saves a real amendment (R2
     const reject = screen.getByRole('button', { name: 'Reject' });
     expect(reject).toBeDisabled();
 
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'Wrong site' },
     });
     expect(reject).toBeEnabled();
@@ -1198,7 +1198,7 @@ describe('BoardLineDecisionPanel: a covered line only saves a real amendment (R2
     fireEvent.click(screen.getByRole('button', { name: 'Amend' }));
 
     const trigger = screen.getByTestId(`reject-decision-trigger-${KEY}`);
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'Wrong site' },
     });
 
@@ -1225,7 +1225,7 @@ describe('BoardLineDecisionPanel: a covered line only saves a real amendment (R2
     fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
       target: { value: '18' },
     });
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'The BRW-AM count looked short on the floor.' },
     });
 
@@ -1271,7 +1271,7 @@ describe('BoardLineDecisionPanel: an INQUIRY-ONLY covered line keeps Reject disa
     const reject = screen.getByRole('button', { name: 'Reject' });
     expect(reject).toBeDisabled();
 
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'Wrong site' },
     });
     // UNLIKE the active-decision case (AC-F3), typing a reason does not unlock Reject here.
@@ -1305,7 +1305,7 @@ describe('BoardLineDecisionPanel: the saved amendment overlays on reopen', () =>
 
     expect(screen.getByLabelText('Reserve at BRW-AM')).toHaveValue(5);
     expect(screen.getByLabelText('Reserve at BRW')).toHaveValue(19);
-    expect(screen.getByLabelText(/^Why this differs/)).toHaveValue(
+    expect(screen.getByLabelText(/^Reason/)).toHaveValue(
       'Agreed a smaller own-location share with the site.',
     );
   });
@@ -1423,7 +1423,7 @@ describe('BoardLineDecisionPanel: Reserve add-location (S3, AC-3.1 to AC-3.3)', 
     expect(added).toHaveValue(16);
     fireEvent.change(added, { target: { value: '16' } });
 
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'BRW can spare the rest of this line.' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
@@ -1599,7 +1599,7 @@ describe('BoardLineDecisionPanel: the Save button says it saved (S4, AC-4.1)', (
     fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
       target: { value: '19' },
     });
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'Agreed a smaller own-location share with the site.' },
     });
 
@@ -1710,7 +1710,7 @@ describe('BoardLineDecisionPanel: the Save button says it saved (S4, AC-4.1)', (
     fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
       target: { value: '19' },
     });
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'Agreed a smaller own-location share with the site.' },
     });
 
@@ -1797,7 +1797,7 @@ describe('BoardLineDecisionPanel: Reject says it landed', () => {
       />,
     );
 
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'The customer cancelled this line.' },
     });
     await act(async () => {
@@ -1859,7 +1859,7 @@ describe('BoardLineDecisionPanel: Reject says it landed', () => {
       />,
     );
 
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'The customer cancelled this line.' },
     });
     await act(async () => {
@@ -1893,7 +1893,7 @@ describe('BoardLineDecisionPanel: Reject says it landed', () => {
       />,
     );
 
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'The customer cancelled this line.' },
     });
     await act(async () => {
@@ -1918,7 +1918,7 @@ describe('BoardLineDecisionPanel: Reject says it landed', () => {
       />,
     );
 
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'The customer cancelled this line.' },
     });
     await act(async () => {
@@ -1928,7 +1928,7 @@ describe('BoardLineDecisionPanel: Reject says it landed', () => {
       screen.getByRole('button', { name: 'Rejected' }),
     ).toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'The customer cancelled this line, on second thought no.' },
     });
 
@@ -1965,7 +1965,7 @@ describe('BoardLineDecisionPanel: Reject disables itself while its own write is 
       />,
     );
 
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'The customer cancelled this line.' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
@@ -2022,7 +2022,7 @@ describe('BoardLineDecisionPanel: Reject disables itself while its own write is 
     fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
       target: { value: '18' },
     });
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'The BRW-AM count looked short on the floor.' },
     });
 
@@ -2063,7 +2063,7 @@ describe('BoardLineDecisionPanel: Reject disables itself while its own write is 
       />,
     );
 
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'The customer cancelled this line.' },
     });
     const reject = screen.getByRole('button', { name: 'Reject' });
@@ -2279,7 +2279,7 @@ describe('BoardLineDecisionPanel: Buy follows the remainder of the line (D7)', (
     // The composition now differs from the engine's own suggestion (62 became 60), so Save
     // still needs the reason C7 already requires of any amendment - once it has one, the
     // 60/75 split is a legal pool-share carve-out (D5) and nothing else blocks it.
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'The site can only spare 60 today.' },
     });
     expect(
@@ -2293,7 +2293,7 @@ describe('BoardLineDecisionPanel: Buy follows the remainder of the line (D7)', (
     fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
       target: { value: '60' },
     });
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'The site can only spare 60 today.' },
     });
 

@@ -90,6 +90,24 @@ export function BoardTrailPopover({
                 <span>How this decision was reached</span>
                 <ItemFlagChips contribution={contribution} />
               </div>
+              {/* D3 (S2): ONE Reason box now writes `amend_reason`, `buy_reason` and every
+                  borrow reason with the SAME text, so a frozen line with all three set is not
+                  three different answers repeated - it is one answer, said once. Absent when
+                  nothing was stored, or when an older revision froze three different texts
+                  (each still reads in its own place: the borrow row, the trail's own "why"). */}
+              {trailReason(contribution) && (
+                <div className="border-b px-3 py-2">
+                  <p className="text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Reason
+                  </p>
+                  <p
+                    data-testid={`trail-reason-${contribution.key}`}
+                    className="mt-0.5 text-xs"
+                  >
+                    {trailReason(contribution)}
+                  </p>
+                </div>
+              )}
               {trail.length === 0 ? (
                 <p className="px-3 py-2 text-xs text-muted-foreground">
                   {trailAbsence(contribution)}
@@ -230,6 +248,23 @@ export function BoardTrailPopover({
         )}
     </>
   );
+}
+
+/**
+ * D3 (S2): what the frozen decision's `amend_reason`, `buy_reason` and every borrow reason
+ * collapse to when they are all the SAME text (blanks dropped) - the answer the one Reason box
+ * now writes everywhere at once. `null` when nothing was stored, or when they disagree (an
+ * older revision, frozen before this box existed): each still reads in its own place, so
+ * nothing here is lost, only not repeated.
+ */
+function trailReason(contribution: BoardContribution): string | null {
+  const decision = contribution.decision;
+  if (!decision) return null;
+  const texts = [decision.amend_reason, decision.buy_reason, ...(decision.borrow ?? []).map((row) => row.reason)]
+    .map((text) => text?.trim())
+    .filter((text): text is string => Boolean(text));
+  if (texts.length === 0) return null;
+  return new Set(texts).size === 1 ? texts[0] : null;
 }
 
 /** A rung says something under itself when it has a sentence, a hint, a pile or a queue to name. */

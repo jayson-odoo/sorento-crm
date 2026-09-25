@@ -795,6 +795,29 @@ export function amendNeedsReason(
   );
 }
 
+/**
+ * Whether the composition carries a Borrow the engine itself never proposed (D3, S2): the
+ * server requires a reason on every borrow (`_check_borrow`), so the one Reason box is
+ * required whenever one of these is present, independent of whether the rest of the line still
+ * matches its baseline (a re-opened, unedited amendment that already borrowed by hand is still
+ * "a borrow row the engine did not suggest").
+ *
+ * Compared against the SUGGESTION baseline (never the frozen one): a covered line's own frozen
+ * borrow is what the planner already decided, and `amendNeedsReason`'s comparison against it is
+ * the rule that asks for a fresh reason there, not this one.
+ */
+export function hasUnsuggestedBorrow(
+  contribution: BoardContribution,
+  borrow: { qty: string; warehouse_id?: string | null; donor_project_id?: string | null }[],
+): boolean {
+  const suggested = new Set(
+    suggestionBaseline(contribution).borrow.map((row) => borrowReasonKeyOf(row)),
+  );
+  return borrow.some(
+    (row) => toMinor(row.qty) > 0 && !suggested.has(borrowReasonKeyOf(row)),
+  );
+}
+
 /** The four kinds as the editor holds them; the ids are what makes "the same" mean something. */
 interface AmendComposition {
   timely_spo_qty: string;
