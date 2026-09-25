@@ -2,7 +2,7 @@
 
 import { useEffect } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useForm, type Resolver } from 'react-hook-form';
+import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import {
   Dialog,
@@ -36,18 +36,12 @@ const CategorySchema = z.object({
   is_active: z.boolean(),
   is_searchable: z.boolean(),
   display_order: z.number().int().min(0),
-  // Empty/null must preprocess to null BEFORE z.coerce.number() runs: a bare
-  // z.union([z.coerce.number(), z.null()]) tries the coerce branch first, and
-  // Number(null) is 0, so null and '' both silently became an explicit 0
-  // (R2: unset must stay unset so a category opts in, not out, by default).
-  chatbot_max_qty: z.preprocess(
-    (v) => (v === '' || v === null || v === undefined ? null : v),
-    z.coerce.number().int().min(0, { message: 'Max quantity cannot be negative.' }).nullable(),
-  ),
-  chatbot_eta_offset_days: z.preprocess(
-    (v) => (v === '' || v === null || v === undefined ? null : v),
-    z.coerce.number().int().min(0, { message: 'ETA offset cannot be negative.' }).nullable(),
-  ),
+  // .nullable() checks for null BEFORE z.coerce.number() runs, so a cleared
+  // input (which this form's onChange already turns into null, never '')
+  // stays null instead of coercing to 0 (R2: unset must stay unset so a
+  // category opts in, not out, by default).
+  chatbot_max_qty: z.coerce.number().int().min(0, { message: 'Max quantity cannot be negative.' }).nullable(),
+  chatbot_eta_offset_days: z.coerce.number().int().min(0, { message: 'ETA offset cannot be negative.' }).nullable(),
 });
 
 type CategorySchemaType = z.infer<typeof CategorySchema>;
@@ -68,12 +62,7 @@ export default function CategoryForm({ open, onOpenChange, categoryId, copyFromC
   const canEditChatbotLimits = useHasPermission('master_data.chatbot_stock_limits.edit');
 
   const form = useForm<CategorySchemaType>({
-    // z.preprocess (the Blocking 1 fix, PR #1221 reviewer pass 85c2e9e7) makes
-    // zodResolver's inferred generic diverge from CategorySchemaType across every
-    // field, not just the two it touches - the repo's established cast for this
-    // exact zodResolver/react-hook-form generic mismatch (PackingListForm.tsx,
-    // GRNForm.tsx, UserAddSchema, ContactEditSchema all do the same).
-    resolver: zodResolver(CategorySchema) as Resolver<CategorySchemaType>,
+    resolver: zodResolver(CategorySchema),
     mode: 'onTouched',
     defaultValues: {
       category_code: '',
