@@ -1,7 +1,7 @@
 # PLAN: sponsorship form requires a unit price on every line
 
-Status: Track: small fix - implemented. Issue #1227. Branch
-`fix/sponsorship-unit-price-required`.
+Status: Track: small fix - in review (round 1 addressed, awaiting merge). Issue #1227.
+Branch `fix/sponsorship-unit-price-required`, PR #1232.
 
 UAC: `sponsorship-unit-price-required-acceptance-criteria.md`.
 
