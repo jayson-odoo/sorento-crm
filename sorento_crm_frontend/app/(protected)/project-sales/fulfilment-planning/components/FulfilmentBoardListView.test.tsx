@@ -985,6 +985,74 @@ describe('FulfilmentBoardListView: a pre-marked row (PLAN-board-change-proposed-
 });
 
 /**
+ * S5 (owner ruling 25 Sep 2026, issue #1245): a `Change proposed` line is a LABEL, not a
+ * saved decision - `canQuickSave`'s own `!draft[key]` rule reads the board's pre-mark
+ * object (`{ verdict: 'approved', preMarked: true }`, seeded by `FulfilmentBoardPanel`'s
+ * own effect) as "already has a draft" and disables the row's tick, with the wrong reason
+ * text too ("Already saved. Undo it before saving it again.") - exactly backwards: nothing
+ * has been saved yet, which is the whole point of offering the tick at all.
+ * `FulfilmentBoardListView.tsx` ~307 / ~774 both still pass the raw `draft` prop straight
+ * into `canQuickSave` and `enableRowSelection`.
+ */
+describe('FulfilmentBoardListView: a pre-marked row can still be ticked and saved (S5, issue #1245)', () => {
+  it('offers a pre-marked row an ENABLED checkbox - it is not saved yet, whatever the pill says', async () => {
+    const row = contribution();
+    renderView({
+      contributions: [row],
+      draft: { [row.key]: { verdict: 'approved', preMarked: true } },
+    });
+
+    await screen.findByText('SO397450');
+    expect(
+      await screen.findByTestId(`decision-pill-${row.key}`),
+    ).toHaveTextContent('Change proposed');
+    expect(
+      screen.getByRole('checkbox', { name: 'Select SO397450 line 10' }),
+    ).toBeEnabled();
+  });
+
+  it('ticking a pre-marked row and pressing "Save as suggested" turns it into a real saved decision', async () => {
+    const row = contribution();
+    const { onDecide, onDecideMany, rerender } = renderView({
+      contributions: [row],
+      draft: { [row.key]: { verdict: 'approved', preMarked: true } },
+    });
+
+    await screen.findByText('SO397450');
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: 'Select SO397450 line 10' }),
+    );
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Save as suggested (1)' }),
+    );
+
+    expect(onDecideMany).toHaveBeenCalledWith([row.key]);
+    expect(onDecide).toHaveBeenCalledWith(
+      row.key,
+      expect.objectContaining({ verdict: 'approved', buy_qty: '43' }),
+    );
+    // `decide()` overwrites the pre-mark object on save (the plan's own words: "the flag
+    // drops itself") - what actually gets posted carries no `preMarked` at all.
+    const [, savedDecision] = vi.mocked(onDecide).mock.calls[0];
+    expect(savedDecision).not.toHaveProperty('preMarked');
+
+    // The parent owns the draft (`onDecide` is local-first in `FulfilmentBoardPanel`) - this
+    // re-render is what its own save looks like once the pre-mark is replaced.
+    rerender(
+      <FulfilmentBoardListView
+        contributions={[row]}
+        draft={{ [row.key]: { verdict: 'approved' } }}
+        onDecide={onDecide}
+        onDecideMany={onDecideMany}
+      />,
+    );
+    expect(
+      await screen.findByTestId(`decision-pill-${row.key}`),
+    ).toHaveTextContent('Saved');
+  });
+});
+
+/**
  * D15: a one-click save on the row itself, beside the pill - a planner who agrees with the
  * engine no longer has to open the row and press Save inside it. Exactly one of the two icons
  * (this one, or D14's Undo) ever shows for a given row, since `canQuickSave` already excludes

@@ -49,11 +49,14 @@ from app.services.scm.outstanding_diff import ADDED, DATE_MOVED, PRODUCT_CHANGED
 from app.services.scm.sales_order_service import SalesOrderService
 
 from tests.scm.test_planning_change_diff_parity import (  # noqa: F401 - fixtures reused
+    _api_client,
     _core_line,
     _freeze_with_a_full_buy,
+    _line_payload,
     _linked_line,
     _product,
     _project_line,
+    _restore_api_client,
     _rows_for,
     api,
 )
@@ -831,4 +834,129 @@ def test_partial_apply_leaves_the_batch_open_until_every_row_is_applied(api):
     assert final_batch.applied_at is not None, (
         "S5b: only once every row of the WHOLE batch has actually been applied does the "
         "batch itself stamp applied_at"
+    )
+
+
+def test_two_confirmed_lines_same_order_applied_one_press_at_a_time(api):
+    """Reviewer B1 + coder fix (round 4, issue #1245): the SAME-order case the earlier
+    S5b test deliberately avoided (two rows of one order share one `SOSupplyDecision`
+    revision) is now the actual contract, through the real board route
+    (`POST /sales-orders/{pso}/confirm` with `batch_id`, `_confirm_a_planning_change`,
+    `fulfilment_planning.py` ~1020-1092).
+
+    Two lines confirmed together at revision 1. A book move gives each a `delayed` row in
+    ONE batch, both `held_json.revision_no == 1`. Press 1 names line 1 only: `apply` mints
+    revision 2 (line 1's new composition, line 2's UNCHANGED composition carried forward,
+    same as any partial reconfirm) - row 1 applies, row 2 stays pending, the batch itself
+    stays open (S5b). Press 1 must ALSO re-base row 2's own `held_json.revision_no` to 2 -
+    the ORDER's active decision just moved to 2 under it, even though nobody decided row 2
+    itself - or `set_row_decision`/`apply` on press 2 refuses it as superseded
+    (`_row_is_superseded` compares the row's frozen snapshot against the CURRENT revision).
+    Press 2, naming line 2, must then succeed (not 409) and finally stamp `applied_at`.
+    """
+    world, project = api
+    db = world.db
+    core_so, core_line_1, product_1, order, mirror_1 = _linked_line(
+        world, project, qty_ordered=72,
+    )
+    product_2 = _product(db)
+    core_line_2 = _core_line(
+        db, core_so, product_2, world.own_wh, qty_ordered="10", required_date=date(2026, 8, 20),
+    )
+    mirror_2 = _project_line(db, order, line_no=2, product=product_2, core_line=core_line_2)
+    db.commit()
+
+    # BOTH lines held by ONE confirm - one SOSupplyDecision, revision 1, covering both.
+    client, originals = _api_client(db, world.actor)
+    try:
+        response = client.post(
+            f"/api/v1/project-sales/sales-orders/{order.id}/confirm",
+            json={"lines": [
+                _line_payload(mirror_1.id, buy_qty="72", buy_reason="ZZT no stock anywhere"),
+                _line_payload(mirror_2.id, buy_qty="10", buy_reason="ZZT no stock anywhere"),
+            ]},
+        )
+        assert response.status_code == 200, response.text
+    finally:
+        _restore_api_client(originals)
+    db.commit()
+
+    move_1 = _moved_change(
+        core_so.so_number, product_1.product_code, world.own_wh.warehouse_code,
+        core_line_1.id, old_date=date(2026, 8, 20), new_date=D1, qty=72.0,
+    )
+    move_2 = _moved_change(
+        core_so.so_number, product_2.product_code, world.own_wh.warehouse_code,
+        core_line_2.id, old_date=date(2026, 8, 20), new_date=D1, qty=10.0,
+    )
+    batch = planning_change_service.build_batch(
+        db, Diff(scope_documents=(core_so.so_number,), changes=[move_1, move_2]),
+        applied_line_ids={id(move_1): str(core_line_1.id), id(move_2): str(core_line_2.id)},
+        order_ids={core_so.so_number: str(core_so.id)},
+        actor=world.actor, import_job_id=None, file_name="book.xlsx",
+    )
+    db.commit()
+    assert batch is not None
+    rows = _rows_for(db, batch.id)
+    assert len(rows) == 2, [r.kind for r in rows]
+    row_1 = next(r for r in rows if r.project_line_id == str(mirror_1.id))
+    row_2 = next(r for r in rows if r.project_line_id == str(mirror_2.id))
+    assert row_1.kind == "delayed"
+    assert row_2.kind == "delayed"
+    assert row_1.held_json["revision_no"] == 1
+    assert row_2.held_json["revision_no"] == 1
+
+    # Press 1: the board route, naming line 1 only, carrying the batch.
+    client, originals = _api_client(db, world.actor)
+    try:
+        press_1 = client.post(
+            f"/api/v1/project-sales/sales-orders/{order.id}/confirm",
+            json={
+                "lines": [_line_payload(mirror_1.id, buy_qty="72", buy_reason="ZZT no stock anywhere")],
+                "batch_id": str(batch.id),
+            },
+        )
+    finally:
+        _restore_api_client(originals)
+    assert press_1.status_code == 200, press_1.text
+    assert press_1.json()["revision_no"] == 2, press_1.json()
+    db.commit()
+
+    db.expire_all()
+    row_1_after = db.get(PlanningChangeRow, row_1.id)
+    row_2_after = db.get(PlanningChangeRow, row_2.id)
+    batch_after = db.get(type(batch), batch.id)
+    assert row_1_after.applied_state == "applied"
+    assert row_2_after.applied_state == "pending"
+    assert batch_after.applied_at is None, (
+        "S5b: row 2 is still pending, so the batch itself must stay open"
+    )
+    assert row_2_after.held_json["revision_no"] == 2, (
+        "the coder's re-base in _apply_one_order: row 2 was never decided, but the ORDER's "
+        "active decision just moved to revision 2 under it (frozen forward, unchanged) - "
+        "the row's own snapshot has to move with it or press 2 reads it as superseded"
+    )
+
+    # Press 2: the board route, naming line 2 only, carrying the SAME batch.
+    client, originals = _api_client(db, world.actor)
+    try:
+        press_2 = client.post(
+            f"/api/v1/project-sales/sales-orders/{order.id}/confirm",
+            json={
+                "lines": [_line_payload(mirror_2.id, buy_qty="10", buy_reason="ZZT no stock anywhere")],
+                "batch_id": str(batch.id),
+            },
+        )
+    finally:
+        _restore_api_client(originals)
+    assert press_2.status_code == 200, press_2.text
+    db.commit()
+
+    db.expire_all()
+    row_2_final = db.get(PlanningChangeRow, row_2.id)
+    batch_final = db.get(type(batch), batch.id)
+    assert row_2_final.applied_state == "applied"
+    assert batch_final.applied_at is not None, (
+        "S5b: only once BOTH rows of this one-order batch are applied does the batch stamp "
+        "applied_at"
     )
