@@ -42,6 +42,7 @@ from app.dependencies import (
 from app.models.access import ContactAccessType, RespondContact, StockVisibilityPolicy
 from app.models.base import set_company_scope
 from app.models.inventory import StockLedger
+from app.models.product import ProductCategory
 from app.models.respond_workspace import RespondWorkspace
 from app.services.company_scope import DEFAULT_COMPANY_ID
 from app.services.company_scope_resolver import apply_company_scope
@@ -594,6 +595,13 @@ def test_compact_uses_on_hand_not_available(db):
     assert result["stock_summary"][0]["total_on_hand"] == 100
 
 
+def _category_of(db, p) -> ProductCategory:
+    """Chatbot stock ask v2 (S1): the `branch()` cap. `product()` always creates
+    a fresh category with no `chatbot_max_qty`, so a B-series test that wants its
+    yes/no judged on stock (not on an unset cap, R2) sets this first."""
+    return db.query(ProductCategory).filter(ProductCategory.id == p.category_id).one()
+
+
 # ---- the availability leak walk ---------------------------------------------
 
 #: Keys allowed to carry a number on an `availability` answer. `requested_qty` is
@@ -651,10 +659,11 @@ def test_availability_needs_quantity_no_leak(db):
             "product_name": p.product_name,
             "needs_quantity": True,
             "requested_qty": None,
-            "available": None,
-            "verdict": None,
-            "running_low": None,
-            "disclaimer": None,
+            "branch": None,
+            "cap_unset": None,
+            "category_name": None,
+            "eta": None,
+            "packing_list": None,
         }
     ]
     assert "stock_summary" not in result
@@ -665,6 +674,7 @@ def test_availability_yes(db):
     """B7. 50 asked for, 60 on hand across the allowed locations."""
     brw, brw_bb, _ = _three_warehouses(db)
     p = product(db, company_id=DEFAULT_COMPANY_ID)
+    _category_of(db, p).chatbot_max_qty = 100
     stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=brw.id, on_hand=40)
     stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=brw_bb.id, on_hand=20)
     contact = _contact(db)
@@ -676,7 +686,7 @@ def test_availability_yes(db):
     )
 
     entry = result["stock_availability"][0]
-    assert entry["available"] is True
+    assert entry["branch"] == "in_stock"
     assert entry["needs_quantity"] is False
     assert entry["requested_qty"] == 50
     _assert_no_quantity_anywhere(result, {40, 20, 60})
@@ -686,6 +696,7 @@ def test_availability_no_ignores_disallowed_warehouses(db):
     """B8. 500 sitting in a location the dealer may not see is not their stock."""
     brw, _, dc1 = _three_warehouses(db)
     p = product(db, company_id=DEFAULT_COMPANY_ID)
+    _category_of(db, p).chatbot_max_qty = 100
     stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=brw.id, on_hand=40)
     stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=dc1.id, on_hand=500)
     contact = _contact(db)
@@ -697,7 +708,7 @@ def test_availability_no_ignores_disallowed_warehouses(db):
     )
 
     entry = result["stock_availability"][0]
-    assert entry["available"] is False
+    assert entry["branch"] != "in_stock"
     _assert_no_quantity_anywhere(result, {40, 500})
 
 
@@ -706,6 +717,8 @@ def test_availability_says_no_for_a_product_with_no_stock(db):
     entry: the dealer asked about this product and has to be told something."""
     brw, _, dc1 = _three_warehouses(db)
     p = product(db, company_id=DEFAULT_COMPANY_ID)
+    category = _category_of(db, p)
+    category.chatbot_max_qty = 100
     stock(
         db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=dc1.id, on_hand=500
     )
@@ -724,10 +737,11 @@ def test_availability_says_no_for_a_product_with_no_stock(db):
             "product_name": p.product_name,
             "needs_quantity": False,
             "requested_qty": 50,
-            "available": False,
-            "verdict": "not_available",
-            "running_low": False,
-            "disclaimer": None,
+            "branch": "no_incoming",
+            "cap_unset": False,
+            "category_name": category.category_name,
+            "eta": None,
+            "packing_list": None,
         }
     ]
     _assert_no_quantity_anywhere(result, {500})
@@ -755,10 +769,11 @@ def test_availability_still_asks_for_a_product_with_no_stock(db):
             "product_name": p.product_name,
             "needs_quantity": True,
             "requested_qty": None,
-            "available": None,
-            "verdict": None,
-            "running_low": None,
-            "disclaimer": None,
+            "branch": None,
+            "cap_unset": None,
+            "category_name": None,
+            "eta": None,
+            "packing_list": None,
         }
     ]
     _assert_no_quantity_anywhere(result, {500})
@@ -886,7 +901,7 @@ def test_requested_qty_below_one_is_read_as_no_quantity(client, db):
         entry = response.json()["stock_availability"][0]
         assert entry["needs_quantity"] is True, bad
         assert entry["requested_qty"] is None, bad
-        assert entry["available"] is None, bad
+        assert entry["branch"] is None, bad
 
 
 def test_response_model_declares_blocks(client, db):
@@ -2021,6 +2036,7 @@ def test_availability_ignores_hide_zero_locations(db):
     every allowed location, zero rows included."""
     brw, brw_bb, _ = _three_warehouses(db)
     p = product(db, company_id=DEFAULT_COMPANY_ID)
+    _category_of(db, p).chatbot_max_qty = 100
     for wh, qty in ((brw, 40), (brw_bb, 0)):
         stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=wh.id, on_hand=qty)
     contact = _contact(db)
@@ -2034,8 +2050,8 @@ def test_availability_ignores_hide_zero_locations(db):
         product_ids=[p.id], contact_id=contact.id, requested_qty=41
     )
 
-    assert yes["stock_availability"][0]["available"] is True
-    assert no["stock_availability"][0]["available"] is False
+    assert yes["stock_availability"][0]["branch"] == "in_stock"
+    assert no["stock_availability"][0]["branch"] != "in_stock"
     # Still no location named, flag or no flag.
     assert "warehouse_codes" not in yes["stock_visibility"]
 
@@ -2343,6 +2359,7 @@ def test_availability_no_ignores_excluded_warehouses(db):
     this contact's stock - with nowhere else to look, 50 asked for is a no."""
     _, _, dc1 = _three_warehouses(db)
     p = product(db, company_id=DEFAULT_COMPANY_ID)
+    _category_of(db, p).chatbot_max_qty = 100
     stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=dc1.id, on_hand=999)
     contact = _contact(db)
     _policy_row(db, mode="availability", excluded_warehouse_ids=[dc1.id], contact=contact)
@@ -2352,7 +2369,7 @@ def test_availability_no_ignores_excluded_warehouses(db):
         product_ids=[p.id], contact_id=contact.id, requested_qty=50
     )
 
-    assert result["stock_availability"][0]["available"] is False
+    assert result["stock_availability"][0]["branch"] != "in_stock"
 
 
 def test_detailed_alternatives_skip_excluded_stock(db, monkeypatch):
