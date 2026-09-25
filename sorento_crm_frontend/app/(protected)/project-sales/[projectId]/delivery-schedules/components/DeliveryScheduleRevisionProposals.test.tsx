@@ -53,7 +53,7 @@ describe('DeliveryScheduleRevisionProposals', () => {
     expect(screen.getByText('No re-dating proposed')).toBeInTheDocument();
   });
 
-  it('titles the card with the item, the phase count, the first date and the note, and lists the cells was -> now', () => {
+  it('titles the card with the item, the area count, the first date and the note, and lists the cells was -> now', () => {
     render(
       <DeliveryScheduleRevisionProposals
         proposals={[
@@ -79,7 +79,7 @@ describe('DeliveryScheduleRevisionProposals', () => {
 
     expect(
       screen.getByText(
-        "SRT382-6 - re-date 3 phases from 23/07/2026, keeping the document's own gaps",
+        "SRT382-6 - re-date 3 areas from 23/07/2026, keeping the document's own gaps",
       ),
     ).toBeInTheDocument();
     expect(
@@ -107,7 +107,7 @@ describe('DeliveryScheduleRevisionProposals', () => {
     const dialog = within(screen.getByRole('dialog'));
     expect(
       dialog.getByText(
-        "Re-date SRT382-6's 2 phases? The amendment will propose ADVANCE per line.",
+        "Re-date SRT382-6's 2 areas? The amendment will propose ADVANCE per line.",
       ),
     ).toBeInTheDocument();
 

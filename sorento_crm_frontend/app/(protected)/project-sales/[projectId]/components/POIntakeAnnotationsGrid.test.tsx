@@ -269,6 +269,48 @@ describe('POIntakeAnnotationsGrid', () => {
     expect(screen.queryByRole('button', { name: /^Accept note/ })).toBeNull();
   });
 
+  it('shows the whole of a long rejection reason, not only on a title (R7)', () => {
+    const longReason =
+      'The signature on page 4 belongs to the site supervisor, not the buyer named on the ' +
+      'purchase order header, and the amendment letter it claims to supersede was never ' +
+      'attached to this document when it was scanned, so the note is rejected as unverifiable ' +
+      'without the buyer or the letter present on the paper itself.';
+    expect(longReason.length).toBeGreaterThan(200);
+    renderGrid([
+      annotation({
+        state: 'rejected',
+        actioned_by_name: 'Yana Abdullah',
+        actioned_at: '2026-05-15T02:41:00',
+        action_note: longReason,
+      }),
+    ]);
+
+    const reason = screen.getByText(longReason);
+    expect(reason).toBeInTheDocument();
+    expect(reason).not.toHaveAttribute('title');
+    expect(reason).not.toHaveClass('truncate');
+    // Nit 7 (PR #1219 round 1): a later `line-clamp-1` would still lack `truncate` and pass the
+    // check above, so pin the wrap behaviour directly rather than only the absence of `truncate`.
+    expect(reason).toHaveClass('whitespace-normal');
+    expect(reason.className).not.toMatch(/\bline-clamp-\d+\b/);
+  });
+
+  it('shows reviewer and date with no empty reason line when there is no reason', () => {
+    renderGrid([
+      annotation({
+        state: 'rejected',
+        actioned_by_name: 'Yana Abdullah',
+        actioned_at: '2026-05-15T02:41:00',
+        action_note: null,
+      }),
+    ]);
+
+    const who = screen.getByText(/By Yana Abdullah/);
+    expect(who).toBeInTheDocument();
+    // The "who" span is the only line in the Reviewed cell: no second, empty reason span.
+    expect(who.parentElement?.children).toHaveLength(1);
+  });
+
   it('leaves the crop cell empty rather than apologising once per note', () => {
     renderGrid([
       annotation({ crop_url: null }),

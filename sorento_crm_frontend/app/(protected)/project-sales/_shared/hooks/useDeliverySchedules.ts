@@ -244,7 +244,7 @@ export function useDeliveryScheduleVersionMutations(
           action: { label: 'Review the amendment', onClick: () => router.push(previewUrl) },
         });
       } else {
-        toast.success('Schedule confirmed. Its phases are on the project.');
+        toast.success('Schedule confirmed. Its areas are on the project.');
       }
     },
     onError: (error: Error) => toast.error(error.message),
