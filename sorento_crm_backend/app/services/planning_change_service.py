@@ -817,6 +817,15 @@ def _from_to(c) -> Tuple[dict, dict]:
     return from_, to_
 
 
+def _entry_differs_from_older_row(c, older: PlanningChangeRow) -> bool:
+    """Whether a gate-failed change actually alters what an older pending row already
+    describes (S1, `PLAN-esb-change-row-refresh.md`) - qty, required_date or status. An
+    idempotent re-push carrying identical facts must not disturb the older row."""
+    _, to_json = _from_to(c)
+    old_to = older.to_json or {}
+    return any(to_json.get(key) != old_to.get(key) for key in ("qty", "required_date", "status"))
+
+
 def _board_link(so_number: str, item_code: str, when: Optional[date]) -> str:
     when_part = when.isoformat() if when else ""
     return f"/project-sales/fulfilment-planning?orders={so_number}&cell={item_code}|{when_part}"
@@ -902,8 +911,18 @@ def build_batch(
             pso = pso_by_core_so.get(str(core_so_id)) if core_so_id else None
             if pso is None:
                 continue
+            # A mirror line can already exist when front-planning reconciliation ran
+            # ahead of the ESB (`project_so_reconciliation_service.py`) - falls back to
+            # `None` for the common case of a genuinely new line with no mirror yet, so an
+            # older `added` row correlates back to a later change on the same line (S1,
+            # `PLAN-esb-change-row-refresh.md`).
             entries.append(
-                {"change": c, "core_line_id": core_line_id, "project_line": None, "order": pso}
+                {
+                    "change": c,
+                    "core_line_id": core_line_id,
+                    "project_line": project_lines_by_core.get(core_line_id),
+                    "order": pso,
+                }
             )
             continue
         project_line = project_lines_by_core.get(core_line_id)
@@ -1078,12 +1097,22 @@ def build_batch(
                 order_has_held_or_inquiry,
                 batch_line_ids,
             )
+            entry_line = e.get("project_line")
+            entry_line_id = str(entry_line.id) if entry_line is not None else None
+            older = pending_lines.get(entry_line_id) if entry_line_id else None
             if row is None:
                 # AC-G1/AC-G4: the line is neither held nor inquired, so it stays off the
-                # batch entirely - not a row worth counting.
+                # batch entirely - not a row worth counting. But a later push whose own
+                # change fails this gate (SO419122, S1) is not silent about the OLDER
+                # pending row it can no longer describe - a re-push that actually changes
+                # the facts must retire that row rather than leave it pending forever at a
+                # stale date. Identical facts (a re-push carrying the same qty/date/status)
+                # leave the row alone - the normal idempotent-push case.
+                if older is not None and _entry_differs_from_older_row(e["change"], older):
+                    older.applied_state = PLANNING_CHANGE_STATE_SUPERSEDED
+                    older.applied_reason = "Line changed again; the row no longer describes it"
                 continue
             kept_orders.add(pso_id)
-            older = pending_lines.get(str(row.project_line_id)) if row.project_line_id else None
             if open_batch_id:
                 # R1 (captain's ruling, review round): one open batch per order, always -
                 # a line the open batch has not seen yet simply joins it, and a later

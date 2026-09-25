@@ -1771,6 +1771,16 @@ class SalesOrderService:
                 line_changes.append((
                     target, old_qty, target.required_date, old_item_code, old_location,
                 ))
+                # S2, `PLAN-esb-change-row-refresh.md`: fetched once, unconditionally, so
+                # every field below that also lives on the mirror line (product on a swap,
+                # qty and required_date always) can follow the core line in the same
+                # transaction - a manual edit otherwise leaves the mirror the board reads
+                # drifting behind the book (AC-7), exactly like an ESB re-push would.
+                mirror_line = (
+                    self.db.query(ProjectSalesOrderLine)
+                    .filter(ProjectSalesOrderLine.core_sales_order_line_id == target.id)
+                    .first()
+                )
                 target.product_id = prod.id
                 if old_item_code != prod.product_code:
                     # R5 (review round, second re-walk): a product change on a MATCHED line
@@ -1778,11 +1788,6 @@ class SalesOrderService:
                     # mirror's own `product_id` too - left alone, the mirror keeps naming
                     # the OLD product forever, disagreeing with the core line it reconciles
                     # to and with the `product_changed` change row this same edit raises.
-                    mirror_line = (
-                        self.db.query(ProjectSalesOrderLine)
-                        .filter(ProjectSalesOrderLine.core_sales_order_line_id == target.id)
-                        .first()
-                    )
                     if mirror_line is not None:
                         mirror_line.product_id = prod.id
                 target.qty_ordered = ln.qty_ordered
@@ -1806,6 +1811,10 @@ class SalesOrderService:
                     target.uom = uom
                 for col, value in money.items():
                     setattr(target, col, value)
+                if mirror_line is not None:
+                    mirror_line.qty = target.qty_ordered
+                    if "required_date" in fields_set:
+                        mirror_line.delivery_date = target.required_date
             else:
                 new_line = SalesOrderLine(
                     sales_order_id=so.id,
