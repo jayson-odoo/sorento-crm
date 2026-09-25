@@ -702,6 +702,8 @@ class TestIdeateBranchCallsMcpTool:
         # `ideation.pending_media` is set AND `reference_positions` is non-empty ->
         # media_selection is the joined positions, per `ideate-turn-http`'s own rule.
         assert call_kwargs["media_selection"] == "1,2"
+        # #1179 AC-6: a live turn says so, so the idea lands on the board.
+        assert call_kwargs["is_test"] is False
 
         expected_text = "Idea IDEA-42 recorded. Thank you!\n\nhttps://outline.example/IDEA-42"
         assert result.reply["text"] == expected_text
@@ -904,17 +906,16 @@ class TestCannedLanesDryRun:
         )
         assert result.is_test is True, f"{kind}: the response must say it was a dry run"
         if kind == "ideate":
-            # The kill assertion for this lane. `ideate` is the only canned kind with a
-            # seam, and its seam WRITES outside `chatbot.turns` - a real idea record, a
-            # respond.io media pull and an `integration_log` row - so "session_vars is
-            # unchanged" above proves nothing about it. D14 is zero writes, and the only
-            # way to have zero here is not to call the tool at all.
-            assert IDEATE_TOOL_CALLS == [], (
-                "dry run called the ideation write tool: D14 says an is_test envelope "
-                "writes nothing outside chatbot.turns, and this tool mints a real idea"
+            # #1179 (owner ruling 24 Sep 2026): `ideate` is the only canned kind with a
+            # seam, and the seam is the point. A dry run CALLS the tool and says it is a
+            # test turn, so the shared service stores the idea as `is_test` (hidden from
+            # the board) and the console gets the real intake replies. "Session_vars is
+            # unchanged" above is still the CRM-side half of D14.
+            assert [c.get("is_test") for c in IDEATE_TOOL_CALLS] == [True], (
+                "a dry run must call the ideation tool exactly once, as a test turn"
             )
 
-    def test_ideate_dry_run_previews_the_reply_it_would_have_sent(
+    def test_ideate_dry_run_calls_the_tool_as_a_test_turn_and_sends_its_real_reply(
         self,
         session_factory,
         seeded,
@@ -923,58 +924,59 @@ class TestCannedLanesDryRun:
         stub_access,
         monkeypatch,
     ):
-        """AC-507's shape on the ideate lane: same actions, seam values stood in for.
+        """#1179 AC-5, AC-7, AC-8: the placeholder is gone; the tool's own words are sent.
 
-        The reply text is the tool's OWN words on a live turn, so there is nothing here
-        that does not depend on the seam - unlike escalation, whose two sentences are
-        fixed and interpolate state the turn already resolved. The whole reply is
-        therefore a placeholder, and the action says so with `preview: true` beside its
-        `dry_run`.
-
-        The placeholder is `PREVIEW_IDEATE_REPLY`, NOT the `<preview>` token. The token is
-        the operator's and stays on `status` and the trace facts; this string is what a
-        `send_message` carries, and the executor executes actions and nothing else - so a
-        dry-run turn used to send the literal "<preview>" to whoever typed the idea.
+        Before this ruling a dry run stood the whole reply in with `PREVIEW_IDEATE_REPLY`
+        and flagged the action `preview: true`, which made ideation untestable anywhere
+        but live WhatsApp. Now the ONLY difference between a test turn and a live one, as
+        far as this lane is concerned, is the `is_test` flag on the tool call. The rest of
+        the dry run is unchanged: `dry_run: true` on the action, no session write, the
+        would-be `session_patch` returned for the caller to carry.
         """
         from app.services.chatbot import contracts
 
         _seed_completed_lanes(session_factory, system_settings_row)
-        envelope, parser_overrides, _ = _build_scenario("ideate", session_factory, monkeypatch)
+        envelope, parser_overrides, expected_text = _build_scenario(
+            "ideate", session_factory, monkeypatch
+        )
         envelope = Envelope(**{**envelope.model_dump(mode="json"), "is_test": True})
         stub_parser(parser_overrides)
         stub_access()
+        before = _session_vars_raw(session_factory)
 
         result = engine_mod.run_turn(envelope, session_factory=session_factory)
 
-        assert IDEATE_TOOL_CALLS == []
+        assert len(IDEATE_TOOL_CALLS) == 1
+        call_kwargs = IDEATE_TOOL_CALLS[0]
+        assert call_kwargs["is_test"] is True
+        # The same arguments a live turn sends, beside the flag.
+        assert call_kwargs["respond_io_id"] == str(CONTACT_ID)
+        assert call_kwargs["session_vars"] == {
+            "ideation": {"draft_id": "ZZT-draft-1", "status": "collecting"}
+        }
+
         assert result.branch_kind == "ideate"
         assert result.delegate is None
-        assert result.reply["text"] == contracts.PREVIEW_IDEATE_REPLY
-        assert contracts.PREVIEW not in result.reply["text"], (
-            "the operator's diagnostic token must never reach the customer: "
-            f"{result.reply['text']!r}"
-        )
+        assert result.is_test is True
+        assert result.reply["text"] == expected_text
+        assert result.reply["ideate_status"] == "collecting"
+        assert contracts.PREVIEW not in result.reply["text"]
         assert result.actions == [
             {
                 "kind": "send_message",
-                "text": contracts.PREVIEW_IDEATE_REPLY,
+                "text": expected_text,
                 "quick_replies": result.reply.get("quick_replies"),
                 "result_set": result.reply.get("result_set"),
                 "dry_run": True,
-                "preview": True,
             }
-        ]
+        ], "the action carries the tool's real reply and no `preview` flag"
         assert result.session_patch is not None
+        assert _session_vars_raw(session_factory) == before, "dry run wrote session_vars"
         row = _turn_row(session_factory, result.turn_id)
         assert row.status == "done"
-        # The OPERATOR's half is unchanged: `status` still carries the marker, which is
-        # what a reader of the fragment keys on, and the action still carries
-        # `preview: true` (asserted above).
-        from app.services.chatbot.lanes.ideate import preview_result
-
-        fragment = preview_result({"session": {"session_vars": {}}})
-        assert fragment["status"] == contracts.PREVIEW
-        assert fragment["reply_text"] == contracts.PREVIEW_IDEATE_REPLY
+        assert not hasattr(contracts, "PREVIEW_IDEATE_REPLY"), (
+            "the ideate placeholder is retired with the preview path"
+        )
 
     def test_access_denied_dry_run_write_nothing(
         self, session_factory, seeded, system_settings_row, stub_parser, stub_access
