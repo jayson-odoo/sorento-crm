@@ -1004,6 +1004,47 @@ class TestACLT19TargetGoesAwayDropsAndReplaces:
         assert after[0].po_line_id == open_line.id
         assert after[0].id != before[0].id
 
+    def test_ac_lt_19_a_closed_target_with_no_alternative_line_is_dropped_not_kept(self, ctx):
+        """Review round 2 Blocking 5 (reversal of the old B1 reason, dated 25 Sep
+        2026): a closed line and NO other line to offer instead - the walk finds no
+        candidate at all, and the honest outcome is that the stale suggestion goes,
+        not that it lingers because nothing replaced it (issue #1215 point 3's own
+        defect: a closed PO still offered for a row)."""
+        db = ctx.db
+        product = _seed_product(db, company_id=ctx.company_a)
+        ref = _ref("SOL")
+        _so, core_line = _seed_so_line(
+            db, company_id=ctx.company_a, product_id=product.id, source_ref=ref, qty="3"
+        )
+        _po, line = _seed_po_line(
+            db,
+            company_id=ctx.company_a,
+            product_id=product.id,
+            qty_ordered="10",
+            header_status="active",
+        )
+        _pso, _mirror, _inquiry, row = _seed_row_and_mirror(
+            db, company_id=ctx.company_a, core_line=core_line, product_id=product.id, qty="3"
+        )
+        db.commit()
+
+        service = ProjectOrderInquiryService(db)
+        service.auto_place_for_products(
+            None, actor_user_id=None, trigger="raise", row_ids=[str(row.id)],
+        )
+        before = _suggested_of(db, row.id)
+        assert len(before) == 1
+        assert before[0].po_line_id == line.id
+
+        line.line_status = "closed"
+        db.commit()
+
+        service.auto_place_for_products(
+            None, actor_user_id=None, trigger="raise", row_ids=[str(row.id)],
+        )
+
+        assert _suggested_of(db, row.id) == []
+
 
 # ============================================================== AC-LT-20 / G2
 class TestACLT20NoClaimForASuggestion:

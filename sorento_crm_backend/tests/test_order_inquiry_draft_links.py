@@ -1160,18 +1160,22 @@ def test_auto_link_all_keeps_the_draft_of_a_row_that_is_now_past_the_cut_off(api
     assert [str(s.id) for s in _suggested_of(world, row)] == before
 
 
-def test_auto_link_all_keeps_the_draft_when_the_document_has_since_closed(api):
-    """B1, the other half. The re-deal found no candidate at all - the purchase order was
-    received and closed between the raise and the press - and the old answer is still the
-    best one anybody has. Taking it down would leave the row reading "Not found (new
-    order)" for a quantity that IS on its way.
+def test_auto_link_all_drops_the_suggestion_when_the_document_has_since_closed(api):
+    """B1, the other half - REVERSED by review round 2 Blocking 5 (AC-LT-19, dated 25
+    Sep 2026). The old B1 reason ("the old answer is still the best one anybody has")
+    applied to a real DRAFT link the row actually held - taking it down really did
+    lose the row its document. A SUGGESTION is a guess, never a placement, and a
+    closed line offered to a row is the exact defect behind issue #1215 point 3: the
+    honest end of a stale guess is that it goes, not that it lingers because nothing
+    else was found to replace it with.
 
-    S3 reversal: the open line carries no book match, so the raise found a
-    SUGGESTION - the walk `continue`s the moment candidates come back empty, never
-    reaching `_write_suggested_links`, so the stale suggestion is left standing.
+    S3 reversal, now reversed again: the open line carries no book match, so the
+    raise found a SUGGESTION - the walk `continue`s the moment candidates come back
+    empty, and now drops the row's stale suggestion there rather than leaving it
+    standing.
     """
     _client, world = api
-    po, line = _open_po_line(world, qty=50)
+    _po, line = _open_po_line(world, qty=50)
     row = _raise_one_row(api, qty="10")["row"]
     before = [str(s.id) for s in _suggested_of(world, row)]
     assert before
@@ -1184,8 +1188,8 @@ def test_auto_link_all_keeps_the_draft_when_the_document_has_since_closed(api):
         assert buyer.post(AUTO_PLACE, json={}).status_code == 200
     world.db.commit()
 
-    assert [str(s.id) for s in _suggested_of(world, row)] == before
-    assert _suggested_documents(world, row) == [po.po_number]
+    assert _suggested_of(world, row) == []
+    assert _suggested_documents(world, row) == []
 
 
 def test_two_presses_of_auto_link_all_change_nothing_at_all(api):
@@ -1230,10 +1234,18 @@ def test_a_reconfirm_with_a_new_date_moves_the_drafted_row_onto_that_date(api):
     S3 reversal: the open line carries no book match, so the raise found a
     SUGGESTION, not a real link - the row is `raised`, never `placed`, and
     `_settle_row_in_place`'s own widened gate (`named_raised`, AC-R2-10/11) still
-    reaches a plain raised row with no real links, settling it the same way. The
-    suggestion itself is neither refreshed nor dropped by a settle (only a state
-    writer or a fresh cascade pass touches it), so the original one survives, stale,
-    exactly as "never re-dealt" describes.
+    reaches a plain raised row with no real links, settling it the same way.
+
+    Review round 2 Blocking 5, "decide it the same way" as the closed-line reversal
+    beside this one: the settle itself touches no suggestion, but this SAME confirm
+    also runs `_draft_links_for_decision`'s fresh cascade pass straight after the
+    handoff (`ProjectSupplyService.confirm`), scoped to this decision's own rows -
+    so the suggestion IS re-derived here, not merely left alone. It reads unchanged
+    (same id, same `suggested_at`, via `_same_placement`) because the PO line is
+    still a valid, in-window candidate under the new date - the honest answer, not
+    a stale one surviving by accident. Had the date change pushed the line outside
+    the window, Blocking 5's own fix would drop it exactly as the closed-line test
+    beside this one now expects.
     """
     _client, world = api
     po, _line = _open_po_line(world, qty=50)

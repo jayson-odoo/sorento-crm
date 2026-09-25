@@ -9177,6 +9177,12 @@ class ProjectOrderInquiryService:
                 continue
             candidates = self._candidates_for_row(row, credit_own_links=bool(drafts))
             if not candidates:
+                # Review round 2 Blocking 5 (AC-LT-19): no candidate at all is the
+                # honest end of a suggestion, not a reason to leave a stale one
+                # standing - the row's own line may have closed since the last pass
+                # that offered it (issue #1215 point 3's own defect, back on a guess
+                # rather than a real link). A no-op when the row holds none.
+                self._drop_suggested_links([row])
                 continue
             # S2/S4 (`PLAN-oi-cascade-skip-early-arrival.md`): `_within_window` is the
             # SAME filter the Link dialog's own preview runs (`po_candidates_for_row`),
@@ -9187,6 +9193,9 @@ class ProjectOrderInquiryService:
                 lead_days = DEFAULT_LEAD_TIME_DAYS
             candidates = self._within_window(row, candidates, lead_days)
             if not candidates:
+                # Same reasoning as the empty-candidates branch above: nothing left
+                # inside the lead-time window is nothing to keep suggesting.
+                self._drop_suggested_links([row])
                 continue
             # AC-LT-14/G2: what OTHER rows already suggest on each target, read fresh
             # right before this row's own take is sized - never cached the way
