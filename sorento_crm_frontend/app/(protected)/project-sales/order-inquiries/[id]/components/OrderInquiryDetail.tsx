@@ -45,7 +45,6 @@ import {
   useCommitOrderInquiryReserve,
   useCreateOrderInquiryReserveRequest,
   useExportOrderInquiryXlsx,
-  useLinkSuggestedOrderInquiryRows,
   useOrderInquiryHandshake,
   useOrderInquiryHeaderDetail,
   useOrderInquiryHeaderLines,
@@ -124,13 +123,6 @@ function reserveIneligibleReason(row: OrderInquiryWorklistRow): string | null {
   return null;
 }
 
-/** A ticked line "Link selected" can turn real (G1, `PLAN-oi-links-autocount-truth-24sep.md`
- * - mirrors `OrderInquiriesClient.tsx`'s own `hasSuggestedLink`): it holds a suggested
- * link. The press no longer runs the cascade over whatever is still owed. */
-function hasSuggestedLink(row: OrderInquiryWorklistRow): boolean {
-  return (row.suggested_links ?? []).length > 0;
-}
-
 export function OrderInquiryDetail({ id }: { id: string }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -153,7 +145,6 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   const commitReserveMutation = useCommitOrderInquiryReserve(id);
   const { acknowledge, unacknowledge } = useOrderInquiryHandshake();
   const autoPlace = useAutoPlaceOrderInquiryRows();
-  const linkSuggested = useLinkSuggestedOrderInquiryRows();
   const exportXlsx = useExportOrderInquiryXlsx(id);
 
   const [rowSelection, setRowSelection] = useState<Record<string, boolean>>({});
@@ -249,10 +240,6 @@ export function OrderInquiryDetail({ id }: { id: string }) {
       selectedLines.filter(
         (l) => ackStateOf(l) !== 'rejected' && ['raised', 'partly_linked', 'placed'].includes(l.state),
       ),
-    [selectedLines],
-  );
-  const selectedSuggested = useMemo(
-    () => selectedLines.filter(hasSuggestedLink),
     [selectedLines],
   );
   const selectedLinked = useMemo(
@@ -560,13 +547,19 @@ export function OrderInquiryDetail({ id }: { id: string }) {
     );
   }
 
-  /** "Link selected" (G1): writes exactly the ticked lines' OWN suggested links as real
-   * links, in the caller's own name - a different mutation from `runAutoLink` below,
-   * which still runs the cascade. */
+  /**
+   * "Link selected" (R18, owner ruling from the hand test on stack C, 25 Sep 2026,
+   * supersedes G1): the SAME mutation as `runAutoLink` below, scoped to exactly the
+   * ticked lines via `row_ids` - it never turns a suggestion into a link on its own.
+   * Pressing it re-runs the AutoCount book step for the ticked lines (in AutoCount's
+   * own name) and refreshes their suggestions, catching a mistake in the automation
+   * rather than promising a placement. Unlike `runAutoLink`, nothing ticked means
+   * nothing to do - there is no whole-OI fallback for this press.
+   */
   function runLinkSelected() {
-    if (selectedSuggested.length === 0) return;
-    linkSuggested.mutate(
-      selectedSuggested.map((l) => l.id),
+    if (selectedIds.length === 0) return;
+    autoPlace.mutate(
+      { row_ids: selectedIds },
       { onSuccess: () => setRowSelection({}) },
     );
   }
@@ -577,10 +570,9 @@ export function OrderInquiryDetail({ id }: { id: string }) {
    * first. Ticked lines -> exactly those (unfiltered - the cascade itself decides what
    * it can and cannot place, the same as the worklist's own unconditional run over
    * everything); nothing ticked -> the whole OI via `filter: { inquiry_id }` (AC-AL-01).
-   * Same hook, same result reporting (`linkOutcomeText`'s toast) as the worklist's "Auto
-   * link all" - nothing new invented here. `runLinkSelected` above is a DIFFERENT
-   * mutation since G1: it writes what is already suggested rather than running the
-   * cascade, so the two presses no longer share a payload.
+   * Same hook, same result reporting (`linkOutcomeText`'s toast) as `runLinkSelected`
+   * above - since R18 the two presses share the exact same call, just a different
+   * scope when nothing is ticked.
    */
   function runAutoLink() {
     autoPlace.mutate(
@@ -693,8 +685,8 @@ export function OrderInquiryDetail({ id }: { id: string }) {
                         Choose document
                       </DropdownMenuItem>
                       <DropdownMenuItem
-                        disabled={selectedSuggested.length === 0}
-                        onSelect={selectedSuggested.length ? runLinkSelected : undefined}
+                        disabled={selectedIds.length === 0}
+                        onSelect={selectedIds.length ? runLinkSelected : undefined}
                       >
                         <Wand2 className="size-4" aria-hidden />
                         Link selected

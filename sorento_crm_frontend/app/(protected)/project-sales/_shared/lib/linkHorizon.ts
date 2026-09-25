@@ -4,21 +4,17 @@
  * Every path that ties a document to an order-inquiry row reaches only as far as a date:
  * a row due after it is left Not linked, so a 2030 order stops eating a purchase order a
  * nearer one needed. Two presses share the date - Acknowledge and Link now - plus the
- * manual Link dialog, which shows it and lets a person overrule it. "Link selected" no
- * longer does (G1, `PLAN-oi-links-autocount-truth-24sep.md`): it stopped running the
- * cascade and now only writes what is already suggested, so it carries no horizon of its
- * own - `linkSuggestedOutcomeText` lives here beside the others only because this is
- * where an order-inquiry link result's own words live, not because it shares the date.
+ * manual Link dialog, which shows it and lets a person overrule it. "Link selected"
+ * (R18, `PLAN-oi-links-autocount-truth-24sep.md`, supersedes G1) carries no horizon of
+ * its own either - it is the SAME `auto-place` call scoped to the ticked rows via
+ * `row_ids`, so it reports through `linkOutcomeText` below like every other caller of
+ * that route.
  *
  * The words a result is reported in live here too, so the presses cannot come to report
  * the same outcome differently.
  */
 import { formatDateInMalaysia } from '@/lib/helpers';
-import type {
-  AcknowledgeResult,
-  AutoPlaceResult,
-  LinkSuggestedResult,
-} from '../types/orderInquiry.types';
+import type { AcknowledgeResult, AutoPlaceResult } from '../types/orderInquiry.types';
 
 /** Where the buyer's own choice is remembered between visits (AC-LH5). */
 export const LINK_HORIZON_STORAGE_KEY = 'sorento.order-inquiries.link-up-to';
@@ -220,6 +216,12 @@ export function linkOutcomeText(result: AutoPlaceResult): string {
     const bookLinked = result.book_linked_rows ?? 0;
     const suggested = result.suggested_rows ?? 0;
     const parts = [`${bookLinked} linked from AutoCount`, `${suggested} suggested`];
+    // R18 (supersedes G1): "Link selected" is this SAME call, scoped to the ticked
+    // rows - the ruling asks it to also say how many of them actually moved, so
+    // recalculating against AutoCount can say whether it caught a mistake rather
+    // than a blanket re-link. Shown whenever the backend sends it (every auto-place
+    // caller, not only "Link selected"), same absence rule as the two counts above.
+    if (result.changed_rows !== undefined) parts.push(`${result.changed_rows} changed`);
     if (after > 0) parts.push(afterPhrase(after, result.link_up_to));
     return parts.join(', ');
   }
@@ -232,24 +234,6 @@ export function linkOutcomeText(result: AutoPlaceResult): string {
     `${placed} row${placed === 1 ? '' : 's'} linked across ` +
     `${result.allocations} document line${result.allocations === 1 ? '' : 's'}`
   );
-}
-
-/**
- * "Link selected"'s own outcome (G1): it no longer runs the cascade, so there is no
- * horizon or allocation count to report - only how many rows it made real, and how many
- * held nothing suggested (reported, not silently dropped, same as `acknowledgeOutcomeText`
- * reports `skipped`).
- */
-export function linkSuggestedOutcomeText(result: LinkSuggestedResult): string {
-  const linked = result.linked_rows ?? 0;
-  const nothing = result.nothing_suggested ?? 0;
-  if (linked === 0) {
-    return nothing > 0
-      ? `Nothing suggested on ${nothing} row${nothing === 1 ? '' : 's'}`
-      : 'Nothing new to link yet';
-  }
-  const rows = `${linked} row${linked === 1 ? '' : 's'} linked`;
-  return nothing > 0 ? `${rows}, ${nothing} had nothing suggested` : rows;
 }
 
 /**

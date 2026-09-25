@@ -1039,18 +1039,15 @@ export interface AutoPlaceResult {
   /** The rows the cascade only SUGGESTED, on top of `book_linked_rows` - never written
    * as an `order_inquiry_links` row, never counted as bought. Same absence rule. */
   suggested_rows?: number;
-}
-
-/**
- * `POST {BASE}/order-inquiries/link-suggested` (G1): "Link selected" no longer runs the
- * cascade - it writes what the cascade already suggested as REAL links, in the buyer's
- * own name (`PLAN-oi-links-autocount-truth-24sep.md` section 3.6). A ticked row holding
- * nothing suggested is reported on `nothing_suggested`, not silently dropped.
- */
-export interface LinkSuggestedResult {
-  linked_rows: number;
-  links: number;
-  nothing_suggested: number;
+  /**
+   * R18 (`PLAN-oi-links-autocount-truth-24sep.md` 3.6, supersedes G1): how many rows
+   * this pass actually moved - book-linked this pass, or given a different suggestion
+   * than the one they held coming in. "Link selected" is THIS route, scoped to the
+   * ticked rows via `row_ids` - there is no separate route for it - and reads this to
+   * say whether recalculating against AutoCount caught a mistake, rather than a
+   * blanket re-link.
+   */
+  changed_rows?: number;
 }
 
 /**

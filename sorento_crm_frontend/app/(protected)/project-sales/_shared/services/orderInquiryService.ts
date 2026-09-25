@@ -6,7 +6,6 @@ import type {
   AcknowledgeResult,
   AutoPlaceRequest,
   AutoPlaceResult,
-  LinkSuggestedResult,
   OrderInquiryDetail,
   OrderInquiryHeader,
   OrderInquiryHeaderDetail,
@@ -45,40 +44,28 @@ const BASE = '/api/v1/project-sales';
  */
 
 /**
- * SUGGESTED LINKS - CONTRACT (`PLAN-oi-links-autocount-truth-24sep.md`, S2 mock; S3/S4
- * wire it live). A suggested link is the cascade's proposal of a document line for a row
- * - NEVER an `order_inquiry_links` row, never read by `state`/`po_ref`/`spo_ref`/the PO
- * or SPO cells. Always called a SUGGESTED LINK, never "suggestion" (that name is taken by
+ * SUGGESTED LINKS - CONTRACT (`PLAN-oi-links-autocount-truth-24sep.md`). A suggested
+ * link is the cascade's proposal of a document line for a row - NEVER an
+ * `order_inquiry_links` row, never read by `state`/`po_ref`/`spo_ref`/the PO or SPO
+ * cells. Always called a SUGGESTED LINK, never "suggestion" (that name is taken by
  * `OrderInquiryLink.suggestion`, the unrelated S1b reallocate/unlink advice on a REAL
  * link).
  *
  *   Row payload (`OrderInquiryRow`, `OrderInquiryWorklistRow`):
  *     suggested_links : OrderInquirySuggestedLink[] - `[{kind, document, po_id,
  *       po_line_id, spo_allocation_id, location, qty, expected_date, late_days,
- *       trigger}]`, separate from `links`. Absent or empty until S3/S4 land - the real
- *       backend answers no such field today, so the Suggested column and every count
- *       that reads this array are dormant in production until then (S2 is FE-only).
+ *       trigger}]`, separate from `links`.
  *
- *   Lightbox payload (`OrderInquiryPoDetail`, `OrderInquirySpoDetail`):
- *     suggested_links : OrderInquiryDocumentAllocation[] - the SAME shape `allocations`
- *       already carries (inquiry_no, so_number, item_code, qty, po_line_id), reused
- *       rather than a near-duplicate type - the "Suggested for" panel below Allocated to.
- *
- *   POST {BASE}/order-inquiries/link-suggested  { row_ids }
- *     -> LinkSuggestedResult { linked_rows, links, nothing_suggested }. "Link selected"
- *     (G1): for each named row, writes ITS OWN suggested links as real links in the
- *     caller's name (`auto = false`), then deletes them. A row named that holds nothing
- *     suggested is reported on `nothing_suggested`, not silently skipped. Grant: the same
- *     `projects.order_inquiry.action` every other bulk link action here already needs -
- *     no new permission. Does not exist on the real backend yet (S2); the FE button that
- *     calls it stays disabled in production until a row can actually carry a suggested
- *     link (S3/S4), so no live call reaches a 404.
- *
- *   POST {BASE}/order-inquiries/auto-place  (unchanged route, G4): `AutoPlaceResult`
- *     gains `book_linked_rows` / `suggested_rows` beside `placed_rows` - AutoCount's own
- *     links from the pass's book step, and what it could only suggest for the rest. Both
- *     absent on today's backend, so "Auto link all"'s toast falls back to its current
- *     wording until S3/S4 populate them.
+ *   POST {BASE}/order-inquiries/auto-place  (G4, R18): `AutoPlaceResult` carries
+ *     `book_linked_rows` / `suggested_rows` / `changed_rows` beside `placed_rows` -
+ *     AutoCount's own links from the pass's book step, what it could only suggest for
+ *     the rest, and how many rows this pass actually moved. R18 (owner ruling from the
+ *     hand test on stack C, 25 Sep 2026, supersedes G1): "Link selected" is THIS same
+ *     route, `row_ids` naming exactly the ticked rows - there is no separate route for
+ *     it. It never turns a suggestion into a real link on its own; the book step above
+ *     already writes only what AutoCount names, in AutoCount's own name, and the
+ *     cascade only ever suggests. Pressing it re-runs that book step for the ticked
+ *     rows (catching a mistake in the automation) and refreshes their suggestions.
  */
 
 function normaliseEnvelope(body: unknown, fallbackLimit: number): OrderInquiryListEnvelope {
@@ -301,24 +288,6 @@ export async function autoPlaceOrderInquiryRows(
   });
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to run the auto-link pass'));
-  return response.json();
-}
-
-/**
- * "Link selected" (G1): writes each named row's own suggested links as real links in the
- * caller's name - it no longer runs the cascade itself. See the SUGGESTED LINKS CONTRACT
- * above for the route and the result shape.
- */
-export async function linkSuggestedOrderInquiryRows(
-  rowIds: string[],
-): Promise<LinkSuggestedResult> {
-  const response = await apiFetch(`${BASE}/order-inquiries/link-suggested`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ row_ids: rowIds }),
-  });
-  if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to link those rows'));
   return response.json();
 }
 

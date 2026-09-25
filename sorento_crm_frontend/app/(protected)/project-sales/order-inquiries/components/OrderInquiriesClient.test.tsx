@@ -90,7 +90,6 @@ const getOrderInquiryWorklistSummary = vi.fn();
 // retired from THIS screen (the sync GET route itself stays for one release elsewhere).
 const exportOrderInquiryWorklistXlsx = vi.fn();
 const autoPlaceOrderInquiryRows = vi.fn();
-const linkSuggestedOrderInquiryRows = vi.fn();
 const getUnplaceAllPreview = vi.fn();
 const unplaceAllOrderInquiryRows = vi.fn();
 const acknowledgeOrderInquiryRows = vi.fn();
@@ -109,8 +108,6 @@ vi.mock('../../_shared/services/orderInquiryService', () => ({
     exportOrderInquiryWorklistXlsx(...args),
   autoPlaceOrderInquiryRows: (...args: unknown[]) =>
     autoPlaceOrderInquiryRows(...args),
-  linkSuggestedOrderInquiryRows: (...args: unknown[]) =>
-    linkSuggestedOrderInquiryRows(...args),
   getUnplaceAllPreview: (...args: unknown[]) => getUnplaceAllPreview(...args),
   unplaceAllOrderInquiryRows: (...args: unknown[]) =>
     unplaceAllOrderInquiryRows(...args),
@@ -618,11 +615,12 @@ describe('AC-D13/AC-D14: one toolbar row, Actions + Start, counts disabling at 0
     expect(getOrderInquiryPoCandidates).toHaveBeenCalledWith('row-2');
   });
 
-  it('AC-LT-05 (G1, reverses AC-T4): Link selected posts link-suggested with only the rows holding a suggested link', async () => {
-    // `PLAN-oi-links-autocount-truth-24sep.md`: "Link selected" no longer runs the
-    // cascade over whatever is still owed (the old `isLinkable` reading, S4 R-B) - it
-    // writes what the cascade already suggested. row-2 gets a suggested link here;
-    // row-1 (actioned, fully linked, no suggestion) does not.
+  it('R18 (supersedes AC-LT-05/G1): Link selected posts auto-place with every ticked row, whatever it holds', async () => {
+    // Owner ruling from the hand test on stack C (25 Sep 2026): Link selected never
+    // turns a suggestion into a link on its own - it re-runs the AutoCount book step
+    // for the ticked rows and refreshes their suggestions, so it acts on every ticked
+    // row, not a "holds a suggestion" subset. row-2 carries a suggested link here;
+    // row-1 (actioned, fully linked, no suggestion) is ticked too and still included.
     const suggested: OrderInquiryWorklistRow = {
       ...MOCK_WORKLIST_ROWS[1],
       suggested_links: [{ kind: 'po', document: '202609-S0090', qty: '10' }],
@@ -630,10 +628,13 @@ describe('AC-D13/AC-D14: one toolbar row, Actions + Start, counts disabling at 0
     listOrderInquiryWorklist.mockResolvedValue(
       envelope([MOCK_WORKLIST_ROWS[0], suggested, ...MOCK_WORKLIST_ROWS.slice(2)]),
     );
-    linkSuggestedOrderInquiryRows.mockResolvedValue({
-      linked_rows: 1,
-      links: 1,
-      nothing_suggested: 0,
+    autoPlaceOrderInquiryRows.mockResolvedValue({
+      placed_rows: 0,
+      allocations: 0,
+      products_touched: 0,
+      book_linked_rows: 0,
+      suggested_rows: 1,
+      changed_rows: 0,
     });
     renderClient();
     await screen.findByText('SO385126');
@@ -642,18 +643,20 @@ describe('AC-D13/AC-D14: one toolbar row, Actions + Start, counts disabling at 0
     fireEvent.click(screen.getByLabelText('Select SRTWB5400 on SO385126'));
     openActionsMenu();
     fireEvent.click(
-      screen.getByRole('menuitem', { name: 'Link selected (1 of 2)' }),
+      screen.getByRole('menuitem', { name: 'Link selected (2)' }),
     );
 
     await waitFor(() =>
-      expect(linkSuggestedOrderInquiryRows).toHaveBeenCalledWith(['row-2']),
+      expect(autoPlaceOrderInquiryRows).toHaveBeenCalledWith({
+        row_ids: ['row-1', 'row-2'],
+      }),
     );
   });
 
-  it('AC-LT-05 (G1, reverses SF-4): a bundled row IS counted once it holds a suggested link - bundling no longer decides eligibility', async () => {
-    // SF-4 (superseded): `isLinkable` used to read `qty - linked_qty - bundled_qty`, so
-    // a fully bundled row never counted. Eligibility is now purely "does this row hold
-    // a suggested link" - bundling plays no part any more.
+  it('R18: a bundled row is counted once ticked - bundling and suggestion state play no part in eligibility', async () => {
+    // Superseded SF-4/AC-LT-05 reading: eligibility used to gate on `isLinkable` and
+    // then on holding a suggested link. R18 drops both - the enabled state and the
+    // count read the ticked rows only.
     const bundled: OrderInquiryWorklistRow = {
       ...MOCK_WORKLIST_ROWS[1],
       id: 'row-bundled',
@@ -668,7 +671,7 @@ describe('AC-D13/AC-D14: one toolbar row, Actions + Start, counts disabling at 0
         item_codes: ['ZZT-HOST'],
         anchor_headline: '5 of 5',
       },
-      suggested_links: [{ kind: 'po', document: '202609-S0090', qty: '5' }],
+      suggested_links: [],
     };
     const plain: OrderInquiryWorklistRow = {
       ...MOCK_WORKLIST_ROWS[1],
@@ -682,24 +685,28 @@ describe('AC-D13/AC-D14: one toolbar row, Actions + Start, counts disabling at 0
       suggested_links: [],
     };
     listOrderInquiryWorklist.mockResolvedValue(envelope([bundled, plain]));
-    linkSuggestedOrderInquiryRows.mockResolvedValue({
-      linked_rows: 1,
-      links: 1,
-      nothing_suggested: 0,
+    autoPlaceOrderInquiryRows.mockResolvedValue({
+      placed_rows: 0,
+      allocations: 0,
+      products_touched: 0,
+      book_linked_rows: 0,
+      suggested_rows: 0,
+      changed_rows: 0,
     });
     renderClient();
     await screen.findByText('SO-BUNDLED');
 
     fireEvent.click(screen.getByLabelText('Select ZZT-BUNDLED on SO-BUNDLED'));
-    fireEvent.click(screen.getByLabelText('Select ZZT-PLAIN on SO-PLAIN'));
     openActionsMenu();
     expect(
-      screen.getByRole('menuitem', { name: 'Link selected (1 of 2)' }),
+      screen.getByRole('menuitem', { name: 'Link selected (1)' }),
     ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Link selected (1 of 2)' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Link selected (1)' }));
 
     await waitFor(() =>
-      expect(linkSuggestedOrderInquiryRows).toHaveBeenCalledWith(['row-bundled']),
+      expect(autoPlaceOrderInquiryRows).toHaveBeenCalledWith({
+        row_ids: ['row-bundled'],
+      }),
     );
   });
 
@@ -757,10 +764,11 @@ describe('AC-D13/AC-D14: one toolbar row, Actions + Start, counts disabling at 0
     ).toBeDisabled();
   });
 
-  it('AC-T2 / AC-LT-05: three rows ticked - two holding a suggested link, one without - label the eligible count', async () => {
-    // Link selected's own count is AC-LT-05's (G1) - row-2 and row-3 each get a
-    // suggested link, row-1 (actioned, fully linked) gets none. Reject selected's count
-    // is unrelated and unchanged (still owed-an-answer, S4 R-B).
+  it('AC-T2 (R18 supersedes AC-LT-05): three rows ticked - Link selected counts all of them, Reject selected keeps its own eligible subset', async () => {
+    // R18: Link selected's count is every ticked row, whatever it holds - row-2 and
+    // row-3 carry a suggested link, row-1 (actioned, fully linked) does not, and all
+    // three still count. Reject selected is unrelated and unchanged (still
+    // owed-an-answer, S4 R-B) - it keeps its own eligible-of-ticked count.
     const rows = MOCK_WORKLIST_ROWS.map((row) =>
       row.id === 'row-2' || row.id === 'row-3'
         ? { ...row, suggested_links: [{ kind: 'po' as const, document: '202609-S0090', qty: '5' }] }
@@ -776,9 +784,9 @@ describe('AC-D13/AC-D14: one toolbar row, Actions + Start, counts disabling at 0
     fireEvent.click(screen.getByLabelText('Select SRTWC8605-SC-RL on SO386461'));
     openActionsMenu();
 
-    // Link selected: row-3 and row-2 hold a suggested link, row-1 does not -> 2 of 3.
+    // Link selected: every ticked row counts, whether or not it holds a suggestion.
     expect(
-      screen.getByRole('menuitem', { name: 'Link selected (2 of 3)' }),
+      screen.getByRole('menuitem', { name: 'Link selected (3)' }),
     ).toBeInTheDocument();
     // Reject selected: row-1 (actioned) has nothing left to refuse - only row-2 and
     // row-3 are still owed an answer -> 2 of 3.
