@@ -204,4 +204,31 @@ describe('ReorderPlanView Actions menu - low stock report (AC-1/AC-2)', () => {
     resolveExport({ id: 'dl-9', kind: 'low_stock_xlsx', status: 'pending', filename: null });
     await waitFor(() => expect(lowStock).not.toBeDisabled());
   });
+
+  it('AC-16/AC-17 (reviewer kill test B1/B2): picking Supplier then Export calls '
+    + 'exportLowStockReport(\'run-1\', \'supplier\') - not the "none" default every other '
+    + 'test in this file leaves selected - and the dialog is GONE once the export '
+    + 'resolves (the success counterpart of AC-18\'s "stays open on refusal")', async () => {
+    exportLowStockReport.mockResolvedValue({
+      id: 'dl-10', kind: 'low_stock_xlsx', status: 'pending', filename: null,
+    });
+    renderView();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole('button', { name: 'Low stock report Excel' }));
+    const supplierRadio = document.getElementById('low-stock-split-supplier');
+    expect(supplierRadio).not.toBeNull();
+    await user.click(supplierRadio as HTMLElement);
+    await user.click(await screen.findByRole('button', { name: 'Export' }));
+
+    await waitFor(() =>
+      expect(exportLowStockReport).toHaveBeenCalledWith('run-1', 'supplier'),
+    );
+
+    // The dialog is gone - no more "Export" button, no dialog role left in the document.
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Export' })).not.toBeInTheDocument(),
+    );
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
 });
