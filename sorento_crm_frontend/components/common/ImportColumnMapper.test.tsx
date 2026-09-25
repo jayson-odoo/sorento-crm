@@ -355,4 +355,28 @@ describe('ImportColumnMapper', () => {
     expect(lineFieldsSection.contains(stepper)).toBe(true);
     expect(headerFieldsSection.contains(stepper)).toBe(false);
   });
+
+  it('V-SO (owner ruling, 25 Sep): a probe that lists so_no as a header-field choice renders "SO"', () => {
+    // SO is now its own header-block field (`so_no`), distinct from BL - a probe that
+    // states it among `header_field_choices` (the mapper's own field vocabulary, V2)
+    // must offer "SO" in the field select the same way it already offers BL/Container/
+    // Seal/PI number/Invoice date/Currency.
+    const probe = {
+      ...probeWith(
+        [{ position: 0, header: 'ITEM', samples: [], field: 'item_code', source: 'supplier' }],
+        14,
+        [{ row: 13, label: '客户SO', sample: 'SO456', field: null, source: 'none' }],
+      ),
+      header_field_choices: [
+        { field: 'so_no', label: 'SO' },
+        { field: 'bl_no', label: 'BL' },
+        { field: 'container_no', label: 'Container' },
+      ],
+    } as ImportMappingProbe;
+    renderMapper(probe);
+
+    const selects = screen.getAllByRole('combobox');
+    openSelect(selects[selects.length - 1]);
+    expect(screen.getByText('SO')).toBeInTheDocument();
+  });
 });

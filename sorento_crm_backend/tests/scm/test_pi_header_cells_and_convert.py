@@ -664,11 +664,18 @@ def _apply_dafuyuan_pi(db, tag: str):
 
 
 def test_B1_convert_carries_container_seal_so_and_company_as_consignee():
-    """AC-C6/R-B: the draft shipment gets `shipping_container_number` = the PI's
-    container, `seal_number` = the PI's seal, `forwarder_order_ref` (the SO field) = the
-    PI's BL (提单号, R-A/6-Sep ruling, unchanged), `consignee` = the PI's OWN COMPANY name
-    (R-B, 24 Sep - ALWAYS, never the sheet's own `consignee_ref`), and `shipper` stays
-    unset (never stated on this sheet)."""
+    """AC-C6/R-B, updated by the SO ruling (owner, 25 Sep): the draft shipment gets
+    `shipping_container_number` = the PI's container, `seal_number` = the PI's seal,
+    `consignee` = the PI's OWN COMPANY name (R-B, 24 Sep - ALWAYS, never the sheet's own
+    `consignee_ref`), and `shipper` stays unset (never stated on this sheet) - unchanged.
+
+    `forwarder_order_ref` (the SO field) now comes from `so_ref`, never `bl_ref` (the
+    pre-SO 6-Sep rule this test used to pin) - DAFUYUAN's own file states 提单号 (which
+    resolves to `bl_no`/`bl_ref` via the SHARED alias, unchanged) and states no distinct
+    SO at all, so `so_ref` stays unset and `forwarder_order_ref` must be None here;
+    `bill_of_lading_number` (never written before the SO ruling) must carry `bl_ref`
+    instead - SO2 covers the positive case where a supplier states BOTH facts
+    separately."""
     from app.models.company import Company
     from app.models.procurement import InboundShipment
     from app.services.scm import proforma_invoice_service
@@ -688,17 +695,21 @@ def test_B1_convert_carries_container_seal_so_and_company_as_consignee():
 
         assert shipment.shipping_container_number == "FSCU9304169", shipment.shipping_container_number
         assert shipment.seal_number == "OOLLGZ7182", shipment.seal_number
-        assert shipment.forwarder_order_ref == "OOLU2339207730", shipment.forwarder_order_ref
+        assert shipment.forwarder_order_ref is None, shipment.forwarder_order_ref
+        assert shipment.bill_of_lading_number == "OOLU2339207730", shipment.bill_of_lading_number
         assert shipment.consignee == company.name, (shipment.consignee, company.name)
         assert shipment.shipper is None, shipment.shipper
 
 
 def test_B3_convert_carry_on_the_pi_detail_matches_what_convert_will_write():
-    """AC-C5: the PI detail payload names a `convert_carry` object - `{container, seal,
-    so, consignee}` - that is exactly what B1's convert will write, so the dialog's
-    "Carried onto the draft" line can read the server rather than echo the PI's own
-    fields (today's bug: it prints them unconditionally, ignoring the one-container
-    condition B1 relies on)."""
+    """AC-C5, updated by the SO ruling (owner, 25 Sep): the PI detail payload names a
+    `convert_carry` object - `{container, seal, so, bl, consignee}` (`bl` new) - that is
+    exactly what B1's convert will write, so the dialog's "Carried onto the draft" line
+    can read the server rather than echo the PI's own fields.
+
+    DAFUYUAN states 提单号 (bl_ref) and no distinct SO, so `carry["so"]` must be None
+    and `carry["bl"]` must carry the BL number - the reverse of what this test pinned
+    before the SO ruling (`carry["so"] == the BL number`, the old carry-BL-as-SO rule)."""
     from app.services.scm import proforma_invoice_service
 
     with pg_session() as db:
@@ -710,7 +721,8 @@ def test_B3_convert_carry_on_the_pi_detail_matches_what_convert_will_write():
         carry = payload["convert_carry"]
         assert carry["container"] == "FSCU9304169", carry
         assert carry["seal"] == "OOLLGZ7182", carry
-        assert carry["so"] == "OOLU2339207730", carry
+        assert carry["so"] is None, carry
+        assert carry["bl"] == "OOLU2339207730", carry
         assert carry["consignee"], carry
 
 
@@ -1776,3 +1788,155 @@ def test_S4_pi_list_serialize_no_per_row_company_query():
             f"{company_queries} `companies` queries for a 25-row page - one per row, "
             "not one for the page"
         )
+
+
+# =================================================================================== #
+# SO (owner ruling, 25 Sep): SO is its own header field, distinct from BL - convert now
+# carries so_ref -> InboundShipment.forwarder_order_ref and bl_ref -> InboundShipment.
+# bill_of_lading_number (never written before). Same PLAN-pi-header-fields-convert-
+# fixes-24sep.md.
+# =================================================================================== #
+
+
+def test_SO1_so_no_is_its_own_header_field_choice_and_save_target():
+    """SO1: the header-field picker needs a distinct "SO" choice (block field `so_no`)
+    for BOTH doc types that carry a header block - today `_BLOCK_FIELDS` has no `so_no`
+    on either reader, so `header_field_choices` never offers it and `save()` refuses a
+    pick of it with a 422. H1-style read: once a supplier maps 提单号 to `so_no` instead
+    of the default (shared) `bl_no`, the document must read `so_no` = the cell's value
+    and `bl_no` = None - the two are independent facts now, not one carried into the
+    other."""
+    from app.models.import_alias import ImportFieldAlias
+    from app.services.error_handler import AppException
+    from app.services.import_alias_service import AliasResolver
+    from app.services.scm import import_mapping_service
+    from app.services.scm.proforma_invoice_reader import DOC_TYPE, read_workbook
+
+    with pg_session() as db:
+        from app.models.base import set_company_scope
+        from app.models.company import Company
+        from app.models.procurement import Supplier
+
+        company_id = _u()
+        db.add(Company(id=company_id, name=f"{MARKER} SO1 co", code=f"{MARKER}SO1"[:50], is_active=True))
+        db.flush()
+        set_company_scope(db, frozenset({company_id}))
+        supplier_id = _u()
+        db.add(Supplier(id=supplier_id, supplier_code=f"{MARKER}-SO1", supplier_name="SO1 supplier", is_active=True))
+        db.flush()
+
+        for doc_type in ("proforma_invoice", "packing_list"):
+            probed = import_mapping_service.probe(
+                db, _fixture("dafuyuan_pi_20260922.xlsx"),
+                supplier_id=supplier_id, doc_types=[doc_type], header_row=14,
+            )
+            assert {"field": "so_no", "label": "SO"} in probed["header_field_choices"], (
+                doc_type, probed["header_field_choices"]
+            )
+
+        try:
+            import_mapping_service.save(
+                db, supplier_id=supplier_id, doc_types=["proforma_invoice"],
+                mappings=[("Whatever the sheet calls it", "so_no")],
+            )
+        except AppException as exc:  # noqa: BLE001 - the failure itself IS the red reason
+            raise AssertionError(f"save() refused a so_no pick: {exc}") from exc
+
+        # H1-style read: 提单号 remapped to so_no for THIS supplier (a direct alias row,
+        # since save() above is the thing under test for the pick itself) - the document
+        # must read so_no from it and bl_no must be None, the reverse of DAFUYUAN's usual
+        # (shared, bl_no) resolution.
+        db.add(ImportFieldAlias(
+            id=_u(), doc_type="proforma_invoice", field="so_no", alias="提单号",
+            supplier_id=supplier_id,
+        ))
+        db.flush()
+        _save_dafuyuan_unit_price_mapping(db, supplier_id)
+        resolver = AliasResolver.for_supplier(db, DOC_TYPE, supplier_id)
+        result = read_workbook(_fixture("dafuyuan_pi_20260922.xlsx"), resolver=resolver, header_row=14)
+        assert result.documents, result.problems
+        doc = result.documents[0]
+        assert getattr(doc, "so_no", None) == "OOLU2339207730", doc
+        assert doc.bl_no is None, doc.bl_no
+
+
+def test_SO2_apply_writes_so_ref_and_convert_carries_so_and_bl_separately():
+    """SO2: `apply()` must write `ProformaInvoice.so_ref` (a new column, alongside the
+    existing `bl_ref`) from the reader's `doc.so_no`; `serialize()` must expose a top-
+    level `so_no` key the same way it already exposes `bl_no`; and convert must write
+    `InboundShipment.forwarder_order_ref` from `so_ref` (not `bl_ref`, the pre-SO rule)
+    and `InboundShipment.bill_of_lading_number` from `bl_ref` (a column that exists
+    today but nothing has ever written to it). `convert_carry` gains `so` and `bl` keys
+    matching those two writes exactly, mirroring `_convert_carry`'s own contract with
+    `serialize`/`convert_to_draft_shipment` (B3)."""
+    from decimal import Decimal as _Decimal
+
+    from app.models.import_alias import ImportFieldAlias
+    from app.models.procurement import InboundShipment
+    from app.models.scm import ProformaInvoice
+    from app.services.scm import proforma_invoice_service
+
+    with pg_session() as db:
+        tag = uuid.uuid4().hex[:8]
+        code = f"{MARKER}-SO2-{tag}"
+        _, supplier_id, product_ids = _seed_company_and_products(db, tag, [code])
+
+        # A supplier-scoped `so_no` pick, distinct from the shared 提单号 -> bl_no alias -
+        # the same shape SO1 pins for the probe/save contract, seeded directly here since
+        # this test is about apply()/convert, not the mapper round trip.
+        db.add(ImportFieldAlias(
+            id=_u(), doc_type="proforma_invoice", field="so_no", alias="客户SO",
+            supplier_id=supplier_id,
+        ))
+        db.flush()
+
+        data = workbook([
+            [f"{MARKER} SO2 letterhead"],
+            ["柜号：CONTAINER1"],
+            ["提单号：BL123"],
+            ["客户SO：SO456"],
+            [],
+            ["产品型号", "数量", "单价"],
+            [code, 5, 10],
+        ])
+        proforma_invoice_service.apply(
+            db, data, supplier_id=supplier_id, header_row=6, currency="CNY",
+        )
+        invoice = db.query(ProformaInvoice).filter(ProformaInvoice.supplier_id == supplier_id).one()
+        assert invoice.container_ref == "CONTAINER1", invoice.container_ref
+        assert invoice.bl_ref == "BL123", invoice.bl_ref
+        assert invoice.so_ref == "SO456", invoice.so_ref
+
+        payload = proforma_invoice_service.serialize(db, invoice)
+        assert payload.get("so_no") == "SO456", payload
+
+        carry = payload.get("convert_carry") or {}
+        assert carry.get("so") == "SO456", carry
+        assert carry.get("bl") == "BL123", carry
+
+        container_size_id = _big_container_size(db, tag)
+        result = proforma_invoice_service.convert_to_draft_shipment(
+            db, [str(invoice.id)], container_size_id=container_size_id,
+        )
+        shipment = (
+            db.query(InboundShipment).filter(InboundShipment.id == result["shipment_id"]).one()
+        )
+        assert shipment.forwarder_order_ref == "SO456", shipment.forwarder_order_ref
+        assert shipment.bill_of_lading_number == "BL123", shipment.bill_of_lading_number
+
+
+def test_SO3_migration_adds_proforma_invoice_so_ref_column():
+    """SO3 (migration, like the R13/seal_ref precedent - `alembic/versions/
+    503_scm_pi_seal_ref.py`): `scm.proforma_invoice.so_ref` must exist on the private
+    test database after the coder's migration is written AND applied
+    (`alembic upgrade head` against `sorento_l2_ci`) - red until then, independent of
+    whatever the ORM model class itself claims."""
+    with pg_session() as db:
+        row = db.execute(
+            text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema = 'scm' AND table_name = 'proforma_invoice' "
+                "AND column_name = 'so_ref'"
+            )
+        ).first()
+        assert row is not None, "scm.proforma_invoice.so_ref does not exist yet"

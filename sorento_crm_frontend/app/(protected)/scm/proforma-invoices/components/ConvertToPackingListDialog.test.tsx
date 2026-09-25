@@ -286,4 +286,27 @@ describe('ConvertToPackingListDialog', () => {
     expect(scrollRegion).not.toBeNull();
     expect(scrollRegion?.contains(searchInput)).toBe(false);
   });
+
+  it('V-SO (owner ruling, 25 Sep): "Carried onto the draft" names SO and BL as two separate facts', () => {
+    // SO is its own header field now, distinct from BL (the pre-SO-ruling carry-BL-as-SO
+    // rule this dialog used to echo) - convert_carry gains a `bl` key alongside `so`, and
+    // the line must name BOTH when the server states both. Today the dialog has no "BL"
+    // clause at all: `carryParts` only ever pushes Container/Seal/SO/Consignee, so a
+    // `convert_carry.bl` value is silently dropped regardless of what the server sends.
+    renderDialog({
+      ...({
+        convert_carry: {
+          container: 'FSCU9304169',
+          seal: 'OOLLGZ7182',
+          so: 'SO456',
+          bl: 'BL123',
+          consignee: 'Sorento',
+        },
+      } as Partial<ProformaInvoiceDetail>),
+    });
+
+    const carryLine = screen.getByText(/Carried onto the draft:/).closest('p');
+    expect(carryLine?.textContent).toContain('SO SO456');
+    expect(carryLine?.textContent).toContain('BL BL123');
+  });
 });
