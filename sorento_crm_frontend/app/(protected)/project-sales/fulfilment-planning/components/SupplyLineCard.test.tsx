@@ -522,9 +522,6 @@ describe('SupplyLineCard', () => {
     expect(screen.getByTestId('cell-location-BRW-BB')).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '40' } });
-    fireEvent.change(screen.getByLabelText(/^Reason/), {
-      target: { value: 'Group borrow, auto-proposed.' },
-    });
     fireEvent.click(screen.getByRole('button', { name: 'Add the borrow' }));
 
     const added = (onChange.mock.calls[0][0] as DraftLine).borrow[0];
@@ -667,6 +664,15 @@ describe('SupplyLineCard', () => {
       screen.queryByText('This product is discontinued. Buying it takes a reason.'),
     ).not.toBeInTheDocument();
     expect(screen.queryByText(/Buying it takes a reason/)).not.toBeInTheDocument();
+  });
+
+  it('S1 should-fix: the discontinued Buy Reason label carries no required asterisk', () => {
+    renderCard(line({ is_discontinued: true }));
+
+    const label = within(section('Buy')).getByText('Reason', { selector: 'label' });
+    expect(label).toHaveTextContent('Reason');
+    expect(label.textContent).toBe('Reason');
+    expect(within(section('Buy')).queryByText('*')).not.toBeInTheDocument();
   });
 
   it('asks for no buy reason on a product that is still made', () => {

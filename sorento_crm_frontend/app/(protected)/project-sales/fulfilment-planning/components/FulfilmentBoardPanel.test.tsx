@@ -165,6 +165,7 @@ import {
   putLineDraft,
 } from '../../_shared/services/fulfilmentPlanningService';
 import { FulfilmentBoardPanel } from './FulfilmentBoardPanel';
+import { unpostableNotices } from '../../_shared/lib/unpostableNotices';
 import {
   buildBoard,
   type BoardDemandLine,
@@ -3683,16 +3684,47 @@ describe('FulfilmentBoardPanel: a rejection toasts too (owner, 22 Sep 2026)', ()
  */
 // D2 (AC-19): `'buy_reason_missing'` is removed from `UnpostableReason` entirely by this fix -
 // the discontinued-with-no-reason cause no longer exists as a left-out reason, so a notice can
-// no longer be constructed for it. The `describe('unpostableNotices', ...)` block that used to
-// live here (`'names a line and states the fix, with no name baked into the clause'` and
-// `'caps the names at five and counts the rest'`, both calling
-// `unpostableNotices('buy_reason_missing', ...)`) is deleted outright rather than rewritten:
-// this is a mechanical removal of a reason kind the type itself is dropping, not a
-// product-behavior deletion. The remaining reason kinds (`no_mirror`, `no_reserve_warehouse`)
-// keep their own `unpostableNotices` coverage elsewhere in this file; AC-19/AC-20's actual
-// red coverage for the discontinued cause lives in `fulfilmentBoard.test.ts`
+// no longer be constructed for it. The `'names a line and states the fix, with no name baked
+// into the clause'` case (a single-name, single-reason call) is a mechanical removal of a
+// reason kind the type itself is dropping, not a product-behavior deletion; AC-19/AC-20's
+// actual red coverage for the discontinued cause lives in `fulfilmentBoard.test.ts`
 // (`describe('confirmLinesFor and a discontinued product', ...)` and the COVERED-line describe
 // beside it), which is where `lineFor`/`unpostableDecidedFor` are exercised directly.
+//
+// The five-name cap and the plural grammar ("reserve ... leaves them out", "are not ... add
+// them") are NOT specific to `buy_reason_missing`: they are generic `unpostableNotices`
+// behaviour, so the S1 review (PR #1218) asked for this case to be re-pointed at a reason that
+// still exists rather than deleted with it.
+describe('unpostableNotices', () => {
+  function line(lineNo: number) {
+    return {
+      contribution: {
+        item_code: 'TPE-9204',
+        line_no: lineNo,
+      } as unknown as BoardContribution,
+      reason: 'no_reserve_warehouse' as const,
+    };
+  }
+
+  it('caps the names at five and counts the rest', () => {
+    const [notice] = unpostableNotices(
+      'no_reserve_warehouse',
+      [1, 2, 3, 4, 5, 6, 7].map((no) => line(no)),
+    );
+    expect(notice.named.map((entry) => entry.label)).toEqual([
+      'TPE-9204 line 1',
+      'TPE-9204 line 2',
+      'TPE-9204 line 3',
+      'TPE-9204 line 4',
+      'TPE-9204 line 5',
+    ]);
+    expect(notice.moreCount).toBe(2);
+    // Seven lines: the clause reads "reserve"/"them", not the one-line "reserves"/"it".
+    expect(notice.clause).toContain('reserve at a warehouse the board cannot address');
+    expect(notice.clause).toContain('leaves them out');
+    expect(notice.clause).toContain('Amend them to place the Reserve.');
+  });
+});
 
 describe('FulfilmentBoardPanel: what was taken off the page', () => {
   it('shows no legend row on either view', async () => {

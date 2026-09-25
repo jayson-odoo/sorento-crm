@@ -1240,8 +1240,8 @@ export function FulfilmentBoardPanel({
         }
         // DECIDED, AND NOT ONE LINE OF IT COULD BE BUILT, AND NOTHING TO WITHDRAW EITHER.
         // Every line was left out for a reason `unpostableDecidedFor` already knows (no
-        // mirror on the planning record, a Reserve at a warehouse the board cannot address,
-        // a discontinued Buy with no reason), so the order sends nothing - and said nothing,
+        // mirror on the planning record, a Reserve at a warehouse the board cannot address),
+        // so the order sends nothing - and said nothing,
         // because a press whose `orders` came out empty with an empty `skipped` never set
         // `batchResults` at all. It is reported beside every other order's outcome instead,
         // in the wording the notice above the block already uses for the lines themselves.

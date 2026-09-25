@@ -3408,7 +3408,7 @@ class FulfilmentBoardService:
             "Buy",
             taken=bought,
             offered=bought,
-            why=lambda outcome: self._buy_why(fact, outcome, outside_window),
+            why=lambda outcome: self._buy_why(outcome, outside_window),
         )
         # Where a person could still borrow from, and it is exactly what the borrow steps
         # above put on the table - step 2's windowed donors, then the manual same-group
@@ -4059,7 +4059,7 @@ class FulfilmentBoardService:
         return _dec(self.supply.netting().donor_group_net(fact.product_id, group).net)
 
     @staticmethod
-    def _buy_why(fact: Any, outcome: str, outside_window: bool = False) -> str:
+    def _buy_why(outcome: str, outside_window: bool = False) -> str:
         """Why the remainder is bought.
 
         Beyond the reserve window "nothing left to take" is not what happened: none of the

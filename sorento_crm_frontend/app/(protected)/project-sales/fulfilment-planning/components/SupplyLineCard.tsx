@@ -354,7 +354,7 @@ export function SupplyLineCard({
                     className="block text-2xs uppercase tracking-wide text-muted-foreground"
                     htmlFor={`buy-reason-${line.project_line_id}`}
                   >
-                    Reason <span className="text-destructive">*</span>
+                    Reason
                   </label>
                   <Textarea
                     id={`buy-reason-${line.project_line_id}`}
