@@ -40,7 +40,6 @@ from app.models.order import SalesOrder, SalesOrderLine
 from app.models.procurement import InboundShipment, InboundShipmentLine
 from app.models.product import ProductCategory
 from app.models.resources import Attachment
-from app.models.user import SystemSetting
 from app.services.company_scope import DEFAULT_COMPANY_ID
 from app.services.company_scope_resolver import apply_company_scope
 from app.services.inventory_service import StockService
@@ -429,32 +428,6 @@ def test_per_product_map_wins_scalar_fills(db):
     assert b_entry2["requested_qty"] == 7, "the scalar fills B, which the map did not name"
     assert b_entry2["needs_quantity"] is False
     assert b_entry2["branch"] == "in_stock"
-
-
-def test_low_threshold_setting_is_unread_by_availability(db):
-    """AC-SA317. `chatbot_stock_low_threshold_pct` is unchanged (#1118) but this branch
-    never reads it - no entry carries a `running_low` field or any low-stock behaviour,
-    even set to a value (1%) that would have flagged every case under the old #1118 rule."""
-    db.add(
-        SystemSetting(
-            id=str(uuid.uuid4()), name="ZZTDSV Co", chatbot_stock_low_threshold_pct=1
-        )
-    )
-    brw = _wh(db, "ZZTBRW")
-    p = product(db, company_id=DEFAULT_COMPANY_ID)
-    _category_of(db, p).chatbot_max_qty = 200
-    stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=brw.id, on_hand=100)
-    contact = _contact(db)
-    _policy_row(db, mode="availability", warehouse_ids=[brw.id], contact=contact)
-    db.flush()
-
-    result = StockService(db).list_stock(
-        product_ids=[p.id], contact_id=contact.id, requested_quantities={p.id: 100}
-    )
-
-    entry = _entry(result, p.id)
-    assert entry["branch"] == "in_stock"
-    assert "running_low" not in entry
 
 
 # ================================================================================ AC-SA311

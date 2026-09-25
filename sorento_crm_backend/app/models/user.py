@@ -687,16 +687,6 @@ class SystemSetting(Base):
     chatbot_ordering_enabled = Column(
         Boolean, nullable=False, server_default="false", default=False
     )
-    # Ported from PR #1118 (feat/chatbot-dealer-stock-verdict, not merged, owner ruling
-    # 24 Sep 2026) for chatbot-stock-ask-v2 S3 parity: the ONE threshold `verdict()`
-    # compares ask against available/incoming/purchase to decide `running_low` /
-    # `limited` - "make the T configurable" (owner, plan page). Integer percent, 1-100,
-    # default 50; bounded by `SystemSettingUpdate`, never by a raw column constraint,
-    # the way every other bounded setting on this table already is. R11 (lavish review,
-    # 24 Sep 2026): kept exactly as #1118 lands it - v2's four branches never read it.
-    chatbot_stock_low_threshold_pct = Column(
-        Integer, nullable=False, server_default="50", default=50
-    )
 
 
 class UserQuickAccess(Base):

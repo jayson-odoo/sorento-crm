@@ -42,6 +42,8 @@ Classification: the X / Y columns, the contact toggles and the `stock_asks` tabl
 >
 > R11 "can we keep the column?" (stock-low-threshold). Yes: keep system_settings.chatbot_stock_low_threshold_pct and its Settings card exactly as #1118 lands them. Delete migration sa2_0003_drop_stock_low_threshold from S3, delete the "Settings > Chatbot loses the threshold card" frontend seam line, delete the Risks item that offers dropping dsv_0001 in S0, and adjust any UAC line that asserted the column or card is gone (state instead: unchanged, still unread by v2).
 >
+> Owner ruling 25 Sep 2026: the threshold column is dropped, #1118 never merges.
+>
 > R12 "the product inherit from category, overridable, we don't need parent category -> category relationship for now". This already matches the resolution rule (product value, else its own category value, else 0); add the quote under Rulings and leave the rule as is.
 >
 > R13 owner asked "the notification to salesperson is in this plan?" Answer is yes, S4. Add one line at the top of S4 saying so in plain words.

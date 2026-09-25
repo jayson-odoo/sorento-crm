@@ -74,7 +74,7 @@ Truth table for `branch()` (x and y already resolved; unset = 0):
 - **AC-SA314 [BE]** Engine: B3 with `packing_list` present emits one `send_attachments` action with that file; without it, no attachment action.
 - **AC-SA315 [BE]** `detailed` and `compact` payloads are unchanged (R10); the `stock_denied` / `demand_qty` suites on `chatbot_stock_denial_enabled` pass unchanged (R1).
 - **AC-SA316 [BE]** `stock_verdict.py` and `tests/test_stock_verdict.py` are gone; nothing imports `stock_verdict`.
-- **AC-SA317 [BE]** `system_settings.chatbot_stock_low_threshold_pct` and its Settings > Chatbot card are unchanged from #1118 (lavish review R11, 24 Sep 2026); v2 does not read the column in any branch. **[FE]** Settings > Chatbot still renders the threshold card.
+- **AC-SA317 [BE]** Owner ruling 25 Sep 2026: the threshold column is dropped, #1118 never merges - it superseded lavish review R11 (24 Sep 2026), which had kept the column and card unchanged from #1118. The migration, model column, settings dict entries, schema field and the test that only pinned it are removed from this PR; there is no reader and no card. **[FE]** N/A - no card is added.
 - **AC-SA318 [E2E]** Console check per `documentation/agents/chatbot-verification.md` against an "Availability only" dealer contact: one turn per branch (B1 via Q > X, B1 via unset X, B2, B3 with toggle on and off, B4); replies quoted in `documentation/plans/chatbot/evidence/`.
 
 ## S4 - Agent notification + integration_log
