@@ -2,7 +2,13 @@
 
 import * as React from 'react';
 import type { CSSProperties } from 'react';
-import type { PDFDocumentLoadingTask, PDFDocumentProxy, PDFPageProxy, RenderTask, TextLayer } from 'pdfjs-dist';
+import type {
+  PDFDocumentLoadingTask,
+  PDFDocumentProxy,
+  PDFPageProxy,
+  RenderTask,
+  TextLayer,
+} from 'pdfjs-dist';
 import {
   ChevronLeft,
   ChevronRight,
@@ -20,6 +26,7 @@ import { cn } from '@/lib/utils';
 import { toast } from '@/lib/toast';
 
 import { loadPdfJs, type PdfJs } from './pdfjs';
+import './pdf-viewer.css';
 import type { PdfViewerProps } from './types';
 
 const ZOOM_MIN = 0.25;
@@ -66,7 +73,8 @@ export default function PdfViewerImpl({
 }: PdfViewerProps) {
   const hasSource = Boolean(url || loadData);
   // With bytes but no url and no key, the one document this mount was given.
-  const identity = documentKey ?? (url ? url.split('?')[0] : hasSource ? 'bytes' : null);
+  const identity =
+    documentKey ?? (url ? url.split('?')[0] : hasSource ? 'bytes' : null);
 
   // The loader reads the latest source through a ref, so a re-signed URL for the same
   // document (same identity) does not throw away the rendered pages.
@@ -75,13 +83,18 @@ export default function PdfViewerImpl({
   const onPageChangeRef = React.useRef(onPageChange);
   onPageChangeRef.current = onPageChange;
 
-  const [status, setStatus] = React.useState<Status>(hasSource ? 'loading' : 'idle');
+  const [status, setStatus] = React.useState<Status>(
+    hasSource ? 'loading' : 'idle',
+  );
   const [loaded, setLoaded] = React.useState<LoadedDocument | null>(null);
   const [pdfjs, setPdfjs] = React.useState<PdfJs | null>(null);
   const [current, setCurrent] = React.useState(Math.max(1, page ?? 1));
   const [zoom, setZoom] = React.useState<Zoom>('fit');
   const [containerWidth, setContainerWidth] = React.useState(0);
-  const [range, setRange] = React.useState<[number, number]>([1, 1 + 2 * RENDER_AHEAD]);
+  const [range, setRange] = React.useState<[number, number]>([
+    1,
+    1 + 2 * RENDER_AHEAD,
+  ]);
 
   const scrollerRef = React.useRef<HTMLDivElement>(null);
   const pageRefs = React.useRef<(HTMLDivElement | null)[]>([]);
@@ -103,7 +116,9 @@ export default function PdfViewerImpl({
       try {
         const lib = await loadPdfJs();
         const { url: sourceUrl, loadData: read } = sourceRef.current;
-        const source = read ? { data: new Uint8Array(await read()) } : { url: sourceUrl as string };
+        const source = read
+          ? { data: new Uint8Array(await read()) }
+          : { url: sourceUrl as string };
         if (cancelled) return;
         task = lib.getDocument({ ...source, isEvalSupported: false });
         const doc = await task.promise;
@@ -111,7 +126,9 @@ export default function PdfViewerImpl({
           Array.from({ length: doc.numPages }, (_, i) => doc.getPage(i + 1)),
         );
         if (cancelled) return;
-        const baseWidth = Math.max(...pages.map((p) => p.getViewport({ scale: 1 }).width));
+        const baseWidth = Math.max(
+          ...pages.map((p) => p.getViewport({ scale: 1 }).width),
+        );
         setPdfjs(() => lib);
         setLoaded({ doc, pages, baseWidth });
         setStatus('ready');
@@ -125,8 +142,12 @@ export default function PdfViewerImpl({
     };
   }, [identity, hasSource]);
 
-  const numPages = loaded?.pages.length ?? (pageCountHint && pageCountHint > 0 ? pageCountHint : 0);
-  const shownPage = numPages ? Math.min(Math.max(current, 1), numPages) : current;
+  const numPages =
+    loaded?.pages.length ??
+    (pageCountHint && pageCountHint > 0 ? pageCountHint : 0);
+  const shownPage = numPages
+    ? Math.min(Math.max(current, 1), numPages)
+    : current;
 
   const fitScale =
     loaded && containerWidth > 0
@@ -140,7 +161,9 @@ export default function PdfViewerImpl({
     const el = scrollerRef.current;
     if (!el) return;
     setContainerWidth(el.clientWidth);
-    const observer = new ResizeObserver(() => setContainerWidth(el.clientWidth));
+    const observer = new ResizeObserver(() =>
+      setContainerWidth(el.clientWidth),
+    );
     observer.observe(el);
     return () => observer.disconnect();
   }, [status]);
@@ -150,7 +173,8 @@ export default function PdfViewerImpl({
     const node = pageRefs.current[target - 1];
     // Instant, never smooth: a page jump is a keyboard or click action, and a smooth scroll
     // would report every page it passes on the way.
-    if (el && node) el.scrollTop = Math.max(0, node.offsetTop - SCROLLER_PADDING);
+    if (el && node)
+      el.scrollTop = Math.max(0, node.offsetTop - SCROLLER_PADDING);
   }, []);
 
   const report = React.useCallback((next: number) => {
@@ -163,7 +187,9 @@ export default function PdfViewerImpl({
 
   const goTo = React.useCallback(
     (target: number) => {
-      const bounded = numPages ? Math.min(Math.max(target, 1), numPages) : Math.max(target, 1);
+      const bounded = numPages
+        ? Math.min(Math.max(target, 1), numPages)
+        : Math.max(target, 1);
       scrollToPage(bounded);
       report(bounded);
     },
@@ -199,8 +225,13 @@ export default function PdfViewerImpl({
       if (!reading && nodeBottom > probe) reading = i + 1;
     });
     if (first) {
-      const next: [number, number] = [first - RENDER_AHEAD, last + RENDER_AHEAD];
-      setRange((prev) => (prev[0] === next[0] && prev[1] === next[1] ? prev : next));
+      const next: [number, number] = [
+        first - RENDER_AHEAD,
+        last + RENDER_AHEAD,
+      ];
+      setRange((prev) =>
+        prev[0] === next[0] && prev[1] === next[1] ? prev : next,
+      );
     }
     if (reading) report(reading);
   }, [report]);
@@ -228,7 +259,8 @@ export default function PdfViewerImpl({
   const onKeyDown = (event: React.KeyboardEvent) => {
     if (event.altKey || event.ctrlKey || event.metaKey) return;
     const target = event.target as HTMLElement;
-    if (target.closest('input, textarea, select, [contenteditable="true"]')) return;
+    if (target.closest('input, textarea, select, [contenteditable="true"]'))
+      return;
     let handled = true;
     if (event.key === 'PageDown') goTo(shownPage + 1);
     else if (event.key === 'PageUp') goTo(shownPage - 1);
@@ -246,7 +278,9 @@ export default function PdfViewerImpl({
     if (!loaded) return;
     try {
       const bytes = await loaded.doc.getData();
-      const href = URL.createObjectURL(new Blob([bytes as BlobPart], { type: 'application/pdf' }));
+      const href = URL.createObjectURL(
+        new Blob([bytes as BlobPart], { type: 'application/pdf' }),
+      );
       const a = document.createElement('a');
       a.href = href;
       a.download = fileName || `${title}.pdf`;
@@ -266,7 +300,9 @@ export default function PdfViewerImpl({
     if (!tab || !loaded) return;
     tab.opener = null;
     const bytes = await loaded.doc.getData();
-    const href = URL.createObjectURL(new Blob([bytes as BlobPart], { type: 'application/pdf' }));
+    const href = URL.createObjectURL(
+      new Blob([bytes as BlobPart], { type: 'application/pdf' }),
+    );
     tab.location.href = href;
     setTimeout(() => URL.revokeObjectURL(href), 60_000);
   };
@@ -275,11 +311,16 @@ export default function PdfViewerImpl({
 
   return (
     <div
-      className={cn('flex min-h-0 min-w-0 flex-col overflow-hidden bg-background', className)}
+      className={cn(
+        'flex min-h-0 min-w-0 flex-col overflow-hidden bg-background',
+        className,
+      )}
+      role="group"
+      aria-label={`${title} viewer`}
       onKeyDown={onKeyDown}
       data-slot="pdf-viewer"
     >
-      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-border px-2 py-1.5">
+      <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 border-b border-border px-2 py-1.5">
         <div className="flex items-center gap-1">
           <Button
             type="button"
@@ -322,7 +363,10 @@ export default function PdfViewerImpl({
           >
             <ZoomOut className="size-4" />
           </Button>
-          <span className="w-10 text-center text-xs tabular-nums text-muted-foreground" aria-live="polite">
+          <span
+            className="w-10 text-center text-xs tabular-nums text-muted-foreground"
+            aria-live="polite"
+          >
             {status === 'ready' ? `${Math.round(scale * 100)}%` : ''}
           </span>
           <Button
@@ -348,43 +392,55 @@ export default function PdfViewerImpl({
           >
             <MoveHorizontal className="size-4" />
           </Button>
+        </div>
 
-          {fileActions && hasSource && (
-            <>
-              <span aria-hidden className="mx-1 h-4 w-px bg-border" />
+        {/* Three groups that wrap as whole groups, so a narrow column (375px, a side
+            panel) stacks them instead of clipping the last button. */}
+        {fileActions && hasSource && (
+          <div className="flex items-center gap-1">
+            <Button
+              type="button"
+              mode="icon"
+              variant="ghost"
+              size="sm"
+              aria-label="Download"
+              disabled={status !== 'ready'}
+              onClick={download}
+            >
+              <Download className="size-4" />
+            </Button>
+            {openUrl ? (
               <Button
                 type="button"
                 mode="icon"
                 variant="ghost"
                 size="sm"
-                aria-label="Download"
-                disabled={status !== 'ready'}
-                onClick={download}
+                asChild
               >
-                <Download className="size-4" />
-              </Button>
-              {openUrl ? (
-                <Button type="button" mode="icon" variant="ghost" size="sm" asChild>
-                  <a href={openUrl} target="_blank" rel="noopener noreferrer" aria-label="Open in new tab">
-                    <ExternalLink className="size-4" />
-                  </a>
-                </Button>
-              ) : (
-                <Button
-                  type="button"
-                  mode="icon"
-                  variant="ghost"
-                  size="sm"
+                <a
+                  href={openUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
                   aria-label="Open in new tab"
-                  disabled={status !== 'ready'}
-                  onClick={openLoaded}
                 >
                   <ExternalLink className="size-4" />
-                </Button>
-              )}
-            </>
-          )}
-        </div>
+                </a>
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                mode="icon"
+                variant="ghost"
+                size="sm"
+                aria-label="Open in new tab"
+                disabled={status !== 'ready'}
+                onClick={openLoaded}
+              >
+                <ExternalLink className="size-4" />
+              </Button>
+            )}
+          </div>
+        )}
       </div>
 
       <div
@@ -396,7 +452,9 @@ export default function PdfViewerImpl({
         className="relative min-h-0 flex-1 overflow-auto bg-muted/40 p-2 outline-none focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-inset"
       >
         {status === 'idle' ? (
-          unavailable ?? <PdfNotice title="The file is not available to preview" />
+          (unavailable ?? (
+            <PdfNotice title="The file is not available to preview" />
+          ))
         ) : status === 'error' ? (
           <PdfNotice title="This PDF could not be shown here">
             {openUrl && (
@@ -409,7 +467,12 @@ export default function PdfViewerImpl({
             )}
           </PdfNotice>
         ) : status === 'loading' || !loaded || !pdfjs ? (
-          <div role="status" aria-busy="true" aria-label="Loading" className="mx-auto w-full max-w-[640px]">
+          <div
+            role="status"
+            aria-busy="true"
+            aria-label="Loading"
+            className="mx-auto w-full max-w-[640px]"
+          >
             <Skeleton className="aspect-[1/1.414] w-full rounded-sm" />
           </div>
         ) : (
@@ -434,7 +497,13 @@ export default function PdfViewerImpl({
   );
 }
 
-function PdfNotice({ title, children }: { title: string; children?: React.ReactNode }) {
+function PdfNotice({
+  title,
+  children,
+}: {
+  title: string;
+  children?: React.ReactNode;
+}) {
   return (
     <div className="flex h-full min-h-40 flex-col items-center justify-center gap-2 rounded border border-dashed border-border px-6 text-center">
       <FileWarning className="size-5 text-muted-foreground" aria-hidden />
@@ -459,7 +528,10 @@ function PdfPage({
   draw: boolean;
   nodeRef: (node: HTMLDivElement | null) => void;
 }) {
-  const viewport = React.useMemo(() => pdfPage.getViewport({ scale }), [pdfPage, scale]);
+  const viewport = React.useMemo(
+    () => pdfPage.getViewport({ scale }),
+    [pdfPage, scale],
+  );
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
   const textRef = React.useRef<HTMLDivElement>(null);
 
@@ -523,7 +595,11 @@ function PdfPage({
     >
       {draw && (
         <>
-          <canvas ref={canvasRef} aria-hidden className="absolute inset-0 block size-full" />
+          <canvas
+            ref={canvasRef}
+            aria-hidden
+            className="absolute inset-0 block size-full"
+          />
           <div ref={textRef} className="textLayer" />
         </>
       )}
