@@ -1024,7 +1024,14 @@ class TestACLT19TargetGoesAwayDropsAndReplaces:
         2026): a closed line and NO other line to offer instead - the walk finds no
         candidate at all, and the honest outcome is that the stale suggestion goes,
         not that it lingers because nothing replaced it (issue #1215 point 3's own
-        defect: a closed PO still offered for a row)."""
+        defect: a closed PO still offered for a row).
+
+        Review round 4 Should fix 1: this is the likeliest stale case on prod - a
+        line closes with nothing else for the product - and Link selected's own
+        call (`trigger="worklist", redeal_drafts=True, include_awaiting=True`) must
+        report it in `changed_rows`, not "nothing changed", the same reporting fix
+        round 3's B1 made for the emptied-takes branch.
+        """
         db = ctx.db
         product = _seed_product(db, company_id=ctx.company_a)
         ref = _ref("SOL")
@@ -1054,11 +1061,17 @@ class TestACLT19TargetGoesAwayDropsAndReplaces:
         line.line_status = "closed"
         db.commit()
 
-        service.auto_place_for_products(
-            None, actor_user_id=None, trigger="raise", row_ids=[str(row.id)],
+        result = service.auto_place_for_products(
+            None,
+            actor_user_id=None,
+            trigger="worklist",
+            row_ids=[str(row.id)],
+            redeal_drafts=True,
+            include_awaiting=True,
         )
 
         assert _suggested_of(db, row.id) == []
+        assert result["changed_rows"] == 1
 
     def test_ac_lt_19_remaining_lines_cannot_cover_in_full_drops_the_stale_suggestion(
         self, ctx

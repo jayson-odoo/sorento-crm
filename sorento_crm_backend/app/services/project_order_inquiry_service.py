@@ -9290,9 +9290,17 @@ class ProjectOrderInquiryService:
                 # standing - the row's own line may have closed since the last pass
                 # that offered it (issue #1215 point 3's own defect, back on a guess
                 # rather than a real link). A no-op when the row holds none.
+                #
+                # Review round 4 Should fix 1: this drop is counted in
+                # `changed_suggestion_row_ids` too - round 3's B1 fix counted the
+                # SAME drop on the empty-takes branch below but missed this older,
+                # more common one (a closed line with no alternative), which left
+                # Link selected reporting `changed_rows: 0` on the exact case its
+                # own toast exists to catch.
                 if existing_suggestions:
                     self._drop_suggested_links([row])
                     _release_own_contribution()
+                    changed_suggestion_row_ids.add(str(row.id))
                 continue
             # S2/S4 (`PLAN-oi-cascade-skip-early-arrival.md`): `_within_window` is the
             # SAME filter the Link dialog's own preview runs (`po_candidates_for_row`),
@@ -9305,9 +9313,11 @@ class ProjectOrderInquiryService:
             if not candidates:
                 # Same reasoning as the empty-candidates branch above: nothing left
                 # inside the lead-time window is nothing to keep suggesting.
+                # Review round 4 Should fix 1: counted too, same reason as above.
                 if existing_suggestions:
                     self._drop_suggested_links([row])
                     _release_own_contribution()
+                    changed_suggestion_row_ids.add(str(row.id))
                 continue
             # What OTHER rows already suggest on each target, netted from the ONE
             # shared total built before this loop started - this row's own current
