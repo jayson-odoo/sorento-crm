@@ -245,6 +245,10 @@ class DecisionTrailService:
             )
             .join(OrderInquiry, OrderInquiry.id == OrderInquiryRow.order_inquiry_id)
             .filter(ProjectSalesOrderLine.core_sales_order_line_id == core_line_id)
+            # A stable order: with none, the "later events" pass below (B3) could
+            # attribute one raise event's `· qty N` detail to a different row - and
+            # therefore a different quantity - on every request.
+            .order_by(OrderInquiryRow.created_at, OrderInquiryRow.id)
             .all()
         )
         if not rows:
