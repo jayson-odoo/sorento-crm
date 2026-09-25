@@ -1,6 +1,6 @@
 # PLAN: Order inquiry handover email prints the AutoCount SO document date as SO DATE (25 Sep 2026)
 
-Status: PLANNED 25 Sep 2026, small fix track (one service, two dict builders, no migration,
+Status: REVIEW CLEAN 25 Sep 2026 (coder 2 rounds, reviewer kill test passed, 6 new tests), PR open, awaiting owner hand test + merge go. Small fix track (one service, two dict builders, no migration,
 no auth change; one coder writes tests + fix, one reviewer, no browser pass - no screen
 changes).
 UAC: `oi-handover-so-date-autocount-25sep-acceptance-criteria.md`.
@@ -51,7 +51,13 @@ owner's ruling (25 Sep 2026): SO DATE is the AutoCount sales order document date
 Out of scope: the header list and worklist (already correct), the FE, the importer's
 `so_date` read (`project_order_inquiry_reader.py`, a sheet cell, unrelated).
 
-## 4. Trigger for anything wider
+## 4. Follow-up named
+
+`_rank_raised_rows` (`document_age` ranking input) still reads `published_at or created_at`
+while `scm/priority.py` documents `document_age <- sales_orders.order_date`. Internal ranking
+input, not printed; aligning it changes placement order, so it is its own lane.
+
+## 5. Trigger for anything wider
 
 If a third `published_at or created_at` copy turns up while doing this, list it in the PR
 and fix it in the same commit only when it is an OI row surface; otherwise leave it and
