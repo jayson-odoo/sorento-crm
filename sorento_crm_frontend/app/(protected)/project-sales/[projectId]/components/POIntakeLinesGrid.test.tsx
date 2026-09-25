@@ -395,6 +395,24 @@ describe('POIntakeLinesGrid, showing only what needs attention', () => {
     ).toHaveAttribute('aria-checked', 'true');
     expect(screen.getByLabelText('Quantity on line 2')).toBeInTheDocument();
   });
+
+  it('states the flagged state once, as the two chips only, never a health sentence or handwriting strip (N3, R22)', async () => {
+    renderGrid(
+      [
+        line({ id: 'l1', line_no: 1, arithmetic_ok: false }),
+        line({ id: 'l2', line_no: 2, is_cancelled: true }),
+        line({ id: 'l3', line_no: 3 }),
+      ],
+      { annotations: [annotation({ id: 'a1', refers_to_lines: [3] })] },
+    );
+
+    await screen.findByRole('radio', { name: /Lines identified/ });
+
+    expect(
+      screen.queryByText(/lines? need attention|add up and resolve|with handwriting to review/i),
+    ).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Next unreviewed' })).toBeNull();
+  });
 });
 
 /**
