@@ -609,9 +609,13 @@ export interface ReviseSubmissionResult {
 /**
  * POST .../submissions/{kind}/{id}/revise - send a revision.
  *
- * 409 (someone revised it first / double tap) and 422 (policy refused it) both
- * carry one human sentence, surfaced verbatim through `unwrap` ->
- * `extractApiError`.
+ * 409 (someone revised it first / double tap) and most 422s (policy refused it)
+ * carry one human sentence. #1232 blocking 4: revise is a second submission path
+ * with the same sponsorship unit-price gate `submitDraft` has, so a refusal from
+ * it can carry the same `line:<index>` naming - routed through the same
+ * `throwSubmissionError` `submitDraft`/`saveDraft` use rather than the plain
+ * `unwrap` this used before (which would have read the flat body's `detail`
+ * token, e.g. "line:0", as the message - the exact bug already fixed there).
  */
 export async function reviseSubmission(
   kind: PortalLandingKind,
@@ -631,7 +635,8 @@ export async function reviseSubmission(
       }),
     },
   );
-  return unwrap<ReviseSubmissionResult>(res, 'Failed to send revision.');
+  if (!res.ok) return throwSubmissionError(res, 'Failed to send revision.');
+  return (await res.json()) as ReviseSubmissionResult;
 }
 
 export interface SaveRevisionDraftInput {

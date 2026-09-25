@@ -1128,8 +1128,26 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
         );
         return;
       }
-      // 409 (revised elsewhere) and 422 (policy) both carry one server sentence.
-      toast.error(e instanceof Error ? e.message : 'Failed to send revision.');
+      // #1232 blocking 4: same line-naming as handleSubmit's catch, for the same
+      // server refusal shape - the client check above already covers the common
+      // case, this is the race it cannot catch.
+      const errFields = (e as { fields?: unknown } | null)?.fields;
+      const lineField = Array.isArray(errFields)
+        ? errFields.find((f): f is string => typeof f === 'string' && f.startsWith('line:'))
+        : undefined;
+      const message = e instanceof Error ? e.message : 'Failed to send revision.';
+      if (lineField) {
+        const cleanedIndex = Number(lineField.slice('line:'.length));
+        if (Number.isInteger(cleanedIndex)) {
+          setInvalidLineIndex(rawIndexForCleanedIndex(cleanedIndex));
+          toast.error(`Line ${cleanedIndex + 1}: ${message}`);
+        } else {
+          toast.error(message);
+        }
+      } else {
+        // 409 (revised elsewhere) and 422 (policy) both carry one server sentence.
+        toast.error(message);
+      }
     } finally {
       setReviseConfirmOpen(false);
     }
