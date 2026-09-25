@@ -39,6 +39,7 @@ from app.services.uuid_path_param import validate_uuid_path
 from app.schemas.scm_order_summary import (
     KeyedStatusIn,
     KeyedStatusOut,
+    LowStockPreviewOut,
     OrderSummaryDecisionIn,
     OrderSummaryDecisionOut,
     OrderSummaryDemandDrillOut,
@@ -134,6 +135,15 @@ def export_order_summary(
         raise AppException(
             status_code=422,
             message="format must be pdf, xlsx, low_stock_xlsx or oi_worksheet.",
+        )
+    # R6 (PLAN-low-stock-export-split-25sep, AC-13): `split` names how the LOW STOCK
+    # workbook re-files its sheets - it is meaningless on the other three formats, and
+    # silently ignoring it there would let a caller believe a split it never got. Checked
+    # before any guard below creates a row or touches the queue.
+    if payload.split != "none" and fmt != LOW_STOCK_FORMAT:
+        raise AppException(
+            status_code=422,
+            message="split applies to the low stock report only",
         )
     if fmt == OI_WORKSHEET_FORMAT:
         # Fix round 1 (security review): the worksheet prints the OI worklist's own row
@@ -264,6 +274,7 @@ def export_order_summary(
                 str(current_user["id"]),
                 queue_name="imports",
                 job_timeout=600,
+                split=payload.split,
             )
         elif fmt == OI_WORKSHEET_FORMAT:
             enqueue_job(
@@ -294,6 +305,29 @@ def export_order_summary(
         )
 
     return DownloadResponse.model_validate(DownloadService(db).get(str(download.id)))
+
+
+@router.get("/order-summary/low-stock-preview", response_model=LowStockPreviewOut)
+def get_low_stock_preview(
+    run_id: Optional[str] = Query(
+        None,
+        description=(
+            "Which plan's low stock report to preview. Omitted means the newest completed "
+            "plan. Opaque, and never rendered."
+        ),
+    ),
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """The split dialog's own courtesy read (R4, AC-15b): fired once when the dialog opens,
+    never on page load. Same visibility gate as the export itself - a named `run_id` is
+    validated as a UUID (404 on a malformed one, the same non-committal answer a genuinely-
+    absent run gets) before the report is ever read.
+    """
+    if run_id:
+        run_id = validate_uuid_path(run_id, resource="Reorder run")
+        reorder_run_service.assert_run_visible(db, run_id)
+    return low_stock_report_service.low_stock_preview(db, run_id)
 
 
 @router.get(

@@ -62,6 +62,7 @@ from app.services.scm.front_planning_engine import DEFAULT_LEAD_TIME_DAYS
 # "narrow it first" past a size nobody opens a workbook to page through.
 from app.services.scm.low_stock_report_service import MAX_LOW_STOCK_ROWS
 from app.services.scm.planning_predicate import fulfilment_planning_predicate
+from app.services.scm.workbook_split import split_rows, unique_sheet_title
 from app.services.scm.supply_assignment import (
     BUCKET_TBA,
     BUCKET_UNDATED,
@@ -95,41 +96,12 @@ _MONTH_NAMES = (
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 )
 
-#: Excel forbids these in a sheet title (AC-16); stripped rather than replaced, so a
-#: forbidden character never leaves a stray placeholder character behind.
-_FORBIDDEN_TITLE_CHARS = "[]:*?/\\"
-
-
 def _export_month_label(key: str) -> str:
     """`2026-09` -> `Sep 26` (AC-13). The export's own copy of the FE's `monthLabel` -
     the two are the same three lines twice, not a shared import, because one lives in
     Python and the other in TypeScript."""
     year, month = key.split("-")
     return f"{_MONTH_NAMES[int(month) - 1]} {year[2:]}"
-
-
-def _sanitize_sheet_title(raw: str) -> str:
-    """Strip the characters Excel refuses in a sheet title and cut to its 31-char limit
-    (AC-16). Never empty: a title that sanitises to nothing still needs a tab to sit on."""
-    cleaned = "".join(ch for ch in raw if ch not in _FORBIDDEN_TITLE_CHARS).strip()
-    return cleaned[:31] or "Sheet"
-
-
-def _unique_sheet_title(raw: str, used: Set[str]) -> str:
-    """`_sanitize_sheet_title`, then a `(2)`/`(3)`/... suffix for a title that collides
-    with one already taken (AC-16) - two supplier/category pairs whose names agree on
-    their first 31 characters must not silently overwrite one sheet with the other."""
-    base = _sanitize_sheet_title(raw)
-    if base not in used:
-        used.add(base)
-        return base
-    for n in range(2, 1000):
-        suffix = f" ({n})"
-        candidate = base[: 31 - len(suffix)] + suffix
-        if candidate not in used:
-            used.add(candidate)
-            return candidate
-    raise AppException(500, "Could not title every export sheet uniquely.")
 
 
 def _float(value: Any) -> float:
@@ -1472,37 +1444,26 @@ class StockDebtService:
             get_column_letter(index + 1): width for index, width in enumerate(widths)
         }
 
-        groups: Dict[str, List[dict]] = {}
-        if split == "none":
-            # R5/AC-13: one sheet, one fixed title - never derived from a row's own data.
-            groups["Stock debt"] = rows
-        else:
-            for row in rows:
-                supplier_label = row["supplier_name"] or "No supplier"
-                category_label = row["category_code"] or "No category"
-                if split == "supplier":
-                    key = supplier_label
-                elif split == "category":
-                    key = category_label
-                else:
-                    key = f"{supplier_label} - {category_label}"
-                groups.setdefault(key, []).append(row)
-
-        # Sorted by the CLEANED title, case-insensitive (reviewer round) - not the raw
-        # key, which may carry mixed case or characters the title itself never shows.
-        ordered_keys = (
-            list(groups)
+        # R5/AC-13: `split == "none"` is one sheet, one fixed title - never derived from a
+        # row's own data. Any other split groups by the shared `workbook_split.split_rows`
+        # (AC-2, PLAN-low-stock-export-split-25sep) - the SAME grouping and sanitised-title
+        # sort the low stock report's own split uses, lifted here rather than reinvented.
+        ordered: List[Tuple[str, List[dict]]] = (
+            [("Stock debt", rows)]
             if split == "none"
-            else sorted(groups, key=lambda raw: _sanitize_sheet_title(raw).lower())
+            else split_rows(
+                rows, split,
+                supplier=lambda r: r["supplier_name"],
+                category=lambda r: r["category_code"],
+            )
         )
 
         wb = Workbook()
         used_titles: Set[str] = set()
         sheet_count = 0
-        for index, key in enumerate(ordered_keys):
-            group_rows = groups[key]
+        for index, (key, group_rows) in enumerate(ordered):
             ws = wb.active if index == 0 else wb.create_sheet()
-            ws.title = key if split == "none" else _unique_sheet_title(key, used_titles)
+            ws.title = key if split == "none" else unique_sheet_title(key, used_titles)
             sheet_count += 1
             data = [self._export_row(row, axis) for row in group_rows]
             data.append(self._export_total_row(group_rows, axis))

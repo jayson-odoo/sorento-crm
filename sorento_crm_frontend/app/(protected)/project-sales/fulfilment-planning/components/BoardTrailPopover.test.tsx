@@ -198,3 +198,76 @@ describe('BoardTrailPopover: the queue hangs off question 1', () => {
     expect(screen.getAllByTestId(`trail-queue-${contribution.key}`)).toHaveLength(1);
   });
 });
+
+/**
+ * D3 (S2, AC-33): the one Reason box now writes `amend_reason`, `buy_reason` and every borrow
+ * reason with the SAME text, so a frozen line carrying all three is not three copies of one
+ * answer - it is one answer, printed once.
+ */
+describe('BoardTrailPopover: one Reason line for a frozen decision (D3, AC-33)', () => {
+  it('prints one Reason line when amend_reason, buy_reason and the borrow reasons match', () => {
+    const contribution = contributionOf({
+      covered: true,
+      decision: {
+        revision_no: 1,
+        timely_spo_qty: '0',
+        reserve: [],
+        borrow: [
+          {
+            source: 'other_location',
+            warehouse_id: 'wh-donor',
+            qty: '10',
+            reason: 'Project handover.',
+          },
+        ],
+        buy_qty: '30',
+        buy_reason: 'Project handover.',
+        amend_reason: 'Project handover.',
+      },
+    });
+    render(<BoardTrailPopover contribution={contribution} />);
+    openTrail(contribution.key);
+
+    expect(screen.getByTestId(`trail-reason-${contribution.key}`)).toHaveTextContent(
+      'Project handover.',
+    );
+  });
+
+  it('prints nothing when the stored texts disagree (an older, pre-D3 revision)', () => {
+    const contribution = contributionOf({
+      covered: true,
+      decision: {
+        revision_no: 1,
+        timely_spo_qty: '0',
+        reserve: [],
+        borrow: [
+          { source: 'other_location', warehouse_id: 'wh-donor', qty: '10', reason: 'Reason B.' },
+        ],
+        buy_qty: '30',
+        buy_reason: 'Reason A.',
+        amend_reason: 'Reason A.',
+      },
+    });
+    render(<BoardTrailPopover contribution={contribution} />);
+    openTrail(contribution.key);
+
+    expect(screen.queryByTestId(`trail-reason-${contribution.key}`)).not.toBeInTheDocument();
+  });
+
+  it('prints nothing when the frozen decision carries no reason at all', () => {
+    const contribution = contributionOf({
+      covered: true,
+      decision: {
+        revision_no: 1,
+        timely_spo_qty: '0',
+        reserve: [],
+        borrow: [],
+        buy_qty: '30',
+      },
+    });
+    render(<BoardTrailPopover contribution={contribution} />);
+    openTrail(contribution.key);
+
+    expect(screen.queryByTestId(`trail-reason-${contribution.key}`)).not.toBeInTheDocument();
+  });
+});

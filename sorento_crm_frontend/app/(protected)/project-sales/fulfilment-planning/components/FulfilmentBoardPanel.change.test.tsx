@@ -481,7 +481,18 @@ describe('the pre-marked decision, and Confirm', () => {
     });
   });
 
-  it('posts through confirmMany once Confirm is pressed, carrying the pre-marked line', async () => {
+  /**
+   * REVERSED by the S5 ruling (owner, 25 Sep 2026, issue #1245, `PLAN-esb-change-row-
+   * refresh.md`): this test used to press Confirm with NOTHING saved and assert the
+   * pre-marked line rode along anyway - exactly the SO419122 defect ("Confirm (119)" with
+   * nothing ticked handed 49 rows to purchasing). Confirm now carries a line ONLY once a
+   * person has actually saved it (a row Approve, "Save all suggested", or an Amend) - see
+   * the `describe` block below for the pre-mark-alone case (AC-16) and the mixed
+   * saved/unsaved case (AC-18). Kept here, renamed, as the still-true other half: ONCE
+   * saved, a pre-marked line posts through `confirmMany` exactly like any other, with no
+   * `preMarked` flag riding along in the write.
+   */
+  it('posts through confirmMany once Confirm is pressed, carrying a pre-marked line the planner actually saved first', async () => {
     confirmMany.mockResolvedValue({
       results: [
         {
@@ -494,6 +505,31 @@ describe('the pre-marked decision, and Confirm', () => {
     });
     renderPanel();
     await screen.findByTestId('board-change-icon-pcr-381895-1');
+    // Nothing saved yet - the S5 ruling's own premise.
+    await waitFor(() =>
+      expect(screen.getByTestId('board-confirm')).toHaveTextContent(
+        'Confirm (0)',
+      ),
+    );
+
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: /SRTWCX7405-RL-S-PJ, .* across 1 sales order/,
+      }),
+    );
+    const linesTab = await screen.findByRole('tab', {
+      name: /^Contributing lines/,
+    });
+    fireEvent.mouseDown(linesTab);
+    fireEvent.click(linesTab);
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Save SO381895 line 1 as suggested' }),
+    );
+    await waitFor(() => {
+      expect(
+        screen.getByTestId('decision-pill-so-381895|1|SRTWCX7405-RL-S-PJ|2026-08-17'),
+      ).toHaveTextContent('Saved');
+    });
     await waitFor(() =>
       expect(screen.getByTestId('board-confirm')).toHaveTextContent(
         'Confirm (1)',
@@ -523,6 +559,14 @@ describe('the pre-marked decision, and Confirm', () => {
    * card left to block selectively. So a batch NOT yet applied blocks nothing, even though one
    * order's own rows already read `applied_state: 'applied'`: the board-wide block reads only
    * `changeBatch.data.applied_at`.
+   *
+   * Amended for the S5 ruling (owner, 25 Sep 2026, issue #1245): Confirm is disabled whenever
+   * nothing has been SAVED, whatever any row's `applied_state` says - so a plain pre-mark, with
+   * nothing saved, is no longer evidence either way about the row-level-`applied_state` block
+   * this test is actually about. The line is saved first, through its own row Save icon (not
+   * the board-wide "Save all suggested" button - that one has its own separate fix, S5's
+   * `canQuickSave`, pinned by AC-17 above and irrelevant to what THIS test checks), so the
+   * only thing left that COULD still disable Confirm is the block this test pins.
    */
   it('does not block Confirm while the batch itself has not been applied, even if a row says it was', async () => {
     getPlanningChangeBatch.mockResolvedValue({
@@ -540,6 +584,23 @@ describe('the pre-marked decision, and Confirm', () => {
     renderPanel();
     await screen.findByTestId('board-change-icon-pcr-381895-1');
 
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: /SRTWCX7405-RL-S-PJ, .* across 1 sales order/,
+      }),
+    );
+    const linesTab = await screen.findByRole('tab', {
+      name: /^Contributing lines/,
+    });
+    fireEvent.mouseDown(linesTab);
+    fireEvent.click(linesTab);
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Save SO381895 line 1 as suggested' }),
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)'),
+    );
     expect(screen.queryByTestId('confirm-blocked')).not.toBeInTheDocument();
     expect(screen.getByTestId('board-confirm')).toBeEnabled();
   });
@@ -557,6 +618,189 @@ describe('the pre-marked decision, and Confirm', () => {
     expect(blocked).toHaveTextContent('This planning change was applied');
     expect(blocked).toHaveTextContent('Cyndi Tee');
     expect(screen.getByTestId('board-confirm')).toBeDisabled();
+  });
+});
+
+/**
+ * S5 (`PLAN-esb-change-row-refresh.md`, owner ruling 25 Sep 2026, issue #1245): "we should
+ * mark it as Change proposed, but it is not considered Saved". SO419122 read "Confirm (119)"
+ * with nothing ticked, and one press handed 49 rows to purchasing - the pre-mark effect still
+ * seeds `{ verdict: 'approved', preMarked: true }` (the pill, the icons and the per-row
+ * proposal keep working), but `confirmSummary` / `runConfirmAll` must now skip every draft
+ * that is STILL just a pre-mark: only a verdict a person actually saved (a row Approve, an
+ * Amend, a quick save, or "Save all suggested") counts toward Confirm and rides in its body.
+ * "Save all suggested" itself counts and saves the pre-marked lines too - `decide()` already
+ * overwrites the pre-mark object on save, so the flag drops itself. Reject is unchanged: a
+ * planner rejecting a pre-marked line has made a real decision, not left it alone.
+ *
+ * Supersedes the Confirm half of `PLAN-board-change-proposed-pill.md`'s 18 Sep 2026 ruling
+ * (AC-C7 of that plan - "Confirm is this pre-marked path").
+ */
+describe('S5: Change proposed is not Saved (owner ruling 25 Sep 2026, issue #1245)', () => {
+  it('AC-16: nothing saved reads 0 to confirm, Confirm stays disabled, and the pre-marked pill still reads Change proposed', async () => {
+    renderPanel();
+    await screen.findByTestId('board-change-icon-pcr-381895-1');
+
+    await waitFor(() =>
+      expect(screen.getByTestId('board-confirm-summary')).toHaveTextContent(
+        '0 to confirm',
+      ),
+    );
+    expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (0)');
+    expect(screen.getByTestId('board-confirm')).toBeDisabled();
+
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: /SRTWCX7405-RL-S-PJ, .* across 1 sales order/,
+      }),
+    );
+    const linesTab = await screen.findByRole('tab', {
+      name: /^Contributing lines/,
+    });
+    fireEvent.mouseDown(linesTab);
+    fireEvent.click(linesTab);
+    await waitFor(() => {
+      expect(
+        screen.getByTestId('decision-pill-so-381895|1|SRTWCX7405-RL-S-PJ|2026-08-17'),
+      ).toHaveTextContent('Change proposed');
+    });
+  });
+
+  it('AC-17: "Save all suggested" counts the pre-marked line, and pressing it saves it - pill reads Saved, and it now counts toward Confirm', async () => {
+    renderPanel();
+    await screen.findByTestId('board-change-icon-pcr-381895-1');
+
+    const saveAll = await screen.findByRole('button', {
+      name: /^Save all suggested/,
+    });
+    expect(saveAll).toHaveTextContent('Save all suggested (1)');
+
+    fireEvent.click(saveAll);
+
+    await waitFor(() =>
+      expect(screen.getByTestId('board-confirm-summary')).toHaveTextContent(
+        '1 to confirm',
+      ),
+    );
+    expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)');
+
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: /SRTWCX7405-RL-S-PJ, .* across 1 sales order/,
+      }),
+    );
+    const linesTab = await screen.findByRole('tab', {
+      name: /^Contributing lines/,
+    });
+    fireEvent.mouseDown(linesTab);
+    fireEvent.click(linesTab);
+    await waitFor(() => {
+      expect(
+        screen.getByTestId('decision-pill-so-381895|1|SRTWCX7405-RL-S-PJ|2026-08-17'),
+      ).toHaveTextContent('Saved');
+    });
+  });
+
+  it('AC-18: Confirm posts only the line the planner actually saved, leaving the untouched pre-marked one out', async () => {
+    // TWO pre-marked lines on the SAME cell (same item, same bucket, different line_no) - so
+    // one dialog opens both, and only ONE of them ever gets its own Save pressed below.
+    getPlanningBoard.mockResolvedValue(
+      buildBoard(
+        [
+          demand(),
+          demand({ project_line_id: 'pl-381895-9', line_no: 9 }),
+        ],
+        { today: TODAY, freeStock: {}, granularity: 'week' },
+      ),
+    );
+    const row1 = MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE.orders[0].rows[0];
+    const row9 = { ...row1, id: 'pcr-381895-9', project_line_id: 'pl-381895-9', line_no: 9 };
+    getPlanningChangeBatch.mockResolvedValue({
+      ...MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE,
+      orders: [
+        {
+          ...MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE.orders[0],
+          rows: [row1, row9],
+        },
+      ],
+    });
+    confirmMany.mockResolvedValue({
+      results: [
+        { pso_id: 'pso-381895', ok: true, decision_revision: 3, inquiry_rows_created: 1 },
+      ],
+    });
+
+    renderPanel();
+    await screen.findByTestId('board-change-icon-pcr-381895-1');
+    await waitFor(() =>
+      expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (0)'),
+    );
+
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: /SRTWCX7405-RL-S-PJ, .* across 1 sales order/,
+      }),
+    );
+    const linesTab = await screen.findByRole('tab', {
+      name: /^Contributing lines/,
+    });
+    fireEvent.mouseDown(linesTab);
+    fireEvent.click(linesTab);
+
+    // Save ONLY line 1's pre-mark - line 9 is left exactly as the board pre-marked it.
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Save SO381895 line 1 as suggested' }),
+    );
+    await waitFor(() => {
+      expect(
+        screen.getByTestId('decision-pill-so-381895|1|SRTWCX7405-RL-S-PJ|2026-08-17'),
+      ).toHaveTextContent('Saved');
+    });
+    expect(
+      screen.getByTestId('decision-pill-so-381895|9|SRTWCX7405-RL-S-PJ|2026-08-17'),
+    ).toHaveTextContent('Change proposed');
+
+    fireEvent.click(screen.getByTestId('board-confirm'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
+
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+    const [body] = confirmMany.mock.calls[0];
+    expect(body.orders[0].lines).toHaveLength(1);
+    expect(body.orders[0].lines[0].project_line_id).toBe('pl-381895-1');
+  });
+
+  it('AC-19: rejecting a pre-marked line still counts it as rejected and sends it as such', async () => {
+    renderPanel();
+    await screen.findByTestId('board-change-icon-pcr-381895-1');
+
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: /SRTWCX7405-RL-S-PJ, .* across 1 sales order/,
+      }),
+    );
+    const linesTab = await screen.findByRole('tab', {
+      name: /^Contributing lines/,
+    });
+    fireEvent.mouseDown(linesTab);
+    fireEvent.click(linesTab);
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Reject SO381895 line 1' }),
+    );
+    const reasonBox = await screen.findByPlaceholderText('In your own words');
+    fireEvent.change(reasonBox, { target: { value: 'Wrong site' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByTestId('decision-pill-so-381895|1|SRTWCX7405-RL-S-PJ|2026-08-17'),
+      ).toHaveTextContent('Rejected');
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId('board-confirm-summary')).toHaveTextContent(
+        '1 rejected',
+      ),
+    );
   });
 });
 

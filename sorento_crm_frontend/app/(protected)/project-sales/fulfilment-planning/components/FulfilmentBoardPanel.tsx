@@ -64,6 +64,7 @@ import {
   boardAxis,
   bucketLabelText,
   confirmSummaryFor,
+  decisionHeaderText,
   orderListRows,
   rowMatchesSearch,
   confirmLinesFor,
@@ -197,6 +198,30 @@ function granularityFrom(value: string | null): BoardGranularity {
   return GRANULARITIES.includes(value as BoardGranularity)
     ? (value as BoardGranularity)
     : 'date';
+}
+
+/**
+ * `source` with every bare pre-mark dropped, as though the line had never been touched (S5,
+ * owner ruling 25 Sep 2026, issue #1245, `PLAN-esb-change-row-refresh.md`): after SO419122,
+ * "Confirm (119)" read a count that included every `Change proposed` line nobody had actually
+ * looked at, and one press handed 49 of them to purchasing. `{ verdict: 'approved', preMarked:
+ * true }` is the board's OWN suggestion for such a line, seeded so the pill, the per-row
+ * proposal and the change icons keep reading right (`FulfilmentBoardPanel`'s own pre-mark
+ * effect, unchanged) - it is never something a person saved. Confirm's own count, its payload,
+ * and every toast that echoes the count back all read the draft through this first, so a
+ * pre-marked line counts, and posts, only once a real `decide()` write - Save, an explicit
+ * reject, or "Save all suggested" itself - has overwritten it with a decision that carries no
+ * `preMarked` flag. `canQuickSave`'s own `!draft[key]` rule is what makes "Save all suggested"
+ * pick a pre-marked line back up once it reads `undefined` for it here, exactly as it already
+ * would for a line nobody had touched at all.
+ */
+function draftWithoutPreMarks(source: BoardDraft): BoardDraft {
+  const out: BoardDraft = {};
+  for (const [key, decision] of Object.entries(source)) {
+    if (decision?.preMarked) continue;
+    out[key] = decision;
+  }
+  return out;
 }
 
 /**
@@ -744,7 +769,17 @@ export function FulfilmentBoardPanel({
     async (
       key: string,
       decision: BoardDecision | null,
-      options?: { quiet?: boolean },
+      options?: {
+        quiet?: boolean;
+        // Review round 1, Should fix 1: `decideBatch` folds every failed row into its own
+        // lenient toast (R10) - a second, per-row toast off THIS mutation's own `onError`
+        // would be the "too many errors" the owner asked Decide to stop doing. `onFailure`
+        // is how the caller still gets the server's own sentence for its skip, without it.
+        // Nit (review round 2): named `silent`, not `silentError` - the same name
+        // `saveLineDraft`'s own option carries, since this is nothing but a pass-through to it.
+        silent?: boolean;
+        onFailure?: (message: string) => void;
+      },
     ): Promise<boolean> => {
       let hadPrevious = false;
       let previousForKey: BoardDecision | undefined;
@@ -776,16 +811,20 @@ export function FulfilmentBoardPanel({
           // until Confirm freezes a revision.
           pendingSaves.current.add(key);
           try {
-            await saveLineDraft(key, decision, contribution?.sources);
+            await saveLineDraft(key, decision, contribution?.sources, {
+              silent: options?.silent,
+            });
           } finally {
             pendingSaves.current.delete(key);
           }
         } else {
           await removeDraftKey(key);
         }
-      } catch {
-        // The mutation's own `onError` already toasted the message; nothing here is left to
-        // say beyond putting THIS key back the way the click found it.
+      } catch (error) {
+        // The mutation's own `onError` already toasted the message unless `silent`
+        // asked it not to (Should fix 1) - either way, `onFailure` is the caller's own way
+        // to read it, and this key still goes back the way the click found it.
+        options?.onFailure?.(error instanceof Error ? error.message : 'could not be saved');
         setDraft((current) => {
           const reverted = { ...current };
           if (hadPrevious && previousForKey) reverted[key] = previousForKey;
@@ -795,9 +834,11 @@ export function FulfilmentBoardPanel({
         return false;
       }
       if (!options?.quiet && decision) {
+        // S5: the toast's own count reads the same pre-mark-free view Confirm itself does -
+        // `appliedNext` still carries every OTHER line's still-unsaved pre-mark verbatim.
         const { toConfirm, rejected } = confirmSummaryFor(
           allContributions,
-          appliedNext,
+          draftWithoutPreMarks(appliedNext),
           pendingBatchSalesOrderIds,
         );
         toast.success(
@@ -854,9 +895,12 @@ export function FulfilmentBoardPanel({
         );
       }
       if (saved > 0) {
+        // S5: same pre-mark-free reading as every other count on this board - a line outside
+        // THIS press's own population (filtered off screen) can still carry a stale pre-mark
+        // in `appliedNext`.
         const { toConfirm } = confirmSummaryFor(
           allContributions,
-          appliedNext,
+          draftWithoutPreMarks(appliedNext),
           pendingBatchSalesOrderIds,
         );
         toast.success(
@@ -866,6 +910,44 @@ export function FulfilmentBoardPanel({
       return { saved, failed };
     },
     [allContributions, decide, draft, pendingBatchSalesOrderIds],
+  );
+
+  /**
+   * S3 (D1): the Decide strip's own save - one PUT per row through the identical `decide()`
+   * chunked-of-5 loop `decideMany` already runs, but with a DECISION PER KEY the caller has
+   * already composed (`decideComposition`), rather than always the engine's own suggestion.
+   * No toast here (AC-16/AC-17): the caller (`BoardDecideControl`) already knows which rows
+   * it skipped WITHOUT a PUT (a pile a pick could not cover in full) and folds them into the
+   * SAME lenient toast beside whichever of these fail on the wire - two toasts for one press
+   * would be the "too many errors" the owner asked Decide to stop doing (R10).
+   */
+  const decideBatch = React.useCallback(
+    async (
+      entries: { key: string; decision: BoardDecision }[],
+    ): Promise<{ savedKeys: string[]; failed: { key: string; why: string }[] }> => {
+      const savedKeys: string[] = [];
+      const failed: { key: string; why: string }[] = [];
+      const CHUNK_SIZE = 5;
+      for (let i = 0; i < entries.length; i += CHUNK_SIZE) {
+        const chunk = entries.slice(i, i + CHUNK_SIZE);
+        await Promise.all(
+          chunk.map(async ({ key, decision }) => {
+            let why = 'could not be saved';
+            const ok = await decide(key, decision, {
+              quiet: true,
+              silent: true,
+              onFailure: (message) => {
+                why = message;
+              },
+            });
+            if (ok) savedKeys.push(key);
+            else failed.push({ key, why });
+          }),
+        );
+      }
+      return { savedKeys, failed };
+    },
+    [decide],
   );
 
   /**
@@ -923,6 +1005,15 @@ export function FulfilmentBoardPanel({
   );
 
   /**
+   * `draft` as Confirm reads it (S5, owner ruling 25 Sep 2026, issue #1245): every bare
+   * pre-mark dropped, so a `Change proposed` line nobody has saved counts, and posts, exactly
+   * like a line nobody has touched at all - `draftWithoutPreMarks`'s own doc has the reasoning.
+   * The pre-mark seeding effects above still write `preMarked: true` straight into `draft`
+   * itself; this is a read-side view of it, never a second copy of the state.
+   */
+  const draftWithoutPreMark = React.useMemo(() => draftWithoutPreMarks(draft), [draft]);
+
+  /**
    * What one press of Confirm would do: "N to confirm · M rejected" (D1/D3).
    *
    * Counted over exactly the population `confirmLinesFor` posts, so the sentence beside the
@@ -930,10 +1021,25 @@ export function FulfilmentBoardPanel({
    * implementation (`_shared/lib/fulfilmentBoard.ts`) - `decide()`'s own S4 save toast needs
    * the SAME count read off the draft it just wrote, before this `useMemo` has re-run with
    * it, so the reduction lives in one place rather than being kept in step by hand in two.
+   *
+   * Reads `draftWithoutPreMark`, not `draft` (S5): a `Change proposed` line nobody has saved
+   * is not counted, and the Confirm button disables at 0 exactly as it already does for a
+   * board with nothing decided at all.
    */
   const confirmSummary = React.useMemo(
-    () => confirmSummaryFor(allContributions, draft, pendingBatchSalesOrderIds),
-    [allContributions, draft, pendingBatchSalesOrderIds],
+    () => confirmSummaryFor(allContributions, draftWithoutPreMark, pendingBatchSalesOrderIds),
+    [allContributions, draftWithoutPreMark, pendingBatchSalesOrderIds],
+  );
+
+  /**
+   * AC-DT-1/AC-DT-4 (`PLAN-oi-decision-trail-ui.md`): "Revision N, confirmed by <name>,
+   * N lines" beside the confirm summary, or "No decision yet" - one segment per order
+   * when several are planned together. Read off `board.data.orders` (never recomputed):
+   * `decision` is the server's own read of the active `so_supply_decisions` row.
+   */
+  const decisionHeader = React.useMemo(
+    () => decisionHeaderText(board.data?.orders ?? []),
+    [board.data?.orders],
   );
 
   /**
@@ -946,15 +1052,19 @@ export function FulfilmentBoardPanel({
   const unpostable = React.useMemo<UnpostableLine[]>(() => {
     if (!board.data) return [];
     const contributions = board.data.contributions;
+    // S5: a bare pre-mark is not a decision to flag a REASON for - it is not being posted at
+    // all, the same as a line nobody has touched (`draftWithoutPreMark`'s own doc). Left on
+    // raw `draft` this banner would name a `buy_reason_missing`-style refusal for a `Change
+    // proposed` line nobody had looked at yet.
     return board.data.orders.flatMap((order) =>
       unpostableDecidedFor(
         contributions,
         order.sales_order_id,
-        draft,
+        draftWithoutPreMark,
         Boolean(order.project_sales_order_id),
       ),
     );
-  }, [board.data, draft]);
+  }, [board.data, draftWithoutPreMark]);
 
   /**
    * The sales orders whose OWN batch rows have all been applied already (AC-B6).
@@ -1059,6 +1169,11 @@ export function FulfilmentBoardPanel({
    * ruling, reverses R11). An uncovered line nobody saved a decision for is left undecided,
    * not confirmed as the engine's suggestion; "Save all suggested" is the bulk way to agree
    * with it before this press.
+   *
+   * S5 (owner ruling 25 Sep 2026, issue #1245): reads `draftWithoutPreMark`, never `draft`,
+   * throughout - a `Change proposed` line nobody has saved is the SAME "nothing to post" case
+   * as a line nobody has touched, so its order never enters the batch on its account alone and
+   * its batch row stays pending server-side.
    */
   const runConfirmAll = React.useCallback(async () => {
     if (!board.data) return;
@@ -1078,7 +1193,7 @@ export function FulfilmentBoardPanel({
         contributions
           .filter((contribution) => {
             if (contribution.unplannable) return false;
-            const decision = draft[contribution.key];
+            const decision = draftWithoutPreMark[contribution.key];
             // A COVERED reject is a WITHDRAWAL this press carries out (owner ruling 23 Sep
             // 2026, `PLAN-board-reject-on-confirmed-line.md`: "we should confirm the
             // rejection") - its order belongs in the batch on that account alone, same as an
@@ -1177,7 +1292,7 @@ export function FulfilmentBoardPanel({
           } as ConfirmManyOrderResult);
           continue;
         }
-        const lines = confirmLinesFor(contributions, salesOrderId, draft);
+        const lines = confirmLinesFor(contributions, salesOrderId, draftWithoutPreMark);
         // AC-B3/AC-B5: THIS order's own batch, not the board-wide `batchId` - two orders on
         // two different pending batches each answer their own. The batches the screen LOADED
         // first (it was opened on one), and the BOARD'S own statement of the newest pending
@@ -1193,7 +1308,7 @@ export function FulfilmentBoardPanel({
         // scope") - an order on one never carries `rejected_line_ids` from here.
         const rejectedLineIds = orderBatchId
           ? []
-          : rejectedCoveredLineIdsFor(contributions, salesOrderId, draft);
+          : rejectedCoveredLineIdsFor(contributions, salesOrderId, draftWithoutPreMark);
         // S4 (fix round, review): the covered-rejected lines THIS order's own batch just
         // zeroed out of `rejectedLineIds` above, so the planner is told what did not ride
         // along rather than the counter simply promising it and the press posting nothing
@@ -1206,7 +1321,7 @@ export function FulfilmentBoardPanel({
               (contribution) =>
                 contribution.sales_order_id === salesOrderId &&
                 contribution.covered &&
-                draft[contribution.key]?.verdict === 'rejected',
+                draftWithoutPreMark[contribution.key]?.verdict === 'rejected',
             )
           : [];
         // S4: said OUT LOUD, named per line THROUGH `failing_lines` (the same shape a
@@ -1240,8 +1355,8 @@ export function FulfilmentBoardPanel({
         }
         // DECIDED, AND NOT ONE LINE OF IT COULD BE BUILT, AND NOTHING TO WITHDRAW EITHER.
         // Every line was left out for a reason `unpostableDecidedFor` already knows (no
-        // mirror on the planning record, a Reserve at a warehouse the board cannot address,
-        // a discontinued Buy with no reason), so the order sends nothing - and said nothing,
+        // mirror on the planning record, a Reserve at a warehouse the board cannot address),
+        // so the order sends nothing - and said nothing,
         // because a press whose `orders` came out empty with an empty `skipped` never set
         // `batchResults` at all. It is reported beside every other order's outcome instead,
         // in the wording the notice above the block already uses for the lines themselves.
@@ -1249,7 +1364,7 @@ export function FulfilmentBoardPanel({
           // The held-back note above already said why, when that is the whole reason -
           // the generic "had no line..." sentence would only repeat it more vaguely.
           if (heldBackByBatch.length > 0) continue;
-          const blocked = unpostableDecidedFor(contributions, salesOrderId, draft);
+          const blocked = unpostableDecidedFor(contributions, salesOrderId, draftWithoutPreMark);
           const everyLineOffTheRecord =
             blocked.length > 0 && blocked.every((entry) => entry.reason === 'no_mirror');
           skipped.push({
@@ -1353,7 +1468,7 @@ export function FulfilmentBoardPanel({
   }, [
     board,
     allContributions,
-    draft,
+    draftWithoutPreMark,
     adopt,
     confirmMany,
     appliedSoNumbers,
@@ -1489,6 +1604,12 @@ export function FulfilmentBoardPanel({
    * The list already carries its own "whole selection, kind-filtered" population
    * (`visibleListContributions`); the grid additionally narrows by the product search, which
    * only ever touches the rows, never the list.
+   *
+   * `canQuickSave` reads `draftWithoutPreMark`, not `draft` (S5, owner ruling 25 Sep 2026,
+   * issue #1245): its own `!draft[key]` rule already treats a line with no entry as eligible,
+   * and a `Change proposed` line is exactly that - a proposal nobody has saved. Reads as
+   * `undefined` here, so it counts into "Save all suggested (M)" and `decideMany` (below)
+   * overwrites the pre-mark with a real decision, dropping the flag for good.
    */
   const quickSaveKeys = React.useMemo(() => {
     const population =
@@ -1506,9 +1627,9 @@ export function FulfilmentBoardPanel({
             return [...seen.values()];
           })();
     return population
-      .filter((contribution) => canQuickSave(contribution, draft))
+      .filter((contribution) => canQuickSave(contribution, draftWithoutPreMark))
       .map((contribution) => contribution.key);
-  }, [view, visibleListContributions, visibleCells, visibleProductRows, draft]);
+  }, [view, visibleListContributions, visibleCells, visibleProductRows, draftWithoutPreMark]);
 
   /**
    * Orders the link asked for that the board came back without.
@@ -1663,16 +1784,27 @@ export function FulfilmentBoardPanel({
         className="flex flex-col gap-2 rounded-lg border border-border px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between"
       >
         {board.data && board.data.cells.length > 0 ? (
-          <span
-            data-testid="board-confirm-summary"
-            className="text-sm text-muted-foreground tabular-nums"
-          >
-            {`${confirmSummary.toConfirm} to confirm · ${confirmSummary.rejected} rejected`}
-            {/* C4 (code review round 3 batch 2): a saved line the engine has re-suggested
-                is dropped from Confirm with no trace beyond the pill itself - stated here
-                too, and only while it applies, the same rule the two figures beside it
-                follow. */}
-            {confirmSummary.changed > 0 ? ` · ${confirmSummary.changed} changed` : ''}
+          <span className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+            <span
+              data-testid="board-confirm-summary"
+              className="text-sm text-muted-foreground tabular-nums"
+            >
+              {`${confirmSummary.toConfirm} to confirm · ${confirmSummary.rejected} rejected`}
+              {/* C4 (code review round 3 batch 2): a saved line the engine has re-suggested
+                  is dropped from Confirm with no trace beyond the pill itself - stated here
+                  too, and only while it applies, the same rule the two figures beside it
+                  follow. */}
+              {confirmSummary.changed > 0 ? ` · ${confirmSummary.changed} changed` : ''}
+            </span>
+            {/* AC-DT-1/AC-DT-4 (`PLAN-oi-decision-trail-ui.md`): "Revision N, confirmed by
+                <name>, N lines" or "No decision yet" - wraps rather than truncates
+                (AC-DT-7), since a multi-order board's own text can run long. */}
+            <span
+              data-testid="board-decision-header"
+              className="whitespace-normal break-words text-sm text-muted-foreground"
+            >
+              {decisionHeader}
+            </span>
           </span>
         ) : (
           <span />
@@ -2094,6 +2226,7 @@ export function FulfilmentBoardPanel({
                 draft={draft}
                 onDecide={decide}
                 onDecideMany={decideMany}
+                onDecideBatch={decideBatch}
                 annotations={changeAnnotationsByLine}
                 // S6 (PLAN-scm-oi-worklist-excel-parity.md R-J): the ONE search box,
                 // beside the title, drives Grid and List alike - the panel's own search
@@ -2329,9 +2462,5 @@ export function FulfilmentBoardPanel({
   );
 }
 
-const UNPOSTABLE_REASONS: UnpostableReason[] = [
-  'no_mirror',
-  'no_reserve_warehouse',
-  'buy_reason_missing',
-];
+const UNPOSTABLE_REASONS: UnpostableReason[] = ['no_mirror', 'no_reserve_warehouse'];
 

@@ -163,6 +163,27 @@ export async function getOrderInquiryRowHistory(
   return Array.isArray(body) ? body : [];
 }
 
+export interface DecisionTrailEntry {
+  kind: string;
+  actor_name: string | null;
+  at: string | null;
+  detail: string | null;
+}
+
+/**
+ * `PLAN-oi-decision-trail-ui.md` (round 2, AC-DT-10): the History icon's own read, keyed
+ * by the CORE sales-order line - the id an OI row and a fulfilment-board line both point
+ * at (`OrderInquiryWorklistRow.core_line_id`, `BoardContribution.line_id`), never by the
+ * order inquiry or the board itself. Newest first.
+ */
+export async function getDecisionTrail(coreLineId: string): Promise<DecisionTrailEntry[]> {
+  const response = await apiFetch(`${BASE}/sales-order-lines/${coreLineId}/decision-trail`);
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to load that decision trail'));
+  const body = await response.json();
+  return Array.isArray(body?.entries) ? body.entries : [];
+}
+
 /** Every reserve request this header has ever raised, newest first - used to find
  * a row's own open request (or latest answered one) on the Lines grid. */
 export async function getOrderInquiryReserveRequests(
