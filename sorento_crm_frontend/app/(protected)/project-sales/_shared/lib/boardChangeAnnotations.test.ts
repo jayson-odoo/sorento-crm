@@ -601,20 +601,20 @@ describe('uncoverChangedLines', () => {
   /**
    * T7 / AC-9 (`PLAN-esb-change-row-refresh.md` S3, issue #1240): a batch's `proposal_json`
    * is frozen at the moment the batch was built - a re-push that moved the line again writes
-   * a fresh `required_date` / `qty_outstanding` / `is_past` / `bucket_key` onto the LIVE
+   * a fresh `required_date` / `qty_outstanding` / `is_past` / `qty_delivered` onto the LIVE
    * contribution, but the old `{...contribution, ...proposal}` spread let the frozen
    * proposal's copies of those same fields win, so the board printed the stale date. Only
    * the composition (`sources`, `qty_proposed_*`) should come from the proposal; the live
    * facts must survive the merge unchanged.
    */
-  it('T7/AC-9: keeps the live required_date, qty_outstanding, is_past and bucket_key, and only takes the composition from the proposal', () => {
+  it('T7/AC-9: keeps the live required_date, qty_outstanding, is_past and qty_delivered, and only takes the composition from the proposal', () => {
     const live = contribution({
       key: 'k1',
       project_line_id: 'pl-1',
       required_date: '2026-12-01',
       qty_outstanding: '5',
       is_past: false,
-      bucket_key: 'K2',
+      qty_delivered: '5',
       covered: true,
       decision: { revision_no: 2, components: [] },
     } as unknown as Partial<BoardContribution>);
@@ -625,7 +625,7 @@ describe('uncoverChangedLines', () => {
           required_date: '2026-01-15',
           qty_outstanding: '39',
           is_past: true,
-          bucket_key: 'K1',
+          qty_delivered: '39',
           sources: [{ kind: 'buy', qty: '39' }],
           qty_proposed_buy: '39',
         } as BoardContribution,
@@ -639,7 +639,7 @@ describe('uncoverChangedLines', () => {
     expect(merged.required_date).toBe('2026-12-01');
     expect(merged.qty_outstanding).toBe('5');
     expect(merged.is_past).toBe(false);
-    expect(merged.bucket_key).toBe('K2');
+    expect(merged.qty_delivered).toBe('5');
     expect(merged.covered).toBe(false);
     expect(merged.decision).toBeNull();
     expect(merged.sources).toEqual([{ kind: 'buy', qty: '39' }]);
@@ -648,7 +648,7 @@ describe('uncoverChangedLines', () => {
     const cellMerged = out.cells[0].contributions[0];
     expect(cellMerged.required_date).toBe('2026-12-01');
     expect(cellMerged.qty_outstanding).toBe('5');
-    expect(cellMerged.bucket_key).toBe('K2');
+    expect(cellMerged.qty_delivered).toBe('5');
   });
 
   /**
@@ -731,7 +731,12 @@ describe('uncoverChangedLines', () => {
     expect(out.contributions[0].qty_proposed_buy).toBe('5');
     expect(out.contributions[0].covered).toBe(false);
 
-    expect(preMarkedKeys(supersededFirst, [live])).toEqual(['k1']);
+    // `preMarkedKeys` runs on the ALREADY-UNCOVERED contributions in production
+    // (`FulfilmentBoardPanel.tsx` calls it after `uncoverChangedLines` on the same batch),
+    // so a line with a pending row is no longer `covered` by the time it gets here - the
+    // `!contribution.covered` guard itself is pinned separately (AC-F7,
+    // `FulfilmentBoardPanel.change.test.tsx`) and is not what this test is about.
+    expect(preMarkedKeys(supersededFirst, out.contributions)).toEqual(['k1']);
     const byLine = annotationsByLine(supersededFirst);
     expect(byLine.get('pl-1')?.map((entry) => entry.rowId)).toEqual(['pcr-pending']);
   });
