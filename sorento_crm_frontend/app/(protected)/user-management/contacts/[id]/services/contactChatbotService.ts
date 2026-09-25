@@ -48,7 +48,6 @@ export interface ContactChatbotProfile {
 }
 
 function fromContact(contact: {
-  id?: string;
   chatbot_profile?: {
     tier?: string | null;
     language?: string | null;

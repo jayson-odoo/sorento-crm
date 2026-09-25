@@ -32,7 +32,7 @@ Actor: a dealer contact on WhatsApp whose stock visibility policy mode is "Avail
 - **AC-SA107 [BE]** AC-SA105 and AC-SA106 hold for PUT product.
 - **AC-SA108 [BE]** A negative X or Y at the API -> 422. GET category and GET product carry `chatbot_max_qty` and `chatbot_eta_offset_days` (asserted field by field).
 - **AC-SA109 [FE]** `CategoryForm` shows "Max quantity (assistant)" and "ETA offset (days)" only with `.view`; the inputs are disabled without `.edit`. No helper text.
-- **AC-SA110 [FE]** `ProductForm` Basic Information shows the two inputs beside the reorder fields, placeholder = the category value when empty; the product view shows the same fields in the same place and order, `-` when unset.
+- **AC-SA110 [FE]** `ProductForm` Basic Information shows the two inputs beside the reorder fields, placeholder = the category value when empty; the product view shows the same fields in the same place and order, `-` when unset. (Nit, reviewer pass PR #1221 85c2e9e7: landed on the Specifications tab instead, beside Reorder Level / Reorder Quantity - see the plan's dated note, PLAN-chatbot-stock-ask-v2-24sep.md line 166, "the reorder fields actually live in Specifications per `product-schema.ts`'s own tab comment"; both placements stand for Phase 2.)
 - **AC-SA111 [E2E]** Sidebar to Master Data > Product Categories, open a category, set X and Y, save, reopen: persisted; at 375px the modal reaches Save; the product form shows the category placeholder.
 
 ## S2 - Contact toggles
