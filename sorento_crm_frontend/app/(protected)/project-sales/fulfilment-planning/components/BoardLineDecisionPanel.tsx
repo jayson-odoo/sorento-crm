@@ -497,7 +497,9 @@ export function BoardLineDecisionPanel({
         ok = await onDecide({
           ...suggestionWithReasons(contribution, {
             // D3 (S2): the ONE box, not a per-field input any more - `foldedDraft` is the same
-            // fan-out Save's amending branch below uses.
+            // fan-out Save's amending branch below uses. AC-28: `reason` travels on the
+            // approving branch too, not only the amending `else` below.
+            reason,
             buy_reason: foldedDraft.buy_reason,
             borrow: foldedDraft.borrow,
             // S2 (fix round 2, reviewer): the Order back switch and Document cited box are on

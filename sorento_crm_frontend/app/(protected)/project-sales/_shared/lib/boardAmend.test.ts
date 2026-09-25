@@ -993,6 +993,43 @@ describe('decideComposition: the six Decide items (D1, AC-5 to AC-9, AC-51)', ()
     );
   });
 
+  /**
+   * Review round 1, Should fix 2: the donor order's TOTAL free stock used to gate the check
+   * (10 across two lines >= 8), but the single component built afterwards posted the whole 8
+   * against `candidates[0]` alone, which on its own holds only 5 - a claim `_check_borrow`
+   * would refuse at Confirm, far from this press. Neither donor line covers 8 alone here, so
+   * the row skips instead of over-claiming one of them.
+   */
+  it('Should fix 2: skips rather than over-drawing one donor line when two lines together would cover it but neither alone does', () => {
+    const row = decideRow({
+      qty: '8',
+      borrow_candidates: [
+        {
+          source: 'other_location',
+          warehouse_code: 'BRW-BB',
+          warehouse_id: 'wh-donor',
+          free_qty: '5',
+          donor_impact: { free_before: '5', free_after_full_borrow: '0', committed_qty: '0' },
+          donor_so_number: 'SO415472',
+          donor_core_line_id: 'core-line-3',
+        },
+        {
+          source: 'other_location',
+          warehouse_code: 'BRW-BB',
+          warehouse_id: 'wh-donor',
+          free_qty: '5',
+          donor_impact: { free_before: '5', free_after_full_borrow: '0', committed_qty: '0' },
+          donor_so_number: 'SO415472',
+          donor_core_line_id: 'core-line-7',
+        },
+      ],
+    });
+
+    const result = decideComposition(row, 'borrow_order', 'SO415472');
+    expect(result.skip).toBe('SO415472 holds only 5');
+    expect(result.borrow).toBeUndefined();
+  });
+
   it('AC-9: Borrow other location takes the whole line off the picked location', () => {
     const row = decideRow({
       borrow_candidates: [
@@ -1052,6 +1089,34 @@ describe('decideComposition: the six Decide items (D1, AC-5 to AC-9, AC-51)', ()
     expect(firstResult.skip).toBeUndefined();
     const secondResult = decideComposition(second, 'borrow_order', 'SO415472', claimed);
     expect(secondResult.skip).toBe('SO415472 holds only 50');
+  });
+
+  /**
+   * Should fix 6 (review round 1): the ONLY existing AC-10 test contests a borrow donor - the
+   * `own`/`shared` tally read at `:793` (site_pool/own-location rows) was unguarded, since
+   * killing it left `boardAmend.test.ts` and `BoardDecideControl.test.tsx` fully green.
+   */
+  it('AC-10: a running tally makes the second of two rows contesting one BRW pile skip', () => {
+    const pool = {
+      location: 'BRW',
+      where: 'site_pool' as const,
+      warehouse_id: 'wh-pool',
+      qty_free_remaining: '150',
+      available_for_project: '150',
+    };
+    const first = decideRow({ qty: '100', locations: [pool] });
+    const second = decideRow({
+      key: 'so-1|2|WESERP10B|2026-09-04',
+      line_no: 2,
+      qty: '100',
+      locations: [pool],
+    });
+    const claimed = new Map<string, number>();
+
+    const firstResult = decideComposition(first, 'shared', undefined, claimed);
+    expect(firstResult.skip).toBeUndefined();
+    const secondResult = decideComposition(second, 'shared', undefined, claimed);
+    expect(secondResult.skip).toBe('only 50 free at BRW');
   });
 
   it('AC-5/AC-6/AC-7: the suggested reserve/BRW item never draws a site_pool row for own location', () => {

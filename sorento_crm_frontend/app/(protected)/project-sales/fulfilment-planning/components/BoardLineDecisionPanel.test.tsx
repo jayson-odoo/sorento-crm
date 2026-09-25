@@ -457,6 +457,9 @@ describe('BoardLineDecisionPanel: an approving save carries the reasons the plan
       expect.objectContaining({
         verdict: 'approved',
         buy_reason: 'project order',
+        // AC-28 (review round 1, Blocking 3): the ONE box is `reason` too, not only
+        // `buy_reason` - the approving branch used to post `reason: undefined` unconditionally.
+        reason: 'project order',
       }),
     );
 
@@ -522,6 +525,211 @@ describe('BoardLineDecisionPanel: an approving save carries the reasons the plan
     expect(screen.getByLabelText(/^Reason/)).toHaveValue(
       'Confirmed with the other site on WhatsApp.',
     );
+  });
+});
+
+/**
+ * Review round 1, Blocking 4, kill test 3 (AC-24): re-adding the Buy block's own retired
+ * "Reason *" textarea under a DIFFERENT label ("Why buy it") stayed green, because the only
+ * existing assertion looks up the box by its label (`/^Reason/`) rather than counting how many
+ * text areas the discontinued Buy state renders. D3's whole point is ONE box, so this pins the
+ * count directly, label aside.
+ */
+describe('BoardLineDecisionPanel: a discontinued Buy renders exactly one Reason textarea (AC-24)', () => {
+  it('renders one <textarea>, not two, when the line is discontinued and buying', () => {
+    const { container } = render(
+      <BoardLineDecisionPanel
+        contribution={contributionOf({
+          key: 'so-a|32|SRTWT9610-GM|2026-09-10',
+          line_no: 32,
+          item_code: 'SRTWT9610-GM',
+          qty: '3',
+          qty_ordered: '3',
+          qty_outstanding: '3',
+          sources: [
+            {
+              kind: 'buy',
+              qty: '3',
+              location: null,
+              warehouse_id: null,
+              reason: 'Nothing on hand covers this line.',
+            },
+          ],
+          qty_proposed_reserve: '0',
+          qty_proposed_incoming: '0',
+          qty_proposed_buy: '3',
+          item_flags: {
+            dealer_hot_selling: false,
+            dealer_hot_selling_where: [],
+            project_hot_selling: false,
+            project_hot_selling_where: [],
+            dealer_classified: false,
+            project_classified: false,
+            discontinued: true,
+            retail_classification_available: true,
+          },
+        })}
+        decision={null}
+        locations={LOCATIONS}
+        onDecide={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('Discontinued')).toBeInTheDocument();
+    expect(container.querySelectorAll('textarea')).toHaveLength(1);
+  });
+});
+
+/**
+ * Review round 1, Blocking 2: a same-agent borrow `BorrowAddDialog` adds by hand seeds the
+ * row's `reason` with `storedReason`'s own "Authorised by ..." sentence. `foldReasonIntoDraft`
+ * used to replace that outright with the panel's own box text on Save, so the authorisation
+ * the server requires (`_check_borrow`) never reached the server. The fix keeps the seeded
+ * prefix and appends the box text, the same shape `BoardDecideControl` already builds fresh.
+ */
+describe('BoardLineDecisionPanel: a hand-added same-agent borrow keeps its authorisation (review round 1, Blocking 2)', () => {
+  it('appends the typed Reason to the seeded "Authorised by" sentence instead of replacing it', async () => {
+    const onDecide = vi.fn().mockResolvedValue(true);
+    render(
+      <BoardLineDecisionPanel
+        contribution={contributionOf({
+          borrow_candidates: [
+            {
+              source: 'other_location',
+              warehouse_code: 'MWH-BB',
+              warehouse_id: 'wh-mwh-bb',
+              free_qty: '90',
+              donor_impact: {
+                free_before: '90',
+                free_after_full_borrow: '0',
+                committed_qty: '0',
+              },
+              donor_agent_code: 'JEREMY',
+              donor_core_line_id: 'core-line-1',
+              same_agent: true,
+              location: {
+                location: 'MWH-BB',
+                where: 'other_group',
+                product_id: 'prod-1',
+                warehouse_id: 'wh-mwh-bb',
+                qty: '0',
+                qty_on_hand: '90',
+                so_qty: '0',
+                spo_qty: '0',
+                available_qty: '90',
+                po_open_qty: '0',
+                incoming: [],
+              },
+            },
+          ],
+        })}
+        decision={null}
+        locations={LOCATIONS}
+        onDecide={onDecide}
+      />,
+    );
+
+    // Free 9 off the BRW reserve (15 -> 6) so the whole line still balances once the 9 is
+    // borrowed instead - D7 derives a Buy for the gap otherwise, which the borrow then closes.
+    fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
+      target: { value: '6' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add a borrow' }));
+
+    fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '9' } });
+    fireEvent.change(screen.getByLabelText(/^Authorised by agent JEREMY/), {
+      target: { value: 'Agreed on the phone, 25 Aug' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Add the borrow' }));
+
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
+      target: { value: 'Stock held for handover.' },
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
+    });
+
+    expect(onDecide).toHaveBeenCalledWith(
+      expect.objectContaining({
+        borrow: expect.arrayContaining([
+          expect.objectContaining({
+            warehouse_id: 'wh-mwh-bb',
+            reason:
+              'Authorised by agent JEREMY: Agreed on the phone, 25 Aug. Stock held for handover.',
+          }),
+        ]),
+      }),
+    );
+  });
+});
+
+/**
+ * Review round 1, Blocking 4, kill test 2(b): `hasUnsuggestedBorrow` (AC-27) is unguarded - a
+ * re-opened, UNEDITED covered line whose frozen decision already carries a borrow the engine
+ * itself never suggested, with no reason recorded for it (an older revision, frozen before the
+ * one-Reason-box shape existed - `seedReason` seeds nothing from a blank `borrow[0].reason`),
+ * matches its own baseline (`amendNeedsReason` reads false), so only `hasUnsuggestedBorrow`
+ * still asks for a reason. Killing that check alone left every existing test green because none
+ * of them opened a line in exactly this state.
+ */
+describe('BoardLineDecisionPanel: a reopened covered line with a hand borrow already frozen still needs a reason (AC-27)', () => {
+  it('disables Save while the Reason box is blank, and enables it once typed, with nothing else edited', () => {
+    const onDecide = vi.fn().mockResolvedValue(true);
+    render(
+      <BoardLineDecisionPanel
+        contribution={contributionOf({
+          covered: true,
+          qty: '9',
+          qty_ordered: '9',
+          qty_outstanding: '9',
+          sources: [
+            {
+              kind: 'reserve',
+              qty: '9',
+              location: 'BRW-AM',
+              warehouse_id: 'wh-BRW-AM',
+              reason: 'Free unclaimed stock at BRW-AM covers this much.',
+            },
+          ],
+          qty_proposed_reserve: '9',
+          qty_proposed_incoming: '0',
+          qty_proposed_buy: '0',
+          decision: {
+            revision_no: 1,
+            confirmed_at: '2026-08-18T02:00:00',
+            timely_spo_qty: '0',
+            reserve: [],
+            borrow: [
+              {
+                source: 'other_location',
+                warehouse_id: 'wh-mwh-bb',
+                location: 'MWH-BB',
+                qty: '9',
+                reason: '',
+              },
+            ],
+            buy_qty: '0',
+            suspected_system_issue: false,
+          },
+        })}
+        decision={null}
+        locations={LOCATIONS}
+        onDecide={onDecide}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Amend' }));
+
+    expect(screen.getByLabelText(/^Reason/)).toHaveValue('');
+    const save = screen.getByRole('button', { name: 'Save decision' });
+    expect(save).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
+      target: { value: 'Reconfirming the same borrow on reopen.' },
+    });
+    expect(save).toBeEnabled();
   });
 });
 

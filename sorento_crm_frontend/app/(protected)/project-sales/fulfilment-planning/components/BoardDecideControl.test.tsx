@@ -203,7 +203,7 @@ describe('BoardDecideControl: Use own location opens the dialog when it differs 
     const save = within(dialog).getByRole('button', { name: /^Save/ });
     expect(save).toBeDisabled();
 
-    fireEvent.change(within(dialog).getByLabelText('Reason'), {
+    fireEvent.change(within(dialog).getByLabelText(/^Reason/), {
       target: { value: 'Own site can cover it.' },
     });
     expect(save).toBeEnabled();
@@ -264,13 +264,49 @@ describe('BoardDecideControl: the Borrow dialog (AC-11, AC-38)', () => {
     const save = within(dialog).getByRole('button', { name: /^Save/ });
     expect(save).toBeDisabled();
 
-    fireEvent.change(within(dialog).getByLabelText('Reason'), {
+    fireEvent.change(within(dialog).getByLabelText(/^Reason/), {
       target: { value: 'Nothing else is free before the date.' },
     });
     expect(save).toBeDisabled();
 
     fireEvent.change(within(dialog).getByLabelText('donor-or-location'), {
       target: { value: 'DC1-IR' },
+    });
+    expect(save).toBeEnabled();
+  });
+
+  // Review round 1, Blocking 4 kill test 2(a): the test above only ever types the reason
+  // BEFORE picking the donor/location, so it never exercises "picker set, reason still blank"
+  // - a kill of the reason check alone stayed green. Reversing the order guards that half too.
+  it('keeps Save disabled with the picker set and the reason still blank', async () => {
+    renderControl({
+      contributions: [
+        row({
+          borrow_candidates: [
+            {
+              source: 'other_location',
+              warehouse_code: 'DC1-IR',
+              warehouse_id: 'wh-ir',
+              free_qty: '100',
+              donor_impact: { free_before: '100', free_after_full_borrow: '60', committed_qty: '0' },
+            },
+          ],
+        }),
+      ],
+    });
+    openMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Borrow other location' }));
+
+    const dialog = await screen.findByRole('dialog');
+    const save = within(dialog).getByRole('button', { name: /^Save/ });
+
+    fireEvent.change(within(dialog).getByLabelText('donor-or-location'), {
+      target: { value: 'DC1-IR' },
+    });
+    expect(save).toBeDisabled();
+
+    fireEvent.change(within(dialog).getByLabelText(/^Reason/), {
+      target: { value: 'Nothing else is free before the date.' },
     });
     expect(save).toBeEnabled();
   });
@@ -301,7 +337,7 @@ describe('BoardDecideControl: the lenient toast (AC-16, R10)', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Use own location' }));
 
     const dialog = await screen.findByRole('dialog');
-    fireEvent.change(within(dialog).getByLabelText('Reason'), {
+    fireEvent.change(within(dialog).getByLabelText(/^Reason/), {
       target: { value: 'Own site takes what it can.' },
     });
     fireEvent.click(within(dialog).getByRole('button', { name: /^Save/ }));

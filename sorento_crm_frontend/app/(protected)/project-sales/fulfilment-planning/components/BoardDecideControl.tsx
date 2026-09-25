@@ -22,7 +22,11 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import {
   SearchableSelect,
   type SearchableSelectOption,
@@ -90,7 +94,8 @@ function matchesFrozen(
   ) => {
     const byKey = (rows: T[]) => {
       const map = new Map<string, number>();
-      for (const row of rows) map.set(key(row), (map.get(key(row)) ?? 0) + toMinor(row.qty));
+      for (const row of rows)
+        map.set(key(row), (map.get(key(row)) ?? 0) + toMinor(row.qty));
       return map;
     };
     const a = byKey(left);
@@ -102,7 +107,11 @@ function matchesFrozen(
   return (
     sameTotal(frozen.buy_qty, result.buy_qty) &&
     sameTotal(frozen.timely_spo_qty, result.timely_spo_qty) &&
-    sameRows(frozen.reserve, result.reserve ?? [], (row) => row.warehouse_id ?? '') &&
+    sameRows(
+      frozen.reserve,
+      result.reserve ?? [],
+      (row) => row.warehouse_id ?? '',
+    ) &&
     sameRows(
       frozen.borrow,
       result.borrow ?? [],
@@ -137,7 +146,8 @@ function pickerOptions(
 function sameAgentCandidate(rows: BoardContribution[], donorSo: string) {
   for (const row of rows) {
     const found = borrowCandidatesOf(row).find(
-      (candidate) => candidate.donor_so_number === donorSo && candidate.same_agent,
+      (candidate) =>
+        candidate.donor_so_number === donorSo && candidate.same_agent,
     );
     if (found) return found;
   }
@@ -149,11 +159,17 @@ interface SkippedEntry {
   why: string;
 }
 
-/** "7 saved as Buy · 2 skipped: CB6633 line 4 (only 3 free at BRW), ... and 1 more". */
-function toast_message(saved: number, label: string, skipped: SkippedEntry[]): string {
-  const head = `${saved} saved as ${label}`;
+/**
+ * "7 saved as Buy · 2 skipped: CB6633 line 4 (only 3 free at BRW), ... and 1 more", or, when
+ * nothing was saved at all (AC-17), the neutral "0 saved · n skipped: ..." with no Label to
+ * name - saving nothing "as Buy" reads like a Buy that landed.
+ */
+function toastMessage(saved: number, label: string, skipped: SkippedEntry[]): string {
+  const head = saved > 0 ? `${saved} saved as ${label}` : `${saved} saved`;
   if (skipped.length === 0) return head;
-  const named = skipped.slice(0, 3).map((entry) => `${entry.label} (${entry.why})`);
+  const named = skipped
+    .slice(0, 3)
+    .map((entry) => `${entry.label} (${entry.why})`);
   const more = skipped.length > 3 ? `, and ${skipped.length - 3} more` : '';
   return `${head} · ${skipped.length} skipped: ${named.join(', ')}${more}`;
 }
@@ -193,11 +209,17 @@ export function BoardDecideControl({
 
   const isBorrow = way === 'borrow_order' || way === 'borrow_other';
   const options = React.useMemo(
-    () => (isBorrow ? pickerOptions(tickedRows, way as 'borrow_order' | 'borrow_other') : []),
+    () =>
+      isBorrow
+        ? pickerOptions(tickedRows, way as 'borrow_order' | 'borrow_other')
+        : [],
     [isBorrow, tickedRows, way],
   );
   const sameAgent = React.useMemo(
-    () => (way === 'borrow_order' && pick ? sameAgentCandidate(tickedRows, pick) : undefined),
+    () =>
+      way === 'borrow_order' && pick
+        ? sameAgentCandidate(tickedRows, pick)
+        : undefined,
     [way, pick, tickedRows],
   );
 
@@ -214,13 +236,18 @@ export function BoardDecideControl({
     return { coverable };
   }, [way, pick, tickedRows]);
 
-  const reset = () => {
-    setWay(null);
-    setPick('');
-    setReason('');
-    setAuthorisation('');
+  // Should fix 5 (review round 1): only `dialogOpen` closes the dialog now - `way`, `pick`,
+  // `reason` and `authorisation` are left as they were rather than nulled out here, because
+  // `<Dialog>` below stays mounted through the close and its own `AnimatePresence` needs
+  // something to keep rendering while it plays the exit spring. `chooseWay` already
+  // overwrites every one of them the next time the dialog opens, so nothing here is read
+  // stale.
+  // Nit (review round 1): `useCallback` here, not a plain function, so `runSave` below can
+  // name it in its own deps instead of an `eslint-disable` that does not match the rest of
+  // this file's idiom.
+  const reset = React.useCallback(() => {
     setDialogOpen(false);
-  };
+  }, []);
 
   const runSave = React.useCallback(
     async (chosenWay: DecideWay, chosenPick: string, chosenReason: string) => {
@@ -229,7 +256,8 @@ export function BoardDecideControl({
         const claimed = new Map<string, number>();
         const saves: { key: string; decision: BoardDecision }[] = [];
         const skipped: SkippedEntry[] = [];
-        const labelFor = (row: BoardContribution) => `${row.item_code} line ${row.line_no}`;
+        const labelFor = (row: BoardContribution) =>
+          `${row.item_code} line ${row.line_no}`;
 
         for (const row of tickedRows) {
           if (chosenWay === 'suggested') {
@@ -244,7 +272,33 @@ export function BoardDecideControl({
             continue;
           }
 
-          const result = decideComposition(row, chosenWay, chosenPick || undefined, claimed);
+          // Should fix 4 (review round 1): a covered row already decided exactly this way is
+          // skipped for taking NOTHING new, so it must not claim a pile first and starve the
+          // next ticked row on it. Probed against a throwaway, empty tally rather than the
+          // real one - this row already owns whatever it is frozen at, so checking the SHAPE
+          // costs the real tally nothing.
+          if (row.covered) {
+            const probe = decideComposition(
+              row,
+              chosenWay,
+              chosenPick || undefined,
+              new Map(),
+            );
+            if (!probe.skip && matchesFrozen(row, probe)) {
+              skipped.push({
+                label: labelFor(row),
+                why: 'already decided that way',
+              });
+              continue;
+            }
+          }
+
+          const result = decideComposition(
+            row,
+            chosenWay,
+            chosenPick || undefined,
+            claimed,
+          );
           if (result.skip) {
             skipped.push({ label: labelFor(row), why: result.skip });
             continue;
@@ -256,13 +310,11 @@ export function BoardDecideControl({
           }));
           const discontinued = Boolean(row.item_flags?.discontinued);
           const buyReason =
-            discontinued && toMinor(result.buy_qty ?? '0') > 0 ? trimmedReason : undefined;
+            discontinued && toMinor(result.buy_qty ?? '0') > 0
+              ? trimmedReason
+              : undefined;
 
           if (row.covered) {
-            if (matchesFrozen(row, result)) {
-              skipped.push({ label: labelFor(row), why: 'already decided that way' });
-              continue;
-            }
             saves.push({
               key: row.key,
               decision: {
@@ -310,10 +362,13 @@ export function BoardDecideControl({
         const { savedKeys, failed } = await onSave(saves);
         for (const entry of failed) {
           const row = tickedRows.find((r) => r.key === entry.key);
-          skipped.push({ label: row ? labelFor(row) : entry.key, why: entry.why });
+          skipped.push({
+            label: row ? labelFor(row) : entry.key,
+            why: entry.why,
+          });
         }
         onSaved(savedKeys);
-        const message = toast_message(savedKeys.length, labelOf(chosenWay), skipped);
+        const message = toastMessage(savedKeys.length, labelOf(chosenWay), skipped);
         if (savedKeys.length > 0) toast.success(message);
         else toast(message);
       } finally {
@@ -321,8 +376,7 @@ export function BoardDecideControl({
         reset();
       }
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [tickedRows, draft, onSave, onSaved],
+    [tickedRows, draft, onSave, onSaved, reset],
   );
 
   const chooseWay = (chosen: DecideWay) => {
@@ -367,7 +421,9 @@ export function BoardDecideControl({
 
   const needsAuthorisation = Boolean(sameAgent);
   const valid = isBorrow
-    ? Boolean(pick) && reason.trim().length > 0 && (!needsAuthorisation || authorisation.trim())
+    ? Boolean(pick) &&
+      reason.trim().length > 0 &&
+      (!needsAuthorisation || authorisation.trim())
     : reason.trim().length > 0;
 
   return (
@@ -378,26 +434,37 @@ export function BoardDecideControl({
         </Badge>
       ) : null}
       <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
-        <DropdownMenuTrigger asChild>
-          {selectedKeys.length === 0 ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span tabIndex={0} className="inline-flex">
-                  <Button type="button" size="sm" disabled data-testid="board-decide-button">
+        {selectedKeys.length === 0 ? (
+          // Nit (review round 1): the `Tooltip` wraps the WHOLE trigger, outside
+          // `DropdownMenuTrigger`, rather than sitting inside its `asChild` slot - `Tooltip`
+          // renders no DOM of its own, so nested the other way `DropdownMenuTrigger`'s props
+          // land on nothing (harmless only because the button is disabled either way).
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span tabIndex={0} className="inline-flex">
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled
+                    data-testid="board-decide-button"
+                  >
                     Decide
                     <ChevronDown className="size-4" aria-hidden />
                   </Button>
-                </span>
-              </TooltipTrigger>
-              <TooltipContent>Tick the lines to decide</TooltipContent>
-            </Tooltip>
-          ) : (
+                </DropdownMenuTrigger>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>Tick the lines to decide</TooltipContent>
+          </Tooltip>
+        ) : (
+          <DropdownMenuTrigger asChild>
             <Button type="button" size="sm" data-testid="board-decide-button">
               Decide
               <ChevronDown className="size-4" aria-hidden />
             </Button>
-          )}
-        </DropdownMenuTrigger>
+          </DropdownMenuTrigger>
+        )}
         <DropdownMenuContent align="end">
           {MENU_ORDER.map((entry) => (
             <React.Fragment key={entry.way}>
@@ -415,66 +482,76 @@ export function BoardDecideControl({
         </Button>
       ) : null}
 
-      {dialogOpen && way && (
-        <Dialog open onOpenChange={(next) => !next && reset()}>
-          <DialogContent className="max-w-lg">
-            <DialogHeader>
-              <DialogTitle>{`Decide ${selectedKeys.length} lines: ${labelOf(way)}`}</DialogTitle>
-            </DialogHeader>
-            <DialogBody className="space-y-4">
-              {isBorrow && (
-                <div className="space-y-1.5">
-                  <Label>{way === 'borrow_order' ? 'Donor order' : 'Location'}</Label>
-                  <SearchableSelect
-                    value={pick}
-                    onChange={setPick}
-                    options={options}
-                  />
-                </div>
-              )}
+      {
+        // Should fix 5 (review round 1): mounted ALWAYS, never gated on `dialogOpen && way` -
+        // `Dialog`'s own `AnimatePresence` (`components/ui/dialog.tsx`) is what plays
+        // `SURFACE_SPRING_EXIT`, and it needs this element to still be in the tree while that
+        // runs. Unmounting it the instant `dialogOpen` flips is what skipped the exit spring.
+      }
+      <Dialog open={dialogOpen} onOpenChange={(next) => !next && reset()}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{`Decide ${selectedKeys.length} lines: ${way ? labelOf(way) : ''}`}</DialogTitle>
+          </DialogHeader>
+          <DialogBody className="space-y-4">
+            {isBorrow && (
               <div className="space-y-1.5">
-                <Label htmlFor="decide-reason">Reason</Label>
-                <Textarea
-                  id="decide-reason"
-                  rows={3}
-                  value={reason}
-                  placeholder="In your own words"
-                  onChange={(event) => setReason(event.target.value)}
+                <Label htmlFor="decide-picker">
+                  {way === 'borrow_order' ? 'Donor order' : 'Location'}
+                </Label>
+                <SearchableSelect
+                  id="decide-picker"
+                  value={pick}
+                  onChange={setPick}
+                  options={options}
                 />
               </div>
-              {needsAuthorisation && (
-                <div className="space-y-1.5">
-                  <Label htmlFor="decide-authorisation">Who authorised it</Label>
-                  <Input
-                    id="decide-authorisation"
-                    value={authorisation}
-                    onChange={(event) => setAuthorisation(event.target.value)}
-                    placeholder="When, and how"
-                  />
-                </div>
-              )}
-            </DialogBody>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={reset}>
-                Cancel
-              </Button>
-              <Button
-                type="button"
-                disabled={!valid || saving}
-                onClick={() => {
-                  const foldedReason =
-                    sameAgent && authorisation.trim()
-                      ? `Authorised by ${sameAgent.donor_agent_code ? `agent ${sameAgent.donor_agent_code}` : 'the sales agent'}: ${authorisation.trim()}. ${reason.trim()}`
-                      : reason;
-                  void runSave(way, pick, foldedReason);
-                }}
-              >
-                {`Save ${preview.coverable} lines`}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      )}
+            )}
+            <div className="space-y-1.5">
+              <Label htmlFor="decide-reason">
+                Reason<span className="text-destructive"> *</span>
+              </Label>
+              <Textarea
+                id="decide-reason"
+                rows={3}
+                value={reason}
+                placeholder="In your own words"
+                onChange={(event) => setReason(event.target.value)}
+              />
+            </div>
+            {needsAuthorisation && (
+              <div className="space-y-1.5">
+                <Label htmlFor="decide-authorisation">Who authorised it</Label>
+                <Input
+                  id="decide-authorisation"
+                  value={authorisation}
+                  onChange={(event) => setAuthorisation(event.target.value)}
+                  placeholder="When, and how"
+                />
+              </div>
+            )}
+          </DialogBody>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={reset}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={!valid || saving}
+              onClick={() => {
+                if (!way) return;
+                const foldedReason =
+                  sameAgent && authorisation.trim()
+                    ? `Authorised by ${sameAgent.donor_agent_code ? `agent ${sameAgent.donor_agent_code}` : 'the sales agent'}: ${authorisation.trim()}. ${reason.trim()}`
+                    : reason;
+                void runSave(way, pick, foldedReason);
+              }}
+            >
+              {`Save ${preview.coverable} line${preview.coverable === 1 ? '' : 's'}`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

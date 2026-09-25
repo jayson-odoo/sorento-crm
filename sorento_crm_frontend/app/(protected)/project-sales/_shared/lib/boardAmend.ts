@@ -380,9 +380,23 @@ export function foldReasonIntoDraft(draft: DraftLine, reason: string): DraftLine
     buy_reason: draft.is_discontinued && toMinor(draft.buy_qty) > 0 ? trimmed : '',
     borrow: draft.borrow.map((row) => ({
       ...row,
-      reason: trimmed || row.reason,
+      reason: foldBorrowReason(row.reason, trimmed),
     })),
   };
+}
+
+/**
+ * A same-agent borrow `BorrowAddDialog` adds by hand seeds `row.reason` with `storedReason`'s
+ * own `Authorised by ...` sentence - the box's text has to APPEND to that, not replace it
+ * outright, or the authorisation the server requires (`_check_borrow`) is silently dropped
+ * (review round 1, Blocking 2). Matches the shape `BoardDecideControl` already builds fresh
+ * for the same case.
+ */
+function foldBorrowReason(seeded: string, boxText: string): string {
+  if (seeded.startsWith('Authorised by')) {
+    return boxText ? `${seeded} ${boxText}` : seeded;
+  }
+  return boxText || seeded;
 }
 
 /**
@@ -487,6 +501,7 @@ export function borrowReasonKeyOf(row: {
 export function suggestionWithReasons(
   contribution: BoardContribution,
   planner: {
+    reason?: string;
     buy_reason?: string;
     borrow: {
       warehouse_id?: string | null;
@@ -497,7 +512,13 @@ export function suggestionWithReasons(
     cited_document?: string;
   },
 ): BoardDecision {
-  const suggested = decisionFromAmendDraft(suggestionDraftFrom(contribution), '');
+  // AC-28 (review round 1, Blocking 3): the ONE Reason box is what `reason` comes from on an
+  // approving save too, not only an amending one - a reason typed on a line equal to its
+  // suggestion used to go nowhere (`decisionFromAmendDraft` called with `''` unconditionally).
+  const suggested = decisionFromAmendDraft(
+    suggestionDraftFrom(contribution),
+    planner.reason ?? '',
+  );
   const typedReasons = new Map(
     planner.borrow.map((row) => [borrowReasonKeyOf(row), row.reason]),
   );
@@ -721,32 +742,10 @@ export function decideComposition(
 ): DecideComposition {
   const openMinor = toMinor(contribution.qty);
 
-  if (way === 'suggested') {
-    const suggestion = suggestionDraftFrom(contribution);
-    return {
-      reserve: suggestion.reserve
-        .filter((row) => toMinor(row.qty) > 0)
-        .map((row) => ({
-          warehouse_id: row.warehouse_id,
-          location: row.location ?? null,
-          qty: fromMinor(toMinor(row.qty)),
-        })),
-      borrow: suggestion.borrow
-        .filter((row) => toMinor(row.qty) > 0)
-        .map((row) => ({
-          source: row.source,
-          warehouse_id: row.warehouse_id,
-          warehouse_code: row.warehouse_code,
-          donor_project_ref: row.donor_project_ref ?? null,
-          donor_project_id: row.donor_project_id ?? null,
-          qty: fromMinor(toMinor(row.qty)),
-          reason: row.reason,
-          ...borrowPassThrough(row),
-        })),
-      timely_spo_qty: fromMinor(toMinor(suggestion.timely_spo_qty)),
-      buy_qty: fromMinor(toMinor(suggestion.buy_qty)),
-    };
-  }
+  // Nit (review round 1): no 'suggested' branch here - As suggested never reaches this
+  // function. `BoardDecideControl` short-circuits it through `suggestedDecisionFor` (behind
+  // `canQuickSave`) before `decideComposition` is ever called, the identical path Save as
+  // suggested always took.
 
   if (way === 'buy') {
     // R10/Q16/AC-51: a Buy over stock the server has ALREADY landed for this line (an own
@@ -823,19 +822,37 @@ export function decideComposition(
         way === 'borrow_order' ? `${donorLabel} holds none` : `only 0 free at ${donorLabel}`,
     };
   }
-  const donor = candidates[0];
-  const claimKey = `${way}|${contribution.item_code ?? ''}|${pick ?? ''}`;
-  const freeMinor = candidates.reduce((total, entry) => total + toMinor(entry.free_qty), 0);
-  const left = Math.max(freeMinor - (claimed?.get(claimKey) ?? 0), 0);
-  if (left < openMinor) {
+  // Should fix 2 (review round 1): ONE candidate LINE has to cover the whole open quantity
+  // by itself - the server posts one component per `donor_core_line_id`, so summing several
+  // donor lines' free stock together and posting the total against only the first of them is
+  // a claim `_check_borrow` refuses at Confirm, far from this press. Each candidate line keeps
+  // its OWN running claim (never the pick's aggregate), so two ticked rows drawing on the same
+  // donor line still cannot over-claim it between them.
+  const pickKey = `${way}|${contribution.item_code ?? ''}|${pick ?? ''}`;
+  let donor: BorrowCandidate | undefined;
+  let bestLeft = 0;
+  for (const candidate of candidates) {
+    const candidateKey = `${pickKey}|${candidate.donor_core_line_id ?? candidate.warehouse_id}`;
+    const left = Math.max(
+      toMinor(candidate.free_qty) - (claimed?.get(candidateKey) ?? 0),
+      0,
+    );
+    if (left > bestLeft) bestLeft = left;
+    if (left >= openMinor) {
+      donor = candidate;
+      break;
+    }
+  }
+  if (!donor) {
     return {
       skip:
         way === 'borrow_order'
-          ? `${donorLabel} holds only ${fromMinor(left)}`
-          : `only ${fromMinor(left)} free at ${donorLabel}`,
+          ? `${donorLabel} holds only ${fromMinor(bestLeft)}`
+          : `only ${fromMinor(bestLeft)} free at ${donorLabel}`,
     };
   }
-  claimed?.set(claimKey, (claimed.get(claimKey) ?? 0) + openMinor);
+  const donorKey = `${pickKey}|${donor.donor_core_line_id ?? donor.warehouse_id}`;
+  claimed?.set(donorKey, (claimed.get(donorKey) ?? 0) + openMinor);
   return {
     reserve: [],
     borrow: [
