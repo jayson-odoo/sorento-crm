@@ -1007,9 +1007,10 @@ class AutoPlaceInquiryFilter(BaseModel):
 class AutoPlaceRequest(BaseModel):
     """Run the cascade now - the worklist's own "Auto-link". Omitted `product_ids` means
     every product that currently has a raised or partly linked ORDER / RESERVE & ORDER /
-    ORDER BACK row. `row_ids` names the rows and nothing else (the worklist's "Link
-    selected"), and wins over `product_ids`. `filter.inquiry_id` (S3) scopes the whole
-    cascade to one header's own rows, on top of whichever of the other two is also given.
+    ORDER BACK row. `row_ids` names the rows and nothing else (the worklist's and the OI
+    detail's "Link selected", R18 - there is no separate route for it any more), and
+    wins over `product_ids`. `filter.inquiry_id` (S3) scopes the whole cascade to one
+    header's own rows, on top of whichever of the other two is also given.
 
     `extra="forbid"` (S3, security review round 1 precedent on `AcknowledgeFilter`): an
     unknown `filter` key used to be silently dropped by Pydantic's own default, which let
@@ -1059,34 +1060,13 @@ class AutoPlaceResult(BaseModel):
     link_up_to: Optional[date] = None
     #: WHETHER a horizon was in force at all (S1). See `AcknowledgeResult.link_horizon`.
     link_horizon: Literal["date", "none"] = "none"
-
-
-class LinkSuggestedRequest(BaseModel):
-    """Link selected (N) (G1, `PLAN-oi-links-autocount-truth-24sep.md` 3.6): the
-    worklist's own ticked batch - each row's current suggestion, refreshed and
-    written for real in the buyer's own name, never the cascade's."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    row_ids: List[str] = Field(..., min_length=1, max_length=500)
-
-
-class LinkSuggestedRowResult(BaseModel):
-    """One row Link selected could not write for real - nothing suggested for it
-    after the refresh, or its suggestion's own target has since lost room (another
-    real link took it, or it closed)."""
-
-    row_id: str
-    reason: str
-
-
-class LinkSuggestedResult(BaseModel):
-    """What one Link selected press did (AC-LT-35): how many rows it wrote a real
-    link for and how many links that took, plus every row it left alone and why."""
-
-    linked_rows: int = 0
-    links: int = 0
-    skipped: List[LinkSuggestedRowResult] = []
+    #: R18 (`PLAN-oi-links-autocount-truth-24sep.md` 3.6): how many rows this pass
+    #: actually moved - book-linked this pass, or given a different suggestion than
+    #: the one they held coming in. "Link selected" reports this so recalculating
+    #: against AutoCount can say whether it caught anything, distinct from
+    #: `book_linked_rows` / `suggested_rows`, which count the OUTCOME rather than
+    #: whether that outcome is new.
+    changed_rows: int = 0
 
 
 class UnplaceAllRequest(BaseModel):

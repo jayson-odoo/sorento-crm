@@ -33,8 +33,6 @@ from app.schemas.project_order_inquiry import (
     CommitReserveRequestIn,
     CreateReserveRequestIn,
     LinkNowRequest,
-    LinkSuggestedRequest,
-    LinkSuggestedResult,
     MarkInquiryRowsRequest,
     OrderInquiryDetail,
     OrderInquiryHeaderDetailOut,
@@ -1485,7 +1483,14 @@ async def auto_place_order_inquiries(
 
     `filter.inquiry_id` (S3, `PLAN-oi-header-list-detail.md`) is the OI detail page's
     own gear > Auto link: scopes the whole cascade to that header's rows, on top of
-    whichever of `product_ids` / `row_ids` is also given."""
+    whichever of `product_ids` / `row_ids` is also given.
+
+    R18 (`PLAN-oi-links-autocount-truth-24sep.md` 3.6): this is also the worklist's and
+    the OI detail's own "Link selected" - `row_ids` naming exactly the ticked rows, and
+    nothing else. There is no separate route for it: the book step above already writes
+    only what AutoCount names, in AutoCount's own name, and the cascade below only ever
+    suggests, so "Link selected" is this same call, scoped to the ticked rows - it can
+    never turn a suggestion into a link on its own."""
     try:
         for product_id in payload.product_ids or []:
             validate_uuid_path(product_id, resource="Product")
@@ -1512,29 +1517,6 @@ async def auto_place_order_inquiries(
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
-@router.post("/order-inquiries/link-suggested", response_model=LinkSuggestedResult)
-async def link_suggested_order_inquiry_rows(
-    payload: LinkSuggestedRequest,
-    current_user: dict = Depends(require_permission(ACTION)),
-    db: Session = Depends(get_db),
-):
-    """Link selected (N) (G1, `PLAN-oi-links-autocount-truth-24sep.md` 3.6): the
-    worklist's own ticked batch - each row's current suggestion, refreshed and written
-    for real in the buyer's own name. Never turns a suggestion into a placement on its
-    own; a row with nothing suggested, or whose suggested line has since lost room, is
-    reported rather than linked. Same grant as `auto-place` - Link selected is that
-    same action, aimed at exactly what the cascade already offered."""
-    try:
-        for row_id in payload.row_ids:
-            validate_uuid_path(row_id, resource="Order inquiry row")
-        body = ProjectOrderInquiryService(db).link_suggested_rows(
-            payload.row_ids, actor_user_id=current_user["id"],
-        )
-        db.commit()
-        return body
-    except Exception as exc:
-        db.rollback()
-        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
 @router.post(

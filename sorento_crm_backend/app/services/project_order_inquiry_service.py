@@ -5851,95 +5851,6 @@ class ProjectOrderInquiryService:
             include_awaiting=True,
         )
 
-    def link_suggested_rows(
-        self, row_ids: Sequence[str], *, actor_user_id: str
-    ) -> Dict[str, Any]:
-        """Link selected (N) (`PLAN-oi-links-autocount-truth-24sep.md` 3.6, G1,
-        AC-LT-35): for each ticked row, refresh its own suggested links with a
-        cascade pass scoped to exactly it - the answer may be stale by the moment
-        the buyer presses the button - then write what the cascade offers as a REAL
-        link, in the buyer's own name (`auto=False`, `linked_by` the user), delete
-        the suggestion and refresh the row's state.
-
-        A row with nothing suggested once the refresh has run is REPORTED, not
-        linked (G7: this never turns a suggestion into a placement on its own - the
-        buyer's press is the placement). A suggestion whose target line has lost
-        room since it was written - another real link took it, or it closed - is
-        skipped and named, never silently dropped: `place_on_po_allocations` raises
-        the same 409/422 the manual Link dialog would for the same shape, caught
-        here per row so one row's lost room never blocks the rest of the batch.
-        """
-        from app.services.project_service import resolve_user_names
-
-        wanted = [str(row_id) for row_id in row_ids if row_id]
-        names = resolve_user_names(self.db, [actor_user_id] if actor_user_id else [])
-        actor_name = names.get(actor_user_id) or "purchasing"
-
-        linked_rows = 0
-        links_written = 0
-        skipped: List[Dict[str, str]] = []
-        for row_id in wanted:
-            row = self.db.query(OrderInquiryRow).filter(OrderInquiryRow.id == row_id).first()
-            if row is None:
-                skipped.append({"row_id": row_id, "reason": "That row could not be found."})
-                continue
-            # G7: this never DISCOVERS a suggestion for a row that holds none - a
-            # row nobody has cascaded onto anything stays "nothing suggested" and
-            # is reported, never linked on the strength of a press that only
-            # ticked it. "Refresh" means what it says: re-derive what is ALREADY
-            # there, never conjure a fresh guess for a row with nothing to refresh.
-            if not self._suggested_of_row(row_id):
-                skipped.append(
-                    {"row_id": row_id, "reason": "Nothing is suggested for this row."}
-                )
-                continue
-            # A fresh cascade pass, scoped to exactly this row - the suggestion the
-            # worklist showed when the buyer ticked the row may already be stale
-            # (another row's real link has since taken the target, or it closed).
-            self.auto_place_for_products(
-                None,
-                actor_user_id=actor_user_id,
-                trigger="link_selected",
-                row_ids=[row_id],
-            )
-            self.db.flush()
-            suggestions = self._suggested_of_row(row_id)
-            if not suggestions:
-                skipped.append(
-                    {"row_id": row_id, "reason": "Nothing is suggested for this row."}
-                )
-                continue
-            allocations = [
-                {
-                    "po_line_id": suggestion.po_line_id,
-                    "spo_allocation_id": suggestion.spo_allocation_id,
-                    "qty": suggestion.qty,
-                }
-                for suggestion in suggestions
-            ]
-            try:
-                self.place_on_po_allocations(
-                    row_id, allocations, actor_user_id=actor_user_id,
-                )
-            except AppException as exc:
-                skipped.append({"row_id": row_id, "reason": exc.message})
-                continue
-            # The suggestion is spent - written for real above - so it is never a
-            # live answer any more.
-            self._drop_suggested_links([row])
-            note = f"Linked as suggested by {actor_name}"
-            row.note = f"{row.note}; {note}" if row.note else note
-            self.refresh_link_state([row])
-            self.db.flush()
-            linked_rows += 1
-            links_written += len(allocations)
-
-        return {
-            "linked_rows": linked_rows,
-            "links": links_written,
-            "skipped": skipped,
-        }
-
     def row_ids_of_decision(self, decision_id: str) -> List[str]:
         """The linkable rows THIS supply decision raised or carried (R6).
 
@@ -7921,7 +7832,7 @@ class ProjectOrderInquiryService:
         row: OrderInquiryRow,
         takes: Sequence[Tuple[Dict[str, Any], Decimal]],
         trigger: str,
-    ) -> None:
+    ) -> bool:
         """The cascade walk's OWN terminal write (plan 3.4) - never a real link, never
         `scm.order_link_claim`, nobody's name on it. REPLACES this row's suggested
         links with today's answer, unless the answer is unchanged: `_same_placement`
@@ -7933,10 +7844,15 @@ class ProjectOrderInquiryService:
         Writes NOTHING onto the row itself - no note, no `actioned_by`, no state
         change: `po_ref` / `spo_ref` / `state` stay exactly what they were before this
         pass (AC-LT-10), because a guess is not a placement.
+
+        Returns whether the row's suggested links actually changed (R18,
+        `PLAN-oi-links-autocount-truth-24sep.md` 3.6): "Link selected" recalculates
+        against AutoCount to catch a stale suggestion, and needs to say how many rows
+        it actually moved, distinct from the rows it looked at and left alone.
         """
         existing = self._suggested_of_row(row.id)
         if existing and self._same_placement(existing, takes):
-            return
+            return False
         if existing:
             for suggestion in existing:
                 self.db.delete(suggestion)
@@ -7956,6 +7872,7 @@ class ProjectOrderInquiryService:
                 )
             )
         self.db.flush()
+        return True
 
     def _drop_suggested_links(self, rows: Sequence[OrderInquiryRow]) -> None:
         """Delete every suggested link on these rows (AC-LT-17/18): full real coverage,
@@ -9013,6 +8930,7 @@ class ProjectOrderInquiryService:
         # book passes deep, never unbounded. `_skip_book_step` skips the book
         # step outright, for a caller that needs the ordinary cascade only.
         book_linked_rows = 0
+        book_linked_row_ids: set = set()
         if not _skip_book_step:
             book_rows_by_company: Dict[str, List[str]] = {}
             for row_id, row_company_id in query.with_entities(
@@ -9047,7 +8965,8 @@ class ProjectOrderInquiryService:
                 for row_id, links in self._links_by_row(all_book_row_ids).items()
                 if links
             }
-            book_linked_rows = len(linked_after - linked_before)
+            book_linked_row_ids = linked_after - linked_before
+            book_linked_rows = len(book_linked_row_ids)
 
         rows = query.all()
         # Self-heal (issue #1215 point 1): a row can read `placed`/`partly_linked` with
@@ -9121,6 +9040,7 @@ class ProjectOrderInquiryService:
         allocation_count = 0
         after_horizon = 0
         products_touched: set = set()
+        changed_suggestion_row_ids: set = set()
         for row in rows:
             product_id = product_id_by_row.get(row.id)
             if not product_id:
@@ -9204,7 +9124,8 @@ class ProjectOrderInquiryService:
             # PLAN-oi-links-autocount-truth-24sep.md 3.4: the walk's own terminal write
             # is a SUGGESTION, never a real link - the book step above (real links,
             # untouched) already had first go at every row in this pass.
-            self._write_suggested_links(row, takes, trigger)
+            if self._write_suggested_links(row, takes, trigger):
+                changed_suggestion_row_ids.add(str(row.id))
             # One ROW touched, however many documents it took: the row is never split any
             # more, so counting the rows the call returned would always have said 1.
             placed_rows += 1
@@ -9222,6 +9143,13 @@ class ProjectOrderInquiryService:
             # suggestion, never a placement, since S3).
             "book_linked_rows": book_linked_rows,
             "suggested_rows": placed_rows,
+            # R18 (`PLAN-oi-links-autocount-truth-24sep.md` 3.6): how many rows this
+            # pass actually moved - book-linked this pass, or given a DIFFERENT
+            # suggestion than the one they held coming in. A row the pass looked at
+            # and left exactly as it was (same suggestion, or no candidate at all) is
+            # not "changed" - "Link selected" reads this to say whether recalculating
+            # against AutoCount caught anything, rather than a blanket re-link.
+            "changed_rows": len(book_linked_row_ids | changed_suggestion_row_ids),
             "after_horizon": after_horizon,
             "link_up_to": link_up_to,
             "link_horizon": self._horizon_mode(link_up_to),
@@ -9289,6 +9217,7 @@ class ProjectOrderInquiryService:
             "products_touched": 0,
             "book_linked_rows": 0,
             "suggested_rows": 0,
+            "changed_rows": 0,
             "after_horizon": 0,
             "link_up_to": link_up_to,
             "link_horizon": ProjectOrderInquiryService._horizon_mode(link_up_to),

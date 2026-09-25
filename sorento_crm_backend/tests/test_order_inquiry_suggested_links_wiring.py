@@ -338,82 +338,37 @@ def test_ac_lt_34_po_lightbox_allocations_real_only_suggested_in_own_panel(api):
 
 
 # =============================================================================
-# AC-LT-35: Link selected (N) - `POST .../link-suggested` (RED: missing route)
+# R18 (owner ruling from the hand test on stack C, 25 Sep 2026, supersedes G1's
+# "Link selected writes what is suggested as a real link"): "the user should always
+# go to autocount to do linking, the link selected is to recalculate with autocount
+# linkage in case of mistake in the automation." Link selected never turns a
+# suggestion into a real link. `POST .../link-suggested` is gone; the worklist and
+# the OI detail both post `POST .../auto-place` with `row_ids` naming exactly the
+# ticked rows - the SAME route `auto-place_for_products` already exposes, scoped
+# down. That call already writes real links ONLY from the book step (AutoCount's own
+# name, `auto=True`), then suggests the rest - so pointing "Link selected" at it is
+# the whole fix; there is nothing left in this file to write for real.
 # =============================================================================
 
 
-def test_ac_lt_35_link_suggested_writes_real_links_and_reports_the_untouched_row(api):
-    client, world = api
-    product = _seed_product(world.db, company_id=world.company_id)
-
-    ref1 = _ref("SOL")
-    _so1, core_line1 = _seed_so_line(
-        world.db, company_id=world.company_id, product_id=product.id, source_ref=ref1, qty="4"
-    )
-    _po, po_line = _seed_po_line(
-        world.db, company_id=world.company_id, product_id=product.id,
-        qty_ordered="10", header_status="active",
-    )
-    _pso1, _mirror1, _inquiry1, row_with_suggestion = _seed_row_and_mirror(
-        world.db, company_id=world.company_id, core_line=core_line1, product_id=product.id,
-        qty="4",
-    )
-
-    ref2 = _ref("SOL")
-    _so2, core_line2 = _seed_so_line(
-        world.db, company_id=world.company_id, product_id=product.id, source_ref=ref2, qty="3"
-    )
-    _pso2, _mirror2, _inquiry2, row_without_suggestion = _seed_row_and_mirror(
-        world.db, company_id=world.company_id, core_line=core_line2, product_id=product.id,
-        qty="3",
-    )
-    world.db.commit()
-
-    ProjectOrderInquiryService(world.db).auto_place_for_products(
-        None, actor_user_id=None, trigger="raise", row_ids=[str(row_with_suggestion.id)],
-    )
-    world.db.commit()
-    assert len(_suggested_of(world.db, row_with_suggestion.id)) == 1
-    assert _suggested_of(world.db, row_without_suggestion.id) == []
+def test_r18_link_suggested_route_is_gone(api):
+    """The route `link-suggested` used to expose is retired outright - not merely
+    denied, GONE - so a stale client still calling it gets a 404, never a silent
+    200 that used to write a real link."""
+    _client, world = api
+    dummy_row_id = _uid()
 
     with _as_purchasing(world) as buyer:
-        response = buyer.post(
-            LINK_SUGGESTED,
-            json={
-                "row_ids": [
-                    str(row_with_suggestion.id), str(row_without_suggestion.id),
-                ]
-            },
-        )
-    assert response.status_code == 200, response.text
-    world.db.commit()
-    world.db.expire_all()
-
-    real_links = _hs_links_of(world, row_with_suggestion)
-    assert len(real_links) == 1, real_links
-    assert real_links[0].po_line_id == po_line.id
-    assert real_links[0].auto is False, "written in the buyer's name, never as a cascade guess"
-    assert real_links[0].linked_by == world.buyer
-    assert _suggested_of(world.db, row_with_suggestion.id) == []
-
-    refreshed = (
-        world.db.query(OrderInquiryRow)
-        .filter(OrderInquiryRow.id == row_with_suggestion.id)
-        .one()
-    )
-    assert "Linked as suggested by" in (refreshed.note or ""), refreshed.note
-
-    assert _hs_links_of(world, row_without_suggestion) == [], (
-        "a row with nothing suggested is reported, never linked"
-    )
-    assert _suggested_of(world.db, row_without_suggestion.id) == []
+        response = buyer.post(LINK_SUGGESTED, json={"row_ids": [dummy_row_id]})
+    assert response.status_code == 404, response.text
 
 
-def test_ac_lt_35_a_suggested_link_whose_line_lost_room_is_skipped_and_named(api):
-    """AC-LT-35's second half: the line closes (received the balance) AFTER the
-    suggestion was written and BEFORE Link selected is pressed - the route has to
-    notice the room is gone rather than writing a real link past what the line can
-    hold, and name the row rather than staying silent about it."""
+def test_r18_link_selected_never_promotes_a_suggestion_with_no_book_named_target(api):
+    """The core of R18: a row whose only candidate is a pool PO AutoCount has not
+    tied to this sales order line (no `from_so_line_ref`) gets a SUGGESTION from the
+    cascade, never a real link - pressing "Link selected" (now `auto-place` scoped
+    to the ticked row) recalculates that suggestion and still never writes it for
+    real, because nothing here is AutoCount's own answer."""
     client, world = api
     product = _seed_product(world.db, company_id=world.company_id)
     ref = _ref("SOL")
@@ -422,7 +377,7 @@ def test_ac_lt_35_a_suggested_link_whose_line_lost_room_is_skipped_and_named(api
     )
     _po, po_line = _seed_po_line(
         world.db, company_id=world.company_id, product_id=product.id,
-        qty_ordered="4", header_status="active",
+        qty_ordered="10", header_status="active",
     )
     _pso, _mirror, _inquiry, row = _seed_row_and_mirror(
         world.db, company_id=world.company_id, core_line=core_line, product_id=product.id,
@@ -434,31 +389,80 @@ def test_ac_lt_35_a_suggested_link_whose_line_lost_room_is_skipped_and_named(api
         None, actor_user_id=None, trigger="raise", row_ids=[str(row.id)],
     )
     world.db.commit()
+    assert _hs_links_of(world, row) == [], "no book-named target - nothing real yet"
     assert len(_suggested_of(world.db, row.id)) == 1
 
-    po_line.qty_received = Decimal("4")
-    po_line.line_status = "closed"
+    with _as_purchasing(world) as buyer:
+        response = buyer.post(AUTO_PLACE, json={"row_ids": [str(row.id)]})
+    assert response.status_code == 200, response.text
+    world.db.commit()
+    world.db.expire_all()
+
+    assert _hs_links_of(world, row) == [], (
+        "Link selected never turns a suggestion into a link on its own (R18)"
+    )
+    suggestions = _suggested_of(world.db, row.id)
+    assert len(suggestions) == 1, "the suggestion is recalculated, not deleted"
+    assert suggestions[0].po_line_id == po_line.id
+
+    body = response.json()
+    assert body["book_linked_rows"] == 0, body
+    assert body["suggested_rows"] == 1, body
+    # Same answer as the pre-press suggestion - a straight re-run of the identical
+    # cascade counts as nothing changed, which is the "no mistake found" case R18's
+    # own wording describes.
+    assert body["changed_rows"] == 0, body
+
+
+def test_r18_link_selected_links_only_what_the_book_names_for_the_ticked_rows(api):
+    """The book-named half: a row whose PO line DOES carry `from_so_line_ref` for
+    this sales order line is linked for real by the book step, `auto=True` -
+    AutoCount's own answer, never a person's pick (`_write_link` always records the
+    session's actor for the audit trail regardless of who or what triggered it, the
+    same way every other automatic writer in this file does - `auto` is the field
+    that tells a book link apart from a manual one, not `linked_by`)."""
+    client, world = api
+    product = _seed_product(world.db, company_id=world.company_id)
+    ref = _ref("SOL")
+    _so, core_line = _seed_so_line(
+        world.db, company_id=world.company_id, product_id=product.id, source_ref=ref, qty="4"
+    )
+    _po, po_line = _seed_po_line(
+        world.db, company_id=world.company_id, product_id=product.id,
+        from_so_line_ref=ref, qty_ordered="4", header_status="active",
+    )
+    _pso, _mirror, _inquiry, row = _seed_row_and_mirror(
+        world.db, company_id=world.company_id, core_line=core_line, product_id=product.id,
+        qty="4",
+    )
     world.db.commit()
 
     with _as_purchasing(world) as buyer:
-        response = buyer.post(LINK_SUGGESTED, json={"row_ids": [str(row.id)]})
+        response = buyer.post(AUTO_PLACE, json={"row_ids": [str(row.id)]})
     assert response.status_code == 200, response.text
     world.db.commit()
+    world.db.expire_all()
 
-    assert _hs_links_of(world, row) == [], "no room left on the line, so no real link is written"
+    real_links = _hs_links_of(world, row)
+    assert len(real_links) == 1, real_links
+    assert real_links[0].po_line_id == po_line.id
+    assert real_links[0].auto is True, "the book named it - AutoCount's own answer, never a pick"
+    assert _suggested_of(world.db, row.id) == []
+
     body = response.json()
-    assert body, "the response must name the skipped row rather than staying silent about it"
+    assert body["book_linked_rows"] == 1, body
+    assert body["changed_rows"] == 1, body
 
 
-def test_ac_lt_36_link_suggested_denies_a_user_without_the_action_grant(api):
-    """AC-LT-36 (G1). `link-suggested` reuses the SAME grant `auto-place` already
-    requires (`projects.order_inquiry.action`) - a user holding only VIEW and
-    ACKNOWLEDGE is refused."""
+def test_r18_link_selected_reuses_the_auto_place_grant(api):
+    """R18: no new permission - the ticked-rows call goes through the SAME
+    `auto-place` route, which already requires `projects.order_inquiry.action`. A
+    user holding only VIEW and ACKNOWLEDGE is refused."""
     _client, world = api
     dummy_row_id = _uid()
 
     with _as_purchasing(world, permissions=[VIEW, ACKNOWLEDGE]) as viewer:
-        response = viewer.post(LINK_SUGGESTED, json={"row_ids": [dummy_row_id]})
+        response = viewer.post(AUTO_PLACE, json={"row_ids": [dummy_row_id]})
     assert response.status_code == 403, response.text
 
 
@@ -515,6 +519,22 @@ def test_ac_lt_37_auto_place_response_gains_book_and_suggested_counts(api):
     assert body.get("after_horizon") == 0, body
     assert body["book_linked_rows"] == 1, body
     assert body["suggested_rows"] == 1, body
+    # R18: both rows moved this pass - row A was book-linked, row B went from
+    # nothing to a fresh suggestion - so `changed_rows` counts both.
+    assert body["changed_rows"] == 2, body
+
+    # A second, identical press finds nothing new: row A is already book-linked (it
+    # drops out of the book step's own before/after diff) and row B's cascade answer
+    # is unchanged, so `changed_rows` is 0 - "Link selected" pressed twice in a row
+    # with nothing having moved in AutoCount reports no mistake to fix.
+    with _as_purchasing(world) as buyer:
+        again = buyer.post(
+            AUTO_PLACE, json={"row_ids": [str(row_a.id), str(row_b.id)]},
+        )
+    assert again.status_code == 200, again.text
+    again_body = again.json()
+    assert again_body["book_linked_rows"] == 0, again_body
+    assert again_body["changed_rows"] == 0, again_body
 
 
 # =============================================================================
