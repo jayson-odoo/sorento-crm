@@ -194,14 +194,16 @@ describe('AC-RS-83 / 83b / 83c: the reserve icons live inside the State cell', (
     expect(screen.getByLabelText('Edit reserve')).toBeInTheDocument();
   });
 
-  it('AC-RS-83c: with the permission the State column starts at 380 wide with no minSize, so it can be narrowed back down', () => {
+  it('AC-RS-83c: with the permission the State column starts at 410 wide with no minSize, so it can be narrowed back down', () => {
     const { result } = renderHook(() =>
       useOrderInquiryHeaderLinesColumns({ canReserve: true } as never),
     );
     const stateColumn = result.current.find(
       (column) => (column as { accessorKey?: string }).accessorKey === 'state',
     ) as { size?: number; minSize?: number };
-    expect(stateColumn.size).toBe(380);
+    // Round 2 (`PLAN-oi-decision-trail-ui.md`): 380 -> 410, room for the new Decision
+    // trail icon beside the pill and the reserve icons.
+    expect(stateColumn.size).toBe(410);
     expect(stateColumn.minSize).toBeUndefined();
   });
 
@@ -366,5 +368,57 @@ describe('AC-DT-6: the Raised via column (PLAN-oi-decision-trail-ui.md)', () => 
   it('reads Planning change for the qty-drop stamp "Was 5, now 3"', () => {
     render(<>{raisedCell(linesRow({ raise_event_kind: null, note: 'Was 5, now 3' }))}</>);
     expect(screen.getByText('Planning change')).toBeInTheDocument();
+  });
+
+  it('carries an `accessorFn` so the column picker can list and toggle it (`data-grid-column-visibility.tsx` only offers a column that has one)', () => {
+    const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns());
+    const raiseEventColumn = result.current.find(
+      (column) => (column as { id?: string }).id === 'raise_event',
+    );
+    expect(raiseEventColumn).toBeDefined();
+    expect(typeof (raiseEventColumn as { accessorFn?: unknown })?.accessorFn).toBe('function');
+  });
+
+  it('is hidden by default here too now (round 2 ruling), same as the worklist', async () => {
+    const { DEFAULT_HIDDEN_COLUMNS } = await import('../../components/orderInquiryWorklistColumns');
+    expect(DEFAULT_HIDDEN_COLUMNS).toContain('raise_event');
+  });
+});
+
+describe('AC-DT-5 (PLAN-oi-decision-trail-ui.md, round 2): the decision trail icon lives in the State cell', () => {
+  function stateCellFor(row: OrderInquiryWorklistRow, options: Record<string, unknown> = {}) {
+    const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns(options as never));
+    const stateColumn = result.current.find(
+      (column) => (column as { accessorKey?: string }).accessorKey === 'state',
+    ) as { cell: (context: unknown) => React.ReactNode } | undefined;
+    expect(stateColumn).toBeDefined();
+    return stateColumn!.cell({ row: { original: row } });
+  }
+
+  it('renders the icon for a plain (non-reserved) row that names a core sales-order line', () => {
+    render(<>{stateCellFor(linesRow({ id: 'row-plain', core_line_id: 'core-line-1' }))}</>);
+    expect(screen.getByRole('button', { name: /decision trail/i })).toBeInTheDocument();
+  });
+
+  it('renders the icon beside the reserve icons too, on a reserved line with the permission', () => {
+    render(
+      <>
+        {stateCellFor(
+          linesRow({
+            id: 'row-reserved',
+            reserve_state: 'reserved',
+            core_line_id: 'core-line-1',
+          }),
+          { canReserve: true },
+        )}
+      </>,
+    );
+    expect(screen.getByRole('button', { name: /decision trail/i })).toBeInTheDocument();
+    expect(screen.getByLabelText('Amend reserve')).toBeInTheDocument();
+  });
+
+  it('renders nothing for a row that names no core sales-order line', () => {
+    render(<>{stateCellFor(linesRow({ id: 'row-no-core-line' }))}</>);
+    expect(screen.queryByRole('button', { name: /decision trail/i })).not.toBeInTheDocument();
   });
 });

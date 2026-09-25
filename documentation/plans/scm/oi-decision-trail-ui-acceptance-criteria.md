@@ -23,20 +23,45 @@ shipped fact on the same row.
   lines` beside "N to confirm · N rejected", or `No decision yet`; one segment per order when
   several are planned together, order number first. Dates render in the app's existing
   format (`formatDateTimeInMalaysia`, e.g. `25/09/2026, 9:20 am`).
-- AC-DT-5 [FE][T] The Confirmed verdict chip is a popover trigger (a real button - tap at
-  375px, keyboard reachable; review round 1, not a Tooltip) opening to `Confirmed by <name>,
-  <date time> (revision N)` and, only when a draft exists, a second line `Saved by <name>,
-  <date time>`. Other verdict chips are unchanged.
-- AC-DT-6 [FE][T] The OI detail Lines tab shows a column titled `Raised via` (captain
-  ruling, review round 1: `Raised` sat beside the existing `Raised by`; column id stays
-  `raise_event`) after `Instruction`: `<Kind> by <name> · <date time>` where Kind is `Raised`,
-  `Reconfirmed` or `Planning change` (note is exactly what `planning_change_service.py`
-  writes: `Was <YYYY-MM-DD>`, `Was <qty>, now <qty>` or `No previous delivery date`; an
-  ordinary `Was 5 on 2026-09-01` raise note is NOT one); a bare `Sheet` with no name or date
-  when the note starts with "Migrated from order inquiry sheet", checked BEFORE any event
-  (review round 1: sheet rows otherwise matched migration 523's anonymous backfill event or a
-  later reconfirm); a dash when null. Dates in the app's existing format (`25/09/2026,
-  9:20 am`). The worklist has the same column, hidden by default (column preferences apply).
+- AC-DT-5 [FE][T] (round 2, replaces round 1's popover) A History icon button sits beside
+  the State pill on the OI worklist and the Lines tab (every row, not only a reserved one)
+  and right after the verdict chip on the fulfilment board (list view and grid cell
+  breakdown), shown there only when the line carries a decision, a draft or an order
+  inquiry - `aria-label="Decision trail"`, `title="Decision trail"`, ghost variant, same
+  size as the reserve History icon it sits beside / the board's own verdict pencil. It
+  opens `DecisionTrailDialog`, reading `GET .../sales-order-lines/{core_line_id}/
+  decision-trail`. The Confirmed verdict chip carries no popover of its own any more (the
+  round-1 tooltip and its vitests are retired); the pre-round-1 Saved-by popover on a
+  non-confirmed draft line is unchanged.
+- AC-DT-10 [BE][FE][T] `GET /api/v1/project-sales/sales-order-lines/{core_line_id}/
+  decision-trail` returns `{"entries": [...]}`, newest first, each entry `{"kind",
+  "actor_name", "at", "detail"}`. Sources, keyed by the CORE sales-order line
+  (`OrderInquiryRow.so_line_id` -> the project mirror -> `core_sales_order_line_id`;
+  `BoardContribution.line_id` names it directly): every `so_supply_decisions` revision
+  (active AND superseded) whose `line_snapshots` names the line (`confirmed`); the one
+  `so_supply_decision_drafts` row for the line, if any (`saved`); the `order_inquiry_raises`
+  event matched to each of the line's own OI rows by the same window
+  `_raise_events_by_row` (now `nearest_raise_event`, shared) uses, or `sheet` when that
+  row's note starts with the sheet-migration stamp, checked first (`raised` /
+  `reconfirmed` / `sheet`); and, independently, a `planning_change` entry for any such row
+  whose note matches the exact `planning_change_service.py` stamps. 404 on an unknown
+  line id; an empty list when the line carries nothing; `response_model` keeps all four
+  keys on the actual response. `DecisionTrailDialog` renders each entry as a card - the
+  kind label and the detail, then the actor (or "Unknown") and, when present, the date in
+  the app's existing format - with `No trail recorded yet.` as the empty state.
+- AC-DT-6 [FE][T] (amended round 2: hidden by default on BOTH screens now) The OI detail
+  Lines tab AND the worklist both show a column titled `Raised via` (captain ruling, review
+  round 1: `Raised` sat beside the existing `Raised by`; column id stays `raise_event`,
+  hidden by default on both - column preferences let it on either screen), after
+  `Instruction`: `<Kind> by <name> · <date time>` where Kind is `Raised`, `Reconfirmed` or
+  `Planning change` (note is exactly what `planning_change_service.py` writes:
+  `Was <YYYY-MM-DD>`, `Was <qty>, now <qty>` or `No previous delivery date`; an ordinary
+  `Was 5 on 2026-09-01` raise note is NOT one); a bare `Sheet` with no name or date when the
+  note starts with "Migrated from order inquiry sheet", checked BEFORE any event (review
+  round 1: sheet rows otherwise matched migration 523's anonymous backfill event or a later
+  reconfirm); a dash when null. Dates in the app's existing format (`25/09/2026, 9:20 am`).
+  The column carries an `accessorFn` so the shared column picker
+  (`data-grid-column-visibility.tsx`) can list and re-enable it.
 - AC-DT-7 [FE] No UUID anywhere on screen; no explanatory sentence in the UI; every date in
   the app's existing date-time format; usable at 375px and 1280px (tooltip and header wrap).
 - AC-DT-8 [BR] Browser run on this lane's :3086 stack against the 24 Sep prod copy, sidebar
@@ -47,3 +72,7 @@ shipped fact on the same row.
 - AC-DT-9 [DoD] No migration; PR body names the small fix track, the measured diff, and
   states `security-reviewer` was not run (no auth, RBAC, ingest, upload or multi-company
   change).
+- AC-DT-11 [FE][T] (round 2) The board's own Stock button (Outstanding qty column) is icon
+  only - the `<span>Stock</span>` label is gone - and ghost variant, matching the
+  verdict-row pencil (`BoardVerdictActions.tsx`); `aria-label="Stock"` and `title="Stock"`
+  are kept.

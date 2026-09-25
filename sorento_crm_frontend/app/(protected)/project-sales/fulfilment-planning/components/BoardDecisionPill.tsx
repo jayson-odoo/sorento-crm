@@ -1,6 +1,5 @@
 'use client';
 
-import type React from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { STATUS_PILL_BASE } from '@/lib/status-pill';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
@@ -206,36 +205,6 @@ export function BoardDecisionPill({
 
   const savedBy = contribution.draft?.saved_by;
   const savedAt = contribution.draft?.saved_at;
-  /**
-   * AC-DT-5 (`PLAN-oi-decision-trail-ui.md`): the Confirmed chip's own trail - "Confirmed
-   * by <name>, <date time> (revision N)" first and, when a draft ALSO exists on this covered
-   * line, "Saved by <name>, <date time>" after it. `verdictOf` reads Confirmed off the frozen
-   * decision whether or not a draft sits behind it, so a covered line that somebody has since
-   * re-saved carries BOTH facts and this is the one place both are said (reviewer B2, round
-   * 1: gating this on "no draft" meant the Saved line could never render on real data). Every
-   * other verdict chip is unchanged: an uncovered Saved line keeps its own Saved-by popover.
-   */
-  const confirmedTrailLines =
-    verdict === 'confirmed' &&
-    (contribution.decided_by_name ||
-      contribution.decided_at ||
-      contribution.decision_revision ||
-      savedBy)
-      ? [
-          `Confirmed by ${contribution.decided_by_name ?? 'someone'}${
-            contribution.decided_at
-              ? `, ${formatDateTimeInMalaysia(contribution.decided_at)}`
-              : ''
-          }${
-            contribution.decision_revision
-              ? ` (revision ${contribution.decision_revision})`
-              : ''
-          }`,
-          savedBy
-            ? `Saved by ${savedBy}${savedAt ? `, ${formatDateTimeInMalaysia(savedAt)}` : ''}`
-            : null,
-        ].filter((line): line is string => Boolean(line))
-      : null;
   const pill = (
     <span
       data-testid={`decision-pill-${contribution.key}`}
@@ -250,59 +219,51 @@ export function BoardDecisionPill({
     </span>
   );
 
-  const trailPopover = (testId: string, label: string, content: React.ReactNode) => (
-    <Popover>
-      <PopoverTrigger
-        asChild
-        // Stops here so a click meant for the popover does not also toggle the row this
-        // pill sits inside (the board grid and the contributing-lines table both expand
-        // on a row click) - the same reason `BoardRankPopover`'s own trigger stops it.
-        onClick={(event) => event.stopPropagation()}
-      >
-        <button
-          type="button"
-          aria-label={label}
-          data-testid={testId}
-          // `block min-w-0 overflow-hidden` (N-4, reviewer): this wrapper is the flex
-          // item, so without it the button keeps its content's full width and the
-          // pill's own `truncate` inside it has nothing to truncate against - a Saved
-          // line's pill would still push the Verdict cell's icons out at 375px.
-          className="block min-w-0 overflow-hidden rounded-sm outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          {pill}
-        </button>
-      </PopoverTrigger>
-      <PopoverPortal>
-        <PopoverContent
-          align="start"
-          className="w-auto max-w-[92vw] px-3 py-2 text-xs"
-          onOpenAutoFocus={(event) => event.preventDefault()}
-        >
-          {content}
-        </PopoverContent>
-      </PopoverPortal>
-    </Popover>
-  );
-
   return (
     <div className="flex min-w-0 items-center gap-1">
       {/* Who saved this, and when (AC-4.2: "the pill reads 'Saved' only, the saver's name
-          is in the popover"), or - on a Confirmed chip - who confirmed it and who has saved
-          over it since (AC-DT-5). Only wrapped once there is something to say. A `Popover` on
-          a real <button>, never a Tooltip on a span: a tooltip does not open on tap at 375px
-          and a span is not keyboard reachable (the `BoardRankPopover` shape). */}
-      {confirmedTrailLines ? (
-        trailPopover(
-          `decision-confirmed-trail-${contribution.key}`,
-          confirmedTrailLines[0],
-          confirmedTrailLines.map((line) => <p key={line}>{line}</p>),
-        )
-      ) : savedBy ? (
-        trailPopover(
-          `decision-saved-by-${contribution.key}`,
-          `Saved by ${savedBy}`,
-          `Saved by ${savedBy}${savedAt ? ` · ${formatDateTimeInMalaysia(savedAt)}` : ''}`,
-        )
+          is in the popover"). Only wrapped in a popover once there is something to say - a
+          plain `title` is not reachable at 375px, so a small `Popover` carries it instead
+          (the `BoardRankPopover` shape).
+          Round 2 (`PLAN-oi-decision-trail-ui.md`, owner ruling after hand-testing round 1):
+          the CONFIRMED chip carries no popover of its own any more, even on the rare line
+          where a draft also lingers on it (a covered line somebody has since re-saved) - the
+          History icon beside this pill (`DecisionTrailButton`, wired in the caller's own
+          Verdict/Decision cell) opens the full trail, confirmed AND saved facts together,
+          instead. `verdict !== 'confirmed'` is the gate that keeps this a DIFFERENT question
+          (a draft saved on a line nobody has confirmed yet) from that one. */}
+      {verdict !== 'confirmed' && savedBy ? (
+        <Popover>
+          <PopoverTrigger
+            asChild
+            // Stops here so a click meant for the popover does not also toggle the row this
+            // pill sits inside (the board grid and the contributing-lines table both expand
+            // on a row click) - the same reason `BoardRankPopover`'s own trigger stops it.
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              aria-label={`Saved by ${savedBy}`}
+              data-testid={`decision-saved-by-${contribution.key}`}
+              // `block min-w-0 overflow-hidden` (N-4, reviewer): this wrapper is the flex
+              // item, so without it the button keeps its content's full width and the
+              // pill's own `truncate` inside it has nothing to truncate against - a Saved
+              // line's pill would still push the Verdict cell's icons out at 375px.
+              className="block min-w-0 overflow-hidden rounded-sm outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {pill}
+            </button>
+          </PopoverTrigger>
+          <PopoverPortal>
+            <PopoverContent
+              align="start"
+              className="w-auto max-w-[92vw] px-3 py-2 text-xs"
+              onOpenAutoFocus={(event) => event.preventDefault()}
+            >
+              {`Saved by ${savedBy}${savedAt ? ` · ${formatDateTimeInMalaysia(savedAt)}` : ''}`}
+            </PopoverContent>
+          </PopoverPortal>
+        </Popover>
       ) : (
         pill
       )}

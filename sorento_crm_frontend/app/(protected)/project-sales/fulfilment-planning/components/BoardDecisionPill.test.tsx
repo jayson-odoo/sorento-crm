@@ -115,7 +115,7 @@ describe('BoardDecisionPill: no "rev" (R6)', () => {
   });
 });
 
-describe('BoardDecisionPill: the Confirmed chip trail (AC-DT-5, PLAN-oi-decision-trail-ui.md)', () => {
+describe('BoardDecisionPill: no popover on the Confirmed chip (round 2, PLAN-oi-decision-trail-ui.md, owner ruling after hand-testing round 1)', () => {
   const FROZEN = { revision_no: 1, timely_spo_qty: '0', reserve: [], borrow: [], buy_qty: '10' };
   const CONFIRMED = {
     covered: true,
@@ -125,7 +125,7 @@ describe('BoardDecisionPill: the Confirmed chip trail (AC-DT-5, PLAN-oi-decision
     decision_revision: 1,
   };
   // What the backend actually sends when a draft exists: the `draft` object AND the
-  // flattened pair, together - never the pair on its own (reviewer B2, round 1).
+  // flattened pair, together.
   const DRAFT = {
     draft: {
       decision: { verdict: 'approved' as const },
@@ -136,35 +136,23 @@ describe('BoardDecisionPill: the Confirmed chip trail (AC-DT-5, PLAN-oi-decision
     draft_saved_at: '2026-09-25T02:00:00',
   };
 
-  it('is a button (tap at 375px, keyboard reachable) that opens to "Confirmed by <name>, <date time> (revision N)" - one line when no draft exists', () => {
-    render(<BoardDecisionPill contribution={contributionOf(CONFIRMED)} decision={null} />);
-    const trigger = screen.getByTestId(`decision-confirmed-trail-${KEY}`);
-    expect(trigger.tagName).toBe('BUTTON');
-    fireEvent.click(trigger);
-    expect(screen.getByText(/^Confirmed by Nurain, .+ \(revision 1\)$/)).toBeInTheDocument();
-    expect(screen.queryByText(/^Saved by/)).not.toBeInTheDocument();
-  });
-
-  it('adds "Saved by <name>, <date time>" AFTER the Confirmed line when a draft also exists on the covered line', () => {
+  it('renders the Confirmed chip as plain text - no popover trigger, even when a draft also sits on the covered line', () => {
     render(
       <BoardDecisionPill
         contribution={contributionOf({ ...CONFIRMED, ...DRAFT })}
         decision={null}
       />,
     );
-    // Still reads Confirmed: the draft has not been confirmed, the frozen decision has.
     expect(screen.getByTestId(`decision-pill-${KEY}`)).toHaveTextContent('Confirmed');
-    // ONE trigger, not the plain Saved-by popover.
-    expect(screen.queryByTestId(`decision-saved-by-${KEY}`)).not.toBeInTheDocument();
-    fireEvent.click(screen.getByTestId(`decision-confirmed-trail-${KEY}`));
-    const confirmed = screen.getByText(/^Confirmed by Nurain, .+ \(revision 1\)$/);
-    const saved = screen.getByText(/^Saved by Farah, .+$/);
-    expect(
-      confirmed.compareDocumentPosition(saved) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+    // Round 1's own trigger is retired - the History icon (`DecisionTrailButton`, wired
+    // in the caller's own Verdict/Decision cell, not this component) opens the trail now.
+    expect(screen.queryByTestId(`decision-confirmed-trail-${KEY}`)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Confirmed by/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Saved by/)).not.toBeInTheDocument();
   });
 
-  it('leaves every other verdict chip unchanged - a Saved line keeps its own Saved-by popover and no Confirmed line', () => {
+  it('leaves the Saved-by popover on a non-confirmed draft line unchanged', () => {
     render(
       <BoardDecisionPill
         contribution={contributionOf({
@@ -177,8 +165,9 @@ describe('BoardDecisionPill: the Confirmed chip trail (AC-DT-5, PLAN-oi-decision
       />,
     );
     expect(screen.getByTestId(`decision-pill-${KEY}`)).toHaveTextContent('Saved');
-    expect(screen.queryByTestId(`decision-confirmed-trail-${KEY}`)).not.toBeInTheDocument();
-    fireEvent.click(screen.getByTestId(`decision-saved-by-${KEY}`));
+    const trigger = screen.getByTestId(`decision-saved-by-${KEY}`);
+    expect(trigger.tagName).toBe('BUTTON');
+    fireEvent.click(trigger);
     expect(screen.getByText(/^Saved by Farah/)).toBeInTheDocument();
     expect(screen.queryByText(/^Confirmed by/)).not.toBeInTheDocument();
   });

@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import io
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from decimal import Decimal
 from itertools import groupby
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -96,6 +96,7 @@ from app.services.project_supply_service import ProjectSupplyService
 from app.services.scm import order_link_service, priority
 from app.services.scm.demand import demand_qty
 from app.services.scm.front_planning_engine import DEFAULT_LEAD_TIME_DAYS
+from app.services.scm.raise_event_matching import nearest_raise_event
 
 logger = logging.getLogger(__name__)
 
@@ -2147,7 +2148,9 @@ class OrderInquiryWorklistService:
         `None` on all three when nothing falls inside the window.
 
         ONE grouped query for the whole PAGE, never one per row: every raise event of
-        every inquiry the page's rows belong to, read once and matched in Python.
+        every inquiry the page's rows belong to, read once and matched in Python. The
+        window itself is `nearest_raise_event` (`app.services.scm.raise_event_matching`),
+        shared with `decision_trail_service.py` so the two never drift apart.
         """
         inquiry_ids = {row.order_inquiry_id for row in rows if row.order_inquiry_id}
         if not inquiry_ids:
@@ -2170,27 +2173,12 @@ class OrderInquiryWorklistService:
                 (raised_at, kind, name)
             )
 
-        before = timedelta(seconds=1)
-        after = timedelta(minutes=10)
         out: Dict[str, Dict[str, Any]] = {}
         for row in rows:
             candidates = events_by_inquiry.get(str(row.order_inquiry_id or ""), [])
             # `row.raised_at` IS `OrderInquiryRow.created_at` (`_RAISED_AT` above) -
-            # this row's own birth, the moment the window is measured around. A row
-            # with no birth stamp at all matches nothing rather than everything.
-            born = row.raised_at
-            match = (
-                next(
-                    (
-                        entry
-                        for entry in candidates
-                        if born - before <= entry[0] <= born + after
-                    ),
-                    None,
-                )
-                if born is not None
-                else None
-            )
+            # this row's own birth, the moment the window is measured around.
+            match = nearest_raise_event(row.raised_at, candidates)
             out[row.id] = (
                 {"at": match[0], "kind": match[1], "by_name": match[2]}
                 if match

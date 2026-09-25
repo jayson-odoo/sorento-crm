@@ -1658,6 +1658,46 @@ describe('FulfilmentBoardListView: the Verdict cell actions (AC-B1 to AC-C2)', (
   });
 });
 
+describe('FulfilmentBoardListView: the decision trail icon (AC-DT-5, PLAN-oi-decision-trail-ui.md, round 2)', () => {
+  it('shows the History icon, right after the verdict chip, for a line with a decision', async () => {
+    const row = contribution({
+      covered: true,
+      decision: { revision_no: 1, timely_spo_qty: '0', reserve: [], borrow: [], buy_qty: '43' },
+    });
+    renderView({ contributions: [row] });
+
+    await screen.findByTestId(`decision-pill-${row.key}`);
+    expect(screen.getByRole('button', { name: /decision trail/i })).toBeInTheDocument();
+  });
+
+  it('shows it for a line carrying only a draft, or only an order inquiry, too', async () => {
+    const draftRow = contribution({
+      key: 'so-1:line-draft',
+      draft: { decision: { verdict: 'approved' }, saved_by: 'Eling', saved_at: '2026-09-01T00:00:00' },
+    });
+    const { unmount } = renderView({ contributions: [draftRow] });
+    await screen.findByTestId(`decision-pill-${draftRow.key}`);
+    expect(screen.getByRole('button', { name: /decision trail/i })).toBeInTheDocument();
+    unmount();
+
+    const inquiryRow = contribution({
+      key: 'so-1:line-oi',
+      order_inquiry: { inquiry_no: 'OI-2609-0731', state: 'raised' },
+    });
+    renderView({ contributions: [inquiryRow] });
+    await screen.findByTestId(`decision-pill-${inquiryRow.key}`);
+    expect(screen.getByRole('button', { name: /decision trail/i })).toBeInTheDocument();
+  });
+
+  it('hides it for a bare suggested line - nothing decided, saved or raised yet', async () => {
+    const row = contribution();
+    renderView({ contributions: [row] });
+
+    await screen.findByTestId(`decision-pill-${row.key}`);
+    expect(screen.queryByRole('button', { name: /decision trail/i })).not.toBeInTheDocument();
+  });
+});
+
 /**
  * S6 (AC-B6-14): the Sales order cell's own link now carries the target line, landing that
  * exact row highlighted on the sales-order detail (AC-B6-3).

@@ -25,6 +25,7 @@ import {
   movedNoteOf,
   previousValueOf,
 } from '../../_shared/lib/orderInquiryAck';
+import { DecisionTrailButton } from '../../_shared/components/DecisionTrailButton';
 import { OrderInquiryVerbPill, ReservePill } from '../../_shared/components/OrderInquiryVerbPill';
 import {
   bundledHeadline,
@@ -1199,18 +1200,33 @@ export function useOrderInquiryWorklistColumns({
               reserveState={row.original.reserve_state}
               reservedQty={row.original.reserved_qty}
             />
+            {/* AC-DT-5 (`PLAN-oi-decision-trail-ui.md`, round 2): the decision trail
+                icon, beside the row's own state-ish marks - there is no separate "State"
+                column on this worklist (the Lines tab has one; see the note there), so
+                this is where a state-like pill already sits. On EVERY row, not only a
+                reserved one: `DecisionTrailButton` itself hides when the row names no
+                core sales-order line at all. */}
+            <DecisionTrailButton
+              coreLineId={row.original.core_line_id ?? null}
+              itemCode={row.original.item_code}
+              className="size-5 shrink-0 text-muted-foreground"
+            />
           </div>
         ),
       },
       {
         // AC-DT-6 (`PLAN-oi-decision-trail-ui.md`): the trail behind the instruction -
         // Raised, Reconfirmed, Sheet or Planning change, by whom, when. Hidden by
-        // default here (`DEFAULT_HIDDEN_COLUMNS`); the OI detail Lines tab shows the
-        // same column visible (`orderInquiryHeaderLinesColumns.tsx`). Unsortable: it is
-        // a derived, per-row match against `order_inquiry_raises`, not a plain column.
-        // "Raised via", not "Raised": the "Raised by" column sits right beside this one
-        // (captain ruling, review round 1).
+        // default here (`DEFAULT_HIDDEN_COLUMNS`); the OI detail Lines tab hides it by
+        // default too now (round 2 ruling - column preferences still let it on either
+        // screen). Unsortable: it is a derived, per-row match against
+        // `order_inquiry_raises`, not a plain column. `accessorFn` is what the column
+        // picker itself keys "can this be listed" on (`data-grid-column-visibility.tsx`),
+        // so a bare `id` + `cell` (round 1's own shape) made this column impossible to
+        // ever turn back on. "Raised via", not "Raised": the "Raised by" column sits
+        // right beside this one (captain ruling, review round 1).
         id: 'raise_event',
+        accessorFn: (row) => raisedKindLabel(row) ?? '',
         header: ({ column }) => <DataGridColumnHeader title="Raised via" column={column} />,
         size: 220,
         enableSorting: false,

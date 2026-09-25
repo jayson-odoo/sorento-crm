@@ -70,7 +70,9 @@ from app.models.project_so import (
     OrderInquiryReserveRequest,
     OrderInquiryReserveRequestRow,
 )
+from app.schemas.decision_trail import DecisionTrailResponse
 from app.services import project_service as projects
+from app.services.decision_trail_service import DecisionTrailService
 from app.services.download_service import DownloadService
 from app.services.error_handler import AppException, handle_internal_error
 from app.services.order_inquiry_header_service import OrderInquiryHeaderService
@@ -1320,6 +1322,30 @@ def order_inquiry_reserve_request_row_history(
         return OrderInquiryReserveService(db).history_for_row(
             request_id=request_id, row_id=row_id
         )
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.get(
+    "/sales-order-lines/{core_line_id}/decision-trail",
+    response_model=DecisionTrailResponse,
+)
+def sales_order_line_decision_trail(
+    core_line_id: str,
+    _user: dict = Depends(require_any_permission([VIEW, ACKNOWLEDGE, RESERVE])),
+    db: Session = Depends(get_db),
+):
+    """The History icon's own read (`PLAN-oi-decision-trail-ui.md`, round 2, AC-DT-10):
+    who confirmed, saved or raised something against this CORE sales-order line - the id
+    an OI row and a fulfilment-board line both point at (`OrderInquiryRow.so_line_id` ->
+    the project mirror -> `core_sales_order_line_id`; `BoardContribution.line_id` names it
+    directly, no lookup needed). Same read gate as the reserve history route above:
+    `VIEW`/`ACKNOWLEDGE`/`RESERVE` are the three ways to already be allowed to see this
+    line's own inquiry or board."""
+    try:
+        validate_uuid_path(core_line_id, resource="Sales order line")
+        entries = DecisionTrailService(db).for_core_line(core_line_id)
+        return DecisionTrailResponse(entries=entries)
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
