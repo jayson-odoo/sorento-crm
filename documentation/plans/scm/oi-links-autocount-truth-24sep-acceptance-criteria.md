@@ -1,7 +1,7 @@
 # UAC - Order inquiry links: AutoCount is the source of truth, the cascade only suggests
 
 Plan: `PLAN-oi-links-autocount-truth-24sep.md`. Issue #1215, points 3 and 4. Status: IN
-PROGRESS 26 Sep 2026 - every grill question answered by the owner (plan section "Rulings"),
+PROGRESS 25 Sep 2026 - every grill question answered by the owner (plan section "Rulings"),
 S1 to S5 built and merged, S6 (review + browser evidence) under way, review round 2 addressed.
 An AC tagged `(Gn)` holds under the recommended answer to that grill question unless a later
 ruling (`Rn`) supersedes it, noted inline where one does; every other AC holds as written.
@@ -174,7 +174,7 @@ PO line, SPO line and inquiry row. `[BE][T]` unless marked.
   the wire (response_model asserted), and `links` carries nothing suggested.
 * **AC-LT-34 [BE][T] (J3)** Given a PO or SPO with real links and suggested links, when its
   lightbox endpoint is read, then `allocations` lists real links only and the response carries
-  no `suggested_links` field at all (amended, review round 2 Should fix 5, 26 Sep 2026: R13
+  no `suggested_links` field at all (amended, review round 2 Should fix 5, 25 Sep 2026: R13
   retired the lightbox's own separate "Suggested for" panel this AC originally specified - the
   Lines tab's Allocated/Suggested columns, AC-LT-33's own wire field, are the whole answer now,
   so the field was dropped from the schema rather than left dead on the wire).

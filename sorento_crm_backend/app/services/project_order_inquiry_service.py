@@ -7925,13 +7925,15 @@ class ProjectOrderInquiryService:
         by target id (AC-LT-14, G2): what the walk's own take-sizing nets a candidate's
         `remaining` against, on top of the real links `_linked_by_target` already nets.
 
-        Read FRESH every row rather than cached like `_linked_by_target`'s own memo:
-        this SAME pass writes a suggestion for an earlier row before asking about a
-        later one, and a stale total would offer the same units twice
-        (`_write_suggested_links` flushes, so the next query here sees it). `exclude_
-        row_id` is this row's own OLD suggestions - about to be replaced, not a claim
-        against itself, exactly as `credit_own_links` already excludes a row's own real
-        links from the same netting for the manual dialog.
+        Built ONCE per pass, not read fresh per row (Nit 1, review round 3 - the
+        docstring used to say the opposite; Should fix 4 of review round 2 is what
+        changed it): `auto_place_for_products` calls this once before its loop and
+        keeps the dict updated in memory as each row's own answer lands
+        (`_release_own_contribution`), rather than re-querying it as each row goes,
+        which would have cost one GROUP BY per row over a pass that names thousands.
+        `exclude_row_id` is this row's own OLD suggestions - about to be replaced, not
+        a claim against itself, exactly as `credit_own_links` already excludes a row's
+        own real links from the same netting for the manual dialog.
 
         Joined to `OrderInquiryRow` and filtered to `_open_for_buying_clauses` (review
         round 2 Blocking 4): a row that has gone cancelled, actioned, rejected or

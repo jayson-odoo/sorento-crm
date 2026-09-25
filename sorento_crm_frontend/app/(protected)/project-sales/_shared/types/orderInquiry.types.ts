@@ -215,9 +215,12 @@ export interface OrderInquiryLink {
  * `OrderInquiryLink.suggestion` (S1b's `reallocate`/`unlink` advice on a REAL link),
  * which keeps its own name so the two concepts can never be confused.
  *
- * `suggested_links` rides on the row (`OrderInquiryRow`/`OrderInquiryWorklistRow`) and on
- * the lightbox payloads (`OrderInquiryPoDetail`/`OrderInquirySpoDetail`), separate from
- * `links` - a row's PO/SPO cells and State pill never read this array (section 3.5/3.7).
+ * `suggested_links` rides on the row (`OrderInquiryRow`/`OrderInquiryWorklistRow`) only -
+ * dropped from the lightbox payloads (`OrderInquiryPoDetail`/`OrderInquirySpoDetail`,
+ * review round 2 Should fix 5) once R13 retired the lightbox's own separate "Suggested
+ * for" panel: the row's own array and the Lines tab's Allocated/Suggested columns are
+ * the whole answer now. Separate from `links` either way - a row's PO/SPO cells and
+ * State pill never read this array (section 3.5/3.7).
  */
 export interface OrderInquirySuggestedLink {
   /** Which book. `spo` only on an ORDER BACK row, same as a real link. */

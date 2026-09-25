@@ -196,7 +196,7 @@ export function PanelDataGrid<TRow extends object>({
   focusRowId?: string | null;
   /**
    * Review round 2 Should fix 1 (R16): re-fire the jump above for the SAME
-   * `focusRowId`, on demand. `jumpedFocusRowId` below only skips a jump it has
+   * `focusRowId`, on demand. `jumpedFocusToken` below only skips a jump it has
    * already made for a given id - correct for a `focusRowId` that changes, but a
    * "Go to" button always names the same highlighted line, so a second press
    * after the reader had paged away did nothing at all (the id had not changed,

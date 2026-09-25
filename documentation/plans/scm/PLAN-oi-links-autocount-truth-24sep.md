@@ -1,10 +1,10 @@
 # PLAN - Order inquiry links: AutoCount is the source of truth, the cascade only suggests
 
-Status: IN PROGRESS 26 Sep 2026. /feature steps 1 to 3 (journey, grill, UAC/plan) done - every
+Status: IN PROGRESS 25 Sep 2026. /feature steps 1 to 3 (journey, grill, UAC/plan) done - every
 grill question answered by the owner on PR #1220 (see "Rulings" below). S1 to S5 built and
 merged to this branch (S1 the stale-state repair, S2 the FE mock later reconciled against R11
-to R13, S3/S4 the suggested-link model, S5 the conversion script with its dry run applied to
-the 23 Sep prod copy, section 7). S6 (reviewer + browser evidence) is under way: review round 1
+to R13, S3/S4 the suggested-link model, S5 the conversion script with its dry run RUN against
+the 23 Sep prod copy, `--apply` never run, section 7). S6 (reviewer + browser evidence) is under way: review round 1
 addressed (PR comments 5820446777, 5820494222), the hand-test rulings R11 to R18 folded in,
 review round 2 (comment 5825004622, this session) addressed - every Blocking and Should-fix
 item fixed, tester-first where a test was named. Track: full (new table, migration, a change
@@ -315,7 +315,7 @@ a suggestion of a line that no longer exists means nothing.
   suggestion than the one they held coming in - the figure that says whether recalculating
   against AutoCount caught a mistake). Enabled state reads the ticked rows only, whatever
   they hold; there is no whole-OI fallback for it the way Auto link has one. Grant:
-  unchanged (the one `auto-place` already needs). Nit, review round 2 (26 Sep 2026): the
+  unchanged (the one `auto-place` already needs). Nit, review round 2 (25 Sep 2026): the
   book link this press writes still stamps `linked_by`/`actioned_by` with whoever pressed
   the button, exactly as every other door does (`_write_link`, unchanged) - no screen
   renders `linked_by_name` on a book-named link, so nobody reads it as the user's own
@@ -546,7 +546,7 @@ Owner rulings from the hand test on stack C (25 Sep 2026, verbatim; PR #1220):
 SPO lightbox), **R16** (same comment, the jump-to-line button) and **R17** (same comment, the
 via-SPO PO cell): recorded here as out of scope on 25 Sep 2026, but in fact landed on this
 branch that same day (hand test round 1, PR comments 5824495599 and 5824637604) rather than in
-a separate lane. Review round 2 (26 Sep 2026) found and fixed one gap each: R16's second Go to
+a separate lane. Review round 2 (25 Sep 2026) found and fixed one gap each: R16's second Go to
 press after paging away (Should fix 1), the Go to control's own primitive (Should fix 2), and
 R17's via-SPO PO number resolved on the server instead of a client scan (Should fix 3).
 
