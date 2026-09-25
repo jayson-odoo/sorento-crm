@@ -1582,6 +1582,15 @@ class PortalRevisionService:
             adapter.apply_lines(self.db, row, clean_payload)
         self.db.flush()
 
+        # #1232 blocking 4: a revise is a second submission path back into the
+        # approval flow, so it must refuse the same way `submit_draft` does - a
+        # sponsorship line without a usable unit price is checked against the
+        # lines actually persisted by `apply_lines` above (autoflushed by this
+        # query), same reasoning and same detail shape as
+        # `PortalService._require_sponsorship_unit_prices`.
+        if source_entity_type == "sponsorship_form":
+            portal._require_sponsorship_unit_prices(row)  # noqa: SLF001
+
         # 6. Snapshot the stage output this revision invalidates, then clear it on the
         #    entity: an answer to the superseded version must never read as current
         #    (UAC FB2/FB3).

@@ -163,7 +163,7 @@ export function PurchaseRequestDocumentEditCard({
       ? [
           {
             id: 'unit_price',
-            header: ({ column }) => <DataGridColumnHeader title="U/P" column={column} />,
+            header: ({ column }) => <DataGridColumnHeader title="U/P *" column={column} />,
             cell: ({ row }) => (
               <FormField
                 control={control}
@@ -188,7 +188,7 @@ export function PurchaseRequestDocumentEditCard({
                         className="h-8 w-24"
                       />
                     </FormControl>
-                    <FormMessage />
+                    <FormMessage className="whitespace-normal" />
                   </FormItem>
                 )}
               />

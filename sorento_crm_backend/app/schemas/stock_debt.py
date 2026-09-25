@@ -19,6 +19,8 @@ from typing import Annotated, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
+from app.schemas.export_split import ExportSplit as ExportSplit
+
 Tone = Literal["red", "amber", "green"]
 DemandStatus = Literal["covered", "late", "short", "pinned"]
 SupplyKind = Literal["on_hand", "spo", "po"]
@@ -26,8 +28,10 @@ SupplyKind = Literal["on_hand", "spo", "po"]
 #: read; `project` reproduces the pre-24-Sep view (flagged bins only); `retail` is pools
 #: only and ignores `group`.
 Book = Literal["all", "project", "retail"]
-#: The export workbook's split (R5/AC-13..AC-16). One sheet for `none`.
-ExportSplit = Literal["none", "supplier", "category", "supplier_category"]
+#: The export workbook's split (R5/AC-13..AC-16). One sheet for `none`. Imported from the
+#: shared `app.schemas.export_split` (PLAN-low-stock-export-split-25sep) now that the low
+#: stock report's own export accepts the same four values - re-exported under this name
+#: (`as ExportSplit`) so every other import site in this module is unchanged.
 
 
 class StockDebtMonth(BaseModel):

@@ -34,9 +34,8 @@ import { SupplyLineCard } from './SupplyLineCard';
  * (journey steps 1 to 3).
  *
  * The whole sales order is the unit. There is no per-line confirm, no draft that survives
- * the sheet, and no partial state to come back to: a line that does not balance, a borrow
- * without a reason or a discontinued buy without one blocks the single Confirm for the
- * order, and says which line it is.
+ * the sheet, and no partial state to come back to: a line that does not balance, or a borrow
+ * without a reason, blocks the single Confirm for the order, and says which line it is.
  *
  * A refused confirmation writes nothing. Its failing lines are shown here, by line number
  * and item code, so the next attempt starts from the line that refused rather than from a

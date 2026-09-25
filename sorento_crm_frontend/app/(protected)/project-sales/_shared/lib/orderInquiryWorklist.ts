@@ -32,6 +32,51 @@ const MONTH_WORD = [
   'DEC',
 ];
 
+/**
+ * The exact stamp `project_order_inquiry_import_service.py` writes at the front of a
+ * migrated row's note (`_MIGRATION_STAMP`). Matched by prefix, not equality: the import
+ * service appends its own "Was N on D" correction fragment after it.
+ */
+const SHEET_MIGRATION_NOTE_PREFIX = 'Migrated from order inquiry sheet';
+
+/**
+ * AC-DT-6 (`PLAN-oi-decision-trail-ui.md`): the Raised column's own KIND word.
+ *
+ * Read off `raise_event_kind` when the server matched an actual `order_inquiry_raises`
+ * event (AC-DT-3) - `Raised` or `Reconfirmed`. A row with none matched carries no event
+ * at all (migrated before raises were recorded, or raised by a planning change, which
+ * writes no event of its own), so the fallback reads the row's own `note`: the sheet
+ * importer's own stamp, or the "Was <date>" / "Was <qty>, now <qty>" wording
+ * `planning_change_service.py` writes for a date move or a quantity drop. `null` when
+ * neither matches - a row this column has nothing to say about.
+ */
+/**
+ * Exactly the three notes `planning_change_service.py` writes on a row it moves or trims
+ * (its own `stamp` / `note` literals): `Was <YYYY-MM-DD>` for a date move, `No previous
+ * delivery date` when there was none to move from, `Was <qty>, now <qty>` for a quantity
+ * drop. ANCHORED AND EXACT on purpose (reviewer S2, round 1): an ordinary raise or
+ * reconfirm note also begins "Was" - `Was 5 on 2026-09-01`, `Was 5, no previous delivery
+ * date` (`project_order_inquiry_service.py`, the import service) - and a loose prefix test
+ * read every one of those as a planning change.
+ */
+const PLANNING_CHANGE_NOTE =
+  /^Was \d{4}-\d{2}-\d{2}$|^Was [\d.,]+, now |^No previous delivery date$/;
+
+export function raisedKindLabel(
+  row: Pick<OrderInquiryWorklistRow, 'raise_event_kind' | 'note'>,
+): 'Raised' | 'Reconfirmed' | 'Sheet' | 'Planning change' | null {
+  const note = row.note ?? '';
+  // The sheet stamp FIRST, before any event (reviewer B1, round 1): on the 24 Sep prod
+  // copy 10,246 migrated rows also matched migration 523's anonymous backfill `raised`
+  // event, and 2,070 more sat inside a later reconfirm's window. The note is what the row
+  // itself says about where it came from; the event is a guess about it.
+  if (note.startsWith(SHEET_MIGRATION_NOTE_PREFIX)) return 'Sheet';
+  if (row.raise_event_kind === 'raised') return 'Raised';
+  if (row.raise_event_kind === 'reconfirmed') return 'Reconfirmed';
+  if (PLANNING_CHANGE_NOTE.test(note)) return 'Planning change';
+  return null;
+}
+
 /** `2026-01` to `JAN 26`. Anything that is not a month answers null rather than guessing. */
 export function deliveryMonthLabel(month?: string | null): string | null {
   if (!month) return null;

@@ -59,6 +59,7 @@ export function PanelDataGrid<TRow extends object>({
   searchOf,
   renderGroupHeader,
   sortable = false,
+  onSortedRowsChange,
   rowSelection,
   onRowSelectionChange,
   enableRowSelection,
@@ -129,6 +130,14 @@ export function PanelDataGrid<TRow extends object>({
    * asked for one. The initial order is always the order the caller passed.
    */
   sortable?: boolean;
+  /**
+   * The rows in the grid's own live order - sorted, then filtered, never paginated - each time
+   * that order changes (Should fix 3, review round 1, PR #1218 S3). OPTIONAL: a caller whose
+   * own bulk action has to claim contested stock in the order the reader currently SEES has no
+   * other way to read that order back, since `sorting` is this grid's own state. Omitted by
+   * every other panel, which never asked for it.
+   */
+  onSortedRowsChange?: (rows: TRow[]) => void;
   /**
    * Row selection, for a panel that offers bulk actions.
    *
@@ -294,6 +303,21 @@ export function PanelDataGrid<TRow extends object>({
     ...(paginate ? { getPaginationRowModel: getPaginationRowModel() } : {}),
     columnResizeMode: 'onChange',
   });
+
+  // Should fix 3 (review round 1): sorted, then filtered, never paginated - the same order
+  // `focusRowId` above already reads paging by. Fires only when a caller asked for it.
+  // `getSortedRowModel()`'s own ROWS are TanStack's memoized reference (stable while nothing
+  // sorting-relevant moved), so deriving off THAT rather than re-mapping on every render is
+  // what keeps this from re-firing, and re-rendering the caller, every single paint.
+  const sortedRows = sortable ? table.getSortedRowModel().rows : null;
+  const sortedOriginals = React.useMemo(
+    () => (sortedRows ? sortedRows.map((row) => row.original) : filtered),
+    [sortedRows, filtered],
+  );
+  React.useEffect(() => {
+    onSortedRowsChange?.(sortedOriginals);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sortedOriginals]);
 
   /**
    * Which `focusRowId` (paired with the `focusRequestKey` it fired under) the jump

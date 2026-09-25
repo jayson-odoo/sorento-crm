@@ -68,6 +68,7 @@ from app.models.project_so import (
     IV_RESERVE_AND_ORDER,
     OrderInquiry,
     OrderInquiryLink,
+    OrderInquiryRaise,
     OrderInquiryReserveRequest,
     OrderInquiryReserveRequestRow,
     OrderInquiryRow,
@@ -95,6 +96,7 @@ from app.services.project_supply_service import ProjectSupplyService
 from app.services.scm import order_link_service, priority
 from app.services.scm.demand import demand_qty
 from app.services.scm.front_planning_engine import DEFAULT_LEAD_TIME_DAYS
+from app.services.scm.raise_event_matching import nearest_raise_event
 
 logger = logging.getLogger(__name__)
 
@@ -1575,6 +1577,7 @@ class OrderInquiryWorklistService:
         bundle_map = self._bundle_map_for_rows(rows)
         anchor_headline_by_id = self._anchor_headline_by_id(rows, links)
         host_changes_by_row_id = self._host_changes_for_rows(rows, bundle_map)
+        raise_events_by_row = self._raise_events_by_row(rows)
         return {
             "data": [
                 self._serialize(
@@ -1587,6 +1590,7 @@ class OrderInquiryWorklistService:
                     anchor_headline_by_id,
                     host_changes_by_row_id,
                     suggested_links,
+                    raise_events_by_row,
                 )
                 for row in rows
             ],
@@ -2150,6 +2154,63 @@ class OrderInquiryWorklistService:
             return None
         return f"Included with {' + '.join(codes)}"
 
+    def _raise_events_by_row(self, rows: Sequence[Any]) -> Dict[str, Dict[str, Any]]:
+        """AC-DT-3 (`PLAN-oi-decision-trail-ui.md`): the `order_inquiry_raises` EVENT
+        each page row traces to - the confirm or reconfirm that actually raised it,
+        never the row's own coalesced "current owner" (`raised_by_name`/`raised_at`
+        above already answer that question).
+
+        Rows and their raise event are written in the SAME call
+        (`ProjectOrderInquiryService._write` alongside `OrderInquiryRaise`'s own
+        writer), so the match is the event of the SAME inquiry with the smallest
+        `raised_at` inside `[row.created_at - 1s, row.created_at + 10 min]` - the prod
+        gap measured 1.3 seconds (SO390524 / OI-2609-0731, 25 Sep 2026). The UPPER
+        bound is what keeps a row that has no event of its own from latching onto the
+        next reconfirm on the same inquiry (reviewer B1, round 1: 2,070 sheet-migrated
+        rows read "Reconfirmed by Jayson Foundryx" off an event 1 to 23 hours later).
+        Measured on the 24 Sep prod copy: 10,851 real matches within 1.8s, 85 between
+        2s and 67s, then nothing until 1h 14m - ten minutes sits in the empty stretch.
+        `None` on all three when nothing falls inside the window.
+
+        ONE grouped query for the whole PAGE, never one per row: every raise event of
+        every inquiry the page's rows belong to, read once and matched in Python. The
+        window itself is `nearest_raise_event` (`app.services.scm.raise_event_matching`),
+        shared with `decision_trail_service.py` so the two never drift apart.
+        """
+        inquiry_ids = {row.order_inquiry_id for row in rows if row.order_inquiry_id}
+        if not inquiry_ids:
+            return {}
+        events = (
+            self.db.query(
+                OrderInquiryRaise.order_inquiry_id,
+                OrderInquiryRaise.kind,
+                OrderInquiryRaise.raised_at,
+                User.name,
+            )
+            .outerjoin(User, User.id == OrderInquiryRaise.raised_by)
+            .filter(OrderInquiryRaise.order_inquiry_id.in_(inquiry_ids))
+            .order_by(OrderInquiryRaise.raised_at.asc())
+            .all()
+        )
+        events_by_inquiry: Dict[str, List[Tuple[datetime, str, Optional[str]]]] = {}
+        for inquiry_id, kind, raised_at, name in events:
+            events_by_inquiry.setdefault(str(inquiry_id), []).append(
+                (raised_at, kind, name)
+            )
+
+        out: Dict[str, Dict[str, Any]] = {}
+        for row in rows:
+            candidates = events_by_inquiry.get(str(row.order_inquiry_id or ""), [])
+            # `row.raised_at` IS `OrderInquiryRow.created_at` (`_RAISED_AT` above) -
+            # this row's own birth, the moment the window is measured around.
+            match = nearest_raise_event(row.raised_at, candidates)
+            out[row.id] = (
+                {"at": match[0], "kind": match[1], "by_name": match[2]}
+                if match
+                else {"at": None, "kind": None, "by_name": None}
+            )
+        return out
+
     def _serialize(
         self,
         row,
@@ -2161,6 +2222,7 @@ class OrderInquiryWorklistService:
         anchor_headline_by_id: Optional[Dict[str, str]] = None,
         host_changes_by_row_id: Optional[Dict[str, List[Dict[str, Any]]]] = None,
         suggested_links: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+        raise_events_by_row: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         line_flow = (flow or {}).get(row.so_line_id, {})
         row_links = (links or {}).get(row.id, [])
@@ -2281,6 +2343,16 @@ class OrderInquiryWorklistService:
             "line_cancelled": bool(row.line_cancelled),
             "raised_at": row.raised_at,
             "raised_by_name": row.raised_by_name,
+            # AC-DT-3 (`PLAN-oi-decision-trail-ui.md`): the actual `order_inquiry_raises`
+            # EVENT this row traces to - Raised or Reconfirmed, by whom, when - distinct
+            # from `raised_by_name`/`raised_at` above (WHO currently owns the row, a
+            # coalesce of the decision/acknowledger/header). `None` on all three when no
+            # event matches - a row migrated before raises were recorded.
+            "raise_event_kind": (raise_events_by_row or {}).get(row.id, {}).get("kind"),
+            "raise_event_by_name": (
+                (raise_events_by_row or {}).get(row.id, {}).get("by_name")
+            ),
+            "raise_event_at": (raise_events_by_row or {}).get(row.id, {}).get("at"),
             # PLAN-oi-worklist-split-customer-project.md, Slice 2: the Raised at cell's
             # own tooltip - the CANCELLED predecessor(s) of this row on the same SO line,
             # newest first. `[]` on a row with no SO line, or nothing prior. `getattr`,

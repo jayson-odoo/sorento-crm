@@ -13,6 +13,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { BoardDecisionPill } from './BoardDecisionPill';
 import { BoardLineDecisionPanel } from './BoardLineDecisionPanel';
 import type {
+  BoardBorrowCandidate,
   BoardCellLocation,
   BoardContribution,
   BoardDecision,
@@ -231,7 +232,7 @@ describe('BoardLineDecisionPanel: the two verbs (C9)', () => {
     fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
       target: { value: '19' },
     });
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'The site asked for less from BRW-AM.' },
     });
 
@@ -255,7 +256,7 @@ describe('BoardLineDecisionPanel: the two verbs (C9)', () => {
     const reject = screen.getByRole('button', { name: 'Reject' });
     expect(reject).toBeDisabled();
 
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'The customer cancelled this line.' },
     });
     expect(reject).toBeEnabled();
@@ -374,7 +375,7 @@ describe('BoardLineDecisionPanel: an approved draft carries the suggested compos
     fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
       target: { value: '19' },
     });
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'The site asked for less from BRW-AM.' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
@@ -457,6 +458,9 @@ describe('BoardLineDecisionPanel: an approving save carries the reasons the plan
       expect.objectContaining({
         verdict: 'approved',
         buy_reason: 'project order',
+        // AC-28 (review round 1, Blocking 3): the ONE box is `reason` too, not only
+        // `buy_reason` - the approving branch used to post `reason: undefined` unconditionally.
+        reason: 'project order',
       }),
     );
 
@@ -522,6 +526,359 @@ describe('BoardLineDecisionPanel: an approving save carries the reasons the plan
     expect(screen.getByLabelText(/^Reason/)).toHaveValue(
       'Confirmed with the other site on WhatsApp.',
     );
+  });
+});
+
+/**
+ * Review round 1, Blocking 4, kill test 3 (AC-24): re-adding the Buy block's own retired
+ * "Reason *" textarea under a DIFFERENT label ("Why buy it") stayed green, because the only
+ * existing assertion looks up the box by its label (`/^Reason/`) rather than counting how many
+ * text areas the discontinued Buy state renders. D3's whole point is ONE box, so this pins the
+ * count directly, label aside.
+ */
+describe('BoardLineDecisionPanel: a discontinued Buy renders exactly one Reason textarea (AC-24)', () => {
+  it('renders one <textarea>, not two, when the line is discontinued and buying', () => {
+    const { container } = render(
+      <BoardLineDecisionPanel
+        contribution={contributionOf({
+          key: 'so-a|32|SRTWT9610-GM|2026-09-10',
+          line_no: 32,
+          item_code: 'SRTWT9610-GM',
+          qty: '3',
+          qty_ordered: '3',
+          qty_outstanding: '3',
+          sources: [
+            {
+              kind: 'buy',
+              qty: '3',
+              location: null,
+              warehouse_id: null,
+              reason: 'Nothing on hand covers this line.',
+            },
+          ],
+          qty_proposed_reserve: '0',
+          qty_proposed_incoming: '0',
+          qty_proposed_buy: '3',
+          item_flags: {
+            dealer_hot_selling: false,
+            dealer_hot_selling_where: [],
+            project_hot_selling: false,
+            project_hot_selling_where: [],
+            dealer_classified: false,
+            project_classified: false,
+            discontinued: true,
+            retail_classification_available: true,
+          },
+        })}
+        decision={null}
+        locations={LOCATIONS}
+        onDecide={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('Discontinued')).toBeInTheDocument();
+    expect(container.querySelectorAll('textarea')).toHaveLength(1);
+  });
+});
+
+/**
+ * Review round 1, Blocking 2: a same-agent borrow `BorrowAddDialog` adds by hand seeds the
+ * row's `reason` with `storedReason`'s own "Authorised by ..." sentence. `foldReasonIntoDraft`
+ * used to replace that outright with the panel's own box text on Save, so the authorisation
+ * the server requires (`_check_borrow`) never reached the server. The fix keeps the seeded
+ * prefix and appends the box text, the same shape `BoardDecideControl` already builds fresh.
+ */
+describe('BoardLineDecisionPanel: a hand-added same-agent borrow keeps its authorisation (review round 1, Blocking 2)', () => {
+  it('appends the typed Reason to the seeded "Authorised by" sentence instead of replacing it', async () => {
+    const onDecide = vi.fn().mockResolvedValue(true);
+    render(
+      <BoardLineDecisionPanel
+        contribution={contributionOf({
+          borrow_candidates: [
+            {
+              source: 'other_location',
+              warehouse_code: 'MWH-BB',
+              warehouse_id: 'wh-mwh-bb',
+              free_qty: '90',
+              donor_impact: {
+                free_before: '90',
+                free_after_full_borrow: '0',
+                committed_qty: '0',
+              },
+              donor_agent_code: 'JEREMY',
+              donor_core_line_id: 'core-line-1',
+              same_agent: true,
+              location: {
+                location: 'MWH-BB',
+                where: 'other_group',
+                product_id: 'prod-1',
+                warehouse_id: 'wh-mwh-bb',
+                qty: '0',
+                qty_on_hand: '90',
+                so_qty: '0',
+                spo_qty: '0',
+                available_qty: '90',
+                po_open_qty: '0',
+                incoming: [],
+              },
+            },
+          ],
+        })}
+        decision={null}
+        locations={LOCATIONS}
+        onDecide={onDecide}
+      />,
+    );
+
+    // Free 9 off the BRW reserve (15 -> 6) so the whole line still balances once the 9 is
+    // borrowed instead - D7 derives a Buy for the gap otherwise, which the borrow then closes.
+    fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
+      target: { value: '6' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add a borrow' }));
+
+    fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '9' } });
+    fireEvent.change(screen.getByLabelText(/^Authorised by agent JEREMY/), {
+      target: { value: 'Agreed on the phone, 25 Aug' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Add the borrow' }));
+
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
+      target: { value: 'Stock held for handover.' },
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
+    });
+
+    expect(onDecide).toHaveBeenCalledWith(
+      expect.objectContaining({
+        borrow: expect.arrayContaining([
+          expect.objectContaining({
+            warehouse_id: 'wh-mwh-bb',
+            reason:
+              'Authorised by agent JEREMY: Agreed on the phone, 25 Aug. Stock held for handover.',
+          }),
+        ]),
+      }),
+    );
+  });
+});
+
+/**
+ * Review round 2, Blocking 1: the round 1 fix above kept the seeded "Authorised by" sentence
+ * and appended the box text unconditionally, so re-saving a reopened line with nothing edited
+ * appended the SAME box text a second time - `foldBorrowReason` never checked whether the
+ * seeded reason already carried it. The fix rebuilds the reason from the authorisation
+ * sentence plus the current box text every time, instead of appending onto whatever was
+ * stored last, so an unedited re-save reproduces the same string rather than growing it.
+ */
+const BORROW_CANDIDATE_JEREMY: BoardBorrowCandidate = {
+  source: 'other_location',
+  warehouse_code: 'MWH-BB',
+  warehouse_id: 'wh-mwh-bb',
+  free_qty: '90',
+  donor_impact: {
+    free_before: '90',
+    free_after_full_borrow: '0',
+    committed_qty: '0',
+  },
+  donor_agent_code: 'JEREMY',
+  donor_core_line_id: 'core-line-1',
+  same_agent: true,
+  location: {
+    location: 'MWH-BB',
+    where: 'other_group',
+    product_id: 'prod-1',
+    warehouse_id: 'wh-mwh-bb',
+    qty: '0',
+    qty_on_hand: '90',
+    so_qty: '0',
+    spo_qty: '0',
+    available_qty: '90',
+    po_open_qty: '0',
+    incoming: [],
+  },
+};
+
+describe('BoardLineDecisionPanel: re-saving a reopened same-agent borrow line (review round 2, Blocking 1)', () => {
+  it('does not double the box text when the reopened line is saved again unedited', async () => {
+    const onDecide = vi.fn().mockResolvedValue(true);
+    const first = render(
+      <BoardLineDecisionPanel
+        contribution={contributionOf({ borrow_candidates: [BORROW_CANDIDATE_JEREMY] })}
+        decision={null}
+        locations={LOCATIONS}
+        onDecide={onDecide}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
+      target: { value: '6' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Add a borrow' }));
+    fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '9' } });
+    fireEvent.change(screen.getByLabelText(/^Authorised by agent JEREMY/), {
+      target: { value: 'Agreed on the phone, 25 Aug' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Add the borrow' }));
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
+      target: { value: 'Stock held for handover.' },
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
+    });
+
+    const firstDecision = onDecide.mock.calls[0][0] as BoardDecision;
+    expect(firstDecision.borrow?.[0]?.reason).toBe(
+      'Authorised by agent JEREMY: Agreed on the phone, 25 Aug. Stock held for handover.',
+    );
+
+    first.unmount();
+
+    render(
+      <BoardLineDecisionPanel
+        contribution={contributionOf({ borrow_candidates: [BORROW_CANDIDATE_JEREMY] })}
+        decision={firstDecision}
+        locations={LOCATIONS}
+        onDecide={onDecide}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Save decision' })).toBeEnabled();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
+    });
+
+    const secondDecision = onDecide.mock.calls[1][0] as BoardDecision;
+    expect(secondDecision.borrow?.[0]?.reason).toBe(firstDecision.borrow?.[0]?.reason);
+  });
+
+  it('does not double the box text when the box was seeded from a Decide-saved reason that already carries the whole "Authorised by" sentence', async () => {
+    const onDecide = vi.fn().mockResolvedValue(true);
+    // D3/R9: a Decide save folds the whole "Authorised by ...: <name>. <reason>" sentence into
+    // BOTH the top-level `reason` (what `seedReason` reads first) and every borrow row's own
+    // `reason` (`BoardDecideControl.tsx`), so on reopen the box seeds with the whole sentence,
+    // not just the typed reason.
+    const decideSavedDecision: BoardDecision = {
+      verdict: 'amended',
+      reserve: [
+        { warehouse_id: 'wh-BRW-AM', location: 'BRW-AM', qty: '9' },
+        { warehouse_id: 'wh-BRW', location: 'BRW', qty: '6' },
+      ],
+      borrow: [
+        {
+          source: 'other_location',
+          warehouse_id: 'wh-mwh-bb',
+          warehouse_code: 'MWH-BB',
+          qty: '9',
+          reason:
+            'Authorised by agent JEREMY: Agreed on the phone, 25 Aug. Stock held for handover.',
+        },
+      ],
+      timely_spo_qty: '0',
+      buy_qty: '0',
+      reason:
+        'Authorised by agent JEREMY: Agreed on the phone, 25 Aug. Stock held for handover.',
+    };
+
+    render(
+      <BoardLineDecisionPanel
+        contribution={contributionOf({ borrow_candidates: [BORROW_CANDIDATE_JEREMY] })}
+        decision={decideSavedDecision}
+        locations={LOCATIONS}
+        onDecide={onDecide}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Save decision' })).toBeEnabled();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
+    });
+
+    expect(onDecide).toHaveBeenCalledWith(
+      expect.objectContaining({
+        borrow: expect.arrayContaining([
+          expect.objectContaining({
+            warehouse_id: 'wh-mwh-bb',
+            reason:
+              'Authorised by agent JEREMY: Agreed on the phone, 25 Aug. Stock held for handover.',
+          }),
+        ]),
+      }),
+    );
+  });
+});
+
+/**
+ * Review round 1, Blocking 4, kill test 2(b): `hasUnsuggestedBorrow` (AC-27) is unguarded - a
+ * re-opened, UNEDITED covered line whose frozen decision already carries a borrow the engine
+ * itself never suggested, with no reason recorded for it (an older revision, frozen before the
+ * one-Reason-box shape existed - `seedReason` seeds nothing from a blank `borrow[0].reason`),
+ * matches its own baseline (`amendNeedsReason` reads false), so only `hasUnsuggestedBorrow`
+ * still asks for a reason. Killing that check alone left every existing test green because none
+ * of them opened a line in exactly this state.
+ */
+describe('BoardLineDecisionPanel: a reopened covered line with a hand borrow already frozen still needs a reason (AC-27)', () => {
+  it('disables Save while the Reason box is blank, and enables it once typed, with nothing else edited', () => {
+    const onDecide = vi.fn().mockResolvedValue(true);
+    render(
+      <BoardLineDecisionPanel
+        contribution={contributionOf({
+          covered: true,
+          qty: '9',
+          qty_ordered: '9',
+          qty_outstanding: '9',
+          sources: [
+            {
+              kind: 'reserve',
+              qty: '9',
+              location: 'BRW-AM',
+              warehouse_id: 'wh-BRW-AM',
+              reason: 'Free unclaimed stock at BRW-AM covers this much.',
+            },
+          ],
+          qty_proposed_reserve: '9',
+          qty_proposed_incoming: '0',
+          qty_proposed_buy: '0',
+          decision: {
+            revision_no: 1,
+            confirmed_at: '2026-08-18T02:00:00',
+            timely_spo_qty: '0',
+            reserve: [],
+            borrow: [
+              {
+                source: 'other_location',
+                warehouse_id: 'wh-mwh-bb',
+                location: 'MWH-BB',
+                qty: '9',
+                reason: '',
+              },
+            ],
+            buy_qty: '0',
+            suspected_system_issue: false,
+          },
+        })}
+        decision={null}
+        locations={LOCATIONS}
+        onDecide={onDecide}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Amend' }));
+
+    expect(screen.getByLabelText(/^Reason/)).toHaveValue('');
+    const save = screen.getByRole('button', { name: 'Save decision' });
+    expect(save).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
+      target: { value: 'Reconfirming the same borrow on reopen.' },
+    });
+    expect(save).toBeEnabled();
   });
 });
 
@@ -620,7 +977,7 @@ describe('BoardLineDecisionPanel: the balance hint and Save gating (C7, D7)', ()
     const save = screen.getByRole('button', { name: 'Save decision' });
     expect(save).toBeDisabled();
 
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'Customer takes 5 now, the rest on the next shipment.' },
     });
     expect(save).toBeEnabled();
@@ -667,7 +1024,7 @@ describe('BoardLineDecisionPanel: the balance hint and Save gating (C7, D7)', ()
     const save = screen.getByRole('button', { name: 'Save decision' });
     expect(save).toBeDisabled();
 
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'Agreed a smaller own-location share with the site.' },
     });
     expect(save).toBeEnabled();
@@ -719,7 +1076,7 @@ describe('BoardLineDecisionPanel: the suspected-system-issue flag (C10)', () => 
     fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
       target: { value: '19' },
     });
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'The availability beside this line looks wrong.' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
@@ -736,7 +1093,7 @@ describe('BoardLineDecisionPanel: the suspected-system-issue flag (C10)', () => 
     const { onDecide } = renderPanel();
 
     fireEvent.click(checkbox());
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'Cancelled by the customer.' },
     });
     await act(async () => {
@@ -1092,7 +1449,7 @@ describe('BoardLineDecisionPanel: a covered row opens locked with Amend (C11)', 
     fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
       target: { value: '14' },
     });
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'BRW-AM actually had more free stock than recorded.' },
     });
 
@@ -1177,7 +1534,7 @@ describe('BoardLineDecisionPanel: a covered line only saves a real amendment (R2
     const reject = screen.getByRole('button', { name: 'Reject' });
     expect(reject).toBeDisabled();
 
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'Wrong site' },
     });
     expect(reject).toBeEnabled();
@@ -1198,7 +1555,7 @@ describe('BoardLineDecisionPanel: a covered line only saves a real amendment (R2
     fireEvent.click(screen.getByRole('button', { name: 'Amend' }));
 
     const trigger = screen.getByTestId(`reject-decision-trigger-${KEY}`);
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'Wrong site' },
     });
 
@@ -1225,7 +1582,7 @@ describe('BoardLineDecisionPanel: a covered line only saves a real amendment (R2
     fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
       target: { value: '18' },
     });
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'The BRW-AM count looked short on the floor.' },
     });
 
@@ -1271,7 +1628,7 @@ describe('BoardLineDecisionPanel: an INQUIRY-ONLY covered line keeps Reject disa
     const reject = screen.getByRole('button', { name: 'Reject' });
     expect(reject).toBeDisabled();
 
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'Wrong site' },
     });
     // UNLIKE the active-decision case (AC-F3), typing a reason does not unlock Reject here.
@@ -1305,7 +1662,7 @@ describe('BoardLineDecisionPanel: the saved amendment overlays on reopen', () =>
 
     expect(screen.getByLabelText('Reserve at BRW-AM')).toHaveValue(5);
     expect(screen.getByLabelText('Reserve at BRW')).toHaveValue(19);
-    expect(screen.getByLabelText(/^Why this differs/)).toHaveValue(
+    expect(screen.getByLabelText(/^Reason/)).toHaveValue(
       'Agreed a smaller own-location share with the site.',
     );
   });
@@ -1423,7 +1780,7 @@ describe('BoardLineDecisionPanel: Reserve add-location (S3, AC-3.1 to AC-3.3)', 
     expect(added).toHaveValue(16);
     fireEvent.change(added, { target: { value: '16' } });
 
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'BRW can spare the rest of this line.' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
@@ -1599,7 +1956,7 @@ describe('BoardLineDecisionPanel: the Save button says it saved (S4, AC-4.1)', (
     fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
       target: { value: '19' },
     });
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'Agreed a smaller own-location share with the site.' },
     });
 
@@ -1710,7 +2067,7 @@ describe('BoardLineDecisionPanel: the Save button says it saved (S4, AC-4.1)', (
     fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
       target: { value: '19' },
     });
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'Agreed a smaller own-location share with the site.' },
     });
 
@@ -1797,7 +2154,7 @@ describe('BoardLineDecisionPanel: Reject says it landed', () => {
       />,
     );
 
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'The customer cancelled this line.' },
     });
     await act(async () => {
@@ -1859,7 +2216,7 @@ describe('BoardLineDecisionPanel: Reject says it landed', () => {
       />,
     );
 
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'The customer cancelled this line.' },
     });
     await act(async () => {
@@ -1893,7 +2250,7 @@ describe('BoardLineDecisionPanel: Reject says it landed', () => {
       />,
     );
 
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'The customer cancelled this line.' },
     });
     await act(async () => {
@@ -1918,7 +2275,7 @@ describe('BoardLineDecisionPanel: Reject says it landed', () => {
       />,
     );
 
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'The customer cancelled this line.' },
     });
     await act(async () => {
@@ -1928,7 +2285,7 @@ describe('BoardLineDecisionPanel: Reject says it landed', () => {
       screen.getByRole('button', { name: 'Rejected' }),
     ).toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'The customer cancelled this line, on second thought no.' },
     });
 
@@ -1965,7 +2322,7 @@ describe('BoardLineDecisionPanel: Reject disables itself while its own write is 
       />,
     );
 
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'The customer cancelled this line.' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
@@ -2022,7 +2379,7 @@ describe('BoardLineDecisionPanel: Reject disables itself while its own write is 
     fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
       target: { value: '18' },
     });
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'The BRW-AM count looked short on the floor.' },
     });
 
@@ -2063,7 +2420,7 @@ describe('BoardLineDecisionPanel: Reject disables itself while its own write is 
       />,
     );
 
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'The customer cancelled this line.' },
     });
     const reject = screen.getByRole('button', { name: 'Reject' });
@@ -2279,7 +2636,7 @@ describe('BoardLineDecisionPanel: Buy follows the remainder of the line (D7)', (
     // The composition now differs from the engine's own suggestion (62 became 60), so Save
     // still needs the reason C7 already requires of any amendment - once it has one, the
     // 60/75 split is a legal pool-share carve-out (D5) and nothing else blocks it.
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'The site can only spare 60 today.' },
     });
     expect(
@@ -2293,7 +2650,7 @@ describe('BoardLineDecisionPanel: Buy follows the remainder of the line (D7)', (
     fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
       target: { value: '60' },
     });
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'The site can only spare 60 today.' },
     });
 

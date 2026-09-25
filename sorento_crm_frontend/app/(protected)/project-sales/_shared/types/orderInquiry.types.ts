@@ -548,6 +548,16 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
    * export.
    */
   raise_history?: OrderInquiryRaiseHistoryEntry[];
+  /**
+   * AC-DT-3 (`PLAN-oi-decision-trail-ui.md`): the actual `order_inquiry_raises` EVENT
+   * this row traces to - Raised or Reconfirmed, by whom, when - distinct from
+   * `raised_by_name`/`raised_at` above, which name WHO currently owns the row (a
+   * coalesce, not an event). `null` on all three when nothing matches - a row migrated
+   * before raises were recorded.
+   */
+  raise_event_kind?: 'raised' | 'reconfirmed' | null;
+  raise_event_by_name?: string | null;
+  raise_event_at?: string | null;
   verb: OrderInquiryVerb | string;
   note?: string | null;
 

@@ -1046,14 +1046,54 @@ class ProjectOrderInquiryService:
             # decision they made. Batched (S6): one grouped load for this line's own rows
             # rather than one query per row.
             drafted_links = self._links_by_row([str(row.id) for row in rows])
+            # #1226, owner ruling 25 Sep 2026 ("nothing changed, nothing moves"): a
+            # CARRIED line's draft is never handed to `_settle_row_in_place` - this
+            # confirmation named OTHER lines, so its still-placed/partly-linked row is
+            # not this revision's to settle, let alone to redirect (`_redirect_row_if_
+            # received`, `_settle_row_in_place`'s own first step). Without `not carried`
+            # here, a carried line's row whose link happened to have since become fully
+            # received read as a draft this call could still settle, and settling
+            # declined into the redirect anyway (OI-2609-0755, PLAN-oi-carried-line-no-
+            # settle.md).
             drafted = [
                 row
                 for row in rows
-                if row.verb in (IV_ORDER, IV_ORDER_BACK)
+                if not carried
+                and row.verb in (IV_ORDER, IV_ORDER_BACK)
                 and row.state in (INQUIRY_PLACED, INQUIRY_PARTLY_LINKED)
                 and self._cascade_only(drafted_links.get(str(row.id), []))
                 and not row.redirected_to_pool
             ]
+            if carried:
+                # B1 (review round 1, 9fb06ff66): `_settle_row_in_place`'s ordinary
+                # settle stamps `row.supply_decision_id = decision.id` on the row it
+                # touches - gate above means a carried line's live draft never reaches
+                # that call, so left alone it stays tied to the OLD revision.
+                # `_retire_uncovered_rows`'s `only_line_ids` mode
+                # (`retire_rows_for_dropped_lines`, `ProjectSupplyService.uncover_lines`'
+                # whole-revision reject branch) filters on `supply_decision_id ==
+                # decision.id`, so a stale id makes the row invisible to a reject that
+                # names its line: the reject would retire nothing and the row would stay
+                # `placed`/`partly_linked` with its links still holding real PO/SPO
+                # quantity. Re-stamped alone - qty, links, note, state and the handshake
+                # all stand exactly as they are ("nothing changed, nothing moves"); only
+                # which revision the row is filed under moves, the same as a carried
+                # RAISED row's own replacement moves onto this revision below.
+                #
+                # Deliberately unscoped to `_cascade_only` - a carried row with a MANUAL
+                # link, or no link at all, is restamped too. Harmless: `_retire_
+                # uncovered_rows`'s own retirement loop skips a row whose links are not
+                # ALL cascade-made (`if not self._cascade_only(...): continue`), so a
+                # restamped manually-linked row still never gets cancelled by a reject it
+                # was never eligible for - the restamp only ever widens which revision a
+                # reject can FIND the row under, never what the reject does with it.
+                for row in rows:
+                    if (
+                        row.verb in (IV_ORDER, IV_ORDER_BACK)
+                        and row.state in (INQUIRY_PLACED, INQUIRY_PARTLY_LINKED)
+                        and not row.redirected_to_pool
+                    ):
+                        row.supply_decision_id = decision.id
             # S2 (`PLAN-scm-oi-handover-r2-undo.md`, AC-R2-10/11): a NAMED line (not
             # carried, not a planning-change settle) whose only live row is a plain
             # `raised` ORDER/ORDER_BACK row, no links at all, not redirected, and whose
@@ -1237,6 +1277,22 @@ class ProjectOrderInquiryService:
                     # document happened to arrive - not a replan, nobody asked this line to
                     # be restated, and the buyer's own placement should not silently become
                     # history under them.
+                    if carried:
+                        # #1226, owner ruling 25 Sep 2026 ("nothing changed, nothing
+                        # moves"): this confirmation did not name the line, so its
+                        # partly-linked row is not restated at all - the full qty nets
+                        # into `placed` exactly as a PLACED row's does above, and the
+                        # row itself, its links and its note stand untouched. No shrink
+                        # to the linked qty, no "Remainder superseded" note, no
+                        # `refresh_link_state`, no redirect.
+                        #
+                        # S2 (review round 1, 9fb06ff66): no `and not asked_to_settle`
+                        # here - a PLANNING-CHANGE settle line is always NAMED
+                        # (`planning_change_service` appends every `settle_line_ids`
+                        # entry to `confirm_lines`), so `carried` and `asked_to_settle`
+                        # can never both be true and the extra clause was unreachable.
+                        placed += _dec(row.qty)
+                        continue
                     if asked_to_settle and self._redirect_row_if_received(
                         row, drafted_links.get(str(row.id), []), decision
                     ):
@@ -3367,6 +3423,7 @@ class ProjectOrderInquiryService:
                 Project.title,
                 Customer.customer_name,
                 SalesOrder.project_label,
+                SalesOrder.order_date,
             )
             .outerjoin(Project, Project.id == ProjectSalesOrder.project_id)
             .outerjoin(
@@ -3394,6 +3451,7 @@ class ProjectOrderInquiryService:
                 title,
                 customer_name,
                 project_label,
+                order_date,
             ) = row
             facts = {
                 "so_number": autocount_doc_no or provisional_ref,
@@ -3402,7 +3460,13 @@ class ProjectOrderInquiryService:
                 # NULL by design) falls back to the SO's own free-text label
                 # (PLAN-oi-project-label-from-so.md).
                 "project": title or project_label,
-                "so_date": published_at or created_at,
+                # The AutoCount SO DOCUMENT date (`sales_orders.order_date`) wins - an
+                # adopted order has `published_at` NULL by design, and the CRM's own pull
+                # date (`created_at`) is not the day the customer's order was raised
+                # (PLAN-oi-handover-so-date-autocount-25sep.md). `published_at` then
+                # `created_at` stay the fallback for an authored order whose core SO
+                # never carried a date, and for a draft with no core SO at all.
+                "so_date": order_date or published_at or created_at,
             }
         self._handover_order_facts_cache[pso_id] = facts
         return facts
@@ -5274,17 +5338,18 @@ class ProjectOrderInquiryService:
         """One query per fact the rows need, rather than one per row."""
         inquiry_ids = {row.order_inquiry_id for row in rows}
         joined = (
-            self.db.query(OrderInquiry, ProjectSalesOrder)
+            self.db.query(OrderInquiry, ProjectSalesOrder, SalesOrder.order_date)
             .join(
                 ProjectSalesOrder,
                 ProjectSalesOrder.id == OrderInquiry.project_sales_order_id,
             )
+            .outerjoin(SalesOrder, SalesOrder.id == ProjectSalesOrder.so_id)
             .filter(OrderInquiry.id.in_(list(inquiry_ids)))
             .all()
         )
-        labels = self._project_customer_labels({so.id for _inq, so in joined})
+        labels = self._project_customer_labels({so.id for _inq, so, _order_date in joined})
         context: Dict[str, Dict[str, Any]] = {}
-        for inquiry, order in joined:
+        for inquiry, order, order_date in joined:
             context[inquiry.id] = {
                 "project_sales_order_id": order.id,
                 # AC-B6-7 (`PLAN-board-oi-mechanical-22sep.md`, S6): the CORE
@@ -5297,7 +5362,10 @@ class ProjectOrderInquiryService:
                 # sales_order_ref prefers: they are two different documents and the buyer
                 # tracing a Buy back to a project needs the one this system minted.
                 "project_so_ref": order.provisional_ref,
-                "so_date": (order.published_at or order.created_at),
+                # The AutoCount SO DOCUMENT date wins over the CRM's own pull date, same
+                # rule as `_handover_order_facts`
+                # (PLAN-oi-handover-so-date-autocount-25sep.md).
+                "so_date": (order_date or order.published_at or order.created_at),
                 "project_customer": labels.get(order.id),
                 "is_amendment": bool(inquiry.amendment_id),
             }
@@ -9480,9 +9548,15 @@ class ProjectOrderInquiryService:
 
           * `row_key`            <- the row's own id.
           * `required_date`      <- the row's `delivery_date` (`need_by_date`).
-          * `order_date`         <- the sales order's own document date, `published_at`
-            or `created_at` before publish - the identical fact `_context_for` already
-            surfaces as `so_date` for this same row set (`document_age`).
+          * `order_date`         <- `published_at` or `created_at` before publish. This
+            ranking input was never touched by
+            `PLAN-oi-handover-so-date-autocount-25sep.md`: `_context_for` and the
+            handover email now prefer the core `sales_orders.order_date` for the
+            `so_date` a person reads, while `scm/priority.py`'s own docstring
+            (`factors_for_demand_rows`) still documents `document_age <-
+            sales_orders.order_date` for the score a row is RANKED by - the two have
+            drifted apart, and pointing this cascade's `order_date` at the same core
+            column is a named follow-up, out of scope for that lane.
           * `demand_class`       <- always `"project"`: every row this cascade sees came
             off a project order inquiry.
           * `payment_terms_days` <- the resolved customer's terms

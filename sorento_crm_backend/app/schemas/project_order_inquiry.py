@@ -419,6 +419,16 @@ class OrderInquiryWorklistRow(BaseModel):
     # sibling row is a second live instruction, not history (review round 1, blocker
     # B1). `[]` on a row with no SO line, or nothing prior. Never on the Excel export.
     raise_history: List[OrderInquiryRaiseHistoryEntry] = []
+    # AC-DT-3 (`PLAN-oi-decision-trail-ui.md`): the actual `order_inquiry_raises` EVENT
+    # this row traces to - the confirm or reconfirm that raised it, matched by timing
+    # (the same inquiry's earliest event at or after this row's own `created_at`, minus
+    # a one-second grace). Distinct from `raised_by_name`/`raised_at` above, which name
+    # WHO currently owns the row rather than what raised it. `raise_event_kind` is
+    # `"raised"` or `"reconfirmed"` (`OI_RAISE_RAISED`/`OI_RAISE_RECONFIRMED`), or null
+    # when nothing matches - a row migrated before raises were recorded.
+    raise_event_kind: Optional[str] = None
+    raise_event_by_name: Optional[str] = None
+    raise_event_at: Optional[datetime] = None
     verb: str
     note: Optional[str] = None
 

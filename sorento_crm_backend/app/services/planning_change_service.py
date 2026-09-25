@@ -817,6 +817,22 @@ def _from_to(c) -> Tuple[dict, dict]:
     return from_, to_
 
 
+def _entry_differs_from_older_row(c, older: PlanningChangeRow) -> bool:
+    """Whether a gate-failed change actually alters what an older pending row already
+    describes (S1, `PLAN-esb-change-row-refresh.md`) - qty, required_date, status or the
+    product itself (review round 1, S6: a `PRODUCT_CHANGED` re-push, or one whose `item_code`
+    now differs from what the older row's `to_json` names, is never the SAME line description
+    a plain idempotent re-push would leave alone). An idempotent re-push carrying identical
+    facts must not disturb the older row."""
+    _, to_json = _from_to(c)
+    old_to = older.to_json or {}
+    if c.kind == PRODUCT_CHANGED:
+        return True
+    if to_json.get("item_code") != old_to.get("item_code"):
+        return True
+    return any(to_json.get(key) != old_to.get(key) for key in ("qty", "required_date", "status"))
+
+
 def _board_link(so_number: str, item_code: str, when: Optional[date]) -> str:
     when_part = when.isoformat() if when else ""
     return f"/project-sales/fulfilment-planning?orders={so_number}&cell={item_code}|{when_part}"
@@ -902,8 +918,18 @@ def build_batch(
             pso = pso_by_core_so.get(str(core_so_id)) if core_so_id else None
             if pso is None:
                 continue
+            # A mirror line can already exist when front-planning reconciliation ran
+            # ahead of the ESB (`project_so_reconciliation_service.py`) - falls back to
+            # `None` for the common case of a genuinely new line with no mirror yet, so an
+            # older `added` row correlates back to a later change on the same line (S1,
+            # `PLAN-esb-change-row-refresh.md`).
             entries.append(
-                {"change": c, "core_line_id": core_line_id, "project_line": None, "order": pso}
+                {
+                    "change": c,
+                    "core_line_id": core_line_id,
+                    "project_line": project_lines_by_core.get(core_line_id),
+                    "order": pso,
+                }
             )
             continue
         project_line = project_lines_by_core.get(core_line_id)
@@ -1013,19 +1039,29 @@ def build_batch(
     # THEM (a second edit of the SAME line) is told apart below from a row for a line the
     # open batch has never seen (which simply joins it).
     open_pending_lines_by_batch: Dict[str, Dict[str, PlanningChangeRow]] = {}
+    # S4 (review round 1): a pending `added` row commonly carries NO `project_line_id` at all
+    # (52 of 52 on the 24 Sep prod copy - a brand-new line has no mirror yet the moment it is
+    # added), so `open_pending_lines_by_batch` alone can never find it as `older` for a later
+    # push on that same core line. Keyed by `core_line_id` instead, from the SAME query
+    # (dropping the `project_line_id IS NOT NULL` filter), as the fallback below reaches for.
+    open_pending_by_core_by_batch: Dict[str, Dict[str, PlanningChangeRow]] = {}
     if open_batches_by_id:
         for r in (
             db.query(PlanningChangeRow)
             .filter(
                 PlanningChangeRow.batch_id.in_(list(open_batches_by_id.keys())),
                 PlanningChangeRow.applied_state == PLANNING_CHANGE_STATE_PENDING,
-                PlanningChangeRow.project_line_id.isnot(None),
             )
             .all()
         ):
-            open_pending_lines_by_batch.setdefault(str(r.batch_id), {})[
-                str(r.project_line_id)
-            ] = r
+            if r.project_line_id is not None:
+                open_pending_lines_by_batch.setdefault(str(r.batch_id), {})[
+                    str(r.project_line_id)
+                ] = r
+            if r.core_line_id is not None:
+                open_pending_by_core_by_batch.setdefault(str(r.batch_id), {})[
+                    str(r.core_line_id)
+                ] = r
 
     kept_orders: set = set()
     kept_rows: List[PlanningChangeRow] = []
@@ -1040,6 +1076,7 @@ def build_batch(
         order = group[0]["order"]
         open_batch_id = open_batch_id_by_order.get(pso_id)
         pending_lines = open_pending_lines_by_batch.get(open_batch_id or "", {})
+        pending_by_core = open_pending_by_core_by_batch.get(open_batch_id or "", {})
         active_decision = supply.active_decision(pso_id)
         latest_decision = supply.latest_decision(pso_id)
         revision_no = (
@@ -1078,12 +1115,29 @@ def build_batch(
                 order_has_held_or_inquiry,
                 batch_line_ids,
             )
+            entry_line = e.get("project_line")
+            entry_line_id = str(entry_line.id) if entry_line is not None else None
+            # S4 (review round 1): the `core_line_id` fallback is what an `added` row's own
+            # NULL `project_line_id` needs - `entry["core_line_id"]` is resolved for every
+            # entry regardless of kind, so it finds an older `added` row this project-line
+            # lookup alone never can.
+            older = (
+                (pending_lines.get(entry_line_id) if entry_line_id else None)
+                or pending_by_core.get(e["core_line_id"])
+            )
             if row is None:
                 # AC-G1/AC-G4: the line is neither held nor inquired, so it stays off the
-                # batch entirely - not a row worth counting.
+                # batch entirely - not a row worth counting. But a later push whose own
+                # change fails this gate (SO419122, S1) is not silent about the OLDER
+                # pending row it can no longer describe - a re-push that actually changes
+                # the facts must retire that row rather than leave it pending forever at a
+                # stale date. Identical facts (a re-push carrying the same qty/date/status)
+                # leave the row alone - the normal idempotent-push case.
+                if older is not None and _entry_differs_from_older_row(e["change"], older):
+                    older.applied_state = PLANNING_CHANGE_STATE_SUPERSEDED
+                    older.applied_reason = "Line changed again; the row no longer describes it"
                 continue
             kept_orders.add(pso_id)
-            older = pending_lines.get(str(row.project_line_id)) if row.project_line_id else None
             if open_batch_id:
                 # R1 (captain's ruling, review round): one open batch per order, always -
                 # a line the open batch has not seen yet simply joins it, and a later
@@ -4823,6 +4877,30 @@ def _apply_one_order(
             # retired by this apply is as much its work as a confirmed one.
             r.result_json["supply_decision_revision_no"] = revision_no
 
+    # B1 (review round 3, S5b, issue #1245): a leftover row of THIS SAME order, still
+    # pending because nothing named it in this press (a `Change proposed` line nobody
+    # saved), was held against the revision this press just replaced. Left alone,
+    # `_row_is_superseded` reads `held_json.revision_no` against the order's now-newer
+    # active revision and calls it superseded on the very next read - `set_row_decision`
+    # then refuses a SECOND press naming it with 409 "The board confirmed a newer
+    # revision", even though THIS press is what confirmed that newer revision, on this
+    # order's own batch. Re-based onto the new revision instead: this press carried every
+    # line it did not name forward with its hold intact (nothing here changed what the
+    # order's supply looks like for such a line), so the row's `held_json` still
+    # describes what is live, under the number that now names it. Rows held on any OTHER
+    # revision are untouched - an independent confirm elsewhere still supersedes them as
+    # today. Runs only when a new revision was actually minted (`supersede_for_material_
+    # change`'s own branch above leaves `revision_no == current_revision`, nothing to
+    # re-base onto).
+    if revised and revision_no != current_revision:
+        for r in order_rows:
+            if r.applied_state != PLANNING_CHANGE_STATE_PENDING:
+                continue
+            held = r.held_json or {}
+            if held.get("revision_no") != current_revision:
+                continue
+            r.held_json = {**held, "revision_no": revision_no}
+
     # Purchasing is notified by `apply()`, AFTER this order's savepoint has committed, not
     # here: `NotificationService.create_with_channel_preferences` commits on its own, and
     # calling it while still inside `db.begin_nested()` closes that savepoint's transaction,
@@ -5025,17 +5103,23 @@ def apply(
     # their `failed` state and reasons, decisions stay editable, and this same call can
     # simply be retried once the cause is fixed.
     #
-    # AND only once no order this apply LEFT OUT is still pending. `applied_at` is the
-    # batch-wide lock (`set_row_decision` and a retry of this call both gate on it), so
-    # stamping it after a narrowed apply froze every other order of the same upload at
-    # `pending` with no way to decide or confirm them - the planner saw `Applied ...` and
-    # `pending: 2` on the same row. An apply that visited every order is unchanged: there
-    # is nothing left out, so the stamp lands exactly as it did before.
-    left_out_pending = wanted is not None and any(
-        str(r.project_sales_order_id) not in wanted
-        and r.applied_state == PLANNING_CHANGE_STATE_PENDING
-        for r in rows
-    )
+    # AND only once no row of the WHOLE BATCH is still pending (S5b, review round,
+    # `PLAN-esb-change-row-refresh.md`, issue #1245: a partial press must leave the batch
+    # reachable). Widened from "an order this apply LEFT OUT" to every row, because a row of
+    # an order this apply DID visit can stay pending too - a batch row `_apply_one_order`
+    # never accepted because nothing decided it (S5: a `Change proposed` line the board
+    # pre-marked but nobody saved, so its `project_line_id` was never in the confirm body,
+    # so `_confirm_a_planning_change` never called `set_row_decision` for it). `applied_at`
+    # is the batch-wide lock (`set_row_decision` and a retry of this call both gate on it),
+    # so stamping it while ANY row anywhere in the batch is still pending - an order left out
+    # of `only_pso_ids` entirely, or a row of a VISITED order the confirm body never named -
+    # froze that row behind a batch that reads "already applied" and refuses ever being
+    # retried (`refuse_if_applied`). `rows` are the SAME ORM objects `_apply_one_order`
+    # mutated above (queried once, at :4942, before the per-order loop), so this reads their
+    # POST-press state, not the pre-press snapshot. An apply that visited every order and
+    # every row was decided is unchanged: there is nothing left pending, so the stamp lands
+    # exactly as it did before.
+    left_out_pending = any(r.applied_state == PLANNING_CHANGE_STATE_PENDING for r in rows)
     if orders_revised and not left_out_pending:
         batch.applied_at = datetime.utcnow()
         batch.applied_by = actor

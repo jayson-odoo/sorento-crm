@@ -25,6 +25,7 @@ import {
   movedNoteOf,
   previousValueOf,
 } from '../../_shared/lib/orderInquiryAck';
+import { DecisionTrailButton } from '../../_shared/components/DecisionTrailButton';
 import { OrderInquiryVerbPill, ReservePill } from '../../_shared/components/OrderInquiryVerbPill';
 import {
   bundledHeadline,
@@ -35,6 +36,7 @@ import {
   orderInquiryRowHref,
   orderInquirySoLineHref,
   orderInquirySoLineLabel,
+  raisedKindLabel,
 } from '../../_shared/lib/orderInquiryWorklist';
 import type {
   OrderInquiryLinkSuggestion,
@@ -53,7 +55,7 @@ function Muted({ children }: { children: React.ReactNode }) {
  * applies and wins. The order inquiry number stays on the header, the email and the URL -
  * purchasing does not need it as a worklist column any more.
  */
-export const DEFAULT_HIDDEN_COLUMNS: string[] = ['inquiry_no'];
+export const DEFAULT_HIDDEN_COLUMNS: string[] = ['inquiry_no', 'raise_event'];
 
 /**
  * REV design (17 Sep review round): the row's own one-word marks - `via PO`/`via SPO`,
@@ -910,6 +912,31 @@ export function InstructionCell({ row }: { row: OrderInquiryWorklistRow }) {
 }
 
 /**
+ * AC-DT-6 (`PLAN-oi-decision-trail-ui.md`): `<Kind> by <name> · <date time>`, or the
+ * bare kind word when the server matched no event (`Sheet` / `Planning change`, which
+ * carry no `raise_event_by_name`/`raise_event_at`), or a dash when nothing at all is
+ * known about how the row was raised. Shared with the Lines tab
+ * (`orderInquiryHeaderLinesColumns.tsx`) so the same row reads the same way there.
+ */
+export function RaisedCell({ row }: { row: OrderInquiryWorklistRow }) {
+  const kind = raisedKindLabel(row);
+  if (!kind) return <Muted>-</Muted>;
+  // A sheet row reads the bare word: whatever event the window matched, nobody in this
+  // system raised it, and a name or a time beside "Sheet" would say somebody did.
+  const text =
+    kind === 'Sheet'
+      ? kind
+      : `${kind}${row.raise_event_by_name ? ` by ${row.raise_event_by_name}` : ''}${
+          row.raise_event_at ? ` · ${formatDateTimeInMalaysia(row.raise_event_at)}` : ''
+        }`;
+  return (
+    <span className="block truncate" title={text}>
+      {text}
+    </span>
+  );
+}
+
+/**
  * The worklist's columns, in the spreadsheet's own order (`JAN - DEC 2026 ORDER.xlsx`).
  *
  * Shared between the main list and the calendar's day drilldown, so a person reading
@@ -1252,8 +1279,38 @@ export function useOrderInquiryWorklistColumns({
               reserveState={row.original.reserve_state}
               reservedQty={row.original.reserved_qty}
             />
+            {/* AC-DT-5 (`PLAN-oi-decision-trail-ui.md`, round 2): the decision trail
+                icon, beside the row's own state-ish marks - there is no separate "State"
+                column on this worklist (the Lines tab has one; see the note there), so
+                this is where a state-like pill already sits. On EVERY row, not only a
+                reserved one: `DecisionTrailButton` itself hides when the row names no
+                core sales-order line at all. */}
+            <DecisionTrailButton
+              coreLineId={row.original.core_line_id ?? null}
+              itemCode={row.original.item_code}
+              className="size-5 shrink-0 text-muted-foreground"
+            />
           </div>
         ),
+      },
+      {
+        // AC-DT-6 (`PLAN-oi-decision-trail-ui.md`): the trail behind the instruction -
+        // Raised, Reconfirmed, Sheet or Planning change, by whom, when. Hidden by
+        // default here (`DEFAULT_HIDDEN_COLUMNS`); the OI detail Lines tab hides it by
+        // default too now (round 2 ruling - column preferences still let it on either
+        // screen). Unsortable: it is a derived, per-row match against
+        // `order_inquiry_raises`, not a plain column. `accessorFn` is what the column
+        // picker itself keys "can this be listed" on (`data-grid-column-visibility.tsx`),
+        // so a bare `id` + `cell` (round 1's own shape) made this column impossible to
+        // ever turn back on. "Raised via", not "Raised": the "Raised by" column sits
+        // right beside this one (captain ruling, review round 1).
+        id: 'raise_event',
+        accessorFn: (row) => raisedKindLabel(row) ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Raised via" column={column} />,
+        size: 220,
+        enableSorting: false,
+        meta: { headerTitle: 'Raised via', skeleton: <Skeleton className="h-4 w-24" /> },
+        cell: ({ row }) => <RaisedCell row={row.original} />,
       },
       {
         // WHO pushed this to purchasing. Sorted server-side on the person's name, which

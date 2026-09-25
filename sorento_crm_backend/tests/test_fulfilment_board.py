@@ -5405,9 +5405,13 @@ def test_the_pool_rung_names_the_classification_beside_what_it_gave():
         assert step["why"].startswith(f"Dealer hot-selling at {pool.warehouse_code}")
 
 
-def test_a_discontinued_item_says_the_buy_needs_a_reason_on_the_buy_rung():
-    """`is_discontinued` only ever forced a REASON on the buy; now it says so where the buy
-    is explained, instead of surfacing for the first time as a refusal at confirm."""
+def test_a_discontinued_item_no_longer_names_a_reason_requirement_on_the_buy_rung():
+    """AC-43: `is_discontinued` no longer forces a reason at confirm (the gate in
+    `project_supply_service.py` is removed), so the buy-rung explanation drops the
+    "Discontinued: the buy needs a reason." suffix - the sentence is the plain buy
+    explanation, unchanged from any other Buy. `item_flags` still reports the product
+    as discontinued; that flag is informational (drives the frozen `lifecycle_warning`),
+    not a confirmation requirement."""
     with blank_session() as db:
         product = _product(db, f"ZZT-{_uid()[:6]}")
         product.is_discontinued = True
@@ -5422,8 +5426,7 @@ def test_a_discontinued_item_says_the_buy_needs_a_reason_on_the_buy_rung():
         contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
         assert _flags(contribution)["discontinued"] is True
         why = _step(contribution, "buy")["why"]
-        assert why.endswith("Discontinued: the buy needs a reason.")
-        assert why.startswith("Nothing left to take")
+        assert why == "Nothing left to take, so the remainder is bought."
 
 
 def test_a_line_the_ladder_never_walked_carries_no_flags_rather_than_false_ones():
