@@ -346,10 +346,10 @@ export function useOrderInquiryHeaderLinesColumns({
         // carries (hidden there by default), visible here - `RaisedCell` is shared so
         // the same row reads the same way on both screens.
         id: 'raise_event',
-        header: ({ column }) => <DataGridColumnHeader title="Raised" column={column} />,
+        header: ({ column }) => <DataGridColumnHeader title="Raised via" column={column} />,
         size: 220,
         enableSorting: false,
-        meta: { headerTitle: 'Raised', skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'Raised via', skeleton: <Skeleton className="h-4 w-24" /> },
         cell: ({ row }) => <RaisedCell row={row.original} />,
       },
       // `PLAN-oi-request-cs-reserve.md` 6e.2 (AC-RS-83): the pill is plain text.

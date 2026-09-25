@@ -50,14 +50,30 @@ const SHEET_MIGRATION_NOTE_PREFIX = 'Migrated from order inquiry sheet';
  * `planning_change_service.py` writes for a date move or a quantity drop. `null` when
  * neither matches - a row this column has nothing to say about.
  */
+/**
+ * Exactly the three notes `planning_change_service.py` writes on a row it moves or trims
+ * (its own `stamp` / `note` literals): `Was <YYYY-MM-DD>` for a date move, `No previous
+ * delivery date` when there was none to move from, `Was <qty>, now <qty>` for a quantity
+ * drop. ANCHORED AND EXACT on purpose (reviewer S2, round 1): an ordinary raise or
+ * reconfirm note also begins "Was" - `Was 5 on 2026-09-01`, `Was 5, no previous delivery
+ * date` (`project_order_inquiry_service.py`, the import service) - and a loose prefix test
+ * read every one of those as a planning change.
+ */
+const PLANNING_CHANGE_NOTE =
+  /^Was \d{4}-\d{2}-\d{2}$|^Was [\d.,]+, now |^No previous delivery date$/;
+
 export function raisedKindLabel(
   row: Pick<OrderInquiryWorklistRow, 'raise_event_kind' | 'note'>,
 ): 'Raised' | 'Reconfirmed' | 'Sheet' | 'Planning change' | null {
+  const note = row.note ?? '';
+  // The sheet stamp FIRST, before any event (reviewer B1, round 1): on the 24 Sep prod
+  // copy 10,246 migrated rows also matched migration 523's anonymous backfill `raised`
+  // event, and 2,070 more sat inside a later reconfirm's window. The note is what the row
+  // itself says about where it came from; the event is a guess about it.
+  if (note.startsWith(SHEET_MIGRATION_NOTE_PREFIX)) return 'Sheet';
   if (row.raise_event_kind === 'raised') return 'Raised';
   if (row.raise_event_kind === 'reconfirmed') return 'Reconfirmed';
-  const note = row.note ?? '';
-  if (note.startsWith(SHEET_MIGRATION_NOTE_PREFIX)) return 'Sheet';
-  if (note.startsWith('Was ')) return 'Planning change';
+  if (PLANNING_CHANGE_NOTE.test(note)) return 'Planning change';
   return null;
 }
 

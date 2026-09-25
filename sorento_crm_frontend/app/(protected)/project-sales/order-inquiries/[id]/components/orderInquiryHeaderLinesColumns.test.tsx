@@ -44,8 +44,9 @@ describe('AC-B3-1: the Lines tab reads Product, Qty, Taken, Remaining, Delivery 
       'Location',
       'Instruction',
       // AC-DT-6 (`PLAN-oi-decision-trail-ui.md`): the trail behind the instruction,
-      // right after it.
-      'Raised',
+      // right after it. "Raised via", not "Raised" - the worklist already has a
+      // "Raised by" column beside it (captain ruling, review round 1).
+      'Raised via',
       'State',
     ]);
   });
@@ -239,7 +240,7 @@ describe('AC-RS-83 / 83b / 83c: the reserve icons live inside the State cell', (
   });
 });
 
-describe('AC-DT-6: the Raised column (PLAN-oi-decision-trail-ui.md)', () => {
+describe('AC-DT-6: the Raised via column (PLAN-oi-decision-trail-ui.md)', () => {
   function raisedCell(row: OrderInquiryWorklistRow) {
     const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns());
     const raisedColumn = result.current.find(
@@ -310,5 +311,60 @@ describe('AC-DT-6: the Raised column (PLAN-oi-decision-trail-ui.md)', () => {
   it('reads a dash when nothing at all is known about how the row was raised', () => {
     render(<>{raisedCell(linesRow({ raise_event_kind: null, note: null }))}</>);
     expect(screen.getByText('-')).toBeInTheDocument();
+  });
+
+  // Reviewer B1, round 1: on the 24 Sep prod copy 10,246 sheet-migrated rows also match
+  // migration 523's anonymous backfill `raised` event and 2,070 more latch onto a reconfirm
+  // hours later - the note's own sheet stamp is the fact, and it outranks any event.
+  it('reads a bare "Sheet" - no by, no date - for a sheet-migrated row even when an event matched it', () => {
+    render(
+      <>
+        {raisedCell(
+          linesRow({
+            raise_event_kind: 'reconfirmed',
+            raise_event_by_name: 'Jayson Foundryx',
+            raise_event_at: '2026-09-25T04:00:00',
+            note: 'Migrated from order inquiry sheet, row 42',
+          }),
+        )}
+      </>,
+    );
+    expect(screen.getByText('Sheet')).toBeInTheDocument();
+    expect(screen.queryByText(/Reconfirmed/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Jayson/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/2026/)).not.toBeInTheDocument();
+  });
+
+  // Reviewer S2, round 1: an ORDINARY raise/reconfirm note also starts with "Was" -
+  // `Was {qty} on {date}` / `Was {qty}, no previous delivery date`
+  // (project_order_inquiry_service.py, the import service). Only what
+  // planning_change_service.py itself writes reads Planning change.
+  it('does NOT read Planning change for an ordinary "Was 5 on 2026-09-01" raise note', () => {
+    render(<>{raisedCell(linesRow({ raise_event_kind: null, note: 'Was 5 on 2026-09-01' }))}</>);
+    expect(screen.queryByText('Planning change')).not.toBeInTheDocument();
+    expect(screen.getByText('-')).toBeInTheDocument();
+  });
+
+  it('does NOT read Planning change for "Was 5, no previous delivery date"', () => {
+    render(
+      <>
+        {raisedCell(
+          linesRow({ raise_event_kind: null, note: 'Was 5, no previous delivery date' }),
+        )}
+      </>,
+    );
+    expect(screen.queryByText('Planning change')).not.toBeInTheDocument();
+  });
+
+  it('reads Planning change for the date-move stamp "No previous delivery date"', () => {
+    render(
+      <>{raisedCell(linesRow({ raise_event_kind: null, note: 'No previous delivery date' }))}</>,
+    );
+    expect(screen.getByText('Planning change')).toBeInTheDocument();
+  });
+
+  it('reads Planning change for the qty-drop stamp "Was 5, now 3"', () => {
+    render(<>{raisedCell(linesRow({ raise_event_kind: null, note: 'Was 5, now 3' }))}</>);
+    expect(screen.getByText('Planning change')).toBeInTheDocument();
   });
 });

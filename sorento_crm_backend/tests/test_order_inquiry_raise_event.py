@@ -129,3 +129,76 @@ def test_a_row_with_no_matching_event_carries_none_on_all_three():
         # The pre-existing "who currently owns this row" column is untouched by this
         # change - it still reads off its own coalesce, never off `order_inquiry_raises`.
         assert entry["raised_by_name"] == johnson.name
+
+
+def test_a_row_whose_only_event_is_hours_later_carries_none_on_all_three():
+    """Reviewer B1, round 1. On the 24 Sep prod copy 2,070 sheet-migrated rows had no
+    event of their own and latched onto a reconfirm 1 to 23 hours later, reading
+    "Reconfirmed by Jayson Foundryx" for a row a spreadsheet raised. Measured gaps for a
+    REAL match: 10,851 within 1.8s, 85 between 2s and 67s, then nothing until 1h 14m - so
+    the window has an upper bound of 10 minutes and anything past it is not this row's."""
+    with blank_session() as db:
+        company_id = _sorento(db)
+        jayson = _user(db, f"{MARKER} Jayson", f"jayson.{_uid()[:8]}@zzt.test")
+        order = _adopted_order(db, company_id, f"ZZTSO{_uid()[:8]}")
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        line = _line(db, company_id, order, product)
+        header = _inquiry(
+            db, company_id, order, raised_by=jayson.id,
+            raised_at=datetime(2026, 9, 1, 0, 0),
+        )
+        row = _row(db, company_id, header, line, product.product_code)
+        row.created_at = datetime(2026, 9, 1, 0, 0)
+        # The ONLY event on this inquiry, hours after the row was born.
+        _raise(
+            db, company_id, header,
+            kind=OI_RAISE_RECONFIRMED, raised_by=jayson.id,
+            raised_at=row.created_at + timedelta(hours=3),
+        )
+        db.commit()
+
+        client, originals = _client(db, jayson.id, READ_ONLY)
+        try:
+            response = client.get(LIST, params={"query": product.product_code})
+        finally:
+            _restore(originals)
+
+        assert response.status_code == 200, response.text
+        rows = {entry["id"]: entry for entry in response.json()["data"]}
+        entry = rows[row.id]
+        assert entry["raise_event_kind"] is None
+        assert entry["raise_event_by_name"] is None
+        assert entry["raise_event_at"] is None
+
+
+def test_an_event_a_minute_after_the_row_still_matches():
+    """The 85 real matches between 2s and 67s sit INSIDE the 10-minute bound."""
+    with blank_session() as db:
+        company_id = _sorento(db)
+        nurain = _user(db, f"{MARKER} Nurain", f"nurain.{_uid()[:8]}@zzt.test")
+        order = _adopted_order(db, company_id, f"ZZTSO{_uid()[:8]}")
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        line = _line(db, company_id, order, product)
+        header = _inquiry(
+            db, company_id, order, raised_by=nurain.id,
+            raised_at=datetime(2026, 9, 1, 0, 0),
+        )
+        row = _row(db, company_id, header, line, product.product_code)
+        row.created_at = datetime(2026, 9, 1, 0, 0)
+        _raise(
+            db, company_id, header,
+            kind=OI_RAISE_RECONFIRMED, raised_by=nurain.id,
+            raised_at=row.created_at + timedelta(seconds=67),
+        )
+        db.commit()
+
+        client, originals = _client(db, nurain.id, READ_ONLY)
+        try:
+            response = client.get(LIST, params={"query": product.product_code})
+        finally:
+            _restore(originals)
+
+        assert response.status_code == 200, response.text
+        entry = {e["id"]: e for e in response.json()["data"]}[row.id]
+        assert entry["raise_event_kind"] == OI_RAISE_RECONFIRMED
+        assert entry["raise_event_by_name"] == nurain.name

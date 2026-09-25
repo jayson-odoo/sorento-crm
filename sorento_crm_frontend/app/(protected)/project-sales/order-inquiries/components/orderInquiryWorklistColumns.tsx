@@ -844,9 +844,14 @@ export function InstructionCell({ row }: { row: OrderInquiryWorklistRow }) {
 export function RaisedCell({ row }: { row: OrderInquiryWorklistRow }) {
   const kind = raisedKindLabel(row);
   if (!kind) return <Muted>-</Muted>;
-  const text = `${kind}${row.raise_event_by_name ? ` by ${row.raise_event_by_name}` : ''}${
-    row.raise_event_at ? ` · ${formatDateTimeInMalaysia(row.raise_event_at)}` : ''
-  }`;
+  // A sheet row reads the bare word: whatever event the window matched, nobody in this
+  // system raised it, and a name or a time beside "Sheet" would say somebody did.
+  const text =
+    kind === 'Sheet'
+      ? kind
+      : `${kind}${row.raise_event_by_name ? ` by ${row.raise_event_by_name}` : ''}${
+          row.raise_event_at ? ` · ${formatDateTimeInMalaysia(row.raise_event_at)}` : ''
+        }`;
   return (
     <span className="block truncate" title={text}>
       {text}
@@ -1203,11 +1208,13 @@ export function useOrderInquiryWorklistColumns({
         // default here (`DEFAULT_HIDDEN_COLUMNS`); the OI detail Lines tab shows the
         // same column visible (`orderInquiryHeaderLinesColumns.tsx`). Unsortable: it is
         // a derived, per-row match against `order_inquiry_raises`, not a plain column.
+        // "Raised via", not "Raised": the "Raised by" column sits right beside this one
+        // (captain ruling, review round 1).
         id: 'raise_event',
-        header: ({ column }) => <DataGridColumnHeader title="Raised" column={column} />,
+        header: ({ column }) => <DataGridColumnHeader title="Raised via" column={column} />,
         size: 220,
         enableSorting: false,
-        meta: { headerTitle: 'Raised', skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'Raised via', skeleton: <Skeleton className="h-4 w-24" /> },
         cell: ({ row }) => <RaisedCell row={row.original} />,
       },
       {

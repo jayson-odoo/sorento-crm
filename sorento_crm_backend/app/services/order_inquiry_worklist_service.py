@@ -2137,9 +2137,14 @@ class OrderInquiryWorklistService:
         Rows and their raise event are written in the SAME call
         (`ProjectOrderInquiryService._write` alongside `OrderInquiryRaise`'s own
         writer), so the match is the event of the SAME inquiry with the smallest
-        `raised_at >= row.created_at - 1 second` - the prod gap measured 1.3 seconds
-        (SO390524 / OI-2609-0731, 25 Sep 2026). `None` on all three when nothing
-        matches, which is every row migrated before raises were recorded.
+        `raised_at` inside `[row.created_at - 1s, row.created_at + 10 min]` - the prod
+        gap measured 1.3 seconds (SO390524 / OI-2609-0731, 25 Sep 2026). The UPPER
+        bound is what keeps a row that has no event of its own from latching onto the
+        next reconfirm on the same inquiry (reviewer B1, round 1: 2,070 sheet-migrated
+        rows read "Reconfirmed by Jayson Foundryx" off an event 1 to 23 hours later).
+        Measured on the 24 Sep prod copy: 10,851 real matches within 1.8s, 85 between
+        2s and 67s, then nothing until 1h 14m - ten minutes sits in the empty stretch.
+        `None` on all three when nothing falls inside the window.
 
         ONE grouped query for the whole PAGE, never one per row: every raise event of
         every inquiry the page's rows belong to, read once and matched in Python.
@@ -2165,20 +2170,26 @@ class OrderInquiryWorklistService:
                 (raised_at, kind, name)
             )
 
-        window = timedelta(seconds=1)
+        before = timedelta(seconds=1)
+        after = timedelta(minutes=10)
         out: Dict[str, Dict[str, Any]] = {}
         for row in rows:
             candidates = events_by_inquiry.get(str(row.order_inquiry_id or ""), [])
             # `row.raised_at` IS `OrderInquiryRow.created_at` (`_RAISED_AT` above) -
-            # this row's own birth, the threshold this window is measured against.
-            threshold = row.raised_at - window if row.raised_at else None
-            match = next(
-                (
-                    entry
-                    for entry in candidates
-                    if threshold is None or entry[0] >= threshold
-                ),
-                None,
+            # this row's own birth, the moment the window is measured around. A row
+            # with no birth stamp at all matches nothing rather than everything.
+            born = row.raised_at
+            match = (
+                next(
+                    (
+                        entry
+                        for entry in candidates
+                        if born - before <= entry[0] <= born + after
+                    ),
+                    None,
+                )
+                if born is not None
+                else None
             )
             out[row.id] = (
                 {"at": match[0], "kind": match[1], "by_name": match[2]}
