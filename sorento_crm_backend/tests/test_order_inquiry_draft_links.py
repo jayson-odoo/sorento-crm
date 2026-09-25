@@ -84,6 +84,7 @@ from .test_order_inquiry_handshake import (
     _raise_two_rows,
     _restore,
     _settle,
+    _suggested_of,
     _supplier,
     _uid,
     _warehouse,
@@ -181,6 +182,12 @@ def _link_documents(world, row) -> list:
     return [link.document for link in _links_of(world, row)]
 
 
+def _suggested_documents(world, row) -> list:
+    """S3 (`PLAN-oi-links-autocount-truth-24sep.md`): the same question `_link_documents`
+    answers for real links, for the cascade walk's own guesses."""
+    return [suggestion.document for suggestion in _suggested_of(world, row)]
+
+
 # ---------------------------------------------------------------------------
 # AC-D1: the board confirm finds the documents
 # ---------------------------------------------------------------------------
@@ -189,9 +196,12 @@ def _link_documents(world, row) -> list:
 def test_a_board_confirm_raises_a_row_that_already_holds_its_document(api):
     """AC-D1, still true after `PLAN-oi-confirm-per-so.md` S1 reverses G4's own change:
     purchasing opens the page and the answer is on the row - the raise-time cascade never
-    waited on the handshake either side of that lane, so the document it finds is firm
-    from the moment it is written, DRAFT or not. The row itself is born AWAITING again
-    (S1): what makes the link firm is `OrderInquiryLink.auto`, never `ack_state`.
+    waited on the handshake either side of that lane, so the document it finds reaches
+    the row from the moment it is written, DRAFT or not. The row itself is born AWAITING
+    again (S1).
+
+    S3 reversal: the open line carries no book match, so what the raise-time cascade
+    writes is a SUGGESTION now, never a real link.
     """
     _client, world = api
     po, _line = _open_po_line(world, qty=50)
@@ -200,7 +210,8 @@ def test_a_board_confirm_raises_a_row_that_already_holds_its_document(api):
     row = fixture["row"]
 
     assert row.ack_state == ACK_AWAITING
-    assert _link_documents(world, row) == [po.po_number]
+    assert _link_documents(world, row) == []
+    assert _suggested_documents(world, row) == [po.po_number]
 
 
 def test_a_row_nothing_can_cover_still_comes_out_unlinked(api):
@@ -216,14 +227,25 @@ def test_a_row_nothing_can_cover_still_comes_out_unlinked(api):
 def test_the_row_carries_its_own_link_and_no_column_on_the_link(api):
     """R1: the link table gains no state column; a reader asks the row's OWN link's
     `auto` flag, never `ack_state` - which reads `awaiting` the instant the row exists
-    again (`PLAN-oi-confirm-per-so.md` S1), same as it always could."""
+    again (`PLAN-oi-confirm-per-so.md` S1), same as it always could.
+
+    S3: the open line carries no book match, so the raise-time cascade only SUGGESTS
+    it now - a real `OrderInquiryLink` for R1's own shape check is seeded directly
+    here, through `place_on_po_allocations`, the same manual path a buyer's own press
+    takes.
+    """
     _client, world = api
-    _open_po_line(world, qty=50)
+    _po, line = _open_po_line(world, qty=50)
     row = _raise_one_row(api)["row"]
+    ProjectOrderInquiryService(world.db).place_on_po_allocations(
+        str(row.id), [{"po_line_id": str(line.id), "qty": "10"}], actor_user_id=None,
+    )
+    world.db.commit()
 
     link = _links_of(world, row)[0]
 
     assert not hasattr(link, "status"), "a link state column is exactly what R1 refused"
+    world.db.refresh(row)
     assert row.ack_state == ACK_AWAITING
 
 
@@ -233,7 +255,11 @@ def test_the_row_carries_its_own_link_and_no_column_on_the_link(api):
 
 
 def test_an_order_row_drafts_onto_a_shipping_order_before_any_purchase_order(api):
-    """R5: "SPO link is always one, always SPO first then PO". Not only an ORDER BACK."""
+    """R5: "SPO link is always one, always SPO first then PO". Not only an ORDER BACK.
+
+    S3 reversal: neither document carries a book match, so what the cascade offers
+    is a SUGGESTION, never a real link.
+    """
     _client, world = api
     pool = _pooled(world)
     allocation = _spo_line(world, qty=50, warehouse=pool)
@@ -242,7 +268,8 @@ def test_an_order_row_drafts_onto_a_shipping_order_before_any_purchase_order(api
     row = _raise_one_row(api)["row"]
 
     assert row.verb == IV_ORDER
-    assert _link_documents(world, row) == [allocation.spo_number]
+    assert _link_documents(world, row) == []
+    assert _suggested_documents(world, row) == [allocation.spo_number]
 
 
 def test_a_shipping_order_line_outside_the_pool_is_never_drafted(api):
@@ -270,13 +297,15 @@ def test_a_shipping_order_line_outside_the_pool_is_never_drafted(api):
 
 
 def test_two_rows_are_never_drafted_onto_the_same_units(api):
-    """SLICE D, 8 Sep 2026 (S5, review of PR): the first row's draft takes the line's
-    whole balance up to its own need - 12 covers its 10 in full, leaving exactly 2 - and
-    the SECOND row needs exactly that 2, so the all-or-nothing rule (AC-D2, covered in
-    full) drafts it the remainder and no more. Sized this way rather than at 10 so the
-    test keeps a POSITIVE assertion: the second row takes exactly what is left, proving
-    the two never draft onto the same units, rather than a vacuous "gets nothing" that a
-    row needing more than the whole line would read the same either way.
+    """SLICE D, 8 Sep 2026 (S5, review of PR): the first row's own take covers the
+    line's whole balance up to its own need - 12 covers its 10 in full, leaving exactly
+    2 - and the SECOND row needs exactly that 2, so the all-or-nothing rule (AC-D2,
+    covered in full) offers it the remainder and no more. Sized this way rather than at
+    10 so the test keeps a POSITIVE assertion: the second row takes exactly what is
+    left, proving the two never draft onto the same units, rather than a vacuous "gets
+    nothing" that a row needing more than the whole line would read the same either way.
+
+    S3 reversal: no book match, so both takes are SUGGESTIONS, never real links.
     """
     _client, world = api
     _open_po_line(world, qty=12)
@@ -284,8 +313,10 @@ def test_two_rows_are_never_drafted_onto_the_same_units(api):
     first = _raise_one_row(api, qty="10")["row"]
     second = _raise_one_row(api, qty="2")["row"]
 
-    assert sum(Decimal(str(l.qty)) for l in _links_of(world, first)) == Decimal("10")
-    assert sum(Decimal(str(l.qty)) for l in _links_of(world, second)) == Decimal("2")
+    assert _links_of(world, first) == []
+    assert _links_of(world, second) == []
+    assert sum(Decimal(str(s.qty)) for s in _suggested_of(world, first)) == Decimal("10")
+    assert sum(Decimal(str(s.qty)) for s in _suggested_of(world, second)) == Decimal("2")
 
 
 # ---------------------------------------------------------------------------
@@ -309,10 +340,15 @@ def test_the_plan_still_ignores_a_to_confirm_rows_remainder(api):
 
 
 def test_confirm_stamps_the_row_and_moves_no_link(api):
+    """S3 reversal: the open line carries no book match, so what the raise found is a
+    SUGGESTION - "moves no link" is what `_same_placement` guarantees for it too: an
+    unchanged answer is not deleted and rewritten, so the same suggestion (same id)
+    survives Confirm's own cascade pass untouched."""
     _client, world = api
     po, _line = _open_po_line(world, qty=50)
     row = _raise_one_row(api)["row"]
     before = [str(link.id) for link in _links_of(world, row)]
+    before_suggested = [str(s.id) for s in _suggested_of(world, row)]
 
     with _as_purchasing(world) as buyer:
         response = buyer.post(ACK_URL, json={"row_ids": [str(row.id)]})
@@ -322,26 +358,32 @@ def test_confirm_stamps_the_row_and_moves_no_link(api):
     world.db.refresh(row)
     assert row.ack_state == ACK_ACKNOWLEDGED
     assert [str(link.id) for link in _links_of(world, row)] == before
-    assert _link_documents(world, row) == [po.po_number]
+    assert [str(s.id) for s in _suggested_of(world, row)] == before_suggested
+    assert _suggested_documents(world, row) == [po.po_number]
 
 
 def test_confirm_fills_a_remainder_a_draft_could_not_cover_in_full(api):
-    """The press still cascades. SLICE D, 8 Sep 2026: the raise itself now drafts NOTHING
-    when 4 falls short of the row's 10 (AC-D1) - there is no half-covered draft left to
-    finish. Once a second line brings the total to 10, Confirm's own cascade covers the
-    row in full in one pass.
+    """The press still cascades. SLICE D, 8 Sep 2026: the raise itself now suggests
+    NOTHING when 4 falls short of the row's 10 (AC-D1) - there is no half-covered
+    guess left to finish. Once a second line brings the total to 10, Confirm's own
+    cascade covers the row in full in one pass.
+
+    S3 reversal: neither line carries a book match, so what Confirm's cascade writes
+    is a SUGGESTION, never a real link.
     """
     _client, world = api
     _open_po_line(world, qty=4)
     row = _raise_one_row(api, qty="10")["row"]
     assert sum(Decimal(str(l.qty)) for l in _links_of(world, row)) == Decimal("0")
+    assert _suggested_of(world, row) == []
 
     _open_po_line(world, qty=6)
     with _as_purchasing(world) as buyer:
         assert buyer.post(ACK_URL, json={"row_ids": [str(row.id)]}).status_code == 200
     world.db.commit()
 
-    assert sum(Decimal(str(l.qty)) for l in _links_of(world, row)) == Decimal("10")
+    assert sum(Decimal(str(l.qty)) for l in _links_of(world, row)) == Decimal("0")
+    assert sum(Decimal(str(s.qty)) for s in _suggested_of(world, row)) == Decimal("10")
 
 
 # ---------------------------------------------------------------------------
@@ -351,11 +393,22 @@ def test_confirm_fills_a_remainder_a_draft_could_not_cover_in_full(api):
 
 def test_reject_unplaces_every_link_and_gives_the_quantity_back(api):
     """Today's reject refused a fully linked row outright, which with drafts is most of
-    them. It takes the links down first instead, and the purchase order is free again."""
+    them. It takes the links down first instead, and the purchase order is free again.
+
+    S3: the open line carries no book match, so the raise-time cascade only SUGGESTS
+    it now - the real link this test's own subject (reject giving the quantity back)
+    needs is seeded directly here, through `place_on_po_allocations`, the same manual
+    path a buyer's own press takes.
+    """
     _client, world = api
     _po, line = _open_po_line(world, qty=50)
     row = _raise_one_row(api, qty="10")["row"]
-    assert _links_of(world, row), "the draft has to exist for the test to mean anything"
+    ProjectOrderInquiryService(world.db).place_on_po_allocations(
+        str(row.id), [{"po_line_id": str(line.id), "qty": "10"}], actor_user_id=None,
+    )
+    world.db.commit()
+    world.db.refresh(row)
+    assert _links_of(world, row), "the link has to exist for the test to mean anything"
     assert row.state == INQUIRY_PLACED
 
     with _as_purchasing(world) as buyer:
@@ -374,17 +427,29 @@ def test_reject_unplaces_every_link_and_gives_the_quantity_back(api):
 
 
 def test_reject_on_a_placed_row_frees_the_pos_remaining_for_the_next_candidate(api):
-    """Not just a number on a report: the freed quantity is real enough for a SECOND row's
-    own draft to take it on the next re-deal. The first row takes the whole line, so a
-    second row raised straight after it is left with nothing - the proof the reject really
-    freed something rather than merely zeroing a count."""
+    """Not just a number on a report: the freed quantity is real enough for a SECOND
+    row's own take to take it on the next re-deal. The first row takes the whole line,
+    so a second row raised straight after it is left with nothing - the proof the
+    reject really freed something rather than merely zeroing a count.
+
+    S3: the line carries no book match, so the FIRST row's whole-line hold is seeded
+    directly here (through `place_on_po_allocations`) rather than relied on from the
+    raise-time cascade, which would only suggest it - the reject's own subject (real
+    capacity given back) needs a real hold to take back in the first place. The
+    SECOND row's own take, after the reject frees the line, is a SUGGESTION.
+    """
     _client, world = api
-    _open_po_line(world, qty=10)
+    _po, line = _open_po_line(world, qty=10)
     first = _raise_one_row(api, qty="10")["row"]
+    ProjectOrderInquiryService(world.db).place_on_po_allocations(
+        str(first.id), [{"po_line_id": str(line.id), "qty": "10"}], actor_user_id=None,
+    )
+    world.db.commit()
     assert sum(Decimal(str(l.qty)) for l in _links_of(world, first)) == Decimal("10")
 
     second = _raise_one_row(api, qty="5")["row"]
     assert _links_of(world, second) == [], "nothing was left for it while the first held it"
+    assert _suggested_of(world, second) == []
 
     with _as_purchasing(world) as buyer:
         assert (
@@ -398,7 +463,8 @@ def test_reject_on_a_placed_row_frees_the_pos_remaining_for_the_next_candidate(a
     world.db.commit()
 
     world.db.refresh(second)
-    assert sum(Decimal(str(l.qty)) for l in _links_of(world, second)) == Decimal("5")
+    assert _links_of(world, second) == []
+    assert sum(Decimal(str(s.qty)) for s in _suggested_of(world, second)) == Decimal("5")
 
 
 def test_the_batch_reject_takes_one_reason_for_every_row(api):
@@ -508,12 +574,18 @@ def test_auto_link_all_moves_a_draft_onto_a_nearer_document(api):
     `awaiting` (`PLAN-oi-confirm-per-so.md` S1) or born acknowledged (the world G4 made
     and this lane retires) - so the fact that survives is `_only_cascade_links`. A row
     nobody has MANUALLY linked is still the cascade's own guess, whatever its ack_state
-    says, and a better document arriving is still reason enough to move it."""
+    says, and a better document arriving is still reason enough to move it.
+
+    S3 reversal: neither document carries a book match, so the "draft" is a
+    SUGGESTION now - which moves for free on every pass (`_write_suggested_links`
+    always re-derives it), `redeal_drafts` or not.
+    """
     _client, world = api
     far, _far_line = _open_po_line(world, qty=50, expected_date=date(2026, 12, 1))
     row = _raise_one_row(api)["row"]
     assert row.ack_state == ACK_AWAITING, "not the signal `_only_cascade_links` reads either"
-    assert _link_documents(world, row) == [far.po_number]
+    assert _link_documents(world, row) == []
+    assert _suggested_documents(world, row) == [far.po_number]
 
     near, _near_line = _open_po_line(world, qty=50, expected_date=date(2026, 7, 1))
     with _as_purchasing(world) as buyer:
@@ -521,26 +593,32 @@ def test_auto_link_all_moves_a_draft_onto_a_nearer_document(api):
     assert response.status_code == 200, response.text
     world.db.commit()
 
-    assert _link_documents(world, row) == [near.po_number]
+    assert _link_documents(world, row) == []
+    assert _suggested_documents(world, row) == [near.po_number]
 
 
 def test_auto_link_all_never_moves_a_manually_linked_rows_link(api):
     """The other half of R2, and the one that matters: a link a PERSON made by hand is a
     promise, whether or not anybody ever pressed the now-tolerant Acknowledge (S1) - a
-    manual link, not `ack_state`, is what freezes a row against the re-deal."""
+    manual link, not `ack_state`, is what freezes a row against the re-deal.
+
+    S3 reversal: the raise-time cascade only SUGGESTS the far document now - there is
+    no real "draft" to take down first any more, AC-LT-15's own trim does that the
+    moment the manual link below lands on the same target.
+    """
     _client, world = api
     far, far_line = _open_po_line(world, qty=50, expected_date=date(2026, 12, 1))
     row = _raise_one_row(api)["row"]
-    assert _link_documents(world, row) == [far.po_number], "the raise-time cascade found it"
+    assert _link_documents(world, row) == [], "the raise-time cascade only suggests"
+    assert _suggested_documents(world, row) == [far.po_number]
 
-    # Take the cascade's own draft down and re-link it BY HAND, so the row's one link is
-    # genuinely a person's choice rather than the walk's.
-    ProjectOrderInquiryService(world.db).unplace(str(row.id), actor_user_id=world.buyer)
-    world.db.commit()
+    # Link it BY HAND, so the row's one link is genuinely a person's choice rather than
+    # the walk's - the suggestion above is trimmed automatically the moment this lands.
     ProjectOrderInquiryService(world.db).place_on_po_allocations(
         row.id, [{"po_line_id": str(far_line.id), "qty": "10"}], actor_user_id=world.buyer,
     )
     world.db.commit()
+    assert _suggested_documents(world, row) == []
 
     with _as_purchasing(world) as buyer:
         _open_po_line(world, qty=50, expected_date=date(2026, 7, 1))
@@ -556,9 +634,13 @@ def test_auto_link_all_never_moves_a_manually_linked_rows_link(api):
 
 
 def test_a_purchase_order_confirm_links_an_awaiting_row(api):
-    """A plan-generated purchase order is confirmed and the rows that sized it read it -
-    firmly, even though the row itself is born `awaiting` (`PLAN-oi-confirm-per-so.md`
-    S1) and never pressed: this cascade never waited on the handshake, R6."""
+    """A plan-generated purchase order is confirmed and the rows that sized it read it,
+    even though the row itself is born `awaiting` (`PLAN-oi-confirm-per-so.md` S1) and
+    never pressed: this cascade never waited on the handshake, R6.
+
+    S3 reversal: the plan-generated line carries no book match, so the confirm's own
+    cascade SUGGESTS it, it never writes a real link.
+    """
     from app.services.scm.purchase_order_service import PurchaseOrderService
 
     _client, world = api
@@ -595,7 +677,8 @@ def test_a_purchase_order_confirm_links_an_awaiting_row(api):
     world.db.expire_all()
     row = world.db.query(OrderInquiryRow).filter(OrderInquiryRow.id == row.id).one()
     assert row.ack_state == ACK_AWAITING
-    assert len(_links_of(world, row)) == 1
+    assert _links_of(world, row) == []
+    assert len(_suggested_of(world, row)) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -717,39 +800,48 @@ def test_an_unknown_acknowledgement_filter_is_still_refused(api):
 
 
 def test_a_late_document_says_how_many_days_late_it_is(api):
+    """S3 reversal: the open line carries no book match, so the raise-time cascade
+    only SUGGESTS it - `late_days` is on the `suggested_links` wire shape too (plan
+    3.5), `late` (a real-link-only field) is not."""
     client, world = api
     _open_po_line(world, qty=50, expected_date=LATE_ARRIVAL)
     row = _raise_one_row(api)["row"]
 
     listed = _listed(client, row)
-    link = listed["links"][0]
+    assert listed["links"] == []
+    suggestion = listed["suggested_links"][0]
 
-    assert link["late"] is True
-    assert link["late_days"] == LATE_BY
+    assert suggestion["late_days"] == LATE_BY
 
 
 def test_a_document_that_lands_in_time_states_no_day_count(api):
+    """S3 reversal: no book match, so the row's own take is a suggestion."""
     client, world = api
     _open_po_line(world, qty=50, expected_date=date(2026, 8, 1))
     row = _raise_one_row(api)["row"]
 
-    link = _listed(client, row)["links"][0]
+    listed = _listed(client, row)
+    assert listed["links"] == []
+    suggestion = listed["suggested_links"][0]
 
-    assert link["late"] is False
-    assert link["late_days"] is None
+    assert suggestion["late_days"] is None
 
 
 def test_an_spo_link_reads_its_pool_location_rather_than_a_line_number(api):
+    """S3 reversal: the SPO allocation carries no book match, so the row's own take is
+    a suggestion - `suggested_links` carries `location` (plan 3.5), never `line_label`,
+    which is a real-link-only field (a suggestion is not a commitment to one line)."""
     client, world = api
     pool = _pooled(world)
     _spo_line(world, qty=50, warehouse=pool, line_no=14)
     row = _raise_one_row(api)["row"]
 
-    link = _listed(client, row)["links"][0]
+    listed = _listed(client, row)
+    assert listed["links"] == []
+    suggestion = listed["suggested_links"][0]
 
-    assert link["kind"] == "spo"
-    assert link["location"] == pool.warehouse_code
-    assert link["line_label"] == "L14", "the line number moves into the title, it is kept"
+    assert suggestion["kind"] == "spo"
+    assert suggestion["location"] == pool.warehouse_code
 
 
 def test_an_spo_link_with_no_warehouse_falls_back_to_the_books_own_code(api):
@@ -781,7 +873,10 @@ def test_an_spo_link_with_no_warehouse_falls_back_to_the_books_own_code(api):
 
 def test_the_sales_order_detail_carries_the_day_count_too(api):
     """The SO detail is a second reader of the same link, and `response_model` drops a
-    field it has not been told about just as silently there."""
+    field it has not been told about just as silently there.
+
+    S3 reversal: the open line carries no book match, so the row's own take is a
+    suggestion (AC-LT-33: `suggested_links` on the wire too, same field)."""
     client, world = api
     _open_po_line(world, qty=50, expected_date=LATE_ARRIVAL)
     fixture = _raise_one_row(api)
@@ -791,7 +886,8 @@ def test_the_sales_order_detail_carries_the_day_count_too(api):
     ).json()
     row = next(item for item in body["rows"] if item["id"] == str(fixture["row"].id))
 
-    assert row["links"][0]["late_days"] == LATE_BY
+    assert row["links"] == []
+    assert row["suggested_links"][0]["late_days"] == LATE_BY
 
 
 # ---------------------------------------------------------------------------
@@ -802,29 +898,44 @@ def test_the_sales_order_detail_carries_the_day_count_too(api):
 def test_the_purchase_order_lightbox_names_who_is_holding_the_quantity(api):
     """No manual press ever happens here, so the row is born `awaiting`
     (`PLAN-oi-confirm-per-so.md` S1) - the panel reads the link off it either way, since
-    the raise-time cascade never waited on the handshake."""
+    the raise-time cascade never waited on the handshake.
+
+    S3 reversal: the open line carries no book match, so what lands on the row is a
+    SUGGESTION, never a real link - `allocations` (real links only) stays empty.
+
+    Review round 2 Should fix 5 (AC-LT-34, amended): the lightbox's own "Suggested
+    for" panel is retired - R13 replaced it with the Lines tab's own Allocated/
+    Suggested columns, the WHOLE answer now, so `suggested_links` never reaches
+    this wire at all any more.
+    """
     client, world = api
     po, _line = _open_po_line(world, qty=50)
-    row = _raise_one_row(api, qty="10")["row"]
+    _raise_one_row(api, qty="10")
 
     body = client.get(f"{LIST}/po/{po.id}").json()
 
-    assert body["allocations"], "the Allocated to panel reads off the links"
-    allocation = body["allocations"][0]
-    assert allocation["qty"] == "10"
-    assert allocation["ack_state"] == ACK_AWAITING
-    assert allocation["item_code"] == row.item_code
-    assert allocation["inquiry_no"]
+    assert body["allocations"] == [], "no real link sits on the suggested-only line"
+    assert "suggested_links" not in body, "the retired lightbox panel is gone from the wire"
 
 
 def test_the_purchase_order_lightbox_reads_a_manual_acknowledge_press_as_confirmed_too(api):
     """A redundant press over an already-acknowledged row is a tolerant no-op (G4) - the
-    panel reads it as confirmed either way."""
+    panel reads it as confirmed either way.
+
+    S3: the open line carries no book match, so acknowledging only refreshes the row's
+    own suggestion - the REAL link this test's own subject (the panel's `ack_state`
+    reading) needs is seeded directly here, through `place_on_po_allocations`, the
+    same manual path a buyer's own press takes.
+    """
     client, world = api
-    po, _line = _open_po_line(world, qty=50)
+    po, line = _open_po_line(world, qty=50)
     row = _raise_one_row(api, qty="10")["row"]
     with _as_purchasing(world) as buyer:
         assert buyer.post(ACK_URL, json={"row_ids": [str(row.id)]}).status_code == 200
+    world.db.commit()
+    ProjectOrderInquiryService(world.db).place_on_po_allocations(
+        str(row.id), [{"po_line_id": str(line.id), "qty": "10"}], actor_user_id=world.buyer,
+    )
     world.db.commit()
 
     body = client.get(f"{LIST}/po/{po.id}").json()
@@ -864,17 +975,133 @@ def test_the_shipping_order_lightbox_answers_its_lines(api):
 def test_the_shipping_order_lightbox_names_who_is_holding_it(api):
     """No manual press ever happens here, so the row is born `awaiting`
     (`PLAN-oi-confirm-per-so.md` S1) - the panel reads the link off it either way, since
-    the raise-time cascade never waited on the handshake."""
+    the raise-time cascade never waited on the handshake.
+
+    S3 reversal: the allocation carries no book match, so what lands on the row is a
+    SUGGESTION, never a real link - `allocations` stays empty.
+
+    Review round 2 Should fix 5 (AC-LT-34, amended): same reversal as the PO
+    lightbox's own sibling test above - the "Suggested for" panel is retired.
+    """
     client, world = api
     pool = _pooled(world)
     allocation = _spo_line(world, qty=50, warehouse=pool)
-    row = _raise_one_row(api, qty="10")["row"]
+    _raise_one_row(api, qty="10")
 
     body = client.get(f"{LIST}/spo/{quote(allocation.spo_number, safe='')}").json()
 
-    assert body["allocations"][0]["qty"] == "10"
-    assert body["allocations"][0]["ack_state"] == ACK_AWAITING
-    assert body["allocations"][0]["item_code"] == row.item_code
+    assert body["allocations"] == [], "no real link sits on the suggested-only allocation"
+    assert "suggested_links" not in body, "the retired lightbox panel is gone from the wire"
+
+
+# ---------------------------------------------------------------------------
+# Issue #1215 point 2: the lightbox names WHICH line an allocation sits on, and
+# the PO lines grid states each line's own Allocated total.
+# ---------------------------------------------------------------------------
+
+
+def test_the_purchase_order_lightbox_allocation_names_the_line_its_own_qty_sits_on(api):
+    """S3: the open line carries no book match, so the raise-time cascade only
+    SUGGESTS it - `po_line_id` on a real allocation and a line's own `allocated`
+    total (Issue #1215 point 2) are both real-link concepts, so the link this test's
+    subject needs is seeded directly here, through `place_on_po_allocations`."""
+    client, world = api
+    po, line = _open_po_line(world, qty=50)
+    row = _raise_one_row(api, qty="10")["row"]
+    ProjectOrderInquiryService(world.db).place_on_po_allocations(
+        str(row.id), [{"po_line_id": str(line.id), "qty": "10"}], actor_user_id=None,
+    )
+    world.db.commit()
+
+    body = client.get(f"{LIST}/po/{po.id}").json()
+
+    assert body["allocations"][0]["po_line_id"] == line.id
+    detail_line = body["lines"][0]
+    assert detail_line["id"] == line.id
+    assert detail_line["allocated"] == "10"
+
+
+def test_the_purchase_order_lines_grid_allocated_is_per_line_not_the_whole_document(api):
+    """A PO with two lines of the SAME item is exactly what made the OLD panel
+    ambiguous (diagnosis point 2: the Item column happened to identify the line only
+    because the PO had one line per product). Only the line an order inquiry row is
+    actually linked to reads a non-zero Allocated; the other line of the same item
+    reads zero.
+
+    S3: a line's own `allocated` total is a real-link concept - the raise-time
+    cascade would only SUGGEST here, so the real link this test's subject needs is
+    seeded directly, through `place_on_po_allocations`.
+    """
+    client, world = api
+    po, taken_line = _open_po_line(world, qty=50)
+    free_line = PurchaseOrderLine(
+        id=str(uuid.uuid4()),
+        company_id=world.company_id,
+        purchase_order_id=po.id,
+        product_id=world.product.id,
+        warehouse_id=world.warehouse.id,
+        qty_ordered=Decimal("30"),
+        qty_received=Decimal("0"),
+        expected_date=date(2026, 9, 1),
+        line_status="open",
+    )
+    world.db.add(free_line)
+    world.db.commit()
+    row = _raise_one_row(api, qty="10")["row"]
+    ProjectOrderInquiryService(world.db).place_on_po_allocations(
+        str(row.id), [{"po_line_id": str(taken_line.id), "qty": "10"}], actor_user_id=None,
+    )
+    world.db.commit()
+
+    body = client.get(f"{LIST}/po/{po.id}").json()
+
+    lines_by_id = {line["id"]: line for line in body["lines"]}
+    assert lines_by_id[taken_line.id]["allocated"] == "10"
+    assert lines_by_id[free_line.id]["allocated"] == "0"
+
+
+def test_the_shipping_order_lightbox_line_carries_its_own_id(api):
+    """R15 (owner rulings, 25 Sep 2026, hand test on stack C): the SPO lightbox never
+    highlighted its own linked line the way the PO lightbox does (issue #1215 point 2) -
+    `get_po_detail` sends each line's own `id`, `get_spo_detail` never did. Without it
+    the FE has no field to match a link's `spo_allocation_id` against."""
+    client, world = api
+    pool = _pooled(world)
+    allocation = _spo_line(world, qty=50, warehouse=pool)
+
+    body = client.get(f"{LIST}/spo/{quote(allocation.spo_number, safe='')}").json()
+
+    assert body["lines"][0]["id"] == allocation.id
+
+
+def test_the_shipping_order_lightbox_highlights_the_real_linked_line_not_by_product(api):
+    """R15: the SPO lightbox must highlight the SPO line the OI row's own real link
+    names - `OrderInquiryLink.spo_allocation_id`, the exact allocation the cascade or a
+    person resolved through the SO line / PO line chain - never a re-match by product or
+    by source PO number on the frontend. Two lines of the SAME product prove the
+    identity is the FK, not a product guess."""
+    client, world = api
+    pool = _pooled(world)
+    taken = _spo_line(world, qty=50, warehouse=pool, spo_number="SPO-2026/09-ZZT1", line_no=1)
+    _other = _spo_line(
+        world, qty=30, warehouse=pool, spo_number="SPO-2026/09-ZZT1", line_no=2,
+    )
+    row = _raise_one_row(api, qty="10")["row"]
+    ProjectOrderInquiryService(world.db).place_on_po_allocations(
+        str(row.id), [{"spo_allocation_id": str(taken.id), "qty": "10"}], actor_user_id=None,
+    )
+    world.db.commit()
+
+    body = client.get(f"{LIST}/spo/{quote(taken.spo_number, safe='')}").json()
+    wire_link = next(
+        link for link in _links_of(world, row) if link.spo_allocation_id == taken.id
+    )
+
+    assert wire_link.spo_allocation_id == taken.id
+    lines_by_id = {line["id"]: line for line in body["lines"]}
+    assert taken.id in lines_by_id
+    assert _other.id in lines_by_id
+    assert taken.id != _other.id
 
 
 def test_the_shipping_order_lightbox_404s_on_a_number_nobody_holds(api):
@@ -906,12 +1133,18 @@ def test_auto_link_all_keeps_the_draft_of_a_row_that_is_now_past_the_cut_off(api
     """B1. The unplace used to run over the WHOLE scope before the per-row guards, so a
     drafted row the buyer had since moved past the cut off lost its documents and was
     reported as merely "held back". A press that leaves a row alone must leave its links
-    alone: the cut off says "do not deal this one", not "take back what it holds"."""
+    alone: the cut off says "do not deal this one", not "take back what it holds".
+
+    S3 reversal: the open line carries no book match, so the raise found a
+    SUGGESTION, not a real link - the horizon guard (`_after_horizon`, checked before
+    any candidate walk) `continue`s before `_write_suggested_links` ever runs, so the
+    guarantee holds identically: the same suggestion, untouched.
+    """
     _client, world = api
     _po, _line = _open_po_line(world, qty=50)
     row = _raise_one_row(api, qty="10")["row"]
-    before = [str(link.id) for link in _links_of(world, row)]
-    assert before, "the draft has to exist for the test to mean anything"
+    before = [str(s.id) for s in _suggested_of(world, row)]
+    assert before, "the suggestion has to exist for the test to mean anything"
 
     row.delivery_date = FAR
     world.db.flush()
@@ -925,18 +1158,27 @@ def test_auto_link_all_keeps_the_draft_of_a_row_that_is_now_past_the_cut_off(api
     # `>= 1`: this suite runs on the shared prod-copy database, whose own rows are past
     # this cut off too. What matters is that THIS row was counted and left alone.
     assert response.json()["after_horizon"] >= 1
-    assert [str(link.id) for link in _links_of(world, row)] == before
+    assert [str(s.id) for s in _suggested_of(world, row)] == before
 
 
-def test_auto_link_all_keeps_the_draft_when_the_document_has_since_closed(api):
-    """B1, the other half. The re-deal found no candidate at all - the purchase order was
-    received and closed between the raise and the press - and the old answer is still the
-    best one anybody has. Taking it down would leave the row reading "Not found (new
-    order)" for a quantity that IS on its way."""
+def test_auto_link_all_drops_the_suggestion_when_the_document_has_since_closed(api):
+    """B1, the other half - REVERSED by review round 2 Blocking 5 (AC-LT-19, dated 25
+    Sep 2026). The old B1 reason ("the old answer is still the best one anybody has")
+    applied to a real DRAFT link the row actually held - taking it down really did
+    lose the row its document. A SUGGESTION is a guess, never a placement, and a
+    closed line offered to a row is the exact defect behind issue #1215 point 3: the
+    honest end of a stale guess is that it goes, not that it lingers because nothing
+    else was found to replace it with.
+
+    S3 reversal, now reversed again: the open line carries no book match, so the
+    raise found a SUGGESTION - the walk `continue`s the moment candidates come back
+    empty, and now drops the row's stale suggestion there rather than leaving it
+    standing.
+    """
     _client, world = api
-    po, line = _open_po_line(world, qty=50)
+    _po, line = _open_po_line(world, qty=50)
     row = _raise_one_row(api, qty="10")["row"]
-    before = [str(link.id) for link in _links_of(world, row)]
+    before = [str(s.id) for s in _suggested_of(world, row)]
     assert before
 
     line.line_status = "closed"
@@ -947,15 +1189,19 @@ def test_auto_link_all_keeps_the_draft_when_the_document_has_since_closed(api):
         assert buyer.post(AUTO_PLACE, json={}).status_code == 200
     world.db.commit()
 
-    assert [str(link.id) for link in _links_of(world, row)] == before
-    assert _link_documents(world, row) == [po.po_number]
+    assert _suggested_of(world, row) == []
+    assert _suggested_documents(world, row) == []
 
 
 def test_two_presses_of_auto_link_all_change_nothing_at_all(api):
-    """S4. The re-deal deleted and rewrote identical links on every press, and wrote
-    "Unlinked from X; Re-dealt by worklist" onto the row's note each time - so a buyer who
-    pressed the button twice read a row that looked like it had moved twice. The take is
-    computed first, and a take that matches what the row already holds is skipped."""
+    """S4, rewritten for review round 2 Should fix 7: since S3 the walk's own terminal
+    write is a SUGGESTION, never a real link (`_links_of(world, row)` is `[]` on both
+    presses, which made the old link-id assertion here vacuous, `[] == []` - it no
+    longer guarded anything). The idempotence this test was written for is
+    `_write_suggested_links`'s own `_same_placement` check: an unchanged answer is not
+    deleted and rewritten, so the suggestion carries the SAME id and `suggested_at`
+    across both presses, and the row's own note is never touched (a suggestion writes
+    nothing onto the row at all)."""
     _client, world = api
     _open_po_line(world, qty=50)
     row = _raise_one_row(api, qty="10")["row"]
@@ -964,14 +1210,18 @@ def test_two_presses_of_auto_link_all_change_nothing_at_all(api):
         assert buyer.post(AUTO_PLACE, json={}).status_code == 200
         world.db.commit()
         world.db.refresh(row)
-        first = [str(link.id) for link in _links_of(world, row)]
+        assert _links_of(world, row) == [], "S3: the walk only ever suggests"
+        first = [(str(s.id), s.suggested_at) for s in _suggested_of(world, row)]
+        assert first, "the suggestion has to exist for the test to mean anything"
         note = row.note
         assert buyer.post(AUTO_PLACE, json={}).status_code == 200
     world.db.commit()
 
     world.db.refresh(row)
-    assert [str(link.id) for link in _links_of(world, row)] == first
-    assert row.note == note
+    assert _links_of(world, row) == []
+    second = [(str(s.id), s.suggested_at) for s in _suggested_of(world, row)]
+    assert second == first, "an unchanged answer is not deleted and rewritten"
+    assert row.note == note, "a suggestion writes nothing onto the row"
 
 
 # ---------------------------------------------------------------------------
@@ -988,12 +1238,29 @@ def test_a_reconfirm_with_a_new_date_moves_the_drafted_row_onto_that_date(api):
 
     It settles rather than being superseded and re-raised, because the same apply may have
     just SHIFTED a closed line's placement onto this row (AC-P3-6) and a re-raise would
-    hand that placement straight back to a stranger."""
+    hand that placement straight back to a stranger.
+
+    S3 reversal: the open line carries no book match, so the raise found a
+    SUGGESTION, not a real link - the row is `raised`, never `placed`, and
+    `_settle_row_in_place`'s own widened gate (`named_raised`, AC-R2-10/11) still
+    reaches a plain raised row with no real links, settling it the same way.
+
+    Review round 2 Blocking 5, "decide it the same way" as the closed-line reversal
+    beside this one: the settle itself touches no suggestion, but this SAME confirm
+    also runs `_draft_links_for_decision`'s fresh cascade pass straight after the
+    handoff (`ProjectSupplyService.confirm`), scoped to this decision's own rows -
+    so the suggestion IS re-derived here, not merely left alone. It reads unchanged
+    (same id, same `suggested_at`, via `_same_placement`) because the PO line is
+    still a valid, in-window candidate under the new date - the honest answer, not
+    a stale one surviving by accident. Had the date change pushed the line outside
+    the window, Blocking 5's own fix would drop it exactly as the closed-line test
+    beside this one now expects.
+    """
     _client, world = api
     po, _line = _open_po_line(world, qty=50)
     fixture = _raise_one_row(api)
     row = fixture["row"]
-    assert _links_of(world, row), "the draft has to exist for the test to mean anything"
+    assert _suggested_of(world, row), "the suggestion has to exist for the test to mean anything"
 
     fixture["core_line"].required_date = NOW
     fixture["line"].delivery_date = NOW
@@ -1005,11 +1272,12 @@ def test_a_reconfirm_with_a_new_date_moves_the_drafted_row_onto_that_date(api):
     world.db.commit()
 
     world.db.refresh(row)
-    assert row.state == INQUIRY_PLACED, "the draft is still what purchasing is looking at"
+    assert row.state == INQUIRY_RAISED, "no real document, never placed"
     survivor = _order_row(world, fixture["line"])
     assert str(survivor.id) == str(row.id), "the same instruction, not a second one"
     assert survivor.delivery_date == NOW
-    assert _link_documents(world, survivor) == [po.po_number], (
+    assert _link_documents(world, survivor) == []
+    assert _suggested_documents(world, survivor) == [po.po_number], (
         "the document the raise found for it is kept, never re-dealt"
     )
     assert survivor.previous_delivery_date == WAS, "and the row says what it was before"
@@ -1017,7 +1285,10 @@ def test_a_reconfirm_with_a_new_date_moves_the_drafted_row_onto_that_date(api):
 
 def test_a_reconfirm_that_lowers_a_drafted_rows_quantity_raises_no_exception(api):
     """B2. `placed > need` wrote a CANCEL_BALANCE exception - "purchasing bought 10, CS now
-    wants 4" - about a purchase nobody had agreed to."""
+    wants 4" - about a purchase nobody had agreed to.
+
+    S3 reversal: the open line carries no book match, so the raise only SUGGESTED it -
+    there is no real link for the settle to give back."""
     _client, world = api
     _open_po_line(world, qty=50)
     fixture = _raise_one_row(api, qty="10")
@@ -1036,14 +1307,15 @@ def test_a_reconfirm_that_lowers_a_drafted_rows_quantity_raises_no_exception(api
     assert _cancel_balance_rows(world, fixture["line"]) == []
     live = _live_rows(world, fixture["line"])
     assert [str(item.qty) for item in live] == ["4.0000"]
-    assert sum(
-        Decimal(str(link.qty)) for link in _links_of(world, live[0])
-    ) == Decimal("4")
+    assert _links_of(world, live[0]) == []
 
 
 def test_a_reconfirm_that_raises_a_drafted_rows_quantity_leaves_one_row(api):
     """B2. The netting split the line: 10 already "placed" plus a fresh 5, two rows in
-    front of purchasing for one instruction. One row of 15, drafted."""
+    front of purchasing for one instruction. One row of 15, drafted.
+
+    S3 reversal: the open line carries no book match, so the raise only SUGGESTED it -
+    there is no real link for the settled row to carry."""
     _client, world = api
     _open_po_line(world, qty=50)
     fixture = _raise_one_row(api, qty="10")
@@ -1059,20 +1331,28 @@ def test_a_reconfirm_that_raises_a_drafted_rows_quantity_leaves_one_row(api):
 
     live = _live_rows(world, fixture["line"])
     assert [str(item.qty) for item in live] == ["15.0000"]
-    assert sum(
-        Decimal(str(link.qty)) for link in _links_of(world, live[0])
-    ) == Decimal("15")
+    assert _links_of(world, live[0]) == []
 
 
 def test_a_confirmed_rows_links_survive_a_reconfirm_untouched(api):
     """The other side of B2, and the rule it must not break: purchasing said yes, so the
-    row IS supply and a reconfirm nets it exactly as it always did."""
+    row IS supply and a reconfirm nets it exactly as it always did.
+
+    S3: the open line carries no book match, so acknowledging only suggests it - the
+    row's own REAL link, the fact this test's subject (a confirmed row's promise
+    surviving a reconfirm) depends on, is seeded directly here, through
+    `place_on_po_allocations`, the same manual path a buyer's own press takes.
+    """
     _client, world = api
-    po, _line = _open_po_line(world, qty=50)
+    po, line = _open_po_line(world, qty=50)
     fixture = _raise_one_row(api, qty="10")
     row = fixture["row"]
     with _as_purchasing(world) as buyer:
         assert buyer.post(ACK_URL, json={"row_ids": [str(row.id)]}).status_code == 200
+    world.db.commit()
+    ProjectOrderInquiryService(world.db).place_on_po_allocations(
+        str(row.id), [{"po_line_id": str(line.id), "qty": "10"}], actor_user_id=world.buyer,
+    )
     world.db.commit()
     before = [str(link.id) for link in _links_of(world, row)]
 
@@ -1097,7 +1377,13 @@ def test_a_confirmed_rows_links_survive_a_reconfirm_untouched(api):
 def test_a_drafted_row_is_retired_when_its_line_leaves_the_revision(api):
     """B3. The retirement read `raised` only, and a drafted row is `placed` - so a line CS
     took back out of the decision left its row alive, holding purchase-order quantity for
-    an instruction that no longer exists."""
+    an instruction that no longer exists.
+
+    S3 reversal: the open line carries no book match, so both rows only hold
+    SUGGESTIONS - `_retire_uncovered_rows`'s own RAISED branch cancels a raised row
+    unconditionally regardless of what it holds, so the retirement itself is
+    unaffected; only the fixture-check and the "kept" assertion move to the
+    suggested-links table."""
     from app.services.project_supply_service import ProjectSupplyService
 
     _client, world = api
@@ -1105,7 +1391,7 @@ def test_a_drafted_row_is_retired_when_its_line_leaves_the_revision(api):
     fixture = _raise_two_rows(api)
     dropped = fixture["first"]["row"]
     kept = fixture["second"]["row"]
-    assert _links_of(world, dropped), "the draft has to exist for the test to mean anything"
+    assert _suggested_of(world, dropped), "the suggestion has to exist for the test to mean anything"
 
     ProjectSupplyService(world.db).uncover_lines(
         fixture["order"],
@@ -1117,10 +1403,10 @@ def test_a_drafted_row_is_retired_when_its_line_leaves_the_revision(api):
 
     world.db.refresh(dropped)
     assert dropped.state == INQUIRY_CANCELLED
-    assert _links_of(world, dropped) == [], "it held the quantity for ever"
+    assert _links_of(world, dropped) == []
     assert _live_rows(world, fixture["first"]["line"]) == []
-    assert _links_of(world, _order_row(world, fixture["second"]["line"])), (
-        "the line the revision kept keeps its own draft"
+    assert _suggested_of(world, _order_row(world, fixture["second"]["line"])), (
+        "the line the revision kept keeps its own suggestion"
     )
     assert kept is not None
 
@@ -1130,24 +1416,30 @@ def test_a_manually_linked_row_survives_retire_when_its_line_leaves_the_revision
     a row is retirable now, not `ack_state` - and a row a PERSON has manually linked
     (`place_on_po`, not the raise-time cascade) is exactly what that check has to leave
     alone. A retirement that swept it up anyway would take a promise a buyer made back
-    from them without asking."""
+    from them without asking.
+
+    S3 reversal: the open line carries no book match, so the raise-time cascade only
+    SUGGESTS it - there is no real "draft" to take down first any more, so the row is
+    linked BY HAND directly, the same technique
+    `test_auto_link_all_never_moves_a_manually_linked_rows_link` uses. `_cascade_only`
+    then reads a lone MANUAL link the same way it always did - the row must be
+    `placed`, not `raised`, or the retirement's own unconditional RAISED branch would
+    cancel it regardless of what it holds.
+    """
     from app.services.project_supply_service import ProjectSupplyService
 
     _client, world = api
     po, po_line = _open_po_line(world, qty=50)
     fixture = _raise_two_rows(api)
     dropped = fixture["first"]["row"]
-    assert _links_of(world, dropped), "the raise-time cascade has to have linked it first"
+    assert _suggested_of(world, dropped), "the raise-time cascade has to have suggested it first"
 
-    # Take the cascade's own draft down and re-link it BY HAND - the same technique
-    # `test_auto_link_all_never_moves_a_manually_linked_rows_link` uses - so the row's one
-    # link is genuinely a person's choice rather than the walk's.
-    ProjectOrderInquiryService(world.db).unplace(str(dropped.id), actor_user_id=world.buyer)
-    world.db.commit()
     ProjectOrderInquiryService(world.db).place_on_po(
         str(dropped.id), str(po_line.id), actor_user_id=world.buyer
     )
     world.db.commit()
+    world.db.refresh(dropped)
+    assert dropped.state == INQUIRY_PLACED, "a manual link covering it whole"
 
     ProjectSupplyService(world.db).uncover_lines(
         fixture["order"],
@@ -1247,7 +1539,8 @@ def test_the_batch_reject_of_two_lines_of_one_order_refuses_both(api):
     _open_po_line(world, qty=50)
     fixture = _raise_three_rows(api)
     first, second, kept = (entry["row"] for entry in fixture["lines"])
-    assert _links_of(world, first), "the drafts have to exist for the test to mean anything"
+    # S3 reversal: the open line carries no book match, so the raise only SUGGESTED it.
+    assert _suggested_of(world, first), "the suggestions have to exist for the test to mean anything"
     revisions_before = _revision_count(world, fixture["order"])
 
     with _as_purchasing(world) as buyer:
@@ -1329,10 +1622,22 @@ def test_the_scm_sales_order_detail_states_the_day_count_too(api):
     """S1. `SalesOrderLineLink` is a third `response_model` over the same link, and the SO
     detail's Lines tab already prints "arrives late" off it - so the number of days has to
     survive that schema as well, or the badge there says less than the same badge two
-    screens away."""
+    screens away.
+
+    S3: the open line carries no book match, so the raise-time cascade only SUGGESTS
+    it - and AC-LT-38 pins the SCM sales-order detail as a real-links-only reader (no
+    code change in this lane), so this test's own subject (`late_days` surviving this
+    THIRD schema) needs a real link, seeded directly here through
+    `place_on_po_allocations`.
+    """
     _client, world = api
-    _open_po_line(world, qty=50, expected_date=LATE_ARRIVAL)
+    _po, line = _open_po_line(world, qty=50, expected_date=LATE_ARRIVAL)
     fixture = _raise_one_row(api)
+    ProjectOrderInquiryService(world.db).place_on_po_allocations(
+        str(fixture["row"].id), [{"po_line_id": str(line.id), "qty": "10"}],
+        actor_user_id=None,
+    )
+    world.db.commit()
 
     with _as_purchasing(world, permissions=[*PURCHASING, "scm.dashboard.view"]) as buyer:
         response = buyer.get(f"/api/v1/scm/sales-orders/{fixture['core_so'].id}")
@@ -1382,7 +1687,12 @@ def _po_at(world, *, qty, issue_date, expected_date, status="active"):
 def test_a_plan_purchase_order_confirm_moves_the_draft_it_was_bought_for(api):
     """S5. The purchase-order confirm is one of the four re-deal doors (section 5.4): the
     plan bought THIS order for these rows, so its own document beats the far one the raise
-    could reach at the time. Only a draft moves."""
+    could reach at the time. Only a draft moves.
+
+    S3 reversal: neither document carries a book match, so the "draft" is a
+    SUGGESTION - which moves for free on every pass (`_write_suggested_links` always
+    re-derives it).
+    """
     from app.services.scm.purchase_order_service import PurchaseOrderService
 
     _client, world = api
@@ -1390,7 +1700,8 @@ def test_a_plan_purchase_order_confirm_moves_the_draft_it_was_bought_for(api):
         world, qty=50, issue_date=date(2026, 7, 1), expected_date=date(2027, 1, 1)
     )
     row = _raise_one_row(api, qty="10")["row"]
-    assert _link_documents(world, row) == [far.po_number]
+    assert _link_documents(world, row) == []
+    assert _suggested_documents(world, row) == [far.po_number]
 
     plan_po, _line = _po_at(
         world,
@@ -1404,12 +1715,18 @@ def test_a_plan_purchase_order_confirm_moves_the_draft_it_was_bought_for(api):
 
     world.db.expire_all()
     row = world.db.query(OrderInquiryRow).filter(OrderInquiryRow.id == row.id).one()
-    assert _link_documents(world, row) == [plan_po.po_number]
+    assert _link_documents(world, row) == []
+    assert _suggested_documents(world, row) == [plan_po.po_number]
 
 
 def test_a_plan_purchase_order_confirm_never_moves_a_manually_linked_rows_link(api):
     """The same press, on a row a PERSON has manually linked: its link is a promise -
-    `ack_state` no longer tells the two apart (S1), a manual link does."""
+    `ack_state` no longer tells the two apart (S1), a manual link does.
+
+    S3 reversal: the open line carries no book match, so the raise-time cascade only
+    SUGGESTS it - there is no real "draft" to take down first any more, AC-LT-15's
+    own trim does that the moment the manual link below lands on the same target.
+    """
     from app.services.scm.purchase_order_service import PurchaseOrderService
 
     _client, world = api
@@ -1417,8 +1734,6 @@ def test_a_plan_purchase_order_confirm_never_moves_a_manually_linked_rows_link(a
         world, qty=50, issue_date=date(2026, 7, 1), expected_date=date(2027, 1, 1)
     )
     row = _raise_one_row(api, qty="10")["row"]
-    ProjectOrderInquiryService(world.db).unplace(str(row.id), actor_user_id=world.buyer)
-    world.db.commit()
     ProjectOrderInquiryService(world.db).place_on_po_allocations(
         row.id, [{"po_line_id": str(far_line.id), "qty": "10"}], actor_user_id=world.buyer,
     )
@@ -1447,8 +1762,14 @@ def test_a_plan_purchase_order_confirm_never_moves_a_manually_linked_rows_link(a
 def test_a_drafted_placed_row_still_moves_the_to_confirm_count(api):
     """S6's count moves on a fresh raise again (`PLAN-oi-confirm-per-so.md` S1, the plan
     page's own chip restored): a row is born `awaiting` whether or not the raise-time
-    cascade already made it `placed` - a DRAFT link is not a decision, and the row is
-    still purchasing's to confirm."""
+    cascade already found it a document - "waiting" is the ACK STATE alone
+    (`awaiting_acknowledgement_rows`' own docstring), never `row.state`, so the row is
+    purchasing's to confirm either way.
+
+    S3 reversal: the open line carries no book match, so what the raise-time cascade
+    finds is a SUGGESTION, not a real link - the row stays `raised`, which the count
+    itself was never keyed on anyway.
+    """
     from app.services.scm import reorder_run_service
 
     _client, world = api
@@ -1456,7 +1777,8 @@ def test_a_drafted_placed_row_still_moves_the_to_confirm_count(api):
     before = reorder_run_service.awaiting_acknowledgement_rows(world.db)
 
     row = _raise_one_row(api, qty="10")["row"]
-    assert row.state == INQUIRY_PLACED, "the row has to be drafted for this to mean anything"
+    assert row.state == INQUIRY_RAISED, "no book match - only a suggestion"
+    assert _suggested_of(world, row), "the suggestion has to exist for the test to mean anything"
 
     assert reorder_run_service.awaiting_acknowledgement_rows(world.db) == before + 1
 

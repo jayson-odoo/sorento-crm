@@ -17,17 +17,20 @@ import {
 } from '../../../_shared/lib/orderInquiryWorklist';
 import {
   DeliveryDateCell,
+  documentsOf,
   InstructionCell,
   ItemCodeCell,
   LocationCell,
   orderInquirySoLineColumn,
+  orderInquirySuggestedColumn,
   orderInquiryTakenRemainingColumns,
   QtyCell,
   RaisedCell,
   SupplierCell,
+  WorklistPill,
 } from '../../components/orderInquiryWorklistColumns';
 import type { OrderInquiryWorklistRow } from '../../../_shared/types/orderInquiry.types';
-import { OrderInquiryDocumentLink } from '../../components/OrderInquiryDocumentDialog';
+import { OrderInquiryDocumentLink, ViaSpoPoNumber } from '../../components/OrderInquiryDocumentDialog';
 
 /**
  * The Lines tab's own columns (AC-DP-03): Expand, Product, SO line, Qty, Taken,
@@ -61,17 +64,51 @@ export interface StagedReserveEntry {
   reason?: string | null;
 }
 
-/** The first PO (or SPO) link this line carries, for a document trigger. `null` when the
+/** The first PO (or SPO) document this line carries, for a document trigger - reusing the
+ * worklist's OWN derivation (`documentsOf`, issue #1215 point 5) rather than a bare
+ * `kind === 'po'` link. An SPO-only link naming its source PO (`source_po_number`) used
+ * to read a plain dash here even though the worklist already printed it "via SPO" - the
+ * two screens now agree about what counts as a document on this row. `null` when the
  * line names none of that kind - the cell then reads a plain dash, same as the worklist. */
 function firstLinkOf(row: OrderInquiryWorklistRow, kind: 'po' | 'spo') {
-  return (row.links ?? []).find((link) => link.kind === kind) ?? null;
+  return documentsOf(row, kind)[0] ?? null;
 }
 
 function DocumentCell({ row, kind }: { row: OrderInquiryWorklistRow; kind: 'po' | 'spo' }) {
-  const link = firstLinkOf(row, kind);
-  if (!link) return <span className="text-muted-foreground">-</span>;
+  const entry = firstLinkOf(row, kind);
+  if (!entry) return <span className="text-muted-foreground">-</span>;
+  // The REAL link behind this entry, for the PO/SPO popover's own id and (#1215 point 2,
+  // R15) the line it sits on - `documentsOf` states the document, not the link's
+  // identity.
+  const link = (row.links ?? []).find(
+    (candidate) => candidate.kind === kind && candidate.document === entry.document,
+  );
+  // R17 (owner rulings, 25 Sep 2026, "I also need here to be clickable"): a PO entry
+  // read off an SPO link's own `source_po_number` (`entry.via === 'spo'`) has no real
+  // po-kind link behind it, so `link` above is always undefined - `entry.poId` is the
+  // resolved identity instead (review round 1's should-fix 4 plain-text fix reversed
+  // by this ruling; the dead-lightbox bug is fixed by resolving the PO, not by
+  // removing the trigger).
+  const derived = kind === 'po' && entry.via === 'spo';
   return (
-    <OrderInquiryDocumentLink kind={kind} document={link.document} poId={link.po_id} />
+    <span className="flex min-w-0 items-center gap-1">
+      {derived ? (
+        <ViaSpoPoNumber poNumber={entry.document} purchaseOrderId={entry.poId} />
+      ) : (
+        <OrderInquiryDocumentLink
+          kind={kind}
+          document={entry.document}
+          poId={link?.po_id}
+          poLineId={link?.po_line_id}
+          spoLineId={link?.spo_allocation_id}
+        />
+      )}
+      {entry.via ? (
+        <WorklistPill testId={`lines-${kind}-via-${row.id}`}>
+          via {entry.via === 'po' ? 'PO' : 'SPO'}
+        </WorklistPill>
+      ) : null}
+    </span>
   );
 }
 
@@ -332,6 +369,8 @@ export function useOrderInquiryHeaderLinesColumns({
         meta: { headerTitle: 'SPO' },
         cell: ({ row }) => <DocumentCell row={row.original} kind="spo" />,
       },
+      // AC-LT-07: the SAME Suggested column the worklist carries, right after SPO.
+      orderInquirySuggestedColumn(),
       {
         accessorKey: 'location',
         header: ({ column }) => <DataGridColumnHeader title="Location" column={column} />,

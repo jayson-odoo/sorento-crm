@@ -266,6 +266,10 @@ def test_the_worklist_row_schema_declares_raise_history():
 
 
 def test_the_export_carries_no_raise_history_column(raise_history_api):
+    """Reversal (review round 4 Blocking 1): AC-LT-39/G9
+    (`PLAN-oi-links-autocount-truth-24sep.md` 3.5) appends a SUGGESTED column after
+    REMAINING - the cascade's own guess, beside PO and SPO on every other surface, while
+    PO NO above stays real-links only. The header list this test pins gains it too."""
     client, _db, _company_id, _seeded = raise_history_api
     import io
 
@@ -293,4 +297,5 @@ def test_the_export_carries_no_raise_history_column(raise_history_api):
         # shown since S3, appended after ACKNOWLEDGED.
         "TAKEN",
         "REMAINING",
+        "SUGGESTED",
     ]

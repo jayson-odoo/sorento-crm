@@ -62,6 +62,10 @@ BORN_AFTER_THE_MOVE = frozenset({
     # PLAN-scm-cs-planning-uat.md (migration 421_order_inquiry_links): one inquiry row's
     # quantity placed across several documents.
     "order_inquiry_links",
+    # PLAN-oi-links-autocount-truth-24sep.md (migration oisl_0001_suggested_links, issue
+    # #1215): a guess the cascade walk made, never a placement - born straight into
+    # `projects` the same way its sibling `order_inquiry_links` was.
+    "order_inquiry_suggested_links",
     # PLAN-scm-fulfilment-feedback.md: the planning module's own move-stock artifact.
     "stock_transfers",
     # PLAN-scm-fulfilment-feedback-2sep.md S4, migration 461: born straight into `projects`
@@ -108,6 +112,7 @@ def test_a_model_born_after_the_move_keeps_the_prefix_convention_it_was_born_wit
         OrderInquiryReserveEvent,
         OrderInquiryReserveRequest,
         OrderInquiryReserveRequestRow,
+        OrderInquirySuggestedLink,
         SOSupplyDecision,
         SOSupplyDecisionDraft,
     )
@@ -117,6 +122,10 @@ def test_a_model_born_after_the_move_keeps_the_prefix_convention_it_was_born_wit
     assert _audit_entity_type(PlanningChangeBatch) == "project_planning_change_batches"
     assert _audit_entity_type(PlanningChangeRow) == "project_planning_change_rows"
     assert _audit_entity_type(OrderInquiryLink) == "project_order_inquiry_links"
+    assert (
+        _audit_entity_type(OrderInquirySuggestedLink)
+        == "project_order_inquiry_suggested_links"
+    )
     assert _audit_entity_type(StockTransfer) == "project_stock_transfers"
     assert (
         _audit_entity_type(SOSupplyDecisionDraft)

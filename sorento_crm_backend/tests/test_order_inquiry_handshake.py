@@ -355,6 +355,14 @@ def _links_of(world, row) -> list:
     return ProjectOrderInquiryService(world.db)._links_of(str(row.id))
 
 
+def _suggested_of(world, row) -> list:
+    """S3 (`PLAN-oi-links-autocount-truth-24sep.md`): the cascade walk's own guesses,
+    read through the service's own `_suggested_of_row` - `test_order_inquiry_
+    suggested_links.py` imports fixtures FROM this module, so importing its own
+    `_suggested_of` back here would be circular."""
+    return ProjectOrderInquiryService(world.db)._suggested_of_row(str(row.id))
+
+
 def _project_committed(world, *, planned: bool) -> Decimal:
     """What is committed for the product at its warehouse - as the VIEW says it, or as the
     PLAN's own SELECT does (`demand.horizon_committed_select_sql`, acknowledged only)."""
@@ -386,8 +394,9 @@ def test_a_board_confirm_raises_rows_awaiting_holding_a_firm_link(api):
     board confirm raises `awaiting` rows again - purchasing's own Confirm press is back,
     G4's "born acknowledged" is retired. What G4 did NOT touch is untouched here either:
     the raise-time cascade never waited for acknowledgement (`include_awaiting=True`
-    everywhere it matters), so the document it finds is still a FIRM placement - as a
-    draft, since the row is unread - from the moment it is written.
+    everywhere it matters), so the document it finds still reaches the row - as a
+    SUGGESTION, since the row is unread (S3 reversal: the cascade walk suggests here,
+    it no longer writes a real link).
     """
     _client, world = api
     po, _line = _open_po_line(world, qty=50)
@@ -398,7 +407,8 @@ def test_a_board_confirm_raises_rows_awaiting_holding_a_firm_link(api):
     assert row.ack_state == ACK_AWAITING
     assert row.acknowledged_by is None
     assert row.acknowledged_at is None
-    assert [link.document for link in _links_of(world, row)] == [po.po_number]
+    assert _links_of(world, row) == []
+    assert [s.document for s in _suggested_of(world, row)] == [po.po_number]
 
 
 # ---------------------------------------------------------------------------
@@ -437,15 +447,19 @@ def test_acknowledging_an_already_acknowledged_row_is_a_tolerant_no_op(api):
     # press, so nothing TRANSITIONED on this second one - a genuine no-op, and the count
     # says so.
     assert body["acknowledged"] == 0
-    # Nothing left to link BY THIS PRESS: the first acknowledge already placed it firmly.
-    assert body["linked_rows"] == 0
+    # S3 reversal: the first acknowledge only SUGGESTED (never a real link), so the row
+    # stayed `raised` and re-enters the cascade on this second press too - `linked_rows`
+    # (still `placed_rows` under the hood) counts a row the walk WALKED, not one it
+    # placed for real; the suggestion itself is unchanged (`_same_placement`).
+    assert body["linked_rows"] == 1
 
     world.db.refresh(row)
     assert row.ack_state == ACK_ACKNOWLEDGED
     # NOT re-stamped: the second press does not move who took the row on or when.
     assert row.acknowledged_by == stamped_by
     assert row.acknowledged_at == stamped_at
-    assert sum(Decimal(str(link.qty)) for link in _links_of(world, row)) == Decimal("10")
+    assert _links_of(world, row) == []
+    assert sum(Decimal(str(s.qty)) for s in _suggested_of(world, row)) == Decimal("10")
 
 
 def test_acknowledge_takes_a_batch_on_in_one_press(api):
@@ -797,7 +811,8 @@ def test_an_amend_after_acknowledgement_marks_changed_without_reacknowledging(ap
     world.db.refresh(row)
     stamped_by, stamped_at = row.acknowledged_by, row.acknowledged_at
     assert stamped_by and stamped_at
-    assert _links_of(world, row), "acknowledging linked it against the open line"
+    # S3 reversal: acknowledging suggests against the open line, it no longer links.
+    assert _suggested_of(world, row), "acknowledging suggested it against the open line"
 
     _settle(world, fixture, qty="25")
 
@@ -807,7 +822,7 @@ def test_an_amend_after_acknowledgement_marks_changed_without_reacknowledging(ap
     assert row.acknowledged_by == stamped_by
     assert row.acknowledged_at == stamped_at
     assert Decimal(str(row.qty)) == Decimal("25")
-    assert _links_of(world, row), "a change keeps what the buyer already arranged"
+    assert _suggested_of(world, row), "a change keeps what the cascade already suggested"
     assert "Was 10" in (row.note or ""), "the previous value travels with the row"
     # As FIGURES, beside the sentence. The screen prints the Was / Now table off these;
     # it used to parse them back out of the note, where "Was 10, no previous delivery
@@ -939,7 +954,9 @@ def test_re_acknowledging_a_changed_row_returns_it_and_links_the_remainder(api):
 
     world.db.refresh(row)
     assert row.ack_state == ACK_ACKNOWLEDGED
-    assert sum(Decimal(str(link.qty)) for link in _links_of(world, row)) == Decimal("25")
+    # S3 reversal: re-acknowledging suggests the remainder, it no longer links it.
+    assert _links_of(world, row) == []
+    assert sum(Decimal(str(s.qty)) for s in _suggested_of(world, row)) == Decimal("25")
 
 
 def test_a_supersede_of_an_acknowledged_row_raises_its_replacement_acknowledged(api):
@@ -984,8 +1001,11 @@ def test_a_supersede_of_an_acknowledged_row_raises_its_replacement_acknowledged(
     assert str(kept.acknowledged_by) == str(stamped_by)
     assert kept.acknowledged_at == stamped_at
     assert kept.changed_at is None, "nothing about the row's own qty/date moved"
-    assert [link.document for link in _links_of(world, kept)] == [po.po_number], (
-        "the raise-time cascade still links this row onto the document that landed"
+    # S3 reversal: the raise-time cascade suggests this row onto the document that
+    # landed, it no longer writes a real link.
+    assert _links_of(world, kept) == []
+    assert [s.document for s in _suggested_of(world, kept)] == [po.po_number], (
+        "the raise-time cascade still suggests this row onto the document that landed"
     )
 
 
@@ -1119,20 +1139,30 @@ def test_a_carried_line_that_nobody_manually_acknowledged_keeps_its_born_stamp(a
 def test_a_carried_lines_own_link_survives_reconfirm_with_no_false_changed_stamp(api):
     """B2 (review of PR #471). The other test above proves the carried line's stamp
     holds when its row is `raised` and linkless - which `drafted` (`_settle_row_in_place`'s
-    own gate) never reaches, since that gate requires `placed`/`partly_linked`. A row the
-    raise-time cascade DID link IS `placed`, so it IS `drafted`, and a carried line's row
+    own gate) never reaches, since that gate requires `placed`/`partly_linked`. A row
+    holding a REAL link IS `placed`, so it IS `drafted`, and a carried line's row
     reaching `_settle_row_in_place` with `need == previous_qty` and no date change must
     settle as a no-op: no `changed_at`, no rewritten note, no repeated `previous_qty`,
     and the SAME link untouched - not a false "Was 10 -> Now 10" on a line the reconfirm
     never named. The row stays `awaiting` throughout
     (`PLAN-oi-confirm-per-so.md` S1): a no-op settle never reaches the ack_state guard at
     all, so there is nothing here for it to move.
+
+    S3: the open line carries no book match, so the raise-time cascade only SUGGESTS it
+    - the real link this test's own subject (`_settle_row_in_place`'s `drafted` gate)
+    needs is seeded directly here, through `place_on_po_allocations`, the same manual
+    path a buyer's own press takes.
     """
     _client, world = api
-    po, _line = _open_po_line(world, qty=50)
+    po, line = _open_po_line(world, qty=50)
     fixture = _raise_two_rows(api)
     first_row = fixture["first"]["row"]
-    assert first_row.state == "placed", "the raise-time cascade has to have linked it whole"
+    ProjectOrderInquiryService(world.db).place_on_po_allocations(
+        str(first_row.id), [{"po_line_id": str(line.id), "qty": "10"}], actor_user_id=None,
+    )
+    world.db.commit()
+    world.db.refresh(first_row)
+    assert first_row.state == "placed", "the seeded real link has to cover it whole"
     assert first_row.ack_state == ACK_AWAITING
     born_note = first_row.note
     (first_link,) = _links_of(world, first_row)
@@ -1282,11 +1312,18 @@ def test_link_now_links_a_confirmed_row_and_drafts_an_awaiting_one(api):
     world.db.commit()
 
     assert response.json()["placed_rows"] == 2
-    assert _links_of(world, acknowledged["row"])
-    assert _links_of(world, awaiting["row"]), "the awaiting row holds a draft now"
+    # S3 reversal: what the walk deals is a SUGGESTION, never a real link.
+    assert _links_of(world, acknowledged["row"]) == []
+    assert _suggested_of(world, acknowledged["row"])
+    assert _links_of(world, awaiting["row"]) == []
+    assert _suggested_of(world, awaiting["row"]), "the awaiting row holds a suggestion now"
 
 
 def test_link_now_is_scoped_to_the_products_it_is_given(api):
+    """S3 reversal: acknowledging only SUGGESTS (never a real link), so there is
+    nothing here for the old `unplace` scaffolding to give back before the actual
+    press under test - dropped, and the assertions read off the suggested-links
+    table instead of `links`."""
     _client, world = api
     other_product = _product(world.db)
     world.db.commit()
@@ -1304,17 +1341,18 @@ def test_link_now_is_scoped_to_the_products_it_is_given(api):
             == 200
         )
         world.db.commit()
-        for row in (mine["row"], theirs["row"]):
-            ProjectOrderInquiryService(world.db).unplace(
-                str(row.id), actor_user_id=world.buyer
-            )
-        world.db.commit()
+        (theirs_suggestion_before,) = _suggested_of(world, theirs["row"])
         response = buyer.post(LINK_NOW, json={"product_ids": [str(world.product.id)]})
     assert response.status_code == 200, response.text
     world.db.commit()
 
-    assert _links_of(world, mine["row"])
+    assert _links_of(world, mine["row"]) == []
+    assert _suggested_of(world, mine["row"])
     assert _links_of(world, theirs["row"]) == []
+    (theirs_suggestion_after,) = _suggested_of(world, theirs["row"])
+    assert theirs_suggestion_after.id == theirs_suggestion_before.id, (
+        "the other product's row must never be touched by a scoped press"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1412,21 +1450,35 @@ def _due(world, row, when):
     CS deciding the line for 2030 in the first place, and the state that decision leaves is
     a row due then with nothing on it. Without this the horizon tests below would be
     measuring a link the raise made under a different date.
+
+    S3 reversal: the raise-time cascade's own terminal write is a SUGGESTION now, never
+    a real link, so it is the suggestion (not `unplace`) that has to go with the old
+    date - `_drop_suggested_links` is the same helper the row's own state writers call.
     """
     row.delivery_date = when
     world.db.flush()
-    if ProjectOrderInquiryService(world.db)._links_of(str(row.id)):
-        ProjectOrderInquiryService(world.db).unplace(
-            str(row.id), actor_user_id=world.buyer
-        )
+    service = ProjectOrderInquiryService(world.db)
+    if service._links_of(str(row.id)):
+        service.unplace(str(row.id), actor_user_id=world.buyer)
+    if service._suggested_of_row(str(row.id)):
+        service._drop_suggested_links([row])
     world.db.commit()
     return row
 
 
 def _taken_off(world, line) -> Decimal:
-    """What every link together claims off one purchase-order line."""
+    """What every REAL link together claims off one purchase-order line."""
     by_po, _by_spo = ProjectOrderInquiryService(world.db)._linked_by_target()
     return by_po.get(str(line.id), Decimal("0"))
+
+
+def _suggested_off(world, line) -> Decimal:
+    """S3: what every SUGGESTED link together holds on one purchase-order line - the
+    same question `_taken_off` answers for real links, for the capacity a suggestion
+    (never a real placement) leaves behind."""
+    return ProjectOrderInquiryService(world.db)._suggested_totals_by_target().get(
+        str(line.id), Decimal("0")
+    )
 
 
 def test_acknowledge_leaves_a_row_due_after_the_horizon_not_linked(api):
@@ -1458,9 +1510,17 @@ def test_acknowledge_leaves_a_row_due_after_the_horizon_not_linked(api):
     assert body["linked_rows"] == 1
     assert body["after_horizon"] == 1
     assert body["link_up_to"] == HORIZON.isoformat()
-    assert sum(Decimal(str(link.qty)) for link in _links_of(world, near)) == Decimal("10")
+    # S3 reversal: the walk suggests the near row, it no longer writes a real link.
+    assert _links_of(world, near) == []
+    assert sum(Decimal(str(s.qty)) for s in _suggested_of(world, near)) == Decimal("10")
     assert _links_of(world, far) == [], "the 2030 row took a purchase order it is not due on"
-    assert _taken_off(world, line) == Decimal("10"), "the line kept its remainder"
+    assert _suggested_of(world, far) == [], (
+        "the 2030 row must not even be suggested a purchase order it is not due on"
+    )
+    # S3 reversal: nothing REAL sits on the line - the near row's own take is a
+    # suggestion, which never reduces the room a real placement would see.
+    assert _taken_off(world, line) == Decimal("0")
+    assert _suggested_off(world, line) == Decimal("10"), "the line kept its remainder"
 
 
 def test_link_selected_says_how_many_it_left_after_the_horizon(api):
@@ -1517,8 +1577,10 @@ def test_a_row_with_no_delivery_date_is_inside_the_horizon(api):
     world.db.commit()
 
     assert response.json()["after_horizon"] == 0
+    # S3 reversal: the walk suggests here, it no longer writes a real link.
+    assert _links_of(world, undated) == []
     assert sum(
-        Decimal(str(link.qty)) for link in _links_of(world, undated)
+        Decimal(str(s.qty)) for s in _suggested_of(world, undated)
     ) == Decimal("10")
 
 
@@ -1585,7 +1647,9 @@ def test_an_explicit_no_horizon_links_a_row_the_plan_does_not_reach(api):
     assert body["after_horizon"] == 0
     assert body["link_up_to"] is None
     assert body["link_horizon"] == "none", "`response_model` dropped link_horizon"
-    assert sum(Decimal(str(link.qty)) for link in _links_of(world, far)) == Decimal("10")
+    # S3 reversal: the walk suggests here, it no longer writes a real link.
+    assert _links_of(world, far) == []
+    assert sum(Decimal(str(s.qty)) for s in _suggested_of(world, far)) == Decimal("10")
 
 
 def test_a_result_states_which_horizon_it_ran_under(api):

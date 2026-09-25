@@ -83,6 +83,7 @@ import {
   NO_LINK_HORIZON,
   initialLinkHorizon,
   linkHorizonRequest,
+  linkOutcomeText,
   readStoredLinkHorizon,
   readUrlLinkHorizon,
   startsCleared,
@@ -98,7 +99,6 @@ import {
   unplaceOrderInquiryRow,
 } from '../../_shared/services/orderInquiryService';
 import type {
-  OrderInquiryAckFields,
   OrderInquiryMatrixAxis,
   OrderInquiryMatrixCell,
   OrderInquiryMatrixGranularity,
@@ -123,33 +123,6 @@ import { SupplyKindCard } from '../../_shared/components/SupplyKindCard';
  * (S4, AC-T2): the count is never "of n" when a === n, which would say the obvious. */
 function countLabel(base: string, eligible: number, ticked: number): string {
   return eligible === ticked ? `${base} (${ticked})` : `${base} (${eligible} of ${ticked})`;
-}
-
-/** A row this screen still owes a document to (S4, R-A/R-B): raised, partly linked or
- * placed, some quantity still unlinked, and not a row CS has already refused.
- *
- * The remainder is `qty - linked - BUNDLED` (SF-4), the row's own share of the server's
- * `_UNLINKED_QTY`: quantity that rides inside another row's line is not this row's to
- * place. Reading `qty - linked` alone counted a wholly bundled row as still needing a
- * document, so "Link selected" posted an id `auto_place_for_rows` has nothing to place
- * for. `remaining_open` is deliberately NOT read here - it is the LINE's remainder,
- * already net of every sibling row's links, so subtracting this row's links from it
- * again would take them off twice. */
-function isLinkable(
-  row: OrderInquiryAckFields & {
-    state: string;
-    qty: string;
-    linked_qty?: string;
-    bundled_qty?: string;
-  },
-): boolean {
-  if (!['raised', 'partly_linked', 'placed'].includes(row.state)) return false;
-  const unlinked =
-    Number(row.qty ?? '0') -
-    Number(row.linked_qty ?? '0') -
-    Number(row.bundled_qty ?? '0');
-  if (!(unlinked > 0)) return false;
-  return ackStateOf(row) !== 'rejected';
 }
 
 /**
@@ -974,10 +947,11 @@ export function OrderInquiriesClient({
     // (`FulfilmentPlanningClient` carries the same note over the same trap).
     //
     // R-A (S4, PLAN-scm-oi-worklist-excel-parity.md): every row except `cancelled` ticks,
-    // fully linked rows included - there is no per-row disabled checkbox any more. Each
-    // Action counts its OWN eligible subset off the ticked rows instead (`selectedLinkable`
-    // / `selectedLinked` / `selectedRejectable` below) and says so in its own label, so a
-    // row ineligible for Link can still be ticked to Reject in the same batch.
+    // fully linked rows included - there is no per-row disabled checkbox any more. Most
+    // actions count their OWN eligible subset off the ticked rows (`selectedLinked` /
+    // `selectedRejectable` below) and say so in their own label, so a row ineligible for
+    // one action can still be ticked for another in the same batch. "Link selected" is the
+    // exception (R18): it acts on every ticked row, whatever its state.
     enableRowSelection: (row) => row.original.state !== 'cancelled',
     onRowSelectionChange: setRowSelection,
     onPaginationChange: setPagination,
@@ -996,9 +970,6 @@ export function OrderInquiriesClient({
   const selectedLinked = selectedRows.filter(
     (row) => row.state === 'placed' || row.state === 'partly_linked',
   );
-  // Still owed a document (S4, R-A/R-B): what "Link selected" acts on. `isLinkable`
-  // holds the same three tests the column header comment above states.
-  const selectedLinkable = selectedRows.filter((row) => isLinkable(row));
   // Every OWED row, linked or not (plan section 1): with drafts written at raise most
   // rows in front of purchasing are already `placed`, so a Reject that only took
   // unlinked ones would refuse almost nothing.
@@ -1085,26 +1056,22 @@ export function OrderInquiriesClient({
   }
 
   /**
-   * "Link selected" (S4, R-B): the cascade for exactly the ticked, still-linkable rows -
-   * `POST /order-inquiries/auto-place` with `row_ids`, distinct from "Auto link all…"
-   * which runs over every eligible row in the company. `skipped` is not on the wire
-   * (`AutoPlaceResult` carries `placed_rows` and `after_horizon` only) so it is read as
-   * the remainder of what was asked for - the cascade is idempotent, so nothing here is
-   * lost by not naming it, only summarised.
+   * "Link selected" (R18, owner ruling from the hand test on stack C, 25 Sep 2026,
+   * supersedes G1): never turns a suggestion into a link on its own - "the user should
+   * always go to autocount to do linking, the link selected is to recalculate with
+   * autocount linkage in case of mistake in the automation." It is the SAME `auto-place`
+   * call "Auto link all" uses, scoped to exactly the ticked rows via `row_ids`: the book
+   * step re-runs for them (writing only what AutoCount names, in AutoCount's own name),
+   * then their suggestions refresh through the cascade the same way Auto link all's does.
+   * There is no separate route for it any more.
    */
   async function linkSelected() {
-    if (selectedLinkable.length === 0) return;
+    if (selectedRows.length === 0) return;
     setLinkingSelected(true);
     try {
-      const rowIds = selectedLinkable.map((row) => row.id);
+      const rowIds = selectedRows.map((row) => row.id);
       const result = await autoPlaceOrderInquiryRows({ row_ids: rowIds });
-      const placed = result.placed_rows ?? 0;
-      const afterHorizon = result.after_horizon ?? 0;
-      const skipped = Math.max(rowIds.length - placed - afterHorizon, 0);
-      const parts = [`${placed} linked`];
-      if (skipped > 0) parts.push(`${skipped} skipped`);
-      if (afterHorizon > 0) parts.push(`${afterHorizon} after the link horizon`);
-      toast.success(parts.join(', '));
+      toast.success(linkOutcomeText(result));
       setRowSelection({});
       void list.refetch();
       void summary.refetch();
@@ -1476,13 +1443,13 @@ export function OrderInquiriesClient({
               },
               {
                 key: 'link-selected',
-                label: countLabel('Link selected', selectedLinkable.length, selectedRows.length),
+                // R18: acts on every ticked row, whatever its state - no eligible
+                // subset any more, so the count is never "of n".
+                label: `Link selected (${selectedRows.length})`,
                 icon: Wand2,
-                disabled: selectedLinkable.length === 0 || linkingSelected,
+                disabled: selectedRows.length === 0 || linkingSelected,
                 disabledReason:
-                  selectedLinkable.length === 0
-                    ? 'Tick rows still needing a document to link.'
-                    : undefined,
+                  selectedRows.length === 0 ? 'Tick rows to recalculate against AutoCount.' : undefined,
                 onClick: () => void linkSelected(),
               },
               {

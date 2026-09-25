@@ -140,6 +140,25 @@ export interface OrderInquiryLink {
   /** Addresses the PO popover. Null on an SPO link - there is no purchase order to open. */
   po_id?: string | null;
   /**
+   * Issue #1215 point 2: which PO line this link sits on, so the lightbox can
+   * highlight it on the lines grid. Null on an SPO link.
+   */
+  po_line_id?: string | null;
+  /**
+   * R15 (owner rulings, 25 Sep 2026, hand test on stack C): the mirror of `po_line_id`
+   * above for the other book - which `spo_allocations` row this link sits on, so the
+   * SPO lightbox can highlight it the same way the PO lightbox already does. Null on a
+   * `po`-kind link.
+   */
+  spo_allocation_id?: string | null;
+  /**
+   * R17 (owner rulings, 25 Sep 2026): the purchase order an SPO link's allocation
+   * draws its supply from (`SPOAllocation.po_line_id` traced to its own header) - lets
+   * the "via SPO" PO cell open that PO directly rather than guessing by number. Null
+   * on a `po`-kind link and on an SPO allocation with no resolved supply PO line.
+   */
+  purchase_order_id?: string | null;
+  /**
    * The purchase order an SPO link's allocation was raised FROM, per the AutoCount
    * feed's own statement (owner's 9 Sep feedback: "if we link by SPO, where do we see
    * the PO number of this SPO?"). Plain text, never a link yet - a later slice decides
@@ -186,6 +205,41 @@ export interface OrderInquiryLink {
    * acts in AutoCount, and S5 (our link follows the book) reacts to that.
    */
   suggestion?: OrderInquiryLinkSuggestion | null;
+}
+
+/**
+ * One document line the cascade SUGGESTS for this row - never an `order_inquiry_links`
+ * row (`PLAN-oi-links-autocount-truth-24sep.md` section 3.3, owner ruling "the idea is
+ * the suggested link shouldn't be counted as real link and actually appearing in the PO
+ * or SPO column"). Always called a SUGGESTED LINK, in code and on screen - unrelated to
+ * `OrderInquiryLink.suggestion` (S1b's `reallocate`/`unlink` advice on a REAL link),
+ * which keeps its own name so the two concepts can never be confused.
+ *
+ * `suggested_links` rides on the row (`OrderInquiryRow`/`OrderInquiryWorklistRow`) only -
+ * dropped from the lightbox payloads (`OrderInquiryPoDetail`/`OrderInquirySpoDetail`,
+ * review round 2 Should fix 5) once R13 retired the lightbox's own separate "Suggested
+ * for" panel: the row's own array and the Lines tab's Allocated/Suggested columns are
+ * the whole answer now. Separate from `links` either way - a row's PO/SPO cells and
+ * State pill never read this array (section 3.5/3.7).
+ */
+export interface OrderInquirySuggestedLink {
+  /** Which book. `spo` only on an ORDER BACK row, same as a real link. */
+  kind: 'po' | 'spo';
+  /** `202607-S0105`, `SPO-2026/08-0061`. Never an id: what the buyer quotes. */
+  document: string;
+  /** Addresses the PO lightbox. Null on an SPO suggestion. */
+  po_id?: string | null;
+  po_line_id?: string | null;
+  spo_allocation_id?: string | null;
+  location?: string | null;
+  qty: string;
+  expected_date?: string | null;
+  /** BY HOW MUCH the suggested document lands after the row's own required date - same
+   * convention as `OrderInquiryLink.late_days`. Null or absent when it is not late. */
+  late_days?: number | null;
+  /** Which cascade door wrote it (section 2.5/3.4) - never rendered, `converted` only
+   * ever appears after the S5 conversion script (section 3.8). */
+  trigger?: string | null;
 }
 
 /** One row a `reallocate` suggestion could move the link to (AC-RL-20). */
@@ -282,6 +336,13 @@ export interface OrderInquiryRow extends OrderInquiryAckFields {
    * `qty - linked_qty` is what still flows to reorder planning.
    */
   linked_qty?: string;
+  /**
+   * `PLAN-oi-links-autocount-truth-24sep.md` section 3.5: what the cascade suggests for
+   * this row's unlinked remainder - never a real link, never read by `state`/`po_ref`/
+   * `spo_ref`. Empty or absent on a row the cascade has not covered (S2 mock: absent on
+   * every row the real backend answers today, until S3/S4 land).
+   */
+  suggested_links?: OrderInquirySuggestedLink[];
   /** The document CS cited on an order back, which the cascade tries before any other. */
   cited_document?: string | null;
   po_ref?: string | null;
@@ -408,6 +469,12 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
    */
   links?: OrderInquiryLink[];
   linked_qty?: string;
+  /**
+   * `PLAN-oi-links-autocount-truth-24sep.md` section 3.5: the Suggested column, after
+   * SPO, on both the worklist and the OI detail Lines tab (`orderInquirySuggestedColumn`
+   * reads this - never `links`). Absent or empty on every row today (S2, FE mock).
+   */
+  suggested_links?: OrderInquirySuggestedLink[];
   /**
    * PLAN-scm-supplied-with-companions.md, S2. `bundled_qty` never exceeds `qty - linked_qty`
    * (a link a person already made stays a link); `bundled_with` is null on an un-bundled
@@ -989,6 +1056,25 @@ export interface AutoPlaceResult {
   /** Whether a horizon was in force at all (S1) - `'none'` says the null above is a
    *  deliberate "no horizon", not a plan that has never named one. */
   link_horizon?: 'date' | 'none';
+  /**
+   * G4 (`PLAN-oi-links-autocount-truth-24sep.md`): "Auto link all"'s own book step -
+   * rows AutoCount itself ties to a document, a REAL link. Absent on a backend that has
+   * not yet split the cascade into suggested links (S2/S3); the toast then falls back to
+   * `placed_rows` alone, exactly as it reads today.
+   */
+  book_linked_rows?: number;
+  /** The rows the cascade only SUGGESTED, on top of `book_linked_rows` - never written
+   * as an `order_inquiry_links` row, never counted as bought. Same absence rule. */
+  suggested_rows?: number;
+  /**
+   * R18 (`PLAN-oi-links-autocount-truth-24sep.md` 3.6, supersedes G1): how many rows
+   * this pass actually moved - book-linked this pass, or given a different suggestion
+   * than the one they held coming in. "Link selected" is THIS route, scoped to the
+   * ticked rows via `row_ids` - there is no separate route for it - and reads this to
+   * say whether recalculating against AutoCount caught a mistake, rather than a
+   * blanket re-link.
+   */
+  changed_rows?: number;
 }
 
 /**
@@ -1047,11 +1133,23 @@ export interface UnplaceAllPreview {
  * line's own balance - never netted against other rows' claims, which is a different
  * reading that belongs to the "Place on PO" candidates. */
 export interface OrderInquiryPoDetailLine {
+  /**
+   * Issue #1215 point 2: the line's own identity, so the lightbox can highlight the
+   * exact line an opening row's link sits on - the SKU alone is ambiguous the moment a
+   * PO carries two lines of the same item.
+   */
+  id?: string | null;
   sku?: string | null;
   product_name?: string | null;
   qty_ordered: string;
   qty_received: string;
   remaining: string;
+  /**
+   * Every order inquiry row's own placement on THIS line, summed - never netted
+   * against anything else, unlike the "Place on PO" candidate walk's own `remaining`.
+   * Optional only for a caller that predates this field.
+   */
+  allocated?: string | null;
   location?: string | null;
   /**
    * The AutoCount book's own sales-order linkage for this line - the SAME fact and the
@@ -1082,6 +1180,11 @@ export interface OrderInquiryDocumentAllocation {
    * field the endpoint sends.
    */
   linked_at?: string | null;
+  /**
+   * Issue #1215 point 2: which PO line this allocation sits on, so the lightbox can
+   * highlight it on the lines grid. Null on an SPO allocation.
+   */
+  po_line_id?: string | null;
 }
 
 export interface OrderInquiryPoDetail {
@@ -1108,6 +1211,13 @@ export interface OrderInquiryPoDetail {
 
 /** One allocation line of the shipping order: what is on it, what has landed, where. */
 export interface OrderInquirySpoDetailLine {
+  /**
+   * R15 (owner rulings, 25 Sep 2026, hand test on stack C): the line's own identity
+   * (`spo_allocations.id`), the same reason `OrderInquiryPoDetailLine.id` exists
+   * (issue #1215 point 2) - without it the SPO lightbox has no field to highlight a
+   * line by, unlike the PO lightbox next door.
+   */
+  id?: string | null;
   sku?: string | null;
   product_name?: string | null;
   allocated: string;
