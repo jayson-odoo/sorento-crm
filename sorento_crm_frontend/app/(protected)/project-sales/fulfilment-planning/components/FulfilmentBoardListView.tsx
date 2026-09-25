@@ -176,6 +176,17 @@ export function FulfilmentBoardListView({
     [contributions, externalSearch],
   );
 
+  // Should fix 3 (review round 1): AC-10's "the order follows the list's current sort" means
+  // the grid's OWN sort, not the incoming prop order - `PanelDataGrid` holds that state, so
+  // this mirrors it back via `onSortedRowsChange` rather than re-deriving it here. Seeded from
+  // `filteredContributions` so Decide has an order to claim by before the grid's first effect
+  // runs, and reset whenever the underlying rows change (a save, a refetch) so a stale sort
+  // never outlives the rows it was computed from.
+  const [sortedContributions, setSortedContributions] = React.useState(filteredContributions);
+  React.useEffect(() => {
+    setSortedContributions(filteredContributions);
+  }, [filteredContributions]);
+
   const expansion = useDecisionRowExpansion({ multiple: true });
   const {
     expanded,
@@ -826,7 +837,7 @@ export function FulfilmentBoardListView({
               suggested is now its first menu item, and Decide itself is ALWAYS rendered,
               disabled with a tooltip while nothing is ticked. */}
           <BoardDecideControl
-            contributions={filteredContributions}
+            contributions={sortedContributions}
             selectedKeys={selectedKeys}
             draft={draft}
             onSave={onDecideBatch}
@@ -841,6 +852,7 @@ export function FulfilmentBoardListView({
       pageSize={25}
       // Owner ruling, 22 Sep 2026: every column on this list sorts.
       sortable
+      onSortedRowsChange={setSortedContributions}
       // AC-5, fix round 1: the banner's link names a ROW, not a page - `PanelDataGrid` jumps
       // to whichever page currently holds it, in its own sorted order, so a left-out line
       // beyond page 1 is reachable rather than a dead link.
