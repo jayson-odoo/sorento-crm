@@ -70,6 +70,16 @@ arrives - see the file's own "Materials" comment for the precedent.
   responses under the ONE shared `transition` prop that otherwise governs both.
 - `surfaceVariants(prefersReducedMotion)`: fade + scale 0.96 -> 1 in (never scale 0); reduced
   motion drops the scale and keeps only the fade.
+- **`NOOP_ON_UPDATE`: pass it as `onUpdate` on every `motion.div` inside an `AnimatePresence` that
+  animates `opacity`.** A live `onUpdate` is the only thing that disqualifies motion-dom's WAAPI
+  hand-off (`supportsBrowserAnimation`'s `!onUpdate` check); without it, opacity runs on the
+  browser's native Web Animations API, whose `onfinish` cancels the effect one render tick before
+  its settled value reaches the inline style - a real, one-frame flicker to the pre-phase value
+  (`0` on enter, `1` on exit) that jsdom cannot reproduce (no `Element.prototype.animate` there).
+  Every opacity-animating surface in this file (Dialog, AlertDialog, Sheet's overlay and its
+  reduced-motion fallback, Popover, DropdownMenu, ContextMenu, HoverCard, Menubar) carries it; a
+  new one needs it too, guarded by a per-surface wiring test in the shape of
+  `dialog.animation-boundary.test.tsx`.
 - `useOpenState()`: mirrors a Radix root's open state into plain React state so a sibling
   `Content` can gate an `<AnimatePresence>` - Radix's own Presence unmounts on a CSS animation
   it can detect, which a JS spring is not. A primitive with no controlled `open` prop of its own

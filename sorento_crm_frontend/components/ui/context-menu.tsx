@@ -7,6 +7,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { cn } from '@/lib/utils';
 import { PRESSED_TRANSFORM_CLASS } from '@/components/ui/primitive-classes';
 import {
+  NOOP_ON_UPDATE,
   surfaceExitTransition,
   surfaceTransition,
   surfaceVariants,
@@ -127,6 +128,7 @@ function ContextMenuSubContent({
               animate={variants.animate}
               exit={{ ...variants.exit, transition: exitTransition }}
               transition={transition}
+              onUpdate={NOOP_ON_UPDATE}
             >
               {children}
             </motion.div>
@@ -162,6 +164,7 @@ function ContextMenuContent({
               animate={variants.animate}
               exit={{ ...variants.exit, transition: exitTransition }}
               transition={transition}
+              onUpdate={NOOP_ON_UPDATE}
             >
               {children}
             </motion.div>

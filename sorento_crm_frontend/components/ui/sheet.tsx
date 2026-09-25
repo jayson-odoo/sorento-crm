@@ -7,7 +7,13 @@ import { X } from 'lucide-react';
 import { Dialog as SheetPrimitive } from 'radix-ui';
 import { AnimatePresence, motion } from 'motion/react';
 import { OVERLAY_CLASS_STATIC } from '@/components/ui/primitive-classes';
-import { surfaceExitTransition, surfaceTransition, useOpenState, useReducedMotion } from '@/lib/motion';
+import {
+  NOOP_ON_UPDATE,
+  surfaceExitTransition,
+  surfaceTransition,
+  useOpenState,
+  useReducedMotion,
+} from '@/lib/motion';
 
 // Mirrors the Root's open state so SheetContent can gate its own
 // <AnimatePresence> (S8-01) - see the identical DialogOpenContext in dialog.tsx.
@@ -133,6 +139,7 @@ function SheetContent({
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0, transition: exitTransition }}
                 transition={transition}
+                onUpdate={NOOP_ON_UPDATE}
               />
             </SheetPrimitive.Overlay>
           )}
@@ -143,6 +150,7 @@ function SheetContent({
               animate={variants.animate}
               exit={{ ...variants.exit, transition: exitTransition }}
               transition={transition}
+              onUpdate={NOOP_ON_UPDATE}
             >
               {children}
               {close && (
