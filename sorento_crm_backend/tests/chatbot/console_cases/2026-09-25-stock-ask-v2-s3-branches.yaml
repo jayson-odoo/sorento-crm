@@ -15,6 +15,14 @@
 # running alongside the backend - the engine calls it in-process over HTTP for every
 # domain fetch.
 #
+# Round 2 review, Should fix 1: the seed database must ALSO carry a `stock_ledger` row
+# with `transaction_type = 'BULK_IMPORT'`, or the `reply_not_contains: ["Data last
+# updated"]` assertions below prove nothing - `StockService` only ever emits the
+# `_Data last updated_` footer when such a row exists system-wide (`inventory_service.
+# py`'s `last_import_at` query), so a DB with none makes the no-footer case
+# unreachable rather than passing for the right reason (round 1's evidence file
+# had exactly this gap).
+#
 #   cd sorento_crm_backend
 #   venv/bin/python scripts/chatbot_console_check.py \
 #       tests/chatbot/console_cases/2026-09-25-stock-ask-v2-s3-branches.yaml \
@@ -144,6 +152,12 @@ cases:
           reply_contains:
             - "SA318A x 250: the quantity is more than what I can confirm here, please refer to your salesman."
             - "SA318B x 20: the quantity is more than what I can confirm here, please refer to your salesman."
+          # Round 2 review, Blocking 1 (AC-SA312): production always sets
+          # `last_updated_at`, and only a DB with a BULK_IMPORT ledger row exercises
+          # this - the round 1 evidence's seeded DB had none, so the footer went
+          # unchecked. This case's seed data carries one.
+          reply_not_contains:
+            - "Data last updated"
           no_uuid: true
 
   - name: "B2 - in stock"
@@ -242,6 +256,8 @@ cases:
           branch_kind: business_query
           reply_contains:
             - "SA318C x 50: yes, we have stock, please refer to your salesman to proceed."
+          reply_not_contains:
+            - "Data last updated"
           no_uuid: true
 
   - name: "B4 - no stock and no incoming"
@@ -340,4 +356,6 @@ cases:
           branch_kind: business_query
           reply_contains:
             - "SA318E x 150: no stock and no incoming at the moment, please refer to your salesman."
+          reply_not_contains:
+            - "Data last updated"
           no_uuid: true

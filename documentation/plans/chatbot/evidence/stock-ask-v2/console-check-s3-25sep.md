@@ -5,7 +5,56 @@ an Availability only dealer contact: one turn per branch - B1 via Q > X, B1 via 
 B2, B3 with toggle on and off, B4; replies quoted in
 `documentation/plans/chatbot/evidence/`").
 
-## Environment note (deviation from the brief)
+## Round 2 update (review round 2 on PR #1247, Should fix 1)
+
+The replies below were re-quoted after review round 2's Blocking 1 fix (the
+`_Data last updated: dd/mm/yyyy hh:mm:ss_` footer no longer prints on an answered
+`stock_availability` reply, `app/services/chatbot/lanes/business/fetch.py`, gated by the
+same `stock_availability_answered` flag that already gates the intro and the numbering).
+
+Round 1's seed database carried no `stock_ledger` row with `transaction_type =
+'BULK_IMPORT'`, so `StockService`'s `last_import_at` query returned `NULL` and the footer
+never printed regardless of whether the code suppressed it - a pass for the wrong reason.
+This round adds one such row (product `SA318C`, warehouse `SA318W1`, `created_at`
+2026-08-24 18:00 seed-local) before re-running, so the footer case is genuinely exercised.
+Both console-case yaml files now also carry `reply_not_contains: ["Data last updated"]`
+on their final (answered) turn, so a regression is caught by the yaml itself, not only by
+eyeballing this file.
+
+Everything else about the scenario (contact, categories, products, stock, the incoming
+shipment + packing list) is unchanged from the round 1 seed described below. Round 2 also
+needed three additional rows round 1's evidence did not call out (the environment this
+round ran in was a fresh CI-shaped Postgres with none of them, where round 1's sandbox
+apparently already had them):
+
+4. **`respond_workspaces` + the contact's `workspace_id`.** `mcp_access_service.
+   evaluate_agent` (the in-process port of `/external/access-agent/check`) resolves the
+   contact via `(respond_io_id, workspace_id)`, and the default workspace via
+   `RespondWorkspace.is_default`. Without a workspace row the contact resolves to
+   `deny_unknown_contact` regardless of any access grant. Seeded one `is_default=true`
+   workspace and pointed the contact at it.
+5. **An `access_agents` row named `general_enquiries` plus a `contact_agent_access` grant
+   for it.** A stock ask's `routing.suggested_agent` defaults to `general_enquiries` when
+   the mock parser leaves it null (this file's own case turns do). With no such agent row
+   the check fails closed (`deny_unknown_agent`); with the row but no grant it fails
+   `deny_no_access`. Both are pre-existing sandbox/DB gaps, not an S3 code defect - the
+   same class of gap round 1's evidence section below documents for `api_call_log` and
+   `respond_contact_companies`.
+6. **`integration_api_keys` carrying the console-check API key's hash.** Authentication
+   now resolves the presented `X-API-Key` through `integration_api_keys` exclusively
+   (`app.dependencies.get_current_user_or_api_key`, "the env var is no longer consulted at
+   runtime") rather than the legacy `settings.external_api_key` comparison round 1's
+   evidence describes below. Ran `app.services.integration_seed.seed_integrations(db,
+   external_api_key="cloud-lane-test-key")` - the same seed the Group A migration runs in
+   a real deploy - which attaches the key's hash to the `n8n` integration and gives it an
+   `act_as_user_id` principal with Admin-parity permissions, making the separate
+   `EXTERNAL_API_KEY_ACT_AS_USER_ID` env var round 1 needed no longer necessary (kept it
+   set anyway, harmless).
+
+None of the round 2 seed additions touched a migration or application code - additive rows
+only, on top of round 1's scenario.
+
+## Environment note (round 1, deviation from the brief)
 
 The brief assumed this sandbox's `DATABASE_URL` was already a bootstrapped prod-copy DB.
 Measured instead: `scripts/cloud-env-setup.sh` bootstraps a CI-shaped, EMPTY Postgres
@@ -66,16 +115,9 @@ CRM_BASE_URL=http://localhost:8000 EXTERNAL_API_KEY=cloud-lane-test-key \
 ```
 
 The console-check API key used throughout is `.env.ci-tests`'s `EXTERNAL_API_KEY`
-(`cloud-lane-test-key`) - deliberately, not a fresh integration key: authentication goes
-through the new `integration_api_keys` hash lookup, but
-`company_scope_resolver._api_key_valid` (a second, older check that decides whether to apply
-company scope to a request AT ALL) still compares the presented header byte-for-byte against
-the legacy `settings.external_api_key` env var. A bespoke key authenticates fine but resolves
-an UNSET (fail-closed) scope on every plain HTTP call this session made directly (e.g. the
-`/system/references/resolve` probes below) - sharing the value satisfies both checks. The
-integration's `act_as_user_id` principal holds the seeded DB's `admin` role, which short-circuits
-`UserPermissionService.check_user_has_permission` (superadmin/admin check) past the
-`integration.chat_turn.submit` permission gate.
+(`cloud-lane-test-key`) - deliberately, not a fresh integration key (round 1's reasoning;
+round 2 instead seeded that same value's hash into `integration_api_keys`, see above,
+since the legacy env-var comparison round 1 relied on has since been removed).
 
 ## Scenario data
 
@@ -100,13 +142,17 @@ Products (all inherit their category's X/Y - product-level `chatbot_max_qty` /
   `2026-10-12 + Y(7) = 19/10/2026`.
 - `SA318E` (SA318CAP) - no_incoming: 0 on hand, no shipment.
 
+Round 2 addition: one `stock_ledger` row, `product_id = SA318C`, `warehouse_id = SA318W1`,
+`transaction_type = 'BULK_IMPORT'` - the system-wide "last import" row `StockService`'s
+`last_import_at` query reads across every policy mode.
+
 `branch()` (`app.services.stock_ask_branch.branch`) was confirmed by hand against these
 numbers BEFORE writing the case files' `reply_contains`, per the brief's instruction:
 `branch(250, 200, 0, None) = too_big`; `branch(20, 0, 0, None) = too_big` (X unset -> 0);
 `branch(50, 200, 200, None) = in_stock`; `branch(150, 200, 0, date(2026,10,12)) = incoming`;
 `branch(150, 200, 0, None) = no_incoming`.
 
-## Commands run
+## Commands run (round 2)
 
 ```
 cd sorento_crm_backend
@@ -118,15 +164,15 @@ SORENTO_ENV_FILE=.env.ci-tests venv/bin/python scripts/chatbot_console_check.py 
 Output:
 
 ```
-console-check-1790322722  3 cases against http://127.0.0.1:8000  parser prompt: whatever the `production` label points at
+console-check-1790332814  3 cases against http://127.0.0.1:8000  parser prompt: whatever the `production` label points at
 lane switches before: enabled=False lanes=[]
 lane switches for the run: enabled=True lanes=13
-PASS  B1 via Q>X and B1 via unset X, one multi-product turn (R14 sample g) branch=business_query  'Sorry, we do not have enough stock for that quantity.  1. SA318A x 250: the quantity is more than what I can confirm her'
-PASS  B2 - in stock                                branch=business_query  'Yes, we have stock.  1. SA318C x 50: yes, we have stock, please refer to your salesman to proceed. Yes, we have stock.  '
-PASS  B4 - no stock and no incoming                branch=business_query  'Sorry, we do not have enough stock for that quantity.  1. SA318E x 150: no stock and no incoming at the moment, please r'
+PASS  B1 via Q>X and B1 via unset X, one multi-product turn (R14 sample g) branch=business_query  'SA318A x 250: the quantity is more than what I can confirm here, please refer to your salesman.  SA318B x 20: the quanti'
+PASS  B2 - in stock                                branch=business_query  'SA318C x 50: yes, we have stock, please refer to your salesman to proceed. SA318C x 50: yes, we have stock, please refer'
+PASS  B4 - no stock and no incoming                branch=business_query  'SA318E x 150: no stock and no incoming at the moment, please refer to your salesman. SA318E x 150: no stock and no incom'
 lane switches restored: enabled=False lanes=[]
 
-3 passed, 0 failed  (console-check-1790322722)
+3 passed, 0 failed  (console-check-1790332814)
 ```
 
 Then, for B3, run twice with the toggle flipped between runs (`UPDATE respond_contacts SET
@@ -141,33 +187,34 @@ SORENTO_ENV_FILE=.env.ci-tests venv/bin/python scripts/chatbot_console_check.py 
 Output (toggle ON):
 
 ```
-console-check-1790322700  1 cases against http://127.0.0.1:8000  parser prompt: whatever the `production` label points at
+console-check-1790332824  1 cases against http://127.0.0.1:8000  parser prompt: whatever the `production` label points at
 lane switches before: enabled=False lanes=[]
 lane switches for the run: enabled=True lanes=13
-PASS  B3 - incoming with ETA (run with packing_list_allowed both true and false) branch=business_query  'Here is the stock availability for the requested products.  1. SA318D x 150: no stock at the moment, ETA 19/10/2026. Her'
+PASS  B3 - incoming with ETA (run with packing_list_allowed both true and false) branch=business_query  'SA318D x 150: no stock at the moment, ETA 19/10/2026. SA318D x 150: no stock at the moment, ETA 19/10/2026.'
 lane switches restored: enabled=False lanes=[]
 
-1 passed, 0 failed  (console-check-1790322700)
+1 passed, 0 failed  (console-check-1790332824)
 ```
 
 Output (toggle OFF):
 
 ```
-console-check-1790322709  1 cases against http://127.0.0.1:8000  parser prompt: whatever the `production` label points at
+console-check-1790332830  1 cases against http://127.0.0.1:8000  parser prompt: whatever the `production` label points at
 lane switches before: enabled=False lanes=[]
 lane switches for the run: enabled=True lanes=13
-PASS  B3 - incoming with ETA (run with packing_list_allowed both true and false) branch=business_query  'Here is the stock availability for the requested products.  1. SA318D x 150: no stock at the moment, ETA 19/10/2026. Her'
+PASS  B3 - incoming with ETA (run with packing_list_allowed both true and false) branch=business_query  'SA318D x 150: no stock at the moment, ETA 19/10/2026. SA318D x 150: no stock at the moment, ETA 19/10/2026.'
 lane switches restored: enabled=False lanes=[]
 
-1 passed, 0 failed  (console-check-1790322709)
+1 passed, 0 failed  (console-check-1790332830)
 ```
 
-Both runs' `reply_contains` graded identically (the reply TEXT does not carry the
-attachment) - the attachment finding below is the second half of this branch's evidence,
-read directly off `chatbot.turns.response->'actions'` for each run's own row, as the case
-file's own header says to.
+Both runs' `reply_contains` AND `reply_not_contains` graded identically (the reply TEXT
+does not carry the attachment, and neither carries the footer) - the attachment finding
+below is the second half of this branch's evidence, read directly off
+`chatbot.turns.response->'actions'` for each run's own row, as the case file's own header
+says to.
 
-## The six branches, replies verbatim
+## The six branches, replies verbatim (round 2, footer fix + BULK_IMPORT row both in effect)
 
 Read via `SELECT response->'reply'->>'text' FROM chatbot.turns WHERE contact_respond_id =
 '437264483' AND is_test = true ORDER BY created_at DESC` immediately after each run (dry
@@ -177,63 +224,64 @@ runs still write `chatbot.turns`, per `documentation/agents/chatbot-verification
 unset) - one multi-product turn, R14 sample (g)'s own shape:
 
 ```
-Sorry, we do not have enough stock for that quantity.
+SA318A x 250: the quantity is more than what I can confirm here, please refer to your salesman.
 
-1. SA318A x 250: the quantity is more than what I can confirm here, please refer to your salesman.
-
-2. SA318B x 20: the quantity is more than what I can confirm here, please refer to your salesman.
+SA318B x 20: the quantity is more than what I can confirm here, please refer to your salesman.
 ```
 
 Both lines read identically to the dealer, confirming R14/AC-SA313: the "no cap set for
 `<category>`" wording is S4's own AGENT-notification reason (not built in this slice),
-never a sentence the dealer is sent.
+never a sentence the dealer is sent. No intro, no numbering, no footer.
 
 **B2 - in stock** (`SA318C`, asked 50, 200 on hand):
 
 ```
-Yes, we have stock.
-
-1. SA318C x 50: yes, we have stock, please refer to your salesman to proceed.
+SA318C x 50: yes, we have stock, please refer to your salesman to proceed.
 ```
 
 **B3 - incoming, ETA** (`SA318D`, asked 150, 0 on hand, shipment 2026-10-12 + Y=7 ->
 19/10/2026) - identical reply text both toggle runs:
 
 ```
-Here is the stock availability for the requested products.
-
-1. SA318D x 150: no stock at the moment, ETA 19/10/2026.
+SA318D x 150: no stock at the moment, ETA 19/10/2026.
 ```
 
 **B4 - no stock, no incoming** (`SA318E`, asked 150, 0 on hand, no shipment):
 
 ```
-Sorry, we do not have enough stock for that quantity.
-
-1. SA318E x 150: no stock and no incoming at the moment, please refer to your salesman.
+SA318E x 150: no stock and no incoming at the moment, please refer to your salesman.
 ```
+
+**No reply above carries the `_Data last updated: ..._` footer**, confirmed against a DB
+that DOES have a `BULK_IMPORT` ledger row - this is what round 1's evidence could not show
+(its seed DB had none, so the assertion held for the wrong reason). As a control, the
+FIRST turn of each case (before the dealer states a quantity, `needs_quantity` still true
+- e.g. `"How many units do you need?"`) DOES carry the footer
+(`_Data last updated: 25/08/2026 02:00:00_`), confirming the fix is scoped to the answered
+case exactly as designed (`stock_availability_answered`), not a blanket removal that would
+also silence it for the still-open ask.
 
 ## B3 `send_attachments` finding
 
 Read via `SELECT response->'actions' FROM chatbot.turns WHERE id = '<turn id>'` for each
 run's own final (quantity-stating) turn:
 
-**Toggle ON** (`respond_contacts.packing_list_allowed = true`), turn `d72da7ff-c201-4601-9f72-d2d0557d1716`:
+**Toggle ON** (`respond_contacts.packing_list_allowed = true`), turn `97c4cdc6-9f2e-4849-b566-675bb2e74f15`:
 
 ```json
 [
-  {"kind": "send_message", "text": "Here is the stock availability for the requested products.\n\n1. SA318D x 150: no stock at the moment, ETA 19/10/2026.", "dry_run": true, "result_set": [], "quick_replies": null},
-  {"kind": "send_attachments", "dry_run": true, "attachments_src": [{"url": "https://example.test/sa318-packing-list.pdf", "filename": "SA318-packing-list.pdf", "mimeType": "application/pdf"}]}
+  {"kind": "send_message", "text": "SA318D x 150: no stock at the moment, ETA 19/10/2026.", "dry_run": true, "result_set": [], "quick_replies": null},
+  {"kind": "send_attachments", "dry_run": true, "attachments_src": [{"url": "https://example.test/sa318-packing-list.pdf", "filename": "sa318-packing-list.pdf", "mimeType": "application/pdf"}]}
 ]
 ```
 
 `send_attachments` IS present, carrying the seeded shipment's packing list attachment.
 
-**Toggle OFF** (`respond_contacts.packing_list_allowed = false`), turn `2bb5f8f7-49f2-42f4-b268-58b92d1612b0`:
+**Toggle OFF** (`respond_contacts.packing_list_allowed = false`), turn `65e70daf-84d4-48c0-ba5e-6936c75c21db`:
 
 ```json
 [
-  {"kind": "send_message", "text": "Here is the stock availability for the requested products.\n\n1. SA318D x 150: no stock at the moment, ETA 19/10/2026.", "dry_run": true, "result_set": [], "quick_replies": null}
+  {"kind": "send_message", "text": "SA318D x 150: no stock at the moment, ETA 19/10/2026.", "dry_run": true, "result_set": [], "quick_replies": null}
 ]
 ```
 
@@ -248,9 +296,9 @@ attachment action") against a real turn through the real backend, not just the p
 ## Files
 
 - `tests/chatbot/console_cases/2026-09-25-stock-ask-v2-s3-branches.yaml` (B1 via Q>X, B1 via
-  unset X, B2, B4).
+  unset X, B2, B4; round 2 adds `reply_not_contains: ["Data last updated"]` to each case).
 - `tests/chatbot/console_cases/2026-09-25-stock-ask-v2-s3-incoming-packing-list.yaml` (B3,
-  run against both toggle states).
+  run against both toggle states; round 2 adds the same `reply_not_contains`).
 - This file.
 
 ## Result
@@ -259,7 +307,9 @@ All six AC-SA318 branches (B1 via Q > X, B1 via unset X, B2, B3 with the toggle 
 the toggle off, B4) pass for the right reason: each reply is graded on the exact R14
 sentence, not the generic error reply or a `branch_kind`-only assertion (the pitfall
 `documentation/agents/chatbot-verification.md` and this repo's other console-case files both
-name). No case was weakened to pass. No S3 code defect was found; the two environment gaps
-above are pre-existing sandbox/DB gaps, not part of this slice's diff, and were worked around
-additively (a missing table created, one data row seeded) rather than by touching any
-migration or application code.
+name), AND on the absence of the last-updated footer against a DB that actually has a
+`BULK_IMPORT` row to trigger it. No case was weakened to pass. No S3 code defect was found
+this round; the three additional environment gaps above (workspace/access-agent seeding,
+the `integration_api_keys` auth cutover) are pre-existing sandbox/DB gaps, not part of this
+round's diff, and were worked around additively (rows seeded, no migration or application
+code touched) exactly as round 1's own two gaps were.
