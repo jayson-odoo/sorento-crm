@@ -76,7 +76,7 @@ lifted out of `stock_debt_service` into one shared module now that two workbooks
 - `split == "none"`: today's two sheets, byte-for-byte the same path.
 - Otherwise: `split_rows(all_rows, split, supplier=lambda r: r.get("supplier_name"), category=lambda r: master[r["product_code"]]["category_code"])`; for each `(key, group)`: `base = unique_sheet_title(key, used, limit=25)`; sheet `f"{base} - Low"` with `[r for r in group if _is_low(r)]`, then sheet `base` with `group`. Same `write_sheet`, same columns, same `_sheet_row`.
 - Return tuple unchanged; the counts dict gains `"sheets"` (logged by the task, not stamped).
-- `low_stock_sheet_counts(db, run_id) -> {"rows": n, "sheet_counts": {"supplier", "category", "supplier_category"}}`: `_split()` once, then distinct keys over `all_rows` with the SAME key callables the workbook uses (none-buckets included, pairs only when present). Group counts, not sheet counts: the FE doubles them (R2).
+- `low_stock_preview(db, run_id) -> {"rows": n, "sheet_counts": {"supplier", "category", "supplier_category"}}`: `_split()` once, then distinct keys over `all_rows` with the SAME key callables the workbook uses (none-buckets included, pairs only when present). Group counts, not sheet counts: the FE doubles them (R2).
 
 Route `GET /scm/order-summary/low-stock-preview?run_id=` (`_VIEW`, API key allowed - a read): `run_id` optional (newest completed run, as the report), validated + `assert_run_visible` like the export; returns `LowStockPreviewOut {rows, sheet_counts}`. Called once per dialog open, never on page load.
 
