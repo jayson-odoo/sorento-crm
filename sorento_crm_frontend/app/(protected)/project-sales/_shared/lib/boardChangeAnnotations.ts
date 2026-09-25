@@ -620,8 +620,15 @@ function changedLineIds(
  *
  * A row whose suggestion leaves the line's own supply alone is approved as it stands; a row
  * carrying a fresh proposal is approved against that proposal, which is exactly what the
- * board's own Approve does to an undecided cell. Confirm (AC-C7) is this pre-marked path.
- * Nothing is written here: this seeds the board's DRAFT, and Confirm is still the only write.
+ * board's own Approve does to an undecided cell. Nothing is written here: this seeds the
+ * board's DRAFT, and Confirm is still the only write.
+ *
+ * Confirm does NOT count or post a bare pre-mark on its own any more (S5, owner ruling 25 Sep
+ * 2026, `PLAN-esb-change-row-refresh.md`, issue #1245 - supersedes the AC-C7 line of
+ * `PLAN-board-change-proposed-pill`, 18 Sep 2026): SO419122 read "Confirm (119)" with nothing
+ * ticked and one press handed 49 rows to purchasing. The pill, the icons and this seeding
+ * still fire unchanged - only the count, and what Confirm actually sends, changed, in
+ * `FulfilmentBoardPanel.tsx`'s `draftWithoutPreMarks`.
  */
 export function preMarkedKeys(
   batch: Pick<PlanningChangeBatch, 'orders'> | null | undefined,

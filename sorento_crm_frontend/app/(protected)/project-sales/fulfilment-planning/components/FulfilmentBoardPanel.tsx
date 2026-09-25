@@ -200,6 +200,30 @@ function granularityFrom(value: string | null): BoardGranularity {
 }
 
 /**
+ * `source` with every bare pre-mark dropped, as though the line had never been touched (S5,
+ * owner ruling 25 Sep 2026, issue #1245, `PLAN-esb-change-row-refresh.md`): after SO419122,
+ * "Confirm (119)" read a count that included every `Change proposed` line nobody had actually
+ * looked at, and one press handed 49 of them to purchasing. `{ verdict: 'approved', preMarked:
+ * true }` is the board's OWN suggestion for such a line, seeded so the pill, the per-row
+ * proposal and the change icons keep reading right (`FulfilmentBoardPanel`'s own pre-mark
+ * effect, unchanged) - it is never something a person saved. Confirm's own count, its payload,
+ * and every toast that echoes the count back all read the draft through this first, so a
+ * pre-marked line counts, and posts, only once a real `decide()` write - Save, an explicit
+ * reject, or "Save all suggested" itself - has overwritten it with a decision that carries no
+ * `preMarked` flag. `canQuickSave`'s own `!draft[key]` rule is what makes "Save all suggested"
+ * pick a pre-marked line back up once it reads `undefined` for it here, exactly as it already
+ * would for a line nobody had touched at all.
+ */
+function draftWithoutPreMarks(source: BoardDraft): BoardDraft {
+  const out: BoardDraft = {};
+  for (const [key, decision] of Object.entries(source)) {
+    if (decision?.preMarked) continue;
+    out[key] = decision;
+  }
+  return out;
+}
+
+/**
  * Planning several sales orders at once (PLAN section 13).
  *
  * The board is a LENS. It reads across the selection and writes nothing of its own: approve /
@@ -795,9 +819,11 @@ export function FulfilmentBoardPanel({
         return false;
       }
       if (!options?.quiet && decision) {
+        // S5: the toast's own count reads the same pre-mark-free view Confirm itself does -
+        // `appliedNext` still carries every OTHER line's still-unsaved pre-mark verbatim.
         const { toConfirm, rejected } = confirmSummaryFor(
           allContributions,
-          appliedNext,
+          draftWithoutPreMarks(appliedNext),
           pendingBatchSalesOrderIds,
         );
         toast.success(
@@ -854,9 +880,12 @@ export function FulfilmentBoardPanel({
         );
       }
       if (saved > 0) {
+        // S5: same pre-mark-free reading as every other count on this board - a line outside
+        // THIS press's own population (filtered off screen) can still carry a stale pre-mark
+        // in `appliedNext`.
         const { toConfirm } = confirmSummaryFor(
           allContributions,
-          appliedNext,
+          draftWithoutPreMarks(appliedNext),
           pendingBatchSalesOrderIds,
         );
         toast.success(
@@ -923,6 +952,15 @@ export function FulfilmentBoardPanel({
   );
 
   /**
+   * `draft` as Confirm reads it (S5, owner ruling 25 Sep 2026, issue #1245): every bare
+   * pre-mark dropped, so a `Change proposed` line nobody has saved counts, and posts, exactly
+   * like a line nobody has touched at all - `draftWithoutPreMarks`'s own doc has the reasoning.
+   * The pre-mark seeding effects above still write `preMarked: true` straight into `draft`
+   * itself; this is a read-side view of it, never a second copy of the state.
+   */
+  const draftWithoutPreMark = React.useMemo(() => draftWithoutPreMarks(draft), [draft]);
+
+  /**
    * What one press of Confirm would do: "N to confirm · M rejected" (D1/D3).
    *
    * Counted over exactly the population `confirmLinesFor` posts, so the sentence beside the
@@ -930,10 +968,14 @@ export function FulfilmentBoardPanel({
    * implementation (`_shared/lib/fulfilmentBoard.ts`) - `decide()`'s own S4 save toast needs
    * the SAME count read off the draft it just wrote, before this `useMemo` has re-run with
    * it, so the reduction lives in one place rather than being kept in step by hand in two.
+   *
+   * Reads `draftWithoutPreMark`, not `draft` (S5): a `Change proposed` line nobody has saved
+   * is not counted, and the Confirm button disables at 0 exactly as it already does for a
+   * board with nothing decided at all.
    */
   const confirmSummary = React.useMemo(
-    () => confirmSummaryFor(allContributions, draft, pendingBatchSalesOrderIds),
-    [allContributions, draft, pendingBatchSalesOrderIds],
+    () => confirmSummaryFor(allContributions, draftWithoutPreMark, pendingBatchSalesOrderIds),
+    [allContributions, draftWithoutPreMark, pendingBatchSalesOrderIds],
   );
 
   /**
@@ -946,15 +988,19 @@ export function FulfilmentBoardPanel({
   const unpostable = React.useMemo<UnpostableLine[]>(() => {
     if (!board.data) return [];
     const contributions = board.data.contributions;
+    // S5: a bare pre-mark is not a decision to flag a REASON for - it is not being posted at
+    // all, the same as a line nobody has touched (`draftWithoutPreMark`'s own doc). Left on
+    // raw `draft` this banner would name a `buy_reason_missing`-style refusal for a `Change
+    // proposed` line nobody had looked at yet.
     return board.data.orders.flatMap((order) =>
       unpostableDecidedFor(
         contributions,
         order.sales_order_id,
-        draft,
+        draftWithoutPreMark,
         Boolean(order.project_sales_order_id),
       ),
     );
-  }, [board.data, draft]);
+  }, [board.data, draftWithoutPreMark]);
 
   /**
    * The sales orders whose OWN batch rows have all been applied already (AC-B6).
@@ -1059,6 +1105,11 @@ export function FulfilmentBoardPanel({
    * ruling, reverses R11). An uncovered line nobody saved a decision for is left undecided,
    * not confirmed as the engine's suggestion; "Save all suggested" is the bulk way to agree
    * with it before this press.
+   *
+   * S5 (owner ruling 25 Sep 2026, issue #1245): reads `draftWithoutPreMark`, never `draft`,
+   * throughout - a `Change proposed` line nobody has saved is the SAME "nothing to post" case
+   * as a line nobody has touched, so its order never enters the batch on its account alone and
+   * its batch row stays pending server-side.
    */
   const runConfirmAll = React.useCallback(async () => {
     if (!board.data) return;
@@ -1078,7 +1129,7 @@ export function FulfilmentBoardPanel({
         contributions
           .filter((contribution) => {
             if (contribution.unplannable) return false;
-            const decision = draft[contribution.key];
+            const decision = draftWithoutPreMark[contribution.key];
             // A COVERED reject is a WITHDRAWAL this press carries out (owner ruling 23 Sep
             // 2026, `PLAN-board-reject-on-confirmed-line.md`: "we should confirm the
             // rejection") - its order belongs in the batch on that account alone, same as an
@@ -1177,7 +1228,7 @@ export function FulfilmentBoardPanel({
           } as ConfirmManyOrderResult);
           continue;
         }
-        const lines = confirmLinesFor(contributions, salesOrderId, draft);
+        const lines = confirmLinesFor(contributions, salesOrderId, draftWithoutPreMark);
         // AC-B3/AC-B5: THIS order's own batch, not the board-wide `batchId` - two orders on
         // two different pending batches each answer their own. The batches the screen LOADED
         // first (it was opened on one), and the BOARD'S own statement of the newest pending
@@ -1193,7 +1244,7 @@ export function FulfilmentBoardPanel({
         // scope") - an order on one never carries `rejected_line_ids` from here.
         const rejectedLineIds = orderBatchId
           ? []
-          : rejectedCoveredLineIdsFor(contributions, salesOrderId, draft);
+          : rejectedCoveredLineIdsFor(contributions, salesOrderId, draftWithoutPreMark);
         // S4 (fix round, review): the covered-rejected lines THIS order's own batch just
         // zeroed out of `rejectedLineIds` above, so the planner is told what did not ride
         // along rather than the counter simply promising it and the press posting nothing
@@ -1206,7 +1257,7 @@ export function FulfilmentBoardPanel({
               (contribution) =>
                 contribution.sales_order_id === salesOrderId &&
                 contribution.covered &&
-                draft[contribution.key]?.verdict === 'rejected',
+                draftWithoutPreMark[contribution.key]?.verdict === 'rejected',
             )
           : [];
         // S4: said OUT LOUD, named per line THROUGH `failing_lines` (the same shape a
@@ -1249,7 +1300,7 @@ export function FulfilmentBoardPanel({
           // The held-back note above already said why, when that is the whole reason -
           // the generic "had no line..." sentence would only repeat it more vaguely.
           if (heldBackByBatch.length > 0) continue;
-          const blocked = unpostableDecidedFor(contributions, salesOrderId, draft);
+          const blocked = unpostableDecidedFor(contributions, salesOrderId, draftWithoutPreMark);
           const everyLineOffTheRecord =
             blocked.length > 0 && blocked.every((entry) => entry.reason === 'no_mirror');
           skipped.push({
@@ -1353,7 +1404,7 @@ export function FulfilmentBoardPanel({
   }, [
     board,
     allContributions,
-    draft,
+    draftWithoutPreMark,
     adopt,
     confirmMany,
     appliedSoNumbers,
@@ -1489,6 +1540,12 @@ export function FulfilmentBoardPanel({
    * The list already carries its own "whole selection, kind-filtered" population
    * (`visibleListContributions`); the grid additionally narrows by the product search, which
    * only ever touches the rows, never the list.
+   *
+   * `canQuickSave` reads `draftWithoutPreMark`, not `draft` (S5, owner ruling 25 Sep 2026,
+   * issue #1245): its own `!draft[key]` rule already treats a line with no entry as eligible,
+   * and a `Change proposed` line is exactly that - a proposal nobody has saved. Reads as
+   * `undefined` here, so it counts into "Save all suggested (M)" and `decideMany` (below)
+   * overwrites the pre-mark with a real decision, dropping the flag for good.
    */
   const quickSaveKeys = React.useMemo(() => {
     const population =
@@ -1506,9 +1563,9 @@ export function FulfilmentBoardPanel({
             return [...seen.values()];
           })();
     return population
-      .filter((contribution) => canQuickSave(contribution, draft))
+      .filter((contribution) => canQuickSave(contribution, draftWithoutPreMark))
       .map((contribution) => contribution.key);
-  }, [view, visibleListContributions, visibleCells, visibleProductRows, draft]);
+  }, [view, visibleListContributions, visibleCells, visibleProductRows, draftWithoutPreMark]);
 
   /**
    * Orders the link asked for that the board came back without.

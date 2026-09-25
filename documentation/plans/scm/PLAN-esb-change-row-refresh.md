@@ -32,7 +32,7 @@ would raise 39 OIs at that date.
 4. Apply writes OI `delivery_date` from `to_json.required_date`
    (`planning_change_service.py:3857`), so the stale row is not cosmetic.
 
-## Fix (four seams, no migration, no auth change)
+## Fix (five seams, no migration, no auth change)
 
 ### S1 BE `build_batch`: a later change retires the older pending row even when it yields no row
 
@@ -80,6 +80,23 @@ and still pre-marks the line. Fix in the FE helpers: skip any row whose `applied
 not `pending` (one shared predicate, used by all four). Superseded rows stay visible in the
 batch lightbox / history as today; only the board overlay and pre-mark stop reading them.
 
+### S5 FE a "Change proposed" line is a label, not a saved decision (owner ruling 25 Sep 2026, issue #1245)
+
+Owner, after SO419122 read "Confirm (119)" with nothing ticked and one press handed 49 rows to
+purchasing: "we should mark it as Change proposed, but it is not considered Saved". Supersedes
+the Confirm half of the 18 Sep pill ruling (AC-C7 of PLAN-board-change-proposed-pill).
+
+`FulfilmentBoardPanel.tsx`: the pre-mark effect still seeds `{ verdict: 'approved', preMarked:
+true }` so the pill, the per-row proposal and the change icons keep working, but:
+- `confirmSummary` ("N to confirm", the Confirm (N) label) and `runConfirmAll` skip every draft
+  with `preMarked: true`. Only a verdict a person saved (row approve, amend, quick-save, Save all
+  suggested) counts and is sent.
+- "Save all suggested (N)" counts and saves pre-marked lines too, so tick + Save all turns
+  "Change proposed" into Saved in one motion; `decide()` already overwrites the pre-mark object,
+  so the flag drops itself on save.
+- Reject (X) unchanged. A pre-marked line nobody saved is left alone by Confirm: its batch row
+  stays pending.
+
 ## Out of scope
 
 - The SO419122 rows themselves: one-off datafix SQL (scratchpad `so419122_datafix.sql`,
@@ -106,6 +123,10 @@ FE `boardChangeAnnotations.test.ts`:
 
 - T7 `uncoverChangedLines` keeps the live `required_date`, `qty_outstanding`, `is_past`,
   `bucket_key` and takes `sources` / `qty_proposed_buy` from the proposal.
+- T9 (S5) FulfilmentBoardPanel.change.test.tsx: a board with pre-marked lines and nothing saved
+  reads "0 to confirm", Confirm disabled; Save all suggested (N) counts the pre-marked lines; after
+  Save all the same lines count and Confirm's payload carries them; a pre-marked line left unsaved
+  is absent from the Confirm payload; reject still works.
 - T8 a batch whose only row for a line is `applied_state = superseded` (or `applied`):
   `uncoverChangedLines` leaves that contribution untouched, `preMarkedKeys` does not name
   it, `annotationsByLine` / `annotationsByCell` carry no annotation for it. A line with a

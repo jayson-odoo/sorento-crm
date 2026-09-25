@@ -51,6 +51,17 @@ minutes apart; the board and Confirm must follow the second push.
   Confirm, never a row's own `applied_state` - pinned by `FulfilmentBoardPanel.change.test.tsx`'s
   "does not block Confirm ... even if a row says it was".
 
+## S5 Change proposed is not Saved (owner ruling 25 Sep 2026, #1245)
+
+- **AC-16 [FE]** A board whose batch pre-marks N lines and where nothing has been saved reads
+  "0 to confirm", the Confirm button is disabled, and every pre-marked row's pill still reads
+  "Change proposed".
+- **AC-17 [FE]** "Save all suggested (M)" counts the pre-marked lines among M; pressing it saves
+  them; their pills read Saved and "M to confirm" now counts them.
+- **AC-18 [FE]** Confirm's request body contains only lines with a saved verdict; a pre-marked
+  line the planner never saved is absent, and its batch row stays pending.
+- **AC-19 [FE]** Reject (X) on a pre-marked line still counts as rejected and is sent as such.
+
 ## Apply
 
 - **AC-11 [BE]** After AC-2, `apply` on that order raises no order-inquiry row for L at D1.
