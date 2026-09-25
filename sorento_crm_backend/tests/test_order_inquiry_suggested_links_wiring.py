@@ -269,12 +269,14 @@ def test_ac_lt_33_suggested_links_on_the_worklist_and_detail_rows(api):
 
 
 # =============================================================================
-# AC-LT-34: the PO lightbox - allocations real only, suggested_links its own
-# panel (RED: missing field)
+# AC-LT-34: the PO lightbox - allocations real only, the retired "Suggested for"
+# panel never on the wire (review round 2 Should fix 5, amended 25 Sep 2026: R13
+# replaced the panel with the Lines tab's own Allocated/Suggested columns, so
+# `suggested_links` never reaches this route at all any more)
 # =============================================================================
 
 
-def test_ac_lt_34_po_lightbox_allocations_real_only_suggested_in_own_panel(api):
+def test_ac_lt_34_po_lightbox_allocations_real_only_no_retired_suggested_panel(api):
     client, world = api
     product = _seed_product(world.db, company_id=world.company_id)
 
@@ -326,14 +328,9 @@ def test_ac_lt_34_po_lightbox_allocations_real_only_suggested_in_own_panel(api):
     assert all(a["po_line_id"] == str(real_line.id) for a in real_body["allocations"])
 
     suggest_body = client.get(f"{LIST}/po/{po_suggest.id}").json()
-    assert "suggested_links" in suggest_body, (
-        "the lightbox must carry a Suggested for panel"
+    assert "suggested_links" not in suggest_body, (
+        "the retired lightbox panel is gone from the wire"
     )
-    entries = suggest_body["suggested_links"]
-    assert len(entries) == 1, entries
-    entry = entries[0]
-    assert entry.get("item_code") == product.product_code
-    assert Decimal(entry["qty"]) == Decimal("6")
     assert suggest_body.get("allocations") == [], "no real link sits on the suggested-only PO"
 
 

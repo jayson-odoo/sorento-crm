@@ -1187,12 +1187,6 @@ export interface OrderInquiryPoDetail {
    * answers it (plan section 5.1), and the panel then says so rather than claiming none.
    */
   allocations?: OrderInquiryDocumentAllocation[];
-  /**
-   * `PLAN-oi-links-autocount-truth-24sep.md` section 3.5: the lightbox's own "Suggested
-   * for" panel, below Allocated to - every row the cascade suggests THIS document for.
-   * Absent or empty on every purchase order today (S2, FE mock; AC-LT-34 wires it live).
-   */
-  suggested_links?: OrderInquiryDocumentAllocation[];
 }
 
 /* --------------------------------------------------------- the SPO lightbox
@@ -1239,9 +1233,6 @@ export interface OrderInquirySpoDetail {
   container_no?: string | null;
   lines: OrderInquirySpoDetailLine[];
   allocations?: OrderInquiryDocumentAllocation[];
-  /** Section 3.5's "Suggested for" panel, for the other book. Absent or empty today
-   * (S2, FE mock; AC-LT-34 wires it live). */
-  suggested_links?: OrderInquiryDocumentAllocation[];
 }
 
 /**

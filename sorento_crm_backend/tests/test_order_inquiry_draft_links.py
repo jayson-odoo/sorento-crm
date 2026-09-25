@@ -901,22 +901,21 @@ def test_the_purchase_order_lightbox_names_who_is_holding_the_quantity(api):
     the raise-time cascade never waited on the handshake.
 
     S3 reversal: the open line carries no book match, so what lands on the row is a
-    SUGGESTION - AC-LT-34's own "Suggested for" panel, never `allocations` (real links
-    only). A suggestion carries no `ack_state` at all (plan 3.5): it is not
-    purchasing's word, so there is nothing on it to read as Proposed or Confirmed.
+    SUGGESTION, never a real link - `allocations` (real links only) stays empty.
+
+    Review round 2 Should fix 5 (AC-LT-34, amended): the lightbox's own "Suggested
+    for" panel is retired - R13 replaced it with the Lines tab's own Allocated/
+    Suggested columns, the WHOLE answer now, so `suggested_links` never reaches
+    this wire at all any more.
     """
     client, world = api
     po, _line = _open_po_line(world, qty=50)
-    row = _raise_one_row(api, qty="10")["row"]
+    _raise_one_row(api, qty="10")
 
     body = client.get(f"{LIST}/po/{po.id}").json()
 
     assert body["allocations"] == [], "no real link sits on the suggested-only line"
-    assert body["suggested_links"], "the Suggested for panel reads off the suggestion"
-    suggested = body["suggested_links"][0]
-    assert suggested["qty"] == "10"
-    assert suggested["item_code"] == row.item_code
-    assert suggested["inquiry_no"]
+    assert "suggested_links" not in body, "the retired lightbox panel is gone from the wire"
 
 
 def test_the_purchase_order_lightbox_reads_a_manual_acknowledge_press_as_confirmed_too(api):
@@ -979,18 +978,20 @@ def test_the_shipping_order_lightbox_names_who_is_holding_it(api):
     the raise-time cascade never waited on the handshake.
 
     S3 reversal: the allocation carries no book match, so what lands on the row is a
-    SUGGESTION - AC-LT-34's own "Suggested for" panel, never `allocations`.
+    SUGGESTION, never a real link - `allocations` stays empty.
+
+    Review round 2 Should fix 5 (AC-LT-34, amended): same reversal as the PO
+    lightbox's own sibling test above - the "Suggested for" panel is retired.
     """
     client, world = api
     pool = _pooled(world)
     allocation = _spo_line(world, qty=50, warehouse=pool)
-    row = _raise_one_row(api, qty="10")["row"]
+    _raise_one_row(api, qty="10")
 
     body = client.get(f"{LIST}/spo/{quote(allocation.spo_number, safe='')}").json()
 
     assert body["allocations"] == [], "no real link sits on the suggested-only allocation"
-    assert body["suggested_links"][0]["qty"] == "10"
-    assert body["suggested_links"][0]["item_code"] == row.item_code
+    assert "suggested_links" not in body, "the retired lightbox panel is gone from the wire"
 
 
 # ---------------------------------------------------------------------------

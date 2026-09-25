@@ -71,7 +71,6 @@ from app.models.project_so import (
     OrderInquiryReserveRequest,
     OrderInquiryReserveRequestRow,
     OrderInquiryRow,
-    OrderInquirySuggestedLink,
     ProjectSalesOrder,
     ProjectSalesOrderLine,
     SOSupplyDecision,
@@ -2426,8 +2425,6 @@ class OrderInquiryWorklistService:
             # buyer a line is free when the next Confirm is going to take it. Real links
             # only - a suggestion never appears here (AC-LT-34).
             "allocations": self._allocations_on(po_line_ids=line_ids),
-            # AC-LT-34: the "Suggested for" panel below Allocated to.
-            "suggested_links": self._suggested_links_on(po_line_ids=line_ids),
         }
 
     # -------------------------------------------------------------- spo detail
@@ -2554,10 +2551,6 @@ class OrderInquiryWorklistService:
             "allocations": self._allocations_on(
                 spo_allocation_ids=[str(allocation.id) for allocation in allocations]
             ),
-            # AC-LT-34: the "Suggested for" panel below Allocated to.
-            "suggested_links": self._suggested_links_on(
-                spo_allocation_ids=[str(allocation.id) for allocation in allocations]
-            ),
         }
 
     # ------------------------------------------------------- who holds a document
@@ -2634,87 +2627,6 @@ class OrderInquiryWorklistService:
                 inquiry_no,
                 autocount_doc_no,
                 provisional_ref,
-            ) in rows
-        ]
-
-    def _suggested_links_on(
-        self,
-        *,
-        po_line_ids: Optional[Sequence[str]] = None,
-        spo_allocation_ids: Optional[Sequence[str]] = None,
-    ) -> List[Dict[str, Any]]:
-        """AC-LT-34: the lightbox's own "Suggested for" panel, below Allocated to -
-        every row the cascade has guessed onto one of these document lines, never a
-        placement. Same shape `_allocations_on` returns (`ack_state`/`linked_at`
-        both stay null - a suggestion carries neither), so both panels render off
-        one wire contract.
-        """
-        targets = []
-        if po_line_ids:
-            targets.append(OrderInquirySuggestedLink.po_line_id.in_(list(po_line_ids)))
-        if spo_allocation_ids:
-            targets.append(
-                OrderInquirySuggestedLink.spo_allocation_id.in_(list(spo_allocation_ids))
-            )
-        if not targets:
-            return []
-        rows = (
-            self.db.query(
-                OrderInquirySuggestedLink.qty,
-                OrderInquirySuggestedLink.po_line_id,
-                OrderInquiry.inquiry_no,
-                ProjectSalesOrder.autocount_doc_no,
-                ProjectSalesOrder.provisional_ref,
-                # The PRODUCT the suggestion's own line names, not the row's own
-                # `item_code` column - the bulk of a row this table's own seed helpers
-                # write leaves that blank, and the target line is the fact that
-                # actually says what item this is.
-                Product.product_code,
-            )
-            .select_from(OrderInquirySuggestedLink)
-            .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquirySuggestedLink.row_id)
-            .join(OrderInquiry, OrderInquiry.id == OrderInquiryRow.order_inquiry_id)
-            .outerjoin(
-                ProjectSalesOrder,
-                ProjectSalesOrder.id == OrderInquiry.project_sales_order_id,
-            )
-            .outerjoin(
-                PurchaseOrderLine,
-                PurchaseOrderLine.id == OrderInquirySuggestedLink.po_line_id,
-            )
-            .outerjoin(
-                SPOAllocation,
-                SPOAllocation.id == OrderInquirySuggestedLink.spo_allocation_id,
-            )
-            .outerjoin(
-                Product,
-                Product.id
-                == func.coalesce(PurchaseOrderLine.product_id, SPOAllocation.product_id),
-            )
-            .filter(or_(*targets))
-            .order_by(
-                OrderInquirySuggestedLink.suggested_at.asc(),
-                OrderInquirySuggestedLink.id.asc(),
-            )
-            .all()
-        )
-        return [
-            {
-                "inquiry_no": inquiry_no,
-                "so_number": autocount_doc_no or provisional_ref,
-                "item_code": item_code,
-                "qty": _qty_str(_dec(qty)),
-                "ack_state": None,
-                "linked_at": None,
-                "po_line_id": str(po_line_id) if po_line_id else None,
-            }
-            for (
-                qty,
-                po_line_id,
-                inquiry_no,
-                autocount_doc_no,
-                provisional_ref,
-                item_code,
             ) in rows
         ]
 

@@ -1238,9 +1238,6 @@ class OrderInquiryPoDetail(BaseModel):
     #: Who this purchase order's quantity is spoken for by, drafts included (AC-D18).
     #: Real links only - a suggested link never appears here (AC-LT-34).
     allocations: List[OrderInquiryDocumentAllocation] = []
-    #: AC-LT-34: the "Suggested for" panel below Allocated to - every row the
-    #: cascade has guessed onto one of this document's lines, never a placement.
-    suggested_links: List[OrderInquiryDocumentAllocation] = []
 
 
 class OrderInquirySpoDetailLine(BaseModel):
@@ -1289,9 +1286,6 @@ class OrderInquirySpoDetail(BaseModel):
     lines: List[OrderInquirySpoDetailLine] = []
     #: Real links only - a suggested link never appears here (AC-LT-34).
     allocations: List[OrderInquiryDocumentAllocation] = []
-    #: AC-LT-34: the "Suggested for" panel below Allocated to - every row the
-    #: cascade has guessed onto one of this document's lines, never a placement.
-    suggested_links: List[OrderInquiryDocumentAllocation] = []
 
 
 # ---------------------------------------------------------------------------------
