@@ -4,9 +4,21 @@ on:
   push:
     branches:
       - main
+  # `types: [labeled]` ONLY - a push to the PR branch fires no `pull_request`
+  # event at all (GitHub still fires `labeled` again on the PR's CURRENT head
+  # every time any label is added, so the orchestrator re-adds `ci` to re-run
+  # against a new head). Every root job below then gates on
+  # `github.event.label.name == 'ci'`, so labeling with anything else is a
+  # no-op. This exists because push-triggered PR runs were burning most of the
+  # account's 20 concurrent job slots and queuing push-to-main deploys behind
+  # them for 30-50+ minutes (2026-09-25: runs 36103575754/36105804527/36107711150
+  # all queued behind one PR run). A PR with no `ci` label therefore shows NO
+  # checks and cannot merge - see the required-checks note on `check-migration-heads`
+  # and `changes` below; this is intended, not a bug.
   pull_request:
     branches:
       - main
+    types: [labeled]
   # Merge-queue entries: GitHub creates a temporary branch containing the
   # candidate merge result (this PR merged onto main plus every entry queued
   # ahead of it) and fires this event. Every validate/test job below runs for
@@ -60,6 +72,18 @@ jobs:
   check-migration-heads:
     name: Single alembic head (fast gate)
     runs-on: ubuntu-latest
+    # Root job (no `needs`): gates the whole `pull_request` run on the `ci`
+    # label. `github.event_name != 'pull_request'` keeps push/merge_group/
+    # workflow_dispatch running exactly as before; on a `pull_request` event
+    # (now `labeled` only) this only passes when the label just added is `ci`,
+    # so labeling with anything else no-ops. No status-check function
+    # (success()/always()/etc) appears in this expression, so every job that
+    # `needs` this one (directly or transitively) is skipped automatically
+    # when it is skipped - see https://docs.github.com/actions/using-jobs/using-conditions-to-control-job-execution.
+    # The job NAME is unchanged, so branch-protection required checks keep
+    # matching; a PR with no `ci` label simply never reports this check,
+    # which is what keeps it unmergeable until the orchestrator labels it.
+    if: github.event_name != 'pull_request' || github.event.label.name == 'ci'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -120,6 +144,12 @@ jobs:
   changes:
     name: Changed areas
     runs-on: ubuntu-latest
+    # Same gate as check-migration-heads above, and for the same reason: this
+    # is the other root job (no `needs`), so skipping it here skips every job
+    # that depends on it transitively (validate-backend, validate-mcp,
+    # test-backend, test-backend-scm, validate-frontend, typecheck-frontend,
+    # build-images) without touching their own `if` conditions.
+    if: github.event_name != 'pull_request' || github.event.label.name == 'ci'
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
       frontend: ${{ steps.filter.outputs.frontend }}
@@ -1149,4 +1179,29 @@ jobs:
         if: steps.smtp.outputs.configured != 'true'
         run: |
           echo "Email notification skipped: set SMTP_SERVER, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, OWNER_EMAIL secrets."
+
+  # Makes the `ci` label a one-shot trigger rather than a standing state: the
+  # instant a `pull_request labeled` event with label `ci` fires (which is
+  # also what let every other job above run this time), this job removes the
+  # label again. GitHub fires a fresh `labeled` event every time the label is
+  # ADDED, even if it was already present and removed since, so the
+  # orchestrator re-labels the PR to re-run CI against its current head - a
+  # push alone never does, per the trigger comment above. `always()` plus no
+  # `needs` means this runs independently of whether the gated jobs above
+  # passed or failed; the label removal itself must not block on their
+  # result.
+  release-ci-label:
+    name: Release ci label (one-shot trigger)
+    runs-on: ubuntu-latest
+    if: always() && github.event_name == 'pull_request' && github.event.label.name == 'ci'
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Remove ci label so a future add re-triggers CI
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr edit "${{ github.event.pull_request.number }}" \
+            --repo "${{ github.repository }}" \
+            --remove-label ci
 
