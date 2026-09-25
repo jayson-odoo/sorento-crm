@@ -479,6 +479,62 @@ def test_collecting_reply_invents_idea_number_falls_back(configured):
     assert out == "fallback"
 
 
+# --------------------------------------------------------------------------- #
+# Reviewer Should fix 1 (round 2): the fabricated-number check must catch an   #
+# invented idea number in any format an LLM could plausibly write it, not     #
+# only the exact "IDEA-<digits>" form.                                        #
+# --------------------------------------------------------------------------- #
+def test_collecting_reply_invents_lowercase_idea_number_falls_back(configured):
+    text = "Your idea is idea-0777. What's the impact?"
+    result = {
+        "status": "collecting",
+        "title": "",
+        "captured": {},
+        "next_field": "impact",
+        "duplicate_candidate": None,
+        "idea_number": None,
+        "link": None,
+        "reply_text": "fallback",
+    }
+    with _patched(_StubProvider(text)):
+        out = compose_ideate_reply(configured, result=result, user_message="hi")
+    assert out == "fallback"
+
+
+def test_collecting_reply_invents_spaced_idea_number_falls_back(configured):
+    text = "Your idea is IDEA 0777. What's the impact?"
+    result = {
+        "status": "collecting",
+        "title": "",
+        "captured": {},
+        "next_field": "impact",
+        "duplicate_candidate": None,
+        "idea_number": None,
+        "link": None,
+        "reply_text": "fallback",
+    }
+    with _patched(_StubProvider(text)):
+        out = compose_ideate_reply(configured, result=result, user_message="hi")
+    assert out == "fallback"
+
+
+def test_collecting_reply_invents_idea_number_with_trailing_char_falls_back(configured):
+    text = "Your idea is IDEA-0777a. What's the impact?"
+    result = {
+        "status": "collecting",
+        "title": "",
+        "captured": {},
+        "next_field": "impact",
+        "duplicate_candidate": None,
+        "idea_number": None,
+        "link": None,
+        "reply_text": "fallback",
+    }
+    with _patched(_StubProvider(text)):
+        out = compose_ideate_reply(configured, result=result, user_message="hi")
+    assert out == "fallback"
+
+
 def test_collecting_reply_invents_duplicate_mention_falls_back(configured):
     text = "Similar idea exists: Made up idea. Keep going?"
     result = {
@@ -662,49 +718,11 @@ def test_complete_reply_idea_number_not_on_its_own_line_falls_back(configured):
     assert out == "fallback"
 
 
-# --------------------------------------------------------------------------- #
-# Reviewer Should fix 6 - canned.access_denied_text itself, not only the      #
-# composer function it calls: the ideation branch routes through the         #
-# composer; every other agent's denial is unchanged with no LLM call         #
-# --------------------------------------------------------------------------- #
-def test_access_denied_text_ideation_routes_through_composer(monkeypatch):
-    from app.services.chatbot.copy import fallback_copy
-    from app.services.chatbot.lanes import canned
-
-    calls = []
-
-    def _fake_compose(db, *, user_message, fallback_text):
-        calls.append((user_message, fallback_text))
-        return "LLM-composed denial"
-
-    monkeypatch.setattr(
-        "app.services.ideation_turn_service.compose_ideate_denial_reply", _fake_compose
-    )
-    ctx = {
-        "parse": {"output": {"routing": {"suggested_agent": "ideation"}}},
-        "text": {"message": {"message": {"text": "i have an idea"}}},
-    }
-    out = canned.access_denied_text(None, ctx, fallback_copy())
-    assert out == "LLM-composed denial"
-    assert calls[0][0] == "i have an idea"
-
-
-def test_access_denied_text_other_agent_skips_composer(monkeypatch):
-    from app.services.chatbot.copy import fallback_copy
-    from app.services.chatbot.lanes import canned
-
-    calls = []
-    monkeypatch.setattr(
-        "app.services.ideation_turn_service.compose_ideate_denial_reply",
-        lambda *a, **k: calls.append(1),
-    )
-    ctx = {
-        "parse": {"output": {"routing": {"suggested_agent": "purchasing"}}},
-        "text": {"message": {"message": {"text": "need stock"}}},
-    }
-    out = canned.access_denied_text(None, ctx, fallback_copy())
-    assert calls == []
-    assert "purchasing" in out
+# Reviewer Should fix 6 (round 1) added unit tests for `canned.access_denied_text`
+# itself here, but that function lives in `app.services.chatbot` - importing it
+# from this file (outside `tests/chatbot/`) breaks `test_import_boundary.py`
+# (Blocking 1, round 2). Moved to
+# `tests/chatbot/test_s3_canned_and_ideate.py::TestAccessDeniedTextComposerRouting`.
 
 
 # --------------------------------------------------------------------------- #

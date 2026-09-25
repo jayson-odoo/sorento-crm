@@ -68,6 +68,13 @@ _TERMINAL_STATUSES = {"complete", "voted", "cancelled"}
 # session_vars / the create_idea payload. Keeps the most recent turns.
 _TRANSCRIPT_MAX_TURNS = 50
 
+# Should fix 2 (reviewer, round 2): the S4 close's ONLY signal that a draft is
+# already gone shared-service side (safe to clear the pointer without a retry)
+# - not every 4xx. 401/403 (a rotated or wrong api_key) and 408/429 mean the
+# REQUEST failed, not that the draft is gone; treating them as "gone" would
+# orphan the draft on shared-service while sorento silently forgets it.
+_DRAFT_GONE_STATUS_CODES = {404, 409, 410, 422}
+
 # Intake answer keys the brain extracts into (mirrors the shared-service intake
 # target_schema - problem / proposed_solution / impact / department; no module or
 # who - business submitters don't know the module, and the submitter identifies who).
@@ -93,7 +100,14 @@ _QUESTION_MARKS = "?？"  # ASCII ? and full-width ？ (AC-1302)
 # Blocking 1 (reviewer, round 1, PR #1222 at 720bb8f5): any IDEA-<digits> token
 # in a composed reply must be EXACTLY a fact's idea number - word-boundary
 # matched, never a substring (IDEA-0042 is not IDEA-00421).
-_IDEA_TOKEN_RE = re.compile(r"\bIDEA-\d+\b")
+#
+# Should fix 1 (reviewer, round 2): an LLM can plausibly write the token as
+# "idea-0777" (lowercase), "IDEA 0777" (a space instead of a hyphen), or
+# "IDEA-0777a" (a trailing word char, which used to defeat the trailing `\b`
+# entirely and let the token slip past unmatched). Case-insensitive, the
+# separator optional, and no trailing boundary - the digits captured are
+# compared to the allowed set, so format never matters, only the number.
+_IDEA_TOKEN_RE = re.compile(r"\bIDEA[-\s]?(\d+)", re.I)
 # The duplicate-candidate template's own opening phrase - a reply carrying it
 # while the status ISN'T duplicate_candidate is always an invention (there is
 # no candidate fact to name).
@@ -124,28 +138,38 @@ def _ends_in_one_question(text_out: str) -> bool:
     return sum(stripped.count(ch) for ch in _QUESTION_MARKS) == 1
 
 
+def _idea_digits(raw: Any) -> str:
+    """Should fix 1 (reviewer, round 2): the bare digits out of an idea number
+    in any of the formats ``_IDEA_TOKEN_RE`` recognises, so a fact's own
+    number (always the canonical ``IDEA-<digits>`` shape) compares equal to a
+    differently-cased or -spaced mention of the same number in LLM text."""
+    match = _IDEA_TOKEN_RE.search(str(raw))
+    return match.group(1) if match else str(raw)
+
+
 def _allowed_idea_numbers(facts: dict[str, Any]) -> set[str]:
-    """Every idea number a composed reply is allowed to name: the response's own
-    ``idea_number`` (the idea's on complete, the candidate's on voted) and the
-    duplicate candidate's, when one is offered."""
+    """Every idea number (as bare digits) a composed reply is allowed to name:
+    the response's own ``idea_number`` (the idea's on complete, the
+    candidate's on voted) and the duplicate candidate's, when one is offered."""
     allowed: set[str] = set()
     if facts.get("idea_number"):
-        allowed.add(str(facts["idea_number"]))
+        allowed.add(_idea_digits(facts["idea_number"]))
     candidate = facts.get("duplicate_candidate") or {}
     if candidate.get("idea_number"):
-        allowed.add(str(candidate["idea_number"]))
+        allowed.add(_idea_digits(candidate["idea_number"]))
     return allowed
 
 
 def _facts_not_fabricated(text_out: str, facts: dict[str, Any], status: str | None) -> bool:
     """Blocking 1 (reviewer, round 1): applied to EVERY status, not only
-    ``complete`` - reject any ``IDEA-<digits>`` token that is not EXACTLY a
-    fact's idea number (word-boundary match, never a substring), any URL that
-    is not exactly ``facts.link``, and a duplicate-candidate mention when the
-    status carries no such candidate."""
+    ``complete`` - reject any ``IDEA-<digits>``-shaped token (in any case,
+    with a hyphen, a space, or nothing between the letters and the digits -
+    Should fix 1, round 2) whose digits are not EXACTLY a fact's idea number,
+    any URL that is not exactly ``facts.link``, and a duplicate-candidate
+    mention when the status carries no such candidate."""
     allowed_numbers = _allowed_idea_numbers(facts)
     for match in _IDEA_TOKEN_RE.finditer(text_out):
-        if match.group(0) not in allowed_numbers:
+        if match.group(1) not in allowed_numbers:
             return False
 
     link = facts.get("link")
@@ -800,7 +824,10 @@ def handle_turn(
             "title": result.get("title") or prior_title,
             # Blocking 2: the draft's current captured answers, carried forward
             # so the NEXT turn's extractor has them as context (AC-1219 extend).
-            "captured": result.get("captured") or prior_captured,
+            # Nit 2 (reviewer round 2): `or` would replace a LEGITIMATE empty
+            # `captured: {}` (a `remove` emptying the draft) with the stale
+            # prior turn's answers - key presence decides, not truthiness.
+            "captured": result["captured"] if "captured" in result else prior_captured,
             # Persist the running transcript so the NEXT turn appends to it (WS-B).
             "transcript": transcript_list,
             "updated_at": _now_iso(),
@@ -907,11 +934,14 @@ def _close_idle_ideation_draft(
     """AC-1402/AC-1407: close the draft via the same ``cancel: true`` contract a
     live turn uses (plan S4: ``{product_id, draft_id, cancel: true,
     submitter_contact_id}``). Returns True on success (caller clears the
-    pointer). Should fix 4 (reviewer round 1): a 4xx (the draft is already
-    closed/gone shared-service side) is ALSO treated as success - clearing the
-    pointer rather than re-POSTing the same dead draft_id every 15 minutes
-    forever. Only a transport/5xx failure returns False (caller KEEPS the
-    pointer so the next tick retries, AC-1407)."""
+    pointer). Should fix 4 (reviewer round 1): a status in
+    ``_DRAFT_GONE_STATUS_CODES`` (the draft is already closed/gone
+    shared-service side) is ALSO treated as success - clearing the pointer
+    rather than re-POSTing the same dead draft_id every 15 minutes forever.
+    Should fix 2 (reviewer round 2): only those specific statuses mean "gone" -
+    a 401/403/408/429 is a request failure, not a gone draft, and returns
+    False like a transport/5xx failure (caller KEEPS the pointer so the next
+    tick retries, AC-1407)."""
     config = _resolve_ideation_config(db)
     if not config.is_ready:
         return False
@@ -925,7 +955,7 @@ def _close_idle_ideation_draft(
     try:
         call_create_idea(config.base_url, config.api_key, payload)
     except IdeationServiceError as exc:
-        if exc.status_code is not None and 400 <= exc.status_code < 500:
+        if exc.status_code in _DRAFT_GONE_STATUS_CODES:
             logger.warning(
                 "ideation idle sweep: close got %s for respond_io_id=%s (draft "
                 "already gone) - clearing the pointer instead of retrying",

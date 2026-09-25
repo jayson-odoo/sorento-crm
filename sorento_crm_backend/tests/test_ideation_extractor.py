@@ -348,10 +348,15 @@ def test_context_block_carries_captured_answers_and_prior_title(configured):
     assert "Dealers check order status by calling" in user_content
 
 
-def test_semantic_capture_extends_the_existing_field_using_context(configured):
-    """With the prior problem text in context, the model (stubbed here to act
-    like a cooperative one) returns the FULL extended value - not just the new
-    sentence - so nothing captured earlier is lost (AC-1219, Blocking 2)."""
+def test_semantic_capture_extends_the_existing_field_is_a_pass_through_check(configured):
+    """Nit 1 (reviewer, round 2): this does NOT prove a real model extends the
+    field using the context - the stub always returns the extended value
+    regardless of what `captured`/`prior_title` hold, so it stays green even
+    with the context wiring removed (K2a). It only proves the extractor
+    forwards a cooperative model's output unchanged when the field's value
+    happens to be an extension. `test_context_block_carries_captured_answers_
+    and_prior_title` above is the test that actually pins the context wiring;
+    live "does the model extend" behaviour is a console-walk item (AC-1219)."""
     out = _extraction(
         configured,
         {

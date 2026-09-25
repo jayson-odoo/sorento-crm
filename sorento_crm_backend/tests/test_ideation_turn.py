@@ -800,6 +800,39 @@ def test_captured_answers_persisted_onto_the_pointer(wired):
 
 
 # --------------------------------------------------------------------------- #
+# Reviewer Nit 2 (round 2): a response that legitimately returns `captured: {}`#
+# (a `remove` emptied the draft) must NOT have the prior turn's stale answers  #
+# carried forward - `or` treats an empty dict the same as a missing key.      #
+# --------------------------------------------------------------------------- #
+def test_empty_captured_in_response_is_not_replaced_by_stale_prior_answers(wired):
+    wired.set_session_vars(
+        {
+            "ideation": {
+                "draft_id": "d-1",
+                "status": "collecting",
+                "captured": {"problem": "dealers keep calling to check order status"},
+                "missing": [],
+                "updated_at": "t",
+                "is_test": False,
+            }
+        }
+    )
+    wired.set_create_idea(
+        {
+            "draft_id": "d-1",
+            "status": "collecting",
+            "captured": {},
+            "missing": [],
+            "next_field": "problem",
+            "reply_text": "ok",
+        }
+    )
+    out = _turn(message_text="actually forget the problem")
+    ideation = out["session_vars"]["ideation"]
+    assert ideation["captured"] == {}
+
+
+# --------------------------------------------------------------------------- #
 # Reviewer Nit 3 - cancelling during duplicate_candidate omits duplicate_choice#
 # (precedence is shared-service's call; don't send a stale "separate" too)    #
 # --------------------------------------------------------------------------- #
@@ -1144,6 +1177,22 @@ def test_call_create_idea_wraps_httpx_error(monkeypatch):
     monkeypatch.setattr(httpx.Client, "post", _boom)
     with pytest.raises(IdeationServiceError):
         svc.call_create_idea("https://shared.test", "k", {"product_id": "p"})
+
+
+# --------------------------------------------------------------------------- #
+# Reviewer Should fix 3 (round 2): the HTTP status -> `status_code` mapping    #
+# itself has to be driven through an actual `httpx.HTTPStatusError`, not      #
+# monkeypatched directly - otherwise deleting the mapping code leaves every   #
+# sweep test green while production silently retries every 4xx forever.      #
+# --------------------------------------------------------------------------- #
+def test_call_create_idea_maps_http_status_error_status_code(monkeypatch):
+    def _respond(self, url, **kw):  # noqa: ANN001
+        return httpx.Response(404, json={"error": "not found"}, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(httpx.Client, "post", _respond)
+    with pytest.raises(IdeationServiceError) as exc_info:
+        svc.call_create_idea("https://shared.test", "k", {"product_id": "p"})
+    assert exc_info.value.status_code == 404
 
 
 # --------------------------------------------------------------------------- #

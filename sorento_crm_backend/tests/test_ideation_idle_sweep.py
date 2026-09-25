@@ -343,6 +343,58 @@ def test_close_with_5xx_keeps_the_pointer_for_retry(db, monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
+# Reviewer Should fix 2 (round 2): only the statuses that mean the draft is    #
+# ALREADY GONE clear the pointer. A rotated/wrong api_key (401/403) or a rate #
+# limit (429) is retryable, not "gone" - clearing the pointer there orphans   #
+# the draft on shared-service while sorento forgets about it.                 #
+# --------------------------------------------------------------------------- #
+def test_close_with_401_keeps_the_pointer_for_retry(db, monkeypatch):
+    def _boom(*_a, **_k):
+        raise IdeationServiceError("unauthorized", status_code=401)
+
+    monkeypatch.setattr(svc, "call_create_idea", _boom)
+    contact = _make_contact(
+        db,
+        ideation={
+            "draft_id": "d-1",
+            "status": "collecting",
+            "updated_at": _iso(NOW - timedelta(hours=49)),
+            "reminded_at": _iso(NOW - timedelta(hours=25)),
+        },
+    )
+
+    result = sweep_idle_ideation_drafts(db, now=NOW)
+
+    assert result == {"reminded": 0, "closed": 0}
+    ideation = _reload_ideation(db, contact.id)
+    assert ideation is not None
+    assert ideation["draft_id"] == "d-1"
+
+
+def test_close_with_429_keeps_the_pointer_for_retry(db, monkeypatch):
+    def _boom(*_a, **_k):
+        raise IdeationServiceError("rate limited", status_code=429)
+
+    monkeypatch.setattr(svc, "call_create_idea", _boom)
+    contact = _make_contact(
+        db,
+        ideation={
+            "draft_id": "d-1",
+            "status": "collecting",
+            "updated_at": _iso(NOW - timedelta(hours=49)),
+            "reminded_at": _iso(NOW - timedelta(hours=25)),
+        },
+    )
+
+    result = sweep_idle_ideation_drafts(db, now=NOW)
+
+    assert result == {"reminded": 0, "closed": 0}
+    ideation = _reload_ideation(db, contact.id)
+    assert ideation is not None
+    assert ideation["draft_id"] == "d-1"
+
+
+# --------------------------------------------------------------------------- #
 # Reviewer Should fix 5 - the sweep must re-read session_vars fresh right      #
 # before writing, so a live turn landing between the read and the write is    #
 # never overwritten with the stale snapshot (plan S4: "reading the row        #
