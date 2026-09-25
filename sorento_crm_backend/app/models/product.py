@@ -80,6 +80,18 @@ class ProductCategory(Base, CompanyScopedMixin):
         ),
         Index("ix_product_categories_parent_category_id", "parent_category_id"),
         Index("ix_product_categories_is_active", "is_active"),
+        # Should fix 2 (reviewer pass, PR #1221, 85c2e9e7): matches
+        # sa2_0001_xy_columns's CHECK constraints by name, so `create_all`
+        # (every blank-schema test fixture, bootstrap_env) and the migration
+        # (prod) agree - `create_all` built these columns with no CHECK at all
+        # before this.
+        CheckConstraint(
+            "chatbot_max_qty >= 0", name="ck_product_categories_chatbot_max_qty_non_negative"
+        ),
+        CheckConstraint(
+            "chatbot_eta_offset_days >= 0",
+            name="ck_product_categories_chatbot_eta_offset_days_non_negative",
+        ),
     )
 
 
@@ -303,6 +315,18 @@ class Product(Base, CompanyScopedMixin):
         ),
         Index("ix_products_discontinued_pending", "is_discontinued", "discontinued_notified_at"),
         Index("ix_products_discontinued_notify_batch_id", "discontinued_notify_batch_id"),
+        # Should fix 2 (reviewer pass, PR #1221, 85c2e9e7): matches
+        # sa2_0001_xy_columns's CHECK constraints by name, so `create_all`
+        # (every blank-schema test fixture, bootstrap_env) and the migration
+        # (prod) agree - `create_all` built these columns with no CHECK at all
+        # before this.
+        CheckConstraint(
+            "chatbot_max_qty >= 0", name="ck_products_chatbot_max_qty_non_negative"
+        ),
+        CheckConstraint(
+            "chatbot_eta_offset_days >= 0",
+            name="ck_products_chatbot_eta_offset_days_non_negative",
+        ),
     )
 
 

@@ -22,7 +22,7 @@ from app.schemas.product import (
 )
 from app.schemas.common import ListResponse, ErrorResponse, ValidateImportResponse
 from app.services.error_handler import handle_internal_error
-from app.services.stock_ask_limits import guard_chatbot_limits_edit
+from app.services.stock_ask_limits import guard_chatbot_limits_edit, NULL_LIMITS
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -295,6 +295,9 @@ async def create_product(
 ):
     """Create a new product."""
     try:
+        guard_chatbot_limits_edit(
+            db, current_user["id"], NULL_LIMITS, product_data.model_dump(exclude_unset=True)
+        )
         service = ProductService(db)
         product = service.create_product(product_data, current_user["id"])
         return product

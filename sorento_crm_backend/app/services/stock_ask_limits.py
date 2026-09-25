@@ -15,6 +15,7 @@ so the ordinary form keeps saving").
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -24,6 +25,12 @@ from app.services.user_service import UserPermissionService
 
 EDIT_PERMISSION = "master_data.chatbot_stock_limits.edit"
 _FIELDS = ("chatbot_max_qty", "chatbot_eta_offset_days")
+
+# Should fix 1 (reviewer pass, PR #1221, 85c2e9e7): the baseline a CREATE route
+# guards against - a brand-new row has no stored X/Y yet, so any value the create
+# body carries is a change from NULL and must clear the same permission a PUT
+# would need to set it.
+NULL_LIMITS = SimpleNamespace(chatbot_max_qty=None, chatbot_eta_offset_days=None)
 
 
 def _resolve(product_value: int | None, category_value: int | None) -> int:

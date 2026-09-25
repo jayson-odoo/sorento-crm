@@ -486,3 +486,146 @@ def test_get_product_carries_both_fields(api, world, db):
     body = res.json()
     assert "chatbot_max_qty" in body
     assert "chatbot_eta_offset_days" in body
+
+
+# --- Should fix 1 (reviewer pass, PR #1221, 85c2e9e7): X/Y on CREATE, without .edit --
+# The create routes never called guard_chatbot_limits_edit, so a
+# product_categories.add / products.add holder without .edit could opt a brand-new
+# category or product in through the create body alone (a live path - the Phase 1
+# browser walk used the Create Category modal). Guarded against a NULL baseline, the
+# same "current" a create has: no stored value yet, so ANY X/Y in the body is a change.
+
+def test_post_category_with_edit_persists_chatbot_limits(api, db):
+    role = _role(db, "zzt_cat_create_full")
+    _grant(db, role, "master_data.product_categories.add")
+    _grant(db, role, "master_data.chatbot_stock_limits.edit")
+    user_id = _user_with_role(db, role)
+    db.commit()
+
+    client, state = api
+    state["user_id"] = user_id
+
+    res = client.post(
+        "/api/v1/master-data/product-categories/",
+        json={
+            "category_code": unique_code(f"{STEM}-CREATECAT"),
+            "category_name": "ZZT Create Category",
+            "chatbot_max_qty": 40,
+            "chatbot_eta_offset_days": 5,
+        },
+    )
+    assert res.status_code == 201, res.text
+    body = res.json()
+    assert body.get("chatbot_max_qty") == 40
+    assert body.get("chatbot_eta_offset_days") == 5
+
+
+def test_post_category_without_edit_setting_chatbot_limits_is_403(api, db):
+    role = _role(db, "zzt_cat_create_limited")
+    _grant(db, role, "master_data.product_categories.add")
+    user_id = _user_with_role(db, role)
+    db.commit()
+
+    client, state = api
+    state["user_id"] = user_id
+
+    res = client.post(
+        "/api/v1/master-data/product-categories/",
+        json={
+            "category_code": unique_code(f"{STEM}-CREATECAT403"),
+            "category_name": "ZZT Create Category No Edit",
+            "chatbot_max_qty": 40,
+        },
+    )
+    assert res.status_code == 403, res.text
+    assert "master_data.chatbot_stock_limits.edit" in res.text
+
+
+def test_post_category_without_edit_and_no_chatbot_limits_in_body_still_creates(api, db):
+    role = _role(db, "zzt_cat_create_plain")
+    _grant(db, role, "master_data.product_categories.add")
+    user_id = _user_with_role(db, role)
+    db.commit()
+
+    client, state = api
+    state["user_id"] = user_id
+
+    res = client.post(
+        "/api/v1/master-data/product-categories/",
+        json={
+            "category_code": unique_code(f"{STEM}-CREATECATPLAIN"),
+            "category_name": "ZZT Create Category Plain",
+        },
+    )
+    assert res.status_code == 201, res.text
+    assert res.json().get("chatbot_max_qty") is None
+
+
+def test_post_product_with_edit_persists_chatbot_limits(api, world, db):
+    role = _role(db, "zzt_prod_create_full")
+    _grant(db, role, "master_data.chatbot_stock_limits.edit")
+    user_id = _user_with_role(db, role)
+    db.commit()
+
+    client, state = api
+    state["user_id"] = user_id
+
+    res = client.post(
+        "/api/v1/master-data/products/",
+        json={
+            "product_code": unique_code(f"{STEM}-CREATEPRD"),
+            "product_name": "ZZT Create Product",
+            "category_id": world["cat_id"],
+            "base_uom_id": world["uom_id"],
+            "list_price": "10.00",
+            "chatbot_max_qty": 60,
+            "chatbot_eta_offset_days": 4,
+        },
+    )
+    assert res.status_code == 201, res.text
+    body = res.json()
+    assert body.get("chatbot_max_qty") == 60
+    assert body.get("chatbot_eta_offset_days") == 4
+
+
+def test_post_product_without_edit_setting_chatbot_limits_is_403(api, world, db):
+    user_id = _user_with_role(db, None)
+    db.commit()
+
+    client, state = api
+    state["user_id"] = user_id
+
+    res = client.post(
+        "/api/v1/master-data/products/",
+        json={
+            "product_code": unique_code(f"{STEM}-CREATEPRD403"),
+            "product_name": "ZZT Create Product No Edit",
+            "category_id": world["cat_id"],
+            "base_uom_id": world["uom_id"],
+            "list_price": "10.00",
+            "chatbot_max_qty": 60,
+        },
+    )
+    assert res.status_code == 403, res.text
+    assert "master_data.chatbot_stock_limits.edit" in res.text
+
+
+def test_post_product_without_edit_and_no_chatbot_limits_in_body_still_creates(api, world, db):
+    user_id = _user_with_role(db, None)
+    db.commit()
+
+    client, state = api
+    state["user_id"] = user_id
+
+    res = client.post(
+        "/api/v1/master-data/products/",
+        json={
+            "product_code": unique_code(f"{STEM}-CREATEPRDPLAIN"),
+            "product_name": "ZZT Create Product Plain",
+            "category_id": world["cat_id"],
+            "base_uom_id": world["uom_id"],
+            "list_price": "10.00",
+        },
+    )
+    assert res.status_code == 201, res.text
+    assert res.json().get("chatbot_max_qty") is None
