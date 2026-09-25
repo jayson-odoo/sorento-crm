@@ -41,7 +41,6 @@ vi.mock('@/lib/toast', () => ({
 
 import {
   POIntakeLinesGrid,
-  describeLineHealth,
   isFlaggedLine,
   lineNeedsAttention,
   type POIntakeLinesGridHandle,
@@ -251,17 +250,6 @@ describe('POIntakeLinesGrid', () => {
  * reconciled against a table that is already hiding rows.
  */
 describe('POIntakeLinesGrid, showing only what needs attention', () => {
-  it('counts the work in a sentence a person can act on', () => {
-    expect(describeLineHealth(52, 3, 0)).toBe('3 of 52 lines need attention');
-    expect(describeLineHealth(52, 3, 1)).toBe(
-      '3 of 52 lines need attention, and 1 is cancelled',
-    );
-    expect(describeLineHealth(52, 0, 0)).toBe('All 52 lines add up and resolve');
-    expect(describeLineHealth(52, 0, 2)).toBe(
-      'All 52 lines add up and resolve, 2 are cancelled',
-    );
-  });
-
   it('counts a cancelled line as an exception to see, not as work outstanding', () => {
     const cancelled = line({ is_cancelled: true });
     expect(isFlaggedLine(cancelled)).toBe(true);
@@ -272,11 +260,10 @@ describe('POIntakeLinesGrid, showing only what needs attention', () => {
     expect(lineNeedsAttention(unresolved)).toBe(true);
   });
 
-  it('starts by showing every line, and says how many of them are the work', async () => {
+  it('starts by showing every line, unfiltered', async () => {
     renderGrid(threeLines({ arithmetic_ok: false }));
 
-    expect(await screen.findByText('1 of 3 lines need attention')).toBeInTheDocument();
-    expect(screen.getByLabelText('Quantity on line 1')).toBeInTheDocument();
+    expect(await screen.findByLabelText('Quantity on line 1')).toBeInTheDocument();
     expect(screen.getByLabelText('Quantity on line 2')).toBeInTheDocument();
     expect(screen.getByLabelText('Quantity on line 3')).toBeInTheDocument();
     expect(
@@ -292,8 +279,6 @@ describe('POIntakeLinesGrid, showing only what needs attention', () => {
     expect(screen.getByLabelText('Quantity on line 2')).toBeInTheDocument();
     expect(screen.queryByLabelText('Quantity on line 1')).toBeNull();
     expect(screen.queryByLabelText('Quantity on line 3')).toBeNull();
-    // The count keeps describing the whole document, not the filtered view.
-    expect(screen.getByText('1 of 3 lines need attention')).toBeInTheDocument();
 
     expect(
       screen.getByRole('radio', { name: /Lines identified 1/ }),
@@ -311,9 +296,6 @@ describe('POIntakeLinesGrid, showing only what needs attention', () => {
 
     expect(screen.getByText('Cancelled')).toBeInTheDocument();
     expect(screen.queryByLabelText('Quantity on line 1')).toBeNull();
-    expect(
-      screen.getByText('All 3 lines add up and resolve, 1 is cancelled'),
-    ).toBeInTheDocument();
   });
 
   it('opens on Lines identified when defaultFlaggedOnly is set, unlike the default (S6-3)', async () => {
@@ -326,11 +308,12 @@ describe('POIntakeLinesGrid, showing only what needs attention', () => {
     expect(screen.queryByLabelText('Quantity on line 1')).toBeNull();
   });
 
-  it('says so plainly when there is nothing to filter down to', async () => {
+  it('shows no filter toggle at all when there is nothing to filter down to', async () => {
     renderGrid(threeLines());
 
-    expect(await screen.findByText('All 3 lines add up and resolve')).toBeInTheDocument();
+    await screen.findByLabelText('Quantity on line 1');
     expect(screen.queryByRole('radio', { name: /Lines identified/ })).toBeNull();
+    expect(screen.queryByRole('radio', { name: /Show all lines/ })).toBeNull();
   });
 
   it('reads an emptied filter as good news, not as an empty table', async () => {
@@ -343,9 +326,6 @@ describe('POIntakeLinesGrid, showing only what needs attention', () => {
     rerenderWith(threeLines());
 
     expect(screen.getByText('Nothing left to fix')).toBeInTheDocument();
-    expect(
-      screen.getByText('Every line adds up and resolves to a product.'),
-    ).toBeInTheDocument();
     expect(screen.queryByLabelText('Quantity on line 2')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Show all lines (3)' }));
@@ -391,7 +371,9 @@ describe('POIntakeLinesGrid, handwriting reviewed on the line itself', () => {
       annotations: [annotation({ refers_to_lines: [2], id: 'a1' })],
     });
 
-    expect(await screen.findByText('1 line with handwriting to review')).toBeInTheDocument();
+    expect(
+      await screen.findByRole('button', { name: 'Accept the note on line 2' }),
+    ).toBeInTheDocument();
     // Twice on purpose: the amber badge on the row itself, and again on the note panel
     // opened under it, the same way a flagged line marks both the Check column and its cell.
     expect(screen.getAllByText('Cancel line')).toHaveLength(2);
@@ -399,9 +381,6 @@ describe('POIntakeLinesGrid, handwriting reviewed on the line itself', () => {
       screen.getByText('cancel this, refer to new P/O HQ/26/05/087'),
     ).toBeInTheDocument();
     expect(screen.getByText('15/5/26')).toBeInTheDocument();
-    expect(
-      screen.getByRole('button', { name: 'Accept the note on line 2' }),
-    ).toBeInTheDocument();
     expect(
       screen.getByRole('button', { name: 'Edit the note on line 2' }),
     ).toBeInTheDocument();
@@ -420,9 +399,9 @@ describe('POIntakeLinesGrid, handwriting reviewed on the line itself', () => {
       ],
     });
 
-    expect(await screen.findByText('2 lines with handwriting to review')).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Accept the note on line 1' }));
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Accept the note on line 1' }),
+    );
     fireEvent.click(screen.getByRole('button', { name: /Accept and cancel/i }));
     expect(onAcceptAnnotation).toHaveBeenCalledWith('a1');
 
@@ -461,12 +440,14 @@ describe('POIntakeLinesGrid, handwriting reviewed on the line itself', () => {
     ).toBeNull();
   });
 
-  it('lets "Next unreviewed" reach a note without scrolling by hand', async () => {
+  it('lets "Skip to the next unreviewed line" reach a note without scrolling by hand', async () => {
     renderGrid(threeLines(), {
       annotations: [annotation({ id: 'a1', refers_to_lines: [3] })],
     });
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Next unreviewed' }));
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Skip to the next unreviewed line' }),
+    );
 
     expect(onFocusLine).toHaveBeenCalledWith(expect.objectContaining({ line_no: 3 }));
   });
@@ -489,16 +470,15 @@ describe('POIntakeLinesGrid, handwriting reviewed on the line itself', () => {
     expect(screen.getByText('Rejected: Cancel line')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Accept/ })).toBeNull();
     expect(screen.queryByRole('button', { name: /^Reject/ })).toBeNull();
-    // Nothing left to review, so the toolbar banner is gone too.
-    expect(screen.queryByText(/lines? with handwriting to review/)).toBeNull();
   });
 
   it('says nothing about handwriting when the document carries none', async () => {
     renderGrid(threeLines());
 
     await screen.findByLabelText('Quantity on line 1');
-    expect(screen.queryByText(/lines? with handwriting to review/)).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Next unreviewed' })).toBeNull();
+    expect(
+      screen.queryByRole('button', { name: 'Skip to the next unreviewed line' }),
+    ).toBeNull();
   });
 
   it('shows a still-pending note as a muted badge in read-only, not hidden', async () => {

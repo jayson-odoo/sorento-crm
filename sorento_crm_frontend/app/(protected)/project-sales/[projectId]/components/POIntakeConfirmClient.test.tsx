@@ -294,7 +294,6 @@ describe('POIntakeConfirmClient', () => {
     expect(screen.queryByLabelText('PO number')).toBeNull();
     expect(screen.getByLabelText('Quantity on line 1')).toHaveValue('927');
     // The note names line 1, so it shows there, on the Lines tab.
-    expect(screen.getByText('1 line with handwriting to review')).toBeInTheDocument();
     expect(
       screen.getByText('cancel item (7), refer to new P/O HQ/26/05/087'),
     ).toBeInTheDocument();
@@ -314,7 +313,7 @@ describe('POIntakeConfirmClient', () => {
 
     renderConfirm();
 
-    await screen.findByText('1 line with handwriting to review');
+    await screen.findByText('cancel item (7), refer to new P/O HQ/26/05/087');
     expect(screen.queryByTitle(/Purchase order page/)).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Page 4' }));
@@ -362,7 +361,7 @@ describe('POIntakeConfirmClient', () => {
     expect(screen.getByText('Page 4 of 10')).toBeInTheDocument();
   });
 
-  it('counts the exceptions once, on the lines card, and still reaches them', async () => {
+  it('shows the exceptions on the lines card, once, and still reaches them', async () => {
     getPOVersion.mockResolvedValue(
       version({
         lines: [line(), line({ id: 'l2', line_no: 2, amount: '1.00', arithmetic_ok: false })],
@@ -377,7 +376,9 @@ describe('POIntakeConfirmClient', () => {
 
     renderConfirm();
 
-    expect(await screen.findByText('1 of 2 lines need attention')).toBeInTheDocument();
+    expect(
+      await screen.findByRole('radio', { name: 'Lines identified 1' }),
+    ).toBeInTheDocument();
     // The old count in the card header is gone: two numbers on one card teaches people to
     // read neither.
     expect(screen.queryByText('1 of 2 multiply out')).toBeNull();

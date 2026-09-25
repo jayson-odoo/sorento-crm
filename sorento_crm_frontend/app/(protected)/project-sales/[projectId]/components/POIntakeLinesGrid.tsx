@@ -102,11 +102,6 @@ function annotationBadgeLabel(note: POAnnotation): string {
   }
 }
 
-/** How many lines still have a note nobody has looked at, as a sentence with a number in it. */
-export function describeAnnotationHealth(count: number): string {
-  return `${count} line${count === 1 ? '' : 's'} with handwriting to review`;
-}
-
 /** A line our arithmetic disagrees with, one with no product, or one that was cancelled. */
 export function isFlaggedLine(line: POVersionLine): boolean {
   return !line.arithmetic_ok || !line.resolved_product_id || line.is_cancelled;
@@ -132,9 +127,9 @@ export function lineNeedsAttention(line: POVersionLine): boolean {
  * the API to the API, and a number input invites the float round trip the contract forbids.
  *
  * The real task on this document is three exceptions out of fifty-two rows, so the flagged
- * lines can be shown on their own. That filter starts OFF: somebody reconciling a total has
- * to see the whole document first, and a screen that hid rows before being asked would make
- * the totals at the top unverifiable.
+ * lines can be shown on their own. That filter opens ON while the version is unconfirmed
+ * (S6-3, `defaultFlaggedOnly`) - the exceptions are the work; "Show all lines" is one click
+ * away for reconciling a total against the whole document.
  */
 export const POIntakeLinesGrid = React.forwardRef<POIntakeLinesGridHandle, Props>(
   function POIntakeLinesGrid(
@@ -184,15 +179,6 @@ export const POIntakeLinesGrid = React.forwardRef<POIntakeLinesGridHandle, Props
     // rather than leaving the reader to scroll and find it.
     const lastActionedAnnotationId = React.useRef<string | null>(null);
     const lastActionedLineId = React.useRef<string | null>(null);
-
-    const attentionCount = React.useMemo(
-      () => lines.filter(lineNeedsAttention).length,
-      [lines],
-    );
-    const cancelledCount = React.useMemo(
-      () => lines.filter((line) => line.is_cancelled).length,
-      [lines],
-    );
 
     // Notes that name at least one line, grouped by the line number they name. A note naming
     // three lines lives in three buckets, so it shows, and clears, on every one of them.
@@ -768,11 +754,8 @@ export const POIntakeLinesGrid = React.forwardRef<POIntakeLinesGridHandle, Props
 
     return (
       <div className="min-w-0 space-y-2">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <p className="min-w-0 text-xs text-muted-foreground">
-            {describeLineHealth(lines.length, attentionCount, cancelledCount)}
-          </p>
-          {showFilterToggle && (
+        {showFilterToggle && (
+          <div className="flex justify-end">
             <ToggleGroup
               type="single"
               variant="outline"
@@ -787,23 +770,6 @@ export const POIntakeLinesGrid = React.forwardRef<POIntakeLinesGridHandle, Props
                 {`Show all lines (${lines.length})`}
               </ToggleGroupItem>
             </ToggleGroup>
-          )}
-        </div>
-
-        {!readOnly && linesWithUnreviewedAnnotations.length > 0 && (
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-500/40 bg-amber-50/60 px-3 py-1.5 dark:bg-amber-950/20">
-            <span className="text-xs font-medium text-amber-900 dark:text-amber-300">
-              {describeAnnotationHealth(linesWithUnreviewedAnnotations.length)}
-            </span>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-6 shrink-0 px-2 text-[11px]"
-              onClick={() => goToNextUnreviewed(focusedLineId)}
-            >
-              Next unreviewed
-            </Button>
           </div>
         )}
 
@@ -812,9 +778,6 @@ export const POIntakeLinesGrid = React.forwardRef<POIntakeLinesGridHandle, Props
             <h3 className="text-sm font-semibold text-emerald-900 dark:text-emerald-300">
               Nothing left to fix
             </h3>
-            <p className="mx-auto mt-1 max-w-md text-sm text-emerald-900/80 dark:text-emerald-300/80">
-              Every line adds up and resolves to a product.
-            </p>
             <Button
               type="button"
               variant="outline"
@@ -1011,33 +974,6 @@ export const POIntakeLinesGrid = React.forwardRef<POIntakeLinesGridHandle, Props
     );
   },
 );
-
-/**
- * How much of this document is actually work, as a sentence with numbers in it. A bare
- * toggle would leave "is this a clean read?" unanswered, which is the question.
- *
- * Cancelled lines are counted separately from lines needing attention: they are in the
- * filtered view because they are exceptions worth seeing, but they are not outstanding work.
- */
-export function describeLineHealth(
-  total: number,
-  attention: number,
-  cancelled: number,
-): string {
-  if (total === 0) return 'No lines';
-  const cancelledClause =
-    cancelled === 0
-      ? ''
-      : `${cancelled} ${cancelled === 1 ? 'is' : 'are'} cancelled`;
-
-  if (attention === 0) {
-    const clean = `All ${total} lines add up and resolve`;
-    return cancelledClause ? `${clean}, ${cancelledClause}` : clean;
-  }
-
-  const head = `${attention} of ${total} lines need attention`;
-  return cancelledClause ? `${head}, and ${cancelledClause}` : head;
-}
 
 function describeLine(line: POVersionLine): string {
   const parts = [
