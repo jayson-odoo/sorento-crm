@@ -9,9 +9,10 @@ addressed (PR comments 5820446777, 5820494222), the hand-test rulings R11 to R18
 review round 2 (comment 5825004622, this session) addressed, review round 3 (comment
 5826588258) addressed - every Blocking and Should-fix item fixed, tester-first where a test
 was named; Blocking 2 (S6 browser evidence, AC-LT-50/51) captured 25 Sep 2026 on stack :3080 at
-9319d07b3: `evidence/oi-links-autocount-truth/s3-*.png`, `s4-*.png`, `index.md` (the +N badge
+2570770e2: `evidence/oi-links-autocount-truth/s3-*.png`, `s4-*.png`, `index.md` (the +N badge
 and the Auto link all toast not shown; a Link selected observation on OI-2609-0003 is flagged
-in the index for review). Track: full (new table, migration, a change
+in the index for review, addressed by review round 4's G5 diagnosis). Review round 4 (comment
+5829615234) addressed. Track: full (new table, migration, a change
 to what the Buy card, stock debt and `scm.committed_v` count). Branch `fix/oi-links-24sep`, one
 lane, one PR with the S1 repair (issue #1215 points 1, 2, 5) folded in. UAC:
 `oi-links-autocount-truth-24sep-acceptance-criteria.md`. Domain: SCM, order inquiries.

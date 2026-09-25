@@ -9244,14 +9244,32 @@ class ProjectOrderInquiryService:
             need = self._unlinked_need(row)
             if need <= _ZERO:
                 continue
+            # The horizon, checked on a row that still has something to link and before any
+            # candidate is read: a row already covered is not one the buyer left behind, and
+            # counting it would put a number on the banner nobody could act on. Review round
+            # 3 Blocking 1 asked this branch be decided the same way as the no-candidate ones
+            # below; the decision here is NOT to drop - B1's own rule
+            # (`test_auto_link_all_keeps_the_draft_of_a_row_that_is_now_past_the_cut_off`)
+            # already governs this exact branch: the cut off says "do not deal this row", not
+            # "take back what it holds". A row past the horizon is not re-walked at all - no
+            # candidate is even read for it - so there is no fresher answer to prefer over
+            # what it already has, unlike the no-candidate branches below, which DO walk the
+            # row and find nothing left to stand behind the suggestion it is holding.
+            #
+            # Review round 4 Nit 1: `existing_suggestions` is fetched AFTER this check
+            # (moved back from before it, review round 3) - a row past the horizon
+            # `continue`s without ever reading it, so fetching it earlier cost one
+            # `_suggested_of_row` query per after-horizon row for nothing; this branch
+            # never drops a suggestion, so it never needed the fetch in the first place.
+            if self._after_horizon(row, link_up_to):
+                after_horizon += 1
+                continue
             # AC-LT-14/G2, Should fix 4 (review round 2): this row's OWN current
             # suggestions, fetched once and used three ways below - to net them OUT
             # of the shared `suggested_totals_by_target` (so the row never competes
             # against itself), to update that SAME shared total in memory afterward
             # (never a second full-table query), and handed to `_write_suggested_
-            # links` so it does not fetch them a second time. Fetched BEFORE the
-            # horizon check below (review round 3 Blocking 1) so that branch can drop
-            # a stale suggestion too, exactly as the no-candidate branches do.
+            # links` so it does not fetch them a second time.
             existing_suggestions = self._suggested_of_row(row.id)
             own_by_target: Dict[str, Decimal] = {}
             for suggestion in existing_suggestions:
@@ -9269,20 +9287,6 @@ class ProjectOrderInquiryService:
                         suggested_totals_by_target.get(target, _ZERO) - qty
                     )
 
-            # The horizon, checked on a row that still has something to link and before any
-            # candidate is read: a row already covered is not one the buyer left behind, and
-            # counting it would put a number on the banner nobody could act on. Review round
-            # 3 Blocking 1 asked this branch be decided the same way as the no-candidate ones
-            # below; the decision here is NOT to drop - B1's own rule
-            # (`test_auto_link_all_keeps_the_draft_of_a_row_that_is_now_past_the_cut_off`)
-            # already governs this exact branch: the cut off says "do not deal this row", not
-            # "take back what it holds". A row past the horizon is not re-walked at all - no
-            # candidate is even read for it - so there is no fresher answer to prefer over
-            # what it already has, unlike the no-candidate branches below, which DO walk the
-            # row and find nothing left to stand behind the suggestion it is holding.
-            if self._after_horizon(row, link_up_to):
-                after_horizon += 1
-                continue
             candidates = self._candidates_for_row(row, credit_own_links=bool(drafts))
             if not candidates:
                 # Review round 2 Blocking 5 (AC-LT-19): no candidate at all is the

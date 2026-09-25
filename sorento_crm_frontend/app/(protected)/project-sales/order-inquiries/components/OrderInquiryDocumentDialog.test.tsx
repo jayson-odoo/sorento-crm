@@ -833,7 +833,7 @@ describe('SPO lightbox body (AC-D19)', () => {
     expect(screen.getByRole('button', { name: 'Go to linked line' })).toBeDisabled();
   });
 
-  it('Should fix 4 (review round 2): disables Go to when highlightLines names a line no row on the document carries', async () => {
+  it('Should fix 4 (review round 3): disables Go to when highlightLines names a line no row on the document carries', async () => {
     // RED before the fix: `highlightedLineId` fell back to the placeholder
     // `'__highlighted__'` the moment `highlightLines` was non-empty, whether or not
     // `SpoBody` ever resolved a matching row - stock debt could open this lightbox

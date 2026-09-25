@@ -245,12 +245,4 @@ removed copy, for whoever restores a UI for them:
     tool. Fix: revisit whether this route should be a POST.
   | `plans/scm/PLAN-low-stock-report.md` | Low | Open |
 | BL-066 | **Reorder run `product_ids` likely carries the same JSON-null crash as `undo_journal` (#993 review finding R1)** - `scm.reorder_runs.product_ids` is a plain `JSONB` (`reorder_run_service.py` ~175, ~206-217) written with a Python `None` for an unnarrowed run, which SQLAlchemy's JSON type serialises as the JSON literal `null`, not a SQL NULL. The plans grid's sort by Products (`api/v1/scm/reorder_runs.py` ~145) reads `jsonb_array_length(COALESCE(product_ids, '[]'))`, and `COALESCE` does not catch a JSON null (only a real SQL NULL) - an unnarrowed run in that sort would 500 the same way `undo_journal` did. Same fix shape as #993 (`none_as_null=True` + a `jsonb_typeof` guard). Not verified against data - no reproduction run yet, unlike #993's raw-psql confirmation. | (none - reviewer finding, see PR #993) | Medium | Open |
-- **BL-067** (2026-09-25, PR #1220 review round 3, Nit 5): `tests/scm/conftest.py`'s Postgres
-  probe (`:20-43`) reads `DATABASE_URL` from the environment or `.env` only, never
-  `SORENTO_ENV_FILE` - so `SORENTO_ENV_FILE=.env.ci-tests pytest ...` silently SKIPS every
-  stock-debt test (64 on this lane) rather than running them against the CI database, and a
-  full local run reads "413 passed, 64 skipped, 0 failed" as green when 64 tests never ran at
-  all. Pre-existing on main, not this lane's own defect. **Trigger:** the next PR that touches
-  `tests/scm/` and needs its suite to actually run under `SORENTO_ENV_FILE`. Fix: have the probe
-  resolve the same env file `app.config._resolve_settings_env_file` does, instead of reading
-  `DATABASE_URL`/`.env` directly. | (none - reviewer finding, see PR #1220) | Low | Open |
+| BL-067 | **`tests/scm/conftest.py`'s Postgres probe (`:20-43`) reads `DATABASE_URL` from the environment or `.env` only, never `SORENTO_ENV_FILE`** - so `SORENTO_ENV_FILE=.env.ci-tests pytest ...` silently SKIPS every stock-debt test (64 on this lane) rather than running them against the CI database, and a full local run reads "413 passed, 64 skipped, 0 failed" as green when 64 tests never ran at all. Pre-existing on main, not this lane's own defect. **Trigger:** the next PR that touches `tests/scm/` and needs its suite to actually run under `SORENTO_ENV_FILE`. Fix: have the probe resolve the same env file `app.config._resolve_settings_env_file` does, instead of reading `DATABASE_URL`/`.env` directly. | (none - reviewer finding, see PR #1220) | Low | Open |
