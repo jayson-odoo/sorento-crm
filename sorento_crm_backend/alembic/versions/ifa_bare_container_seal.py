@@ -18,7 +18,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "ifa_bare_container_seal"
-down_revision = "ifa_supplier_uniq"
+down_revision = "sdbt_0001_download_counts"
 branch_labels = None
 depends_on = None
 
