@@ -165,11 +165,12 @@ describe('PurchaseRequestDocumentEditCard - line items DataGrid', () => {
 
   it('shows the U/P and Total columns on a sponsorship form, not on a purchase request', () => {
     const { rerender } = render(<Harness record={request()} />);
-    expect(screen.queryByText('U/P')).not.toBeInTheDocument();
+    expect(screen.queryByText('U/P *')).not.toBeInTheDocument();
     expect(screen.queryByText('Total')).not.toBeInTheDocument();
 
     rerender(<Harness record={request({ request_type: 'sponsorship_form' })} />);
-    expect(screen.getByText('U/P')).toBeInTheDocument();
+    // #1227: the asterisk marks unit price as required - sponsorship lines only.
+    expect(screen.getByText('U/P *')).toBeInTheDocument();
     expect(screen.getByText('Total')).toBeInTheDocument();
   });
 });
