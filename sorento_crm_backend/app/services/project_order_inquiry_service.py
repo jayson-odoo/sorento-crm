@@ -961,6 +961,11 @@ class ProjectOrderInquiryService:
                         was={"qty": was_qty},
                         actor_user_id=actor_user_id,
                     )
+                # Review round 2 Blocking 4 (AC-LT-18): this supersede sets `state`
+                # directly rather than through `refresh_link_state`, so a suggestion the
+                # walk left on one of these rows would otherwise go on holding capacity
+                # against every other row for good.
+                self._drop_suggested_links(local_rows)
                 settled_in_place.append(str(local_line.id))
                 continue
             line = entry["line"]
@@ -1166,11 +1171,17 @@ class ProjectOrderInquiryService:
             # against". The row this very loop is about to cancel below IS that
             # instruction, so it is kept as the fallback the handover carry-gate reads.
             cancelled_owned_row: Optional[OrderInquiryRow] = None
+            # Review round 2 Blocking 4 (AC-LT-18): this loop sets `state` directly
+            # rather than through `refresh_link_state`, so it has to drop each
+            # cancelled row's own suggestions by hand once it is done - the board
+            # re-confirm supersede path the reviewer's probe named.
+            superseded_cancelled_rows: List[OrderInquiryRow] = []
             for row in rows:
                 if row.state == INQUIRY_RAISED:
                     was_qty = row.qty
                     row.state = INQUIRY_CANCELLED
                     row.note = f"Superseded by revision {decision.revision_no}"
+                    superseded_cancelled_rows.append(row)
                     if row.verb in (IV_ORDER, IV_ORDER_BACK) and cancelled_owned_row is None:
                         cancelled_owned_row = row
                     if not carried:
@@ -1244,6 +1255,8 @@ class ProjectOrderInquiryService:
                         if row.note
                         else f"Remainder superseded by revision {decision.revision_no}"
                     )
+
+            self._drop_suggested_links(superseded_cancelled_rows)
 
             # S4/AC-OH-40..42, R4 revised/AC-OH-44: every row THIS call redirected,
             # whichever seam found it - `_settle_row_in_place`'s own single-row decline
@@ -1629,6 +1642,9 @@ class ProjectOrderInquiryService:
                 if row.note
                 else f"{moved}; the book left nothing to buy"
             )
+            # Review round 2 Blocking 4 (AC-LT-18): a settled-in-place row this branch
+            # cancels holds no capacity for anyone else's row a moment longer.
+            self._drop_suggested_links([row])
             self._retire_settled_cancel_balance(rows, decision, actor_user_id=actor_user_id)
             self.db.flush()
             if had_links:
@@ -3578,11 +3594,13 @@ class ProjectOrderInquiryService:
         # purchasing to buy the covered part a second time.
         linked = self._linked_qty_by_row([row.id for row in rows])
         placed: Dict[Tuple[Optional[str], Optional[str]], Decimal] = {}
+        cancelled_this_pass: List[OrderInquiryRow] = []
         for row in rows:
             key = (row.item_code or None, row.stock_location or None)
             if row.state == INQUIRY_RAISED:
                 row.state = INQUIRY_CANCELLED
                 row.note = f"Superseded by revision {decision.revision_no}"
+                cancelled_this_pass.append(row)
             elif row.state == INQUIRY_PARTLY_LINKED:
                 covered = linked.get(row.id, _ZERO)
                 placed[key] = placed.get(key, _ZERO) + covered
@@ -3598,6 +3616,10 @@ class ProjectOrderInquiryService:
             # one does.
             elif row.state in (INQUIRY_ACTIONED, INQUIRY_PLACED):
                 placed[key] = placed.get(key, _ZERO) + _dec(row.qty)
+
+        # Review round 2 Blocking 4 (AC-LT-18): an ORDER_BACK row is linkable and can
+        # carry a suggestion, so a hole this pass cancels must not go on holding it.
+        self._drop_suggested_links(cancelled_this_pass)
 
         created = 0
         for entry in shortfalls:
@@ -3750,6 +3772,7 @@ class ProjectOrderInquiryService:
         # Batched (S6): one grouped load for every stale row's links, rather than one
         # query per row inside the loop below.
         stale_links = self._links_by_row([str(row.id) for row in stale])
+        retired_this_pass: List[OrderInquiryRow] = []
         for row in stale:
             if str(row.so_line_id) in covered:
                 continue
@@ -3761,6 +3784,7 @@ class ProjectOrderInquiryService:
             if row.state == INQUIRY_RAISED:
                 row.state = INQUIRY_CANCELLED
                 row.note = stamp
+                retired_this_pass.append(row)
                 self._record_handover(
                     row, kind="cancelled", was={"qty": was_qty}, actor_user_id=actor_user_id
                 )
@@ -3772,6 +3796,7 @@ class ProjectOrderInquiryService:
             self._unplace_drafts([row], trigger="retired")
             row.state = INQUIRY_CANCELLED
             row.note = f"{row.note}; {stamp}" if row.note else stamp
+            retired_this_pass.append(row)
             # S4: this line dropped out of the revision taking real cascade-linked
             # supply with it - a superseded row that held a link is exactly what
             # purchasing has to hear about, the same as a zeroed settle-in-place.
@@ -3779,6 +3804,10 @@ class ProjectOrderInquiryService:
             self._record_handover(
                 row, kind="cancelled", was={"qty": was_qty}, actor_user_id=actor_user_id
             )
+        # Review round 2 Blocking 4 (AC-LT-18): a retired row's own suggestion must not
+        # go on holding capacity against every other row for a line CS took back out of
+        # the confirmation.
+        self._drop_suggested_links(retired_this_pass)
 
     def retire_rows_for_dropped_lines(
         self,
@@ -5424,6 +5453,14 @@ class ProjectOrderInquiryService:
             row.actioned_by = actor_user_id if state != INQUIRY_RAISED else None
             row.actioned_at = now if state != INQUIRY_RAISED else None
         self.db.flush()
+        # Review round 2 Blocking 4 (AC-LT-18): this is a CANCEL/ACTIONED writer that
+        # never runs `refresh_link_state` (it sets `state` directly, on purchasing's own
+        # word), so it is the one place `_drop_suggested_links` has to be called by
+        # hand - a row this press just moved off "open for buying" must not go on
+        # holding a suggestion nobody is ever going to act on.
+        self._drop_suggested_links(
+            [row for row in rows if row.state in (INQUIRY_ACTIONED, INQUIRY_CANCELLED)]
+        )
         self._refresh_inquiry_states({row.order_inquiry_id for row in rows})
         return self.serialize_rows(rows)
 
@@ -7823,11 +7860,26 @@ class ProjectOrderInquiryService:
             .all()
         )
 
+    @staticmethod
+    def _open_for_buying_clauses() -> Tuple[Any, ...]:
+        """The row conditions a suggested link may still hold capacity under (review
+        round 2 Blocking 4, AC-LT-14/18): the exact INVERSE of `_drop_suggested_links`'s
+        own "no longer open for buying" (cancelled, actioned, rejected, redirected to
+        pool), so the two can never drift apart. A row's suggestions stop counting
+        against other rows' room the moment it leaves this set, whether or not the
+        writer that moved it remembered to call `_drop_suggested_links` itself.
+        """
+        return (
+            OrderInquiryRow.state.notin_((INQUIRY_CANCELLED, INQUIRY_ACTIONED)),
+            OrderInquiryRow.ack_state != ACK_REJECTED,
+            OrderInquiryRow.redirected_to_pool.is_(False),
+        )
+
     def _suggested_totals_by_target(
         self, *, exclude_row_id: Optional[str] = None
     ) -> Dict[str, Decimal]:
-        """Every OTHER row's suggested total, PO and SPO merged into one dict keyed by
-        target id (AC-LT-14, G2): what the walk's own take-sizing nets a candidate's
+        """Every OTHER OPEN row's suggested total, PO and SPO merged into one dict keyed
+        by target id (AC-LT-14, G2): what the walk's own take-sizing nets a candidate's
         `remaining` against, on top of the real links `_linked_by_target` already nets.
 
         Read FRESH every row rather than cached like `_linked_by_target`'s own memo:
@@ -7837,15 +7889,34 @@ class ProjectOrderInquiryService:
         row_id` is this row's own OLD suggestions - about to be replaced, not a claim
         against itself, exactly as `credit_own_links` already excludes a row's own real
         links from the same netting for the manual dialog.
+
+        Joined to `OrderInquiryRow` and filtered to `_open_for_buying_clauses` (review
+        round 2 Blocking 4): a row that has gone cancelled, actioned, rejected or
+        redirected to pool never again nets capacity from other rows through a
+        suggestion nobody is ever going to act on.
         """
         totals: Dict[str, Decimal] = {}
-        po_query = self.db.query(
-            OrderInquirySuggestedLink.po_line_id, func.sum(OrderInquirySuggestedLink.qty)
-        ).filter(OrderInquirySuggestedLink.po_line_id.isnot(None))
-        spo_query = self.db.query(
-            OrderInquirySuggestedLink.spo_allocation_id,
-            func.sum(OrderInquirySuggestedLink.qty),
-        ).filter(OrderInquirySuggestedLink.spo_allocation_id.isnot(None))
+        po_query = (
+            self.db.query(
+                OrderInquirySuggestedLink.po_line_id, func.sum(OrderInquirySuggestedLink.qty)
+            )
+            .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquirySuggestedLink.row_id)
+            .filter(
+                OrderInquirySuggestedLink.po_line_id.isnot(None),
+                *self._open_for_buying_clauses(),
+            )
+        )
+        spo_query = (
+            self.db.query(
+                OrderInquirySuggestedLink.spo_allocation_id,
+                func.sum(OrderInquirySuggestedLink.qty),
+            )
+            .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquirySuggestedLink.row_id)
+            .filter(
+                OrderInquirySuggestedLink.spo_allocation_id.isnot(None),
+                *self._open_for_buying_clauses(),
+            )
+        )
         if exclude_row_id:
             po_query = po_query.filter(OrderInquirySuggestedLink.row_id != exclude_row_id)
             spo_query = spo_query.filter(OrderInquirySuggestedLink.row_id != exclude_row_id)
@@ -7939,10 +8010,15 @@ class ProjectOrderInquiryService:
             else OrderInquirySuggestedLink.spo_allocation_id
         )
         target_id = po_line_id or spo_allocation_id
+        # Review round 2 Blocking 4: the same `_open_for_buying_clauses` filter as
+        # `_suggested_totals_by_target` - a suggestion on a row no longer open for
+        # buying is not real demand for this room and must not inflate `over` (which
+        # would otherwise shrink or delete an OPEN row's own suggestion to make space
+        # for a real link that never needed it).
         suggestions = (
             self.db.query(OrderInquirySuggestedLink)
             .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquirySuggestedLink.row_id)
-            .filter(column == target_id)
+            .filter(column == target_id, *self._open_for_buying_clauses())
             .order_by(
                 OrderInquiryRow.delivery_date.desc().nullslast(),
                 OrderInquirySuggestedLink.suggested_at.desc(),
@@ -8159,6 +8235,9 @@ class ProjectOrderInquiryService:
             row.note = f"{row.note}; {reason}" if row.note else reason
         if rows:
             self.db.flush()
+        # Review round 2 Blocking 4 (AC-LT-18): same rule as every other cancel writer
+        # in this file - a row this call cancels must not go on holding capacity.
+        self._drop_suggested_links(rows)
         return len(rows)
 
     def place_on_po(

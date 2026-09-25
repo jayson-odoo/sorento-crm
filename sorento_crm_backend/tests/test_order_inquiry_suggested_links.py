@@ -30,6 +30,7 @@ inquiry row (UAC note at the top of Group S3) - nothing here borrows another tes
 """
 from __future__ import annotations
 
+import uuid
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
@@ -43,8 +44,12 @@ from app.models.project_so import (
     ACK_REJECTED,
     OrderInquiryRow,
     OrderInquirySuggestedLink,
+    ProjectSalesOrder,
+    ProjectSalesOrderLine,
+    SOSupplyDecision,
 )
 from app.models.scm import OrderLinkClaim
+from app.models.user import User
 from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 
 from tests.test_oi_follow_book_chain import (
@@ -780,29 +785,36 @@ class TestACLT18ARowMovedOffActiveDropsSuggestions:
         return row
 
     def test_ac_lt_18_a_cancelled_row_drops_its_suggestions(self, ctx):
+        """Review round 2 Blocking 4: through `mark_rows`, the REAL writer purchasing's
+        own bulk action calls - not a hand-set `state` plus a bare `_drop_suggested_
+        links` call, which passed even before `mark_rows` itself was fixed to call it."""
         row = self._setup(ctx)
-        row.state = INQUIRY_CANCELLED
-        ctx.db.commit()
 
-        ProjectOrderInquiryService(ctx.db)._drop_suggested_links([row])
+        ProjectOrderInquiryService(ctx.db).mark_rows(
+            [str(row.id)], state=INQUIRY_CANCELLED, actor_user_id=None,
+        )
 
         assert _suggested_of(ctx.db, row.id) == []
 
     def test_ac_lt_18_an_actioned_row_drops_its_suggestions(self, ctx):
+        """Review round 2 Blocking 4: through `mark_rows`, the real writer."""
         row = self._setup(ctx)
-        row.state = INQUIRY_ACTIONED
-        ctx.db.commit()
 
-        ProjectOrderInquiryService(ctx.db)._drop_suggested_links([row])
+        ProjectOrderInquiryService(ctx.db).mark_rows(
+            [str(row.id)], state=INQUIRY_ACTIONED, actor_user_id=None,
+        )
 
         assert _suggested_of(ctx.db, row.id) == []
 
     def test_ac_lt_18_a_rejected_row_drops_its_suggestions(self, ctx):
+        """Review round 2 Blocking 4: through `reject_row`, the real writer - already
+        correct before this round (`_stamp_rejected` calls `_drop_suggested_links`
+        itself), kept on the real seam rather than the hand-set state it replaced."""
         row = self._setup(ctx)
-        row.ack_state = ACK_REJECTED
-        ctx.db.commit()
 
-        ProjectOrderInquiryService(ctx.db)._drop_suggested_links([row])
+        ProjectOrderInquiryService(ctx.db).reject_row(
+            str(row.id), reason="ZZT no longer needed", actor_user_id=None,
+        )
 
         assert _suggested_of(ctx.db, row.id) == []
 
@@ -814,6 +826,134 @@ class TestACLT18ARowMovedOffActiveDropsSuggestions:
         ProjectOrderInquiryService(ctx.db)._drop_suggested_links([row])
 
         assert _suggested_of(ctx.db, row.id) == []
+
+
+# ================================== Review round 2 Blocking 4: the supersede's own shape
+class TestACLT18SupersedeFreesTheRetiredRowsRoom:
+    """Review round 2 Blocking 4, the reviewer's own probe. `refresh_for_decision`'s
+    supersede loop and `_retire_uncovered_rows` both set a row's `state` DIRECTLY -
+    never through `refresh_link_state` - so before this round a row they cancelled
+    went on holding capacity through its own stale suggestion for good
+    (`_suggested_totals_by_target` never filtered by row state at all). Proven here
+    through the REAL writer, `refresh_for_decision` itself (`test_order_inquiry_
+    number.py`'s own pattern for exercising it directly, service level, real FK
+    rows), not a hand-set state: row X is suggested a PO line's whole room, its own
+    line then drops out of the next confirmation and X is retired the board
+    re-confirm's own way (`_retire_uncovered_rows`); row Y, competing for the SAME
+    PO line, must draw its own full need rather than whatever X's stale suggestion
+    would otherwise still be holding.
+    """
+
+    def test_a_retired_rows_suggestion_frees_its_full_room_for_the_next_row(self, ctx):
+        db = ctx.db
+        product = _seed_product(db, company_id=ctx.company_a)
+        _po, po_line = _seed_po_line(
+            db, company_id=ctx.company_a, product_id=product.id,
+            qty_ordered="8", header_status="active",
+        )
+        order = ProjectSalesOrder(
+            id=str(uuid.uuid4()), company_id=ctx.company_a, project_id=None,
+            provisional_ref=f"ZZT-PSO-{uuid.uuid4().hex[:8]}", status="draft",
+        )
+        db.add(order)
+        db.flush()
+        line_x = ProjectSalesOrderLine(
+            id=str(uuid.uuid4()), company_id=ctx.company_a, project_sales_order_id=order.id,
+            line_no=1, product_id=product.id, description="ZZT line X", qty=Decimal("8"),
+            uom="UNIT", unit_price=Decimal("10"), amount=Decimal("80"),
+            delivery_date=date(2026, 9, 1),
+        )
+        line_y = ProjectSalesOrderLine(
+            id=str(uuid.uuid4()), company_id=ctx.company_a, project_sales_order_id=order.id,
+            line_no=2, product_id=product.id, description="ZZT line Y", qty=Decimal("5"),
+            uom="UNIT", unit_price=Decimal("10"), amount=Decimal("50"),
+            delivery_date=date(2026, 9, 1),
+        )
+        db.add_all([line_x, line_y])
+        db.flush()
+
+        svc = ProjectOrderInquiryService(db)
+        decision_1 = SOSupplyDecision(
+            id=str(uuid.uuid4()), company_id=ctx.company_a, project_sales_order_id=order.id,
+            revision_no=1, state="active", line_snapshots=[{"line_no": 1}],
+            confirmed_by=None, confirmed_at=datetime.utcnow(),
+        )
+        db.add(decision_1)
+        db.flush()
+        svc.refresh_for_decision(
+            order, decision_1,
+            [{"line": line_x, "line_no": 1, "item_code": product.product_code,
+              "buy_qty": Decimal("8"), "required_date": line_x.delivery_date,
+              "stock_location": None}],
+            actor_user_id=None,
+        )
+        db.commit()
+        row_x = (
+            db.query(OrderInquiryRow)
+            .filter(
+                OrderInquiryRow.so_line_id == line_x.id,
+                OrderInquiryRow.state == INQUIRY_RAISED,
+            )
+            .one()
+        )
+        # The raise-time cascade: neither line carries a book match, so row X is only
+        # ever SUGGESTED - the same seam `ProjectSupplyService.confirm` itself calls
+        # right after `refresh_for_decision` (`_draft_links_for_decision`).
+        svc.auto_place_for_products(
+            [product.id], actor_user_id=None, trigger="raise", include_awaiting=True,
+        )
+        db.commit()
+        suggested_x = _suggested_of(db, row_x.id)
+        assert {s.po_line_id for s in suggested_x} == {po_line.id}
+        assert sum(Decimal(str(s.qty)) for s in suggested_x) == Decimal("8"), (
+            "row X takes the PO line's whole room - nothing is left for anyone else"
+        )
+
+        # Revision 2 drops line X out of the confirmation (CS took it back out) and
+        # raises line Y instead - `_retire_uncovered_rows`'s own shape. The prior
+        # decision supersedes first, the same way `ProjectSupplyService.confirm`
+        # itself does, or the ACTIVE-per-order constraint refuses the insert below.
+        decision_1.state = "superseded"
+        decision_1.superseded_at = datetime.utcnow()
+        db.flush()
+        decision_2 = SOSupplyDecision(
+            id=str(uuid.uuid4()), company_id=ctx.company_a, project_sales_order_id=order.id,
+            revision_no=2, state="active", line_snapshots=[{"line_no": 2}],
+            confirmed_by=None, confirmed_at=datetime.utcnow(),
+        )
+        db.add(decision_2)
+        db.flush()
+        svc.refresh_for_decision(
+            order, decision_2,
+            [{"line": line_y, "line_no": 2, "item_code": product.product_code,
+              "buy_qty": Decimal("5"), "required_date": line_y.delivery_date,
+              "stock_location": None}],
+            actor_user_id=None,
+        )
+        db.commit()
+        db.refresh(row_x)
+        assert row_x.state == INQUIRY_CANCELLED, "line X dropped out of the confirmation"
+        assert _suggested_of(db, row_x.id) == [], (
+            "the retired row's own suggestion is gone, not left to hold room forever"
+        )
+
+        row_y = (
+            db.query(OrderInquiryRow)
+            .filter(
+                OrderInquiryRow.so_line_id == line_y.id,
+                OrderInquiryRow.state == INQUIRY_RAISED,
+            )
+            .one()
+        )
+        svc.auto_place_for_products(
+            [product.id], actor_user_id=None, trigger="raise", include_awaiting=True,
+        )
+        db.commit()
+        suggested_y = _suggested_of(db, row_y.id)
+        assert {s.po_line_id for s in suggested_y} == {po_line.id}
+        assert sum(Decimal(str(s.qty)) for s in suggested_y) == Decimal("5"), (
+            "row Y draws its FULL need - X's retired suggestion no longer holds any of it"
+        )
 
 
 # ============================================================== AC-LT-19
