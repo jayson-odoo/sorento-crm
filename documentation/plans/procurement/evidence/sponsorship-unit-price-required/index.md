@@ -11,6 +11,28 @@ status with a single `PurchaseRequestLine` that has `unit_price = NULL` on
 purpose, so every screen can show the required-mark and the blocked-save state
 without any manual field editing.
 
+## Round 2 retake (review round 2, Blocking 1 + Should fix 2)
+
+The four system screenshots below were retaken after the round 2 fix
+(`FormMessage className="whitespace-normal"` on the U/P cell in both
+`PurchaseRequestForm.tsx` and `PurchaseRequestDocumentEditCard.tsx`): the
+resizable DataGrid's cell carries a `truncate` class (`overflow: hidden` plus
+an inherited `white-space: nowrap`) that cut "Unit price is required." to
+"Unit price is requir" in the round 1 screenshots. All four now show the full
+sentence, wrapped onto two lines. The portal screenshots are unchanged from
+round 1 (reviewer round 2 confirmed the portal table already wraps at both
+widths - it is a plain `<table>`, not a resizable DataGrid, so it never had
+the `truncate` class).
+
+Every system screenshot below carries a Next.js dev-mode "1 Issue" badge in
+the bottom-left corner. Opened once (via "Open issues overlay") to identify
+it: a React console warning, "Each child in a list should have a unique 'key'
+prop. Check the render method of `Demo1Layout`." `Demo1Layout` is the shared
+app shell (sidebar/menu chrome) - not a file this PR or its round 2 fix
+touches - so this is a pre-existing dev-only warning, unrelated to this diff.
+It does not appear in a production build (dev-only overlay) and is left as
+found.
+
 ## Portal submit (dealer web portal, `/portal/sponsorship_form/<id>`)
 
 - `portal-submit-1280.png` - 1280px. Items table with the `UNIT PRICE*` header,
@@ -25,17 +47,21 @@ without any manual field editing.
 
 - `system-create-1280.png` - 1280px. New Sponsorship Form page, line items
   table with the `U/P *` required column header, after filling in an item
-  code + quantity with no unit price and clicking "Create" - shows the
-  "Unit price is requir[ed]" inline message on the line.
-- `system-create-375.png` - 375px. Same blocked-create state at mobile width.
+  code + quantity with no unit price and clicking "Create" - shows the full
+  "Unit price is required." inline message on the line, wrapped onto two
+  lines, not clipped. Dev-mode "1 Issue" badge bottom-left (see above).
+- `system-create-375.png` - 375px. Same blocked-create state at mobile width,
+  scrolled so the `U/P *` column and the full inline message are in frame.
 
 ## System edit (`/procurement-management/sponsorship-forms/<id>/edit`)
 
 - `system-edit-1280.png` - 1280px. Edit page for the seeded draft (opened via
-  its Detail page's "Edit" button), `U/P *` required column header, after
-  clicking "Update" with the line's unit price left empty - shows the "Unit
-  price is requir[ed]" inline message.
-- `system-edit-375.png` - 375px. Same blocked-update state at mobile width.
+  its Detail page's "Edit" button - same URL, in-place edit mode per the
+  view/edit-same-layout convention), `U/P *` required column header, after
+  clicking "Update" with the line's unit price left empty - shows the full
+  "Unit price is required." inline message, wrapped, not clipped.
+- `system-edit-375.png` - 375px. Same blocked-update state at mobile width,
+  scrolled so the `U/P *` column and the full inline message are in frame.
 
 ## Navigation path used (system screens)
 
@@ -56,3 +82,8 @@ that bypass does not extend to this frontend nav-visibility endpoint). All 22
 catalog modules were enabled for the default tenant (`tenant_modules` rows
 with `enabled=true`) as part of the throwaway seeding so the sidebar matched
 what a normal installed tenant would show.
+
+The round 2 retake used a fresh throwaway sandbox (new admin user, new
+`tenant_modules` rows, same deviation as above) and located the seeded row
+via the list's own Search box (`ZZEVID-SP-ROUND2`) rather than scrolling the
+unfiltered list - still sidebar/UI clicks throughout, no deep URL.
