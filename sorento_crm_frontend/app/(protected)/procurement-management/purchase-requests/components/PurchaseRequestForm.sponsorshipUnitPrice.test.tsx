@@ -8,7 +8,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
@@ -21,11 +21,16 @@ vi.mock('next/navigation', () => ({
 }));
 
 const createMutateAsync = vi.fn();
+const updateAndReplyMutateAsync = vi.fn().mockResolvedValue({});
+let mockRequest: unknown = undefined;
 vi.mock('../hooks/usePurchaseRequests', () => ({
-  usePurchaseRequest: () => ({ data: undefined, isLoading: false }),
+  usePurchaseRequest: () => ({ data: mockRequest, isLoading: false }),
   useCreatePurchaseRequest: () => ({ mutateAsync: createMutateAsync, isPending: false }),
   useUpdatePurchaseRequest: () => ({ mutateAsync: vi.fn(), isPending: false }),
-  useUpdatePurchaseRequestAndReply: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useUpdatePurchaseRequestAndReply: () => ({
+    mutateAsync: updateAndReplyMutateAsync,
+    isPending: false,
+  }),
 }));
 
 vi.mock('../services/purchaseRequestService', () => ({
@@ -63,6 +68,15 @@ function renderForm() {
   );
 }
 
+function renderEditForm() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={client}>
+      <PurchaseRequestForm requestId="req-1" expectedRequestType="sponsorship_form" />
+    </QueryClientProvider>,
+  );
+}
+
 /** Targets a line cell by its react-hook-form field name (`products.<i>.<field>`)
  *  rather than DOM position - the DataGrid table renders row-motion styles that
  *  can shift a plain positional query between two `fireEvent` calls. */
@@ -77,6 +91,7 @@ function lineInput(container: HTMLElement, index: number, field: string): HTMLIn
 beforeEach(() => {
   cleanup();
   vi.clearAllMocks();
+  mockRequest = undefined;
 });
 
 describe('PurchaseRequestForm - sponsorship unit price required (#1227)', () => {
@@ -112,5 +127,48 @@ describe('PurchaseRequestForm - sponsorship unit price required (#1227)', () => 
 
     await waitFor(() => expect(createMutateAsync).toHaveBeenCalled(), { timeout: 3000 });
     expect(screen.queryByText('Unit price is required.')).toBeNull();
+  });
+});
+
+describe('PurchaseRequestForm - Update & Reply carries unit_price and total (#1232 blocking 1)', () => {
+  /**
+   * Regression: the Update & Reply payload was built by a second, hand-rolled
+   * `products.map` that dropped `unit_price`/`total`, so every line on a
+   * sponsorship form reached `PurchaseRequestUpdateAndReply` price-less and the
+   * new backend rule (mandatory unit price) refused the request even though
+   * every line on screen had a price. It must use the same mapping as `onSubmit`.
+   */
+  it('includes unit_price and total in the Update & Reply payload for every line', async () => {
+    mockRequest = {
+      id: 'req-1',
+      request_type: 'sponsorship_form',
+      request_number: 'SF-0001',
+      project_title: 'Community Fun Run',
+      lines: [
+        { item_code: 'ITEM-A', quantity: 2, remark: null, unit_price: 15, total: 30 },
+      ],
+    };
+
+    renderEditForm();
+
+    fireEvent.click(await screen.findByRole('button', { name: /Update & Reply/i }));
+
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(
+      within(dialog).getByLabelText('Message to send'),
+      { target: { value: 'Updated the sponsorship form.' } },
+    );
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Update & Reply$/i }));
+
+    await waitFor(() => expect(updateAndReplyMutateAsync).toHaveBeenCalled());
+    const call = updateAndReplyMutateAsync.mock.calls[0][0];
+    expect(call.data.formData.products).toEqual([
+      expect.objectContaining({
+        item_code: 'ITEM-A',
+        quantity: 2,
+        unit_price: 15,
+        total: 30,
+      }),
+    ]);
   });
 });

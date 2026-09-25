@@ -1178,6 +1178,14 @@ export default function PurchaseRequestForm({
                                   ? Number(p.quantity)
                                   : undefined,
                             remark: p.remark ?? undefined,
+                            unit_price:
+                              p.unit_price != null && p.unit_price !== ""
+                                ? Number(p.unit_price)
+                                : undefined,
+                            total:
+                              p.total != null && p.total !== ""
+                                ? Number(p.total)
+                                : undefined,
                           })),
                         },
                         reply_message: replyMessage.trim(),
