@@ -65,6 +65,9 @@ function renderView(
     draft?: BoardDraft;
     onDecide?: (key: string, decision: BoardDecision | null) => void;
     onDecideMany?: (keys: string[]) => Promise<{ saved: number; failed: number }>;
+    onDecideBatch?: (
+      entries: { key: string; decision: BoardDecision }[],
+    ) => Promise<{ savedKeys: string[]; failed: { key: string; why: string }[] }>;
     annotations?: Map<string, BoardChangeAnnotation[]>;
     externalSearch?: string;
     focusKey?: string | null;
@@ -88,19 +91,32 @@ function renderView(
       }
       return { saved, failed: keys.length - saved };
     });
+  // S3 (D1): the Decide strip's own save path - same shape `FulfilmentBoardPanel.decideBatch`
+  // returns, standing in here so the existing `onDecide` assertions keep reading every write.
+  const onDecideBatch =
+    overrides.onDecideBatch ??
+    vi.fn(async (entries: { key: string; decision: BoardDecision }[]) => {
+      const savedKeys: string[] = [];
+      for (const entry of entries) {
+        onDecide(entry.key, entry.decision);
+        savedKeys.push(entry.key);
+      }
+      return { savedKeys, failed: [] };
+    });
   const utils = render(
     <FulfilmentBoardListView
       contributions={rows}
       draft={overrides.draft ?? {}}
       onDecide={onDecide}
       onDecideMany={onDecideMany}
+      onDecideBatch={onDecideBatch}
       annotations={overrides.annotations}
       externalSearch={overrides.externalSearch}
       focusKey={overrides.focusKey}
       onFocusHandled={overrides.onFocusHandled}
     />,
   );
-  return { ...utils, onDecide, onDecideMany };
+  return { ...utils, onDecide, onDecideMany, onDecideBatch };
 }
 
 beforeEach(() => {
@@ -248,6 +264,7 @@ describe('FulfilmentBoardListView', () => {
         draft={{}}
         onDecide={vi.fn()}
         onDecideMany={vi.fn()}
+        onDecideBatch={vi.fn()}
       />,
     );
 
@@ -261,6 +278,7 @@ describe('FulfilmentBoardListView', () => {
         draft={{ [row.key]: { verdict: 'approved' } }}
         onDecide={vi.fn()}
         onDecideMany={vi.fn()}
+        onDecideBatch={vi.fn()}
       />,
     );
 
@@ -800,58 +818,78 @@ describe('FulfilmentBoardListView: quick save as suggested and per-line undo', (
     );
   }
 
-  it('offers no bulk save button until a row is ticked', async () => {
+  // S3 (D1, R1): "Save as suggested" left the strip outright - it is Decide's first menu
+  // item now (As suggested), so there is no bare bulk-save button to look for any more.
+  it('renders Decide disabled until a row is ticked, with no bare bulk-save button', async () => {
     renderView({ contributions: threeRows() });
 
     await screen.findByText('SO397450');
     expect(
       screen.queryByRole('button', { name: /^Save as suggested/ }),
     ).not.toBeInTheDocument();
+    expect(screen.getByTestId('board-decide-button')).toBeDisabled();
   });
 
-  it('saves every ticked row with the engine composition and clears the selection', async () => {
-    const { onDecide, onDecideMany } = renderView({ contributions: threeRows() });
+  it('AC-3/D15: Decide > As suggested saves every ticked row with the engine composition and clears the selection', async () => {
+    const { onDecide, onDecideBatch } = renderView({ contributions: threeRows() });
 
     await screen.findByText('SO397450');
     selectAll();
-    expect(
-      await screen.findByRole('button', { name: 'Save as suggested (3)' }),
-    ).toBeInTheDocument();
+    fireEvent.keyDown(await screen.findByTestId('board-decide-button'), { key: 'Enter' });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'As suggested' }));
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save as suggested (3)' }));
-
-    // D15: posts through `onDecideMany` (the panel's own quiet-bulk path), never a loop of
-    // `onDecide` calls made here - the mock still forwards each key's suggestion to `onDecide`
+    // S3: posts through `onDecideBatch` (the Decide strip's own chunked-PUT path), never a
+    // loop of `onDecide` calls made here - the mock still forwards each entry to `onDecide`
     // for the assertions below to read, but the PROP actually reached has to be this one.
-    expect(onDecideMany).toHaveBeenCalledTimes(1);
-    expect(onDecideMany).toHaveBeenCalledWith([
-      'so-1:line-10',
-      'so-2:line-20',
-      'so-3:line-30',
-    ]);
+    await waitFor(() => expect(onDecideBatch).toHaveBeenCalledTimes(1));
     expect(onDecide).toHaveBeenCalledTimes(3);
     for (const call of vi.mocked(onDecide).mock.calls) {
       expect(call[1]).toEqual(
         expect.objectContaining({ verdict: 'approved', buy_qty: '43' }),
       );
     }
-    expect(
-      screen.queryByRole('button', { name: /^Save as suggested/ }),
-    ).not.toBeInTheDocument();
+    // Saved rows untick (R9): the strip goes back to disabled with nothing left selected.
+    await waitFor(() => expect(screen.getByTestId('board-decide-button')).toBeDisabled());
   });
 
-  it('does not offer a covered row a checkbox', async () => {
+  // AC-2 (S3, R3): the owner's own case is amendments, so both a Confirmed row and a row
+  // already Saved are tickable now - only unplannable and cancelled stay disabled.
+  it('AC-2: offers a Confirmed row and a Saved row an enabled checkbox', async () => {
+    const covered = contribution({
+      key: 'so-1:line-10',
+      covered: true,
+      decision: {
+        revision_no: 1,
+        timely_spo_qty: '0',
+        reserve: [],
+        borrow: [],
+        buy_qty: '43',
+      },
+    });
+    const saved = contribution({ key: 'so-2:line-20', so_number: 'SO397451', line_no: 20 });
+    renderView({
+      contributions: [covered, saved],
+      draft: { [saved.key]: { verdict: 'approved' } },
+    });
+
+    await screen.findByText('SO397450');
+    expect(
+      screen.getByRole('checkbox', { name: 'Select SO397450 line 10' }),
+    ).toBeEnabled();
+    expect(
+      screen.getByRole('checkbox', { name: 'Select SO397451 line 20' }),
+    ).toBeEnabled();
+  });
+
+  it('AC-2: keeps an unplannable row and a cancelled row disabled', async () => {
     renderView({
       contributions: [
+        contribution({ key: 'so-1:line-10', unplannable: true }),
         contribution({
-          covered: true,
-          decision: {
-            revision_no: 1,
-            timely_spo_qty: '0',
-            reserve: [],
-            borrow: [],
-            buy_qty: '43',
-          },
+          key: 'so-2:line-20',
+          so_number: 'SO397451',
+          line_no: 20,
+          cancelled: true,
         }),
       ],
     });
@@ -860,18 +898,8 @@ describe('FulfilmentBoardListView: quick save as suggested and per-line undo', (
     expect(
       screen.getByRole('checkbox', { name: 'Select SO397450 line 10' }),
     ).toBeDisabled();
-  });
-
-  it('does not offer an already-saved row a checkbox', async () => {
-    const row = contribution();
-    renderView({
-      contributions: [row],
-      draft: { [row.key]: { verdict: 'approved' } },
-    });
-
-    await screen.findByText('SO397450');
     expect(
-      screen.getByRole('checkbox', { name: 'Select SO397450 line 10' }),
+      screen.getByRole('checkbox', { name: 'Select SO397451 line 20' }),
     ).toBeDisabled();
   });
 
@@ -917,7 +945,10 @@ describe('FulfilmentBoardListView: quick save as suggested and per-line undo', (
       },
     });
     const draft = { [row.key]: { verdict: 'rejected' as const, reason: 'Wrong site.' } };
-    const { onDecide, onDecideMany, rerender } = renderView({ contributions: [row], draft });
+    const { onDecide, onDecideMany, onDecideBatch, rerender } = renderView({
+      contributions: [row],
+      draft,
+    });
 
     expect(await screen.findByTestId(`decision-pill-${row.key}`)).toHaveTextContent('Rejected');
     fireEvent.click(
@@ -933,9 +964,113 @@ describe('FulfilmentBoardListView: quick save as suggested and per-line undo', (
         draft={{}}
         onDecide={onDecide}
         onDecideMany={onDecideMany}
+        onDecideBatch={onDecideBatch}
       />,
     );
     expect(await screen.findByTestId(`decision-pill-${row.key}`)).toHaveTextContent('Confirmed');
+  });
+});
+
+/**
+ * Review round 2, Should fix 1: the sort mirror `FulfilmentBoardListView` hands
+ * `BoardDecideControl` (AC-10, review round 1 Should fix 3) fell back to the incoming prop
+ * order the instant the underlying rows changed - a Decide save patches the board query, so
+ * from the SECOND Decide onward the claim tally read the wrong order again. Caused by a parent
+ * effect that reset the mirror to `filteredContributions` on every rows change: React fires a
+ * child's effects before its parent's, so `PanelDataGrid`'s own `onSortedRowsChange` effect
+ * (which re-fires on a rows change too, since the sort recomputes over the new rows) landed
+ * first and the parent's reset then threw its answer away. The fix drops that reset effect -
+ * `PanelDataGrid`'s own effect is enough, because it already re-fires whenever the rows change.
+ */
+describe('FulfilmentBoardListView: the Decide claim order survives a rows change under the same sort (review round 2, Should fix 1)', () => {
+  const CONTESTED_POOL = {
+    location: 'BRW',
+    where: 'site_pool' as const,
+    warehouse_id: 'wh-pool',
+    qty_free_remaining: '150',
+    available_for_project: '150',
+  };
+
+  function contestedRows() {
+    return [
+      contribution({
+        key: 'so-1:line-10',
+        so_number: 'SO397450',
+        line_no: 10,
+        qty: '100',
+        qty_outstanding: '100',
+        sources: [{ kind: 'buy', qty: '100', reason: 'Nothing free at any location.' }],
+        locations: [CONTESTED_POOL],
+      }),
+      contribution({
+        key: 'so-2:line-20',
+        so_number: 'SO397451',
+        line_no: 20,
+        qty: '100',
+        qty_outstanding: '100',
+        sources: [{ kind: 'buy', qty: '100', reason: 'Nothing free at any location.' }],
+        locations: [CONTESTED_POOL],
+      }),
+    ];
+  }
+
+  it('claims the contested BRW pool in the grid\'s own sort order even after the rows array is replaced', async () => {
+    const rows = contestedRows();
+    const { onDecide, onDecideBatch, onDecideMany, rerender } = renderView({
+      contributions: rows,
+    });
+
+    await screen.findByText('SO397450');
+
+    // Sort the Line column DESCENDING: line 20 on top, line 10 second - the reverse of the
+    // rows' own prop order.
+    fireEvent.click(screen.getByRole('button', { name: 'Line' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Line' }));
+    const dataRows = () => screen.getAllByRole('row').slice(1);
+    expect(within(dataRows()[0]).getByText('SO397451')).toBeInTheDocument();
+
+    // A rows change carrying the SAME rows in the SAME (prop) order - what a Decide save's own
+    // board-query patch, or a plain refetch, looks like. Nothing about the sort changed.
+    rerender(
+      <FulfilmentBoardListView
+        contributions={[...rows]}
+        draft={{}}
+        onDecide={onDecide}
+        onDecideMany={onDecideMany}
+        onDecideBatch={onDecideBatch}
+      />,
+    );
+    expect(within(dataRows()[0]).getByText('SO397451')).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: 'Select SO397450 line 10' }),
+    );
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: 'Select SO397451 line 20' }),
+    );
+    fireEvent.keyDown(await screen.findByTestId('board-decide-button'), { key: 'Enter' });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Use BRW' }));
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
+      target: { value: 'Consolidating onto the shared pool.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^Save \d line/ }));
+
+    // The grid still shows SO397451 (line 20) on top, so it claims the pool FIRST and covers in
+    // full; SO397450 (line 10) is left with only 50 free and is skipped for it, never the other
+    // way around.
+    await waitFor(() => expect(onDecideBatch).toHaveBeenCalledTimes(1));
+    expect(onDecide).toHaveBeenCalledWith(
+      'so-2:line-20',
+      expect.objectContaining({
+        reserve: expect.arrayContaining([
+          expect.objectContaining({ warehouse_id: 'wh-pool', qty: '100' }),
+        ]),
+      }),
+    );
+    expect(onDecide).not.toHaveBeenCalledWith(
+      'so-1:line-10',
+      expect.anything(),
+    );
   });
 });
 
@@ -1463,6 +1598,7 @@ describe('FulfilmentBoardListView: the focus effect waits for the row to actuall
         draft={{}}
         onDecide={onDecide}
         onDecideMany={onDecideMany}
+        onDecideBatch={vi.fn()}
         focusKey={target.key}
         onFocusHandled={onFocusHandled}
       />,
@@ -1479,6 +1615,7 @@ describe('FulfilmentBoardListView: the focus effect waits for the row to actuall
         draft={{}}
         onDecide={onDecide}
         onDecideMany={onDecideMany}
+        onDecideBatch={vi.fn()}
         focusKey={target.key}
         onFocusHandled={onFocusHandled}
       />,
@@ -1523,6 +1660,7 @@ describe('FulfilmentBoardListView: the page jump retries when the row arrives la
         draft={{}}
         onDecide={onDecide}
         onDecideMany={onDecideMany}
+        onDecideBatch={vi.fn()}
         focusKey={target.key}
         onFocusHandled={onFocusHandled}
       />,
@@ -1538,6 +1676,7 @@ describe('FulfilmentBoardListView: the page jump retries when the row arrives la
         draft={{}}
         onDecide={onDecide}
         onDecideMany={onDecideMany}
+        onDecideBatch={vi.fn()}
         focusKey={target.key}
         onFocusHandled={onFocusHandled}
       />,

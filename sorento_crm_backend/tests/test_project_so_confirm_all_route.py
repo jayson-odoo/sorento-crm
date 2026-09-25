@@ -28,6 +28,7 @@ from .test_so_supply_confirmation import (  # noqa: F401 - `api` is a fixture
     _core_line,
     _core_so,
     _line_payload,
+    _product,
     _project_line,
     _project_so,
     _restore,
@@ -129,6 +130,71 @@ def test_confirm_all_commits_the_good_order_and_reports_the_bad_one_without_writ
         .count()
         == 0
     ), "nothing from the failing order may be written"
+
+
+# --------------------------------------------------------------------------- discontinued
+
+
+def test_confirm_all_reports_both_orders_ok_when_one_carries_a_discontinued_buy_with_no_reason(
+    api,
+):
+    """AC-42: the discontinued-buy-needs-a-reason gate is removed, so a batch that mixes an
+    ordinary line on one order with a no-reason discontinued Buy on another must report BOTH
+    orders as successful writes - not one refusal dragging the batch's per-order isolation
+    into visibly reporting a failure that no longer exists."""
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.pool_wh, on_hand=100)
+    discontinued = _product(db, discontinued=True)
+
+    order_1 = _project_so(db, world.project)
+    core_1 = _core_so(db, world.company_id)
+    core_line_1 = _core_line(db, core_1, world.product, world.own_wh, qty_ordered="50")
+    line_1 = _project_line(db, order_1, line_no=10, product=world.product, core_line=core_line_1)
+
+    order_2 = _project_so(db, world.project)
+    core_2 = _core_so(db, world.company_id)
+    core_line_2 = _core_line(db, core_2, discontinued, world.own_wh, qty_ordered="15")
+    line_2 = _project_line(db, order_2, line_no=10, product=discontinued, core_line=core_line_2)
+    db.commit()
+
+    payload = {
+        "orders": [
+            {
+                "pso_id": order_1.id,
+                "lines": [
+                    _line_payload(
+                        line_1.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "50"}]
+                    )
+                ],
+            },
+            {
+                "pso_id": order_2.id,
+                "lines": [_line_payload(line_2.id, buy_qty="15")],
+            },
+        ]
+    }
+    response = client.post(f"{BASE}/fulfilment-planning/confirm-all", json=payload)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    results = {row["pso_id"]: row for row in body["results"]}
+    assert len(body["results"]) == 2
+
+    first = results[order_1.id]
+    assert first["ok"] is True, first
+
+    second = results[order_2.id]
+    assert second["ok"] is True, second
+    assert second.get("error") is None
+    assert second["decision_revision"] == 1
+    assert second["lines_decided"] == 1
+
+    assert (
+        db.query(SOSupplyDecision)
+        .filter(SOSupplyDecision.project_sales_order_id == order_2.id)
+        .count()
+        == 1
+    ), "the discontinued order's commit must stand once the gate is removed"
 
 
 # --------------------------------------------------------------------------- malformed id

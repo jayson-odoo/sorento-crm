@@ -744,7 +744,17 @@ export function FulfilmentBoardPanel({
     async (
       key: string,
       decision: BoardDecision | null,
-      options?: { quiet?: boolean },
+      options?: {
+        quiet?: boolean;
+        // Review round 1, Should fix 1: `decideBatch` folds every failed row into its own
+        // lenient toast (R10) - a second, per-row toast off THIS mutation's own `onError`
+        // would be the "too many errors" the owner asked Decide to stop doing. `onFailure`
+        // is how the caller still gets the server's own sentence for its skip, without it.
+        // Nit (review round 2): named `silent`, not `silentError` - the same name
+        // `saveLineDraft`'s own option carries, since this is nothing but a pass-through to it.
+        silent?: boolean;
+        onFailure?: (message: string) => void;
+      },
     ): Promise<boolean> => {
       let hadPrevious = false;
       let previousForKey: BoardDecision | undefined;
@@ -776,16 +786,20 @@ export function FulfilmentBoardPanel({
           // until Confirm freezes a revision.
           pendingSaves.current.add(key);
           try {
-            await saveLineDraft(key, decision, contribution?.sources);
+            await saveLineDraft(key, decision, contribution?.sources, {
+              silent: options?.silent,
+            });
           } finally {
             pendingSaves.current.delete(key);
           }
         } else {
           await removeDraftKey(key);
         }
-      } catch {
-        // The mutation's own `onError` already toasted the message; nothing here is left to
-        // say beyond putting THIS key back the way the click found it.
+      } catch (error) {
+        // The mutation's own `onError` already toasted the message unless `silent`
+        // asked it not to (Should fix 1) - either way, `onFailure` is the caller's own way
+        // to read it, and this key still goes back the way the click found it.
+        options?.onFailure?.(error instanceof Error ? error.message : 'could not be saved');
         setDraft((current) => {
           const reverted = { ...current };
           if (hadPrevious && previousForKey) reverted[key] = previousForKey;
@@ -866,6 +880,44 @@ export function FulfilmentBoardPanel({
       return { saved, failed };
     },
     [allContributions, decide, draft, pendingBatchSalesOrderIds],
+  );
+
+  /**
+   * S3 (D1): the Decide strip's own save - one PUT per row through the identical `decide()`
+   * chunked-of-5 loop `decideMany` already runs, but with a DECISION PER KEY the caller has
+   * already composed (`decideComposition`), rather than always the engine's own suggestion.
+   * No toast here (AC-16/AC-17): the caller (`BoardDecideControl`) already knows which rows
+   * it skipped WITHOUT a PUT (a pile a pick could not cover in full) and folds them into the
+   * SAME lenient toast beside whichever of these fail on the wire - two toasts for one press
+   * would be the "too many errors" the owner asked Decide to stop doing (R10).
+   */
+  const decideBatch = React.useCallback(
+    async (
+      entries: { key: string; decision: BoardDecision }[],
+    ): Promise<{ savedKeys: string[]; failed: { key: string; why: string }[] }> => {
+      const savedKeys: string[] = [];
+      const failed: { key: string; why: string }[] = [];
+      const CHUNK_SIZE = 5;
+      for (let i = 0; i < entries.length; i += CHUNK_SIZE) {
+        const chunk = entries.slice(i, i + CHUNK_SIZE);
+        await Promise.all(
+          chunk.map(async ({ key, decision }) => {
+            let why = 'could not be saved';
+            const ok = await decide(key, decision, {
+              quiet: true,
+              silent: true,
+              onFailure: (message) => {
+                why = message;
+              },
+            });
+            if (ok) savedKeys.push(key);
+            else failed.push({ key, why });
+          }),
+        );
+      }
+      return { savedKeys, failed };
+    },
+    [decide],
   );
 
   /**
@@ -1240,8 +1292,8 @@ export function FulfilmentBoardPanel({
         }
         // DECIDED, AND NOT ONE LINE OF IT COULD BE BUILT, AND NOTHING TO WITHDRAW EITHER.
         // Every line was left out for a reason `unpostableDecidedFor` already knows (no
-        // mirror on the planning record, a Reserve at a warehouse the board cannot address,
-        // a discontinued Buy with no reason), so the order sends nothing - and said nothing,
+        // mirror on the planning record, a Reserve at a warehouse the board cannot address),
+        // so the order sends nothing - and said nothing,
         // because a press whose `orders` came out empty with an empty `skipped` never set
         // `batchResults` at all. It is reported beside every other order's outcome instead,
         // in the wording the notice above the block already uses for the lines themselves.
@@ -2094,6 +2146,7 @@ export function FulfilmentBoardPanel({
                 draft={draft}
                 onDecide={decide}
                 onDecideMany={decideMany}
+                onDecideBatch={decideBatch}
                 annotations={changeAnnotationsByLine}
                 // S6 (PLAN-scm-oi-worklist-excel-parity.md R-J): the ONE search box,
                 // beside the title, drives Grid and List alike - the panel's own search
@@ -2329,9 +2382,5 @@ export function FulfilmentBoardPanel({
   );
 }
 
-const UNPOSTABLE_REASONS: UnpostableReason[] = [
-  'no_mirror',
-  'no_reserve_warehouse',
-  'buy_reason_missing',
-];
+const UNPOSTABLE_REASONS: UnpostableReason[] = ['no_mirror', 'no_reserve_warehouse'];
 
