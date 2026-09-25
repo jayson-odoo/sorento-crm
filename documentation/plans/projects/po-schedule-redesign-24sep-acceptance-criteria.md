@@ -101,12 +101,18 @@ R3's other terms -- one severity set, one verb, duplicates collapsed, the gate u
 - **S3-2 [FE] (J4)** The only dismiss verb is "Dismiss with a reason". A text check asserts
   "Override with a reason", "Clear with a reason" and "Dismiss as false signal" appear nowhere
   in project-sales.
+  Reviewer note, 25 Sep 2026: this round added the project-sales-wide text check for
+  "Override with a reason" and "Clear with a reason" (`dismissVerb.guard.test.ts`). The third
+  string, "Dismiss as false signal", is still live on purpose in
+  `DeliveryScheduleReconciliationList.tsx` - it is S5's to rename.
 - **S3-3 [FE] (J4)** Findings with the same `code` about the same subject render as one row with
   a count. Subject key, first present wins: `line_id`, then `detail_json.customer_code_raw` (a
   schedule column; the unmapped-column finding carries one row per area), then
   `detail_json.product_code`, then `detail_json.line_no`. Dismissing the row calls the existing
   acknowledge endpoint once per underlying finding with the same reason. A finding with none of
   these keys never collapses.
+  25 Sep 2026: `collapseFindings()` shipped with no caller yet, and R23's cross-code collapse is
+  not implemented in it; both carried to S5 (schedule matrix) and S7 (SO lines list).
 - **S3-4 [FE] (J4)** The dismiss dialog requires a reason of at least 3 characters (the service's
   existing rule) and names the count ("Dismiss 7").
 - **S3-5 [FE][BE] (J4)** The publish gate is unchanged: a pytest pins that warn findings leave an
@@ -178,8 +184,17 @@ the rejected-note reasons move together into Documents, always present (R18).
   the lines table, at 1280 or at 375 -- Lines takes the full page width in both.
 - **S6-3 [FE] (J3)** Lines opens on "Lines identified" (today's "Show only these" filter, on by
   default while unconfirmed); "Show all lines (N)" is one click away.
-- **S6-4 [FE] (J3)** A line with an open finding carries a Flag cell and one "Dismiss with a
-  reason" action on its own row; there is no separate Findings tab or card.
+- **S6-4 [FE] (J3)** A line with an open finding carries a Flag cell and the row's own corrective
+  action (edit the line, cancel it, or accept/reject the handwritten note); there is no separate
+  Findings tab or card, and no Dismiss action on a PO line.
+
+  Amended by reviewer judgment (a), 25 Sep 2026: at PO review time a line's mismatch is not a
+  persisted `SODraftFinding` row - those are written only at SO draft time as HARD findings whose
+  text says correct the line on the PO version. Correcting the line is the designed resolution and
+  the grid already offers it. A Dismiss would need a new persisted field on `projects.po_lines`
+  (migration + PATCH), contradicting "Backend seam: none", and the later hard finding would still
+  stand unless the draft service learned to skip it (OOS-3). No seam is the smallest correct
+  answer.
 - **S6-5 [FE] (J3)** The Documents tab renders the PDF viewer, or, when it cannot be found, the
   S5-5 empty state (R13), with the rejected-note reasons (R7, `POIntakeAnnotationsGrid`) directly
   below it, both in the one tab, always present.
