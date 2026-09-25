@@ -106,6 +106,7 @@ interface RenderOptions {
   readOnly?: boolean;
   annotations?: POAnnotation[];
   focusedLineId?: string | null;
+  defaultFlaggedOnly?: boolean;
 }
 
 function renderGrid(lines: POVersionLine[], options: RenderOptions | boolean = {}) {
@@ -131,6 +132,7 @@ function renderGrid(lines: POVersionLine[], options: RenderOptions | boolean = {
         onAcceptAnnotation={onAcceptAnnotation}
         onEditAnnotation={onEditAnnotation}
         onRejectAnnotation={onRejectAnnotation}
+        defaultFlaggedOnly={next.defaultFlaggedOnly}
       />
     </QueryClientProvider>
   );
@@ -278,14 +280,14 @@ describe('POIntakeLinesGrid, showing only what needs attention', () => {
     expect(screen.getByLabelText('Quantity on line 2')).toBeInTheDocument();
     expect(screen.getByLabelText('Quantity on line 3')).toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: /Show only these 1/ }),
-    ).toHaveAttribute('aria-pressed', 'false');
+      screen.getByRole('radio', { name: /Lines identified 1/ }),
+    ).toHaveAttribute('aria-checked', 'false');
   });
 
   it('drops the healthy rows when asked, and puts them back', async () => {
     renderGrid(threeLines({ arithmetic_ok: false }));
 
-    fireEvent.click(await screen.findByRole('button', { name: /Show only these 1/ }));
+    fireEvent.click(await screen.findByRole('radio', { name: /Lines identified 1/ }));
 
     expect(screen.getByLabelText('Quantity on line 2')).toBeInTheDocument();
     expect(screen.queryByLabelText('Quantity on line 1')).toBeNull();
@@ -293,8 +295,11 @@ describe('POIntakeLinesGrid, showing only what needs attention', () => {
     // The count keeps describing the whole document, not the filtered view.
     expect(screen.getByText('1 of 3 lines need attention')).toBeInTheDocument();
 
-    const back = screen.getByRole('button', { name: 'Show all 3 lines' });
-    expect(back).toHaveAttribute('aria-pressed', 'true');
+    expect(
+      screen.getByRole('radio', { name: /Lines identified 1/ }),
+    ).toHaveAttribute('aria-checked', 'true');
+    const back = screen.getByRole('radio', { name: 'Show all lines (3)' });
+    expect(back).toHaveAttribute('aria-checked', 'false');
     fireEvent.click(back);
     expect(screen.getByLabelText('Quantity on line 1')).toBeInTheDocument();
   });
@@ -302,7 +307,7 @@ describe('POIntakeLinesGrid, showing only what needs attention', () => {
   it('keeps a cancelled line in the filtered view', async () => {
     renderGrid(threeLines({ is_cancelled: true }));
 
-    fireEvent.click(await screen.findByRole('button', { name: /Show only these 1/ }));
+    fireEvent.click(await screen.findByRole('radio', { name: /Lines identified 1/ }));
 
     expect(screen.getByText('Cancelled')).toBeInTheDocument();
     expect(screen.queryByLabelText('Quantity on line 1')).toBeNull();
@@ -311,17 +316,27 @@ describe('POIntakeLinesGrid, showing only what needs attention', () => {
     ).toBeInTheDocument();
   });
 
+  it('opens on Lines identified when defaultFlaggedOnly is set, unlike the default (S6-3)', async () => {
+    renderGrid(threeLines({ arithmetic_ok: false }), { defaultFlaggedOnly: true });
+
+    expect(
+      await screen.findByRole('radio', { name: /Lines identified 1/ }),
+    ).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByLabelText('Quantity on line 2')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Quantity on line 1')).toBeNull();
+  });
+
   it('says so plainly when there is nothing to filter down to', async () => {
     renderGrid(threeLines());
 
     expect(await screen.findByText('All 3 lines add up and resolve')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Show only/ })).toBeNull();
+    expect(screen.queryByRole('radio', { name: /Lines identified/ })).toBeNull();
   });
 
   it('reads an emptied filter as good news, not as an empty table', async () => {
     const { rerenderWith } = renderGrid(threeLines({ arithmetic_ok: false }));
 
-    fireEvent.click(await screen.findByRole('button', { name: /Show only these 1/ }));
+    fireEvent.click(await screen.findByRole('radio', { name: /Lines identified 1/ }));
     expect(screen.getByLabelText('Quantity on line 2')).toBeInTheDocument();
 
     // The line gets fixed, so the filter now matches nothing at all.
@@ -333,26 +348,26 @@ describe('POIntakeLinesGrid, showing only what needs attention', () => {
     ).toBeInTheDocument();
     expect(screen.queryByLabelText('Quantity on line 2')).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Show all 3 lines' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Show all lines (3)' }));
     expect(screen.getByLabelText('Quantity on line 1')).toBeInTheDocument();
   });
 
   it('still lands on a flagged line asked for from outside, with the filter on', async () => {
     const { gridRef } = renderGrid(threeLines({ arithmetic_ok: false }));
 
-    fireEvent.click(await screen.findByRole('button', { name: /Show only these 1/ }));
+    fireEvent.click(await screen.findByRole('radio', { name: /Lines identified 1/ }));
     act(() => gridRef.current?.focusLine('l2'));
 
     expect(onFocusLine).toHaveBeenCalledWith(expect.objectContaining({ line_no: 2 }));
     // Still filtered: the row asked for is one of the flagged ones.
-    expect(screen.getByRole('button', { name: 'Show all 3 lines' })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: 'Show all lines (3)' })).toBeInTheDocument();
     expect(screen.getByLabelText('Quantity on line 2')).toBeInTheDocument();
   });
 
   it('gives the filter up rather than swallowing a jump to a healthy line', async () => {
     const { gridRef } = renderGrid(threeLines({ arithmetic_ok: false }));
 
-    fireEvent.click(await screen.findByRole('button', { name: /Show only these 1/ }));
+    fireEvent.click(await screen.findByRole('radio', { name: /Lines identified 1/ }));
     expect(screen.queryByLabelText('Quantity on line 3')).toBeNull();
 
     // This is what a handwriting card naming a perfectly healthy line does.
@@ -361,8 +376,8 @@ describe('POIntakeLinesGrid, showing only what needs attention', () => {
     expect(onFocusLine).toHaveBeenCalledWith(expect.objectContaining({ line_no: 3 }));
     expect(screen.getByLabelText('Quantity on line 3')).toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: /Show only these 1/ }),
-    ).toHaveAttribute('aria-pressed', 'false');
+      screen.getByRole('radio', { name: /Lines identified 1/ }),
+    ).toHaveAttribute('aria-checked', 'false');
   });
 });
 

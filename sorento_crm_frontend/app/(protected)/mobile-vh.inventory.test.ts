@@ -201,10 +201,6 @@ const ALLOWLIST = new Map<string, string>([
     'M6 follow-up: desktop-only intake grid',
   ],
   [
-    'app/(protected)/project-sales/[projectId]/components/POIntakeConfirmClient.tsx',
-    'M6 follow-up: desktop-only intake flow',
-  ],
-  [
     'app/(protected)/project-sales/[projectId]/components/POIntakeLinesGrid.tsx',
     'M6 follow-up: desktop-only intake grid',
   ],
@@ -274,13 +270,13 @@ describe('fixed viewport-height sweep (M6-02 / M6-03)', () => {
     }
   });
 
-  it('the allowlist matches its baseline (223 lines, 149 files)', () => {
+  it('the allowlist matches its baseline (222 lines, 148 files)', () => {
     let matchingLines = 0;
     for (const file of ALLOWLIST.keys()) {
       const lines = fs.readFileSync(file, 'utf8').split('\n');
       matchingLines += lines.filter((line) => PATTERN.test(line)).length;
     }
-    expect(ALLOWLIST.size).toBe(149);
-    expect(matchingLines).toBe(223);
+    expect(ALLOWLIST.size).toBe(148);
+    expect(matchingLines).toBe(222);
   });
 });

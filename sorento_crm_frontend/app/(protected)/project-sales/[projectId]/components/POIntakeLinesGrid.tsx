@@ -7,7 +7,7 @@ import {
   getExpandedRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { Ban, Check, Filter, Loader2, Pencil, RotateCcw, X } from 'lucide-react';
+import { Ban, Check, Loader2, Pencil, RotateCcw, X } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import {
   AlertDialog,
@@ -29,6 +29,7 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 // The shared products `/select` mapper. Its name says "variant" because that screen needed
 // it first; the endpoint and the shape are the generic ones.
 import { getProductsForVariantSelect } from '@/app/(protected)/master-data-management/products/services/productService';
@@ -71,6 +72,11 @@ interface Props {
   onAcceptAnnotation: (annotationId: string, note?: string | null) => Promise<void>;
   onEditAnnotation: (annotationId: string, body: POAnnotationEditBody) => Promise<void>;
   onRejectAnnotation: (annotationId: string, note: string) => Promise<void>;
+  /**
+   * S6-3: the grid opens on "Lines identified" while the version is unconfirmed, and on
+   * every line once it is - a confirmed PO is a record to check against, not a queue to work.
+   */
+  defaultFlaggedOnly?: boolean;
 }
 
 /** The short marker on the row: what the pencil is asking for, not why. */
@@ -145,6 +151,7 @@ export const POIntakeLinesGrid = React.forwardRef<POIntakeLinesGridHandle, Props
       onAcceptAnnotation,
       onEditAnnotation,
       onRejectAnnotation,
+      defaultFlaggedOnly,
     },
     ref,
   ) {
@@ -153,7 +160,7 @@ export const POIntakeLinesGrid = React.forwardRef<POIntakeLinesGridHandle, Props
       kind: 'cancel' | 'clear-product';
       line: POVersionLine;
     } | null>(null);
-    const [flaggedOnly, setFlaggedOnly] = React.useState(false);
+    const [flaggedOnly, setFlaggedOnly] = React.useState(defaultFlaggedOnly ?? false);
     // A row asked for while it is filtered out cannot be scrolled to until it mounts.
     const pendingFocusId = React.useRef<string | null>(null);
 
@@ -178,7 +185,6 @@ export const POIntakeLinesGrid = React.forwardRef<POIntakeLinesGridHandle, Props
     const lastActionedAnnotationId = React.useRef<string | null>(null);
     const lastActionedLineId = React.useRef<string | null>(null);
 
-    const flagged = React.useMemo(() => lines.filter(isFlaggedLine), [lines]);
     const attentionCount = React.useMemo(
       () => lines.filter(lineNeedsAttention).length,
       [lines],
@@ -187,11 +193,6 @@ export const POIntakeLinesGrid = React.forwardRef<POIntakeLinesGridHandle, Props
       () => lines.filter((line) => line.is_cancelled).length,
       [lines],
     );
-    const visibleLines = flaggedOnly ? flagged : lines;
-    const nothingLeftToShow = flaggedOnly && visibleLines.length === 0;
-    // When the filter has emptied itself the way back lives in the all-clear panel, so the
-    // toolbar toggle stands down rather than offering the same thing twice.
-    const showFilterToggle = (flagged.length > 0 || flaggedOnly) && !nothingLeftToShow;
 
     // Notes that name at least one line, grouped by the line number they name. A note naming
     // three lines lives in three buckets, so it shows, and clears, on every one of them.
@@ -206,6 +207,26 @@ export const POIntakeLinesGrid = React.forwardRef<POIntakeLinesGridHandle, Props
       }
       return map;
     }, [annotations]);
+
+    // "Identified" (S6-3): an arithmetic mismatch, an unresolved product, a cancellation, or
+    // a handwritten note still waiting on a decision - everything a person has to look at
+    // before this document can be trusted, not only what `isFlaggedLine` alone catches.
+    const flagged = React.useMemo(
+      () =>
+        lines.filter(
+          (line) =>
+            isFlaggedLine(line) ||
+            (annotationsByLineNo.get(line.line_no) ?? []).some(
+              (note) => note.state === 'proposed',
+            ),
+        ),
+      [lines, annotationsByLineNo],
+    );
+    const visibleLines = flaggedOnly ? flagged : lines;
+    const nothingLeftToShow = flaggedOnly && visibleLines.length === 0;
+    // When the filter has emptied itself the way back lives in the all-clear panel, so the
+    // toolbar toggle stands down rather than offering the same thing twice.
+    const showFilterToggle = (flagged.length > 0 || flaggedOnly) && !nothingLeftToShow;
 
     const linesWithUnreviewedAnnotations = React.useMemo(
       () =>
@@ -510,7 +531,7 @@ export const POIntakeLinesGrid = React.forwardRef<POIntakeLinesGridHandle, Props
         },
         {
           id: 'check',
-          header: ({ column }) => <DataGridColumnHeader title="Check" column={column} />,
+          header: ({ column }) => <DataGridColumnHeader title="Flag" column={column} />,
           cell: ({ row }) => {
             const line = row.original;
             const expected = multiplyMoney(line.qty, line.unit_price);
@@ -585,7 +606,7 @@ export const POIntakeLinesGrid = React.forwardRef<POIntakeLinesGridHandle, Props
           size: 190,
           minSize: 130,
           meta: {
-            headerTitle: 'Check',
+            headerTitle: 'Flag',
             skeleton: <Skeleton className="h-4 w-20" />,
           },
         },
@@ -752,19 +773,20 @@ export const POIntakeLinesGrid = React.forwardRef<POIntakeLinesGridHandle, Props
             {describeLineHealth(lines.length, attentionCount, cancelledCount)}
           </p>
           {showFilterToggle && (
-            <Button
-              type="button"
+            <ToggleGroup
+              type="single"
               variant="outline"
               size="sm"
-              className="shrink-0"
-              aria-pressed={flaggedOnly}
-              onClick={() => setFlaggedOnly((previous) => !previous)}
+              value={flaggedOnly ? 'flagged' : 'all'}
+              onValueChange={(next) => next && setFlaggedOnly(next === 'flagged')}
             >
-              <Filter className="size-3.5" aria-hidden />
-              {flaggedOnly
-                ? `Show all ${lines.length} lines`
-                : `Show only these ${flagged.length}`}
-            </Button>
+              <ToggleGroupItem value="flagged" className="px-3">
+                {`Lines identified ${flagged.length}`}
+              </ToggleGroupItem>
+              <ToggleGroupItem value="all" className="px-3">
+                {`Show all lines (${lines.length})`}
+              </ToggleGroupItem>
+            </ToggleGroup>
           )}
         </div>
 
@@ -799,7 +821,7 @@ export const POIntakeLinesGrid = React.forwardRef<POIntakeLinesGridHandle, Props
               className="mt-4"
               onClick={() => setFlaggedOnly(false)}
             >
-              {`Show all ${lines.length} lines`}
+              {`Show all lines (${lines.length})`}
             </Button>
           </div>
         ) : (

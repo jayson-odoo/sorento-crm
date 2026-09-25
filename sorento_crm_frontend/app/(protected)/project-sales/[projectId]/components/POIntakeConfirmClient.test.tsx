@@ -281,43 +281,45 @@ describe('POIntakeConfirmClient', () => {
   });
 
   /**
-   * 19 Aug follow-up: a note naming a line lives on that line now, not scrolled to
-   * separately, so the fixture's cancel_line note (naming line 1) shows inline. The
-   * document-level card renders too, with its own empty state, per the CRUD standard that
-   * every section always renders.
+   * S6: no Header card and no separate Findings/notes card - a note naming a line lives on
+   * that line, inline, in the Lines tab; the PDF and the document-level notes live together
+   * in the Documents tab, always present (R18), reached with one click.
    */
   it('puts the header, the lines and each note on its own line on one screen', async () => {
     getPOVersion.mockResolvedValue(version({ annotations: [annotation()] }));
 
     renderConfirm();
 
-    expect(await screen.findByText('PO HQ/26/01/041')).toBeInTheDocument();
-    expect(screen.getByLabelText('PO number')).toHaveValue('HQ/26/01/041');
-    expect(screen.getByLabelText('Filing reference')).toHaveValue('PS26-0143');
+    expect(await screen.findByText('PO HQ/26/01/041 v1')).toBeInTheDocument();
+    expect(screen.queryByLabelText('PO number')).toBeNull();
     expect(screen.getByLabelText('Quantity on line 1')).toHaveValue('927');
-    // The note names line 1, so it shows there, not in a separate card scrolled to.
+    // The note names line 1, so it shows there, on the Lines tab.
     expect(screen.getByText('1 line with handwriting to review')).toBeInTheDocument();
     expect(
       screen.getByText('cancel item (7), refer to new P/O HQ/26/05/087'),
     ).toBeInTheDocument();
-    expect(
-      screen.getByText('Document notes', { selector: '[data-slot="card-title"]' }),
-    ).toBeInTheDocument();
+    expect(screen.queryByTitle('Purchase order page 1')).toBeNull();
+
+    const documentsTab = screen.getByRole('tab', { name: 'Documents' });
+    documentsTab.focus();
+    fireEvent.click(documentsTab);
+
+    expect(await screen.findByTitle('Purchase order page 1')).toBeInTheDocument();
     expect(screen.getByText('No document-level notes')).toBeInTheDocument();
-    expect(screen.getByTitle('Purchase order page 1')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Quantity on line 1')).toBeNull();
   });
 
-  it('moves the scan to the page a note was written on', async () => {
+  it('moves the scan to the page a note was written on, and to the Documents tab that shows it', async () => {
     getPOVersion.mockResolvedValue(version({ annotations: [annotation()] }));
 
     renderConfirm();
 
-    // The viewer is on page 1 until a note asks for its own page.
-    expect(await screen.findByTitle('Purchase order page 1')).toBeInTheDocument();
+    await screen.findByText('1 line with handwriting to review');
+    expect(screen.queryByTitle(/Purchase order page/)).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Page 4' }));
 
-    expect(screen.getByTitle('Purchase order page 4')).toBeInTheDocument();
+    expect(await screen.findByTitle('Purchase order page 4')).toBeInTheDocument();
     expect(screen.getByText('Page 4 of 10')).toBeInTheDocument();
   });
 
@@ -380,10 +382,14 @@ describe('POIntakeConfirmClient', () => {
     // read neither.
     expect(screen.queryByText('1 of 2 multiply out')).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: /first problem line/i }));
+    // The mismatch sentence on the meta line is itself the jump-to-problem action now (S6-1);
+    // there is no separate banner or button for it.
+    fireEvent.click(
+      screen.getByRole('button', { name: /below the total printed on the document/i }),
+    );
     expect(screen.getByLabelText('Amount on line 2')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: /Show only these 1/ }));
+    fireEvent.click(screen.getByRole('radio', { name: /Lines identified 1/ }));
     expect(screen.getByLabelText('Amount on line 2')).toBeInTheDocument();
     expect(screen.queryByLabelText('Amount on line 1')).toBeNull();
   });
@@ -515,5 +521,75 @@ describe('POIntakeConfirmClient', () => {
     expect(screen.queryByRole('button', { name: /Confirm this PO/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /^Accept$/ })).toBeNull();
     expect(screen.queryByLabelText('Quantity on line 1')).toBeNull();
+  });
+
+  /** S6-1: no "Back to the project" link anywhere on the steady-state screen. */
+  it('carries no "Back to the project" link once the version has loaded', async () => {
+    getPOVersion.mockResolvedValue(version());
+
+    renderConfirm();
+
+    await screen.findByText('PO HQ/26/01/041 v1');
+    expect(screen.queryByRole('link', { name: /Back to the project/i })).toBeNull();
+  });
+
+  /** S6-2: exactly two tabs, Lines and Documents - no Findings, no Header. */
+  it('carries exactly two tabs, Lines and Documents, never a Findings or Header tab', async () => {
+    getPOVersion.mockResolvedValue(version());
+
+    renderConfirm();
+
+    await screen.findByText('PO HQ/26/01/041 v1');
+    expect(screen.getAllByRole('tab')).toHaveLength(2);
+    expect(screen.getByRole('tab', { name: /^Lines/ })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Documents' })).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: /Findings/i })).toBeNull();
+    expect(screen.queryByRole('tab', { name: /Header/i })).toBeNull();
+  });
+
+  /**
+   * S6-5/R13: a version with no stored document renders the plain empty state instead of
+   * POIntakeDocumentViewer's own "not available to preview" fallback - never an error code.
+   */
+  it('shows the R13 empty state on Documents when the PDF cannot be found, with an upload action', async () => {
+    getPOVersion.mockResolvedValue(version({ document_url: null }));
+
+    renderConfirm();
+
+    await screen.findByText('PO HQ/26/01/041 v1');
+    const documentsTab = screen.getByRole('tab', { name: 'Documents' });
+    documentsTab.focus();
+    fireEvent.click(documentsTab);
+
+    expect(await screen.findByText('This PDF is not available yet')).toBeInTheDocument();
+    expect(
+      screen.getByText('The source file has not finished uploading, or could not be found.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/404/)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Upload the PO again' }));
+    expect(
+      screen.getByText('Upload a new document for HQ/26/01/041'),
+    ).toBeInTheDocument();
+  });
+
+  it('does not offer to upload again from the R13 empty state without edit rights', async () => {
+    getProject.mockResolvedValue({
+      id: 'p1',
+      project_code: 'PRJ-000001',
+      title: 'Tuju Residences',
+      outcome: 'open',
+      can_edit: false,
+    } as never);
+    getPOVersion.mockResolvedValue(version({ document_url: null }));
+
+    renderConfirm();
+
+    await screen.findByText('PO HQ/26/01/041 v1');
+    const documentsTab = screen.getByRole('tab', { name: 'Documents' });
+    documentsTab.focus();
+    fireEvent.click(documentsTab);
+
+    expect(await screen.findByText('This PDF is not available yet')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Upload the PO again' })).toBeNull();
   });
 });
