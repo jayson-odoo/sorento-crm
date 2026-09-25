@@ -972,6 +972,109 @@ describe('FulfilmentBoardListView: quick save as suggested and per-line undo', (
 });
 
 /**
+ * Review round 2, Should fix 1: the sort mirror `FulfilmentBoardListView` hands
+ * `BoardDecideControl` (AC-10, review round 1 Should fix 3) fell back to the incoming prop
+ * order the instant the underlying rows changed - a Decide save patches the board query, so
+ * from the SECOND Decide onward the claim tally read the wrong order again. Caused by a parent
+ * effect that reset the mirror to `filteredContributions` on every rows change: React fires a
+ * child's effects before its parent's, so `PanelDataGrid`'s own `onSortedRowsChange` effect
+ * (which re-fires on a rows change too, since the sort recomputes over the new rows) landed
+ * first and the parent's reset then threw its answer away. The fix drops that reset effect -
+ * `PanelDataGrid`'s own effect is enough, because it already re-fires whenever the rows change.
+ */
+describe('FulfilmentBoardListView: the Decide claim order survives a rows change under the same sort (review round 2, Should fix 1)', () => {
+  const CONTESTED_POOL = {
+    location: 'BRW',
+    where: 'site_pool' as const,
+    warehouse_id: 'wh-pool',
+    qty_free_remaining: '150',
+    available_for_project: '150',
+  };
+
+  function contestedRows() {
+    return [
+      contribution({
+        key: 'so-1:line-10',
+        so_number: 'SO397450',
+        line_no: 10,
+        qty: '100',
+        qty_outstanding: '100',
+        sources: [{ kind: 'buy', qty: '100', reason: 'Nothing free at any location.' }],
+        locations: [CONTESTED_POOL],
+      }),
+      contribution({
+        key: 'so-2:line-20',
+        so_number: 'SO397451',
+        line_no: 20,
+        qty: '100',
+        qty_outstanding: '100',
+        sources: [{ kind: 'buy', qty: '100', reason: 'Nothing free at any location.' }],
+        locations: [CONTESTED_POOL],
+      }),
+    ];
+  }
+
+  it('claims the contested BRW pool in the grid\'s own sort order even after the rows array is replaced', async () => {
+    const rows = contestedRows();
+    const { onDecide, onDecideBatch, onDecideMany, rerender } = renderView({
+      contributions: rows,
+    });
+
+    await screen.findByText('SO397450');
+
+    // Sort the Line column DESCENDING: line 20 on top, line 10 second - the reverse of the
+    // rows' own prop order.
+    fireEvent.click(screen.getByRole('button', { name: 'Line' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Line' }));
+    const dataRows = () => screen.getAllByRole('row').slice(1);
+    expect(within(dataRows()[0]).getByText('SO397451')).toBeInTheDocument();
+
+    // A rows change carrying the SAME rows in the SAME (prop) order - what a Decide save's own
+    // board-query patch, or a plain refetch, looks like. Nothing about the sort changed.
+    rerender(
+      <FulfilmentBoardListView
+        contributions={[...rows]}
+        draft={{}}
+        onDecide={onDecide}
+        onDecideMany={onDecideMany}
+        onDecideBatch={onDecideBatch}
+      />,
+    );
+    expect(within(dataRows()[0]).getByText('SO397451')).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: 'Select SO397450 line 10' }),
+    );
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: 'Select SO397451 line 20' }),
+    );
+    fireEvent.keyDown(await screen.findByTestId('board-decide-button'), { key: 'Enter' });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Use BRW' }));
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
+      target: { value: 'Consolidating onto the shared pool.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^Save \d line/ }));
+
+    // The grid still shows SO397451 (line 20) on top, so it claims the pool FIRST and covers in
+    // full; SO397450 (line 10) is left with only 50 free and is skipped for it, never the other
+    // way around.
+    await waitFor(() => expect(onDecideBatch).toHaveBeenCalledTimes(1));
+    expect(onDecide).toHaveBeenCalledWith(
+      'so-2:line-20',
+      expect.objectContaining({
+        reserve: expect.arrayContaining([
+          expect.objectContaining({ warehouse_id: 'wh-pool', qty: '100' }),
+        ]),
+      }),
+    );
+    expect(onDecide).not.toHaveBeenCalledWith(
+      'so-1:line-10',
+      expect.anything(),
+    );
+  });
+});
+
+/**
  * PLAN-board-change-proposed-pill (AC-1/AC-2/AC-3): a line the board pre-marked itself -
  * `preMarkedKeys` seeding `{ verdict: 'approved', preMarked: true }` into the session draft,
  * with nothing yet saved on the server - reads "Change proposed" and offers no Undo (nothing

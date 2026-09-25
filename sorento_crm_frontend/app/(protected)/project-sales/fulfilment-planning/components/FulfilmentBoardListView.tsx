@@ -176,16 +176,20 @@ export function FulfilmentBoardListView({
     [contributions, externalSearch],
   );
 
-  // Should fix 3 (review round 1): AC-10's "the order follows the list's current sort" means
-  // the grid's OWN sort, not the incoming prop order - `PanelDataGrid` holds that state, so
-  // this mirrors it back via `onSortedRowsChange` rather than re-deriving it here. Seeded from
-  // `filteredContributions` so Decide has an order to claim by before the grid's first effect
-  // runs, and reset whenever the underlying rows change (a save, a refetch) so a stale sort
-  // never outlives the rows it was computed from.
+  // Should fix 3 (review round 1, fixed again round 2): AC-10's "the order follows the list's
+  // current sort" means the grid's OWN sort, not the incoming prop order - `PanelDataGrid`
+  // holds that state, so this mirrors it back via `onSortedRowsChange` rather than re-deriving
+  // it here. Seeded from `filteredContributions` so Decide has an order to claim by before the
+  // grid's first effect runs.
+  //
+  // NO reset effect on `filteredContributions` any more (review round 2, Should fix 1): React
+  // runs a child's effects before its parent's, so `PanelDataGrid`'s own `onSortedRowsChange`
+  // effect (which fires on every rows change too, since the sort recomputes against the new
+  // rows) landed first and a parent reset right after it threw the sorted order away again -
+  // AC-10's claim order fell back to prop order on the very save it was supposed to survive.
+  // The child effect alone is enough: it already re-fires whenever `filteredContributions`
+  // changes, because the sort it reads is derived from those same rows.
   const [sortedContributions, setSortedContributions] = React.useState(filteredContributions);
-  React.useEffect(() => {
-    setSortedContributions(filteredContributions);
-  }, [filteredContributions]);
 
   const expansion = useDecisionRowExpansion({ multiple: true });
   const {
