@@ -15,11 +15,13 @@ ran), the grant insert is SELECT-driven with `ON CONFLICT (role_id,
 permission_id) DO NOTHING`, and a database with no `integration_foundryx_esb`
 role (CI) is a clean no-op.
 
-**Downgrade removes exactly these three grants for this role** (D9) - unlike
-`511_brands_esb_grant.py`'s no-op downgrade, `inventory.stock.*` did not
-pre-date this migration the way the brands slugs might have (the Admin copy
-predates brands entirely), so there is nothing older to protect by leaving it
-alone.
+**Downgrade is a no-op**, same shape as `511_brands_esb_grant.py` and for the
+same reason (fix round 1, both reviews): the ESB role's grants were seeded
+once as a copy of Admin's own (`integration_seed.py`), and Admin already
+holds `inventory.stock.*` - so these three grants likely PRE-DATE this
+migration rather than being introduced by it, exactly as brands' did.
+Stripping them on a downgrade could take away access the ESB already had
+before this ever ran; only the ESB role is touched either way.
 
 Revision ID: sb1_stock_balances_grant
 Revises: oisl_0001_suggested_links
@@ -79,21 +81,7 @@ def apply(bind) -> None:
 
 
 def revert(bind) -> None:
-    """Removes exactly these three grants for the ESB role (D9) - the
-    permission rows themselves are left alone, only the role's grant of them."""
-    bind.execute(
-        sa.text(
-            """
-            DELETE FROM user_role_permissions rp
-            USING user_roles r, user_permissions p
-            WHERE rp.role_id = r.id
-              AND rp.permission_id = p.id
-              AND r.slug = :role_slug
-              AND p.slug = ANY(:slugs)
-            """
-        ),
-        {"role_slug": _ESB_ROLE_SLUG, "slugs": [slug for slug, _, _ in _GRANTS]},
-    )
+    """No-op (fix round 1) - see the module docstring for why."""
 
 
 def upgrade() -> None:

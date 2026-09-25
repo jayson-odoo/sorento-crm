@@ -787,16 +787,7 @@ def ingest_masters(
         # The service has already rolled back; this is the second of two locks
         # on the same door. A preview that writes is the one outcome this
         # endpoint must never produce, so neither layer relies on the other.
-        #
-        # `stock_balances` is the one exception: `StockBalanceIngestService
-        # .ingest()` scopes its own dry-run rollback to a SAVEPOINT around
-        # just this batch (its own docstring says why), rather than a
-        # session-level `db.rollback()` - so a second, SESSION-level
-        # rollback here would discard whatever else this request's session
-        # holds that this batch never touched. Skipped for this entity only;
-        # every other ingester still gets the belt-and-suspenders rollback.
-        if entity not in STOCK_BALANCE_ENTITIES:
-            db.rollback()
+        db.rollback()
     else:
         # Committed once for the batch. Each record already succeeded or rolled
         # back inside its own savepoint, so this persists exactly the good ones.
@@ -962,11 +953,8 @@ def delete_records(
 
     if dry_run:
         # The service has already rolled back; this is the second of two locks on
-        # the same door, exactly as on the ingest. `stock_balances` is the same
-        # exception the ingest route documents: its own SAVEPOINT-scoped
-        # rollback must not be followed by a session-level one.
-        if entity not in STOCK_BALANCE_ENTITIES:
-            db.rollback()
+        # the same door, exactly as on the ingest.
+        db.rollback()
     else:
         db.commit()
 

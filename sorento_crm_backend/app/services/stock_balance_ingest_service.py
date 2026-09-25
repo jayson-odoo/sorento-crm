@@ -34,6 +34,36 @@ the row may simply not have synced yet), an unresolved or inactive warehouse
 is `updated` with a fixed warning and nothing written - the same shape
 `MasterRefResolver` already gives warehouses on every other ingest surface,
 reused here via `WARN_WAREHOUSE_UNRESOLVED`.
+
+**One preload per batch, plain dicts.** `_build_preload` reads every
+warehouse of the anchor company, every product whose code the batch actually
+names, and every stock row for those products - once, before the per-record
+loop, the same "avoid the N+1" reasoning `MasterIngestService`'s own
+`_ProductBatchPreload` documents at length, but as three bare dicts on
+`self` rather than a second class: this service has one preload shape, not
+several. A record's own write updates `self._stock_by_pair` in place, so a
+duplicate pair later in the SAME batch sees it (AC-SB-13); a record whose
+savepoint rolls back removes whatever IT added via `self._pending_stock_keys`,
+the same revert-on-rollback shape `_pending_preload_additions` gives that
+other preload.
+
+**Exact code match wins; more than one normalised match is ambiguous.**
+`warehouse_code`/`product_code` are unique per company only as the RAW stored
+string (migration 305) - two rows spelled `"MBS"` and `"mbs "` can coexist.
+An incoming code matching one of them exactly (after the pydantic layer's own
+trim) is resolved to that row without further question; failing that, more
+than one row sharing its case/whitespace-insensitive form cannot be told
+apart and the record is refused rather than guessed at.
+
+**A same-pair insert race is a conflict, not a retry loop.** Two pushes for
+the same never-before-seen pair, close enough together, can both find no
+existing row and both attempt the same INSERT - the DB's own
+`uq_stock_product_id_warehouse_id` index catches the loser. The loser
+re-reads (company-scoped) and switches to an UPDATE, so the last value still
+wins; a row that STILL cannot be found company-scoped despite the conflict
+means the pair's id pair already belongs to a different company (that
+constraint carries no company column of its own), a data defect refused as
+`failed` rather than silently adopted.
 """
 from __future__ import annotations
 
@@ -43,6 +73,7 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.inventory import Stock
@@ -71,6 +102,21 @@ STOCK_BALANCE_ENTITIES = {"stock_balances"}
 #: booked into, so nothing is written for it either.
 WARN_WAREHOUSE_INACTIVE = "warehouse_inactive"
 
+#: Postgres' own code for a unique-constraint violation, read off
+#: `exc.orig.pgcode` (never `str(exc)` - see `integrity_conflict_errors`'s own
+#: docstring in `master_ingest_service` for why).
+_UNIQUE_VIOLATION_PGCODE = "23505"
+#: `app/models/inventory.py::Stock.__table_args__` - the ONLY constraint an
+#: insert on this table can violate through this service's own write path.
+_STOCK_PAIR_CONSTRAINT = "uq_stock_product_id_warehouse_id"
+
+#: Fix round 1 (security S1): Postgres `Integer` (int4) tops out at
+#: 2,147,483,647 - the `stock.quantity_on_hand` column's own type. A qty
+#: above it can never be stored, so it is refused at validation rather than
+#: reaching a DB-level `IntegrityError` (or, on some drivers, silent
+#: wraparound) at flush time.
+_MAX_QTY = 2_147_483_647
+
 
 class _StockBalanceRecord(BaseModel):
     """D3. `extra="forbid"`: an unmapped key is a wiring bug on the ESB's
@@ -78,9 +124,10 @@ class _StockBalanceRecord(BaseModel):
     two named exceptions - accepted and ignored, display fields Sorento
     already resolves the product/uom by code.
 
-    `qty` is a strict, non-negative int: a bool, a float or a numeric string
-    are all exactly the kind of upstream mapping slip this validation exists
-    to catch (AC-SB-9) - `0` is a legitimate, and common, incoming value.
+    `qty` is a strict, bounded, non-negative int: a bool, a float or a
+    numeric string are all exactly the kind of upstream mapping slip this
+    validation exists to catch (AC-SB-9) - `0` is a legitimate, and common,
+    incoming value; a value above `_MAX_QTY` cannot be stored at all.
     """
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
@@ -88,52 +135,22 @@ class _StockBalanceRecord(BaseModel):
     source_ref: str = Field(..., min_length=1, max_length=255)
     item_code: str = Field(..., min_length=1, max_length=255)
     location_code: str = Field(..., min_length=1, max_length=255)
-    qty: StrictInt = Field(..., ge=0)
+    qty: StrictInt = Field(..., ge=0, le=_MAX_QTY)
     item_description: Optional[str] = None
     uom_code: Optional[str] = None
 
 
-def _resolve_warehouse(db: Session, company_id: str, location_code: str):
-    """(`id`, `is_active`) for the warehouse this pair names, trimmed +
-    case-insensitive, scoped to `company_id` explicitly (never ambient
-    session scope) - the same match `autocount_pull_service.classify_stock_rows`
-    uses for the Pull side of this same table. `None` when nothing matches."""
-    row = db.execute(
-        text(
-            "SELECT id, is_active FROM warehouses "
-            "WHERE company_id = :cid AND upper(btrim(warehouse_code)) = upper(btrim(:code)) "
-            "LIMIT 1"
-        ),
-        {"cid": company_id, "code": location_code},
-    ).first()
-    return row
-
-
-def _resolve_product(db: Session, company_id: str, item_code: str) -> Optional[str]:
-    """The product id this pair's `item_code` names, trimmed + case-insensitive,
-    scoped to `company_id` explicitly. `None` when nothing matches (retryable -
-    the master push may simply not have drained yet)."""
-    row = db.execute(
-        text(
-            "SELECT id FROM products "
-            "WHERE company_id = :cid AND upper(btrim(product_code)) = upper(btrim(:code)) "
-            "LIMIT 1"
-        ),
-        {"cid": company_id, "code": item_code},
-    ).first()
-    return str(row[0]) if row else None
-
-
-def _find_stock_row(db: Session, company_id: str, product_id: str, warehouse_id: str):
-    return (
-        db.query(Stock)
-        .filter(
-            Stock.company_id == company_id,
-            Stock.product_id == product_id,
-            Stock.warehouse_id == warehouse_id,
-        )
-        .first()
-    )
+def _is_stock_pair_conflict(exc: IntegrityError) -> bool:
+    """Whether `exc` is the specific race `uq_stock_product_id_warehouse_id`
+    catches - any OTHER `IntegrityError` (a different constraint, a
+    non-unique-violation pgcode) is not this service's to retry around."""
+    orig = getattr(exc, "orig", None)
+    pgcode = getattr(orig, "pgcode", None)
+    if pgcode != _UNIQUE_VIOLATION_PGCODE:
+        return False
+    diag = getattr(orig, "diag", None)
+    constraint = getattr(diag, "constraint_name", None) if diag else None
+    return constraint == _STOCK_PAIR_CONSTRAINT
 
 
 class StockBalanceIngestService:
@@ -151,6 +168,134 @@ class StockBalanceIngestService:
         # a default would be the incumbent company, and a push meant for the
         # other one would land there silently.
         self.company_id = company_id
+        # Per-call preload (`_build_preload`, fix round 1 / reviewer S4) -
+        # reset at the start of every `ingest()`/`delete()`/`current_state()`
+        # call, never shared across calls on the same instance.
+        self._warehouses_by_exact: dict[str, dict] = {}
+        self._warehouses_by_normalized: dict[str, list[dict]] = {}
+        self._products_by_exact: dict[str, dict] = {}
+        self._products_by_normalized: dict[str, list[dict]] = {}
+        self._stock_by_pair: dict[tuple[str, str], Stock] = {}
+        # `(product_id, warehouse_id)` keys THIS record's own write added to
+        # `self._stock_by_pair` - reset per record, walked back on that
+        # record's own rollback (T11's shape in `master_ingest_service`,
+        # applied to this service's one preload map).
+        self._pending_stock_keys: list[tuple[str, str]] = []
+
+    # ------------------------------------------------------------- preload
+    def _build_preload(self, item_codes: set[str], location_codes: set[str]) -> None:
+        """Every company warehouse, every product the batch's own codes name,
+        and every stock row for those products - all explicitly scoped to
+        `self.company_id`, never ambient session scope (fix round 1,
+        reviewer S4). `location_codes` is accepted for symmetry with the
+        caller's own scan but unused: the company's whole warehouse list is
+        cheap enough that filtering it buys nothing a product catalogue's
+        size would justify.
+        """
+        self._warehouses_by_exact = {}
+        self._warehouses_by_normalized = {}
+        rows = self.db.execute(
+            text(
+                "SELECT id, warehouse_code, is_active FROM warehouses WHERE company_id = :cid"
+            ),
+            {"cid": self.company_id},
+        ).mappings().all()
+        for row in rows:
+            code = row["warehouse_code"]
+            entry = {"id": str(row["id"]), "is_active": bool(row["is_active"])}
+            self._warehouses_by_exact[code] = entry
+            self._warehouses_by_normalized.setdefault(code.strip().upper(), []).append(entry)
+
+        self._products_by_exact = {}
+        self._products_by_normalized = {}
+        product_ids: list[str] = []
+        normalized_codes = sorted({c.strip().upper() for c in item_codes if c})
+        if normalized_codes:
+            rows = self.db.execute(
+                text(
+                    "SELECT id, product_code FROM products "
+                    "WHERE company_id = :cid AND upper(btrim(product_code)) = ANY(:codes)"
+                ),
+                {"cid": self.company_id, "codes": normalized_codes},
+            ).mappings().all()
+            for row in rows:
+                code = row["product_code"]
+                entry = {"id": str(row["id"])}
+                self._products_by_exact[code] = entry
+                self._products_by_normalized.setdefault(code.strip().upper(), []).append(entry)
+                product_ids.append(entry["id"])
+
+        self._stock_by_pair = {}
+        if product_ids:
+            for stock_row in (
+                self.db.query(Stock)
+                .filter(Stock.company_id == self.company_id, Stock.product_id.in_(product_ids))
+                .all()
+            ):
+                self._stock_by_pair[
+                    (str(stock_row.product_id), str(stock_row.warehouse_id))
+                ] = stock_row
+
+    @staticmethod
+    def _codes_from_records(records: list) -> tuple[set[str], set[str]]:
+        item_codes: set[str] = set()
+        location_codes: set[str] = set()
+        for raw in records:
+            if not isinstance(raw, dict):
+                continue
+            if isinstance(raw.get("item_code"), str):
+                item_codes.add(raw["item_code"])
+            if isinstance(raw.get("location_code"), str):
+                location_codes.add(raw["location_code"])
+        return item_codes, location_codes
+
+    @staticmethod
+    def _codes_from_pairs(pairs: Any) -> tuple[set[str], set[str]]:
+        item_codes: set[str] = set()
+        location_codes: set[str] = set()
+        if isinstance(pairs, dict):
+            for pair in pairs.values():
+                if not isinstance(pair, dict):
+                    continue
+                if isinstance(pair.get("item_code"), str):
+                    item_codes.add(pair["item_code"])
+                if isinstance(pair.get("location_code"), str):
+                    location_codes.add(pair["location_code"])
+        return item_codes, location_codes
+
+    def _resolve_warehouse_pair(self, location_code: str) -> tuple[Optional[dict], bool]:
+        """`(entry, ambiguous)` - `entry` is `None` on either a miss or an
+        ambiguous match; the caller tells the two apart via the second value.
+        An EXACT (trimmed, case-sensitive) match wins outright; otherwise
+        more than one case/whitespace-insensitive match is ambiguous rather
+        than guessed at (fix round 1, reviewer S3 / security N2)."""
+        exact = self._warehouses_by_exact.get(location_code)
+        if exact is not None:
+            return exact, False
+        candidates = self._warehouses_by_normalized.get(location_code.strip().upper(), [])
+        if len(candidates) == 1:
+            return candidates[0], False
+        if len(candidates) > 1:
+            return None, True
+        return None, False
+
+    def _resolve_product_pair(self, item_code: str) -> tuple[Optional[str], bool]:
+        """`(product_id, ambiguous)` - same exact-then-normalised rule as
+        `_resolve_warehouse_pair`."""
+        exact = self._products_by_exact.get(item_code)
+        if exact is not None:
+            return exact["id"], False
+        candidates = self._products_by_normalized.get(item_code.strip().upper(), [])
+        if len(candidates) == 1:
+            return candidates[0]["id"], False
+        if len(candidates) > 1:
+            return None, True
+        return None, False
+
+    def _revert_pending_stock_keys(self) -> None:
+        for key in self._pending_stock_keys:
+            self._stock_by_pair.pop(key, None)
+        self._pending_stock_keys = []
 
     # ------------------------------------------------------------- ingest
     def ingest(
@@ -158,26 +303,25 @@ class StockBalanceIngestService:
     ) -> IngestResult:
         """D5/D6: one savepoint per record, input order, dry run resolves and
         applies exactly like a real run and is then rolled back - the same
-        contract `MasterIngestService.ingest` documents at length.
-
-        A dry run's own rollback is scoped to a SAVEPOINT wrapping this whole
-        batch, taken via `begin_nested()` rather than a bare `self.db
-        .rollback()`: this call is one write in a session a caller may
-        already hold other not-yet-committed work on (a route sharing one
-        request-scoped session, or - the same shape this surface's own tests
-        rely on - a test fixture that seeds a row with `flush()` alone,
-        never `commit()`, then calls a dry run and expects that seed to
-        survive it). A session-level rollback would discard that too; a
-        SAVEPOINT undoes only what THIS batch did.
+        contract `MasterIngestService.ingest` documents at length, including
+        the plain session-level `self.db.rollback()` on a dry run (fix round
+        1, reviewer S1 / security N1): every ingester on this surface must
+        roll back the same way, so a caller cannot tell `stock_balances`
+        apart from any other entity by how its preview is undone.
         """
+        item_codes, location_codes = self._codes_from_records(records)
+        self._build_preload(item_codes, location_codes)
+
         result = IngestResult(dry_run=dry_run)
-        batch_savepoint = self.db.begin_nested() if dry_run else None
         try:
             for raw in records:
                 result.records.append(self._ingest_one(raw))
         finally:
-            if batch_savepoint is not None:
-                batch_savepoint.rollback()
+            if dry_run:
+                # In a finally, so an unexpected error mid-batch cannot leave
+                # a partially-applied preview sitting in the session for
+                # whatever commits next.
+                self.db.rollback()
         return result
 
     def _ingest_one(self, raw: dict) -> RecordResult:
@@ -204,13 +348,98 @@ class StockBalanceIngestService:
         # Each record commits or rolls back alone - without this a failed
         # flush poisons the session and every later record in the batch
         # fails too.
+        self._pending_stock_keys = []
         savepoint = self.db.begin_nested()
         try:
             record = self._apply(payload)
             savepoint.commit()
             return record
+        except IntegrityError as exc:
+            # Fix round 1 (reviewer S2 / security N2): the ONE conflict this
+            # write path can hit - another writer's insert for the same
+            # never-before-seen pair landed between our preload and ours.
+            savepoint.rollback()
+            self._revert_pending_stock_keys()
+            return self._handle_insert_conflict(payload, exc)
         except Exception:  # noqa: BLE001 - one record's failure, not the batch's
             savepoint.rollback()
+            self._revert_pending_stock_keys()
+            # SEC-style: never echo a non-domain exception's own message - it
+            # routinely quotes SQL, a table/column name or a raw UUID.
+            logger.warning(
+                "stock_balance_ingest.record_failed source_ref=%s", payload.source_ref,
+                exc_info=True,
+            )
+            return RecordResult(
+                source_ref=payload.source_ref,
+                outcome=IngestOutcome.FAILED,
+                errors={"_": INTERNAL_ERROR_MESSAGE},
+            )
+
+    def _handle_insert_conflict(
+        self, payload: "_StockBalanceRecord", exc: IntegrityError
+    ) -> RecordResult:
+        """The loser of a same-pair insert race re-reads, company-scoped, in
+        a FRESH savepoint. Found: the winner's row is updated instead - the
+        last value still wins, exactly as a duplicate pair within one batch
+        already does. Still not found: the pair's (product_id, warehouse_id)
+        already belongs to a DIFFERENT company (`uq_stock_product_id_
+        warehouse_id` carries no company column of its own to protect
+        against that) - a data defect, refused rather than silently adopted.
+        """
+        if not _is_stock_pair_conflict(exc):
+            logger.warning(
+                "stock_balance_ingest.record_failed source_ref=%s", payload.source_ref,
+                exc_info=True,
+            )
+            return RecordResult(
+                source_ref=payload.source_ref,
+                outcome=IngestOutcome.FAILED,
+                errors={"_": INTERNAL_ERROR_MESSAGE},
+            )
+
+        warehouse_entry, _ = self._resolve_warehouse_pair(payload.location_code)
+        product_id, _ = self._resolve_product_pair(payload.item_code)
+        # Both resolved without ambiguity above - this handler is only ever
+        # reached from the create branch of `_apply`, which only attempts an
+        # insert once both already resolved cleanly.
+        warehouse_id = warehouse_entry["id"]
+
+        retry_savepoint = self.db.begin_nested()
+        try:
+            existing = (
+                self.db.query(Stock)
+                .filter(
+                    Stock.company_id == self.company_id,
+                    Stock.product_id == product_id,
+                    Stock.warehouse_id == warehouse_id,
+                )
+                .first()
+            )
+            if existing is None:
+                retry_savepoint.commit()
+                return RecordResult(
+                    source_ref=payload.source_ref,
+                    outcome=IngestOutcome.FAILED,
+                    errors={
+                        "_": "stock row for this product and warehouse exists under another company"
+                    },
+                )
+            existing.quantity_on_hand = payload.qty
+            existing.updated_at = datetime.utcnow()
+            self.db.flush()
+            key = (product_id, warehouse_id)
+            self._stock_by_pair[key] = existing
+            self._pending_stock_keys.append(key)
+            retry_savepoint.commit()
+            return RecordResult(
+                source_ref=payload.source_ref,
+                outcome=IngestOutcome.UPDATED,
+                entity_id=str(existing.id),
+                diff=None,
+            )
+        except Exception:  # noqa: BLE001 - one record's failure, not the batch's
+            retry_savepoint.rollback()
             logger.warning(
                 "stock_balance_ingest.record_failed source_ref=%s", payload.source_ref,
                 exc_info=True,
@@ -223,9 +452,19 @@ class StockBalanceIngestService:
 
     def _apply(self, payload: _StockBalanceRecord) -> RecordResult:
         # D4 step 2: location, before item - an unresolved/inactive warehouse
-        # never even looks at the item code.
-        warehouse = _resolve_warehouse(self.db, self.company_id, payload.location_code)
-        if warehouse is None:
+        # never even looks at the item code. Ambiguous (fix round 1) is
+        # checked ahead of both: a code that cannot be told apart is neither
+        # confidently unresolved nor confidently found.
+        warehouse_entry, warehouse_ambiguous = self._resolve_warehouse_pair(
+            payload.location_code
+        )
+        if warehouse_ambiguous:
+            return RecordResult(
+                source_ref=payload.source_ref,
+                outcome=IngestOutcome.FAILED,
+                errors={"location_code": f"ambiguous: {payload.location_code}"},
+            )
+        if warehouse_entry is None:
             # D6: an `updated` verdict always carries SOME diff shape on a
             # dry run - `{}` here, the same "nothing changed" answer an
             # unchanged upsert gives, since nothing was written either way.
@@ -236,8 +475,7 @@ class StockBalanceIngestService:
                 diff={},
                 warnings=[WARN_WAREHOUSE_UNRESOLVED],
             )
-        warehouse_id, warehouse_active = str(warehouse[0]), bool(warehouse[1])
-        if not warehouse_active:
+        if not warehouse_entry["is_active"]:
             return RecordResult(
                 source_ref=payload.source_ref,
                 outcome=IngestOutcome.UPDATED,
@@ -245,9 +483,16 @@ class StockBalanceIngestService:
                 diff={},
                 warnings=[WARN_WAREHOUSE_INACTIVE],
             )
+        warehouse_id = warehouse_entry["id"]
 
         # D4 step 3: item code, company-scoped, trimmed + case-insensitive.
-        product_id = _resolve_product(self.db, self.company_id, payload.item_code)
+        product_id, product_ambiguous = self._resolve_product_pair(payload.item_code)
+        if product_ambiguous:
+            return RecordResult(
+                source_ref=payload.source_ref,
+                outcome=IngestOutcome.FAILED,
+                errors={"item_code": f"ambiguous: {payload.item_code}"},
+            )
         if product_id is None:
             return RecordResult(
                 source_ref=payload.source_ref,
@@ -257,7 +502,8 @@ class StockBalanceIngestService:
 
         # D4 step 4: upsert. `quantity_on_hand` ONLY, never reserved/damaged/
         # reorder_point/zone_id.
-        existing = _find_stock_row(self.db, self.company_id, product_id, warehouse_id)
+        key = (product_id, warehouse_id)
+        existing = self._stock_by_pair.get(key)
         if existing is None:
             row = Stock(
                 product_id=product_id,
@@ -267,7 +513,12 @@ class StockBalanceIngestService:
                 updated_at=datetime.utcnow(),
             )
             self.db.add(row)
+            # May raise IntegrityError on `uq_stock_product_id_warehouse_id`
+            # (fix round 1, reviewer S2) - handled by the caller
+            # (`_ingest_one`/`_handle_insert_conflict`), never here.
             self.db.flush()
+            self._stock_by_pair[key] = row
+            self._pending_stock_keys.append(key)
             return RecordResult(
                 source_ref=payload.source_ref,
                 outcome=IngestOutcome.CREATED,
@@ -276,11 +527,17 @@ class StockBalanceIngestService:
             )
 
         current_qty = existing.quantity_on_hand
-        diff: Optional[dict[str, dict[str, Any]]] = (
-            {} if current_qty == payload.qty else {
-                "qty": {"current": current_qty, "incoming": payload.qty}
-            }
-        )
+        if current_qty == payload.qty:
+            # Fix round 1 (reviewer N3): nothing to write - skip the flush
+            # and `updated_at` stamp entirely rather than writing the same
+            # value back, so an unchanged re-push never bumps a row's own
+            # last-modified marker.
+            return RecordResult(
+                source_ref=payload.source_ref,
+                outcome=IngestOutcome.UPDATED,
+                entity_id=str(existing.id),
+                diff={},
+            )
         existing.quantity_on_hand = payload.qty
         existing.updated_at = datetime.utcnow()
         self.db.flush()
@@ -288,7 +545,7 @@ class StockBalanceIngestService:
             source_ref=payload.source_ref,
             outcome=IngestOutcome.UPDATED,
             entity_id=str(existing.id),
-            diff=diff,
+            diff={"qty": {"current": current_qty, "incoming": payload.qty}},
         )
 
     # ------------------------------------------------------------ deletions
@@ -299,18 +556,21 @@ class StockBalanceIngestService:
         every other deletion entity there is no reference to resolve through;
         the pair IS the identity, exactly as on the ingest side.
 
-        Same SAVEPOINT-scoped dry-run rollback as `ingest()` - see that
-        docstring for why a bare `self.db.rollback()` is not used here.
+        Same session-level dry-run rollback as `ingest()` (fix round 1).
         """
+        item_codes, location_codes = self._codes_from_pairs(pairs)
+        self._build_preload(item_codes, location_codes)
+
         result = DeletionResult(dry_run=dry_run)
-        batch_savepoint = self.db.begin_nested() if dry_run else None
         try:
             for ref in source_refs:
                 key = ref if isinstance(ref, str) else str(ref)
-                result.records.append(self._delete_one(key, pairs.get(key) if isinstance(pairs, dict) else None))
+                result.records.append(
+                    self._delete_one(key, pairs.get(key) if isinstance(pairs, dict) else None)
+                )
         finally:
-            if batch_savepoint is not None:
-                batch_savepoint.rollback()
+            if dry_run:
+                self.db.rollback()
         return result
 
     def _delete_one(self, ref: str, pair: Any) -> DeletionRecordResult:
@@ -331,12 +591,18 @@ class StockBalanceIngestService:
 
         savepoint = self.db.begin_nested()
         try:
-            warehouse = _resolve_warehouse(self.db, self.company_id, location_code)
-            if warehouse is None:
+            warehouse_entry, warehouse_ambiguous = self._resolve_warehouse_pair(location_code)
+            if warehouse_ambiguous:
+                savepoint.commit()
+                return DeletionRecordResult(
+                    source_ref=ref,
+                    outcome=DeletionOutcome.FAILED,
+                    errors={"location_code": f"ambiguous: {location_code}"},
+                )
+            if warehouse_entry is None:
                 savepoint.commit()
                 return DeletionRecordResult(source_ref=ref, outcome=DeletionOutcome.NOT_FOUND)
-            warehouse_id, warehouse_active = str(warehouse[0]), bool(warehouse[1])
-            if not warehouse_active:
+            if not warehouse_entry["is_active"]:
                 savepoint.commit()
                 return DeletionRecordResult(
                     source_ref=ref,
@@ -344,12 +610,19 @@ class StockBalanceIngestService:
                     warnings=[WARN_WAREHOUSE_INACTIVE],
                 )
 
-            product_id = _resolve_product(self.db, self.company_id, item_code)
+            product_id, product_ambiguous = self._resolve_product_pair(item_code)
+            if product_ambiguous:
+                savepoint.commit()
+                return DeletionRecordResult(
+                    source_ref=ref,
+                    outcome=DeletionOutcome.FAILED,
+                    errors={"item_code": f"ambiguous: {item_code}"},
+                )
             if product_id is None:
                 savepoint.commit()
                 return DeletionRecordResult(source_ref=ref, outcome=DeletionOutcome.NOT_FOUND)
 
-            existing = _find_stock_row(self.db, self.company_id, product_id, warehouse_id)
+            existing = self._stock_by_pair.get((product_id, warehouse_entry["id"]))
             if existing is None:
                 savepoint.commit()
                 return DeletionRecordResult(source_ref=ref, outcome=DeletionOutcome.NOT_FOUND)
@@ -375,7 +648,12 @@ class StockBalanceIngestService:
         """D8. `{records: [{source_ref, qty}], not_found: [...]}` for a batch
         of pairs - optional on the contract, implemented because the entity
         set on this surface drives the route regardless of whether any
-        caller uses it yet."""
+        caller uses it yet. An ambiguous pair (fix round 1, reviewer S3)
+        reads as `not_found` here - a read-back has no `errors` channel to
+        refuse through the way ingest/delete do."""
+        item_codes, location_codes = self._codes_from_pairs(pairs)
+        self._build_preload(item_codes, location_codes)
+
         records: list[dict[str, Any]] = []
         not_found: list[str] = []
         for ref in source_refs:
@@ -386,13 +664,13 @@ class StockBalanceIngestService:
                 item_code = pair.get("item_code")
                 location_code = pair.get("location_code")
                 if isinstance(item_code, str) and isinstance(location_code, str):
-                    warehouse = _resolve_warehouse(self.db, self.company_id, location_code)
-                    if warehouse is not None:
-                        product_id = _resolve_product(self.db, self.company_id, item_code)
-                        if product_id is not None:
-                            row = _find_stock_row(
-                                self.db, self.company_id, product_id, str(warehouse[0])
-                            )
+                    warehouse_entry, warehouse_ambiguous = self._resolve_warehouse_pair(
+                        location_code
+                    )
+                    if warehouse_entry is not None and not warehouse_ambiguous:
+                        product_id, product_ambiguous = self._resolve_product_pair(item_code)
+                        if product_id is not None and not product_ambiguous:
+                            row = self._stock_by_pair.get((product_id, warehouse_entry["id"]))
             if row is None:
                 not_found.append(key)
             else:

@@ -33,6 +33,7 @@ import importlib.util
 import json
 import os
 import uuid
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -173,7 +174,12 @@ class _Env:
             **kw,
         )
         self.db.add(row)
-        self.db.flush()
+        # Fix round 1 (reviewer S1 / security N1): a real `commit()`, not a
+        # bare `flush()` - the service's dry-run rollback is a plain
+        # session-level `self.db.rollback()` again (the uniform pattern
+        # every other ingest entity already uses), which discards anything
+        # this session holds uncommitted, seed data included.
+        self.db.commit()
         return row
 
     # --------------------------------------------------------------- calls
@@ -1140,9 +1146,11 @@ class TestMigrationGrantAC18:
         for slug in self._TARGET_SLUGS:
             assert self._grant_count(bind, role_id, slug) == 1, slug
 
-    def test_revert_removes_exactly_these_three_grants(self, bind):
-        """D9: unlike `511_brands_esb_grant.py`'s no-op downgrade, this
-        migration's `revert()` actually removes the three grants it made."""
+    def test_downgrade_is_a_no_op(self, bind):
+        """Fix round 1 (both reviews): same no-op shape as
+        `511_brands_esb_grant.py` - the ESB role's grants were seeded once as
+        a copy of Admin's own, so these three likely pre-date this migration
+        and a downgrade must not take away access the ESB already had."""
         role_id = self._esb_role(bind)
         mig = self._load_migration()
 
@@ -1150,7 +1158,10 @@ class TestMigrationGrantAC18:
         mig.revert(bind)
 
         for slug in self._TARGET_SLUGS:
-            assert self._grant_count(bind, role_id, slug) == 0, slug
+            assert self._grant_count(bind, role_id, slug) == 1, (
+                f"{slug} must survive the downgrade (fix round 1: the grant may "
+                "pre-date this migration)"
+            )
 
     def test_apply_on_a_database_without_the_esb_role_does_not_error(self, bind):
         assert not self._role_slug_taken(bind), (
@@ -1189,6 +1200,328 @@ class TestReadBackAC19:
         assert body["not_found"] == [missing_ref], body
         got = {r["source_ref"]: r["qty"] for r in body["records"]}
         assert got == {ref: 33}, body
+
+
+# ============================================================== Fix round 1
+# Reviewer + security fix round 1 (2026-09-26): insert race (S2/N2),
+# ambiguous code resolution (S3/N2), unchanged-value skip (N3), qty upper
+# bound (security S1), and a real-mount double-gate probe (security S2).
+class TestInsertRaceFixRound1:
+    def test_insert_race_loser_updates_and_last_value_wins(self, env, monkeypatch):
+        """A same-pair insert race: another writer's row for this EXACT
+        (product, warehouse) pair lands after our own preload found nothing,
+        but before our own INSERT - simulated by inserting it, via the same
+        session, from inside `_build_preload` (called once, before the
+        per-record loop even starts, so the injected row predates the
+        record's own savepoint and survives that savepoint's rollback when
+        our own insert hits the real unique constraint)."""
+        from app.services import stock_balance_ingest_service as svc_module
+
+        original_build_preload = svc_module.StockBalanceIngestService._build_preload
+        injected = {"done": False}
+
+        def _build_preload_then_race(self, item_codes, location_codes):
+            original_build_preload(self, item_codes, location_codes)
+            if not injected["done"]:
+                injected["done"] = True
+                env.db.execute(
+                    text(
+                        "INSERT INTO stock (id, product_id, warehouse_id, company_id, "
+                        "quantity_on_hand, synced_to_excel) "
+                        "VALUES (gen_random_uuid(), :p, :w, :c, :q, false)"
+                    ),
+                    {
+                        "p": str(env.product.id),
+                        "w": str(env.wh_active.id),
+                        "c": env.company_a,
+                        "q": 5,
+                    },
+                )
+
+        monkeypatch.setattr(
+            svc_module.StockBalanceIngestService, "_build_preload", _build_preload_then_race
+        )
+
+        record = _sb_record(
+            item_code=env.product.product_code,
+            location_code=env.wh_active.warehouse_code,
+            qty=50,
+        )
+        res = env.post(INGEST_SB, [record])
+        assert res.status_code == 200, res.text
+        entry = res.json()["records"][0]
+        assert entry["outcome"] == "updated", entry
+        row = env.stock_row(env.product.id, env.wh_active.id)
+        assert row is not None
+        assert row["quantity_on_hand"] == 50, "last value wins, same as a same-batch duplicate"
+
+    def test_insert_race_still_not_found_after_retry_is_failed(self, env):
+        """A "legacy data defect": a stock row already exists for this EXACT
+        (product_id, warehouse_id) pair, but stamped to a DIFFERENT company -
+        `uq_stock_product_id_warehouse_id` carries no company column of its
+        own to prevent that. Our own company-scoped preload correctly does
+        not see it (so the create branch is attempted), and the real unique
+        constraint still refuses the insert; the retry's own company-scoped
+        re-read still finds nothing, so the record is refused rather than
+        silently adopted."""
+        env.db.execute(
+            text(
+                "INSERT INTO stock (id, product_id, warehouse_id, company_id, quantity_on_hand, "
+                "synced_to_excel) VALUES (gen_random_uuid(), :p, :w, :c, :q, false)"
+            ),
+            {
+                "p": str(env.product.id),
+                "w": str(env.wh_active.id),
+                "c": env.company_b,
+                "q": 5,
+            },
+        )
+        env.db.commit()
+
+        record = _sb_record(
+            item_code=env.product.product_code,
+            location_code=env.wh_active.warehouse_code,
+            qty=50,
+        )
+        res = env.post(INGEST_SB, [record])
+        assert res.status_code == 200, res.text
+        entry = res.json()["records"][0]
+        assert entry["outcome"] == "failed", entry
+        assert "exists under another company" in entry.get("errors", {}).get("_", ""), entry
+
+
+class TestAmbiguousCodesFixRound1:
+    """`warehouse_code`/`product_code` are unique per company only as the raw
+    stored string - two rows spelled differently but case/whitespace-
+    identical after normalising CAN coexist. Seeds exactly that pair for
+    each (an exact-case code and a lower-cased, trailing-spaced twin,
+    matching the plan's own `"MBS"`/`"mbs "` example) and sends a THIRD
+    spelling that matches neither exactly."""
+
+    def test_ambiguous_item_code_on_ingest_is_failed(self, env):
+        base = f"AMBI{uuid.uuid4().hex[:8]}"
+        env._product(base, company_id=env.company_a)
+        env._product(f"{base.lower()} ", company_id=env.company_a)
+
+        record = _sb_record(
+            item_code=base.lower(), location_code=env.wh_active.warehouse_code, qty=5
+        )
+        res = env.post(INGEST_SB, [record])
+        assert res.status_code == 200, res.text
+        entry = res.json()["records"][0]
+        assert entry["outcome"] == "failed", entry
+        assert entry.get("errors", {}).get("item_code", "").startswith("ambiguous:"), entry
+
+    def test_ambiguous_location_code_on_ingest_is_failed(self, env):
+        base = f"AMBW{uuid.uuid4().hex[:8]}"
+        env.db.add(
+            Warehouse(
+                warehouse_code=base, warehouse_name=f"{MARKER} a", is_active=True,
+                company_id=env.company_a,
+            )
+        )
+        env.db.add(
+            Warehouse(
+                warehouse_code=f"{base.lower()} ", warehouse_name=f"{MARKER} b", is_active=True,
+                company_id=env.company_a,
+            )
+        )
+        env.db.commit()
+
+        record = _sb_record(
+            item_code=env.product.product_code, location_code=base.lower(), qty=5
+        )
+        res = env.post(INGEST_SB, [record])
+        assert res.status_code == 200, res.text
+        entry = res.json()["records"][0]
+        assert entry["outcome"] == "failed", entry
+        assert entry.get("errors", {}).get("location_code", "").startswith("ambiguous:"), entry
+
+    def test_exact_code_wins_over_ambiguous_decoys(self, env):
+        base = f"AMBE{uuid.uuid4().hex[:8]}"
+        env._product(base, company_id=env.company_a)
+        env._product(f"{base.lower()} ", company_id=env.company_a)
+
+        record = _sb_record(
+            item_code=base, location_code=env.wh_active.warehouse_code, qty=5
+        )
+        res = env.post(INGEST_SB, [record])
+        assert res.status_code == 200, res.text
+        entry = res.json()["records"][0]
+        assert entry["outcome"] == "created", entry
+
+    def test_ambiguous_pair_on_deletion_is_failed(self, env):
+        base = f"AMBD{uuid.uuid4().hex[:8]}"
+        env._product(base, company_id=env.company_a)
+        env._product(f"{base.lower()} ", company_id=env.company_a)
+        ref = _ref("AMBDEL")
+        pairs = {ref: {"item_code": base.lower(), "location_code": env.wh_active.warehouse_code}}
+
+        res = env.delete([ref], pairs)
+        assert res.status_code == 200, res.text
+        entry = res.json()["records"][0]
+        assert entry["outcome"] == "failed", entry
+        assert entry.get("errors", {}).get("item_code", "").startswith("ambiguous:"), entry
+
+    def test_ambiguous_pair_on_read_back_is_not_found(self, env):
+        base = f"AMBR{uuid.uuid4().hex[:8]}"
+        env._product(base, company_id=env.company_a)
+        env._product(f"{base.lower()} ", company_id=env.company_a)
+        ref = _ref("AMBREAD")
+        pairs = {ref: {"item_code": base.lower(), "location_code": env.wh_active.warehouse_code}}
+
+        res = env.read([ref], pairs)
+        assert res.status_code == 200, res.text
+        assert res.json()["not_found"] == [ref], res.json()
+
+
+class TestUnchangedValueSkipsWriteFixRound1:
+    def test_unchanged_qty_skips_the_flush_updated_at_is_untouched(self, env):
+        existing = env.make_stock(
+            product_id=env.product.id, warehouse_id=env.wh_active.id, quantity_on_hand=10,
+        )
+        fixed_ts = datetime(2020, 1, 1, 0, 0, 0)
+        env.db.execute(
+            text("UPDATE stock SET updated_at = :ts WHERE id = :id"),
+            {"ts": fixed_ts, "id": str(existing.id)},
+        )
+        env.db.commit()
+
+        record = _sb_record(
+            item_code=env.product.product_code, location_code=env.wh_active.warehouse_code, qty=10
+        )
+        res = env.post(INGEST_SB, [record])
+        assert res.status_code == 200, res.text
+        entry = res.json()["records"][0]
+        assert entry["outcome"] == "updated", entry
+        row = env.stock_by_id(existing.id)
+        assert row["quantity_on_hand"] == 10
+        assert row["updated_at"] == fixed_ts, "no write at all, so updated_at must be untouched"
+
+
+class TestQtyUpperBoundFixRound1:
+    def test_qty_above_postgres_int4_max_is_failed(self, env):
+        record = _sb_record(
+            item_code=env.product.product_code,
+            location_code=env.wh_active.warehouse_code,
+            qty=2**31,
+        )
+        res = env.post(INGEST_SB, [record])
+        assert res.status_code == 200, res.text
+        entry = res.json()["records"][0]
+        assert entry["outcome"] == "failed", entry
+        assert "qty" in entry.get("errors", {}), entry
+
+
+class TestRealMountDoubleGateFixRound1:
+    """Security S2: the SAME two-guard wiring `TestPermissionGuardAC18`
+    proves against a throwaway stub app, now proved against the REAL mounted
+    app with REAL issued integration keys and no `get_external_api_user`
+    override - a stub app cannot catch a mounting mistake in
+    `app/api/v1/external/__init__.py` itself, only a real router chain can.
+    """
+
+    @pytest.fixture()
+    def gate_env(self):
+        from app.dependencies import get_db
+        from app.models.base import set_company_scope
+        from app.models.integration import Integration
+        from app.models.user import User, UserPermission, UserRole, UserRoleAssignment, UserRolePermission
+        from app.services.company_scope_resolver import apply_company_scope
+        from app.services.integration_key_service import IntegrationKeyService
+
+        with blank_session() as db:
+            set_company_scope(db, None)
+            perms = {}
+            for slug in ("inventory.stock.view", "inventory.stock.edit", "inventory.stock.delete"):
+                perm = UserPermission(slug=slug, name=slug)
+                db.add(perm)
+                db.flush()
+                perms[slug] = perm
+
+            keys = {}
+            for label, held in (
+                ("edit", ["inventory.stock.edit"]),
+                ("view", ["inventory.stock.view"]),
+                ("delete", ["inventory.stock.delete"]),
+                ("editdel", ["inventory.stock.edit", "inventory.stock.delete"]),
+            ):
+                user = User(
+                    email=f"{MARKER.lower()}-realgate-{label}-{uuid.uuid4().hex[:6]}@integrations.local",
+                    name=f"{MARKER} realgate {label}",
+                    status="ACTIVE",
+                    is_integration=True,
+                )
+                db.add(user)
+                db.flush()
+                role = UserRole(slug=f"{MARKER.lower()}_realgate_{label}_{uuid.uuid4().hex[:6]}", name=label)
+                db.add(role)
+                db.flush()
+                db.add(UserRoleAssignment(user_id=user.id, role_id=role.id))
+                for slug in held:
+                    db.add(UserRolePermission(role_id=role.id, permission_id=perms[slug].id))
+                db.flush()
+                integration = Integration(
+                    name=f"{MARKER}-realgate-{label}-{uuid.uuid4().hex[:6]}",
+                    type="autocount_esb",
+                    act_as_user_id=user.id,
+                    is_active=True,
+                )
+                db.add(integration)
+                db.flush()
+                keys[label] = IntegrationKeyService(db).issue_key(integration)
+
+            db.commit()
+            company_code = db.execute(
+                text("SELECT code FROM companies WHERE id = :id"), {"id": DEFAULT_COMPANY_ID}
+            ).scalar()
+
+            def _override_get_db():
+                yield db
+
+            def _override_scope():
+                set_company_scope(db, None)
+                return None
+
+            app.dependency_overrides[get_db] = _override_get_db
+            app.dependency_overrides[apply_company_scope] = _override_scope
+            # Deliberately NO override of `get_external_api_user` (security
+            # S2): the real dependency resolves the real issued key through
+            # `integration_api_keys`, exactly as a live ESB call would.
+            try:
+                with TestClient(app) as client:
+                    yield {"client": client, "keys": keys, "company_code": company_code}
+            finally:
+                app.dependency_overrides.clear()
+
+    @staticmethod
+    def _call(client, url, company_code, keys, label):
+        body = {"companyCode": company_code, "source_refs": [], "pairs": {}}
+        return client.post(url, json=body, headers={"X-API-Key": keys[label]})
+
+    def test_delete_only_key_is_403_on_deletions(self, gate_env):
+        res = self._call(
+            gate_env["client"], DELETE_SB, gate_env["company_code"], gate_env["keys"], "delete"
+        )
+        assert res.status_code == 403, res.text
+
+    def test_edit_only_key_is_403_on_deletions(self, gate_env):
+        res = self._call(
+            gate_env["client"], DELETE_SB, gate_env["company_code"], gate_env["keys"], "edit"
+        )
+        assert res.status_code == 403, res.text
+
+    def test_edit_only_key_is_403_on_read(self, gate_env):
+        res = self._call(
+            gate_env["client"], READ_SB, gate_env["company_code"], gate_env["keys"], "edit"
+        )
+        assert res.status_code == 403, res.text
+
+    def test_edit_and_delete_key_is_200_on_deletions(self, gate_env):
+        res = self._call(
+            gate_env["client"], DELETE_SB, gate_env["company_code"], gate_env["keys"], "editdel"
+        )
+        assert res.status_code == 200, res.text
 
 
 # =================================================================== AC-SB-20
