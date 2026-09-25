@@ -8,6 +8,7 @@ import { Dialog as DialogPrimitive } from 'radix-ui';
 import { AnimatePresence, motion } from 'motion/react';
 import { OVERLAY_CLASS, OVERLAY_CLASS_STATIC } from '@/components/ui/primitive-classes';
 import {
+  NOOP_ON_UPDATE,
   REDUCED_MOTION_TRANSITION,
   surfaceExitTransition,
   surfaceTransition,
@@ -280,6 +281,7 @@ function DialogContent({
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0, transition: overlayTransition }}
                 transition={overlayTransition}
+                onUpdate={NOOP_ON_UPDATE}
               />
             </DialogPrimitive.Overlay>
           )}
@@ -301,6 +303,7 @@ function DialogContent({
               animate={variants.animate}
               exit={{ ...variants.exit, transition: exitTransition }}
               transition={transition}
+              onUpdate={NOOP_ON_UPDATE}
             >
               {needsFallbackTitle ? (
                 <DialogPrimitive.Title className="sr-only">Dialog</DialogPrimitive.Title>
