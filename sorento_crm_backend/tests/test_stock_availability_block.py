@@ -520,6 +520,64 @@ def test_packing_list_absent_on_every_branch_other_than_incoming(db):
     assert entry["packing_list"] is None
 
 
+def test_eta_offset_adds_y_days_across_a_month_end(db):
+    """Blocking 3, review round 1 (R5 truth table row 5): the `+ Y` offset on `eta` is
+    only exercised at Y = 0 anywhere in this file before this test - a kill test that
+    replaced `timedelta(days=y)` with `timedelta(days=0)` at
+    `inventory_service.py:1666` left every block test green. `estimated_arrival_date`
+    2026-10-28 + Y = 5 crosses into November, so a date-only slip (no month/year carry)
+    would still read October and go undetected without a month-end case."""
+    brw = _wh(db, "ZZTBRW")
+    p = product(db, company_id=DEFAULT_COMPANY_ID)
+    category = _category_of(db, p)
+    category.chatbot_max_qty = 200
+    category.chatbot_eta_offset_days = 5
+    stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=brw.id, on_hand=0)
+    att = _attachment(db)
+    shipment = _incoming_shipment(db, eta=date(2026, 10, 28), attachment_id=att.id)
+    _incoming_line(db, shipment_id=shipment.id, product_id=p.id)
+    contact = _contact(db)
+    _policy_row(db, mode="availability", warehouse_ids=[brw.id], contact=contact)
+    db.flush()
+
+    result = StockService(db).list_stock(
+        product_ids=[p.id], contact_id=contact.id, requested_quantities={p.id: 150}
+    )
+
+    entry = _entry(result, p.id)
+    assert entry["branch"] == "incoming"
+    assert entry["eta"] == "02/11/2026"
+
+
+def test_product_eta_offset_overrides_category_offset_through_the_block(db):
+    """Blocking 3, review round 1: R2's product-overrides-category rule for Y is only
+    proven by S1's pure `stock_ask_limits.effective()` test - never through the full
+    availability block, where `inventory_service.py` resolves `x, y = effective_limits(
+    product, category)` itself. The category sets Y = 20 (would read 01/11/2026 off a
+    2026-10-12 shipment); the product overrides it to Y = 0 (told date stays 12/10/2026)."""
+    brw = _wh(db, "ZZTBRW")
+    p = product(db, company_id=DEFAULT_COMPANY_ID)
+    category = _category_of(db, p)
+    category.chatbot_max_qty = 200
+    category.chatbot_eta_offset_days = 20
+    p.chatbot_eta_offset_days = 0
+    stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=brw.id, on_hand=0)
+    att = _attachment(db)
+    shipment = _incoming_shipment(db, eta=date(2026, 10, 12), attachment_id=att.id)
+    _incoming_line(db, shipment_id=shipment.id, product_id=p.id)
+    contact = _contact(db)
+    _policy_row(db, mode="availability", warehouse_ids=[brw.id], contact=contact)
+    db.flush()
+
+    result = StockService(db).list_stock(
+        product_ids=[p.id], contact_id=contact.id, requested_quantities={p.id: 150}
+    )
+
+    entry = _entry(result, p.id)
+    assert entry["branch"] == "incoming"
+    assert entry["eta"] == "12/10/2026"
+
+
 # =================================================================================== AC-SA316
 
 
