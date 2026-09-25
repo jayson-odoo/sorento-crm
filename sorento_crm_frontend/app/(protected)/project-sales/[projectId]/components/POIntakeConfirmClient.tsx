@@ -269,6 +269,7 @@ export function POIntakeConfirmClient({
                 // The version id, so a re-signed URL for the same scan is not treated as
                 // a different document and the reader keeps their place.
                 documentKey={version.id}
+                attachmentId={version.attachment_id}
                 pageCount={version.page_count}
                 page={page}
                 onPageChange={setPage}

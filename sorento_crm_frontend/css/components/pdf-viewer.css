@@ -1,0 +1,72 @@
+/*
+ * pdf.js text layer for `components/common/PdfViewer`: transparent glyph spans laid over the
+ * page canvas so text can be selected and copied. The subset of pdf.js's own
+ * `web/pdf_viewer.css` the text layer needs (the rest styles pdf.js's viewer, which we do not
+ * use). Positions and font sizes come from pdf.js as inline custom properties; the page
+ * element sets `--total-scale-factor`.
+ */
+[data-slot='pdf-viewer'] .textLayer {
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+  opacity: 1;
+  line-height: 1;
+  text-align: initial;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  caret-color: CanvasText;
+  z-index: 0;
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+}
+
+[data-slot='pdf-viewer'] .textLayer :is(span, br) {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+}
+
+[data-slot='pdf-viewer'] .textLayer > :not(.markedContent),
+[data-slot='pdf-viewer'] .textLayer .markedContent span:not(.markedContent) {
+  z-index: 1;
+  --font-height: 0;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  --scale-x: 1;
+  --rotate: 0deg;
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+
+[data-slot='pdf-viewer'] .textLayer .markedContent {
+  display: contents;
+}
+
+[data-slot='pdf-viewer'] .textLayer span[role='img'] {
+  user-select: none;
+  cursor: default;
+}
+
+[data-slot='pdf-viewer'] .textLayer ::selection {
+  background: color-mix(in oklab, var(--primary) 30%, transparent);
+}
+
+[data-slot='pdf-viewer'] .textLayer br::selection {
+  background: transparent;
+}
+
+/* pdf.js appends this after the spans so a drag-select past the last glyph does not jump. */
+[data-slot='pdf-viewer'] .textLayer .endOfContent {
+  display: block;
+  position: absolute;
+  inset: 100% 0 0;
+  z-index: 0;
+  cursor: default;
+  user-select: none;
+}
+
+[data-slot='pdf-viewer'] .textLayer.selecting .endOfContent {
+  top: 0;
+}

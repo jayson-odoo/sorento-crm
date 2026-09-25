@@ -1163,6 +1163,53 @@ def test_the_version_reports_how_much_of_the_document_was_read(seeded):
     assert body["failed_pages"] == [2]
 
 
+def test_the_version_names_its_scan_so_the_viewer_can_read_the_bytes(seeded, monkeypatch):
+    """The in-app PDF viewer draws the scan from its bytes, and the signed URL is
+    cross-origin with no CORS headers, so a script cannot read it. The version carries
+    the attachment id, which the authenticated same-origin download route takes."""
+    from app.models.resources import Attachment
+    from app.schemas.project_po_intake import POVersionDetailResponse
+    from app.services import storage_router
+
+    monkeypatch.setattr(
+        storage_router, "resolve_signed_url", lambda path, provider=None: f"{path}?sig=1"
+    )
+    db, project, owner = seeded
+    service = ProjectPOExtractionService(db)
+    version = _version(db, _po(db, project, owner, "PO-SCAN-ID"))
+    attachment = Attachment(
+        id=str(uuid.uuid4()),
+        original_filename=f"{MARKER}.pdf",
+        stored_filename=f"{MARKER}.pdf",
+        file_path=f"https://cdn.example.test/po/{MARKER}.pdf",
+        mime_type="application/pdf",
+        storage_provider="s3",
+        company_id=version.company_id,
+        is_deleted=False,
+    )
+    db.add(attachment)
+    db.flush()
+    version.attachment_id = attachment.id
+    db.flush()
+
+    body = service.serialize_version(version)
+
+    assert body["attachment_id"] == str(attachment.id)
+    assert body["document_url"] == f"https://cdn.example.test/po/{MARKER}.pdf?sig=1"
+    assert POVersionDetailResponse.model_validate(body).attachment_id == str(attachment.id)
+
+
+def test_a_version_with_no_scan_has_no_attachment_id(seeded):
+    db, project, owner = seeded
+    service = ProjectPOExtractionService(db)
+    version = _version(db, _po(db, project, owner, "PO-NO-SCAN"))
+
+    body = service.serialize_version(version)
+
+    assert body["attachment_id"] is None
+    assert body["document_url"] is None
+
+
 def test_run_extraction_commits_progress_once_per_page(seeded, monkeypatch):
     """B3 (19 Aug follow-up): a long read must not look frozen. ``run_extraction``
     wires ``on_page`` into ``extract_document`` so ``extracted_json`` (and so

@@ -108,6 +108,8 @@ export interface POVersion {
   page_count: number | null;
   /** Presigned document URL for the side-by-side viewer. */
   document_url: string | null;
+  /** Additive: the scan's attachment, so the viewer can read its bytes same-origin. */
+  attachment_id?: string | null;
   header: POVersionHeader;
   totals: POVersionTotals;
   lines: POVersionLine[];

@@ -10,7 +10,12 @@ import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { fakePdfJs } from '@/test-utils/fakePdfJs';
 import type { POVersion, POVersionLine } from '../../_shared/types/poIntake.types';
+
+vi.mock('@/components/common/pdf-viewer/pdfjs', async () =>
+  (await import('@/test-utils/fakePdfJs')).fakePdfJsModule,
+);
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
@@ -155,6 +160,8 @@ function renderConfirm() {
 }
 
 beforeEach(() => {
+  fakePdfJs.reset();
+  fakePdfJs.setNumPages(10);
   vi.clearAllMocks();
   getProject.mockResolvedValue({
     id: 'p1',
@@ -301,7 +308,9 @@ describe('POIntakeConfirmClient', () => {
       screen.getByText('Document notes', { selector: '[data-slot="card-title"]' }),
     ).toBeInTheDocument();
     expect(screen.getByText('No document-level notes')).toBeInTheDocument();
-    expect(screen.getByTitle('Purchase order page 1')).toBeInTheDocument();
+    expect(
+      await screen.findByRole('group', { name: 'Purchase order page 1' }),
+    ).toBeInTheDocument();
   });
 
   it('moves the scan to the page a note was written on', async () => {
@@ -310,11 +319,11 @@ describe('POIntakeConfirmClient', () => {
     renderConfirm();
 
     // The viewer is on page 1 until a note asks for its own page.
-    expect(await screen.findByTitle('Purchase order page 1')).toBeInTheDocument();
+    await screen.findByRole('group', { name: 'Purchase order page 4' });
+    expect(screen.getByText('Page 1 of 10')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Page 4' }));
 
-    expect(screen.getByTitle('Purchase order page 4')).toBeInTheDocument();
     expect(screen.getByText('Page 4 of 10')).toBeInTheDocument();
   });
 

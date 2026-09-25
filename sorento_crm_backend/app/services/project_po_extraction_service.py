@@ -193,6 +193,10 @@ class ProjectPOExtractionService(
             "pages_extracted": pages_extracted,
             "failed_pages": failed_pages,
             "document_url": document_url,
+            # The in-app PDF viewer reads the bytes through the authenticated
+            # `/attachments/{id}/download` route: the signed URL is cross-origin and the
+            # bucket sends no CORS headers, so a script cannot read it.
+            "attachment_id": str(attachment.id) if attachment is not None else None,
             "source_filename": version.source_filename,
             "header": {
                 "po_number": header.get("po_number") or po.po_number or None,

@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/carousel';
 import { Button } from '@/components/ui/button';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { PdfViewer } from '@/components/common/PdfViewer';
 import { apiFetch } from '@/lib/api';
 import { splitHighlightSegments } from '@/lib/textHighlight';
 import { toast } from '@/lib/toast';
@@ -137,10 +138,10 @@ async function openItem(item: AttachmentPreviewItem, fetchBytes: FetchBytes, tar
 
 /**
  * One previewable file. `url` is the stable, cacheable CDN URL (for
- * <img>/<video>/<iframe> - no CORS/fetch needed, browser + CDN cache it).
- * `downloadUrl` is the same-origin backend `/download` route, used both for the
- * Download button and for reading Excel bytes (R2 public URLs don't send CORS
- * headers, so xlsx must be fetched same-origin).
+ * <img>/<video> - no CORS/fetch needed, browser + CDN cache it).
+ * `downloadUrl` is the same-origin backend `/download` route, used for the
+ * Download button and for reading Excel and PDF bytes (R2 public URLs don't send
+ * CORS headers, so those must be fetched same-origin).
  */
 export interface AttachmentPreviewItem {
   id: string;
@@ -350,7 +351,16 @@ export default function AttachmentPreviewModal({
 
         <Carousel
           setApi={setApi}
-          opts={{ startIndex, loop: false, watchDrag: items.length > 1 }}
+          opts={{
+            startIndex,
+            loop: false,
+            // A drag inside a PDF selects its text; it does not swipe to the next file.
+            watchDrag:
+              items.length > 1
+                ? (_api, event) =>
+                    !(event.target as Element | null)?.closest?.('[data-slot="pdf-viewer"]')
+                : false,
+          }}
           className="w-full"
         >
           <CarouselContent className="ml-0">
@@ -399,11 +409,11 @@ function PreviewSlide({
   fetchBytes: FetchBytes;
 }) {
   const kind = kindOf(item.name);
-  // <img>/<video>/<iframe> can't send an auth header, so they can only render a
+  // <img>/<video> can't send an auth header, so they can only render a
   // public CDN url - or a local blob:/data: url for bytes the browser already
   // holds (a file staged before upload). Without one (e.g. an attachment
   // missing its stored CDN path), fall back to download rather than a broken
-  // element. Excel is exempt - it reads bytes via fetchBytes.
+  // element. Excel and PDF are exempt - they read bytes via fetchBytes.
   const hasCdn = /^(https?:|blob:|data:)/.test(item.url);
 
   if (kind === 'image') {
@@ -445,11 +455,26 @@ function PreviewSlide({
   }
 
   if (kind === 'pdf') {
-    return hasCdn ? (
-      <iframe
-        src={item.url}
+    // Drawn in our own viewer rather than the browser's. The bytes come through
+    // `fetchBytes` when the item has a byte route, since a CDN url sends no CORS headers;
+    // a blob:/data: url (a file staged before upload) is read directly. The header above
+    // already carries Open and Download, so the viewer's own are off.
+    const loadData = item.downloadUrl
+      ? async () => {
+          const response = await fetchBytes(item);
+          if (!response.ok) throw new Error('Preview failed');
+          return response.arrayBuffer();
+        }
+      : undefined;
+    return hasCdn || loadData ? (
+      <PdfViewer
+        url={hasCdn ? item.url : null}
+        loadData={loadData}
+        documentKey={item.id}
+        fileName={item.name}
         title={item.name}
-        className="h-[78vh] w-full rounded border bg-white"
+        fileActions={false}
+        className="h-[78vh] w-full rounded border"
       />
     ) : (
       <PreviewFallback item={item} reason="This attachment has no previewable URL." fetchBytes={fetchBytes} />
