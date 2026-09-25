@@ -123,6 +123,39 @@ quoted the PR body, not independently re-verified against the shared-service dif
   internal names are shared-service implementation detail, noted here so a future reader is not
   confused by a `rejected` or `duplicate` value seen in shared-service logs or its own DB rows.
 
+### Confirmed against shared-service PR #87 (25 Sep 2026)
+
+Intake endpoint behaviour for a `cancel: true` turn, confirmed against the shared-service code on
+main `4ddc50e2` (PR #87), answering review round 3's open point:
+
+| Request | HTTP | Body |
+| --- | --- | --- |
+| `draft_id` unknown, or another tenant's | 404 | `{"error":{"code":"unknown_draft", ...}}` (the only other 404 is `unknown_product`) |
+| draft already complete | 200 | terminal echo, status `complete`, idea_number, link; cancel ignored |
+| draft already cancelled (rejected) | 200 | status `cancelled`, missing [], captured {}, idea_number and link null |
+| draft already voted (duplicate) | 200 | status `voted`, the candidate's idea_number and link |
+| open draft | 200 | status `cancelled`; 409 `transition_blocked` only if the tenant's status set blocks draft to rejected |
+| no draft_id + cancel: true | 200 | creates a draft and cancels it at once (quirk, harmless) |
+
+- cancel wins over duplicate_choice, skip and the field merge; only the idempotent terminal echo
+  runs earlier.
+- A payload validation error returns 422 (FastAPI default `{"detail": [...]}` shape, since the
+  intake path is outside the /api/v1 gateway prefix); a title over 8 words returns 422
+  `title_too_long`, never on a cancel turn. Already-closed cases are never 4xx, so 422 never means
+  "draft gone".
+- The complete template's last line is exactly `Track it here: {link}`, link =
+  `{frontend_url}/public/ideas/{status_token}`, omitted when link is null.
+
+Consequence for the S4 idle close (`_close_idle_ideation_draft` / `_DRAFT_GONE_STATUS_CODES`,
+`app/services/ideation_turn_service.py`): a 200 with a terminal status (`complete`, `cancelled`,
+`voted`) clears the pointer (the normal already-gone path); 404 clears the pointer; 410 may stay
+treated as gone; 422 never clears the pointer - it is a sorento payload bug, logged at error level
+with the response detail, and the draft is retried no more than once more; 409
+`transition_blocked` keeps the pointer but the block is recorded on the pointer and is not
+re-sent every tick - later ticks skip that draft until the pointer changes, logged once at
+warning level; 401/403/408/429/5xx and transport errors keep the pointer for retry as today. A
+fix lane (PR #1222 round 3) applies this.
+
 ### Shared-service storage (S1, to confirm in S1)
 
 - `ideas.title` text null (R2).
