@@ -221,36 +221,38 @@ class StockSummaryEntry(BaseModel):
     flags: Dict[str, Any] = {}
 
 
-class StockAvailabilityDisclaimer(BaseModel):
-    """Ported from PR #1118 (feat/chatbot-dealer-stock-verdict, not merged, owner
-    ruling 24 Sep 2026) for chatbot-stock-ask-v2 S3 parity. Never a quantity of ours -
-    `sources` names which supply covers the deficit, `limited` says whether that
-    supply is itself running short, `incoming_eta` is the earliest counted
-    allocation's date, and `purchase_eta_days` is the lead-time PHRASE, never a PO
-    date."""
+class StockAvailabilityPackingList(BaseModel):
+    """AC-SA311: the R5 shipment's own packing list attachment, present on an
+    `incoming` entry only when the asking contact's `packing_list_allowed` is true."""
 
-    sources: List[str]
-    limited: bool
-    incoming_eta: Optional[str] = None
-    purchase_eta_days: Optional[int] = None
+    filename: Optional[str] = None
+    file_path: Optional[str] = None
+    mime_type: Optional[str] = None
 
 
 class StockAvailabilityEntry(BaseModel):
-    """One `availability` answer. Deliberately carries NO quantity of OURS:
-    `requested_qty` is the contact's own number echoed back, `available` is the
-    yes/no, and `verdict` / `running_low` / `disclaimer` (ported from PR #1118) are
-    judged only against the dealer's allowed warehouses - never a stock/incoming/PO
-    figure."""
+    """One `availability` answer (chatbot stock ask v2 S3, R6/R14). Deliberately
+    carries NO quantity of ours - not the on-hand figure, not incoming, not a PO
+    line: `requested_qty` is the contact's own number echoed back, `branch` is the
+    one of four fixed answers (`too_big` / `in_stock` / `incoming` / `no_incoming`,
+    `app.services.stock_ask_branch.branch`), `cap_unset` says whether X resolved
+    from NULLs (the B1 "no cap set for <category>" agent-notification reason),
+    `eta` is `estimated_arrival_date + Y` as dd/mm/yyyy (incoming only), and
+    `packing_list` is the R5 shipment's own attachment (incoming only, AC-SA311).
+
+    AC-SA310: `verdict` / `running_low` / `disclaimer` / `available` (#1118's dealer
+    stock verdict shape) are gone - this is the v2 shape, not a #1118 read."""
 
     product_id: str
     product_code: Optional[str] = None
     product_name: Optional[str] = None
     needs_quantity: bool
     requested_qty: Optional[int] = None
-    available: Optional[bool] = None
-    verdict: Optional[str] = None
-    running_low: Optional[bool] = None
-    disclaimer: Optional[StockAvailabilityDisclaimer] = None
+    branch: Optional[str] = None
+    cap_unset: Optional[bool] = None
+    category_name: Optional[str] = None
+    eta: Optional[str] = None
+    packing_list: Optional[StockAvailabilityPackingList] = None
 
 
 class StockBalanceListResponse(ListResponse[StockResponse]):
