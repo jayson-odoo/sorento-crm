@@ -16,6 +16,11 @@ class ProductCategoryBase(BaseModel):
     # in them is hidden from the chatbot whatever its own flag says (issue #300).
     is_searchable: bool = True
     display_order: Optional[int] = 0
+    # Chatbot stock ask v2 S1 (PLAN-chatbot-stock-ask-v2-24sep.md, R2): X and Y for
+    # every product in this category, unless the product overrides them. None means
+    # not opted in (resolves to 0, app.services.stock_ask_limits.effective()).
+    chatbot_max_qty: Optional[int] = Field(None, ge=0)
+    chatbot_eta_offset_days: Optional[int] = Field(None, ge=0)
 
 
 class ProductCategoryCreate(ProductCategoryBase):
@@ -29,13 +34,15 @@ class ProductCategoryUpdate(BaseModel):
     is_active: Optional[bool] = None
     is_searchable: Optional[bool] = None
     display_order: Optional[int] = None
+    chatbot_max_qty: Optional[int] = Field(None, ge=0)
+    chatbot_eta_offset_days: Optional[int] = Field(None, ge=0)
 
 
 class ProductCategoryResponse(ProductCategoryBase):
     id: str
     created_at: datetime
     updated_at: Optional[datetime] = None
-    
+
     class Config:
         from_attributes = True
 
@@ -163,6 +170,11 @@ class ProductBase(BaseModel):
     has_batch_tracking: bool = False
     reorder_level: Optional[int] = None
     reorder_quantity: Optional[int] = None
+    # Chatbot stock ask v2 S1 (PLAN-chatbot-stock-ask-v2-24sep.md, R2): X and Y for
+    # this product; overrides the category value when set. None falls back to the
+    # product's own category, then to 0 (app.services.stock_ask_limits.effective()).
+    chatbot_max_qty: Optional[int] = Field(None, ge=0)
+    chatbot_eta_offset_days: Optional[int] = Field(None, ge=0)
     is_active: bool = True
     # Whether the chatbot may answer with this product. Independent of is_active:
     # an order placeholder stays active and is still not a chat answer (#300).
@@ -224,6 +236,8 @@ class ProductUpdate(BaseModel):
     has_batch_tracking: Optional[bool] = None
     reorder_level: Optional[int] = None
     reorder_quantity: Optional[int] = None
+    chatbot_max_qty: Optional[int] = Field(None, ge=0)
+    chatbot_eta_offset_days: Optional[int] = Field(None, ge=0)
     is_active: Optional[bool] = None
     is_searchable: Optional[bool] = None
     # D2: explicit flag wins over the description-derived value (only recomputed
