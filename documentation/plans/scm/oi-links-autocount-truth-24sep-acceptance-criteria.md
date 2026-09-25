@@ -45,12 +45,17 @@ reserved from stock.
 3. **J3 - Look closer.** The suggested document number opens the same lightbox as a real one.
    Its "Allocated to" panel lists real allocations; a separate "Suggested for" panel lists
    the rows the document is suggested for. Decision: none.
-4. **J4 - Act on it.** One decision: is this the document? Yes, the usual way: tie the PO line
-   to the sales order in AutoCount; the next push makes it a real link and the suggested link
-   goes. Yes, in the CRM (for a pool PO that AutoCount will never name for a sales order):
-   tick the rows, Actions, **Link selected (N)**, which writes the suggested links as real
-   links in the buyer's name (G1). No: buy something else; the suggested link stays until a
-   pass finds a better one or the row is covered.
+4. **J4 - Act on it.** One decision: is this the document? Yes: tie the PO line to the sales
+   order in AutoCount; the next push makes it a real link and the suggested link goes - the
+   only way a suggestion becomes a link (R18, 25 Sep 2026, supersedes the G1 reading below).
+   Pool purchases AutoCount will never name for a sales order stay suggested; the buyer ticks
+   the rows and presses **Link selected (N)** to recalculate against AutoCount (catching a
+   mistake in the automation), but pressing it never promises a placement on its own. No: buy
+   something else; the suggested link stays until a pass finds a better one or the row is
+   covered.
+   ~~Superseded (G1): "Yes, in the CRM (for a pool PO that AutoCount will never name for a
+   sales order): tick the rows, Actions, Link selected (N), which writes the suggested links
+   as real links in the buyer's name."~~
 5. **J5 - Confirm.** Start, Confirm selected (N) stamps the rows as read, exactly as today. It
    does not turn a suggested link into a real one (G7). Decision: none beyond the tick.
 6. **J6 - Auto link all.** Follows AutoCount for every open row in scope (real links), then
@@ -89,12 +94,15 @@ screen leaves open: a guess never reads as bought.
   `OrderInquiryDocumentDialog` opens for that PO or SPO; "Allocated to" lists real
   allocations only, and a "Suggested for" panel lists the suggested links (inquiry, S/O no,
   item, qty, line), with an explicit empty state when there are none.
-* **AC-LT-05 [FE] (J4) (G1)** Given ticked rows, when Actions opens, then Link selected (N)
-  counts the ticked rows holding a suggested link and is disabled at 0; after it runs, the
-  toast names the rows linked and the rows that had nothing suggested.
+* **AC-LT-05 [FE] (J4) (R18, supersedes the G1 reading below)** Given ticked rows, when
+  Actions opens, then Link selected (N) counts every ticked row, whatever it holds, and is
+  disabled at 0; pressing it posts `auto-place` with those rows' ids; after it runs, the
+  toast names the rows linked from AutoCount, the rows still holding a suggestion, and the
+  rows that changed. ~~Superseded (G1): "counts the ticked rows holding a suggested link
+  ... the toast names the rows linked and the rows that had nothing suggested."~~
 * **AC-LT-06 [FE] (J6) (G4)** Given Auto link all completes, when the toast shows, then it
-  names the rows linked from AutoCount and the rows given a suggested link as two numbers,
-  plus the after-cut-off count as today.
+  names the rows linked from AutoCount, the rows given a suggested link and the rows changed
+  as figures, plus the after-cut-off count as today.
 * **AC-LT-07 [FE] (J1, J2)** Given the OI detail page Lines tab, when a row with a suggested
   link renders, then its PO and SPO cells follow the worklist's rule (real only) and a
   Suggested column carries the suggested link, reusing the worklist's cell.
@@ -164,17 +172,23 @@ PO line, SPO line and inquiry row. `[BE][T]` unless marked.
 * **AC-LT-34 [BE][T] (J3)** Given a PO or SPO with real links and suggested links, when its
   lightbox endpoint is read, then `allocations` lists real links only and `suggested_links`
   lists the suggested rows with inquiry number, S/O number, item, qty and line id.
-* **AC-LT-35 [BE][T] (J4) (G1)** Given two ticked rows, one holding a suggested link and one
-  holding none, when `POST /order-inquiries/link-suggested` runs as a purchasing user, then
-  the first row's suggested link becomes a real link through `place_on_po_allocations` with
-  `auto = false`, `linked_by` the user, the claim written, the row note "Linked as suggested
-  by <name>", the suggested link deleted and the state refreshed; the second is reported as
-  "nothing suggested" and left alone. A suggested link whose line has no room left is
-  skipped and named per row.
-* **AC-LT-36 [BE][T] (J4) (G1)** A user without the grant `auto-place` already requires gets
-  403 from `link-suggested`.
-* **AC-LT-37 [BE][T] (J6) (G4)** `POST /order-inquiries/auto-place` returns
-  `book_linked_rows` and `suggested_rows` beside `after_horizon`.
+* **AC-LT-35 [BE][T] (J4) (R18, supersedes the G1 reading below)** `POST
+  /order-inquiries/link-suggested` no longer exists (404). Given a ticked row whose only
+  candidate is a pool PO with no `from_so_line_ref`, when `POST /order-inquiries/auto-place`
+  runs scoped to it (`row_ids`) as a purchasing user - Link selected's own call - then its
+  suggestion is recalculated but never written as a real link; a book-named target still
+  links for real, `auto = true`, in AutoCount's own name.
+  ~~Superseded (G1): "the first row's suggested link becomes a real link through
+  `place_on_po_allocations` with `auto = false`, `linked_by` the user, the claim written,
+  the row note 'Linked as suggested by <name>', the suggested link deleted and the state
+  refreshed."~~
+* **AC-LT-36 [BE][T] (J4) (R18)** A user without the grant `auto-place` already requires
+  gets 403 from `auto-place` called with `row_ids` - Link selected reuses that same grant,
+  no new permission.
+* **AC-LT-37 [BE][T] (J6) (G4, R18)** `POST /order-inquiries/auto-place` returns
+  `book_linked_rows`, `suggested_rows` and `changed_rows` beside `after_horizon` -
+  `changed_rows` counts rows this pass actually moved (book-linked this pass, or given a
+  different suggestion than the one they held coming in), 0 on an identical second pass.
 * **AC-LT-38 [BE][T] (J1)** The SCM sales order detail line links, the fulfilment board
   contribution's `order_inquiry.documents`, the PO page placements and the handover email
   context read real links only; a suggested link appears in none of them.

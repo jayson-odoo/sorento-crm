@@ -273,14 +273,27 @@ a suggestion of a line that no longer exists means nothing.
 * **Confirm (N)** (`acknowledge_rows`): stamps the rows, then runs the cascade for the
   unlinked remainder as today, which now writes suggested links. It never turns a suggested
   link into a real one (G7).
-* **Link selected (N)** (G1): same menu item, same place on the worklist and the OI detail.
-  For each ticked row it refreshes the row's suggested links (a cascade pass scoped to the
-  row) and writes them as real links through `place_on_po_allocations` in the buyer's name
-  (`auto = false`, `linked_by` the user, note "Linked as suggested by <name>"), then deletes
-  them and refreshes the state. A row with nothing suggested is reported, not linked. Grant:
-  unchanged (the one `auto-place` already needs). Route: `POST
-  /order-inquiries/link-suggested {row_ids}`; `auto-place` with `row_ids` keeps its meaning
-  for any other caller.
+* **Link selected (N)** (R18, 25 Sep 2026, supersedes G1's sentence below): same menu item,
+  same place on the worklist and the OI detail, but it never turns a suggestion into a real
+  link any more. It is the SAME `auto-place` call "Auto link all" uses, `row_ids` naming
+  exactly the ticked rows and nothing else - no separate route. Pressing it re-runs the
+  AutoCount book step for the ticked rows only (`follow_book_for_rows`, writing only what
+  AutoCount names, `auto = true`, in AutoCount's own name, never the user's), then refreshes
+  those rows' suggestions through the cascade the same way Auto link all does after its own
+  book step. The result and toast state how many rows AutoCount linked (`book_linked_rows`),
+  how many still hold a suggestion (`suggested_rows`), and how many of the ticked rows
+  actually changed (`changed_rows`, new: book-linked this pass, or given a different
+  suggestion than the one they held coming in - the figure that says whether recalculating
+  against AutoCount caught a mistake). Enabled state reads the ticked rows only, whatever
+  they hold; there is no whole-OI fallback for it the way Auto link has one. Grant:
+  unchanged (the one `auto-place` already needs).
+  ~~Superseded sentence (G1, no longer true): "For each ticked row it refreshes the row's
+  suggested links (a cascade pass scoped to the row) and writes them as real links through
+  `place_on_po_allocations` in the buyer's name (`auto = false`, `linked_by` the user, note
+  "Linked as suggested by <name>"), then deletes them and refreshes the state. A row with
+  nothing suggested is reported, not linked. Route: `POST /order-inquiries/link-suggested
+  {row_ids}`" - this route is removed; `auto-place` with `row_ids` is now Link selected's
+  own route, not a separate meaning for "any other caller".~~
 * **Auto link all** (G4): unchanged route and date; runs the book step (real links) then the
   cascade (suggested links); the result gains `book_linked_rows` and `suggested_rows`, and the
   toast names both. The detail page gear's Auto link does the same for one header.
@@ -462,6 +475,35 @@ link.
 S2 onward builds to these rulings; G4 and G6 wording is being confirmed in chat before the
 lane's review.
 
+Owner rulings from the hand test on stack C (25 Sep 2026, verbatim; PR #1220):
+
+**R15** (comment https://github.com/jayson-odoo/sorento-crm/pull/1220#issuecomment-5823949694,
+SPO lightbox, out of this lane's scope), **R16** (same comment, the jump-to-line button, out of
+this lane's scope) and **R17** (same comment, the via-SPO PO cell, out of this lane's scope) are
+recorded on the PR only; a separate fix lane covers them.
+
+**R18** (comment https://github.com/jayson-odoo/sorento-crm/pull/1220#issuecomment-5824001234,
+supersedes G1's "Link selected" answer). On hand-test step 4 ("Tick rows with a Suggested
+value, press Link selected. Suggested cell empties, PO/SPO cell fills, State goes On PO/SPO;
+linked_by = your name"):
+
+> "for this, what does it mean, link selected now converts suggested cell to PO/SPO cell? no,
+> we shouldn't do that, the user should always go to autocount to do linking, the link selected
+> is to recalculate with autocount linkage in case of mistake in the automation"
+
+Reading in force, replacing G1's "Link selected" answer: Link selected (N) never writes a link
+from a suggestion. It re-runs the AutoCount book step for the ticked rows only (the existing
+`follow_book_for_rows` path, writing only what AutoCount names, `auto = true`, in AutoCount's
+own name, never the user's), then refreshes those rows' suggestions through the cascade the
+same way Auto link all does after its own book step. `POST /order-inquiries/link-suggested` is
+removed; Link selected is the existing `auto-place` route scoped by `row_ids`, reusing the
+`auto-place` grant - no new route. Section 3.6 carries the implementation detail.
+
+Open question for the owner, not yet answered: does "the user should always go to autocount to
+do linking" also retire the manual Choose document / Link PO by-hand actions (G3 said a manual
+link by purchasing stays real, in the buyer's name)? Until answered, G3 stands unchanged and
+only Link selected changes.
+
 ## Grill questions
 
 Each with a recommended answer and why. The ACs marked `(G<n>)` follow the answer.
@@ -470,11 +512,15 @@ Each with a recommended answer and why. The ACs marked `(G<n>)` follow the answe
 Recommended: its own Suggested column after SPO (worklist and Lines tab) with the amber word
 `suggested`, and a "Suggested for" panel in the lightbox. It becomes real in two ways: (1) the
 buyer ties the PO line to the sales order in AutoCount and the next push links it (the primary
-path, the only one that makes AutoCount agree); (2) the buyer ticks the row and presses Link
-selected, which writes the suggested links as real links in the buyer's name. Why (2): pool
-purchases such as PO-2026/05-0022 and SPO-2026/09-0080 carry no sales order reference, so
-AutoCount will never name them for a row; and Link selected is already the button purchasing
-presses to mean "link these", it just stops being a guess written as if a person chose it.
+path, the only one that makes AutoCount agree); ~~(2) the buyer ticks the row and presses Link
+selected, which writes the suggested links as real links in the buyer's name.~~ **Superseded by
+R18 (25 Sep 2026):** Link selected never writes a suggestion as a real link - see the Rulings
+section and plan section 3.6. Pool purchases such as PO-2026/05-0022 and SPO-2026/09-0080 that
+AutoCount will never name for a row stay suggested until AutoCount does name them, or until the
+open question on manual Choose document / Link PO under R18 is answered. Why the column and the
+first path still stand: pool purchases carry no sales order reference, so the buyer still needs
+to see the suggestion and Link selected is still the button that recalculates it against
+AutoCount - it just no longer promises the recalculation itself is a link.
 
 **G2. Does a suggested link hold capacity against other rows?**
 Recommended: against other suggested links yes, dealt in the existing priority order, so two
