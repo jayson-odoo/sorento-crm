@@ -744,7 +744,15 @@ export function FulfilmentBoardPanel({
     async (
       key: string,
       decision: BoardDecision | null,
-      options?: { quiet?: boolean },
+      options?: {
+        quiet?: boolean;
+        // Review round 1, Should fix 1: `decideBatch` folds every failed row into its own
+        // lenient toast (R10) - a second, per-row toast off THIS mutation's own `onError`
+        // would be the "too many errors" the owner asked Decide to stop doing. `onFailure`
+        // is how the caller still gets the server's own sentence for its skip, without it.
+        silentError?: boolean;
+        onFailure?: (message: string) => void;
+      },
     ): Promise<boolean> => {
       let hadPrevious = false;
       let previousForKey: BoardDecision | undefined;
@@ -776,16 +784,20 @@ export function FulfilmentBoardPanel({
           // until Confirm freezes a revision.
           pendingSaves.current.add(key);
           try {
-            await saveLineDraft(key, decision, contribution?.sources);
+            await saveLineDraft(key, decision, contribution?.sources, {
+              silent: options?.silentError,
+            });
           } finally {
             pendingSaves.current.delete(key);
           }
         } else {
           await removeDraftKey(key);
         }
-      } catch {
-        // The mutation's own `onError` already toasted the message; nothing here is left to
-        // say beyond putting THIS key back the way the click found it.
+      } catch (error) {
+        // The mutation's own `onError` already toasted the message unless `silentError`
+        // asked it not to (Should fix 1) - either way, `onFailure` is the caller's own way
+        // to read it, and this key still goes back the way the click found it.
+        options?.onFailure?.(error instanceof Error ? error.message : 'could not be saved');
         setDraft((current) => {
           const reverted = { ...current };
           if (hadPrevious && previousForKey) reverted[key] = previousForKey;
@@ -888,9 +900,16 @@ export function FulfilmentBoardPanel({
         const chunk = entries.slice(i, i + CHUNK_SIZE);
         await Promise.all(
           chunk.map(async ({ key, decision }) => {
-            const ok = await decide(key, decision, { quiet: true });
+            let why = 'could not be saved';
+            const ok = await decide(key, decision, {
+              quiet: true,
+              silentError: true,
+              onFailure: (message) => {
+                why = message;
+              },
+            });
             if (ok) savedKeys.push(key);
-            else failed.push({ key, why: 'could not be saved' });
+            else failed.push({ key, why });
           }),
         );
       }
