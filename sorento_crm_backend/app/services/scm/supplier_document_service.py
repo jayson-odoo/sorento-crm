@@ -882,15 +882,18 @@ def apply(
             packing_rows_written += packing_service.replace_packing_rows(
                 db, invoice, block.lines, supplier_id=supplier_id, actor=actor_name,
             )
-            # Standing ruling (S2/S4/S5, captain 9 Sep): the packing document fills the PI
-            # header's container/seal/BL when the PI itself stated none - convert's header
-            # carry-over (AC-D2c) reads all three off the invoice.
+            # Standing ruling (S2/S4/S5, captain 9 Sep; SO added R-E, 25 Sep): the packing
+            # document fills the PI header's container/seal/BL/SO when the PI itself
+            # stated none - convert's header carry-over (AC-D2c) reads all four off the
+            # invoice.
             if not invoice.container_ref and block.container_no:
                 invoice.container_ref = block.container_no
             if not invoice.seal_ref and block.seal_no:
                 invoice.seal_ref = block.seal_no
             if not invoice.bl_ref and block.bl_no:
                 invoice.bl_ref = block.bl_no
+            if not getattr(invoice, "so_ref", None) and block.so_no:
+                invoice.so_ref = block.so_no
             if not getattr(invoice, "consignee_ref", None) and block.consignee:
                 invoice.consignee_ref = block.consignee
             attached_invoice_ids.append(str(invoice.id))

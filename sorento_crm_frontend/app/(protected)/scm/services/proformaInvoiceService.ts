@@ -100,6 +100,9 @@ export interface ProformaDocumentSummary {
   invoice_date: string | null;
   container_no: string | null;
   bl_no: string | null;
+  /** R-E (owner ruling 25 Sep): distinct from `bl_no` now. Optional so a hand-built
+   *  fixture from before this field existed still typechecks. */
+  so_no?: string | null;
   lines: number;
   qty: number | null;
   total: number | null;
@@ -177,6 +180,11 @@ export interface ProformaInvoiceListRow {
    *  seal and the SO. */
   consignee: string | null;
   bl_no: string | null;
+  /** R-E (owner ruling 25 Sep): the forwarder's booking/SO reference - its OWN header
+   *  field now, distinct from `bl_no`, never derived from it (the superseded 6 Sep
+   *  carry-BL-as-SO rule). Optional so a hand-built fixture from before this field
+   *  existed still typechecks; the real payload always states it. */
+  so_no?: string | null;
   total_amount: number | null;
   line_count: number;
   source_ref: string | null;
@@ -373,15 +381,19 @@ export interface ProformaInvoiceSourceFile {
   mime_type: string | null;
 }
 
-/** Container/seal/SO/consignee EXACTLY as Convert (B1) will write them onto the draft -
+/** Container/seal/SO/BL/consignee EXACTLY as Convert (B1) will write them onto the draft -
  *  B3/AC-C5: computed server-side by the SAME function `convert_to_draft_shipment` uses,
  *  so the dialog's "Carried onto the draft" line can never disagree with what Convert
- *  itself does. `so` is the PI's own `bl_no` (提单号, R-A) - it lands on the packing list
- *  under SO (`forwarder_order_ref`), never a "BL" field. */
+ *  itself does. R-E (owner ruling 25 Sep): `so` and `bl` are two INDEPENDENT facts - `so`
+ *  lands on the packing list's `forwarder_order_ref`, `bl` on its `bill_of_lading_number` -
+ *  superseding the 6 Sep rule that put `bl_no` alone into the SO field. */
 export interface ProformaInvoiceConvertCarry {
   container: string | null;
   seal: string | null;
   so: string | null;
+  /** R-E (owner ruling 25 Sep): the true bill of lading, distinct from `so` now - never
+   *  derived from it (the superseded 6 Sep carry-BL-as-SO rule). */
+  bl: string | null;
   consignee: string | null;
 }
 

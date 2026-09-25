@@ -19,7 +19,8 @@ the file to My Downloads and the download history sits on the packing list.
   FSCU8706420, Seal OOLLJN6147.
 - AC-H3 A cell with one `label：value` pair reads as today; a labelled value elsewhere on the
   sheet still wins first.
-- AC-H4 The PI General tab shows Container, Seal, BL, Consignee in that order; empty ones "-".
+- AC-H4 The PI General tab shows Container, Seal, BL, SO, Consignee in that order (SO added
+  by R-E, 25 Sep); empty ones "-".
 
 ## Header fields in the mapper (R-D)
 
@@ -28,8 +29,9 @@ the file to My Downloads and the download history sits on the packing list.
   lists every `label：value` pair found above the table (DAFUYUAN: 提单号, 柜号, 封条号, Date:, PI
   No.:) with the value as sample and the label as-is; a pair already known for this supplier is
   pre-filled.
-- AC-F2 Field choices are PI number, Invoice date, BL, Container, Seal, Currency, Ignore;
-  Consignee is not offered.
+- AC-F2 Field choices are PI number, Invoice date, BL, SO, Container, Seal, Currency, Ignore
+  (SO added by R-E, 25 Sep - its own field, distinct from BL, no shared alias); Consignee is
+  not offered.
 - AC-F3 Test saves header-field picks together with the column picks; the next upload from the
   same supplier folds the section into the "N of N mapped" summary.
 - AC-F4 Mapping 柜号 -> Container and 封条号 -> Seal on DAFUYUAN, then Test, yields the three
@@ -45,8 +47,9 @@ the file to My Downloads and the download history sits on the packing list.
 - AC-C4 Only the header's Convert to packing list button exists; the Packing lists tab empty
   state has no button.
 - AC-C5 "Carried onto the draft" names exactly what the packing list will receive.
-- AC-C6 The packing list shows Container no, Seal no, SO (= the PI's BL) and Consignee = the
-  PI's company, always (R-B); Shipper stays "-".
+- AC-C6 The packing list shows Container no, Seal no, SO (= the PI's own `so_ref`, its own
+  header field), BL (= the PI's own `bl_ref`, a separate fact - R-E, 25 Sep, supersedes the
+  "SO = the PI's BL" rule) and Consignee = the PI's company, always (R-B); Shipper stays "-".
 - AC-C7 Existing PIs with a repeated product are rebound by the backfill; the PR states the
   count on the prod copy.
 

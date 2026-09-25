@@ -67,6 +67,15 @@ Track: full `/feature`, one lane, one PR, stacked on #1188.
   line whose product has rows elsewhere never falls back; backfill sets scope None + rollup;
   serialize carry reads packing rows; export task verifies its download row and the owner's
   membership; failure text fixed; header-field choices come from the probe.
+- R-E (owner 25 Sep, SUPERSEDES R-A): SO is its own header field (`so_ref`/`so_no`), distinct
+  from BL - the mapper offers a "SO" choice alongside BL/Container/Seal/PI number/Invoice
+  date/Currency, and the owner maps `提单号` to `so_no` per supplier where it genuinely is the
+  forwarder's booking/SO number rather than a true bill of lading (some suppliers' `提单号` IS
+  a real B/L). No shared alias for `so_no` - `提单号` keeps resolving to `bl_no` by default
+  (375/311's shared row, unchanged); a supplier override is the only way to `so_no`. Convert
+  now writes `so_ref` -> `forwarder_order_ref` (the SO field) and `bl_ref` ->
+  `bill_of_lading_number` (a column that existed already but nothing had ever written to) -
+  two independent facts, never one carried into the other the way R-A's 6 Sep rule did.
 
 ## Design
 
@@ -80,13 +89,16 @@ value (`提单号：` then next label) yields no pair, so first-wins in `_absorb
 row's real BL.
 A2 Aliases (shared, migration seed): container_no += `柜号`; seal_no += `封条` (both doc types).
 A3 PI General tab renders Seal and Consignee alongside Container and BL (same card, same order
-as the PL: Container no, Seal no, BL, Consignee).
+as the PL: Container no, Seal no, BL, Consignee). R-E (25 Sep) adds SO to this same card,
+between BL and Consignee: Container, Seal, BL, SO, Consignee.
 
 ### B. Convert carries the header fields (BE + FE)
 
-B1 Carry BL (→ SO), seal, consignee whenever the PI states them and the draft is for ONE
-container (today's rule) - unchanged, but now reachable because A1 fills the container. Shipper
-stays unset (not on the sheet).
+B1 Carry SO, BL, seal, consignee whenever the PI states them and the draft is for ONE
+container (today's rule) - unchanged, but now reachable because A1 fills the container. R-E
+(25 Sep) supersedes the original "BL -> SO" text here: SO (`so_ref`) carries onto
+`forwarder_order_ref` and BL (`bl_ref`) carries onto `bill_of_lading_number`, two independent
+header facts rather than one folded into the other. Shipper stays unset (not on the sheet).
 B2 R-B: consignee = the PI's company name, always.
 B3 The dialog's "Carried onto the draft" line prints exactly what B1 will write (ask the server:
 convert preview returns the carry set) instead of echoing the PI fields.

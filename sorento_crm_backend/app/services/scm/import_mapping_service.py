@@ -33,6 +33,8 @@ _HEADER_FIELD_LABELS: dict[str, str] = {
     "pi_number": "PI number",
     "invoice_date": "Invoice date",
     "bl_no": "BL",
+    # R-E (owner ruling 25 Sep): SO is its own header field, distinct from BL.
+    "so_no": "SO",
     "container_no": "Container",
     "seal_no": "Seal",
     "currency": "Currency",

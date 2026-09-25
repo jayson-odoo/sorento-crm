@@ -109,13 +109,14 @@ export function ConvertToPackingListDialog({
     setPlacedRowIds(new Set(packingRows.filter((r) => r.match_state === 'matched').map((r) => r.id)));
   }, [open, packingRows]);
 
-  // Container / seal / SO / consignee the draft will actually receive (AC-C5/AC-C6, B3) -
-  // read straight off the server's own `convert_carry` (the PI payload field
+  // Container / seal / SO / BL / consignee the draft will actually receive (AC-C5/AC-C6,
+  // B3) - read straight off the server's own `convert_carry` (the PI payload field
   // `proforma_invoice_service.serialize` computes with the SAME function `convert_to_
   // draft_shipment` uses), never recomputed here: the dialog's line can then never say
-  // something Convert itself would not.
+  // something Convert itself would not. R-E (owner ruling 25 Sep): `so` and `bl` are two
+  // INDEPENDENT facts now, never one carried into the other.
   const carryPreview = invoice?.convert_carry ?? {
-    container: null, seal: null, so: null, consignee: null,
+    container: null, seal: null, so: null, bl: null, consignee: null,
   };
   // V3 (fix round 1): the line names only what IS carried - a part with no value is
   // dropped entirely rather than printed as "Container -".
@@ -124,9 +125,13 @@ export function ConvertToPackingListDialog({
     if (carryPreview.container) parts.push(`Container ${carryPreview.container}`);
     if (carryPreview.seal) parts.push(`Seal ${carryPreview.seal}`);
     if (carryPreview.so) parts.push(`SO ${carryPreview.so}`);
+    if (carryPreview.bl) parts.push(`BL ${carryPreview.bl}`);
     if (carryPreview.consignee) parts.push(`Consignee ${carryPreview.consignee}`);
     return parts;
-  }, [carryPreview.container, carryPreview.seal, carryPreview.so, carryPreview.consignee]);
+  }, [
+    carryPreview.container, carryPreview.seal, carryPreview.so, carryPreview.bl,
+    carryPreview.consignee,
+  ]);
 
   const defaultSize = useMemo(
     () => (containerSizes.data ?? []).find((s) => s.is_default) ?? null,

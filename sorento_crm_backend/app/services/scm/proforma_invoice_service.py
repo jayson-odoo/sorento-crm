@@ -379,6 +379,8 @@ def _summarise(
                 "invoice_date": doc.invoice_date.isoformat() if doc.invoice_date else None,
                 "container_no": doc.container_no,
                 "bl_no": doc.bl_no,
+                # R-E (owner ruling 25 Sep): SO is its own field now, distinct from BL.
+                "so_no": doc.so_no,
                 # A3 (PLAN-pi-header-fields-convert-fixes-24sep.md): the same two facts the
                 # PI General tab now shows beside container/BL, so the preview already
                 # states what apply() is about to write (H1/H2).
@@ -1021,9 +1023,12 @@ def apply(
         # unpriced one has nothing to denominate and stays NULL. Never a house default (AC-P3.3).
         invoice.currency = code or invoice.currency
         invoice.container_ref = doc.container_no
-        # `bl_ref` holds `提单号`, which the 6 Sep ruling put in the SO field on the draft,
-        # not in a bill of lading - the column name is historical.
         invoice.bl_ref = doc.bl_no
+        # R-E (owner ruling 25 Sep): SO is its own header field, distinct from `bl_ref` -
+        # superseded the 6 Sep rule that treated `提单号`/`bl_ref` as the SO on the draft.
+        # Written the same unconditional way `bl_ref` is (a re-upload that no longer
+        # states one clears it, same as `bl_ref` already does).
+        invoice.so_ref = doc.so_no
         # The other two header facts the document states (ruling 28). Written only when the
         # document HAS them, so a re-upload of an invoice that states neither does not wipe
         # what the packing list filled in beside it.
@@ -1608,18 +1613,24 @@ def _convert_carry(
     rows_by_invoice: Optional[dict[str, list]] = None,
     company_name: Optional[str] = None,
 ) -> dict[str, Optional[str]]:
-    """Container/seal/SO/consignee exactly as `convert_to_draft_shipment` (B1) will write
-    them onto the draft - shared by it and `serialize` (B3), so the dialog's "Carried onto
-    the draft" line can never say something Convert itself would not (AC-C5).
+    """Container/seal/SO/BL/consignee exactly as `convert_to_draft_shipment` (B1) will
+    write them onto the draft - shared by it and `serialize` (B3), so the dialog's
+    "Carried onto the draft" line can never say something Convert itself would not
+    (AC-C5).
 
-    AC-D2c/R-A: container/seal/SO carry ONLY when every invoice in `invoices` agrees on ONE
-    container - each invoice's own packing rows first (`rows_by_invoice`, a container can
-    differ from the header when a PI was applied before the real container was assigned),
-    else its header `container_ref`; `serialize` calls this for ONE invoice with no rows,
-    which is exactly that invoice's own header. `提单号` (`bl_ref`) lands in the SO field,
-    never a "BL" (6 Sep ruling, unchanged). R-B (24 Sep): consignee is ALWAYS the invoices'
-    OWN COMPANY name - never `consignee_ref`, which is read off the sheet and ignored here -
-    and carries regardless of whether the container agrees.
+    AC-D2c/R-A: container/seal/SO/BL carry ONLY when every invoice in `invoices` agrees on
+    ONE container - each invoice's own packing rows first (`rows_by_invoice`, a container
+    can differ from the header when a PI was applied before the real container was
+    assigned), else its header `container_ref`; `serialize` calls this for ONE invoice
+    with no rows, which is exactly that invoice's own header.
+
+    R-E (owner ruling 25 Sep): SO and BL are now TWO INDEPENDENT facts - `so` reads
+    `so_ref` (the forwarder's booking/SO reference, a per-supplier mapper pick, no shared
+    alias) and `bl` reads `bl_ref` (the true bill of lading, when the supplier states one
+    distinctly). This supersedes the 6 Sep rule that carried `bl_ref` into the SO field
+    alone, with nothing ever landing in a BL field. R-B (24 Sep): consignee is ALWAYS the
+    invoices' OWN COMPANY name - never `consignee_ref`, which is read off the sheet and
+    ignored here - and carries regardless of whether the container agrees.
 
     `company_name`, when given (S4, review round 2), is used AS THE ANSWER rather than
     resolved here - `serialize`'s own per-page `_company_names` batch already has it, and
@@ -1638,11 +1649,12 @@ def _convert_carry(
 
     per_invoice_containers = {str(inv.id): _pi_container(inv) for inv in invoices}
     distinct_containers = {v for v in per_invoice_containers.values() if v}
-    container = seal = so = None
+    container = seal = so = bl = None
     if len(distinct_containers) == 1:
         container = next(iter(distinct_containers))
         seal = next((inv.seal_ref for inv in invoices if inv.seal_ref), None)
-        so = next((inv.bl_ref for inv in invoices if inv.bl_ref), None)
+        so = next((inv.so_ref for inv in invoices if inv.so_ref), None)
+        bl = next((inv.bl_ref for inv in invoices if inv.bl_ref), None)
 
     if company_name is not None:
         consignee = company_name
@@ -1653,6 +1665,7 @@ def _convert_carry(
         "container": container,
         "seal": seal,
         "so": so,
+        "bl": bl,
         "consignee": consignee,
         # Named for the caller that reports it (`convert_to_draft_shipment`'s own
         # `header_conflicts`) - several DIFFERENT containers named, not simply none at all.
@@ -2141,8 +2154,8 @@ def convert_to_draft_shipment(
     # `_convert_carry`'s own docstring, shared with `serialize` (B3) so the two never
     # disagree about what Convert is about to write.
     carry = _convert_carry(db, invoices, rows_by_invoice=rows_by_invoice)
-    carry_container, carry_seal, carry_bl, carry_consignee = (
-        carry["container"], carry["seal"], carry["so"], carry["consignee"],
+    carry_container, carry_seal, carry_so, carry_bl, carry_consignee = (
+        carry["container"], carry["seal"], carry["so"], carry["bl"], carry["consignee"],
     )
     header_conflicts: list[str] = []
     if carry["conflict"]:
@@ -2157,9 +2170,11 @@ def convert_to_draft_shipment(
         shipment_date=min(invoice_dates) if invoice_dates else _date.today(),
         shipping_container_number=carry_container,
         seal_number=carry_seal,
-        # `提单号` is the forwarder's SO, not a bill of lading (Q1 ruling, 6 Sep) - the
-        # same field `_header_of` already fills from it on the upload preview.
-        forwarder_order_ref=carry_bl,
+        # R-E (owner ruling 25 Sep): `so_ref` fills the SO field, `bl_ref` fills the BILL
+        # OF LADING field - two independent facts, superseding the 6 Sep rule that put
+        # `bl_ref` alone into the SO field with nothing ever reaching this one.
+        forwarder_order_ref=carry_so,
+        bill_of_lading_number=carry_bl,
         consignee=carry_consignee,
         shipment_status=_DRAFT_SHIPMENT_STATUS,
         created_by=created_by,
@@ -3263,6 +3278,9 @@ def serialize(
         # sheet's `consignee_ref` (kept on the row, unused for display - B4).
         "consignee": consignee_name,
         "bl_no": invoice.bl_ref,
+        # R-E (owner ruling 25 Sep): SO is its own header field, distinct from BL - never
+        # derived from `bl_ref` any more (the superseded 6 Sep carry-BL-as-SO rule).
+        "so_no": invoice.so_ref,
         "total_amount": _f(invoice.total_amount),
         "line_count": invoice.line_count,
         "source_ref": invoice.source_ref,

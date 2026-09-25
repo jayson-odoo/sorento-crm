@@ -49,7 +49,11 @@ REQUIRED_COLUMNS = _REQUIRED_COLUMNS
 #: number/date, when it states one - what the packing-list-alone attach resolution matches
 #: a proforma invoice by, same convention `proforma_invoice_reader._BLOCK_FIELDS` already
 #: uses for its own five.
-_BLOCK_FIELDS = ("container_no", "bl_no", "seal_no", "consignee", "pi_number", "invoice_date")
+#: `so_no` (R-E, owner ruling 25 Sep): the forwarder's booking/SO reference, distinct from
+#: `bl_no` now - no shared alias seeds it; the operator maps a label to it per supplier.
+_BLOCK_FIELDS = (
+    "container_no", "bl_no", "so_no", "seal_no", "consignee", "pi_number", "invoice_date",
+)
 
 #: A cell may state TWO block fields side by side (`箱号:WHSU6243088 / 封签号:WHA4528193`,
 #: the Jiexia sample). Split on the supplier's own separator BEFORE the label test, so both
@@ -172,6 +176,9 @@ class PackingBlock:
     index: int
     container_no: Optional[str] = None
     bl_no: Optional[str] = None
+    #: The forwarder's booking/SO reference (R-E, owner ruling 25 Sep) - distinct from
+    #: `bl_no` now, mapped per supplier. Per block, like `bl_no`/`container_no`.
+    so_no: Optional[str] = None
     #: The container's seal number (`封签号`, R13). Per block, never carried over: two
     #: containers in one file never share a seal.
     seal_no: Optional[str] = None
@@ -851,6 +858,7 @@ def read_workbook(
                 index=len(result.blocks) + 1,
                 container_no=pending.get("container_no"),
                 bl_no=pending.get("bl_no"),
+                so_no=pending.get("so_no"),
                 seal_no=pending.get("seal_no"),
                 consignee=pending.get("consignee") or sticky_consignee,
                 pi_number=pending.get("pi_number"),
@@ -863,6 +871,8 @@ def read_workbook(
                 current.container_no = pending["container_no"]
             if pending.get("bl_no"):
                 current.bl_no = pending["bl_no"]
+            if pending.get("so_no"):
+                current.so_no = pending["so_no"]
             if pending.get("seal_no"):
                 current.seal_no = pending["seal_no"]
             if pending.get("consignee"):
@@ -905,6 +915,7 @@ def read_workbook(
                 index=len(result.blocks) + 1,
                 container_no=pending.get("container_no"),
                 bl_no=pending.get("bl_no"),
+                so_no=pending.get("so_no"),
                 seal_no=pending.get("seal_no"),
                 consignee=pending.get("consignee") or sticky_consignee,
                 pi_number=pending.get("pi_number"),
@@ -1013,6 +1024,7 @@ def _split_by_container_column(
                     index=0,
                     container_no=key or block.container_no,
                     bl_no=block.bl_no,
+                    so_no=block.so_no,
                     # The table carries ONE seal/consignee/note set, stated once above the
                     # whole table rather than per container column value - carried onto
                     # EVERY split-off block rather than only the first (S2, review round 1).

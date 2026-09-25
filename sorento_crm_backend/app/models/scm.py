@@ -1723,15 +1723,23 @@ class ProformaInvoice(Base, CompanyScopedMixin):
     currency = Column(String(3), nullable=True)
 
     container_ref = Column(String(100), nullable=True)
+    #: The forwarder's own bill of lading number, when the supplier states one distinctly
+    #: from the SO/booking number below. Carried onto the draft's `bill_of_lading_number`
+    #: (R-E, 25 Sep - a column that existed already but nothing had ever written to).
     bl_ref = Column(String(100), nullable=True)
+    #: The forwarder's booking/SO reference (R-E, owner ruling 25 Sep) - a header field OF
+    #: ITS OWN now, distinct from `bl_ref`: some suppliers' `提单号` genuinely is a bill of
+    #: lading, others' is the SO number, and which is which is a per-supplier mapper pick
+    #: (F1/F2), never a shared alias. Superseded the 6 Sep rule that carried `bl_ref` into
+    #: the draft's SO field unconditionally - carries onto `forwarder_order_ref` instead.
+    so_ref = Column(String(100), nullable=True)
     #: The container's seal number (S2/S4 standing ruling, captain 9 Sep) - filled from the
     #: packing document when the PI itself stated none, same convention `container_ref`/
     #: `bl_ref` already follow. Read by convert's header carry-over (AC-D2c) alongside them.
     seal_ref = Column(String(100), nullable=True)
     #: Who the document bills (`客户名` / `Customer Name` / `客户`, ruling 28) - the fourth
     #: header fact the supplier states and the packing list needs, carried onto the draft
-    #: with the other three. `bl_ref` holds `提单号`, which is the forwarder's SO, not a
-    #: bill of lading (6 Sep ruling) - the name is historical.
+    #: with the other three.
     consignee_ref = Column(String(150), nullable=True)
 
     #: What the document totals ITSELF to when it states a total, else the sum of its lines.

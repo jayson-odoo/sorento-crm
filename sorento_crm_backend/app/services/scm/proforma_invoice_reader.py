@@ -56,8 +56,12 @@ REQUIRED_COLUMNS = _REQUIRED_COLUMNS
 #: Fields describing the DOCUMENT rather than a line. Written as labelled cells above the
 #: table (`货单号：`, `日期：`) or, rarely, as columns in it. `seal_no` and `consignee` are R13
 #: additions (purchasing consolidation batch, lane C).
+#: `so_no` (R-E, owner ruling 25 Sep): the forwarder's booking/SO reference, distinct from
+#: `bl_no` now - no shared alias seeds it (see `pi_so_ref` migration's own docstring); the
+#: operator maps a label to it per supplier, same as any other header field.
 _BLOCK_FIELDS = (
-    "pi_number", "invoice_date", "container_no", "bl_no", "currency", "seal_no", "consignee",
+    "pi_number", "invoice_date", "container_no", "bl_no", "so_no", "currency", "seal_no",
+    "consignee",
 )
 
 #: How the two suppliers write "total". Normalised, so `合 计` and `合计` are one key.
@@ -134,6 +138,10 @@ class ProformaDocument:
     invoice_date: Optional[date] = None
     container_no: Optional[str] = None
     bl_no: Optional[str] = None
+    #: The forwarder's booking/SO reference (R-E, owner ruling 25 Sep) - distinct from
+    #: `bl_no` now, mapped per supplier (no shared alias). Per document/block, like
+    #: `bl_no`/`container_no`.
+    so_no: Optional[str] = None
     #: The container's seal number (`封签号`, R13). Per document/block, like `container_no`.
     seal_no: Optional[str] = None
     #: Who is billed (`客户：`, R13). Stated once per file and carried onto every later
@@ -509,6 +517,8 @@ def read_workbook(
                 current.container_no = pending["container_no"][0]
             if pending.get("bl_no", (None,))[0]:
                 current.bl_no = pending["bl_no"][0]
+            if pending.get("so_no", (None,))[0]:
+                current.so_no = pending["so_no"][0]
             if pending.get("seal_no", (None,))[0]:
                 current.seal_no = pending["seal_no"][0]
             if pending.get("consignee", (None,))[0]:
@@ -677,6 +687,7 @@ def _document_from(
         invoice_date=invoice_date,
         container_no=pending.get("container_no", (None, 0))[0],
         bl_no=pending.get("bl_no", (None, 0))[0],
+        so_no=pending.get("so_no", (None, 0))[0],
         seal_no=pending.get("seal_no", (None, 0))[0],
         consignee=pending.get("consignee", (None, 0))[0],
         currency_hint=price_column_currency(
@@ -700,6 +711,7 @@ def _split_document(
         invoice_date=previous.invoice_date,
         container_no=found.get("container_no"),
         bl_no=found.get("bl_no"),
+        so_no=found.get("so_no"),
         seal_no=found.get("seal_no"),
         consignee=found.get("consignee") or previous.consignee,
         currency_hint=previous.currency_hint,
