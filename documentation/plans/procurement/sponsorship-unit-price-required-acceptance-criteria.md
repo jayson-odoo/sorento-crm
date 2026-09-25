@@ -16,6 +16,13 @@ Plan: `PLAN-sponsorship-unit-price-required.md`. Track: small fix. Issue #1227.
   with no unit price still submits.
 - **AC-P7** A header with zero lines submits unaffected (existing sponsorship forms are not
   migrated).
+- **AC-P8** A unit price of exactly 0 is accepted, not refused - a sponsored item can
+  legitimately be free. "Mandatory" means a value must be present; it does not mean the
+  value must be positive. Confirmed with the owner at the hand test (review round 1,
+  Should fix 2).
+- **AC-P9** (review round 1, Blocking 4) Revise is gated the same way submit is: a
+  price-less real line blocks `openReviseConfirm` client-side before the confirm dialog
+  opens, and `PortalRevisionService.revise` refuses server-side too.
 
 ## System create/edit (`procurement-management/purchase-requests` and
 `.../sponsorship-forms`)
@@ -28,6 +35,10 @@ Plan: `PLAN-sponsorship-unit-price-required.md`. Track: small fix. Issue #1227.
 - **AC-S4** Purchase requests are unaffected - the `sales_type`-mandatory rule this mirrors
   stays scoped to `purchase_request`, and this rule stays scoped to `sponsorship_form`.
 - **AC-S5** The line total keeps computing from quantity x unit price - no regression.
+- **AC-S6** A unit price of exactly 0 is accepted on create and edit alike - see AC-P8.
+- **AC-S7** (review round 1, Blocking 1) The Update & Reply payload carries `unit_price`
+  and `total` for every line, the same mapping `onSubmit` uses - so the new backend rule
+  passes when every line on screen has a price.
 
 ## Backend (external ingest + internal create/update schemas)
 
@@ -42,3 +53,13 @@ Plan: `PLAN-sponsorship-unit-price-required.md`. Track: small fix. Issue #1227.
 - **AC-B5** `PortalService.submit_draft` refuses a sponsorship line the same way, checked
   against the lines actually persisted (covers both a fresh submit payload and a bare
   resubmit of an already-saved draft).
+- **AC-B6** A unit price of exactly 0 is accepted on all three schemas, and on
+  `PortalService.submit_draft` - see AC-P8.
+- **AC-B7** (review round 1, Blocking 2) `ProcurementService.update_request` and
+  `update_request_and_reply` refuse a price-less sponsorship line against the EFFECTIVE
+  type (`data.request_type or header.request_type`) whenever `products` is not `None` -
+  a caller cannot bypass the rule on a stored sponsorship form by simply omitting
+  `request_type` from the payload.
+- **AC-B8** (review round 1, Blocking 4) `PortalRevisionService.revise` refuses a
+  price-less sponsorship line the same way `submit_draft` does, checked against the
+  lines `apply_lines` actually persisted - a revise cannot bypass the rule either.

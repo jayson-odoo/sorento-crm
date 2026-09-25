@@ -94,6 +94,16 @@ describe('sponsorship unit price validation (#1227)', () => {
     expect(res.success).toBe(true);
   });
 
+  it('accepts a unit price of exactly 0 (AC-P8/S6: mandatory means present, not positive)', () => {
+    const res = parse('sponsorship_form', {
+      item_code: 'ITEM-A',
+      quantity: 2,
+      unit_price: 0,
+      total: 0,
+    });
+    expect(res.success).toBe(true);
+  });
+
   it('never refuses a fully blank filler line (nothing to check yet)', () => {
     const res = parse('sponsorship_form', {
       item_code: null,

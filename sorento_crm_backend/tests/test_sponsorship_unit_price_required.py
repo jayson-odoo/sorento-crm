@@ -163,6 +163,15 @@ def test_internal_create_accepts_sponsorship_line_with_unit_price():
     assert data.products[0].unit_price is not None
 
 
+def test_internal_create_accepts_sponsorship_line_with_zero_unit_price():
+    """AC-P8/Should fix 2: mandatory means present, not positive - a sponsored
+    item can legitimately be free. 0 must not be refused."""
+    data = PurchaseRequestHeaderCreate(
+        request_type="sponsorship_form", products=[_internal_line(unit_price="0")]
+    )
+    assert data.products[0].unit_price == 0
+
+
 def test_internal_create_purchase_request_line_without_unit_price_is_unchanged():
     data = PurchaseRequestHeaderCreate(
         request_type="purchase_request", products=[_internal_line(unit_price=None)]
@@ -327,6 +336,25 @@ def test_portal_update_draft_with_priceless_sponsorship_line_is_not_blocked(db):
     db.refresh(header)
     assert header.status == "draft"
     assert header.lines[0].unit_price is None
+
+
+def test_portal_submit_accepts_sponsorship_line_with_zero_unit_price(db):
+    """AC-P8/Should fix 2: 0 is a plausible real price for a sponsored item and
+    must not be refused - "mandatory" means present, not positive."""
+    token, header = _seed_portal_draft(db, kind="sponsorship_form")
+    svc = PortalService(db)
+    svc.create_or_update_draft(
+        token,
+        "sponsorship_form",
+        {"products": [{"item_code": f"{MARKER}-ITEM", "quantity": "2", "unit_price": "0"}]},
+        submission_id=str(header.id),
+    )
+
+    svc.submit_draft(token, "sponsorship_form", str(header.id))
+
+    db.refresh(header)
+    assert header.status == "submitted"
+    assert header.lines[0].unit_price == 0
 
 
 def test_portal_submit_purchase_request_line_without_unit_price_is_unchanged(db):
