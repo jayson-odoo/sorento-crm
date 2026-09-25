@@ -117,6 +117,26 @@ class OrderInquiryLinkOut(BaseModel):
     #: WHO linked it, by name. Null on a cascade link, which nobody did by hand.
     linked_by_name: Optional[str] = None
     po_id: Optional[str] = None
+    #: Issue #1215 point 2 - `links_for_rows` has always computed this (the candidate
+    #: walk's own target id), but `response_model` silently drops a field it has not
+    #: been told about (same lesson as `ack_state` elsewhere) and this one never was.
+    #: Needed so the Lines tab / PO lightbox can highlight the exact line this link
+    #: sits on. Null on an SPO link.
+    po_line_id: Optional[str] = None
+    #: R15 (owner rulings, 25 Sep 2026, hand test on stack C): the same gap as
+    #: `po_line_id` above, mirrored for the other book - `links_for_rows` has always
+    #: computed this (the link's own target), but it never reached the wire. Needed so
+    #: the SPO lightbox can highlight the exact allocation line this link sits on, the
+    #: same way `po_line_id` already does for the PO lightbox. Null on a PO-kind link.
+    spo_allocation_id: Optional[str] = None
+    #: R17 (owner rulings, 25 Sep 2026): the purchase order an SPO link's allocation
+    #: draws down (`SPOAllocation.po_line_id` traced to its own PO header), so the Lines
+    #: tab's "<number> via SPO" cell can open that PO directly rather than guessing by
+    #: number. A different question from `po_id` above, which addresses THIS link's own
+    #: document. Null on a PO-kind link and on an SPO allocation with no resolved supply
+    #: PO line (`links_for_rows`' own `purchase_order_id`, review round 1's L4 item,
+    #: which never reached the wire either).
+    purchase_order_id: Optional[str] = None
     #: The purchase order an SPO link's allocation was raised FROM, per AutoCount's own
     #: statement (`SPOAllocation.from_po_number`, migration 493 / contract 2.2) - a
     #: different question from `po_id` above, which addresses this link's OWN document.
@@ -141,6 +161,30 @@ class OrderInquiryLinkOut(BaseModel):
     #: inside the product's lead-time window. Nothing is written from it - purchasing
     #: acts in AutoCount, S5 follows.
     suggestion: Optional[Dict[str, Any]] = None
+
+
+class OrderInquirySuggestedLinkOut(BaseModel):
+    """One guess the cascade walk made, never a placement
+    (`PLAN-oi-links-autocount-truth-24sep.md` 3.5, AC-LT-33) - kept off `links` above,
+    which carries real links only. Same vocabulary as `OrderInquiryLinkOut` where the
+    two overlap, minus everything only a real link has (no `id` to unlink by, no
+    `linked_by_name`, no `received`): a suggestion is not purchasing's word and there
+    is nothing on it to act on directly."""
+
+    #: `po` or `spo`.
+    kind: str
+    document: Optional[str] = None
+    po_id: Optional[str] = None
+    po_line_id: Optional[str] = None
+    spo_allocation_id: Optional[str] = None
+    location: Optional[str] = None
+    qty: str
+    expected_date: Optional[date] = None
+    late_days: Optional[int] = None
+    #: Why the walk offered this - `raise`, `worklist`, `link_now`, `acknowledge`,
+    #: `po_confirm`, `decision_confirm` - the same trigger vocabulary a real link's
+    #: `auto` note already carries.
+    trigger: Optional[str] = None
 
 
 class OrderInquiryRowOut(BaseModel):
@@ -187,6 +231,9 @@ class OrderInquiryRowOut(BaseModel):
     cited_document: Optional[str] = None
     #: Every document this row's quantity sits on, oldest link first (AC-I5).
     links: List[OrderInquiryLinkOut] = []
+    #: AC-LT-33: the cascade's own guesses, never a placement - kept off `links`
+    #: above, which carries nothing suggested.
+    suggested_links: List[OrderInquirySuggestedLinkOut] = []
     #: The sum of `links[].qty` for the REAL links only - `links` also carries synthetic
     #: "via PO" entries (`derived: true`) for a linked PO's own open SPO allocations,
     #: which never wrote an `order_inquiry_links` row and are excluded from this sum.
@@ -409,6 +456,9 @@ class OrderInquiryWorklistRow(BaseModel):
     #: Every document this row's quantity sits on (AC-I5), the SAME reader the per-project
     #: list and the SCM sales-order detail use. Empty on a row nobody has linked.
     links: List[OrderInquiryLinkOut] = []
+    #: AC-LT-33: the cascade's own guesses, never a placement - kept off `links`
+    #: above, which carries nothing suggested.
+    suggested_links: List[OrderInquirySuggestedLinkOut] = []
     linked_qty: str = "0"
     #: The document CS cited on an order back, so the screen can say the walk honoured it.
     cited_document: Optional[str] = None
@@ -981,9 +1031,10 @@ class AutoPlaceInquiryFilter(BaseModel):
 class AutoPlaceRequest(BaseModel):
     """Run the cascade now - the worklist's own "Auto-link". Omitted `product_ids` means
     every product that currently has a raised or partly linked ORDER / RESERVE & ORDER /
-    ORDER BACK row. `row_ids` names the rows and nothing else (the worklist's "Link
-    selected"), and wins over `product_ids`. `filter.inquiry_id` (S3) scopes the whole
-    cascade to one header's own rows, on top of whichever of the other two is also given.
+    ORDER BACK row. `row_ids` names the rows and nothing else (the worklist's and the OI
+    detail's "Link selected", R18 - there is no separate route for it any more), and
+    wins over `product_ids`. `filter.inquiry_id` (S3) scopes the whole cascade to one
+    header's own rows, on top of whichever of the other two is also given.
 
     `extra="forbid"` (S3, security review round 1 precedent on `AcknowledgeFilter`): an
     unknown `filter` key used to be silently dropped by Pydantic's own default, which let
@@ -1019,6 +1070,13 @@ class AutoPlaceResult(BaseModel):
     placed_rows: int = 0
     allocations: int = 0
     products_touched: int = 0
+    #: AC-LT-37 (G4): the book step's own count, real links, distinct from the
+    #: cascade's own guesses below.
+    book_linked_rows: int = 0
+    #: AC-LT-37: rows the cascade walk offered a suggested link to this pass - never
+    #: a placement, and `placed_rows` above already counts them for backward
+    #: compatibility (the walk's own terminal write is a suggestion since S3).
+    suggested_rows: int = 0
     #: Rows still owed but due after `link_up_to`, left Not linked on purpose (AC-LH2).
     after_horizon: int = 0
     #: The horizon the pass ran under - the caller's own date, or the plan's own when they
@@ -1026,6 +1084,13 @@ class AutoPlaceResult(BaseModel):
     link_up_to: Optional[date] = None
     #: WHETHER a horizon was in force at all (S1). See `AcknowledgeResult.link_horizon`.
     link_horizon: Literal["date", "none"] = "none"
+    #: R18 (`PLAN-oi-links-autocount-truth-24sep.md` 3.6): how many rows this pass
+    #: actually moved - book-linked this pass, or given a different suggestion than
+    #: the one they held coming in. "Link selected" reports this so recalculating
+    #: against AutoCount can say whether it caught anything, distinct from
+    #: `book_linked_rows` / `suggested_rows`, which count the OUTCOME rather than
+    #: whether that outcome is new.
+    changed_rows: int = 0
 
 
 class UnplaceAllRequest(BaseModel):
@@ -1113,11 +1178,20 @@ class OrderInquiryPoDetailLine(BaseModel):
     against other rows' claims - that reading belongs to the "Place on PO" candidates,
     not to a plain look at what was ordered."""
 
+    #: Issue #1215 point 2 - the line's own identity, so the FE can highlight the line
+    #: an opening row's link actually sits on. The SKU alone is ambiguous the moment a
+    #: PO carries two lines of the same item.
+    id: Optional[str] = None
     sku: Optional[str] = None
     product_name: Optional[str] = None
     qty_ordered: str
     qty_received: str
     remaining: str
+    #: Every order inquiry row's own placement on THIS line, summed (never netted
+    #: against anything else - that reading belongs to the "Place on PO" candidates).
+    #: Optional only for a caller that predates this field; `get_po_detail` always
+    #: sends it.
+    allocated: Optional[str] = None
     location: Optional[str] = None
     #: The book's own linkage for this line - the SAME fact and the SAME shape the SCM
     #: purchase-order detail's Lines tab prints (`PurchaseOrderLine.book_so_number` /
@@ -1155,6 +1229,9 @@ class OrderInquiryDocumentAllocation(BaseModel):
     qty: str
     ack_state: Optional[str] = None
     linked_at: Optional[datetime] = None
+    #: Issue #1215 point 2 - which PO line this allocation sits on, so the FE can
+    #: highlight it on the lines grid. Null on an SPO allocation.
+    po_line_id: Optional[str] = None
 
 
 class OrderInquiryPoDetail(BaseModel):
@@ -1169,6 +1246,7 @@ class OrderInquiryPoDetail(BaseModel):
     status: str
     lines: List[OrderInquiryPoDetailLine] = []
     #: Who this purchase order's quantity is spoken for by, drafts included (AC-D18).
+    #: Real links only - a suggested link never appears here (AC-LT-34).
     allocations: List[OrderInquiryDocumentAllocation] = []
 
 
@@ -1181,6 +1259,11 @@ class OrderInquirySpoDetailLine(BaseModel):
     never take (R11): showing it is how a buyer learns why nothing was drafted onto it.
     """
 
+    #: R15 (owner rulings, 25 Sep 2026, hand test on stack C): the line's own identity
+    #: (`spo_allocations.id`), the same reason `OrderInquiryPoDetailLine.id` exists
+    #: (issue #1215 point 2) - without it the SPO lightbox has no field to highlight a
+    #: line by, unlike the PO lightbox next door.
+    id: Optional[str] = None
     sku: Optional[str] = None
     product_name: Optional[str] = None
     #: R31b (stock debt lane): this line's own `spo_allocations.spo_line_number`, so a
@@ -1214,6 +1297,7 @@ class OrderInquirySpoDetail(BaseModel):
     shipment_ref: Optional[str] = None
     container_no: Optional[str] = None
     lines: List[OrderInquirySpoDetailLine] = []
+    #: Real links only - a suggested link never appears here (AC-LT-34).
     allocations: List[OrderInquiryDocumentAllocation] = []
 
 

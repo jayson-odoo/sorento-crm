@@ -550,7 +550,12 @@ def test_every_company_id_table_is_registered():
     # (F3) - the reserve/unreserve route both load and write it BY the reserve request
     # row's id, never through a scoped parent query, so it is owned outright like its
     # sibling reserve tables above.
-    expected_owned = 137
+    # PLAN-oi-links-autocount-truth-24sep.md (issue #1215) adds 1:
+    # `order_inquiry_suggested_links` is one company's own guess the cascade walk made
+    # against its own order inquiry row, written and trimmed by
+    # `ProjectOrderInquiryService._write_suggested_links` off the scoped row - owned the
+    # same reason `order_inquiry_links` beside it is owned.
+    expected_owned = 138
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )

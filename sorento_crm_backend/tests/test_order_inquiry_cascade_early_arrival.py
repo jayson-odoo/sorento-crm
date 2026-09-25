@@ -517,8 +517,12 @@ def test_ac_ea_3_a_stated_lead_row_refuses_its_only_early_po_line(world):
 
 
 def test_ac_ea_4_a_stated_lead_row_links_a_po_line_inside_the_window(world):
-    """AC-EA-4: same row, the PO line promised 2026-12-20 (inside the window) - linked as
-    before, `placed_rows == 1`."""
+    """AC-EA-4: same row, the PO line promised 2026-12-20 (inside the window) - suggested
+    as before, `placed_rows == 1`.
+
+    S3 reversal: the line carries no book match, so the walk SUGGESTS it, it no
+    longer writes a real link.
+    """
     world.lead_time(world.product, days=STATED_LEAD)
     line = world.purchase_order(
         "ZZT-EA4-PO", date(2026, 8, 1), [("BRW", 20, date(2026, 12, 20), "1")]
@@ -531,15 +535,20 @@ def test_ac_ea_4_a_stated_lead_row_links_a_po_line_inside_the_window(world):
     world.db.refresh(row)
 
     assert result["placed_rows"] == 1
-    assert row.state == "placed"
-    [link] = world.svc._links_of(row.id)
-    assert link.po_line_id == line
+    assert row.state == "raised"
+    assert world.svc._links_of(row.id) == []
+    [suggestion] = world.svc._suggested_of_row(row.id)
+    assert suggestion.po_line_id == line
 
 
 def test_ac_ea_5_default_lead_time_refuses_at_ninety_days_and_links_the_day_after(world):
     """AC-EA-5: no stated and no measured lead time -> default 90. A PO promised
-    2026-10-17 (delivery - 90) is refused; one promised 2026-10-18 is linked. Two
-    independent products so the two outcomes cannot interfere with each other's walk."""
+    2026-10-17 (delivery - 90) is refused; one promised 2026-10-18 is suggested. Two
+    independent products so the two outcomes cannot interfere with each other's walk.
+
+    S3 reversal: neither line carries a book match, so the day-after PO is SUGGESTED,
+    it no longer gets a real link.
+    """
     refused_product = world.product
     world.purchase_order(
         "ZZT-EA5A-PO", date(2026, 8, 1), [("BRW", 20, DEFAULT_THRESHOLD, "1")]
@@ -567,17 +576,24 @@ def test_ac_ea_5_default_lead_time_refuses_at_ninety_days_and_links_the_day_afte
     assert result["placed_rows"] == 1
     assert row_refused.state == "raised"
     assert world.svc._links_of(row_refused.id) == []
-    assert row_linked.state == "placed"
-    [link] = world.svc._links_of(row_linked.id)
-    assert link.po_line_id == line_linked
+    assert world.svc._suggested_of_row(row_refused.id) == []
+    assert row_linked.state == "raised"
+    assert world.svc._links_of(row_linked.id) == []
+    [suggestion] = world.svc._suggested_of_row(row_linked.id)
+    assert suggestion.po_line_id == line_linked
 
 
 def test_ac_ea_6_an_early_line_this_rows_own_so_claims_links_regardless_of_the_window(world):
     """AC-EA-6: an early PO line THIS row's own SO claims (`scm.order_link_claim`) is
-    linked regardless of the window, and the worklist then reads `suggestion is None`
-    on that link (S3) - the pill must not flag what the walk was just told to honour."""
-    from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
+    OFFERED regardless of the window - the exemption is about `_within_window` alone,
+    never about which write it reaches after.
 
+    S3 reversal: the line carries no book match (a claim is not the book -
+    `follow_book_for_rows` is a separate, earlier pass keyed on `from_so_line_ref`), so
+    what the ordinary cascade walk does with an exempt candidate is still a SUGGESTION,
+    never a real link - the reallocate pill (`suggestion` on a wire LINK entry) is a
+    real-link-only concern and does not apply here at all.
+    """
     world.lead_time(world.product, days=STATED_LEAD)
     line = world.purchase_order(
         "ZZT-EA6-PO", date(2026, 8, 1), [("BRW", 20, date(2026, 10, 1), "1")]
@@ -596,25 +612,19 @@ def test_ac_ea_6_an_early_line_this_rows_own_so_claims_links_regardless_of_the_w
     world.db.refresh(row)
 
     assert result["placed_rows"] == 1
-    assert row.state == "placed"
-    [link] = world.svc._links_of(row.id)
-    assert link.po_line_id == line
-
-    entry = next(
-        item
-        for item in OrderInquiryWorklistService(world.db).list_rows(limit=100)["data"]
-        if item["id"] == row.id
-    )
-    [wire_link] = entry["links"]
-    assert wire_link["suggestion"] is None
+    assert row.state == "raised"
+    assert world.svc._links_of(row.id) == []
+    [suggestion] = world.svc._suggested_of_row(row.id)
+    assert suggestion.po_line_id == line
 
 
 def test_ac_ea_7_an_early_line_the_row_cites_links_regardless_of_the_window(world):
-    """AC-EA-7: an early PO line whose document number the row cites is linked
-    regardless of the window, and the worklist then reads `suggestion is None` on that
-    link (S3)."""
-    from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
+    """AC-EA-7: an early PO line whose document number the row cites is OFFERED
+    regardless of the window - the exemption is about `_within_window` alone.
 
+    S3 reversal: the cited document carries no book match either, so the ordinary
+    cascade walk still SUGGESTS it, it never writes a real link.
+    """
     world.lead_time(world.product, days=STATED_LEAD)
     line = world.purchase_order(
         "ZZT-EA7-PO", date(2026, 8, 1), [("BRW", 20, date(2026, 10, 1), "1")]
@@ -629,22 +639,18 @@ def test_ac_ea_7_an_early_line_the_row_cites_links_regardless_of_the_window(worl
     world.db.refresh(row)
 
     assert result["placed_rows"] == 1
-    assert row.state == "placed"
-    [link] = world.svc._links_of(row.id)
-    assert link.po_line_id == line
-
-    entry = next(
-        item
-        for item in OrderInquiryWorklistService(world.db).list_rows(limit=100)["data"]
-        if item["id"] == row.id
-    )
-    [wire_link] = entry["links"]
-    assert wire_link["suggestion"] is None
+    assert row.state == "raised"
+    assert world.svc._links_of(row.id) == []
+    [suggestion] = world.svc._suggested_of_row(row.id)
+    assert suggestion.po_line_id == line
 
 
 def test_ac_ea_8_only_the_inside_candidate_counts_toward_cover(world):
     """AC-EA-8, first half: an early line and an inside-window line both open - only the
-    inside one is taken."""
+    inside one is taken.
+
+    S3 reversal: neither line carries a book match, so the take is SUGGESTED, it is
+    no longer a real link."""
     world.lead_time(world.product, days=STATED_LEAD)
     lines = world.purchase_order(
         "ZZT-EA8-PO", date(2026, 8, 1),
@@ -659,9 +665,10 @@ def test_ac_ea_8_only_the_inside_candidate_counts_toward_cover(world):
     world.db.refresh(row)
 
     assert result["placed_rows"] == 1
-    assert row.state == "placed"
-    [link] = world.svc._links_of(row.id)
-    assert link.po_line_id == inside_line
+    assert row.state == "raised"
+    assert world.svc._links_of(row.id) == []
+    [suggestion] = world.svc._suggested_of_row(row.id)
+    assert suggestion.po_line_id == inside_line
 
 
 def test_ac_ea_8_when_the_inside_candidate_alone_cannot_cover_the_need_nothing_links(world):
@@ -694,7 +701,11 @@ def test_ac_ea_9_an_early_spo_allocation_is_refused_the_same_way_as_a_po_line(wo
     `_candidates_for_row` in the first place - without it BOTH halves would pass for
     the wrong reason (an empty candidate list, not a refused one). Two independent
     products, the same isolation AC-EA-5 uses, so the two allocations cannot be dealt
-    to the wrong row."""
+    to the wrong row.
+
+    S3 reversal: neither allocation carries a book match, so the inside-window one is
+    SUGGESTED, it no longer gets a real link.
+    """
     refused_product = world.product
     world.lead_time(refused_product, days=STATED_LEAD)
     world.spo_allocation("ZZT-EA9A-SPO", "BRW", 20, expected=date(2026, 10, 1))
@@ -720,9 +731,11 @@ def test_ac_ea_9_an_early_spo_allocation_is_refused_the_same_way_as_a_po_line(wo
     assert result["placed_rows"] == 1
     assert row_refused.state == "raised"
     assert world.svc._links_of(row_refused.id) == []
-    assert row_linked.state == "placed"
-    [link] = world.svc._links_of(row_linked.id)
-    assert link.spo_allocation_id == allocation_linked
+    assert world.svc._suggested_of_row(row_refused.id) == []
+    assert row_linked.state == "raised"
+    assert world.svc._links_of(row_linked.id) == []
+    [suggestion] = world.svc._suggested_of_row(row_linked.id)
+    assert suggestion.spo_allocation_id == allocation_linked
 
 
 def test_ac_ea_10_a_redeal_keeps_a_draft_on_an_early_line_with_nothing_better(world):
@@ -960,11 +973,15 @@ def test_ac_ea_17_a_live_but_unresolved_claim_is_an_exemption_on_the_walk_and_th
     UNRESOLVED (`resolved_at = NULL`) - exactly what a claim written before the
     purchase side is named looks like. `_claim_rows` (the walk's own reader) never
     filters on `resolved_at`, so the claim's live outstanding still makes `own_so_claim`
-    True and the cascade links the early line regardless of the window. The pill's
-    `_claim_so_numbers_by_target` DOES filter `resolved_at IS NOT NULL`, so today it
-    cannot find this claim and flags the link the walk was just told to honour - the
-    same invariant break S3 exists to stop, on the one claim shape S3 missed. RED on
-    the second half until the pill stops filtering on `resolved_at`."""
+    True and the cascade offers the early line regardless of the window.
+
+    `PLAN-oi-links-autocount-truth-24sep.md` S3 reversal (a different S3 from the one
+    named above, which belongs to THIS plan, `oi-cascade-skip-early-arrival`): the
+    claimed line carries no BOOK match (a claim is not the book), so what the ordinary
+    cascade walk writes is a SUGGESTION now, never a real link - `_worklist_suggestion`
+    (the S1b reallocate pill, a real-link-only field) has nothing to read here at all,
+    since `links` is empty; there is no pill on a guess.
+    """
     world.lead_time(world.product, days=STATED_LEAD)
     line = world.purchase_order(
         "ZZT-EA17-PO", date(2026, 8, 1), [("BRW", 20, date(2026, 10, 1), "1")]
@@ -983,8 +1000,7 @@ def test_ac_ea_17_a_live_but_unresolved_claim_is_an_exemption_on_the_walk_and_th
     world.db.refresh(row)
 
     assert result["placed_rows"] == 1
-    assert row.state == "placed"
-    [link] = world.svc._links_of(row.id)
-    assert link.po_line_id == line
-
-    assert _worklist_suggestion(world, row.id) is None
+    assert row.state == "raised"
+    assert world.svc._links_of(row.id) == []
+    [suggestion] = world.svc._suggested_of_row(row.id)
+    assert suggestion.po_line_id == line

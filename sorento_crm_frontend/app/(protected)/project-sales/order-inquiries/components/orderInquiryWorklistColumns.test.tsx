@@ -32,6 +32,7 @@ vi.mock('@/components/ui/tooltip', async () => {
     TooltipContent: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   };
 });
+
 import type { OrderInquiryWorklistRow } from '../../_shared/types/orderInquiry.types';
 
 function worklistRow(over: Partial<OrderInquiryWorklistRow> = {}): OrderInquiryWorklistRow {
@@ -392,9 +393,11 @@ describe('AC-A5: the info icon opens the backing-documents lightbox', () => {
     fireEvent.click(screen.getByTestId('backing-documents-trigger-row-source-po'));
     const dialog = screen.getByTestId('backing-documents-row-source-po');
 
-    expect(within(dialog).getByText('from PO 202606-S0110')).toBeInTheDocument();
+    // R17: "from PO" plus a CLICKABLE number now (two nodes, not one text run).
+    expect(within(dialog).getByText('from PO')).toBeInTheDocument();
+    expect(within(dialog).getByText('202606-S0110')).toBeInTheDocument();
     // Exactly one "from PO" line - the sourceless SPO and the PO-kind link add none.
-    expect(within(dialog).getAllByText(/^from PO /)).toHaveLength(1);
+    expect(within(dialog).getAllByText('from PO')).toHaveLength(1);
   });
 });
 
@@ -1949,6 +1952,150 @@ describe('AC-S5-2 (own arrival, Path B retained row): reads Received exactly as 
     expect(mark.textContent).toBe('received');
     // Path B is a RETAIN, never a redirect: the row stays active, not muted.
     expect(row.className).not.toContain('opacity-60');
+  });
+});
+
+describe('the Suggested column: document number only (R11/R12, owner rulings 24 Sep 2026)', () => {
+  it('R11/R12: prints the document number and nothing else - no kind badge, no location, no qty, no late marker, no "suggested" word', () => {
+    renderRows(
+      [
+        worklistRow({
+          id: 'row-1',
+          suggested_links: [
+            {
+              kind: 'po',
+              document: '202609-S0090',
+              po_id: 'po-90',
+              po_line_id: 'line-90',
+              location: 'BRW-BB',
+              qty: '10',
+              late_days: 3,
+            },
+          ],
+        }),
+      ],
+      'suggested',
+    );
+
+    const row = screen.getByTestId('row-row-1');
+    expect(within(row).getByText('202609-S0090')).toBeInTheDocument();
+    expect(within(row).queryByText('PO')).not.toBeInTheDocument();
+    expect(within(row).queryByText('SPO')).not.toBeInTheDocument();
+    expect(within(row).queryByText(/BRW-BB/)).not.toBeInTheDocument();
+    expect(within(row).queryByText(/late/)).not.toBeInTheDocument();
+    expect(within(row).queryByText('suggested')).not.toBeInTheDocument();
+  });
+
+  it('R11: a plain +N pill when the row holds more than one suggestion, no badge and no word beside it', () => {
+    renderRows(
+      [
+        worklistRow({
+          id: 'row-multi',
+          suggested_links: [
+            { kind: 'po', document: '202609-S0090', po_id: 'po-90', qty: '10' },
+            { kind: 'spo', document: 'SPO-2026/09-0012', qty: '5' },
+          ],
+        }),
+      ],
+      'suggested',
+    );
+
+    const row = screen.getByTestId('row-row-multi');
+    expect(within(row).getByText('202609-S0090')).toBeInTheDocument();
+    const pill = within(row).getByTestId('suggested-pill-row-multi');
+    expect(pill).toHaveTextContent('+1');
+    expect(within(row).queryByText('SPO-2026/09-0012')).not.toBeInTheDocument();
+    // Nit 1 (review round 2): the rest are named in the pill's own title, not hidden.
+    expect(pill).toHaveAttribute('title', 'SPO-2026/09-0012');
+  });
+
+  it('AC-LT-03: reads a plain dash when the row carries no suggestion', () => {
+    renderRows([worklistRow({ id: 'row-none', suggested_links: [] })], 'suggested');
+
+    const row = screen.getByTestId('row-row-none');
+    expect(within(row).getByText('-')).toBeInTheDocument();
+  });
+
+  it('R11: opening the document from this cell is the SAME lightbox trigger the PO/SPO cells use', () => {
+    renderRows(
+      [
+        worklistRow({
+          id: 'row-open',
+          suggested_links: [
+            { kind: 'po', document: '202609-S0090', po_id: 'po-90', po_line_id: 'line-90', qty: '10' },
+          ],
+        }),
+      ],
+      'suggested',
+    );
+
+    const row = screen.getByTestId('row-row-open');
+    expect(
+      within(row).getByTestId('document-detail-trigger-202609-S0090'),
+    ).toBeInTheDocument();
+  });
+});
+
+/**
+ * Review round 2 Should fix 9: AC-LT-02 had no test at all. A real link and a
+ * suggested link on the SAME row must never print each other's document - the
+ * whole point of "the cascade only suggests" is that the two never merge.
+ */
+describe('AC-LT-02: a real SPO link and a suggested link on the same row stay apart', () => {
+  const row = worklistRow({
+    id: 'row-both',
+    links: [{ id: 'l1', kind: 'spo', document: 'SPO-2026/09-0080', qty: '4' }],
+    suggested_links: [{ kind: 'po', document: '202609-S0090', po_id: 'po-90', qty: '6' }],
+  });
+
+  it('the SPO cell shows the real link only', () => {
+    renderRows([row], 'spo_number');
+
+    const rendered = screen.getByTestId('row-row-both');
+    expect(within(rendered).getByText('SPO-2026/09-0080')).toBeInTheDocument();
+    expect(within(rendered).queryByText('202609-S0090')).not.toBeInTheDocument();
+  });
+
+  it('the Suggested cell shows the suggested link only', () => {
+    renderRows([row], 'suggested');
+
+    const rendered = screen.getByTestId('row-row-both');
+    expect(within(rendered).getByText('202609-S0090')).toBeInTheDocument();
+    expect(within(rendered).queryByText('SPO-2026/09-0080')).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * Review round 2 Should fix 9: AC-LT-08 had no test at all. The truncation and
+ * `title` fallback this pins are what keeps a long document number from pushing
+ * the row wider than the viewport (the "no horizontal page scroll" half of the AC
+ * is S6's own agent-browser evidence, not something jsdom can measure).
+ */
+describe('AC-LT-08: the Suggested cell truncates a long document number with a title', () => {
+  it('carries the truncate class and a title matching the full document number', () => {
+    renderRows(
+      [
+        worklistRow({
+          id: 'row-long',
+          links: [
+            {
+              id: 'l1', kind: 'po', document: '202609-S0090-VERY-LONG-DOCUMENT-NUMBER',
+              qty: '4', received: true,
+            },
+          ],
+          suggested_links: [
+            { kind: 'spo', document: 'SPO-2026/09-0080-ANOTHER-LONG-NUMBER', qty: '6' },
+          ],
+        }),
+      ],
+      'suggested',
+    );
+
+    const trigger = screen.getByTestId(
+      'document-detail-trigger-SPO-2026/09-0080-ANOTHER-LONG-NUMBER',
+    );
+    expect(trigger).toHaveClass('truncate');
+    expect(trigger).toHaveAttribute('title', 'SPO-2026/09-0080-ANOTHER-LONG-NUMBER');
   });
 });
 

@@ -214,6 +214,11 @@ EXPORT_HEADINGS = (
     # place to the right.
     "TAKEN",
     "REMAINING",
+    # AC-LT-39 (G9, `PLAN-oi-links-autocount-truth-24sep.md` 3.5): the cascade's own
+    # guess, beside PO and SPO on every other surface - PO NO above stays real-links
+    # only. APPENDED for the same reason ACKNOWLEDGED/TAKEN/REMAINING were: their own
+    # filters are keyed on the columns before it being where they have always been.
+    "SUGGESTED",
 )
 
 # The two routes a row can be attributed by, joined ONCE through a coalesce rather than
@@ -883,6 +888,22 @@ def _export_remaining(row: Dict[str, Any]) -> str:
     return _qty_str(max(remaining, _ZERO))
 
 
+def _export_suggested(row: Dict[str, Any]) -> str:
+    """AC-LT-39 (G9): the export's own Suggested cell - the same document/qty the
+    worklist's Suggested column would print, kept simple for a spreadsheet cell
+    rather than the badge the screen shows. `-` on a row nothing has been guessed
+    for, several entries joined with `; ` on the rare row the walk offered more
+    than one document to.
+    """
+    entries = row.get("suggested_links") or []
+    if not entries:
+        return "-"
+    return "; ".join(
+        f"{entry.get('document') or entry.get('kind')} {_qty_str(_dec(entry.get('qty')))}"
+        for entry in entries
+    )
+
+
 def ack_label(row: Dict[str, Any]) -> str:
     """The handshake as one printed phrase, for the export (AC-H14).
 
@@ -1549,6 +1570,9 @@ class OrderInquiryWorklistService:
         links = ProjectOrderInquiryService(self.db).links_for_rows(
             [row.id for row in rows]
         )
+        suggested_links = ProjectOrderInquiryService(self.db).suggested_links_for_rows(
+            [row.id for row in rows]
+        )
         self._attach_link_suggestions(rows, links, product_by_row)
         bundle_map = self._bundle_map_for_rows(rows)
         anchor_headline_by_id = self._anchor_headline_by_id(rows, links)
@@ -1565,6 +1589,7 @@ class OrderInquiryWorklistService:
                     bundle_map,
                     anchor_headline_by_id,
                     host_changes_by_row_id,
+                    suggested_links,
                     raise_events_by_row,
                 )
                 for row in rows
@@ -2196,6 +2221,7 @@ class OrderInquiryWorklistService:
         bundle_map: Optional[Dict[str, List[str]]] = None,
         anchor_headline_by_id: Optional[Dict[str, str]] = None,
         host_changes_by_row_id: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+        suggested_links: Optional[Dict[str, List[Dict[str, Any]]]] = None,
         raise_events_by_row: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         line_flow = (flow or {}).get(row.so_line_id, {})
@@ -2253,6 +2279,9 @@ class OrderInquiryWorklistService:
             # WHERE this row's quantity sits (AC-I5), off the ONE reader the per-project
             # list and the SCM sales-order detail also use.
             "links": row_links,
+            # AC-LT-33: the cascade's own guesses, kept separate from `links` above,
+            # which carries nothing suggested.
+            "suggested_links": (suggested_links or {}).get(row.id, []),
             "linked_qty": _qty_str(linked_qty),
             "cited_document": row.cited_document,
             # PLAN-scm-supplied-with-companions.md S5. `response_model` drops what it is
@@ -2400,6 +2429,25 @@ class OrderInquiryWorklistService:
         book_so_by_ref = order_link_service.book_so_numbers_by_ref(
             self.db, [line[-1] for line in lines if line[-1]]
         )
+        # Issue #1215 point 2: which LINE an order inquiry's placement sits on, not only
+        # which document - a PO with two lines of the same item made the "Allocated to"
+        # panel's Item column ambiguous. Summed here (never per-row in the loop below) so
+        # the grid's own Allocated column and the panel agree about what "linked" means,
+        # and left out of `_allocations_on`'s own real-time read of who holds a document
+        # (that reader answers a different question, per row).
+        allocated_by_line = {
+            str(po_line_id): _dec(total)
+            for po_line_id, total in self.db.query(
+                OrderInquiryLink.po_line_id, func.sum(OrderInquiryLink.qty)
+            )
+            .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquiryLink.row_id)
+            .filter(
+                OrderInquiryLink.po_line_id.in_(line_ids),
+                OrderInquiryRow.state != INQUIRY_CANCELLED,
+            )
+            .group_by(OrderInquiryLink.po_line_id)
+            .all()
+        }
         return {
             "id": po.id,
             "po_number": po.po_number,
@@ -2409,11 +2457,21 @@ class OrderInquiryWorklistService:
             "status": po.status,
             "lines": [
                 {
+                    # Issue #1215 point 2: the line's own identity, so the FE can
+                    # highlight the one line the opening row's link actually sits on -
+                    # the SKU alone is ambiguous the moment a PO carries two lines of the
+                    # same item.
+                    "id": str(line_id),
                     "sku": sku,
                     "product_name": product_name,
                     "qty_ordered": _qty_str(_dec(qty_ordered)),
                     "qty_received": _qty_str(_dec(qty_received)),
                     "remaining": _qty_str(_dec(qty_ordered) - _dec(qty_received)),
+                    # Every order inquiry row's own placement on THIS line, summed -
+                    # never netted against anything else, unlike the "Place on PO"
+                    # candidate walk's own `remaining`. Zero rather than absent when
+                    # nothing is linked here yet.
+                    "allocated": _qty_str(allocated_by_line.get(str(line_id), _ZERO)),
                     "location": warehouse_code,
                     # The book's own SO linkage, read off the line's OWN
                     # `from_so_line_ref` - three states, and the ref itself never leaves
@@ -2436,7 +2494,8 @@ class OrderInquiryWorklistService:
             ],
             # WHO is holding this document's quantity (AC-D18). Drafts included and marked
             # as such: they occupy the quantity, so a panel that hid them would tell the
-            # buyer a line is free when the next Confirm is going to take it.
+            # buyer a line is free when the next Confirm is going to take it. Real links
+            # only - a suggestion never appears here (AC-LT-34).
             "allocations": self._allocations_on(po_line_ids=line_ids),
         }
 
@@ -2534,6 +2593,11 @@ class OrderInquiryWorklistService:
             "container_no": shipment.shipping_container_number if shipment else None,
             "lines": [
                 {
+                    # R15 (owner rulings, 25 Sep 2026, hand test on stack C): the line's
+                    # own identity, the same reason `get_po_detail` sends one for its own
+                    # lines (issue #1215 point 2) - without it the FE has no field to
+                    # highlight this exact allocation by.
+                    "id": str(allocation.id),
                     "sku": product_code,
                     "product_name": product_name,
                     # R31b (stock debt lane): the document dialog's own `highlightLines`
@@ -2593,6 +2657,11 @@ class OrderInquiryWorklistService:
             self.db.query(
                 OrderInquiryLink.qty,
                 OrderInquiryLink.linked_at,
+                # Issue #1215 point 2: which LINE this allocation sits on - the panel
+                # named only the document before, and a PO with two lines of the same
+                # item could not say which one. `spo_allocation_id` is never sent: the
+                # SPO lightbox already addresses its own lines by number, not by id.
+                OrderInquiryLink.po_line_id,
                 OrderInquiryRow.item_code,
                 OrderInquiryRow.ack_state,
                 OrderInquiry.inquiry_no,
@@ -2623,10 +2692,12 @@ class OrderInquiryWorklistService:
                 "qty": _qty_str(_dec(qty)),
                 "ack_state": ack_state,
                 "linked_at": linked_at,
+                "po_line_id": str(po_line_id) if po_line_id else None,
             }
             for (
                 qty,
                 linked_at,
+                po_line_id,
                 item_code,
                 ack_state,
                 inquiry_no,
@@ -3244,8 +3315,14 @@ class OrderInquiryWorklistService:
         # empty `links` dict for every row, and the export's new Taken/Remaining columns
         # would print "0"/the bare qty regardless of what is actually linked.
         links = ProjectOrderInquiryService(self.db).links_for_rows([row.id for row in rows])
+        suggested_links = ProjectOrderInquiryService(self.db).suggested_links_for_rows(
+            [row.id for row in rows]
+        )
         return [
-            self._serialize(row, bundle_map=bundle_map, links=links) for row in rows
+            self._serialize(
+                row, bundle_map=bundle_map, links=links, suggested_links=suggested_links
+            )
+            for row in rows
         ]
 
     def _write_sheet(
@@ -3296,6 +3373,7 @@ class OrderInquiryWorklistService:
                     ack_label(row),
                     _export_taken(row),
                     _export_remaining(row),
+                    _export_suggested(row),
                 ]
                 # `columns` may be a PREFIX of `EXPORT_HEADINGS` (Lane C's worksheet, no
                 # ACKNOWLEDGED / TAKEN / REMAINING) - cut the row to match so the sheet

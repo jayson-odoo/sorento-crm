@@ -85,6 +85,7 @@ from .test_order_inquiry_handshake import (
     api,
     world,
 )
+from .test_order_inquiry_suggested_links import _suggested_of
 from .test_order_inquiry_worklist_raised_by import _decision, _product
 from .test_order_inquiry_worklist import (
     LIST as WL_LIST,
@@ -157,7 +158,11 @@ class TestCascadeSkipsUsedRows:
 
     def test_cascade_links_open_spo_to_fresh_row_not_used_AC_OH_11(self, api):
         """AC-OH-11: the same open SPO must land on the FRESH row the redirect raised,
-        never on the used one."""
+        never on the used one.
+
+        S3 reversal: the open SPO carries no book match for the fresh row, so the
+        cascade walk now SUGGESTS it rather than writing a real link - the used row's
+        own link stays real (seeded directly by the fixture, never by the cascade)."""
         _client, world = api
         fixture = _redirected_fixture(api)
         row = fixture["redirected_row"]
@@ -191,16 +196,24 @@ class TestCascadeSkipsUsedRows:
 
         world.db.refresh(new_row)
         world.db.refresh(row)
-        new_links = _links_of(world, new_row)
-        assert len(new_links) == 1, "the open SPO must land on the fresh row"
-        assert new_links[0].spo_allocation_id == open_alloc.id
+        assert _links_of(world, new_row) == [], (
+            "S3: the cascade never writes a real link - it suggests"
+        )
+        new_suggested = _suggested_of(world.db, new_row.id)
+        assert len(new_suggested) == 1, "the open SPO must be suggested to the fresh row"
+        assert new_suggested[0].spo_allocation_id == open_alloc.id
+        assert _suggested_of(world.db, row.id) == [], (
+            "the used row must not gain the open SPO, suggested or otherwise"
+        )
         used_links = _links_of(world, row)
         assert len(used_links) == 1, "the used row must not gain the open SPO"
         assert used_links[0].spo_allocation_id == fixture["received_allocation"].id
 
     def test_link_now_skips_redirected_row_AC_OH_12(self, api):
         """AC-OH-12: Link now / Auto link all (`link_now`) goes through the same seam and
-        must skip the used row the same way."""
+        must skip the used row the same way.
+
+        S3 reversal: the fresh row's own take is a suggestion now, never a real link."""
         _client, world = api
         fixture = _redirected_fixture(api)
         row = fixture["redirected_row"]
@@ -224,8 +237,14 @@ class TestCascadeSkipsUsedRows:
         used_links = _links_of(world, row)
         assert len(used_links) == 1, "link_now must skip the used row the same way"
         assert used_links[0].spo_allocation_id == fixture["received_allocation"].id
-        new_links = _links_of(world, new_row)
-        assert new_links and new_links[0].spo_allocation_id == open_alloc.id
+        assert _suggested_of(world.db, row.id) == [], (
+            "the used row must not gain the open SPO, suggested or otherwise"
+        )
+        assert _links_of(world, new_row) == [], (
+            "S3: the cascade never writes a real link - it suggests"
+        )
+        new_suggested = _suggested_of(world.db, new_row.id)
+        assert new_suggested and new_suggested[0].spo_allocation_id == open_alloc.id
 
 
 # =============================================================================

@@ -1509,7 +1509,14 @@ async def auto_place_order_inquiries(
 
     `filter.inquiry_id` (S3, `PLAN-oi-header-list-detail.md`) is the OI detail page's
     own gear > Auto link: scopes the whole cascade to that header's rows, on top of
-    whichever of `product_ids` / `row_ids` is also given."""
+    whichever of `product_ids` / `row_ids` is also given.
+
+    R18 (`PLAN-oi-links-autocount-truth-24sep.md` 3.6): this is also the worklist's and
+    the OI detail's own "Link selected" - `row_ids` naming exactly the ticked rows, and
+    nothing else. There is no separate route for it: the book step above already writes
+    only what AutoCount names, in AutoCount's own name, and the cascade below only ever
+    suggests, so "Link selected" is this same call, scoped to the ticked rows - it can
+    never turn a suggestion into a link on its own."""
     try:
         for product_id in payload.product_ids or []:
             validate_uuid_path(product_id, resource="Product")

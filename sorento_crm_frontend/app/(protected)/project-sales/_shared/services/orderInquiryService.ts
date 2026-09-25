@@ -43,6 +43,31 @@ const BASE = '/api/v1/project-sales';
  * service does is read them, export them and record what purchasing did about them.
  */
 
+/**
+ * SUGGESTED LINKS - CONTRACT (`PLAN-oi-links-autocount-truth-24sep.md`). A suggested
+ * link is the cascade's proposal of a document line for a row - NEVER an
+ * `order_inquiry_links` row, never read by `state`/`po_ref`/`spo_ref`/the PO or SPO
+ * cells. Always called a SUGGESTED LINK, never "suggestion" (that name is taken by
+ * `OrderInquiryLink.suggestion`, the unrelated S1b reallocate/unlink advice on a REAL
+ * link).
+ *
+ *   Row payload (`OrderInquiryRow`, `OrderInquiryWorklistRow`):
+ *     suggested_links : OrderInquirySuggestedLink[] - `[{kind, document, po_id,
+ *       po_line_id, spo_allocation_id, location, qty, expected_date, late_days,
+ *       trigger}]`, separate from `links`.
+ *
+ *   POST {BASE}/order-inquiries/auto-place  (G4, R18): `AutoPlaceResult` carries
+ *     `book_linked_rows` / `suggested_rows` / `changed_rows` beside `placed_rows` -
+ *     AutoCount's own links from the pass's book step, what it could only suggest for
+ *     the rest, and how many rows this pass actually moved. R18 (owner ruling from the
+ *     hand test on stack C, 25 Sep 2026, supersedes G1): "Link selected" is THIS same
+ *     route, `row_ids` naming exactly the ticked rows - there is no separate route for
+ *     it. It never turns a suggestion into a real link on its own; the book step above
+ *     already writes only what AutoCount names, in AutoCount's own name, and the
+ *     cascade only ever suggests. Pressing it re-runs that book step for the ticked
+ *     rows (catching a mistake in the automation) and refreshes their suggestions.
+ */
+
 function normaliseEnvelope(body: unknown, fallbackLimit: number): OrderInquiryListEnvelope {
   const raw = (body ?? {}) as {
     data?: OrderInquiryRow[];
