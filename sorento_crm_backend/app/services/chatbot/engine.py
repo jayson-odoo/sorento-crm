@@ -2525,6 +2525,14 @@ def _run_stages(  # noqa: PLR0915
                         if spec.domain == "inventory"
                     ),
                 )
+                # Chatbot stock ask v2 S3, AC-SA314: an `incoming` entry answered
+                # with its own packing list attaches it to THIS reply. `answer.files`
+                # is the same seam every other domain's attachment already flows
+                # through (`turn_runtime.envelope_of`'s own "files" -> here -> the
+                # existing `send_attachments` action, `_send_actions`) - reused
+                # rather than a new action kind, so B3 needs nothing new from the
+                # executor.
+                answer.files.extend(_stock_ask_packing_list_files(envelopes))
                 turn_trace.record(
                     "looked_up",
                     summary="Looked the answer up.",
@@ -4155,6 +4163,38 @@ class CompleteResult:
 
 def _load_turn(db: Session, turn_id: str) -> ChatbotTurn | None:
     return db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).first()
+
+
+def _stock_ask_packing_list_files(envelopes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Chatbot stock ask v2 S3, AC-SA314: one file per `incoming` entry that carries
+    a `packing_list` (gated server-side, `StockService._apply_stock_visibility` only
+    ever sets it for a contact whose `packing_list_allowed` is on - this reads that
+    decision, it does not re-make it). The canonical file shape every other domain's
+    attachment already carries into `answer.files` (`url`/`filename`/`mimeType`,
+    `sorento_crm_mcp.presenters._Builder.attach`'s own normalisation, unreachable
+    from this package so re-stated here rather than imported across the process
+    boundary)."""
+    files: list[dict[str, Any]] = []
+    for envelope in envelopes or []:
+        if not isinstance(envelope, dict):
+            continue
+        for entry in envelope.get("stock_availability") or []:
+            if not isinstance(entry, dict) or entry.get("branch") != "incoming":
+                continue
+            packing_list = entry.get("packing_list")
+            if not isinstance(packing_list, dict):
+                continue
+            url = packing_list.get("file_path")
+            if not url:
+                continue
+            files.append(
+                {
+                    "url": url,
+                    "filename": packing_list.get("filename"),
+                    "mimeType": packing_list.get("mime_type"),
+                }
+            )
+    return files
 
 
 def _attachments_src(answer: Any) -> Any:
