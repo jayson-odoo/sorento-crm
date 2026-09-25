@@ -73,9 +73,35 @@ vi.mock('../../reorder/services/outstandingImportService', () => ({
   getOutstandingUploadConfig: async () => ({ allowed_extensions: ['.xlsx'] }),
 }));
 
+// V3 (PLAN-import-column-mapper-24sep.md F2, AC-M9/AC-M10) - the proforma path, so a
+// column's `required` label reads "Quantity" (the proforma field list's own label; the
+// stock-list path's own is "Packed quantity").
+const previewProformaInvoice = vi.fn();
+const applyProformaInvoice = vi.fn();
+vi.mock('../../services/proformaInvoiceService', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../services/proformaInvoiceService')>();
+  return {
+    ...actual,
+    previewProformaInvoice: (...a: unknown[]) => previewProformaInvoice(...a),
+    applyProformaInvoice: (...a: unknown[]) => applyProformaInvoice(...a),
+  };
+});
+
+const probeImportMapping = vi.fn();
+const saveImportMapping = vi.fn();
+vi.mock('../../services/importMappingService', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../services/importMappingService')>();
+  return {
+    ...actual,
+    probeImportMapping: (...a: unknown[]) => probeImportMapping(...a),
+    saveImportMapping: (...a: unknown[]) => saveImportMapping(...a),
+  };
+});
+
 import { toast } from '@/lib/toast';
 
 import { PlanContainerDialog } from './PlanContainerDialog';
+import type { ImportMappingProbe, ImportMappingField } from '@/components/common/ImportColumnMapper';
 
 function renderDialog() {
   const onOpenChange = vi.fn();
@@ -104,6 +130,19 @@ describe('PlanContainerDialog', () => {
     testStockList.mockResolvedValue({ valid: true, errors: [], warnings: [] });
     createLoadingPlanRecord.mockResolvedValue({ id: 'plan-9' });
     deleteLoadingPlan.mockResolvedValue(undefined);
+    previewProformaInvoice.mockResolvedValue({
+      ok: true,
+      documents: [],
+      missing_columns: [],
+      problems: [],
+      unmapped_headers: [],
+      unmatched_items: 0,
+      unmatched_item_codes: [],
+      supplier_check: null,
+    });
+    applyProformaInvoice.mockResolvedValue({ ids: [] });
+    probeImportMapping.mockResolvedValue(null);
+    saveImportMapping.mockResolvedValue(undefined);
   });
 
   it('asks for the supplier, the sales orders needed window and the document, and nothing else', async () => {
@@ -274,5 +313,143 @@ describe('PlanContainerDialog', () => {
       await screen.findByText('This file has no model number column.'),
     ).toBeInTheDocument();
     expect(push).not.toHaveBeenCalled();
+  });
+
+  // V3 (PLAN-import-column-mapper-24sep.md F2, AC-M9/AC-M10)
+  describe('the inline column mapper', () => {
+    const PDF_XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+
+    function unresolvedQtyProbe(): { probe: ImportMappingProbe; fields: ImportMappingField[] } {
+      return {
+        probe: {
+          header_row: 15,
+          columns: [
+            { position: 0, header: 'ITEM', samples: ['A', 'B'], field: 'item_code', source: 'supplier' },
+            { position: 1, header: 'QTY', samples: ['1', '2'], field: null, source: 'none' },
+            { position: 2, header: 'PRICE', samples: ['10', '20'], field: 'unit_price', source: 'supplier' },
+          ],
+          required_fields: ['item_code', 'qty', 'unit_price'],
+        },
+        fields: [
+          { field: 'item_code', label: 'Item code' },
+          { field: 'qty', label: 'Quantity' },
+          { field: 'unit_price', label: 'Unit price' },
+        ],
+      };
+    }
+
+    async function dropProformaFile() {
+      fireEvent.click(screen.getByLabelText('Proforma invoice'));
+      const file = new File(['x'], 'pi.xlsx', { type: PDF_XLSX });
+      const dropzone = document.querySelector('input[type="file"]') as HTMLInputElement;
+      fireEvent.change(dropzone, { target: { files: [file] } });
+      return file;
+    }
+
+    it('disables Test while a required field is unresolved, and names it (AC-M9)', async () => {
+      probeImportMapping.mockResolvedValue(unresolvedQtyProbe());
+      renderDialog();
+      await chooseSupplier();
+      await dropProformaFile();
+
+      await waitFor(() => expect(probeImportMapping).toHaveBeenCalled());
+
+      const test = await screen.findByRole('button', { name: /Test/ });
+      await waitFor(() => expect((test as HTMLButtonElement).disabled).toBe(true));
+      expect(test.getAttribute('title')).toBe('Map Quantity before testing');
+    });
+
+    it('Test saves the mapping THEN previews with the probed header_row (AC-M10, G1)', async () => {
+      const resolved = unresolvedQtyProbe();
+      resolved.probe.columns[1] = { ...resolved.probe.columns[1], field: 'qty', source: 'supplier' };
+      probeImportMapping.mockResolvedValue(resolved);
+      renderDialog();
+      await chooseSupplier();
+      await dropProformaFile();
+
+      const test = await screen.findByRole('button', { name: /Test/ });
+      await waitFor(() => expect((test as HTMLButtonElement).disabled).toBe(false));
+
+      fireEvent.click(test);
+
+      await waitFor(() => expect(saveImportMapping).toHaveBeenCalled());
+      await waitFor(() => expect(previewProformaInvoice).toHaveBeenCalled());
+      const saveOrder = saveImportMapping.mock.invocationCallOrder[0];
+      const previewOrder = previewProformaInvoice.mock.invocationCallOrder[0];
+      expect(saveOrder).toBeLessThan(previewOrder);
+
+      // The probed header row (15) must travel onto the read Test takes.
+      const previewCallArgs = previewProformaInvoice.mock.calls[0];
+      expect(previewCallArgs).toContain(15);
+    });
+
+    // V7 (fix-round, review R1): Confirm must save the current mapping before it applies,
+    // the same way Test does (grill G1) - today Confirm calls `upload.confirm()`
+    // directly, with no save at all, pressed or not.
+    it('Confirm without a prior Test saves the mapping first', async () => {
+      const resolved = unresolvedQtyProbe();
+      resolved.probe.columns[1] = { ...resolved.probe.columns[1], field: 'qty', source: 'supplier' };
+      probeImportMapping.mockResolvedValue(resolved);
+      renderDialog();
+      await chooseSupplier();
+      await dropProformaFile();
+
+      const confirm = await screen.findByTestId('plan-container-confirm');
+      await waitFor(() => expect((confirm as HTMLButtonElement).disabled).toBe(false));
+
+      fireEvent.click(confirm);
+
+      await waitFor(() => expect(applyProformaInvoice).toHaveBeenCalled());
+      expect(saveImportMapping).toHaveBeenCalled();
+      const saveOrder = saveImportMapping.mock.invocationCallOrder[0];
+      const applyOrder = applyProformaInvoice.mock.invocationCallOrder[0];
+      expect(saveOrder).toBeLessThan(applyOrder);
+    });
+
+    // PLAN-pi-header-fields-convert-fixes-24sep.md F3: header-field picks (the PI's own
+    // label:value block) travel in the SAME `mappings` array Test saves, alongside the
+    // column picks - one table, one save.
+    it('sends header-field picks in the same save body as column picks (AC-F3)', async () => {
+      const resolved = unresolvedQtyProbe();
+      resolved.probe.columns[1] = { ...resolved.probe.columns[1], field: 'qty', source: 'supplier' };
+      resolved.probe.header_fields = [
+        {
+          row: 13,
+          label: '柜号',
+          sample: 'FSCU9304169',
+          field: 'container_no',
+          source: 'supplier',
+        },
+      ];
+      probeImportMapping.mockResolvedValue(resolved);
+      renderDialog();
+      await chooseSupplier();
+      await dropProformaFile();
+
+      // Waited on the folded header-fields summary, not the bare heading: the mapper's own
+      // mount effect - which also fires `onChange` with the header-field pick combined in -
+      // needs one more commit to propagate back up before Test's click handler reads the
+      // current selections.
+      expect(
+        await screen.findByText('1 of 1 header field mapped from saved layout'),
+      ).toBeInTheDocument();
+      const test = await screen.findByRole('button', { name: /Test/ });
+      await waitFor(() => expect((test as HTMLButtonElement).disabled).toBe(false));
+
+      fireEvent.click(test);
+
+      await waitFor(() => expect(saveImportMapping).toHaveBeenCalled());
+      const call = saveImportMapping.mock.calls[0][0] as {
+        mappings: { header: string; field: string }[];
+      };
+      expect(call.mappings).toEqual(
+        expect.arrayContaining([
+          { header: 'ITEM', field: 'item_code' },
+          { header: 'QTY', field: 'qty' },
+          { header: 'PRICE', field: 'unit_price' },
+          { header: '柜号', field: 'container_no' },
+        ]),
+      );
+    });
   });
 });

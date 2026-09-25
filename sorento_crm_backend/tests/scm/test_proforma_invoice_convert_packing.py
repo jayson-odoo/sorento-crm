@@ -68,7 +68,7 @@ def _seed_kailu(db):
     conn.execute(_text(
         "INSERT INTO import_field_alias (doc_type, field, alias, locale) "
         "VALUES ('packing_list','invoice_date','Date','en') "
-        "ON CONFLICT (doc_type, field, alias) DO NOTHING"
+        "ON CONFLICT (doc_type, field, alias) WHERE supplier_id IS NULL DO NOTHING"
     ))
     db.commit()
 

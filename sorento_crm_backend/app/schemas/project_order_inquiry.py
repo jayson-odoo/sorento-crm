@@ -1173,6 +1173,9 @@ class OrderInquirySpoDetailLine(BaseModel):
 
     sku: Optional[str] = None
     product_name: Optional[str] = None
+    #: R31b (stock debt lane): this line's own `spo_allocations.spo_line_number`, so a
+    #: caller opening the dialog off a linked demand line can mark and jump to the row.
+    spo_line_number: Optional[int] = None
     allocated: str
     received: str
     remaining: str
