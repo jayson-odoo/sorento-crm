@@ -392,8 +392,11 @@ def _header_of(
             first_block.consignee if first_block else None
         ),
         "shipper": (pi.shipper if pi else None) or (pl.shipper if pl else None),
-        # Q1 ruling: `提单号` (`bl_no`) fills the SO field, never `bill_of_lading_number`.
-        "so_ref": (first_doc.bl_no if first_doc else None) or (
+        # R-E: SO is its own field (`so_no`), distinct from the B/L reference (`bl_no`).
+        "so_ref": (first_doc.so_no if first_doc else None) or (
+            first_block.so_no if first_block else None
+        ),
+        "bl_ref": (first_doc.bl_no if first_doc else None) or (
             first_block.bl_no if first_block else None
         ),
     }
