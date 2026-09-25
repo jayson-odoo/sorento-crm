@@ -24,6 +24,7 @@ import {
 } from './POIntakeExtractionStatus';
 import {
   POIntakeLinesGrid,
+  blockingNotes,
   lineNeedsAttention,
   type POIntakeLinesGridHandle,
 } from './POIntakeLinesGrid';
@@ -157,10 +158,9 @@ export function POIntakeConfirmClient({
   // F4 (owner hand test 25 Sep 2026, item 4): a note naming no line - a signature, "Continue
   // To Next Page", delivery instructions - had its only surface in the Documents-tab
   // annotations grid, which is gone. With nowhere left to review it, it no longer blocks
-  // Confirm. A note naming a line still does, through that row's own indicator (F2).
-  const unreviewed = version.annotations.filter(
-    (note) => note.state === 'proposed' && note.refers_to_lines.length > 0,
-  );
+  // Confirm. A note naming a line still does, through that row's own indicator (F2). The
+  // server gates Confirm on this same rule.
+  const unreviewed = blockingNotes(version.annotations, version.lines);
   const confirmed = Boolean(version.confirmed_at);
   const readOnly = !canEdit || confirmed;
   const extractionSettled =

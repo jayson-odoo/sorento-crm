@@ -505,6 +505,38 @@ describe('POIntakeConfirmClient', () => {
     expect(screen.queryByRole('button', { name: /Review them/i })).toBeNull();
   });
 
+  /**
+   * Owner re-test 25 Sep 2026: the server refused Confirm over notes this screen did not
+   * show. N notes naming K lines: the header counts N, "Need attention" lists every one of
+   * the K lines, and a note naming a line this document does not have counts nowhere (the
+   * server's `blocking_annotations` is the same rule).
+   */
+  it('counts every blocking note and lists each of its lines under Need attention', async () => {
+    const clean = (n: number) =>
+      line({ id: `l${n}`, line_no: n, stock_code_raw: `CLEAN-${n}`, description_raw: `Clean ${n}` });
+    getPOVersion.mockResolvedValue(
+      version({
+        lines: [1, 2, 3, 4, 5, 6, 7, 8].map(clean),
+        annotations: [
+          annotation({ id: 'n1', refers_to_lines: [2] }),
+          annotation({ id: 'n2', refers_to_lines: [5] }),
+          annotation({ id: 'n3', refers_to_lines: [5], raw_text: 'second note on 5' }),
+          annotation({ id: 'n4', refers_to_lines: [7] }),
+          annotation({ id: 'ghost', refers_to_lines: [99] }),
+          annotation({ id: 'doc', refers_to_lines: [] }),
+        ],
+      }),
+    );
+
+    renderConfirm();
+
+    expect(await screen.findByRole('button', { name: /Confirm this PO/i })).toBeDisabled();
+    expect(screen.getByText('4 handwritten notes still unreviewed')).toBeInTheDocument();
+    expect(screen.getByText('Need attention (3)')).toBeInTheDocument();
+    for (const n of [2, 5, 7]) expect(screen.getByDisplayValue(`CLEAN-${n}`)).toBeInTheDocument();
+    for (const n of [1, 3, 4, 6, 8]) expect(screen.queryByDisplayValue(`CLEAN-${n}`)).toBeNull();
+  });
+
   it('confirms once every note has been looked at', async () => {
     getPOVersion.mockResolvedValue(
       version({

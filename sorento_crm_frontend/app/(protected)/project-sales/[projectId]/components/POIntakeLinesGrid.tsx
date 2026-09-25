@@ -117,6 +117,24 @@ export function lineNeedsAttention(line: POVersionLine): boolean {
 }
 
 /**
+ * The notes that hold Confirm: still proposed AND naming a line on this version. The server's
+ * `blocking_annotations` (`project_po_confirm.py`) is the same rule, so the button, the
+ * "Need attention" rows and the server's refusal always agree (owner re-test 25 Sep 2026: the
+ * server once counted 11 notes this screen did not show). A note naming no line here has no
+ * row to be reviewed from, so it never blocks.
+ */
+export function blockingNotes(
+  annotations: POAnnotation[],
+  lines: Pick<POVersionLine, 'line_no'>[],
+): POAnnotation[] {
+  const lineNos = new Set(lines.map((line) => line.line_no));
+  return annotations.filter(
+    (note) =>
+      note.state === 'proposed' && note.refers_to_lines.some((lineNo) => lineNos.has(lineNo)),
+  );
+}
+
+/**
  * The 52 lines, editable in place.
  *
  * Cells are UNCONTROLLED and commit on blur. A controlled input would re-render the whole
