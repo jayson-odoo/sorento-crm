@@ -298,16 +298,11 @@ export async function exportLowStockReport(
 
 /**
  * The split dialog's own preview read (R4, AC-15b): fired once when the dialog opens,
- * never on page load. `USE_SUMMARY_ORDER_MOCKS` stays declared for this one function's own
- * sake (Phase 1, PLAN-low-stock-export-split-25sep) even with the flag off elsewhere in
- * this domain - a group count is a number a fixture can usefully stand in for, unlike a
- * rendered workbook, which is why this function gets a mock branch and the exports above
- * do not.
+ * never on page load. No mock branch (review fix round): `USE_SUMMARY_ORDER_MOCKS` is
+ * `false` domain-wide and Phase 2 is the point the mock store itself is deleted, so a
+ * branch on that flag here would be dead code from the moment it was written.
  */
 export async function getLowStockPreview(runId: string): Promise<LowStockPreview> {
-  if (USE_SUMMARY_ORDER_MOCKS) {
-    return { rows: 833, sheet_counts: { supplier: 14, category: 9, supplier_category: 31 } };
-  }
   const params = new URLSearchParams({ run_id: runId });
   const res = await apiFetch(`/api/v1/scm/order-summary/low-stock-preview?${params}`);
   if (!res.ok) {

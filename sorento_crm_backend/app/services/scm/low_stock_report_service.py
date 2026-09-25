@@ -325,7 +325,7 @@ def export_low_stock(db: Session, *, run_id: Optional[str],
         used_titles: set[str] = set()
         sheet_index = 0
         for key, group_rows in groups:
-            base = unique_sheet_title(key, used_titles, limit=25)
+            base = unique_sheet_title(key, used_titles, limit=25, reserve=(" - Low",))
             low_group = [r for r in group_rows if _is_low(r)]
             for title, rows in ((f"{base} - Low", low_group), (base, group_rows)):
                 ws = wb.active if sheet_index == 0 else wb.create_sheet()

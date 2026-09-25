@@ -980,8 +980,11 @@ def generate_low_stock_report(download_id: str, run_id: str, user_id: str, *,
     * `include_supplier=False` (S5, for a contact without the `purchase_orders.supplier`
       reveal key) drops the Supplier column from both sheets.
     * `split` (default `"none"`, the chat route never sends one) is forwarded to
-      `export_low_stock` unchanged - the route's own guard already refused an unknown
-      value or a supplier split without the Supplier column before this job was enqueued.
+      `export_low_stock` unchanged. The route's own schema already refused an unknown
+      value before this job was enqueued; a supplier split without the Supplier column is
+      a combination the route can never produce (it never sends `include_supplier=False`,
+      only the chat route does, and that route never sends a split), so the check for it
+      lives inside `export_low_stock` itself (R5) rather than here.
 
     `_record_failure` on any exception, never raising into RQ: a poisoned job retries for
     ever and the buyer's row sits `processing` until it goes stale.

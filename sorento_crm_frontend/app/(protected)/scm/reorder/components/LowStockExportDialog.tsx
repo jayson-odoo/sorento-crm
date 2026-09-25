@@ -56,7 +56,9 @@ export function LowStockExportDialog({
       <DialogContent className="sm:max-w-sm">
         <DialogHeader>
           <DialogTitle>Low stock report</DialogTitle>
-          <DialogDescription>Choose how to split the workbook, then export.</DialogDescription>
+          <DialogDescription className="sr-only">
+            Choose how to split the workbook, then export.
+          </DialogDescription>
         </DialogHeader>
 
         <DialogBody className="space-y-4">

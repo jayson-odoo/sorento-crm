@@ -120,10 +120,13 @@ export function ReorderPlanView({ runId }: { runId: string }) {
    * four disable while any export is pending").
    */
   const exportOiWorksheet = useExportOiWorksheet(runId);
+  // Shared by every export item's `disabled` AND the split dialog's own `pending` (AC-19:
+  // the dialog's Export button disables while ANY of the four exports is in flight, not
+  // just this one) - hoisted above the memo so both readers see the exact same flag.
+  const exportPending =
+    exportOrderSheet.isPending || exportLowStock.isPending || exportOiWorksheet.isPending;
 
   const actions = useMemo<ToolbarAction[]>(() => {
-    const exportPending =
-      exportOrderSheet.isPending || exportLowStock.isPending || exportOiWorksheet.isPending;
     return [
       {
         key: 'order_sheet_pdf',
@@ -173,13 +176,7 @@ export function ReorderPlanView({ runId }: { runId: string }) {
         onClick: () => setResetOpen(true),
       },
     ];
-  }, [
-    exportOrderSheet.mutate,
-    exportOrderSheet.isPending,
-    exportLowStock.isPending,
-    exportOiWorksheet.mutate,
-    exportOiWorksheet.isPending,
-  ]);
+  }, [exportOrderSheet.mutate, exportOiWorksheet.mutate, exportPending]);
 
   const doReset = async () => {
     setResetting(true);
@@ -402,7 +399,7 @@ export function ReorderPlanView({ runId }: { runId: string }) {
         open={lowStockOpen}
         onOpenChange={setLowStockOpen}
         runId={runId}
-        pending={exportLowStock.isPending}
+        pending={exportPending}
         onExport={(split) =>
           exportLowStock.mutate(split, { onSuccess: () => setLowStockOpen(false) })
         }

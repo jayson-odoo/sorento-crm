@@ -23,28 +23,71 @@ _FORBIDDEN_TITLE_CHARS = "[]:*?/\\"
 
 
 def sanitize_sheet_title(raw: str, *, limit: int = 31) -> str:
-    """Strip the characters Excel refuses in a sheet title and cut to `limit` (Excel's own
-    cap is 31; a caller pairing two sheets per group passes a tighter one so the ` - Low`
-    suffix still fits, A4). Never empty: a title that sanitises to nothing still needs a
-    tab to sit on."""
-    cleaned = "".join(ch for ch in raw if ch not in _FORBIDDEN_TITLE_CHARS).strip()
-    return cleaned[:limit] or "Sheet"
+    """Strip the characters Excel refuses in a sheet title - the eight forbidden symbols,
+    C0 control characters (`ch < " "`; a name lifted from free text can carry one), and
+    leading/trailing apostrophes (Excel's own separate rule) - then cut to `limit` (Excel's
+    own cap is 31; a caller pairing two sheets per group passes a tighter one so the
+    ` - Low` suffix still fits, A4).
+
+    `rstrip()` runs AGAIN after the cut: measured on the prod copy, 10 of 71 real supplier
+    names cut at 25 landed on a trailing space, which printed a tab like
+    `"CHAOZHOU CHAOAN FENGTANG  - Low"` (review fix round, security). A result that
+    sanitises to Excel's own reserved name, case-insensitively, becomes "History sheet"
+    instead - Excel refuses a sheet literally named "History" in any case. Never empty: a
+    title that sanitises to nothing still needs a tab to sit on.
+    """
+    cleaned = (
+        "".join(ch for ch in raw if ch not in _FORBIDDEN_TITLE_CHARS and ch >= " ")
+        .strip()
+        .strip("'")
+    )
+    cut = cleaned[:limit].rstrip()
+    if not cut:
+        return "Sheet"
+    if cut.lower() == "history":
+        return "History sheet"
+    return cut
 
 
-def unique_sheet_title(raw: str, used: Set[str], *, limit: int = 31) -> str:
+def unique_sheet_title(
+    raw: str, used: Set[str], *, limit: int = 31, reserve: Tuple[str, ...] = (),
+) -> str:
     """`sanitize_sheet_title`, then a ` (2)`/` (3)`/... suffix for a title that collides
     with one already taken - two supplier/category pairs whose names agree on the first
-    `limit` characters must not silently overwrite one sheet with the other."""
+    `limit` characters must not silently overwrite one sheet with the other.
+
+    Comparisons are CASE-INSENSITIVE (`used` holds LOWERCASED titles): Excel and openpyxl
+    both treat tab names case-insensitively, and openpyxl's own silent rename on a
+    collision it does not know about can still produce a 32-character tab that makes Excel
+    repair the file on open (review fix round, security).
+
+    `reserve` names the OTHER suffix(es) a caller is about to pair with this same base (the
+    low stock report's own `" - Low"` sheet, written alongside the base) - a candidate is
+    accepted only when the candidate ITSELF and every `candidate + suffix` for `suffix` in
+    `reserve` are all free, and on acceptance every one of them is added to `used` in the
+    same step. This is what lets both tabs of a pair reserve their titles together, so an
+    unrelated later group can never be handed the exact string this pair's own `" - Low"`
+    sheet is about to use.
+    """
+    def _free(candidate: str) -> bool:
+        if candidate.lower() in used:
+            return False
+        return all(f"{candidate}{suffix}".lower() not in used for suffix in reserve)
+
+    def _claim(candidate: str) -> str:
+        used.add(candidate.lower())
+        for suffix in reserve:
+            used.add(f"{candidate}{suffix}".lower())
+        return candidate
+
     base = sanitize_sheet_title(raw, limit=limit)
-    if base not in used:
-        used.add(base)
-        return base
+    if _free(base):
+        return _claim(base)
     for n in range(2, 1000):
         suffix = f" ({n})"
         candidate = base[: limit - len(suffix)] + suffix
-        if candidate not in used:
-            used.add(candidate)
-            return candidate
+        if _free(candidate):
+            return _claim(candidate)
     raise AppException(500, "Could not title every export sheet uniquely.")
 
 
