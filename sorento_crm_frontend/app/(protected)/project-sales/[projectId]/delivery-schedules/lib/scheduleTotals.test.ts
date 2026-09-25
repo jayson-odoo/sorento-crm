@@ -111,7 +111,7 @@ describe('buildColumnStates', () => {
       'reported_mismatch',
     ]);
     expect(column.blockers[0].detail).toBe(
-      "The phases add up to 8 but the schedule's own TOTAL QTY row says 16. " +
+      "The areas add up to 8 but the schedule's own TOTAL QTY row says 16. " +
         'One of the two was misread, so check the cells against the paper.',
     );
   });
@@ -150,7 +150,7 @@ describe('buildColumnStates', () => {
     expect(column.blockers.map((blocker) => blocker.code)).toEqual(['po_mismatch']);
     expect(column.blockers[0].detail).toBe(
       'The schedule asks for 927 and the PO orders 900, 27 over. ' +
-        'Correct a phase quantity, or amend the PO.',
+        'Correct an area quantity, or amend the PO.',
     );
     expect(column.warning).toBeNull();
   });
@@ -306,8 +306,8 @@ describe('phase grouping', () => {
   });
 
   it('names an unlabeled row by its sequence, because COMMON AREA rows have no label', () => {
-    expect(phaseRowLabel({ label: null, sequence: 3 })).toBe('Phase 3');
-    expect(phaseRowLabel({ label: '  ', sequence: 3 })).toBe('Phase 3');
+    expect(phaseRowLabel({ label: null, sequence: 3 })).toBe('Area 3');
+    expect(phaseRowLabel({ label: '  ', sequence: 3 })).toBe('Area 3');
     expect(phaseRowLabel({ label: 'Level 2 & 7', sequence: 1 })).toBe('Level 2 & 7');
   });
 });

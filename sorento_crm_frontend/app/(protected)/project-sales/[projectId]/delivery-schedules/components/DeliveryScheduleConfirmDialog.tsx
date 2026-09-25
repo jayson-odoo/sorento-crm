@@ -61,7 +61,7 @@ export function DeliveryScheduleConfirmDialog({
               ? `${blocking.length} column${
                   blocking.length === 1 ? ' does' : 's do'
                 } not add up yet.`
-              : 'Every column agrees with the PO. Its phases go onto the project.'}
+              : 'Every column agrees with the PO. Its areas go onto the project.'}
           </DialogDescription>
         </DialogHeader>
 

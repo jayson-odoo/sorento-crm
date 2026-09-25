@@ -1,13 +1,14 @@
 'use client';
 
 import * as React from 'react';
-import { Filter, KanbanSquare, Plus, Table2 } from 'lucide-react';
+import { ChevronDown, Filter, KanbanSquare, Table2 } from 'lucide-react';
 import type { PaginationState, SortingState } from '@tanstack/react-table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Label } from '@/components/ui/label';
@@ -26,9 +27,13 @@ import {
 import { ProjectsGrid } from '../../_shared/components/ProjectsGrid';
 import { EmptyState, PipelineBoard } from './PipelineBoard';
 import { RegisterProjectDialog } from './RegisterProjectDialog';
+import { POIntakeUploadDialog } from '../../[projectId]/components/POIntakeUploadDialog';
+import { DeliveryScheduleUploadDialog } from '../../[projectId]/components/DeliveryScheduleUploadDialog';
 import { PageHeader } from '@/components/common/PageHeader';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
+
+type StartAction = 'upload-po' | 'upload-schedule' | null;
 
 const VIEW_STORAGE_KEY = 'project-sales.pipeline.view';
 
@@ -48,6 +53,7 @@ type PipelineView = 'board' | 'grid';
 export function PipelineClient() {
   const [view, setView] = React.useState<PipelineView>('board');
   const [registerOpen, setRegisterOpen] = React.useState(false);
+  const [startAction, setStartAction] = React.useState<StartAction>(null);
   const {
     value: search,
     setValue: setSearch,
@@ -298,10 +304,25 @@ export function PipelineClient() {
                 <Table2 className="size-4" aria-hidden />
               </Button>
             </div>
-            <Button type="button" onClick={() => setRegisterOpen(true)}>
-              <Plus className="size-4" aria-hidden />
-              Register project
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button type="button">
+                  Start
+                  <ChevronDown className="size-4" aria-hidden />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onSelect={() => setRegisterOpen(true)}>
+                  Register a project
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setStartAction('upload-po')}>
+                  Upload PO
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setStartAction('upload-schedule')}>
+                  Upload delivery schedule
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         }
       >
@@ -403,6 +424,13 @@ export function PipelineClient() {
       )}
 
       <RegisterProjectDialog open={registerOpen} onOpenChange={setRegisterOpen} />
+
+      {startAction === 'upload-po' && (
+        <POIntakeUploadDialog onDone={() => setStartAction(null)} />
+      )}
+      {startAction === 'upload-schedule' && (
+        <DeliveryScheduleUploadDialog onDone={() => setStartAction(null)} />
+      )}
     </div>
   );
 }
