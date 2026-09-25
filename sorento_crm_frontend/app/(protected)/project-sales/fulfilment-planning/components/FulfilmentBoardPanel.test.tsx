@@ -3611,7 +3611,7 @@ describe('FulfilmentBoardPanel: Save all suggested (D15)', () => {
 });
 
 /**
- * Review round 2, Should fix 2: `decideBatch`'s own `silentError`/`onFailure` wiring (review
+ * Review round 2, Should fix 2: `decideBatch`'s own `silent`/`onFailure` wiring (review
  * round 1, Should fix 1) shipped with no test - reverting it to a per-row `toast.error` plus
  * the generic "could not be saved" left every existing test green, because none of them made a
  * Decide save actually fail on the wire. A real PUT failure has to reach the Decide strip's OWN
@@ -3659,7 +3659,7 @@ describe('FulfilmentBoardPanel: a failed Decide save toasts the server message o
 
     await waitFor(() => expect(putLineDraft).toHaveBeenCalledTimes(2));
     // Exactly ONE toast for the whole batch (R10) - not a second one off the mutation's own
-    // `onError`, which `silentError` exists to suppress.
+    // `onError`, which `silent` exists to suppress.
     expect(toast.success).toHaveBeenCalledTimes(1);
     expect(toast.success).toHaveBeenCalledWith(
       expect.stringContaining('Not enough free stock left.'),

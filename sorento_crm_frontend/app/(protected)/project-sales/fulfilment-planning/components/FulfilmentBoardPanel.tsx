@@ -750,7 +750,9 @@ export function FulfilmentBoardPanel({
         // lenient toast (R10) - a second, per-row toast off THIS mutation's own `onError`
         // would be the "too many errors" the owner asked Decide to stop doing. `onFailure`
         // is how the caller still gets the server's own sentence for its skip, without it.
-        silentError?: boolean;
+        // Nit (review round 2): named `silent`, not `silentError` - the same name
+        // `saveLineDraft`'s own option carries, since this is nothing but a pass-through to it.
+        silent?: boolean;
         onFailure?: (message: string) => void;
       },
     ): Promise<boolean> => {
@@ -785,7 +787,7 @@ export function FulfilmentBoardPanel({
           pendingSaves.current.add(key);
           try {
             await saveLineDraft(key, decision, contribution?.sources, {
-              silent: options?.silentError,
+              silent: options?.silent,
             });
           } finally {
             pendingSaves.current.delete(key);
@@ -794,7 +796,7 @@ export function FulfilmentBoardPanel({
           await removeDraftKey(key);
         }
       } catch (error) {
-        // The mutation's own `onError` already toasted the message unless `silentError`
+        // The mutation's own `onError` already toasted the message unless `silent`
         // asked it not to (Should fix 1) - either way, `onFailure` is the caller's own way
         // to read it, and this key still goes back the way the click found it.
         options?.onFailure?.(error instanceof Error ? error.message : 'could not be saved');
@@ -903,7 +905,7 @@ export function FulfilmentBoardPanel({
             let why = 'could not be saved';
             const ok = await decide(key, decision, {
               quiet: true,
-              silentError: true,
+              silent: true,
               onFailure: (message) => {
                 why = message;
               },
