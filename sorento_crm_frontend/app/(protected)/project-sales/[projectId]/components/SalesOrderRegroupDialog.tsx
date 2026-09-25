@@ -237,7 +237,7 @@ export function SalesOrderRegroupDialog({
                     </span>
                     <span className="mt-0.5 flex flex-wrap items-center gap-x-3 text-xs text-muted-foreground">
                       <span>{assignment[set.key] || currentAreaGroup}</span>
-                      <span>{set.parent.phase_label || 'Unlabeled phase'}</span>
+                      <span>{set.parent.phase_label || 'Unlabeled area'}</span>
                       <span>
                         {set.parent.delivery_date
                           ? formatDateInMalaysia(set.parent.delivery_date)

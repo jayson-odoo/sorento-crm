@@ -104,12 +104,14 @@ def build_reply(result: Mapping[str, Any]) -> dict[str, Any]:
     `ideation` is the pointer the tail persists, and it is read through both session-vars
     shapes. `ideate_status` defaults to `'error'`, which is the JS's own fallback and the
     reason a tool that answers without a status still reads as a failure on the trace.
+
+    No raw ``link`` append (AC-1216): the composed reply (S3's
+    ``compose_ideate_reply``, or its shared-service template fallback) already
+    carries the link itself, deliberately, via the facts block - appending it again
+    here would risk a doubled URL rather than fixing a missing one.
     """
     r = result if isinstance(result, dict) else {}
     response = jsc.get(r, "reply_text") or ""
-    link = jsc.get(r, "link")
-    if jsc.get(r, "status") == "complete" and jsc.truthy(link) and jsc.js_string(link) not in response:
-        response = f"{response}\n\n{jsc.js_string(link)}"
 
     session_vars = jsc.get(r, "session_vars") or {}
     if jsc.has(session_vars, "ideation"):

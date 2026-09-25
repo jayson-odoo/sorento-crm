@@ -4647,7 +4647,7 @@ def _complete_canned_lane(
     reply_extras: dict[str, Any] = {}
 
     if branch_kind in canned_lanes.NO_SESSION_WRITE_BRANCH_KINDS:
-        text = canned_lanes.access_denied_text(ctx, canned)
+        text = canned_lanes.access_denied_text(db, ctx, canned)
         reply = {"text": text, "quick_replies": None, "result_set": [], "attachments_src": None}
         session_patch: dict[str, Any] | None = {}
         turn_trace.record(

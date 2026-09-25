@@ -48,7 +48,7 @@ export function poToSalesOrderStep(readiness: SalesOrderReadiness) {
       title: 'Add the delivery schedule to build the sales orders',
       // The reason is the useful half. Quantities alone cannot be scheduled, and a
       // person who knows that will go and find the schedule rather than retry.
-      body: 'The PO says what they ordered. The delivery schedule says when each phase needs it, and a sales order needs both.',
+      body: 'The PO says what they ordered. The delivery schedule says when each area needs it, and a sales order needs both.',
       actionLabel: 'Go to delivery schedules',
     };
   }

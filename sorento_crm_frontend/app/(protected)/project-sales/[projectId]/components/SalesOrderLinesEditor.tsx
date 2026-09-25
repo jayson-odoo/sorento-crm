@@ -25,7 +25,7 @@ import { salesOrderLineErrors } from '../sales-orders/[psoId]/components/useSale
  * One row of the editor: the key it is drawn under, and the stored line behind it.
  *
  * The same shape the quotation editor uses, for the same reason: a line added in this session
- * has no stored row, and every column that draws a fact only the server can decide (the phase
+ * has no stored row, and every column that draws a fact only the server can decide (the area
  * label, the PO line it exploded from, its findings) reads it from here and renders nothing
  * while it is null.
  */
@@ -263,13 +263,13 @@ export function SalesOrderLinesEditor({
       },
       {
         key: 'phase_label',
-        header: 'Phase',
+        header: 'Area',
         width: 160,
         // The schedule's own row, so it is the schedule that changes it, not this table. A
-        // new line belongs to no phase until a rebuild places it.
+        // new line belongs to no area until a rebuild places it.
         kind: 'derived',
         derive: (_draft, _index, row) =>
-          row?.line?.phase_label ?? (row?.line ? 'Unlabeled phase' : 'No phase yet'),
+          row?.line?.phase_label ?? (row?.line ? 'Unlabeled area' : 'No area yet'),
       },
       {
         key: 'source_po_line_no',
