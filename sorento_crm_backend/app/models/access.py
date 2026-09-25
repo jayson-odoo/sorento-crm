@@ -267,6 +267,12 @@ class RespondContact(Base):
     # S6 (owner ruling, 16 Sep 2026): whether this contact may ask for stock is a CRM
     # fact, default ON; the respond.io `is_allowed_stock` custom field is not read.
     chatbot_stock_allowed = Column(Boolean, nullable=False, server_default=text("true"), default=True)
+    # Chatbot stock ask v2 S2 (PLAN-chatbot-stock-ask-v2-24sep.md, R7): per-contact
+    # toggles, both default OFF (unlike chatbot_stock_allowed above). notify_salesman -
+    # the customer's sales agent gets one WhatsApp line per B1/B2/B4 answered ask.
+    # packing_list_allowed - the shipment's packing list is attached on a B3 answer.
+    notify_salesman = Column(Boolean, nullable=False, server_default=text("false"), default=False)
+    packing_list_allowed = Column(Boolean, nullable=False, server_default=text("false"), default=False)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     created_by = Column(Text, nullable=True)
