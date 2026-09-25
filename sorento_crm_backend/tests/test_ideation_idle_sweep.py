@@ -15,6 +15,14 @@ Keys back to
 - **AC-1407** - a shared-service outage during the close keeps the pointer.
 - **AC-1408** - the scheduler registers the sweep at a 15-minute interval.
 
+Fix round 3 (PR #1222 review round 3, shared-service contract facts from PR #87): a 200
+response whose status is a terminal one (complete/cancelled/voted) clears the pointer; 404
+clears the pointer; 410 may stay treated as gone; 422 (a sorento payload bug) never clears the
+pointer, is logged at error level with the response detail, and is retried no more than once
+more; 409 transition_blocked keeps the pointer, records the block on it (``close_blocked_at``)
+and is not re-sent on later ticks until the pointer changes; 401/403/408/429/5xx and transport
+errors keep the pointer for retry as today.
+
 AC-1403 (a reply after the reminder drops ``reminded_at`` and moves
 ``updated_at``) is pinned in ``tests/test_ideation_turn.py`` - it exercises
 ``handle_turn``, which already rebuilds the pointer from scratch every turn.
@@ -25,6 +33,7 @@ shared-service.
 """
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
@@ -294,13 +303,38 @@ def test_close_outage_keeps_the_pointer_for_retry(db, monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-# Reviewer Should fix 4 (round 1, PR #1222 at 720bb8f5): a 4xx close error     #
-# (the draft is already gone shared-service side) must clear the pointer      #
-# instead of retrying forever; a 5xx/transport error keeps retrying (AC-1407).#
+# Reviewer Should fix 4 (round 1, PR #1222 at 720bb8f5), narrowed by round 3's #
+# shared-service contract facts (PR #87): only 404 (unknown_draft) and 410    #
+# mean the draft is already gone shared-service side - NOT every 4xx (409 and #
+# 422 are their own cases below, and a 5xx/transport error keeps retrying,    #
+# AC-1407).                                                                    #
 # --------------------------------------------------------------------------- #
-def test_close_with_4xx_clears_the_pointer_without_retry(db, monkeypatch):
+def test_close_with_404_clears_the_pointer_without_retry(db, monkeypatch):
     def _boom(*_a, **_k):
         raise IdeationServiceError("draft already closed", status_code=404)
+
+    monkeypatch.setattr(svc, "call_create_idea", _boom)
+    contact = _make_contact(
+        db,
+        ideation={
+            "draft_id": "d-1",
+            "status": "collecting",
+            "updated_at": _iso(NOW - timedelta(hours=49)),
+            "reminded_at": _iso(NOW - timedelta(hours=25)),
+        },
+    )
+
+    result = sweep_idle_ideation_drafts(db, now=NOW)
+
+    assert result == {"reminded": 0, "closed": 1}
+    assert _reload_ideation(db, contact.id) is None
+
+
+def test_close_with_410_clears_the_pointer_without_retry(db, monkeypatch):
+    """Shared-service contract facts (PR #87): 410 may stay treated as gone."""
+
+    def _boom(*_a, **_k):
+        raise IdeationServiceError("draft gone", status_code=410)
 
     monkeypatch.setattr(svc, "call_create_idea", _boom)
     contact = _make_contact(
@@ -343,10 +377,11 @@ def test_close_with_5xx_keeps_the_pointer_for_retry(db, monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-# Reviewer Should fix 2 (round 2): only the statuses that mean the draft is    #
-# ALREADY GONE clear the pointer. A rotated/wrong api_key (401/403) or a rate #
-# limit (429) is retryable, not "gone" - clearing the pointer there orphans   #
-# the draft on shared-service while sorento forgets about it.                 #
+# Reviewer Should fix 2 (round 2), reaffirmed by round 3's shared-service     #
+# contract facts (PR #87): only 404/410 mean the draft is ALREADY GONE. A     #
+# rotated/wrong api_key (401/403), a rate limit (429), a timeout (408), or a  #
+# 5xx/transport failure is retryable, not "gone" - clearing the pointer there #
+# orphans the draft on shared-service while sorento forgets about it.         #
 # --------------------------------------------------------------------------- #
 def test_close_with_401_keeps_the_pointer_for_retry(db, monkeypatch):
     def _boom(*_a, **_k):
@@ -392,6 +427,160 @@ def test_close_with_429_keeps_the_pointer_for_retry(db, monkeypatch):
     ideation = _reload_ideation(db, contact.id)
     assert ideation is not None
     assert ideation["draft_id"] == "d-1"
+
+
+# --------------------------------------------------------------------------- #
+# Fix round 3 - shared-service contract facts (PR #87): a 200 whose status is #
+# a terminal one (complete/cancelled/voted) is the normal "already gone" path #
+# and clears the pointer. `cancelled` is already pinned by                    #
+# test_close_after_reminder_ttl above; these two cover the other terminals.   #
+# --------------------------------------------------------------------------- #
+def test_close_200_complete_status_clears_the_pointer(db, monkeypatch):
+    def _fake_create_idea(_base_url, _api_key, payload):
+        return {"status": "complete", "draft_id": payload.get("draft_id"), "idea_number": "IDEA-0042"}
+
+    monkeypatch.setattr(svc, "call_create_idea", _fake_create_idea)
+    contact = _make_contact(
+        db,
+        ideation={
+            "draft_id": "d-1",
+            "status": "collecting",
+            "updated_at": _iso(NOW - timedelta(hours=49)),
+            "reminded_at": _iso(NOW - timedelta(hours=25)),
+        },
+    )
+
+    result = sweep_idle_ideation_drafts(db, now=NOW)
+
+    assert result == {"reminded": 0, "closed": 1}
+    assert _reload_ideation(db, contact.id) is None
+
+
+def test_close_200_voted_status_clears_the_pointer(db, monkeypatch):
+    def _fake_create_idea(_base_url, _api_key, payload):
+        return {"status": "voted", "draft_id": payload.get("draft_id"), "idea_number": "IDEA-0007"}
+
+    monkeypatch.setattr(svc, "call_create_idea", _fake_create_idea)
+    contact = _make_contact(
+        db,
+        ideation={
+            "draft_id": "d-1",
+            "status": "collecting",
+            "updated_at": _iso(NOW - timedelta(hours=49)),
+            "reminded_at": _iso(NOW - timedelta(hours=25)),
+        },
+    )
+
+    result = sweep_idle_ideation_drafts(db, now=NOW)
+
+    assert result == {"reminded": 0, "closed": 1}
+    assert _reload_ideation(db, contact.id) is None
+
+
+# --------------------------------------------------------------------------- #
+# Fix round 3 - shared-service contract facts (PR #87): 422 is a sorento      #
+# payload bug (a validation error or a title over 8 words), never a gone      #
+# draft. It never clears the pointer, is logged at error level with the       #
+# response detail, and is retried no more than once more - after that the    #
+# draft is skipped on later ticks (the pointer still isn't cleared; a human   #
+# needs to look at the payload bug).                                         #
+# --------------------------------------------------------------------------- #
+def test_close_with_422_logs_error_keeps_pointer_and_stops_after_one_retry(db, monkeypatch, caplog):
+    call_count = 0
+
+    def _boom(*_a, **_k):
+        nonlocal call_count
+        call_count += 1
+        raise IdeationServiceError(
+            "create_idea request failed: 422",
+            status_code=422,
+            response_detail={"detail": [{"msg": "title too long"}]},
+        )
+
+    monkeypatch.setattr(svc, "call_create_idea", _boom)
+    contact = _make_contact(
+        db,
+        ideation={
+            "draft_id": "d-1",
+            "status": "collecting",
+            "updated_at": _iso(NOW - timedelta(hours=49)),
+            "reminded_at": _iso(NOW - timedelta(hours=25)),
+        },
+    )
+
+    with caplog.at_level(logging.ERROR, logger="app.services.ideation_turn_service"):
+        first = sweep_idle_ideation_drafts(db, now=NOW)
+    assert first == {"reminded": 0, "closed": 0}
+    assert call_count == 1
+    ideation = _reload_ideation(db, contact.id)
+    assert ideation is not None
+    assert ideation["close_retry_count"] == 1
+    error_records = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert len(error_records) == 1
+    assert "title too long" in error_records[0].getMessage()
+
+    caplog.clear()
+    with caplog.at_level(logging.ERROR, logger="app.services.ideation_turn_service"):
+        second = sweep_idle_ideation_drafts(db, now=NOW + timedelta(minutes=15))
+    assert second == {"reminded": 0, "closed": 0}
+    assert call_count == 2  # the one extra retry
+    ideation = _reload_ideation(db, contact.id)
+    assert ideation["close_retry_count"] == 2
+    assert len([r for r in caplog.records if r.levelno == logging.ERROR]) == 1
+
+    caplog.clear()
+    third = sweep_idle_ideation_drafts(db, now=NOW + timedelta(minutes=30))
+    assert third == {"reminded": 0, "closed": 0}
+    assert call_count == 2  # retry budget spent - not sent again
+    ideation = _reload_ideation(db, contact.id)
+    assert ideation is not None  # still not cleared
+    assert ideation["close_retry_count"] == 2
+
+
+# --------------------------------------------------------------------------- #
+# Fix round 3 - shared-service contract facts (PR #87): 409 transition_blocked#
+# means the draft is still OPEN shared-service side (the tenant blocks draft  #
+# to rejected) - the pointer is kept, the block is recorded on it, and it is  #
+# not re-sent on later ticks (logged once at warning level) until the pointer #
+# changes (a live turn rebuilds it from scratch).                             #
+# --------------------------------------------------------------------------- #
+def test_close_with_409_transition_blocked_keeps_pointer_and_skips_later_ticks(db, monkeypatch, caplog):
+    call_count = 0
+
+    def _boom(*_a, **_k):
+        nonlocal call_count
+        call_count += 1
+        raise IdeationServiceError("transition blocked", status_code=409)
+
+    monkeypatch.setattr(svc, "call_create_idea", _boom)
+    contact = _make_contact(
+        db,
+        ideation={
+            "draft_id": "d-1",
+            "status": "collecting",
+            "updated_at": _iso(NOW - timedelta(hours=49)),
+            "reminded_at": _iso(NOW - timedelta(hours=25)),
+        },
+    )
+
+    with caplog.at_level(logging.WARNING, logger="app.services.ideation_turn_service"):
+        first = sweep_idle_ideation_drafts(db, now=NOW)
+    assert first == {"reminded": 0, "closed": 0}
+    assert call_count == 1
+    ideation = _reload_ideation(db, contact.id)
+    assert ideation is not None
+    assert ideation["close_blocked_at"] is not None
+    blocked_records = [r for r in caplog.records if r.levelno == logging.WARNING and "blocked" in r.getMessage().lower()]
+    assert len(blocked_records) == 1
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="app.services.ideation_turn_service"):
+        second = sweep_idle_ideation_drafts(db, now=NOW + timedelta(minutes=15))
+    assert second == {"reminded": 0, "closed": 0}
+    assert call_count == 1  # not re-sent - the tick skipped the call entirely
+    assert not [r for r in caplog.records if "blocked" in r.getMessage().lower()]
+    ideation_after = _reload_ideation(db, contact.id)
+    assert ideation_after["close_blocked_at"] == ideation["close_blocked_at"]  # unchanged
 
 
 # --------------------------------------------------------------------------- #
