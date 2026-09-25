@@ -295,10 +295,17 @@ def test_repush_moving_an_inquired_line_still_replaces_in_place(api):
     assert new_row.to_json["required_date"] == D2.isoformat()
 
 
-def test_apply_after_a_gate_failed_repush_raises_no_oi_for_the_stale_row(api):
-    """T6 (AC-11): once AC-2 retires the stale `added` row, `apply` on that batch must not
-    manufacture an order-inquiry row at the frozen date for L - there is nothing pending
-    left to decide for it.
+def test_apply_after_a_gate_failed_repush_raises_no_oi_for_the_confirmed_stale_row(api):
+    """T6 (AC-11), made real (reviewer S5): a row staying `pending` with no decision ever
+    reaches `apply` in the first place - `_apply_one_order`'s own `accepted` filter already
+    skips a row nobody confirmed, whatever its `applied_state`, so that alone proves nothing
+    about the S1 fix. The board's real Confirm flow pre-marks every changed row and posts a
+    decision for it (`set_row_decision`) BEFORE Apply ever runs - so this confirms the
+    `added` row from push 1 exactly like a planner pressing Confirm would, THEN pushes the
+    move that fails the per-line gate. Apply must still raise no order-inquiry row at the
+    stale D1 date: the S1 supersede is what keeps a CONFIRMED-but-stale row out of
+    `_apply_one_order`'s `accepted` list (it filters on `applied_state == PENDING`, not on
+    whether a decision was ever taken).
     """
     world, project = api
     db = world.db
@@ -326,6 +333,18 @@ def test_apply_after_a_gate_failed_repush_raises_no_oi_for_the_stale_row(api):
     )
     db.commit()
     assert batch1 is not None
+    added_row = [
+        r for r in _rows_for(db, batch1.id) if r.item_code == new_product.product_code
+    ][0]
+
+    # The planner presses Confirm on the still-open batch before push 2 ever lands - the
+    # same write `set_row_decision` makes for a real board Confirm.
+    planning_change_service.set_row_decision(db, batch1.id, added_row.id, "confirm")
+    db.commit()
+    db.expire_all()
+    confirmed_row = db.get(PlanningChangeRow, added_row.id)
+    assert confirmed_row.decision == "confirm"
+    assert confirmed_row.applied_state == "pending"
 
     new_core_line.required_date = D2
     db.flush()
@@ -341,6 +360,12 @@ def test_apply_after_a_gate_failed_repush_raises_no_oi_for_the_stale_row(api):
     )
     db.commit()
 
+    db.expire_all()
+    stale = db.get(PlanningChangeRow, added_row.id)
+    assert stale.applied_state == "superseded"
+    # The decision itself is left alone - S1 retires the ROW, not the earlier decision on it.
+    assert stale.decision == "confirm"
+
     before_count = (
         db.query(OrderInquiryRow).filter(OrderInquiryRow.so_line_id == new_mirror.id).count()
     )
@@ -354,7 +379,10 @@ def test_apply_after_a_gate_failed_repush_raises_no_oi_for_the_stale_row(api):
         .filter(OrderInquiryRow.so_line_id == new_mirror.id, OrderInquiryRow.delivery_date == D1)
         .count()
     )
-    assert after_count == 0, "AC-11: apply must raise no OI row at the stale date for L"
+    assert after_count == 0, (
+        "AC-11: apply must raise no OI row at the stale date for L, even though the row was "
+        "confirmed before the re-push superseded it"
+    )
 
 
 # --------------------------------------------------------------------------- #

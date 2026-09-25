@@ -44,8 +44,12 @@ minutes apart; the board and Confirm must follow the second push.
   L's key, and `annotationsByLine` / `annotationsByCell` hold nothing for L.
 - **AC-14 [FE]** Given line M with a superseded row (D1) and a pending row (D3), the overlay
   and annotations use only the pending row.
-- **AC-15 [FE]** Rows with `applied_state = 'applied'` are treated like superseded ones for
-  the overlay and pre-mark (an applied batch never re-marks a line).
+- **AC-15 [FE]** Rows with `applied_state = 'applied'` still overlay and pre-mark exactly like
+  a `pending` row - `superseded` is the only state S4 retires from the overlay. Captain ruling,
+  R3 (`PLAN-board-draft-on-confirmed-line.md`, review round 3), restated for #1240: only the
+  BATCH's own `applied_at` gates whether a line stays covered and blocked from a second
+  Confirm, never a row's own `applied_state` - pinned by `FulfilmentBoardPanel.change.test.tsx`'s
+  "does not block Confirm ... even if a row says it was".
 
 ## Apply
 

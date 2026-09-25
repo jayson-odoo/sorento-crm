@@ -741,7 +741,17 @@ describe('uncoverChangedLines', () => {
     expect(byLine.get('pl-1')?.map((entry) => entry.rowId)).toEqual(['pcr-pending']);
   });
 
-  it('T8/AC-15: an applied row is ignored exactly like a superseded one', () => {
+  /**
+   * T8/AC-15, R3 ruling (`PLAN-board-draft-on-confirmed-line.md`, review round 3, restated
+   * for #1240): only the BATCH's own `applied_at` gates whether a line stays covered and
+   * blocked from a second Confirm - pinned by `FulfilmentBoardPanel.change.test.tsx`'s "does
+   * not block Confirm ... even if a row says it was". A ROW's own `applied_state` of
+   * `'applied'` is not the same signal - `superseded` is the only state S4 retires from the
+   * overlay - so a batch not yet applied but already carrying an `applied` row (an order this
+   * upload named twice, one line already actioned) must still overlay and pre-mark that row
+   * exactly like a pending one.
+   */
+  it('T8/AC-15 (R3 ruling): an applied row still overlays and pre-marks like a pending one', () => {
     const live = contribution({
       key: 'k1',
       project_line_id: 'pl-1',
@@ -751,21 +761,28 @@ describe('uncoverChangedLines', () => {
     } as unknown as Partial<BoardContribution>);
     const appliedBatch = batchOf([
       row({
+        id: 'pcr-applied',
         applied_state: 'applied',
         project_line_id: 'pl-1',
         proposal: {
           ...contribution({ key: 'built-earlier', project_line_id: 'pl-1' }),
-          required_date: '2026-01-15',
-          sources: [{ kind: 'buy', qty: '39' }],
-          qty_proposed_buy: '39',
+          required_date: '2026-12-01',
+          sources: [{ kind: 'buy', qty: '5' }],
+          qty_proposed_buy: '5',
         } as BoardContribution,
       }),
     ]);
     const board = { cells: [cell({ contributions: [live] })], contributions: [live] };
 
     const out = uncoverChangedLines(board, appliedBatch);
-    expect(out.contributions[0]).toEqual(live);
-    expect(preMarkedKeys(appliedBatch, [live])).toEqual([]);
-    expect(annotationsByLine(appliedBatch).size).toBe(0);
+    expect(out.contributions[0].covered).toBe(false);
+    expect(out.contributions[0].decision).toBeNull();
+    expect(out.contributions[0].sources).toEqual([{ kind: 'buy', qty: '5' }]);
+    expect(out.contributions[0].qty_proposed_buy).toBe('5');
+
+    // Pre-marked off the ALREADY-UNCOVERED contributions, same as AC-14 above.
+    expect(preMarkedKeys(appliedBatch, out.contributions)).toEqual(['k1']);
+    const byLine = annotationsByLine(appliedBatch);
+    expect(byLine.get('pl-1')?.map((entry) => entry.rowId)).toEqual(['pcr-applied']);
   });
 });
