@@ -1499,8 +1499,10 @@ class StockService:
         # the caller's own `warehouse_ids=` narrowing ("stock at BRW"), and a supply
         # read that skipped both counted an allocation bound for a retired warehouse,
         # or bound for MWH under a question that asked only about BRW, towards a
-        # verdict the dealer then read as a promise. Applied to all three reads below,
-        # as one list, so they cannot drift apart from each other again.
+        # verdict the dealer then read as a promise. Nit, review round 1: the
+        # incoming and purchase-order reads this scope also applied to under #1118
+        # are gone by R5 (this slice reads incoming stock a different way, ANY
+        # location, never scoped here) - only the open SO read below still uses it.
         def _supply_scope(column):
             scoped = [
                 column.isnot(None),

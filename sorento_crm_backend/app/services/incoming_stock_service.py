@@ -206,6 +206,11 @@ def earliest_packing_list_shipment(
         .order_by(
             InboundShipmentLine.product_id,
             InboundShipment.estimated_arrival_date.asc(),
+            # Nit, review round 1: two qualifying shipments on the same
+            # `estimated_arrival_date` otherwise pick an arbitrary one (Postgres
+            # makes no promise about which `DISTINCT ON` row wins a tie) - id is
+            # not a meaningful order, only a deterministic one.
+            InboundShipment.id.asc(),
         )
         .distinct(InboundShipmentLine.product_id)
         .all()

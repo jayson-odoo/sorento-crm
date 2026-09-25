@@ -1427,7 +1427,11 @@ def _availability_line(entry: dict) -> str:
     if branch == "incoming":
         tail = f"no stock at the moment, ETA {entry.get('eta')}."
     else:
-        tail = _AVAILABILITY_TAILS.get(branch, _AVAILABILITY_TAILS["no_incoming"])
+        # Nit, review round 1: an unknown or missing branch is unreachable today
+        # (`products.category_id` is NOT NULL, so `inventory_service.py` never
+        # leaves `branch` unset) - but if a fallback is kept, `too_big` is the one
+        # of the four sentences that claims nothing about our stock either way.
+        tail = _AVAILABILITY_TAILS.get(branch, _AVAILABILITY_TAILS["too_big"])
     return f"{code} x {qty}: {tail}"
 
 
