@@ -53,7 +53,10 @@ from app.models.projects import TASK_LINK_ORDER_INQUIRY, TASK_PHASE_DELIVERY, Pr
 from app.schemas.project_supply import ConfirmLine, ConfirmSupplyBody
 from app.services.planning_change_service import _oi_demand_rows
 from app.services.project_order_inquiry_engine import CHANGE_DATE_LATER, CHANGE_QTY_DECREASE
-from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+from app.services.project_order_inquiry_service import (
+    _HANDOVER_PENDING_KEY,
+    ProjectOrderInquiryService,
+)
 from app.services.project_supply_service import ProjectSupplyService
 
 from ._pg_fixture import blank_session
@@ -1196,6 +1199,326 @@ class TestWasNowAfterRedirect:
         note = new_row.note or ""
         assert alloc1.spo_number in note
         assert alloc2.spo_number in note
+
+
+# =============================================================================
+# AC-CL-1..5 (issue #1226, owner ruling 25 Sep 2026 "nothing changed, nothing moves"):
+# a carried line never settles or redirects its row on reconfirm
+# =============================================================================
+
+
+def _next_decision(world, order) -> SOSupplyDecision:
+    """A fresh `SOSupplyDecision` revision on `order`, built by hand the same way
+    `test_confirm_local_buy_no_oi.py::test_carried_local_line_skipped` does to call
+    `refresh_for_decision` directly. Only ONE revision may be `active`
+    (`uq_so_supply_decisions_active`), and `_raise_one_row`'s own `_confirm()` already
+    left revision 1 holding that state, so every later revision built here is
+    `superseded` - the same convention the local-line test follows."""
+    revision = (
+        world.db.query(SOSupplyDecision)
+        .filter(SOSupplyDecision.project_sales_order_id == order.id)
+        .count()
+        + 1
+    )
+    decision = SOSupplyDecision(
+        id=_uid(), company_id=order.company_id, project_sales_order_id=order.id,
+        revision_no=revision, state="active" if revision == 1 else "superseded",
+        line_snapshots=[], confirmed_by=world.cs_user, confirmed_at=datetime.utcnow(),
+    )
+    world.db.add(decision)
+    world.db.flush()
+    return decision
+
+
+def _buy_line_entry(service, line, *, carried, buy_qty=None):
+    """One `refresh_for_decision` buy_lines entry, OVERSEAS origin (never `"local"` -
+    that path is out of scope, S9's own carried-local rule stands). `buy_qty` defaults
+    to the line's own live quantity, so the entry states an UNCHANGED reconfirm unless
+    a test asks for something else."""
+    return {
+        "line": line, "line_no": line.line_no,
+        "item_code": service._product_code(line.product_id),
+        "buy_qty": Decimal(str(buy_qty)) if buy_qty is not None else Decimal(str(line.qty)),
+        "required_date": line.delivery_date, "stock_location": line.stock_location,
+        "origin": "overseas", "carried": carried,
+    }
+
+
+def _handover_count_for_row(world, row) -> int:
+    """How many handover lines the pending queue currently carries for `row`. The
+    queue is session-lifetime, not drained by a savepoint commit
+    (`_fire_pending_handover`'s own docstring - only a ROOT commit drains it, and every
+    commit in this suite is a savepoint), so AC-CL-2 diffs a BEFORE/AFTER count rather
+    than asserting the queue is empty outright."""
+    return sum(
+        1
+        for item in world.db.info.get(_HANDOVER_PENDING_KEY, [])
+        if item.get("row_id") == str(row.id)
+    )
+
+
+def _received_po_placed_row(api):
+    """A raised row, fully cascade-linked (`auto=True`) to a PO line already closed
+    with `qty_received >= qty_ordered` - the OI-2609-0755 shape the plan measures: a
+    PLACED draft whose own-arrival credit is 0 (no Stock row is seeded, so
+    `_own_arrival_credit_for_row` reads nothing to credit), which is exactly what makes
+    `_redirect_row_if_received` decline it when it is reached."""
+    _client, world = api
+    fixture = _raise_one_row(api, qty="10")
+    row = fixture["row"]
+    po, po_line = _open_po_line(world, qty="10")
+    po_line.qty_received = Decimal("10")
+    po_line.line_status = "closed"
+    world.db.flush()
+    link = OrderInquiryLink(
+        id=_uid(), company_id=row.company_id, row_id=row.id,
+        po_line_id=po_line.id, document=po.po_number, qty=Decimal("10"), auto=True,
+    )
+    world.db.add(link)
+    world.db.flush()
+    ProjectOrderInquiryService(world.db).refresh_link_state([row])
+    world.db.commit()
+    world.db.refresh(row)
+    assert row.state == INQUIRY_PLACED, "fixture sanity"
+    fixture["po"] = po
+    return fixture
+
+
+class TestCarriedLineNeverSettlesOrRedirects:
+    """`refresh_for_decision` called directly with a hand-built `buy_lines` entry
+    (`carried: True`) - the same seam `test_confirm_local_buy_no_oi.py::
+    test_carried_local_line_skipped` already exercises for the LOCAL-origin case."""
+
+    def test_placed_row_on_received_po_not_redirected_AC_CL_1_2(self, api):
+        """AC-CL-1/2: a carried line's PLACED draft, linked to a fully received PO
+        line (credit 0), is left exactly alone by a reconfirm that does not name it -
+        no redirect, no note change, no second ORDER row, no handover line."""
+        _client, world = api
+        fixture = _received_po_placed_row(api)
+        row = fixture["row"]
+        line = fixture["line"]
+        original_note = row.note
+
+        service = ProjectOrderInquiryService(world.db)
+        decision = _next_decision(world, fixture["order"])
+        before = _handover_count_for_row(world, row)
+        service.refresh_for_decision(
+            fixture["order"], decision,
+            [_buy_line_entry(service, line, carried=True)],
+            actor_user_id=world.cs_user,
+        )
+        world.db.commit()
+        world.db.refresh(row)
+
+        assert row.state == INQUIRY_PLACED
+        assert row.redirected_to_pool is False
+        assert row.note == original_note
+        assert [r.id for r in _rows_for_line(world, line)] == [row.id], (
+            "a carried line's unchanged draft must not spawn a second ORDER row"
+        )
+        assert _handover_count_for_row(world, row) == before, (
+            "a carried line's untouched row must not queue a handover line"
+        )
+
+    def test_partly_linked_row_kept_whole_AC_CL_3(self, api):
+        """AC-CL-3: a carried line's PARTLY_LINKED row (qty 5, 3 linked to a still-
+        open document) keeps its qty, state and note on an unrelated reconfirm - no
+        shrink to the linked 3, no "Remainder superseded" note, no remainder row
+        raised for the other 2."""
+        _client, world = api
+        fixture = _raise_one_row(api, qty="5")
+        row = fixture["row"]
+        line = fixture["line"]
+
+        po, open_line = _open_po_line(world, qty="3")
+        _link_row_to(world, row, qty="3", document=po.po_number, po_line=open_line)
+        world.db.refresh(row)
+        assert row.state == INQUIRY_PARTLY_LINKED, "fixture sanity"
+        original_note = row.note
+
+        service = ProjectOrderInquiryService(world.db)
+        decision = _next_decision(world, fixture["order"])
+        service.refresh_for_decision(
+            fixture["order"], decision,
+            [_buy_line_entry(service, line, carried=True)],
+            actor_user_id=world.cs_user,
+        )
+        world.db.commit()
+        world.db.refresh(row)
+
+        assert Decimal(str(row.qty)) == Decimal("5")
+        assert row.state == INQUIRY_PARTLY_LINKED
+        assert row.note == original_note
+        assert [r.id for r in _rows_for_line(world, line)] == [row.id], (
+            "no remainder row for a carried line's untouched partly-linked row"
+        )
+
+    def test_named_line_still_redirects_AC_CL_4(self, api):
+        """AC-CL-4 (guard against over-gating): the SAME shape as AC-CL-1, but the
+        line is NAMED this revision (`carried` false) - today's redirect still
+        happens, the same shape AC-OH-40 already pins."""
+        _client, world = api
+        fixture = _received_po_placed_row(api)
+        row = fixture["row"]
+        line = fixture["line"]
+        po = fixture["po"]
+
+        service = ProjectOrderInquiryService(world.db)
+        decision = _next_decision(world, fixture["order"])
+        service.refresh_for_decision(
+            fixture["order"], decision,
+            [_buy_line_entry(service, line, carried=False)],
+            actor_user_id=world.cs_user,
+        )
+        world.db.commit()
+        world.db.refresh(row)
+
+        assert row.redirected_to_pool is True
+        new_row = next(
+            r for r in _rows_for_line(world, line) if str(r.id) != str(row.id)
+        )
+        assert Decimal(str(new_row.previous_qty)) == Decimal("10")
+        assert new_row.previous_delivery_date == WAS
+        note = new_row.note or ""
+        assert "Replaces 10 used" in note
+        assert po.po_number in note
+        assert "received" in note
+
+    def test_carried_raised_row_still_cancelled_and_reraised_AC_CL_5(self, api):
+        """AC-CL-5: a carried line whose only live row is still `raised`, no links,
+        keeps today's behaviour - cancelled "Superseded by revision N" and re-raised
+        under the new revision with the handshake INHERITED, never promoted to
+        `changed` (`_handshake_for_raise(carried=True)`'s own `prior` branch). The row
+        is acknowledged FIRST, so `_live_handshake` hands `_handshake_for_raise` a real
+        `prior` to inherit from, rather than the trivial AWAITING-to-AWAITING case a
+        never-acknowledged row would also pass."""
+        _client, world = api
+        fixture = _raise_one_row(api, qty="10")
+        row = fixture["row"]
+        line = fixture["line"]
+        row.ack_state = ACK_ACKNOWLEDGED
+        row.acknowledged_by = world.buyer
+        row.acknowledged_at = datetime.utcnow()
+        world.db.flush()
+        world.db.commit()
+
+        service = ProjectOrderInquiryService(world.db)
+        decision = _next_decision(world, fixture["order"])
+        service.refresh_for_decision(
+            fixture["order"], decision,
+            [_buy_line_entry(service, line, carried=True)],
+            actor_user_id=world.cs_user,
+        )
+        world.db.commit()
+        world.db.refresh(row)
+
+        assert row.state == INQUIRY_CANCELLED
+        assert row.note == f"Superseded by revision {decision.revision_no}"
+
+        live_rows = _rows_for_line(world, line)
+        assert [r.id for r in live_rows] == [
+            r.id for r in live_rows if str(r.id) != str(row.id)
+        ], "the old row must not still read as live"
+        assert len(live_rows) == 1, "exactly one fresh ORDER row for the line"
+        new_row = live_rows[0]
+        assert new_row.state == INQUIRY_RAISED
+        assert new_row.verb == IV_ORDER
+        assert Decimal(str(new_row.qty)) == Decimal("10")
+        assert new_row.delivery_date == WAS
+        assert new_row.ack_state == ACK_ACKNOWLEDGED, (
+            "the handshake is inherited from the row it carries, not reset"
+        )
+        assert new_row.acknowledged_by == world.buyer
+        assert new_row.changed_at is None, "a silent carry must not promote to changed"
+
+    def test_partly_linked_cascade_draft_kept_whole_AC_CL_3_cascade(self, api):
+        """S1 (review round 1, 9fb06ff66): AC-CL-3's own test links through
+        `_link_row_to`, which leaves `auto` False - a MANUAL link, never a `drafted`
+        candidate, so it exercises gate (2) (the netting loop's own PARTLY_LINKED
+        branch) alone. This is the OI-2609-0755 shape itself: a CASCADE-made link
+        (`auto=True`), which without gate (1) (the `drafted` list emptied for a
+        carried line) would have been handed to `_settle_row_in_place` first - so this
+        variant exercises gates (1) and (2) together. Same assertions as AC-CL-3."""
+        _client, world = api
+        fixture = _raise_one_row(api, qty="5")
+        row = fixture["row"]
+        line = fixture["line"]
+
+        po, open_line = _open_po_line(world, qty="3")
+        link = OrderInquiryLink(
+            id=_uid(), company_id=row.company_id, row_id=row.id,
+            po_line_id=open_line.id, document=po.po_number, qty=Decimal("3"), auto=True,
+        )
+        world.db.add(link)
+        world.db.flush()
+        ProjectOrderInquiryService(world.db).refresh_link_state([row])
+        world.db.commit()
+        world.db.refresh(row)
+        assert row.state == INQUIRY_PARTLY_LINKED, "fixture sanity"
+        original_note = row.note
+
+        service = ProjectOrderInquiryService(world.db)
+        decision = _next_decision(world, fixture["order"])
+        service.refresh_for_decision(
+            fixture["order"], decision,
+            [_buy_line_entry(service, line, carried=True)],
+            actor_user_id=world.cs_user,
+        )
+        world.db.commit()
+        world.db.refresh(row)
+
+        assert Decimal(str(row.qty)) == Decimal("5")
+        assert row.state == INQUIRY_PARTLY_LINKED
+        assert row.note == original_note
+        assert [r.id for r in _rows_for_line(world, line)] == [row.id], (
+            "no remainder row for a carried line's untouched cascade-linked draft"
+        )
+
+    def test_carried_draft_restamped_so_whole_revision_reject_retires_it_B1(self, api):
+        """B1 (review round 1, 9fb06ff66): a carried line's live draft is re-stamped
+        onto the new revision (`row.supply_decision_id`) even though gate (1) keeps it
+        away from `_settle_row_in_place` (the ordinary settle's own writer of that
+        column). Without the restamp, `retire_rows_for_dropped_lines` - the whole-
+        revision reject branch, `ProjectSupplyService.uncover_lines` -filters on
+        `supply_decision_id == decision.id` and would never find the row, so a reject
+        naming this line would retire nothing and leave the row `placed` with its
+        links still holding real PO quantity."""
+        _client, world = api
+        fixture = _received_po_placed_row(api)
+        row = fixture["row"]
+        line = fixture["line"]
+        original_note = row.note
+
+        service = ProjectOrderInquiryService(world.db)
+        decision = _next_decision(world, fixture["order"])
+        service.refresh_for_decision(
+            fixture["order"], decision,
+            [_buy_line_entry(service, line, carried=True)],
+            actor_user_id=world.cs_user,
+        )
+        world.db.commit()
+        world.db.refresh(row)
+
+        # The carried reconfirm itself must leave everything but the revision pointer
+        # alone - the same shape AC-CL-1/2 already pins.
+        assert row.state == INQUIRY_PLACED
+        assert row.redirected_to_pool is False
+        assert Decimal(str(row.qty)) == Decimal("10")
+        assert row.note == original_note
+        assert row.supply_decision_id == decision.id, (
+            "a carried draft must be re-stamped onto the new revision, or a later "
+            "whole-revision reject of its line cannot find it"
+        )
+
+        service.retire_rows_for_dropped_lines(
+            str(fixture["order"].id), decision, [str(line.id)],
+            reason="rejected", actor_user_id=world.cs_user,
+        )
+        world.db.commit()
+        world.db.refresh(row)
+
+        assert row.state == INQUIRY_CANCELLED
+        assert _links_of(world, row) == []
 
 
 # =============================================================================
