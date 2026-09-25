@@ -90,24 +90,6 @@ export function BoardTrailPopover({
                 <span>How this decision was reached</span>
                 <ItemFlagChips contribution={contribution} />
               </div>
-              {/* D3 (S2): ONE Reason box now writes `amend_reason`, `buy_reason` and every
-                  borrow reason with the SAME text, so a frozen line with all three set is not
-                  three different answers repeated - it is one answer, said once. Absent when
-                  nothing was stored, or when an older revision froze three different texts
-                  (each still reads in its own place: the borrow row, the trail's own "why"). */}
-              {trailReason(contribution) && (
-                <div className="border-b px-3 py-2">
-                  <p className="text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    Reason
-                  </p>
-                  <p
-                    data-testid={`trail-reason-${contribution.key}`}
-                    className="mt-0.5 text-xs"
-                  >
-                    {trailReason(contribution)}
-                  </p>
-                </div>
-              )}
               {trail.length === 0 ? (
                 <p className="px-3 py-2 text-xs text-muted-foreground">
                   {trailAbsence(contribution)}
@@ -214,6 +196,26 @@ export function BoardTrailPopover({
                     ))}
                   </tbody>
                 </table>
+              )}
+              {/* D3 (S2): ONE Reason box now writes `amend_reason`, `buy_reason` and every
+                  borrow reason with the SAME text, so a frozen line with all three set is not
+                  three different answers repeated - it is one answer, said once. Absent when
+                  nothing was stored, or when an older revision froze three different texts
+                  (each still reads in its own place: the borrow row, the trail's own "why").
+                  Placed after the table (not between the header and it) so the raw table stays
+                  in its own horizontal scroller (S4-04). */}
+              {trailReason(contribution) && (
+                <div className="border-t px-3 py-2">
+                  <p className="text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Reason
+                  </p>
+                  <p
+                    data-testid={`trail-reason-${contribution.key}`}
+                    className="mt-0.5 text-xs"
+                  >
+                    {trailReason(contribution)}
+                  </p>
+                </div>
               )}
               {/* AND WHAT ELSE COULD HAVE BEEN DONE (R36, AC-S3-14). Beneath the questions,
                   because it is the answer to the one they raise: five rungs were checked, and
