@@ -965,6 +965,8 @@ def test_spo_prefixed_documents_are_never_candidates_the_flag_or_the_cascade(api
     db.commit()
     assert result == {"placed_rows": 0, "allocations": 0, "products_touched": 0,
                       "book_linked_rows": 0, "suggested_rows": 0,
+                      # R18: nothing was walked, so nothing changed.
+                      "changed_rows": 0,
                       "after_horizon": 0, "link_up_to": None,
                       "link_horizon": "none"}
     db.refresh(row)
@@ -1120,10 +1122,15 @@ def test_auto_place_for_products_is_idempotent(api):
 
     assert first == {"placed_rows": 1, "allocations": 1, "products_touched": 1,
                      "book_linked_rows": 0, "suggested_rows": 1,
+                     # R18: the first pass writes a new suggestion, so the row changed.
+                     "changed_rows": 1,
                      "after_horizon": 0, "link_up_to": None,
                      "link_horizon": "none"}
     assert second == {"placed_rows": 1, "allocations": 1, "products_touched": 1,
                       "book_linked_rows": 0, "suggested_rows": 1,
+                      # R18: the second pass writes the SAME suggestion
+                      # (`_same_placement`), so nothing changed.
+                      "changed_rows": 0,
                       "after_horizon": 0, "link_up_to": None,
                       "link_horizon": "none"}
     db.refresh(row)
@@ -1152,6 +1159,8 @@ def test_auto_place_route_places_raised_rows_and_reports_totals(api):
     body = response.json()
     assert body == {"placed_rows": 1, "allocations": 1, "products_touched": 1,
                     "book_linked_rows": 0, "suggested_rows": 1,
+                    # R18: a new suggestion is written, so the row changed.
+                    "changed_rows": 1,
                     "after_horizon": 0, "link_up_to": None,
                     "link_horizon": "none"}
     db.refresh(row)
@@ -1444,6 +1453,8 @@ def test_auto_place_ranks_by_the_active_policys_document_age_over_the_old_delive
 
     assert result == {"placed_rows": 1, "allocations": 1, "products_touched": 1,
                       "book_linked_rows": 0, "suggested_rows": 1,
+                      # R18: a new suggestion is written for the winning row, so it changed.
+                      "changed_rows": 1,
                       "after_horizon": 0, "link_up_to": None,
                       "link_horizon": "none"}
     db.refresh(older)
@@ -1494,6 +1505,8 @@ def test_auto_place_ranks_by_the_active_policys_need_by_date_over_the_old_delive
 
     assert result == {"placed_rows": 1, "allocations": 1, "products_touched": 1,
                       "book_linked_rows": 0, "suggested_rows": 1,
+                      # R18: a new suggestion is written for the winning row, so it changed.
+                      "changed_rows": 1,
                       "after_horizon": 0, "link_up_to": None,
                       "link_horizon": "none"}
     db.refresh(older)
