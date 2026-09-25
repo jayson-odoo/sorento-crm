@@ -897,3 +897,499 @@ def test_include_supplier_false_drops_the_supplier_column_on_both_sheets(db):
         assert "Guangdong SW" not in _rows_of(ws)[0], (
             f"{name} still prints the supplier name in another cell"
         )
+
+
+# =========================================================================== #
+# --- PLAN-low-stock-export-split-25sep (#1229) ---
+#
+# Test list items 5-16c. WRITTEN BEFORE ANY OF THIS SLICE'S CODE EXISTS (Phase 2 is
+# test-first): `export_low_stock` above takes no `split` kwarg at all today, so most of
+# these fail with a TypeError on that keyword - the honest red for "the parameter is not
+# there yet", not a fixture bug. `low_stock_preview` and the preview route do not exist at
+# all yet either.
+# =========================================================================== #
+
+def _product_in_category(db, *, stem, cat):
+    """A product filed under an EXACT category row, never `_product`'s own
+    random-or-named category creation - needed for the "No category" bucket, whose
+    `category_code` must be the literal empty string rather than falling through
+    `_product`'s `category_code or _code("CAT")` default (an explicit `""` is falsy)."""
+    uom = UnitOfMeasure(id=_u(), uom_code=_code("U")[:20], uom_name=f"{MARKER} uom")
+    db.add(uom)
+    db.flush()
+    product = Product(
+        id=_u(), product_code=_code(stem), product_name=f"{MARKER} {stem} product",
+        category_id=cat.id, base_uom_id=uom.id, list_price=0,
+        is_active=True, is_discontinued=False,
+    )
+    db.add(product)
+    db.flush()
+    return product
+
+
+def _blank_category(db) -> ProductCategory:
+    """The ONE category row whose `category_code` is a literal empty string - the "No
+    category" bucket's own master-data fact, shared across this file's split tests inside
+    the same rolled-back savepoint."""
+    cat = (
+        db.query(ProductCategory).filter(ProductCategory.category_code == "").one_or_none()
+    )
+    if cat is None:
+        cat = ProductCategory(id=_u(), category_code="", category_name=f"{MARKER} blank")
+        db.add(cat)
+        db.flush()
+    return cat
+
+
+def test_low_stock_split_none_is_unchanged(db):
+    """Test list item 5 (AC-3): explicitly passing `split="none"` is today's workbook,
+    unchanged - "Low stock" then "All", the same sixteen columns. Explicit rather than
+    omitted, so this proves the KWARG exists and defaults to the old behaviour, not just
+    that calling with no split at all still works (the 18 pre-existing tests already cover
+    that read).
+    """
+    lsr = _lsr()
+    run = _run(db)
+    _summary_row(db, run, _product(db, stem="SPLITNONE"), pool_on_hand=40, reorder_level=100)
+
+    blob, _ct, _fn, _counts = lsr.export_low_stock(db, run_id=str(run.id), split="none")
+
+    wb = _sheets(blob)
+    assert wb.sheetnames == ["Low stock", "All"], wb.sheetnames
+    header = tuple(c.value for c in wb["All"][1])
+    assert len(header) == 16, header
+
+
+def test_low_stock_split_category_pairs_low_then_all(db):
+    """Test list item 6 (AC-4): `split="category"` writes TWO sheets per category, in the
+    order `"<category> - Low"` then `"<category>"`, groups in SANITISED-title order
+    ("No category" sorts before either named category here, alphabetically), and a product
+    with no category folds into "No category". The workbook's total "All" rows across every
+    group equals the `split="none"` "All" count - the split re-files every visible row, it
+    never drops or duplicates one.
+    """
+    lsr = _lsr()
+    run = _run(db)
+    cat_a = f"{MARKER}-CATA"
+    cat_b = f"{MARKER}-CATB"
+    a_low = _product(db, stem="CATALOW", category_code=cat_a)
+    a_ok = _product(db, stem="CATAOK", category_code=cat_a)
+    b_low = _product(db, stem="CATBLOW", category_code=cat_b)
+    _summary_row(db, run, a_low, pool_on_hand=10, reorder_level=100)
+    _summary_row(db, run, a_ok, pool_on_hand=150, reorder_level=100)
+    _summary_row(db, run, b_low, pool_on_hand=10, reorder_level=100)
+    no_cat = _product_in_category(db, stem="NOCAT", cat=_blank_category(db))
+    _summary_row(db, run, no_cat, pool_on_hand=10, reorder_level=100)
+
+    _blob_none, _ct0, _fn0, counts_none = lsr.export_low_stock(db, run_id=str(run.id))
+
+    blob, _ct, _fn, _counts = lsr.export_low_stock(
+        db, run_id=str(run.id), split="category",
+    )
+    wb = _sheets(blob)
+    # "no category" < "zztlsr-cata" < "zztlsr-catb" case-insensitive - "No category" sorts
+    # FIRST here, not last.
+    expected_order = [
+        "No category - Low", "No category",
+        f"{cat_a} - Low", cat_a,
+        f"{cat_b} - Low", cat_b,
+    ]
+    assert wb.sheetnames == expected_order, wb.sheetnames
+
+    assert _codes_of(wb[cat_a]) == [a_low.product_code, a_ok.product_code]
+    assert _codes_of(wb[f"{cat_a} - Low"]) == [a_low.product_code]
+    assert _codes_of(wb[cat_b]) == [b_low.product_code]
+    assert _codes_of(wb["No category"]) == [no_cat.product_code]
+
+    total_all = sum(
+        len(_codes_of(wb[name])) for name in (cat_a, cat_b, "No category")
+    )
+    assert total_all == counts_none["all"], (
+        "the split re-files every visible row, it never drops or duplicates one"
+    )
+
+
+def test_low_stock_split_category_empty_low_sheet_is_header_only(db):
+    """Test list item 7 (AC-4 / A3): a group with NO row below its level still gets its
+    " - Low" sheet - header only, so the buyer sees "nothing low here" rather than a
+    missing tab.
+    """
+    lsr = _lsr()
+    run = _run(db)
+    cat = f"{MARKER}-ALLOK"
+    p1 = _product(db, stem="OKAY1", category_code=cat)
+    p2 = _product(db, stem="OKAY2", category_code=cat)
+    _summary_row(db, run, p1, pool_on_hand=150, reorder_level=100)
+    _summary_row(db, run, p2, pool_on_hand=120, reorder_level=100)
+
+    blob, _ct, _fn, _counts = lsr.export_low_stock(db, run_id=str(run.id), split="category")
+    wb = _sheets(blob)
+
+    low_ws = wb[f"{cat} - Low"]
+    assert low_ws.max_row == 1, "header only, no data rows"
+    assert tuple(c.value for c in low_ws[1])[0] == "Item code"
+    assert _codes_of(wb[cat]) == [p1.product_code, p2.product_code]
+
+
+def test_low_stock_split_supplier_keys_on_frozen_supplier_name(db):
+    """Test list item 8 (AC-5): `split="supplier"` keys on the FROZEN row's
+    `supplier_name` - not any master-data join - blank folding into "No supplier"."""
+    lsr = _lsr()
+    run = _run(db)
+    zeta_p = _product(db, stem="SUPZETA")
+    alpha_p = _product(db, stem="SUPALPHA")
+    none_p = _product(db, stem="SUPNONE")
+    _summary_row(db, run, zeta_p, pool_on_hand=10, reorder_level=100, supplier_name="Zeta co")
+    _summary_row(
+        db, run, alpha_p, pool_on_hand=10, reorder_level=100, supplier_name="alpha co",
+    )
+    _summary_row(db, run, none_p, pool_on_hand=10, reorder_level=100, supplier_name=None)
+
+    blob, _ct, _fn, _counts = lsr.export_low_stock(db, run_id=str(run.id), split="supplier")
+    wb = _sheets(blob)
+
+    expected_order = [
+        "alpha co - Low", "alpha co", "No supplier - Low", "No supplier",
+        "Zeta co - Low", "Zeta co",
+    ]
+    assert wb.sheetnames == expected_order, wb.sheetnames
+    assert _codes_of(wb["Zeta co"]) == [zeta_p.product_code]
+    assert _codes_of(wb["No supplier"]) == [none_p.product_code]
+    assert _codes_of(wb["alpha co"]) == [alpha_p.product_code]
+
+
+def test_low_stock_split_supplier_category_title_cut_and_collision(db):
+    """Test list item 9 (AC-6): a `"<supplier> - <category>"` key longer than 25 chars is
+    cut so the ` - Low` suffix still fits Excel's 31-char limit (A4); two keys that agree on
+    the cut get ` (2)` on BOTH sheets of the second pair.
+
+    Both supplier names start with the SAME 40 "A"s, which alone already exceeds the
+    25-char cut, so both keys sanitise to an identical base regardless of the category or
+    the "ONE"/"TWO" suffix that follows - the collision this test proves. Products are
+    named so `p1`'s code sorts before `p2`'s under the SAME category, which is what puts
+    `p1`'s key first through `unique_sheet_title` and makes `p1` the UNsuffixed one.
+    """
+    lsr = _lsr()
+    run = _run(db)
+    shared_cat = f"{MARKER}-SHARED"
+    long_base = "A" * 40
+    p1 = _product(db, stem="PAIR1", category_code=shared_cat)
+    p2 = _product(db, stem="PAIR2", category_code=shared_cat)
+    _summary_row(db, run, p1, pool_on_hand=10, reorder_level=100,
+                supplier_name=f"{long_base}ONE")
+    _summary_row(db, run, p2, pool_on_hand=10, reorder_level=100,
+                supplier_name=f"{long_base}TWO")
+
+    blob, _ct, _fn, _counts = lsr.export_low_stock(
+        db, run_id=str(run.id), split="supplier_category",
+    )
+    wb = _sheets(blob)
+
+    base1 = "A" * 25
+    base2 = "A" * 21 + " (2)"
+    assert wb.sheetnames == [
+        f"{base1} - Low", base1, f"{base2} - Low", base2,
+    ], wb.sheetnames
+    for title in wb.sheetnames:
+        assert len(title) <= 31, title
+    assert _codes_of(wb[base1]) == [p1.product_code]
+    assert _codes_of(wb[base2]) == [p2.product_code]
+
+
+def test_low_stock_split_supplier_refused_without_supplier_column(db):
+    """Test list item 10 (AC-8/R5): `split="supplier"` or `"supplier_category"` with
+    `include_supplier=False` raises 422 BEFORE any sheet is written - the sheet titles
+    would leak the names the column is being withheld to protect."""
+    lsr = _lsr()
+    run = _run(db)
+    _summary_row(db, run, _product(db, stem="NOSUP"), pool_on_hand=10, reorder_level=100,
+                supplier_name="Guangdong SW")
+
+    for split in ("supplier", "supplier_category"):
+        with pytest.raises(AppException) as excinfo:
+            lsr.export_low_stock(
+                db, run_id=str(run.id), include_supplier=False, split=split,
+            )
+        assert excinfo.value.status_code == 422
+        assert "Split by supplier is not available without the Supplier column" in str(
+            excinfo.value.detail
+        ), (split, excinfo.value.detail)
+
+
+def test_low_stock_split_category_allowed_without_supplier_column(db):
+    """Test list item 11 (AC-8): `split="category"` with `include_supplier=False` still
+    works, and drops the Supplier column on EVERY sheet - the category split names nothing
+    the reveal key hides."""
+    lsr = _lsr()
+    run = _run(db)
+    cat = f"{MARKER}-NOSUPCAT"
+    _summary_row(
+        db, run, _product(db, stem="NOSUPCAT", category_code=cat),
+        pool_on_hand=10, reorder_level=100, supplier_name="Guangdong SW",
+    )
+
+    blob, _ct, _fn, _counts = lsr.export_low_stock(
+        db, run_id=str(run.id), include_supplier=False, split="category",
+    )
+    wb = _sheets(blob)
+    expected_header = tuple(c for c in _EXPECTED_COLUMNS if c != "Supplier")
+    assert len(wb.sheetnames) == 2, wb.sheetnames
+    for name in wb.sheetnames:
+        header = tuple(c.value for c in wb[name][1])
+        assert header == expected_header, f"{name}: {header}"
+
+
+def test_low_stock_cap_applies_under_split(db, monkeypatch):
+    """Test list item 12 (AC-9): the cap is checked against the TOTAL visible row count,
+    whatever the split - the split never changes what is counted."""
+    lsr = _lsr()
+    run = _run(db)
+    for stem in ("SPLITCAP1", "SPLITCAP2", "SPLITCAP3"):
+        _summary_row(db, run, _product(db, stem=stem), pool_on_hand=10, reorder_level=100)
+
+    monkeypatch.setattr(lsr, "MAX_LOW_STOCK_ROWS", 2)
+    with pytest.raises(AppException) as excinfo:
+        lsr.export_low_stock(db, run_id=str(run.id), split="category")
+    assert excinfo.value.status_code == 422
+    assert "Narrow the plan first" in str(excinfo.value.detail)
+
+
+def test_export_route_forwards_split_to_task(scm_app, monkeypatch):
+    """Test list item 13 (AC-11): `split` in the POST body is forwarded to
+    `generate_low_stock_report`'s kwargs unchanged; omitted, the kwarg reads "none" -
+    the existing enqueue test's own shape stays valid either way.
+    """
+    from app.services import queue_service
+
+    _export_tasks, task_fn = _task()
+    app, db = _client(scm_app, "purchasing")
+    run_id = _seed_run(db)
+    run = db.get(ReorderRun, run_id)
+    _summary_row(db, run, _product(db, stem="FWDSPLIT"), pool_on_hand=40, reorder_level=100)
+    run2_id = _seed_run(db)
+    run2 = db.get(ReorderRun, run2_id)
+    _summary_row(
+        db, run2, _product(db, stem="FWDSPLITNONE"), pool_on_hand=40, reorder_level=100,
+    )
+    db.flush()
+
+    calls: list[dict] = []
+
+    def _fake_enqueue(func, *args, **kwargs):
+        calls.append(kwargs)
+        return type("J", (), {"id": "fake-job-id"})()
+
+    monkeypatch.setattr(queue_service, "enqueue_job", _fake_enqueue)
+
+    with TestClient(app) as c:
+        resp = c.post("/api/v1/scm/order-summary/export", json={
+            "run_id": run_id, "format": "low_stock_xlsx", "split": "supplier",
+        })
+        assert resp.status_code == 200, resp.text
+        assert calls[-1].get("split") == "supplier", calls[-1]
+
+        resp2 = c.post("/api/v1/scm/order-summary/export", json={
+            "run_id": run2_id, "format": "low_stock_xlsx",
+        })
+        assert resp2.status_code == 200, resp2.text
+        assert calls[-1].get("split", "none") == "none", calls[-1]
+        assert calls[-1].get("queue_name") == "imports", calls[-1]
+        assert calls[-1].get("job_timeout") == 600, calls[-1]
+
+
+def test_export_route_rejects_unknown_split(scm_app, monkeypatch):
+    """Test list item 14 (AC-12): `split: "bogus"` is refused 422 (schema-level), and no
+    `user_downloads` row is created.
+
+    RED today for a schema reason, not an exception: `OrderSummaryExportIn` does not
+    declare `split` at all yet, so an unrecognised field is silently dropped by pydantic
+    rather than rejected - the POST below succeeds with the run's low stock export queued
+    exactly as if no split had been named, and this assertion is what proves that gap.
+    """
+    from app.services import queue_service
+
+    _task()
+    app, db = _client(scm_app, "purchasing")
+    run_id = _seed_run(db)
+    run = db.get(ReorderRun, run_id)
+    _summary_row(db, run, _product(db, stem="BOGUSSPLIT"), pool_on_hand=40, reorder_level=100)
+    db.flush()
+    before = db.execute(text("SELECT count(*) FROM user_downloads")).scalar()
+
+    monkeypatch.setattr(queue_service, "enqueue_job",
+                        lambda *a, **k: type("J", (), {"id": "x"})())
+
+    with TestClient(app) as c:
+        resp = c.post("/api/v1/scm/order-summary/export", json={
+            "run_id": run_id, "format": "low_stock_xlsx", "split": "bogus",
+        })
+
+    assert resp.status_code == 422, resp.text
+    after = db.execute(text("SELECT count(*) FROM user_downloads")).scalar()
+    assert after == before, "an unknown split must not create a download row"
+
+
+def test_export_route_rejects_split_on_other_formats(scm_app, monkeypatch):
+    """Test list item 15 (AC-13/R6): `split` on any format OTHER than the low stock report
+    is refused 422 ("split applies to the low stock report only"), no download row,
+    nothing enqueued - for all three of xlsx, pdf and oi_worksheet.
+
+    RED today: the route reads no `split` field at all, so each of these currently
+    proceeds exactly as an ordinary export of that format - `oi_worksheet` additionally
+    needs the OI worklist's own view permission (`_client_with_oi_view`), the same gate
+    `test_oi_worksheet_export_route.py` grants, or its 403 would be a confound unrelated to
+    this slice.
+    """
+    from app.services import queue_service
+    from tests.scm.test_oi_worksheet_export_route import _client_with_oi_view
+
+    calls: list[dict] = []
+
+    def _fake_enqueue(func, *args, **kwargs):
+        calls.append(kwargs)
+        return type("J", (), {"id": "fake-job-id"})()
+
+    monkeypatch.setattr(queue_service, "enqueue_job", _fake_enqueue)
+
+    for fmt, client_factory in (
+        ("xlsx", lambda: _client(scm_app, "purchasing")),
+        ("pdf", lambda: _client(scm_app, "purchasing")),
+        ("oi_worksheet", lambda: _client_with_oi_view(scm_app)),
+    ):
+        app, db = client_factory()
+        run_id = _seed_run(db)
+        run = db.get(ReorderRun, run_id)
+        _summary_row(
+            db, run, _product(db, stem=f"OTHRFMT{fmt[:4]}"),
+            pool_on_hand=40, reorder_level=100,
+        )
+        db.flush()
+        before = db.execute(text("SELECT count(*) FROM user_downloads")).scalar()
+        calls.clear()
+
+        with TestClient(app) as c:
+            resp = c.post("/api/v1/scm/order-summary/export", json={
+                "run_id": run_id, "format": fmt, "split": "supplier",
+            })
+
+        assert resp.status_code == 422, (fmt, resp.text)
+        assert "split applies to the low stock report only" in resp.text, (fmt, resp.text)
+        after = db.execute(text("SELECT count(*) FROM user_downloads")).scalar()
+        assert after == before, (fmt, "a refused export left a download row behind")
+        assert calls == [], (fmt, "a refused export must not enqueue anything")
+
+
+def test_generate_low_stock_report_forwards_split(scm_app, monkeypatch):
+    """Test list item 16 (AC-14): the task forwards `split` to `export_low_stock` and still
+    marks the row ready with `row_count_low`/`row_count_all` as before."""
+    from app.services.download_service import DownloadService
+
+    export_tasks, task_fn = _task()
+    lsr = _lsr()
+
+    _app, db, _gcu, _gcuak = scm_app
+    run_id = _seed_run(db)
+    user_id = seed_user(db, "purchasing")
+    db.flush()
+
+    dl = DownloadService(db).create(
+        user_id=user_id, kind="low_stock_xlsx", source_entity_type="reorder_run",
+        source_entity_id=run_id, filename="low-stock-10092026.xlsx",
+    )
+
+    class _FakeBackend:
+        def upload_file(self, *, file_content, file_path, content_type):
+            return (file_path, None)
+
+    seen: dict = {}
+
+    def _fake_export(db_, *, run_id, include_supplier=True, split="none"):
+        seen["split"] = split
+        return (
+            b"fake-workbook",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "low-stock-10092026.xlsx",
+            {"low": 3, "all": 9, "sheets": 6},
+        )
+
+    monkeypatch.setattr(export_tasks, "SessionLocal", lambda: _NoCloseSession(db))
+    monkeypatch.setattr(export_tasks, "default_provider", lambda: "s3")
+    monkeypatch.setattr(export_tasks, "get_backend", lambda provider: _FakeBackend())
+    monkeypatch.setattr(lsr, "export_low_stock", _fake_export)
+
+    result = task_fn(str(dl.id), run_id, user_id, split="category")
+
+    assert result["status"] == "ready", result
+    assert seen.get("split") == "category", (
+        "the task must forward its own split kwarg to export_low_stock"
+    )
+    row = DownloadService(db).get(str(dl.id))
+    assert row.status == "ready", row.status
+    assert getattr(row, "row_count_low", None) == 3
+    assert getattr(row, "row_count_all", None) == 9
+
+
+def test_low_stock_preview_counts_match_the_workbook(db):
+    """Test list item 16b (AC-15b): `low_stock_report_service` answers a preview whose
+    GROUP counts equal each split's own sheet count / 2, and whose `rows` equals the
+    visible row count (the "All" count) - the SAME split the workbook is built from, not a
+    second guess at it.
+    """
+    lsr = _lsr()
+    run = _run(db)
+    cat_a = f"{MARKER}-PVA"
+    cat_b = f"{MARKER}-PVB"
+    p1 = _product(db, stem="PVONE", category_code=cat_a)
+    p2 = _product(db, stem="PVTWO", category_code=cat_a)
+    p3 = _product(db, stem="PVTHREE", category_code=cat_b)
+    _summary_row(db, run, p1, pool_on_hand=10, reorder_level=100, supplier_name="Alpha co")
+    _summary_row(db, run, p2, pool_on_hand=150, reorder_level=100, supplier_name="Beta co")
+    _summary_row(db, run, p3, pool_on_hand=10, reorder_level=100, supplier_name="Alpha co")
+
+    preview = lsr.low_stock_preview(db, str(run.id))
+    assert preview["rows"] == 3, preview
+
+    for split in ("supplier", "category", "supplier_category"):
+        blob, _ct, _fn, _counts = lsr.export_low_stock(db, run_id=str(run.id), split=split)
+        wb = _sheets(blob)
+        assert len(wb.sheetnames) == preview["sheet_counts"][split] * 2, (
+            split, wb.sheetnames, preview["sheet_counts"]
+        )
+
+
+def test_low_stock_preview_route_404_on_invisible_run_and_fields_declared(scm_app):
+    """Test list item 16c (AC-15b): `GET /order-summary/low-stock-preview` answers 404 on a
+    malformed or invisible run id, and its success shape carries `rows`/`sheet_counts.
+    {supplier, category, supplier_category}` by NAME - `response_model` silently drops
+    undeclared fields (LESSONS-LEARNT), so this is asserted through the route, not the
+    service dict.
+    """
+    app, db = _client(scm_app, "purchasing")
+    run_id = _seed_run(db)
+    run = db.get(ReorderRun, run_id)
+    _summary_row(
+        db, run, _product(db, stem="PREVROUTE"), pool_on_hand=10, reorder_level=100,
+    )
+    db.flush()
+
+    with TestClient(app) as c:
+        ok_resp = c.get(
+            "/api/v1/scm/order-summary/low-stock-preview", params={"run_id": run_id},
+        )
+        assert ok_resp.status_code == 200, ok_resp.text
+        body = ok_resp.json()
+        assert set(body.keys()) >= {"rows", "sheet_counts"}, body
+        assert set(body["sheet_counts"].keys()) == {
+            "supplier", "category", "supplier_category",
+        }, body["sheet_counts"]
+
+        malformed = c.get(
+            "/api/v1/scm/order-summary/low-stock-preview", params={"run_id": "not-a-uuid"},
+        )
+        assert malformed.status_code == 404, malformed.text
+
+        missing = c.get(
+            "/api/v1/scm/order-summary/low-stock-preview",
+            params={"run_id": str(uuid.uuid4())},
+        )
+        assert missing.status_code == 404, missing.text

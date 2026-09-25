@@ -38,7 +38,9 @@ vi.mock('../lib/summaryOrderMockStore', () => mockStore);
 import {
   exportLowStockReport,
   exportOrderSheet,
+  getLowStockPreview,
   getOrderSummaryDemand,
+  previewLowStockExport,
 } from './summaryOrderService';
 
 function ok(body: unknown) {
@@ -144,5 +146,61 @@ describe('summaryOrderService - exportLowStockReport (PLAN-low-stock-report AC-2
     } as unknown as Response);
 
     await expect(exportLowStockReport('run-2026-w37')).rejects.toThrow('Narrow the plan first');
+  });
+});
+
+// --- PLAN-low-stock-export-split-25sep (#1229) - test list item 20 ---
+//
+// `getLowStockPreview` and `previewLowStockExport` are ALREADY Phase-1 real code (they
+// have their own mock branch inside `USE_SUMMARY_ORDER_MOCKS`, unlike the exports above),
+// so these are expected GREEN, not red - captured here as the service's own coverage.
+
+describe('summaryOrderService - getLowStockPreview (R4, AC-15b)', () => {
+  it('GETs /order-summary/low-stock-preview?run_id=<runId> and returns the body', async () => {
+    mockStore.USE_SUMMARY_ORDER_MOCKS = false;
+    const preview = {
+      rows: 100,
+      sheet_counts: { supplier: 5, category: 3, supplier_category: 8 },
+    };
+    apiFetch.mockResolvedValue(ok(preview));
+
+    const result = await getLowStockPreview('run-1');
+
+    expect(apiFetch).toHaveBeenCalledTimes(1);
+    const url = calledUrl();
+    expect(url.pathname).toBe('/api/v1/scm/order-summary/low-stock-preview');
+    expect(url.searchParams.get('run_id')).toBe('run-1');
+    expect(result).toEqual(preview);
+  });
+
+  it('throws the extracted error message on a non-ok response', async () => {
+    mockStore.USE_SUMMARY_ORDER_MOCKS = false;
+    apiFetch.mockResolvedValue({
+      ok: false,
+      status: 404,
+      headers: { get: () => 'application/json' },
+      json: async () => ({ message: 'That plan does not exist.' }),
+    } as unknown as Response);
+
+    await expect(getLowStockPreview('run-1')).rejects.toThrow('That plan does not exist.');
+  });
+});
+
+describe('summaryOrderService - previewLowStockExport (R2/R4, AC-16b)', () => {
+  const preview = {
+    rows: 100,
+    sheet_counts: { supplier: 5, category: 3, supplier_category: 8 },
+  };
+
+  it('reads 0 rows and 0 sheets when the preview is undefined (loading/failed)', () => {
+    expect(previewLowStockExport(undefined, 'none')).toEqual({ rows: 0, sheets: 0 });
+  });
+
+  it('reads 2 sheets under "none", whatever the group counts say', () => {
+    expect(previewLowStockExport(preview, 'none')).toEqual({ rows: 100, sheets: 2 });
+  });
+
+  it('doubles the matching group count under "supplier"', () => {
+    expect(previewLowStockExport(preview, 'supplier')).toEqual({ rows: 100, sheets: 10 });
   });
 });
