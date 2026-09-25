@@ -9,8 +9,8 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, cleanup, fireEvent } from '@testing-library/react';
-import { useForm, useFieldArray } from 'react-hook-form';
+import { render, screen, cleanup, fireEvent, act } from '@testing-library/react';
+import { useForm, useFieldArray, type UseFormReturn } from 'react-hook-form';
 
 import { Form } from '@/components/ui/form';
 
@@ -172,5 +172,51 @@ describe('PurchaseRequestDocumentEditCard - line items DataGrid', () => {
     // #1227: the asterisk marks unit price as required - sponsorship lines only.
     expect(screen.getByText('U/P *')).toBeInTheDocument();
     expect(screen.getByText('Total')).toBeInTheDocument();
+  });
+
+  it('the required-price inline message renders full and unclipped in the edit DataGrid cell (#1232 round 2 blocking 1)', () => {
+    let formRef: UseFormReturn<PurchaseRequestSchemaType> | undefined;
+    const Wrapper = () => {
+      const form = useForm<PurchaseRequestSchemaType>({
+        defaultValues: {
+          request_type: 'sponsorship_form',
+          request_number: 'PR26-0332',
+          products: [{ item_code: 'ITEM-A', quantity: 4, remark: null, unit_price: null, total: null }],
+        } as unknown as PurchaseRequestSchemaType,
+      });
+      formRef = form;
+      const { fields, append, remove } = useFieldArray({ control: form.control, name: 'products' });
+      form.watch('products');
+      return (
+        <Form {...form}>
+          <form onSubmit={form.handleSubmit(() => {})}>
+            <PurchaseRequestDocumentEditCard
+              form={form}
+              request={request({ request_type: 'sponsorship_form' })}
+              isSponsorship
+              showTypeSelect={false}
+              fields={fields}
+              append={append}
+              remove={remove}
+              sponsorshipLineGrandTotal={0}
+            />
+          </form>
+        </Form>
+      );
+    };
+    render(<Wrapper />);
+
+    act(() => {
+      formRef!.setError('products.0.unit_price', { type: 'custom', message: 'Unit price is required.' });
+    });
+
+    const message = screen.getByText('Unit price is required.');
+    expect(message).toBeInTheDocument();
+    // Round 2 blocking 1: the U/P column (size 120) sits in a resizable DataGrid,
+    // whose cell carries a `truncate` class - `overflow: hidden` plus an inherited
+    // `white-space: nowrap` that clipped this sentence to "Unit price is requir" in
+    // the committed edit screenshots. The FormMessage must opt back into wrapping.
+    expect(message.textContent).toBe('Unit price is required.');
+    expect(message.className).toContain('whitespace-normal');
   });
 });

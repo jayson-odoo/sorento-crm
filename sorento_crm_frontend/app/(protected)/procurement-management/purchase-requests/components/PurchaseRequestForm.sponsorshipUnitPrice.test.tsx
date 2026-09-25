@@ -108,8 +108,15 @@ describe('PurchaseRequestForm - sponsorship unit price required (#1227)', () => 
     });
     fireEvent.click(screen.getByRole('button', { name: /Create/i }));
 
-    expect(await screen.findByText('Unit price is required.')).toBeInTheDocument();
+    const message = await screen.findByText('Unit price is required.');
+    expect(message).toBeInTheDocument();
     expect(createMutateAsync).not.toHaveBeenCalled();
+    // Round 2 blocking 1: the U/P column (size 120) sits in a resizable DataGrid,
+    // whose cell carries a `truncate` class - `overflow: hidden` plus an inherited
+    // `white-space: nowrap` that clipped this sentence to "Unit price is requir" in
+    // the committed screenshots. The FormMessage must opt back into wrapping.
+    expect(message.textContent).toBe('Unit price is required.');
+    expect(message.className).toContain('whitespace-normal');
   });
 
   it('a fully blank filler line never blocks Create by itself', async () => {
