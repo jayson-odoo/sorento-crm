@@ -17,7 +17,9 @@ Four sources, each already written by an existing feature - nothing here writes 
   worklist's "Raised via" column matches one (`app.services.scm.raise_event_matching.
   nearest_raise_event`) - `raised` / `reconfirmed`, or `sheet` when the row's own
   migration note says so, checked FIRST (the same priority `orderInquiryWorklist.ts`'s
-  `raisedKindLabel` uses, reviewer B1 round 1).
+  `raisedKindLabel` uses, reviewer B1 round 1) - PLUS (round 3, B3) any LATER raise event
+  of the same inquiry, past the row's own 10-minute window, that no row's own origin
+  match already reported.
 - A row's own planning-change note (`planning_change_service.py`'s exact three stamps) -
   `planning_change`, independent of whether that same row also matched a raise event
   above: the trail is a full history, not a single label picking one fact to show.
@@ -27,7 +29,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from sqlalchemy.orm import Session
 
@@ -43,7 +45,7 @@ from app.models.project_so import (
 from app.models.user import User
 from app.services.error_handler import AppException
 from app.services.project_service import resolve_user_names
-from app.services.scm.raise_event_matching import nearest_raise_event
+from app.services.scm.raise_event_matching import RAISE_EVENT_AFTER, nearest_raise_event
 
 _ZERO = Decimal("0")
 
@@ -69,6 +71,11 @@ _KIND_LABEL = {
     "buy": "Buy",
 }
 _KIND_ORDER = ("reserve", "timely_spo", "borrow", "buy")
+
+#: `(inquiry_id, raised_at, kind)` - identifies one `order_inquiry_raises` row, for the
+#: two dedupe sets `_raise_entries` keeps (an event already reported as some row's own
+#: origin match, and an event already reported once by the "later events" pass).
+_EventKey = Tuple[str, datetime, str]
 
 
 def _qty_str(value: Any) -> str:
@@ -138,10 +145,10 @@ class DecisionTrailService:
         entries.extend(self._saved_entry(core_line_id))
         entries.extend(self._raise_entries(core_line_id))
 
-        # Newest first (AC-DT-10). An entry with no timestamp of its own (a bare `sheet`
-        # mark, AC-DT-6: nobody in this system raised it) sorts to the end rather than
-        # claiming to be the oldest OR the newest - `datetime.min` is simply the smallest
-        # value Python can compare a real timestamp against.
+        # Newest first (AC-DT-10). A `sheet` entry now carries the row's own `created_at`
+        # (round 3) and sorts among the rest like any other entry; `or datetime.min`
+        # stays as a fallback for any future entry kind that genuinely has no timestamp,
+        # sorting it to the end rather than claiming to be the oldest OR the newest.
         entries.sort(key=lambda entry: entry["at"] or datetime.min, reverse=True)
         return entries
 
@@ -262,14 +269,26 @@ class DecisionTrailService:
             )
 
         out: List[Dict[str, Any]] = []
+        # B3 (review round 3): every raise event some row's own ORIGIN match consumed,
+        # keyed by `(inquiry_id, raised_at, kind)` - the "later events" pass below must
+        # never re-report one of these under a DIFFERENT row's own (later) threshold.
+        origin_event_keys: Set[_EventKey] = set()
         for row in rows:
             note = row.note or ""
             detail = f"{row.inquiry_no or 'Unnumbered inquiry'} · qty {_qty_str(row.qty)}"
             # The sheet stamp FIRST, before any event (reviewer B1, round 1): the note is
             # what the row itself says about where it came from, the event is a guess.
+            # `at` is the row's own `created_at` (round 3, reviewer): the row is a real
+            # fact with a real time, only the uploader is unknown - `actor_name` stays
+            # `None`, the sheet import records no uploader.
             if note.startswith(_SHEET_MIGRATION_NOTE_PREFIX):
                 out.append(
-                    {"kind": "sheet", "actor_name": None, "at": None, "detail": detail}
+                    {
+                        "kind": "sheet",
+                        "actor_name": None,
+                        "at": row.created_at,
+                        "detail": detail,
+                    }
                 )
             else:
                 candidates = events_by_inquiry.get(str(row.order_inquiry_id or ""), [])
@@ -284,6 +303,9 @@ class DecisionTrailService:
                             "detail": detail,
                         }
                     )
+                    origin_event_keys.add(
+                        (str(row.order_inquiry_id or ""), matched_at, matched_kind)
+                    )
             # Independent of the above (S2, review round 1's exact-note match): the trail
             # is a full history, not a single label picking one fact to show.
             if _PLANNING_CHANGE_NOTE.match(note):
@@ -294,5 +316,31 @@ class DecisionTrailService:
                         "at": row.created_at,
                         "detail": note,
                     }
+                )
+
+        # B3 (review round 3, SO390524 / OI-2609-0731): a `sheet` row's own origin match
+        # never touches an event at all, so a LATER raise on the very same inquiry - the
+        # 20 Sep 11:22 UTC reconfirm on a fully sheet-migrated inquiry, for one - never
+        # surfaced anywhere. Any event more than `RAISE_EVENT_AFTER` (10 min) past a
+        # row's own birth is a fact about the same core line's inquiry that the row's own
+        # origin match cannot state, so it earns its own entry - once per `(inquiry,
+        # event)` even when several of this line's own rows share the inquiry, and never
+        # for an event some row's own origin match already reported.
+        emitted_later_keys: Set[_EventKey] = set()
+        for row in rows:
+            if row.created_at is None:
+                continue
+            inquiry_id = str(row.order_inquiry_id or "")
+            threshold = row.created_at + RAISE_EVENT_AFTER
+            detail = f"{row.inquiry_no or 'Unnumbered inquiry'} · qty {_qty_str(row.qty)}"
+            for raised_at, kind, name in events_by_inquiry.get(inquiry_id, []):
+                if raised_at <= threshold:
+                    continue
+                key = (inquiry_id, raised_at, kind)
+                if key in origin_event_keys or key in emitted_later_keys:
+                    continue
+                emitted_later_keys.add(key)
+                out.append(
+                    {"kind": kind, "actor_name": name, "at": raised_at, "detail": detail}
                 )
         return out

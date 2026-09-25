@@ -43,12 +43,26 @@ shipped fact on the same row.
   event matched to each of the line's own OI rows by the same window
   `_raise_events_by_row` (now `nearest_raise_event`, shared) uses, or `sheet` when that
   row's note starts with the sheet-migration stamp, checked first (`raised` /
-  `reconfirmed` / `sheet`); and, independently, a `planning_change` entry for any such row
+  `reconfirmed` / `sheet`), PLUS (round 3 reviewer B3) one entry per raise event of that
+  same inquiry landing more than 10 minutes past a row's own birth that no row's own
+  origin match already reported - deduped one per `(inquiry, event)` even when several of
+  the line's own rows share the inquiry, and never for an event some row's own origin
+  match already carries; and, independently, a `planning_change` entry for any such row
   whose note matches the exact `planning_change_service.py` stamps. 404 on an unknown
   line id; an empty list when the line carries nothing; `response_model` keeps all four
-  keys on the actual response. `DecisionTrailDialog` renders each entry as a card - the
-  kind label and the detail, then the actor (or "Unknown") and, when present, the date in
-  the app's existing format - with `No trail recorded yet.` as the empty state.
+  keys on the actual response. (Amended round 3, reviewer: a `sheet` entry's `at` is the
+  row's own `created_at`, not `None` - the row is a real fact with a real time, so it
+  sorts among the other entries rather than always trailing them; `actor_name` stays
+  `None`, the sheet import records no uploader.) `DecisionTrailDialog` (`_shared/
+  components/` - round 3 reviewer N2: shared code must not import from a route folder)
+  renders each entry as a card - the kind label and the detail, then, when `actor_name`
+  is null (a `sheet` mark, a `planning_change` note, or an anonymous backfill `raised`/
+  `reconfirmed` event), ONLY the date, with no actor line at all - never "Unknown", which
+  would claim a person was simply left unnamed; every other entry keeps the actor and,
+  when present, the date - in the app's existing format. `No trail recorded yet.` is the
+  empty state; a skeleton renders while the read is in flight and `extractApiError`'s own
+  message renders on a failed one (round 3 reviewer S1), neither ever mistaken for the
+  empty state.
 - AC-DT-6 [FE][T] (amended round 2: hidden by default on BOTH screens now) The OI detail
   Lines tab AND the worklist both show a column titled `Raised via` (captain ruling, review
   round 1: `Raised` sat beside the existing `Raised by`; column id stays `raise_event`,

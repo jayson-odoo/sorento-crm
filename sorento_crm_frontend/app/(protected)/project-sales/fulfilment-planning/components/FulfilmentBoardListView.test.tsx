@@ -1696,6 +1696,22 @@ describe('FulfilmentBoardListView: the decision trail icon (AC-DT-5, PLAN-oi-dec
     await screen.findByTestId(`decision-pill-${row.key}`);
     expect(screen.queryByRole('button', { name: /decision trail/i })).not.toBeInTheDocument();
   });
+
+  /**
+   * N1 (review round 3): a fully-reserved / local-buy covered line can carry
+   * `covered: true` with no `decision` object of its own, no draft and no OI row - the
+   * sheet-migrated-inquiry-decided shape `BoardDecisionPill`'s own "sheet-covered line
+   * reads Confirmed" describe block already covers. The gate has to name `covered`
+   * itself, not just the three facts that usually come with it, or exactly this line
+   * loses its icon.
+   */
+  it('shows it for a covered line that carries none of the other three facts', async () => {
+    const row = contribution({ covered: true, decision: null });
+    renderView({ contributions: [row] });
+
+    await screen.findByTestId(`decision-pill-${row.key}`);
+    expect(screen.getByRole('button', { name: /decision trail/i })).toBeInTheDocument();
+  });
 });
 
 /**

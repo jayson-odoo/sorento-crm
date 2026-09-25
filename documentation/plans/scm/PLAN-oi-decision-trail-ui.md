@@ -4,6 +4,21 @@ Status: approved, small fix track (owner ruling 25 Sep 2026, "after got the data
 the UI gap"), building on `feat/oi-decision-trail-ui`. Issue #1238.
 UAC: `oi-decision-trail-ui-acceptance-criteria.md` (beside this file).
 
+**Round 3 (reviewer, code-correct-not-ready pass):** a `sheet` entry's `at` is now the
+row's own `created_at` instead of `None` - the row is a real fact with a real time,
+only the uploader is unknown, so it sorts among the trail's other entries instead of
+always trailing at the end. `DecisionTrailDialog` (moved to `_shared/components/` -
+shared code must not import from a route folder) omits the actor line entirely and
+prints only the date whenever `actor_name` is null - a plain, kind-agnostic rule (not a
+`sheet`-specific sentence): "Unknown" would claim a person was simply left unnamed,
+which both a `sheet` mark and an anonymous backfill `raised`/`reconfirmed` event
+(`raised_by` is nullable) are not. A `sheet` row's own origin match never touches
+`order_inquiry_raises` at all, so a LATER raise event on the same inquiry (SO390524 /
+OI-2609-0731's own 20 Sep 11:22 UTC reconfirm, on a fully sheet-migrated inquiry) never
+surfaced anywhere; `_raise_entries` now emits one additional entry per `(inquiry, event)`
+for any event more than 10 minutes past a row's own birth that no row's own origin match
+already reported. See AC-DT-10.
+
 **Deviation (coder, implementation):** `OrderInquiryWorklistRow` already carries
 `raised_by_name` / `raised_at` (AC-H2/H3/H4, `test_order_inquiry_worklist_raised_by.py`) -
 a coalesce of the covering decision's confirmer, the row's own acknowledger, then the

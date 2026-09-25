@@ -3,7 +3,7 @@
 import * as React from 'react';
 import { History as HistoryIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { DecisionTrailDialog } from '../../order-inquiries/[id]/components/DecisionTrailDialog';
+import { DecisionTrailDialog } from './DecisionTrailDialog';
 import { useDecisionTrail } from '../hooks/useOrderInquiry';
 
 /**
@@ -32,6 +32,11 @@ function DecisionTrailDialogContainer({
       onOpenChange={onOpenChange}
       itemCode={itemCode}
       entries={trail.data ?? []}
+      isLoading={trail.isLoading}
+      // S1 (review round 3): `trail.data ?? []` alone read a loading state and a
+      // failed fetch the same as "genuinely nothing recorded" - `getDecisionTrail`
+      // already throws `extractApiError`'s own message, so `trail.error` carries it.
+      error={trail.error ? trail.error.message : null}
     />
   );
 }

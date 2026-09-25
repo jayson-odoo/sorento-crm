@@ -745,9 +745,15 @@ export function FulfilmentBoardListView({
               <BoardDecisionPill contribution={contribution} decision={draft[key] ?? null} />
               {/* AC-DT-5 (`PLAN-oi-decision-trail-ui.md`, round 2): the History icon,
                   right after the verdict chip - shown only once there is a trail worth
-                  opening (a decision, a draft or an OI row); a bare suggested line has
-                  none of the three and stays hidden. */}
-              {contribution.decision || contribution.draft || contribution.order_inquiry ? (
+                  opening (a decision, a draft, an OI row, OR the line simply being
+                  covered - N1, round 3: a fully-reserved / local-buy covered line can
+                  carry `covered: true` with no `decision` object of its own and no OI
+                  row, and still have a confirmed revision behind it worth tracing); a
+                  bare suggested line has none of the four and stays hidden. */}
+              {contribution.decision ||
+              contribution.draft ||
+              contribution.order_inquiry ||
+              contribution.covered ? (
                 <DecisionTrailButton
                   coreLineId={contribution.line_id ?? null}
                   itemCode={contribution.item_code}
