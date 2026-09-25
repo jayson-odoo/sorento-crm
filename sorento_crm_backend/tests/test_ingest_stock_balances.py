@@ -1528,31 +1528,20 @@ class TestRealMountDoubleGateFixRound1:
 class TestFixturesAC20:
     """Replays the corrected Foundryx A7 fixtures
     (`tests/fixtures/stock_balances/`, copied verbatim from
-    `foundryx-shared-service` commit 1175bf82 - see that directory's own
-    README for the request/response mapping and the six 2026-09-25
-    corrections) against a chain seeded to match what each response implies:
-    an `updated` row exists beforehand (its current quantity matching the
-    dry-run fixture's own diff, or - where that diff is `{}` - the incoming
-    qty itself, since nothing changed); a `created` row does not.
+    `foundryx-shared-service` commit 1b35224a - see that directory's own
+    README for the request/response mapping and the corrections) against a
+    chain seeded to match what each response implies: an `updated` row
+    exists beforehand (its current quantity matching the dry-run fixture's
+    own diff, or - where that diff is `{}` - the incoming qty itself, since
+    nothing changed); a `created` row does not.
 
     `entity_id` is asserted PRESENT and null-vs-non-null only (README
     correction 1: the fixture's own ids are placeholders, never a value
-    Sorento's real response would echo).
-
-    Two known fixture/plan disagreements, NOT bent around here (reported to
-    the captain instead, per brief item 4):
-
-    - `contract-2.5.json`'s `fields_added` is shaped `{"2.5": [...]}` - a
-      per-VERSION list. Every version before it in `app/api/v1/external/
-      contract.py::FIELDS_ADDED` (and AC-SB-1) is keyed per-ENTITY instead
-      (`"stock_balances": [...]`), which is what this codebase already
-      implements and what AC-SB-1 already pins - not replayed here.
-    - `stock_balances-deletions-error-422-invalid-body.json` collapses "pairs
-      is not an object" AND "pairs has over MAX_BATCH entries" into one 422
-      `INVALID_BODY`. D7 and `TestDeletionsValidationAC17::
-      test_pairs_over_max_batch_is_413` (already green) require the
-      over-limit case to answer 413 `BATCH_TOO_LARGE` instead - only the
-      "not an object" trigger is replayed against this fixture below.
+    Sorento's real response would echo). The two disagreements this class
+    used to carry (`contract-2.5.json`'s `fields_added` shape, and the
+    original single 422-only deletions error fixture) were both corrected in
+    the 2026-09-26 fixture update and now replay clean - see the class's own
+    git history for the earlier notes.
     """
 
     _FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "stock_balances"
@@ -1738,9 +1727,9 @@ class TestFixturesAC20:
         assert body["records"][0]["entity_id"] == body["records"][1]["entity_id"]
 
     def test_malformed_pairs_body_is_422_invalid_body(self, env):
-        """Only the "pairs is not an object" trigger - see the class
-        docstring for why the fixture's OTHER trigger (over MAX_BATCH) is not
-        replayed here."""
+        """`pairs` not an object at all - the 2026-09-26 fixture split gives
+        this its own file, distinct from the over-`MAX_BATCH` 413 case
+        below."""
         expected = self._load("stock_balances-deletions-error-422-invalid-body.json")
         res = env.client.post(
             DELETE_SB,
@@ -1748,3 +1737,39 @@ class TestFixturesAC20:
         )
         assert res.status_code == 422, res.text
         assert res.json()["code"] == expected["code"]
+
+    def test_pairs_over_max_batch_is_413_batch_too_large(self, env):
+        """`pairs` IS an object but carries over `MAX_BATCH` entries - the
+        same over-cap response `source_refs`/`codes` already get (README),
+        never a second 422 shape for the identical failure mode."""
+        expected = self._load("stock_balances-deletions-error-413-batch-too-large.json")
+        pairs = {
+            f"{MARKER}-{i}": {"item_code": "X", "location_code": "Y"}
+            for i in range(MAX_BATCH + 1)
+        }
+        res = env.client.post(
+            DELETE_SB,
+            json={
+                "companyCode": env.company_a_code,
+                "source_refs": list(pairs.keys())[:5],
+                "pairs": pairs,
+            },
+        )
+        assert res.status_code == 413, res.text
+        assert res.json()["code"] == expected["code"]
+
+    def test_contract_2_5_fixture_replays_against_get_contract(self, env):
+        expected = self._load("contract-2.5.json")
+        res = env.client.get(CONTRACT_URL)
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert body["version"] == expected["version"]
+        assert "stock_balances" in body["entities"]
+        assert "warehouse_inactive" in body["warnings"]
+        # Set comparison, not exact list equality (`fields_added` order
+        # carries no meaning - the codebase's every other contract-version
+        # test compares it the same way, e.g. `test_ingest_parity_s4_contract
+        # .py::test_contract_lists_fields_added_per_entity`).
+        assert set(body["fields_added"]["stock_balances"]) == set(
+            expected["fields_added"]["stock_balances"]
+        )
