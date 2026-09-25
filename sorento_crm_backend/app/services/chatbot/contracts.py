@@ -549,6 +549,13 @@ class Focus(BaseModel):
     date_window: dict[str, Any] | None = None
     # AC-1317: where a counted-set answer got to, `{set_key, offset}`.
     set_page: dict[str, Any] | None = None
+    # Ported from PR #1118 (feat/chatbot-dealer-stock-verdict, not merged, owner ruling
+    # 24 Sep 2026) for chatbot-stock-ask-v2 S3: the open tasks, carried INSIDE the
+    # focus rather than on a session key of their own. Declared here because this
+    # model is `extra="forbid"` and `turn/state.py::focus_to_wire` writes the key on
+    # every turn - a shape the session validator did not know would fail the write
+    # itself.
+    tasks: list[dict[str, Any]] = Field(default_factory=list)
     # Any entity kind without a named axis above, keyed by kind. A kind this turn's
     # policy narrows on but the Focus never declared still has somewhere safe to sit
     # rather than being dropped on the way to the session.

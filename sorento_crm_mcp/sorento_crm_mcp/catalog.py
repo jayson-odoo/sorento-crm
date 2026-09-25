@@ -471,6 +471,10 @@ CATALOG: tuple[ToolSpec, ...] = (
             "'50' after being asked how many), pass that number as `requested_qty`. Some contacts are "
             "answered yes/no against it instead of with quantities, and without it the reply can only "
             "ask how many units they need.\n\n"
+            "QUANTITY PER PRODUCT: when the user named a DIFFERENT quantity for MORE THAN ONE product "
+            "in the same ask ('MWT5727SS-CR 5, MHS1028 60'), pass `requested_quantities` - a JSON object "
+            "mapping each product's UUID to ITS OWN quantity - instead of, or alongside, `requested_qty`. "
+            "Per product the map wins; `requested_qty` only fills a product the map does not name.\n\n"
             "OUTSTANDING SO: pass `include_sellable=true` to add `Outstanding` (that warehouse row's "
             "own open sales-order quantity, not yet a delivery order) to every stock row, and an "
             "`(O/S: n)` suffix on the compact block's Total and warehouse lines. Default false. "
@@ -483,7 +487,8 @@ CATALOG: tuple[ToolSpec, ...] = (
         (),
         (
             "page", "limit", "product_ids", "sort", "dir", "warehouse_ids", "quantity_operator",
-            "quantity_value", "status", "requested_qty", "include_sellable", "contact_id", "space_id",
+            "quantity_value", "status", "requested_qty", "requested_quantities", "include_sellable",
+            "contact_id", "space_id",
         ),
         domain="inventory",
         related_tools=("crm_inventory_warehouses_list",),

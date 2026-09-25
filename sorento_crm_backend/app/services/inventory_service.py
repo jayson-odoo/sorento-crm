@@ -649,6 +649,7 @@ class StockService:
         contact_id: Optional[str] = None,
         space_id: Optional[str] = None,
         requested_qty: Optional[int] = None,
+        requested_quantities: Optional[dict] = None,
     ):
         """List stock with product and warehouse info.
 
@@ -674,6 +675,13 @@ class StockService:
                 of a sentence by an LLM, so a 0 is a parse artefact rather than a
                 demand, and refusing the call would lose the question ("how many
                 units do you need?") along with the number.
+            requested_quantities: Ported from PR #1118 (feat/chatbot-dealer-stock-
+                verdict, not merged, owner ruling 24 Sep 2026): product UUID -> the
+                quantity asked for THAT product, one turn's whole ask rather than a
+                single scalar. Only read in `availability` mode. Per product the map
+                wins; `requested_qty` fills any product it does not name. A mapped
+                value below 1 is read as NOT PROVIDED, the same rule `requested_qty`
+                follows above and for the same reason.
         """
         from sqlalchemy import or_, func
         from app.services.stock_visibility import resolve_policy, warehouse_criterion
@@ -701,6 +709,49 @@ class StockService:
             EntityFilterBuckets,
             resolve_entities_to_filters,
         )
+
+        # D27, ported from PR #1118 (not merged), review round 8: in the DEALER mode a
+        # named product id stands for its CODE. The availability block answers one
+        # entry per code across the contact's companies, keyed on the first of the
+        # merged ids - so the task's slot carries that one id and the next turn's fetch
+        # names it alone. Measured on the live database (turn 38d74c62): MWT5727SS-CR's
+        # 177 open PO lines sit on the SORENTO row, the fetch carried only the MOCHA id,
+        # and the dealer was told "Not available" with no purchase disclaimer at all -
+        # the same call with both ids answered correctly. A code is one product to this
+        # reader, so it is one product to every read behind the answer too.
+        #
+        # `availability` only: `compact` and `detailed` name locations and quantities per
+        # product ROW, and the staff grid / n8n callers of those modes ask for the id
+        # they mean.
+        if policy is not None and policy.mode == "availability" and product_ids:
+            named_ids = [str(pid) for pid in product_ids if pid]
+            code_rows = (
+                self.db.query(Product.id, Product.product_code)
+                .filter(
+                    func.lower(Product.product_code).in_(
+                        self.db.query(func.lower(Product.product_code)).filter(
+                            Product.id.in_(named_ids)
+                        )
+                    )
+                )
+                .all()
+            )
+            siblings: dict[str, list[str]] = {}
+            code_by_id: dict[str, str] = {}
+            for row_id, row_code in code_rows:
+                key = (row_code or "").strip().lower()
+                siblings.setdefault(key, []).append(str(row_id))
+                code_by_id[str(row_id)] = key
+            expanded: list[str] = []
+            seen: set[str] = set()
+            for pid in named_ids:
+                # The named id first, so the asked order (review round 6) and the merged
+                # entry's own `product_id` (review round 5) are both unchanged.
+                for candidate in [pid] + siblings.get(code_by_id.get(pid, ""), []):
+                    if candidate not in seen:
+                        seen.add(candidate)
+                        expanded.append(candidate)
+            product_ids = expanded
 
         # Resolved input product id(s) - used on the data-miss (empty) path to find
         # data-bearing variant/neighbour alternatives (section 3.3), and by the
@@ -1005,9 +1056,24 @@ class StockService:
                 policy_q=policy_q,
                 last_import_at=last_import_at,
                 requested_qty=requested_qty,
+                requested_quantities=requested_quantities,
                 requested_product_ids=resolved_input_product_ids,
+                # Ported from PR #1118 (not merged), review round 6 (finding B): the
+                # caller's own list, in order - the set above is for membership tests
+                # and cannot carry one.
+                product_id_order=[str(pid) for pid in (product_ids or []) if pid],
                 page=page,
                 limit=limit,
+                # Ported from PR #1118 (not merged), SEC-S1: the SAME location
+                # narrowing the on-hand query above ran with ("stock at BRW"), so the
+                # supply reads cannot answer from a warehouse the question itself
+                # excluded. Merged with `resolved_wh_ids` (review round 2): the
+                # singular `warehouse_id` param narrows the on-hand read above but,
+                # unmerged, left the three supply reads unscoped - a question asking
+                # about ONE warehouse by its singular param still counted supply
+                # parked at every other one.
+                warehouse_ids=list({*(warehouse_ids or []), *(resolved_wh_ids or [])})
+                or None,
             )
 
         # Data-miss (§3.3): the query resolved to a real product but returned 0 stock
@@ -1190,6 +1256,9 @@ class StockService:
         requested_product_ids: set[str],
         page: int,
         limit: int,
+        requested_quantities: Optional[dict] = None,
+        warehouse_ids: Optional[list[str]] = None,
+        product_id_order: Optional[list[str]] = None,
     ) -> None:
         """Attach the visibility block(s) and, for the two summary modes, empty `data`.
 
@@ -1303,6 +1372,26 @@ class StockService:
         # paged on, so page 2 continues where page 1 stopped.
         ordered_ids = [pid for pid in page_ids if pid in products_by_id]
 
+        # Ported from PR #1118 (not merged), review round 6, finding B: when the
+        # CALLER named the products, that list is the order the answer is read out in -
+        # the dealer hears their own question back. `ordered_ids` above is
+        # `product_code` asc, which is the right order for the catalogue case ("what
+        # stock do you have?", nothing named) and the wrong one here: the reply noted
+        # "MHS1028 x 60, MWT5727SS-CR x 5" for a dealer who had asked the other way
+        # round. Anything the caller did not name (a product with stock that the page
+        # picked up) keeps its page position, after the named ones.
+        asked_order = [str(pid) for pid in (product_id_order or []) if pid]
+        if asked_order:
+            rank = {pid: index for index, pid in enumerate(asked_order)}
+            unranked = len(rank)
+            ordered_ids = [
+                pid
+                for _, pid in sorted(
+                    ((rank.get(pid, unranked), pid) for pid in ordered_ids),
+                    key=lambda pair: pair[0],
+                )
+            ]
+
         payload["data"] = []
         payload["pagination"] = {"total": total_products, "page": page, "limit": limit}
         # `empty` is what the MCP escalation hint reads. These modes clear `data`
@@ -1348,25 +1437,283 @@ class StockService:
             ]
             return
 
-        # availability: a yes/no judged against the allowed locations only. No
-        # quantity of any kind reaches the block - not the total, not the
-        # per-location split - because a number here is exactly what the dealer
-        # policy exists to withhold.
-        payload["stock_availability"] = [
-            {
+        # Ported from PR #1118 (not merged), D35, review round 11: a DEALER question is
+        # always about a product, so a stock ask that names none is answered by asking
+        # for the code - never by returning the catalogue page as a question. The
+        # tool's own contract makes every filter optional ("call with none to span
+        # every product"), which is right for the staff grid and for n8n and wrong
+        # here: the block came back with one `needs_quantity` entry per catalogue row
+        # and the dealer was asked to quantify fifty products they had never mentioned.
+        #
+        # The empty block is also what keeps the engine honest: no entries, no slots,
+        # no task (`turn/task.py::tasks_after_reply`). `needs_product` is what the MCP
+        # presenter renders its one sentence from - the same division of labour D25
+        # already sets, the server deciding and the presenter saying.
+        #
+        # `compact` and `detailed` return above and are untouched: they answer with
+        # rows and locations, and a caller asking either of them for a page means it.
+        if not named_ids:
+            payload["stock_visibility"]["needs_product"] = True
+            payload["stock_availability"] = []
+            return
+
+        # availability: a verdict judged against the allowed locations only. No
+        # quantity of OURS reaches the block - not the total, not the per-location
+        # split, not on hand/incoming/PO themselves - because a number here is
+        # exactly what the dealer policy exists to withhold. Only the dealer's own
+        # asked quantity (echoed back) and `stock_verdict.verdict()`'s judgement of
+        # it ever appear. Ported from PR #1118 (feat/chatbot-dealer-stock-verdict, not
+        # merged, owner ruling 24 Sep 2026) for chatbot-stock-ask-v2 S3 parity - this
+        # whole branch (verdict/spo_allocations/purchase-order/threshold logic
+        # included) is SUPERSEDED by a later step of this same slice, which replaces
+        # it with the four B1-B4 branches (R6); it is ported as-is here only to reach
+        # #1118's own parity.
+        from app.models.order import SalesOrderLine
+        from app.models.procurement import (
+            InboundShipment,
+            PurchaseOrder,
+            PurchaseOrderLine,
+            SPOAllocation,
+        )
+        from app.models.user import SystemSetting
+        from app.services.stock_verdict import verdict as compute_verdict
+
+        # SEC-S1 (security review, round 1): `warehouse_criterion` is only HALF of what
+        # the on-hand read filters by. That query also carries `Warehouse.is_active`
+        # (a retired location is not somewhere this contact can be supplied from) and
+        # the caller's own `warehouse_ids=` narrowing ("stock at BRW"), and a supply
+        # read that skipped both counted an allocation bound for a retired warehouse,
+        # or bound for MWH under a question that asked only about BRW, towards a
+        # verdict the dealer then read as a promise. Applied to all three reads below,
+        # as one list, so they cannot drift apart from each other again.
+        def _supply_scope(column):
+            scoped = [
+                column.isnot(None),
+                warehouse_criterion(policy, column),
+                column.in_(
+                    self.db.query(Warehouse.id).filter(Warehouse.is_active.is_(True))
+                ),
+            ]
+            if warehouse_ids:
+                scoped.append(column.in_(warehouse_ids))
+            return scoped
+
+        # D2: open SO subtracted from on-hand, per the SAME warehouse_criterion as
+        # `on hand` itself. A line with no destination is never subtracted - it
+        # cannot be placed at any warehouse the policy names, allowed or not.
+        so_rows = (
+            self.db.query(
+                SalesOrderLine.product_id,
+                func.sum(SalesOrderLine.qty_ordered - SalesOrderLine.qty_delivered).label(
+                    "open_qty"
+                ),
+            )
+            .filter(
+                SalesOrderLine.product_id.in_(page_ids),
+                *_supply_scope(SalesOrderLine.warehouse_id),
+                SalesOrderLine.line_status == "open",
+                SalesOrderLine.qty_ordered > SalesOrderLine.qty_delivered,
+            )
+            .group_by(SalesOrderLine.product_id)
+            .all()
+            if page_ids
+            else []
+        )
+        open_so_by_product = {str(r.product_id): float(r.open_qty or 0) for r in so_rows}
+
+        # D9, D10, D11: incoming = `spo_allocations` under `scm.on_order_v`'s own
+        # predicate, verbatim (`alembic/versions/420_spo_docs_in_allocations.py`,
+        # `on_order_from_spo_documents`), plus the SAME policy set. ETA = the
+        # earliest `expected_date` among the counted rows (D10); PO is never netted
+        # against it (D11, measured disjoint).
+        _RECEIVED_SHIPMENT_STATES = (
+            "fully_received",
+            "closed",
+            "received",
+            "completed",
+            "cancelled",
+        )
+        incoming_rows = (
+            self.db.query(
+                SPOAllocation.product_id,
+                func.sum(
+                    SPOAllocation.allocated_quantity
+                    - func.coalesce(SPOAllocation.quantity_received, 0)
+                ).label("incoming_qty"),
+                func.min(SPOAllocation.expected_date).label("earliest_eta"),
+            )
+            .outerjoin(InboundShipment, InboundShipment.id == SPOAllocation.inbound_shipment_id)
+            .filter(
+                SPOAllocation.product_id.in_(page_ids),
+                *_supply_scope(SPOAllocation.warehouse_id),
+                sa_or(
+                    InboundShipment.id.is_(None),
+                    InboundShipment.shipment_status.notin_(_RECEIVED_SHIPMENT_STATES),
+                ),
+                # The view's own COALESCE, which this predicate said it copied
+                # "verbatim" and did not: `NOT IN` over a NULL is NULL, never true, so
+                # an allocation with no `line_status` or no `receipt_status` yet was
+                # silently dropped from a dealer's incoming instead of counted as the
+                # open, unreceived row it is.
+                func.coalesce(SPOAllocation.line_status, "open") == "open",
+                func.coalesce(SPOAllocation.receipt_status, "pending").notin_(
+                    ("fully_received", "received")
+                ),
+                SPOAllocation.allocated_quantity
+                > func.coalesce(SPOAllocation.quantity_received, 0),
+            )
+            .group_by(SPOAllocation.product_id)
+            .all()
+            if page_ids
+            else []
+        )
+        incoming_by_product = {
+            str(r.product_id): (float(r.incoming_qty or 0), r.earliest_eta)
+            for r in incoming_rows
+        }
+
+        # D8: open purchase order lines, the SAME status set the PO book already
+        # uses (`po_book_service._po_book_sql`), destined to a NAMED warehouse
+        # inside the policy set - a NULL destination counts nowhere, the same rule
+        # incoming follows above.
+        _PO_BOOK_STATUSES = ("active", "received", "partial", "closed")
+        po_rows = (
+            self.db.query(
+                PurchaseOrderLine.product_id,
+                func.sum(
+                    PurchaseOrderLine.qty_ordered - PurchaseOrderLine.qty_received
+                ).label("po_qty"),
+            )
+            .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+            .filter(
+                PurchaseOrderLine.product_id.in_(page_ids),
+                *_supply_scope(PurchaseOrderLine.warehouse_id),
+                PurchaseOrder.status.in_(_PO_BOOK_STATUSES),
+                PurchaseOrderLine.line_status == "open",
+                PurchaseOrderLine.qty_ordered > PurchaseOrderLine.qty_received,
+            )
+            .group_by(PurchaseOrderLine.product_id)
+            .all()
+            if page_ids
+            else []
+        )
+        purchase_by_product = {str(r.product_id): float(r.po_qty or 0) for r in po_rows}
+
+        # D7, D3: the threshold `verdict()` compares against, and the lead-time
+        # phrase a purchase disclaimer reads instead of a PO date.
+        settings_row = self.db.query(SystemSetting).first()
+        threshold_pct = (
+            int(settings_row.chatbot_stock_low_threshold_pct) if settings_row else 50
+        )
+        lead_time_days = (
+            int(settings_row.default_product_standard_lead_time_days)
+            if settings_row and settings_row.default_product_standard_lead_time_days is not None
+            else 90
+        )
+
+        def _resolve_ask(pid: str) -> Optional[int]:
+            # D20: the per-product map wins; the scalar fills whatever it does not
+            # name. Either way, below 1 reads as NOT PROVIDED - the same rule the
+            # scalar alone has always followed (a 0 is a parse artefact, not a demand).
+            if requested_quantities and pid in requested_quantities:
+                ask = requested_quantities[pid]
+            else:
+                ask = requested_qty
+            if ask is not None and ask < 1:
+                ask = None
+            return ask
+
+        # Review round 5: ONE entry per product CODE. A dealer contact whose companies
+        # both carry the same code resolves it to two products, and the block answered
+        # for each: the question read "MHS1028, MHS1028 and MSK11A-QT", a full answer
+        # would print two verdict lines for the one code, and the task would hold two
+        # slots the dealer sees as one product. A dealer sees one product per code, so
+        # the rows collapse HERE, where the figures are - every number is summed across
+        # the merged ids BEFORE `verdict()` judges them, so the answer is about what
+        # Sorento can actually supply, not about what one company alone holds.
+        #
+        # A row with no `product_code` merges with nothing (the sentinel key): "unnamed"
+        # is not an identity, and two of them are not the same product. `detailed` and
+        # `compact` return above and are untouched - they name locations and quantities
+        # per row, and a merged row has no one location to name.
+        merged_ids: dict[str, list[str]] = {}
+        for pid in ordered_ids:
+            code = getattr(products_by_id.get(pid), "product_code", None)
+            # A NUL cannot appear in a product code, so a codeless row's key is
+            # unique to that row and merges with nothing.
+            key = code.strip().lower() if code else "\x00" + pid
+            merged_ids.setdefault(key, []).append(pid)
+
+        entries = []
+        for group_ids in merged_ids.values():
+            # `ordered_ids` is already in page order, so the first id of a group is the
+            # first row of it on this page. That id is what the entry, the task's slot
+            # and the next fetch's `requested_quantities` key all carry.
+            pid = group_ids[0]
+            # D20, across the merge: a quantity given for ANY of the merged ids is a
+            # quantity for the merged product. The scalar `requested_qty` fallback
+            # resolves the same for every id, so the first answer found is the answer.
+            ask = next(
+                (a for a in (_resolve_ask(gid) for gid in group_ids) if a is not None),
+                None,
+            )
+            entry = {
                 "product_id": pid,
                 "product_code": getattr(products_by_id.get(pid), "product_code", None),
                 "product_name": getattr(products_by_id.get(pid), "product_name", None),
-                "needs_quantity": requested_qty is None,
-                "requested_qty": requested_qty,
-                "available": (
-                    None
-                    if requested_qty is None
-                    else sum(int(r.on_hand or 0) for r in per_product[pid]) >= requested_qty
-                ),
+                "needs_quantity": ask is None,
+                "requested_qty": ask,
+                "available": None,
+                "verdict": None,
+                "running_low": None,
+                "disclaimer": None,
             }
-            for pid in ordered_ids
-        ]
+            if ask is not None:
+                on_hand_total = sum(
+                    int(r.on_hand or 0) for gid in group_ids for r in per_product[gid]
+                )
+                net_available = on_hand_total - int(
+                    sum(open_so_by_product.get(gid, 0) for gid in group_ids)
+                )
+                incoming_pairs = [
+                    incoming_by_product.get(gid, (0, None)) for gid in group_ids
+                ]
+                incoming_qty = sum(qty for qty, _ in incoming_pairs)
+                # D10 across the merge: the earliest date any of them is due, because
+                # that is when the first of them can be supplied from.
+                incoming_etas = [eta for _, eta in incoming_pairs if eta is not None]
+                incoming_eta_date = min(incoming_etas) if incoming_etas else None
+                purchase_qty = sum(purchase_by_product.get(gid, 0) for gid in group_ids)
+                v = compute_verdict(
+                    available=net_available,
+                    ask=ask,
+                    incoming=int(incoming_qty),
+                    purchase=int(purchase_qty),
+                    threshold_pct=threshold_pct,
+                )
+                entry["available"] = v.answer == "available"
+                entry["verdict"] = v.answer
+                entry["running_low"] = v.running_low
+                if v.sources:
+                    entry["disclaimer"] = {
+                        "sources": list(v.sources),
+                        "limited": v.limited,
+                        "incoming_eta": (
+                            incoming_eta_date.isoformat()
+                            if "incoming" in v.sources and incoming_eta_date
+                            else None
+                        ),
+                        # SEC-N2: named only when PURCHASE is one of the sources, the
+                        # mirror of `incoming_eta`'s own guard right above. A lead time
+                        # printed beside an incoming-only disclaimer is a promise about
+                        # a purchase that was never consulted.
+                        "purchase_eta_days": (
+                            lead_time_days if "purchase" in v.sources else None
+                        ),
+                    }
+            entries.append(entry)
+
+        payload["stock_availability"] = entries
 
     def _stock_entity_alternatives(
         self,

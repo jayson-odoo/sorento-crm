@@ -652,6 +652,9 @@ def test_availability_needs_quantity_no_leak(db):
             "needs_quantity": True,
             "requested_qty": None,
             "available": None,
+            "verdict": None,
+            "running_low": None,
+            "disclaimer": None,
         }
     ]
     assert "stock_summary" not in result
@@ -722,6 +725,9 @@ def test_availability_says_no_for_a_product_with_no_stock(db):
             "needs_quantity": False,
             "requested_qty": 50,
             "available": False,
+            "verdict": "not_available",
+            "running_low": False,
+            "disclaimer": None,
         }
     ]
     _assert_no_quantity_anywhere(result, {500})
@@ -750,6 +756,9 @@ def test_availability_still_asks_for_a_product_with_no_stock(db):
             "needs_quantity": True,
             "requested_qty": None,
             "available": None,
+            "verdict": None,
+            "running_low": None,
+            "disclaimer": None,
         }
     ]
     _assert_no_quantity_anywhere(result, {500})
@@ -1685,18 +1694,31 @@ def test_compact_pages_over_products(db):
 
 def test_availability_pages_over_products(db):
     """B15, the dealer side: the same cap, or one question returns thousands of
-    yes/no lines for products nobody asked about."""
+    yes/no lines for products nobody asked about.
+
+    D35 (review round 11, ported from PR #1118) answers the "nobody asked about" half
+    at the source - a dealer ask that names NO product now comes back as an empty
+    block and a request for the code, never as a page. So the products are named
+    here, and what this still pins is the cap itself: a named set larger than the
+    page returns one page of it with the true total beside it."""
     brw, _, _ = _three_warehouses(db)
+    products = []
     for code in ("ZZT-SKU-P1", "ZZT-SKU-P2", "ZZT-SKU-P3"):
         p = product(db, company_id=DEFAULT_COMPANY_ID, code=code)
         stock(
             db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=brw.id, on_hand=5
         )
+        products.append(p)
     contact = _contact(db)
     _policy_row(db, mode="availability", warehouse_ids=[brw.id], contact=contact)
     db.flush()
 
-    result = StockService(db).list_stock(contact_id=contact.id, limit=2, requested_qty=1)
+    result = StockService(db).list_stock(
+        contact_id=contact.id,
+        product_ids=[p.id for p in products],
+        limit=2,
+        requested_qty=1,
+    )
 
     assert [e["product_code"] for e in result["stock_availability"]] == [
         "ZZT-SKU-P1",

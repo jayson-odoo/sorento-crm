@@ -63,6 +63,7 @@ from app.services.chatbot.turn import compose as turn_compose
 from app.services.chatbot.turn import fetch as run_fetch_mod
 from app.services.chatbot.turn import memory as memory_mod
 from app.services.chatbot.turn import tail as turn_tail
+from app.services.chatbot.turn import task as turn_task
 from app.services.chatbot.turn.apply import apply as turn_apply
 from app.services.chatbot.turn.apply import is_product_shaped_entity
 from app.services.chatbot.turn.policy import load_policy
@@ -2006,8 +2007,22 @@ def _run_stages(  # noqa: PLR0915
         # the time the ASK section runs.
         bridge_answered = False
         lane_error_text: str | None = None
+
+        # Ported from PR #1118 (feat/chatbot-dealer-stock-verdict, not merged, owner
+        # ruling 24 Sep 2026) for chatbot-stock-ask-v2 S3. -- the OPEN TASK's own
+        # re-ask: nothing to fetch, nothing to roster -- #
+        # A task RESUMED with nothing new ("back to the stock check") asks only what is
+        # still owed and calls no tool at all; so does a bare number the task could not
+        # attribute to one of its slots. Composed the same way the stock refusal below
+        # is - a text Answer, the whole reply, taking the same tail every composed
+        # answer takes.
+        if plan.trace.task_question and completes_here:
+            stage[0] = "replied"
+            answer = turn_compose.Answer(text=plan.trace.task_question)
+
         if (
-            branch_kind in ("business_query", "check_promotion")
+            answer is None
+            and branch_kind in ("business_query", "check_promotion")
             and completes_here
             and not sales_report_grant_refused
             # AC-1708 (captain's ruling, 20 Sep 2026): an `offer` / `access_ask` exit is
@@ -2487,6 +2502,29 @@ def _run_stages(  # noqa: PLR0915
                     # An answer that is not a counted set closes the page: the customer
                     # has moved on, and "more" must not resume a set they left.
                     state_out.focus.set_page = None
+                # Ported from PR #1118 (not merged), D25: the open stock task is
+                # whatever the REPLY says is still owed - opened, updated and closed
+                # by one rule, read off the backend's own `needs_quantity` per
+                # product. The engine never decides who must state a quantity; it
+                # reads what the reply stated about it.
+                state_out.focus.tasks = turn_task.tasks_after_reply(
+                    tuple(state_out.focus.tasks or ()),
+                    envelopes,
+                    turn_no=turn_no,
+                    # SEC-S2: did this ask name a product at all? A bare "what stock
+                    # do you have?" fetches a page of the catalogue, and a task must
+                    # not be opened to collect a quantity for every row of it. Scoped
+                    # to the INVENTORY spec only (review round 2): a multi-domain ask
+                    # like "promo for X, and what stock do we have?" names X on the
+                    # promotion spec, not on the inventory one, and `any(...)` across
+                    # every domain's spec read that as "a product was named" and
+                    # opened a stock task for the whole catalogue page anyway.
+                    named_products=any(
+                        spec.entities
+                        for spec in fetch_plan.fetch
+                        if spec.domain == "inventory"
+                    ),
+                )
                 turn_trace.record(
                     "looked_up",
                     summary="Looked the answer up.",

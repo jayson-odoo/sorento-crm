@@ -238,6 +238,17 @@ def apply_crossdomain_hit(
             return answer
         figures = envelope.get("figures")
         item = {"answers": [r for r in figures if isinstance(r, dict)]} if isinstance(figures, list) else {}
+        # Ported from PR #1118 (feat/chatbot-dealer-stock-verdict, not merged, owner
+        # ruling 24 Sep 2026) for chatbot-stock-ask-v2 S3, D17, review round 10: the
+        # DEALER's availability block rides along with the rows, because it is what
+        # turns the whole ladder off (`crossdomain_zeroset`'s own `stock_availability`
+        # gate). Rebuilt from `figures` alone, this item lost the block, so that gate
+        # never saw it on a HIT and the ladder listed rungs beside the verdict and
+        # offered an escalation the dealer had not asked for. A stray offer also
+        # competes with the dealer's own open stock task.
+        availability = envelope.get("stock_availability")
+        if isinstance(availability, list) and availability:
+            item["stock_availability"] = availability
         result = _run_crossdomain_ladder(
             parser=parser,
             resolved=_hit_ladder_resolved(resolved, focus_products),
@@ -1548,6 +1559,20 @@ def answer_for(
         space_id=space_id,
         trace=trace,
         dry_run=dry_run,
+        # Ported from PR #1118 (not merged), D17, review round 10: the dealer's
+        # availability block turns the whole ladder off (`crossdomain_zeroset`'s own
+        # gate). The MISS arm hands the ladder an empty item, so the block has to
+        # travel here too - measured unreachable on this shape today (an availability
+        # reply carries an entry per named product, so it is a HIT), carried anyway
+        # because "no rung on a dealer reply" is a rule about the REPLY, not about
+        # which arm composed it.
+        item=(
+            {"stock_availability": envelope["stock_availability"]}
+            if isinstance(envelope, Mapping)
+            and isinstance(envelope.get("stock_availability"), list)
+            and envelope.get("stock_availability")
+            else None
+        ),
     )
 
     miss_gate = _scope_gate(raw_fragment)

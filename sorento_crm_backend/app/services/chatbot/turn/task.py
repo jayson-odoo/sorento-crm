@@ -1,0 +1,669 @@
+# Task: what the conversation still OWES, as one axis on the focus.
+#
+# Ported from PR #1118 (feat/chatbot-dealer-stock-verdict, not merged, owner ruling
+# 24 Sep 2026) for chatbot-stock-ask-v2 S3 (PLAN-chatbot-stock-ask-v2-24sep.md, ruling
+# R1: "keep #1118's per-product quantity collection (Focus.tasks, StockQtyTask)").
+#
+# The focus holds what the conversation is ABOUT. It does not hold what is still owed,
+# and neither does `pending`: a genuine new ask CLOSES a roster while an owed
+# collection must PARK and come back. So a task is its own axis, with its own
+# lifecycle, and the roster's one-shot rules are untouched.
+#
+# SCOPE CUT from #1118 (R1, PRINCIPLES.md "simplest thing that works"): #1118 also
+# built an `IdeationTask` kind and a `task_pick` tie between two open task kinds
+# (D24(b)) - both deliberately left OUT here. Ideation already has its own
+# independent mechanism on main (`app/services/chatbot/lanes/ideate.py`,
+# `session_state.py`) that does not need this generic Task wrapper, and a tie between
+# two kinds is machinery for a problem that cannot occur while `TASK_KINDS` has one
+# entry (at most one task per kind is ever open, so `claimed` below can never exceed
+# length 1). `TASK_KINDS = {"stock_qty": StockQtyTask()}` is the only registry entry;
+# the `TaskKind` protocol and `run()`'s generic shape stay, so a THIRD kind (real or a
+# test double) still drives the same seams with no per-kind arm anywhere else.
+#
+# Pure, like the rest of this package: no I/O, no message words, no import of `head`,
+# `dialogue`, `tail` or `engine`, and no import of `turn/state.py` either (that module
+# imports THIS one, for `Focus.tasks`).
+from __future__ import annotations
+
+from dataclasses import dataclass, replace
+from typing import Any, Protocol
+
+from app.services.chatbot.turn.plan import FetchSpec
+
+OPEN = "open"
+PARKED = "parked"
+
+
+@dataclass(frozen=True)
+class Slot:
+    """One thing a task is still collecting. `key` is the machine identity the fetch
+    sends (a product uuid); `label` is what a person calls it (the product code);
+    `value` is what the contact has said, or None while it is still owed."""
+
+    key: str
+    label: str
+    value: Any = None
+
+
+@dataclass(frozen=True)
+class Task:
+    """One open collection, carried on `Focus.tasks` and persisted inside the focus
+    wire, at most one per kind.
+
+    `not_checked` is what this task STOPPED asking about - the slots a "just proceed"
+    dropped. It rides on the task because the reply has to name them, and the task is
+    the one thing that knows which ones got dropped.
+    """
+
+    kind: str
+    domain: str
+    status: str = OPEN
+    opened_at_turn: int = 0
+    touched_at_turn: int = 0
+    slots: tuple[Slot, ...] = ()
+    not_checked: tuple[str, ...] = ()
+
+
+class TaskKind(Protocol):
+    """What a kind has to answer. One implementation per kind, no per-kind arms
+    anywhere else.
+
+    `claims(verdict)` is the routing question: is this turn's value MINE?
+    """
+
+    def claims(self, verdict: dict[str, Any]) -> bool: ...
+
+    def missing(self, task: Task) -> tuple[Slot, ...]: ...
+
+    def fill(self, task: Task, verdict: dict[str, Any]) -> Task: ...
+
+    def to_fetch(self, task: Task) -> FetchSpec | None: ...
+
+    def question(self, task: Task) -> str | None: ...
+
+
+def _number(value: Any) -> int | None:
+    """A quantity the parser stated, as an int, or None. `bool` is not a number here:
+    `True` is 1 in Python and a quantity of one is not what a boolean meant."""
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.isdigit():
+            return int(stripped)
+    return None
+
+
+def _entity_codes(entity: dict[str, Any]) -> set[str]:
+    codes = set()
+    for name in ("canonical_code", "code", "raw"):
+        value = entity.get(name)
+        if isinstance(value, str) and value.strip():
+            codes.add(value.strip().casefold())
+    uuid = entity.get("uuid")
+    if isinstance(uuid, str) and uuid.strip():
+        codes.add(uuid.strip().casefold())
+    return codes
+
+
+def _only_task_slots(
+    task: "Task", verdict: dict[str, Any], *, allow_quantities: bool = False
+) -> bool:
+    """Does this message name anything the task is not already collecting for?
+
+    Review round 6 (#1118). Empty entities name nothing new (the original rule); so do
+    entities that are all products this task already holds. `allow_quantities` is the
+    difference between the two readings that need this question answered:
+
+    * the RESUME arm says no - a quantity is a fill, not a resume;
+    * the FILL arm says yes - a quantity for a product the task already holds is
+      exactly what a fill IS, and it must not be mistaken for a fresh ask.
+    """
+    entities = [e for e in (verdict.get("entities") or []) if isinstance(e, dict)]
+    if not entities:
+        return True
+    known: set[str] = set()
+    for slot in task.slots:
+        for value in (slot.key, slot.label):
+            if isinstance(value, str) and value.strip():
+                known.add(value.strip().casefold())
+    if not known:
+        return False
+    for entity in entities:
+        if not allow_quantities and _number(entity.get("quantity")) is not None:
+            return False
+        if not (_entity_codes(entity) & known):
+            return False
+    return True
+
+
+#: SEC-S2 (#1118 security review, round 1): how many slots one stock task may carry,
+#: and how many of them a sentence enumerates before it counts the rest. An ask that
+#: names no product at all used to open a task with one slot per CATALOGUE row (the
+#: tool's own page cap is 5000) and then echo every code into the reply and into every
+#: later parser block. A task is a question about what the dealer named, not about the
+#: book.
+MAX_SLOTS = 20
+MAX_NAMED = 10
+
+
+def _named(labels: list[str]) -> str:
+    """The labels a QUESTION prints ("for C and D"), at most `MAX_NAMED` of them, with
+    the rest counted rather than listed (SEC-S2)."""
+    if len(labels) <= MAX_NAMED:
+        return _join(labels)
+    shown = labels[:MAX_NAMED]
+    return f"{', '.join(shown)} and {len(labels) - MAX_NAMED} others"
+
+
+def _listed(labels: list[str]) -> str:
+    """The same cap for a plain COMMA list - the parser hint's own shape, a fact
+    stated to the model rather than a sentence said to a person."""
+    if len(labels) <= MAX_NAMED:
+        return ", ".join(labels)
+    shown = labels[:MAX_NAMED]
+    return f"{', '.join(shown)} and {len(labels) - MAX_NAMED} others"
+
+
+def _join(words: list[str]) -> str:
+    if len(words) > 1:
+        return ", ".join(words[:-1]) + " and " + words[-1]
+    return words[0] if words else ""
+
+
+class StockQtyTask:
+    """The dealer's owed quantities, one slot per product.
+
+    The slots are OPENED from the stock tool's own reply (`needs_quantity` per
+    product): the backend owns the rule about who must state a quantity, and the
+    engine never reads a policy to decide it.
+    """
+
+    label = "stock check"
+
+    def claims(self, verdict: dict[str, Any]) -> bool:
+        if verdict.get("proceed_anyway") is True:
+            return True
+        for entity in verdict.get("entities") or []:
+            if isinstance(entity, dict) and _number(entity.get("quantity")) is not None:
+                return True
+        return _number(verdict.get("demand_qty")) is not None
+
+    def missing(self, task: Task) -> tuple[Slot, ...]:
+        return tuple(slot for slot in task.slots if slot.value is None)
+
+    def fill(self, task: Task, verdict: dict[str, Any]) -> Task:
+        slots = list(task.slots)
+        by_code: dict[str, int] = {}
+        for entity in verdict.get("entities") or []:
+            if not isinstance(entity, dict):
+                continue
+            quantity = _number(entity.get("quantity"))
+            if quantity is None:
+                continue
+            for code in _entity_codes(entity):
+                by_code[code] = quantity
+        for i, slot in enumerate(slots):
+            for code in (slot.key, slot.label):
+                if not isinstance(code, str):
+                    continue
+                named = by_code.get(code.strip().casefold())
+                if named is not None:
+                    # A restated quantity REPLACES the earlier one, and nothing is
+                    # asked twice for a product already noted.
+                    slots[i] = replace(slot, value=named)
+                    break
+        if verdict.get("proceed_anyway") is True:
+            # "go ahead with what you have": answer what is noted and drop every
+            # product still missing a quantity, naming them in the reply. When
+            # NOTHING is noted, that leaves a task with no slots at all - there is
+            # nothing to fetch and nothing to answer, so the task is finished and the
+            # reply is the one line that says which products went unchecked.
+            dropped = tuple(slot.label for slot in slots if slot.value is None)
+            return replace(
+                task,
+                slots=tuple(slot for slot in slots if slot.value is not None),
+                not_checked=dropped,
+            )
+        still_missing = [slot for slot in slots if slot.value is None]
+        if len(still_missing) == 1 and not by_code:
+            # Deterministic fallback, for a prompt version that does not fill
+            # `entities[].quantity` yet: a bare number with exactly ONE slot still
+            # owed belongs to that slot. Two owed slots and it belongs to neither.
+            bare = _number(verdict.get("demand_qty"))
+            if bare is not None:
+                index = slots.index(still_missing[0])
+                slots[index] = replace(still_missing[0], value=bare)
+        return replace(task, slots=tuple(slots))
+
+    def to_fetch(self, task: Task) -> FetchSpec | None:
+        if not task.slots:
+            # "just proceed" with nothing noted leaves no product to ask about.
+            # There is nothing to fetch, and `question()` below says the one thing
+            # left to say.
+            return None
+        entities = [
+            {
+                "raw": slot.label,
+                "hint": "product",
+                "canonical_code": slot.label,
+                "uuid": slot.key,
+                "current_message": True,
+                "confident": True,
+            }
+            for slot in task.slots
+        ]
+        # SEC-N4 (#1118 security review, round 1): a slot value read back from a
+        # session row written by an older build (or by hand) may be a string, a float
+        # or anything else JSON can carry, and `requested_quantities` is validated at
+        # the route - a bad value there is a 400 that kills the WHOLE fetch, not just
+        # that product. Coerced here, once, and a value that cannot be a quantity is
+        # simply not sent (the backend then answers `needs_quantity` for it, which is
+        # the truth).
+        quantities = {}
+        for slot in task.slots:
+            quantity = _number(slot.value)
+            if quantity is not None:
+                quantities[slot.key] = quantity
+        filters: dict[str, Any] = {"task": task.kind}
+        if quantities:
+            filters["requested_quantities"] = quantities
+        if task.not_checked:
+            filters["not_checked"] = list(task.not_checked)
+        return FetchSpec(
+            domain=task.domain, entities=entities, filters=filters, date_window=None
+        )
+
+    def question(self, task: Task) -> str | None:
+        """The same sentence the MCP presenter says when the tool reply itself carries
+        a gap - said HERE only on the turn that resumes the task without fetching
+        anything, so the dealer reads one wording for one question."""
+        if not task.slots and task.not_checked:
+            # The dealer said to proceed and had noted nothing, so the whole ask went
+            # unchecked. One line, and the task is over - never an empty task that
+            # keeps printing a hint about a question nobody is answering.
+            return f"Not checked: {_named(list(task.not_checked))}."
+        missing = [slot.label for slot in self.missing(task)]
+        if not missing:
+            return None
+        question = f"How many units do you need for {_named(missing)}?"
+        noted = [
+            f"{slot.label} x {slot.value}" for slot in task.slots if slot.value is not None
+        ]
+        if not noted:
+            return question
+        return f"Noted: {_listed(noted)}. {question}"
+
+    def hint(self, task: Task) -> str:
+        """The line the parser reads."""
+        parts = [f"Open task: {self.label}."]
+        noted = [
+            f"{slot.label} x {slot.value}" for slot in task.slots if slot.value is not None
+        ]
+        if noted:
+            parts.append(f"Noted: {_listed(noted)}.")
+        missing = [slot.label for slot in self.missing(task)]
+        if missing:
+            parts.append(f"Still needs a quantity for: {_listed(missing)}.")
+        return " ".join(parts)
+
+
+#: The registry. One entry today (R1 scope cut) - a second kind pays for nothing but
+#: its own class.
+TASK_KINDS: dict[str, Any] = {"stock_qty": StockQtyTask()}
+
+
+def kind_of(task: Any) -> Any:
+    return TASK_KINDS.get(_value(task, "kind"))
+
+
+def _value(task: Any, name: str, default: Any = None) -> Any:
+    """One read for a task row that may be a `Task` or the dict it is stored as."""
+    if isinstance(task, dict):
+        return task.get(name, default)
+    return getattr(task, name, default)
+
+
+# --------------------------------------------------------------------------- #
+# The wire shape - carried INSIDE the focus (no new session key)
+# --------------------------------------------------------------------------- #
+
+
+def task_to_wire(task: Task) -> dict[str, Any]:
+    return {
+        "kind": task.kind,
+        "domain": task.domain,
+        "status": task.status,
+        "opened_at_turn": task.opened_at_turn,
+        "touched_at_turn": task.touched_at_turn,
+        "slots": [
+            {"key": slot.key, "label": slot.label, "value": slot.value}
+            for slot in task.slots
+        ],
+        "not_checked": list(task.not_checked),
+    }
+
+
+def task_from_wire(raw: Any) -> Task | None:
+    """Tolerant, like every other read on this path: a task that cannot be read is a
+    forgotten collection, not a failed turn."""
+    if not isinstance(raw, dict) or not raw.get("kind"):
+        return None
+    slots = []
+    for row in raw.get("slots") or []:
+        if not isinstance(row, dict) or row.get("key") is None:
+            continue
+        slots.append(
+            Slot(
+                key=str(row.get("key")),
+                label=str(row.get("label") or row.get("key")),
+                value=row.get("value"),
+            )
+        )
+    status = raw.get("status")
+    return Task(
+        kind=str(raw["kind"]),
+        domain=str(raw.get("domain") or ""),
+        status=status if status in (OPEN, PARKED) else OPEN,
+        opened_at_turn=raw.get("opened_at_turn") or 0,
+        touched_at_turn=raw.get("touched_at_turn") or 0,
+        slots=tuple(slots),
+        not_checked=tuple(
+            str(name) for name in (raw.get("not_checked") or []) if name is not None
+        ),
+    )
+
+
+# --------------------------------------------------------------------------- #
+# The lifecycle, as one pure step `apply()` runs before decide's four outcomes
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True)
+class TaskOutcome:
+    tasks: tuple[Task, ...] = ()
+    fetch: FetchSpec | None = None
+    fetch_domain: str | None = None
+    question: str | None = None
+    question_domain: str | None = None
+    parked_kinds: tuple[str, ...] = ()
+    closed_kinds: tuple[str, ...] = ()
+    rules: tuple[str, ...] = ()
+
+
+def run(
+    tasks: tuple[Task, ...],
+    verdict: dict[str, Any],
+    *,
+    decision_kind: str,
+    positions: list[int] | None = None,
+    pending: Any = None,
+    turn_no: int = 0,
+) -> TaskOutcome:
+    """Every task rule, in the order the plan names: claims -> fill, complete ->
+    fetch, park, resume, close. One function, so the arms cannot disagree about one
+    turn.
+
+    `decision_kind` is `decide()`'s own reading of this message; `positions` are the
+    option numbers it picked (unused while `TASK_KINDS` has one entry - kept on the
+    signature so a caller that already threads them through does not need an arm of
+    its own). Nothing here reads a word.
+    """
+    rules: list[str] = []
+    tasks = tuple(tasks)
+
+    if not tasks:
+        return TaskOutcome(tasks=(), rules=())
+
+    named_domain = verdict.get("domain_hint")
+
+    # (1) Close or park on a topic reset. A reset aimed at a task's OWN domain ends
+    # it; one aimed elsewhere parks it, and the focus keeps the task through the wipe
+    # (`apply._focus_rules` empties every other axis).
+    if verdict.get("topic_reset") is True:
+        kept: list[Task] = []
+        closed: list[str] = []
+        for task in tasks:
+            aimed_here = not named_domain or task.domain == named_domain
+            if aimed_here:
+                closed.append(task.kind)
+                rules.append(f"task_closed_on_reset_{task.kind}")
+                continue
+            kept.append(replace(task, status=PARKED))
+            rules.append(f"task_parked_{task.kind}")
+        return TaskOutcome(
+            tasks=tuple(kept), closed_kinds=tuple(closed), rules=tuple(rules)
+        )
+
+    claimed = [
+        task
+        for task in tasks
+        if TASK_KINDS.get(task.kind) is not None
+        and TASK_KINDS[task.kind].claims(verdict)
+    ]
+
+    out = []
+    parked_kinds: list[str] = []
+    fetch = None
+    fetch_domain = None
+    question = None
+    question_domain = None
+    for task in tasks:
+        impl = TASK_KINDS.get(task.kind)
+        if impl is None:
+            out.append(task)
+            continue
+        if claimed and task is claimed[0]:
+            # (2) fill: the value goes to the kind that claims it, whatever the
+            # current subject. A fill that moved a slot re-runs the domain's own
+            # fetch over the WHOLE task, which is what lets the backend answer or
+            # re-ask per product; a fill that moved nothing re-asks what is still
+            # owed, unless this turn asked a question of its own - a fresh stock ask
+            # carries its own products and its own reply rebuilds the task.
+            filled = replace(
+                impl.fill(task, verdict), status=OPEN, touched_at_turn=turn_no
+            )
+            moved = filled.slots != task.slots
+            # The fill MERGES into the slots the task already has, so a quantity for
+            # one product leaves the others exactly as they were - and while any of
+            # them is still owed there is nothing to answer yet. A fetch happens when
+            # NO slot is missing, or on a `proceed_anyway`, which drops the missing
+            # ones and so leaves none behind either.
+            still_missing = impl.missing(filled) if hasattr(impl, "missing") else ()
+            spec = impl.to_fetch(filled) if (moved and not still_missing) else None
+            if spec is None and moved and not filled.slots:
+                # The fill emptied the task (a "just proceed" with nothing noted). It
+                # is finished - it does not ride on as an empty task - and its own
+                # last sentence names what went unchecked.
+                rules.append(f"task_closed_on_proceed_{task.kind}")
+                if question is None:
+                    question = impl.question(filled)
+                    question_domain = filled.domain
+                continue
+            out.append(filled)
+            rules.append(f"task_filled_{task.kind}")
+            if spec is not None:
+                fetch = spec
+                fetch_domain = filled.domain
+            elif question is None and (
+                (still_missing and _only_task_slots(task, verdict, allow_quantities=True))
+                or (not moved and decision_kind != "new_ask")
+            ):
+                # A turn that gave or RESTATED a quantity for this task's own products
+                # always speaks, whatever `decide()` made of the sentence (a quantity
+                # beside a product code reads as a new ask): the dealer just answered
+                # part of this question, so the reply is what is noted and what is
+                # still owed - even when the restated number changed nothing. A
+                # message that names a product the task does NOT hold is a fresh
+                # stock question of its own and rebuilds the task, so it falls through
+                # to the ordinary plan.
+                question = impl.question(filled)
+                question_domain = filled.domain
+            continue
+        if task.domain and task.domain == named_domain and _only_task_slots(task, verdict):
+            # (3) resume: the task's own topic, named again with nothing new. Only
+            # what is still missing is asked; nothing is asked twice.
+            resumed = replace(task, status=OPEN, touched_at_turn=turn_no)
+            out.append(resumed)
+            rules.append(f"task_resumed_{task.kind}")
+            if question is None:
+                question = impl.question(resumed)
+                question_domain = resumed.domain
+            continue
+        if decision_kind == "new_ask" and not claimed:
+            # (4) park: the dealer asked something ELSE. Silent - the reply says
+            # nothing about the parked task. A turn that answered one of the open
+            # tasks is not "something else" for the others.
+            out.append(replace(task, status=PARKED))
+            parked_kinds.append(task.kind)
+            rules.append(f"task_parked_{task.kind}")
+            continue
+        out.append(task)
+
+    return TaskOutcome(
+        tasks=tuple(out),
+        fetch=fetch,
+        fetch_domain=fetch_domain,
+        question=question,
+        question_domain=question_domain if question else None,
+        parked_kinds=tuple(parked_kinds),
+        rules=tuple(rules),
+    )
+
+
+def unpark(
+    tasks: tuple[Task, ...], kinds: tuple[str, ...], before: tuple[Task, ...]
+) -> tuple[Task, ...]:
+    """Put back the status of a task this turn parked, when the turn turned out to ASK
+    a question of its own rather than answer anything.
+
+    Parking is what keeps a task silent while the OTHER question is answered. A turn
+    that ends in a roster has answered nothing and taken the conversation nowhere, so
+    there is nothing yet to be silent about - and a task parked by it would then need
+    the dealer to name it again, for a detour that never happened.
+    """
+    if not kinds:
+        return tasks
+    was = {task.kind: task.status for task in before}
+    return tuple(
+        replace(task, status=was.get(task.kind, task.status))
+        if task.kind in kinds
+        else task
+        for task in tasks
+    )
+
+
+# --------------------------------------------------------------------------- #
+# What the TOOL's reply says about the task (the backend owns the rule)
+# --------------------------------------------------------------------------- #
+
+
+def tasks_after_reply(
+    tasks: tuple[Task, ...],
+    envelopes: list[dict[str, Any]],
+    *,
+    turn_no: int = 0,
+    named_products: bool = True,
+) -> tuple[Task, ...]:
+    """The stock task, rebuilt from the stock tool's own `stock_availability` block.
+
+    ONE rule for open, update and close, and it is the backend's rule, not the
+    engine's: every entry becomes a slot, its `requested_qty` becomes the slot's
+    value, and a reply where no entry still needs a quantity has no task left to
+    carry. The engine never reads a policy to decide who must state a quantity - it
+    reads what the reply said about it.
+
+    `named_products` is SEC-S2 (#1118 security review, round 1): did the ask name a
+    product at all? "What stock do you have?" names none, so the reply is a PAGE OF
+    THE CATALOGUE and every row of it carries `needs_quantity` - which opened a task
+    with one slot per product and then echoed every code into the reply and into
+    every later parser block. A task is a question about what the dealer named; with
+    nothing named there is no task to open, and the reply stays the presenter's own
+    single question. An ALREADY OPEN task is still updated (it named its products
+    when it opened).
+    """
+    block: list[dict[str, Any]] | None = None
+    for envelope in envelopes or []:
+        rows = envelope.get("stock_availability") if isinstance(envelope, dict) else None
+        if isinstance(rows, list) and rows:
+            block = [row for row in rows if isinstance(row, dict)]
+
+    if block is None:
+        return tasks
+
+    others = tuple(task for task in tasks if task.kind != "stock_qty")
+    if not any(row.get("needs_quantity") is True for row in block):
+        return others
+
+    existing = next((task for task in tasks if task.kind == "stock_qty"), None)
+    if existing is None and not named_products:
+        # SEC-S2: nothing was named, so there is nothing to collect FOR.
+        return others
+    slots: list[Slot] = []
+    for row in block:
+        key = row.get("product_id")
+        # R-S4 / SEC-N3 (#1118): a row with no `product_code` must never put the UUID
+        # in front of a person - not in the reply, not in the hint line the parser
+        # reads next turn (the frontend's own "no UUIDs in the UI" rule, here at the
+        # seam the text is built from). The product NAME is the fallback; a row with
+        # neither is dropped, because there is no way to ask about it.
+        label = row.get("product_code") or row.get("product_name")
+        if not key or not label:
+            continue
+        slots.append(
+            Slot(key=str(key), label=str(label), value=_number(row.get("requested_qty")))
+        )
+    # SEC-S2: a cap, not a truncation of the question the dealer asked - a reply that
+    # needs more than this many products has stopped being a stock check and is a
+    # catalogue dump. The remaining products are simply not COLLECTED for; the reply
+    # itself is the presenter's and is unchanged.
+    slots = slots[:MAX_SLOTS]
+    if not slots:
+        return others
+    opened = existing.opened_at_turn if existing is not None else turn_no
+    return others + (
+        Task(
+            kind="stock_qty",
+            domain="inventory",
+            status=OPEN,
+            opened_at_turn=opened,
+            touched_at_turn=turn_no,
+            slots=tuple(slots),
+        ),
+    )
+
+
+def tasks_after_tool_status(
+    tasks: tuple[Task, ...], *, kind: str, status: Any
+) -> tuple[Task, ...]:
+    """The one seam a kind's own `closes_on_tool_status` is read at (unused with only
+    `stock_qty` registered; kept generic so a future kind that closes on a tool word
+    plugs in here with no engine change)."""
+    impl = TASK_KINDS.get(kind)
+    if impl is None or not hasattr(impl, "closes_on_tool_status"):
+        return tasks
+    if not impl.closes_on_tool_status(status):
+        return tasks
+    return tuple(task for task in tasks if task.kind != kind)
+
+
+def hint_lines(tasks: Any) -> list[str]:
+    """One `Open task: ...` line per task, most recently touched first.
+
+    Reads a task ROW, which may be a `Task` or the dict it is stored as - the parser
+    block is built from whichever the caller holds.
+    """
+    rows = list(tasks or [])
+    rows.sort(key=lambda row: _value(row, "touched_at_turn", 0) or 0, reverse=True)
+    lines: list[str] = []
+    for row in rows:
+        impl = TASK_KINDS.get(_value(row, "kind"))
+        if impl is None or not hasattr(impl, "hint"):
+            continue
+        as_task = row if isinstance(row, Task) else task_from_wire(row)
+        if as_task is None:
+            continue
+        lines.append(impl.hint(as_task))
+    return lines

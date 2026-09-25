@@ -221,9 +221,26 @@ class StockSummaryEntry(BaseModel):
     flags: Dict[str, Any] = {}
 
 
+class StockAvailabilityDisclaimer(BaseModel):
+    """Ported from PR #1118 (feat/chatbot-dealer-stock-verdict, not merged, owner
+    ruling 24 Sep 2026) for chatbot-stock-ask-v2 S3 parity. Never a quantity of ours -
+    `sources` names which supply covers the deficit, `limited` says whether that
+    supply is itself running short, `incoming_eta` is the earliest counted
+    allocation's date, and `purchase_eta_days` is the lead-time PHRASE, never a PO
+    date."""
+
+    sources: List[str]
+    limited: bool
+    incoming_eta: Optional[str] = None
+    purchase_eta_days: Optional[int] = None
+
+
 class StockAvailabilityEntry(BaseModel):
-    """One `availability` answer. Deliberately carries NO quantity: `requested_qty`
-    is the contact's own number echoed back, and `available` is the whole reply."""
+    """One `availability` answer. Deliberately carries NO quantity of OURS:
+    `requested_qty` is the contact's own number echoed back, `available` is the
+    yes/no, and `verdict` / `running_low` / `disclaimer` (ported from PR #1118) are
+    judged only against the dealer's allowed warehouses - never a stock/incoming/PO
+    figure."""
 
     product_id: str
     product_code: Optional[str] = None
@@ -231,6 +248,9 @@ class StockAvailabilityEntry(BaseModel):
     needs_quantity: bool
     requested_qty: Optional[int] = None
     available: Optional[bool] = None
+    verdict: Optional[str] = None
+    running_low: Optional[bool] = None
+    disclaimer: Optional[StockAvailabilityDisclaimer] = None
 
 
 class StockBalanceListResponse(ListResponse[StockResponse]):

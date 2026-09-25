@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 
 from app.services.ai_prompt_registry import agent_model, render
 from app.services.chatbot.contracts import ParserOutputError  # noqa: F401 - re-export
+from app.services.chatbot.turn import task as task_mod
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +143,17 @@ def _build_json_schema() -> dict[str, Any]:
                         # hinted kind FIRST only when this is true; a low-confidence
                         # kind hint goes straight to reconciliation instead.
                         "hint_confident": {"type": ["boolean", "null"]},
+                        # Ported from PR #1118 (feat/chatbot-dealer-stock-verdict, not
+                        # merged, owner ruling 24 Sep 2026) for chatbot-stock-ask-v2
+                        # S3, D13: the quantity the message stated FOR THIS ENTITY.
+                        # `demand_qty` below is one number for the whole turn and
+                        # cannot answer "MWT5727SS-CR 5, MHS1028 60" at all, which is
+                        # why an `availability` dealer was asked "how many units do
+                        # you need?" and never answered. REQUIRED like every other key
+                        # of this object: strict mode rejects a `properties` key
+                        # absent from `required`, and a key the provider is never
+                        # forced to reason about is a key it never fills.
+                        "quantity": {"type": ["number", "null"]},
                     },
                     "required": [
                         "raw",
@@ -150,6 +162,7 @@ def _build_json_schema() -> dict[str, Any]:
                         "current_message",
                         "confident",
                         "hint_confident",
+                        "quantity",
                     ],
                 },
             },
@@ -292,6 +305,12 @@ def _build_json_schema() -> dict[str, Any]:
             # with no way for the model to set it, so no live turn has ever reset a topic
             # or written an episode.
             "topic_reset": {"type": ["boolean", "null"]},
+            # Ported from PR #1118 (not merged), D13/D15: "go ahead without answering
+            # the open question" - said in any wording, in any language ("just
+            # proceed", "never mind those, check what you have"). Generic, not
+            # stock-specific: it is the one word that closes ANY open task with what
+            # it already holds.
+            "proceed_anyway": {"type": ["boolean", "null"]},
             "anaphora": {
                 "type": "object",
                 "additionalProperties": False,
@@ -340,6 +359,7 @@ def _build_json_schema() -> dict[str, Any]:
             "status",
             "asks",
             "topic_reset",
+            "proceed_anyway",
             "anaphora",
         ],
     }
@@ -364,8 +384,15 @@ DECLARED_KEYS: frozenset[str] = frozenset(PARSE_OUTPUT_JSON_SCHEMA["required"])
 #: it HAS to be declared at the wire, and no prompt version before the sales report
 #: addendum ever emits it - so every recorded emission and every `mock_reformulator_
 #: output` a console case carries lacks it, and reads as null.
+#: `proceed_anyway` joins them by the SAME rule (ported from PR #1118, not merged,
+#: D13): it has to be declared at the wire to exist at all, and no prompt version
+#: before this lane's addendum emits it, so every recorded emission and every
+#: `mock_reformulator_output` a console case carries lacks it and reads as null.
+#: `entities[].quantity` needs no tolerance - this check is TOP-LEVEL keys only, and a
+#: nested entity field is validated by the provider's own strict schema, never
+#: against a replay emission.
 TOLERATED_ABSENT: frozenset[str] = frozenset(
-    {"broaden_to", "domain_in_message", "sales_channel"}
+    {"broaden_to", "domain_in_message", "sales_channel", "proceed_anyway"}
 )
 
 
@@ -490,6 +517,12 @@ def build_user_block(
     `focus` is the third (hand pass 3, 17 Sep 2026): the "Current subject" line, so a
     refinement and a domain switch are read against what the conversation is about rather
     than against the previous reply alone.
+
+    The fourth is the OPEN TASK lines (ported from PR #1118, not merged, D21): one
+    `Open task: ...` line per task the focus carries, most recently touched first, so
+    the model can fill a quantity for a product the task named whatever the current
+    subject is, and can read "add", "drop", "make B 80", "proceed" and "never mind
+    the stock check" as instructions on that task.
     """
     import re
 
@@ -506,6 +539,8 @@ def build_user_block(
         # and a domain switch are judged against something. One line, omitted whole when
         # the focus is empty.
         lines.append(subject)
+    for task_line in task_mod.hint_lines(getattr(focus, "tasks", None)):
+        lines.append(task_line)
     if pending_kind:
         lines.append(f"Pending: the assistant is waiting for a {pending_kind} reply.")
     if pending_options:
