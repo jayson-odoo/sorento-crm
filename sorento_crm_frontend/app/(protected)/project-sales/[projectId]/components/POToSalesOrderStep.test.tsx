@@ -86,12 +86,12 @@ describe('the next step after a PO', () => {
 
     // The REASON is the useful half (quantities alone cannot be scheduled), but it is a
     // lesson learned once, so it is not printed beside every PO.
-    expect(screen.queryByText(/when each phase needs it/i)).toBeNull();
+    expect(screen.queryByText(/when each area needs it/i)).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: /Why this is the next step/i }));
 
     await waitFor(() =>
-      expect(screen.getByText(/when each phase needs it/i)).toBeInTheDocument(),
+      expect(screen.getByText(/when each area needs it/i)).toBeInTheDocument(),
     );
   });
 
