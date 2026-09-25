@@ -2,10 +2,11 @@
  * Sheet's overlay animates opacity exactly like Dialog's/AlertDialog's, so it
  * carries the same WAAPI hand-off race (#1250, follow-up to #1246's
  * dialog.animation-boundary.test.tsx). The content itself slides on `x`/`y`
- * under normal motion - not accelerated by WAAPI here (only `opacity` is, see
- * lib/motion.ts NOOP_ON_UPDATE) - but its `prefers-reduced-motion` fallback
- * (`slideVariants` in sheet.tsx) drops the slide for a same-frame opacity
- * change, which races exactly like every other surface's fade.
+ * under normal motion - not in WAAPI's `acceleratedValues` (opacity, clipPath,
+ * filter, transform; see lib/motion.ts NOOP_ON_UPDATE) - so it carries no
+ * `onUpdate` here at all; it only gets one conditionally, under reduced
+ * motion, where `slideVariants` collapses to an opacity-only fallback that
+ * races the same way (see sheet.reduced-motion.animation-boundary.test.tsx).
  *
  * jsdom has no `Element.prototype.animate`, so this guards the fix's wiring,
  * not the WAAPI race itself - see dialog.animation-boundary.test.tsx for the
@@ -28,12 +29,14 @@ import { Sheet, SheetContent, SheetTitle } from './sheet';
 const realMatchMedia = window.matchMedia;
 const skipAnimations = MotionGlobalConfig.skipAnimations;
 
-function mockMatchMedia(reducedMotion: boolean) {
+beforeEach(() => {
+  onUpdateSpy.mockClear();
+  MotionGlobalConfig.skipAnimations = false;
   Object.defineProperty(window, 'matchMedia', {
     writable: true,
     configurable: true,
     value: (query: string) => ({
-      matches: reducedMotion,
+      matches: false,
       media: query,
       onchange: null,
       addEventListener: () => {},
@@ -43,33 +46,12 @@ function mockMatchMedia(reducedMotion: boolean) {
       dispatchEvent: () => false,
     }),
   });
-}
-
-beforeEach(() => {
-  onUpdateSpy.mockClear();
-  MotionGlobalConfig.skipAnimations = false;
-  mockMatchMedia(false);
 });
 
 afterEach(() => {
   MotionGlobalConfig.skipAnimations = skipAnimations;
   Object.defineProperty(window, 'matchMedia', { writable: true, configurable: true, value: realMatchMedia });
 });
-
-// Under normal (non-reduced) motion, the content slides on `x`/`y` while the
-// overlay animates `opacity` alone - so a call's argument carries an `x` or
-// `y` key if and only if it came from the content's `motion.div`.
-function isContentCall(call: unknown[]): boolean {
-  const latest = call[0] as Record<string, unknown> | undefined;
-  if (latest === undefined) return false;
-  return Object.prototype.hasOwnProperty.call(latest, 'x') || Object.prototype.hasOwnProperty.call(latest, 'y');
-}
-
-function splitCallsBySurface(calls: unknown[][]) {
-  const contentCalls = calls.filter(isContentCall);
-  const overlayCalls = calls.filter((call) => !isContentCall(call));
-  return { overlayCalls, contentCalls };
-}
 
 function renderSheet(open: boolean) {
   return (
@@ -81,17 +63,18 @@ function renderSheet(open: boolean) {
   );
 }
 
-describe('Sheet overlay and content (slide) defeat WAAPI hand-off', () => {
-  it('drives onUpdate on both the overlay and the sliding content while entering', async () => {
+// Under normal (non-reduced) motion the content slides on `x`/`y` alone and
+// carries no `onUpdate` at all (see sheet.tsx - it is conditional on reduced
+// motion), so every call the shared spy sees here is the overlay's.
+describe('Sheet overlay defeats WAAPI hand-off (normal motion)', () => {
+  it('drives onUpdate on the overlay while entering', async () => {
     render(renderSheet(true));
     await new Promise((resolve) => setTimeout(resolve, 500));
 
-    const { overlayCalls, contentCalls } = splitCallsBySurface(onUpdateSpy.mock.calls);
-    expect(overlayCalls.length).toBeGreaterThan(1);
-    expect(contentCalls.length).toBeGreaterThan(1);
+    expect(onUpdateSpy.mock.calls.length).toBeGreaterThan(1);
   });
 
-  it('keeps driving onUpdate on both the overlay and the sliding content while closing', async () => {
+  it('keeps driving onUpdate on the overlay while closing', async () => {
     const { rerender } = render(renderSheet(true));
     await new Promise((resolve) => setTimeout(resolve, 500));
     onUpdateSpy.mockClear();
@@ -99,47 +82,6 @@ describe('Sheet overlay and content (slide) defeat WAAPI hand-off', () => {
     rerender(renderSheet(false));
     await new Promise((resolve) => setTimeout(resolve, 500));
 
-    const { overlayCalls, contentCalls } = splitCallsBySurface(onUpdateSpy.mock.calls);
-    expect(overlayCalls.length).toBeGreaterThan(1);
-    expect(contentCalls.length).toBeGreaterThan(1);
-  });
-});
-
-// Isolated from the overlay entirely (`overlay={false}`), under forced
-// `prefers-reduced-motion: reduce`, so every onUpdate call in this describe
-// block can only have come from the content's own motion.div running its
-// opacity fallback (slideVariants collapses to `{ opacity }` under reduced
-// motion) - the surface the issue calls out by name.
-describe("Sheet content drives onUpdate on its reduced-motion opacity fallback", () => {
-  beforeEach(() => {
-    mockMatchMedia(true);
-  });
-
-  function renderReducedMotionSheet(open: boolean) {
-    return (
-      <Sheet open={open}>
-        <SheetContent overlay={false}>
-          <SheetTitle>T</SheetTitle>
-        </SheetContent>
-      </Sheet>
-    );
-  }
-
-  it('drives onUpdate while entering under reduced motion', async () => {
-    render(renderReducedMotionSheet(true));
-    await new Promise((resolve) => setTimeout(resolve, 200));
-
-    expect(onUpdateSpy.mock.calls.length).toBeGreaterThan(0);
-  });
-
-  it('keeps driving onUpdate while closing under reduced motion', async () => {
-    const { rerender } = render(renderReducedMotionSheet(true));
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    onUpdateSpy.mockClear();
-
-    rerender(renderReducedMotionSheet(false));
-    await new Promise((resolve) => setTimeout(resolve, 200));
-
-    expect(onUpdateSpy.mock.calls.length).toBeGreaterThan(0);
+    expect(onUpdateSpy.mock.calls.length).toBeGreaterThan(1);
   });
 });

@@ -150,7 +150,7 @@ function SheetContent({
               animate={variants.animate}
               exit={{ ...variants.exit, transition: exitTransition }}
               transition={transition}
-              onUpdate={NOOP_ON_UPDATE}
+              onUpdate={prefersReducedMotion ? NOOP_ON_UPDATE : undefined}
             >
               {children}
               {close && (

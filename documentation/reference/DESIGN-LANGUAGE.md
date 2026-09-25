@@ -76,7 +76,7 @@ arrives - see the file's own "Materials" comment for the precedent.
   browser's native Web Animations API, whose `onfinish` cancels the effect one render tick before
   its settled value reaches the inline style - a real, one-frame flicker to the pre-phase value
   (`0` on enter, `1` on exit) that jsdom cannot reproduce (no `Element.prototype.animate` there).
-  Every opacity-animating surface in this file (Dialog, AlertDialog, Sheet's overlay and its
+  Every opacity-animating surface in `components/ui` (Dialog, AlertDialog, Sheet's overlay and its
   reduced-motion fallback, Popover, DropdownMenu, ContextMenu, HoverCard, Menubar) carries it; a
   new one needs it too, guarded by a per-surface wiring test in the shape of
   `dialog.animation-boundary.test.tsx`.
