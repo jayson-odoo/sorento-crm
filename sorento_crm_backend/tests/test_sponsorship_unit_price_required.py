@@ -31,12 +31,17 @@ import pytest
 
 from app.models.access import RespondContact
 from app.models.portal import PortalToken
-from app.models.procurement import PurchaseRequestHeader
+from app.models.procurement import PurchaseRequestHeader, PurchaseRequestLine
 from app.schemas.external.procurement import PurchaseRequestExternalCreate
-from app.schemas.procurement import PurchaseRequestHeaderCreate, PurchaseRequestHeaderUpdate
+from app.schemas.procurement import (
+    PurchaseRequestHeaderCreate,
+    PurchaseRequestHeaderUpdate,
+    PurchaseRequestUpdateAndReply,
+)
 from app.services.error_handler import AppException
 import app.services.form_sla_service as form_sla_service_mod
 from app.services.portal_service import PortalService
+from app.services.procurement_service import PurchaseRequestService
 from tests._pg_fixture import blank_session
 
 MARKER = "ZZT-SPUP"
@@ -294,3 +299,100 @@ def test_portal_submit_with_no_lines_is_unaffected(db):
 
     db.refresh(header)
     assert header.status == "submitted"
+
+
+# --------------------------------------------------------------------------- #
+# 4. ProcurementService.update_request / update_request_and_reply - effective
+#    type check (#1232 blocking 2). `request_type` is optional on
+#    `PurchaseRequestHeaderUpdate` and usually absent on a plain header edit -
+#    the rule must still hold against the STORED header's type when the
+#    payload itself omits it, or a direct API caller bypasses the rule on a
+#    stored sponsorship form simply by not sending request_type.
+# --------------------------------------------------------------------------- #
+
+
+def _seed_stored_sponsorship_request(db) -> PurchaseRequestHeader:
+    header = PurchaseRequestHeader(
+        id=str(uuid.uuid4()),
+        request_type="sponsorship_form",
+        status="draft",
+        source="system",
+    )
+    db.add(header)
+    db.flush()
+    db.add(
+        PurchaseRequestLine(
+            id=str(uuid.uuid4()),
+            purchase_request_id=header.id,
+            item_code=f"{MARKER}-ITEM",
+            quantity=2,
+            unit_price=10,
+            total=20,
+            sort_order=0,
+        )
+    )
+    db.commit()
+    db.refresh(header)
+    return header
+
+
+def test_update_request_refuses_priceless_line_when_request_type_omitted(db):
+    header = _seed_stored_sponsorship_request(db)
+    svc = PurchaseRequestService(db)
+    data = PurchaseRequestHeaderUpdate(
+        products=[{"item_code": f"{MARKER}-ITEM", "quantity": 2}]
+    )
+    assert data.request_type is None
+
+    with pytest.raises(AppException) as ei:
+        svc.update_request(str(header.id), data)
+
+    _assert_line_refusal(ei.value)
+    db.rollback()
+
+
+def test_update_request_accepts_priceless_line_when_explicitly_purchase_request(db):
+    """The effective-type check must still respect an explicit override: a
+    stored sponsorship form's type is only inferred as a fallback, never
+    forced, so a payload that (validly) changes the type away from
+    sponsorship_form is unaffected."""
+    header = _seed_stored_sponsorship_request(db)
+    svc = PurchaseRequestService(db)
+    data = PurchaseRequestHeaderUpdate(
+        request_type="purchase_request",
+        products=[{"item_code": f"{MARKER}-ITEM", "quantity": 2}],
+    )
+
+    updated = svc.update_request(str(header.id), data)
+
+    assert updated.request_type == "purchase_request"
+    assert updated.lines[0].unit_price is None
+
+
+def test_update_request_and_reply_refuses_priceless_line_when_request_type_omitted(db):
+    header = _seed_stored_sponsorship_request(db)
+    svc = PurchaseRequestService(db)
+    data = PurchaseRequestUpdateAndReply(
+        products=[{"item_code": f"{MARKER}-ITEM", "quantity": 2}],
+        reply_message="hi",
+    )
+    assert data.request_type is None
+
+    with pytest.raises(AppException) as ei:
+        svc.update_request_and_reply(str(header.id), data, respond_user_id=f"{MARKER}-user")
+
+    _assert_line_refusal(ei.value)
+    db.rollback()
+
+
+def test_update_request_with_no_products_key_is_unaffected_by_effective_type(db):
+    """An edit that never touches lines (`products` omitted) is a no-op for this
+    rule regardless of whether request_type is sent - matches
+    `test_internal_update_with_no_products_key_is_a_no_op` for the schema layer."""
+    header = _seed_stored_sponsorship_request(db)
+    svc = PurchaseRequestService(db)
+    data = PurchaseRequestHeaderUpdate(customer_name=f"{MARKER} updated")
+
+    updated = svc.update_request(str(header.id), data)
+
+    assert updated.customer_name == f"{MARKER} updated"
