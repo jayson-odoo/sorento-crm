@@ -61,14 +61,9 @@ export function unpostableNotices(
   const moreCount = lines.length - named.length;
   const one = lines.length === 1;
   const them = one ? 'it' : 'them';
-  const clause = (() => {
-    if (reason === 'no_mirror') {
-      return `${one ? 'is' : 'are'} not on the planning record yet, so this confirmation leaves ${them} out. Re-sync the sales order to add ${them}.`;
-    }
-    if (reason === 'no_reserve_warehouse') {
-      return `${one ? 'reserves' : 'reserve'} at a warehouse the board cannot address, so this confirmation leaves ${them} out. Amend ${them} to place the Reserve.`;
-    }
-    return `${one ? 'buys' : 'buy'} a discontinued product with no reason given, so this confirmation leaves ${them} out. Amend ${them} to give one.`;
-  })();
+  const clause =
+    reason === 'no_mirror'
+      ? `${one ? 'is' : 'are'} not on the planning record yet, so this confirmation leaves ${them} out. Re-sync the sales order to add ${them}.`
+      : `${one ? 'reserves' : 'reserve'} at a warehouse the board cannot address, so this confirmation leaves ${them} out. Amend ${them} to place the Reserve.`;
   return [{ clause, named, moreCount }];
 }

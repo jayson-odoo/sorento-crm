@@ -18,6 +18,15 @@ import type {
 } from '../types/product.types';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 
+/**
+ * Chatbot stock limits, X / Y (PLAN-chatbot-stock-ask-v2-24sep.md S1):
+ *   products.chatbot_max_qty          integer | null  (X: overrides the
+ *     product's category value when set; unset falls back to the category)
+ *   products.chatbot_eta_offset_days  integer | null  (Y: same override rule)
+ * Both ride the GET/PUT /api/v1/master-data/products/{id} payload as plain
+ * fields, gated the same way as the category columns (see categoryService.ts).
+ */
+
 export interface GetProductsParams extends DataGridApiFetchParams {
   category_id?: string;
   /**

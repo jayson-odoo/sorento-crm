@@ -345,6 +345,10 @@ class ContactService:
             "chatbot_recall_enabled": bool(getattr(contact, "chatbot_recall_enabled", False)),
             # S6: the stock allowance, default ON - a row without the attribute is allowed.
             "chatbot_stock_allowed": bool(getattr(contact, "chatbot_stock_allowed", True)),
+            # Chatbot stock ask v2 S2 (PLAN-chatbot-stock-ask-v2-24sep.md, R7): both
+            # default OFF, unlike chatbot_stock_allowed above.
+            "notify_salesman": bool(getattr(contact, "notify_salesman", False)),
+            "packing_list_allowed": bool(getattr(contact, "packing_list_allowed", False)),
             "created_at": contact.created_at,
             "updated_at": contact.updated_at,
             "created_by": contact.created_by,

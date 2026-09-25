@@ -23,6 +23,26 @@ on:
         default: false
         type: boolean
 
+# Cancels a PR's own superseded runs without touching push-to-main runs, which
+# is why the group key and cancel-in-progress both differ by event instead of
+# being one flat rule:
+#   - pull_request: the group key is the PR number, so every push to the same
+#     PR lands in the same group, and cancel-in-progress is true, so GitHub
+#     cancels that PR's older queued/running run per the docs' per-group
+#     cancellation semantics (https://docs.github.com/actions/using-jobs/using-concurrency).
+#     This is the fix: a lane pushing after every green step no longer queues
+#     one full ~17-job run per push.
+#   - push (to main) and merge_group: github.event.pull_request.number is
+#     empty, so the group key falls back to github.run_id, which is unique to
+#     this run. A unique group can never collide with another run's group, so
+#     cancel-in-progress here is a no-op and every main push still runs its
+#     full matrix independently, exactly as before this change. The dedicated
+#     `deploy-production` job-level group below is untouched (cancel-in-progress
+#     false) so no merge ever loses its deploy.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   IMAGE_REPO: jayson1004/sorento-crm
   RELEASE_TAG: 1.0.1
@@ -936,13 +956,14 @@ jobs:
     # queue merges it, so each change still deploys exactly once, from main.
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    # Job-level, not workflow-level: a workflow-level group would also queue PR
-    # runs behind each other, which is not the problem here. Two merges close
-    # together used to run two deploys overlapped - the second recreated the
-    # worker while the first was still mid blue/green, killing in-flight RQ
-    # jobs (AbandonedJobError). This queues the second deploy behind the
-    # first instead. cancel-in-progress is false because every merge must
-    # still deploy, none can be dropped for a later one.
+    # Job-level, and a fixed group name rather than the workflow-level group
+    # above (which is per-run for push events, so it never serializes deploys
+    # on its own). Two merges close together used to run two deploys overlapped
+    # - the second recreated the worker while the first was still mid
+    # blue/green, killing in-flight RQ jobs (AbandonedJobError). This queues
+    # the second deploy behind the first instead. cancel-in-progress is false
+    # because every merge must still deploy, none can be dropped for a later
+    # one.
     concurrency:
       group: deploy-production
       cancel-in-progress: false

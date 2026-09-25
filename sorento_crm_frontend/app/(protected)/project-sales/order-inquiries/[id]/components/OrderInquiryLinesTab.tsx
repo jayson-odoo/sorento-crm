@@ -27,6 +27,7 @@ import {
 } from '@/components/common/SearchableMultiSelect';
 import { useTableDeepLinkHighlight } from '@/hooks/useTableDeepLinkHighlight';
 import { STATE_LABEL } from '../../../_shared/components/OrderInquiryVerbPill';
+import { DEFAULT_HIDDEN_COLUMNS } from '../../components/orderInquiryWorklistColumns';
 import {
   StagedReserveEntry,
   useOrderInquiryHeaderLinesColumns,
@@ -148,6 +149,15 @@ export function OrderInquiryLinesTab({
     columns,
     data: rows,
     getRowId: (row) => row.id,
+    // AC-DT-6 (`PLAN-oi-decision-trail-ui.md`, round 2 ruling): "Raised via" is hidden by
+    // default on THIS screen too now, matching the worklist's own `DEFAULT_HIDDEN_
+    // COLUMNS` - `initialState` only, so a saved column preference (`listingKey` below)
+    // still applies afterwards and wins.
+    initialState: {
+      columnVisibility: Object.fromEntries(
+        DEFAULT_HIDDEN_COLUMNS.map((id) => [id, false]),
+      ),
+    },
     state: { pagination, sorting, rowSelection, globalFilter: search, expanded },
     onPaginationChange: setPagination,
     onSortingChange: setSorting,

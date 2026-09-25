@@ -54,6 +54,7 @@ from app.schemas.procurement import (
     PurchaseRequestHeaderCreate, PurchaseRequestHeaderUpdate, PurchaseRequestUpdateAndReply,
     ProductSimple, WarehouseSimple, InboundShipmentSimple,
     SPODocument, SPODocumentLine, SPODocumentRow, SPODocumentContainer,
+    refuse_missing_sponsorship_unit_prices,
 )
 from app.services.error_handler import (
     AppException,
@@ -9057,6 +9058,16 @@ class PurchaseRequestService:
         silently dropped: see ``_pop_status_or_refuse_move``.
         """
         header = self.get_request(request_id)
+        if data.products is not None:
+            # #1232 blocking 2: `request_type` is optional on this schema and usually
+            # absent on a plain header edit, so `refuse_missing_sponsorship_unit_prices`
+            # (which only fires on request_type == "sponsorship_form") must be checked
+            # against the EFFECTIVE type - the payload's own if it sent one, else the
+            # stored header's - or a caller that simply omits request_type bypasses the
+            # rule on a stored sponsorship form.
+            refuse_missing_sponsorship_unit_prices(
+                data.request_type or header.request_type, data.products
+            )
         payload = data.model_dump(exclude_unset=True, exclude={"products"})
         _pop_status_or_refuse_move(
             payload,
@@ -9135,6 +9146,12 @@ class PurchaseRequestService:
         log_service = IntegrationLogService(self.db)
 
         header = self.get_request(request_id)
+        if data.products is not None:
+            # #1232 blocking 2: same effective-type check as `update_request` - this
+            # schema inherits `request_type` (optional) from `PurchaseRequestHeaderUpdate`.
+            refuse_missing_sponsorship_unit_prices(
+                data.request_type or header.request_type, data.products
+            )
         payload = data.model_dump(exclude_unset=True, exclude={"products", "reply_message"})
         _pop_status_or_refuse_move(
             payload,

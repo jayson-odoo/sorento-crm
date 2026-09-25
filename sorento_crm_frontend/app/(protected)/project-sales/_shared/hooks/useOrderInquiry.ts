@@ -36,6 +36,7 @@ import {
 import {
   commitOrderInquiryReserve,
   createOrderInquiryReserveRequest,
+  getDecisionTrail,
   getOrderInquiryReserveRequests,
   getOrderInquiryRowHistory,
   type CommitReservePayload,
@@ -75,6 +76,7 @@ export const ORDER_INQUIRY_HEADER_RELATED_DOCUMENTS_KEY =
   'order-inquiry-header-related-documents';
 export const ORDER_INQUIRY_RESERVE_REQUESTS_KEY = 'order-inquiry-reserve-requests';
 export const ORDER_INQUIRY_ROW_HISTORY_KEY = 'order-inquiry-row-history';
+export const DECISION_TRAIL_KEY = 'order-inquiry-decision-trail';
 
 /**
  * The header LIST's own React Query key (`PLAN-oi-header-list-detail.md`). Built through
@@ -236,6 +238,20 @@ export function useOrderInquiryRowHistory(
     queryKey: [ORDER_INQUIRY_ROW_HISTORY_KEY, requestId, rowId],
     queryFn: () => getOrderInquiryRowHistory(requestId as string, rowId as string),
     enabled: Boolean(requestId) && Boolean(rowId),
+  });
+}
+
+/**
+ * `PLAN-oi-decision-trail-ui.md` (round 2, AC-DT-10): the History icon's own read,
+ * keyed by the CORE sales-order line rather than by a row or a request - the id an OI row
+ * and a fulfilment-board line both point at, so the same trail opens from either surface.
+ * Fetched only while `DecisionTrailButton`'s own dialog is open for it.
+ */
+export function useDecisionTrail(coreLineId: string | null | undefined) {
+  return useQuery({
+    queryKey: [DECISION_TRAIL_KEY, coreLineId],
+    queryFn: () => getDecisionTrail(coreLineId as string),
+    enabled: Boolean(coreLineId),
   });
 }
 

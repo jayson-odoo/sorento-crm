@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { PanelDataGrid } from '@/components/common/PanelDataGrid';
+import { DecisionTrailButton } from '../../_shared/components/DecisionTrailButton';
 import { BoardCellBreakdownDialog } from './BoardCellBreakdownDialog';
 import { BoardDecidedMarker, decidedRevisions } from './BoardDecidedMarker';
 import {
@@ -29,8 +30,9 @@ import { UnsavedDecisionPrompt, useDecisionRowExpansion } from './decisionRowExp
 import { BoardChangeTable } from './BoardChangeTable';
 import { changedFieldsOf, lineKeyOf } from '../../_shared/lib/boardChangeAnnotations';
 import type { BoardChangeAnnotation } from '../../_shared/lib/boardChangeAnnotations';
-import { canQuickSave } from '../../_shared/lib/boardAmend';
+import { canDecide } from '../../_shared/lib/boardAmend';
 import { contributionMatchesSearch } from '../../_shared/lib/fulfilmentBoard';
+import { BoardDecideControl } from './BoardDecideControl';
 import {
   boardOrderInquiryWord,
   contributionDecision,
@@ -84,6 +86,7 @@ export function FulfilmentBoardListView({
   draft,
   onDecide,
   onDecideMany,
+  onDecideBatch,
   annotations,
   externalSearch,
   pageResetKey,
@@ -100,6 +103,15 @@ export function FulfilmentBoardListView({
    * to confirm") rather than the N separate "Line N saved" toasts D14 shipped with.
    */
   onDecideMany: (keys: string[]) => Promise<{ saved: number; failed: number }>;
+  /**
+   * S3 (D1): the Decide strip's own save - one PUT per row, a decision per key already
+   * composed by `BoardDecideControl` (`decideComposition`), through the SAME chunked-of-5
+   * loop `onDecideMany` runs. No bulk endpoint (AC-18); this is the loop's own generalisation
+   * to a decision per row rather than always the engine's suggestion.
+   */
+  onDecideBatch: (
+    entries: { key: string; decision: BoardDecision }[],
+  ) => Promise<{ savedKeys: string[]; failed: { key: string; why: string }[] }>;
   /**
    * What the re-uploaded book did to each line, keyed by planning line (AC-C9). The row
    * shows it as a hazard icon in the column that moved, and the lightbox behind the icon
@@ -164,6 +176,21 @@ export function FulfilmentBoardListView({
     () => contributions.filter((contribution) => contributionMatchesSearch(contribution, externalSearch ?? '')),
     [contributions, externalSearch],
   );
+
+  // Should fix 3 (review round 1, fixed again round 2): AC-10's "the order follows the list's
+  // current sort" means the grid's OWN sort, not the incoming prop order - `PanelDataGrid`
+  // holds that state, so this mirrors it back via `onSortedRowsChange` rather than re-deriving
+  // it here. Seeded from `filteredContributions` so Decide has an order to claim by before the
+  // grid's first effect runs.
+  //
+  // NO reset effect on `filteredContributions` any more (review round 2, Should fix 1): React
+  // runs a child's effects before its parent's, so `PanelDataGrid`'s own `onSortedRowsChange`
+  // effect (which fires on every rows change too, since the sort recomputes against the new
+  // rows) landed first and a parent reset right after it threw the sorted order away again -
+  // AC-10's claim order fell back to prop order on the very save it was supposed to survive.
+  // The child effect alone is enough: it already re-fires whenever `filteredContributions`
+  // changes, because the sort it reads is derived from those same rows.
+  const [sortedContributions, setSortedContributions] = React.useState(filteredContributions);
 
   const expansion = useDecisionRowExpansion({ multiple: true });
   const {
@@ -236,10 +263,16 @@ export function FulfilmentBoardListView({
     () => Object.keys(rowSelection).filter((key) => rowSelection[key]),
     [rowSelection],
   );
-  const saveSelectedAsSuggested = React.useCallback(() => {
-    void onDecideMany(selectedKeys);
-    setRowSelection({});
-  }, [selectedKeys, onDecideMany]);
+  // S3 (D1, R9): saved rows untick, skipped rows stay ticked - so a Decide press narrows the
+  // selection to exactly what it could not cover, ready for a second pick.
+  const untickSaved = React.useCallback((savedKeys: string[]) => {
+    if (savedKeys.length === 0) return;
+    setRowSelection((current) => {
+      const next = { ...current };
+      for (const key of savedKeys) delete next[key];
+      return next;
+    });
+  }, []);
 
   /**
    * Open this line's decision panel, and only open it (AC-B10): the pencil is not a toggle -
@@ -304,15 +337,15 @@ export function FulfilmentBoardListView({
       // The repo's own select column (the users list uses the same one), so a quick save is
       // a bulk action like any other rather than a second selection mechanism.
       buildSelectColumn<BoardContribution>({
-        enableRow: (row) => canQuickSave(row.original, draft),
+        // S3 (D1): widened from `canQuickSave` - a Confirmed or already-saved row is
+        // tickable too (R3), so only an unplannable or a cancelled line is refused.
+        enableRow: (row) => canDecide(row.original),
         disabledReason: (row) =>
-          row.original.covered
-            ? 'This line is already confirmed. Amend it to change what was decided.'
-            : row.original.unplannable
-              ? 'This line cannot be decided here: its sales order states no fulfilment location.'
-              : draft[row.original.key]
-                ? 'Already saved. Undo it before saving it again.'
-                : undefined,
+          row.original.unplannable
+            ? 'This line cannot be decided here: its sales order states no fulfilment location.'
+            : row.original.cancelled
+              ? 'This line was removed from the sales order.'
+              : undefined,
         rowLabel: (row) => `Select ${row.original.so_number} line ${row.original.line_no}`,
       }),
       // S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-13): the leftmost column, split out
@@ -579,15 +612,20 @@ export function FulfilmentBoardListView({
                 {contribution.qty_outstanding ?? contribution.qty}
               </button>
               {changeIcons(contribution, 'outstanding')}
-              {/* AC-RS-42: a labelled Stock button per row, opening the SAME dialog the
-                  grid view's cell strip does - purchasing used to leave this screen and
-                  open the grid just to check one line's own stock. */}
+              {/* AC-RS-42: a Stock icon-button per row, opening the SAME dialog the grid
+                  view's cell strip does - purchasing used to leave this screen and open
+                  the grid just to check one line's own stock. Icon only, ghost variant
+                  (round 2, owner ruling after hand-testing round 1) - matches the
+                  verdict-row pencil in `BoardVerdictActions.tsx`, never the labelled
+                  outline button this used to be. */}
               <Button
                 type="button"
+                mode="icon"
+                variant="ghost"
                 size="sm"
-                variant="outline"
-                className="h-6 gap-1 px-1.5"
+                className="shrink-0"
                 aria-label="Stock"
+                title="Stock"
                 data-testid={`board-list-stock-${contribution.key}`}
                 onClick={(event) => {
                   event.stopPropagation();
@@ -595,7 +633,6 @@ export function FulfilmentBoardListView({
                 }}
               >
                 <PackageSearch className="size-3.5" aria-hidden />
-                <span className="hidden xl:inline">Stock</span>
               </Button>
             </span>
           );
@@ -738,6 +775,23 @@ export function FulfilmentBoardListView({
           return (
             <div className="flex min-w-0 items-center gap-1">
               <BoardDecisionPill contribution={contribution} decision={draft[key] ?? null} />
+              {/* AC-DT-5 (`PLAN-oi-decision-trail-ui.md`, round 2): the History icon,
+                  right after the verdict chip - shown only once there is a trail worth
+                  opening (a decision, a draft, an OI row, OR the line simply being
+                  covered - N1, round 3: a fully-reserved / local-buy covered line can
+                  carry `covered: true` with no `decision` object of its own and no OI
+                  row, and still have a confirmed revision behind it worth tracing); a
+                  bare suggested line has none of the four and stays hidden. */}
+              {contribution.decision ||
+              contribution.draft ||
+              contribution.order_inquiry ||
+              contribution.covered ? (
+                <DecisionTrailButton
+                  coreLineId={contribution.line_id ?? null}
+                  itemCode={contribution.item_code}
+                  className="shrink-0"
+                />
+              ) : null}
               <BoardVerdictActions
                 contribution={contribution}
                 decision={draft[key] ?? null}
@@ -771,7 +825,7 @@ export function FulfilmentBoardListView({
       emptyTitle="Nothing is outstanding on this board"
       rowSelection={rowSelection}
       onRowSelectionChange={setRowSelection}
-      enableRowSelection={(row) => canQuickSave(row.original, draft)}
+      enableRowSelection={(row) => canDecide(row.original)}
       toolbar={
         <div className="flex flex-wrap items-center gap-2">
           {/* The same pair reorder planning carries, in the same place and the same shape
@@ -805,24 +859,17 @@ export function FulfilmentBoardListView({
           >
             <ChevronsDownUp className="size-4" aria-hidden />
           </Button>
-          {selectedKeys.length > 0 ? (
-            <>
-              <Badge variant="secondary" className="h-8 gap-1 px-2.5 text-sm">
-                {`${selectedKeys.length} selected`}
-              </Badge>
-              <Button type="button" size="sm" onClick={saveSelectedAsSuggested}>
-                {`Save as suggested (${selectedKeys.length})`}
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                onClick={() => setRowSelection({})}
-              >
-                Clear
-              </Button>
-            </>
-          ) : null}
+          {/* S3 (D1, R1, R4): Decide replaces the old "Save as suggested" button - As
+              suggested is now its first menu item, and Decide itself is ALWAYS rendered,
+              disabled with a tooltip while nothing is ticked. */}
+          <BoardDecideControl
+            contributions={sortedContributions}
+            selectedKeys={selectedKeys}
+            draft={draft}
+            onSave={onDecideBatch}
+            onSaved={untickSaved}
+            onClear={() => setRowSelection({})}
+          />
         </div>
       }
       expanded={expanded}
@@ -831,6 +878,7 @@ export function FulfilmentBoardListView({
       pageSize={25}
       // Owner ruling, 22 Sep 2026: every column on this list sorts.
       sortable
+      onSortedRowsChange={setSortedContributions}
       // AC-5, fix round 1: the banner's link names a ROW, not a page - `PanelDataGrid` jumps
       // to whichever page currently holds it, in its own sorted order, so a left-out line
       // beyond page 1 is reachable rather than a dead link.

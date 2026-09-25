@@ -62,6 +62,9 @@ class RespondContactResponse(RespondContactBase):
     chatbot_recall_enabled: bool = False
     # S6: stock allowance on the contact row, default on.
     chatbot_stock_allowed: bool = True
+    # Chatbot stock ask v2 S2 (PLAN-chatbot-stock-ask-v2-24sep.md, R7): both default off.
+    notify_salesman: bool = False
+    packing_list_allowed: bool = False
 
     class Config:
         from_attributes = True

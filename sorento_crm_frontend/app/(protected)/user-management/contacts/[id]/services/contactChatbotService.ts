@@ -8,7 +8,8 @@
  *     carries `chatbot_profile` / `chatbot_recall_enabled` (AC-1503, both dict
  *     builders) - no dedicated GET route exists for the card alone.
  *   PUT /api/v1/user-management/contacts/{id}/chatbot
- *     { chatbot_profile?, chatbot_recall_enabled?, chatbot_stock_allowed? }
+ *     { chatbot_profile?, chatbot_recall_enabled?, chatbot_stock_allowed?,
+ *       notify_salesman?, packing_list_allowed? }
  *     Absent means "leave it alone", never "clear it" - a recall toggle must not
  *     switch off as a side effect of saving a language.
  *
@@ -16,6 +17,14 @@
  * exist on the real contact - the backend has no signal distinguishing a value a pick
  * set from one typed here, so `tier` is edited directly like `language`, same as every
  * other profile field on this card.
+ *
+ * ---- notify_salesman / packing_list_allowed (PLAN-chatbot-stock-ask-v2-24sep.md
+ * S2, R7) ----------------------------------------------------------------------
+ *   respond_contacts.notify_salesman        boolean NOT NULL DEFAULT false
+ *   respond_contacts.packing_list_allowed   boolean NOT NULL DEFAULT false
+ * Both are plain siblings of `chatbot_stock_allowed` (not nested in
+ * `chatbot_profile`) and ride the GET contact / PUT .../chatbot payload as plain
+ * fields.
  */
 
 import { apiFetch } from '@/lib/api';
@@ -32,6 +41,10 @@ export interface ContactChatbotProfile {
   always_full_report: boolean;
   /** S6: stock checks allowed for this contact (`chatbot_stock_allowed`), default on. */
   stock_allowed: boolean;
+  /** R7: the customer's sales agent gets one WhatsApp line per answered ask. Default off. */
+  notify_salesman: boolean;
+  /** R7: the shipment's packing list is attached on a B3 answer. Default off. */
+  packing_list_allowed: boolean;
 }
 
 function fromContact(contact: {
@@ -43,6 +56,8 @@ function fromContact(contact: {
   } | null;
   chatbot_recall_enabled?: boolean;
   chatbot_stock_allowed?: boolean;
+  notify_salesman?: boolean;
+  packing_list_allowed?: boolean;
 }): ContactChatbotProfile {
   const profile = contact.chatbot_profile ?? null;
   return {
@@ -52,6 +67,8 @@ function fromContact(contact: {
     default_ledgers: profile?.default_ledgers ?? [],
     always_full_report: Boolean(profile?.always_full_report),
     stock_allowed: contact.chatbot_stock_allowed !== false,
+    notify_salesman: Boolean(contact.notify_salesman),
+    packing_list_allowed: Boolean(contact.packing_list_allowed),
   };
 }
 
@@ -80,6 +97,8 @@ export async function saveContactChatbotProfile(
       },
       chatbot_recall_enabled: input.recall_enabled,
       chatbot_stock_allowed: input.stock_allowed,
+      notify_salesman: input.notify_salesman,
+      packing_list_allowed: input.packing_list_allowed,
     }),
   });
   if (!response.ok) {
