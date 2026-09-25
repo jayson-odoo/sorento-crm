@@ -1100,7 +1100,20 @@ class TestRedealNeverTakesALegacyRealLink:
     The reviewer's own probe, reproduced here: a legacy link of 5 (half the row's
     qty of 10) on a line that later closes, a second open line, and a call with
     Auto link all's own arguments (`trigger='worklist', redeal_drafts=True,
-    include_awaiting=True`)."""
+    include_awaiting=True`).
+
+    Review round 3 Should fix 3: `other_line` carries `qty_ordered="10"`, not "5" as
+    this test originally had it. At 5, the OLD re-deal (`drafts = _links_of(row)`,
+    `need = row.qty` = 10 full) never actually reaches the delete this test claims
+    to guard - the all-or-nothing gate sees only 5 cascadable (`other_line`, the
+    closed `legacy_line` is not cascadable) against a need of 10 and returns `[]`
+    before `_unplace_drafts` is ever called, so the legacy link survives by
+    accident and the mutation (K1) only turns the REMAINDER assertion red, not the
+    link-survives one this class is named for. At 10, `other_line` alone covers
+    the full need under the old re-deal, `_unplace_drafts` runs, and the legacy
+    link is deleted - confirmed red under K1, green under the current guard (which
+    never re-deals a real link at all, so this line's exact capacity does not
+    change today's outcome)."""
 
     def test_a_legacy_real_link_survives_even_once_its_own_line_has_closed(self, ctx):
         db = ctx.db
@@ -1115,10 +1128,13 @@ class TestRedealNeverTakesALegacyRealLink:
             db, company_id=ctx.company_a, product_id=product.id,
             qty_ordered="5", header_status="active",
         )
-        # A second, open line the walk may offer the row's unlinked remainder.
+        # A second, open line the walk may offer the row's unlinked remainder - sized
+        # to cover the row's FULL qty (10), not just the remainder, so the old re-deal's
+        # `need = row.qty` finds enough here alone to reach `_unplace_drafts` (Should
+        # fix 3).
         _other_po, other_line = _seed_po_line(
             db, company_id=ctx.company_a, product_id=product.id,
-            qty_ordered="5", header_status="active",
+            qty_ordered="10", header_status="active",
         )
         _pso, _mirror, _inquiry, row = _seed_row_and_mirror(
             db, company_id=ctx.company_a, core_line=core_line, product_id=product.id, qty="10",
