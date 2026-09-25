@@ -1229,3 +1229,82 @@ def generate_order_inquiry_worklist_xlsx(
     finally:
         set_company_scope(db, caller_scope)
         db.close()
+
+
+def generate_stock_debt_xlsx(
+    download_id: str, user_id: str, params: dict, *, company_id: Optional[str] = None,
+) -> dict:
+    """Render the Stock Debt workbook for the board's own filters, store it, update the
+    download row (PLAN-stock-debt-filters-totals-export-24sep.md, AC-12b).
+
+    Same shape as `generate_order_inquiry_worklist_xlsx` above - a filtered export with no
+    run or header of its own to adopt a company from, so the enqueuing request's own
+    single-company scope travels as `company_id`, snapshotted at enqueue time
+    (`export_stock_debt`'s own `acting_company_id(db)` call).
+
+    A DIRECT call with no `company_id` (this module's own tests, which reuse the seeding
+    session's already-resolved scope) leaves the session's scope exactly as it found it,
+    rather than forcing `UNSET` the way the OI worklist twin does: a brand-new worker
+    session already defaults to fail-closed on its own (`get_company_scope`'s own "absent
+    key => UNSET"), so there is nothing this branch needs to enforce that resetting an
+    ALREADY-resolved scope would not simply break.
+
+    `row_count` / `sheet_count` (the export's own `counts` tuple) are stamped at
+    `mark_ready` in the SAME transaction as the status - the generic pair
+    (`516_low_stock_report`'s `row_count_low`/`row_count_all` twin), because this export's
+    sheet count varies with its own `split` rather than being a fixed two.
+
+    `_record_failure` on any exception, never raising into RQ: a poisoned job retries for
+    ever and the buyer's row sits `processing` until it goes stale.
+    """
+    db = SessionLocal()
+    from app.models.base import get_company_scope
+
+    caller_scope = get_company_scope(db)
+    if company_id:
+        set_company_scope(db, frozenset({str(company_id)}))
+    svc = DownloadService(db)
+    try:
+        svc.mark_processing(download_id)
+        row = svc.get(download_id)
+        filename = row.filename if row else None
+
+        from app.services.scm.stock_debt_service import StockDebtService
+
+        file_bytes, content_type, fallback_filename, counts = StockDebtService(db).export(
+            **(params or {}),
+        )
+        filename = filename or fallback_filename
+
+        provider = default_provider()
+        backend = get_backend(provider)
+        key = f"exports/stock-debt-xlsx/{download_id}/{filename}"
+        stored_key, _signed = backend.upload_file(
+            file_content=file_bytes,
+            file_path=key,
+            content_type=content_type,
+        )
+
+        svc.mark_ready(
+            download_id,
+            storage_provider=provider,
+            storage_key=stored_key,
+            filename=filename,
+            row_count=counts["rows"],
+            sheet_count=counts["sheets"],
+        )
+        logger.info(
+            "generate_stock_debt_xlsx: download %s ready (%d bytes, %d rows, %d sheets)",
+            download_id, len(file_bytes), counts["rows"], counts["sheets"],
+        )
+        return {
+            "download_id": download_id, "status": "ready", "bytes": len(file_bytes),
+            "row_count": counts["rows"], "sheet_count": counts["sheets"],
+        }
+    except Exception as e:  # noqa: BLE001 - mark failed, never poison the queue
+        logger.exception("generate_stock_debt_xlsx failed for download %s", download_id)
+        _record_failure(db, svc, download_id, e, "generate_stock_debt_xlsx")
+        return {"download_id": download_id, "status": "failed", "error": str(e)}
+    finally:
+        set_company_scope(db, caller_scope)
+        db.close()
