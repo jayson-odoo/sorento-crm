@@ -14,6 +14,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const getOrderInquiryPoDetail = vi.fn();
 const getOrderInquirySpoDetail = vi.fn();
+const listOrderInquiryWorklist = vi.fn();
 
 vi.mock('../../_shared/services/orderInquiryService', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../_shared/services/orderInquiryService')>();
@@ -21,6 +22,7 @@ vi.mock('../../_shared/services/orderInquiryService', async (importOriginal) => 
     ...actual,
     getOrderInquiryPoDetail: (...args: unknown[]) => getOrderInquiryPoDetail(...args),
     getOrderInquirySpoDetail: (...args: unknown[]) => getOrderInquirySpoDetail(...args),
+    listOrderInquiryWorklist: (...args: unknown[]) => listOrderInquiryWorklist(...args),
   };
 });
 
@@ -38,6 +40,7 @@ function renderNode(node: React.ReactElement) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  listOrderInquiryWorklist.mockResolvedValue({ data: [], total: 0, page: 1, limit: 5 });
 });
 
 function rowWithPoLink(): OrderInquiryWorklistRow {
@@ -108,5 +111,151 @@ describe('issue #1215 point 2 (Blocking 1): the backing-documents dialog threads
 
     expect(takenRow).toHaveAttribute('data-linked-line', 'true');
     expect(otherRow).not.toHaveAttribute('data-linked-line');
+  });
+});
+
+function rowWithSpoLink(): OrderInquiryWorklistRow {
+  return {
+    id: 'row-2',
+    qty: '10',
+    linked_qty: '10',
+    links: [
+      {
+        id: 'link-2',
+        kind: 'spo',
+        document: 'SPO-2026/09-0051',
+        spo_allocation_id: 'spo-line-taken',
+        qty: '10',
+        location: 'BRW',
+      },
+    ],
+  } as unknown as OrderInquiryWorklistRow;
+}
+
+describe('R15 (owner rulings, 25 Sep 2026): the backing-documents dialog threads spo_allocation_id through', () => {
+  it('highlights the exact SPO line the opening link names, not nothing', async () => {
+    getOrderInquirySpoDetail.mockResolvedValue({
+      spo_number: 'SPO-2026/09-0051',
+      supplier_name: 'CHAOSHENG',
+      lines: [
+        { id: 'spo-line-taken', sku: 'TPE-9204', allocated: '10', received: '0', remaining: '10' },
+        { id: 'spo-line-other', sku: 'TPE-9204', allocated: '5', received: '0', remaining: '5' },
+      ],
+      allocations: [],
+    });
+
+    renderNode(
+      <OrderInquiryBackingDocumentsDialog row={rowWithSpoLink()} open onOpenChange={vi.fn()} />,
+    );
+
+    fireEvent.click(screen.getByTestId('document-detail-trigger-SPO-2026/09-0051'));
+
+    const rows = (await screen.findAllByText('TPE-9204')).map(
+      (cell) => cell.closest('tr') as HTMLElement,
+    );
+    expect(rows).toHaveLength(2);
+    const takenRow = rows.find((r) => r.getAttribute('data-linked-line') === 'true');
+    expect(takenRow).toBeTruthy();
+    const otherRow = rows.find((r) => r !== takenRow);
+    expect(otherRow).not.toHaveAttribute('data-linked-line');
+  });
+});
+
+function rowWithViaSpoPoLink(purchaseOrderId: string | null): OrderInquiryWorklistRow {
+  return {
+    id: 'row-3',
+    qty: '6',
+    linked_qty: '6',
+    links: [
+      {
+        id: 'link-3',
+        kind: 'spo',
+        document: 'SPO-2026/09-0080',
+        source_po_number: '202607-S0105',
+        derived_po: true,
+        purchase_order_id: purchaseOrderId,
+        qty: '6',
+        location: 'BRW',
+      },
+    ],
+  } as unknown as OrderInquiryWorklistRow;
+}
+
+describe('R17 (owner rulings, 25 Sep 2026): "from PO X" is clickable, never dead text', () => {
+  it('opens the PO lightbox by purchase_order_id when the payload carries it', async () => {
+    getOrderInquirySpoDetail.mockResolvedValue({
+      spo_number: 'SPO-2026/09-0080',
+      supplier_name: 'CHAOSHENG',
+      lines: [],
+      allocations: [],
+    });
+    getOrderInquiryPoDetail.mockResolvedValue({
+      id: 'po-source-1',
+      po_number: '202607-S0105',
+      supplier_name: 'DAFUYUAN',
+      status: 'confirmed',
+      expected_date: '2026-09-01',
+      lines: [],
+      allocations: [],
+    });
+
+    renderNode(
+      <OrderInquiryBackingDocumentsDialog
+        row={rowWithViaSpoPoLink('po-source-1')}
+        open
+        onOpenChange={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByText('from PO')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('document-detail-trigger-202607-S0105'));
+
+    expect(await screen.findByText('DAFUYUAN')).toBeInTheDocument();
+    expect(getOrderInquiryPoDetail).toHaveBeenCalledWith('po-source-1');
+    expect(listOrderInquiryWorklist).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the worklist po_number lookup when the payload carries no purchase_order_id', async () => {
+    getOrderInquirySpoDetail.mockResolvedValue({
+      spo_number: 'SPO-2026/09-0080',
+      supplier_name: 'CHAOSHENG',
+      lines: [],
+      allocations: [],
+    });
+    listOrderInquiryWorklist.mockResolvedValue({
+      data: [
+        {
+          id: 'other-row',
+          links: [{ kind: 'po', document: '202607-S0105', po_id: 'po-by-number' }],
+        },
+      ],
+      total: 1,
+      page: 1,
+      limit: 5,
+    });
+    getOrderInquiryPoDetail.mockResolvedValue({
+      id: 'po-by-number',
+      po_number: '202607-S0105',
+      supplier_name: 'CHAOSHENG PO',
+      status: 'confirmed',
+      expected_date: '2026-09-01',
+      lines: [],
+      allocations: [],
+    });
+
+    renderNode(
+      <OrderInquiryBackingDocumentsDialog
+        row={rowWithViaSpoPoLink(null)}
+        open
+        onOpenChange={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(await screen.findByTestId('document-detail-trigger-202607-S0105'));
+
+    expect(await screen.findByText('CHAOSHENG PO')).toBeInTheDocument();
+    expect(listOrderInquiryWorklist).toHaveBeenCalledWith(
+      expect.objectContaining({ po_number: '202607-S0105' }),
+    );
   });
 });

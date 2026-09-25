@@ -145,6 +145,20 @@ export interface OrderInquiryLink {
    */
   po_line_id?: string | null;
   /**
+   * R15 (owner rulings, 25 Sep 2026, hand test on stack C): the mirror of `po_line_id`
+   * above for the other book - which `spo_allocations` row this link sits on, so the
+   * SPO lightbox can highlight it the same way the PO lightbox already does. Null on a
+   * `po`-kind link.
+   */
+  spo_allocation_id?: string | null;
+  /**
+   * R17 (owner rulings, 25 Sep 2026): the purchase order an SPO link's allocation
+   * draws its supply from (`SPOAllocation.po_line_id` traced to its own header) - lets
+   * the "via SPO" PO cell open that PO directly rather than guessing by number. Null
+   * on a `po`-kind link and on an SPO allocation with no resolved supply PO line.
+   */
+  purchase_order_id?: string | null;
+  /**
    * The purchase order an SPO link's allocation was raised FROM, per the AutoCount
    * feed's own statement (owner's 9 Sep feedback: "if we link by SPO, where do we see
    * the PO number of this SPO?"). Plain text, never a link yet - a later slice decides
@@ -1190,6 +1204,13 @@ export interface OrderInquiryPoDetail {
 
 /** One allocation line of the shipping order: what is on it, what has landed, where. */
 export interface OrderInquirySpoDetailLine {
+  /**
+   * R15 (owner rulings, 25 Sep 2026, hand test on stack C): the line's own identity
+   * (`spo_allocations.id`), the same reason `OrderInquiryPoDetailLine.id` exists
+   * (issue #1215 point 2) - without it the SPO lightbox has no field to highlight a
+   * line by, unlike the PO lightbox next door.
+   */
+  id?: string | null;
   sku?: string | null;
   product_name?: string | null;
   allocated: string;

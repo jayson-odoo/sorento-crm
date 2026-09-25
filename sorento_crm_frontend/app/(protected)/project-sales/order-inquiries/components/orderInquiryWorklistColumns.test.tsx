@@ -14,7 +14,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, renderHook, screen, within } from '@testing-library/react';
 import { flexRender, getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import type { ColumnDef } from '@tanstack/react-table';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   orderInquiryTakenRemainingColumns,
   useOrderInquiryWorklistColumns,
@@ -32,7 +32,24 @@ vi.mock('@/components/ui/tooltip', async () => {
     TooltipContent: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   };
 });
+
+// R17: `ViaSpoPoNumber`'s fallback lookup (`useOrderInquiryPoIdByNumber`) reaches this
+// service directly - mocked so a "from PO" cell never fires a real network call.
+const listOrderInquiryWorklist = vi.fn();
+vi.mock('../../_shared/services/orderInquiryService', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../_shared/services/orderInquiryService')>();
+  return {
+    ...actual,
+    listOrderInquiryWorklist: (...args: unknown[]) => listOrderInquiryWorklist(...args),
+  };
+});
+
 import type { OrderInquiryWorklistRow } from '../../_shared/types/orderInquiry.types';
+
+beforeEach(() => {
+  listOrderInquiryWorklist.mockReset();
+  listOrderInquiryWorklist.mockResolvedValue({ data: [], total: 0, page: 1, limit: 5 });
+});
 
 function worklistRow(over: Partial<OrderInquiryWorklistRow> = {}): OrderInquiryWorklistRow {
   return {
@@ -392,9 +409,11 @@ describe('AC-A5: the info icon opens the backing-documents lightbox', () => {
     fireEvent.click(screen.getByTestId('backing-documents-trigger-row-source-po'));
     const dialog = screen.getByTestId('backing-documents-row-source-po');
 
-    expect(within(dialog).getByText('from PO 202606-S0110')).toBeInTheDocument();
+    // R17: "from PO" plus a CLICKABLE number now (two nodes, not one text run).
+    expect(within(dialog).getByText('from PO')).toBeInTheDocument();
+    expect(within(dialog).getByText('202606-S0110')).toBeInTheDocument();
     // Exactly one "from PO" line - the sourceless SPO and the PO-kind link add none.
-    expect(within(dialog).getAllByText(/^from PO /)).toHaveLength(1);
+    expect(within(dialog).getAllByText('from PO')).toHaveLength(1);
   });
 });
 

@@ -17,11 +17,42 @@
  * click target now (`AC-RS-68` suite below), so the census here drops back to one column
  * per fact.
  */
-import { render, renderHook, screen } from '@testing-library/react';
+import React from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { fireEvent, render, renderHook, screen } from '@testing-library/react';
 import { flexRender, getCoreRowModel, useReactTable } from '@tanstack/react-table';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const getOrderInquiryPoDetail = vi.fn();
+const getOrderInquirySpoDetail = vi.fn();
+const listOrderInquiryWorklist = vi.fn();
+
+vi.mock('../../../_shared/services/orderInquiryService', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../_shared/services/orderInquiryService')>();
+  return {
+    ...actual,
+    getOrderInquiryPoDetail: (...args: unknown[]) => getOrderInquiryPoDetail(...args),
+    getOrderInquirySpoDetail: (...args: unknown[]) => getOrderInquirySpoDetail(...args),
+    listOrderInquiryWorklist: (...args: unknown[]) => listOrderInquiryWorklist(...args),
+  };
+});
+
+vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
+  useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
+}));
+
 import { useOrderInquiryHeaderLinesColumns } from './orderInquiryHeaderLinesColumns';
 import type { OrderInquiryWorklistRow } from '../../../_shared/types/orderInquiry.types';
+
+function renderWithClient(node: React.ReactElement) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(<QueryClientProvider client={client}>{node}</QueryClientProvider>);
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  listOrderInquiryWorklist.mockResolvedValue({ data: [], total: 0, page: 1, limit: 5 });
+});
 
 function headerTitleOf(column: unknown): string | undefined {
   return (column as { meta?: { headerTitle?: string } }).meta?.headerTitle;
@@ -272,7 +303,7 @@ describe('issue #1215 point 5: the PO cell reads "via SPO" for an SPO-only link 
       ],
     } as never);
 
-    render(<>{poCell(row)}</>);
+    renderWithClient(<>{poCell(row)}</>);
 
     expect(screen.getByText('202607-S0105')).toBeInTheDocument();
     expect(screen.getByText(/via SPO/)).toBeInTheDocument();
@@ -282,7 +313,7 @@ describe('issue #1215 point 5: the PO cell reads "via SPO" for an SPO-only link 
   it('still reads a plain dash when the row carries no link naming a PO at all', () => {
     const row = linesRow({ id: 'row-none', links: [] } as never);
 
-    render(<>{poCell(row)}</>);
+    renderWithClient(<>{poCell(row)}</>);
 
     expect(screen.getByText('-')).toBeInTheDocument();
   });
@@ -293,9 +324,161 @@ describe('issue #1215 point 5: the PO cell reads "via SPO" for an SPO-only link 
       links: [{ id: 'link-2', kind: 'po', document: '202607-S0031', qty: '4' }],
     } as never);
 
-    render(<>{poCell(row)}</>);
+    renderWithClient(<>{poCell(row)}</>);
 
     expect(screen.getByText('202607-S0031')).toBeInTheDocument();
     expect(screen.queryByText(/via /)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * R17 (owner rulings, 25 Sep 2026, hand test on stack C): "I also need here to be
+ * clickable" - reversing review round 1's should-fix 4 plain-text fix. The via-SPO PO
+ * cell opens the PO lightbox for the source PO, resolved by `purchase_order_id` when
+ * the payload carries it, else by number.
+ */
+describe('R17: the via-SPO PO cell is clickable again', () => {
+  function poCell(row: OrderInquiryWorklistRow) {
+    const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns());
+    const poColumn = result.current.find(
+      (column) => (column as { id?: string }).id === 'po_number',
+    ) as { cell: (context: unknown) => React.ReactNode } | undefined;
+    expect(poColumn).toBeDefined();
+    return poColumn!.cell({ row: { original: row } });
+  }
+
+  it('opens the PO lightbox by purchase_order_id when the payload carries it, never a dead-lightbox message', async () => {
+    getOrderInquiryPoDetail.mockResolvedValue({
+      id: 'po-source-1',
+      po_number: '202607-S0105',
+      supplier_name: 'DAFUYUAN',
+      status: 'confirmed',
+      expected_date: '2026-09-01',
+      lines: [],
+      allocations: [],
+    });
+    const row = linesRow({
+      id: 'row-spo-only',
+      links: [
+        {
+          id: 'link-1',
+          kind: 'spo',
+          document: 'SPO-2026/09-0080',
+          source_po_number: '202607-S0105',
+          derived_po: true,
+          purchase_order_id: 'po-source-1',
+          qty: '6',
+        },
+      ],
+    } as never);
+
+    renderWithClient(<>{poCell(row)}</>);
+    fireEvent.click(screen.getByTestId('document-detail-trigger-202607-S0105'));
+
+    expect(await screen.findByText('DAFUYUAN')).toBeInTheDocument();
+    expect(getOrderInquiryPoDetail).toHaveBeenCalledWith('po-source-1');
+    expect(listOrderInquiryWorklist).not.toHaveBeenCalled();
+    expect(
+      screen.queryByText('This link does not reach a purchase order in the system.'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('falls back to resolving the PO by number when the payload carries no purchase_order_id', async () => {
+    listOrderInquiryWorklist.mockResolvedValue({
+      data: [
+        {
+          id: 'other-row',
+          links: [{ kind: 'po', document: '202607-S0105', po_id: 'po-by-number' }],
+        },
+      ],
+      total: 1,
+      page: 1,
+      limit: 5,
+    });
+    getOrderInquiryPoDetail.mockResolvedValue({
+      id: 'po-by-number',
+      po_number: '202607-S0105',
+      supplier_name: 'CHAOSHENG',
+      status: 'confirmed',
+      expected_date: '2026-09-01',
+      lines: [],
+      allocations: [],
+    });
+    const row = linesRow({
+      id: 'row-spo-only-no-id',
+      links: [
+        {
+          id: 'link-2',
+          kind: 'spo',
+          document: 'SPO-2026/09-0081',
+          source_po_number: '202607-S0105',
+          derived_po: true,
+          purchase_order_id: null,
+          qty: '6',
+        },
+      ],
+    } as never);
+
+    renderWithClient(<>{poCell(row)}</>);
+    fireEvent.click(screen.getByTestId('document-detail-trigger-202607-S0105'));
+
+    expect(await screen.findByText('CHAOSHENG')).toBeInTheDocument();
+    expect(listOrderInquiryWorklist).toHaveBeenCalledWith(
+      expect.objectContaining({ po_number: '202607-S0105' }),
+    );
+    expect(getOrderInquiryPoDetail).toHaveBeenCalledWith('po-by-number');
+  });
+});
+
+/**
+ * R15 (owner rulings, 25 Sep 2026, hand test on stack C): the SPO cell threads the
+ * REAL link's `spo_allocation_id` through, so the SPO lightbox opened from the Lines
+ * tab can highlight the exact line - the same identity the worklist's own
+ * backing-documents dialog now carries.
+ */
+describe('R15: the SPO cell threads spo_allocation_id through', () => {
+  function spoCell(row: OrderInquiryWorklistRow) {
+    const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns());
+    const spoColumn = result.current.find(
+      (column) => (column as { id?: string }).id === 'spo_number',
+    ) as { cell: (context: unknown) => React.ReactNode } | undefined;
+    expect(spoColumn).toBeDefined();
+    return spoColumn!.cell({ row: { original: row } });
+  }
+
+  it('highlights the exact SPO line the real link names', async () => {
+    getOrderInquirySpoDetail.mockResolvedValue({
+      spo_number: 'SPO-2026/09-0051',
+      supplier_name: 'CHAOSHENG',
+      lines: [
+        { id: 'spo-line-taken', sku: 'TPE-9204', allocated: '10', received: '0', remaining: '10' },
+        { id: 'spo-line-other', sku: 'TPE-9204', allocated: '5', received: '0', remaining: '5' },
+      ],
+      allocations: [],
+    });
+    const row = linesRow({
+      id: 'row-spo-real',
+      links: [
+        {
+          id: 'link-3',
+          kind: 'spo',
+          document: 'SPO-2026/09-0051',
+          spo_allocation_id: 'spo-line-taken',
+          qty: '10',
+        },
+      ],
+    } as never);
+
+    renderWithClient(<>{spoCell(row)}</>);
+    fireEvent.click(screen.getByTestId('document-detail-trigger-SPO-2026/09-0051'));
+
+    const rows = (await screen.findAllByText('TPE-9204')).map(
+      (cell) => cell.closest('tr') as HTMLElement,
+    );
+    expect(rows).toHaveLength(2);
+    const takenRow = rows.find((r) => r.getAttribute('data-linked-line') === 'true');
+    expect(takenRow).toBeTruthy();
+    const otherRow = rows.find((r) => r !== takenRow);
+    expect(otherRow).not.toHaveAttribute('data-linked-line');
   });
 });

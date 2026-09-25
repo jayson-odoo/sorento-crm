@@ -13,7 +13,7 @@ import { formatDateInMalaysia } from '@/lib/helpers';
 import { ackStateOf } from '../../_shared/lib/orderInquiryAck';
 import { formatInquiryQty, linkedSummary } from '../../_shared/lib/orderInquiryWorklist';
 import type { OrderInquiryWorklistRow } from '../../_shared/types/orderInquiry.types';
-import { OrderInquiryDocumentLink } from './OrderInquiryDocumentDialog';
+import { OrderInquiryDocumentLink, ViaSpoPoNumber } from './OrderInquiryDocumentDialog';
 
 /**
  * What a bundled row's lightbox adds on top of the plain one (UAC D1-D3, D10): the
@@ -114,6 +114,9 @@ export function OrderInquiryBackingDocumentsDialog({
                         // named a line - only the OI detail Lines tab did. `po_line_id`
                         // is already on the wire (schemas/project_order_inquiry.py).
                         poLineId={link.po_line_id}
+                        // R15 (owner rulings, 25 Sep 2026): the mirror for the SPO
+                        // lightbox - `spo_allocation_id` is already on the wire.
+                        spoLineId={link.spo_allocation_id}
                       />
                       {/* S5, R-E: never a real link - the SAME "via" tag the cell itself
                           shows, so the lightbox and the cell can never disagree. */}
@@ -123,12 +126,20 @@ export function OrderInquiryBackingDocumentsDialog({
                     </div>
                     {/* Owner's 9 Sep feedback: "if we link by SPO, where do we see the PO
                         number of this SPO?" - named here, clearly subordinate to the SPO
-                        number above it (smaller, muted, no badge of its own). Never a
-                        link yet - a later slice decides where it goes. Absent rather than
-                        an empty label when the book named no source (AC-A14). */}
+                        number above it (smaller, muted, no badge of its own). Absent
+                        rather than an empty label when the book named no source (AC-A14).
+                        R17 (owner rulings, 25 Sep 2026, "I also need here to be
+                        clickable"): now the SAME trigger as the SPO number above it,
+                        resolved to the PO by `purchase_order_id` when the payload
+                        carries it, else by number (`useOrderInquiryPoIdByNumber`) - the
+                        same resolution the Lines tab's own via-SPO cell uses. */}
                     {link.kind === 'spo' && link.source_po_number ? (
                       <div className="truncate text-2xs text-muted-foreground">
-                        from PO {link.source_po_number}
+                        from PO{' '}
+                        <ViaSpoPoNumber
+                          poNumber={link.source_po_number}
+                          purchaseOrderId={link.purchase_order_id}
+                        />
                       </div>
                     ) : null}
                     <div className="text-xs text-muted-foreground">

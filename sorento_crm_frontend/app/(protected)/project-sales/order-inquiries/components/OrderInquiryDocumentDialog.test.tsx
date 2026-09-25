@@ -731,3 +731,191 @@ describe('SPO lightbox body (AC-D19)', () => {
     expect(within(rows[1] as HTMLElement).getByText('-')).toBeInTheDocument();
   });
 });
+
+describe('SPO lightbox lines - the linked line highlight (R15, owner rulings 25 Sep 2026)', () => {
+  const detailWithLines = (lines: Record<string, unknown>[]) => ({
+    spo_number: 'SPO-2026/09-0051',
+    supplier_name: 'CHAOSHENG',
+    eta: '2026-09-15',
+    lines,
+    allocations: [],
+  });
+
+  it('R15: "why the SPO doesn\'t show the highlight like PO does" - highlights only the line the opening row\'s own real link sits on, same SKU on both lines, keyed by id never product', async () => {
+    getOrderInquirySpoDetail.mockResolvedValue(
+      detailWithLines([
+        {
+          id: 'spo-line-taken',
+          sku: 'TPE-9204',
+          product_name: 'Basin',
+          allocated: '10',
+          received: '0',
+          remaining: '10',
+          location: 'BRW',
+        },
+        {
+          id: 'spo-line-other',
+          sku: 'TPE-9204',
+          product_name: 'Basin',
+          allocated: '5',
+          received: '0',
+          remaining: '5',
+          location: 'BRW-B',
+        },
+      ]),
+    );
+    renderNode(
+      <OrderInquiryDocumentDialog
+        kind="spo"
+        document="SPO-2026/09-0051"
+        spoLineId="spo-line-taken"
+        open
+        onOpenChange={vi.fn()}
+      />,
+    );
+
+    const rows = (await screen.findAllByText('TPE-9204')).map(
+      (cell) => cell.closest('tr') as HTMLElement,
+    );
+    expect(rows).toHaveLength(2);
+    const [takenRow, otherRow] = rows;
+    expect(takenRow).toHaveAttribute('data-linked-line', 'true');
+    expect(otherRow).not.toHaveAttribute('data-linked-line');
+  });
+
+  it('R11/R15: a suggested SPO line highlights the same idiom, and both a linked and a suggested line can show at once', async () => {
+    getOrderInquirySpoDetail.mockResolvedValue(
+      detailWithLines([
+        { id: 'spo-line-taken', sku: 'TPE-9204', allocated: '10', received: '0', remaining: '10' },
+        {
+          id: 'spo-line-suggested',
+          sku: 'TPE-9203',
+          allocated: '5',
+          received: '0',
+          remaining: '5',
+        },
+      ]),
+    );
+    renderNode(
+      <OrderInquiryDocumentDialog
+        kind="spo"
+        document="SPO-2026/09-0051"
+        spoLineId="spo-line-taken"
+        suggestedLineId="spo-line-suggested"
+        open
+        onOpenChange={vi.fn()}
+      />,
+    );
+
+    const takenRow = (await screen.findByText('TPE-9204')).closest('tr') as HTMLElement;
+    const suggestedRow = screen.getByText('TPE-9203').closest('tr') as HTMLElement;
+    expect(takenRow).toHaveAttribute('data-linked-line', 'true');
+    expect(suggestedRow).toHaveAttribute('data-suggested-line', 'true');
+  });
+
+  it('highlights nothing when no spoLineId or suggestedLineId is given', async () => {
+    getOrderInquirySpoDetail.mockResolvedValue(
+      detailWithLines([
+        { id: 'spo-line-1', sku: 'TPE-9204', allocated: '10', received: '0', remaining: '10' },
+      ]),
+    );
+    renderNode(
+      <OrderInquiryDocumentDialog kind="spo" document="SPO-2026/09-0051" open onOpenChange={vi.fn()} />,
+    );
+
+    const row = (await screen.findByText('TPE-9204')).closest('tr') as HTMLElement;
+    expect(row).not.toHaveAttribute('data-linked-line');
+    expect(row).not.toHaveAttribute('data-suggested-line');
+  });
+});
+
+describe('R16 (owner rulings, 25 Sep 2026): "1 button to quickly jump to the linked line" in both lightbox headers', () => {
+  it('is disabled with a tooltip reason when nothing is highlighted, on the PO lightbox', async () => {
+    getOrderInquiryPoDetail.mockResolvedValue({
+      id: 'po-1',
+      po_number: '202607-S0105',
+      supplier_name: 'DAFUYUAN',
+      status: 'confirmed',
+      expected_date: '2026-09-01',
+      lines: [{ id: 'line-1', sku: 'SKU-1', qty_ordered: '10', qty_received: '0', remaining: '10' }],
+      allocations: [],
+    });
+    renderNode(
+      <OrderInquiryDocumentDialog kind="po" document="202607-S0105" poId="po-1" open onOpenChange={vi.fn()} />,
+    );
+
+    await screen.findByText('SKU-1');
+    const button = screen.getByTestId('document-detail-go-to-line');
+    expect(button).toBeDisabled();
+    expect(button).toHaveTextContent('Go to linked line');
+  });
+
+  it('reads "Go to linked line" and jumps the PO lines grid to the page holding it, scrolling it into view', async () => {
+    const lines = Array.from({ length: 25 }, (_, index) => ({
+      id: `line-${index}`,
+      sku: `SKU-${index}`,
+      qty_ordered: '10',
+      qty_received: '0',
+      remaining: '10',
+    }));
+    getOrderInquiryPoDetail.mockResolvedValue({
+      id: 'po-1',
+      po_number: '202607-S0105',
+      supplier_name: 'DAFUYUAN',
+      status: 'confirmed',
+      expected_date: '2026-09-01',
+      lines,
+      allocations: [],
+    });
+    renderNode(
+      <OrderInquiryDocumentDialog
+        kind="po"
+        document="202607-S0105"
+        poId="po-1"
+        poLineId="line-22"
+        open
+        onOpenChange={vi.fn()}
+      />,
+    );
+
+    await screen.findByText('SKU-0');
+    // The linked line sits on page 3 (10 rows/page) - not visible yet.
+    expect(screen.queryByText('SKU-22')).not.toBeInTheDocument();
+
+    const button = screen.getByTestId('document-detail-go-to-line');
+    expect(button).not.toBeDisabled();
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    fireEvent.click(button);
+
+    await waitFor(() => expect(screen.getByText('SKU-22')).toBeInTheDocument());
+    const linkedRow = screen.getByText('SKU-22').closest('tr') as HTMLElement;
+    expect(linkedRow).toHaveAttribute('data-linked-line', 'true');
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
+  });
+
+  it('reads "Go to suggested line" when opened from a Suggested cell (no real link highlighted)', async () => {
+    getOrderInquirySpoDetail.mockResolvedValue({
+      spo_number: 'SPO-2026/09-0051',
+      supplier_name: 'CHAOSHENG',
+      lines: [
+        { id: 'spo-line-1', sku: 'SKU-1', allocated: '10', received: '0', remaining: '10' },
+      ],
+      allocations: [],
+    });
+    renderNode(
+      <OrderInquiryDocumentDialog
+        kind="spo"
+        document="SPO-2026/09-0051"
+        suggestedLineId="spo-line-1"
+        open
+        onOpenChange={vi.fn()}
+      />,
+    );
+
+    await screen.findByText('SKU-1');
+    const button = screen.getByTestId('document-detail-go-to-line');
+    expect(button).not.toBeDisabled();
+    expect(button).toHaveTextContent('Go to suggested line');
+  });
+});

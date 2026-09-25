@@ -24,7 +24,7 @@ import {
   WorklistPill,
 } from '../../components/orderInquiryWorklistColumns';
 import type { OrderInquiryWorklistRow } from '../../../_shared/types/orderInquiry.types';
-import { OrderInquiryDocumentLink } from '../../components/OrderInquiryDocumentDialog';
+import { OrderInquiryDocumentLink, ViaSpoPoNumber } from '../../components/OrderInquiryDocumentDialog';
 
 /**
  * The Lines tab's own columns (AC-DP-03): Expand, Product, SO line, Qty, Taken,
@@ -71,37 +71,30 @@ function firstLinkOf(row: OrderInquiryWorklistRow, kind: 'po' | 'spo') {
 function DocumentCell({ row, kind }: { row: OrderInquiryWorklistRow; kind: 'po' | 'spo' }) {
   const entry = firstLinkOf(row, kind);
   if (!entry) return <span className="text-muted-foreground">-</span>;
-  // The REAL link behind this entry, for the PO popover's own id and (#1215 point 2) the
-  // line it sits on - `documentsOf` states the document, not the link's identity.
-  const link =
-    kind === 'po'
-      ? (row.links ?? []).find(
-          (candidate) => candidate.kind === 'po' && candidate.document === entry.document,
-        )
-      : null;
-  // Should-fix 4 (review of PR #1220): a PO entry read off an SPO link's own
-  // `source_po_number` (`entry.via === 'spo'`) has no real po-kind link behind it, so
-  // `link` above is always undefined and a lightbox trigger here can never resolve a
-  // poId - it always read "This link does not reach a purchase order in the system.",
-  // even though the worklist's own click on this same row opens the SPO link directly
-  // and works. Plain text instead, one behaviour with what the worklist SPO cell
-  // itself renders for a "via PO" derived entry.
+  // The REAL link behind this entry, for the PO/SPO popover's own id and (#1215 point 2,
+  // R15) the line it sits on - `documentsOf` states the document, not the link's
+  // identity.
+  const link = (row.links ?? []).find(
+    (candidate) => candidate.kind === kind && candidate.document === entry.document,
+  );
+  // R17 (owner rulings, 25 Sep 2026, "I also need here to be clickable"): a PO entry
+  // read off an SPO link's own `source_po_number` (`entry.via === 'spo'`) has no real
+  // po-kind link behind it, so `link` above is always undefined - `entry.poId` is the
+  // resolved identity instead (review round 1's should-fix 4 plain-text fix reversed
+  // by this ruling; the dead-lightbox bug is fixed by resolving the PO, not by
+  // removing the trigger).
   const derived = kind === 'po' && entry.via === 'spo';
   return (
     <span className="flex min-w-0 items-center gap-1">
       {derived ? (
-        <span
-          className="block max-w-full truncate text-xs font-medium tabular-nums"
-          title={entry.document}
-        >
-          {entry.document}
-        </span>
+        <ViaSpoPoNumber poNumber={entry.document} purchaseOrderId={entry.poId} />
       ) : (
         <OrderInquiryDocumentLink
           kind={kind}
           document={entry.document}
           poId={link?.po_id}
           poLineId={link?.po_line_id}
+          spoLineId={link?.spo_allocation_id}
         />
       )}
       {entry.via ? (

@@ -155,6 +155,15 @@ export interface DocumentEntry {
   document: string;
   via: 'po' | 'spo' | null;
   /**
+   * R17 (owner rulings, 25 Sep 2026): addresses the PO lightbox for a `kind: 'po'`
+   * entry - the real link's own `po_id`, or, for a `via: 'spo'` derived entry, the
+   * source PO id resolved through the SPO allocation's own supply PO line
+   * (`purchase_order_id`). Null when neither resolves (an SPO allocation with no
+   * supply PO line, whose PO the Lines tab / worklist then look up by number
+   * instead). Never set for a `kind: 'spo'` entry - there is no PO to address there.
+   */
+  poId: string | null;
+  /**
    * The FIRST link naming this document is fully received (S1,
    * `PLAN-oi-replan-received-links.md`, AC-RL-02) - goods that have landed, not a promise
    * still in transit. `receivedQty`/`qty` back the chip's own title; both are the LINK's
@@ -181,11 +190,18 @@ export function documentsOf(row: OrderInquiryWorklistRow, kind: 'po' | 'spo'): D
   for (const link of row.links ?? []) {
     let named: string | null = null;
     let via: 'po' | 'spo' | null = null;
+    let poId: string | null = null;
     if (kind === 'po') {
-      if (link.kind === 'po') named = link.document;
-      else if (link.kind === 'spo' && link.source_po_number) {
+      if (link.kind === 'po') {
+        named = link.document;
+        poId = link.po_id ?? null;
+      } else if (link.kind === 'spo' && link.source_po_number) {
         named = link.source_po_number;
         via = link.derived_po ? 'spo' : null;
+        // R17: the source PO's OWN id, resolved through this SPO allocation's supply
+        // PO line - never guessed here, the Lines tab / worklist fall back to a
+        // number lookup only when this is null.
+        poId = link.purchase_order_id ?? null;
       }
     } else if (link.kind === 'spo') {
       named = link.document;
@@ -197,6 +213,7 @@ export function documentsOf(row: OrderInquiryWorklistRow, kind: 'po' | 'spo'): D
     entries.push({
       document,
       via,
+      poId,
       received: Boolean(link.received),
       receivedQty: link.received_qty ?? null,
       qty: link.qty ?? null,
