@@ -29,9 +29,9 @@ Every code minted here carries a `ZZTSB` marker.
 """
 from __future__ import annotations
 
-import sys
+import importlib.util
+import os
 import uuid
-from pathlib import Path
 
 import pytest
 from fastapi import Depends, FastAPI
@@ -1018,28 +1018,29 @@ class TestMigrationGrantAC18:
     """D9: the migration grants `inventory.stock.{view,edit,delete}` to
     `integration_foundryx_esb`.
 
-    Run for real via the CLI (`alembic upgrade head`) against THIS
-    worktree's OWN private database (`sorento_sbp_ci`) rather than the
-    guessed-migration-filename `apply()`/`revert()` convention used
-    elsewhere in this suite (`test_migration_brands_grant.py`,
-    `test_migration_445_grant_sweep.py`) - that convention exists because
-    those tests run against the shared local dev database, whose
-    `alembic_version` tracks a DIFFERENT branch, so stepping it there would
-    move a stamp every other worktree relies on. This database belongs to
-    this worktree alone and was stamped to the pre-SR5a head by
-    `scripts/bootstrap_env.py` (see the tester's setup notes) - a real
-    `alembic upgrade head` here applies ONLY the coder's own new
-    migration(s), exactly as CI's `check-migration-heads`/deploy path would,
-    and is safe to run from a test because it is idempotent both ways (D9,
-    mirroring `511_brands_esb_grant.py`): a second run is a no-op.
-
-    `integration_foundryx_esb` does not exist on a freshly bootstrapped
-    database (checked directly: 0 rows), so it is seeded here first, inside
-    the SAME connection `alembic upgrade head`'s migration will read -
-    committed (not rolled back) so the subprocess's own connection can see
-    it, and cleaned up in a `finally` so re-running this test is safe.
+    Driven through `apply()`/`revert()` - the `tests/test_migration_brands_
+    grant.py` convention - not `alembic upgrade head`. The original version
+    of this test shelled out to the CLI: that only ever applies a NEW
+    migration ONCE per database (it is stamped into `alembic_version`), so a
+    test built around it could pass at most once and never again on a second
+    run, CI included, whose own database is bootstrapped straight to head
+    before the suite ever runs (`scripts/bootstrap_env.py`) - the very first
+    invocation of this test would already see the migration as a no-op.
+    `bind` mirrors `test_migration_brands_grant.py::bind` exactly, and for
+    the same reason: the migration's own statements are plain, unqualified
+    SQL against `user_permissions`/`user_roles`/`user_role_permissions`,
+    resolved through the connection's ordinary `search_path` - a
+    `pg_empty_schema` scratch schema would NOT catch that SQL, since its
+    `schema_translate_map` only rewrites compiled ORM/Core constructs, never
+    a raw `text()` string.
     """
 
+    _MIG_PATH = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "alembic",
+        "versions",
+        "sb1_stock_balances_grant.py",
+    )
     _ESB_ROLE_SLUG = "integration_foundryx_esb"
     _TARGET_SLUGS = (
         "inventory.stock.view",
@@ -1047,67 +1048,125 @@ class TestMigrationGrantAC18:
         "inventory.stock.delete",
     )
 
-    def test_alembic_upgrade_head_grants_the_esb_role(self):
-        import subprocess
+    def _load_migration(self):
+        if not os.path.exists(self._MIG_PATH):
+            pytest.fail(
+                f"expected migration module at {self._MIG_PATH} (tester's "
+                "assumed revision id - update _MIG_PATH here if the coder "
+                "named it differently) with module-level apply(conn)/revert(conn)"
+            )
+        spec = importlib.util.spec_from_file_location(
+            "mig_sb1_stock_balances_grant", self._MIG_PATH
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
 
-        backend_dir = Path(__file__).resolve().parent.parent
+    @pytest.fixture()
+    def bind(self):
+        """A connection whose every write is discarded - same reason
+        `test_migration_brands_grant.py::bind` gives: the statement under
+        test is exactly the one production will run, against the real
+        tables, so narrowing it to a scratch schema would stop testing it."""
+        connection = engine.connect()
+        transaction = connection.begin()
+        try:
+            yield connection
+        finally:
+            transaction.rollback()
+            connection.close()
 
-        with engine.connect() as conn:
-            existing = conn.execute(
-                text("SELECT id FROM user_roles WHERE slug = :s"),
+    def _role_slug_taken(self, bind) -> bool:
+        return (
+            bind.execute(
+                text("SELECT 1 FROM user_roles WHERE slug = :s"),
                 {"s": self._ESB_ROLE_SLUG},
             ).first()
-            seeded_role = existing is None
-            if seeded_role:
-                role_id = str(uuid.uuid4())
-                conn.execute(
-                    text(
-                        "INSERT INTO user_roles (id, slug, name, description, "
-                        "is_protected, is_default, is_trashed) VALUES "
-                        "(:i, :s, :n, :d, false, false, false)"
-                    ),
-                    {
-                        "i": role_id,
-                        "s": self._ESB_ROLE_SLUG,
-                        "n": f"{MARKER} ESB role",
-                        "d": f"{MARKER} scratch",
-                    },
-                )
-                conn.commit()
-            else:
-                role_id = str(existing[0])
+            is not None
+        )
 
-        try:
-            result = subprocess.run(
-                [sys.executable, "-m", "alembic", "upgrade", "head"],
-                cwd=backend_dir,
-                capture_output=True,
-                text=True,
-            )
-            assert result.returncode == 0, result.stdout + "\n" + result.stderr
+    def _esb_role(self, bind) -> str:
+        """A role holding the real `integration_foundryx_esb` slug, seeded
+        inside the transaction the `bind` fixture rolls back - nothing here
+        survives the test."""
+        role_id = str(uuid.uuid4())
+        suffix = uuid.uuid4().hex[:8]
+        taken = self._role_slug_taken(bind)
+        bind.execute(
+            text(
+                "INSERT INTO user_roles (id, slug, name, description, is_protected, "
+                "is_default, is_trashed) VALUES (:i, :s, :n, :d, false, false, false)"
+            ),
+            {
+                "i": role_id,
+                "s": f"{self._ESB_ROLE_SLUG}_{suffix}" if taken else self._ESB_ROLE_SLUG,
+                "n": f"{MARKER} ESB role {suffix}",
+                "d": f"{MARKER} scratch",
+            },
+        )
+        return role_id
 
-            with engine.connect() as conn:
-                for slug in self._TARGET_SLUGS:
-                    count = conn.execute(
-                        text(
-                            "SELECT count(*) FROM user_role_permissions rp "
-                            "JOIN user_permissions p ON p.id = rp.permission_id "
-                            "WHERE rp.role_id = :r AND p.slug = :s"
-                        ),
-                        {"r": role_id, "s": slug},
-                    ).scalar()
-                    assert count == 1, (
-                        f"{slug} not granted to {self._ESB_ROLE_SLUG} after "
-                        "alembic upgrade head"
-                    )
-        finally:
-            if seeded_role:
-                with engine.begin() as conn:
-                    conn.execute(
-                        text("DELETE FROM user_role_permissions WHERE role_id = :r"),
-                        {"r": role_id},
-                    )
-                    conn.execute(text("DELETE FROM user_roles WHERE id = :r"), {"r": role_id})
+    def _grant_count(self, bind, role_id: str, slug: str) -> int:
+        return bind.execute(
+            text(
+                "SELECT count(*) FROM user_role_permissions rp "
+                "JOIN user_permissions p ON p.id = rp.permission_id "
+                "WHERE rp.role_id = :r AND p.slug = :s"
+            ),
+            {"r": role_id, "s": slug},
+        ).scalar()
+
+    def test_apply_grants_view_edit_delete_to_the_esb_role(self, bind):
+        role_id = self._esb_role(bind)
+        mig = self._load_migration()
+
+        for slug in self._TARGET_SLUGS:
+            assert self._grant_count(bind, role_id, slug) == 0
+
+        mig.apply(bind)
+
+        for slug in self._TARGET_SLUGS:
+            assert self._grant_count(bind, role_id, slug) == 1, slug
+
+    def test_apply_is_idempotent(self, bind):
+        role_id = self._esb_role(bind)
+        mig = self._load_migration()
+
+        mig.apply(bind)
+        mig.apply(bind)
+
+        for slug in self._TARGET_SLUGS:
+            assert self._grant_count(bind, role_id, slug) == 1, slug
+
+    def test_revert_removes_exactly_these_three_grants(self, bind):
+        """D9: unlike `511_brands_esb_grant.py`'s no-op downgrade, this
+        migration's `revert()` actually removes the three grants it made."""
+        role_id = self._esb_role(bind)
+        mig = self._load_migration()
+
+        mig.apply(bind)
+        mig.revert(bind)
+
+        for slug in self._TARGET_SLUGS:
+            assert self._grant_count(bind, role_id, slug) == 0, slug
+
+    def test_apply_on_a_database_without_the_esb_role_does_not_error(self, bind):
+        assert not self._role_slug_taken(bind), (
+            "this database already has an integration_foundryx_esb role - "
+            "this test needs one that genuinely does not exist"
+        )
+        mig = self._load_migration()
+
+        before = bind.execute(
+            text("SELECT count(*) FROM user_role_permissions")
+        ).scalar()
+
+        mig.apply(bind)  # must not raise
+
+        after = bind.execute(
+            text("SELECT count(*) FROM user_role_permissions")
+        ).scalar()
+        assert after == before, "nothing to grant to, so nothing new was granted"
 
 
 # =================================================================== AC-SB-19
