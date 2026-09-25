@@ -894,6 +894,57 @@ describe('R16 (owner rulings, 25 Sep 2026): "1 button to quickly jump to the lin
     await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
   });
 
+  it('Should fix 1 (review round 2): jumps again on a second Go to press after the reader has paged away', async () => {
+    const lines = Array.from({ length: 25 }, (_, index) => ({
+      id: `line-${index}`,
+      sku: `SKU-${index}`,
+      qty_ordered: '10',
+      qty_received: '0',
+      remaining: '10',
+    }));
+    getOrderInquiryPoDetail.mockResolvedValue({
+      id: 'po-1',
+      po_number: '202607-S0105',
+      supplier_name: 'DAFUYUAN',
+      status: 'confirmed',
+      expected_date: '2026-09-01',
+      lines,
+      allocations: [],
+    });
+    renderNode(
+      <OrderInquiryDocumentDialog
+        kind="po"
+        document="202607-S0105"
+        poId="po-1"
+        poLineId="line-22"
+        open
+        onOpenChange={vi.fn()}
+      />,
+    );
+
+    await screen.findByText('SKU-0');
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+
+    // First press: jumps to page 3, where the linked line sits.
+    fireEvent.click(screen.getByTestId('document-detail-go-to-line'));
+    await waitFor(() => expect(screen.getByText('SKU-22')).toBeInTheDocument());
+
+    // The reader pages away, back to page 1 - `goToLineId` never changes, only
+    // the grid's own page does.
+    fireEvent.click(screen.getByRole('button', { name: '1' }));
+    await waitFor(() => expect(screen.queryByText('SKU-22')).not.toBeInTheDocument());
+    scrollIntoView.mockClear();
+
+    // A second press must jump back to the linked line, not read as a no-op
+    // because `goToLineId` is unchanged from the first press.
+    fireEvent.click(screen.getByTestId('document-detail-go-to-line'));
+    await waitFor(() => expect(screen.getByText('SKU-22')).toBeInTheDocument());
+    const linkedRowAgain = screen.getByText('SKU-22').closest('tr') as HTMLElement;
+    expect(linkedRowAgain).toHaveAttribute('data-linked-line', 'true');
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
+  });
+
   it('reads "Go to suggested line" when opened from a Suggested cell (no real link highlighted)', async () => {
     getOrderInquirySpoDetail.mockResolvedValue({
       spo_number: 'SPO-2026/09-0051',

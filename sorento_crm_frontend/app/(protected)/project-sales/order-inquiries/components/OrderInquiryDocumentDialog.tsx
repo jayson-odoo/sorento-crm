@@ -12,6 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -152,15 +153,17 @@ function GoToLinkedLineButton({
   onClick: () => void;
 }) {
   const button = (
-    <button
+    <Button
       type="button"
+      variant="outline"
+      size="sm"
       data-testid="document-detail-go-to-line"
       disabled={disabled}
       onClick={onClick}
-      className="inline-flex shrink-0 items-center gap-1 rounded-md border px-2.5 py-1 text-xs font-medium text-foreground hover:bg-accent disabled:pointer-events-none disabled:opacity-50"
+      className="shrink-0"
     >
       {label}
-    </button>
+    </Button>
   );
   if (!disabled) return button;
   return (
@@ -575,6 +578,11 @@ function PoBody({
         // primitive. Only set once the reader has actually pressed Go to (`goToNonce`),
         // so opening the dialog never jumps the page on its own.
         focusRowId={goToNonce ? (goToLineId ?? null) : null}
+        // Should fix 1 (review round 2): `goToLineId` never changes between
+        // presses - it is the one highlighted line for this dialog's whole life -
+        // so without the request key a second Go to press after paging away found
+        // `PanelDataGrid`'s own guard already satisfied and did nothing.
+        focusRequestKey={goToNonce}
         // Issue #1215 point 2: highlight the line the OPENING row's own REAL link sits
         // on - a PO with two lines of the same item is exactly the case the plain Item
         // column could not tell apart. R13 (owner rulings, 24 Sep 2026): the lines grid
@@ -660,6 +668,9 @@ function SpoBody({
         // R16: same idiom as the PO lightbox - the grid's own pagination state, only
         // engaged once the reader presses Go to.
         focusRowId={goToNonce ? (goToLineId ?? null) : null}
+        // Should fix 1 (review round 2): same reasoning as the PO lightbox above -
+        // a second press must jump again even though `goToLineId` never changes.
+        focusRequestKey={goToNonce}
         // R15: the SPO lightbox highlights its own linked/suggested line exactly the
         // way the PO lightbox already does - `spoLineId` is the OI row's real link's
         // own `spo_allocation_id`, never a re-match by product or source PO number.

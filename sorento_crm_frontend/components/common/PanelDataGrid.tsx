@@ -69,6 +69,7 @@ export function PanelDataGrid<TRow extends object>({
   scrollerMaxHeight,
   pageResetKey,
   focusRowId,
+  focusRequestKey,
 }: {
   /**
    * A plain heading, or a heading with an embedded link (e.g. the record's own number).
@@ -193,6 +194,18 @@ export function PanelDataGrid<TRow extends object>({
    * would need to duplicate whatever sort this grid is currently under.
    */
   focusRowId?: string | null;
+  /**
+   * Review round 2 Should fix 1 (R16): re-fire the jump above for the SAME
+   * `focusRowId`, on demand. `jumpedFocusRowId` below only skips a jump it has
+   * already made for a given id - correct for a `focusRowId` that changes, but a
+   * "Go to" button always names the same highlighted line, so a second press
+   * after the reader had paged away did nothing at all (the id had not changed,
+   * so the guard fired). Bump a counter (or any other value) on every press and
+   * pass it here; a change clears the guard so the jump effect runs again even
+   * though `focusRowId` itself is unchanged. Omit it for a caller with nothing
+   * to re-press, which keeps today's once-per-id behaviour exactly as it is.
+   */
+  focusRequestKey?: string | number;
 }) {
   const [pagination, setPagination] = React.useState<PaginationState>({
     pageIndex: 0,
@@ -283,11 +296,15 @@ export function PanelDataGrid<TRow extends object>({
   });
 
   /**
-   * Which `focusRowId` the jump below has already fired for, so a re-render (or a later
-   * arrival, S5 just below) does not repeat it - the same ref shape the list's own scroll
-   * effect uses (`FulfilmentBoardListView`, S3).
+   * Which `focusRowId` (paired with the `focusRequestKey` it fired under) the jump
+   * below has already fired for, so a re-render (or a later arrival, S5 just below)
+   * does not repeat it - the same ref shape the list's own scroll effect uses
+   * (`FulfilmentBoardListView`, S3). Review round 2 Should fix 1 (R16): the token
+   * carries `focusRequestKey` alongside the id, not the id alone - a "Go to" button
+   * always names the SAME `focusRowId`, so without the request key a second press
+   * after the reader had paged away matched this guard and did nothing at all.
    */
-  const jumpedFocusRowId = React.useRef<string | null>(null);
+  const jumpedFocusToken = React.useRef<string | null>(null);
 
   // `getPrePaginationRowModel` is filtered-then-sorted, exactly what paging itself slices -
   // no second implementation of sorting here, and it stays right if a column is later sorted
@@ -309,20 +326,24 @@ export function PanelDataGrid<TRow extends object>({
   // already on the right page from the start does not re-jump on every unrelated data refresh.
   React.useEffect(() => {
     if (!focusRowId) {
-      jumpedFocusRowId.current = null;
+      jumpedFocusToken.current = null;
       return;
     }
-    if (!paginate || jumpedFocusRowId.current === focusRowId) return;
+    // Should fix 1 (R16): `focusRequestKey` joins the token, so bumping it alone -
+    // `focusRowId` unchanged - is itself a reason to re-run this effect and jump
+    // again, the way a genuinely new `focusRowId` already did.
+    const token = `${focusRowId}::${focusRequestKey ?? ''}`;
+    if (!paginate || jumpedFocusToken.current === token) return;
     const rows = table.getPrePaginationRowModel().rows;
     const index = rows.findIndex((row) => row.id === focusRowId);
     if (index === -1) return;
-    jumpedFocusRowId.current = focusRowId;
+    jumpedFocusToken.current = token;
     const targetPage = Math.floor(index / pagination.pageSize);
     setPagination((current) =>
       current.pageIndex === targetPage ? current : { ...current, pageIndex: targetPage },
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focusRowId, filtered]);
+  }, [focusRowId, filtered, focusRequestKey]);
 
   return (
     <DataGrid
