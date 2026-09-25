@@ -24,10 +24,18 @@
  * asserted by driving a real animation in this suite (see the frame-trace
  * evidence in the PR body instead). What CAN be pinned here is the fix
  * itself: passing `onUpdate` to a motion value disqualifies WAAPI outright
- * (`!onUpdate` in supportsBrowserAnimation), so this asserts both the
- * overlay's and the content's `motion.div` are wired with one, and that
- * motion actually invokes it while animating - i.e. the disqualifier is live,
- * not a prop that silently does nothing.
+ * (`!onUpdate` in supportsBrowserAnimation), so this asserts the overlay's
+ * AND the content's `motion.div` are EACH wired with one, and that motion
+ * actually invokes it on each surface while animating - i.e. the disqualifier
+ * is live on both, not a prop that silently does nothing on one of them.
+ *
+ * `onUpdate` is called with the element's `latestValues` (framer-motion's
+ * `VisualElement.notifyUpdate`, `this.notify('Update', this.latestValues)`).
+ * Under the non-reduced motion this suite forces, the content's variants
+ * (`surfaceVariants` in lib/motion.ts) animate `{ opacity, scale }` while the
+ * overlay animates `opacity` alone - so a call's argument carries a `scale`
+ * key if and only if it came from the content's `motion.div`. That split is
+ * how the two assertions below tell the surfaces apart from one shared spy.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -73,6 +81,19 @@ afterEach(() => {
   Object.defineProperty(window, 'matchMedia', { writable: true, configurable: true, value: realMatchMedia });
 });
 
+// A call came from the content's `motion.div` iff its `latestValues` carries
+// `scale` - only the content's variants animate scale (see file header).
+function isContentCall(call: unknown[]): boolean {
+  const latest = call[0] as Record<string, unknown> | undefined;
+  return latest !== undefined && Object.prototype.hasOwnProperty.call(latest, 'scale');
+}
+
+function splitCallsBySurface(calls: unknown[][]) {
+  const contentCalls = calls.filter(isContentCall);
+  const overlayCalls = calls.filter((call) => !isContentCall(call));
+  return { overlayCalls, contentCalls };
+}
+
 describe('Dialog defeats WAAPI hand-off on its animated surfaces', () => {
   it('drives onUpdate on both the overlay and the content while entering', async () => {
     render(
@@ -85,12 +106,17 @@ describe('Dialog defeats WAAPI hand-off on its animated surfaces', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 500));
 
-    // One motion.div per surface (overlay + content); each ticks onUpdate on
-    // every frame of a real spring, so a healthy run calls this many times.
-    expect(onUpdateSpy.mock.calls.length).toBeGreaterThan(1);
+    // Each surface's own `motion.div` ticks onUpdate on every frame of a real
+    // spring, so a healthy run calls each one this many times. Asserted per
+    // surface (not summed) so deleting `onUpdate` from just one of the two
+    // `motion.div`s - which reintroduces that surface's WAAPI flicker - fails
+    // this test instead of hiding behind the other surface's calls.
+    const { overlayCalls, contentCalls } = splitCallsBySurface(onUpdateSpy.mock.calls);
+    expect(overlayCalls.length).toBeGreaterThan(1);
+    expect(contentCalls.length).toBeGreaterThan(1);
   });
 
-  it('keeps driving onUpdate while closing', async () => {
+  it('keeps driving onUpdate on both the overlay and the content while closing', async () => {
     const { rerender } = render(
       <Dialog open>
         <DialogContent>
@@ -110,6 +136,8 @@ describe('Dialog defeats WAAPI hand-off on its animated surfaces', () => {
     );
     await new Promise((resolve) => setTimeout(resolve, 500));
 
-    expect(onUpdateSpy.mock.calls.length).toBeGreaterThan(1);
+    const { overlayCalls, contentCalls } = splitCallsBySurface(onUpdateSpy.mock.calls);
+    expect(overlayCalls.length).toBeGreaterThan(1);
+    expect(contentCalls.length).toBeGreaterThan(1);
   });
 });
