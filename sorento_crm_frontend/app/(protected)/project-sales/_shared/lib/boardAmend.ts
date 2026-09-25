@@ -560,14 +560,23 @@ export function suggestionWithReasons(
  * round's new icons all wrote out by hand as the same three clauses: not COVERED (there is
  * nothing to approve on a line an active decision already confirms - Amend is how that one
  * changes), not UNPLANNABLE (its sales order names no fulfilment location, so there is no
- * suggestion to save), and not already carrying a DRAFT of its own (a second quick save would
- * overwrite an amendment with the engine's composition, which is the one thing a planner who
- * amended it does not want - Undo is how a saved line comes back into play).
+ * suggestion to save), and not already carrying a SAVED draft of its own (a second quick save
+ * would overwrite an amendment with the engine's composition, which is the one thing a planner
+ * who amended it does not want - Undo is how a saved line comes back into play).
+ *
+ * A BARE PRE-MARK does not count as "already carrying a draft" (S5/N1, owner ruling 25 Sep
+ * 2026, issue #1245): `{ verdict: 'approved', preMarked: true }` is the board's own suggestion
+ * for a `Change proposed` line, not something a person saved, so every one of this predicate's
+ * callers - the cell's own quick-save icon, the breakdown dialog's row enable/select, the list
+ * view's row enable/select, and the board-wide "Save all suggested" - already treats it the
+ * same as a line nobody has touched. One rule here, not a `draftWithoutPreMark` view built
+ * separately at each call site.
  */
 export function canQuickSave(
   contribution: BoardContribution,
   draft: BoardDraft,
 ): boolean {
+  const decision = draft[contribution.key];
   return (
     !contribution.covered &&
     !contribution.unplannable &&
@@ -575,7 +584,7 @@ export function canQuickSave(
     // retires it. Offering to save the engine's suggestion for it would be offering to
     // source a quantity nobody is owed.
     !contribution.cancelled &&
-    !draft[contribution.key]
+    (!decision || Boolean(decision.preMarked))
   );
 }
 

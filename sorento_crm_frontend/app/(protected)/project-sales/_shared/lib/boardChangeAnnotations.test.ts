@@ -11,6 +11,7 @@ import { describe, expect, it } from 'vitest';
 import {
   annotationOf,
   annotationsByCell,
+  annotationsByLine,
   cellKeyOf,
   decisionWords,
   preMarkedKeys,
@@ -595,5 +596,206 @@ describe('uncoverChangedLines', () => {
     expect(out.cells[0].contributions[0].order_inquiry?.documents).toEqual([
       { document: 'SPO-2026/04-0058', kind: 'spo', received: true },
     ]);
+  });
+
+  /**
+   * T7 / AC-9 (`PLAN-esb-change-row-refresh.md` S3, issue #1240): a batch's `proposal_json`
+   * is frozen at the moment the batch was built - a re-push that moved the line again writes
+   * a fresh `required_date` / `qty_outstanding` / `is_past` / `qty_delivered` onto the LIVE
+   * contribution, but the old `{...contribution, ...proposal}` spread let the frozen
+   * proposal's copies of those same fields win, so the board printed the stale date. Only
+   * the composition (`sources`, `qty_proposed_*`) should come from the proposal; the live
+   * facts must survive the merge unchanged.
+   */
+  it('T7/AC-9: keeps the live required_date, qty_outstanding, is_past and qty_delivered, and only takes the composition (including trail and rank_score) from the proposal', () => {
+    const live = contribution({
+      key: 'k1',
+      project_line_id: 'pl-1',
+      required_date: '2026-12-01',
+      qty_outstanding: '5',
+      is_past: false,
+      qty_delivered: '5',
+      covered: true,
+      decision: { revision_no: 2, components: [] },
+      rank_score: 1,
+      trail: [],
+    } as unknown as Partial<BoardContribution>);
+    const proposedTrail = [
+      { step: 1, kind: 'reserve_own', question: 'Any reserved stock at BRW?', answer: 'yes', took: '5' },
+    ];
+    const frozenProposalBatch = batchOf([
+      row({
+        proposal: {
+          ...contribution({ key: 'built-earlier', project_line_id: 'pl-1' }),
+          required_date: '2026-01-15',
+          qty_outstanding: '39',
+          is_past: true,
+          qty_delivered: '39',
+          sources: [{ kind: 'buy', qty: '39' }],
+          qty_proposed_buy: '39',
+          rank_score: 9,
+          trail: proposedTrail,
+        } as BoardContribution,
+      }),
+    ]);
+    const out = uncoverChangedLines(
+      { cells: [cell({ contributions: [live] })], contributions: [live] },
+      frozenProposalBatch,
+    );
+    const merged = out.contributions[0];
+    expect(merged.required_date).toBe('2026-12-01');
+    expect(merged.qty_outstanding).toBe('5');
+    expect(merged.is_past).toBe(false);
+    expect(merged.qty_delivered).toBe('5');
+    expect(merged.covered).toBe(false);
+    expect(merged.decision).toBeNull();
+    expect(merged.sources).toEqual([{ kind: 'buy', qty: '39' }]);
+    expect(merged.qty_proposed_buy).toBe('39');
+    // The composition's OWN facts - what the ladder walk found and how it scored - come
+    // from the proposal too, exactly like `sources` and `qty_proposed_buy` above.
+    expect(merged.rank_score).toBe(9);
+    expect(merged.trail).toEqual(proposedTrail);
+    // Same on the cell copy - the two must never disagree.
+    const cellMerged = out.cells[0].contributions[0];
+    expect(cellMerged.required_date).toBe('2026-12-01');
+    expect(cellMerged.qty_outstanding).toBe('5');
+    expect(cellMerged.qty_delivered).toBe('5');
+    expect(cellMerged.rank_score).toBe(9);
+    expect(cellMerged.trail).toEqual(proposedTrail);
+  });
+
+  /**
+   * T8 / AC-13 to AC-15 (`PLAN-esb-change-row-refresh.md` S4, issue #1240): measured on prod
+   * after the 25 Sep datafix - `get_batch` returns every row a batch ever carried, superseded
+   * and applied included (the append-only record), and `proposalsByLine` (which
+   * `uncoverChangedLines` and `preMarkedKeys` both read through) never looked at
+   * `applied_state`. A superseded row's frozen proposal kept overlaying the board and
+   * pre-marking the line even after the datafix retired it.
+   */
+  it('T8/AC-13: a superseded row is ignored - the contribution, pre-mark and annotations are untouched', () => {
+    const live = contribution({
+      key: 'k1',
+      project_line_id: 'pl-1',
+      required_date: '2026-12-01',
+      covered: true,
+      decision: { revision_no: 2, components: [] },
+    } as unknown as Partial<BoardContribution>);
+    const supersededBatch = batchOf([
+      row({
+        applied_state: 'superseded',
+        project_line_id: 'pl-1',
+        proposal: {
+          ...contribution({ key: 'built-earlier', project_line_id: 'pl-1' }),
+          required_date: '2026-01-15',
+          sources: [{ kind: 'buy', qty: '39' }],
+          qty_proposed_buy: '39',
+        } as BoardContribution,
+      }),
+    ]);
+    const board = { cells: [cell({ contributions: [live] })], contributions: [live] };
+
+    const out = uncoverChangedLines(board, supersededBatch);
+    expect(out.contributions[0]).toEqual(live);
+    expect(out.cells[0].contributions[0]).toEqual(live);
+
+    expect(preMarkedKeys(supersededBatch, [live])).toEqual([]);
+    expect(annotationsByLine(supersededBatch).size).toBe(0);
+    expect(annotationsByCell(supersededBatch, [cell({ contributions: [live] })]).size).toBe(0);
+  });
+
+  it('T8/AC-14: a line with a superseded row (D1) AND a pending row (D3) uses only the pending row', () => {
+    const live = contribution({
+      key: 'k1',
+      project_line_id: 'pl-1',
+      required_date: '2026-12-01',
+      covered: true,
+      decision: { revision_no: 2, components: [] },
+    } as unknown as Partial<BoardContribution>);
+    const supersededFirst = batchOf([
+      // Superseded row first in the payload, on purpose - the fix must not depend on row
+      // order to pick the live one.
+      row({
+        id: 'pcr-superseded',
+        applied_state: 'superseded',
+        project_line_id: 'pl-1',
+        proposal: {
+          ...contribution({ key: 'built-earlier', project_line_id: 'pl-1' }),
+          required_date: '2026-01-15',
+          sources: [{ kind: 'buy', qty: '39' }],
+          qty_proposed_buy: '39',
+        } as BoardContribution,
+      }),
+      row({
+        id: 'pcr-pending',
+        applied_state: 'pending',
+        project_line_id: 'pl-1',
+        proposal: {
+          ...contribution({ key: 'built-later', project_line_id: 'pl-1' }),
+          required_date: '2026-12-01',
+          sources: [{ kind: 'buy', qty: '5' }],
+          qty_proposed_buy: '5',
+        } as BoardContribution,
+      }),
+    ]);
+    const board = { cells: [cell({ contributions: [live] })], contributions: [live] };
+
+    const out = uncoverChangedLines(board, supersededFirst);
+    expect(out.contributions[0].sources).toEqual([{ kind: 'buy', qty: '5' }]);
+    expect(out.contributions[0].qty_proposed_buy).toBe('5');
+    expect(out.contributions[0].covered).toBe(false);
+
+    // `preMarkedKeys` runs on the ALREADY-UNCOVERED contributions in production
+    // (`FulfilmentBoardPanel.tsx` calls it after `uncoverChangedLines` on the same batch),
+    // so a line with a pending row is no longer `covered` by the time it gets here - the
+    // `!contribution.covered` guard itself is pinned separately (AC-F7,
+    // `FulfilmentBoardPanel.change.test.tsx`) and is not what this test is about.
+    expect(preMarkedKeys(supersededFirst, out.contributions)).toEqual(['k1']);
+    const byLine = annotationsByLine(supersededFirst);
+    expect(byLine.get('pl-1')?.map((entry) => entry.rowId)).toEqual(['pcr-pending']);
+  });
+
+  /**
+   * T8/AC-15, R3 ruling (`PLAN-board-draft-on-confirmed-line.md`, review round 3, restated
+   * for #1240): only the BATCH's own `applied_at` gates whether a line stays covered and
+   * blocked from a second Confirm - pinned by `FulfilmentBoardPanel.change.test.tsx`'s "does
+   * not block Confirm ... even if a row says it was". A ROW's own `applied_state` of
+   * `'applied'` is not the same signal - `superseded` is the only state S4 retires from the
+   * overlay - so a batch not yet applied but already carrying an `applied` row (an order this
+   * upload named twice, one line already actioned) must still overlay and pre-mark that row
+   * exactly like a pending one.
+   */
+  it('T8/AC-15 (R3 ruling): an applied row still overlays and pre-marks like a pending one', () => {
+    const live = contribution({
+      key: 'k1',
+      project_line_id: 'pl-1',
+      required_date: '2026-12-01',
+      covered: true,
+      decision: { revision_no: 2, components: [] },
+    } as unknown as Partial<BoardContribution>);
+    const appliedBatch = batchOf([
+      row({
+        id: 'pcr-applied',
+        applied_state: 'applied',
+        project_line_id: 'pl-1',
+        proposal: {
+          ...contribution({ key: 'built-earlier', project_line_id: 'pl-1' }),
+          required_date: '2026-12-01',
+          sources: [{ kind: 'buy', qty: '5' }],
+          qty_proposed_buy: '5',
+        } as BoardContribution,
+      }),
+    ]);
+    const board = { cells: [cell({ contributions: [live] })], contributions: [live] };
+
+    const out = uncoverChangedLines(board, appliedBatch);
+    expect(out.contributions[0].covered).toBe(false);
+    expect(out.contributions[0].decision).toBeNull();
+    expect(out.contributions[0].sources).toEqual([{ kind: 'buy', qty: '5' }]);
+    expect(out.contributions[0].qty_proposed_buy).toBe('5');
+
+    // Pre-marked off the ALREADY-UNCOVERED contributions, same as AC-14 above.
+    expect(preMarkedKeys(appliedBatch, out.contributions)).toEqual(['k1']);
+    const byLine = annotationsByLine(appliedBatch);
+    expect(byLine.get('pl-1')?.map((entry) => entry.rowId)).toEqual(['pcr-applied']);
   });
 });
