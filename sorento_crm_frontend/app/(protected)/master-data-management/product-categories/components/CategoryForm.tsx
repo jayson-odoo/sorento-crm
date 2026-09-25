@@ -2,7 +2,7 @@
 
 import { useEffect } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useForm } from 'react-hook-form';
+import { useForm, type Resolver } from 'react-hook-form';
 import { z } from 'zod';
 import {
   Dialog,
@@ -50,6 +50,8 @@ const CategorySchema = z.object({
   ),
 });
 
+type CategorySchemaType = z.infer<typeof CategorySchema>;
+
 interface CategoryFormProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -65,8 +67,13 @@ export default function CategoryForm({ open, onOpenChange, categoryId, copyFromC
   const canViewChatbotLimits = useHasPermission('master_data.chatbot_stock_limits.view');
   const canEditChatbotLimits = useHasPermission('master_data.chatbot_stock_limits.edit');
 
-  const form = useForm<z.infer<typeof CategorySchema>>({
-    resolver: zodResolver(CategorySchema),
+  const form = useForm<CategorySchemaType>({
+    // z.preprocess (the Blocking 1 fix, PR #1221 reviewer pass 85c2e9e7) makes
+    // zodResolver's inferred generic diverge from CategorySchemaType across every
+    // field, not just the two it touches - the repo's established cast for this
+    // exact zodResolver/react-hook-form generic mismatch (PackingListForm.tsx,
+    // GRNForm.tsx, UserAddSchema, ContactEditSchema all do the same).
+    resolver: zodResolver(CategorySchema) as Resolver<CategorySchemaType>,
     mode: 'onTouched',
     defaultValues: {
       category_code: '',
@@ -119,7 +126,7 @@ export default function CategoryForm({ open, onOpenChange, categoryId, copyFromC
     }
   }, [open, form, categoryId, category, copyFromCategory]);
 
-  const onSubmit = async (data: z.infer<typeof CategorySchema>) => {
+  const onSubmit = async (data: CategorySchemaType) => {
     try {
       const formData: CategoryFormData = {
         category_code: data.category_code,

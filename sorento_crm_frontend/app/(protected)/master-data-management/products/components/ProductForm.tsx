@@ -2,7 +2,7 @@
 
 import { useEffect, useLayoutEffect, useRef } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useForm } from 'react-hook-form';
+import { useForm, type Resolver } from 'react-hook-form';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
   Banknote,
@@ -80,7 +80,12 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
   const navigationBasePath = '/master-data-management/products';
 
   const form = useForm<ProductSchemaType>({
-    resolver: zodResolver(ProductSchema),
+    // z.preprocess (the Blocking 1 fix, PR #1221 reviewer pass 85c2e9e7) makes
+    // zodResolver's inferred generic diverge from ProductSchemaType across every
+    // field, not just the two it touches - the repo's established cast for this
+    // exact zodResolver/react-hook-form generic mismatch (PackingListForm.tsx,
+    // GRNForm.tsx, UserAddSchema, ContactEditSchema all do the same).
+    resolver: zodResolver(ProductSchema) as Resolver<ProductSchemaType>,
     defaultValues: {
       product_code: '',
       product_name: '',
