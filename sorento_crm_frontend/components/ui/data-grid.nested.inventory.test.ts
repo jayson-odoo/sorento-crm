@@ -173,12 +173,12 @@ const GRID_IN_FLOATING_SURFACE_SITES = new Map<string, string>([
     'Supply tab, same dialog. (Line moved 666 -> 619, same round.)',
   ],
   [
-    'app/(protected)/scm/proforma-invoices/components/ConvertToPackingListDialog.tsx:403',
-    "What goes in the container, in a dialog opened as a sibling of the invoice list or the invoice's own detail - no grid context. It KEEPS the default `--grid-max-h` bound rather than turning it off: the dialog body does not scroll, so the table is what scrolls, with its header sticking inside that window while the container size select and Convert stay put",
+    'app/(protected)/scm/proforma-invoices/components/ConvertToPackingListDialog.tsx:455',
+    "What goes in the container, in a dialog opened as a sibling of the invoice list or the invoice's own detail - no grid context. It KEEPS the default `--grid-max-h` bound rather than turning it off: the dialog body does not scroll, so the table is what scrolls, with its header sticking inside that window while the container size select and Convert stay put. (Line moved 403 -> 455 when #1223 made convert bind repeated products by order.)",
   ],
   [
-    'app/(protected)/scm/proforma-invoices/components/ConvertToPackingListDialog.tsx:414',
-    'The DataGridTable of the same grid, not a second one',
+    'app/(protected)/scm/proforma-invoices/components/ConvertToPackingListDialog.tsx:468',
+    'The DataGridTable of the same grid, not a second one. (Line moved 414 -> 468, same round.)',
   ],
   [
     'app/(protected)/project-sales/_shared/components/LinkDocumentDialog.tsx:343',
