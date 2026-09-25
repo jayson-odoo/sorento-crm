@@ -260,14 +260,31 @@ def canonical_fields(doc_type: str) -> list[str]:
     """
     import dataclasses
 
+    #: The header-block fields (F2/R-D, PLAN-pi-header-fields-convert-fixes-24sep.md ruling
+    #: 1) - each reader's OWN `_BLOCK_FIELDS`, unioned in below rather than read off the
+    #: dataclass fields like everything else: `ProformaDocument`'s money SLOT is
+    #: `currency_hint` (what the reader writes), but the header-block splitter and the
+    #: mapper both resolve the CANONICAL name `currency` (what `_BLOCK_FIELDS` states) -
+    #: `currency_hint` is excluded below so the two never both appear as separate fields.
+    block_fields: tuple[str, ...] = ()
     if doc_type == "proforma_invoice":
-        from app.services.scm.proforma_invoice_reader import ProformaDocument, ProformaLine
+        from app.services.scm.proforma_invoice_reader import (
+            _BLOCK_FIELDS as _pi_block_fields,
+            ProformaDocument,
+            ProformaLine,
+        )
 
         classes: tuple[type, ...] = (ProformaLine, ProformaDocument)
+        block_fields = _pi_block_fields
     elif doc_type == "packing_list":
-        from app.services.scm.packing_list_reader import PackingBlock, PackingLine
+        from app.services.scm.packing_list_reader import (
+            _BLOCK_FIELDS as _pl_block_fields,
+            PackingBlock,
+            PackingLine,
+        )
 
         classes = (PackingLine, PackingBlock)
+        block_fields = _pl_block_fields
     elif doc_type == "supplier_inventory":
         # B7: this doc type used to answer `[]` here (measured 24 Sep) - the stock list
         # could not be mapped through the API at all. One row's own dataclass, unlike the
@@ -286,8 +303,12 @@ def canonical_fields(doc_type: str) -> list[str]:
     out: list[str] = []
     for cls in classes:
         for f in dataclasses.fields(cls):
-            if f.name in _DENY_INTERNAL_FIELDS or f.name in seen:
+            if f.name in _DENY_INTERNAL_FIELDS or f.name in seen or f.name == "currency_hint":
                 continue
             seen.add(f.name)
             out.append(f.name)
+    for f in block_fields:
+        if f not in seen:
+            seen.add(f)
+            out.append(f)
     return out

@@ -25,6 +25,7 @@ from app.services.scm import priority
 from app.services.scm.supply_assignment import month_key
 from tests.scm.conftest import (
     SORENTO_COMPANY_ID,
+    _REF_CATEGORY_CODE,
     as_user,
     ensure_reference_data,
     requires_pg,
@@ -151,7 +152,10 @@ def _agent(db, code: str):
     return row
 
 
-def _demand(db, product, warehouse, *, qty, required_date, so_number, agent=None):
+def _demand(
+    db, product, warehouse, *, qty, required_date, so_number, agent=None,
+    qty_delivered=0, qty_required=None,
+):
     from app.models.order import SalesOrder, SalesOrderLine
 
     order = SalesOrder(
@@ -171,7 +175,8 @@ def _demand(db, product, warehouse, *, qty, required_date, so_number, agent=None
         product_id=product.id,
         warehouse_id=warehouse.id,
         qty_ordered=Decimal(str(qty)),
-        qty_delivered=Decimal("0"),
+        qty_delivered=Decimal(str(qty_delivered)),
+        qty_required=Decimal(str(qty_required)) if qty_required is not None else None,
         required_date=required_date,
         line_status="open",
     )
@@ -180,7 +185,7 @@ def _demand(db, product, warehouse, *, qty, required_date, so_number, agent=None
     return order, line
 
 
-def _spo(db, product, warehouse, *, qty, arrives, spo_number=None):
+def _spo(db, product, warehouse, *, qty, arrives, spo_number=None, received=0):
     from app.models.procurement import SPOAllocation
 
     row = SPOAllocation(
@@ -190,7 +195,7 @@ def _spo(db, product, warehouse, *, qty, arrives, spo_number=None):
         product_id=product.id,
         warehouse_id=warehouse.id,
         allocated_quantity=qty,
-        quantity_received=0,
+        quantity_received=received,
         receipt_status="pending",
         line_status="open",
         expected_date=arrives,
@@ -612,12 +617,55 @@ def _order_back_link_on_po(db, project_order, so_line, *, po_line, qty):
     return row, link
 
 
-def test_a_po_line_hold_pins_the_quantity_to_the_askers_line(scm_app):
-    """R21/AC-S2-2 through `order_inquiry_links.po_line_id`: a placement link binds the
-    PO's quantity to the line it was made for, whatever first-come-by-date would otherwise
-    give it. The PO is made to arrive well AFTER the line's own required date - without the
-    pin the line would read `short` or `late`, never `pinned` - and the supply row's
-    `assigned_to` names the asking SO in the PO's own arrival month."""
+def _order_back_link_on_spo(db, project_order, so_line, *, allocation, qty):
+    """An ORDER_BACK-verb inquiry row linked to an SPO allocation -
+    `order_inquiry_links.spo_allocation_id` - `_order_back_link_on_po`'s sibling for the
+    other of the two legal link targets. Returns the OI HEADER too (not just the row/
+    link), for R29 addendum's own `oi_number`/`oi_id` assertions."""
+    from app.models.project_so import (
+        IV_ORDER_BACK,
+        OrderInquiry,
+        OrderInquiryLink,
+        OrderInquiryRow,
+    )
+
+    inquiry = OrderInquiry(
+        id=_u(), company_id=SORENTO_COMPANY_ID, project_sales_order_id=project_order.id,
+    )
+    db.add(inquiry)
+    db.flush()
+    row = OrderInquiryRow(
+        id=_u(),
+        company_id=SORENTO_COMPANY_ID,
+        order_inquiry_id=inquiry.id,
+        so_line_id=so_line.id,
+        qty=Decimal(str(qty)),
+        verb=IV_ORDER_BACK,
+    )
+    db.add(row)
+    db.flush()
+    link = OrderInquiryLink(
+        id=_u(),
+        company_id=SORENTO_COMPANY_ID,
+        row_id=row.id,
+        spo_allocation_id=allocation.id,
+        qty=Decimal(str(qty)),
+    )
+    db.add(link)
+    db.flush()
+    return inquiry, row, link
+
+
+def test_a_po_line_hold_pins_nothing_in_stock_debt(scm_app):
+    """REWRITTEN for R23 (owner, 24 Sep): "got PO doesn't mean got supply." Before R23
+    this asserted the opposite - that a placement link (`order_inquiry_links.po_line_id`)
+    pinned the PO's quantity to the line and put a `kind: "po"` row in the drill's Supply
+    tab. Stock Debt's own walk now counts supply as on hand + SPO ONLY: a PO never enters
+    it, pinned or free, so this same placement link now pins NOTHING here (the fulfilment
+    board and ladder, plan v7 R29, still read PO and are untouched - this is Stock Debt's
+    own reading). The line reads `short` and the drill lists no PO row at all, in EITHER
+    month.
+    """
     app, db = _client(scm_app)
     marker = f"ZZTSD{_u()[:6]}".upper()
     warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
@@ -637,7 +685,6 @@ def test_a_po_line_hold_pins_the_quantity_to_the_askers_line(scm_app):
         [str(product.id)], [str(warehouse.id)]
     )
     arrival = po_rows[(str(product.id), str(warehouse.id))][0].arrival_date
-    assert arrival > due, "the PO must arrive after the line's own date, or the pin is untested"
 
     with TestClient(app) as c:
         cell = c.get(f"{BASE}/{product.id}/cell", params={"month": month_key(due)}).json()
@@ -648,12 +695,223 @@ def test_a_po_line_hold_pins_the_quantity_to_the_askers_line(scm_app):
     assert len(cell["demand"]) == 1
     demand_line = cell["demand"][0]
     assert demand_line["so_number"] == f"{marker}-SO1"
-    assert demand_line["status"] == "pinned"
-    assert demand_line["assigned_qty"] == 50
+    assert demand_line["status"] == "short"
+    assert demand_line["assigned_qty"] == 0
 
-    po_events = [event for event in supply_cell["supply"] if event["kind"] == "po"]
-    assert len(po_events) == 1
-    assert po_events[0]["assigned_to"] == [{"so_number": f"{marker}-SO1", "qty": 50}]
+    assert supply_cell["supply"] == []
+
+
+def test_a_line_covered_only_by_a_free_po_reads_short(scm_app):
+    """R23 (owner, 24 Sep, third red batch): a line whose only covering document is a
+    FREE (unpinned) PO - the ordinary first-come-by-date case, not the placement-link
+    case the previous test covers - still reads `short`, never `covered`/`late`, and the
+    PO's own arrival month lists no supply row at all.
+    """
+    app, db = _client(scm_app)
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    product = _product(db, f"{marker}-A")
+    due = _months_ahead(1)
+    _demand(db, product, warehouse, qty=50, required_date=due, so_number=f"{marker}-SO1")
+    _po_line_for_hold(db, product, warehouse, qty=50, issue_date=TODAY)
+    db.flush()
+
+    from app.services.project_supply_service import ProjectSupplyService
+
+    po_rows = ProjectSupplyService(db).po_by_location(
+        [str(product.id)], [str(warehouse.id)]
+    )
+    arrival = po_rows[(str(product.id), str(warehouse.id))][0].arrival_date
+
+    with TestClient(app) as c:
+        cell = c.get(f"{BASE}/{product.id}/cell", params={"month": month_key(due)}).json()
+        supply_cell = c.get(
+            f"{BASE}/{product.id}/cell", params={"month": month_key(arrival)}
+        ).json()
+
+    line = cell["demand"][0]
+    assert line["status"] == "short"
+    assert line["assigned_qty"] == 0
+    assert supply_cell["supply"] == []
+
+
+def test_a_line_covered_by_an_spo_reads_covered_as_before(scm_app):
+    """R23's other half: an SPO (not a PO) is still real supply, exactly as before this
+    ruling - the walk narrows to on hand + SPO, it does not stop covering with SPOs.
+    """
+    app, db = _client(scm_app)
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    product = _product(db, f"{marker}-A")
+    due = _months_ahead(1)
+    _demand(db, product, warehouse, qty=50, required_date=due, so_number=f"{marker}-SO1")
+    _spo(db, product, warehouse, qty=50, arrives=due)
+    db.flush()
+
+    with TestClient(app) as c:
+        cell = c.get(f"{BASE}/{product.id}/cell", params={"month": month_key(due)}).json()
+
+    line = cell["demand"][0]
+    assert line["status"] == "covered"
+    assert line["assigned_qty"] == 50
+
+
+def test_the_cell_envelope_carries_total_quantities_for_the_tab_labels(scm_app):
+    """R25 (owner, 24 Sep): the tab labels state total QUANTITY, not record count -
+    `demand_total_qty` (sum of `open_qty` over the cell's demand rows) and
+    `supply_total_qty` (sum of `qty` over its supply rows), so the FE does not sum on its
+    own. RED today: neither field exists on the envelope at all.
+    """
+    app, db = _client(scm_app)
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    product = _product(db, f"{marker}-A")
+    due = _months_ahead(1)
+    _demand(db, product, warehouse, qty=30, required_date=due, so_number=f"{marker}-SO1")
+    _demand(db, product, warehouse, qty=20, required_date=due, so_number=f"{marker}-SO2")
+    _spo(db, product, warehouse, qty=15, arrives=due)
+    _spo(db, product, warehouse, qty=25, arrives=due)
+    db.flush()
+
+    with TestClient(app) as c:
+        cell = c.get(f"{BASE}/{product.id}/cell", params={"month": month_key(due)}).json()
+
+    assert len(cell["demand"]) == 2
+    assert cell["demand_total_qty"] == 50
+    assert len(cell["supply"]) == 2
+    assert cell["supply_total_qty"] == 40
+
+
+def test_the_cell_states_spo_qty_received_and_outstanding(scm_app):
+    """R26 (owner, 24 Sep): the drill's Supply tab states Qty (the SPO line's ordered
+    quantity), Received (quantity received so far) and Outstanding (Qty minus Received) -
+    the walk itself counts ONLY Outstanding as incoming supply, so received goods are not
+    double-counted (they are already on hand at the bin).
+
+    `ProjectSupplyService._spo_rows` (the R7 lane, "PO qty_received = SPO transfer")
+    ALREADY nets `allocated_quantity - quantity_received` into the ONE `qty` the walk
+    uses for assignment - so the ASSIGNMENT half below (`assigned_qty == 70`, capped at
+    Outstanding, never the full 100) is a REGRESSION GUARD, not new behaviour. RED today
+    is the two NEW WIRE FIELDS only: the route's single `qty` on a supply row is already
+    the netted Outstanding value, not the SPO line's raw ordered quantity, and
+    `received_qty` does not exist on the schema at all.
+    """
+    app, db = _client(scm_app)
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    product = _product(db, f"{marker}-A")
+    due = _months_ahead(1)
+    _demand(db, product, warehouse, qty=100, required_date=due, so_number=f"{marker}-SO1")
+    _spo(db, product, warehouse, qty=100, received=30, arrives=due)
+    db.flush()
+
+    with TestClient(app) as c:
+        cell = c.get(f"{BASE}/{product.id}/cell", params={"month": month_key(due)}).json()
+
+    supply_row = cell["supply"][0]
+    assert supply_row["qty"] == 100
+    assert supply_row["received_qty"] == 30
+    assert supply_row["outstanding_qty"] == 70
+
+    demand_line = cell["demand"][0]
+    assert demand_line["assigned_qty"] == 70
+
+    assert cell["supply_total_qty"] == 70
+
+
+def test_the_cell_carries_linked_documents_and_named_lines(scm_app):
+    """R29 (owner, 24 Sep): documents are LINKS and lines are NAMED.
+
+    - A supply row carries `spo_number` / `spo_line_number` so the FE can link the
+      Document cell to `/procurement-management/spo-allocations/<spo_number>`.
+    - Its `assigned_to` entries carry `line_no` (the SO line's own number) beside
+      `so_number`, so the FE can render "SO382618 line 2 (100)".
+    - A demand line carries `sales_order_id` (for the Sales order cell's own link) and
+      `assigned_from` - `assigned_source` (free text) split into
+      `[{kind, ref, spo_number, spo_line_number, qty, oi_number, oi_id}]`, one entry per
+      source. `oi_number`/`oi_id` (addendum, same day) name the order inquiry a PLACED
+      source came through; this line's own source is a plain WALK assignment (no
+      placement), so both are `None` here - the pinned case is its own test below.
+
+    Asserted by NAME through the route (a `response_model` that has not declared a field
+    drops it silently) - RED today because none of `spo_number`, `spo_line_number`,
+    `line_no`, `sales_order_id` or `assigned_from` exists on the wire at all.
+    """
+    app, db = _client(scm_app)
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    product = _product(db, f"{marker}-A")
+    due = _months_ahead(1)
+    order, core_line = _demand(
+        db, product, warehouse, qty=100, required_date=due, so_number=f"{marker}-SO1",
+    )
+    core_line.line_no = 2
+    allocation = _spo(db, product, warehouse, qty=100, arrives=due, spo_number=f"ZZT-SPO-{_u()[:6]}")
+    db.flush()
+
+    with TestClient(app) as c:
+        cell = c.get(f"{BASE}/{product.id}/cell", params={"month": month_key(due)}).json()
+
+    # `_spo_ref`'s own rule (`stock_debt_service.py`): the SPO number as-is if it already
+    # reads "SPO...", else prefixed - our marker-prefixed number needs the prefix.
+    expected_ref = f"SPO {allocation.spo_number}"
+
+    demand_line = cell["demand"][0]
+    assert demand_line["sales_order_id"] == str(order.id)
+    assert demand_line["assigned_from"] == [
+        {
+            "kind": "spo", "ref": expected_ref,
+            "spo_number": allocation.spo_number, "spo_line_number": allocation.spo_line_number,
+            "qty": 100,
+            # R29 addendum: this line drew the SPO off the plain WALK (no placement
+            # link), so it names no order inquiry at all.
+            "oi_number": None, "oi_id": None,
+        }
+    ]
+
+    supply_row = cell["supply"][0]
+    assert supply_row["spo_number"] == allocation.spo_number
+    assert supply_row["spo_line_number"] == allocation.spo_line_number
+    assert supply_row["assigned_to"] == [
+        {"so_number": f"{marker}-SO1", "line_no": 2, "qty": 100},
+    ]
+
+
+def test_a_pinned_source_names_the_order_inquiry_it_came_through(scm_app):
+    """R29 addendum (owner, 24 Sep): a placement link is an `order_inquiry_links` row -
+    part of an OI row's quantity, on one document line, and the OI row itself points at
+    the SO line - so a PINNED source names the order inquiry it came through.
+    `assigned_from` entries of kind spo/po that come from a placement carry `oi_number`
+    and `oi_id` (the OI header the row belongs to). RED today: neither field exists on
+    `assigned_from` at all (which itself does not exist before this same red round).
+    """
+    app, db = _client(scm_app)
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    product = _product(db, f"{marker}-A")
+    due = _months_ahead(1)
+    order, core_line = _demand(
+        db, product, warehouse, qty=50, required_date=due, so_number=f"{marker}-SO1",
+    )
+    project_order, project_line = _project_line_for(db, core_line)
+    allocation = _spo(db, product, warehouse, qty=50, arrives=due)
+    inquiry, _row, _link = _order_back_link_on_spo(
+        db, project_order, project_line, allocation=allocation, qty=50,
+    )
+    db.flush()
+
+    with TestClient(app) as c:
+        cell = c.get(f"{BASE}/{product.id}/cell", params={"month": month_key(due)}).json()
+
+    demand_line = cell["demand"][0]
+    assert demand_line["status"] == "pinned"
+    assert demand_line["assigned_from"] == [
+        {
+            "kind": "spo", "ref": f"SPO {allocation.spo_number}",
+            "spo_number": allocation.spo_number, "spo_line_number": allocation.spo_line_number,
+            "qty": 50, "oi_number": inquiry.inquiry_no, "oi_id": str(inquiry.id),
+        }
+    ]
 
 
 # --------------------------------------------------------------------------- AC-S2-7
@@ -694,7 +952,11 @@ def test_the_cell_lists_the_demand_with_its_bin_and_the_supply_with_its_assignme
     # and late. Short would outrank late if anything were left over (`supply_assignment`).
     assert line["assigned_qty"] == 100
     assert line["status"] == "late"
-    assert warehouse.warehouse_code in line["assigned_source"]
+    # R29: `assigned_source` (free text) is replaced by `assigned_from`, one linked entry
+    # per source - two here, the on-hand bin and the SPO.
+    on_hand_sources = [e for e in line["assigned_from"] if e["kind"] == "on_hand"]
+    assert len(on_hand_sources) == 1
+    assert warehouse.warehouse_code in on_hand_sources[0]["ref"]
 
     # The on hand sits in the CURRENT month, so this month's supply is the SPO only.
     current = c_get_supply(app, product, month_key(TODAY))
@@ -708,7 +970,17 @@ def test_the_cell_lists_the_demand_with_its_bin_and_the_supply_with_its_assignme
     assert current[0]["date"] == TODAY.isoformat()
     assert current[0]["bought_for"] is None
     assert current[0]["overdue"] is False
-    assert current[0]["assigned_to"] == [{"so_number": f"{marker}-SO1", "qty": 40}]
+    # `line_no` is the seeded core line's own AutoCount `Seq` - `None` here since `_demand`
+    # never sets one. RED on purpose (owner ruling, 25 Sep): every other field on this
+    # contract is ALWAYS present, null when unknown (`response_model` discipline) - a key
+    # that appears and disappears is what breaks FE typing. Today the service OMITS the
+    # key entirely instead (`stock_debt_service.py`:
+    # `**({"line_no": line_no} if line_no is not None else {})`) and the route carries
+    # `response_model_exclude_unset=True` to make that stick - the coder is to emit the
+    # key unconditionally and drop `exclude_unset`.
+    assert current[0]["assigned_to"] == [
+        {"so_number": f"{marker}-SO1", "qty": 40, "line_no": None},
+    ]
 
 
 def c_get_supply(app, product, month) -> list:
@@ -716,6 +988,55 @@ def c_get_supply(app, product, month) -> list:
         return c.get(f"{BASE}/{product.id}/cell", params={"month": month}).json()[
             "supply"
         ]
+
+
+def test_the_cell_states_ordered_delivered_and_outstanding(scm_app):
+    """R22 (owner, 24 Sep): the Demand grid states Ordered/Delivered/Outstanding, not
+    Outstanding (`open_qty`) alone. Delivered = `qty_delivered`; Outstanding is `open_qty`
+    unchanged (Ordered minus Delivered, floored at 0) - RED today because the route's
+    dict/schema carries neither `qty_ordered` nor `qty_delivered` at all, so a
+    `response_model` that has not declared them drops them silently.
+    """
+    app, db = _client(scm_app)
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    product = _product(db, f"{marker}-A")
+    due = _months_ahead(1)
+    _demand(
+        db, product, warehouse, qty=100, qty_delivered=30, required_date=due,
+        so_number=f"{marker}-SO1",
+    )
+    db.flush()
+
+    with TestClient(app) as c:
+        got = c.get(f"{BASE}/{product.id}/cell", params={"month": month_key(due)})
+    assert got.status_code == 200, got.text
+    line = got.json()["demand"][0]
+    assert line["qty_ordered"] == 100
+    assert line["qty_delivered"] == 30
+    assert line["open_qty"] == 70
+
+
+def test_the_cell_states_ordered_as_the_cs_required_quantity_when_set(scm_app):
+    """R22: `qty_required` (the Order Inquiry sheet's own CS statement) wins over
+    `qty_ordered` for the drill's Ordered column - the same coalesce `demand_qty()` and
+    `plan_qty()` already apply elsewhere (`app/services/scm/demand.py`).
+    """
+    app, db = _client(scm_app)
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    product = _product(db, f"{marker}-A")
+    due = _months_ahead(1)
+    _demand(
+        db, product, warehouse, qty=60, qty_required=80, required_date=due,
+        so_number=f"{marker}-SO1",
+    )
+    db.flush()
+
+    with TestClient(app) as c:
+        got = c.get(f"{BASE}/{product.id}/cell", params={"month": month_key(due)})
+    assert got.status_code == 200, got.text
+    assert got.json()["demand"][0]["qty_ordered"] == 80
 
 
 def test_a_dead_document_is_listed_and_counted_as_nothing(scm_app):
@@ -979,13 +1300,20 @@ def test_a_hold_at_a_pool_or_an_unflagged_bin_still_reads_pinned(scm_app):
     by_so = {line["so_number"]: line for line in cell["demand"]}
     assert by_so[f"{marker}-SO-POOL"]["status"] == "pinned"
     assert by_so[f"{marker}-SO-POOL"]["assigned_qty"] == 40
-    assert by_so[f"{marker}-SO-POOL"]["assigned_source"] == (
-        f"On hand {pool.warehouse_code}"
-    )
+    # R29: one `assigned_from` entry, naming the pool bin the hold pinned.
+    assert by_so[f"{marker}-SO-POOL"]["assigned_from"] == [
+        {
+            "kind": "on_hand", "ref": f"On hand {pool.warehouse_code}",
+            "spo_number": None, "spo_line_number": None, "qty": 40,
+        }
+    ]
     assert by_so[f"{marker}-SO-HP"]["status"] == "pinned"
-    assert by_so[f"{marker}-SO-HP"]["assigned_source"] == (
-        f"On hand {unflagged.warehouse_code}"
-    )
+    assert by_so[f"{marker}-SO-HP"]["assigned_from"] == [
+        {
+            "kind": "on_hand", "ref": f"On hand {unflagged.warehouse_code}",
+            "spo_number": None, "spo_line_number": None, "qty": 30,
+        }
+    ]
     # And the month agrees with the drill: 70 pinned against 70 owed owes nothing.
     row = _row_of(board, product.product_code)
     assert {m["key"]: m["balance"] for m in row["months"]}[month_key(due)] == 0
@@ -1020,7 +1348,12 @@ def test_a_donor_holds_stock_in_another_group_and_group_bb_still_reads_it_pinned
 
     assert cell["demand"][0]["status"] == "pinned"
     assert cell["demand"][0]["assigned_qty"] == 25
-    assert cell["demand"][0]["assigned_source"] == f"On hand {ib.warehouse_code}"
+    assert cell["demand"][0]["assigned_from"] == [
+        {
+            "kind": "on_hand", "ref": f"On hand {ib.warehouse_code}",
+            "spo_number": None, "spo_line_number": None, "qty": 25,
+        }
+    ]
 
 
 def test_an_allocation_that_was_never_confirmed_holds_nothing(scm_app):
@@ -1259,7 +1592,13 @@ def test_a_debt_stays_in_the_month_it_was_raised_in(scm_app):
     assert balances[after] == 0
     assert balances[month_key(_months_ahead(3))] == 0
     # The cell that reads 0 opens onto nothing, which is now the same statement twice.
-    assert drill == {"demand": [], "supply": []}
+    # Not exact-equality any more: R25 added `demand_total_qty` / `supply_total_qty` to
+    # every cell response, so this checks the two lists and the two new totals by name
+    # rather than pinning the whole envelope shape.
+    assert drill["demand"] == []
+    assert drill["supply"] == []
+    assert drill["demand_total_qty"] == 0
+    assert drill["supply_total_qty"] == 0
 
 
 def test_supply_arriving_after_the_debt_is_spare_in_its_own_month(scm_app):
@@ -1424,3 +1763,894 @@ def test_on_hand_is_stamped_with_the_callers_as_of_not_the_clock(scm_app):
     assert events and events[0].at == TODAY - timedelta(days=10)
     assert line.status == "covered", "the floor was there on the simulated day"
     assert line.short_at_date == 0
+
+
+# --------------------------------------------------------------------------- 24 Sep slice:
+# cutoff / supplier / book filters, totals, suppliers, sheet_counts (AC-1..AC-11)
+#
+# WRITTEN BEFORE THE IMPLEMENTATION EXISTS (Phase 2 is test-first): `cutoff`, `supplier_id`
+# and `book` are not yet accepted by either route, and `total`, `totals`, `suppliers` and
+# `sheet_counts` are not yet on the schema. FastAPI ignores an undeclared query param rather
+# than 422ing it, so every test below is red on a WRONG VALUE (a field missing from the
+# dict, or a row/balance the filter should have dropped or kept), never on a collection or
+# fixture error.
+
+
+def _supplier(db, code: str):
+    from app.models.procurement import Supplier
+
+    row = Supplier(
+        id=_u(), supplier_code=code, supplier_name=f"{code} supplier", is_active=True,
+        company_id=SORENTO_COMPANY_ID,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _po(db, product, warehouse, supplier, *, issue_date, status="active"):
+    from app.models.procurement import PurchaseOrder, PurchaseOrderLine
+
+    po = PurchaseOrder(
+        id=_u(), po_number=f"ZZTPO{_u()[:6]}".upper(),
+        supplier_id=supplier.id if supplier else None,
+        issue_date=issue_date, status=status, company_id=SORENTO_COMPANY_ID,
+    )
+    db.add(po)
+    db.flush()
+    line = PurchaseOrderLine(
+        id=_u(), purchase_order_id=po.id, product_id=product.id, warehouse_id=warehouse.id,
+        qty_ordered=Decimal("10"), qty_received=Decimal("0"), line_status="open",
+        company_id=SORENTO_COMPANY_ID,
+    )
+    db.add(line)
+    db.flush()
+    return po, line
+
+
+def _category(db, code: str):
+    from app.models.product import ProductCategory
+
+    row = ProductCategory(id=_u(), category_code=code, category_name=f"{code} category")
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _product_with_category(db, code: str, category_id):
+    from app.models.product import Product
+
+    uom_id = db.execute(
+        text("SELECT base_uom_id FROM products WHERE base_uom_id IS NOT NULL LIMIT 1")
+    ).scalar()
+    row = Product(
+        id=_u(), product_code=code, product_name=f"{code} basin", category_id=category_id,
+        base_uom_id=uom_id, list_price=Decimal("10.00"), company_id=SORENTO_COMPANY_ID,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def test_cutoff_drops_demand_due_after_it(scm_app):
+    """AC-1/R14: `date_to` on the SALES ORDER's required date drops every line due after
+    it - not folded into TBA, not shown at all. A product whose only open line falls after
+    `date_to` owes nothing under it, so `only_debt=true` drops the whole row, and the axis
+    (a property of the filtered set) never reaches into a month nothing in it needs. `cutoff`
+    is REMOVED (R14), not aliased - passing it does nothing."""
+    app, db = _client(scm_app)
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    inside = _product(db, f"{marker}-INSIDE")
+    outside = _product(db, f"{marker}-OUTSIDE")
+    _demand(
+        db, inside, warehouse, qty=10, required_date=date(2026, 11, 10),
+        so_number=f"{marker}-SO1",
+    )
+    _demand(
+        db, outside, warehouse, qty=10, required_date=date(2026, 12, 5),
+        so_number=f"{marker}-SO2",
+    )
+    # AC-1 (reviewer round): supply landing well past date_to is still supply (AC-3) and
+    # would otherwise stretch a row's own `months` past it - the axis cap must clamp the
+    # COLUMN, not merely rely on there being no later demand to draw one out.
+    _spo(db, inside, warehouse, qty=5, arrives=date(2027, 1, 15))
+    db.flush()
+
+    with TestClient(app) as c:
+        body = c.get(
+            BASE, params={"query": marker, "date_to": "2026-11-30", "only_debt": True}
+        ).json()
+
+    codes = [row["product_code"] for row in body["data"]]
+    assert inside.product_code in codes
+    assert outside.product_code not in codes
+    assert body["months"][-1] == "2026-11"
+
+
+def test_date_from_drops_demand_due_before_it(scm_app):
+    """AC-1b/R14: `date_from` drops every line due BEFORE it, the mirror of `date_to`. A
+    line due 20 Oct 2026 is dropped under `date_from=2026-11-01`, and the axis (a property
+    of the whole filtered set) STARTS at `date_from`'s month rather than the current
+    month - `max(current month, date_from's month)`, so a range that starts in the future
+    does not draw an empty run of months nothing in it needs."""
+    app, db = _client(scm_app)
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    early = _product(db, f"{marker}-EARLY")
+    late = _product(db, f"{marker}-LATE")
+    _demand(
+        db, early, warehouse, qty=10, required_date=date(2026, 10, 20),
+        so_number=f"{marker}-SO1",
+    )
+    _demand(
+        db, late, warehouse, qty=10, required_date=date(2026, 11, 10),
+        so_number=f"{marker}-SO2",
+    )
+    db.flush()
+
+    with TestClient(app) as c:
+        body = c.get(
+            BASE, params={"query": marker, "date_from": "2026-11-01", "only_debt": True}
+        ).json()
+
+    codes = [row["product_code"] for row in body["data"]]
+    assert early.product_code not in codes
+    assert late.product_code in codes
+    assert body["months"][0] == "2026-11"
+
+
+def test_cutoff_keeps_undated_and_unlocated(scm_app):
+    """AC-2/A3/R14: a `date_from`/`date_to` range has no date to test an undated or
+    unlocated line against, so both survive it unchanged; TBA reads 0 once the policy's
+    `tba_date_from` (2029-01-01 by default) sits after `date_to`, because every TBA line
+    is dated on or after it."""
+    app, db = _client(scm_app)
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    product = _product(db, f"{marker}-A")
+    _demand(
+        db, product, warehouse, qty=12, required_date=None, so_number=f"{marker}-NODATE"
+    )
+    _order, unlocated_line = _demand(
+        db, product, warehouse, qty=15, required_date=date(2026, 11, 10),
+        so_number=f"{marker}-NOWHERE",
+    )
+    unlocated_line.warehouse_id = None
+    _demand(
+        db, product, warehouse, qty=60, required_date=date(2029, 6, 1),
+        so_number=f"{marker}-TBA",
+    )
+    db.flush()
+
+    with TestClient(app) as c:
+        body = c.get(
+            BASE, params={"query": marker, "date_to": "2026-11-30", "only_debt": False}
+        ).json()
+
+    row = _row_of(body, product.product_code)
+    assert row["undated"] == -12
+    assert row["unlocated"] == -15
+    assert row["tba"] == 0
+
+
+def test_cutoff_supply_after_due_still_covers(scm_app):
+    """AC-3/A2/R14: a line due 10 Nov, covered by an SPO landing 20 Nov, ends `late` - R37
+    books the shortfall in the line's OWN month regardless of the fact it is eventually
+    covered (`test_supply_arriving_after_the_debt_is_spare_in_its_own_month` proves the
+    same rule), so November reads -20 whether or not `date_to` is applied. AC-3's actual
+    claim is narrower than "the month reads 0": `date_to` must not change how the walk
+    ASSIGNS - the SPO still covers the line, and the range leaves the Nov balance exactly
+    as it is without one."""
+    app, db = _client(scm_app)
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    product = _product(db, f"{marker}-A")
+    _demand(
+        db, product, warehouse, qty=20, required_date=date(2026, 11, 10),
+        so_number=f"{marker}-SO1",
+    )
+    _spo(db, product, warehouse, qty=20, arrives=date(2026, 11, 20))
+    db.flush()
+
+    with TestClient(app) as c:
+        with_date_to = c.get(
+            BASE, params={"query": marker, "date_to": "2026-11-30", "only_debt": False}
+        ).json()
+        without_date_to = c.get(
+            BASE, params={"query": marker, "only_debt": False}
+        ).json()
+        cell = c.get(
+            f"{BASE}/{product.id}/cell",
+            params={"month": "2026-11", "date_to": "2026-11-30"},
+        ).json()
+
+    balances_with = {
+        m["key"]: m["balance"]
+        for m in _row_of(with_date_to, product.product_code)["months"]
+    }
+    balances_without = {
+        m["key"]: m["balance"]
+        for m in _row_of(without_date_to, product.product_code)["months"]
+    }
+    assert balances_with["2026-11"] == -20
+    assert balances_without["2026-11"] == -20
+    assert balances_with["2026-11"] == balances_without["2026-11"]
+
+    assert len(cell["demand"]) == 1
+    line = cell["demand"][0]
+    assert line["so_number"] == f"{marker}-SO1"
+    assert line["status"] == "late"
+    assert line["assigned_qty"] == 20
+    assert line["short_qty"] == 20
+
+
+def test_supplier_filter_reads_newest_po_line(scm_app):
+    """AC-4/A1/R15: the LAST supplier is the one on the product's newest PURCHASE ORDER
+    line - newest by issue date - never the SPO's, whatever it names. A product with no PO
+    falls back to its primary-flagged product supplier; a product with neither files under
+    `supplier_ids=none`. `supplier_ids` is a MULTI select (R15): a product matches when its
+    last supplier is ANY of the values passed, and `none` is one more value alongside real
+    ids, not a sentinel that excludes them."""
+    app, db = _client(scm_app)
+    from app.models.procurement import ProductSupplier
+
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    s1 = _supplier(db, f"ZZTS1{_u()[:5]}".upper())
+    s2 = _supplier(db, f"ZZTS2{_u()[:5]}".upper())
+    s3 = _supplier(db, f"ZZTS3{_u()[:5]}".upper())
+    s4 = _supplier(db, f"ZZTS4{_u()[:5]}".upper())
+    primary = _supplier(db, f"ZZTSP{_u()[:5]}".upper())
+
+    product_a = _product(db, f"{marker}-A")
+    _demand(
+        db, product_a, warehouse, qty=5, required_date=date(2026, 11, 10),
+        so_number=f"{marker}-SOA",
+    )
+    _po(db, product_a, warehouse, s2, issue_date=date(2026, 1, 1))
+    _po(db, product_a, warehouse, s1, issue_date=date(2026, 6, 1))
+    # AC-4 (reviewer round): a NEWER PO than S1's own, but CANCELLED - A1 names the
+    # PO's own status, so a cancelled document must not outrank the newest LIVE one
+    # however recent it is.
+    _po(db, product_a, warehouse, s4, issue_date=date(2026, 9, 1), status="cancelled")
+    spo_row = _spo(
+        db, product_a, warehouse, qty=5, arrives=date(2026, 11, 5),
+        spo_number=f"{marker}-SPO",
+    )
+    spo_row.supplier_id = s3.id
+
+    product_b = _product(db, f"{marker}-B")
+    _demand(
+        db, product_b, warehouse, qty=5, required_date=date(2026, 11, 10),
+        so_number=f"{marker}-SOB",
+    )
+    db.add(
+        ProductSupplier(
+            id=_u(), product_id=product_b.id, supplier_id=primary.id,
+            standard_lead_time_days=7, is_primary_supplier=True,
+            company_id=SORENTO_COMPANY_ID,
+        )
+    )
+
+    product_c = _product(db, f"{marker}-C")
+    _demand(
+        db, product_c, warehouse, qty=5, required_date=date(2026, 11, 10),
+        so_number=f"{marker}-SOC",
+    )
+
+    # A fourth product whose own LAST supplier is s2 - the "third, dropped" product for
+    # the multi-select case below (s2 is otherwise only the OLDER, outranked PO on
+    # product_a, never anyone's actual last supplier until now).
+    product_d = _product(db, f"{marker}-D")
+    _demand(
+        db, product_d, warehouse, qty=5, required_date=date(2026, 11, 10),
+        so_number=f"{marker}-SOD",
+    )
+    _po(db, product_d, warehouse, s2, issue_date=date(2026, 1, 1))
+    db.flush()
+
+    with TestClient(app) as c:
+        under_s1 = c.get(
+            BASE, params={"query": marker, "supplier_ids": [s1.id], "only_debt": False}
+        ).json()
+        under_s2 = c.get(
+            BASE, params={"query": marker, "supplier_ids": [s2.id], "only_debt": False}
+        ).json()
+        under_s3 = c.get(
+            BASE, params={"query": marker, "supplier_ids": [s3.id], "only_debt": False}
+        ).json()
+        under_primary = c.get(
+            BASE,
+            params={"query": marker, "supplier_ids": [primary.id], "only_debt": False},
+        ).json()
+        under_none = c.get(
+            BASE, params={"query": marker, "supplier_ids": ["none"], "only_debt": False}
+        ).json()
+        # R15: two ids selected together keeps BOTH their products, and drops the third
+        # (product_d, last supplier s2, which is in neither set).
+        under_multi = c.get(
+            BASE,
+            params={
+                "query": marker, "supplier_ids": [s1.id, primary.id],
+                "only_debt": False,
+            },
+        ).json()
+        # R15: `none` alongside a real id keeps BOTH the no-supplier product and that
+        # id's product.
+        under_none_and_s1 = c.get(
+            BASE,
+            params={
+                "query": marker, "supplier_ids": ["none", s1.id], "only_debt": False,
+            },
+        ).json()
+
+    assert [r["product_code"] for r in under_s1["data"]] == [product_a.product_code]
+    assert product_a.product_code not in [r["product_code"] for r in under_s2["data"]]
+    assert product_a.product_code not in [r["product_code"] for r in under_s3["data"]]
+    assert [r["product_code"] for r in under_primary["data"]] == [product_b.product_code]
+    assert [r["product_code"] for r in under_none["data"]] == [product_c.product_code]
+
+    assert sorted(r["product_code"] for r in under_multi["data"]) == sorted(
+        [product_a.product_code, product_b.product_code]
+    )
+    assert product_d.product_code not in [r["product_code"] for r in under_multi["data"]]
+
+    assert sorted(r["product_code"] for r in under_none_and_s1["data"]) == sorted(
+        [product_a.product_code, product_c.product_code]
+    )
+
+
+def test_last_supplier_stays_within_company_scope(scm_app):
+    """AC-4b - a REGRESSION GUARD, not a red test. A security review raised the concern
+    that `_last_supplier_map`'s window query, wrapped in `.subquery()`, could lose the
+    company-scope predicate and let a newer purchase-order line from ANOTHER company
+    outrank the caller's own. Measured 24 Sep 2026 with a real two-company seed (a fresh
+    `Company` row, a `PurchaseOrder`/`PurchaseOrderLine` explicitly stamped to it) run
+    through the real `scm_app` harness, SQL traced via `before_cursor_execute`: on this
+    SQLAlchemy version, `do_orm_execute`'s `with_loader_criteria(..., include_aliases=
+    True)` DOES reach into the window subquery - the compiled SQL carries
+    `purchase_orders.company_id IN (...)` inside the JOIN, in both directions tried
+    (the other company owning the PO and its line; the other company owning only the
+    PO with the line re-stamped to the caller's own company). `_last_supplier_map`
+    already excludes the other company's newer PO correctly, so this test is GREEN
+    today - it exists to catch a REGRESSION (a SQLAlchemy upgrade, or a rewritten query
+    shape, that stops threading the criteria through the subquery), at which point an
+    explicit `company_id` predicate would need adding to the query itself and this test
+    would go red until it did.
+    """
+    app, db = _client(scm_app)
+    from app.models.company import Company
+    from app.models.procurement import PurchaseOrder, PurchaseOrderLine
+
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    product = _product(db, f"{marker}-A")
+    _demand(
+        db, product, warehouse, qty=5, required_date=date(2026, 11, 10),
+        so_number=f"{marker}-SO1",
+    )
+
+    supplier_s = _supplier(db, f"ZZTS{_u()[:6]}".upper())
+
+    other_company = Company(
+        id=_u(), code=f"ZZT{_u()[:8]}".upper()[:20], name=f"{marker} other company",
+    )
+    db.add(other_company)
+    db.flush()
+    supplier_other = _supplier(db, f"ZZTOTH{_u()[:5]}".upper())
+    # Explicitly stamped to the OTHER company - the auto-stamp leaves an already-set
+    # `company_id` alone (`app.services.company_scope._stamp_scope`), so this persists
+    # under `other_company` even though the active session scope is Sorento.
+    supplier_other.company_id = other_company.id
+    db.flush()
+
+    # The caller's OWN, older PO - the answer this guard says must win.
+    po_own = PurchaseOrder(
+        id=_u(), po_number=f"ZZTPO{_u()[:6]}".upper(), supplier_id=supplier_s.id,
+        issue_date=date(2026, 1, 1), status="active", company_id=SORENTO_COMPANY_ID,
+    )
+    db.add(po_own)
+    db.flush()
+    db.add(
+        PurchaseOrderLine(
+            id=_u(), purchase_order_id=po_own.id, product_id=product.id,
+            warehouse_id=warehouse.id, qty_ordered=Decimal("10"),
+            qty_received=Decimal("0"), line_status="open",
+            company_id=SORENTO_COMPANY_ID,
+        )
+    )
+
+    # A NEWER PO owned by the OTHER company, naming the SAME product - invisible to the
+    # caller's scope, and yet a broken window query could rank it first anyway.
+    po_other = PurchaseOrder(
+        id=_u(), po_number=f"ZZTPO{_u()[:6]}".upper(), supplier_id=supplier_other.id,
+        issue_date=date(2026, 6, 1), status="active", company_id=other_company.id,
+    )
+    db.add(po_other)
+    db.flush()
+    db.add(
+        PurchaseOrderLine(
+            id=_u(), purchase_order_id=po_other.id, product_id=product.id,
+            warehouse_id=warehouse.id, qty_ordered=Decimal("10"),
+            qty_received=Decimal("0"), line_status="open", company_id=other_company.id,
+        )
+    )
+    db.flush()
+
+    with TestClient(app) as c:
+        body = c.get(BASE, params={"query": marker, "only_debt": False}).json()
+
+    row = _row_of(body, product.product_code)
+    assert row["supplier_id"] == str(supplier_s.id), (
+        "the other company's newer PO must not outrank the caller's own"
+    )
+    assert row["supplier_name"] == supplier_s.supplier_name
+    assert body["suppliers"] == [{"id": str(supplier_s.id), "name": supplier_s.supplier_name}]
+
+
+def test_row_carries_supplier_category_total(scm_app):
+    """AC-5/A5/R17: every row carries `supplier_id`, `supplier_name`, `category_code` and
+    a `total` that sums the row's own months plus `tba` ONLY - `undated` and `unlocated`
+    are dropped from `total` (R17, since the "No date" and "No location" columns leave
+    the screen and the workbook); the row still carries `undated`/`unlocated` themselves,
+    unchanged. This test seeds an undated line specifically so a `total` that still folds
+    it in is caught."""
+    app, db = _client(scm_app)
+    from app.models.procurement import ProductSupplier
+
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    supplier = _supplier(db, f"ZZTSUP{_u()[:5]}".upper())
+    product = _product(db, f"{marker}-A")
+    db.add(
+        ProductSupplier(
+            id=_u(), product_id=product.id, supplier_id=supplier.id,
+            standard_lead_time_days=7, is_primary_supplier=True,
+            company_id=SORENTO_COMPANY_ID,
+        )
+    )
+    _demand(
+        db, product, warehouse, qty=10, required_date=date(2026, 11, 10),
+        so_number=f"{marker}-SO1",
+    )
+    _demand(
+        db, product, warehouse, qty=5, required_date=None, so_number=f"{marker}-NODATE"
+    )
+    db.flush()
+
+    with TestClient(app) as c:
+        body = c.get(BASE, params={"query": marker, "only_debt": False}).json()
+
+    row = _row_of(body, product.product_code)
+    assert row["supplier_id"] == str(supplier.id)
+    assert row["supplier_name"] == supplier.supplier_name
+    assert row["category_code"] == _REF_CATEGORY_CODE
+    assert row["undated"] == -5, "undated itself is unchanged by R17"
+    expected_total = sum(m["balance"] for m in row["months"]) + row["tba"]
+    assert row["total"] == expected_total
+
+
+def test_totals_are_whole_set_and_stable_across_pages(scm_app):
+    """AC-6/A6/R17: the envelope's `totals` sum the WHOLE filtered set, not the page, so a
+    reader turning the page sees the same totals twice; `totals.total` sums months + tba
+    ONLY (R17), never `undated`/`unlocated` - one of the three seeded products carries an
+    undated line specifically so a `totals.total` that still folds it in is caught."""
+    app, db = _client(scm_app)
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    codes = [f"{marker}-A", f"{marker}-B", f"{marker}-C"]
+    for index, code in enumerate(codes):
+        product = _product(db, code)
+        _demand(
+            db, product, warehouse, qty=10 + index, required_date=date(2026, 11, 10),
+            so_number=f"{marker}-SO{code[-1]}",
+        )
+        if index == 0:
+            _demand(
+                db, product, warehouse, qty=3, required_date=None,
+                so_number=f"{marker}-SO{code[-1]}-NODATE",
+            )
+    db.flush()
+
+    with TestClient(app) as c:
+        whole = c.get(
+            BASE, params={"query": marker, "only_debt": False, "limit": 50}
+        ).json()
+        page1 = c.get(
+            BASE, params={"query": marker, "only_debt": False, "page": 1, "limit": 2}
+        ).json()
+        page2 = c.get(
+            BASE, params={"query": marker, "only_debt": False, "page": 2, "limit": 2}
+        ).json()
+
+    expected_month_totals: dict = {}
+    expected_tba = expected_undated = expected_unlocated = expected_total = 0.0
+    for row in whole["data"]:
+        for month in row["months"]:
+            expected_month_totals[month["key"]] = (
+                expected_month_totals.get(month["key"], 0.0) + month["balance"]
+            )
+        expected_tba += row["tba"]
+        expected_undated += row["undated"]
+        expected_unlocated += row["unlocated"]
+        expected_total += sum(m["balance"] for m in row["months"]) + row["tba"]
+
+    for body in (page1, page2):
+        totals = body["totals"]
+        assert totals["months"] == expected_month_totals
+        assert totals["tba"] == expected_tba
+        assert totals["undated"] == expected_undated
+        assert totals["unlocated"] == expected_unlocated
+        assert totals["total"] == expected_total
+    assert page1["totals"] == page2["totals"]
+
+
+def test_suppliers_on_envelope_distinct_sorted_by_name(scm_app):
+    """AC-7: `suppliers` on the envelope is the distinct `{id, name}` of the filtered
+    set's LAST suppliers, sorted by name - a product with no supplier at all contributes
+    nothing to the list."""
+    app, db = _client(scm_app)
+    from app.models.procurement import ProductSupplier
+
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    supplier_z = _supplier(db, f"ZZTSZZ{_u()[:4]}".upper())
+    supplier_z.supplier_name = "Zeta supplier"
+    supplier_a = _supplier(db, f"ZZTSAA{_u()[:4]}".upper())
+    supplier_a.supplier_name = "Alpha supplier"
+    db.flush()
+
+    product_z = _product(db, f"{marker}-Z")
+    db.add(
+        ProductSupplier(
+            id=_u(), product_id=product_z.id, supplier_id=supplier_z.id,
+            standard_lead_time_days=7, is_primary_supplier=True,
+            company_id=SORENTO_COMPANY_ID,
+        )
+    )
+    _demand(
+        db, product_z, warehouse, qty=5, required_date=date(2026, 11, 10),
+        so_number=f"{marker}-SOZ",
+    )
+
+    product_y = _product(db, f"{marker}-Y")
+    db.add(
+        ProductSupplier(
+            id=_u(), product_id=product_y.id, supplier_id=supplier_a.id,
+            standard_lead_time_days=7, is_primary_supplier=True,
+            company_id=SORENTO_COMPANY_ID,
+        )
+    )
+    _demand(
+        db, product_y, warehouse, qty=5, required_date=date(2026, 11, 10),
+        so_number=f"{marker}-SOY",
+    )
+
+    product_none = _product(db, f"{marker}-N")
+    _demand(
+        db, product_none, warehouse, qty=5, required_date=date(2026, 11, 10),
+        so_number=f"{marker}-SON",
+    )
+    db.flush()
+
+    with TestClient(app) as c:
+        body = c.get(BASE, params={"query": marker, "only_debt": False}).json()
+        under_s1 = c.get(
+            BASE,
+            params={
+                "query": marker, "only_debt": False,
+                "supplier_ids": [str(supplier_a.id)],
+            },
+        ).json()
+
+    assert body["suppliers"] == [
+        {"id": str(supplier_a.id), "name": "Alpha supplier"},
+        {"id": str(supplier_z.id), "name": "Zeta supplier"},
+    ]
+
+    # AC-7c (reviewer round): `suppliers` is computed off the set BEFORE the
+    # `supplier_ids` filter narrows it, so the select can switch supplier without first
+    # clearing itself - narrowing to Alpha must not make Zeta vanish from the options,
+    # even though Zeta's own product is dropped from `data`. Every entry keeps a real
+    # name, never an id standing in for one.
+    assert [r["product_code"] for r in under_s1["data"]] == [product_y.product_code]
+    assert under_s1["suppliers"] == body["suppliers"]
+    for entry in under_s1["suppliers"]:
+        assert entry["name"], f"{entry['id']} has no name"
+
+
+def test_sheet_counts_exact_with_none_buckets(scm_app):
+    """AC-7b: `sheet_counts` states exactly how many sheets an export of the CURRENT
+    filtered set would produce, none-buckets included - and it rides the envelope, so it
+    is the same on every page."""
+    app, db = _client(scm_app)
+    from app.models.procurement import ProductSupplier
+
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    cat_x = _category(db, f"{marker}-CATX")
+    cat_y = _category(db, f"{marker}-CATY")
+    supplier_1 = _supplier(db, f"ZZTS1{_u()[:5]}".upper())
+    supplier_2 = _supplier(db, f"ZZTS2{_u()[:5]}".upper())
+
+    p1 = _product_with_category(db, f"{marker}-P1", cat_x.id)
+    db.add(
+        ProductSupplier(
+            id=_u(), product_id=p1.id, supplier_id=supplier_1.id,
+            standard_lead_time_days=7, is_primary_supplier=True,
+            company_id=SORENTO_COMPANY_ID,
+        )
+    )
+    _demand(
+        db, p1, warehouse, qty=5, required_date=date(2026, 11, 10), so_number=f"{marker}-SO1"
+    )
+
+    p2 = _product_with_category(db, f"{marker}-P2", cat_y.id)
+    db.add(
+        ProductSupplier(
+            id=_u(), product_id=p2.id, supplier_id=supplier_2.id,
+            standard_lead_time_days=7, is_primary_supplier=True,
+            company_id=SORENTO_COMPANY_ID,
+        )
+    )
+    _demand(
+        db, p2, warehouse, qty=5, required_date=date(2026, 11, 10), so_number=f"{marker}-SO2"
+    )
+
+    # `products.category_id` is NOT NULL (the FK is mandatory), so "no category" is
+    # represented the same way `low_stock_report_service._master_map` already treats it -
+    # a BLANK `category_code` - rather than a null FK, which the schema does not allow.
+    no_category = _category(db, "")
+    p3 = _product_with_category(db, f"{marker}-P3", no_category.id)
+    _demand(
+        db, p3, warehouse, qty=5, required_date=date(2026, 11, 10), so_number=f"{marker}-SO3"
+    )
+    db.flush()
+
+    with TestClient(app) as c:
+        page1 = c.get(
+            BASE, params={"query": marker, "only_debt": False, "page": 1, "limit": 2}
+        ).json()
+        page2 = c.get(
+            BASE, params={"query": marker, "only_debt": False, "page": 2, "limit": 2}
+        ).json()
+
+    # 2 named suppliers + "No supplier" (p3) = 3; 2 named categories + "No category"
+    # (p3) = 3; distinct (supplier, category) pairs present: (s1, catx), (s2, caty),
+    # (None, None) = 3.
+    for body in (page1, page2):
+        assert body["sheet_counts"] == {"supplier": 3, "category": 3, "supplier_category": 3}
+
+
+def test_book_all_project_retail(scm_app):
+    """AC-8/R1/A4: `book=all` (the new default) spans flagged project bins AND site
+    pools - a line at each shows on the SAME product row, and pool stock covers only the
+    pool line while project stock covers only the project line. `book=project` reproduces
+    the OLD flagged-bins-only view (the pool-booked line is out of that span entirely, not
+    even as unlocated); `book=retail` shows pool demand and supply only and ignores
+    `group`."""
+    app, db = _client(scm_app)
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    bb = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    pool = _warehouse(db, f"ZZTPOOL{_u()[:5]}", planning=False)
+    bb.pool_warehouse_id = pool.id
+    db.flush()
+    product = _product(db, f"{marker}-A")
+    due = date(2026, 11, 10)
+    _demand(db, product, bb, qty=30, required_date=due, so_number=f"{marker}-SO-PROJECT")
+    _demand(db, product, pool, qty=20, required_date=due, so_number=f"{marker}-SO-POOL")
+    _stock(db, product, pool, 500)
+    db.flush()
+
+    with TestClient(app) as c:
+        book_all = c.get(
+            BASE, params={"query": marker, "book": "all", "only_debt": False}
+        ).json()
+        today_default = c.get(BASE, params={"query": marker, "only_debt": False}).json()
+        book_project = c.get(
+            BASE, params={"query": marker, "book": "project", "only_debt": False}
+        ).json()
+        book_retail = c.get(
+            BASE, params={"query": marker, "book": "retail", "only_debt": False}
+        ).json()
+        book_retail_grouped = c.get(
+            BASE,
+            params={
+                "query": marker, "book": "retail", "group": "BB", "only_debt": False,
+            },
+        ).json()
+
+    # The new default (no `book` at all) is `book=all`.
+    assert today_default == book_all
+
+    row_all = _row_of(book_all, product.product_code)
+    balances_all = {m["key"]: m["balance"] for m in row_all["months"]}
+    # The project line is short its whole 30 (no stock in the project span); the pool's
+    # 500 less the 20 its own line drew is spare in the CURRENT month, never the
+    # project's.
+    assert balances_all[month_key(due)] == -30
+    assert balances_all[month_key(TODAY)] == 480
+
+    row_project = _row_of(book_project, product.product_code)
+    balances_project = {m["key"]: m["balance"] for m in row_project["months"]}
+    # `book=project`: the pool-booked line is out of this span entirely (a named bin the
+    # span does not hold, not "no bin"), so only the project shortfall shows.
+    assert balances_project[month_key(due)] == -30
+    assert balances_project[month_key(TODAY)] == 0
+
+    row_retail = _row_of(book_retail, product.product_code)
+    balances_retail = {m["key"]: m["balance"] for m in row_retail["months"]}
+    assert balances_retail[month_key(due)] == 0
+    assert balances_retail[month_key(TODAY)] == 480
+    assert book_retail_grouped == book_retail
+
+
+def test_pool_seal_both_directions(scm_app):
+    """AC-8b (reviewer round): the previous test's project bin carries a `-BB` suffix, so
+    a naive "different group label" filter would ALSO keep the two piles apart - it does
+    not prove the POOL_GROUP seal itself. Here the project bin carries NO suffix at all
+    (`group_of_warehouse_code` returns `None` for it, same as the pool's own code), so the
+    only thing that can be separating them is `assign()`'s `is_pool` flag / POOL_GROUP
+    branch. Proven in BOTH directions: stock at the pool never covers the project line,
+    and stock at the project bin never covers the pool line."""
+    app, db = _client(scm_app)
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    # No hyphen - `group_of_warehouse_code` returns None, exactly like the pool's own
+    # code does. Any separation observed cannot be "different group suffix".
+    project_bin = _warehouse(db, f"ZZTBRW{_u()[:8]}".upper())
+    pool = _warehouse(db, f"ZZTPOOL{_u()[:5]}", planning=False)
+    project_bin.pool_warehouse_id = pool.id
+    db.flush()
+    due = date(2026, 11, 10)
+
+    # First half: stock only at the pool.
+    product_a = _product(db, f"{marker}-A")
+    _demand(
+        db, product_a, project_bin, qty=30, required_date=due,
+        so_number=f"{marker}-SO-PROJECT-A",
+    )
+    _demand(
+        db, product_a, pool, qty=20, required_date=due, so_number=f"{marker}-SO-POOL-A",
+    )
+    _stock(db, product_a, pool, 500)
+
+    # Second half: stock only at the project bin.
+    product_b = _product(db, f"{marker}-B")
+    _demand(
+        db, product_b, project_bin, qty=30, required_date=due,
+        so_number=f"{marker}-SO-PROJECT-B",
+    )
+    _demand(
+        db, product_b, pool, qty=20, required_date=due, so_number=f"{marker}-SO-POOL-B",
+    )
+    _stock(db, product_b, project_bin, 500)
+    db.flush()
+
+    with TestClient(app) as c:
+        body = c.get(
+            BASE, params={"query": marker, "book": "all", "only_debt": False}
+        ).json()
+
+    row_a = _row_of(body, product_a.product_code)
+    balances_a = {m["key"]: m["balance"] for m in row_a["months"]}
+    # Pool has the stock: the project line stays short its whole 30, the pool line is
+    # covered (its own month owes nothing).
+    assert balances_a[month_key(due)] == -30
+
+    row_b = _row_of(body, product_b.product_code)
+    balances_b = {m["key"]: m["balance"] for m in row_b["months"]}
+    # Project bin has the stock: the pool line stays short its whole 20, the project
+    # line is covered - so the ONLY thing left owed in the line's own month is the
+    # pool's 20.
+    assert balances_b[month_key(due)] == -20
+
+
+def test_product_name_null_when_equal_to_code(scm_app):
+    """AC-9/R8: `product_name` is null when it equals `product_code`, case-sensitively
+    and trimmed of surrounding whitespace; a genuinely different name still prints."""
+    app, db = _client(scm_app)
+    from app.models.product import Product
+
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    category_id, uom_id = db.execute(
+        text(
+            "SELECT category_id, base_uom_id FROM products "
+            "WHERE category_id IS NOT NULL AND base_uom_id IS NOT NULL LIMIT 1"
+        )
+    ).first()
+
+    equal_code = f"{marker}-EQ"
+    padded_code = f"{marker}-PAD"
+    different_code = f"{marker}-DIFF"
+    same = Product(
+        id=_u(), product_code=equal_code, product_name=equal_code,
+        category_id=category_id, base_uom_id=uom_id, list_price=Decimal("10"),
+        company_id=SORENTO_COMPANY_ID,
+    )
+    padded = Product(
+        id=_u(), product_code=padded_code, product_name=f" {padded_code} ",
+        category_id=category_id, base_uom_id=uom_id, list_price=Decimal("10"),
+        company_id=SORENTO_COMPANY_ID,
+    )
+    different = Product(
+        id=_u(), product_code=different_code, product_name=f"{different_code} basin",
+        category_id=category_id, base_uom_id=uom_id, list_price=Decimal("10"),
+        company_id=SORENTO_COMPANY_ID,
+    )
+    db.add_all([same, padded, different])
+    db.flush()
+    for product in (same, padded, different):
+        _demand(
+            db, product, warehouse, qty=5, required_date=date(2026, 11, 10),
+            so_number=f"{marker}-SO-{product.product_code[-4:]}",
+        )
+    db.flush()
+
+    with TestClient(app) as c:
+        body = c.get(BASE, params={"query": marker, "only_debt": False}).json()
+
+    assert _row_of(body, equal_code)["product_name"] is None
+    assert _row_of(body, padded_code)["product_name"] is None
+    assert _row_of(body, different_code)["product_name"] == f"{different_code} basin"
+
+
+def test_new_fields_survive_response_model(scm_app):
+    """AC-10: every new field is declared on the schema and reaches the wire - a
+    `response_model` silently drops what it does not declare."""
+    app, db = _client(scm_app)
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    product = _product(db, f"{marker}-A")
+    _demand(
+        db, product, warehouse, qty=5, required_date=date(2026, 11, 10),
+        so_number=f"{marker}-SO1",
+    )
+    db.flush()
+
+    with TestClient(app) as c:
+        body = c.get(BASE, params={"query": marker, "only_debt": False}).json()
+
+    row = _row_of(body, product.product_code)
+    for field in ("supplier_id", "supplier_name", "category_code", "total"):
+        assert field in row, f"{field} missing from the row - response_model dropped it"
+    for field in ("totals", "suppliers", "sheet_counts"):
+        assert field in body, f"{field} missing from the envelope - response_model dropped it"
+
+
+def test_cell_drill_takes_cutoff_and_book(scm_app):
+    """AC-11/R14: the cell drill accepts `date_from`/`date_to` and `book`, and its lines
+    foot with them - a line dropped by the range is not listed, and `book=retail` lists
+    the pool line only."""
+    app, db = _client(scm_app)
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    bb = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    pool = _warehouse(db, f"ZZTPOOL{_u()[:5]}", planning=False)
+    bb.pool_warehouse_id = pool.id
+    db.flush()
+    product = _product(db, f"{marker}-A")
+    due = date(2026, 11, 10)
+    after_range = date(2026, 12, 5)
+    _demand(db, product, bb, qty=10, required_date=due, so_number=f"{marker}-SO-INSIDE")
+    _demand(
+        db, product, bb, qty=10, required_date=after_range,
+        so_number=f"{marker}-SO-OUTSIDE",
+    )
+    _demand(db, product, pool, qty=5, required_date=due, so_number=f"{marker}-SO-POOL")
+    db.flush()
+
+    with TestClient(app) as c:
+        date_to_cell = c.get(
+            f"{BASE}/{product.id}/cell",
+            params={"month": month_key(after_range), "date_to": "2026-11-30"},
+        ).json()
+        retail_cell = c.get(
+            f"{BASE}/{product.id}/cell",
+            params={"month": month_key(due), "book": "retail"},
+        ).json()
+
+    assert date_to_cell["demand"] == []
+    assert [line["so_number"] for line in retail_cell["demand"]] == [
+        f"{marker}-SO-POOL"
+    ]

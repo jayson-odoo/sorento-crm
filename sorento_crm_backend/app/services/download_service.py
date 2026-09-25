@@ -205,6 +205,7 @@ class DownloadService:
         self, download_id: str, *, storage_provider: str, storage_key: str,
         filename: Optional[str] = None,
         row_count_low: Optional[int] = None, row_count_all: Optional[int] = None,
+        row_count: Optional[int] = None, sheet_count: Optional[int] = None,
     ) -> Optional[UserDownload]:
         row = self.get(download_id)
         if row is None:
@@ -222,6 +223,13 @@ class DownloadService:
             row.row_count_low = row_count_low
         if row_count_all is not None:
             row.row_count_all = row_count_all
+        # `row_count` / `sheet_count` (PLAN-stock-debt-filters-totals-export-24sep.md,
+        # AC-12b): the GENERIC pair, same same-transaction reasoning - `stock_debt_xlsx`
+        # is the first writer, low stock's own two columns above are untouched.
+        if row_count is not None:
+            row.row_count = row_count
+        if sheet_count is not None:
+            row.sheet_count = sheet_count
         row.error = None
         row.ready_at = _utc_naive_now()
         self.db.commit()

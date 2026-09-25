@@ -546,6 +546,13 @@ class _SpoRow:
     #: Who it is coming from. Display only, and defaulted so every existing construction of
     #: this row keeps working; the sheet does not read it, the stock drill-down does.
     supplier_name: Optional[str] = None
+    #: R26 (Stock Debt only): the SPO line's RAW `allocated_quantity`/`quantity_received`,
+    #: beside `qty` above which stays the NETTED outstanding balance every other caller
+    #: (the ladder, the board) already reads and keeps reading unchanged. Defaulted so the
+    #: one other construction of this row keeps working; only the Stock Debt drill's own
+    #: Qty/Received/Outstanding columns read either.
+    ordered_qty: Optional[Decimal] = None
+    received_qty: Optional[Decimal] = None
 
 
 @dataclass(frozen=True)
@@ -8944,6 +8951,8 @@ class ProjectSupplyService:
                     qty=balance,
                     overdue_days=spo_supply.overdue_days(arrival, today),
                     supplier_name=row.shipment_supplier_name or row.spo_supplier_name,
+                    ordered_qty=_dec(row.allocated_quantity),
+                    received_qty=_dec(row.quantity_received),
                 )
             )
         return out
