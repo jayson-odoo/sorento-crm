@@ -25,7 +25,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const getOrderInquiryPoDetail = vi.fn();
 const getOrderInquirySpoDetail = vi.fn();
-const listOrderInquiryWorklist = vi.fn();
 
 vi.mock('../../../_shared/services/orderInquiryService', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../_shared/services/orderInquiryService')>();
@@ -33,7 +32,6 @@ vi.mock('../../../_shared/services/orderInquiryService', async (importOriginal) 
     ...actual,
     getOrderInquiryPoDetail: (...args: unknown[]) => getOrderInquiryPoDetail(...args),
     getOrderInquirySpoDetail: (...args: unknown[]) => getOrderInquirySpoDetail(...args),
-    listOrderInquiryWorklist: (...args: unknown[]) => listOrderInquiryWorklist(...args),
   };
 });
 
@@ -51,7 +49,6 @@ function renderWithClient(node: React.ReactElement) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  listOrderInquiryWorklist.mockResolvedValue({ data: [], total: 0, page: 1, limit: 5 });
 });
 
 function headerTitleOf(column: unknown): string | undefined {
@@ -377,33 +374,12 @@ describe('R17: the via-SPO PO cell is clickable again', () => {
 
     expect(await screen.findByText('DAFUYUAN')).toBeInTheDocument();
     expect(getOrderInquiryPoDetail).toHaveBeenCalledWith('po-source-1');
-    expect(listOrderInquiryWorklist).not.toHaveBeenCalled();
     expect(
       screen.queryByText('This link does not reach a purchase order in the system.'),
     ).not.toBeInTheDocument();
   });
 
-  it('falls back to resolving the PO by number when the payload carries no purchase_order_id', async () => {
-    listOrderInquiryWorklist.mockResolvedValue({
-      data: [
-        {
-          id: 'other-row',
-          links: [{ kind: 'po', document: '202607-S0105', po_id: 'po-by-number' }],
-        },
-      ],
-      total: 1,
-      page: 1,
-      limit: 5,
-    });
-    getOrderInquiryPoDetail.mockResolvedValue({
-      id: 'po-by-number',
-      po_number: '202607-S0105',
-      supplier_name: 'CHAOSHENG',
-      status: 'confirmed',
-      expected_date: '2026-09-01',
-      lines: [],
-      allocations: [],
-    });
+  it('Should fix 3 (review round 2): purchase_order_id is resolved on the SERVER now, never a client scan - a payload carrying none reads the same dead-lightbox message as any other unresolved PO', async () => {
     const row = linesRow({
       id: 'row-spo-only-no-id',
       links: [
@@ -422,11 +398,10 @@ describe('R17: the via-SPO PO cell is clickable again', () => {
     renderWithClient(<>{poCell(row)}</>);
     fireEvent.click(screen.getByTestId('document-detail-trigger-202607-S0105'));
 
-    expect(await screen.findByText('CHAOSHENG')).toBeInTheDocument();
-    expect(listOrderInquiryWorklist).toHaveBeenCalledWith(
-      expect.objectContaining({ po_number: '202607-S0105' }),
-    );
-    expect(getOrderInquiryPoDetail).toHaveBeenCalledWith('po-by-number');
+    expect(
+      await screen.findByText('This link does not reach a purchase order in the system.'),
+    ).toBeInTheDocument();
+    expect(getOrderInquiryPoDetail).not.toHaveBeenCalled();
   });
 });
 

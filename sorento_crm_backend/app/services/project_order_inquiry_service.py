@@ -5041,6 +5041,36 @@ class ProjectOrderInquiryService:
                     continue
                 for entry in entries_awaiting_purchase_order_id[str(supply_line_id)]:
                     entry["purchase_order_id"] = str(purchase_order_id)
+        # Should fix 3 (review round 2): the ORDINARY via-SPO case, resolved on the
+        # server rather than by the frontend scanning the worklist by number
+        # (`useOrderInquiryPoIdByNumber`, now retired). The block above only ever
+        # answers for a Sorento-raised SPO carrying its own `po_line_id` FK; most
+        # book-fed allocations carry only the AutoCount pass-through PO NUMBER
+        # (`from_po_number`, `source_po_number` on the wire) with no such FK, and a
+        # PO reached ONLY through an SPO never appears as a `po`-kind link on any
+        # row for the worklist scan to find. One batched `PurchaseOrder.po_number
+        # IN (...)` for the whole page, exactly beside the block above.
+        entries_awaiting_po_by_number: Dict[str, List[Dict[str, Any]]] = {}
+        for entries in out.values():
+            for entry in entries:
+                source_po_number = entry.get("source_po_number")
+                if (
+                    entry.get("kind") == "spo"
+                    and entry.get("purchase_order_id") is None
+                    and source_po_number
+                ):
+                    entries_awaiting_po_by_number.setdefault(source_po_number, []).append(
+                        entry
+                    )
+        if entries_awaiting_po_by_number:
+            numbered_pos = (
+                self.db.query(PurchaseOrder.po_number, PurchaseOrder.id)
+                .filter(PurchaseOrder.po_number.in_(entries_awaiting_po_by_number.keys()))
+                .all()
+            )
+            for po_number, purchase_order_id in numbered_pos:
+                for entry in entries_awaiting_po_by_number.get(po_number, []):
+                    entry["purchase_order_id"] = str(purchase_order_id)
         self._append_derived_spo_entries(out, po_pairs_by_row)
         return out
 

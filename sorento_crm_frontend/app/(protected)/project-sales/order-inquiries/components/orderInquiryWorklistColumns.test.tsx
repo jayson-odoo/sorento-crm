@@ -14,7 +14,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, renderHook, screen, within } from '@testing-library/react';
 import { flexRender, getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import type { ColumnDef } from '@tanstack/react-table';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   orderInquiryTakenRemainingColumns,
   useOrderInquiryWorklistColumns,
@@ -33,23 +33,7 @@ vi.mock('@/components/ui/tooltip', async () => {
   };
 });
 
-// R17: `ViaSpoPoNumber`'s fallback lookup (`useOrderInquiryPoIdByNumber`) reaches this
-// service directly - mocked so a "from PO" cell never fires a real network call.
-const listOrderInquiryWorklist = vi.fn();
-vi.mock('../../_shared/services/orderInquiryService', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../_shared/services/orderInquiryService')>();
-  return {
-    ...actual,
-    listOrderInquiryWorklist: (...args: unknown[]) => listOrderInquiryWorklist(...args),
-  };
-});
-
 import type { OrderInquiryWorklistRow } from '../../_shared/types/orderInquiry.types';
-
-beforeEach(() => {
-  listOrderInquiryWorklist.mockReset();
-  listOrderInquiryWorklist.mockResolvedValue({ data: [], total: 0, page: 1, limit: 5 });
-});
 
 function worklistRow(over: Partial<OrderInquiryWorklistRow> = {}): OrderInquiryWorklistRow {
   return {

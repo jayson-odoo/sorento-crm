@@ -21,7 +21,6 @@ import { formatDateInMalaysia } from '@/lib/helpers';
 import { statusPillClass } from '@/lib/status-pill';
 import {
   useOrderInquiryPoDetail,
-  useOrderInquiryPoIdByNumber,
   useOrderInquirySpoDetail,
 } from '../../_shared/hooks/useOrderInquiry';
 import { formatInquiryQty } from '../../_shared/lib/orderInquiryWorklist';
@@ -694,13 +693,15 @@ function SpoBody({
  * R17 (owner rulings, 25 Sep 2026, hand test on stack C): a "via SPO" PO number -
  * `source_po_number` on an spo-kind link, never a real po-kind link of its own - opens
  * the PO lightbox for that source PO rather than reading dead text (review round 1's
- * should-fix 4 fix, reversed by this ruling). `purchaseOrderId` first, when the payload
- * carries it (`SPOAllocation.po_line_id` resolved to its own header); else looked up by
- * number, through the worklist's own `po_number` filter
- * (`useOrderInquiryPoIdByNumber`) - never the SCM purchase-orders list, which this
- * screen's `projects.projects.view` grant cannot call. Shared by the worklist's
- * backing-documents dialog and the OI detail Lines tab, so the two screens can never
- * disagree about how this number opens.
+ * should-fix 4 fix, reversed by this ruling). `purchaseOrderId` is resolved on the
+ * SERVER now (review round 2 Should fix 3, `links_for_rows`, one batched
+ * `PurchaseOrder.po_number IN (...)` for the whole page) - by `SPOAllocation.po_line_id`
+ * traced to its own header first, then by `from_po_number` itself when there is no such
+ * FK, which is the ordinary book-fed case. The client no longer scans the worklist for
+ * it (`useOrderInquiryPoIdByNumber`, retired - it could never answer for a PO reached
+ * ONLY through an SPO, since that PO holds no `po`-kind link of its own on any row).
+ * Shared by the worklist's backing-documents dialog and the OI detail Lines tab, so the
+ * two screens can never disagree about how this number opens.
  */
 export function ViaSpoPoNumber({
   poNumber,
@@ -709,12 +710,7 @@ export function ViaSpoPoNumber({
   poNumber: string;
   purchaseOrderId?: string | null;
 }) {
-  const { data: resolvedId } = useOrderInquiryPoIdByNumber(poNumber, {
-    enabled: !purchaseOrderId,
-  });
-  return (
-    <OrderInquiryDocumentLink kind="po" document={poNumber} poId={purchaseOrderId ?? resolvedId ?? null} />
-  );
+  return <OrderInquiryDocumentLink kind="po" document={poNumber} poId={purchaseOrderId ?? null} />;
 }
 
 export default OrderInquiryDocumentDialog;

@@ -860,6 +860,61 @@ def test_the_links_payload_pins_purchase_order_id_for_an_spo_link_with_a_resolve
     assert link["source_po_number"] == po["order"].po_number
 
 
+def test_the_links_payload_pins_purchase_order_id_for_an_spo_link_named_by_number_only(api):
+    """Review round 2 Should fix 3. The R17 test above covers a Sorento-raised SPO
+    with its own `po_line_id` FK back to the supply line - the NARROW case. Most
+    book-fed allocations carry only the AutoCount pass-through PO NUMBER
+    (`from_po_number`), no `po_line_id` at all, and a PO reached ONLY through an
+    SPO never appears as a `po`-kind link on any row - the exact case the old
+    client-side `useOrderInquiryPoIdByNumber` scan of the worklist could never
+    answer for. `links_for_rows` now resolves it server side, one batched
+    `PurchaseOrder.po_number IN (...)` query."""
+    client, db, company_id, seeded = api
+    po = _purchase_order(db, company_id)
+    supplier = Supplier(
+        id=_uid(), company_id=company_id, supplier_code=f"ZZT-{_uid()[:8]}",
+        supplier_name=f"{MARKER} SPO SUPPLIER 3",
+    )
+    db.add(supplier)
+    db.flush()
+    product = _product(db, f"ZZT-SPOLINE3-{_uid()[:6]}", f"{MARKER} spo line item 3")
+    allocation = SPOAllocation(
+        id=_uid(), company_id=company_id, spo_number=f"ZZT-SPO-{_uid()[:8]}",
+        spo_line_number=1, product_id=product.id, allocated_quantity=40,
+        quantity_received=0, receipt_status="pending", line_status="open",
+        source_system="scm_upload", supplier_id=supplier.id, po_line_id=None,
+        from_po_number=po["order"].po_number,
+    )
+    db.add(allocation)
+    db.flush()
+    pso = ProjectSalesOrder(
+        id=_uid(), company_id=company_id, provisional_ref=f"ZZT-PSO-{_uid()[:8]}",
+    )
+    db.add(pso)
+    db.flush()
+    inquiry = _inquiry_for(db, company_id, pso)
+    row = OrderInquiryRow(
+        id=_uid(), company_id=company_id, order_inquiry_id=inquiry.id, verb=IV_ORDER,
+        state=INQUIRY_PLACED, qty=Decimal("5"), item_code=product.product_code,
+    )
+    db.add(row)
+    db.flush()
+    db.add(
+        OrderInquiryLink(
+            id=_uid(), company_id=company_id, row_id=row.id,
+            spo_allocation_id=allocation.id, document=allocation.spo_number, qty=row.qty,
+        )
+    )
+    db.commit()
+
+    body = client.get(LIST, params={"limit": 200}).json()
+    wire_row = next(r for r in body["data"] if r["id"] == row.id)
+    [link] = wire_row["links"]
+
+    assert link["purchase_order_id"] == po["order"].id
+    assert link["source_po_number"] == po["order"].po_number
+
+
 def test_supplier_reads_off_an_spo_only_links_own_supplier(api):
     """AC-FB-52 (measured on the prod copy: 5,156 SPO-only rows show "Not linked"
     under Supplier): a row whose ONLY link is an SPO allocation with no `po_line_id`

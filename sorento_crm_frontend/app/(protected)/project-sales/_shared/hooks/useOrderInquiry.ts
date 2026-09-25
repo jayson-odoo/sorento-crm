@@ -448,38 +448,6 @@ export function useOrderInquirySpoDetail(
 }
 
 /**
- * R17 (owner rulings, 25 Sep 2026): the fallback path for a "<number> via SPO" PO cell
- * whose link carries no `purchase_order_id` (an SPO allocation with no resolved supply
- * PO line) - resolves the number through the worklist's OWN `po_number` filter (the
- * same lookup purchasing's search box already does, permission-correct for this screen
- * unlike the SCM purchase-orders list, which needs `scm.dashboard.view`) rather than
- * guessing or reaching for a route this screen cannot call. Returns the id of the
- * first row whose OWN real `po`-kind link names this exact number, or `null` when
- * nothing here holds it - the caller then reads the same "does not reach a purchase
- * order" state a missing `poId` already means.
- */
-export function useOrderInquiryPoIdByNumber(
-  poNumber: string | undefined,
-  options: { enabled?: boolean } = {},
-) {
-  return useQuery({
-    queryKey: ['order-inquiry-po-id-by-number', poNumber],
-    queryFn: async () => {
-      const page = await listOrderInquiryWorklist({ po_number: poNumber, limit: 5 });
-      for (const row of page.data) {
-        const match = (row.links ?? []).find(
-          (link) => link.kind === 'po' && link.document === poNumber,
-        );
-        if (match?.po_id) return match.po_id;
-      }
-      return null;
-    },
-    enabled: Boolean(poNumber) && options.enabled !== false,
-    retry: false,
-  });
-}
-
-/**
  * Place on PO / Unplace (section G). Not scoped to a project id: the per-project screen
  * and purchasing's cross-project worklist carry the same row action, so both invalidate
  * every query family a placement touches rather than just their own screen's.

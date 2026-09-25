@@ -130,9 +130,11 @@ export function OrderInquiryBackingDocumentsDialog({
                         rather than an empty label when the book named no source (AC-A14).
                         R17 (owner rulings, 25 Sep 2026, "I also need here to be
                         clickable"): now the SAME trigger as the SPO number above it,
-                        resolved to the PO by `purchase_order_id` when the payload
-                        carries it, else by number (`useOrderInquiryPoIdByNumber`) - the
-                        same resolution the Lines tab's own via-SPO cell uses. */}
+                        resolved to the PO by `purchase_order_id` - resolved server side
+                        now (review round 2 Should fix 3, `links_for_rows`), by
+                        `po_line_id` when there is one or by `from_po_number` itself
+                        otherwise - the same resolution the Lines tab's own via-SPO cell
+                        uses. */}
                     {link.kind === 'spo' && link.source_po_number ? (
                       <div className="truncate text-2xs text-muted-foreground">
                         from PO{' '}
