@@ -8,10 +8,23 @@ dealer unguarded. `_availability_intro`'s old `_AVAILABILITY_NO` line ("Sorry, w
 have enough stock for that quantity.") is a statement about OUR stock, which R6 B1
 forbids, and is false for a `too_big` entry with plenty on hand. This file guards the
 RENDERED reply `output_structurer` produces, not the presenter's item title alone.
+Reviewer pass round 2, PR #1247 S3 at ae16ee35, Blocking 1 (the part round 1 left unfixed):
+the hand-built `_availability_envelope` helper below never carries `last_updated_at`, so the
+footer `output_structurer` appends at the end of every reply (`fetch.py`'s `_fmt_ts` +
+`"_Data last updated: ..._"` line, fed by `StockService._apply_stock_visibility` setting
+`payload["last_updated_at"]` for every policy mode, availability included) went unchecked.
+`test_answered_reply_carries_no_last_updated_footer` below builds the envelope through the
+REAL MCP presenter (`sorento_crm_mcp.presenters.present_response`) with `last_updated_at` set,
+the way production always has it, so the footer is actually exercised.
 """
 from __future__ import annotations
 
+import json
 import re
+import sys
+from pathlib import Path
+
+import pytest
 
 from app.services.chatbot.lanes.business import fetch
 
@@ -84,4 +97,64 @@ def test_ac_sa312_rendered_reply_has_no_digit_of_ours():
     ]
     out = fetch.output_structurer(_availability_envelope(entries), {"semantic_input": {}})
 
+    assert re.findall(r"\d+", out["response"]) == ["42", "7", "19", "10", "2026"]
+
+
+def _real_entry(code: str, qty: int, branch: str, *, eta: str | None = None) -> dict:
+    """The raw shape `StockService._apply_stock_visibility` puts on the wire for an
+    `availability` entry (`inventory_service.py`'s entry shape, AC-SA310)."""
+    return {
+        "product_id": "33333333-3333-4333-8333-333333333333",
+        "product_code": code,
+        "product_name": code,
+        "needs_quantity": False,
+        "requested_qty": qty,
+        "branch": branch,
+        "cap_unset": None,
+        "category_name": "Category",
+        "eta": eta,
+        "packing_list": None,
+    }
+
+
+def _real_availability_envelope(entries: list, last_updated_at: str = "2026-08-24T18:00:00") -> dict:
+    """The REAL MCP presenter, imported the way `tests/chatbot/test_outstanding_lane.py`
+    imports it: append the `sorento_crm_mcp` that sits beside THIS checkout's backend, so
+    a stale editable install in the shared venv cannot win. Skipped, never failed, where
+    the package is absent. `last_updated_at` set on the raw payload is what makes this
+    envelope carry the one field the hand-built `_availability_envelope` above never had -
+    the same field `StockService._apply_stock_visibility` sets in production for every
+    policy mode, availability included."""
+    repo_root = Path(__file__).resolve().parents[3]
+    mcp_root = repo_root / "sorento_crm_mcp"
+    if str(mcp_root) not in sys.path:
+        sys.path.append(str(mcp_root))
+    try:
+        from sorento_crm_mcp.presenters import present_response
+    except ImportError:  # pragma: no cover - only where the package is not on disk
+        pytest.skip("sorento_crm_mcp is not importable in this environment")
+    payload = {
+        "data": [],
+        "pagination": {"total": 0, "page": 1, "limit": 50},
+        "empty": True,
+        "stock_visibility": {"mode": "availability", "warehouse_codes": None, "source": "contact"},
+        "stock_availability": entries,
+        "last_updated_at": last_updated_at,
+    }
+    raw = json.dumps(payload)
+    return json.loads(present_response("crm_inventory_stock_balance_list", raw))
+
+
+def test_answered_reply_carries_no_last_updated_footer():
+    """Reviewer pass round 2 Blocking 1: production always sets `last_updated_at`
+    (`inventory_service.py:1322`, every policy mode). `output_structurer` (`fetch.py:2633`)
+    appends it as `_Data last updated: dd/mm/yyyy hh:mm:ss_` - a line that starts with
+    neither a product code nor one of the four R6 sentences, and whose digits are ours,
+    which AC-SA312 forbids. An answered `stock_availability` reply must not carry it."""
+    entries = [_real_entry("SRT-BIG", 42, "too_big"), _real_entry("SRT-ETA", 7, "incoming", eta="19/10/2026")]
+    envelope = _real_availability_envelope(entries)
+
+    out = fetch.output_structurer(envelope, {"semantic_input": {}})
+
+    assert "Data last updated" not in out["response"]
     assert re.findall(r"\d+", out["response"]) == ["42", "7", "19", "10", "2026"]

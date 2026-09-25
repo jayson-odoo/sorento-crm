@@ -2630,7 +2630,14 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     if access_notes:
         msg += "\n".join(access_notes) + "\n\n"
 
-    ts = _fmt_ts(e.get("last_updated_at"))
+    # Chatbot stock ask v2 S3 fix round 2, Blocking 1 (R6 B1, R14, AC-SA312): production
+    # always sets `last_updated_at` (`StockService._apply_stock_visibility`, every policy
+    # mode, availability included), so an answered `availability` reply would otherwise
+    # end in a line that is not one of the four R6 sentences and whose digits are ours -
+    # exactly what the intro and the numbering were already gated off of above, for the
+    # same reason. `compact` and `detailed` are untouched (R10): neither sets
+    # `stock_availability_answered`.
+    ts = None if stock_availability_answered else _fmt_ts(e.get("last_updated_at"))
     if ts:
         msg += f"_Data last updated: {ts}_"
 
