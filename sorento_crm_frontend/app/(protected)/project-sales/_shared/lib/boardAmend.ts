@@ -32,6 +32,7 @@ import {
   type DraftLine,
   type DraftReserve,
 } from './supplyComposition';
+import { availableForProjectOf } from './poolShare';
 import { ORDER, SHORT_LABELS, rowOf, type SupplyKind } from './supplyVocabulary';
 
 /**
@@ -361,6 +362,59 @@ export function borrowCandidatesOf(contribution: BoardContribution): BorrowCandi
 }
 
 /**
+ * D3 (S2): the panel's ONE Reason box, fanned out onto the draft it is about to be saved
+ * from - `buy_reason` when the line is discontinued and buying, every borrow row's own
+ * `reason` when the box carries text.
+ *
+ * A blank box leaves `buy_reason` at `''` (unchanged/absent) and leaves each borrow row's own
+ * `reason` exactly as it was seeded - the engine's own sentence for a row `amendDraftFrom` /
+ * `suggestionDraftFrom` carried in, or whatever `BorrowAddDialog` folded a same-agent
+ * authorisation into for a row added by hand. `lineBlockers`'s own borrow-reason check (still
+ * shared with the per-order sheet) is what refuses a hand-added row while the box stays blank
+ * (AC-27), not this function - it only ever COPIES the box, it never validates it.
+ */
+export function foldReasonIntoDraft(draft: DraftLine, reason: string): DraftLine {
+  const trimmed = reason.trim();
+  return {
+    ...draft,
+    buy_reason: draft.is_discontinued && toMinor(draft.buy_qty) > 0 ? trimmed : '',
+    borrow: draft.borrow.map((row) => ({
+      ...row,
+      reason: foldBorrowReason(row.reason, trimmed),
+    })),
+  };
+}
+
+/**
+ * A same-agent borrow `BorrowAddDialog` adds by hand seeds `row.reason` with `storedReason`'s
+ * own `Authorised by ...` sentence - the box's text has to APPEND to that, not replace it
+ * outright, or the authorisation the server requires (`_check_borrow`) is silently dropped
+ * (review round 1, Blocking 2). Matches the shape `BoardDecideControl` already builds fresh
+ * for the same case.
+ *
+ * REBUILT every call, never appended to whatever is already stored (review round 2, Blocking
+ * 1): `seeded` is the row's LAST saved reason, which already carries the authorisation sentence
+ * plus a previous box text once the line has been saved once, so appending onto it doubled the
+ * box text on every unedited re-save. The authorisation sentence is pulled fresh out of
+ * `seeded` and the current box text is placed after it, so re-saving with the same box text
+ * reproduces the same string instead of growing it. When the box text itself already starts
+ * with `Authorised by` (`BoardDecideControl`'s own fold, D1), it already carries the whole
+ * sentence, so it is used as-is with nothing appended.
+ */
+const AUTHORISATION_SENTENCE = /^Authorised by [^.]*\./;
+
+function foldBorrowReason(seeded: string, boxText: string): string {
+  if (boxText.startsWith('Authorised by')) {
+    return boxText;
+  }
+  const authorisation = seeded.match(AUTHORISATION_SENTENCE)?.[0];
+  if (!authorisation) {
+    return boxText || seeded;
+  }
+  return boxText ? `${authorisation} ${boxText}` : authorisation;
+}
+
+/**
  * What the editor hands back to the draft: the WHOLE composition, not a summary of it.
  *
  * `reserve_qty` travels alongside because a decision taken before this editor existed carries
@@ -462,6 +516,7 @@ export function borrowReasonKeyOf(row: {
 export function suggestionWithReasons(
   contribution: BoardContribution,
   planner: {
+    reason?: string;
     buy_reason?: string;
     borrow: {
       warehouse_id?: string | null;
@@ -472,7 +527,13 @@ export function suggestionWithReasons(
     cited_document?: string;
   },
 ): BoardDecision {
-  const suggested = decisionFromAmendDraft(suggestionDraftFrom(contribution), '');
+  // AC-28 (review round 1, Blocking 3): the ONE Reason box is what `reason` comes from on an
+  // approving save too, not only an amending one - a reason typed on a line equal to its
+  // suggestion used to go nowhere (`decisionFromAmendDraft` called with `''` unconditionally).
+  const suggested = decisionFromAmendDraft(
+    suggestionDraftFrom(contribution),
+    planner.reason ?? '',
+  );
   const typedReasons = new Map(
     planner.borrow.map((row) => [borrowReasonKeyOf(row), row.reason]),
   );
@@ -638,4 +699,190 @@ function sumSources(sources: BoardSource[], kind: string): number {
   return sources
     .filter((source) => source.kind === kind)
     .reduce((total, source) => total + toMinor(source.qty), 0);
+}
+
+/**
+ * S3 (D1): which rows the Decide strip may tick, widened from `canQuickSave` - a Confirmed or
+ * already-saved row is decidable here too (R3, the owner's own case is amendments), so only an
+ * unplannable line (no fulfilment location, `lineFor` returns null for it) or a cancelled one
+ * (the book removed it, R3) is refused.
+ */
+export function canDecide(contribution: BoardContribution): boolean {
+  return !contribution.unplannable && !contribution.cancelled;
+}
+
+/** The Decide menu's six items (R14), the vocabulary's own kinds plus the non-supply pick. */
+export type DecideWay =
+  | 'suggested'
+  | 'own'
+  | 'shared'
+  | 'borrow_order'
+  | 'borrow_other'
+  | 'buy';
+
+/**
+ * One ticked row's composition for a Decide pick, or why it is skipped (D1, R2, R6 to R10).
+ *
+ * `skip` set means the row cannot be covered in full by this pick; nothing else on the result
+ * means anything then. Otherwise the composition is exactly what `decisionFromAmendDraft`
+ * would need to post it, minus the reason - `borrow[].reason` is left `''` here on purpose:
+ * the Decide dialog's own Reason box fans its text onto every row after every ticked row's
+ * composition is known, the same one-box-many-fields shape `foldReasonIntoDraft` gives the
+ * expanded row (D3), so this function never has to know the reason at all.
+ */
+export interface DecideComposition {
+  skip?: string;
+  reserve?: BoardReserveComponent[];
+  borrow?: BoardBorrowComponent[];
+  timely_spo_qty?: string;
+  buy_qty?: string;
+  order_back?: boolean;
+}
+
+/**
+ * R9/AC-10: several ticked rows can contest the SAME pile (one location, one donor order, one
+ * donor location) - the list's current sort order claims it, top first. `claimed` is that
+ * running tally, in minor units, kept by the CALLER (the strip's save loop walks ticked rows in
+ * list order, threading one `Map` through every call) and both READ and WRITTEN here: a row
+ * reads what earlier rows already took off the same pile before deciding whether there is
+ * enough left for it, and a row this function composes successfully adds its own take before
+ * returning. Omitted, every row reads the pile's own full free figure - which is what AC-5 to
+ * AC-9 below are written against, one row at a time with nothing already claimed.
+ */
+export function decideComposition(
+  contribution: BoardContribution,
+  way: DecideWay,
+  pick?: string,
+  claimed?: Map<string, number>,
+): DecideComposition {
+  const openMinor = toMinor(contribution.qty);
+
+  // Nit (review round 1): no 'suggested' branch here - As suggested never reaches this
+  // function. `BoardDecideControl` short-circuits it through `suggestedDecisionFor` (behind
+  // `canQuickSave`) before `decideComposition` is ever called, the identical path Save as
+  // suggested always took.
+
+  if (way === 'buy') {
+    // R10/Q16/AC-51: a Buy over stock the server has ALREADY landed for this line (an own
+    // arrival) is refused at Confirm (`planning_change_buy_over_own_arrival`); skipping it
+    // here is kinder than a 409 there. Read off the same flag the board's "Received" chip
+    // keys off (`BoardReserveComponent.source === 'own_arrival'`), never re-derived.
+    const landed = (contribution.proposed?.components ?? contribution.sources).some(
+      (source) =>
+        source.kind === 'reserve' &&
+        (source as { source?: string | null }).source === 'own_arrival' &&
+        toMinor(source.qty) > 0,
+    );
+    if (landed) return { skip: 'stock already landed for it' };
+    return {
+      reserve: [],
+      borrow: [],
+      timely_spo_qty: '0',
+      buy_qty: fromMinor(openMinor),
+      order_back: false,
+    };
+  }
+
+  if (way === 'own' || way === 'shared') {
+    // R2/R6: the own-location rung (own + group) or the site pool rows only - the same rows
+    // `ReserveAddDialog` offers there, in the engine's own order, never mixed.
+    const locations = (contribution.locations ?? []).filter((location) =>
+      way === 'own'
+        ? (location.where ?? 'own') === 'own' || location.where === 'group'
+        : location.where === 'site_pool',
+    );
+    const rows: BoardReserveComponent[] = [];
+    let takenMinor = 0;
+    for (const location of locations) {
+      if (!location.warehouse_id || takenMinor >= openMinor) continue;
+      const freeMinor = toMinor(location.qty_free_remaining ?? location.qty_free ?? '0');
+      // R6/D1: the same pool-share limit `poolShareLimitsOf` bounds a manual composition by,
+      // never re-implemented - `availableForProjectOf` is the identical per-row reading
+      // `CellStockTable` and `ReserveAddDialog` already offer on.
+      const bounded =
+        way === 'shared'
+          ? Math.min(freeMinor, toMinor(availableForProjectOf(location) ?? String(freeMinor)))
+          : freeMinor;
+      const claimKey = `${way}|${contribution.item_code ?? ''}|${location.warehouse_id}`;
+      const left = Math.max(bounded - (claimed?.get(claimKey) ?? 0), 0);
+      if (left <= 0) continue;
+      const take = Math.min(left, openMinor - takenMinor);
+      if (take <= 0) continue;
+      rows.push({
+        warehouse_id: location.warehouse_id,
+        location: location.location ?? null,
+        qty: fromMinor(take),
+      });
+      claimed?.set(claimKey, (claimed.get(claimKey) ?? 0) + take);
+      takenMinor += take;
+    }
+    if (takenMinor < openMinor) {
+      return {
+        skip: `only ${fromMinor(takenMinor)} free at ${way === 'shared' ? 'BRW' : 'own location'}`,
+      };
+    }
+    return { reserve: rows, borrow: [], timely_spo_qty: '0', buy_qty: '0' };
+  }
+
+  // way === 'borrow_order' | 'borrow_other' (R8): one donor, picked, for the whole line.
+  const candidates = borrowCandidatesOf(contribution).filter((candidate) =>
+    way === 'borrow_order'
+      ? candidate.donor_so_number === pick
+      : candidate.source === 'other_location' && candidate.warehouse_code === pick,
+  );
+  const donorLabel = pick ?? (way === 'borrow_order' ? 'the donor' : 'the location');
+  if (candidates.length === 0) {
+    return {
+      skip:
+        way === 'borrow_order' ? `${donorLabel} holds none` : `only 0 free at ${donorLabel}`,
+    };
+  }
+  // Should fix 2 (review round 1): ONE candidate LINE has to cover the whole open quantity
+  // by itself - the server posts one component per `donor_core_line_id`, so summing several
+  // donor lines' free stock together and posting the total against only the first of them is
+  // a claim `_check_borrow` refuses at Confirm, far from this press. Each candidate line keeps
+  // its OWN running claim (never the pick's aggregate), so two ticked rows drawing on the same
+  // donor line still cannot over-claim it between them.
+  const pickKey = `${way}|${contribution.item_code ?? ''}|${pick ?? ''}`;
+  let donor: BorrowCandidate | undefined;
+  let bestLeft = 0;
+  for (const candidate of candidates) {
+    const candidateKey = `${pickKey}|${candidate.donor_core_line_id ?? candidate.warehouse_id}`;
+    const left = Math.max(
+      toMinor(candidate.free_qty) - (claimed?.get(candidateKey) ?? 0),
+      0,
+    );
+    if (left > bestLeft) bestLeft = left;
+    if (left >= openMinor) {
+      donor = candidate;
+      break;
+    }
+  }
+  if (!donor) {
+    return {
+      skip:
+        way === 'borrow_order'
+          ? `${donorLabel} holds only ${fromMinor(bestLeft)}`
+          : `only ${fromMinor(bestLeft)} free at ${donorLabel}`,
+    };
+  }
+  const donorKey = `${pickKey}|${donor.donor_core_line_id ?? donor.warehouse_id}`;
+  claimed?.set(donorKey, (claimed.get(donorKey) ?? 0) + openMinor);
+  return {
+    reserve: [],
+    borrow: [
+      {
+        source: donor.source,
+        warehouse_id: donor.warehouse_id,
+        warehouse_code: donor.warehouse_code,
+        donor_project_ref: donor.donor_project_ref ?? null,
+        donor_project_id: donor.donor_project_id ?? null,
+        qty: fromMinor(openMinor),
+        reason: '',
+        ...borrowPassThrough(donor),
+      },
+    ],
+    timely_spo_qty: '0',
+    buy_qty: '0',
+  };
 }

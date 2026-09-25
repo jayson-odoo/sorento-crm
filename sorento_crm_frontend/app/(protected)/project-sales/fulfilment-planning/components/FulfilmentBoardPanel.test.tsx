@@ -957,7 +957,7 @@ describe('FulfilmentBoardPanel: the confirm counter is selection-scoped, not win
       }),
     );
     expandRow();
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'This line is being replaced.' },
     });
     // Reject is async now (mirrors Save): closing the dialog before the write settles would
@@ -991,7 +991,7 @@ describe('FulfilmentBoardPanel: the confirm counter is selection-scoped, not win
       }),
     );
     expandRow();
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'This line is being replaced.' },
     });
     // Reject is async now (mirrors Save): closing the dialog before the write settles would
@@ -1778,7 +1778,7 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
     );
   });
 
-  it('names a SAVED, approved-as-is Buy of a discontinued product that carries no reason, and leaves it out', async () => {
+  it('AC-20: includes a SAVED, approved-as-is Buy of a discontinued product that carries no reason - no banner, full count', async () => {
     const board = twoLineOrder();
     getPlanningBoard.mockResolvedValue(
       withContribution(
@@ -1799,20 +1799,79 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
         }),
       ),
     );
+    confirmMany.mockResolvedValue({
+      results: [{ pso_id: 'pso-so-a', ok: true, decision_revision: 1 }],
+    });
+
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    // AC-20: no banner renders for a discontinued Buy with no reason - it is no longer
+    // "left out" for that cause.
+    expect(screen.queryByTestId('board-left-out-banner')).not.toBeInTheDocument();
+    expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (2)');
+
+    await openConfirmDialog();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+    expect(
+      confirmMany.mock.calls[0][0].orders[0].lines
+        .map((line: { project_line_id: string }) => line.project_line_id)
+        .sort(),
+    ).toEqual(['pl-so-a-1', 'pl-so-a-2']);
+  });
+
+  /**
+   * AC-21: one line left out for `no_mirror`, and one discontinued Buy with no reason on the
+   * SAME order - the banner must name only the `no_mirror` line, and the discontinued cause's
+   * old clause ("discontinued product with no reason given") must not appear anywhere on the
+   * page, since D2 removed that reason kind from the left-out banner entirely.
+   */
+  it('AC-21: names only the no_mirror line when a discontinued Buy with no reason sits alongside it, and never mentions the discontinued clause', async () => {
+    const board = allSaved(
+      boardOf([
+        demand({ line_no: 1, item_code: 'WESERP10B' }),
+        demand({ line_no: 2, item_code: 'TPE-9204' }),
+        demand({ line_no: 3, item_code: 'OLD-1' }),
+      ]),
+    );
+    const withNoMirror = withContribution(
+      board,
+      (entry) => entry.item_code === 'TPE-9204',
+      (entry) => ({ ...entry, project_line_id: null }),
+    );
+    const withDiscontinued = withContribution(
+      withNoMirror,
+      (entry) => entry.item_code === 'OLD-1',
+      (entry) => ({
+        ...entry,
+        item_flags: {
+          dealer_hot_selling: false,
+          dealer_hot_selling_where: [],
+          project_hot_selling: false,
+          project_hot_selling_where: [],
+          dealer_classified: false,
+          project_classified: false,
+          discontinued: true,
+          retail_classification_available: true,
+        },
+      }),
+    );
+    getPlanningBoard.mockResolvedValue(withDiscontinued);
 
     renderPanel(['SO403340']);
     await screen.findByTestId('fulfilment-board-matrix');
 
     const banner = await screen.findByTestId('board-left-out-banner');
-    expect(banner).toHaveTextContent(
-      'buys a discontinued product with no reason given, so this confirmation leaves it out. Amend it to give one.',
-    );
     expect(
       within(banner).getByRole('button', { name: 'TPE-9204 line 2' }),
     ).toBeInTheDocument();
-    expect(screen.getByTestId('board-confirm')).toHaveTextContent(
-      'Confirm (1)',
-    );
+    expect(
+      within(banner).queryByRole('button', { name: 'OLD-1 line 3' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/discontinued product with no reason given/i),
+    ).not.toBeInTheDocument();
   });
 
   /**
@@ -1822,24 +1881,18 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
    * line) and opens that line's own decision panel, scrolled into view.
    */
   it('the banner link switches to List and opens that line’s decision panel (AC-4/AC-5)', async () => {
+    // D2/AC-19-AC-20 note: this fixture used to be a discontinued Buy with no reason. That
+    // cause no longer produces a left-out banner at all, so it would no longer exercise this
+    // test's actual subject (the banner LINK mechanism) - switched to the `no_mirror` cause,
+    // which is incidental flavor here, same as it is for the neighboring
+    // "reaches the left-out line, beyond page 1..." and "states both counts in an AMBER
+    // toast..." tests below.
     const board = twoLineOrder();
     getPlanningBoard.mockResolvedValue(
       withContribution(
         board,
         (entry) => entry.item_code === 'TPE-9204',
-        (entry) => ({
-          ...entry,
-          item_flags: {
-            dealer_hot_selling: false,
-            dealer_hot_selling_where: [],
-            project_hot_selling: false,
-            project_hot_selling_where: [],
-            dealer_classified: false,
-            project_classified: false,
-            discontinued: true,
-            retail_classification_available: true,
-          },
-        }),
+        (entry) => ({ ...entry, project_line_id: null }),
       ),
     );
 
@@ -1886,22 +1939,13 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
       demand({ line_no: index + 1, item_code: `ITEM${index + 1}` }),
     );
     // The 28th line: index 27 in `so_number`/`line_no` order, page floor(27 / 25) = page 2.
+    // D2/AC-19-AC-20 note: this fixture used to be a discontinued Buy with no reason, which no
+    // longer produces a left-out banner - switched to `no_mirror` (incidental flavor, same as
+    // the "banner link" test above) so this test still exercises the banner it needs.
     const board = withContribution(
       allSaved(boardOf(lines)),
       (entry) => entry.line_no === 28,
-      (entry) => ({
-        ...entry,
-        item_flags: {
-          dealer_hot_selling: false,
-          dealer_hot_selling_where: [],
-          project_hot_selling: false,
-          project_hot_selling_where: [],
-          dealer_classified: false,
-          project_classified: false,
-          discontinued: true,
-          retail_classification_available: true,
-        },
-      }),
+      (entry) => ({ ...entry, project_line_id: null }),
     );
     getPlanningBoard.mockResolvedValue(board);
 
@@ -1938,24 +1982,15 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
    * states that too, in the SAME toast rather than a second one.
    */
   it('states both counts in an AMBER toast when a line is left out (AC-6, fix round 2, S4)', async () => {
+    // D2/AC-19-AC-20 note: this fixture used to be a discontinued Buy with no reason, which no
+    // longer leaves a line out - switched to `no_mirror` (incidental flavor) so this test still
+    // exercises a real left-out line.
     const board = twoLineOrder();
     getPlanningBoard.mockResolvedValue(
       withContribution(
         board,
         (entry) => entry.item_code === 'TPE-9204',
-        (entry) => ({
-          ...entry,
-          item_flags: {
-            dealer_hot_selling: false,
-            dealer_hot_selling_where: [],
-            project_hot_selling: false,
-            project_hot_selling_where: [],
-            dealer_classified: false,
-            project_classified: false,
-            discontinued: true,
-            retail_classification_available: true,
-          },
-        }),
+        (entry) => ({ ...entry, project_line_id: null }),
       ),
     );
     confirmMany.mockResolvedValue({
@@ -2774,7 +2809,7 @@ describe('FulfilmentBoardPanel: pivoting the rows', () => {
     );
     openLinesTab();
     fireEvent.click(screen.getByText('SO000001'));
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'The tower plan changed.' },
     });
     // Reject is async now (mirrors Save): closing the dialog before the write settles would
@@ -3024,7 +3059,7 @@ describe('FulfilmentBoardPanel: one Confirm, not Approve all (D1, D4)', () => {
     );
     openLinesTab();
     fireEvent.click(screen.getByText('SO403340'));
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'Cancelled by the customer.' },
     });
     // Reject is async now (mirrors Save): closing the dialog before the write settles would
@@ -3576,6 +3611,64 @@ describe('FulfilmentBoardPanel: Save all suggested (D15)', () => {
 });
 
 /**
+ * Review round 2, Should fix 2: `decideBatch`'s own `silent`/`onFailure` wiring (review
+ * round 1, Should fix 1) shipped with no test - reverting it to a per-row `toast.error` plus
+ * the generic "could not be saved" left every existing test green, because none of them made a
+ * Decide save actually fail on the wire. A real PUT failure has to reach the Decide strip's OWN
+ * lenient toast (R10) with the server's own sentence, and nowhere else: a second toast off the
+ * mutation's own `onError` would be exactly the "too many errors" the owner asked Decide to stop
+ * doing.
+ */
+describe('FulfilmentBoardPanel: a failed Decide save toasts the server message once (review round 2, Should fix 2)', () => {
+  it('toasts exactly once, carrying the server sentence, when one row of a Decide batch fails on the wire', async () => {
+    getPlanningBoard.mockResolvedValue(
+      boardOf([
+        demand({ sales_order_id: 'so-a', so_number: 'SO403340', line_no: 1 }),
+        demand({
+          sales_order_id: 'so-b',
+          so_number: 'SO398322',
+          line_no: 1,
+          item_code: 'WESERP20B',
+        }),
+      ]),
+    );
+
+    // Ticked in this order below, and `tickedRows`/`decideBatch` walk `contributions` in the
+    // same order the board lists them - SO403340 first, SO398322 second - so the two `Once`
+    // calls line up with which row they answer. `Once` rather than a persistent
+    // `mockImplementation` (B1): this file's `beforeEach` only `clearAllMocks`es, which does
+    // not touch a standing implementation, so a persistent override here would leak into
+    // every test that runs after this one in the file.
+    vi.mocked(putLineDraft)
+      .mockResolvedValueOnce({
+        decision: { verdict: 'approved' },
+        saved_by: 'Test Planner',
+        saved_at: '2026-09-03T00:00:00Z',
+      })
+      .mockRejectedValueOnce(new Error('Not enough free stock left.'));
+
+    renderPanel(['SO403340', 'SO398322']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+    await screen.findByRole('table');
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select SO403340 line 1' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select SO398322 line 1' }));
+    fireEvent.keyDown(await screen.findByTestId('board-decide-button'), { key: 'Enter' });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'As suggested' }));
+
+    await waitFor(() => expect(putLineDraft).toHaveBeenCalledTimes(2));
+    // Exactly ONE toast for the whole batch (R10) - not a second one off the mutation's own
+    // `onError`, which `silent` exists to suppress.
+    expect(toast.success).toHaveBeenCalledTimes(1);
+    expect(toast.success).toHaveBeenCalledWith(
+      expect.stringContaining('Not enough free stock left.'),
+    );
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+});
+
+/**
  * D15: a grid cell's own undo icon, for a cell holding only drafted lines - `undoMany` deletes
  * every one of them and toasts once, rather than the per-line Undo's silent single delete.
  */
@@ -3628,7 +3721,7 @@ describe('FulfilmentBoardPanel: a rejection toasts too (owner, 22 Sep 2026)', ()
     fireEvent.click(screen.getByRole('button', { name: 'List' }));
 
     fireEvent.click(await screen.findByText('WESERP10B'));
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'The customer cancelled this line.' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
@@ -3647,6 +3740,19 @@ describe('FulfilmentBoardPanel: a rejection toasts too (owner, 22 Sep 2026)', ()
  * of them is NAMED, capped at five - the CLAUSE names none of them any more, because the
  * caller (`FulfilmentBoardPanel`) puts each one on its own link instead of in the prose.
  */
+// D2 (AC-19): `'buy_reason_missing'` is removed from `UnpostableReason` entirely by this fix -
+// the discontinued-with-no-reason cause no longer exists as a left-out reason, so a notice can
+// no longer be constructed for it. The `'names a line and states the fix, with no name baked
+// into the clause'` case (a single-name, single-reason call) is a mechanical removal of a
+// reason kind the type itself is dropping, not a product-behavior deletion; AC-19/AC-20's
+// actual red coverage for the discontinued cause lives in `fulfilmentBoard.test.ts`
+// (`describe('confirmLinesFor and a discontinued product', ...)` and the COVERED-line describe
+// beside it), which is where `lineFor`/`unpostableDecidedFor` are exercised directly.
+//
+// The five-name cap and the plural grammar ("reserve ... leaves them out", "are not ... add
+// them") are NOT specific to `buy_reason_missing`: they are generic `unpostableNotices`
+// behaviour, so the S1 review (PR #1218) asked for this case to be re-pointed at a reason that
+// still exists rather than deleted with it.
 describe('unpostableNotices', () => {
   function line(lineNo: number) {
     return {
@@ -3654,22 +3760,13 @@ describe('unpostableNotices', () => {
         item_code: 'TPE-9204',
         line_no: lineNo,
       } as unknown as BoardContribution,
-      reason: 'buy_reason_missing' as const,
+      reason: 'no_reserve_warehouse' as const,
     };
   }
 
-  it('names a line and states the fix, with no name baked into the clause', () => {
-    const [notice] = unpostableNotices('buy_reason_missing', [line(2)]);
-    expect(notice.named).toEqual([{ label: 'TPE-9204 line 2', line: line(2) }]);
-    expect(notice.moreCount).toBe(0);
-    expect(notice.clause).toBe(
-      'buys a discontinued product with no reason given, so this confirmation leaves it out. Amend it to give one.',
-    );
-  });
-
   it('caps the names at five and counts the rest', () => {
     const [notice] = unpostableNotices(
-      'buy_reason_missing',
+      'no_reserve_warehouse',
       [1, 2, 3, 4, 5, 6, 7].map((no) => line(no)),
     );
     expect(notice.named.map((entry) => entry.label)).toEqual([
@@ -3680,9 +3777,10 @@ describe('unpostableNotices', () => {
       'TPE-9204 line 5',
     ]);
     expect(notice.moreCount).toBe(2);
-    // Several lines: the clause reads "buy"/"them", not the one-line "buys"/"it".
-    expect(notice.clause).toContain('buy a discontinued product');
+    // Seven lines: the clause reads "reserve"/"them", not the one-line "reserves"/"it".
+    expect(notice.clause).toContain('reserve at a warehouse the board cannot address');
     expect(notice.clause).toContain('leaves them out');
+    expect(notice.clause).toContain('Amend them to place the Reserve.');
   });
 });
 

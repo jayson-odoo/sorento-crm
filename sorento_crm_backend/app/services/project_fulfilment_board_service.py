@@ -3408,7 +3408,7 @@ class FulfilmentBoardService:
             "Buy",
             taken=bought,
             offered=bought,
-            why=lambda outcome: self._buy_why(fact, outcome, outside_window),
+            why=lambda outcome: self._buy_why(outcome, outside_window),
         )
         # Where a person could still borrow from, and it is exactly what the borrow steps
         # above put on the table - step 2's windowed donors, then the manual same-group
@@ -4059,10 +4059,8 @@ class FulfilmentBoardService:
         return _dec(self.supply.netting().donor_group_net(fact.product_id, group).net)
 
     @staticmethod
-    def _buy_why(fact: Any, outcome: str, outside_window: bool = False) -> str:
-        """Why the remainder is bought - and, for a discontinued item, that the buy will need
-        a reason. `is_discontinued` only ever forced a REASON on the buy; saying so here is
-        cheaper than a refusal at confirm being the first anybody hears of it.
+    def _buy_why(outcome: str, outside_window: bool = False) -> str:
+        """Why the remainder is bought.
 
         Beyond the reserve window "nothing left to take" is not what happened: none of the
         four questions was asked at all, and there may well be stock at a donor this line is
@@ -4070,15 +4068,12 @@ class FulfilmentBoardService:
         """
         if outcome != "took":
             return _COVERED_BEFORE
-        sentence = (
+        return (
             "The delivery date is beyond the lead time window, so the stock is kept for "
             "nearer orders and the quantity is bought."
             if outside_window
             else "Nothing left to take, so the remainder is bought."
         )
-        if fact.is_discontinued:
-            return f"{sentence} Discontinued: the buy needs a reason."
-        return sentence
 
     def _buy_reason(
         self,

@@ -13,15 +13,17 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
 import { CellStockTable, type DonorLocationRow } from './CellStockTable';
 import type { BorrowCandidate } from '../../_shared/types/fulfilmentPlanning.types';
 
 /**
- * Borrowing takes exactly one approval: the CS actor who confirms the sales order, with the
- * donor's impact in front of them and a reason nobody can skip (AC-B09, AC-B10). So the
- * reason is mandatory here as well as at the Confirm gate.
+ * D3 (S2): this dialog no longer asks for a reason. `BoardLineDecisionPanel` carries exactly
+ * ONE Reason box now (the row's own, `line-reason-{key}`), and it is required for any borrow
+ * the engine did not suggest - so a reason typed here would be a second box for the same
+ * answer. What still belongs to THIS donor, and nowhere else, is who authorised drawing on a
+ * same-agent order (below): a name, not a reason, folded into the row's stored reason exactly
+ * as before.
  *
  * THE SOURCE IS THE GRID LOCATION TABLE (S4, `PLAN-local-supplier-oi-routing.md`,
  * AC-1.4/AC-1.5): the same `CellStockTable` the Grid view renders, fed by each candidate's
@@ -63,7 +65,13 @@ export function BorrowAddDialog({
   lineId?: string | null;
   candidates: BorrowCandidate[];
   onDone: () => void;
-  onAdd: (candidate: BorrowCandidate, qty: string, reason: string) => void;
+  /**
+   * D3 (S2): the third argument is no longer a typed reason - it is the same-agent
+   * authorisation, already folded (`storedReason` below), or `''` when the donor names none.
+   * `BoardLineDecisionPanel`'s own Reason box (`foldReasonIntoDraft`) fans its text onto this
+   * row at save time; this dialog no longer collects one.
+   */
+  onAdd: (candidate: BorrowCandidate, qty: string, authorisationReason: string) => void;
 }) {
   // Every candidate is selectable since v7.1 (R5): the cross-group cap that used to show a
   // row disabled and unselectable is gone, so the opening selection is simply the first of
@@ -74,11 +82,9 @@ export function BorrowAddDialog({
   // make the second row's radio silently select the first.
   const [selectedKey, setSelectedKey] = React.useState(first ? candidateKey(first) : '');
   const [qty, setQty] = React.useState(openingQty(first));
-  const [reason, setReason] = React.useState('');
   const [authorisation, setAuthorisation] = React.useState('');
 
   const selected = candidates.find((candidate) => candidateKey(candidate) === selectedKey) ?? first;
-  const trimmed = reason.trim();
   const authorised = authorisation.trim();
   const needsAuthorisation = Boolean(selected?.same_agent);
   const amount = Number.parseFloat(qty);
@@ -107,7 +113,6 @@ export function BorrowAddDialog({
     hasDonors &&
     Boolean(selected) &&
     typed !== null &&
-    Boolean(trimmed) &&
     (!needsAuthorisation || Boolean(authorised));
 
   const badges = React.useMemo(() => {
@@ -133,7 +138,7 @@ export function BorrowAddDialog({
           onSubmit={(event) => {
             event.preventDefault();
             if (!valid || !selected) return;
-            onAdd(selected, qty.trim(), storedReason(selected, authorised, trimmed));
+            onAdd(selected, qty.trim(), storedReason(selected, authorised));
             onDone();
           }}
         >
@@ -213,19 +218,6 @@ export function BorrowAddDialog({
                 />
               </div>
             )}
-
-            <div className="space-y-1.5">
-              <Label htmlFor={`borrow-reason-${lineNo}`}>
-                Reason <span className="text-destructive">*</span>
-              </Label>
-              <Textarea
-                id={`borrow-reason-${lineNo}`}
-                value={reason}
-                onChange={(event) => setReason(event.target.value)}
-                rows={3}
-                placeholder="In your own words"
-              />
-            </div>
           </DialogBody>
 
           <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end">
@@ -328,17 +320,14 @@ function authorisationLabel(candidate: BorrowCandidate | undefined): string {
 }
 
 /**
- * What is stored beside the quantity: the authorisation first, then the planner's own words.
- * ONE field, because `so_line_allocations.reason` is one column and two half-sentences in two
- * places is how a reason stops being readable.
+ * What this dialog alone contributes to the row's stored reason (D3, S2): who authorised a
+ * same-agent donor, or nothing. `BoardLineDecisionPanel`'s Reason box fans its own text onto
+ * this same row at save time (`foldReasonIntoDraft`) - when it carries text it replaces
+ * whatever is seeded here outright, so this never needs to hold both.
  */
-function storedReason(
-  candidate: BorrowCandidate,
-  authorised: string,
-  reason: string,
-): string {
-  if (!candidate.same_agent || !authorised) return reason;
-  return `${authorisationLabel(candidate)}: ${authorised}. ${reason}`;
+function storedReason(candidate: BorrowCandidate, authorised: string): string {
+  if (!candidate.same_agent || !authorised) return '';
+  return `${authorisationLabel(candidate)}: ${authorised}.`;
 }
 
 /**
