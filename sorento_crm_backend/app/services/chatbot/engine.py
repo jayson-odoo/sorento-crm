@@ -4392,7 +4392,13 @@ def run_tail(
         "open_question": turn_pending.to_wire(
             question if question is not None else (applied.pending if applied else None)
         ),
-        "ideation": before.get("ideation"),
+        # The ideate lane's own pointer wins over the turn-start value (owner console
+        # walk 25 Sep 2026: three turns minted three drafts because this always read
+        # `before`). Only `lanes/ideate.py::build_reply` sets `ideation` on the tail
+        # item, `None` clearing it on a terminal status - pre-re-architecture
+        # `tail/compile_state.py:773` wrote `ideate.ideation if ideate else prev.ideation`
+        # and commit 0a335146e dropped that arm.
+        "ideation": item.get("ideation") if "ideation" in item else before.get("ideation"),
         "access_levels": list(before.get("access_levels") or []),
         "contains_flyer": bool(before.get("contains_flyer")),
     }

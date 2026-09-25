@@ -1040,14 +1040,54 @@ class ProjectOrderInquiryService:
             # decision they made. Batched (S6): one grouped load for this line's own rows
             # rather than one query per row.
             drafted_links = self._links_by_row([str(row.id) for row in rows])
+            # #1226, owner ruling 25 Sep 2026 ("nothing changed, nothing moves"): a
+            # CARRIED line's draft is never handed to `_settle_row_in_place` - this
+            # confirmation named OTHER lines, so its still-placed/partly-linked row is
+            # not this revision's to settle, let alone to redirect (`_redirect_row_if_
+            # received`, `_settle_row_in_place`'s own first step). Without `not carried`
+            # here, a carried line's row whose link happened to have since become fully
+            # received read as a draft this call could still settle, and settling
+            # declined into the redirect anyway (OI-2609-0755, PLAN-oi-carried-line-no-
+            # settle.md).
             drafted = [
                 row
                 for row in rows
-                if row.verb in (IV_ORDER, IV_ORDER_BACK)
+                if not carried
+                and row.verb in (IV_ORDER, IV_ORDER_BACK)
                 and row.state in (INQUIRY_PLACED, INQUIRY_PARTLY_LINKED)
                 and self._cascade_only(drafted_links.get(str(row.id), []))
                 and not row.redirected_to_pool
             ]
+            if carried:
+                # B1 (review round 1, 9fb06ff66): `_settle_row_in_place`'s ordinary
+                # settle stamps `row.supply_decision_id = decision.id` on the row it
+                # touches - gate above means a carried line's live draft never reaches
+                # that call, so left alone it stays tied to the OLD revision.
+                # `_retire_uncovered_rows`'s `only_line_ids` mode
+                # (`retire_rows_for_dropped_lines`, `ProjectSupplyService.uncover_lines`'
+                # whole-revision reject branch) filters on `supply_decision_id ==
+                # decision.id`, so a stale id makes the row invisible to a reject that
+                # names its line: the reject would retire nothing and the row would stay
+                # `placed`/`partly_linked` with its links still holding real PO/SPO
+                # quantity. Re-stamped alone - qty, links, note, state and the handshake
+                # all stand exactly as they are ("nothing changed, nothing moves"); only
+                # which revision the row is filed under moves, the same as a carried
+                # RAISED row's own replacement moves onto this revision below.
+                #
+                # Deliberately unscoped to `_cascade_only` - a carried row with a MANUAL
+                # link, or no link at all, is restamped too. Harmless: `_retire_
+                # uncovered_rows`'s own retirement loop skips a row whose links are not
+                # ALL cascade-made (`if not self._cascade_only(...): continue`), so a
+                # restamped manually-linked row still never gets cancelled by a reject it
+                # was never eligible for - the restamp only ever widens which revision a
+                # reject can FIND the row under, never what the reject does with it.
+                for row in rows:
+                    if (
+                        row.verb in (IV_ORDER, IV_ORDER_BACK)
+                        and row.state in (INQUIRY_PLACED, INQUIRY_PARTLY_LINKED)
+                        and not row.redirected_to_pool
+                    ):
+                        row.supply_decision_id = decision.id
             # S2 (`PLAN-scm-oi-handover-r2-undo.md`, AC-R2-10/11): a NAMED line (not
             # carried, not a planning-change settle) whose only live row is a plain
             # `raised` ORDER/ORDER_BACK row, no links at all, not redirected, and whose
@@ -1225,6 +1265,22 @@ class ProjectOrderInquiryService:
                     # document happened to arrive - not a replan, nobody asked this line to
                     # be restated, and the buyer's own placement should not silently become
                     # history under them.
+                    if carried:
+                        # #1226, owner ruling 25 Sep 2026 ("nothing changed, nothing
+                        # moves"): this confirmation did not name the line, so its
+                        # partly-linked row is not restated at all - the full qty nets
+                        # into `placed` exactly as a PLACED row's does above, and the
+                        # row itself, its links and its note stand untouched. No shrink
+                        # to the linked qty, no "Remainder superseded" note, no
+                        # `refresh_link_state`, no redirect.
+                        #
+                        # S2 (review round 1, 9fb06ff66): no `and not asked_to_settle`
+                        # here - a PLANNING-CHANGE settle line is always NAMED
+                        # (`planning_change_service` appends every `settle_line_ids`
+                        # entry to `confirm_lines`), so `carried` and `asked_to_settle`
+                        # can never both be true and the extra clause was unreachable.
+                        placed += _dec(row.qty)
+                        continue
                     if asked_to_settle and self._redirect_row_if_received(
                         row, drafted_links.get(str(row.id), []), decision
                     ):

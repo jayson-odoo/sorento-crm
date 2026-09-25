@@ -1951,3 +1951,45 @@ describe('AC-S5-2 (own arrival, Path B retained row): reads Received exactly as 
     expect(row.className).not.toContain('opacity-60');
   });
 });
+
+describe('AC-DT-5/AC-DT-6 (PLAN-oi-decision-trail-ui.md, round 2): the decision trail icon and the Raised via column', () => {
+  it('the Instruction cell carries a Decision trail icon for a row that names a core sales-order line', () => {
+    renderRows(
+      [worklistRow({ id: 'row-with-core-line', core_line_id: 'core-line-1' })],
+      'verb',
+    );
+
+    const row = screen.getByTestId('row-row-with-core-line');
+    expect(within(row).getByRole('button', { name: /decision trail/i })).toBeInTheDocument();
+  });
+
+  it('hides the icon on a row that names no core sales-order line at all', () => {
+    renderRows([worklistRow({ id: 'row-no-core-line', core_line_id: null })], 'verb');
+
+    const row = screen.getByTestId('row-row-no-core-line');
+    expect(
+      within(row).queryByRole('button', { name: /decision trail/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('`raise_event` carries an `accessorFn` so the column picker can list and toggle it (`data-grid-column-visibility.tsx` only offers a column that has one)', () => {
+    let captured: ColumnDef<OrderInquiryWorklistRow>[] | null = null;
+    function Capture() {
+      captured = useOrderInquiryWorklistColumns();
+      return null;
+    }
+    render(<Capture />);
+    const allColumns = captured as unknown as (ColumnDef<OrderInquiryWorklistRow> & {
+      id?: string;
+      accessorFn?: unknown;
+    })[];
+    const raiseEventColumn = allColumns.find((column) => column.id === 'raise_event');
+    expect(raiseEventColumn).toBeDefined();
+    expect(typeof raiseEventColumn?.accessorFn).toBe('function');
+  });
+
+  it('hidden by default: `raise_event` is in `DEFAULT_HIDDEN_COLUMNS`', async () => {
+    const { DEFAULT_HIDDEN_COLUMNS } = await import('./orderInquiryWorklistColumns');
+    expect(DEFAULT_HIDDEN_COLUMNS).toContain('raise_event');
+  });
+});

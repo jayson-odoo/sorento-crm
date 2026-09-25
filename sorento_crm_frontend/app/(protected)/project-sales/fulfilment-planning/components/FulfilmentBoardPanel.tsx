@@ -64,6 +64,7 @@ import {
   boardAxis,
   bucketLabelText,
   confirmSummaryFor,
+  decisionHeaderText,
   orderListRows,
   rowMatchesSearch,
   confirmLinesFor,
@@ -744,7 +745,17 @@ export function FulfilmentBoardPanel({
     async (
       key: string,
       decision: BoardDecision | null,
-      options?: { quiet?: boolean },
+      options?: {
+        quiet?: boolean;
+        // Review round 1, Should fix 1: `decideBatch` folds every failed row into its own
+        // lenient toast (R10) - a second, per-row toast off THIS mutation's own `onError`
+        // would be the "too many errors" the owner asked Decide to stop doing. `onFailure`
+        // is how the caller still gets the server's own sentence for its skip, without it.
+        // Nit (review round 2): named `silent`, not `silentError` - the same name
+        // `saveLineDraft`'s own option carries, since this is nothing but a pass-through to it.
+        silent?: boolean;
+        onFailure?: (message: string) => void;
+      },
     ): Promise<boolean> => {
       let hadPrevious = false;
       let previousForKey: BoardDecision | undefined;
@@ -776,16 +787,20 @@ export function FulfilmentBoardPanel({
           // until Confirm freezes a revision.
           pendingSaves.current.add(key);
           try {
-            await saveLineDraft(key, decision, contribution?.sources);
+            await saveLineDraft(key, decision, contribution?.sources, {
+              silent: options?.silent,
+            });
           } finally {
             pendingSaves.current.delete(key);
           }
         } else {
           await removeDraftKey(key);
         }
-      } catch {
-        // The mutation's own `onError` already toasted the message; nothing here is left to
-        // say beyond putting THIS key back the way the click found it.
+      } catch (error) {
+        // The mutation's own `onError` already toasted the message unless `silent`
+        // asked it not to (Should fix 1) - either way, `onFailure` is the caller's own way
+        // to read it, and this key still goes back the way the click found it.
+        options?.onFailure?.(error instanceof Error ? error.message : 'could not be saved');
         setDraft((current) => {
           const reverted = { ...current };
           if (hadPrevious && previousForKey) reverted[key] = previousForKey;
@@ -869,6 +884,44 @@ export function FulfilmentBoardPanel({
   );
 
   /**
+   * S3 (D1): the Decide strip's own save - one PUT per row through the identical `decide()`
+   * chunked-of-5 loop `decideMany` already runs, but with a DECISION PER KEY the caller has
+   * already composed (`decideComposition`), rather than always the engine's own suggestion.
+   * No toast here (AC-16/AC-17): the caller (`BoardDecideControl`) already knows which rows
+   * it skipped WITHOUT a PUT (a pile a pick could not cover in full) and folds them into the
+   * SAME lenient toast beside whichever of these fail on the wire - two toasts for one press
+   * would be the "too many errors" the owner asked Decide to stop doing (R10).
+   */
+  const decideBatch = React.useCallback(
+    async (
+      entries: { key: string; decision: BoardDecision }[],
+    ): Promise<{ savedKeys: string[]; failed: { key: string; why: string }[] }> => {
+      const savedKeys: string[] = [];
+      const failed: { key: string; why: string }[] = [];
+      const CHUNK_SIZE = 5;
+      for (let i = 0; i < entries.length; i += CHUNK_SIZE) {
+        const chunk = entries.slice(i, i + CHUNK_SIZE);
+        await Promise.all(
+          chunk.map(async ({ key, decision }) => {
+            let why = 'could not be saved';
+            const ok = await decide(key, decision, {
+              quiet: true,
+              silent: true,
+              onFailure: (message) => {
+                why = message;
+              },
+            });
+            if (ok) savedKeys.push(key);
+            else failed.push({ key, why });
+          }),
+        );
+      }
+      return { savedKeys, failed };
+    },
+    [decide],
+  );
+
+  /**
    * The cell's own Undo and the list's per-row Undo already act on ONE line without a toast
    * (S4's per-line Undo carries none, on the reading that one line's undo is reversible with
    * another quick save). A GRID CELL's own undo icon can carry several lines at once, so it
@@ -934,6 +987,17 @@ export function FulfilmentBoardPanel({
   const confirmSummary = React.useMemo(
     () => confirmSummaryFor(allContributions, draft, pendingBatchSalesOrderIds),
     [allContributions, draft, pendingBatchSalesOrderIds],
+  );
+
+  /**
+   * AC-DT-1/AC-DT-4 (`PLAN-oi-decision-trail-ui.md`): "Revision N, confirmed by <name>,
+   * N lines" beside the confirm summary, or "No decision yet" - one segment per order
+   * when several are planned together. Read off `board.data.orders` (never recomputed):
+   * `decision` is the server's own read of the active `so_supply_decisions` row.
+   */
+  const decisionHeader = React.useMemo(
+    () => decisionHeaderText(board.data?.orders ?? []),
+    [board.data?.orders],
   );
 
   /**
@@ -1240,8 +1304,8 @@ export function FulfilmentBoardPanel({
         }
         // DECIDED, AND NOT ONE LINE OF IT COULD BE BUILT, AND NOTHING TO WITHDRAW EITHER.
         // Every line was left out for a reason `unpostableDecidedFor` already knows (no
-        // mirror on the planning record, a Reserve at a warehouse the board cannot address,
-        // a discontinued Buy with no reason), so the order sends nothing - and said nothing,
+        // mirror on the planning record, a Reserve at a warehouse the board cannot address),
+        // so the order sends nothing - and said nothing,
         // because a press whose `orders` came out empty with an empty `skipped` never set
         // `batchResults` at all. It is reported beside every other order's outcome instead,
         // in the wording the notice above the block already uses for the lines themselves.
@@ -1663,16 +1727,27 @@ export function FulfilmentBoardPanel({
         className="flex flex-col gap-2 rounded-lg border border-border px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between"
       >
         {board.data && board.data.cells.length > 0 ? (
-          <span
-            data-testid="board-confirm-summary"
-            className="text-sm text-muted-foreground tabular-nums"
-          >
-            {`${confirmSummary.toConfirm} to confirm · ${confirmSummary.rejected} rejected`}
-            {/* C4 (code review round 3 batch 2): a saved line the engine has re-suggested
-                is dropped from Confirm with no trace beyond the pill itself - stated here
-                too, and only while it applies, the same rule the two figures beside it
-                follow. */}
-            {confirmSummary.changed > 0 ? ` · ${confirmSummary.changed} changed` : ''}
+          <span className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+            <span
+              data-testid="board-confirm-summary"
+              className="text-sm text-muted-foreground tabular-nums"
+            >
+              {`${confirmSummary.toConfirm} to confirm · ${confirmSummary.rejected} rejected`}
+              {/* C4 (code review round 3 batch 2): a saved line the engine has re-suggested
+                  is dropped from Confirm with no trace beyond the pill itself - stated here
+                  too, and only while it applies, the same rule the two figures beside it
+                  follow. */}
+              {confirmSummary.changed > 0 ? ` · ${confirmSummary.changed} changed` : ''}
+            </span>
+            {/* AC-DT-1/AC-DT-4 (`PLAN-oi-decision-trail-ui.md`): "Revision N, confirmed by
+                <name>, N lines" or "No decision yet" - wraps rather than truncates
+                (AC-DT-7), since a multi-order board's own text can run long. */}
+            <span
+              data-testid="board-decision-header"
+              className="whitespace-normal break-words text-sm text-muted-foreground"
+            >
+              {decisionHeader}
+            </span>
           </span>
         ) : (
           <span />
@@ -2094,6 +2169,7 @@ export function FulfilmentBoardPanel({
                 draft={draft}
                 onDecide={decide}
                 onDecideMany={decideMany}
+                onDecideBatch={decideBatch}
                 annotations={changeAnnotationsByLine}
                 // S6 (PLAN-scm-oi-worklist-excel-parity.md R-J): the ONE search box,
                 // beside the title, drives Grid and List alike - the panel's own search
@@ -2329,9 +2405,5 @@ export function FulfilmentBoardPanel({
   );
 }
 
-const UNPOSTABLE_REASONS: UnpostableReason[] = [
-  'no_mirror',
-  'no_reserve_warehouse',
-  'buy_reason_missing',
-];
+const UNPOSTABLE_REASONS: UnpostableReason[] = ['no_mirror', 'no_reserve_warehouse'];
 

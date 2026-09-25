@@ -37,6 +37,7 @@ import {
   confirmLineFrom,
   suggestionWithReasons,
 } from './boardAmend';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { fromMinor, toMinor } from './supplyComposition';
 
 /**
@@ -53,6 +54,37 @@ import { fromMinor, toMinor } from './supplyComposition';
  */
 export function bucketLabelText(label: string): string {
   return label.replace(/^w\/c\s+/i, '');
+}
+
+/**
+ * AC-DT-1/AC-DT-4 (`PLAN-oi-decision-trail-ui.md`): the board header line beside "N to
+ * confirm - N rejected" - "Revision N - confirmed by <name>, <date time> - N lines", or
+ * "No decision yet" when the order has no active decision. One segment per order, order
+ * number first, when several orders are planned together - a single-order board (the
+ * ordinary case) prints the bare sentence with no order number in front of it.
+ */
+export function decisionHeaderText(orders: BoardOrderStanding[]): string {
+  if (orders.length === 0) return 'No decision yet';
+  const segments = orders.map((order) => {
+    const decision = order.decision;
+    const body = decision
+      ? [
+          `Revision ${decision.revision_no}`,
+          decision.confirmed_by_name || decision.confirmed_at
+            ? `confirmed by ${decision.confirmed_by_name ?? 'someone'}${
+                decision.confirmed_at
+                  ? `, ${formatDateTimeInMalaysia(decision.confirmed_at)}`
+                  : ''
+              }`
+            : null,
+          `${decision.line_count} line${decision.line_count === 1 ? '' : 's'}`,
+        ]
+          .filter(Boolean)
+          .join(' · ')
+      : 'No decision yet';
+    return orders.length > 1 ? `${order.so_number}: ${body}` : body;
+  });
+  return segments.join('; ');
 }
 
 /**
@@ -315,7 +347,7 @@ export function rejectedCoveredLineIdsFor(
  * server would refuse, and the confirmation is atomic across the order, so posting it would take
  * every other line down with it. It is left out and NAMED instead.
  */
-export type UnpostableReason = 'no_mirror' | 'no_reserve_warehouse' | 'buy_reason_missing';
+export type UnpostableReason = 'no_mirror' | 'no_reserve_warehouse';
 
 export interface UnpostableLine {
   contribution: BoardContribution;
@@ -370,7 +402,6 @@ function lineFor(
   }
   if (decision?.verdict === 'rejected') return null;
 
-  const discontinued = Boolean(contribution.item_flags?.discontinued);
   const buyReason = decision?.buy_reason?.trim() || undefined;
 
   // AN AMENDMENT COMPOSED IN THE EDITOR IS POSTED AS COMPOSED. Every warehouse and every
@@ -379,8 +410,6 @@ function lineFor(
   // entirely from Buy has no Reserve source to read a warehouse off, so an amendment moving
   // it into a Reserve was dropped from the body while the row still read "Amended".
   if (decision?.verdict === 'amended' && decision.reserve) {
-    const buy = toMinor(decision.buy_qty ?? '0');
-    if (discontinued && buy > 0 && !buyReason) return 'buy_reason_missing';
     if (!contribution.project_line_id) return 'no_mirror';
     return confirmLineFrom(contribution.project_line_id, decision);
   }
@@ -413,10 +442,6 @@ function lineFor(
       cited_document: decision.cited_document ?? undefined,
     });
     suggested.suspected_system_issue = decision.suspected_system_issue ?? false;
-    const suggestedBuy = toMinor(suggested.buy_qty ?? '0');
-    if (discontinued && suggestedBuy > 0 && !suggested.buy_reason?.trim()) {
-      return 'buy_reason_missing';
-    }
     if (!contribution.project_line_id) return 'no_mirror';
     return confirmLineFrom(contribution.project_line_id, suggested);
   }
@@ -450,9 +475,6 @@ function lineFor(
     contribution.qty_proposed_buy === null
       ? Math.max(owed - incoming - reserveQty, 0)
       : toMinor(contribution.qty_proposed_buy);
-  // An approval carries no reason, and a Buy of a discontinued product needs one (AC-B11):
-  // the line is left out until the planner gives it in the editor.
-  if (discontinued && buy > 0 && !buyReason) return 'buy_reason_missing';
   const reserve = reserveWarehouses(contribution, reserveQty);
   // A Reserve nobody can address is not a Reserve. Leaving the line out keeps it undecided,
   // which is recoverable; posting a Reserve with no warehouse would fail the whole
@@ -802,6 +824,29 @@ export function amendNeedsReason(
     // typed reason by - one function, so the three can never quietly disagree about which
     // row is which (nit, fix round 2 review).
     !sameRows(baseline.borrow, composition.borrow, borrowReasonKeyOf)
+  );
+}
+
+/**
+ * Whether the composition carries a Borrow the engine itself never proposed (D3, S2): the
+ * server requires a reason on every borrow (`_check_borrow`), so the one Reason box is
+ * required whenever one of these is present, independent of whether the rest of the line still
+ * matches its baseline (a re-opened, unedited amendment that already borrowed by hand is still
+ * "a borrow row the engine did not suggest").
+ *
+ * Compared against the SUGGESTION baseline (never the frozen one): a covered line's own frozen
+ * borrow is what the planner already decided, and `amendNeedsReason`'s comparison against it is
+ * the rule that asks for a fresh reason there, not this one.
+ */
+export function hasUnsuggestedBorrow(
+  contribution: BoardContribution,
+  borrow: { qty: string; warehouse_id?: string | null; donor_project_id?: string | null }[],
+): boolean {
+  const suggested = new Set(
+    suggestionBaseline(contribution).borrow.map((row) => borrowReasonKeyOf(row)),
+  );
+  return borrow.some(
+    (row) => toMinor(row.qty) > 0 && !suggested.has(borrowReasonKeyOf(row)),
   );
 }
 

@@ -5,6 +5,7 @@
  * file carries the SHAPES, so neither restates the other. Both the Phase-1 fixture and
  * the Phase-2 backend answer to exactly these types.
  */
+import type { ExportSplit } from '@/components/common/export-split';
 
 /** Where a month's balance sits against "can this still be bought in time" (AC-S2-6). */
 export type StockDebtTone = 'red' | 'amber' | 'green';
@@ -249,8 +250,13 @@ export interface StockDebtCell {
   supply_total_qty?: number;
 }
 
-/** How the export workbook is split into sheets (R5). One sheet for `none`. */
-export type StockDebtExportSplit = 'none' | 'supplier' | 'category' | 'supplier_category';
+/**
+ * How the export workbook is split into sheets (R5). One sheet for `none`. Re-exported off
+ * the shared `ExportSplit` (`components/common/export-split.ts`, PLAN-low-stock-export-
+ * split-25sep) so both Stock Debt and the low stock report speak the same four values -
+ * kept under this name so nothing else here changes.
+ */
+export type StockDebtExportSplit = ExportSplit;
 
 /** A rough count for the export popover's "212 rows, 14 sheets" line (AC-33). Best-effort:
  *  built from what the board already has loaded (`pagination.total` + `suppliers`), not a

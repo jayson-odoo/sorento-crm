@@ -1032,6 +1032,32 @@ def test_outage_returns_graceful_reply(wired):
 
 
 # --------------------------------------------------------------------------- #
+# Reviewer round 1 (PR #1230): `_graceful` echoed the contact's raw DB         #
+# `session_vars`, not the pointer THIS turn actually read. On a dry run       #
+# carrying a TEST pointer via `session_vars_in`, an outage therefore handed   #
+# back the contact's REAL stored pointer (possibly `is_test: false`) instead  #
+# of the carried test one - a test draft silently swapped for a live draft.  #
+# --------------------------------------------------------------------------- #
+def test_outage_on_a_dry_run_keeps_the_carried_pointer_not_the_db_one(wired):
+    wired.set_session_vars(
+        {"ideation": {"draft_id": "d-live-db", "status": "collecting", "missing": ["who"], "updated_at": "t"}}
+    )
+    carried_pointer = {
+        "draft_id": "d-test-carried",
+        "status": "collecting",
+        "missing": ["impact"],
+        "updated_at": "t2",
+        "is_test": True,
+    }
+    wired.set_create_idea(IdeationServiceError("connect timeout"))
+    out = _turn(is_test=True, session_vars_in={"ideation": carried_pointer})
+
+    assert out["status"] == "error"
+    assert wired.overwrites == []  # session_vars untouched
+    assert out["session_vars"]["ideation"] == carried_pointer
+
+
+# --------------------------------------------------------------------------- #
 # Issue #1179 - `is_test` rides the create_idea payload (AC-1..AC-3 of         #
 # `documentation/plans/chatbot/ideation-is-test-turns-acceptance-criteria.md`) #
 # --------------------------------------------------------------------------- #

@@ -224,8 +224,15 @@ export function BoardDecisionPill({
       {/* Who saved this, and when (AC-4.2: "the pill reads 'Saved' only, the saver's name
           is in the popover"). Only wrapped in a popover once there is something to say - a
           plain `title` is not reachable at 375px, so a small `Popover` carries it instead
-          (the `BoardRankPopover` shape). */}
-      {savedBy ? (
+          (the `BoardRankPopover` shape).
+          Round 2 (`PLAN-oi-decision-trail-ui.md`, owner ruling after hand-testing round 1):
+          the CONFIRMED chip carries no popover of its own any more, even on the rare line
+          where a draft also lingers on it (a covered line somebody has since re-saved) - the
+          History icon beside this pill (`DecisionTrailButton`, wired in the caller's own
+          Verdict/Decision cell) opens the full trail, confirmed AND saved facts together,
+          instead. `verdict !== 'confirmed'` is the gate that keeps this a DIFFERENT question
+          (a draft saved on a line nobody has confirmed yet) from that one. */}
+      {verdict !== 'confirmed' && savedBy ? (
         <Popover>
           <PopoverTrigger
             asChild
