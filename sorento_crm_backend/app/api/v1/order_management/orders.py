@@ -1990,7 +1990,9 @@ async def get_top_selling(
                         )
                     )
                 }
-                if matched and not matched.intersection(own):
+                # Other customers only and nobody at all get the same 403, so
+                # the answer never says whether a name exists in the book.
+                if not matched.intersection(own):
                     raise not_permitted
             resolved_customer_ids = resolved_customer_ids or own
             dealer_scoped = True
