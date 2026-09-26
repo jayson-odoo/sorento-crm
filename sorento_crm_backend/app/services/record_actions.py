@@ -1883,6 +1883,55 @@ def _undo_confirm(db: Session, payload: dict):
     )
 
 
+def _discard_cost_price_change_set(db: Session, payload: dict):
+    from app.services.procurement.cost_price_change_service import discard
+
+    return discard(db, _entity_id(payload))
+
+
+register(
+    FormAction(
+        key="cost_price_change_set.discard",
+        entity_types=("cost_price_change_set",),
+        execute=_discard_cost_price_change_set,
+        # A Draft set has nothing live changed yet - there is no way back once the
+        # window lapses, same as any other hard delete (#1288, AC-S1-23).
+        window=WINDOW_DESTRUCTIVE,
+        permission="procurement.cost_price_changes.upload",
+        label="Discard price change",
+    )
+)
+
+
+def _delete_product_supplier_cost(db: Session, payload: dict):
+    from app.models.cost_price import ProductSupplierCost
+    from app.services.error_handler import handle_not_found
+    from app.services.procurement.supplier_cost_service import delete_cost
+
+    cost_id = _entity_id(payload)
+    row = db.query(ProductSupplierCost).filter(ProductSupplierCost.id == cost_id).first()
+    if row is None:
+        raise handle_not_found("Cost row", cost_id)
+    return delete_cost(
+        db, str(row.product_supplier_id), cost_id,
+        {"id": payload.get("requested_by_id")},
+    )
+
+
+register(
+    FormAction(
+        key="product_supplier_cost.delete",
+        entity_types=("product_supplier_cost",),
+        execute=_delete_product_supplier_cost,
+        window=WINDOW_DESTRUCTIVE,
+        # The section lives on the supplier's Prices tab / product's Suppliers tab,
+        # both gated by the product-suppliers edit slug (#1288, contract 2.3).
+        permission="procurement.product_suppliers.edit",
+        label="Delete cost row",
+    )
+)
+
+
 register(
     FormAction(
         key="project_sales_order.undo_confirm",
