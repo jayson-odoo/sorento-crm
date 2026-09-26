@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import Link from 'next/link';
 import {
   ColumnDef,
   PaginationState,
@@ -131,14 +132,14 @@ export default function SalesOpportunitiesView() {
         header: ({ column }) => <DataGridColumnHeader title="Title" column={column} />,
         size: 200,
         cell: ({ row }) => (
-          <a
+          <Link
             href={`/sales/opportunities/${row.original.id}`}
             onClick={(e) => e.stopPropagation()}
             className="block truncate font-medium text-primary hover:underline"
             title={row.original.title}
           >
             {row.original.title}
-          </a>
+          </Link>
         ),
         meta: { headerTitle: 'Title', skeleton: <Skeleton className="h-4 w-32" /> },
       },
@@ -177,7 +178,11 @@ export default function SalesOpportunitiesView() {
         header: ({ column }) => <DataGridColumnHeader title="Stage" column={column} />,
         size: 130,
         enableSorting: false,
-        cell: ({ row }) => <Badge appearance="light">{row.original.stage_label}</Badge>,
+        cell: ({ row }) => (
+          <Badge status={row.original.stage_key} appearance="light">
+            {row.original.stage_label}
+          </Badge>
+        ),
         meta: { headerTitle: 'Stage', skeleton: <Skeleton className="h-5 w-20" /> },
       },
       {

@@ -67,6 +67,10 @@ export default function SalesOpportunityDetail({ id }: { id: string }) {
   const [title, setTitle] = useState('');
   const [customerOrProspect, setCustomerOrProspect] = useState('');
   const [salesAgentId, setSalesAgentId] = useState('');
+  // Should-fix 2 (Phase 3 fix2): the picker starts seeded from the record, so a save
+  // with the field untouched must not resend the same id as though it had changed -
+  // only an actual pick (SearchableSelect's onChange) sets this.
+  const [salesAgentTouched, setSalesAgentTouched] = useState(false);
   const [expectedAmount, setExpectedAmount] = useState('');
   const [expectedCloseDate, setExpectedCloseDate] = useState('');
   const [lines, setLines] = useState<LineDraft[]>([]);
@@ -124,6 +128,7 @@ export default function SalesOpportunityDetail({ id }: { id: string }) {
       opportunity.customer_id ?? (opportunity.prospect_name ? `${PROSPECT_PREFIX}${opportunity.prospect_name}` : ''),
     );
     setSalesAgentId(opportunity.sales_agent_id ?? '');
+    setSalesAgentTouched(false);
     setExpectedAmount(String(opportunity.expected_amount ?? ''));
     setExpectedCloseDate(opportunity.expected_close_date ?? '');
     setLines(
@@ -161,10 +166,17 @@ export default function SalesOpportunityDetail({ id }: { id: string }) {
         title: title.trim(),
         expected_amount: expectedAmount,
         expected_close_date: expectedCloseDate,
-        sales_agent_id: salesAgentId || null,
+        // Should-fix 2 (Phase 3 fix2): only sent when the picker was actually touched -
+        // resending the seeded value every save reads as a change to `update_opportunity`
+        // (it re-validates the agent) for a field nothing happened to.
+        ...(salesAgentTouched ? { sales_agent_id: salesAgentId || null } : {}),
+        // B-new (Phase 3 fix2): the OTHER key goes along as an explicit null, not
+        // omitted - `update_opportunity` fills an absent key from the row already on the
+        // opportunity, so switching customer -> prospect (or back) with the other key
+        // merely missing re-sent the old value and 422'd CUSTOMER_AND_PROSPECT_TOGETHER.
         ...(isProspect
-          ? { prospect_name: customerOrProspect.slice(PROSPECT_PREFIX.length) }
-          : { customer_id: customerOrProspect }),
+          ? { prospect_name: customerOrProspect.slice(PROSPECT_PREFIX.length), customer_id: null }
+          : { customer_id: customerOrProspect, prospect_name: null }),
         lines: lines
           .filter((l) => l.productId)
           .map((l) => ({ product_id: l.productId, qty: Number(l.qty) || 0 })),
@@ -216,7 +228,9 @@ export default function SalesOpportunityDetail({ id }: { id: string }) {
                 {opportunity.title}
               </h2>
             )}
-            <Badge appearance="light">{opportunity.stage_label}</Badge>
+            <Badge status={opportunity.stage_key} appearance="light">
+              {opportunity.stage_label}
+            </Badge>
           </div>
           {isEditing ? (
             <div className="flex shrink-0 flex-wrap items-center gap-2">
@@ -244,7 +258,7 @@ export default function SalesOpportunityDetail({ id }: { id: string }) {
               actions={actions}
               pendingAction={pendingDelete}
               primary={
-                canEdit ? (
+                canEdit && opportunity.outcome === 'open' ? (
                   <Button variant="primary" size="sm" className="gap-1.5" onClick={beginEdit}>
                     <SquarePen className="size-4" />
                     Edit
@@ -281,7 +295,9 @@ export default function SalesOpportunityDetail({ id }: { id: string }) {
                   selectedOption={
                     opportunity.customer_id
                       ? { value: opportunity.customer_id, label: customerLabel }
-                      : undefined
+                      : opportunity.prospect_name
+                        ? { value: `${PROSPECT_PREFIX}${opportunity.prospect_name}`, label: customerLabel }
+                        : undefined
                   }
                   placeholder="Search customers..."
                   wrapOptions
@@ -313,7 +329,10 @@ export default function SalesOpportunityDetail({ id }: { id: string }) {
                   id="opportunity-edit-agent"
                   aria-label="Agent"
                   value={salesAgentId}
-                  onChange={setSalesAgentId}
+                  onChange={(value) => {
+                    setSalesAgentId(value);
+                    setSalesAgentTouched(true);
+                  }}
                   options={agentSelectOptions}
                   placeholder="Unassigned"
                   clearable

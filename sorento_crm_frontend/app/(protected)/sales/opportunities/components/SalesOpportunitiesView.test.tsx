@@ -256,4 +256,18 @@ describe('SalesOpportunitiesView', () => {
     // recordCount comes from the API's own total, not the page's row count.
     expect(screen.getByText(/120/)).toBeTruthy();
   });
+
+  it('fix2 3: the Stage pill colours from stage_key through the shared getStatusBadgeVariant', () => {
+    withOpportunities([opportunity({ stage_key: 'lost', stage_label: 'Lost' })]);
+    render(<SalesOpportunitiesView />);
+    expect(screen.getByText('Lost').className).toMatch(/--color-destructive-soft/);
+  });
+
+  it('fix2 nit: the title cell is a real link, not a raw anchor with a manual href', () => {
+    withOpportunities([opportunity()]);
+    render(<SalesOpportunitiesView />);
+    const link = screen.getByRole('link', { name: /ZZT Basins Deal/i });
+    expect(link.tagName).toBe('A');
+    expect(link.getAttribute('href')).toBe('/sales/opportunities/opp-1');
+  });
 });

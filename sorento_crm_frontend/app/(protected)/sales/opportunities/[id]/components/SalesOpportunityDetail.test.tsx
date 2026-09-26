@@ -41,11 +41,19 @@ vi.mock('@/components/common/SearchableSelect', () => ({
     onChange: (v: string) => void;
     options?: { value: string; label: string }[];
     fetchOptions?: (q: string) => Promise<{ value: string; label: string }[]>;
+    selectedOption?: { value: string; label: string };
   }) => {
     const [options, setOptions] = React.useState(props.options ?? []);
     React.useEffect(() => {
       if (props.fetchOptions) props.fetchOptions('').then(setOptions);
     }, []);
+    // A `selectedOption` (async mode's "preset value shows its own label" fallback,
+    // Phase 3 fix2 nit) merges in even before a fetch resolves - the same reason the
+    // real component carries it.
+    const merged =
+      props.selectedOption && !options.some((o) => o.value === props.selectedOption!.value)
+        ? [props.selectedOption, ...options]
+        : options;
     return (
       <select
         aria-label={props['aria-label'] ?? props.id ?? 'select'}
@@ -53,7 +61,7 @@ vi.mock('@/components/common/SearchableSelect', () => ({
         onChange={(e) => props.onChange(e.target.value)}
       >
         <option value="" />
-        {options.map((o) => (
+        {merged.map((o) => (
           <option key={o.value} value={o.value}>
             {o.label}
           </option>
@@ -313,5 +321,107 @@ describe('SalesOpportunityDetail', () => {
     perms.granted = new Set();
     render(<SalesOpportunityDetail id="opp-1" />);
     expect(screen.queryByRole('button', { name: /^edit$/i })).toBeNull();
+  });
+
+  it('fix2 should-fix 1: no Edit once the opportunity is closed (won), same as the portal', () => {
+    hooks.useSalesOpportunity.mockReturnValue({
+      data: detail({ outcome: 'won', stage_key: 'won', available_transitions: [] }),
+      isLoading: false,
+      isError: false,
+    });
+    render(<SalesOpportunityDetail id="opp-1" />);
+    expect(screen.queryByRole('button', { name: /^edit$/i })).toBeNull();
+  });
+
+  it('fix2 should-fix 1: no Edit once the opportunity is closed (lost)', () => {
+    hooks.useSalesOpportunity.mockReturnValue({
+      data: detail({ outcome: 'lost', stage_key: 'lost', available_transitions: [] }),
+      isLoading: false,
+      isError: false,
+    });
+    render(<SalesOpportunityDetail id="opp-1" />);
+    expect(screen.queryByRole('button', { name: /^edit$/i })).toBeNull();
+  });
+
+  it('fix2 should-fix 2: saving without touching Agent does not send sales_agent_id at all', async () => {
+    render(<SalesOpportunityDetail id="opp-1" />);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    await waitFor(() => expect(save.mutateAsync).toHaveBeenCalledTimes(1));
+    expect(save.mutateAsync.mock.calls[0][0]).not.toHaveProperty('sales_agent_id');
+  });
+
+  it('fix2 should-fix 2: changing Agent sends the new sales_agent_id', async () => {
+    hooks.useSalesOpportunityAgentOptions.mockReturnValue({
+      data: [{ id: 'agent-1', code: 'ALI', label: 'ALI - Ali Hassan' }],
+    });
+    render(<SalesOpportunityDetail id="opp-1" />);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    fireEvent.change(screen.getByLabelText('Agent'), { target: { value: 'agent-1' } });
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    await waitFor(() => expect(save.mutateAsync).toHaveBeenCalledTimes(1));
+    expect(save.mutateAsync.mock.calls[0][0].sales_agent_id).toBe('agent-1');
+  });
+
+  it('fix2 should-fix 3: the header Stage pill colours from stage_key', () => {
+    hooks.useSalesOpportunity.mockReturnValue({
+      data: detail({ outcome: 'lost', stage_key: 'lost', stage_label: 'Lost', available_transitions: [] }),
+      isLoading: false,
+      isError: false,
+    });
+    render(<SalesOpportunityDetail id="opp-1" />);
+    expect(screen.getByText('Lost').className).toMatch(/--color-destructive-soft/);
+  });
+
+  it('fix2 B-new: switching a customer-backed opportunity to a prospect sends customer_id: null', async () => {
+    service.getSalesOpportunityCustomerOptions.mockResolvedValue({
+      items: [],
+      prospect: { name: 'ZZT New Prospect' },
+      blocked: null,
+    });
+    render(<SalesOpportunityDetail id="opp-1" />);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    await screen.findByRole('option', { name: /add "ZZT New Prospect" as a new prospect/i });
+    fireEvent.change(screen.getByLabelText('Customer or prospect'), {
+      target: { value: 'prospect:ZZT New Prospect' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    await waitFor(() => expect(save.mutateAsync).toHaveBeenCalledTimes(1));
+    const payload = save.mutateAsync.mock.calls[0][0];
+    expect(payload.prospect_name).toBe('ZZT New Prospect');
+    expect(payload.customer_id).toBeNull();
+  });
+
+  it('fix2 B-new: switching a prospect-backed opportunity to a customer sends prospect_name: null', async () => {
+    hooks.useSalesOpportunity.mockReturnValue({
+      data: detail({ customer_id: null, customer_name: null, prospect_name: 'ZZT Old Prospect' }),
+      isLoading: false,
+      isError: false,
+    });
+    service.getSalesOpportunityCustomerOptions.mockResolvedValue({
+      items: [{ customer_id: 'cust-2', customer_code: 'C2', customer_name: 'ZZT New Customer' }],
+      prospect: null,
+      blocked: null,
+    });
+    render(<SalesOpportunityDetail id="opp-1" />);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    await screen.findByRole('option', { name: 'C2 - ZZT New Customer' });
+    fireEvent.change(screen.getByLabelText('Customer or prospect'), { target: { value: 'cust-2' } });
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    await waitFor(() => expect(save.mutateAsync).toHaveBeenCalledTimes(1));
+    const payload = save.mutateAsync.mock.calls[0][0];
+    expect(payload.customer_id).toBe('cust-2');
+    expect(payload.prospect_name).toBeNull();
+  });
+
+  it('fix2 nit: a prospect-backed opportunity shows the prospect name in the select once editing', () => {
+    hooks.useSalesOpportunity.mockReturnValue({
+      data: detail({ customer_id: null, customer_name: null, prospect_name: 'ZZT Prospect Co' }),
+      isLoading: false,
+      isError: false,
+    });
+    render(<SalesOpportunityDetail id="opp-1" />);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    expect(screen.getByRole('option', { name: 'ZZT Prospect Co' })).toBeTruthy();
   });
 });
