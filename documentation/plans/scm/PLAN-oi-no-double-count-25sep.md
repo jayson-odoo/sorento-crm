@@ -1,7 +1,8 @@
 # PLAN: Order inquiry view without double counting - one row per sales order line, history behind the History icon
 
 Status: grilled (owner rulings 26 Sep 2026 folded in, see "Owner rulings 26 Sep 2026" below). S0
-(FE mock) built on `feat/oi-no-double-count-s0`, awaiting the owner's hands-on; S1 next. S3
+(FE mock) built on `feat/oi-no-double-count-s0` (PR #1266), reviewer round 1 fixed (B1, B2, S1
+to S5, nits), awaiting the owner's hands-on; S1 next. S3
 (worklist) is dropped (G8). Track: feature (three-phase) - expected diff is over ~300 lines across FE and BE; no
 migration, no auth/RBAC change, no new ingest surface, so `security-reviewer` is expected to be
 skipped. Issue #1248. Docs branch `claude/oi-no-double-count-plan-kyf2l4` (draft PR; docs PRs are
@@ -254,7 +255,9 @@ the board and the worklist keep `DecisionTrailButton` and its dialog unchanged).
 (fixed layout, explicit sizes, truncate + title) inside its own horizontal scroller: When, Qty,
 What, Document, Why. The live rows on top as "Now"; retired rows follow newest first. What is a
 `Badge` pill: Now / Used / Superseded / Re-raised / Cancelled / Cancel balance / Line cancelled.
-Why is the row's note; for a Now row with `previous_qty` it reads "Was <previous_qty>" before
+Re-raised has no note of its own: the carry site stamps the old row "Superseded by revision N",
+the same as a plain supersede (L9), so S0 reads a superseded row as Re-raised when a later row of
+the same line asks for the same qty again, and as Superseded otherwise. Why is the row's note; for a Now row with `previous_qty` it reads "Was <previous_qty>" before
 the note (the one place the Was / now story lives, G1). Empty: "No earlier rows for this line."
 Reserve tab only when the line has reserve history (today's `ReserveLineHistoryDialog` body
 moves in, its icon goes).
@@ -322,10 +325,10 @@ the fold, the row, the tabs switch (tens a day: none), or the History icon.
   (`PLAN-oi-cancelled-line-used-confirm.md`) and the 17 Sep "greyed with ONE one-word `used` mark
   on the Qty cell" ruling (`PLAN-oi-replan-received-links.md`) move from the main view into
   History on the detail; neither loses data. The worklist keeps them (G8).
-- Grid census (`sorento_crm_frontend/components/ui/data-grid.nested.inventory.test.ts`): the
-  History dialog's Rows grid is a new grid inside a dialog opened from a Lines grid cell, so it
-  is registered there as a new site; the retired `ReserveLineHistoryDialog` entry, if listed, is
-  removed.
+- Grid census: the History dialog's Rows grid is registered in the SCROLLER census
+  (`sorento_crm_frontend/components/ui/data-grid-scroller.inventory.test.ts`, `scrollerMaxHeight:
+  false` inside its DialogBody). The NESTING census (`data-grid.nested.inventory.test.ts`) does not
+  change: the dialog is a sibling of the Lines grid, not rendered inside it.
 
 ## Open
 

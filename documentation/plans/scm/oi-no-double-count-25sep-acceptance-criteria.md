@@ -59,6 +59,9 @@ Issue: #1248
   Owner ruling 26 Sep (G1): ONE row, Requested 5, State "To confirm"; no "Was 2, now 5" text, no
   Qty (i) Was button and no "used" pill anywhere on the main grid. The used row of 2 is listed in
   History's Rows tab as "Used".
+  "To confirm" is the line State whenever a live buy row's `ack_state` is `changed`; a fresh row
+  born `awaiting` still reads its own state (AC-ND-8 reads To buy). The Instruction cell shows the
+  pill only; the row's note ("Replaces 2 used ...") reads in History's Why, never on the grid.
 - AC-ND-8 [FE] (G5) Given a line with a partly linked row of 6 on PO-0031 and a fresh raised row
   of 4, then ONE row: Buy 10, PO cell "PO-0031", State "Partly on PO".
   Owner ruling 26 Sep (G4, G5): ONE row, Requested 10, Taken 6, Remaining 4, PO cell "PO-0031";
@@ -95,8 +98,12 @@ Issue: #1248
   Re-raised / Cancelled / Cancel balance / Line cancelled.
   Owner ruling 26 Sep (G1, G6): every row that is not the line's current need is listed here,
   the used row included; the Now row's Why reads "Was <previous_qty>" before its note when it
-  has one (the only place the Was / now story shows).
+  has one (the only place the Was / now story shows). Re-raised is a "Superseded by revision N"
+  row that a later row of the same line asks for again at the same qty; any other superseded row
+  reads Superseded.
 - AC-ND-16 [FE] (journey 5) Rows tab with no retired rows reads "No earlier rows for this line."
+  While the cancelled rows load it shows a skeleton, and if the read fails it shows the error,
+  never the empty text.
 - AC-ND-17 [FE] (header totals) The Lines tab footer Qty foots Qty and Buy over the visible line
   rows; the header card's Qty equals the Buy total.
   Owner ruling 26 Sep (G4, G10): the footer totals SO Qty, Requested, Taken and Remaining over
@@ -104,7 +111,8 @@ Issue: #1248
   its Lines equals the number of line rows rendered.
 - AC-ND-18 [UX] (Owner ruling 26 Sep, brief) Every grid on the screen (the Lines grid and the
   History Rows grid) scrolls sideways inside its own container at 375; the page never scrolls
-  sideways. The DataGrid nesting census lists the History Rows grid.
+  sideways. The DataGrid scroller census lists the History Rows grid; the nesting census does not
+  change, since the dialog is a sibling of the Lines grid, not inside it.
 
 ## Phase 2 - backend (S1), wiring (S2); worklist (S3) dropped by owner ruling 26 Sep (G8)
 
