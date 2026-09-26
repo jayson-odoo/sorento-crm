@@ -420,6 +420,14 @@ def delete_opportunity(db: Session, opportunity: SalesOpportunity) -> None:
     db.flush()
 
 
+def delete_opportunity_by_id(db: Session, opportunity_id: str) -> None:
+    """The parked `sales_opportunity.delete` action's handler (Phase 3 fix B2). Already
+    gone is not an error - same rule `team_service.delete_team_by_id` follows."""
+    opportunity = db.query(SalesOpportunity).filter(SalesOpportunity.id == opportunity_id).first()
+    if opportunity is not None:
+        delete_opportunity(db, opportunity)
+
+
 def get_opportunity_or_404(db: Session, opportunity_id: str) -> SalesOpportunity:
     opportunity = db.query(SalesOpportunity).filter(SalesOpportunity.id == opportunity_id).first()
     if opportunity is None:
