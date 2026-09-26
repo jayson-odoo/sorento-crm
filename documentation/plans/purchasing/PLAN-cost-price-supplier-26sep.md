@@ -303,8 +303,8 @@ a Respond.io contact and OTP over WhatsApp, which the supplier does not have.
 - No supplier currency column: currency resolves from the links (Q2). Trigger to add one: a
   supplier with no links yet uploads a list in a currency the header does not state, more than
   once.
-- No supplier Chinese name column: the letterhead match uses `import_field_alias`-style supplier
-  aliases (section 5.4). Trigger: a second screen needs the Chinese name.
+- No supplier Chinese name column or alias: the letterhead match uses the English name and code
+  (section 5.4 names the trigger).
 
 ## 5. Parsing the supplier's Excel
 
@@ -352,15 +352,16 @@ The owner's file, with prices and the supplier name replaced by synthetic values
 structural quirk kept (letterhead merges, row 6 header, merged 产品配置, bracketed packaging notes,
 one priceless row), is committed as `tests/fixtures/cost_price/taiyang_price_list.xlsx` and is the
 golden input for AC-S1-01 to AC-S1-05. The tester writes the expected row counts before the reader
-exists.
+exists. **Prerequisite:** the file is not in the repository; the owner attaches it to #1288 (or
+hands it to the lane) before Phase 2. Phase 1 needs only the mockups.
 
 ### 5.4 Supplier from the letterhead
 
 Match the letterhead text (NFKC, uppercased, punctuation stripped) against active suppliers'
-`supplier_name` and against `import_field_alias` rows with doc_type `supplier_price_list`, field
-`supplier_name` (a place to hold `厦门太阳科技` for TAIYANG, added from the set detail the first
-time a user corrects the pre-fill). Exactly one hit pre-selects; otherwise the field is required
-(AC-S1-06).
+`supplier_code` and `supplier_name`. Exactly one hit pre-selects; otherwise the supplier field is
+required, which costs one pick (AC-S1-06). The owner's file carries the English name, so it
+pre-selects. Trigger for a Chinese-name alias per supplier: a supplier whose letterhead is Chinese
+only has to be picked by hand on three uploads.
 
 ## 6. Matching codes
 
@@ -519,3 +520,157 @@ the RBAC change):
   company; the staff upload refuses a multi-company session.
 - No OTP (Q11): the supplier has no WhatsApp, and SMS to a Chinese number is not something the
   stack sends today. The compensating control is that the link can only propose.
+
+## 11. Slices, definitions of done, out of scope, risks
+
+Two lanes, one PR each (`CLAUDE.md` "Lane merge discipline"). S1 and S2 share a lane because an
+upload that can never apply delivers nothing the owner can use, and they share one migration. S3
+is its own lane: it adds a public ingest surface and can merge a week later without holding the
+staff flow back. Each lane runs `/feature` Phases 1 to 3 in order: the FE against mocks first
+(the three mockups are the target), then the `tester` writes the red tests from these ACs, then
+one `coder` makes them green, then `reviewer`, `security-reviewer` and the browser pass in
+parallel.
+
+### Lane A: S1 + S2, "upload, verify, apply" (branch `feat/cost-price-change-sets`)
+
+**S1: staff upload into a pending change set.** UAC AC-S1-01 to AC-S1-24, AC-AU-01, AC-AU-02
+(upload and submit events), AC-AU-04.
+
+- BE: migration (the two change-set tables, `supplier_price_links` created empty so Lane B needs
+  no second migration, the partial unique index, the permission seed and sweep, the
+  `supplier_price_list` alias seed); models; `supplier_price_list_reader.py`; the one-edit near
+  match; service and routes under `/procurement/cost-price-changes` (probe, upload, list, detail,
+  line map / pick / skip, submit, discard, source file); `product_suppliers.__audit_track__`.
+- FE: sidebar entry under Purchasing (permission gated), list page, upload modal, set detail
+  (stat filters, sheet tabs, grid, resolve actions, header actions, History tab), services and
+  hooks per the layering rule.
+- Done when: the owner's file (anonymised fixture) parses to the stated row counts; the golden
+  tests for header scan, merges, bracket split and price cleaning are green; a real upload of the
+  owner's file on the lane stack lands a Draft set with the near, unmatched and pick-one rows
+  listed apart; submit refuses unresolved rows; the live price is unchanged; 375px and 1280px
+  screenshots; pre-flight queries 1 to 5 answered in the PR body.
+
+**S2: verification and apply.** UAC AC-S2-01 to AC-S2-18, AC-AU-02 (return and apply events),
+AC-AU-03.
+
+- BE: decide, decide-all, return, apply (conditional update, stale check under row lock, link
+  creation, alias write-back), history read, notifications, the CRUD permission enforcement and
+  its sweep.
+- FE: decision column and apply bar on the same detail page (same tabs, same order: View and
+  Edit are one layout), product Suppliers tab cost history, the currency fix on the supplier price.
+- Done when: a second user applies a set and the product's Suppliers tab and the reorder screen
+  show the new price; the same user who submitted cannot apply (API and disabled button); a stale
+  line blocks apply; the audit screen shows the `product_suppliers` before and after with the
+  apply's trace id; the kill test turns red on the four-eyes and stale-check branches.
+
+### Lane B: S3, "the supplier page" (branch `feat/supplier-price-page`, after Lane A merges)
+
+UAC AC-S3-01 to AC-S3-17, AC-AU-02 (link events), AC-S3-10.
+
+- BE: link issue, current, revoke; the five public routes; rate limits; the actor stamp; response
+  headers and log masking.
+- FE: the Share price page modal with QR and message; the public page (tabs, table edit, upload,
+  submitted state, history, expired state, language toggle).
+- Done when: a second browser context at 375px edits and submits through a real link; the set is
+  Pending with channel Supplier page; a verifier applies it; the supplier page shows Applied; an
+  expired and a revoked link both show only the invalid-link state; a test asserts no public route
+  writes `product_suppliers`; security-reviewer clean.
+
+### Later (not in either lane)
+
+- **S4, supplier login:** when #1280 ships users for outside parties (section 8.4).
+
+### Out of scope, each with the trigger that would bring it in
+
+| Not built | Trigger |
+| --- | --- |
+| Future-dated prices applied by a scheduler tick | The owner asks for a price to change on a date after it is verified, twice |
+| FX conversion, or a MYR landed cost derived from the supplier price | The owner rules that `products.cost_price` should follow supplier prices (Q1, Q2) |
+| Writing `products.cost_price` | Same |
+| OTP on the supplier page | A link is found forwarded outside the supplier, or the owner asks |
+| Server-sent WeChat messages | Sorento connects a WeChat channel (Respond.io or WeCom) with an API |
+| Creating a product from an unmatched code | Unmatched rows are routinely new products the owner wants in the master |
+| More than one open set per supplier | Staff and supplier sets collide in practice (a 409 seen more than once a month) |
+| An i18n framework | A third public page needs Chinese, or a third language arrives |
+| Remembered skips | Section 6 trigger |
+| Parsing on the `imports` queue | Section 5 trigger |
+
+### Risks
+
+- **The one-edit near match suggests a wrong sibling** (`-GY` vs `-GR` are both real colours).
+  It never binds; the user must map it, and the suggestion shows the candidate's description.
+- **Packaging variants may be real separate products for Sorento** (Q9). If the owner says so,
+  `pick_one` becomes "map to a different product" and nothing else changes.
+- **The reorder engine starts using verified prices immediately.** That is the intent, but a
+  large price rise changes recommendations the same hour; the apply bar surfaces the largest rise
+  so the verifier sees it.
+- **Other writers of `unit_cost` still bypass verification** (PO flows, product import, rules).
+  They are staff paths and now audited; Q13 asks whether the owner wants more.
+- **CI has no data** (lesson): every test seeds its own supplier, products and links; the fixture
+  file is committed, not read from a local path.
+
+## 12. Grill questions for the owner
+
+Each has a recommendation; the UAC is written to the recommendations.
+
+1. **Which price is "the cost price" this updates?** Options: (a) the supplier's price per
+   product, `product_suppliers.unit_cost` + currency, which the reorder engine reads; (b) the
+   product's own `cost_price` (one number per product, MYR, used for stock valuation); (c) both.
+   **Recommend (a).** The list is one supplier's price in its own currency; a product can have
+   several suppliers, and writing CNY into a MYR field would corrupt valuation. (b) stays as it is
+   (typed by staff or pushed from AutoCount).
+2. **Currency and exchange rate.** **Recommend: keep the supplier's currency, no conversion.** The
+   set's currency comes from the price header if it says (RMB, 元), else from the currency this
+   supplier's prices already carry, else the uploader must pick; there is no house default. No FX
+   rate is stored or applied; MYR equivalents stay the job of the PO and landed-cost flows. A
+   line whose link is in a different currency shows both and applies the set's currency.
+3. **Effective dates and versioning.** **Recommend: Apply takes effect immediately, with an
+   effective date recorded (default today, up to 90 days back, never future).** Each applied set
+   is a version; the product page lists every verified price with its date, set, verifier and
+   source. Scheduling a price for a future date is left out until you need it twice.
+4. **Price basis.** The sheet says 价格 only. **Recommend: treat it as the supplier's unit price on
+   their usual terms (what they would put on a PI), and record nothing extra.** If some suppliers
+   quote FOB and others EXW or tax-inclusive, tell us and we add a basis field to the set.
+5. **Who may upload.** **Recommend: purchasing staff (the roles that upload PIs today, i.e. holders
+   of `scm.proforma_invoice.upload`) get `upload` and `view`; admin gets all four.**
+6. **Who may verify, and must it be a second person?** **Recommend: a new `verify` permission,
+   granted to purchasing leads and admin, and a hard rule that the person who uploaded or
+   submitted a set cannot verify it, superadmin included.** A supplier's own submission counts as
+   the first pair of eyes, so any verifier can apply it. If one person must do both on a small
+   team, say so and we drop the rule for admin only.
+7. **Partial acceptance and returns.** **Recommend: per-line accept or reject, Accept all as one
+   click, an optional reason per rejection, and Apply writes only accepted lines; Return to
+   submitter (reason required) sends the whole set back for edits.** A rejected line keeps the
+   old price and stays visible on the set forever.
+8. **Codes we do not know, and products not yet linked to the supplier.** **Recommend: a near
+   match is suggested, never auto-bound; the user maps or skips each unknown code (a map teaches
+   the matcher only once the set is applied); never create a product from this screen. A known
+   product not yet linked to this supplier becomes a new link on apply, with the supplier's usual
+   lead time.**
+9. **Packaging variants (`CB2500SS-BL（彩盒）` vs `（白盒）`).** **Recommend: one price per product per
+   supplier; when two variants land on one product the user picks which price applies and the
+   other is skipped with a reason.** If packaging variants are separate products for Sorento,
+   answer that and they are mapped as different products instead.
+10. **One open set per supplier.** **Recommend: at most one Draft or Pending set per supplier at a
+    time, from any channel.** A staff upload while the supplier has a set pending is refused with a
+    link to the open set; this keeps "what is the supplier proposing" to one answer.
+11. **Supplier identity, what they see, and link expiry.** **Recommend: one link per supplier
+    (not per person), 30 days, revocable, re-issued from the supplier record; no OTP (no WhatsApp,
+    and the link can only propose). The supplier sees only its own linked products and its own
+    current prices, and per set and per line whether Sorento accepted, never our reasons, our MYR
+    cost or anything about other suppliers. A supplier login replaces the link when #1280 lands.**
+12. **Language.** **Recommend: Chinese first with English beneath on every label, with a 中文 / EN
+    switch; staff screens stay English, with the supplier's Chinese configuration text shown as
+    sent.**
+13. **Other ways a supplier price changes today.** Staff can already edit a link's price with no
+    permission check and no audit. **Recommend: enforce the existing product-supplier edit
+    permission on that screen, and audit every change to supplier prices from now on; leave the
+    PO and import flows as they are (staff paths, now traced).** Say if you want every staff edit
+    to go through a change set as well.
+14. **Delivering the link over WeChat.** **Recommend: staff send it themselves from their own
+    WeChat; the dialog gives a plain link, a QR code image and a ready bilingual message to paste.
+    No server-side WeChat sending.** If Sorento connects a WeChat channel to Respond.io later, the
+    same message can be sent from the system.
+15. **Who hears about a submission.** **Recommend: an in-app notification to every verifier when a
+    set is submitted (staff or supplier), and to the submitter when it is applied or returned. No
+    email or WhatsApp.**

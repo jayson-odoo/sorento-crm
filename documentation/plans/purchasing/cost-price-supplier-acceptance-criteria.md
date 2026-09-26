@@ -96,9 +96,9 @@ Actors: Mei Ling (purchasing, holds `upload`), Kelvin (purchasing lead, holds `v
 - **AC-S1-05** `[BE]` (J3) Given a price cell holding `¥512`, `512.00元`, `"512"` or `512`, then the
   price is 512.00; given `面议`, blank or a negative number, then the line has no price, is listed
   under "Needs attention" and cannot be submitted until skipped.
-- **AC-S1-06** `[BE]` (J2) Given the letterhead text contains the supplier's name (or its Chinese
-  name held in an alias) and exactly one active supplier matches, then the upload pre-selects it;
-  given zero or several, then the supplier field is empty and required.
+- **AC-S1-06** `[BE]` (J2) Given the letterhead text contains the supplier's name or code and
+  exactly one active supplier matches, then the upload pre-selects it; given zero or several, then
+  the supplier field is empty and required.
 - **AC-S1-07** `[BE]` (J2) Given the supplier's existing links all carry `CNY`, then the set's
   currency is CNY; given the 价格 header carries a currency token (`RMB`, `元`, `USD`), then that
   wins; given neither resolves, then the currency field is required in the upload dialog. There is
