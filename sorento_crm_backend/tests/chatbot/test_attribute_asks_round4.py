@@ -512,6 +512,13 @@ def test_r7_a_product_search_reply_never_prints_a_stored_value(chat, world, monk
     assert specs == "Product class: Tap, Water supply: Cold only, Trap: S trap, Type: Toilet seat", specs
 
 
+def test_r7_a_miss_names_its_domain_in_plain_words(chat, world):
+    """Found by the scan: a product ask for a bare class word answered "But no
+    master_products matched these." - the domain key, as stored."""
+    text = chat.say("wash basin", _product_ask("wash basin", "wash basin"))
+    assert "master_products" not in text and "master products" in text, text
+
+
 # --------------------------------------------------------------------------- #
 # The owner's eight exchanges, replayed                                         #
 # --------------------------------------------------------------------------- #
