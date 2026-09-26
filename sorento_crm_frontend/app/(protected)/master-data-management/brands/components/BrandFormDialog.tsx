@@ -273,10 +273,6 @@ export default function BrandFormDialog({
                 <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
                   <div className="space-y-0.5">
                     <FormLabel className="text-base">Customers can ask for this brand</FormLabel>
-                    <FormDescription>
-                      Off for a placeholder brand like Others or No logo, which nobody
-                      ever names in a search.
-                    </FormDescription>
                   </div>
                   <FormControl>
                     <Switch

@@ -265,10 +265,6 @@ export default function BrandForm({ brandId, onSuccess }: BrandFormProps) {
                       <FormLabel className="text-base">
                         Customers can ask for this brand
                       </FormLabel>
-                      <FormDescription>
-                        Off for a placeholder brand like Others or No logo, which nobody
-                        ever names in a search.
-                      </FormDescription>
                     </div>
                     <FormControl>
                       <Switch

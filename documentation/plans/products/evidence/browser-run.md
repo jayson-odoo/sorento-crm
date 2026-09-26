@@ -165,3 +165,132 @@ list view), `ac-s0-4-brand-others-detail-1280.png`, `ac-s0-4-brand-others-detail
   contradicts it).
 - Independent confirmation of whether "0" is actually correct for Product class's Choices count
   (D5) - would need a query against this tenant's category master's class labels.
+
+## Re-check after fix round 3
+
+Same setup: session `lane1286`, sidebar clicks from `/`, 1280 and 375, no source edits, no
+commits. Hard-reloaded (`open http://localhost:3000/signin` then logged back in fresh) before
+starting - the first login attempt hung mid-request behind a `[Fast Refresh] rebuilding` cycle
+(the fix round hot-reloading), a second attempt on a fresh `/signin` load went through cleanly
+in about a second, consistent with the coordinator's warning rather than a new defect.
+
+### D1 - Choices and words tab hang: **FIXED, PASS**
+
+Reproduced the exact original trigger: opened Finish or colour, switched to the **Choices and
+words** tab while still in view mode, then **Edit** -> inline edit a word cell -> **Cancel** ->
+**Edit** again. Timed every step with `get url` immediately after: every response landed in
+0.96-1.17s, both at 1280 and at 375 (no `ps aux` CPU spike, no wedge, no browser restart needed
+either width).
+
+- `recheck-d1-01-view-mode-1280.png` - the tab before entering edit
+- `recheck-d1-02-edit-mode-1280.png` - Edit clicked, no hang, `get url` returned in 1.06s
+- `recheck-d1-03-inline-edit-1280.png` - "Gunmetal"'s word cell open as an inline text input
+- `recheck-d1-04-after-cancel-1280.png` - Cancel clicked, no hang, back to view mode
+- `recheck-d1-05-edit-again-1280.png` - Edit clicked a second time, no hang, same tab still active
+- `recheck-d1-06-edit-mode-375.png`, `recheck-d1-07-after-cancel-375.png` - the same Edit -> inline
+  cell click -> Cancel cycle at 375, also clean (0.97-1.05s each)
+
+**PASS.**
+
+### D2 - toast wording and deferred remove: **FIXED, PASS**
+
+Added a harmless Words rule to Finish or colour (`ZZTRECHECK -> Chrome`, a word no demo product's
+description contains) through the real Add-a-rule modal, saved the rule, then saved the record.
+
+- `recheck-d2-01-rule-filled-1280.png` - the rule and its live grid-row preview before saving
+- `recheck-d2-02-saved-toast-1280.png` - the toast: **"Saved. 0 products updated."** - exact
+  format match, D2 is fixed (0 is correct: the word matches none of the 12 demo products)
+
+Removed it afterwards via the row's own actions menu, identifying the row by its **What to find**
+text (`ZZTRECHECK`) rather than its row number, since the grid renumbers on removal - the mapping
+that bit me last time (`Ends with: -SC -> Satin chrome`, restored last session) was double-checked
+still present and correctly mapped at every step below, confirming that mistake is not repeated:
+
+- `recheck-d2-03-row-menu-1280.png` - Rule 23's row menu open (Edit/Move up/Move down/Remove),
+  `-SC -> Satin chrome` visible two rows above it, unaffected
+- `recheck-d2-04-deferred-countdown-1280.png` - immediately after clicking Remove, the row is
+  still present (deferred, not instant) - the countdown pill itself is off the right edge of the
+  grid's own horizontal scroll frame in the screenshot (same CLI-latency caveat as the first pass:
+  a script-level scroll of the grid's own container did not locate the cell in time); the
+  functional deferred behaviour is confirmed by the next screenshot instead
+- `recheck-d2-05-after-remove-1280.png` - moments later: **22 rules**, `ZZTRECHECK` gone,
+  `Ends with: -SC -> Satin chrome` still present and correctly mapped
+
+**PASS** (toast wording and deferred-remove both correct; the countdown pill's own pixels were
+not captured, same tooling limitation as the first pass, not a product defect).
+
+### D3 - Brand detail page: **FIXED, PASS** - and confirmed not environmental
+
+`GET /master-data-management/brands/{id}` now loads and renders fully -
+`recheck-d3-brand-detail-1280.png` (OTHERS: Basic information, Access, Record sections all
+populated, no skeleton stuck).
+
+Also opened a page this lane did not touch, **Product Categories > Kitchen Sink**
+(`/master-data-management/product-categories/{id}`), to answer the coordinator's "is it
+environmental" question directly: it loaded cleanly and immediately -
+`recheck-d3-category-detail-1280.png`. So the original hang was specific to the Brand detail
+route, not a property of this environment's detail-page pattern in general, and it is now fixed
+either way.
+
+**PASS.**
+
+### D4 - "Customers can ask for this brand" toggle: **STILL MISSING, FAIL**
+
+Checked both places a merchandiser would meet the brand form:
+
+- The list's own row **Edit** path: clicking a brand's name/code cell in the Brands list
+  (`Reference Data > Brands`) opens the **detail page** (not a separate dialog - the "..." row
+  menu itself only offers "Duplicate brand" / "Delete brand", `recheck-d4-01-row-menu-1280.png`),
+  and its **Edit** button switches the same page into an inline edit form:
+  `recheck-d4-03-detail-edit-mode-1280.png`. Fields present: Brand code, Brand name, Description,
+  Status, **Flows to purchasing**. No `is_searchable` control, no "Customers can ask for this
+  brand" wording, anywhere on the page in either state.
+- The **Create Brand** dialog (`recheck-d4-02-brand-dialog-1280.png` from the first pass, re-
+  confirmed unchanged this pass by the same field list on the edit form above): same fields,
+  same gap.
+
+I could not find a distinct modal "dialog the list opens" separate from the page-level edit
+described above - if fix round 3 intended a different surface for that toggle, it either did not
+land yet or is not reachable from anywhere in the Brands list or detail page I could find by
+sidebar/row clicks.
+
+**FAIL - unchanged from the first pass.** AC-S0.4's FE requirement is still not met.
+
+### D5 - Product class Choices count: **FIXED, PASS**
+
+Filtered the Product Specifications list to "Product class":
+`recheck-d5-02-product-class-1280.png` - **Choices: 4**, matching the coordinator's stated demo
+data (was 0 in the first pass).
+
+**PASS.**
+
+### Re-check summary
+
+| Item | Result |
+| --- | --- |
+| D1 (Choices and words hang) | **FIXED** |
+| D2 (toast wording "Saved. N products updated.") | **FIXED** |
+| D2 (deferred remove, identified by text) | **FIXED**, functionally confirmed |
+| D3 (Brand detail page loads) | **FIXED**; confirmed not environmental (Category detail page, untouched by this lane, always loaded fine) |
+| D4 (Brand form "Customers can ask for this brand") | **STILL FAILING** - no such control on either the Create dialog or the detail page's Edit form |
+| D5 (Product class Choices = category class count) | **FIXED** (now reads 4) |
+
+No source files were edited and nothing was committed during this re-check.
+
+## Captain re-check of D4 after the detail-page fix
+
+The brand detail page (`/master-data-management/brands/{id}`) has its own inline view and edit
+form, which none of the fix rounds had touched. It now carries "Customers can ask for this
+brand" in the same place in view (Yes / No) and edit (a switch), per the same-layout mandate.
+Reached by sidebar clicks: Products > Reference Data > Brands > BRAVAT.
+
+| Step | Result | Evidence |
+| --- | --- | --- |
+| Detail view shows "Customers can ask for this brand: Yes" | pass | text read in the session |
+| Edit, switch off, Save brand; view reads "No"; `GET /brands/{id}` returns `is_searchable: false` | pass | `recheck-d4-brand-detail-searchable-off-1280.png` |
+| 375 wide after reload, no horizontal page scroll (`scrollWidth <= innerWidth` true) | pass | `recheck-d4-brand-detail-375.png` |
+| Set back on (API) | done | |
+| Brands list > Create Brand dialog shows the switch, on by default | pass | `recheck-d4-create-dialog-1280.png` |
+
+**D4: pass.** The one console message on the brands list is a React missing-key warning from
+the list, which this lane does not change.
