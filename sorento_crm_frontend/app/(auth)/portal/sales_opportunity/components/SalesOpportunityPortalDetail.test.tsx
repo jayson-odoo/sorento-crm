@@ -206,4 +206,13 @@ describe('SalesOpportunityPortalDetail', () => {
     await screen.findByText('OPP-000001');
     expect(screen.getByText('Price')).toBeTruthy();
   });
+
+  it('fix nit: shows an error state with Retry when the load fails', async () => {
+    service.getPortalSalesOpportunity.mockRejectedValueOnce(new Error('network down'));
+    service.getPortalSalesOpportunity.mockResolvedValueOnce(detail());
+    render(<SalesOpportunityPortalDetail id="opp-1" />);
+    await screen.findByText(/failed to load/i);
+    fireEvent.click(screen.getByRole('button', { name: /retry/i }));
+    await screen.findByText('OPP-000001');
+  });
 });

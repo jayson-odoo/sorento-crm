@@ -31,6 +31,7 @@ import {
 export default function SalesOpportunityPortalDetail({ id }: { id: string }) {
   const [opportunity, setOpportunity] = useState<PortalSalesOpportunity | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [lostReasonOptions, setLostReasonOptions] = useState<SearchableSelectOption[]>([]);
   const [pendingLost, setPendingLost] = useState(false);
   const [lostToStatusId, setLostToStatusId] = useState<string | null>(null);
@@ -39,16 +40,22 @@ export default function SalesOpportunityPortalDetail({ id }: { id: string }) {
 
   const load = () => {
     setLoading(true);
+    setLoadError(false);
     getPortalSalesOpportunity(id)
       .then(setOpportunity)
+      .catch(() => setLoadError(true))
       .finally(() => setLoading(false));
   };
 
   useEffect(() => {
     load();
-    getPortalOpportunityMeta().then((meta) =>
-      setLostReasonOptions(meta.lost_reasons.map((r) => ({ value: r.value, label: r.label }))),
-    );
+    // The reason picker just falls back to an empty list on failure - Lost still works,
+    // it only offers nothing to pick until a retry (Move stage) succeeds.
+    getPortalOpportunityMeta()
+      .then((meta) =>
+        setLostReasonOptions(meta.lost_reasons.map((r) => ({ value: r.value, label: r.label }))),
+      )
+      .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
@@ -57,6 +64,17 @@ export default function SalesOpportunityPortalDetail({ id }: { id: string }) {
       <div className="mx-auto w-full max-w-2xl space-y-3 px-3 pt-4">
         <Skeleton className="h-8 w-32" />
         <Skeleton className="h-40 w-full rounded-xl" />
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="mx-auto w-full max-w-2xl space-y-3 px-3 pt-4 text-center text-sm">
+        <p className="text-destructive">Failed to load this opportunity.</p>
+        <Button variant="outline" size="sm" onClick={load}>
+          Retry
+        </Button>
       </div>
     );
   }
