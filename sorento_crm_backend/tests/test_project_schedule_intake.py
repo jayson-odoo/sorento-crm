@@ -747,6 +747,56 @@ def test_document_url_is_none_when_the_schedule_file_cannot_be_shown(scenario, m
     )
 
 
+def test_the_schedule_version_names_its_attachment_for_the_in_app_pdf_viewer(
+    scenario, monkeypatch
+):
+    """Merge of #1256: every in-app PDF draws through PdfViewer, which reads the bytes with a
+    script. The signed document_url is cross-origin with no CORS headers, so the viewer
+    reads them through /resource-management/attachments/{id}/download instead, the same way
+    the PO screen does. The id rides along only when there is a file to show."""
+    from app.models.resources import Attachment
+    from app.schemas.project_schedule import DeliveryScheduleVersionResponse
+    from app.services import storage_router
+
+    db = scenario["db"]
+    version = scenario["version"]
+    service = ProjectScheduleService(db)
+
+    body = service.get_version_detail(version.id)
+    assert body["attachment_id"] is None
+    assert body["document_url"] is None
+
+    attachment = Attachment(
+        original_filename="schedule.pdf",
+        stored_filename="schedule.pdf",
+        file_path=f"project-schedule/{version.id}/schedule.pdf",
+        entity_type="delivery_schedule_version",
+        entity_id=version.id,
+        storage_provider="s3",
+    )
+    db.add(attachment)
+    db.flush()
+    version.attachment_id = attachment.id
+    db.flush()
+
+    class _FakeBackend:
+        def file_exists(self, key):
+            return True
+
+        def get_signed_url(self, key, expires_in=3600):
+            return f"https://signed.example/{key}"
+
+    storage_router.clear_signed_url_cache()
+    monkeypatch.setattr(storage_router, "get_backend", lambda provider: _FakeBackend())
+
+    body = service.get_version_detail(version.id)
+    assert body["document_url"]
+    assert body["attachment_id"] == str(attachment.id)
+    assert DeliveryScheduleVersionResponse.model_validate(body).attachment_id == str(
+        attachment.id
+    )
+
+
 def test_a_schedule_asking_for_more_than_the_po_ordered_still_blocks(scenario):
     """The other direction is the one that is a concern: a schedule cannot commit
     quantity nobody bought."""

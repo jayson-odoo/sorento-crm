@@ -11,6 +11,7 @@ import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { toast } from '@/lib/toast';
+import { fakePdfJs } from '@/test-utils/fakePdfJs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   DeliveryScheduleVersion,
@@ -25,6 +26,16 @@ if (!window.matchMedia) {
     removeListener() {},
   });
 }
+
+vi.mock('@/components/common/pdf-viewer/pdfjs', async () =>
+  (await import('@/test-utils/fakePdfJs')).fakePdfJsModule,
+);
+
+const apiFetch = vi.fn();
+vi.mock('@/lib/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api')>()),
+  apiFetch: (...args: unknown[]) => apiFetch(...args),
+}));
 
 const push = vi.fn();
 let originParam: string | null = null;
@@ -111,6 +122,7 @@ function version(overrides: Partial<DeliveryScheduleVersion> = {}): DeliverySche
     purchase_order_id: 'po1',
     extraction_state: 'done',
     document_url: 'https://example.test/schedule.pdf',
+    attachment_id: 'att-schedule',
     schedule_date: '2026-07-23',
     po_number: 'HQ/26/01/121',
     page_count: 7,
@@ -270,6 +282,8 @@ function poVersion() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  fakePdfJs.reset();
+  apiFetch.mockResolvedValue({ ok: true, arrayBuffer: async () => new ArrayBuffer(4) });
   originParam = null;
   getDeliveryScheduleVersion.mockResolvedValue(version());
   listDeliveryScheduleVersions.mockResolvedValue([]);
@@ -572,9 +586,16 @@ describe('DeliveryScheduleReviewClient Documents (S5-5)', () => {
     fireEvent.mouseDown(screen.getByRole('tab', { name: 'Documents' }));
     fireEvent.click(screen.getByRole('tab', { name: 'Documents' }));
     const panel = await screen.findByRole('tabpanel');
-    expect(panel.querySelector('iframe, img, object, embed')).not.toBeNull();
     // S2 (review of #1265): the shared viewer named every file a purchase order.
-    expect(panel.querySelector('iframe')).toHaveAttribute('title', 'Delivery schedule page 1');
+    expect(
+      await within(panel).findByRole('group', { name: 'Delivery schedule page 1' }),
+    ).toBeInTheDocument();
+    // #1256: our own PdfViewer, never the browser's viewer in an iframe; the bytes come
+    // through the authenticated download route because the signed URL is cross-origin.
+    expect(panel.querySelector('iframe')).toBeNull();
+    expect(apiFetch).toHaveBeenCalledWith(
+      '/api/v1/resource-management/attachments/att-schedule/download',
+    );
     expect(within(panel).queryByRole('table')).toBeNull();
     expect(within(panel).queryByRole('grid')).toBeNull();
   });
