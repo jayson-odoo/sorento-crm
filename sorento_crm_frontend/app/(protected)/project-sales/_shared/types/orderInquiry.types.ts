@@ -571,6 +571,12 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
    */
   line_no?: number | null;
   /**
+   * MOCK(S1), `PLAN-oi-no-double-count-25sep.md`: the sales order line's own quantity, the
+   * SO Qty column (owner ruling 26 Sep, G4). The server does not send it yet; S1 adds it,
+   * and until then `foldInquiryLines` reads SO Qty off the line's own rows instead.
+   */
+  so_line_qty?: string | null;
+  /**
    * S6 (AC-B6-1/AC-B6-7): the CORE sales-order line's own id, which the backend resolves
    * server-side off the row's mirror line - never the mirror id itself, which this screen
    * has no use for. Addresses the "SO line" link's own `?line=` param
