@@ -406,17 +406,34 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
             if team and team not in teams:
                 teams.append(team)
         if teams:
-            offer = Offer(teams=teams)
-            # R-f (owner hand pass 7, 19 Sep 2026): a SINGLE team names itself in the
-            # offer, the same tail wording `CHATBOT_REPLY_ESCALATE_OFFER` sends
-            # ("...to {{team}} team?"), via this module's own `_pretty_team` (the
-            # `turn` package may not import `chatbot.tail`). Several teams keep the
-            # bare question because the roster right below it is what names them.
-            text += (
-                f"\n\nWould you like me to escalate to {_pretty_team(teams[0])} team?"
-                if len(teams) == 1
-                else "\n\nWould you like me to escalate?"
-            )
+            # #1262 slice 11 (F8), ONE gate for both rules rather than one per call
+            # site - guards only the VISIBLE offer (the `Offer` object and its
+            # sentence), never the roster re-arm below: that carry is silent
+            # bookkeeping for a LATER accepted escalation, not a new offer.
+            # - AC-S11-1: staff (`profile.tier == "office"`, owner ruling 2) get no
+            #   BOT-INITIATED offer on a miss - they can still ask to escalate
+            #   explicitly, a different turn (an `is_escalation_confirmation`
+            #   verdict), never this arm.
+            # - AC-S11-2: a clarifying question already open when this turn's own
+            #   fetch also misses (T3's still-open `kind_pick`, `state.pending`
+            #   carried in, never resolved by `_lane_question` above because it is
+            #   not THIS turn's own ask) must stay the only open question - a
+            #   second one piled on top is what the finding measured.
+            is_staff = getattr(getattr(state, "profile", None), "tier", None) == "office"
+            clarifying_open = getattr(state, "pending", None) is not None
+            if not is_staff and not clarifying_open:
+                offer = Offer(teams=teams)
+                # R-f (owner hand pass 7, 19 Sep 2026): a SINGLE team names itself in
+                # the offer, the same tail wording `CHATBOT_REPLY_ESCALATE_OFFER`
+                # sends ("...to {{team}} team?"), via this module's own
+                # `_pretty_team` (the `turn` package may not import `chatbot.tail`).
+                # Several teams keep the bare question because the roster right
+                # below it is what names them.
+                text += (
+                    f"\n\nWould you like me to escalate to {_pretty_team(teams[0])} team?"
+                    if len(teams) == 1
+                    else "\n\nWould you like me to escalate?"
+                )
             carried = getattr(state, "pending", None)
             if carried is not None and is_roster(carried.kind):
                 # Owner hand pass 2, item 8 (turns 29605e65 miss, then 586746d3 "5" and
