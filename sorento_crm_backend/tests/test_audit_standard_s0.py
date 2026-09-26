@@ -34,7 +34,6 @@ from app.models.user import SystemSetting, User
 from app.services import audit_service
 from app.services.audit_service import (
     BULK_AUDIT_CAP,
-    REDACTED,
     audit_event,
     log_audit,
     record,
@@ -152,6 +151,10 @@ class TestDefaultOn:
 
 
 class TestRedaction:
+    """S-1's (#1298) drop semantics: a secret key is absent from the row, at every depth.
+    ``User.__audit_columns__`` already leaves ``password`` out, so a password-only change
+    writes no row and a mixed change carries only the other keys."""
+
     def test_ac_s0_05_password_is_redacted_on_create_and_update(self, db):
         user = User(
             email=f"{uuid.uuid4().hex}@t.local", name="Pw", status="ACTIVE", password="$2b$hash-one"
@@ -159,13 +162,15 @@ class TestRedaction:
         db.add(user)
         db.flush()
         user.password = "$2b$hash-two"
+        user.name = "Pw2"
         db.flush()
         for row in _rows(db, user.id):
             blob = f"{row.old_values} {row.new_values}"
             assert "hash-one" not in blob and "hash-two" not in blob
+            assert "password" not in (row.old_values or {}) and "password" not in (row.new_values or {})
         (upd,) = _rows(db, user.id, "UPDATE")
-        assert upd.old_values == {"password": REDACTED}
-        assert upd.new_values == {"password": REDACTED}
+        assert upd.old_values == {"name": "Pw"}
+        assert upd.new_values == {"name": "Pw2"}
 
     def test_ac_s0_05_smtp_password_is_redacted(self, db):
         s = db.query(SystemSetting).first()
@@ -178,6 +183,7 @@ class TestRedaction:
         rows = db.query(AuditLog).filter(AuditLog.entity_type == audit_service._audit_entity_type(SystemSetting)).all()
         assert rows
         assert all("hunter2-smtp" not in f"{r.old_values} {r.new_values}" for r in rows)
+        assert all("smtp_password" not in (r.new_values or {}) for r in rows)
 
     def test_ac_s0_05_explicit_log_audit_is_redacted(self, db):
         eid = str(uuid.uuid4())
@@ -187,17 +193,19 @@ class TestRedaction:
             new_values={"api_key_ciphertext": "c2", "sign_token": "t", "note": "b"},
         )
         (row,) = _rows(db, eid)
-        assert row.new_values == {"api_key_ciphertext": REDACTED, "sign_token": REDACTED, "note": "b"}
-        assert row.old_values["api_key_ciphertext"] == REDACTED
+        assert row.new_values == {"note": "b"}
+        assert row.old_values == {"note": "a"}
 
     def test_ac_s0_05_bulk_update_is_redacted(self, db):
         user = User(email=f"{uuid.uuid4().hex}@t.local", name="Bulk", status="ACTIVE", password="old-pw")
         db.add(user)
         db.flush()
-        db.query(User).filter(User.id == user.id).update({"password": "new-pw"}, synchronize_session=False)
+        db.query(User).filter(User.id == user.id).update(
+            {"password": "new-pw", "name": "Bulk2"}, synchronize_session=False
+        )
         (row,) = _rows(db, user.id, "UPDATE")
-        assert row.old_values == {"password": REDACTED}
-        assert row.new_values == {"password": REDACTED}
+        assert row.old_values == {"name": "Bulk"}
+        assert row.new_values == {"name": "Bulk2"}
 
 
 # --- Bulk DML --------------------------------------------------------------------
@@ -638,7 +646,10 @@ def test_ac_s0_23_the_list_route_returns_the_new_fields(db):
     real_app.dependency_overrides[get_db] = _db
     real_app.dependency_overrides[get_current_user_or_api_key] = lambda: admin
     try:
-        with patch("app.services.company_scope.admin_listing_company_filter", return_value=None):
+        # The read gate is S-1's (#1298, tests/test_audit_read_gate.py); this test is about
+        # the fields, so the caller is simply an audit admin.
+        with patch("app.services.company_scope.admin_listing_company_filter", return_value=None), \
+                patch("app.api.v1.audit.audit_logs._is_audit_admin", return_value=True):
             r = TestClient(real_app).get(f"/api/v1/audit/logs/?entity_type=probe&entity_id={eid}")
     finally:
         real_app.dependency_overrides.pop(get_db, None)

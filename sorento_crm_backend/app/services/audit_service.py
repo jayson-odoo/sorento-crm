@@ -20,22 +20,21 @@ from datetime import datetime, date, time, timedelta
 from enum import Enum
 from decimal import Decimal
 from uuid import UUID
-from app.models.audit import AuditLog
+from app.models.audit import AUDIT_SECRET_KEYS, AuditLog
 
 logger = logging.getLogger(__name__)
 
-REDACTED = "[redacted]"
 EXPRESSION = "[expression]"
 # Per bulk statement: this many itemised rows, then one summary row with the remainder's count.
 BULK_AUDIT_CAP = 500
 
-# Column names whose VALUE never enters the trail. The key stays, reading REDACTED, so the fact
-# of the change survives. Measured against every mapped column on 26 Sep 2026: users.password,
+# Column names whose value never enters the trail: the key is DROPPED at every depth, S-1's
+# semantics (PR #1298; its 527 scrub and its tests assume the key is absent). Measured against every mapped column on 26 Sep 2026: users.password,
 # system_settings.smtp_password, *_ciphertext (respond_workspaces, ai_assistant_configs),
 # integration_api_keys.key_hash, portal_otp_codes.code_hash, integrations.credentials_json,
 # token / public_token / sign_token on the share-link tables.
-# A superset of S-1's AUDIT_SECRET_KEYS (PR #1298): the two lists merge into this one when it
-# lands. Also: push_subscriptions.auth / p256dh (the Web Push subscription secret) and the n8n
+# S-1's AUDIT_SECRET_KEYS (app.models.audit, which models derive __audit_columns__ from) is
+# folded in by ``_is_secret_key``; these patterns are its superset. Also: push_subscriptions.auth / p256dh (the Web Push subscription secret) and the n8n
 # webhook URLs on system_settings (unauthenticated capability URLs). Applied at every depth of
 # a JSON value, not only to top-level columns.
 _REDACT_EXACT = frozenset({
@@ -62,13 +61,18 @@ _TOUCH_COLUMNS = frozenset({
 
 def _is_secret_key(key: str) -> bool:
     k = str(key).lower()
-    return k in _REDACT_EXACT or k.endswith(_REDACT_SUFFIXES) or k.startswith(_REDACT_PREFIXES)
+    return (
+        k in _REDACT_EXACT
+        or k in AUDIT_SECRET_KEYS
+        or k.endswith(_REDACT_SUFFIXES)
+        or k.startswith(_REDACT_PREFIXES)
+    )
 
 
 def _redact(values: Any) -> Any:
-    """Mask secret keys at every depth (a JSONB column can hold a nested ``token``)."""
+    """Drop secret keys at every depth (a JSONB column can hold a nested ``token``)."""
     if isinstance(values, dict):
-        return {k: (REDACTED if _is_secret_key(k) else _redact(v)) for k, v in values.items()}
+        return {k: _redact(v) for k, v in values.items() if not _is_secret_key(k)}
     if isinstance(values, list):
         return [_redact(v) for v in values]
     return values
@@ -89,6 +93,7 @@ def _is_uuid(value: str) -> bool:
 #   __audit_columns__ = ["col1", "col2"]   # optional, default all columns
 #   __audit_parent__ = "fk_column"         # optional, the record an operator opens
 # ``__audit_track__ = True`` predates default-on and is now a no-op marker.
+# Secret keys are dropped either way (see ``_redact``).
 def _is_audited_cls(cls: type) -> bool:
     if cls is AuditLog:
         return False
