@@ -76,7 +76,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.models.inventory import Stock
+from app.models.inventory import Stock, StockLedger
 from app.services.deletion_service import (
     DeletionOutcome,
     DeletionRecordResult,
@@ -101,6 +101,10 @@ STOCK_BALANCE_ENTITIES = {"stock_balances"}
 #: `WARN_WAREHOUSE_UNRESOLVED`) - it simply is not a place stock can be
 #: booked into, so nothing is written for it either.
 WARN_WAREHOUSE_INACTIVE = "warehouse_inactive"
+
+#: Fix round 2 (#1257): the Stock Ledger `transaction_type` a push writes when
+#: it CHANGES a quantity, beside the upload's `BULK_IMPORT`.
+AUTOCOUNT_PUSH = "AUTOCOUNT_PUSH"
 
 #: Postgres' own code for a unique-constraint violation, read off
 #: `exc.orig.pgcode` (never `str(exc)` - see `integrity_conflict_errors`'s own
@@ -159,10 +163,16 @@ class StockBalanceIngestService:
     unused: `stock_balances` never touches `integration_references` (D3)."""
 
     def __init__(
-        self, db: Session, integration_id: Optional[str] = None, *, company_id: str
+        self,
+        db: Session,
+        integration_id: Optional[str] = None,
+        *,
+        company_id: str,
+        actor_user_id: Optional[str] = None,
     ):
         self.db = db
         self.integration_id = integration_id
+        self.actor_user_id = actor_user_id
         # Required, not defaulted, for the same reason every other ingest
         # surface requires it (see `master_ingest_service`'s own docstring):
         # a default would be the incumbent company, and a push meant for the
@@ -291,6 +301,34 @@ class StockBalanceIngestService:
         if len(candidates) > 1:
             return None, True
         return None, False
+
+    def _add_ledger_row(
+        self, stock_row: Stock, previous: int, new: int, source_ref: str, *, zeroed: bool = False
+    ) -> None:
+        """Fix round 2 (#1257): one `AUTOCOUNT_PUSH` Stock Ledger row for a push
+        that CHANGES a quantity, the same shape an upload's `BULK_IMPORT` row
+        has. An unchanged value writes nothing, so a push every 5 minutes adds
+        no noise. Added before the caller's flush, inside the record's own
+        savepoint: a record that rolls back takes its ledger row with it, and
+        a dry run's rollback leaves none. `created_by` is the integration's
+        act-as user, so the screen names who pushed."""
+        if previous == new:
+            return
+        self.db.add(
+            StockLedger(
+                product_id=stock_row.product_id,
+                warehouse_id=stock_row.warehouse_id,
+                company_id=self.company_id,
+                transaction_type=AUTOCOUNT_PUSH,
+                quantity_change=new - previous,
+                previous_quantity=previous,
+                new_quantity=new,
+                reference_type="autocount_push",
+                reference_id=source_ref,
+                notes="AutoCount push (deletion zeroed)" if zeroed else "AutoCount push",
+                created_by=self.actor_user_id,
+            )
+        )
 
     def _revert_pending_stock_keys(self) -> None:
         for key in self._pending_stock_keys:
@@ -445,6 +483,9 @@ class StockBalanceIngestService:
                         "_": "stock row for this product and warehouse exists under another company"
                     },
                 )
+            self._add_ledger_row(
+                existing, existing.quantity_on_hand, payload.qty, payload.source_ref
+            )
             existing.quantity_on_hand = payload.qty
             existing.updated_at = datetime.utcnow()
             self.db.flush()
@@ -533,6 +574,7 @@ class StockBalanceIngestService:
                 updated_at=datetime.utcnow(),
             )
             self.db.add(row)
+            self._add_ledger_row(row, 0, payload.qty, payload.source_ref)
             # May raise IntegrityError on `uq_stock_product_id_warehouse_id`
             # (fix round 1, reviewer S2) - handled by the caller
             # (`_ingest_one`/`_handle_insert_conflict`), never here.
@@ -558,6 +600,7 @@ class StockBalanceIngestService:
                 entity_id=str(existing.id),
                 diff={},
             )
+        self._add_ledger_row(existing, current_qty, payload.qty, payload.source_ref)
         existing.quantity_on_hand = payload.qty
         existing.updated_at = datetime.utcnow()
         self.db.flush()
@@ -650,6 +693,7 @@ class StockBalanceIngestService:
                 savepoint.commit()
                 return DeletionRecordResult(source_ref=ref, outcome=DeletionOutcome.NOT_FOUND)
 
+            self._add_ledger_row(existing, existing.quantity_on_hand, 0, ref, zeroed=True)
             existing.quantity_on_hand = 0
             existing.updated_at = datetime.utcnow()
             self.db.flush()

@@ -1065,7 +1065,9 @@ class StockService:
         """`{company_id: when its stock was last confirmed}` = the latest of the
         company's last BULK_IMPORT ledger row and its last accepted AutoCount push
         batch. SYSTEM_ADJUSTMENT never counts (see the note in `list_stock`). A
-        company with neither is absent.
+        company with neither is absent. AUTOCOUNT_PUSH ledger rows are not read:
+        the batch that writes one stamps the push time in the same transaction,
+        at least as late, and the stamp also covers unchanged batches.
 
         One `max()` per company rather than a GROUP BY: each can walk
         `ix_stock_ledger_created_at` backwards and stop at the first hit, where a
