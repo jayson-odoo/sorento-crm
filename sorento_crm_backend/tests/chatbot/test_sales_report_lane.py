@@ -1171,16 +1171,18 @@ class TestParserPromptAndContractsTeachSalesReport:
         stays RETIRED on this lane (S0 dropped the dev/prod dual-body split; only ONE
         body ships now, `SEMANTIC_PARSER_PROMPT`) - main's own edit to the SLIM body
         is deliberately dropped, so the original "both texts ship" premise (dev vs
-        prod split) no longer applies. `SALES_REPORT_ADDENDUM` is still the newest
-        addendum, so it is still the tail of the one body that exists."""
+        prod split) no longer applies. `TOP_SELLING_ADDENDUM` (PLAN-chatbot-top-x-
+        hot-selling-24sep.md S4) now stacks after it, so it is peeled first and
+        `SALES_REPORT_ADDENDUM` is the tail beneath it."""
         from app.services.chatbot_parser_prompt import (
             SALES_REPORT_ADDENDUM,
             SEMANTIC_PARSER_PROMPT,
+            TOP_SELLING_ADDENDUM,
         )
 
-        assert SEMANTIC_PARSER_PROMPT.endswith(SALES_REPORT_ADDENDUM), (
-            "SEMANTIC_PARSER_PROMPT does not end with SALES_REPORT_ADDENDUM - it is "
-            "the newest addendum, so it is the tail"
+        assert SEMANTIC_PARSER_PROMPT.removesuffix(TOP_SELLING_ADDENDUM).endswith(SALES_REPORT_ADDENDUM), (
+            "SEMANTIC_PARSER_PROMPT does not end with SALES_REPORT_ADDENDUM once the "
+            "newer TOP_SELLING_ADDENDUM is peeled"
         )
 
     def test_the_addendum_stacks_after_low_stock(self) -> None:
@@ -1194,9 +1196,10 @@ class TestParserPromptAndContractsTeachSalesReport:
             LOW_STOCK_ADDENDUM,
             SALES_REPORT_ADDENDUM,
             SEMANTIC_PARSER_PROMPT,
+            TOP_SELLING_ADDENDUM,
         )
 
-        assert SEMANTIC_PARSER_PROMPT.removesuffix(SALES_REPORT_ADDENDUM).endswith(
+        assert SEMANTIC_PARSER_PROMPT.removesuffix(TOP_SELLING_ADDENDUM).removesuffix(SALES_REPORT_ADDENDUM).endswith(
             LOW_STOCK_ADDENDUM
         ), "SALES_REPORT_ADDENDUM must stack AFTER LOW_STOCK_ADDENDUM"
 

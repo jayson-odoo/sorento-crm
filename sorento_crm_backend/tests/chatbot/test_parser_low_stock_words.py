@@ -85,12 +85,13 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         newest outermost, so it is stripped first before `LOW_STOCK_ADDENDUM` is asserted
         as the tail - the same treatment `LAST_COST_ADDENDUM` got here when
         `LOW_STOCK_ADDENDUM` landed."""
-        from app.services.chatbot_parser_prompt import SALES_REPORT_ADDENDUM
+        from app.services.chatbot_parser_prompt import SALES_REPORT_ADDENDUM, TOP_SELLING_ADDENDUM
 
-
+        # `TOP_SELLING_ADDENDUM` (PLAN-chatbot-top-x-hot-selling-24sep.md S4) is newer
+        # still, peeled first the same way.
         _mod, addendum = _prompt()
         for name, body in _bodies().items():
-            assert body.removesuffix(SALES_REPORT_ADDENDUM).endswith(addendum), (
+            assert body.removesuffix(TOP_SELLING_ADDENDUM).removesuffix(SALES_REPORT_ADDENDUM).endswith(addendum), (
                 f"{name} body does not end with LOW_STOCK_ADDENDUM once the newer "
                 "SALES_REPORT_ADDENDUM is stripped - LOW_STOCK_ADDENDUM must stay the "
                 "tail beneath it"
@@ -105,12 +106,14 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         from app.services.chatbot_parser_prompt import (
             LAST_COST_ADDENDUM,
             SALES_REPORT_ADDENDUM,
+            TOP_SELLING_ADDENDUM,
         )
 
         _mod, addendum = _prompt()
         for name, body in _bodies().items():
             assert (
-                body.removesuffix(SALES_REPORT_ADDENDUM)
+                body.removesuffix(TOP_SELLING_ADDENDUM)
+                .removesuffix(SALES_REPORT_ADDENDUM)
                 .removesuffix(addendum)
                 .endswith(LAST_COST_ADDENDUM)
             ), f"{name}: LOW_STOCK_ADDENDUM must stack AFTER LAST_COST_ADDENDUM"

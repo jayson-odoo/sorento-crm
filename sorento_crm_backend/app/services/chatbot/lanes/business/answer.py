@@ -2459,6 +2459,12 @@ def _outstanding_report_text(item: Any) -> str:
     miss from anything else never matches here.
     """
     body = item if isinstance(item, dict) else {}
+    if body.get("outstanding_report") is not True and isinstance(body.get("fetch"), dict):
+        # PLAN-chatbot-top-x-hot-selling-24sep.md S4 (AC-1957): the rearch miss path
+        # hands over the fetch fragment WRAPPED (`{"fetch": structured}`); a top selling
+        # miss with no subject arrives that way, and its own header plus "No sales
+        # found." is the answer, not a generic "Could not find order.".
+        body = body["fetch"]
     if body.get("outstanding_report") is not True:
         return ""
     return jsc.js_string(body.get("response") or "").strip()

@@ -506,3 +506,39 @@ def production_services(db: Session, *, space_id: str | None = None) -> ResolveG
         resolve_entity=_resolve_entity(db),
         probe=_probe(db),
     )
+
+
+def resolve_category_token(db: Session, token: str) -> list[tuple[str, str]]:
+    """A top selling ask's category word, as `(id, category_name)` rows
+    (PLAN-chatbot-top-x-hot-selling-24sep.md S4 point 4, AC-1954).
+
+    Not the generic resolver: under `order` it re-types a category token as a customer
+    (`entity_resolver._DOMAIN_HINT_EXPANSIONS`). An exact `category_code` or
+    `category_name` (case-insensitive) wins alone; otherwise every category whose name
+    contains the word, or whose name the word contains ("kitchen sinks" holds "KITCHEN
+    SINK"), matches, and several are all kept (the kind row's `optional_filter`: an IN,
+    never a picker). Read under the engine's per-contact company scope, like
+    `resolve_warehouse_token` above."""
+    from sqlalchemy import func, literal, or_
+
+    from app.models.product import ProductCategory
+
+    word = " ".join((token or "").split()).lower()
+    if not word:
+        return []
+    name = func.lower(ProductCategory.category_name)
+    exact = (
+        db.query(ProductCategory.id, ProductCategory.category_name)
+        .filter(or_(func.lower(ProductCategory.category_code) == word, name == word))
+        .all()
+    )
+    if exact:
+        return [(str(r[0]), r[1]) for r in exact]
+    rows = (
+        db.query(ProductCategory.id, ProductCategory.category_name)
+        .filter(or_(name.contains(word, autoescape=True), literal(word).contains(name)))
+        .order_by(ProductCategory.category_name)
+        .all()
+    )
+    return [(str(r[0]), r[1]) for r in rows]
+

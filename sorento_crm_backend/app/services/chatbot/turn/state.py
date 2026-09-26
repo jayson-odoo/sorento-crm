@@ -108,6 +108,14 @@ class Focus:
     # re-counting it. Its own slot rather than a bag entry: a page position is a focus
     # axis like any other, and it has to be cleared by a topic reset with the rest.
     set_page: dict[str, Any] | None = None
+    # PLAN-chatbot-top-x-hot-selling-24sep.md "Lane wiring (S4)" point 8: a top selling
+    # ask's own axes (`rank_by`, `basis`, `rank_group`, `top_n`, the category words and a
+    # picked row's `detail_code` / `category_code`), carried while `status ==
+    # "top_selling"`. The metric, grain, basis and count questions are answered in a
+    # SECOND message that names only the answer, so the ask they complete has to be
+    # somewhere; `turn/apply._top_selling_rules` is its one writer. One slot, not four
+    # fields: every key lives and dies with the one ask.
+    top_selling: dict[str, Any] | None = None
     extra: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
 
 
@@ -164,6 +172,7 @@ def focus_to_wire(focus: Focus) -> dict[str, Any]:
     wire["sales_channel"] = focus.sales_channel
     wire["date_window"] = focus.date_window
     wire["set_page"] = focus.set_page
+    wire["top_selling"] = dict(focus.top_selling) if focus.top_selling else None
     wire["extra"] = {k: list(v) for k, v in (focus.extra or {}).items()}
     return wire
 
@@ -213,6 +222,8 @@ def focus_from_wire(raw: Any) -> Focus:
     focus.date_window = window if isinstance(window, dict) else None
     page = raw.get("set_page")
     focus.set_page = page if isinstance(page, dict) else None
+    top_selling = raw.get("top_selling")
+    focus.top_selling = dict(top_selling) if isinstance(top_selling, dict) else None
     extra = raw.get("extra")
     if isinstance(extra, dict):
         focus.extra = {

@@ -1705,8 +1705,12 @@ def _run_stages(  # noqa: PLR0915
         # defence, for a re-entry path that calls it directly.
         from app.services.chatbot.lanes.business import _SALES_REPORT_GRANT
 
+        from app.services.chatbot.contracts import SALES_FIGURE_STATUSES
+
+        # PLAN-chatbot-top-x-hot-selling-24sep.md S4 point 5: the top selling ranking is
+        # the same money under the same key, refused at the same seam.
         sales_report_grant_refused = (
-            jsc.js_string(parsed_output.get("order_status") or "").strip() == "sales_report"
+            jsc.js_string(parsed_output.get("order_status") or "").strip() in SALES_FIGURE_STATUSES
             and _SALES_REPORT_GRANT not in set(access.get("attributes") or [])
         )
         if sales_report_grant_refused:
@@ -1781,6 +1785,22 @@ def _run_stages(  # noqa: PLR0915
                 state_out.focus,
                 unsettled_only=plan.ask is None,
             )
+            # PLAN-chatbot-top-x-hot-selling-24sep.md S4 point 4 (AC-1954): under `order`
+            # the generic resolver re-types a category token as a customer
+            # (`entity_resolver._DOMAIN_HINT_EXPANSIONS["order"]["category"]`), which
+            # would filter the ranking by a customer nobody named or open a customer
+            # picker. A top selling ask resolves its category words itself, against
+            # `product_categories` (`lanes/business._top_selling_category_ids`), so the
+            # resolver is never asked about them.
+            if jsc.js_string(resolver_parse_output.get("order_status") or "").strip() == "top_selling":
+                resolver_parse_output = {
+                    **resolver_parse_output,
+                    "entities": [
+                        e
+                        for e in (resolver_parse_output.get("entities") or [])
+                        if not (isinstance(e, dict) and e.get("hint") == "category")
+                    ],
+                }
             if (
                 len(plan.domains) > 1
                 and resolver_parse_output.get("entities")

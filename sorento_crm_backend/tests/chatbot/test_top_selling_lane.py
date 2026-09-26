@@ -33,6 +33,7 @@ import pytest
 from sqlalchemy import text
 
 from app.services.chatbot.lanes.business.services import FetchServices
+from app.services.company_scope import DEFAULT_COMPANY_ID
 from tests.chatbot import test_outstanding_lane as outstanding_lane
 from tests.chatbot.test_engine import _parser_output
 from tests.chatbot.test_outstanding_lane import (
@@ -121,7 +122,7 @@ def _fake_route(args: dict[str, Any], *, codes: list[str] | None = None, refuse:
 def route(monkeypatch):
     """Swap the harness's MCP double for one that answers `crm_top_selling_report` with
     `_fake_route` rendered through the real presenter. `route.codes` / `route.refuse`
-    shape the next answer; `route.captured` is every `(name, args)` call."""
+    shape the next answer; each turn gets its own `(name, args)` capture list."""
 
     class _Route:
         codes: list[str] | None = None
@@ -133,13 +134,16 @@ def route(monkeypatch):
     present = _present_response()
 
     def _factory(_response: Any = None):
+        captured: list[tuple[str, dict[str, Any]]] = []
+        state.captured = captured
+
         def _call(name: str, args: dict[str, Any]) -> Any:
-            state.captured.append((name, dict(args)))
+            captured.append((name, dict(args)))
             if name != TOOL:
                 return json.dumps({"has_result": False, "items": []})
             return present(name, json.dumps(_fake_route(args, codes=state.codes, refuse=state.refuse)))
 
-        return _call, state.captured
+        return _call, captured
 
     monkeypatch.setattr(outstanding_lane, "_capturing_mcp", _factory)
     return state
@@ -345,10 +349,10 @@ def _seed_contact_again(session_factory) -> None:
 
 class TestCategory:
     def _seed_category(self, session_factory) -> str:
-        from app.models.order import ProductCategory
+        from app.models.product import ProductCategory
 
         db = session_factory()
-        row = ProductCategory(category_code="KS", category_name="KITCHEN SINK")
+        row = ProductCategory(category_code="KS", category_name="KITCHEN SINK", company_id=DEFAULT_COMPANY_ID)
         db.add(row)
         db.commit()
         return str(row.id)
@@ -479,7 +483,9 @@ class TestFollowUp:
         the bot asked, or a follow-up that names no ask of its own."""
         _seed_contact(session_factory, variables={})
         _turn(session_factory, monkeypatch, _ts(rank_by="amount"), "top 5 by amount")
-        reply, captured = _turn(session_factory, monkeypatch, _ts(rank_by=None, top_n=10), "top 10 selling items")
+        reply, captured = _turn(
+            session_factory, monkeypatch, _ts(rank_by=None, top_n=10, domain_in_message=True), "top 10 selling items",
+        )
         assert _calls(captured) == []
         assert reply.strip() == ASK_METRIC
 
@@ -670,10 +676,10 @@ class TestPickList:
         assert _open_question(session_factory).get("kind") == "top_selling_pick"
 
     def test_category_pick_runs_that_categorys_items(self, session_factory, monkeypatch, route) -> None:
-        from app.models.order import ProductCategory
+        from app.models.product import ProductCategory
 
         db = session_factory()
-        category = ProductCategory(category_code="WC", category_name="WATER CLOSET")
+        category = ProductCategory(category_code="WC", category_name="WATER CLOSET", company_id=DEFAULT_COMPANY_ID)
         db.add(category)
         db.commit()
         _seed_contact(session_factory, variables={})

@@ -778,6 +778,16 @@ def lane_parse_output(
     # than a second session key the two could disagree about.
     if not out.get("sales_channel") and focus is not None and focus.sales_channel:
         out["sales_channel"] = focus.sales_channel
+    # PLAN-chatbot-top-x-hot-selling-24sep.md "Lane wiring (S4)" point 8: the top
+    # selling ask's axes, off the FOCUS (`turn/apply._top_selling_rules` already laid
+    # this turn's own values over the carried ones). One key, read by
+    # `lanes/business._fetch_semantic_input`.
+    if (
+        jsc.js_string(out.get("order_status") or "").strip() == "top_selling"
+        and focus is not None
+        and focus.top_selling
+    ):
+        out["top_selling"] = dict(focus.top_selling)
 
     routing = dict(out.get("routing") or {})
     if accepted_team:

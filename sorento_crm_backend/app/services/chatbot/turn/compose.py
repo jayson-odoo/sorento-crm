@@ -13,7 +13,12 @@ from typing import Any
 from app.services.chatbot.turn.decide import OUTSTANDING_KINDS
 from app.services.chatbot.turn.fetch import envelope_missed
 from app.services.chatbot.turn.narrow import ledger_family_key, ledger_family_label
-from app.services.chatbot.turn.pending import ask as pending_ask, is_roster, quick_replies_suppressed
+from app.services.chatbot.turn.pending import (
+    ask as pending_ask,
+    is_roster,
+    quick_replies_suppressed,
+    top_selling_pick,
+)
 from app.services.chatbot.turn.policy import Policy
 from app.services.chatbot.turn.state import KIND_FIELD_MAP, State, focus_row_label
 
@@ -161,6 +166,16 @@ def _lane_question(envelopes: list[dict[str, Any]], turn_no: int | None = None):
             continue
         rows = [r for r in (ask.get("last_result_set") or []) if isinstance(r, dict)]
         kind = str(ask.get("kind"))
+        if kind == "top_selling_pick":
+            # PLAN-chatbot-top-x-hot-selling-24sep.md S4: the ranked list's own roster
+            # builder (`turn/pending.top_selling_pick`, S1): options carry the printed
+            # code and grain, and the payload sends a pick back to the ranking.
+            question = top_selling_pick(
+                rows, asked_at_turn=turn_no, filters=dict(ask.get("filters") or {})
+            )
+            if question is not None:
+                return question
+            continue
         # The OUTSTANDING kinds keep their own `entity_type` (their options are a scope,
         # never a row to pick's own `uuid` - `apply._answer_outstanding` owns the whole
         # answering turn before the generic roster path ever reads `entity_type`). A

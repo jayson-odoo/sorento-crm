@@ -203,6 +203,17 @@ def _build_json_schema() -> dict[str, Any]:
             # reading as null; the field is genuinely conditional (emitted only on a
             # sales report ask) either way.
             "sales_channel": {"type": ["string", "null"], "enum": ["dealer", "project", None]},
+            # PLAN-chatbot-top-x-hot-selling-24sep.md "Parser (S4)": the top selling ask's
+            # three axes, each nullable and each an ENUM for the reason `group_by` gives
+            # (no earlier prompt version emits them, so no working turn produces a value
+            # outside the set). Required for strict mode, exempted from the recorded
+            # emissions' check through `TOLERATED_ABSENT`, exactly like `sales_channel`.
+            # `unclear` is the parser saying the message could mean either: the lane asks
+            # (owner rulings 26 Sep 2026: never assume the basis or the grain). A null
+            # `rank_by` is asked too (no default metric).
+            "rank_by": {"type": ["string", "null"], "enum": ["quantity", "amount", None]},
+            "basis": {"type": ["string", "null"], "enum": ["delivered", "ordered", "unclear", None]},
+            "rank_group": {"type": ["string", "null"], "enum": ["item", "category", "unclear", None]},
             "correction": {"type": ["boolean", "null"]},
             "routing": {
                 "type": "object",
@@ -333,6 +344,9 @@ def _build_json_schema() -> dict[str, Any]:
             "group_by",
             "top_n",
             "sales_channel",
+            "rank_by",
+            "basis",
+            "rank_group",
             "correction",
             "routing",
             "escalation",
@@ -364,8 +378,9 @@ DECLARED_KEYS: frozenset[str] = frozenset(PARSE_OUTPUT_JSON_SCHEMA["required"])
 #: it HAS to be declared at the wire, and no prompt version before the sales report
 #: addendum ever emits it - so every recorded emission and every `mock_reformulator_
 #: output` a console case carries lacks it, and reads as null.
+#: The top selling keys (`rank_by`, `basis`, `rank_group`) join for the same reason.
 TOLERATED_ABSENT: frozenset[str] = frozenset(
-    {"broaden_to", "domain_in_message", "sales_channel"}
+    {"broaden_to", "domain_in_message", "sales_channel", "rank_by", "basis", "rank_group"}
 )
 
 
