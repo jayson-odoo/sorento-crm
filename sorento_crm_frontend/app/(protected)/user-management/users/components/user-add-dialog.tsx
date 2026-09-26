@@ -79,8 +79,11 @@ const UserAddDialog = ({
   const appliedContactRef = useRef<string | null>(null);
   const appliedCompaniesRef = useRef<string | null>(null);
 
-  // Fetch available roles
-  const { data: roleList } = useRoleSelectQuery();
+  // Fetch available roles. Guarded against a non-array response (a test's
+  // generic `apiFetch` stub, say) - this query has no `enabled: open` gate, so
+  // it fires the moment the component mounts, dialog closed or not.
+  const { data: roleListRaw } = useRoleSelectQuery();
+  const roleList: UserRole[] = Array.isArray(roleListRaw) ? (roleListRaw as UserRole[]) : [];
 
   const form = useForm<UserAddSchemaType>({
     resolver: zodResolver(UserAddSchema) as Resolver<UserAddSchemaType>,
@@ -167,10 +170,8 @@ const UserAddDialog = ({
       form.setValue('name', linkedContactDetail.name);
     }
     form.setValue('contact_number', linkedContactDetail.phone_number ?? '');
-    if (!dirty.roleIds && linkedContactDetail.suggested_role_slug && roleList?.length) {
-      const suggested = (roleList as UserRole[]).find(
-        (r) => r.slug === linkedContactDetail.suggested_role_slug,
-      );
+    if (!dirty.roleIds && linkedContactDetail.suggested_role_slug && roleList.length) {
+      const suggested = roleList.find((r) => r.slug === linkedContactDetail.suggested_role_slug);
       if (suggested) form.setValue('roleIds', [suggested.id]);
     }
   }, [linkedContactDetail, form, roleList]);
@@ -191,7 +192,7 @@ const UserAddDialog = ({
     if (!selectedContactId) appliedContactRef.current = null;
   }, [selectedContactId]);
 
-  const suggestedRole = (roleList as UserRole[] | undefined)?.find(
+  const suggestedRole = roleList.find(
     (r) => r.slug === linkedContactDetail?.suggested_role_slug,
   );
 
@@ -461,7 +462,7 @@ const UserAddDialog = ({
                       <SearchableMultiSelect
                         value={field.value ?? []}
                         onChange={(v) => field.onChange(v)}
-                        options={(roleList ?? []).map((role: UserRole) => ({
+                        options={roleList.map((role: UserRole) => ({
                           value: role.id,
                           label: role.name,
                         }))}
