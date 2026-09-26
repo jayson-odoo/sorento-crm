@@ -890,7 +890,12 @@ TOP_SELLING_ONE_SHOT = ("detail_code",)
 #: and the parser key that answers each. The how-many question is not here: its answer
 #: is a bare count, which never names the ranking, so a message that does name it is a
 #: new ask (reviewer B2 (b), PR #1273).
-TOP_SELLING_CLARIFY_AXES = {"group": "rank_group", "metric": "rank_by", "basis": "basis"}
+TOP_SELLING_CLARIFY_AXES = {
+    "group": "rank_group",
+    "metric": "rank_by",
+    "basis": "basis",
+    "category": "category_words",
+}
 
 
 def _top_selling_waiting(asked: Any, own: dict[str, Any]) -> bool:

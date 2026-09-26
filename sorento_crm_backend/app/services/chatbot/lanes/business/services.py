@@ -508,37 +508,46 @@ def production_services(db: Session, *, space_id: str | None = None) -> ResolveG
     )
 
 
-def resolve_category_token(db: Session, token: str) -> list[tuple[str, str]]:
-    """A top selling ask's category word, as `(id, category_name)` rows
+def _category_words(text: str) -> list[str]:
+    """Lower-cased words, each plural folded to its singular by one trailing `s`
+    ("sinks" -> "sink"), applied to both sides so a match is word for word."""
+    return [w[:-1] if len(w) > 3 and w.endswith("s") else w for w in (text or "").lower().split()]
+
+
+def resolve_category_token(db: Session, token: str) -> list[tuple[str, str, str]]:
+    """A top selling ask's category word, as `(id, category_code, category_name)` rows
     (PLAN-chatbot-top-x-hot-selling-24sep.md S4 point 4, AC-1954).
 
     Not the generic resolver: under `order` it re-types a category token as a customer
     (`entity_resolver._DOMAIN_HINT_EXPANSIONS`). An exact `category_code` or
-    `category_name` (case-insensitive) wins alone; otherwise every category whose name
-    contains the word, or whose name the word contains ("kitchen sinks" holds "KITCHEN
-    SINK"), matches, and several are all kept (the kind row's `optional_filter`: an IN,
-    never a picker). Read under the engine's per-contact company scope, like
-    `resolve_warehouse_token` above."""
-    from sqlalchemy import func, literal, or_
-
+    `category_name` (case-insensitive, a plural folded) wins alone; otherwise a category
+    matches when the word is a whole-word run of its name ("sinks" is in "KITCHEN
+    SINK"). Never the reverse (reviewer S1, PR #1273: "kitchen sinks" took the category
+    KIT and "basin mixers" took BASIN beside BASIN MIXER, a silent widening). Several
+    matches are returned for the lane to ASK about, never all kept. Read under the
+    engine's per-contact company scope, like `resolve_warehouse_token` above."""
     from app.models.product import ProductCategory
 
     word = " ".join((token or "").split()).lower()
     if not word:
         return []
-    name = func.lower(ProductCategory.category_name)
-    exact = (
-        db.query(ProductCategory.id, ProductCategory.category_name)
-        .filter(or_(func.lower(ProductCategory.category_code) == word, name == word))
-        .all()
-    )
-    if exact:
-        return [(str(r[0]), r[1]) for r in exact]
-    rows = (
-        db.query(ProductCategory.id, ProductCategory.category_name)
-        .filter(or_(name.contains(word, autoescape=True), literal(word).contains(name)))
+    words = _category_words(word)
+    rows = [
+        (str(r[0]), r[1] or "", r[2] or "")
+        for r in db.query(ProductCategory.id, ProductCategory.category_code, ProductCategory.category_name)
         .order_by(ProductCategory.category_name)
         .all()
-    )
-    return [(str(r[0]), r[1]) for r in rows]
+    ]
+    exact = [
+        r for r in rows
+        if r[1].lower() == word or r[2].lower() == word or _category_words(r[2]) == words
+    ]
+    if exact:
+        return exact
+
+    def _has_run(name: str) -> bool:
+        have = _category_words(name)
+        return any(have[i : i + len(words)] == words for i in range(len(have) - len(words) + 1))
+
+    return [r for r in rows if _has_run(r[2])]
 

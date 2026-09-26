@@ -387,6 +387,69 @@ class TestCategory:
         assert "Which customer" not in reply
         assert "Category: KITCHEN SINK" in reply
 
+    @staticmethod
+    def _categories(db, *rows: tuple[str, str]) -> dict[str, str]:
+        from app.models.product import ProductCategory
+
+        made = [ProductCategory(category_code=c, category_name=n, company_id=DEFAULT_COMPANY_ID) for c, n in rows]
+        db.add_all(made)
+        db.commit()
+        return {r.category_name: str(r.id) for r in made}
+
+    @pytest.mark.parametrize(
+        "word, expected",
+        [
+            ("kitchen sinks", []),  # reviewer S1: KIT is inside the word, it is not the word
+            ("basin mixers", ["BASIN MIXER"]),  # reviewer S1: BASIN must not ride along
+            ("basin", ["BASIN"]),  # an exact name wins alone
+            ("BM", ["BASIN MIXER"]),  # an exact code wins alone
+            ("mixer", ["BASIN MIXER", "SHOWER MIXER"]),  # whole word, several: the lane asks
+            ("mix", []),  # part of a word is not a word
+        ],
+    )
+    def test_category_word_matches_whole_words_never_reverse_containment(
+        self, session_factory, word, expected
+    ) -> None:
+        """Reviewer S1, PR #1273: `resolve_category_token` matched every category whose
+        name the word CONTAINS ("kitchen sinks" took KIT; "basin mixers" took BASIN too),
+        a silent widening. A category matches on its exact code or name, else when the
+        word is a whole-word run of its name (a plural folds to its singular)."""
+        from app.services.chatbot.lanes.business import services as business_services
+
+        db = session_factory()
+        self._categories(db, ("KT", "KIT"), ("BA", "BASIN"), ("BM", "BASIN MIXER"), ("SM", "SHOWER MIXER"))
+        got = sorted(name for _id, _code, name in business_services.resolve_category_token(db, word))
+        assert got == expected
+
+    def test_a_plural_word_finds_its_category(self, session_factory) -> None:
+        from app.services.chatbot.lanes.business import services as business_services
+
+        db = session_factory()
+        ids = self._categories(db, ("KT", "KIT"), ("KS", "KITCHEN SINK"))
+        got = business_services.resolve_category_token(db, "kitchen sinks")
+        assert [row[0] for row in got] == [ids["KITCHEN SINK"]]
+
+    def test_a_word_matching_several_categories_is_asked(self, session_factory, monkeypatch, route) -> None:
+        """Reviewer S1: several categories match, so the bot asks which one (owner: no
+        silent defaults, clarify), listing the codes (owner: code only), and fetches
+        nothing. The code typed next runs the ask inside that one category."""
+        ids = self._categories(session_factory(), ("BM", "BASIN MIXER"), ("SM", "SHOWER MIXER"))
+        _seed_contact(session_factory, variables={})
+        mixer = {"raw": "mixers", "hint": "category", "canonical_code": None, "current_message": True, "confident": True, "hint_confident": True}
+        reply, captured = _turn(session_factory, monkeypatch, _ts(top_n=3, entities=[mixer]), "top 3 mixers by quantity")
+        assert _calls(captured) == []
+        assert reply.strip() == "Which category do you mean? Reply with one code: BM, SM"
+
+        answer = {"raw": "SM", "hint": "category", "canonical_code": None, "current_message": True, "confident": True, "hint_confident": True}
+        _reply, captured = _turn(
+            session_factory, monkeypatch,
+            _parser_output(message_type="business_query", intent_hint=None, domain_hint=None, order_status=None, entities=[answer]),
+            "SM",
+        )
+        (args,) = _calls(captured)
+        assert args["category_ids"] == [ids["SHOWER MIXER"]]
+        assert args["rank_by"] == "quantity" and args["n"] == 3
+
 
 # --------------------------------------------------------------------------- #
 # AC-1955 - an ambiguous customer takes the existing picker, and the pick continues

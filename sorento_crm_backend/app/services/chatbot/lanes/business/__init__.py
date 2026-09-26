@@ -459,23 +459,33 @@ def _top_selling_question(slot: dict[str, Any]) -> tuple[str, str] | None:
     return None
 
 
-def _top_selling_category_ids(slot: dict[str, Any], *, db: Any) -> tuple[list[str], bool]:
+def _top_selling_category_ids(slot: dict[str, Any], *, db: Any) -> tuple[list[str], bool, list[str]]:
     """The category filter a top selling ask carries, as ids: a picked category row's
     exact code (`category_code`), else the category words the messages named
-    (`category_words`). Returns `(ids, named)`; `named` with no ids means a category
-    word matched nothing, which is a miss, never a silent widening to every category.
+    (`category_words`). Returns `(ids, named, ambiguous)`; `named` with no ids means a
+    category word matched nothing, which is a miss, never a silent widening to every
+    category. `ambiguous` is the codes of every category ONE word matched when it matched
+    several: the lane asks which (reviewer S1, PR #1273), it never takes them all.
     `db is None` (a direct `run_fetch` test) resolves nothing."""
     code = jsc.js_string(slot.get("category_code") or "").strip()
     words = [jsc.js_string(w).strip() for w in (slot.get("category_words") or []) if jsc.truthy(w)]
     tokens = [code] if code else words
     if not tokens or db is None:
-        return [], bool(tokens)
+        return [], bool(tokens), []
     ids: list[str] = []
     for token in tokens:
-        for category_id, _name in business_services.resolve_category_token(db, token):
+        matched = business_services.resolve_category_token(db, token)
+        if len(matched) > 1:
+            return [], True, [row[1] for row in matched]
+        for category_id, _code, _name in matched:
             if category_id not in ids:
                 ids.append(category_id)
-    return ids, True
+    return ids, True, []
+
+
+def _top_selling_ask_category(codes: list[str]) -> str:
+    """The category question: the codes only (owner, 26 Sep ~07:40Z, code only)."""
+    return f"Which category do you mean? Reply with one code: {', '.join(codes)}"
 
 
 def _fixed_reply(text: str, *, top_selling_asked: str | None = None) -> dict[str, Any]:
@@ -1407,7 +1417,11 @@ def run_fetch(
             if trace is not None:
                 trace.add("top_selling", {"asked": line})
             return _fixed_reply(line, top_selling_asked=axis)
-        category_ids, category_named = _top_selling_category_ids(slot, db=db)
+        category_ids, category_named, ambiguous = _top_selling_category_ids(slot, db=db)
+        if ambiguous:
+            if trace is not None:
+                trace.add("top_selling", {"asked": "category", "codes": ambiguous})
+            return _fixed_reply(_top_selling_ask_category(ambiguous), top_selling_asked="category")
         if category_named and not category_ids:
             return _error_fragment(
                 "top selling: the category named matches no product category",
