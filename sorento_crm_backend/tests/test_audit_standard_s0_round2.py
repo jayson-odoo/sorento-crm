@@ -315,3 +315,33 @@ class TestS2MigrationLocks:
                 assert valid is True
             finally:
                 outer.rollback()
+
+
+# --- S3: write order on the create_all path is pinned, not left to UUID luck -----------
+
+
+class TestS3WriteOrder:
+    """AC-S0-21b on the model path. The review's kill K7 (model default back to now()) went
+    red in only 2 of 3 runs: the ordering in test_ac_s0_01 passes whenever random ids sort
+    in write order. These two go red every time under K7."""
+
+    def test_s3_the_blank_schema_default_is_clock_timestamp(self, db):
+        from sqlalchemy import text
+
+        default = db.execute(
+            text(
+                "SELECT column_default FROM information_schema.columns "
+                "WHERE table_schema = current_schema() AND table_name = 'audit_logs' "
+                "AND column_name = 'changed_at'"
+            )
+        ).scalar()
+        assert default and "clock_timestamp" in default
+
+    def test_s3_rows_in_one_transaction_are_strictly_ordered(self, db):
+        from app.services.audit_service import log_audit
+
+        first = log_audit(db, "probe", str(uuid.uuid4()), "EVENT")
+        second = log_audit(db, "probe", str(uuid.uuid4()), "EVENT")
+        db.refresh(first)
+        db.refresh(second)
+        assert second.changed_at > first.changed_at
