@@ -1,0 +1,1798 @@
+[
+  {
+    "id": "kuching-carry-live-episode-1",
+    "needs_memory": true,
+    "profile_facts": [
+      {
+        "key": "customer",
+        "value": "Chin Chun Trading (CC001)"
+      },
+      {
+        "key": "segment",
+        "value": "dealer"
+      },
+      {
+        "key": "salesperson",
+        "value": "Aina"
+      },
+      {
+        "key": "language",
+        "value": "en"
+      },
+      {
+        "key": "role",
+        "value": "purchaser"
+      },
+      {
+        "key": "usual_products",
+        "value": [
+          "SRTWB1455",
+          "M486-75-BL"
+        ]
+      },
+      {
+        "key": "usual_sites",
+        "value": [
+          "Kuching"
+        ]
+      }
+    ],
+    "summaries": [
+      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
+      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+    ],
+    "earlier_messages": [
+      {
+        "created_at": "Thu 3:14pm",
+        "text": "do you have SRTWB1455 in JB?"
+      }
+    ],
+    "previous_response": "Yes, SRTWB1455 is available in JB - 120 units on hand.",
+    "current_subject": "SRTWB1455 stock in JB",
+    "current_message": "and in kuching?",
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nEarlier in this conversation (oldest first):\n- Thu 3:14pm you: do you have SRTWB1455 in JB?\nPrevious response: Yes, SRTWB1455 is available in JB - 120 units on hand.\nCurrent subject: SRTWB1455 stock in JB\nCurrent user message: and in kuching?",
+    "assembled_est_tokens": 209,
+    "expected": {
+      "entities": [
+        {
+          "canonical_code": "SRTWB1455",
+          "current_message": false
+        },
+        {
+          "raw": "kuching",
+          "current_message": true
+        }
+      ],
+      "message_type": null,
+      "profile_statement": null,
+      "domain_hint": "inventory"
+    }
+  },
+  {
+    "id": "kuching-carry-live-episode-2",
+    "needs_memory": true,
+    "profile_facts": [
+      {
+        "key": "customer",
+        "value": "Chin Chun Trading (CC001)"
+      },
+      {
+        "key": "segment",
+        "value": "dealer"
+      },
+      {
+        "key": "salesperson",
+        "value": "Aina"
+      },
+      {
+        "key": "language",
+        "value": "en"
+      },
+      {
+        "key": "role",
+        "value": "purchaser"
+      },
+      {
+        "key": "usual_products",
+        "value": [
+          "SRTWB1455",
+          "M486-75-BL"
+        ]
+      },
+      {
+        "key": "usual_sites",
+        "value": [
+          "Kuching"
+        ]
+      }
+    ],
+    "summaries": [
+      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
+      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+    ],
+    "earlier_messages": [
+      {
+        "created_at": "Mon 10:02am",
+        "text": "stock check for M486-75-BL in Miri?"
+      }
+    ],
+    "previous_response": "M486-75-BL: 0 units in Miri right now.",
+    "current_subject": "M486-75-BL stock in Miri",
+    "current_message": "what about kuching?",
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nEarlier in this conversation (oldest first):\n- Mon 10:02am you: stock check for M486-75-BL in Miri?\nPrevious response: M486-75-BL: 0 units in Miri right now.\nCurrent subject: M486-75-BL stock in Miri\nCurrent user message: what about kuching?",
+    "assembled_est_tokens": 208,
+    "expected": {
+      "entities": [
+        {
+          "canonical_code": "M486-75-BL",
+          "current_message": false
+        },
+        {
+          "raw": "kuching",
+          "current_message": true
+        }
+      ],
+      "message_type": null,
+      "profile_statement": null,
+      "domain_hint": "inventory"
+    }
+  },
+  {
+    "id": "kuching-carry-across-episode-3",
+    "needs_memory": true,
+    "profile_facts": [
+      {
+        "key": "customer",
+        "value": "Chin Chun Trading (CC001)"
+      },
+      {
+        "key": "segment",
+        "value": "dealer"
+      },
+      {
+        "key": "salesperson",
+        "value": "Aina"
+      },
+      {
+        "key": "language",
+        "value": "en"
+      },
+      {
+        "key": "role",
+        "value": "purchaser"
+      },
+      {
+        "key": "usual_products",
+        "value": [
+          "SRTWB1455",
+          "M486-75-BL"
+        ]
+      },
+      {
+        "key": "usual_sites",
+        "value": [
+          "Kuching"
+        ]
+      }
+    ],
+    "summaries": [
+      "Wed 24 Sep: stock check for CWCX604-S-RL in JB (answered, 40 units).",
+      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
+      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+    ],
+    "earlier_messages": [],
+    "previous_response": null,
+    "current_subject": "promotions for this quarter",
+    "current_message": "back to that one, stock in kuching?",
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\n- Wed 24 Sep: stock check for CWCX604-S-RL in JB (answered, 40 units).\nCurrent subject: promotions for this quarter\nCurrent user message: back to that one, stock in kuching?",
+    "assembled_est_tokens": 186,
+    "expected": {
+      "entities": [
+        {
+          "canonical_code": "CWCX604-S-RL",
+          "current_message": false
+        },
+        {
+          "raw": "kuching",
+          "current_message": true
+        }
+      ],
+      "message_type": null,
+      "profile_statement": null,
+      "domain_hint": "inventory"
+    }
+  },
+  {
+    "id": "same-as-last-time-1",
+    "needs_memory": true,
+    "profile_facts": [
+      {
+        "key": "customer",
+        "value": "Chin Chun Trading (CC001)"
+      },
+      {
+        "key": "segment",
+        "value": "dealer"
+      },
+      {
+        "key": "salesperson",
+        "value": "Aina"
+      },
+      {
+        "key": "language",
+        "value": "en"
+      },
+      {
+        "key": "role",
+        "value": "purchaser"
+      },
+      {
+        "key": "usual_products",
+        "value": [
+          "SRTWB1455",
+          "M486-75-BL"
+        ]
+      },
+      {
+        "key": "usual_sites",
+        "value": [
+          "Kuching"
+        ]
+      }
+    ],
+    "summaries": [
+      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
+      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+    ],
+    "earlier_messages": [
+      {
+        "created_at": "Thu 2:40pm",
+        "text": "order 50 units of SRTWB1455 please"
+      }
+    ],
+    "previous_response": "Noted - 50 units of SRTWB1455. I'll pass this to Aina to confirm.",
+    "current_subject": "an order for SRTWB1455",
+    "current_message": "can I place the same order as last time?",
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nEarlier in this conversation (oldest first):\n- Thu 2:40pm you: order 50 units of SRTWB1455 please\nPrevious response: Noted - 50 units of SRTWB1455. I'll pass this to Aina to confirm.\nCurrent subject: an order for SRTWB1455\nCurrent user message: can I place the same order as last time?",
+    "assembled_est_tokens": 223,
+    "expected": {
+      "entities": [
+        {
+          "canonical_code": "SRTWB1455",
+          "current_message": false
+        }
+      ],
+      "message_type": null,
+      "profile_statement": null,
+      "domain_hint": "order"
+    }
+  },
+  {
+    "id": "same-as-last-time-2",
+    "needs_memory": true,
+    "profile_facts": [
+      {
+        "key": "customer",
+        "value": "Chin Chun Trading (CC001)"
+      },
+      {
+        "key": "segment",
+        "value": "dealer"
+      },
+      {
+        "key": "salesperson",
+        "value": "Aina"
+      },
+      {
+        "key": "language",
+        "value": "en"
+      },
+      {
+        "key": "role",
+        "value": "purchaser"
+      },
+      {
+        "key": "usual_products",
+        "value": [
+          "SRTWB1455",
+          "M486-75-BL"
+        ]
+      },
+      {
+        "key": "usual_sites",
+        "value": [
+          "Kuching"
+        ]
+      }
+    ],
+    "summaries": [
+      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
+      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+    ],
+    "earlier_messages": [
+      {
+        "created_at": "Tue 9:12am",
+        "text": "PS202609-0063 100 units of M486-75-BL"
+      }
+    ],
+    "previous_response": "Got it - PS202609-0063 for 100 units of M486-75-BL.",
+    "current_subject": "purchase request PS202609-0063",
+    "current_message": "same as before, another 100 units",
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nEarlier in this conversation (oldest first):\n- Tue 9:12am you: PS202609-0063 100 units of M486-75-BL\nPrevious response: Got it - PS202609-0063 for 100 units of M486-75-BL.\nCurrent subject: purchase request PS202609-0063\nCurrent user message: same as before, another 100 units",
+    "assembled_est_tokens": 220,
+    "expected": {
+      "entities": [
+        {
+          "canonical_code": "M486-75-BL",
+          "current_message": false
+        }
+      ],
+      "message_type": null,
+      "profile_statement": null,
+      "domain_hint": null
+    }
+  },
+  {
+    "id": "same-as-last-time-3",
+    "needs_memory": true,
+    "profile_facts": [
+      {
+        "key": "customer",
+        "value": "Chin Chun Trading (CC001)"
+      },
+      {
+        "key": "segment",
+        "value": "dealer"
+      },
+      {
+        "key": "salesperson",
+        "value": "Aina"
+      },
+      {
+        "key": "language",
+        "value": "en"
+      },
+      {
+        "key": "role",
+        "value": "purchaser"
+      },
+      {
+        "key": "usual_products",
+        "value": [
+          "SRTWB1455",
+          "M486-75-BL"
+        ]
+      },
+      {
+        "key": "usual_sites",
+        "value": [
+          "Kuching"
+        ]
+      }
+    ],
+    "summaries": [
+      "Fri 19 Sep: order for 200 units of SRTWC8517 (answered).",
+      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
+      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+    ],
+    "earlier_messages": [],
+    "previous_response": null,
+    "current_subject": null,
+    "current_message": "reorder same as last time please",
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\n- Fri 19 Sep: order for 200 units of SRTWC8517 (answered).\nCurrent user message: reorder same as last time please",
+    "assembled_est_tokens": 166,
+    "expected": {
+      "entities": [
+        {
+          "canonical_code": "SRTWC8517",
+          "current_message": false
+        }
+      ],
+      "message_type": null,
+      "profile_statement": null,
+      "domain_hint": "order"
+    }
+  },
+  {
+    "id": "the-usual-1",
+    "needs_memory": true,
+    "profile_facts": [
+      {
+        "key": "customer",
+        "value": "Chin Chun Trading (CC001)"
+      },
+      {
+        "key": "segment",
+        "value": "dealer"
+      },
+      {
+        "key": "salesperson",
+        "value": "Aina"
+      },
+      {
+        "key": "language",
+        "value": "en"
+      },
+      {
+        "key": "role",
+        "value": "purchaser"
+      },
+      {
+        "key": "usual_products",
+        "value": [
+          "SRTWB1455",
+          "M486-75-BL"
+        ]
+      },
+      {
+        "key": "usual_sites",
+        "value": [
+          "Kuching"
+        ]
+      }
+    ],
+    "summaries": [
+      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
+      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+    ],
+    "earlier_messages": [],
+    "previous_response": null,
+    "current_subject": null,
+    "current_message": "stock for the usual please",
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nCurrent user message: stock for the usual please",
+    "assembled_est_tokens": 144,
+    "expected": {
+      "entities": [
+        {
+          "canonical_code": "SRTWB1455",
+          "current_message": false
+        },
+        {
+          "canonical_code": "M486-75-BL",
+          "current_message": false
+        }
+      ],
+      "message_type": null,
+      "profile_statement": null,
+      "domain_hint": "inventory"
+    }
+  },
+  {
+    "id": "the-usual-2",
+    "needs_memory": true,
+    "profile_facts": [
+      {
+        "key": "customer",
+        "value": "Chin Chun Trading (CC001)"
+      },
+      {
+        "key": "segment",
+        "value": "dealer"
+      },
+      {
+        "key": "salesperson",
+        "value": "Aina"
+      },
+      {
+        "key": "language",
+        "value": "en"
+      },
+      {
+        "key": "role",
+        "value": "purchaser"
+      },
+      {
+        "key": "usual_products",
+        "value": [
+          "SRTWB1455",
+          "M486-75-BL"
+        ]
+      },
+      {
+        "key": "usual_sites",
+        "value": [
+          "Kuching"
+        ]
+      }
+    ],
+    "summaries": [
+      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
+      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+    ],
+    "earlier_messages": [],
+    "previous_response": null,
+    "current_subject": null,
+    "current_message": "can you check the usual for me",
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nCurrent user message: can you check the usual for me",
+    "assembled_est_tokens": 145,
+    "expected": {
+      "entities": [
+        {
+          "canonical_code": "SRTWB1455",
+          "current_message": false
+        },
+        {
+          "canonical_code": "M486-75-BL",
+          "current_message": false
+        }
+      ],
+      "message_type": null,
+      "profile_statement": null,
+      "domain_hint": "inventory"
+    }
+  },
+  {
+    "id": "the-usual-3",
+    "needs_memory": true,
+    "profile_facts": [
+      {
+        "key": "customer",
+        "value": "Chin Chun Trading (CC001)"
+      },
+      {
+        "key": "segment",
+        "value": "dealer"
+      },
+      {
+        "key": "salesperson",
+        "value": "Aina"
+      },
+      {
+        "key": "language",
+        "value": "en"
+      },
+      {
+        "key": "role",
+        "value": "purchaser"
+      },
+      {
+        "key": "usual_products",
+        "value": [
+          "SRTWB1455",
+          "M486-75-BL"
+        ]
+      },
+      {
+        "key": "usual_sites",
+        "value": [
+          "Kuching"
+        ]
+      }
+    ],
+    "summaries": [
+      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
+      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+    ],
+    "earlier_messages": [],
+    "previous_response": null,
+    "current_subject": null,
+    "current_message": "reorder the usual, same site as always",
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nCurrent user message: reorder the usual, same site as always",
+    "assembled_est_tokens": 148,
+    "expected": {
+      "entities": [
+        {
+          "canonical_code": "SRTWB1455",
+          "current_message": false
+        },
+        {
+          "canonical_code": "M486-75-BL",
+          "current_message": false
+        }
+      ],
+      "message_type": null,
+      "profile_statement": null,
+      "domain_hint": "order"
+    }
+  },
+  {
+    "id": "that-one-after-topic-switch-1",
+    "needs_memory": true,
+    "profile_facts": [
+      {
+        "key": "customer",
+        "value": "Chin Chun Trading (CC001)"
+      },
+      {
+        "key": "segment",
+        "value": "dealer"
+      },
+      {
+        "key": "salesperson",
+        "value": "Aina"
+      },
+      {
+        "key": "language",
+        "value": "en"
+      },
+      {
+        "key": "role",
+        "value": "purchaser"
+      },
+      {
+        "key": "usual_products",
+        "value": [
+          "SRTWB1455",
+          "M486-75-BL"
+        ]
+      },
+      {
+        "key": "usual_sites",
+        "value": [
+          "Kuching"
+        ]
+      }
+    ],
+    "summaries": [
+      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
+      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+    ],
+    "earlier_messages": [],
+    "previous_response": null,
+    "current_subject": "upcoming promotions",
+    "current_message": "actually, is that one still available?",
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nCurrent subject: upcoming promotions\nCurrent user message: actually, is that one still available?",
+    "assembled_est_tokens": 160,
+    "expected": {
+      "entities": [
+        {
+          "canonical_code": "SRTWB1455",
+          "current_message": false
+        }
+      ],
+      "message_type": null,
+      "profile_statement": null,
+      "domain_hint": null
+    }
+  },
+  {
+    "id": "that-one-after-topic-switch-2",
+    "needs_memory": true,
+    "profile_facts": [
+      {
+        "key": "customer",
+        "value": "Chin Chun Trading (CC001)"
+      },
+      {
+        "key": "segment",
+        "value": "dealer"
+      },
+      {
+        "key": "salesperson",
+        "value": "Aina"
+      },
+      {
+        "key": "language",
+        "value": "en"
+      },
+      {
+        "key": "role",
+        "value": "purchaser"
+      },
+      {
+        "key": "usual_products",
+        "value": [
+          "SRTWB1455",
+          "M486-75-BL"
+        ]
+      },
+      {
+        "key": "usual_sites",
+        "value": [
+          "Kuching"
+        ]
+      }
+    ],
+    "summaries": [
+      "Sat 20 Sep: incoming ETA for CBFAL5570 (answered, 3 Oct).",
+      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
+      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+    ],
+    "earlier_messages": [],
+    "previous_response": null,
+    "current_subject": "a different customer's warranty claim",
+    "current_message": "sorry, back to that one - any update?",
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\n- Sat 20 Sep: incoming ETA for CBFAL5570 (answered, 3 Oct).\nCurrent subject: a different customer's warranty claim\nCurrent user message: sorry, back to that one - any update?",
+    "assembled_est_tokens": 186,
+    "expected": {
+      "entities": [
+        {
+          "canonical_code": "CBFAL5570",
+          "current_message": false
+        }
+      ],
+      "message_type": null,
+      "profile_statement": null,
+      "domain_hint": null
+    }
+  },
+  {
+    "id": "that-one-after-topic-switch-3",
+    "needs_memory": true,
+    "profile_facts": [
+      {
+        "key": "customer",
+        "value": "Chin Chun Trading (CC001)"
+      },
+      {
+        "key": "segment",
+        "value": "dealer"
+      },
+      {
+        "key": "salesperson",
+        "value": "Aina"
+      },
+      {
+        "key": "language",
+        "value": "en"
+      },
+      {
+        "key": "role",
+        "value": "purchaser"
+      },
+      {
+        "key": "usual_products",
+        "value": [
+          "SRTWB1455",
+          "M486-75-BL"
+        ]
+      },
+      {
+        "key": "usual_sites",
+        "value": [
+          "Kuching"
+        ]
+      }
+    ],
+    "summaries": [
+      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
+      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+    ],
+    "earlier_messages": [],
+    "previous_response": null,
+    "current_subject": "a new promotion this dealer asked about",
+    "current_message": "anyway is that one back in stock now?",
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nCurrent subject: a new promotion this dealer asked about\nCurrent user message: anyway is that one back in stock now?",
+    "assembled_est_tokens": 167,
+    "expected": {
+      "entities": [
+        {
+          "canonical_code": "M486-75-BL",
+          "current_message": false
+        }
+      ],
+      "message_type": null,
+      "profile_statement": null,
+      "domain_hint": "inventory"
+    }
+  },
+  {
+    "id": "any-update-on-that-do-1",
+    "needs_memory": true,
+    "profile_facts": [
+      {
+        "key": "customer",
+        "value": "Chin Chun Trading (CC001)"
+      },
+      {
+        "key": "segment",
+        "value": "dealer"
+      },
+      {
+        "key": "salesperson",
+        "value": "Aina"
+      },
+      {
+        "key": "language",
+        "value": "en"
+      },
+      {
+        "key": "role",
+        "value": "purchaser"
+      },
+      {
+        "key": "usual_products",
+        "value": [
+          "SRTWB1455",
+          "M486-75-BL"
+        ]
+      },
+      {
+        "key": "usual_sites",
+        "value": [
+          "Kuching"
+        ]
+      }
+    ],
+    "summaries": [
+      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
+      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+    ],
+    "earlier_messages": [],
+    "previous_response": null,
+    "current_subject": null,
+    "current_message": "any update on that DO?",
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nCurrent user message: any update on that DO?",
+    "assembled_est_tokens": 143,
+    "expected": {
+      "entities": null,
+      "message_type": null,
+      "profile_statement": null,
+      "domain_hint": "order"
+    }
+  },
+  {
+    "id": "any-update-on-that-do-2",
+    "needs_memory": true,
+    "profile_facts": [
+      {
+        "key": "customer",
+        "value": "Chin Chun Trading (CC001)"
+      },
+      {
+        "key": "segment",
+        "value": "dealer"
+      },
+      {
+        "key": "salesperson",
+        "value": "Aina"
+      },
+      {
+        "key": "language",
+        "value": "en"
+      },
+      {
+        "key": "role",
+        "value": "purchaser"
+      },
+      {
+        "key": "usual_products",
+        "value": [
+          "SRTWB1455",
+          "M486-75-BL"
+        ]
+      },
+      {
+        "key": "usual_sites",
+        "value": [
+          "Kuching"
+        ]
+      }
+    ],
+    "summaries": [
+      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
+      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+    ],
+    "earlier_messages": [],
+    "previous_response": null,
+    "current_subject": null,
+    "current_message": "has that delivery order moved at all?",
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nCurrent user message: has that delivery order moved at all?",
+    "assembled_est_tokens": 148,
+    "expected": {
+      "entities": null,
+      "message_type": null,
+      "profile_statement": null,
+      "domain_hint": "order"
+    }
+  },
+  {
+    "id": "any-update-on-that-do-3",
+    "needs_memory": true,
+    "profile_facts": [
+      {
+        "key": "customer",
+        "value": "Chin Chun Trading (CC001)"
+      },
+      {
+        "key": "segment",
+        "value": "dealer"
+      },
+      {
+        "key": "salesperson",
+        "value": "Aina"
+      },
+      {
+        "key": "language",
+        "value": "en"
+      },
+      {
+        "key": "role",
+        "value": "purchaser"
+      },
+      {
+        "key": "usual_products",
+        "value": [
+          "SRTWB1455",
+          "M486-75-BL"
+        ]
+      },
+      {
+        "key": "usual_sites",
+        "value": [
+          "Kuching"
+        ]
+      }
+    ],
+    "summaries": [
+      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
+      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+    ],
+    "earlier_messages": [],
+    "previous_response": null,
+    "current_subject": null,
+    "current_message": "still waiting on that DO from before, any news?",
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nCurrent user message: still waiting on that DO from before, any news?",
+    "assembled_est_tokens": 151,
+    "expected": {
+      "entities": null,
+      "message_type": null,
+      "profile_statement": null,
+      "domain_hint": "order"
+    }
+  },
+  {
+    "id": "history-question-en",
+    "needs_memory": true,
+    "profile_facts": [
+      {
+        "key": "customer",
+        "value": "Chin Chun Trading (CC001)"
+      },
+      {
+        "key": "segment",
+        "value": "dealer"
+      },
+      {
+        "key": "salesperson",
+        "value": "Aina"
+      },
+      {
+        "key": "language",
+        "value": "en"
+      },
+      {
+        "key": "role",
+        "value": "purchaser"
+      },
+      {
+        "key": "usual_products",
+        "value": [
+          "SRTWB1455",
+          "M486-75-BL"
+        ]
+      },
+      {
+        "key": "usual_sites",
+        "value": [
+          "Kuching"
+        ]
+      }
+    ],
+    "summaries": [
+      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
+      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+    ],
+    "earlier_messages": [],
+    "previous_response": null,
+    "current_subject": null,
+    "current_message": "what did I ask you last week?",
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nCurrent user message: what did I ask you last week?",
+    "assembled_est_tokens": 145,
+    "expected": {
+      "entities": null,
+      "message_type": "history_question",
+      "profile_statement": null,
+      "domain_hint": null
+    }
+  },
+  {
+    "id": "history-question-ms",
+    "needs_memory": true,
+    "profile_facts": [
+      {
+        "key": "customer",
+        "value": "Chin Chun Trading (CC001)"
+      },
+      {
+        "key": "segment",
+        "value": "dealer"
+      },
+      {
+        "key": "salesperson",
+        "value": "Aina"
+      },
+      {
+        "key": "language",
+        "value": "en"
+      },
+      {
+        "key": "role",
+        "value": "purchaser"
+      },
+      {
+        "key": "usual_products",
+        "value": [
+          "SRTWB1455",
+          "M486-75-BL"
+        ]
+      },
+      {
+        "key": "usual_sites",
+        "value": [
+          "Kuching"
+        ]
+      }
+    ],
+    "summaries": [
+      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
+      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+    ],
+    "earlier_messages": [],
+    "previous_response": null,
+    "current_subject": null,
+    "current_message": "apa yang saya tanya minggu lepas?",
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nCurrent user message: apa yang saya tanya minggu lepas?",
+    "assembled_est_tokens": 146,
+    "expected": {
+      "entities": null,
+      "message_type": "history_question",
+      "profile_statement": null,
+      "domain_hint": null
+    }
+  },
+  {
+    "id": "history-question-zh",
+    "needs_memory": true,
+    "profile_facts": [
+      {
+        "key": "customer",
+        "value": "Chin Chun Trading (CC001)"
+      },
+      {
+        "key": "segment",
+        "value": "dealer"
+      },
+      {
+        "key": "salesperson",
+        "value": "Aina"
+      },
+      {
+        "key": "language",
+        "value": "en"
+      },
+      {
+        "key": "role",
+        "value": "purchaser"
+      },
+      {
+        "key": "usual_products",
+        "value": [
+          "SRTWB1455",
+          "M486-75-BL"
+        ]
+      },
+      {
+        "key": "usual_sites",
+        "value": [
+          "Kuching"
+        ]
+      }
+    ],
+    "summaries": [
+      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
+      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+    ],
+    "earlier_messages": [],
+    "previous_response": null,
+    "current_subject": null,
+    "current_message": "我上星期问了什么？",
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nCurrent user message: 我上星期问了什么？",
+    "assembled_est_tokens": 144,
+    "expected": {
+      "entities": null,
+      "message_type": "history_question",
+      "profile_statement": null,
+      "domain_hint": null
+    }
+  },
+  {
+    "id": "stated-role",
+    "needs_memory": true,
+    "profile_facts": [
+      {
+        "key": "customer",
+        "value": "Chin Chun Trading (CC001)"
+      },
+      {
+        "key": "segment",
+        "value": "dealer"
+      },
+      {
+        "key": "salesperson",
+        "value": "Aina"
+      },
+      {
+        "key": "language",
+        "value": "en"
+      },
+      {
+        "key": "role",
+        "value": "purchaser"
+      },
+      {
+        "key": "usual_products",
+        "value": [
+          "SRTWB1455",
+          "M486-75-BL"
+        ]
+      },
+      {
+        "key": "usual_sites",
+        "value": [
+          "Kuching"
+        ]
+      }
+    ],
+    "summaries": [
+      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
+      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+    ],
+    "earlier_messages": [],
+    "previous_response": null,
+    "current_subject": null,
+    "current_message": "I'm the new purchaser here, taking over from Mr Lim",
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nCurrent user message: I'm the new purchaser here, taking over from Mr Lim",
+    "assembled_est_tokens": 152,
+    "expected": {
+      "entities": null,
+      "message_type": null,
+      "profile_statement": {
+        "key": "role",
+        "value": "purchaser"
+      },
+      "domain_hint": null
+    }
+  },
+  {
+    "id": "stated-language",
+    "needs_memory": true,
+    "profile_facts": [
+      {
+        "key": "customer",
+        "value": "Chin Chun Trading (CC001)"
+      },
+      {
+        "key": "segment",
+        "value": "dealer"
+      },
+      {
+        "key": "salesperson",
+        "value": "Aina"
+      },
+      {
+        "key": "language",
+        "value": "en"
+      },
+      {
+        "key": "role",
+        "value": "purchaser"
+      },
+      {
+        "key": "usual_products",
+        "value": [
+          "SRTWB1455",
+          "M486-75-BL"
+        ]
+      },
+      {
+        "key": "usual_sites",
+        "value": [
+          "Kuching"
+        ]
+      }
+    ],
+    "summaries": [
+      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
+      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+    ],
+    "earlier_messages": [],
+    "previous_response": null,
+    "current_subject": null,
+    "current_message": "boleh reply dalam Bahasa Melayu lepas ni?",
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nCurrent user message: boleh reply dalam Bahasa Melayu lepas ni?",
+    "assembled_est_tokens": 149,
+    "expected": {
+      "entities": null,
+      "message_type": null,
+      "profile_statement": {
+        "key": "language",
+        "value": "ms"
+      },
+      "domain_hint": null
+    }
+  },
+  {
+    "id": "stated-project",
+    "needs_memory": true,
+    "profile_facts": [
+      {
+        "key": "customer",
+        "value": "Chin Chun Trading (CC001)"
+      },
+      {
+        "key": "segment",
+        "value": "dealer"
+      },
+      {
+        "key": "salesperson",
+        "value": "Aina"
+      },
+      {
+        "key": "language",
+        "value": "en"
+      },
+      {
+        "key": "role",
+        "value": "purchaser"
+      },
+      {
+        "key": "usual_products",
+        "value": [
+          "SRTWB1455",
+          "M486-75-BL"
+        ]
+      },
+      {
+        "key": "usual_sites",
+        "value": [
+          "Kuching"
+        ]
+      }
+    ],
+    "summaries": [
+      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
+      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+    ],
+    "earlier_messages": [],
+    "previous_response": null,
+    "current_subject": null,
+    "current_message": "just so you know, we're ordering for our Riverside Tower Phase 2 project",
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nCurrent user message: just so you know, we're ordering for our Riverside Tower Phase 2 project",
+    "assembled_est_tokens": 159,
+    "expected": {
+      "entities": null,
+      "message_type": null,
+      "profile_statement": {
+        "key": "project",
+        "value": "Riverside Tower Phase 2"
+      },
+      "domain_hint": null
+    }
+  },
+  {
+    "id": "stated-about",
+    "needs_memory": true,
+    "profile_facts": [
+      {
+        "key": "customer",
+        "value": "Chin Chun Trading (CC001)"
+      },
+      {
+        "key": "segment",
+        "value": "dealer"
+      },
+      {
+        "key": "salesperson",
+        "value": "Aina"
+      },
+      {
+        "key": "language",
+        "value": "en"
+      },
+      {
+        "key": "role",
+        "value": "purchaser"
+      },
+      {
+        "key": "usual_products",
+        "value": [
+          "SRTWB1455",
+          "M486-75-BL"
+        ]
+      },
+      {
+        "key": "usual_sites",
+        "value": [
+          "Kuching"
+        ]
+      }
+    ],
+    "summaries": [
+      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
+      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+    ],
+    "earlier_messages": [],
+    "previous_response": null,
+    "current_subject": null,
+    "current_message": "by the way, we can only take deliveries before 10am",
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nCurrent user message: by the way, we can only take deliveries before 10am",
+    "assembled_est_tokens": 152,
+    "expected": {
+      "entities": null,
+      "message_type": null,
+      "profile_statement": {
+        "key": "about"
+      },
+      "domain_hint": null
+    }
+  },
+  {
+    "id": "stated-usual-brand",
+    "needs_memory": true,
+    "profile_facts": [
+      {
+        "key": "customer",
+        "value": "Chin Chun Trading (CC001)"
+      },
+      {
+        "key": "segment",
+        "value": "dealer"
+      },
+      {
+        "key": "salesperson",
+        "value": "Aina"
+      },
+      {
+        "key": "language",
+        "value": "en"
+      },
+      {
+        "key": "role",
+        "value": "purchaser"
+      },
+      {
+        "key": "usual_products",
+        "value": [
+          "SRTWB1455",
+          "M486-75-BL"
+        ]
+      },
+      {
+        "key": "usual_sites",
+        "value": [
+          "Kuching"
+        ]
+      }
+    ],
+    "summaries": [
+      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
+      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+    ],
+    "earlier_messages": [],
+    "previous_response": null,
+    "current_subject": null,
+    "current_message": "we mostly buy Sorento brand stuff these days",
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nCurrent user message: we mostly buy Sorento brand stuff these days",
+    "assembled_est_tokens": 150,
+    "expected": {
+      "entities": null,
+      "message_type": null,
+      "profile_statement": {
+        "key": "usual_brands",
+        "value": [
+          "Sorento"
+        ]
+      },
+      "domain_hint": null
+    }
+  },
+  {
+    "id": "stated-usual-site",
+    "needs_memory": true,
+    "profile_facts": [
+      {
+        "key": "customer",
+        "value": "Chin Chun Trading (CC001)"
+      },
+      {
+        "key": "segment",
+        "value": "dealer"
+      },
+      {
+        "key": "salesperson",
+        "value": "Aina"
+      },
+      {
+        "key": "language",
+        "value": "en"
+      },
+      {
+        "key": "role",
+        "value": "purchaser"
+      },
+      {
+        "key": "usual_products",
+        "value": [
+          "SRTWB1455",
+          "M486-75-BL"
+        ]
+      },
+      {
+        "key": "usual_sites",
+        "value": [
+          "Kuching"
+        ]
+      }
+    ],
+    "summaries": [
+      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
+      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+    ],
+    "earlier_messages": [],
+    "previous_response": null,
+    "current_subject": null,
+    "current_message": "our new site is in Miri now, not Kuching",
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nCurrent user message: our new site is in Miri now, not Kuching",
+    "assembled_est_tokens": 149,
+    "expected": {
+      "entities": null,
+      "message_type": null,
+      "profile_statement": {
+        "key": "usual_sites",
+        "value": [
+          "Miri"
+        ]
+      },
+      "domain_hint": null
+    }
+  },
+  {
+    "id": "override-named-product-wins-1",
+    "needs_memory": true,
+    "profile_facts": [
+      {
+        "key": "customer",
+        "value": "Chin Chun Trading (CC001)"
+      },
+      {
+        "key": "segment",
+        "value": "dealer"
+      },
+      {
+        "key": "salesperson",
+        "value": "Aina"
+      },
+      {
+        "key": "language",
+        "value": "en"
+      },
+      {
+        "key": "role",
+        "value": "purchaser"
+      },
+      {
+        "key": "usual_products",
+        "value": [
+          "SRTWB1455"
+        ]
+      },
+      {
+        "key": "usual_sites",
+        "value": [
+          "Kuching"
+        ]
+      }
+    ],
+    "summaries": [
+      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
+      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+    ],
+    "earlier_messages": [],
+    "previous_response": null,
+    "current_subject": null,
+    "current_message": "stock M483-BL",
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nCurrent user message: stock M483-BL",
+    "assembled_est_tokens": 135,
+    "expected": {
+      "entities": [
+        {
+          "canonical_code": "M483-BL",
+          "current_message": true
+        }
+      ],
+      "message_type": null,
+      "profile_statement": null,
+      "domain_hint": "inventory"
+    }
+  },
+  {
+    "id": "override-named-site-wins-2",
+    "needs_memory": true,
+    "profile_facts": [
+      {
+        "key": "customer",
+        "value": "Chin Chun Trading (CC001)"
+      },
+      {
+        "key": "segment",
+        "value": "dealer"
+      },
+      {
+        "key": "salesperson",
+        "value": "Aina"
+      },
+      {
+        "key": "language",
+        "value": "en"
+      },
+      {
+        "key": "role",
+        "value": "purchaser"
+      },
+      {
+        "key": "usual_products",
+        "value": [
+          "SRTWB1455",
+          "M486-75-BL"
+        ]
+      },
+      {
+        "key": "usual_sites",
+        "value": [
+          "Kuching"
+        ]
+      }
+    ],
+    "summaries": [
+      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
+      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+    ],
+    "earlier_messages": [],
+    "previous_response": null,
+    "current_subject": null,
+    "current_message": "stock SRTWB1455 in JB",
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nCurrent user message: stock SRTWB1455 in JB",
+    "assembled_est_tokens": 142,
+    "expected": {
+      "entities": [
+        {
+          "canonical_code": "SRTWB1455",
+          "current_message": true
+        },
+        {
+          "raw": "JB",
+          "current_message": true
+        }
+      ],
+      "message_type": null,
+      "profile_statement": null,
+      "domain_hint": "inventory"
+    }
+  },
+  {
+    "id": "override-named-product-wins-3",
+    "needs_memory": true,
+    "profile_facts": [
+      {
+        "key": "customer",
+        "value": "Chin Chun Trading (CC001)"
+      },
+      {
+        "key": "segment",
+        "value": "dealer"
+      },
+      {
+        "key": "salesperson",
+        "value": "Aina"
+      },
+      {
+        "key": "language",
+        "value": "en"
+      },
+      {
+        "key": "role",
+        "value": "purchaser"
+      },
+      {
+        "key": "usual_products",
+        "value": [
+          "SRTWB1455",
+          "M486-75-BL"
+        ]
+      },
+      {
+        "key": "usual_sites",
+        "value": [
+          "Kuching"
+        ]
+      }
+    ],
+    "summaries": [
+      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
+      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+    ],
+    "earlier_messages": [],
+    "previous_response": null,
+    "current_subject": null,
+    "current_message": "how about CWCX604-S-RL instead",
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nCurrent user message: how about CWCX604-S-RL instead",
+    "assembled_est_tokens": 145,
+    "expected": {
+      "entities": [
+        {
+          "canonical_code": "CWCX604-S-RL",
+          "current_message": true
+        }
+      ],
+      "message_type": null,
+      "profile_statement": null,
+      "domain_hint": null
+    }
+  },
+  {
+    "id": "greeting-after-answer-must-not-carry-1",
+    "needs_memory": false,
+    "profile_facts": [
+      {
+        "key": "customer",
+        "value": "Chin Chun Trading (CC001)"
+      },
+      {
+        "key": "segment",
+        "value": "dealer"
+      },
+      {
+        "key": "salesperson",
+        "value": "Aina"
+      },
+      {
+        "key": "language",
+        "value": "en"
+      },
+      {
+        "key": "role",
+        "value": "purchaser"
+      },
+      {
+        "key": "usual_products",
+        "value": [
+          "SRTWB1455",
+          "M486-75-BL"
+        ]
+      },
+      {
+        "key": "usual_sites",
+        "value": [
+          "Kuching"
+        ]
+      }
+    ],
+    "summaries": [
+      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
+      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+    ],
+    "earlier_messages": [],
+    "previous_response": "Yes, SRTWB1455 is available in JB - 120 units on hand.",
+    "current_subject": "SRTWB1455 stock in JB",
+    "current_message": "ok thanks!",
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nPrevious response: Yes, SRTWB1455 is available in JB - 120 units on hand.\nCurrent subject: SRTWB1455 stock in JB\nCurrent user message: ok thanks!",
+    "assembled_est_tokens": 176,
+    "expected": {
+      "entities": [],
+      "message_type": "casual",
+      "profile_statement": null,
+      "domain_hint": null
+    }
+  },
+  {
+    "id": "greeting-after-answer-must-not-carry-2",
+    "needs_memory": false,
+    "profile_facts": [
+      {
+        "key": "customer",
+        "value": "Chin Chun Trading (CC001)"
+      },
+      {
+        "key": "segment",
+        "value": "dealer"
+      },
+      {
+        "key": "salesperson",
+        "value": "Aina"
+      },
+      {
+        "key": "language",
+        "value": "en"
+      },
+      {
+        "key": "role",
+        "value": "purchaser"
+      },
+      {
+        "key": "usual_products",
+        "value": [
+          "SRTWB1455",
+          "M486-75-BL"
+        ]
+      },
+      {
+        "key": "usual_sites",
+        "value": [
+          "Kuching"
+        ]
+      }
+    ],
+    "summaries": [
+      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
+      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+    ],
+    "earlier_messages": [],
+    "previous_response": "For the outstanding DOs of Chin Chun Trading: DO-2409-118 is still pending dispatch.",
+    "current_subject": "outstanding DO status",
+    "current_message": "noted, thank you",
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nPrevious response: For the outstanding DOs of Chin Chun Trading: DO-2409-118 is still pending dispatch.\nCurrent subject: outstanding DO status\nCurrent user message: noted, thank you",
+    "assembled_est_tokens": 188,
+    "expected": {
+      "entities": [],
+      "message_type": "casual",
+      "profile_statement": null,
+      "domain_hint": null
+    }
+  },
+  {
+    "id": "greeting-after-answer-must-not-carry-3",
+    "needs_memory": false,
+    "profile_facts": [
+      {
+        "key": "customer",
+        "value": "Chin Chun Trading (CC001)"
+      },
+      {
+        "key": "segment",
+        "value": "dealer"
+      },
+      {
+        "key": "salesperson",
+        "value": "Aina"
+      },
+      {
+        "key": "language",
+        "value": "en"
+      },
+      {
+        "key": "role",
+        "value": "purchaser"
+      },
+      {
+        "key": "usual_products",
+        "value": [
+          "SRTWB1455",
+          "M486-75-BL"
+        ]
+      },
+      {
+        "key": "usual_sites",
+        "value": [
+          "Kuching"
+        ]
+      }
+    ],
+    "summaries": [
+      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
+      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+    ],
+    "earlier_messages": [],
+    "previous_response": "M486-75-BL is expected in on 3 Oct.",
+    "current_subject": "M486-75-BL incoming stock",
+    "current_message": "great, see you!",
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nPrevious response: M486-75-BL is expected in on 3 Oct.\nCurrent subject: M486-75-BL incoming stock\nCurrent user message: great, see you!",
+    "assembled_est_tokens": 173,
+    "expected": {
+      "entities": [],
+      "message_type": "casual",
+      "profile_statement": null,
+      "domain_hint": null
+    }
+  }
+]
