@@ -1,7 +1,8 @@
 # PLAN: retail sales reports on the reports kernel, one query layer for the screens and the chatbot (#1267)
 
 Status: S1 built and ready for review (26 Sep 2026; merged head re-verified: backend S1 +
-chatbot + report suites, MCP, vitest, browser at 1280 and 375), track full, on PR #1269 (the plan rides inside the feature PR,
+chatbot + report suites, MCP, vitest, browser at 1280 and 375; main merged again after #1260
+landed the `sales` module first, see S1-B), track full, on PR #1269 (the plan rides inside the feature PR,
 owner ruling 26 Sep ~08:25Z; Q9 (a), Q10 (a); Mocha AutoCount connected in production, so S4
 shrinks to verifying Mocha sales orders arrive). S2, S3, S5, S6 not built. Build notes and the
 deviations S1 took from this text are in section S1-B below.
@@ -98,6 +99,18 @@ design; nothing here changes a ruling):
 - **New FE files:** the route wrapper, `ReportPivotChart.tsx` and `reportFormat.ts` (a plain
   module for the whole-ringgit formatter: a 'use client' component file must export
   components only, LESSONS-LEARNT 106).
+- **Merged with #1260 S6 (main dc10a1afb, 26 Sep 14:19Z), which landed the `sales` module
+  first.** One module, one router, one menu group:
+  - `sales_s1_reports_module` now sits on `sales_0002_team_leader` (one alembic head). The
+    schema and the catalog row are `sales_0001_teams`'s, so S1's `CREATE SCHEMA IF NOT
+    EXISTS` and catalog insert are no-ops there, and S1's downgrade leaves the catalog row
+    to that revision. S1 still enables the module wherever `order` is.
+  - `/api/v1/sales` is mounted once; its router holds the teams routes and the analysis
+    route.
+  - The Yearly comparison joins #1260's Sales group (Sales Teams, Sales Agents), which has
+    no group-level `moduleKey`, so the item carries `moduleKey: 'sales'` itself.
+  - The manifest dependencies are #1260's (`base`, `product`, `order`), and the purge file
+    lists #1260's teams tables. This plan still adds no table.
 
 ## R5. Round 5: the owner's answers to round 4's Q6 to Q8 (26 Sep 07:34Z)
 
