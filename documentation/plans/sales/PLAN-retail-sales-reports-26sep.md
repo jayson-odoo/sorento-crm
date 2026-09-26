@@ -104,6 +104,9 @@ design; nothing here changes a ruling):
   shipped it dormant on purpose, keep it so"). The S1 migration writes no `tenant_modules`
   row, and its downgrade leaves any such row alone. Owner step after deploy: switch on Sales
   in App Store; until then the menu item is hidden from every non-admin.
+- **The dev "1 Issue" badge is not S1's** (review round 2 S3): it is React's key warning from
+  `Demo1Layout`, a file S1 does not touch, and it also showed on a fresh Dashboards load.
+  The retaken `evidence/s1/merged-head/` screenshots (1280 and 375) show no badge.
 - **AC-S1-6's "a list over 50 ids" is not applicable in S1**: no id-list param exists yet
   (customer lists arrive with S2 and S5).
 - **Company names come from `companies.name`** ("SORENTO - DEALER"); the PDF's "SORENTO SDN
