@@ -471,11 +471,18 @@ def _handler_scm_reorder_run(db, task):
 
 
 def _drain_email_outbox_tick():
-    """APScheduler tick wrapper. Owns its own DB session (drain_email_outbox handles errors)."""
-    try:
-        from app.tasks.email_outbox_tasks import drain_email_outbox
+    """APScheduler tick wrapper. Owns its own DB session (drain_email_outbox handles errors).
 
-        summary = drain_email_outbox()
+    That session is not a `scheduler_session`, so the tick stamps the `scheduler` audit
+    actor itself (identity S0, AC-10); the drainer's session reads it from the context.
+    """
+    from app.audit_context import AuditActor, actor_scope
+
+    try:
+        from app.tasks import email_outbox_tasks
+
+        with actor_scope(AuditActor(actor_type="scheduler", job_id="email_outbox_drainer")):
+            summary = email_outbox_tasks.drain_email_outbox()
         if summary.get("picked"):
             logger.info("Email outbox drainer tick: %s", summary)
     except Exception as e:

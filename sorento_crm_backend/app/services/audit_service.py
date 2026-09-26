@@ -137,6 +137,16 @@ def log_audit(
     # The stamped actor (identity S0, plan 8): who, how they signed in, and through
     # what. Nothing stamped (a script, a test, a bare service call) is `system`.
     actor = get_actor(db)
+    if actor is None and (user_id is not None or contact_id is not None):
+        # An explicit caller with nothing stamped (a service method, a script): the
+        # row belongs to whoever it names, so the screen keeps showing their name.
+        # Only no user and no contact at all is `system`.
+        from app.audit_context import AuditActor
+
+        if user_id is not None:
+            actor = AuditActor(actor_type="user", user_id=str(user_id), real_user_id=str(user_id))
+        else:
+            actor = AuditActor(actor_type="contact", contact_id=str(contact_id))
     if description is None and actor is not None and actor.tool_name:
         description = f"Tool: {actor.tool_name}"
     entry = AuditLog(
