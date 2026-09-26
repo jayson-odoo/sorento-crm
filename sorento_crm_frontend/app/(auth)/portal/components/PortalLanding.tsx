@@ -59,6 +59,7 @@ import {
   statusLabel,
 } from '../lib/portal-client';
 import { listRequestsAsSummaries } from '../lib/price-tag-request-service';
+import { SALES_OPPORTUNITY_KIND } from '@/lib/portal-form-kinds';
 import {
   complaintStatusLabel,
   complaintStatusPillClass,
@@ -330,7 +331,10 @@ export function PortalLanding({ slug }: { slug?: string }) {
   // Keep tab in sync if the user navigates back with a different ?type=.
   useEffect(() => {
     const t = searchParams?.get('type');
-    if (isLandingKind(t) && t !== activeTab) setActiveTab(t);
+    // `landingKinds.includes` too (the same guard the default-tab effect above uses):
+    // `isLandingKind` alone now also answers true for `sales_opportunity` (its own bespoke
+    // pages, never a tab here), which this contact may not even have offered.
+    if (isLandingKind(t) && landingKinds.includes(t) && t !== activeTab) setActiveTab(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
@@ -516,6 +520,25 @@ export function PortalLanding({ slug }: { slug?: string }) {
           <LogOut className="h-4 w-4" />
         </Button>
       </div>
+
+      {/* Sales Opportunities (UAC S2-10, plan section 16): its own bespoke pages, not a
+          LANDING_KINDS tab - shown only when the contact's own grant includes it. */}
+      {contact?.visible_form_types?.includes(SALES_OPPORTUNITY_KIND) ? (
+        <Card>
+          <CardContent className="p-0">
+            <Link
+              href="/portal/sales_opportunity"
+              className="flex items-center justify-between gap-3 px-5 py-3 text-sm font-medium"
+            >
+              <span className="flex items-center gap-2">
+                <FileText className="h-4 w-4 text-muted-foreground" />
+                Sales Opportunities
+              </span>
+              <span className="text-xs text-muted-foreground">Open</span>
+            </Link>
+          </CardContent>
+        </Card>
+      ) : null}
 
       {landingKinds.length === 0 ? (
         // AC-L3/AC-L5: no picker, toolbar, list or search box - just the one
