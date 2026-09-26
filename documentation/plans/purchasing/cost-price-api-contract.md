@@ -162,7 +162,8 @@ deferred-action route: a `FormAction` `cost_price_change_set.discard`, entity ty
 
 ### 1.10 `GET /{id}/source-file` - `view`
 
-The retained upload, `Content-Disposition: attachment` with the original file name. 404 when the
+The retained upload (kept as bytes on the set row, `source_file_bytes`, not through the
+storage router: captain ruling during Phase 2, see the PR's Rulings assumed), `Content-Disposition: attachment` with the original file name. 404 when the
 set has none.
 
 ### 1.11 `GET /{id}/history` - `view`
