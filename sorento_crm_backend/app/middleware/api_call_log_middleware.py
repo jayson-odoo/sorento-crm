@@ -72,7 +72,8 @@ def _decode_headers(raw) -> dict:
 
 
 def _actor_label(state) -> str | None:
-    """`user:<id>` or `integration:<id>` from the stamped audit actor (identity S0)."""
+    """`user:<id>`, `user:<real>/as:<effective>` under impersonation, or
+    `integration:<id>`, from the stamped audit actor (identity S0)."""
     try:
         actor = (state or {}).get("audit_actor")
     except Exception:  # noqa: BLE001
@@ -81,6 +82,9 @@ def _actor_label(state) -> str | None:
         return None
     if actor.actor_type == "integration" and actor.integration_id:
         return f"integration:{actor.integration_id}"
+    real = actor.real_user_id
+    if real and actor.user_id and real != actor.user_id:
+        return f"user:{real}/as:{actor.user_id}"[:128]
     if actor.user_id:
         return f"user:{actor.user_id}"
     return None

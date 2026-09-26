@@ -65,8 +65,9 @@ def normalize_email(value: Optional[str]) -> Optional[str]:
 
 
 def user_label(user) -> str:
-    """A person's name for a message: name, else email, else phone. Never an id."""
-    for value in (getattr(user, "name", None), getattr(user, "email", None), getattr(user, "contact_number", None)):
+    """A person's name for a message: name, else email, else "another user".
+    Never an id, and never a phone number (a 409 must not disclose one)."""
+    for value in (getattr(user, "name", None), getattr(user, "email", None)):
         if value and str(value).strip():
             return str(value).strip()
     return "another user"
@@ -453,7 +454,6 @@ class UserService:
                 "id": u.id,
                 "name": getattr(u, "name", None) or "",
                 "email": getattr(u, "email", None) or "",
-                "contact_number": getattr(u, "contact_number", None) or "",
             }
             for u in users
         ]
@@ -469,7 +469,7 @@ class UserService:
         if not existing:
             return
         parts = [
-            (f"{u['name']} ({u['email']})" if u["name"] and u["email"] else (u["name"] or u["email"] or u["contact_number"] or "another user"))
+            (f"{u['name']} ({u['email']})" if u["name"] and u["email"] else (u["name"] or u["email"] or "another user"))
             for u in existing
         ]
         msg = "Respond User ID is already used by: " + "; ".join(parts)

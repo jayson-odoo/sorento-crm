@@ -81,6 +81,38 @@ def _constraint_exists(bind, table: str, name: str) -> bool:
     )
 
 
+def _index_valid(bind, name: str):
+    """pg_index.indisvalid for ``name`` (True / False), or None when there is no such index."""
+    return bind.execute(
+        sa.text("SELECT indisvalid FROM pg_index WHERE indexrelid = to_regclass(:name)"),
+        {"name": name},
+    ).scalar()
+
+
+def _ensure_index(bind, name: str, statement: str, *, concurrently: bool) -> None:
+    """Build ``name``, never leaving an INVALID one behind.
+
+    An interrupted or failed CREATE INDEX CONCURRENTLY leaves an INVALID index, which
+    enforces nothing and which `IF NOT EXISTS` would then keep forever. So: drop an
+    INVALID one before building, check again after, rebuild once, and stop naming the
+    index if it is still INVALID.
+    """
+    c = "CONCURRENTLY" if concurrently else ""
+    drop = f"DROP INDEX {c} IF EXISTS {name}"
+    create = statement.format(c=c)
+    if _index_valid(bind, name) is False:
+        bind.execute(sa.text(drop))
+    bind.execute(sa.text(create))
+    if _index_valid(bind, name) is False:
+        bind.execute(sa.text(drop))
+        bind.execute(sa.text(create))
+        if _index_valid(bind, name) is False:
+            raise RuntimeError(
+                f"identity_0001_s0_model: index {name} is still INVALID after a rebuild. "
+                "Check for duplicate values it would reject, drop it, and rerun."
+            )
+
+
 def _preflight(bind) -> None:
     """Plan 9.1 Q1 and Q2: stop before any DDL, naming the people, never an id."""
     problems = []
@@ -133,6 +165,7 @@ def _backfill_links(bind) -> None:
                 FROM users u
                 WHERE u.respond_contact_id IS NULL
                   AND u.contact_number IS NOT NULL
+                  AND u.contact_number <> ''
                   AND u.is_trashed = false
                   AND coalesce(u.is_integration, false) = false
             ),
@@ -201,11 +234,11 @@ def _upgrade(concurrently: bool) -> None:
 
     if concurrently:
         with op.get_context().autocommit_block():
-            for _name, statement in _INDEXES:
-                op.get_bind().execute(sa.text(statement.format(c="CONCURRENTLY")))
+            for name, statement in _INDEXES:
+                _ensure_index(op.get_bind(), name, statement, concurrently=True)
     else:
-        for _name, statement in _INDEXES:
-            bind.execute(sa.text(statement.format(c="")))
+        for name, statement in _INDEXES:
+            _ensure_index(bind, name, statement, concurrently=False)
 
 
 def _downgrade() -> None:

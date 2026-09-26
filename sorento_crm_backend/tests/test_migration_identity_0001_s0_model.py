@@ -286,3 +286,97 @@ def test_upgrade_backfills_links_seeds_roles_and_is_idempotent():
             assert audit_rows_again == 1, "re-running the backfill must not duplicate the audit row"
         finally:
             outer.rollback()
+
+
+# --------------------------------------------------------------------------- #
+# Security review round: INVALID indexes from an interrupted CONCURRENTLY      #
+# build, and blank phone numbers in the backfill.                              #
+# --------------------------------------------------------------------------- #
+def _index_valid(conn, name: str):
+    return conn.execute(
+        sa.text(
+            "SELECT i.indisvalid FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid "
+            "WHERE c.relname = :name"
+        ),
+        {"name": name},
+    ).scalar()
+
+
+def test_upgrade_drops_and_rebuilds_an_invalid_unique_index():
+    """A failed CREATE INDEX CONCURRENTLY leaves an INVALID index that `IF NOT EXISTS`
+    would silently keep. The real path is reproduced by marking the index invalid in
+    pg_index (the CI role is a superuser), inside the rolled-back transaction."""
+    module = _load()
+    with engine.connect() as raw:
+        outer = raw.begin()
+        try:
+            for name in ("uq_users_email_lower", "uq_users_respond_contact_id"):
+                raw.execute(
+                    sa.text("UPDATE pg_index SET indisvalid = false WHERE indexrelid = to_regclass(:name)"),
+                    {"name": name},
+                )
+                assert _index_valid(raw, name) is False
+
+            _run(raw, lambda: module._upgrade(concurrently=False))
+
+            for name in ("uq_users_email_lower", "uq_users_respond_contact_id"):
+                assert _index_valid(raw, name) is True, f"{name} was left INVALID"
+        finally:
+            outer.rollback()
+
+
+def test_ensure_index_raises_naming_the_index_when_the_rebuild_stays_invalid():
+    """The give-up path, against a fake bind: the index reads INVALID before and after
+    the rebuild, so the migration stops and names it rather than carrying on."""
+    module = _load()
+    executed: list[str] = []
+
+    class _Result:
+        def scalar(self):
+            return False  # indisvalid = false, every time
+
+    class _FakeBind:
+        def execute(self, statement, params=None):
+            executed.append(str(statement))
+            return _Result()
+
+    with pytest.raises(RuntimeError) as excinfo:
+        module._ensure_index(
+            _FakeBind(),
+            "uq_users_email_lower",
+            "CREATE UNIQUE INDEX {c} IF NOT EXISTS uq_users_email_lower ON users (lower(email))",
+            concurrently=False,
+        )
+    assert "uq_users_email_lower" in str(excinfo.value)
+    assert any("DROP INDEX" in s for s in executed), "an INVALID index must be dropped before the rebuild"
+
+
+def test_backfill_never_matches_a_blank_phone_number():
+    module = _load()
+    with engine.connect() as raw:
+        outer = raw.begin()
+        try:
+            stem = f"{PREFIX}-blank-{uuid.uuid4().hex[:8]}"
+            contact_id = _mk_id()
+            raw.execute(
+                sa.text("INSERT INTO respond_contacts (id, phone_number, name) VALUES (:id, '', :name)"),
+                {"id": contact_id, "name": f"{stem} Blank Contact"},
+            )
+            user_id = _mk_id()
+            raw.execute(
+                sa.text(
+                    "INSERT INTO users (id, email, name, status, contact_number, is_trashed, is_integration, "
+                    "is_protected, respond_synced, daily_sla_summary_subscribed) VALUES "
+                    "(:id, :email, :name, 'ACTIVE', '', false, false, false, 'pending', true)"
+                ),
+                {"id": user_id, "email": f"{stem}@example.com".lower(), "name": f"{stem} Blank"},
+            )
+
+            _run(raw, lambda: module._upgrade(concurrently=False))
+
+            linked = raw.execute(
+                sa.text("SELECT respond_contact_id FROM users WHERE id = :id"), {"id": user_id}
+            ).scalar()
+            assert linked is None, "a blank phone must never be linked to a blank-phone contact"
+        finally:
+            outer.rollback()

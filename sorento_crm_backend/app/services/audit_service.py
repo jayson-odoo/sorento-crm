@@ -248,7 +248,11 @@ def list_audit_logs(
     if user_id:
         if not _is_uuid(user_id):
             return [], 0
-        q = q.filter(AuditLog.user_id == user_id)
+        # Plan 8.1: an impersonated write carries the target as user_id and the admin
+        # as real_user_id, so filtering by a person finds both kinds of row.
+        from sqlalchemy import or_
+
+        q = q.filter(or_(AuditLog.user_id == user_id, AuditLog.real_user_id == user_id))
     if action:
         q = q.filter(AuditLog.action == action.upper())
     if trace_id:

@@ -1,4 +1,5 @@
 """Logging middleware for API requests."""
+import re
 import time
 import uuid
 import logging
@@ -6,6 +7,10 @@ from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from app.services.logging import log_api_request
 from app.audit_context import AuditActor, stamp_actor, set_trace_id
+
+# An inbound X-Trace-Id is echoed in the response and written to every audit row, so
+# only a plain token is accepted; anything else gets a freshly minted id.
+_TRACE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 # Paths whose unauthenticated writes are a public link's (identity S0, plan 8.1).
 _PUBLIC_PREFIX = "/api/v1/public/"
@@ -32,7 +37,8 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         )
         # Correlation id for this request (honour an inbound X-Trace-Id if present,
         # else mint one). Copied onto every audit row written during the request.
-        trace_id = request.headers.get("X-Trace-Id") or uuid.uuid4().hex[:16]
+        inbound = request.headers.get("X-Trace-Id")
+        trace_id = inbound if inbound and _TRACE_ID_RE.match(inbound) else uuid.uuid4().hex[:16]
         set_trace_id(trace_id)
 
         # Skip logging for health check and docs

@@ -104,6 +104,15 @@ def _stamp_session_actor(request: Request, db: Session, real_user: dict) -> None
     )
 
 
+def _clean_tool_name(raw: Optional[str]) -> Optional[str]:
+    """X-Tool-Name as it may land in an audit description: control characters
+    (below 0x20, and 0x7f) stripped first, then capped at 128."""
+    if not raw:
+        return None
+    cleaned = "".join(ch for ch in raw if ord(ch) >= 0x20 and ord(ch) != 0x7F).strip()
+    return cleaned[:128] or None
+
+
 def _stamp_integration_actor(request: Request, db: Session, user: dict) -> None:
     """Stamp an integration API key as the audit actor (identity S0, AC-09)."""
     from app.audit_context import AuditActor, stamp_actor
@@ -115,7 +124,7 @@ def _stamp_integration_actor(request: Request, db: Session, user: dict) -> None:
             real_user_id=str(user["id"]),
             auth_method="api_key",
             integration_id=user.get("integration_id"),
-            tool_name=(request.headers.get("X-Tool-Name") or "").strip()[:128] or None,
+            tool_name=_clean_tool_name(request.headers.get("X-Tool-Name")),
             ip_address=_client_ip(request),
             user_agent=request.headers.get("user-agent"),
         ),
