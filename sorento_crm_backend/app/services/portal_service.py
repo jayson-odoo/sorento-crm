@@ -726,6 +726,7 @@ class PortalService:
         if not self.consume_reserved(otp.id, _utcnow()):
             # Someone else's parallel verify consumed this exact code first.
             raise handle_validation_error("Incorrect verification code.")
+
         # Mark every unrevoked token for this contact as verified so the original
         # admin-issued QR / link / "Send via Respond.io" token grants access
         # immediately after OTP success - no need to re-issue through the new
