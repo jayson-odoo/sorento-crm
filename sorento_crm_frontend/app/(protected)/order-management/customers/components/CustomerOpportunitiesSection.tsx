@@ -27,8 +27,10 @@ import SalesOpportunityModal from '@/app/(protected)/sales/opportunities/compone
  */
 export default function CustomerOpportunitiesSection({
   customerId,
+  customerName,
 }: {
   customerId: string;
+  customerName?: string;
   isEditing?: boolean;
 }) {
   const [modalOpen, setModalOpen] = useState(false);
@@ -96,6 +98,7 @@ export default function CustomerOpportunitiesSection({
           open={modalOpen}
           onOpenChange={setModalOpen}
           presetCustomerId={customerId}
+          presetCustomerLabel={customerName}
         />
       ) : null}
     </Card>

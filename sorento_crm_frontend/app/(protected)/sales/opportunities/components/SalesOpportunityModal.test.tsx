@@ -21,6 +21,8 @@ vi.mock('@/components/common/SearchableSelect', () => ({
     fetchOptions?: (q: string, page: number) => Promise<
       { value: string; label: string; disabled?: boolean }[]
     >;
+    onSearchChange?: (q: string) => void;
+    selectedOption?: { value: string; label: string };
   }) => {
     const [query, setQuery] = React.useState('');
     const [options, setOptions] = React.useState(props.options ?? []);
@@ -39,22 +41,35 @@ vi.mock('@/components/common/SearchableSelect', () => ({
       if (!props.fetchOptions) setOptions(props.options ?? []);
     }, [props.options, props.fetchOptions]);
     const label = props['aria-label'] ?? props.id ?? 'select';
+    // Mirrors the real component's own fallback: a `selectedOption` whose value isn't in
+    // the fetched page still shows as the current selection (reviewer should-fix 7).
+    const displayOptions =
+      props.selectedOption && !options.some((o) => o.value === props.selectedOption!.value)
+        ? [props.selectedOption, ...options]
+        : options;
     return (
       <div>
-        {props.fetchOptions && (
-          <input aria-label={`${label} search`} value={query} onChange={(e) => setQuery(e.target.value)} />
-        )}
+        {props.fetchOptions || props.onSearchChange ? (
+          <input
+            aria-label={`${label} search`}
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              props.onSearchChange?.(e.target.value);
+            }}
+          />
+        ) : null}
         <select
           aria-label={label}
           value={props.value}
           onChange={(e) => {
             props.onChange(e.target.value);
-            const opt = options.find((o) => o.value === e.target.value) ?? null;
+            const opt = displayOptions.find((o) => o.value === e.target.value) ?? null;
             props.onOptionChange?.(opt);
           }}
         >
           <option value="" />
-          {options.map((o) => (
+          {displayOptions.map((o) => (
             <option key={o.value} value={o.value} disabled={o.disabled}>
               {o.label}
             </option>
@@ -185,14 +200,17 @@ describe('SalesOpportunityModal', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /add product/i }));
     const rows = screen.getAllByTestId('opportunity-line-row');
+    // A row now also has its own search box (reviewer-7's fix exercises onSearchChange),
+    // so `role: 'combobox'` is what picks the <select> out of the two /product/i matches.
     await waitFor(() =>
       expect(
         Array.from(
-          (within(rows[0]).getByLabelText(/product/i) as HTMLSelectElement).options,
+          (within(rows[0]).getByRole('combobox', { name: /product/i }) as HTMLSelectElement)
+            .options,
         ).map((o) => o.value),
       ).toContain('p1'),
     );
-    const firstProductSelect = within(rows[0]).getByLabelText(/product/i);
+    const firstProductSelect = within(rows[0]).getByRole('combobox', { name: /product/i });
     fireEvent.change(firstProductSelect, { target: { value: 'p1' } });
     const firstQty = within(rows[0]).getByLabelText(/qty/i);
     fireEvent.change(firstQty, { target: { value: '3' } });
@@ -200,5 +218,46 @@ describe('SalesOpportunityModal', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(save.mutateAsync).toHaveBeenCalledTimes(1));
     expect(save.mutateAsync.mock.calls[0][0].lines).toEqual([{ product_id: 'p1', qty: 3 }]);
+  });
+
+  it('fix reviewer-7: a preset customer shows its own name, not a blank field', () => {
+    render(
+      <SalesOpportunityModal
+        open
+        onOpenChange={() => {}}
+        presetCustomerId="cust-1"
+        presetCustomerLabel="C1 - ZZT Customer"
+      />,
+    );
+    const select = screen.getByLabelText('Customer or prospect') as HTMLSelectElement;
+    expect(select.value).toBe('cust-1');
+    expect(screen.getByRole('option', { name: 'C1 - ZZT Customer' })).toBeTruthy();
+  });
+
+  it('fix reviewer-7: a picked product keeps its label after a later search', async () => {
+    service.getSalesOpportunityProductOptions.mockImplementation(async (q: string) => {
+      if (!q) return [{ value: 'p1', label: 'ZZT-001 - ZZT Basin' }];
+      return [{ value: 'p2', label: 'ZZT-002 - ZZT Faucet' }];
+    });
+    render(<SalesOpportunityModal open onOpenChange={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: /add product/i }));
+    const rows = screen.getAllByTestId('opportunity-line-row');
+    const productSelect = within(rows[0]).getByRole('combobox', { name: /product/i }) as HTMLSelectElement;
+    await waitFor(() =>
+      expect(Array.from(productSelect.options).map((o) => o.value)).toContain('p1'),
+    );
+    fireEvent.change(productSelect, { target: { value: 'p1' } });
+    expect(productSelect.value).toBe('p1');
+
+    // A later search for something else replaces the fetched page entirely.
+    const searchBox = within(rows[0]).getByLabelText(/product.*search/i);
+    fireEvent.change(searchBox, { target: { value: 'faucet' } });
+    await waitFor(() =>
+      expect(Array.from(productSelect.options).map((o) => o.value)).toContain('p2'),
+    );
+
+    // The earlier pick is still selected AND still has its own label available.
+    expect(productSelect.value).toBe('p1');
+    expect(screen.getByRole('option', { name: 'ZZT-001 - ZZT Basin' })).toBeTruthy();
   });
 });

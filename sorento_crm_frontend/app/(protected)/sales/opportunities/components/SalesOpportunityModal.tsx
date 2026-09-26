@@ -50,6 +50,14 @@ function ProductLineRow({
   onRemove: () => void;
 }) {
   const [options, setOptions] = useState<SearchableSelectOption[]>([]);
+  // Reviewer should-fix 7: a later search REPLACES `options` wholesale, and a picked
+  // product from an earlier search is gone from that replacement the moment the reader
+  // types again - the trigger would then find no match for `line.productId` and fall
+  // back to the placeholder, reading as if the pick had been lost. Keeping the chosen
+  // option itself, merged back in, means it survives regardless of what the next search
+  // returns (the static-mode equivalent of `selectedOption`, which only applies in
+  // `fetchOptions` mode).
+  const [selected, setSelected] = useState<SearchableSelectOption | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -61,6 +69,11 @@ function ProductLineRow({
     };
   }, []);
 
+  const mergedOptions = useMemo(() => {
+    if (!selected || options.some((o) => o.value === selected.value)) return options;
+    return [selected, ...options];
+  }, [options, selected]);
+
   return (
     <div data-testid="opportunity-line-row" className="flex items-end gap-2">
       <div className="flex-1 flex flex-col gap-1.5">
@@ -69,7 +82,8 @@ function ProductLineRow({
           id={`Product-${line.key}`}
           value={line.productId}
           onChange={(v) => onChange({ productId: v })}
-          options={options}
+          onOptionChange={setSelected}
+          options={mergedOptions}
           onSearchChange={(q) => getSalesOpportunityProductOptions(q).then(setOptions)}
           placeholder="Search products..."
           wrapOptions
@@ -107,11 +121,16 @@ export default function SalesOpportunityModal({
   open,
   onOpenChange,
   presetCustomerId,
+  presetCustomerLabel,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** Preset from a customer's own page (J8); the field still shows the picked customer. */
   presetCustomerId?: string;
+  /** Reviewer should-fix 7: the async SearchableSelect has no page loaded that could
+   *  contain this id, so without the name here the field reads as empty despite a real
+   *  preset - the caller already has it (the customer page it was opened from). */
+  presetCustomerLabel?: string;
 }) {
   const save = useSaveSalesOpportunity();
 
@@ -208,6 +227,11 @@ export default function SalesOpportunityModal({
                 onChange={setCustomerOrProspect}
                 options={customerOptions}
                 fetchOptions={fetchCustomerOptions}
+                selectedOption={
+                  presetCustomerId && presetCustomerLabel
+                    ? { value: presetCustomerId, label: presetCustomerLabel }
+                    : undefined
+                }
                 placeholder="Search customers..."
                 wrapOptions
               />

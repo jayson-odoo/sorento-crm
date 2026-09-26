@@ -151,7 +151,7 @@ export default function CustomerDetail({ customerId }: CustomerDetailProps) {
         </Card>
       </div>
 
-      <CustomerOpportunitiesSection customerId={customerId} />
+      <CustomerOpportunitiesSection customerId={customerId} customerName={customer.customer_name} />
     </div>
   );
 }
