@@ -388,3 +388,87 @@ def test_clarifying_question_open_at_the_answer_bridge_seam_still_gets_no_fresh_
     )
     assert answer is not None
     assert "escalate" not in answer.text.lower(), answer.text
+
+
+# --------------------------------------------------------------------------- #
+# Coordinator round 2 (26 Sep 2026): AC-S11-1 names the outstanding-report miss
+# EXPLICITLY, and `not_found_error_message` turned out to carry ELEVEN separate
+# "Would you like me to escalate" clauses, not one - every branch of its own big
+# if/elif tree builds its own copy. Two of the other ten, driven directly (no
+# `answer_bridge` round-trip needed - `not_found_error_message` is the ONE place
+# every one of them is built, and its own `escalate_message` key is what a caller
+# reads verbatim).
+# --------------------------------------------------------------------------- #
+from app.services.chatbot.lanes.business import answer as _answer_mod
+
+
+def test_staff_outstanding_report_empty_miss_gets_no_offer():
+    """AC-S11-1's own explicit example: an outstanding report that came back with
+    nothing still ends in "Would you like me to escalate to X team?" today,
+    unconditionally - the `_outstanding_report_text(item)` branch of
+    `not_found_error_message`."""
+    item = {
+        "outstanding_report": True,
+        "response": "Product: SRTWC286\nCustomer: all\nLocation: all\nOrder date: all\n\n"
+        "*Sales order outstanding*\nNo open sales order.",
+    }
+    parser = {"domain_hint": "order", "intent_hint": "check_order", "routing": {}}
+    resolved = {"resolutions": [], "unresolved_tokens": [], "tokens": []}
+    gate = {"gate_passed": True, "compatible_entities": []}
+
+    out = _answer_mod.not_found_error_message(
+        item, parser=parser, resolved=resolved, gate=gate, profile=Profile(tier="office")
+    )
+
+    text = out.get("escalate_message") or ""
+    assert "escalate" not in text.lower(), text
+    assert "No open sales order." in text, (
+        f"the report's own rendered text must still print - only the offer is gated: {text!r}"
+    )
+
+
+def test_dealer_outstanding_report_empty_miss_keeps_the_offer():
+    """Guard (R6): unchanged for a dealer/non-staff profile through this SAME branch."""
+    item = {
+        "outstanding_report": True,
+        "response": "Product: SRTWC286\nCustomer: all\nLocation: all\nOrder date: all\n\n"
+        "*Sales order outstanding*\nNo open sales order.",
+    }
+    parser = {"domain_hint": "order", "intent_hint": "check_order", "routing": {}}
+    resolved = {"resolutions": [], "unresolved_tokens": [], "tokens": []}
+    gate = {"gate_passed": True, "compatible_entities": []}
+
+    out = _answer_mod.not_found_error_message(
+        item, parser=parser, resolved=resolved, gate=gate, profile=Profile(tier="dealer")
+    )
+
+    text = out.get("escalate_message") or ""
+    assert "would you like me to escalate" in text.lower(), text
+
+
+def test_staff_catalog_could_not_find_miss_gets_no_offer():
+    """The catalog "Couldn't find: X" branch (`not_found_raw and not found_lines` -
+    nothing resolved at all, no compatible entities) - a DIFFERENT branch from the
+    `build_breakdown_msg`/"But no order matched these" one slice 11's first fix
+    covered, and from the outstanding-report one above."""
+    item = {}
+    parser = {
+        "domain_hint": "order",
+        "intent_hint": "check_order",
+        "entities": [{"raw": "STWC26", "hint": "product", "current_message": True, "confident": True}],
+        "routing": {},
+    }
+    resolved = {
+        "resolutions": [{"token": "STWC26", "matches": []}],
+        "unresolved_tokens": ["STWC26"],
+        "tokens": ["STWC26"],
+    }
+    gate = {"gate_passed": True, "compatible_entities": []}
+
+    out = _answer_mod.not_found_error_message(
+        item, parser=parser, resolved=resolved, gate=gate, profile=Profile(tier="office")
+    )
+
+    text = out.get("escalate_message") or ""
+    assert "escalate" not in text.lower(), text
+    assert "couldn't find" in text.lower(), text

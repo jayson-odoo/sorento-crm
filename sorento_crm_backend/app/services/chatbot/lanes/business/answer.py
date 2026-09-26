@@ -2901,6 +2901,22 @@ def not_found_error_message(
             )
             suggested_team = domain_row.escalation_team_code if domain_row is not None else None
         team = _pretty_team(suggested_team if jsc.truthy(suggested_team) else "customer_service")
+
+        def _esc_offer(offer_team: Any = None) -> str:
+            """#1262 slice 11 (F8) follow-up (coordinator round 2): the ONE place every
+            "Would you like me to escalate to X team?" clause in this function is built -
+            AC-S11-1 names the outstanding-report miss explicitly, and this function has
+            ELEVEN such clauses (grepped, not guessed), each hand-written before this
+            slice. A per-branch `if is_staff: ... else: ...` at each site is exactly the
+            "one branch missed later" risk the coordinator flagged; routing every one of
+            them through this closure instead means a TWELFTH branch added after this
+            slice inherits the gate for free, rather than needing its own author to
+            remember it. `""` for a staff profile - the caller appends it only when
+            truthy, so no branch prints a dangling space or period-with-nothing-after.
+            """
+            t = offer_team if jsc.truthy(offer_team) else team
+            return "" if is_staff else f"Would you like me to escalate to {t} team?"
+
         is_active = jsc.get(q, "is_active")
         active_inactive = (
             " active"
@@ -3109,20 +3125,16 @@ def not_found_error_message(
                 for m in uniq
             )
             if not any_active:
-                return (
-                    f"{label} has ended, so there is nothing to send. "
-                    f"Would you like me to escalate to {team} team?"
-                )
+                esc = _esc_offer()
+                return f"{label} has ended, so there is nothing to send." + (f" {esc}" if esc else "")
             levels = [
                 jsc.js_string(x if jsc.truthy(x) else "").strip()
                 for x in jsc.array(entitlement_levels)
             ]
             levels = [x for x in levels if x]
             at = f" at your access level ({', '.join(levels)})" if levels else " to you"
-            return (
-                f"{label} is not available{at}. "
-                f"Would you like me to escalate to {team} team?"
-            )
+            esc = _esc_offer()
+            return f"{label} is not available{at}." + (f" {esc}" if esc else "")
 
         entitlement_miss = _entitlement_miss()
 
@@ -3324,23 +3336,25 @@ def not_found_error_message(
                 if (is_order_scope and jsc.truthy(date_start) and jsc.truthy(date_end))
                 else date_range
             )
-            # #1262 slice 11 (F8) follow-up: the SAME staff-audience gate `turn/
-            # compose.py` and the cross-domain ladder already apply - a staff rep gets
-            # the widen invite (a genuinely useful next step, not a bot-initiated
-            # offer) but never the "or would you like me to escalate" clause.
-            if is_staff:
+            # #1262 slice 11 (F8) follow-up: the widen invite (a genuinely useful next
+            # step, never a bot-initiated offer) stays for every audience - `is_staff`
+            # (read once, at the top of this function, the SAME flag `_esc_offer` uses)
+            # only ever drops the ", or would you like me to escalate" half joined onto
+            # it. Bespoke rather than routed through `_esc_offer` because this is the
+            # ONE site where the clause is comma-joined mid-sentence rather than its own
+            # trailing sentence - `_esc_offer`'s own phrasing covers every OTHER site.
+            windowed = is_order_scope and (jsc.truthy(date_start) or jsc.truthy(date_end))
+            if windowed:
                 esc_ask = (
                     "Reply 'all dates' to search without the date filter."
-                    if (is_order_scope and (jsc.truthy(date_start) or jsc.truthy(date_end)))
-                    else ""
+                    if is_staff
+                    else (
+                        f"Reply 'all dates' to search without the date filter, or would you like me "
+                        f"to escalate to {team} team?"
+                    )
                 )
             else:
-                esc_ask = (
-                    f"Reply 'all dates' to search without the date filter, or would you like me "
-                    f"to escalate to {team} team?"
-                    if (is_order_scope and (jsc.truthy(date_start) or jsc.truthy(date_end)))
-                    else f"Would you like me to escalate to {team} team?"
-                )
+                esc_ask = _esc_offer()
             miss_sentence = (
                 f"But no{active_inactive} {domain_word}{miss_window}{access} matched these{co_suffix}."
             )
@@ -3410,11 +3424,11 @@ def not_found_error_message(
                 schemes_text = (
                     ", ".join(jsc.js_string(s) for s in schemes) if schemes else "none on file yet"
                 )
+                esc = _esc_offer()
                 escalate_message = (
                     f"The register has no {scheme_word or 'that'} certificates. "
-                    f"Schemes on file: {schemes_text}. "
-                    f"Would you like me to escalate to {team} team?"
-                )
+                    f"Schemes on file: {schemes_text}."
+                ) + (f" {esc}" if esc else "")
             elif described_set_answers and "attachment_types_on_file" in predicate:
                 # R6/AC-1329 (console fix round 2): the unrecognised word is an
                 # ATTACHMENT LABEL ("photo"), not a class/product_type word - a
@@ -3540,11 +3554,11 @@ def not_found_error_message(
                     if checked_codes
                     else ""
                 )
+                esc = _esc_offer()
                 escalate_message = (
                     f"Couldn't find {subject_phrase} with "
-                    f"{_predicate_phrase(jsc.get(predicate, 'require') or {})}{checked}. "
-                    f"Would you like me to escalate to {team} team?"
-                )
+                    f"{_predicate_phrase(jsc.get(predicate, 'require') or {})}{checked}."
+                ) + (f" {esc}" if esc else "")
             elif domain_hint == "product_attachment":
                 # FIX B: natural, parser-driven phrasing - never leak the internal literal.
                 product_raws = [
@@ -3590,10 +3604,10 @@ def not_found_error_message(
                         subject = f"attachments for {prod_text}"
                     else:
                         subject = requested if jsc.truthy(requested) else "the requested item"
+                    esc = _esc_offer()
                     escalate_message = (
-                        f"Could not find{active_inactive} {subject}{date_range}{access}. "
-                        f"Would you like me to escalate to {team} team?"
-                    )
+                        f"Could not find{active_inactive} {subject}{date_range}{access}."
+                    ) + (f" {esc}" if esc else "")
             elif _outstanding_report_text(item):
                 # AC-1107 / S4 point 6, and the owner's approved miss mock: an outstanding
                 # report that came back empty ALREADY says what was searched and what was
@@ -3606,10 +3620,8 @@ def not_found_error_message(
                 # team picker behind it work exactly as they do on every other miss.
                 # THIS TOOL ONLY: no other miss reaches here, because no other answer
                 # carries `outstanding_report`.
-                escalate_message = (
-                    f"{_outstanding_report_text(item)}\n\n"
-                    f"Would you like me to escalate to {team} team?"
-                )
+                esc = _esc_offer()
+                escalate_message = f"{_outstanding_report_text(item)}" + (f"\n\n{esc}" if esc else "")
                 found_summary = _outstanding_report_text(item)
             else:
                 # status-filter-aware: one or more SPECIFIC orders resolved (the DO exists)
@@ -3666,7 +3678,9 @@ def not_found_error_message(
                     # AC-1863: one order must stay byte-identical to before this fix, so the
                     # escalate question is appended to the LAST line (a space, not a newline)
                     # and only the order lines themselves are newline-joined.
-                    order_lines[-1] = f"{order_lines[-1]} Would you like me to escalate to {team} team?"
+                    esc = _esc_offer()
+                    if esc:
+                        order_lines[-1] = f"{order_lines[-1]} {esc}"
                     escalate_message = "\n".join(order_lines)
                 elif use_breakdown:
                     escalate_message = build_breakdown_msg(
@@ -3677,17 +3691,17 @@ def not_found_error_message(
                     # promotions were searched and none matched - they were not: the gate
                     # dead-ends on the no-compatible-entity branch and the fetch never runs.
                     # Saying we searched sends the customer off correcting the wrong thing.
+                    esc = _esc_offer()
                     escalate_message = (
-                        f"Couldn't find: {', '.join(label_token(t) for t in not_found_raw)}. "
-                        f"Would you like me to escalate to {team} team?"
-                    )
+                        f"Couldn't find: {', '.join(label_token(t) for t in not_found_raw)}."
+                    ) + (f" {esc}" if esc else "")
                 else:
                     for_requested = f" for {requested}" if jsc.truthy(requested) else ""
+                    esc = _esc_offer()
                     escalate_message = (
                         f"Could not find{active_inactive} {status_label}"
-                        f"{jsc.js_string(domain_hint)}{for_requested}{date_range}{access}. "
-                        f"Would you like me to escalate to {team} team?"
-                    )
+                        f"{jsc.js_string(domain_hint)}{for_requested}{date_range}{access}."
+                    ) + (f" {esc}" if esc else "")
 
     # Q23: the customer named an access level they do not hold. The gate detects it; say so
     # here too, or an entitlement problem reads as an ordinary "couldn't find it".
