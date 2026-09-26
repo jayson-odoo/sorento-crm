@@ -1,8 +1,8 @@
 # PLAN: one append-only audit backbone for every function (issue #1281)
 
-Status: S0 in build on `feat/audit-standard-s0` (Track: full - a migration and an auth-surface
-change). S-1 (security fixes) runs in its own lane on `fix/audit-log-security-holes`. S1, S2, S3
-not started.
+Status: S0 built, PR #1299 ready for the owner (Track: full - a migration and an auth-surface
+change); reviewer and security-reviewer ran once, round-1 findings fixed. S-1 (security fixes)
+is PR #1298 on `fix/audit-log-security-holes` and should merge first. S1, S2, S3 not started.
 Plan created: 2026-09-26 (from the investigation report on #1281, comment 5846914028, sections 7
 to 10, investigated at `51d30ccc5`).
 Domain: audit (CORE, not a module: every install needs a trail; the `audit` App Store key keeps
