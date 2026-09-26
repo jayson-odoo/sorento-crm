@@ -61,7 +61,10 @@ def _seed_roles_and_order_domain(db):
     sys.path.insert(0, str(_VERSIONS.parent))
     s0 = iu.module_from_spec(spec)
     spec.loader.exec_module(s0)
-    s0.seed_domains_and_kinds(db.connection())
+    # No compiled cache for the reflection s0 does: an earlier migration test in the same
+    # serial run compiles pg_catalog reflection under a translate map with no `None` key,
+    # and SQLAlchemy refuses to reuse that statement under blank_session's map.
+    s0.seed_domains_and_kinds(db.connection().execution_options(compiled_cache=None))
     db.execute(sa.text(
         "INSERT INTO app_modules_catalog (id, module_key, display_name, dependencies) "
         "VALUES (gen_random_uuid(), 'order', 'Order', '[]'::jsonb) ON CONFLICT DO NOTHING"
