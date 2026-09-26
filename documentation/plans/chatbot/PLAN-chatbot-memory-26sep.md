@@ -925,7 +925,7 @@ write routes on contacts and S3 changes what reaches an LLM from stored data.
 | S1 | episode summaries: `episode_digest`; summary rules (no figures); backfill script; the four dead memory settings and the Memory card removed | S0 | AC-MEM020 to AC-MEM029 |
 | S2 | profile facts and staff screen: vocabulary, CRM view read live, tally, stated, staff, precedence, tombstones, single-key writes under lock, "facts never grant", tier pick writes, Contact card sections, facts routes | S1 (tally reads digests) | AC-MEM030 to AC-MEM050 |
 | S3 | prompt assembly under budget: `turn/context.py`, per-layer caps, memory addendum and its paid cuts, `history_question` and `profile_statement` in the schema, recall re-parse and frame embedding deleted, toggle relabelled and still default OFF (Q1 ruling), date moved to the end, budget CI test, production token gate | S1, S2 | AC-MEM060 to AC-MEM073 |
-| S3T | owner memory test on a local stack (Q1 ruling): memory switched on for one test contact; regression run; carry-over cases that must NOT carry; the owner's verdict recorded verbatim. No default-on change in this slice | S3 | AC-MEM074 to AC-MEM079 |
+| S3T | owner memory test on a local stack (owner ruling 26 Sep 2026, Q1): memory switched on for one test contact; regression run; carry-over cases that must NOT carry; the owner's verdict recorded verbatim. No default-on change in this slice | S3 | AC-MEM074 to AC-MEM079 |
 | S4 | out-of-boundary replies: reply shape, clarifier gets the memory slice and reports language, ack guard, history reply, handover names who, no silence, no exception text, new templates in en / ms / zh | S3 | AC-MEM080 to AC-MEM095 |
 
 No slice flips the memory default (owner ruling 26 Sep 2026, Q1). Until S3 deploys, the
