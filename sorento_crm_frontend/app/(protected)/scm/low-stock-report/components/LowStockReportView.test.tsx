@@ -18,8 +18,29 @@ vi.mock('next/navigation', () => ({
 }));
 
 vi.mock('@/components/common/PageHeader', () => ({
-  PageHeader: ({ title, children, actions }: { title: React.ReactNode; children?: React.ReactNode; actions?: React.ReactNode }) => (
+  PageHeader: ({
+    title,
+    children,
+    actions,
+    crumbs,
+  }: {
+    title: React.ReactNode;
+    children?: React.ReactNode;
+    actions?: React.ReactNode;
+    crumbs?: { title: string; path?: string }[];
+  }) => (
     <header>
+      <nav aria-label="Breadcrumb">
+        {(crumbs ?? []).map((c) =>
+          c.path ? (
+            <a key={c.title} href={c.path}>
+              {c.title}
+            </a>
+          ) : (
+            <span key={c.title}>{c.title}</span>
+          ),
+        )}
+      </nav>
       <h1>{title}</h1>
       {children}
       {actions}
@@ -178,6 +199,24 @@ describe('LowStockReportView', () => {
     expect(back).toHaveAttribute('href', `/scm/reorder/${RUN_ID}`);
     // The page header's actions, as "Back to purchase orders" on the purchase order page.
     expect(back.closest('header')).not.toBeNull();
+  });
+
+  it('W5: the trail runs through Reorder Planning, since no sidebar item names the page', async () => {
+    getLowStockView.mockResolvedValue(view());
+    renderPage();
+    await screen.findByText('2 rows, 2 sheets');
+
+    const trail = screen.getByRole('navigation', { name: 'Breadcrumb' });
+    expect(Array.from(trail.children).map((c) => c.textContent)).toEqual([
+      'Procurement',
+      'Supply Chain',
+      'Reorder Planning',
+      'Low stock report',
+    ]);
+    expect(within(trail).getByRole('link', { name: 'Reorder Planning' })).toHaveAttribute(
+      'href',
+      '/scm/reorder',
+    );
   });
 
   it('Download sends exactly what the page shows', async () => {

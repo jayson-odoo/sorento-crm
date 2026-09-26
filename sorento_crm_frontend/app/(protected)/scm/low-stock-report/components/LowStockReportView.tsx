@@ -22,6 +22,17 @@ import type { LowStockFacet, LowStockView } from '../types/lowStockReport.types'
 /** The row search reads the product code and its description (owner hand test 26 Sep, W4). */
 const SEARCH_COLUMNS = ['Item code', 'Description'];
 
+/**
+ * No sidebar item names this page (W5), so the trail would fall back to the Supply Chain
+ * dashboard's; it runs through the Reorder Planning entry the page is opened from instead.
+ */
+const CRUMBS = [
+  { title: 'Procurement' },
+  { title: 'Supply Chain' },
+  { title: 'Reorder Planning', path: '/scm/reorder' },
+  { title: 'Low stock report' },
+];
+
 /** Owner, 26 Sep 01:40Z: "default is split by both". */
 const SPLITS: { value: ExportSplit; label: string }[] = [
   { value: 'supplier_category', label: 'Supplier and category' },
@@ -167,6 +178,7 @@ export function LowStockReportView({ runId }: { runId: string }) {
     <div className="space-y-4">
       <PageHeader
         title="Low stock report"
+        crumbs={CRUMBS}
         actions={
           <BackToList
             listPath={`/scm/reorder/${runId}`}
