@@ -332,6 +332,8 @@ export function SpecRulesGrid({
     );
   };
 
+  const isSortedByOrder = sorting.length === 0 || (sorting[0]?.id === 'order' && !sorting[0]?.desc);
+
   const columns = useMemo<ColumnDef<GridRow>[]>(() => {
     const base: ColumnDef<GridRow>[] = [
       {
@@ -424,16 +426,10 @@ export function SpecRulesGrid({
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuItem onClick={() => onEdit(gridRow.index)}>Edit</DropdownMenuItem>
-              <DropdownMenuItem
-                disabled={sorting[0]?.id !== 'order' || !!sorting[0]?.desc}
-                onClick={() => moveBy(gridRow.index, -1)}
-              >
+              <DropdownMenuItem disabled={!isSortedByOrder} onClick={() => moveBy(gridRow.index, -1)}>
                 Move up
               </DropdownMenuItem>
-              <DropdownMenuItem
-                disabled={sorting[0]?.id !== 'order' || !!sorting[0]?.desc}
-                onClick={() => moveBy(gridRow.index, 1)}
-              >
+              <DropdownMenuItem disabled={!isSortedByOrder} onClick={() => moveBy(gridRow.index, 1)}>
                 Move down
               </DropdownMenuItem>
               <DropdownMenuItem
@@ -463,13 +459,12 @@ export function SpecRulesGrid({
     removingUid,
     removal.countdown,
     removal.isBlocked,
-    sorting,
+    isSortedByOrder,
     rules,
     onChange,
     onEdit,
   ]);
 
-  const isSortedByOrder = sorting.length === 0 || (sorting[0]?.id === 'order' && !sorting[0]?.desc);
   const reorderable = mode === 'edit' && isSortedByOrder;
 
   // The handle leads the row whenever it may be reordered - no toggle to press first.

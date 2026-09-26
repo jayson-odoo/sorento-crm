@@ -22,6 +22,13 @@ vi.mock('./services/productSpecService', () => ({
 vi.mock('./hooks/useSpecTryIt', () => ({
   useSpecTryIt: () => ({ result: null, loading: false, error: null }),
 }));
+// `WordsDataGrid`/`SpecRulesGrid`/`ValuesAndWordsTab` park real deferred
+// actions (fix round 1) - nothing here presses Remove.
+vi.mock('@/services/pendingActionService', () => ({
+  createPendingAction: vi.fn(),
+  cancelPendingAction: vi.fn(),
+  getCurrentPendingAction: vi.fn().mockResolvedValue({ pending: null, last_outcome: null }),
+}));
 
 import { HeaderTab } from './components/record/HeaderTab';
 import { ValuesAndWordsTab } from './components/record/ValuesAndWordsTab';
@@ -70,7 +77,7 @@ const FINISH_ROW: SpecRegistryKey = {
 describe('D15 guard - the record page tabs', () => {
   it('Details renders no underscore anywhere', () => {
     const { container } = render(
-      <HeaderTab row={FINISH_ROW} mode="view" draft={null} setDraft={() => {}} />,
+      withClient(<HeaderTab row={FINISH_ROW} mode="view" draft={null} setDraft={() => {}} />),
     );
     assertNoSnakeCase(container);
   });

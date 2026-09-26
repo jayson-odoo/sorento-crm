@@ -11,6 +11,7 @@ const SNAKE_CASE = /\w_\w/;
 
 const useProductSpecTable = vi.fn();
 vi.mock('../products/hooks/useProductSpecTable', () => ({
+  DETAIL_KEY: (productId: string) => ['product-spec-detail', productId],
   useProductSpecTable: (...a: unknown[]) => useProductSpecTable(...a),
 }));
 vi.mock('../products/hooks/useProducts', () => ({
@@ -29,7 +30,16 @@ vi.mock('../products/hooks/useProducts', () => ({
 vi.mock('@/hooks/usePermissions', () => ({
   usePermissions: () => ({ permissionSet: new Set(['master_data.products.edit']) }),
 }));
-vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock('@/lib/toast', () => ({
+  toast: { success: vi.fn(), error: vi.fn(), custom: vi.fn(), message: vi.fn(), dismiss: vi.fn() },
+}));
+// `CheckedLine` parks the real `spec_verification.unverify` deferred action
+// (fix round 1) - nothing here presses Undo.
+vi.mock('@/services/pendingActionService', () => ({
+  createPendingAction: vi.fn(),
+  cancelPendingAction: vi.fn(),
+  getCurrentPendingAction: vi.fn().mockResolvedValue({ pending: null, last_outcome: null }),
+}));
 
 import ProductSpecificationsTab from '../products/[id]/components/ProductSpecificationsTab';
 
@@ -97,7 +107,6 @@ useProductSpecTable.mockReturnValue({
   error: null,
   refetch: vi.fn(),
   verify: vi.fn(),
-  unverify: vi.fn(),
   verificationBusy: false,
   setValue: vi.fn(),
   tombstone: vi.fn(),

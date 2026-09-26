@@ -12,6 +12,18 @@ vi.mock('../../hooks/useSpecTryIt', () => ({
   useSpecTryIt: () => ({ result: null, loading: false, error: null }),
 }));
 
+vi.mock('@/lib/toast', () => ({
+  toast: { success: vi.fn(), error: vi.fn(), custom: vi.fn(), message: vi.fn(), dismiss: vi.fn() },
+}));
+
+// `SpecRulesGrid` parks the real `spec_rule.remove` deferred action (fix round
+// 1) - nothing here presses Remove.
+vi.mock('@/services/pendingActionService', () => ({
+  createPendingAction: vi.fn(),
+  cancelPendingAction: vi.fn(),
+  getCurrentPendingAction: vi.fn().mockResolvedValue({ pending: null, last_outcome: null }),
+}));
+
 import { RulesTab } from './RulesTab';
 import type { SpecDerivationRule, SpecRegistryKey } from '../../types/productSpec.types';
 
