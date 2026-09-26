@@ -258,5 +258,8 @@ def _entity(value: Any) -> dict[str, Any]:
         # Read back from the session, so named by an EARLIER message - see the docstring
         # above. A copy, never the caller's dict: the wire payload is read by other
         # readers too and this rule is about the STATE, not about the stored row.
-        return {**value, "current_message": False}
+        # #1262 fix lane round 2 (S1's nit): the parser's `quantity` is a fact of the
+        # message that typed it, like `current_message` - a carried row drops it, so a
+        # later subject line never repeats an earlier message's "(x5)".
+        return {**{k: v for k, v in value.items() if k != "quantity"}, "current_message": False}
     return {"raw": value, "canonical_code": value, "current_message": False}

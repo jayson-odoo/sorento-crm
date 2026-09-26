@@ -19,6 +19,7 @@ from app.services.chatbot.turn.state import (
     KIND_FIELD_MAP,
     State,
     focus_row_label,
+    fold_token,
     is_staff_profile,
 )
 
@@ -230,6 +231,27 @@ def _header_subjects(entities: list[Any]) -> list[str]:
     return out
 
 
+def _with_quantities(codes: list[Any], state: State) -> list[Any]:
+    """#1262 fix lane round 2, S1 (AC-S5-4): each envelope code named with the parser's
+    own quantity when the focus product row it came from carries one ("M210-GM (x5)"),
+    through the ONE label rule `focus_row_label`. The envelope's codes stay bare - the
+    ladder probes and the miss list read them as codes."""
+    by_code: dict[str, Any] = {}
+    for row in getattr(getattr(state, "focus", None), "products", None) or []:
+        if not isinstance(row, dict) or row.get("quantity") is None:
+            continue
+        for key in (row.get("raw"), row.get("canonical_code"), row.get("code")):
+            if key:
+                by_code.setdefault(fold_token(str(key)).casefold(), row["quantity"])
+    if not by_code:
+        return codes
+    out: list[Any] = []
+    for code in codes:
+        quantity = by_code.get(fold_token(str(code)).casefold())
+        out.append(focus_row_label({"raw": code, "quantity": quantity}) if quantity is not None else code)
+    return out
+
+
 def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: Any) -> Answer:
     sections: list[Section] = []
     seen_rows: set[tuple] = set()
@@ -266,7 +288,7 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
             missed_domains.append(domain)
 
         label = row.label if row else domain
-        codes = ", ".join(_header_subjects(entities))
+        codes = ", ".join(_with_quantities(_header_subjects(entities), state))
         # A counted-set answer (AC-1316/AC-1317, "10 taps have certificates. Showing
         # 5.") carries its OWN header, computed off the qualifying total and the
         # class word rather than the domain label - it wins over the generic

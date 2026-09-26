@@ -3173,6 +3173,26 @@ def not_found_error_message(
                 typed_order[group] = typed_seq
                 typed_seq += 1
 
+        # #1262 fix lane round 2, S1 (AC-S5-4): the parser's own per-entity quantity,
+        # printed beside the code it belongs to through the ONE label rule
+        # (`turn/state.py::focus_row_label`, "M210-GM (x5)") - never a regex.
+        from app.services.chatbot.turn.state import focus_row_label
+
+        qty_by_code: dict[str, Any] = {}
+        for entity in all_ents:
+            quantity = jsc.get(entity, "quantity") if jsc.truthy(entity) else None
+            if not jsc.truthy(quantity):
+                continue
+            for key in (jsc.get(entity, "raw"), jsc.get(entity, "canonical_code")):
+                if _type_norm(key):
+                    qty_by_code.setdefault(_type_norm(key), quantity)
+
+        def with_quantity(label: Any) -> str:
+            quantity = qty_by_code.get(_type_norm(bare_label(label)))
+            if quantity is None:
+                return jsc.js_string(label)
+            return jsc.js_string(focus_row_label({"raw": jsc.js_string(label), "quantity": quantity}))
+
         found_lines: list[str] = []
         for entity_type, codes in by_type.items():
             # The cap is over DISTINCT CODES, not over labels: a turn that resolved eight
@@ -3196,7 +3216,7 @@ def not_found_error_message(
                 else ""
             )
             rendered = ", ".join(
-                ", ".join(jsc.js_string(l) for l in by_code[b]) for b in named_codes
+                ", ".join(with_quantity(l) for l in by_code[b]) for b in named_codes
             )
             found_lines.append(f"• {jsc.js_string(entity_type)}: {rendered}{extra}")
         found_summary = "\n".join(found_lines)
