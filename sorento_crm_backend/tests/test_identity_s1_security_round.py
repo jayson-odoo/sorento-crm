@@ -1,0 +1,544 @@
+"""Identity S1 security-review fix round (#1280): B1-B3, S2, S4, S5, and the
+note fix. Written against the captain's fix-round brief BEFORE the fixes
+existed in this file's own history (see the coder's report for the red-run
+evidence: the whole set was verified red-for-cause with `git stash` against
+HEAD 21f26334, since B2/S1/S4 share the same two routes and are easiest to
+verify coherently as one revert/reapply rather than one file at a time).
+
+Postgres only (`tests/_pg_fixture.py`), one rolled-back transaction per test,
+except the B1 tests which exercise the real `app.database.SessionLocal`
+(mirrors `tests/test_identity_s1_phone_signin.py`'s AC-22 tests) because
+`_send_and_log` opens its own session - those clean up every row they write.
+"""
+from __future__ import annotations
+
+import uuid
+from datetime import timedelta
+from unittest.mock import patch
+
+import pytest
+from fastapi.testclient import TestClient
+
+from app.database import get_db
+from app.main import app
+from app.models.access import RespondContact
+from app.models.integration import IntegrationLog
+from app.models.portal import PortalOtpCode
+from app.models.respond_workspace import RespondWorkspace
+from app.models.user import User, UserRole, UserRoleAssignment
+from app.services.portal_service import PortalService, _hash_otp, _utcnow
+from tests._pg_fixture import blank_session, unique_code
+
+
+def _digits() -> str:
+    return "601" + f"{uuid.uuid4().int % 10**8:08d}"
+
+
+def _workspace(db) -> RespondWorkspace:
+    ws = RespondWorkspace(
+        id=str(uuid.uuid4()), space_id=f"sp_{uuid.uuid4().hex[:8]}",
+        name="ZZT WS", api_key_ciphertext="test-cipher",
+    )
+    db.add(ws)
+    db.flush()
+    return ws
+
+
+def _contact(db, ws, phone: str) -> RespondContact:
+    c = RespondContact(id=str(uuid.uuid4()), phone_number=phone, name="ZZT Contact", workspace_id=ws.id)
+    db.add(c)
+    db.flush()
+    return c
+
+
+def _user(db, *, phone=None, contact_id=None, status="ACTIVE", is_trashed=False, email=None) -> User:
+    u = User(
+        id=str(uuid.uuid4()), email=email, name="ZZT User", status=status,
+        is_trashed=is_trashed, contact_number=phone, respond_contact_id=contact_id,
+    )
+    db.add(u)
+    db.commit()
+    return u
+
+
+def _eligible_chain(db):
+    ws = _workspace(db)
+    digits = _digits()
+    contact = _contact(db, ws, digits)
+    user = _user(db, phone=digits, contact_id=contact.id, email=f"{unique_code('sec')}@x.com".lower())
+    return ws, contact, user, digits
+
+
+class _client_ctx:
+    def __init__(self, db):
+        self.db = db
+
+    def __enter__(self):
+        def _override_db():
+            yield self.db
+
+        app.dependency_overrides[get_db] = _override_db
+        self._tc = TestClient(app)
+        self._client = self._tc.__enter__()
+        return self._client
+
+    def __exit__(self, *exc):
+        self._tc.__exit__(*exc)
+        app.dependency_overrides.pop(get_db, None)
+
+
+@pytest.fixture()
+def rate_limit_cleanup():
+    from app.services.queue_service import redis_conn
+
+    idents: list[str] = []
+    yield idents
+    for ident in idents:
+        for key in redis_conn.keys(f"*{ident}*"):
+            redis_conn.delete(key)
+    for bucket in ("phone_signin_otp", "phone_signin_verify"):
+        redis_conn.delete(f"rate_limit:v1:{bucket}:testclient")
+
+
+# --------------------------------------------------------------------------- #
+# B1: sign-in / portal codes must not be readable from integration_log        #
+# --------------------------------------------------------------------------- #
+def test_b1_signin_otp_success_send_leaves_no_code_in_integration_log():
+    """RED reason (pre-fix): `_send_and_log` wrote the real code into
+    `request_payload` (`{"message": {"type": "text", "text": "...<code>..."}}`)
+    on every send, and `GET /api/v1/integrations/logs` has no permission gate
+    - any signed-in user could read the code and verify as the target."""
+    from app.database import SessionLocal
+    from app.tasks.respond_io_tasks import send_login_otp_respond_message
+
+    code = "778899"
+    otp_id = str(uuid.uuid4())
+    db = SessionLocal()
+    fake_result = {
+        "sent_as": "text",
+        "rendered_text": f"Your Sorento sign-in code is {code}.",
+        "response": {"ok": True, "id": "resp-b1-success", "echo": f"code {code} sent"},
+        "request_payload": {"message": {"type": "text", "text": f"Your Sorento sign-in code is {code}."}},
+    }
+    try:
+        with patch(
+            "app.services.respond_messaging_service.send_text_or_template",
+            return_value=fake_result,
+        ):
+            send_login_otp_respond_message(otp_id, "ZZT-b1-success-id", "text", code, None)
+
+        row = (
+            db.query(IntegrationLog)
+            .filter(IntegrationLog.business_table == "portal_otp_codes", IntegrationLog.business_id == otp_id)
+            .order_by(IntegrationLog.created_at.desc())
+            .first()
+        )
+        assert row is not None
+        assert row.status == "success"
+        assert code not in (row.request_payload or ""), row.request_payload
+        assert code not in (row.response_payload or ""), row.response_payload
+    finally:
+        db.query(IntegrationLog).filter(IntegrationLog.business_id == otp_id).delete(synchronize_session=False)
+        db.commit()
+        db.close()
+
+
+def test_b1_signin_otp_failed_send_leaves_no_code_in_integration_log():
+    """RED reason (pre-fix): the FAILURE branch's default `request_payload`
+    (built before the send is even attempted) already embeds the rendered
+    text, code and all, and gets written to the `failed` row verbatim."""
+    from app.database import SessionLocal
+    from app.tasks.respond_io_tasks import send_login_otp_respond_message
+
+    code = "334455"
+    otp_id = str(uuid.uuid4())
+    db = SessionLocal()
+    try:
+        with patch(
+            "app.services.respond_messaging_service.send_text_or_template",
+            side_effect=RuntimeError(f"no network - code was {code}"),
+        ):
+            with pytest.raises(RuntimeError):
+                send_login_otp_respond_message(
+                    otp_id, "ZZT-b1-failed-id",
+                    f"Your Sorento sign-in code is {code}. It expires in 10 minutes.",
+                    code, None,
+                )
+
+        row = (
+            db.query(IntegrationLog)
+            .filter(IntegrationLog.business_table == "portal_otp_codes", IntegrationLog.business_id == otp_id)
+            .order_by(IntegrationLog.created_at.desc())
+            .first()
+        )
+        assert row is not None
+        assert row.status == "failed"
+        assert code not in (row.request_payload or ""), row.request_payload
+        assert code not in (row.error_message or ""), row.error_message
+    finally:
+        db.query(IntegrationLog).filter(IntegrationLog.business_id == otp_id).delete(synchronize_session=False)
+        db.commit()
+        db.close()
+
+
+def test_b1_portal_otp_success_send_leaves_no_code_in_integration_log():
+    """The portal's own OTP is the SAME `portal_otp_codes` row phone sign-in's
+    verify accepts - a readable portal code is a CRM takeover too."""
+    from app.database import SessionLocal
+    from app.tasks.respond_io_tasks import send_portal_otp_respond_message
+
+    code = "112233"
+    otp_id = str(uuid.uuid4())
+    db = SessionLocal()
+    fake_result = {
+        "sent_as": "text",
+        "rendered_text": f"Your Sorento portal verification code is {code}.",
+        "response": {"ok": True, "id": "resp-b1-portal-success"},
+        "request_payload": {"message": {"type": "text", "text": f"Your Sorento portal verification code is {code}."}},
+    }
+    try:
+        with patch(
+            "app.services.respond_messaging_service.send_text_or_template",
+            return_value=fake_result,
+        ):
+            send_portal_otp_respond_message(otp_id, "ZZT-b1-portal-success-id", "text", code, None)
+
+        row = (
+            db.query(IntegrationLog)
+            .filter(IntegrationLog.business_table == "portal_otp_codes", IntegrationLog.business_id == otp_id)
+            .order_by(IntegrationLog.created_at.desc())
+            .first()
+        )
+        assert row is not None
+        assert code not in (row.request_payload or ""), row.request_payload
+        assert code not in (row.response_payload or ""), row.response_payload
+    finally:
+        db.query(IntegrationLog).filter(IntegrationLog.business_id == otp_id).delete(synchronize_session=False)
+        db.commit()
+        db.close()
+
+
+def test_b1_portal_otp_failed_send_leaves_no_code_in_integration_log():
+    from app.database import SessionLocal
+    from app.tasks.respond_io_tasks import send_portal_otp_respond_message
+
+    code = "556677"
+    otp_id = str(uuid.uuid4())
+    db = SessionLocal()
+    try:
+        with patch(
+            "app.services.respond_messaging_service.send_text_or_template",
+            side_effect=RuntimeError(f"no network - code was {code}"),
+        ):
+            with pytest.raises(RuntimeError):
+                send_portal_otp_respond_message(
+                    otp_id, "ZZT-b1-portal-failed-id",
+                    f"Your Sorento portal verification code is {code}.",
+                    code, None,
+                )
+
+        row = (
+            db.query(IntegrationLog)
+            .filter(IntegrationLog.business_table == "portal_otp_codes", IntegrationLog.business_id == otp_id)
+            .order_by(IntegrationLog.created_at.desc())
+            .first()
+        )
+        assert row is not None
+        assert row.status == "failed"
+        assert code not in (row.request_payload or ""), row.request_payload
+        assert code not in (row.error_message or ""), row.error_message
+    finally:
+        db.query(IntegrationLog).filter(IntegrationLog.business_id == otp_id).delete(synchronize_session=False)
+        db.commit()
+        db.close()
+
+
+# --------------------------------------------------------------------------- #
+# B2: verify race - reserve before compare                                    #
+# --------------------------------------------------------------------------- #
+def test_b2_reserve_attempt_refuses_once_cap_reached(rate_limit_cleanup):
+    """RED reason (pre-fix): `reserve_attempt` did not exist; the cap was
+    enforced by a Python-side read-then-write (`otp.attempts += 1`) with no
+    atomic guard, so two parallel reservations could both read the same
+    stale value and both "succeed"."""
+    with blank_session() as db:
+        ws, contact, user, digits = _eligible_chain(db)
+        rate_limit_cleanup.append(digits)
+        otp = PortalOtpCode(
+            contact_id=contact.id, space_id=ws.space_id, code_hash=_hash_otp("123456"),
+            expires_at=_utcnow() + timedelta(minutes=10), attempts=5,
+        )
+        db.add(otp)
+        db.commit()
+
+        svc = PortalService(db)
+        assert svc.reserve_attempt(otp.id) is None
+
+
+def test_b2_second_consume_of_the_same_otp_row_returns_false(rate_limit_cleanup):
+    """RED reason (pre-fix): `consume_reserved` did not exist; `verify_otp`
+    set `otp.consumed_at = _utcnow()` in Python with no WHERE guard, so a
+    second parallel verify that already passed its own (stale) compare would
+    silently overwrite the same value and mint a SECOND session/token for one
+    one-time code."""
+    with blank_session() as db:
+        ws, contact, user, digits = _eligible_chain(db)
+        rate_limit_cleanup.append(digits)
+        otp = PortalOtpCode(
+            contact_id=contact.id, space_id=ws.space_id, code_hash=_hash_otp("123456"),
+            expires_at=_utcnow() + timedelta(minutes=10),
+        )
+        db.add(otp)
+        db.commit()
+
+        svc = PortalService(db)
+        assert svc.consume_reserved(otp.id, _utcnow()) is True
+        assert svc.consume_reserved(otp.id, _utcnow()) is False
+
+
+def test_b2_locked_number_is_429_without_ever_comparing_the_code(rate_limit_cleanup):
+    """RED reason (pre-fix): the lock check (`check_locked`) was a read-only
+    GET performed once, separately from the increment-on-miss
+    (`record_wrong_attempt`) - a lock existed, but nothing stopped the
+    compare from running first if the two Redis calls interleaved with a
+    parallel request."""
+    from app.services.queue_service import redis_conn
+
+    with blank_session() as db:
+        ws, contact, user, digits = _eligible_chain(db)
+        rate_limit_cleanup.append(digits)
+        redis_conn.set(f"phone_signin:tries:{digits}", 5, ex=900)
+
+        with _client_ctx(db) as client, patch("hmac.compare_digest") as mock_compare:
+            resp = client.post(
+                "/api/v1/auth/phone/verify", json={"phone": digits, "code": "123456"}
+            )
+
+        assert resp.status_code == 429, resp.text
+        assert resp.json().get("code") == "RATE_LIMITED"
+        mock_compare.assert_not_called()
+
+
+def test_b2_redis_counter_is_incremented_before_the_code_is_compared(rate_limit_cleanup):
+    """RED reason (pre-fix): the increment (`record_wrong_attempt`) ran AFTER
+    a failed compare, not before it - so by the time this test's `compare_digest`
+    stand-in runs, the real code had not incremented the counter yet."""
+    from app.services.queue_service import redis_conn
+
+    with blank_session() as db:
+        ws, contact, user, digits = _eligible_chain(db)
+        rate_limit_cleanup.append(digits)
+
+        seen = {}
+
+        def _fake_compare(a, b):
+            seen["tries_at_compare_time"] = redis_conn.get(f"phone_signin:tries:{digits}")
+            return False
+
+        with _client_ctx(db) as client:
+            with patch("app.services.queue_service.enqueue_job"):
+                client.post("/api/v1/auth/phone/request-code", json={"phone": digits})
+            with patch("hmac.compare_digest", side_effect=_fake_compare):
+                resp = client.post(
+                    "/api/v1/auth/phone/verify", json={"phone": digits, "code": "000000"}
+                )
+
+        assert resp.status_code == 401, resp.text
+        assert seen.get("tries_at_compare_time") is not None, (
+            "the wrong-attempt counter must already be incremented by the "
+            "time the code is compared, not after"
+        )
+        assert int(seen["tries_at_compare_time"]) == 1
+
+
+# --------------------------------------------------------------------------- #
+# B3: POST /auth/password must refuse under impersonation                     #
+# --------------------------------------------------------------------------- #
+@pytest.fixture()
+def impersonation_setup():
+    """A real admin session impersonating a real target, via the actual
+    X-Impersonate-User-Id header path (not a dependency override) - so
+    `request.state.impersonation_session_id` is set exactly the way
+    `dependencies._maybe_apply_impersonation` sets it in production."""
+    from app.models.impersonation import ImpersonationSession
+    from app.services.user_session_service import mint_session
+
+    with blank_session() as db:
+        admin_role = UserRole(
+            id=str(uuid.uuid4()), slug="admin", name="ZZT Admin Role",
+            is_protected=False, is_default=False,
+        )
+        db.add(admin_role)
+        db.flush()
+        admin = _user(db, email=f"{unique_code('admin')}@x.com".lower())
+        target = _user(db, email=f"{unique_code('target')}@x.com".lower())
+        target.password = "existing-hash-not-checked-here"
+        db.add(UserRoleAssignment(user_id=admin.id, role_id=admin_role.id))
+        db.commit()
+
+        imp = ImpersonationSession(
+            id=str(uuid.uuid4()), admin_user_id=admin.id, target_user_id=target.id,
+        )
+        db.add(imp)
+        db.commit()
+
+        admin_session = mint_session(db, admin.id, remember=True, auth_method="password")
+        target_session = mint_session(db, target.id, remember=True, auth_method="password")
+
+        yield db, admin, target, admin_session, target_session
+
+
+def test_b3_password_change_is_refused_while_impersonating(impersonation_setup):
+    """RED reason (pre-fix): the route had no impersonation check at all - an
+    admin impersonating `target` could set `target`'s password with no
+    current-password check (current_user IS the target under impersonation),
+    an account takeover, not a support action."""
+    db, admin, target, admin_session, _target_session = impersonation_setup
+
+    with _client_ctx(db) as client:
+        resp = client.post(
+            "/api/v1/auth/password",
+            json={"new_password": "brandnewpassword1"},
+            headers={
+                "Authorization": f"Bearer {admin_session.token}",
+                "X-Impersonate-User-Id": target.id,
+            },
+        )
+
+    assert resp.status_code == 403, resp.text
+    db.refresh(target)
+    assert target.password == "existing-hash-not-checked-here"
+
+
+def test_b3_normal_password_change_revokes_the_changed_users_own_sessions(impersonation_setup):
+    """RED reason (pre-fix): the revoke call used `get_actor_user_id`, which
+    (outside impersonation too) is a needless indirection for this route -
+    tightened to `current_user["id"]` directly, the user whose password just
+    changed. No impersonation here, so this is the ordinary path."""
+    from app.models.user_session import UserSession
+    from app.services.user_session_service import mint_session
+
+    db, admin, target, _admin_session, target_session = impersonation_setup
+    target.password = _hash_password("original-password-123")
+    db.commit()
+    other_target_session = mint_session(db, target.id, remember=True, auth_method="password")
+
+    with _client_ctx(db) as client:
+        resp = client.post(
+            "/api/v1/auth/password",
+            json={"current_password": "original-password-123", "new_password": "new-password-123"},
+            headers={"Authorization": f"Bearer {target_session.token}"},
+        )
+
+    assert resp.status_code == 200, resp.text
+    current_row = db.query(UserSession).filter(UserSession.id == target_session.id).one()
+    other_row = db.query(UserSession).filter(UserSession.id == other_target_session.id).one()
+    assert current_row.revoked_at is None
+    assert other_row.revoked_at is not None
+
+
+def _hash_password(pw: str) -> str:
+    import bcrypt
+
+    return bcrypt.hashpw(pw.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+# --------------------------------------------------------------------------- #
+# S2: email login's "no password hash at all" branch must not skip the       #
+# timing-equalising dummy bcrypt check                                        #
+# --------------------------------------------------------------------------- #
+def test_s2_no_password_user_login_still_runs_the_dummy_bcrypt_check():
+    """RED reason (pre-fix): the `pw_raw is None or pw_raw == ""` branch
+    raised 401 immediately with no `bcrypt.checkpw` call at all, so this
+    branch answered measurably faster than a wrong-password branch does -
+    itself an enumeration tell (OAuth-only vs password-holding accounts)."""
+    import bcrypt
+
+    with blank_session() as db:
+        user = _user(db, email=f"{unique_code('nopw')}@x.com".lower())
+        user.password = ""
+        db.commit()
+
+        with _client_ctx(db) as client, patch(
+            "bcrypt.checkpw", wraps=bcrypt.checkpw
+        ) as mock_checkpw:
+            resp = client.post(
+                "/api/v1/auth/login", json={"email": user.email, "password": "anything-at-all"}
+            )
+
+        assert resp.status_code == 401, resp.text
+        mock_checkpw.assert_called_once()
+
+
+# --------------------------------------------------------------------------- #
+# S4: /auth/phone/verify must not share one global per-IP bucket              #
+# --------------------------------------------------------------------------- #
+def test_s4_verify_burst_for_different_numbers_from_one_client_is_not_globally_blocked(
+    rate_limit_cleanup,
+):
+    """RED reason (pre-fix): verify's own `rate_limit.hit("phone_signin_verify",
+    ip, ...)` bucket is keyed on `request.client.host` alone - since NextAuth
+    calls this route server-to-server, that host is the SAME Next.js server
+    for every real user, so enough distinct sign-in attempts (each for a
+    DIFFERENT number, i.e. different people) would trip one shared bucket and
+    429 everyone, a sign-in DoS. `rate_limit_portal_otp_max` defaults to 30,
+    so 35 calls from `testclient` reliably crossed it before this fix."""
+    with blank_session() as db:
+        with _client_ctx(db) as client:
+            statuses = []
+            for _ in range(35):
+                number = _digits()
+                rate_limit_cleanup.append(number)
+                resp = client.post(
+                    "/api/v1/auth/phone/verify",
+                    json={"phone": number, "code": "000000"},
+                )
+                statuses.append(resp.status_code)
+
+        assert all(s == 401 for s in statuses), statuses
+
+
+# --------------------------------------------------------------------------- #
+# S5: find_eligible must treat >1 match as ineligible, not pick one           #
+# --------------------------------------------------------------------------- #
+def test_s5_two_users_with_plain_and_plus_prefixed_same_number_are_ineligible(rate_limit_cleanup):
+    """RED reason (pre-fix): `find_eligible` used `.first()` over
+    `contact_number IN (num, '+'+num)` - with two DIFFERENT user rows
+    matching (one stored as digits, one as `+digits`), `.first()` picks
+    whichever the query planner returns first instead of refusing an
+    ambiguous match."""
+    from app.services.phone_signin_service import find_eligible
+
+    with blank_session() as db:
+        ws = _workspace(db)
+        digits = _digits()
+        contact = _contact(db, ws, digits)
+        rate_limit_cleanup.append(digits)
+
+        _user(db, phone=digits, contact_id=contact.id, email=f"{unique_code('dup1')}@x.com".lower())
+        _user(db, phone=f"+{digits}", contact_id=contact.id, email=f"{unique_code('dup2')}@x.com".lower())
+
+        assert find_eligible(db, digits) is None
+
+
+# --------------------------------------------------------------------------- #
+# Note fix: SetPasswordRequest.new_password must cap at 72 bytes              #
+# --------------------------------------------------------------------------- #
+def test_note_password_over_72_bytes_is_422_not_500(rate_limit_cleanup):
+    """RED reason (pre-fix): bcrypt raises `ValueError` past 72 bytes and
+    nothing caught it, so this 500'd instead of answering a clean 422."""
+    from app.services.user_session_service import mint_session
+
+    with blank_session() as db:
+        user = _user(db, email=f"{unique_code('longpw')}@x.com".lower())
+        db.commit()
+        session_row = mint_session(db, user.id, remember=True, auth_method="password")
+
+        with _client_ctx(db) as client:
+            resp = client.post(
+                "/api/v1/auth/password",
+                json={"new_password": "x" * 73},
+                headers={"Authorization": f"Bearer {session_row.token}"},
+            )
+
+    assert resp.status_code == 422, resp.text
