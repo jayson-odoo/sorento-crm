@@ -1847,8 +1847,8 @@ async def get_top_selling(
         None,
         description=(
             "delivered (default) | ordered. delivered = LEAST(qty_delivered, qty_ordered), "
-            "transferred to DO, and its share of line_total; ordered = the whole line, the "
-            "sales report's own ordered figures."
+            "transferred to DO, and its share of line_total; ordered = the whole line, "
+            "qty_ordered and line_total, whatever the line's status."
         ),
     ),
     group: Optional[str] = Query(

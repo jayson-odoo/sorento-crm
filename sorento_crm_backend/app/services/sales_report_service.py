@@ -537,13 +537,16 @@ def sales_report(
 
 _MY_TZ = ZoneInfo("Asia/Kuala_Lumpur")
 
-#: basis -> the (quantity, amount) keys of `_per_line_exprs`. "delivered" is
-#: the confirmed pair (transferred to DO, capped at ordered); "ordered" is the
-#: report's own ordered pair, so the two chatbot reports never disagree.
-_BASIS_FIGURES = {
-    "delivered": ("confirmed_qty", "confirmed_value"),
-    "ordered": ("ordered_qty", "ordered_value"),
-}
+def _basis_figures(basis: str) -> tuple:
+    """The (quantity, amount) per-line expressions for `basis` (AC-1931).
+    "delivered" is the report's confirmed pair (transferred to DO, capped at
+    ordered). "ordered" is the whole line, `qty_ordered` / `line_total`, NOT the
+    report's ordered pair: that one counts a closed, short-delivered line only
+    up to what was delivered."""
+    if basis == "ordered":
+        return SalesOrderLine.qty_ordered, func.coalesce(SalesOrderLine.line_total, 0)
+    exprs = _per_line_exprs()
+    return exprs["confirmed_qty"], exprs["confirmed_value"]
 
 
 def current_year_window(today: Optional[date] = None) -> tuple[date, date]:
@@ -593,10 +596,9 @@ def top_selling(
     on the chosen basis has no sale to rank and is left out (an item nothing
     was delivered of, on the delivered basis); a zero-value line with a real
     quantity still ranks (owner ruling Q9)."""
-    qty_key, amount_key = _BASIS_FIGURES[basis]
-    exprs = _per_line_exprs()
-    qty_sum = func.coalesce(func.sum(exprs[qty_key]), 0)
-    amount_sum = func.coalesce(func.sum(exprs[amount_key]), 0)
+    qty_expr, amount_expr = _basis_figures(basis)
+    qty_sum = func.coalesce(func.sum(qty_expr), 0)
+    amount_sum = func.coalesce(func.sum(amount_expr), 0)
 
     bucket_expr = _bucket_expr()
     filters = _common_filters(
