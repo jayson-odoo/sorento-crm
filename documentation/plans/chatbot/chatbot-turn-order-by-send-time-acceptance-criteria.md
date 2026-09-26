@@ -31,3 +31,18 @@ Plan: `PLAN-chatbot-turn-order-by-send-time.md`. Tests:
   `T::TestReviewRound1::test_a_failing_lookup_answers_this_turn_alone`
 - AC-11 D14: a dry run never claims or answers a live message.
   `T::TestReviewRound1::test_a_dry_run_never_claims_or_answers_live_messages`
+- AC-12 Contact isolation: a turn never claims or answers another contact's queued row or
+  ledger photo. `T::TestContactIsolation::*` (2)
+- AC-13 Bounded per turn: at most 2 earlier messages, and the media waits stay below n8n's 90 s
+  timeout; the rest are left to their own deliveries and this turn's trace says so.
+  `T::TestPreStepBounds::*` (2)
+- AC-14 A ledger photo whose extraction fails or outlives the wait is not answered ahead: no
+  turn row, nothing sent for it, only this turn's reply.
+  `T::TestLedgerPhotoNotReadWhileAnsweredAhead::*` (2)
+- AC-15 An earlier message whose stages raise and whose close raises too still leaves this turn
+  answered. `T::TestReviewRound2::test_a_raising_close_after_a_raising_earlier_turn_still_answers_this_turn`
+- AC-16 A ledger photo first seen after this message's send time is not answered ahead.
+  `T::TestReviewRound2::test_a_ledger_photo_first_seen_after_this_message_was_sent_is_not_answered_ahead`
+- AC-17 The row answered ahead names the message that carried it; the late delivery leaves one
+  ledger row and one extraction job. `T::TestReviewRound2::test_the_row_answered_ahead_names_the_turn_that_answered_it`,
+  `T::TestPhotoStillInN8nMediaIntake::test_the_photos_own_late_delivery_is_a_duplicate_and_sends_nothing`

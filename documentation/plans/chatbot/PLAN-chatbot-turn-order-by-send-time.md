@@ -1,6 +1,6 @@
 # PLAN: a contact's turns are answered in WhatsApp send order, not arrival order
 
-Status: implemented, fix lane round 1 done (W4 stale-focus guard removed), awaiting review. Track: feature by line count (product code is ~480 lines
+Status: implemented, fix lane round 2 done (reviewer B1, S1 to S3, N1 to N3), awaiting review. Track: feature by line count (product code is ~480 lines
 including docstrings, over the ~300 small-fix line), otherwise small-fix shaped: no migration,
 no auth / RBAC change, no new ingest surface, no frontend. One lane, one PR.
 UAC: `chatbot-turn-order-by-send-time-acceptance-criteria.md`.
@@ -40,7 +40,7 @@ CRM already knows about and has not answered, then itself (`app/services/chatbot
    ran out, so it never sends the generic error beside the real answer).
 2. **Photos still in n8n's media intake** (today, until plan S6 is promoted). A ledger row with
    no turn row, accepted, whose job is still `queued` or `running`, written before this turn
-   arrived and after this contact's previous turn. It is rebuilt as the attachment envelope and
+   arrived, before this turn's own send time, and after this contact's previous turn. It is rebuilt as the attachment envelope and
    answered first; its intake replays the same ledger row and job (idempotency key: contact,
    message id, modality), so nothing is extracted or charged twice. The only wait is the
    existing bounded media poll on that job, which the photo's own turn would have waited too.
@@ -54,21 +54,32 @@ Bounds, all states and none of them clocks: a queued row counts only if it arriv
 contact's latest answered turn (a row whose request died in a deploy is history); a ledger row
 only if its job is still queued or running and it was written after the contact's previous turn.
 The whole pre-step is best effort: a failure in it costs the ordering, never this turn and never
-an answer already given. A test turn (dry run) never claims or answers a live message (D14).
+an answer already given, including when an earlier message's stages raise and closing its row
+raises too. A test turn (dry run) never claims or answers a live message (D14). Every lookup is
+filtered to this contact, so one customer's turn never answers another's message.
+
+Bounded per turn, by counts and the existing per-item wait (review round 2, S1): at most 2
+earlier messages (`send_order.MAX_EARLIER_PER_TURN`), and the worst-case media waits taken on,
+this turn's own included, stay below n8n's 90 s `chat-turn` timeout (below
+`chatbot_turn_wait_seconds` when turns are offloaded). The first message that does not fit ends
+the take; it and everything after it go to their own deliveries. This turn's `received` trace
+record says how many were answered ahead, how many were left, and which bound left them.
+
+A ledger photo is answered ahead only once it has been READ (review round 2, S2): the pre-step
+first takes the existing bounded wait on its job, and a job that fails or outlives the wait is
+left alone, with no turn row and nothing sent. n8n's own `media-route` reply arm owns that
+outcome today, so the customer never gets two messages, and a later delivery of the photo runs
+as its own turn. The row answered ahead records the message whose response carried it
+(`answered_ahead_by_message` in its first trace record's facts, the carrying turn id in `raw`).
 
 Not covered, and accepted:
 
 - A message the CRM has not seen at all when a later one is answered stays uncovered until n8n
   S6 is live. After S6 that window is the time between two respond.io webhooks.
-- One response now carries the earlier message's turn (including its bounded media poll, up to
-  `media_sync_wait_seconds`) plus this one. That runs against n8n's 90 s `chat-turn` timeout,
-  the 60 s worker deadline when turns are offloaded, and successors' 45 s queue wait. If the
-  request carrying both answers dies, the earlier message's answer dies with it, and that
-  message's own delivery is a duplicate that sends nothing.
-- A photo whose extraction FAILS or outlives the sync wait while answered this way gets the CRM's
-  "could not read" / "still reading" reply. If n8n still takes its own `media-route` `reply` arm
-  for that job, the customer gets two such messages; on the `continue` arm the late delivery is
-  a duplicate and sends nothing. Owner to check the arm mapping; S6 removes the question.
+- One response carries up to two earlier turns plus this one. The media waits stay under the
+  bound above, but LLM calls are not counted, so a slow provider can still push a request past
+  n8n's timeout. If the request carrying the answers dies, the earlier answers die with it, and
+  those messages' own deliveries are duplicates that send nothing.
 
 ## n8n steps for the owner (plan S6, not touched by this lane)
 
