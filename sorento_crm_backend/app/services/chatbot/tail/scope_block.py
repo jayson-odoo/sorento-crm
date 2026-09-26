@@ -168,10 +168,24 @@ def _axis_words(
     return ", ".join(words) if words else None
 
 
+def with_brand_names(
+    gate_json: Mapping[str, Any] | None, envelope: Mapping[str, Any] | None
+) -> Mapping[str, Any] | None:
+    """#1262 fix lane round 3, B1-r2: `gate_json` with the fetch envelope's own
+    `brand_names` (the live brands the order fetch was actually filtered by,
+    `turn_runtime.order_brand_filter`) as `live_brands`. A copy; unchanged when the
+    fetch sent no brand. A follow-up turn that typed nothing has no resolver gate at
+    all, so the brand has to come off the fetch, never off the resolver."""
+    names = envelope.get("brand_names") if isinstance(envelope, Mapping) else None
+    if not names:
+        return gate_json
+    return {**(gate_json if isinstance(gate_json, Mapping) else {}), "live_brands": list(names)}
+
+
 def live_brand_words(gate_json: Mapping[str, Any] | None) -> str | None:
     """#1262 fix lane round 2, B1: the live brands an order turn is filtered by
-    (`turn_runtime.resolve_kinds` stamps `live_brands` on the gate), for the "Brand:"
-    line both order headers print - this one and the miss composer's in
+    (`with_brand_names` stamps `live_brands` on the gate), for the "Brand:" line both
+    order headers print - this one and the miss composer's in
     `lanes/business/answer.py`."""
     raw = gate_json.get("live_brands") if isinstance(gate_json, Mapping) else None
     words: list[str] = []

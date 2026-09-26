@@ -2367,6 +2367,7 @@ def _run_stages(  # noqa: PLR0915
                         and not envelopes[0].get("own_header")
                     ):
                         from app.services.chatbot import answer_bridge
+                        from app.services.chatbot.tail import scope_block as scope_block_mod
 
                         # Hand pass 12 round 3, Group F (owner ruling): a bare positional
                         # pick runs no resolver of its own (`resolver_payload is None`),
@@ -2390,10 +2391,13 @@ def _run_stages(  # noqa: PLR0915
                             answer,
                             domain=fetch_plan.fetch[0].domain,
                             qf=(ctx.get("parse") or {}).get("output"),
-                            gate_json=(
-                                resolver_payload.get("gate")
-                                if isinstance(resolver_payload, dict)
-                                else None
+                            gate_json=scope_block_mod.with_brand_names(
+                                (
+                                    resolver_payload.get("gate")
+                                    if isinstance(resolver_payload, dict)
+                                    else None
+                                ),
+                                envelopes[0],
                             ),
                             resolver_json=(
                                 resolver_payload.get("resolved")

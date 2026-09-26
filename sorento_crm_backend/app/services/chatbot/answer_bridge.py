@@ -852,6 +852,23 @@ def _breakdown_gate(gate: Any, raw_fragment: Any) -> Any:
     return gate
 
 
+def _unlisted_words(resolved: Mapping[str, Any], envelope: Any) -> list[str]:
+    """The envelope's `unresolved` words the resolver's own `unresolved_tokens` does not
+    already carry (compared by `turn.state.token_key`, separators folded)."""
+    from app.services.chatbot.turn.state import token_key
+
+    words = envelope.get("unresolved") if isinstance(envelope, Mapping) else None
+    already = resolved.get("unresolved_tokens")
+    listed = {token_key(t) for t in (already if isinstance(already, list) else [])}
+    out: list[str] = []
+    for word in words if isinstance(words, list) else []:
+        key = token_key(word)
+        if key and key not in listed:
+            listed.add(key)
+            out.append(str(word))
+    return out
+
+
 def _scope_gate(raw_fragment: Any) -> Any:
     """The FETCH step's own scope refusal, when it made one - otherwise `None`.
 
@@ -1503,6 +1520,19 @@ def answer_for(
     # genuinely did not run (which both readers handle).
     resolved = payload.get("resolved") if isinstance(payload.get("resolved"), dict) else {}
     gate = payload.get("gate") if isinstance(payload.get("gate"), dict) else {}
+    # #1262 fix lane round 3, B1-r2: the brand the fetch sent, for the miss header.
+    gate = dict(scope_block.with_brand_names(gate, envelope) or {})
+    # #1262 fix lane round 3, S5: the words the turn could not place
+    # (`envelope["unresolved"]`, `turn_runtime.resolve_kinds`'s `unplaced`) are the
+    # resolver's own `unresolved_tokens` plus one thing only the chatbot knows - a
+    # brand word that is not on the live list. Added here by token key, so a word the
+    # resolver already listed is never named twice.
+    extra_unplaced = _unlisted_words(resolved, envelope)
+    if extra_unplaced:
+        resolved = {
+            **resolved,
+            "unresolved_tokens": [*(resolved.get("unresolved_tokens") or []), *extra_unplaced],
+        }
     # D4 (hand pass 9): a bare positional pick's own verdict names no team of its
     # own - the customer typed "1", not the original ask - so `turn_runtime.
     # lane_parse_output`'s own generic fallback (`DEFAULT_SUGGESTED_TEAM`,

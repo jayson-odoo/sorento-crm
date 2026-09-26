@@ -1100,6 +1100,15 @@ def run_fetch(
     semantic_input = _fetch_semantic_input(
         parse_output, tier_gate=tier_gate, contact_id=contact_id, space_id=space_id
     )
+    # #1262 fix lane round 3, B1-r2: an order turn's brand ids are resolved ONCE, by
+    # `turn_runtime.order_brand_filter` in the tool runner (typed words first, else the
+    # brand the conversation carries), and the header names the same ids. Taken as is,
+    # so `_resolve_outstanding_brand_ids` below never makes a second, separate answer.
+    pre_resolved_brand_ids = [
+        b for b in jsc.array(parse_output.get("outstanding_brand_ids")) if fetch_mod.is_uuid(b)
+    ]
+    if pre_resolved_brand_ids:
+        semantic_input["outstanding_brand_ids"] = pre_resolved_brand_ids
 
     def probe(tool: str, probe_entities: Any, probe_levels: Any) -> Any:
         """One `sub-get-results` call: build the args the same way, then the same seam."""
