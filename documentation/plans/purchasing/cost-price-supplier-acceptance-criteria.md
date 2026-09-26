@@ -1,315 +1,364 @@
-# UAC: Cost price from the supplier's price list, verified before it applies (#1288)
+# UAC: Cost price from the supplier's price list, as dated cost lists, verified when suppliers submit (#1288)
 
-Status: draft, round 2 (26 Sep 2026). Written to the owner rulings of 26 Sep 23:45 MYT for Q1, Q2,
-Q5, Q6, Q7, Q9, Q10, to the restated round 2 recommendations for Q3, Q4, Q8 (re-asked on PR
-#1291), and to the round 1 recommendations for Q11 to Q15 (plan section 12). An owner answer that
-differs from a recommendation rewrites the ACs it names before Phase 1 starts. Track: full.
+Status: draft, round 3 (27 Sep 2026). Written to the owner rulings of 26 Sep 23:45 MYT (Q1, Q2,
+Q5, Q6, Q7, Q10), 27 Sep 00:10 MYT (Q3, Q4), 27 Sep 00:45 MYT (verification off for the first
+rollout, the shared matching engine, search on every page) and 27 Sep 00:50 MYT (final mockups);
+Q8 and Q9 are withdrawn features (plan section 12); Q11 to Q16 stay written to their
+recommendations. An owner answer that differs rewrites the ACs it names before Phase 1 starts.
+Track: full.
 Plan: `PLAN-cost-price-supplier-26sep.md` (same folder).
-Mockups: `mockups/cost-price-upload-review.html` (S1), `mockups/cost-price-verification.html`
-(S2), `mockups/supplier-price-page.html` (S3).
+Mockups: `mockups/cost-price-uploads.html` (J1, J2), `mockups/cost-price-review.html` (J3 to J9,
+verification off and on), `mockups/supplier-cost-lists.html` (J8, J15, J16, the setting),
+`mockups/supplier-price-page.html` (J10 to J13).
 
 Tags: `[BE]` pytest, `[FE]` vitest, `[E2E]` agent-browser evidence run (no new Playwright spec),
 `[T]` a test that guards a rule rather than a screen. Every AC names the Journey step it serves.
 
 Terms used below:
 
-- **Price** means the supplier's unit cost for one product, in the supplier's currency: the
-  existing `product_suppliers.unit_cost` + `product_suppliers.currency` pair (Q1).
-- **Change set** (CPC-nnnn) is one batch of proposed prices for one supplier, from one source: a
-  staff upload, the supplier's page table, or the supplier's page upload.
-- **Line** is one row of a change set: a supplier code, what it matched, the current price and
+- **Cost list** is one row of a product-supplier link's prices: a raw unit price (Q4) in the
+  supplier's currency, with an optional start date and an optional end date (Q3). Both empty
+  means always; a start with no end means from that day on.
+- **Price in force** on a day is, among the link's cost lists that cover that day, the one with
+  the latest start (an empty start counts as earliest; a tie goes to the newest). It is kept in
+  `product_suppliers.unit_cost` + `currency`, which every existing reader uses.
+- **Change set** (CPC-nnnn) is one upload or one supplier submission for one supplier.
+- **Line** is one row of a change set: a supplier code, what it matched, the price in force and
   the proposed price.
-- **Verifier** is a Sorento staff user holding `procurement.cost_price_changes.verify` (Q6
-  ruling). One verifier decides a set; the set's uploader or submitter cannot be its verifier.
+- **Verification** is the setting `cost_price_verification_enabled` (default off). **Verifier** is
+  a Sorento staff user holding `procurement.cost_price_changes.verify`.
 - **Purchasing roles** are the roles holding `scm.proforma_invoice.upload` today, integration
-  roles excluded (plan section 10).
+  roles excluded.
 
 ## Journey
 
 Actors: Mei Ling (purchasing, holds `upload` and `verify`), Kelvin (purchasing, a different
-Sorento person, holds `upload` and `verify`), Mr Chen (sales at XIAMEN TAIYANG, no Sorento
-account). Both staff hold the same permissions (Q5, Q6 rulings); Kelvin verifies Mei Ling's set
-because she uploaded it.
+Sorento person, same permissions), Mr Chen (sales at XIAMEN TAIYANG, no Sorento account).
 
-**Staff upload (S1)**
+**Staff upload, verification off (S1, the first rollout)**
 
 - **J1.** Mei Ling gets the supplier's Excel over WeChat. She opens Purchasing > Cost price
-  changes and clicks Upload price list.
-- **J2.** She drops the file. The system reads the letterhead and pre-selects the supplier, and
-  takes the currency from that supplier's current prices. On a clean file she clicks Upload with
-  no other decision.
+  uploads, can search past uploads by code, supplier or file name, and clicks Upload price list.
+- **J2.** She drops the file. The system pre-selects the supplier from the letterhead and the
+  currency from that supplier's prices. She may set Valid from and Valid to (both optional; empty
+  means always). She clicks Upload.
 - **J3.** The system reads every sheet, finds the header row on each (序号 型号 产品配置 价格), fills
-  merged configuration cells down, splits a bracketed packaging note off a code, and matches
-  every code against the product master and this supplier's links. She lands on the change set
-  in Draft.
-- **J4.** The set opens filtered to "Price changed". Each line shows sheet and row, supplier code,
-  configuration, the matched product, current price, new price, change percent and currency.
-  Near matches, codes not in the master, and two packaging variants that land on one product are
-  counted and listed apart; they stay out of the set until she maps, picks or skips them.
-- **J5.** She resolves those rows (map a near match, pick one of two packaging prices, skip an
-  unknown code) and clicks Submit for verification. The set is now Pending verification and
-  nothing live has changed.
+  merged configuration cells down, cleans a bracketed note off a code, and matches every code with
+  the same engine the PI, packing list and loading plan uploads use. She lands on the review page.
+- **J4.** The review page opens filtered to "Price changed". She can search by code,
+  configuration or product, and switch sheets. Each line shows sheet and row, supplier code,
+  configuration, matched product, price in force, new price, change percent and currency. Codes
+  the engine could not match are listed under "Not found"; a code that appears twice under
+  "Duplicate code".
+- **J5.** She maps each Not found row from a product dropdown or skips it, and skips one of each
+  duplicate.
+- **J8.** She clicks Apply N changes. Each line becomes a new cost list on its product-supplier
+  link with the chosen dates; the price in force updates at once (or on the start date, for a
+  future start). The set is Applied, marked "not verified".
 
-**Verification (S2)**
+**Staff upload, verification on (S2, built now, switched on later)**
 
-- **J6.** Kelvin gets an in-app notification and opens the set from it (or from the list, filtered
-  to Pending verification).
-- **J7.** He sees the changed lines with their percent change and when each price last changed.
-  He accepts or rejects each line (Accept all is one click), optionally with a reason.
-- **J8.** He clicks Apply N changes. Only now do the accepted prices land in
-  `product_suppliers`. The set becomes Applied, and every product's Suppliers tab shows the new
-  price with its history (applied date, change set, verifier, source).
-- **J9.** Alternatively he clicks Return to submitter with a reason; the set goes back to Draft
-  for Mei Ling (or to the supplier's page, for a supplier set).
+- **J5b.** With the setting on, Apply is replaced by Submit for verification. The set is Pending
+  and nothing live has changed.
+- **J6.** Kelvin gets an in-app notification and opens the set.
+- **J7.** He accepts or rejects each line (Accept all is one click), optionally with a reason.
+- **J8b.** He clicks Apply N changes, which does what J8 does, marked "verified by Kelvin".
+- **J9.** Or he clicks Return to submitter with a reason; the set goes back to Draft.
 
 **Supplier page (S3)**
 
 - **J10.** Mei Ling opens the supplier record and clicks Share price page. The dialog shows a link,
-  a QR code and a ready-to-paste bilingual message; she copies the message into WeChat to Mr Chen.
-- **J11.** Mr Chen opens the link in WeChat. The page is in Chinese with English beneath. He sees
-  only this supplier's linked products and their current prices. He either types new prices in
-  the table or uploads the same Excel he used to send, reviews the changes, and clicks 提交审核
-  Submit for review.
-- **J12.** The set enters Pending verification exactly like a staff upload (J6 to J9). Mr Chen's
-  page shows it as 审核中 Pending review, and later its outcome per set and per line.
+  a QR code and a ready bilingual message; she copies it into WeChat to Mr Chen.
+- **J11.** Mr Chen opens the link. The page is Chinese first with English beneath. He searches
+  his models, sees each one's cost lists with their date ranges and which is in force, types new
+  prices (with an optional Valid from and Valid to for the submission) or uploads the same Excel,
+  and clicks 提交审核 Submit for review.
+- **J12.** The set is Pending whatever the setting, and goes through J6 to J9. His page shows
+  审核中 Pending review, and later the outcome per line.
 - **J13.** When the link expires or is revoked, the page says so in both languages and nothing
   else is readable.
 
+**Cost lists (S1)**
+
+- **J15.** Anyone with product-supplier view opens a supplier's Prices tab, searches a product,
+  and sees every cost list with its dates and a status: In force, Scheduled, Ended, or Always.
+- **J16.** Staff with product-supplier edit add, change or delete a cost list row there by hand;
+  the price in force updates at once.
+- **J17.** Overnight, a scheduled cost list whose start date has arrived becomes the price in
+  force, and one whose end date has passed stops being it.
+
 **Throughout**
 
-- **J14.** Anyone with `view` can open any set's History tab and see who uploaded, mapped,
-  skipped, submitted, accepted, rejected, returned and applied, with before and after values,
-  and download the source file.
+- **J14.** Anyone with `view` opens a set's History tab and sees who uploaded, mapped, skipped,
+  submitted, decided, returned and applied, with before and after values, and downloads the file.
 
-## S1: Staff upload into a pending change set
+## S1: Staff upload, review and apply (verification off)
 
 - **AC-S1-01** `[BE]` (J2, J3) Given the TAIYANG fixture workbook (5 sheets, letterhead rows 1 to 5,
   header at row 6), when it is parsed, then every sheet yields its rows with `sheet`, `row_no`,
   `supplier_code`, `configuration`, `price`, and the 序号 value; row counts are 40, 24, 18, 58 and
   118 (the owner's file), minus rows with neither a code nor a price.
-- **AC-S1-02** `[BE]` (J3) Given a sheet whose header sits at row 4 or row 9 instead of 6, when
-  parsed, then the header is still found (scan of the first 20 rows for the aliases), and a sheet
-  with no recognisable header is reported as "no header found" by name and skipped, not a 500.
-- **AC-S1-03** `[BE]` (J3) Given 产品配置 merged across rows 7 to 9, when parsed, then rows 8 and 9
-  carry row 7's configuration and are flagged `configuration_from_merge`. Given 价格 merged
-  across two rows, then both rows carry the price and are flagged `price_from_merge`, and the
-  flag shows on the line.
-- **AC-S1-04** `[BE]` (J3) Given codes `CB2500SS-BL（彩盒）`, `CB2500SS-BL(白盒)` and
-  ` SRTWT1900-BL-DIY `, when parsed, then the codes are NFKC-folded and trimmed to
-  `CB2500SS-BL`, `CB2500SS-BL`, `SRTWT1900-BL-DIY`, the bracket text is kept as
-  `packaging_note` (`彩盒`, `白盒`), and the verbatim cell text is kept as `supplier_code_raw`.
+- **AC-S1-02** `[BE]` (J3) Given a sheet whose header sits at row 4 or row 9 instead of 6, then
+  the header is still found; a sheet with no recognisable header is reported by name and skipped,
+  not a 500.
+- **AC-S1-03** `[BE]` (J3) Given 产品配置 merged across rows 7 to 9, then rows 8 and 9 carry row 7's
+  configuration flagged `configuration_from_merge`. Given 价格 merged across two rows, then both
+  carry the price flagged `price_from_merge`, and the flag shows on the line.
+- **AC-S1-04** `[BE]` (J3) Given codes `CB2500SS-BL（彩盒）` and ` SRTWT1900-BL-DIY `, then the codes
+  are NFKC-folded and trimmed to `CB2500SS-BL` and `SRTWT1900-BL-DIY`, the bracket text is kept as
+  `code_note` (`彩盒`) and shown under the code, the verbatim cell is kept as `supplier_code_raw`,
+  and the note is never used to match.
 - **AC-S1-05** `[BE]` (J3) Given a price cell holding `¥512`, `512.00元`, `"512"` or `512`, then the
   price is 512.00; given `面议`, blank or a negative number, then the line has no price, is listed
-  under "Needs attention" and cannot be submitted until skipped.
-- **AC-S1-06** `[BE]` (J2) Given the letterhead text contains the supplier's name or code and
-  exactly one active supplier matches, then the upload pre-selects it; given zero or several, then
-  the supplier field is empty and required.
-- **AC-S1-07** `[BE]` (J2) Given the supplier's existing links all carry `CNY` (the owner
-  expects CNY for TAIYANG's file, Q2 ruling), then the set's currency is CNY; given the 价格 header carries a currency token (`RMB`, `元`, `USD`), then that
-  wins; given neither resolves, then the currency field is required in the upload dialog. There is
-  no house default.
-- **AC-S1-08** `[BE]` (J3, J4) Given the parsed lines, when matched, then each line records one
-  outcome: `exact` / `normalised` / `alias` (bound to a product), `near` (one token-set
-  candidate from the existing `supplier_code_matcher`, suggested and never bound), `unmatched`,
-  or `ambiguous` (several candidates, not bound). No one-edit rung is added (Q8, round 2).
-  Matching runs with `remember=False`; the upload writes no alias.
-- **AC-S1-09** `[BE]` (J4) Given a bound product, then the line records the current
-  `unit_cost` and `currency` of the (product, supplier) link at parse time, the new price, and the
-  change percent (null when there is no current price); given no link exists, then the line is
-  `new_link`.
-- **AC-S1-10** `[BE]` (J4) Given two lines bound to one product (two packaging variants), then
-  both are flagged `pick_one`, neither is submittable, and picking one marks the other `skipped`
-  with reason `other packaging variant picked`.
-- **AC-S1-11** `[BE]` (J5) Given a Draft set with any `near`, `unmatched`, `ambiguous`, `pick_one`
-  or priceless line not yet mapped, picked or skipped, when submitted, then 422 names the count;
-  given all resolved, then status becomes `pending_verification` and `submitted_by_user_id`,
-  `submitted_at` are set.
-- **AC-S1-12** `[BE]` (J5) Given a near or unmatched line mapped to a product, then the mapping is
-  stored on the line and the alias is written (`source=manual`) only when the set is applied, so a
-  rejected or discarded set leaves no alias behind.
-- **AC-S1-13** `[BE]` (J4) Given a set, then unchanged lines (new price equals current price in the
-  same currency) are stored with outcome `unchanged`, listed on their own tab and never applied.
-- **AC-S1-14** `[BE]` (J1) Given a supplier that already has a non-terminal set (Draft or Pending
-  verification, from any channel), when a second upload for it arrives, then 409 names the open
-  set's code, and the FE offers to open it.
+  under "Needs attention" and blocks Apply until skipped.
+- **AC-S1-06** `[BE]` (J2) Given the letterhead names exactly one active supplier, then the upload
+  pre-selects it; given zero or several, the supplier field is empty and required.
+- **AC-S1-07** `[BE]` (J2) Given the supplier's existing links all carry `CNY`, then the set's
+  currency is CNY; given the 价格 header carries a currency token, that wins; given neither, the
+  currency is required. No house default (Q2 ruling).
+- **AC-S1-08** `[BE]` `[T]` (J3, J4) Given the parsed lines, then codes are bound by the shared
+  engine unchanged (the exact, company-scoped lookup, then the supplier code ladder, with
+  `remember=False`), and each line records one outcome: `exact`, `alias` or `ladder` (with the
+  rung) when bound, else `unmatched`. A code the ladder finds ambiguous, or that names a product
+  set, is `unmatched`. There is no near-match or suggestion outcome, and no new rung (Q8, round
+  3). A test asserts the upload calls the same engine functions the PI apply calls.
+- **AC-S1-09** `[BE]` (J4) Given a bound product, then the line records the price in force of the
+  (product, supplier) link at parse time, the new price, and the change percent (null when there
+  is none); given no link exists, the line is `new_link`.
+- **AC-S1-10** `[BE]` (J4, J5) Given two lines that bind to one product, then both are flagged
+  `duplicate_code` and listed under "Duplicate code"; Apply is refused until one is skipped.
+  There is no packaging variant concept (Q9, round 3).
+- **AC-S1-11** `[BE]` (J5, J8) Given any `unmatched`, `needs_attention` or `duplicate_code` line not
+  mapped or skipped, when Apply (or, with verification on, Submit) is called, then 422 names the
+  count.
+- **AC-S1-12** `[BE]` (J5, J8) Given an unmatched line mapped to a product from the dropdown, then
+  the map is stored on the line (`match_outcome = manual`); the alias (`source=manual`) and the
+  engine's own `auto` aliases for ladder binds are written only when the set is applied, so a
+  discarded set teaches nothing.
+- **AC-S1-13** `[BE]` (J4) Given a line whose new price equals the price in force in the same
+  currency and the set has no dates, then it is `unchanged`, listed on its own filter and never
+  applied. Given the set has dates, the line is `changed` (a dated cost list is new information).
+- **AC-S1-14** `[BE]` (J1) Given a supplier that already has a Draft or Pending set, when a second
+  upload arrives, then 409 names the open set's code and the FE offers to open it.
 - **AC-S1-15** `[BE]` (J2) Given a file over 25 MB, not `.xlsx`/`.xls`, or over 5,000 parsed rows,
   then 422 with a plain message and nothing is stored.
-- **AC-S1-16** `[BE]` (J1 to J5) Given a caller without `procurement.cost_price_changes.upload`,
-  then upload, map, pick, skip and submit return 403; without `.view`, then list and detail
-  return 403.
-- **AC-S1-25** `[BE]` `[T]` (J1) Given the migration has run, then
-  `procurement.cost_price_changes.upload` and `.view` exist and are granted to every role that
-  holds `scm.proforma_invoice.upload`, and to `admin` and `superadmin`; no `integration_%` role
-  receives either; running the migration twice grants nothing twice (Q5 ruling).
+- **AC-S1-16** `[BE]` (J1 to J8) Given a caller without `procurement.cost_price_changes.upload`,
+  then upload, map, skip, discard and apply (verification off) return 403; without `.view`, list
+  and detail return 403.
 - **AC-S1-17** `[BE]` (J3) Given the caller's session spans two companies, then upload returns 422
-  "pick one company" (the `_require_single_company` rule).
-- **AC-S1-18** `[BE]` (J14) Given an upload, then the source file is retained and downloadable from
-  the set, and the set records its file name, sheet names and parser notes (header row per sheet,
-  merged cells filled).
-- **AC-S1-19** `[FE]` (J2) The upload dialog pre-fills supplier and currency from the parse probe,
-  keeps both editable (`SearchableSelect`, supplier not clearable, currency required only when
-  unresolved), and uses `FileDropzone`.
-- **AC-S1-20** `[FE]` (J4) The set detail renders the stat cards as filters, sheet tabs
-  (`variant="line"`, scrolling at 375px), and a `DataGrid` with explicit column sizes; the change
-  percent renders as a `Badge` (rise and fall tinted apart); a line with `packaging_note` shows it
-  under the code.
-- **AC-S1-21** `[FE]` (J4) Every section renders with an explicit empty state (e.g. "No near
-  matches"), including a set with zero changed lines ("Nothing changed against current prices"
+  "pick one company".
+- **AC-S1-18** `[BE]` (J14) Given an upload, then the source file is retained and downloadable, and
+  the set records file name, sheet names and parser notes.
+- **AC-S1-19** `[FE]` (J2) The upload dialog pre-fills supplier and currency from the parse probe;
+  Supplier and Currency are the system single-select (`SearchableSelect`; supplier not clearable,
+  currency required only when unresolved); Valid from and Valid to are optional date inputs,
+  clearable, with Valid to refused before Valid from; the file's own date from its name is shown
+  beside them as text; the file input is `FileDropzone`.
+- **AC-S1-20** `[FE]` (J4) The review page renders the stat cards as filters, a search box, sheet
+  tabs (`variant="line"`, scrolling at 375px), and a `DataGrid` with explicit column sizes; change
+  percent is a `Badge` (rise and fall tinted apart); a `code_note` shows under the code; a
+  Not found row carries the product single-select (`SearchableSelect`, searching code and
+  description, clearable) and Skip.
+- **AC-S1-21** `[FE]` (J4) Every filter renders an explicit empty state (e.g. "No codes need
+  mapping"), including a set with zero changed lines ("Nothing changed against current prices",
   with Discard as the next step).
-- **AC-S1-22** `[FE]` (J1) Purchasing > Cost price changes is a `DataGrid` list (code, supplier,
-  source, status pill, lines changed, submitted by, submitted at, applied at) with search, a status
-  filter and Upload price list; rows use `rowHref`, and the detail page carries
-  `RecordNavigation`.
+- **AC-S1-22** `[FE]` (J1) Purchasing > Cost price uploads is a `DataGrid` list (code, supplier,
+  source, validity, status pill, lines changed, uploaded by, applied at, verified) with search
+  (code, supplier, file name), a Status filter (`SearchableMultiSelect`), a Supplier filter
+  (`SearchableSelect`, clearable) and Upload price list; rows use `rowHref`, and the detail page
+  carries `RecordNavigation`.
 - **AC-S1-23** `[BE]` (J5) Discard on a Draft set is a hard delete through the deferred-action
   window (10 s, no dialog); a Pending or Applied set cannot be deleted (409).
-- **AC-S1-24** `[E2E]` (J1 to J5) From `/`, sidebar to Cost price changes, upload the fixture,
-  resolve the near match and the packaging pick, submit; screenshots at 375px and 1280px; the
-  product's live price is unchanged afterwards.
+- **AC-S1-24** `[E2E]` (J1 to J8) From `/`, sidebar to Cost price uploads, search the list, upload
+  the fixture with Valid from set, search the review page, map a Not found row, skip one
+  duplicate, apply; the supplier's Prices tab shows the new cost lists with that start date.
+  Screenshots at 375px and 1280px.
+- **AC-S1-25** `[BE]` `[T]` (J1) Given the migration has run, then
+  `procurement.cost_price_changes.upload` and `.view` are granted to every role holding
+  `scm.proforma_invoice.upload`, and to `admin` and `superadmin`; no `integration_%` role gets
+  either; running it twice grants nothing twice (Q5 ruling).
+- **AC-S1-26** `[BE]` `[T]` (J8) Given verification is off and a Draft staff set with everything
+  resolved, when its uploader calls Apply, then the set becomes `applied` with `verified = false`,
+  and no Submit or decision is required.
+- **AC-S1-27** `[BE]` (J8) Given Apply, then in one transaction: one `product_supplier_costs` row
+  per changed or new-link line not skipped, carrying the set's currency, start and end dates and
+  `source_change_line_id`; a `new_link` line creates the link first (AC-S2-05); the price in force
+  is recomputed; the aliases of AC-S1-12 are written.
 
-## S2: Verification and apply
+## Cost lists (S1)
 
-- **AC-S2-01** `[BE]` (J7) Given a Pending set, when a verifier sets a line to accepted or rejected
-  (with an optional reason up to 500 characters), then the decision, the verifier and the time are
-  stored on the line; Accept all and Reject all apply to every undecided changed line.
-- **AC-S2-02** `[BE]` (J8) Given any undecided changed line, when Apply is called, then 422 names
-  the count.
-- **AC-S2-03** `[BE]` `[T]` (J8) Given the verifier is the set's uploader or submitter, then accept,
-  reject, return and apply return 403 `SAME_PERSON_CANNOT_VERIFY`; this holds for superadmin too.
-  Given a different Sorento user holding `verify`, then that one user's decisions and Apply are
-  enough (no second approval). A supplier-page set has no staff submitter, so any one verifier
-  may verify it (Q6 ruling).
-- **AC-S2-04** `[BE]` (J8) Given Apply, then in one transaction: each accepted line writes
-  `product_suppliers.unit_cost` and `currency` for its (product, supplier) pair; a `new_link` line
-  creates the link (lead time from AC-S2-05); every mapped line writes its alias
-  (`source=manual`); the set becomes `applied` with `applied_by_user_id`, `applied_at` and
-  Rejected lines write nothing.
-- **AC-S2-05** `[BE]` (J8) Given a `new_link` line accepted, then the new link's
-  `standard_lead_time_days` is the most common value across this supplier's existing links; given
-  the supplier has no links, then the line shows a lead time input and cannot be accepted empty.
-- **AC-S2-06** `[BE]` `[T]` (J8) Given a line's recorded current price no longer equals the live
-  `unit_cost`/`currency` at Apply (someone changed it since parse), then Apply returns 409 listing
-  those lines as `stale`, writes nothing, and the lines show both values for a fresh decision.
-- **AC-S2-07** `[BE]` (J8) Given Apply is called twice concurrently, then exactly one succeeds
-  (conditional update on `status='pending_verification'`), and the other returns 409.
-- **AC-S2-08** `[BE]` (J8) Given Apply, then the new price takes effect at once and the set's
-  `applied_at` is the date shown in history; Apply takes no date input (Q3, round 2 restated
-  recommendation, re-asked). If the owner asks for the supplier's list date instead, this AC is
-  rewritten to an `effective_date` defaulting to the apply date, never future.
-- **AC-S2-09** `[BE]` (J9) Given Return to submitter with a reason (required, up to 500
-  characters), then the set goes back to `draft`, decisions are cleared, the reason is stored and
-  shown in the header, and the submitter (or the supplier page, for a supplier set) can edit and
-  resubmit.
-- **AC-S2-10** `[BE]` (J8) Given an Applied set, then no line, decision or date can change (409
-  on every write route).
-- **AC-S2-11** `[BE]` (J8) Given a product, then `GET .../products/{id}/supplier-cost-history`
-  returns, per supplier, the accepted lines of applied sets newest first (price, currency,
-  applied date, set code, verifier, channel), plus one "before tracking" row per pair carrying
-  the oldest recorded current price when it is not null.
+- **AC-CL-01** `[BE]` `[T]` (J15, Q3) `price_in_force(link, day)` returns: the always row when it is
+  the only row; a dated row over the always row inside its range; the always row again after the
+  dated row's end; for two rows covering the day, the one with the later start; for equal starts,
+  the newest; none when every row has ended or not started.
+- **AC-CL-02** `[BE]` (Q4) A cost list row stores only price, currency, start and end; there is no
+  basis, shipping, tax or terms field on any screen or route.
+- **AC-CL-03** `[BE]` Given end before start, then 422; given a negative price, 422.
+- **AC-CL-04** `[BE]` `[T]` (J8, J16) Given an apply or a hand edit, then `product_suppliers.unit_cost`
+  and `currency` equal `price_in_force(link, today)` in the same transaction; null when none is
+  in force. A link with no cost list rows is never written by this code.
+- **AC-CL-05** `[BE]` `[T]` (J17) Given the daily tick runs for a fixed day, then every link with cost
+  lists whose price in force differs from `unit_cost` is updated through the ORM, and one
+  `SUPPLIER_COST_TICK` audit row lists them; a second run the same day changes nothing.
+- **AC-CL-06** `[BE]` (J16) Given `procurement.product_suppliers.edit`, then add, change and delete
+  of a cost list row succeed and are audited; without it, 403. Delete is the 10 s deferred action.
+- **AC-CL-07** `[FE]` (J15) The supplier record's Prices tab lists each linked product with its cost
+  list rows (price, currency, Valid from, Valid to, status pill: In force, Scheduled, Ended,
+  Always; source: set code or "Edited by hand"), with search (product code, description, supplier
+  code) and a Status filter (`SearchableMultiSelect`); empty state "No prices recorded for this
+  supplier yet" with Upload price list as the next step.
+- **AC-CL-08** `[FE]` (J15) The product record's Suppliers tab shows, per supplier, the price in
+  force and its cost lists (same columns as AC-CL-07), with search by supplier name or set code;
+  the price renders in the link's own currency (fixes `ProductDetail.tsx` formatting every cost
+  as MYR, for the supplier price only).
+
+## S2: Verification, built now and switched off
+
+- **AC-S2-20** `[BE]` `[T]` (J5b) Given the migration has run, then
+  `system_settings.cost_price_verification_enabled` exists, defaults to false, appears in both
+  system settings serialisers, is editable only with the system settings edit permission, and a
+  change writes `COST_VERIFICATION_SETTING`.
+- **AC-S2-01** `[BE]` (J7) Given a Pending set, when a verifier sets a line accepted or rejected
+  (optional reason up to 500 characters), then the decision, verifier and time are stored; Accept
+  all and Reject all apply to every undecided changed line.
+- **AC-S2-02** `[BE]` (J8b) Given any undecided changed line, when Apply is called on a Pending set,
+  then 422 names the count.
+- **AC-S2-03** `[BE]` `[T]` (J8b) Given verification applies and the verifier is the set's uploader
+  or submitter, then accept, reject, return and apply return 403 `SAME_PERSON_CANNOT_VERIFY`,
+  superadmin included. A different Sorento user holding `verify` is enough (Q6 ruling). A
+  supplier set has no staff submitter, so any one verifier may verify it.
+- **AC-S2-04** `[BE]` `[T]` (J5b) Given verification is on, then Apply on a Draft staff set returns
+  409 "submit for verification first", and Submit moves it to `pending_verification` with
+  `submitted_by_user_id`, `submitted_at`; given it is off, Submit returns 409 and Apply works
+  (AC-S1-26).
+- **AC-S2-05** `[BE]` (J8) Given a `new_link` line applied, then the new link's
+  `standard_lead_time_days` is the most common value across this supplier's links; given none,
+  the line shows a lead time input and blocks Apply while empty.
+- **AC-S2-06** `[BE]` `[T]` (J8) Given a line's recorded price in force no longer equals the live
+  one at Apply, then 409 lists those lines as `stale`, nothing is written, and the lines show both
+  values.
+- **AC-S2-07** `[BE]` (J8) Given Apply twice concurrently, exactly one succeeds (conditional update
+  on the expected status), the other 409.
+- **AC-S2-08** `[BE]` (J8b) Given Apply on a Pending set, then it writes exactly as AC-S1-27 and the
+  set records `verified = true` with the verifier as `applied_by_user_id`.
+- **AC-S2-09** `[BE]` (J9) Given Return with a reason (required, up to 500 characters), then the set
+  goes back to `draft`, decisions are cleared, the reason shows in the header, and the submitter
+  (or the supplier page) can edit and resubmit.
+- **AC-S2-10** `[BE]` (J8) Given an Applied set, then no line, decision or date can change (409).
+- **AC-S2-11** `[BE]` `[T]` (J12) Given the setting is off, when a supplier-channel set is
+  submitted, then it is `pending_verification` and cannot be applied without a verifier; toggling
+  the setting never moves a Pending set.
 - **AC-S2-12** `[BE]` (J6) Given a set enters `pending_verification`, then every active user holding
-  `verify` in the set's company gets one in-app notification linking to the set; given a set is
-  applied or returned, then the submitter (staff set) gets one.
-- **AC-S2-13** `[BE]` `[T]` (J8) Given Apply, then `products.cost_price`, `products.list_price` and
-  `products.invoice_price` are unchanged (Q1): the supplier price never writes the product's MYR
-  cost.
-- **AC-S2-14** `[BE]` (J7) The product-supplier CRUD routes
-  (`/procurement/product-suppliers`) require `procurement.product_suppliers.add|edit|delete` from
-  this slice on, with a grant sweep to every role that could reach them before (Q13).
-- **AC-S2-15** `[FE]` (J7) The verification view is the same set detail page (same tabs, same
-  order) with the Decision column switched on; the apply bar shows accepted,
-  rejected and undecided counts, and the largest rise; Apply names the accepted count and is
-  disabled with a tooltip reason when AC-S2-02 or AC-S2-03 would refuse it.
-- **AC-S2-16** `[FE]` (J8) The product detail's Suppliers tab shows the cost history sub-table per
-  AC-S2-11 (no row action, no pointer cursor), with the empty state "No verified price changes
-  yet".
-- **AC-S2-17** `[FE]` (J8) The price on the product page renders in the link's own currency
-  (fixes `ProductDetail.tsx` formatting every cost as MYR, for the supplier price only).
-- **AC-S2-18** `[E2E]` (J6 to J8) A second user opens the notification, rejects one line with a
-  reason, applies; the product's Suppliers tab shows the new price and history; the reorder
-  screen's supplier price for that product shows the new value. 375px and 1280px.
-- **AC-S2-19** `[BE]` `[T]` (J7, J8) Given the migration has run, then
-  `procurement.cost_price_changes.verify` is granted to every role that holds
-  `scm.proforma_invoice.upload`, and to `admin` and `superadmin`, and to no `integration_%` role;
-  given an API-key principal (`X-API-Key`, including one acting as a user through
-  `EXTERNAL_API_KEY_ACT_AS_USER_ID`) or any public supplier route, then decide, return and apply
-  are unreachable (403 or no such route): verification is by a Sorento staff session only (Q6
-  ruling).
+  `verify` in the set's company gets one in-app notification; given applied or returned, the
+  staff submitter gets one.
+- **AC-S2-13** `[BE]` `[T]` (J8) Given Apply, then `products.cost_price`, `list_price` and
+  `invoice_price` are unchanged (Q1).
+- **AC-S2-14** `[BE]` (J7, J16) The product-supplier CRUD routes and the cost list routes require
+  `procurement.product_suppliers.add|edit|delete`, with a grant sweep to every role that could
+  reach them before (Q13).
+- **AC-S2-15** `[FE]` (J5b, J7) With the setting on, the review page is the same layout (same tabs,
+  same order) with Submit for verification in place of Apply for the uploader, and for a verifier
+  the Decision column, Accept all, Return to submitter and Apply N changes; Apply is disabled with
+  a tooltip reason when AC-S2-02 or AC-S2-03 would refuse it. With the setting off, none of these
+  render.
+- **AC-S2-16** `[FE]` (J5b) System Settings has one switch, "Verify cost price uploads by a second
+  person", off by default.
+- **AC-S2-17** `[FE]` (J14) The list and the set header show Verified by name, or "Not verified"
+  for a set applied with the setting off.
+- **AC-S2-18** `[E2E]` (J5b to J8b) Switch the setting on; Mei Ling uploads and submits; she cannot
+  apply; Kelvin opens the notification, rejects one line with a reason, applies; the supplier's
+  Prices tab shows the new cost lists. 375px and 1280px.
+- **AC-S2-19** `[BE]` `[T]` (J7, J8b) Given the migration has run, then `.verify` is granted to every
+  role holding `scm.proforma_invoice.upload`, and to `admin` and `superadmin`, and to no
+  `integration_%` role; an API-key principal or any public route cannot decide, return or apply
+  (Q6 ruling).
 
 ## S3: The supplier page
 
-- **AC-S3-01** `[BE]` (J10) Given a user with `procurement.suppliers.price_link`, when they issue a
-  link for a supplier, then a `supplier_price_links` row is created with a 256-bit token
-  (`secrets.token_urlsafe(32)`), `expires_at` 30 days out, `issued_by_user_id`, and the
-  recipient name pre-filled from the supplier's `contact_name`; any older active link for that
-  supplier is revoked in the same transaction (one active link per supplier).
+- **AC-S3-01** `[BE]` (J10) Given `procurement.suppliers.price_link`, when a link is issued, then a
+  `supplier_price_links` row with a 256-bit token, `expires_at` 30 days out and
+  `issued_by_user_id` is created, and any older active link for that supplier is revoked in the
+  same transaction.
 - **AC-S3-02** `[BE]` (J13) Given revoke (5 s deferred action, no dialog), then `revoked_at` is set;
-  given an unknown, expired or revoked token, then every public route returns the same 404 body.
+  given an unknown, expired or revoked token, every public route returns the same 404 body.
 - **AC-S3-03** `[BE]` `[T]` (J11) Given a valid token, then the public GET returns only: the
-  supplier's display name, the set currency, and for each product linked to this supplier its
-  code, description, the supplier's current price, and the last supplier code seen for it. It
-  never returns another supplier's price, `products.cost_price`, `list_price`, margins, internal
+  supplier's display name, currency, and for each product linked to this supplier its code,
+  description, its cost lists (price, currency, start, end, in force or not) and the last
+  supplier code seen for it; never another supplier's price, `products.cost_price`, `list_price`,
   reasons or any user's name.
-- **AC-S3-04** `[BE]` (J11) Given the supplier edits prices in the table, then each save writes the
-  supplier's open Draft set for this link (created on first edit, channel `supplier_page`);
-  unedited rows are not lines.
-- **AC-S3-05** `[BE]` (J11) Given the supplier uploads the Excel, then the same parser and matcher
-  as S1 build lines into the supplier's Draft set (channel `supplier_upload`); lines that did not
-  bind to one of this supplier's linked products are shown to the supplier as "models we do not
-  know" and kept on the set for Sorento, never bound by the supplier.
-- **AC-S3-06** `[BE]` (J11, J12) Given Submit, then the set enters `pending_verification` with
-  `submitted_via_link_id` set and no staff submitter; unmatched and packaging-pick lines go to the
-  verifier to resolve (the verifier may map, pick or skip on a supplier set before deciding).
-- **AC-S3-07** `[BE]` (J12) Given a supplier set is Pending, then the page's table is read-only and
-  shows the submitted values; a second submit or a new upload returns 409 (one open set per
-  supplier, AC-S1-14).
-- **AC-S3-08** `[BE]` (J12) Given the History route, then the supplier sees each of its own sets
-  (code, submitted date, status, accepted count of total) and per-line accepted or rejected, never
-  the reason text.
+- **AC-S3-04** `[BE]` (J11) Given the supplier edits prices, then each save writes the supplier's
+  open Draft set (created on first edit, channel `supplier_page`) with the submission's optional
+  start and end dates; unedited rows are not lines.
+- **AC-S3-05** `[BE]` (J11) Given the supplier uploads the Excel, then the same reader and the same
+  shared engine build lines into the Draft set (channel `supplier_upload`); lines that did not
+  bind are shown to the supplier as "models we do not know" and kept for Sorento to map.
+- **AC-S3-06** `[BE]` (J12) Given Submit, then the set enters `pending_verification` with
+  `submitted_via_link_id`, whatever the setting (AC-S2-11); the verifier may map and skip before
+  deciding.
+- **AC-S3-07** `[BE]` (J12) Given a supplier set is Pending, then the table is read-only; a second
+  submit or a new upload returns 409.
+- **AC-S3-08** `[BE]` (J12) Given History, the supplier sees each of its own sets (code, submitted
+  date, validity, status, accepted count of total) and per-line accepted or rejected, never the
+  reason text.
 - **AC-S3-09** `[BE]` `[T]` (J11) Given more than 60 public requests a minute, or more than 10
-  uploads an hour, from one token or one IP, then 429 (`rate_limit.hit`); upload limits of
-  AC-S1-15 apply.
-- **AC-S3-10** `[BE]` `[T]` (J11) Given any public write, then the audit row carries actor type
-  `public_link`, the link id and the recipient name (section 9 of the plan), never a Sorento
-  user id.
-- **AC-S3-11** `[BE]` (J10) Given a link is opened, then `last_opened_at` and `open_count` update
-  (not an audit row per open).
+  uploads an hour, from one token or one IP, then 429.
+- **AC-S3-10** `[BE]` `[T]` (J11) Given any public write, the audit row carries actor type
+  `public_link`, the link id and the recipient name, never a Sorento user id.
+- **AC-S3-11** `[BE]` (J10) Opening a link updates `last_opened_at` and `open_count` (not an audit
+  row per open).
 - **AC-S3-12** `[FE]` (J10) The supplier record's gear menu has Share price page (permission gated)
-  opening a modal with the URL, a `QRCodeSVG` (`qrcode.react`, already a dependency), Copy link,
-  Save QR image, and Copy message (bilingual text with the URL and the expiry date); the modal
-  shows the current link's expiry, last opened time and open count, and Revoke.
-- **AC-S3-13** `[FE]` (J11) The public page lives at `/c/{company}/supplier-prices/{token}`, renders
-  at 375px first, and every label is Chinese first with English beneath; a 中文 / EN toggle swaps
-  which leads and is remembered in `localStorage` (guarded). Tabs: 价格表 Prices, 上传Excel Upload,
-  记录 History.
-- **AC-S3-14** `[FE]` (J11) Price inputs are `inputmode="decimal"` at 16 px (no iOS zoom), a changed
-  value is highlighted with its change percent, the sticky footer shows changed and total counts
-  and 提交审核 Submit for review, and search filters by model code.
+  opening a dialog with the URL, a `QRCodeSVG`, Copy link, Save QR image and Copy message, plus the
+  current link's expiry, last opened time, open count and Revoke.
+- **AC-S3-13** `[FE]` (J11) The public page at `/c/{company}/supplier-prices/{token}` renders at
+  375px first, Chinese first with English beneath, with a 中文 / EN toggle remembered in guarded
+  `localStorage`. Tabs: 价格表 Prices, 上传Excel Upload, 记录 History.
+- **AC-S3-14** `[FE]` (J11) Prices tab: a search box (model code, configuration) at the top; each
+  product shows its cost lists with date ranges and an In force marker; the new price input is
+  `inputmode="decimal"` at 16 px; a changed value shows its change percent; the sticky footer has
+  生效日期 Valid from and 截止日期 Valid to (optional), changed and total counts, and 提交审核 Submit
+  for review.
 - **AC-S3-15** `[FE]` (J13) An expired or revoked link shows 链接已失效 / This link is no longer valid
   and nothing else.
-- **AC-S3-16** `[BE]` (J11) The public page response sets `Referrer-Policy: no-referrer` and
-  `X-Robots-Tag: noindex`; the token is never written to application logs (path is masked the way
-  the supplier-request route is).
-- **AC-S3-17** `[E2E]` (J10 to J12) Staff issues a link; a second browser context opens it at 375px,
-  edits two prices, submits; the staff list shows the set Pending with channel Supplier page; a
-  verifier applies it; the supplier page's History shows Applied. Screenshots at 375px (supplier)
-  and 1280px (staff).
+- **AC-S3-16** `[BE]` (J11) Responses set `Referrer-Policy: no-referrer` and `X-Robots-Tag: noindex`;
+  the token is never written to application logs.
+- **AC-S3-17** `[E2E]` (J10 to J12) With the setting off, staff issue a link; a second browser
+  context at 375px searches, edits two prices with a Valid from, submits; the staff list shows the
+  set Pending with channel Supplier page; a verifier applies it; the supplier page's History
+  shows Applied and the Prices tab shows the new cost list with its date.
+- **AC-S3-18** `[FE]` (J12) History tab has a search box (set code) and an empty state
+  "暂无记录 No submissions yet".
+
+## Search on every page (owner ruling 27 Sep 00:45)
+
+- **AC-SR-01** `[FE]` Cost price uploads list: search by set code, supplier name or file name,
+  debounced, through `buildDataGridParams` (AC-S1-22).
+- **AC-SR-02** `[FE]` Review page: search by supplier code, configuration, matched product code or
+  sheet, combined with the active stat filter and sheet tab; the stat card counts follow the
+  search (AC-S1-20).
+- **AC-SR-03** `[FE]` Supplier Prices tab and product Suppliers tab: search as AC-CL-07, AC-CL-08.
+- **AC-SR-04** `[FE]` Supplier's own page: search on Prices and History (AC-S3-14, AC-S3-18).
+- **AC-SR-05** `[FE]` `[T]` Every single-select on these screens is `SearchableSelect` and every
+  multi-select is `SearchableMultiSelect`; a test over the new files fails on a native `<select>`
+  or another dropdown component.
 
 ## Audit trail (all slices, per #1281)
 
-- **AC-AU-01** `[BE]` (J14) `cost_price_change_sets`, `cost_price_change_lines`,
-  `supplier_price_links` and `product_suppliers` carry `__audit_track__`; every create, update and
-  delete writes an `audit_logs` row with old and new values.
-- **AC-AU-02** `[BE]` (J14) Upload, submit, return, apply, link issue and link revoke each write one
-  named audit action (`COST_SET_UPLOAD`, `COST_SET_SUBMIT`, `COST_SET_RETURN`, `COST_SET_APPLY`,
-  `SUPPLIER_PRICE_LINK_ISSUE`, `SUPPLIER_PRICE_LINK_REVOKE`) against the set or link, carrying the
-  counts and, for apply, the list of (product code, old, new, currency).
-- **AC-AU-03** `[BE]` `[T]` (J8) Given Apply, then every `product_suppliers` row it touched has an
-  audit UPDATE (or CREATE) with the old and new `unit_cost`/`currency`, and the same `trace_id` as
-  the `COST_SET_APPLY` row.
-- **AC-AU-04** `[FE]` (J14) The set's History tab lists those events newest first with actor,
-  time (`formatDateTimeInMalaysia`) and a one-line summary, and links the source file download.
+- **AC-AU-01** `[BE]` (J14) `product_supplier_costs`, `cost_price_change_sets`,
+  `cost_price_change_lines`, `supplier_price_links` and `product_suppliers` carry
+  `__audit_track__`; every create, update and delete writes old and new values.
+- **AC-AU-02** `[BE]` (J14) Upload, submit, return, apply, hand edit, tick, link issue, link revoke
+  and the setting change each write one named action (`COST_SET_UPLOAD`, `COST_SET_SUBMIT`,
+  `COST_SET_RETURN`, `COST_SET_APPLY`, `SUPPLIER_COST_LIST_EDIT`, `SUPPLIER_COST_TICK`,
+  `SUPPLIER_PRICE_LINK_ISSUE`, `SUPPLIER_PRICE_LINK_REVOKE`, `COST_VERIFICATION_SETTING`); apply
+  carries verified yes or no, the dates and the list of (product code, old, new, currency).
+- **AC-AU-03** `[BE]` `[T]` (J8) Given Apply, every `product_suppliers` and `product_supplier_costs`
+  row it touched has an audit row with the same `trace_id` as `COST_SET_APPLY`.
+- **AC-AU-04** `[FE]` (J14) The set's History tab lists those events newest first with actor, time
+  (`formatDateTimeInMalaysia`) and a one-line summary, and links the source file download.
 
 ## Out of scope (named triggers in the plan, section 11)
 
-A separate effective date and future-dated prices (Q3), FX conversion into MYR, writing
-`products.cost_price`, a supplier login (arrives with #1280), OTP on the supplier page, automatic WeChat sending, product creation
-from an unmatched code, and multiple open sets per supplier.
+Readers that price a day other than today, near-match suggestions or a new matching rung,
+packaging variants, FX conversion into MYR, writing `products.cost_price`, a supplier login
+(arrives with #1280), OTP on the supplier page, automatic WeChat sending, product creation from
+an unmatched code, and multiple open sets per supplier.

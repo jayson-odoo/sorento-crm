@@ -659,7 +659,8 @@ writes the red tests from the ACs, then one `coder` makes them green, then `revi
 ### Lane A: S1 + S2, "upload, cost lists, apply; verification built but off" (branch `feat/cost-price-change-sets`)
 
 **S1: staff upload, review, apply into dated cost lists (verification off).** UAC AC-S1-01 to
-AC-S1-27, AC-CL-01 to AC-CL-08, AC-AU-01, AC-AU-02, AC-AU-04. **Owner hand test: yes** (upload the
+AC-S1-27, AC-CL-01 to AC-CL-08, AC-SR-01 to AC-SR-03, AC-SR-05, AC-AU-01, AC-AU-02,
+AC-AU-04. **Owner hand test: yes** (upload the
 TAIYANG file, apply, see the cost lists on the supplier's Prices tab).
 
 - BE: migration (cost lists, change sets and lines, `supplier_price_links` empty, the setting,
@@ -691,7 +692,7 @@ TAIYANG file, apply, see the cost lists on the supplier's Prices tab).
 
 ### Lane B: S3, "the supplier page" (branch `feat/supplier-price-page`, after Lane A merges)
 
-UAC AC-S3-01 to AC-S3-18, AC-AU-02 (link events), AC-S3-10. **Owner hand test: yes** (open the
+UAC AC-S3-01 to AC-S3-18, AC-SR-04, AC-AU-02 (link events), AC-S3-10. **Owner hand test: yes** (open the
 link on a phone at 375).
 
 - BE: link issue, current, revoke; the five public routes; rate limits; the actor stamp; headers
