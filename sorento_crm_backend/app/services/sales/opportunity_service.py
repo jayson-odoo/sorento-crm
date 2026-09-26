@@ -113,6 +113,8 @@ def _validate_customer_or_prospect(
         raise _unprocessable(
             "A customer or a prospect name is required.", "CUSTOMER_OR_PROSPECT_REQUIRED"
         )
+    if customer_id:
+        _assert_customer_exists(db, customer_id)
     if prospect_name:
         normalized = _normalize(prospect_name)
         exact = (
@@ -132,6 +134,31 @@ def _assert_customer_is_agents_own(
         raise _unprocessable("That customer is not yours.", "CUSTOMER_NOT_YOURS")
 
 
+def _assert_customer_exists(db: Session, customer_id: str) -> None:
+    """N2 (Phase 3): a customer_id that names no row is a 422, not a silent FK-less
+    write - `restrict_customer_to_agent_id` already proves existence for the portal
+    path, but the CRM path (no restriction) never checked at all."""
+    exists = db.query(Customer.id).filter(Customer.id == customer_id).first()
+    if exists is None:
+        raise _unprocessable("That customer was not found.", "CUSTOMER_NOT_FOUND")
+
+
+def _assert_agent_visible(db: Session, *, sales_agent_id: str, company_id: str) -> None:
+    """N2 (Phase 3): sales_agent_id must be a visible agent - active, and either shared
+    (no company) or in this opportunity's own company."""
+    agent = (
+        db.query(SalesAgent)
+        .filter(
+            SalesAgent.id == sales_agent_id,
+            SalesAgent.is_active.is_(True),
+            or_(SalesAgent.company_id.is_(None), SalesAgent.company_id == company_id),
+        )
+        .first()
+    )
+    if agent is None:
+        raise _unprocessable("That sales agent is not available.", "SALES_AGENT_NOT_FOUND")
+
+
 # --------------------------------------------------------------------------------------
 # Lines (S2-16)
 # --------------------------------------------------------------------------------------
@@ -140,7 +167,14 @@ def _assert_customer_is_agents_own(
 def _replace_lines(db: Session, opportunity: SalesOpportunity, lines: List[dict]) -> None:
     product_ids = [line["product_id"] for line in lines]
     if product_ids:
-        found = {row[0] for row in db.query(Product.id).filter(Product.id.in_(product_ids)).all()}
+        # N6 (Phase 3): an inactive product counts as "not found" here too - a
+        # discontinued product has no business being added to a NEW line.
+        found = {
+            row[0]
+            for row in db.query(Product.id)
+            .filter(Product.id.in_(product_ids), Product.is_active.is_(True))
+            .all()
+        }
         missing = [pid for pid in product_ids if pid not in found]
         if missing:
             raise _unprocessable("One or more products were not found.", "UNKNOWN_PRODUCT")
@@ -205,6 +239,11 @@ def create_opportunity(
         _assert_customer_is_agents_own(
             db, customer_id=customer_id, sales_agent_id=restrict_customer_to_agent_id
         )
+    if sales_agent_id:
+        # N2 (Phase 3): only the CRM path can name an agent directly - the portal always
+        # passes the requesting agent's own id, trivially visible, but this still guards
+        # against a stale/foreign id reaching either path.
+        _assert_agent_visible(db, sales_agent_id=sales_agent_id, company_id=company_id)
     if sales_agent_id is None and stamp_agent_from_customer and customer_id:
         # CRM only (S2-7): stamped from the customer, null accepted. The portal always
         # passes a concrete agent (resolved from the token before this is ever called).
@@ -282,7 +321,18 @@ def _apply_status_change(
     if target.key == "lost":
         opportunity.lost_reason = _validate_lost_reason(db, lost_reason)
     elif target.key == "won" and sales_order_id:
-        order = db.query(SalesOrder).filter(SalesOrder.id == sales_order_id).first()
+        # N3 (Phase 3): the order must belong to THIS opportunity's own company and be
+        # live - a cancelled order or one from another company is 422, same code as "no
+        # such order", so neither leaks which orders exist elsewhere.
+        order = (
+            db.query(SalesOrder)
+            .filter(
+                SalesOrder.id == sales_order_id,
+                SalesOrder.company_id == opportunity.company_id,
+                SalesOrder.status != "cancelled",
+            )
+            .first()
+        )
         if order is None:
             raise _unprocessable("Sales order not found.", "SALES_ORDER_NOT_FOUND")
         if opportunity.customer_id is not None and order.customer_id != opportunity.customer_id:
@@ -308,6 +358,15 @@ def update_opportunity(
     *,
     restrict_customer_to_agent_id: Optional[str] = None,
 ) -> SalesOpportunity:
+    # N7 (Phase 3): once an opportunity is Won or Lost, nothing about it moves again -
+    # not a field, not another stage - on either side. A stage move away from a terminal
+    # status is already refused by the transition graph (no outgoing edges), but a plain
+    # field edit (title, amount, lines, ...) has no such graph to catch it.
+    if opportunity.outcome != "open" and payload:
+        raise _unprocessable(
+            "This opportunity is closed and cannot be edited.", "OPPORTUNITY_CLOSED"
+        )
+
     if "customer_id" in payload or "prospect_name" in payload:
         customer_id = payload.get("customer_id", opportunity.customer_id)
         prospect_name = payload.get("prospect_name", opportunity.prospect_name)
@@ -326,6 +385,10 @@ def update_opportunity(
     if "expected_close_date" in payload:
         opportunity.expected_close_date = payload["expected_close_date"]
     if "sales_agent_id" in payload:
+        if payload["sales_agent_id"]:
+            _assert_agent_visible(
+                db, sales_agent_id=payload["sales_agent_id"], company_id=opportunity.company_id
+            )
         opportunity.sales_agent_id = payload["sales_agent_id"]
 
     if "status_id" in payload:
@@ -530,8 +593,12 @@ def _created_by_label(db: Session, opportunity: SalesOpportunity) -> Optional[st
         ).first()
         return contact.name if contact else None
     if opportunity.created_by_user_id:
+        # N5 (Phase 3): serialize() is shared by the CRM and portal routers - a raw
+        # staff email must never reach the portal response, and there is no reason to
+        # show a CRM caller one either. "Sorento" is what every other unnamed system
+        # actor in this response shape already reads as (no per-caller branch needed).
         user = db.query(User).filter(User.id == opportunity.created_by_user_id).first()
-        return (user.name or user.email) if user else None
+        return user.name if user and user.name else "Sorento"
     return None
 
 
