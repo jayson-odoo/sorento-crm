@@ -13,6 +13,7 @@ import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
+import { useIsMobile } from '@/hooks/use-mobile';
 import {
   useApplyCostPriceChangeSet,
   useCostPriceChangeLines,
@@ -22,7 +23,7 @@ import {
   useReturnCostPriceChangeSet,
   useSubmitCostPriceChangeSet,
 } from '../../hooks/useCostPriceChangeSets';
-import { searchCostPriceProductOptions } from '../../services/costPriceService';
+import { searchCostPriceProductOptions, type PatchLineInput } from '../../services/costPriceService';
 import type { CostPriceChangeLine, CostPriceChangeSetDetail } from '../../types/costPrice.types';
 
 type FilterKey = 'changed' | 'unchanged' | 'new_link' | 'unmatched' | 'duplicate_code' | 'needs_attention';
@@ -64,6 +65,106 @@ function ChangeBadge({ line }: { line: CostPriceChangeLine }) {
 function money(value: number | null, currency: string | null): string {
   if (value == null) return 'none';
   return `${value.toFixed(2)} ${currency ?? ''}`.trim();
+}
+
+/**
+ * One line, as a card (mockup `cost-price-review.html`, "At 375 wide"): the DataGrid's
+ * horizontal-scroll table does not fit a phone, so mobile gets its own layout rather than
+ * a narrower cut of the same columns - same fields (code, sheet/row, configuration, our
+ * product, price now to new, decision), stacked.
+ */
+function LineCard({
+  line,
+  showDecisionColumn,
+  onPatch,
+  onDecide,
+}: {
+  line: CostPriceChangeLine;
+  showDecisionColumn: boolean;
+  onPatch: (patch: PatchLineInput) => void;
+  onDecide: (decision: 'accepted' | 'rejected') => void;
+}) {
+  const showDecision = showDecisionColumn && !line.skipped && (line.line_state === 'changed' || line.line_state === 'new_link');
+  return (
+    <div className="rounded-lg border border-border bg-card p-3">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <span className="font-medium">{line.supplier_code}</span>
+          {line.code_note ? <div className="text-xs text-muted-foreground">note: {line.code_note}</div> : null}
+        </div>
+        <ChangeBadge line={line} />
+      </div>
+      <div className="mt-1 flex items-center justify-between gap-2 text-xs text-muted-foreground">
+        <span>
+          {line.sheet} row {line.row_no}
+        </span>
+        <span className="truncate">{line.configuration ?? ''}</span>
+      </div>
+
+      {line.match_outcome === 'unmatched' ? (
+        <div className="mt-2 flex flex-col gap-1.5">
+          <SearchableSelect
+            id={`map-mobile-${line.id}`}
+            value=""
+            onChange={() => {}}
+            onOptionChange={(opt) => onPatch({ product_id: opt?.value ?? null })}
+            fetchOptions={searchCostPriceProductOptions}
+            clearable
+            size="sm"
+            placeholder="Pick a product"
+            triggerClassName="w-full"
+          />
+          <Button type="button" size="sm" variant="ghost" className="self-start text-muted-foreground" onClick={() => onPatch({ skipped: true, skip_reason: 'Not found' })}>
+            Skip
+          </Button>
+        </div>
+      ) : (
+        <>
+          <div className="mt-2 flex items-center justify-between text-sm">
+            <span className="text-xs text-muted-foreground">Our product</span>
+            <span className="font-medium">{line.product?.product_code ?? '-'}</span>
+          </div>
+          <div className="mt-1 flex items-center justify-between text-sm">
+            <span className="text-xs text-muted-foreground">Price now to new</span>
+            <span className="tabular-nums">
+              {line.current_unit_cost != null ? <span className="text-muted-foreground line-through">{line.current_unit_cost.toFixed(2)}</span> : null}{' '}
+              {money(line.new_unit_cost, line.current_currency)}
+            </span>
+          </div>
+          {line.flags.includes('duplicate_code') ? (
+            <Button type="button" size="sm" variant="ghost" className="mt-1 text-muted-foreground" onClick={() => onPatch({ skipped: true, skip_reason: 'Duplicate code' })}>
+              Skip this one
+            </Button>
+          ) : null}
+          {line.line_state === 'new_link' && line.new_link_lead_time_days == null ? (
+            <div className="mt-1 flex items-center gap-1.5">
+              <span className="text-xs text-muted-foreground">Lead time (days)</span>
+              <Input
+                type="number"
+                min={0}
+                className="h-7 w-20"
+                onBlur={(e) => {
+                  const v = e.target.value ? Number(e.target.value) : undefined;
+                  if (v !== undefined) onPatch({ new_link_lead_time_days: v });
+                }}
+              />
+            </div>
+          ) : null}
+        </>
+      )}
+
+      {showDecision ? (
+        <div className="mt-2 flex items-center gap-1.5">
+          <Button type="button" size="sm" variant={line.decision === 'accepted' ? 'primary' : 'outline'} onClick={() => onDecide('accepted')}>
+            Accept
+          </Button>
+          <Button type="button" size="sm" variant={line.decision === 'rejected' ? 'destructive' : 'outline'} onClick={() => onDecide('rejected')}>
+            Reject
+          </Button>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 /** Return to submitter needs a reason (AC-S2-09), so it is the one action here with a dialog. */
@@ -115,6 +216,12 @@ function ReturnDialog({ setId, onDone }: { setId: string; onDone: () => void }) 
 export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSetDetail }) {
   const { data } = useCostPriceChangeLines(changeSet.id);
   const lines = React.useMemo(() => data?.data ?? [], [data]);
+  // Cards at 375 (mockup "At 375 wide"), the DataGrid at sm+ - a JS switch, not a CSS
+  // one: `sm:hidden`/`hidden sm:block` render BOTH into the DOM regardless of viewport
+  // (jsdom applies no CSS), which doubled every button `getByRole` sees in the existing
+  // vitest suite. `useIsMobile` defaults to false until its effect runs, which in jsdom
+  // (innerWidth 1024) settles on the desktop view - the same one these tests render today.
+  const isMobile = useIsMobile();
 
   const [activeFilter, setActiveFilter] = React.useState<FilterKey>('changed');
   const [search, setSearch] = React.useState('');
@@ -147,7 +254,7 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
 
   const columns = React.useMemo<ColumnDef<CostPriceChangeLine>[]>(() => {
     const base: ColumnDef<CostPriceChangeLine>[] = [
-      { id: 'sheet', header: 'Sheet', size: 90, cell: ({ row }) => row.original.sheet },
+      { id: 'sheet', header: 'Sheet', size: 110, cell: ({ row }) => row.original.sheet },
       {
         id: 'row_no',
         header: 'Row',
@@ -281,14 +388,17 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
       {
         id: 'current',
         header: 'Price now',
-        size: 90,
+        // 110, not 90: "498.00 CNY" truncated to "498.0..." at 90px (Phase 1 evidence,
+        // review-verification-off-1280.png) - wide enough for a 3-digit amount plus
+        // its currency code with room to spare.
+        size: 110,
         meta: { headerClassName: 'text-end', cellClassName: 'text-end' },
         cell: ({ row }) => <span className="tabular-nums">{money(row.original.current_unit_cost, row.original.current_currency)}</span>,
       },
       {
         id: 'new',
         header: 'New price',
-        size: 90,
+        size: 110,
         meta: { headerClassName: 'text-end', cellClassName: 'text-end' },
         cell: ({ row }) => <span className="tabular-nums">{money(row.original.new_unit_cost, changeSet.currency)}</span>,
       },
@@ -408,6 +518,18 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
             ) : null}
           </div>
         </Card>
+      ) : isMobile ? (
+        <div className="space-y-2">
+          {filteredLines.map((line) => (
+            <LineCard
+              key={line.id}
+              line={line}
+              showDecisionColumn={showDecisionColumn}
+              onPatch={(patch) => void patchLine.mutateAsync({ lineId: line.id, patch })}
+              onDecide={(decision) => void decideLine.mutateAsync({ lineId: line.id, decision })}
+            />
+          ))}
+        </div>
       ) : (
         <DataGrid table={table} recordCount={filteredLines.length} listingKey="" tableLayout={{ width: 'fixed', columnsResizable: true }}>
           <Card>
