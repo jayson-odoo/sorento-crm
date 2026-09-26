@@ -21,6 +21,7 @@ from __future__ import annotations
 import uuid
 
 import pytest
+from fastapi import Request
 from fastapi.testclient import TestClient
 
 # MUST be the first app import - resolves the circular import in
@@ -197,12 +198,11 @@ class CostPriceEnv:
 
     def as_impersonated(self, real_principal: dict, effective_principal: dict, *, scope=None) -> None:
         """Simulates an admin (`real_principal`) impersonating `effective_principal` (B2):
-        every route sees `current_user` == `effective_principal`. Not wired further into
-        this fixture's `get_current_user` override (see that function's own docstring for
-        why a `Request`-typed override broke every route through this harness) - no code
-        path in this lane reads a "real actor" today (that absence IS the B2 finding), so a
-        test proves it from `current_user["id"]` == the effective principal alone and
-        checks the outcome against `e.principal_real` directly."""
+        every route sees `current_user` == `effective_principal`, and
+        `request.state.real_user` (set by `_wire_overrides`' `get_current_user`
+        override, mirroring `_maybe_apply_impersonation`) carries the real principal
+        - so `app.dependencies.get_actor_user_id` resolves `real_principal`, exactly
+        as it would through a genuine `X-Impersonate-User-Id` session."""
         self.principal = effective_principal
         self.principal_real = real_principal
         self.scope = scope if scope is not None else frozenset({self.company_a})
@@ -378,9 +378,30 @@ def _wire_overrides(e: "CostPriceEnv", db) -> None:
     def _override_get_db():
         yield db
 
+    def _override_get_current_user(request: Request):
+        # Mirrors `app.dependencies._maybe_apply_impersonation`: stash the REAL
+        # user on `request.state.real_user` regardless, so `get_actor_user_id`
+        # resolves it the same way a real impersonation session would (B2).
+        #
+        # `Request` MUST be imported at MODULE level (see the top of this file),
+        # not inside this function/`_wire_overrides`: FastAPI's dependency-override
+        # mechanism rebuilds the dependant from the OVERRIDE callable's own type
+        # hints (`get_dependant` -> `get_typed_signature` -> `typing.get_type_hints`,
+        # which reads off `call.__globals__` - the DEFINING MODULE's globals, even
+        # for a function nested inside another). With `from __future__ import
+        # annotations` active in this file, `request: Request` is a deferred string
+        # annotation; if `Request` were only a NAME LOCAL to `_wire_overrides` (a
+        # local `from fastapi import Request`), `get_type_hints` cannot resolve it
+        # against the module's globals, FastAPI falls back to treating `request` as
+        # an ordinary field, and every route through this harness 422s with
+        # "Field required: query.request" - the exact failure the previous attempt
+        # at this hit.
+        request.state.real_user = e.principal_real or e.principal
+        return e.principal
+
     app.dependency_overrides[get_db] = _override_get_db
-    app.dependency_overrides[get_current_user] = lambda: e.principal
-    app.dependency_overrides[get_current_user_or_api_key] = lambda: e.principal
+    app.dependency_overrides[get_current_user] = _override_get_current_user
+    app.dependency_overrides[get_current_user_or_api_key] = _override_get_current_user
 
     async def _override_scope():
         set_company_scope(db, e.scope)
