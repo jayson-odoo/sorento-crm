@@ -998,3 +998,98 @@ def test_format_drops_a_full_width_quoted_title_and_collapses_the_gap():
     facts = {"status": "collecting", "title": "销售报告", "captured": {}}
     out = _format_ideate_reply("「销售报告」\n\nProblem: x\n\n\nWhat next?", facts)
     assert out == "*Problem:* x\n\nWhat next?"
+
+
+# --------------------------------------------------------------------------- #
+# #1279 round 2 - owner console test 26 Sep 14:09Z (W1, W3).                  #
+# --------------------------------------------------------------------------- #
+_CONFIRM_LINE = "Submit this idea? Reply yes to submit, or tell me what to change."
+_REVIEW_CAPTURED = {
+    "problem": "We need our own manufacturing production line.",
+    "proposed_solution": "Implement a production line.",
+    "impact": "It will reduce our supply chain constraints.",
+    "department": "Manufacturing",
+}
+_REVIEW_RECAP = [
+    "*Problem:* We need our own manufacturing production line.",
+    "*Solution:* Implement a production line.",
+    "*Impact:* It will reduce our supply chain constraints.",
+    "*Department:* Manufacturing",
+]
+
+
+def test_format_review_ends_with_the_confirm_question_not_a_field_ask():
+    """Reply 3 of the owner's session asked "What department should own this?"
+    in review; the review reply always ends with the confirm question."""
+    facts = {"status": "review", "title": "Implement manufacturing production line", "captured": _REVIEW_CAPTURED}
+    text = "\n".join(
+        ['"Implement manufacturing production line"']
+        + [line.replace("*", "") for line in _REVIEW_RECAP]
+        + ["What department should own this?"]
+    )
+    assert _format_ideate_reply(text, facts).splitlines() == _REVIEW_RECAP + [_CONFIRM_LINE]
+
+
+def test_format_review_never_lets_a_value_question_mark_stand_in_for_the_confirm():
+    """Reply 4: "*Department:* the manufactuirng?" was the last line and its '?'
+    passed the one-question gate, so no confirm question was asked."""
+    facts = {"status": "review", "title": "", "captured": _REVIEW_CAPTURED}
+    text = "\n".join(_REVIEW_RECAP[:3] + ["*Department:* the manufactuirng?"])
+    out = _format_ideate_reply(text, facts)
+    assert out.splitlines() == _REVIEW_RECAP + [_CONFIRM_LINE]
+    assert "manufactuirng" not in out
+
+
+def test_format_review_is_idempotent():
+    facts = {"status": "review", "title": "", "captured": _REVIEW_CAPTURED}
+    once = _format_ideate_reply("\n".join(_REVIEW_RECAP) + "\nSubmit it?", facts)
+    assert _format_ideate_reply(once, facts) == once
+
+
+def test_compose_review_llm_recap_without_a_question_still_asks_to_confirm(configured):
+    text = "\n".join(_REVIEW_RECAP[:3] + ["*Department:* the manufactuirng?"])
+    result = {
+        "status": "review",
+        "title": "Implement manufacturing production line",
+        "captured": _REVIEW_CAPTURED,
+        "next_field": None,
+        "duplicate_candidate": None,
+        "idea_number": None,
+        "link": None,
+        "reply_text": "fallback",
+    }
+    with _patched(_StubProvider(text)):
+        out = compose_ideate_reply(configured, result=result, user_message="the manufactuirng?")
+    assert out.splitlines() == _REVIEW_RECAP + [_CONFIRM_LINE]
+
+
+def test_compose_shows_still_being_worked_out_for_a_value_the_extractor_never_produced(configured):
+    """W1: a captured value sorento never sent (the intake seeded `problem` from
+    the raw message) is shown as still being worked out, on the LLM path too."""
+    raw = "i have an idea, i think we should implemnt production line"
+    result = {
+        "status": "collecting",
+        "title": "",
+        "captured": {"problem": raw, "proposed_solution": "Implement a production line."},
+        "next_field": "impact",
+        "duplicate_candidate": None,
+        "idea_number": None,
+        "link": None,
+        "reply_text": f"Problem: {raw}\nSolution: Implement a production line.\nWhat impact would this have?",
+    }
+    llm = f"Problem: {raw}\nSolution: Implement a production line.\nWhat impact would this have?"
+    provider = _StubProvider(llm)
+    with _patched(provider):
+        out = compose_ideate_reply(
+            configured,
+            result=result,
+            user_message=raw,
+            clean_fields={"proposed_solution": "Implement a production line."},
+        )
+    assert out.splitlines() == [
+        "*Problem:* still being worked out",
+        "*Solution:* Implement a production line.",
+        "What impact would this have?",
+    ]
+    # The raw text never reaches the composer as a fact either.
+    assert "implemnt" not in provider.calls[0][1]["content"].split("User's latest message")[0]

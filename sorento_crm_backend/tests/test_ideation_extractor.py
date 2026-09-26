@@ -116,14 +116,20 @@ def _extraction(
 # --------------------------------------------------------------------------- #
 def test_confirm_is_derived_not_read_from_model(configured):
     """Even if a rogue model payload carried a top-level `confirm`, the schema
-    doesn't declare one - it can't reach the result except via review_action."""
+    doesn't declare one - it can't reach the result except via review_action.
+    #1279 round 2 (owner ruling 26 Sep 2026): only a plain yes creates, so a
+    submit that carries a field edit and no yes word does not confirm."""
     out = _extraction(
+        configured, {"review_action": "submit"}, message_text="yes", status="review"
+    )
+    assert out.confirm is True
+    edit = _extraction(
         configured,
         {"fields": [{"key": "problem", "value": "x"}], "review_action": "submit"},
         status="review",
     )
-    assert out.confirm is True
-    assert out.fields == {"problem": "x"}
+    assert edit.confirm is False
+    assert edit.fields == {"problem": "x"}
 
 
 # --------------------------------------------------------------------------- #
@@ -188,7 +194,8 @@ def test_unknown_skip_key_dropped(configured):
 # AC-1208 - natural submit words confirm only in review                       #
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize(
-    "word", ["yes", "ok", "boleh", "submit", "confirm", "can you just submit it already"]
+    "word",
+    ["yes", "ok", "ya", "boleh", "好", "可以", "submit", "confirm", "can you just submit it already"],
 )
 def test_submit_words_confirm_in_review(configured, word):
     out = _extraction(configured, {"review_action": "submit"}, message_text=word, status="review")
@@ -475,5 +482,113 @@ def test_ideation_reply_fmt_migration_exists_and_bumps_both_prompts():
     )
     content = matches[0].read_text(encoding="utf-8")
     assert f'revision = "{revision_id}"' in content or f"revision = '{revision_id}'" in content
+    assert 'bump_prompt_to_fallback(op.get_bind(), "ideate_extractor")' in content
+    assert 'bump_prompt_to_fallback(op.get_bind(), "ideate_reply")' in content
+
+
+# --------------------------------------------------------------------------- #
+# #1279 round 2 - owner console test 26 Sep 14:09Z (W1 to W3).                #
+# --------------------------------------------------------------------------- #
+from app.services.ideation_extractor import derive_confirm, normalise_field_value, normalise_title  # noqa: E402
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("the manufacturing?", "Manufacturing"),
+        ("manufacturing?", "Manufacturing"),
+        ("  sales manager  ", "Sales Manager"),
+        ("IT", "IT"),
+        ("our operations team!", "Operations Team"),
+        ("Manufacturing", "Manufacturing"),
+    ],
+)
+def test_normaliser_department(raw, expected):
+    assert normalise_field_value("department", raw) == expected
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("it will boost sales?", "It will boost sales"),
+        ("It will reduce our supply chain constraints.", "It will reduce our supply chain constraints."),
+        ("faster delivery ??", "Faster delivery"),
+        ("  more sales！", "More sales"),
+        ("提高销量？", "提高销量"),
+    ],
+)
+def test_normaliser_impact(raw, expected):
+    assert normalise_field_value("impact", raw) == expected
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ('"Implement manufacturing production line?"', "Implement manufacturing production line"),
+        ("implement production line", "Implement production line"),
+        ("“Sales order KPI tracking”", "Sales order KPI tracking"),
+        ("", ""),
+    ],
+)
+def test_normaliser_title(raw, expected):
+    assert normalise_title(raw) == expected
+
+
+@pytest.mark.parametrize(
+    "message,expected",
+    [
+        ("yes", True), ("ok", True), ("ya", True), ("boleh", True), ("好", True), ("可以", True),
+        ("Yes!", True), ("ok lah", True), ("okay", True),
+        ("sure", False), ("maybe", False), ("manufacturing?", False), ("no", False),
+    ],
+)
+def test_a_plain_yes_confirms_in_review_without_the_model(message, expected):
+    assert derive_confirm("review", message, fields={}, remove=[], review_action="none") is expected
+
+
+def test_confirm_needs_review_and_no_edit():
+    assert derive_confirm("collecting", "yes", fields={}, remove=[], review_action="submit") is False
+    assert derive_confirm("review", "yes", fields={"impact": "x"}, remove=[], review_action="submit") is False
+    assert derive_confirm("review", "yes", fields={}, remove=["impact"], review_action="none") is False
+    assert derive_confirm("review", "yes cancel", fields={}, remove=[], review_action="cancel") is False
+    assert derive_confirm("review", "ok that's correct", fields={}, remove=[], review_action="submit") is True
+    assert derive_confirm("review", "that's correct", fields={}, remove=[], review_action="submit") is False
+
+
+def test_extractor_prompt_cleans_every_value_and_never_keeps_typed_punctuation():
+    from app.services import ai_prompt_registry
+
+    text = ai_prompt_registry.PROMPT_KEYS["ideate_extractor"].fallback()
+    lower = text.lower()
+    # W2: the owner's own example, and the punctuation rule.
+    assert "the manufactuirng?" in lower and "'manufacturing'" in lower
+    assert "question mark" in lower
+    assert "title case" in lower
+    # W1: problem is emitted from the first message, and a raw captured value is re-cleaned.
+    assert "first message" in lower and "always" in lower
+    assert "re-emit" in lower
+    # W3: only a plain yes submits.
+    for word in ("yes", "ok", "ya", "boleh", "好", "可以"):
+        assert word in text
+
+
+def test_reply_prompt_asks_the_confirm_question_in_review():
+    from app.services import ai_prompt_registry
+
+    text = ai_prompt_registry.PROMPT_KEYS["ideate_reply"].fallback()
+    assert "Submit this idea? Reply yes to submit, or tell me what to change." in text
+
+
+def test_ideation_confirm_migration_bumps_both_prompts_on_top_of_round_1():
+    import pathlib
+
+    revision_id = "ideation_confirm_prompts"
+    assert len(revision_id) <= 32
+    versions_dir = pathlib.Path(__file__).resolve().parents[1] / "alembic" / "versions"
+    path = versions_dir / f"{revision_id}.py"
+    assert path.exists()
+    content = path.read_text(encoding="utf-8")
+    assert f'revision = "{revision_id}"' in content
+    assert 'down_revision = "ideation_reply_fmt_prompts"' in content
     assert 'bump_prompt_to_fallback(op.get_bind(), "ideate_extractor")' in content
     assert 'bump_prompt_to_fallback(op.get_bind(), "ideate_reply")' in content
