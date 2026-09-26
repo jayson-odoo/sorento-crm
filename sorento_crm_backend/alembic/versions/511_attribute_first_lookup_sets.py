@@ -1,7 +1,7 @@
 """Two empty lookup sets for attribute-first asks: certificate_scheme, attachment_type_alias
 
 Revision ID: 511_attribute_first_lookup_sets
-Revises: 510_pi_description_en
+Revises: oisl_0001_suggested_links
 Create Date: 2026-09-10
 
 D3, PLAN-attribute-first-asks.md. NO options here by owner decision (10 Sep 2026:
@@ -13,13 +13,20 @@ unrecognized, never a 500 (AC-1314).
 Idempotent: re-running upgrade() leaves the same two rows, not duplicates.
 Downgrade drops both sets; any options an owner has since entered cascade with
 them (`lookup_options.set_id` is `ondelete=CASCADE`).
+
+Also (revive, 26 Sep 2026, owner: "which water tap got stock ... which water basin
+got stock"): appends "water tap" to every Tap category's `search_synonyms` and
+"water basin" to every Wash Basin one, the same words
+`product_class_signal.CLASS_SYNONYMS` now carries so a later backfill keeps them.
+Append-only: a word already there (staff's or the backfill's) is never touched,
+and the word is never added twice. Downgrade removes only these two words.
 """
 from alembic import op
 import sqlalchemy as sa
 
 
 revision = "511_attribute_first_lookup_sets"
-down_revision = "510_pi_description_en"
+down_revision = "oisl_0001_suggested_links"
 branch_labels = None
 depends_on = None
 
@@ -41,7 +48,22 @@ SETS = (
 )
 
 
+# (class_label, the word appended to that class's categories)
+CLASS_WORDS = (("Tap", "water tap"), ("Wash Basin", "water basin"))
+
+
 def upgrade() -> None:
+    for class_label, word in CLASS_WORDS:
+        op.execute(
+            sa.text(
+                """
+                UPDATE product_categories
+                SET search_synonyms = COALESCE(search_synonyms, '[]'::jsonb) || jsonb_build_array(CAST(:word AS text))
+                WHERE class_label = :class_label
+                  AND NOT (COALESCE(search_synonyms, '[]'::jsonb) @> jsonb_build_array(CAST(:word AS text)))
+                """
+            ).bindparams(class_label=class_label, word=word)
+        )
     for set_key, name, description in SETS:
         op.execute(
             sa.text(
@@ -70,6 +92,16 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    for class_label, word in CLASS_WORDS:
+        op.execute(
+            sa.text(
+                """
+                UPDATE product_categories
+                SET search_synonyms = search_synonyms - CAST(:word AS text)
+                WHERE class_label = :class_label
+                """
+            ).bindparams(class_label=class_label, word=word)
+        )
     for set_key, _name, _description in SETS:
         # Cascades to any owner-entered options + keywords via FK ondelete=CASCADE.
         op.execute(

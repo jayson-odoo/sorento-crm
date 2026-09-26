@@ -65,8 +65,10 @@ CLASS_SUFFIXES: dict[str, str] = {
 # class label itself. Malay terms included because the corpus is bilingual.
 CLASS_SYNONYMS: dict[str, list[str]] = {
     "Kitchen Sink": ["kitchen sink", "sink", "sinki", "dapur"],
-    "Tap": ["tap", "faucet", "mixer", "paip", "kepala paip"],
-    "Wash Basin": ["wash basin", "basin", "washbasin", "sink basin", "besen"],
+    # "water tap" / "water basin": the owner's own words for the two (26 Sep 2026, "which
+    # water tap got stock"). Migration 511 appends them to the categories already on file.
+    "Tap": ["tap", "faucet", "mixer", "paip", "kepala paip", "water tap"],
+    "Wash Basin": ["wash basin", "basin", "washbasin", "sink basin", "besen", "water basin"],
     "Water Closet": ["water closet", "wc", "toilet", "toilet bowl", "closet", "tandas"],
     "Shower": ["shower", "shower head", "rain shower", "hand shower", "pancuran"],
     "Bathroom Furniture": ["cabinet", "mirror", "vanity", "bathroom cabinet", "kabinet"],

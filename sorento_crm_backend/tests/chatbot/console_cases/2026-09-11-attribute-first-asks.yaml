@@ -17,10 +17,46 @@ cases:
       reply_not_contains: ["have stock. Showing"]
 
   - name: an unknown class word clarifies with the nearest label (AC-1320)
-    text: "which water tap has cert"
+    # Was "which water tap has cert"; the owner ruled "water tap" IS a tap (26 Sep 2026),
+    # so the clarify is pinned with a word the vocabulary still does not know.
+    text: "which aqua tap has cert"
     cold: true
     expect:
-      reply_contains: ["I don't know 'water tap'", "Did you mean"]
+      reply_contains: ["I don't know 'aqua tap'", "Did you mean"]
+
+  # The owner's own four reverse asks (26 Sep 2026): "which water tap got stock which
+  # water tap got certificate which water basin ... got stock or got incoming".
+  - name: owner reverse ask, which water tap got stock
+    text: "which water tap got stock"
+    cold: true
+    expect:
+      reply_contains: ["taps have stock"]
+      reply_not_contains: ["I don't know"]
+      no_uuid: true
+
+  - name: owner reverse ask, which water tap got certificate
+    text: "which water tap got certificate"
+    cold: true
+    expect:
+      reply_contains: ["taps have certificates"]
+      reply_not_contains: ["I don't know", "Which kind of file"]
+      no_uuid: true
+
+  - name: owner reverse ask, which water basin got stock
+    text: "which water basin got stock"
+    cold: true
+    expect:
+      reply_contains: ["wash basins have stock"]
+      reply_not_contains: ["I don't know"]
+      no_uuid: true
+
+  - name: owner reverse ask, which basin got incoming
+    text: "which basin got incoming"
+    cold: true
+    expect:
+      reply_contains: ["wash basins have incoming stock"]
+      reply_not_contains: ["I don't know"]
+      no_uuid: true
 
   - name: a class word scopes the set and the header counts it (AC-1306, AC-1316)
     text: "which tap has cert"
@@ -100,9 +136,9 @@ cases:
       - text: "which tap has cert"
         expect:
           reply_contains: ["Showing 5"]
-      - text: "which water tap has cert"
+      - text: "which aqua tap has cert"
         expect:
-          reply_contains: ["I don't know 'water tap'"]
+          reply_contains: ["I don't know 'aqua tap'"]
       - text: "more"
         expect:
           reply_not_contains: ["Showing 6 to 10"]

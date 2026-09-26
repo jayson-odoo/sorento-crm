@@ -1190,20 +1190,24 @@ def test_a_size_with_no_unit_is_not_assumed_to_be_millimetres(db):
 
 
 def test_filter_specs_reports_a_phrase_that_names_no_set(db):
-    """AC-1301: "water tap" is a phrase whose content words are EACH known to the
-    catalogue's own vocabulary ("water" from the "Water Closet" synonym set, "tap" from
-    the "Tap" class synonyms) but which, as a two-word phrase, names no class, no
+    """AC-1301: "water tub" is a phrase whose content words are EACH known to the
+    catalogue's own vocabulary ("water" from the "Water Closet" synonym set, "tub" from
+    the "Bathtub" class synonyms) but which, as a two-word phrase, names no class, no
     product_type and no brand. Today `filter_specs` reports this as an honest EMPTY list
     (word-level alien check only) - the fix must report the phrase itself.
+
+    The example used to be "water tap"; the owner ruled on 26 Sep 2026 that "water tap"
+    IS a tap ("which water tap got stock"), so it is a Tap synonym now and this property
+    is pinned with a phrase that still names nothing.
     """
     from app.services.product_spec_search import _search_vocabulary, filter_specs
 
     vocabulary = _search_vocabulary(db)
     assert "water" in vocabulary, "precondition: 'water' alone is already known vocabulary"
 
-    verdict = filter_specs(db, free_terms=["water tap"])
+    verdict = filter_specs(db, free_terms=["water tub"])
     assert verdict["clause"] is None
-    assert verdict["unrecognized_terms"] == ["water tap"]
+    assert verdict["unrecognized_terms"] == ["water tub"]
 
 
 def test_content_words_drop_question_words(db):

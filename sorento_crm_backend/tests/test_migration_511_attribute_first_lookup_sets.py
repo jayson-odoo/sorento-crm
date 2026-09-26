@@ -108,3 +108,66 @@ def test_migration_creates_two_empty_lookup_sets_and_downgrade_removes_them():
         with Operations.context(ctx):
             module.downgrade()
         assert _set_rows(db) == []
+
+
+# --------------------------------------------------------------------------- #
+# Revive 26 Sep 2026 (owner: "which water tap got stock ... which water basin  #
+# got stock"): the two everyday words reach their class. Appended to the       #
+# categories that ALREADY carry the class, never overwriting a word staff or   #
+# the backfill put there, and the code list says the same so a later          #
+# `backfill_category_signals` (set-where-mismatch) keeps them.                  #
+# --------------------------------------------------------------------------- #
+
+WATER_WORDS = {"Tap": "water tap", "Wash Basin": "water basin"}
+
+
+def _category(db, code: str, class_label: str | None, synonyms: list[str]) -> str:
+    import json
+    import uuid
+
+    cid = str(uuid.uuid4())
+    db.execute(
+        text(
+            "INSERT INTO product_categories (id, category_code, category_name, class_label, "
+            "search_synonyms, is_searchable) VALUES (:id, :code, :name, :label, CAST(:syn AS jsonb), TRUE)"
+        ),
+        {"id": cid, "code": code, "name": code, "label": class_label, "syn": json.dumps(synonyms)},
+    )
+    return cid
+
+
+def _synonyms(db, cid: str) -> list[str]:
+    return db.execute(
+        text("SELECT search_synonyms FROM product_categories WHERE id = :id"), {"id": cid}
+    ).scalar()
+
+
+def test_class_synonyms_in_code_carry_the_water_words():
+    from app.services.product_class_signal import CLASS_SYNONYMS
+
+    for label, word in WATER_WORDS.items():
+        assert word in CLASS_SYNONYMS[label], (label, CLASS_SYNONYMS[label])
+
+
+def test_migration_appends_the_water_words_to_their_class_and_downgrade_removes_only_them():
+    module = _load_migration()
+    with blank_session() as db:
+        tap = _category(db, "ZZT-M511-FT", "Tap", ["tap", "faucet", "staff word"])
+        basin = _category(db, "ZZT-M511-WB", "Wash Basin", ["basin"])
+        sink = _category(db, "ZZT-M511-KS", "Kitchen Sink", ["sink"])
+        unclassed = _category(db, "ZZT-M511-X", None, [])
+
+        ctx = MigrationContext.configure(db.connection())
+        with Operations.context(ctx):
+            module.upgrade()
+            module.upgrade()  # idempotent: the word is never added twice
+
+        assert _synonyms(db, tap) == ["tap", "faucet", "staff word", "water tap"]
+        assert _synonyms(db, basin) == ["basin", "water basin"]
+        assert _synonyms(db, sink) == ["sink"]
+        assert _synonyms(db, unclassed) == []
+
+        with Operations.context(ctx):
+            module.downgrade()
+        assert _synonyms(db, tap) == ["tap", "faucet", "staff word"]
+        assert _synonyms(db, basin) == ["basin"]
