@@ -87,8 +87,9 @@ code).
 - **AC-S1-14 [FE][T]** Changing the as-at date or basis refetches once and redraws both blocks.
 - **AC-S1-15 [FE][T]** A block with no sales renders its table with blanks and "No sales in this
   period", never a missing section.
-- **AC-S1-16 [FE][E2E]** At 375 each table scrolls sideways inside its card with the year column
-  sticky; the chart fits the width; nothing is clipped. At 1280 the table fits without scrolling.
+- **AC-S1-16 [FE][E2E]** Screens print whole ringgit (the export keeps cents). At 375, and at 1280
+  whenever twelve months do not fit, each table scrolls sideways inside its card with the YEAR
+  column sticky and no cell cut; the chart fits the width; the page itself never scrolls sideways.
 - **AC-S1-17 [BE][T]** Export: the `.xlsx` has one sheet with the title block (company, report
   title, "As at 26/09/2026", basis), the two blocks in the PDF's order, the variance row, a native
   line chart under each block, number format `#,##0.00;(#,##0.00)`, and totals as values, never

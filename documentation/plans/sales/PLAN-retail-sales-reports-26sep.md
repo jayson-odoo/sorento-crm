@@ -365,9 +365,11 @@ in a list, or an unknown key; 403 on a company outside the caller's grant.
   earlier years in the palette's secondary tokens). B and C: line tabs per group of sections
   (Monthly, Year to date, Dealer vs HANLIM for B; By account, By debtor type, By month, Project
   debtors, By quarter for C), tab strips scrolling at 375.
-- Numbers right aligned, tabular, negatives in brackets `(12,345.00)` as the PDF prints them,
-  blank for no sales, `(blank)` group last. At 375 each grid scrolls sideways inside its card
-  with the first column sticky.
+- Numbers right aligned, tabular, whole ringgit on screen (the export keeps cents), negatives in
+  brackets `(12,345)` as the PDF prints them, blank for no sales, `(blank)` group last. A grid
+  wider than its card (twelve months of 7-digit figures at 1280 with the sidebar open, every
+  month grid at 375) scrolls sideways inside the card with the first column sticky; no cell is
+  cut.
 - Excel: one sheet per report, sections stacked in the PDF's order, the kernel's title block
   (company, report title, as-at date), header bold, number format `#,##0.00;(#,##0.00)`, totals as
   **values, never formulas** (kernel docstring `xlsx_renderer.py:14-16`), report A with a native
