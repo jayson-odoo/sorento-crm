@@ -775,7 +775,9 @@ CATALOG: tuple[ToolSpec, ...] = (
             "the customer which one. `basis` - delivered (default: transferred to DO, capped at "
             "ordered) | ordered. `group` - item (default) | category (rank categories). `n` - how "
             "many rows, 1 to 100; OMIT it when the customer named no number and every ranked row "
-            "comes back (no paging, no 'more'); `total_count` says how many there are.\n\n"
+            "comes back (no paging, no 'more'); `total_count` says how many there are. "
+            "`count_only=true` returns that count and NO rows (one row is still returned): the "
+            "how-many question when the customer named no number.\n\n"
             "FILTERS (all optional, ANDed): `customer_ids` (csv/JSON/repeated UUIDs), "
             "`customer_query` (partial customer NAME, min 3 chars), `category_ids`, "
             "`sales_agent_ids` (sales_orders.sales_agent_id), `channel` dealer | project, "
@@ -794,7 +796,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         (
             "rank_by", "basis", "group", "n", "customer_ids", "customer_query",
             "category_ids", "sales_agent_ids", "channel", "date_from", "date_to",
-            "contact_id", "space_id", "detail_code",
+            "contact_id", "space_id", "detail_code", "count_only",
         ),
         domain="orders",
         related_tools=("crm_sales_report",),

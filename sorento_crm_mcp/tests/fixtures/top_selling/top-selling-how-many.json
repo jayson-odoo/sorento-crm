@@ -1,15 +1,23 @@
 {
-  "group": "item",
-  "rank_by": "qty",
+  "rank_by": "quantity",
   "basis": "delivered",
-  "top_n": null,
-  "total": 1284,
-  "customer_name": null,
-  "category_name": null,
-  "sales_agent": null,
-  "agent_fill_pct": null,
-  "channel": null,
+  "group": "item",
+  "n": null,
   "date_from": "2026-01-01",
   "date_to": "2026-12-31",
-  "rows": []
+  "filters": {
+    "customer_name": null,
+    "category_name": null,
+    "sales_agent": null,
+    "channel": null,
+    "dealer_scoped": false
+  },
+  "total_count": 1284,
+  "rows": [],
+  "totals": {
+    "quantity": 0,
+    "amount": 0
+  },
+  "sales_agent_fill_rate": null,
+  "detail": null
 }

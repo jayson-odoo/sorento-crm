@@ -1,58 +1,66 @@
 {
-  "group": "category",
   "rank_by": "amount",
   "basis": "delivered",
-  "top_n": 6,
-  "total": 6,
-  "customer_name": null,
-  "category_name": null,
-  "sales_agent": null,
-  "agent_fill_pct": null,
-  "channel": null,
+  "group": "category",
+  "n": 6,
   "date_from": "2026-01-01",
   "date_to": "2026-12-31",
+  "filters": {
+    "customer_name": null,
+    "category_name": null,
+    "sales_agent": null,
+    "channel": null,
+    "dealer_scoped": false
+  },
+  "total_count": 6,
   "rows": [
     {
       "rank": 1,
       "code": "KS",
       "name": "KITCHEN SINK",
-      "qty": 4210,
+      "quantity": 4210,
       "amount": 612300.0
     },
     {
       "rank": 2,
       "code": "WC",
       "name": "WATER CLOSET",
-      "qty": 1830,
+      "quantity": 1830,
       "amount": 498120.0
     },
     {
       "rank": 3,
       "code": "BM",
       "name": "BASIN MIXER",
-      "qty": 2960,
+      "quantity": 2960,
       "amount": 301450.75
     },
     {
       "rank": 4,
       "code": "KT",
       "name": "KITCHEN TAP",
-      "qty": 3105,
+      "quantity": 3105,
       "amount": 210980.0
     },
     {
       "rank": 5,
       "code": "ACC",
       "name": null,
-      "qty": 7400,
+      "quantity": 7400,
       "amount": 0
     },
     {
       "rank": 6,
       "code": null,
       "name": null,
-      "qty": 120,
+      "quantity": 120,
       "amount": 3600.0
     }
-  ]
+  ],
+  "totals": {
+    "quantity": 19625,
+    "amount": 1626450.75
+  },
+  "sales_agent_fill_rate": null,
+  "detail": null
 }

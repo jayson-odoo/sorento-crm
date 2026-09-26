@@ -1914,6 +1914,14 @@ async def get_top_selling(
             "by_customer and by_month, same filters and basis, sorted by the rank_by metric desc."
         ),
     ),
+    count_only: bool = Query(
+        False,
+        description=(
+            "The chatbot's how-many question (no N named): the full total_count and totals with "
+            "NO rows, so the whole ranked book is never sent just to be counted. A single ranked "
+            "row is still returned (nothing to choose between). n is ignored."
+        ),
+    ),
     contact_id: Optional[str] = Query(
         None,
         description=(
@@ -2044,7 +2052,9 @@ async def get_top_selling(
         rank_by=rank_by_norm,
         basis=basis_norm,
         group=group_norm,
-        n=n,
+        # count_only: the window functions still count and total the whole set, so
+        # one row is enough to read them off (and is the row a one-row set sends).
+        n=1 if count_only else n,
         customer_query=customer_query_stripped,
         customer_ids=resolved_customer_ids,
         category_ids=resolved_category_ids,
@@ -2055,4 +2065,8 @@ async def get_top_selling(
         dealer_scoped=dealer_scoped,
         detail_code=detail_code_stripped,
     )
+    if count_only:
+        data["n"] = None
+        if data["total_count"] > 1:
+            data["rows"] = []
     return TopSellingResponse(**data)

@@ -9,9 +9,9 @@ Channel: Project
 Delivery date: 01/08/2026 to 31/08/2026
 
 1. SRTWC5501: Qty 210, RM 58,800.00
-2. SRTWT8120 Undermount Sink: Qty 96, RM 8,640.00
-3. SRTBS1020 Basin Mixer: Qty 120, RM 7,200.00
-4. SRTKT39SS Kitchen Tap: Qty 150, RM 4,800.00
-5. SRTSH2201 Shower Set: Qty 88, RM 2,728.00
+2. SRTWT8120: Qty 96, RM 8,640.00
+3. SRTBS1020: Qty 120, RM 7,200.00
+4. SRTKT39SS: Qty 150, RM 4,800.00
+5. SRTSH2201: Qty 88, RM 2,728.00
 
 Reply with a rank number to see that item's customers and months.

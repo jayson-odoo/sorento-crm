@@ -8,10 +8,10 @@ Sales agent: all
 Channel: all
 Delivery date: 01/01/2026 to 31/12/2026
 
-1. SRTWT7445 Kitchen Sink 2 Bowl: Qty 1,240, RM 86,400.00
-2. SRTKT39SS Kitchen Tap: Qty 980, RM 31,200.00
-3. SRTBS1020 Basin Mixer: Qty 875, RM 52,500.50
-4. SRTSH2201 Shower Set: Qty 640, RM 19,840.00
+1. SRTWT7445: Qty 1,240, RM 86,400.00
+2. SRTKT39SS: Qty 980, RM 31,200.00
+3. SRTBS1020: Qty 875, RM 52,500.50
+4. SRTSH2201: Qty 640, RM 19,840.00
 5. SRTWC5501: Qty 512, RM 143,360.00
 
 Reply with a rank number to see that item's customers and months.

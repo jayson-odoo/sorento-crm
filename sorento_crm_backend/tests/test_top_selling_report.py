@@ -389,6 +389,42 @@ def test_n_cuts_the_list_and_totals_cover_the_whole_set(client, db):
     assert _money(body["totals"]["amount"]) == Decimal("120.00")
 
 
+def test_count_only_returns_the_full_count_and_no_rows(client, db):
+    """S4 (owner, PR #1258 05:32Z): with no N named the chatbot states the full count
+    and asks how many. `count_only` is how the lane asks the route for that count
+    WITHOUT the whole ranked book (review N1: a full year was 13,230 rows, about 1 MB):
+    no rows, the true `total_count` and whole-set `totals`, `n` null."""
+    for i in range(7):
+        p = _product(db, f"ZZTCNT-{i:02d}")
+        _line(db, product_id=p.id, ordered=10 + i, delivered=10 + i, line_total=Decimal("2.00"))
+    db.commit()
+
+    body = _get(client, rank_by="quantity", count_only="true").json()
+    assert body["rows"] == []
+    assert body["total_count"] == 7
+    assert body["n"] is None
+    assert body["totals"]["quantity"] == sum(10 + i for i in range(7))
+    assert _money(body["totals"]["amount"]) == Decimal("14.00")
+
+
+def test_count_only_keeps_a_single_row(client, db):
+    """One ranked row is sent as is (nothing to choose between), so `count_only`
+    returns it rather than a count to ask about."""
+    p = _product(db, "ZZTCNT-ONE")
+    _line(db, product_id=p.id, ordered=3, delivered=3, line_total=Decimal("9.00"))
+    db.commit()
+
+    body = _get(client, rank_by="quantity", count_only="true").json()
+    assert body["total_count"] == 1
+    assert _codes(body) == ["ZZTCNT-ONE"]
+
+
+def test_count_only_with_no_sales_is_an_empty_miss(client, db):
+    body = _get(client, rank_by="quantity", count_only="true").json()
+    assert body["total_count"] == 0
+    assert body["rows"] == []
+
+
 @pytest.mark.parametrize("n,status", [(0, 422), (101, 422), (-1, 422), (1, 200), (100, 200)])
 def test_n_cap(client, db, n, status):
     p = _product(db)

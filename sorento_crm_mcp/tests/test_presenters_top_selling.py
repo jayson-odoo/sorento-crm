@@ -1,13 +1,14 @@
 """Golden-fixture coverage for the top X hot selling presenter (S1,
-PLAN-chatbot-top-x-hot-selling-24sep.md / its UAC, AC-1901 to AC-1915, rewritten
-for the owner's 26 Sep 2026 rulings on PR #1175).
+PLAN-chatbot-top-x-hot-selling-24sep.md / its UAC, AC-1901 to AC-1916, rewritten
+for the owner's 26 Sep 2026 rulings on PR #1175; S4 moved the mocks onto the
+route's own body as built on PR #1263 and wired the `present_response` dispatch).
 
 `_top_selling` renders the WHOLE WhatsApp reply for a route body;
 `_top_selling_envelope` wraps it with `result_type` / `has_result` the way
 `_sales_report_envelope` does. The clarify and refusal lines are fixed
 constants the lane sends before any fetch, so their goldens are `.txt` only.
-No `present_response` dispatch yet: S3 adds the tool that would call it, the
-same order the sales report's own S1 followed.
+Rows print the CODE only, never a name (owner, 26 Sep 2026: "don't need to show
+name, just show code will do").
 
 Fixture bytes live in TWO places for the reason `test_presenters_sales_report.py`
 gives: `documentation/plans/chatbot/samples/top-selling-*` is the owner's review
@@ -24,11 +25,14 @@ from pathlib import Path
 import pytest
 
 from sorento_crm_mcp.presenters import (
+    PRESENTER_TOOLS,
+    TOP_SELLING_ASK_BASIS,
     TOP_SELLING_ASK_GROUP,
     TOP_SELLING_ASK_METRIC,
     TOP_SELLING_REFUSED_OTHER_CUSTOMER,
     _top_selling,
     _top_selling_envelope,
+    present_response,
 )
 
 _FIXTURES = Path(__file__).parent / "fixtures" / "top_selling"
@@ -44,10 +48,12 @@ _BODY_GOLDENS = [
     "agent",
     "how-many",
     "miss",
+    "detail",
 ]
 _FIXED_GOLDENS = {
     "clarify-metric": TOP_SELLING_ASK_METRIC,
     "clarify-group": TOP_SELLING_ASK_GROUP,
+    "clarify-basis": TOP_SELLING_ASK_BASIS,
     "refused": TOP_SELLING_REFUSED_OTHER_CUSTOMER,
 }
 _ITEM_OFFER = "Reply with a rank number to see that item's customers and months."
@@ -101,25 +107,28 @@ def test_items_by_quantity_header_order():
 
 
 def test_row_line_shape():
+    """Owner, 26 Sep 2026: the code only, never the name, whether or not the route
+    sends one."""
     rendered = _top_selling(_mock("items-qty"))
-    assert "\n1. SRTWT7445 Kitchen Sink 2 Bowl: Qty 1,240, RM 86,400.00\n" in rendered
-    # a null name prints the code alone before the colon
+    assert "\n1. SRTWT7445: Qty 1,240, RM 86,400.00\n" in rendered
     assert "\n5. SRTWC5501: Qty 512, RM 143,360.00\n" in rendered
+    assert "Kitchen Sink" not in rendered
 
 
 def test_rank_number_is_the_bodys_own():
     body = _mock("items-qty")
     body["rows"] = body["rows"][:1]
     body["rows"][0]["rank"] = 7
-    assert "\n7. SRTWT7445 Kitchen Sink 2 Bowl:" in _top_selling(body)
+    assert "\n7. SRTWT7445:" in _top_selling(body)
 
 
 def test_category_rows():
     rendered = _top_selling(_mock("categories"))
     assert rendered.startswith("*Top 6 selling categories*\n")
     assert "Categories with sales: 6\n" in rendered
-    assert "\n1. KITCHEN SINK: Qty 4,210, RM 612,300.00\n" in rendered
-    # name null prints the category code; both null prints Unassigned
+    assert "\n1. KS: Qty 4,210, RM 612,300.00\n" in rendered
+    assert "KITCHEN SINK" not in rendered
+    # a product with no category ranks under a null code: Unassigned
     assert "\n5. ACC: Qty 7,400, RM 0.00\n" in rendered
     assert "\n6. Unassigned: Qty 120, RM 3,600.00\n" in rendered
 
@@ -131,7 +140,8 @@ def test_category_rows():
 
 def test_absent_axis_prints_all():
     body = _mock("items-qty")
-    for key in ("customer_name", "category_name", "sales_agent", "channel", "date_from", "date_to"):
+    body.pop("filters")
+    for key in ("date_from", "date_to"):
         body.pop(key)
     rendered = _top_selling(body)
     for label in ("Customer", "Category", "Sales agent", "Channel", "Delivery date"):
@@ -140,7 +150,7 @@ def test_absent_axis_prints_all():
 
 def test_channel_prints_dealer_project_or_all():
     body = _mock("items-qty")
-    body["channel"] = "dealer"
+    body["filters"]["channel"] = "dealer"
     assert "\nChannel: Dealer\n" in _top_selling(body)
     assert "\nChannel: Project\n" in _top_selling(_mock("channel"))
     assert "\nChannel: all\n" in _top_selling(_mock("customer"))
@@ -156,7 +166,7 @@ def test_ranked_by_and_basis_labels():
 def test_title_follows_named_n_or_none():
     assert _top_selling(_mock("in-category")).startswith("*Top 3 selling items*\n")
     body = _mock("items-qty")
-    body["top_n"] = None
+    body["n"] = None
     assert _top_selling(body).startswith("*Top selling items*\n")
 
 
@@ -170,6 +180,16 @@ def test_agent_fill_note():
     assert "Note:" not in _top_selling(_mock("items-qty"))
 
 
+@pytest.mark.parametrize("rate, printed", [(0.87, True), (0.9449, True), (0.95, False), (1.0, False), (None, False)])
+def test_agent_fill_note_threshold(rate, printed):
+    """As built on PR #1263 the route sends `sales_agent_fill_rate` (0 to 1) whenever
+    an agent filter is used; the presenter prints the note only below 95% (plan,
+    "The reply")."""
+    body = _mock("agent")
+    body["sales_agent_fill_rate"] = rate
+    assert ("Note: only" in _top_selling(body)) is printed
+
+
 # --------------------------------------------------------------------------
 # AC-1905 / AC-1907: cap and input order
 # --------------------------------------------------------------------------
@@ -177,9 +197,9 @@ def test_agent_fill_note():
 
 def test_never_prints_past_one_hundred():
     body = _mock("items-qty")
-    body["top_n"] = 100
+    body["n"] = 100
     body["rows"] = [
-        {"rank": i, "code": f"ZZ{i:03d}", "name": None, "qty": 1, "amount": 1}
+        {"rank": i, "code": f"ZZ{i:03d}", "name": None, "quantity": 1, "amount": 1}
         for i in range(1, 121)
     ]
     rendered = _top_selling(body)
@@ -229,7 +249,7 @@ def test_how_many_reply():
     assert envelope["has_result"] is True
 
     body["group"] = "category"
-    body["total"] = 6
+    body["total_count"] = 6
     assert _top_selling(body).endswith(
         "How many categories do you want to see? Reply with a number from 1 to 6."
     )
@@ -270,15 +290,15 @@ def test_envelope_carries_one_pick_row_per_printed_item():
     ]
 
 
-def test_envelope_pick_rows_at_category_grain_use_the_printed_label():
+def test_envelope_pick_rows_at_category_grain_use_the_printed_code():
     rows = _top_selling_envelope(_mock("categories"))["result_set"]
-    assert [(r["idx"], r["label"], r["entity_type"]) for r in rows] == [
-        (1, "KITCHEN SINK", "category"),
-        (2, "WATER CLOSET", "category"),
-        (3, "BASIN MIXER", "category"),
-        (4, "KITCHEN TAP", "category"),
-        (5, "ACC", "category"),
-        (6, "Unassigned", "category"),
+    assert [(r["idx"], r["label"], r["code"], r["entity_type"]) for r in rows] == [
+        (1, "KS", "KS", "category"),
+        (2, "WC", "WC", "category"),
+        (3, "BM", "BM", "category"),
+        (4, "KT", "KT", "category"),
+        (5, "ACC", "ACC", "category"),
+        (6, "Unassigned", None, "category"),
     ]
 
 
@@ -289,7 +309,7 @@ def test_pick_row_number_is_the_printed_rank():
     assert [r["idx"] for r in _top_selling_envelope(body)["result_set"]] == [7]
 
 
-@pytest.mark.parametrize("name", ["how-many", "miss"])
+@pytest.mark.parametrize("name", ["how-many", "miss", "detail"])
 def test_no_pick_rows_when_no_list_was_printed(name: str):
     assert _top_selling_envelope(_mock(name))["result_set"] == []
 
@@ -320,8 +340,12 @@ def test_dash_guard_and_no_paging_words(name: str):
 
 def test_hostile_body_never_crashes():
     body = copy.deepcopy(_mock("items-qty"))
-    body["rows"] = [{"rank": None, "code": None, "name": None, "qty": "x", "amount": None}, "junk"]
-    body["total"] = None
+    body["rows"] = [{"rank": None, "code": None, "name": None, "quantity": "x", "amount": None}, "junk"]
+    body["total_count"] = None
+    body["filters"] = "junk"
+    body["sales_agent_fill_rate"] = "junk"
+    assert isinstance(_top_selling(body), str)
+    body["detail"] = {"by_customer": "junk", "by_month": [None, {"month": "junk"}]}
     assert isinstance(_top_selling(body), str)
 
 
@@ -337,3 +361,55 @@ def test_documentation_samples_mirror_fixtures():
         mirror = _DOC_SAMPLES / path.name
         assert mirror.exists(), f"{path.name} has no documentation/ mirror"
         assert mirror.read_bytes() == path.read_bytes(), f"{path.name} has drifted from its documentation/ mirror"
+
+
+# --------------------------------------------------------------------------
+# S4: the detail offer's answer, the count-only how-many body, and the dispatch
+# --------------------------------------------------------------------------
+
+
+def test_detail_reply_lists_customers_and_months_under_the_same_header():
+    """AC-1964 presenter half: a rank number re-calls the route with `detail_code`,
+    and the body's `detail` renders that code's customers and months under the same
+    metric, basis and filter lines the ranking printed. Code only in the title."""
+    rendered = _top_selling(_mock("detail"))
+    assert rendered.startswith("*SRTWT7445: customers and months*\nRanked by: Quantity\n")
+    assert "Kitchen Sink" not in rendered
+    assert "\nTotal: Qty 1,240, RM 86,400.00\n" in rendered
+    assert "*_By customer_*\n1. HANLIM TRADING SDN BHD: Qty 610, RM 42,700.00\n" in rendered
+    assert "\n3. Unassigned: Qty 230, RM 15,900.00\n" in rendered
+    assert "*_By month_*\nMar 2026: Qty 520, RM 36,300.00\n" in rendered
+    envelope = _top_selling_envelope(_mock("detail"))
+    assert envelope["result_type"] == "top_selling_detail"
+    assert envelope["has_result"] is True
+
+
+def test_detail_code_with_no_sales_is_the_miss():
+    body = _mock("miss")
+    body["detail"] = None
+    envelope = _top_selling_envelope(body)
+    assert envelope["has_result"] is False
+    assert envelope["response"].endswith("\n\nNo sales found.")
+
+
+def test_count_only_single_row_is_sent_as_is():
+    """Owner, PR #1258 05:32Z: with no N named the bot asks how many, except a single
+    row, which is sent (nothing to choose between). The route keeps that one row on
+    a `count_only` call, so the presenter prints it as an ordinary ranking."""
+    body = _mock("in-category")
+    body["n"] = None
+    body["rows"] = body["rows"][:1]
+    body["total_count"] = 1
+    rendered = _top_selling(body)
+    assert rendered.startswith("*Top selling items*\n")
+    assert "\n1. SRTWT7445: Qty 1,240, RM 86,400.00\n" in rendered
+    assert "How many" not in rendered
+
+
+def test_present_response_dispatches_the_top_selling_envelope():
+    assert "crm_top_selling_report" in PRESENTER_TOOLS
+    for name in ("items-qty", "how-many", "miss", "detail"):
+        body = _mock(name)
+        assert json.loads(present_response("crm_top_selling_report", json.dumps(body))) == (
+            _top_selling_envelope(body)
+        )

@@ -1,51 +1,59 @@
 {
-  "group": "item",
-  "rank_by": "qty",
+  "rank_by": "quantity",
   "basis": "delivered",
-  "top_n": 5,
-  "total": 1284,
-  "customer_name": null,
-  "category_name": null,
-  "sales_agent": null,
-  "agent_fill_pct": null,
-  "channel": null,
+  "group": "item",
+  "n": 5,
   "date_from": "2026-01-01",
   "date_to": "2026-12-31",
+  "filters": {
+    "customer_name": null,
+    "category_name": null,
+    "sales_agent": null,
+    "channel": null,
+    "dealer_scoped": false
+  },
+  "total_count": 1284,
   "rows": [
     {
       "rank": 1,
       "code": "SRTWT7445",
       "name": "Kitchen Sink 2 Bowl",
-      "qty": 1240,
+      "quantity": 1240,
       "amount": 86400.0
     },
     {
       "rank": 2,
       "code": "SRTKT39SS",
       "name": "Kitchen Tap",
-      "qty": 980,
+      "quantity": 980,
       "amount": 31200.0
     },
     {
       "rank": 3,
       "code": "SRTBS1020",
       "name": "Basin Mixer",
-      "qty": 875,
+      "quantity": 875,
       "amount": 52500.5
     },
     {
       "rank": 4,
       "code": "SRTSH2201",
       "name": "Shower Set",
-      "qty": 640,
+      "quantity": 640,
       "amount": 19840.0
     },
     {
       "rank": 5,
       "code": "SRTWC5501",
       "name": null,
-      "qty": 512,
+      "quantity": 512,
       "amount": 143360.0
     }
-  ]
+  ],
+  "totals": {
+    "quantity": 4247,
+    "amount": 333300.5
+  },
+  "sales_agent_fill_rate": null,
+  "detail": null
 }

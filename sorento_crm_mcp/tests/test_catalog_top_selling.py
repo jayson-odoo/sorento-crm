@@ -31,6 +31,7 @@ REQUIRED_QUERY_PARAMS = (
     "contact_id",
     "space_id",
     "detail_code",
+    "count_only",
 )
 
 
