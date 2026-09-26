@@ -85,6 +85,12 @@ export const MENU_SIDEBAR: MenuConfig = [
     icon: TrendingUp,
     children: [
       {
+        title: 'Opportunities',
+        path: '/sales/opportunities',
+        permission: 'sales.opportunities.view',
+        moduleKey: 'sales',
+      },
+      {
         title: 'Sales Teams',
         path: '/sales/teams',
         permission: 'sales.teams.view',
@@ -1851,6 +1857,12 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
     title: 'Sales',
     icon: TrendingUp,
     children: [
+      {
+        title: 'Opportunities',
+        path: '/sales/opportunities',
+        permission: 'sales.opportunities.view',
+        moduleKey: 'sales',
+      },
       {
         title: 'Sales Teams',
         path: '/sales/teams',

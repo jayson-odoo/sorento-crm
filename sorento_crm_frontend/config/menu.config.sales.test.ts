@@ -29,11 +29,19 @@ describe.each([
   ['MENU_SIDEBAR', MENU_SIDEBAR],
   ['MENU_SIDEBAR_COMPACT', MENU_SIDEBAR_COMPACT],
 ] as const)('%s - Sales group', (_name, menu) => {
-  it('holds Sales Teams then Sales Agents, each gated by its own module', () => {
+  it('holds Opportunities, Sales Teams then Sales Agents, each gated by its own module', () => {
+    // Opportunities (plan section 16, slice S2) joins above Sales Teams - see
+    // config/menu.config.opportunities.test.ts, which asserts it does not regress.
     const group = salesGroup(menu);
     expect(group).toBeDefined();
     expect(group!.moduleKey).toBeUndefined();
     expect(group!.children).toEqual([
+      {
+        title: 'Opportunities',
+        path: '/sales/opportunities',
+        permission: 'sales.opportunities.view',
+        moduleKey: 'sales',
+      },
       {
         title: 'Sales Teams',
         path: '/sales/teams',
@@ -70,8 +78,12 @@ describe('filterMenuByModule - Sales group', () => {
     expect(kept.children!.map((c) => c.title)).toEqual(['Sales Agents']);
   });
 
-  it('shows Sales Teams once the sales module is installed', () => {
+  it('shows Opportunities and Sales Teams once the sales module is installed', () => {
     const [kept] = filterMenuByModule([group], new Set(['base', 'product', 'sales']));
-    expect(kept.children!.map((c) => c.title)).toEqual(['Sales Teams', 'Sales Agents']);
+    expect(kept.children!.map((c) => c.title)).toEqual([
+      'Opportunities',
+      'Sales Teams',
+      'Sales Agents',
+    ]);
   });
 });
