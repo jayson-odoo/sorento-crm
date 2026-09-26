@@ -43,7 +43,7 @@ export function useStockDebtQuery(params: StockDebtListParams) {
 
 /**
  * Starts the workbook export through My Downloads (R10/R12, AC-33/AC-34). Same shape as
- * `useExportLowStockReport` (`scm/reorder/hooks/useSummaryOrder.ts`): invalidates the
+ * `useExportOrderSheet` (`scm/reorder/hooks/useSummaryOrder.ts`): invalidates the
  * drawer's feed on success and toasts where the file will show up - this mutation never
  * returns or saves a file itself, the worker marks the row ready later.
  */

@@ -78,10 +78,14 @@ function controller(overrides: Partial<ScheduleGridController> = {}): ScheduleGr
     valueFor: (phaseId, columnKey) => stored.get(`${phaseId}|${columnKey}`) ?? '',
     setDraft: vi.fn(),
     commit: vi.fn(),
-    resolveProduct: vi.fn(),
-    poOptions: [],
     canEdit: true,
-    learnedColumns: [],
+    flagActions: {
+      canEdit: overrides.canEdit ?? true,
+      poOptions: [],
+      resolveProduct: vi.fn(),
+      fixQuantities: vi.fn(),
+      dismissing: false,
+    },
     registerColumnRef: vi.fn(),
     focusRequest: null,
     metaFor: () => undefined,
@@ -89,20 +93,35 @@ function controller(overrides: Partial<ScheduleGridController> = {}): ScheduleGr
   };
 }
 
+/**
+ * The cards' own open/close toggles. The Flag pill is a popover trigger and carries
+ * `aria-expanded` too, so it is told apart by the `aria-haspopup` Radix gives it.
+ */
+function toggles(): HTMLElement[] {
+  return Array.from(
+    screen
+      .getByTestId('schedule-columns-mobile')
+      .querySelectorAll<HTMLElement>('button[aria-expanded]:not([aria-haspopup])'),
+  );
+}
+
 describe('DeliveryScheduleColumnCards', () => {
-  it('gives each column its three numbers without opening anything', () => {
+  it('gives each column its two numbers and its Flag pill without opening anything', () => {
     render(<DeliveryScheduleColumnCards controller={controller()} />);
     const cards = within(screen.getByTestId('schedule-columns-mobile'));
 
-    expect(cards.getAllByText('Our total')).toHaveLength(2);
     expect(cards.getAllByText('Schedule')).toHaveLength(2);
     expect(cards.getAllByText('PO')).toHaveLength(2);
     expect(cards.getByText('Not on the PO')).toBeInTheDocument();
-    // The flush valve has ONE thing to fix: the phases not adding up to the sheet's own
-    // TOTAL QTY. Asking for 8 of the 16 ordered is a partial schedule, not a fault.
-    // The unmatched column has two: no product, and nothing on the PO to check against.
-    expect(cards.getByText('1 to fix')).toBeInTheDocument();
-    expect(cards.getByText('2 to fix')).toBeInTheDocument();
+    // The flush valve has ONE thing to fix, the phases not adding up to the sheet's own
+    // TOTAL QTY, and one warning: asking for 8 of the 16 ordered is a partial schedule, not a
+    // fault. The unmatched column has two: no product, and nothing on the PO to check against.
+    expect(cards.getByRole('button', { name: 'Blocks publish, 2 on SRTFV1001' })).toBeInTheDocument();
+    expect(
+      cards.getByRole('button', { name: 'Blocks publish, 2 on BUI-HB-SRTWB7055' }),
+    ).toBeInTheDocument();
+    // The customer code is shown whole, never truncated: it is what is read off the paper.
+    expect(cards.getByText('BUI-HB-SRTWB7055').className).not.toMatch(/truncate/);
   });
 
   it('mounts quantity fields only for the column that is open', () => {
@@ -111,7 +130,7 @@ describe('DeliveryScheduleColumnCards', () => {
 
     expect(cards.queryByLabelText('Area 3, SRTFV1001')).toBeNull();
 
-    fireEvent.click(cards.getAllByRole('button', { expanded: false })[0]);
+    fireEvent.click(toggles()[0]);
     expect(cards.getByLabelText('Area 3, SRTFV1001')).toHaveValue('8');
     // A blank cell stays blank: TOWER does not take this product.
     expect(cards.getByLabelText('Level 2 & 7, SRTFV1001')).toHaveValue('');
@@ -121,39 +140,44 @@ describe('DeliveryScheduleColumnCards', () => {
     render(<DeliveryScheduleColumnCards controller={controller()} />);
     const cards = within(screen.getByTestId('schedule-columns-mobile'));
 
-    fireEvent.click(cards.getAllByRole('button', { expanded: false })[0]);
+    fireEvent.click(toggles()[0]);
     expect(cards.getByLabelText('Area 3, SRTFV1001')).toBeInTheDocument();
 
-    fireEvent.click(cards.getAllByRole('button', { expanded: false })[0]);
+    fireEvent.click(toggles()[0]);
     expect(cards.queryByLabelText('Area 3, SRTFV1001')).toBeNull();
   });
 
-  it('locks an unidentified column and offers the picker with its blockers', () => {
+  it('locks an unidentified column, and its pill holds the blockers and the picker', async () => {
     render(<DeliveryScheduleColumnCards controller={controller()} />);
     const cards = within(screen.getByTestId('schedule-columns-mobile'));
 
-    fireEvent.click(cards.getAllByRole('button', { expanded: false })[1]);
-
+    fireEvent.click(toggles()[1]);
+    expect(cards.getByLabelText('Level 2 & 7, BUI-HB-SRTWB7055')).toBeDisabled();
+    // Opening the card shows its quantities, not a stack of findings under it.
     expect(
-      cards.getByText(
+      screen.queryByText(
+        'BUI-HB-SRTWB7055 is not matched to a product. Pick the product this column means.',
+      ),
+    ).toBeNull();
+
+    fireEvent.click(cards.getByRole('button', { name: /Blocks publish, 2 on BUI-HB-SRTWB7055/ }));
+    expect(
+      await screen.findByText(
         'BUI-HB-SRTWB7055 is not matched to a product. Pick the product this column means.',
       ),
     ).toBeInTheDocument();
-    expect(
-      cards.getByLabelText('Pick the product for BUI-HB-SRTWB7055'),
-    ).toBeInTheDocument();
-    expect(cards.getByLabelText('Level 2 & 7, BUI-HB-SRTWB7055')).toBeDisabled();
+    expect(screen.getByLabelText('Pick the product for BUI-HB-SRTWB7055')).toBeInTheDocument();
   });
 
-  it('lets a wrong-but-resolved column be changed, same as the matrix', () => {
+  it('lets a wrong-but-resolved column be changed, same as the matrix', async () => {
     render(<DeliveryScheduleColumnCards controller={controller()} />);
     const cards = within(screen.getByTestId('schedule-columns-mobile'));
 
     // SRTFV1001 is matched already and still does not reconcile. Withholding the picker
     // here left a wrong match unfixable without deleting something.
-    fireEvent.click(cards.getAllByRole('button', { expanded: false })[0]);
+    fireEvent.click(cards.getByRole('button', { name: /Blocks publish, 2 on SRTFV1001/ }));
     expect(
-      cards.getByLabelText('Change the product for BUI-HB-SRTFV1001'),
+      await screen.findByLabelText('Change the product for BUI-HB-SRTFV1001'),
     ).toBeInTheDocument();
   });
 
@@ -194,12 +218,14 @@ describe('DeliveryScheduleColumnCards', () => {
     }
   });
 
-  it('offers no picker and no editing when the user cannot edit', () => {
+  it('offers no picker and no editing when the user cannot edit', async () => {
     render(<DeliveryScheduleColumnCards controller={controller({ canEdit: false })} />);
     const cards = within(screen.getByTestId('schedule-columns-mobile'));
 
-    fireEvent.click(cards.getAllByRole('button', { expanded: false })[1]);
-    expect(cards.queryByLabelText(/Pick the product/i)).toBeNull();
+    fireEvent.click(toggles()[1]);
+    fireEvent.click(cards.getByRole('button', { name: /Blocks publish, 2 on BUI/ }));
+    await screen.findByTestId('flag-lines');
+    expect(screen.queryByLabelText(/Pick the product/i)).toBeNull();
     expect(cards.queryByLabelText(/Change the product/i)).toBeNull();
     expect(cards.getByLabelText('Level 2 & 7, BUI-HB-SRTWB7055')).toBeDisabled();
   });
