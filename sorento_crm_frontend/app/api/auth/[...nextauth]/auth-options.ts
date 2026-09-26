@@ -119,6 +119,63 @@ const authOptions: NextAuthOptions = {
           roleName: data.role_name ?? null,
           // Opaque FastAPI session token  - carried in the NextAuth cookie.
           apiToken: data.token,
+          // Where this user lands after signing in (AC-28) - a salesperson's
+          // portal home, the CRM home for anyone with a permission, else the
+          // portal home. Null on a backend that predates this field.
+          homePath: data.home_path ?? null,
+        } as User;
+      },
+    }),
+    CredentialsProvider({
+      id: 'phone-otp',
+      name: 'Phone',
+      credentials: {
+        phone: { label: 'Phone', type: 'text' },
+        code: { label: 'Code', type: 'text' },
+      },
+      async authorize(credentials) {
+        if (!credentials?.phone || !credentials?.code) {
+          throw new Error(
+            JSON.stringify({ code: 400, message: 'Enter the verification code.' }),
+          );
+        }
+
+        let res: Response;
+        try {
+          res = await fetch(`${backendBaseUrl()}/api/v1/auth/phone/verify`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              phone: credentials.phone,
+              code: credentials.code,
+            }),
+          });
+        } catch {
+          throw new Error(
+            JSON.stringify({ code: 503, message: 'Unable to reach the server. Please try again.' }),
+          );
+        }
+
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          const message =
+            (typeof data?.detail === 'string' && data.detail) ||
+            data?.detail?.message ||
+            'That code is not right.';
+          throw new Error(JSON.stringify({ code: res.status, message }));
+        }
+
+        return {
+          id: data.id,
+          email: data.email,
+          name: data.name || 'Anonymous',
+          avatar: data.avatar ?? null,
+          status: data.status,
+          roleId: data.role_id || (data.role_ids?.[0] ?? null),
+          roleIds: data.role_ids ?? (data.role_id ? [data.role_id] : []),
+          roleName: data.role_name ?? null,
+          apiToken: data.token,
+          homePath: data.home_path ?? null,
         } as User;
       },
     }),
@@ -171,6 +228,7 @@ const authOptions: NextAuthOptions = {
         token.roleIds = user.roleIds ?? (user.roleId ? [user.roleId] : []);
         token.roleName = user.roleName ?? null;
         token.apiToken = (user as { apiToken?: string }).apiToken;
+        token.homePath = (user as { homePath?: string | null }).homePath ?? null;
 
         // Multi-company: seed the active-company claim + grant ids at login.
         const apiToken = (user as { apiToken?: string }).apiToken;
@@ -198,6 +256,7 @@ const authOptions: NextAuthOptions = {
         session.user.roleName = token.roleName;
         session.user.active_company_id = token.active_company_id;
         session.user.company_grants = token.company_grants ?? [];
+        session.user.homePath = token.homePath ?? null;
       }
       return session;
     },

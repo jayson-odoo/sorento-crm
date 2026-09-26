@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -11,9 +12,13 @@ import {
 } from '@/components/ui/card';
 import { comingSoonToast } from '@/components/common/coming-soon-toast';
 import { useAccount } from '../components/account-context';
+import ChangePasswordDialog from './components/change-password-dialog';
 
 export default function Page() {
   const { user } = useAccount();
+  const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
+  const hasPassword = Boolean(user.has_password ?? user.hasPassword);
+  const passwordButtonLabel = hasPassword ? 'Change password' : 'Set a password';
 
   return (
     <div className="space-y-6">
@@ -52,11 +57,17 @@ export default function Page() {
             the instructions.
           </CardDescription>
 
-          <Button variant="outline" onClick={() => comingSoonToast()}>
-            Change password
+          <Button variant="outline" onClick={() => setPasswordDialogOpen(true)}>
+            {passwordButtonLabel}
           </Button>
         </CardContent>
       </Card>
+
+      <ChangePasswordDialog
+        open={passwordDialogOpen}
+        closeDialog={() => setPasswordDialogOpen(false)}
+        hasPassword={hasPassword}
+      />
 
       <Card>
         <CardHeader>

@@ -67,6 +67,7 @@ export type UseCase =
   | 'sponsorship_form_chat'
   | 'conversation_chat'
   | 'portal_otp'
+  | 'login_otp'
   | 'sla_daily_summary'
   | 'sla_assignment'
   | 'sla_escalation'
@@ -252,6 +253,12 @@ export const USE_CASES: {
     label: 'Portal OTP',
     description:
       'Login verification code sent when a contact opens the portal on a new device and the 24h window is closed. Map the code param to "OTP code".',
+  },
+  {
+    key: 'login_otp',
+    label: 'Sign-in OTP',
+    description:
+      'Sign-in code sent when someone signs in with their phone number and the 24h window is closed. Map the code param to "OTP code". Until one is set, the Portal OTP template is used.',
   },
   {
     key: 'sla_daily_summary',
