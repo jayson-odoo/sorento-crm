@@ -87,6 +87,72 @@ def test_daily_run_dispatches_low_stock_report_ready(db, monkeypatch):
     assert report["date_label"] == "10 Sep 2026"
 
 
+def _fail_the_run(monkeypatch, db, run_id):
+    """What the real `run_reorder` does on a failure: it never raises, it marks the run
+    `failed` and returns `{"status": "failed"}` (`reorder_run_service._execute_run`)."""
+    from app.models.scm import ReorderRun
+    from app.services.scm import reorder_run_service as reorder_svc
+
+    def _failed(rid, db=None):
+        run = db.query(ReorderRun).filter(ReorderRun.id == rid).one()
+        run.status = "failed"
+        run.error_text = "planning blew up"
+        db.flush()
+        return {"run_id": rid, "status": "failed", "error": "planning blew up"}
+
+    monkeypatch.setattr(reorder_svc, "run_reorder", _failed)
+
+
+def _record_dispatches(monkeypatch) -> list:
+    from app.services import automation_service
+
+    calls: list = []
+    monkeypatch.setattr(
+        automation_service.AutomationService, "dispatch_event",
+        lambda self, trigger_type, **kw: calls.append((trigger_type, kw)) or {"fired": 0},
+    )
+    return calls
+
+
+def test_failed_run_does_not_dispatch(db, monkeypatch):
+    """Review B1: a failed daily run must never send the low stock email. Before the fix the
+    handler ignored `run_reorder`'s `failed` status and dispatched a "0 low" all-clear
+    linking to an empty page."""
+    from app.scheduler import task_scheduler
+
+    run_id = _seed_run_with_rows(db)
+    _stub_the_run(monkeypatch, run_id)
+    _fail_the_run(monkeypatch, db, run_id)
+    calls = _record_dispatches(monkeypatch)
+
+    result = task_scheduler._handler_scm_reorder_run(db, _Task())
+
+    assert result["run_id"] == run_id
+    assert calls == []
+
+
+def test_dispatch_ready_refuses_a_run_that_is_not_completed(db, monkeypatch):
+    """The guard sits on `dispatch_ready` itself, off the run row, so no caller can mail a
+    report for a failed or still-running plan."""
+    from app.models.scm import ReorderRun
+    from app.services.scm import low_stock_report_service as lsr
+
+    run_id = _seed_run_with_rows(db)
+    calls = _record_dispatches(monkeypatch)
+    run = db.query(ReorderRun).filter(ReorderRun.id == run_id).one()
+
+    for status in ("failed", "running"):
+        run.status = status
+        db.flush()
+        assert lsr.dispatch_ready(db, run_id)["fired"] == 0
+    assert calls == []
+
+    run.status = "completed"
+    db.flush()
+    lsr.dispatch_ready(db, run_id)
+    assert len(calls) == 1
+
+
 def test_trigger_context_link_is_internal_page(db, monkeypatch):
     from app.config import settings
     from app.services.scm import low_stock_report_service as lsr

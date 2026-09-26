@@ -31,6 +31,7 @@ What is DIFFERENT from the order sheet, and why:
 """
 from __future__ import annotations
 
+import logging
 from io import BytesIO
 from typing import Optional
 from urllib.parse import quote
@@ -40,6 +41,8 @@ from sqlalchemy.orm import Session
 from app.models.product import Product, ProductCategory
 from app.services.error_handler import AppException
 from app.services.scm import summary_order_service as svc
+
+logger = logging.getLogger(__name__)
 
 #: The sixteen columns, in the client's own order (AC-31). Description and Category lead,
 #: and Reorder qty sits beside Reorder level, because that is how the sheet this replaces
@@ -540,8 +543,20 @@ def ready_context(db: Session, run_id: str) -> dict:
 def dispatch_ready(db: Session, run_id: str) -> dict:
     """Fire `low_stock_report_ready` once for a finished run: every enabled automation on
     it sends its own template to its own `recipient_config` (Q5). The caller decides what a
-    failure means; the daily run swallows it."""
+    failure means; the daily run swallows it.
+
+    Only a COMPLETED run is reported (review B1): `run_reorder` never raises, it marks a
+    failed run `failed` and returns, so a failed plan would otherwise mail buyers a "0 low"
+    all-clear linking to an empty page. Read off the run row, so no caller can skip it."""
+    from app.models.scm import ReorderRun
     from app.services.automation_service import AutomationService
+
+    status = db.query(ReorderRun.status).filter(ReorderRun.id == run_id).scalar()
+    if status != "completed":
+        logger.warning(
+            "low_stock_report_ready not dispatched: run %s is %s, not completed", run_id, status,
+        )
+        return {"trigger_type": READY_TRIGGER, "fired": 0, "results": []}
 
     return AutomationService(db).dispatch_event(
         READY_TRIGGER,
