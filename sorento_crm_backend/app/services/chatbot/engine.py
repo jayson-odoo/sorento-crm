@@ -1864,14 +1864,6 @@ def _run_stages(  # noqa: PLR0915
                     frozenset(unplaced_tokens),
                 )
 
-        # #865 sibling (owner ruling 27 Sep 2026, fix option 1): the gate's brand comes
-        # only from rows the resolver resolved THIS turn, so "eta" typed after a product
-        # answer (the product carried in focus, settled, not re-resolved) left it null and
-        # every offer minted off it stamped `brand_code: null`. The brand of the product
-        # the conversation is about is read off the product row instead, once, and only
-        # when this turn resolved none.
-        _fill_routing_brand_from_focus(db, resolver_payload, state_out.focus)
-
         # D ROUTE. Two facts outrank the plan and neither is IN one: a refused access
         # agent (contract 58, fail closed) and the stock-denial switch, which is decided
         # from the CONTACT's own record (contract 61, 62).
@@ -2182,8 +2174,9 @@ def _run_stages(  # noqa: PLR0915
                         resolver_payload.get("gate") if isinstance(resolver_payload, dict) else None,
                         "routing_brand",
                     )
-                    # No resolver ran at all: `_team_pick_question` still takes the focus
-                    # product's brand (#865 sibling), the same read the gate fill makes.
+                    # No resolver ran at all (the focus product is settled, so it is not
+                    # re-resolved): `_team_pick_question` still takes the focus product's
+                    # brand (#865 sibling), the same read `_focus_brand_payload` makes.
                     or (
                         _focus_brand(db, state_out.focus)
                         if not isinstance(resolver_payload, dict)
@@ -3839,23 +3832,6 @@ def _focus_brand(db: Session, focus: Any) -> str | None:
     except Exception:  # noqa: BLE001 - a missing brand is not a failed turn
         logger.warning("chatbot: the focus product's brand could not be read", exc_info=True)
         return None
-
-
-def _fill_routing_brand_from_focus(db: Session, resolver_payload: Any, focus: Any) -> None:
-    """Give the gate the focus product's brand when this turn resolved none (#865).
-
-    Every offer mint site stamps `payload.brand_code` off `gate.routing_brand`
-    (`turn/compose.py`, `answer_bridge.py`, `_question_offered`), so filling it HERE is one
-    change for all of them rather than one per site. Only a null brand is filled: a brand
-    this turn resolved, or a brand word the gate took, stays as it is.
-    """
-    gate = resolver_payload.get("gate") if isinstance(resolver_payload, dict) else None
-    if not isinstance(gate, dict) or jsc.truthy(gate.get("routing_brand")):
-        return
-    brand = _focus_brand(db, focus)
-    if brand:
-        gate["routing_brand"] = brand
-        gate["routing_brand_source"] = "focus_product"
 
 
 def _focus_brand_payload(db: Session, focus: Any) -> dict[str, Any]:

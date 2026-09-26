@@ -289,6 +289,50 @@ class TestProvenPathOfferAcceptedWithStampedBrand:
 # --------------------------------------------------------------------------- #
 
 
+def _seed_settled_focus(session_factory, monkeypatch, stub_access, *, phone: str) -> None:
+    """The session a product turn leaves when its product is SETTLED (the focus entry
+    carries the row `uuid`): SRTKS7646, a SORENTO product, over the Packing List roster.
+    Seeded directly, the pattern `test_escalation_agent_carry.py` uses for turn 1."""
+    from app.models.product import Product
+
+    from tests.chatbot.test_escalation_agent_carry import _stub_incoming_probe_empty
+
+    _seed_contact(session_factory, phone=phone)
+    _seed_product_with_brand(session_factory, code="SRTKS7646", brand_code="SORENTO")
+    _seed_packing_list_team(session_factory)
+    _stub_incoming_probe_empty(monkeypatch)
+    stub_access()
+    db = _db(session_factory)
+    product_id = db.query(Product.id).filter(Product.product_code == "SRTKS7646").scalar()
+    db.execute(
+        text("UPDATE respond_contacts SET session_vars = CAST(:sv AS jsonb) WHERE respond_io_id = :c"),
+        {
+            "sv": json.dumps(
+                {
+                    "focus": {
+                        "products": [
+                            {
+                                "raw": "SRTKS7646",
+                                "hint": "product",
+                                "canonical_code": "SRTKS7646",
+                                "uuid": product_id,
+                                "current_message": False,
+                            }
+                        ],
+                        "domains": ["master_products"],
+                    },
+                    "open_question": None,
+                    "ideation": None,
+                    "access_levels": [],
+                    "contains_flyer": False,
+                }
+            ),
+            "c": str(CONTACT_ID),
+        },
+    )
+    db.commit()
+
+
 class TestSiblingEtaAfterAProductTurn:
     def _eta_then_yes(self, session_factory, stub_parser, monkeypatch) -> tuple[dict[str, Any], list]:
         stub_parser(
@@ -320,44 +364,7 @@ class TestSiblingEtaAfterAProductTurn:
         `uuid`) is never re-resolved (`with_carried_entities(unsettled_only=True)`). "Yes"
         then drew the mocha-only Packing List member. The focus is seeded as the product
         turn left it, the pattern `test_escalation_agent_carry.py` uses for turn 1."""
-        from app.models.product import Product
-
-        from tests.chatbot.test_escalation_agent_carry import _stub_incoming_probe_empty
-
-        _seed_contact(session_factory, phone="+60000865004")
-        _seed_product_with_brand(session_factory, code="SRTKS7646", brand_code="SORENTO")
-        _seed_packing_list_team(session_factory)
-        _stub_incoming_probe_empty(monkeypatch)
-        stub_access()
-        db = _db(session_factory)
-        product_id = db.query(Product.id).filter(Product.product_code == "SRTKS7646").scalar()
-        db.execute(
-            text("UPDATE respond_contacts SET session_vars = CAST(:sv AS jsonb) WHERE respond_io_id = :c"),
-            {
-                "sv": json.dumps(
-                    {
-                        "focus": {
-                            "products": [
-                                {
-                                    "raw": "SRTKS7646",
-                                    "hint": "product",
-                                    "canonical_code": "SRTKS7646",
-                                    "uuid": product_id,
-                                    "current_message": False,
-                                }
-                            ],
-                            "domains": ["master_products"],
-                        },
-                        "open_question": None,
-                        "ideation": None,
-                        "access_levels": [],
-                        "contains_flyer": False,
-                    }
-                ),
-                "c": str(CONTACT_ID),
-            },
-        )
-        db.commit()
+        _seed_settled_focus(session_factory, monkeypatch, stub_access, phone="+60000865004")
 
         offer, calls = self._eta_then_yes(session_factory, stub_parser, monkeypatch)
 
@@ -369,6 +376,41 @@ class TestSiblingEtaAfterAProductTurn:
         assert calls[0]["body"]["team_code"] == "purchasing", calls[0]["body"]
         assert calls[0]["body"]["brand_code"] == "sorento", calls[0]["body"]
         assert calls[0]["response"].get("assignee_name") == "ZZT Jereen", calls[0]["response"]
+
+    def test_a_fanned_out_miss_after_a_settled_product_stamps_every_team_option_with_its_brand(
+        self, session_factory, stub_parser, stub_access, monkeypatch
+    ) -> None:
+        """The `_team_pick_question` mint site (`turn/compose.py`): "stock and eta?" after
+        the same settled product fans out to two domains, both miss, and the multi-team
+        pick is minted by compose rather than the bridge. No resolver runs on this turn,
+        so its brand comes from the focus product (`TurnContext.routing_brand`)."""
+        _seed_settled_focus(session_factory, monkeypatch, stub_access, phone="+60000865009")
+        stub_parser(
+            verdict(
+                asks=[{"domain": "inventory"}, {"domain": "incoming"}],
+                domain_hint=None,
+                intent_hint=None,
+                entities=[],
+                routing={"suggested_team": "purchasing", "suggested_agent": "incoming_stock_enquiries"},
+            )
+        )
+        turn = engine_mod.run_turn(
+            _envelope_for("ZZT-msg-865-fan", "stock and eta?"), session_factory=session_factory
+        )
+        assert turn.branch_kind == "business_query", turn.branch_kind
+
+        question = _session_vars(session_factory).get("open_question") or {}
+        assert question.get("kind") == "team_pick", question
+        stamped = [
+            (o.get("payload") or {}).get("brand_code")
+            for o in question.get("options") or []
+            if not (o.get("payload") or {}).get("hold")
+        ]
+        if not stamped:  # a single missed team is yes/no, stamped on the top-level payload
+            stamped = [(question.get("payload") or {}).get("brand_code")]
+        assert stamped and all(b == "sorento" for b in stamped), (
+            f"every team option compose mints must carry the focus product's brand: {question!r}"
+        )
 
     def test_eta_after_a_typed_product_hit_keeps_carrying_the_brand(
         self, session_factory, stub_parser, stub_access, monkeypatch
