@@ -7,6 +7,11 @@ customer) shipped in PR #1177 and is not repeated here.
 Status: grilled. Round 1 answered by the owner 26 Sep 2026 (PR #1260 comment, 05:25Z); every AC
 is now written to the ruling, marked "(Owner ruling 26 Sep, G#)". Round 2 questions R1 to R5
 (plan section 9) may still adjust the ACs marked "(R#)"; each is written to its recommendation.
+Round 3 (26 Sep): the owner's Lavish review of the mockup (PR #1260 comment, 05:35Z) is folded in
+as rulings L1 to L4, marked "(Owner ruling 26 Sep (Lavish), L#)". Round 3 questions T1 to T5 (plan
+section 10) may still adjust the ACs marked "(T#)"; each is written to its recommendation. No
+criterion was deleted: new ones are S1-17, S1-18, S3-5, S4-10, S5-14 and the new slice S6 (sales teams),
+which is built second, right after S1 (plan section 6).
 
 Tags: `[BE]` pytest, `[FE]` vitest, `[E2E]` recorded agent-browser run (no new Playwright spec),
 `[T]` text or copy check. Every AC traces to a journey step (J1 to J12).
@@ -24,6 +29,16 @@ Tags: `[BE]` pytest, `[FE]` vitest, `[E2E]` recorded agent-browser run (no new P
 - **G9, Owner ruling 26 Sep:** targets by admins and holders of "sales targets: edit"; salespeople log opportunities in the portal.
 - **G10, Owner ruling 26 Sep:** project sales count when they are the agent's sales; opened to dealer salespeople first.
 
+## Owner rulings 26 Sep (Lavish), one line each
+
+From the owner's Lavish review of the round 2 mockup (PR #1260 comment, 26 Sep 05:35Z, verbatim
+quotes).
+
+- **L1, Owner ruling 26 Sep (Lavish):** "put sales agents under sales also": the Sales Agents nav item moves into the Sales menu group (S1-17).
+- **L2, Owner ruling 26 Sep (Lavish):** "need to be able to set multiple sales teams and put the sales agents under the team and be able to set team target": sales teams, agents placed in a team, and team targets whose achievement is the sum of the team's agents' orders under the same basis rules (J13, S6).
+- **L3, Owner ruling 26 Sep (Lavish):** "there should be a CTA Set Target at the top right": a Set target primary button in the Targets page header, top right, on every tab and at 375 (S1-18).
+- **L4, Owner ruling 26 Sep (Lavish):** "not sure if we should reuse our teams table in our system": asked as round 3 question T1; the ACs are written to its recommendation, a new sales team table (S6).
+
 ## Journey
 
 Actors: the **sales manager** (a CRM user: the owner or a sales admin) who sets targets and
@@ -36,12 +51,19 @@ WhatsApp message; the **dealer**, who may receive a WhatsApp message.
   grouped by agent, with Target, Achieved, %, Pipeline and Commission. An active agent with no
   target covering this month shows one "No target" row with **Set target**. The manager is asked
   for nothing to see where the team stands.
+  (Owner ruling 26 Sep (Lavish), L1: the Sales group also holds **Sales Agents**, and from S6
+  **Sales Teams**. L3: a **Set target** button sits alone at the top right of the page header, on
+  every tab.)
 - **J2. Set a target.** **Set target** opens a modal with the agent (or dealer) and the start
   month filled in. It asks for a name, the metric (Amount or Quantity), the basis (Ordered or
   Delivered), the products it applies to (All, Categories, Products), how many months it runs and
   how the figure is split (per month, per quarter, or one figure for the whole period), and the
   target figure per period. Defaults: Amount, Ordered, All products, 1 month, per month. Save shows
   the new row.
+  (Owner ruling 26 Sep (Lavish), L3: from the header **Set target** the modal opens with nothing
+  chosen but "Target for" preset to the open tab's kind (Agent, Team from S6, or Dealer) and a
+  searchable select for who; from a "No target" row it opens with that agent or team filled in and
+  read-only, as before.)
 - **J3. Tune the periods.** The target's detail page lists its periods; the manager changes one
   period's figure (a lower December) in place.
 - **J4. Duplicate.** **Duplicate** on a target creates a copy starting the month after it ends,
@@ -72,6 +94,13 @@ WhatsApp message; the **dealer**, who may receive a WhatsApp message.
   schedule on.
 - **J12. The message arrives.** At each recipient's own time, they receive one WhatsApp message
   with the figures they are set to see and nothing else.
+- **J13. Teams and team targets** (Owner ruling 26 Sep (Lavish), L2). The manager opens **Sales >
+  Sales Teams**, clicks **Add team**, types a name and picks the agents who belong to it (an agent
+  already in another team is labelled with that team and moves on save). On **Targets**, the
+  **Teams** tab lists each team's target periods for the month with the same columns as Agents;
+  a team with no covering target shows "No target" with **Set target**. A team target is set in the
+  same modal with "Target for: Team". Its achieved figure is the sum of its agents' orders counted
+  by that target's own metric, basis and product scope. The Agents tab can be filtered by team.
 
 ## Definitions the ACs rely on
 
@@ -88,6 +117,11 @@ WhatsApp message; the **dealer**, who may receive a WhatsApp message.
     0 when `qty_ordered = 0` (the sales report's confirmed value; bucketed by order date, R3);
   - quantity, ordered: `qty_ordered`;
   - quantity, delivered: `least(qty_delivered, qty_ordered)`.
+- **Team achieved value** (Owner ruling 26 Sep (Lavish), L2): the achieved value above, with the
+  agent test widened to "`sales_orders.sales_agent_id` is an agent who is a member of the team
+  now" (T2: current membership, not dated), each agent widened by R2 exactly as for an agent
+  target. The team target's own metric, basis and scope apply. It equals the sum of what the same
+  target would give on each member agent separately, and never counts an order twice.
 - **Stage probability** (Owner ruling 26 Sep, G5): the `win_probability` of the opportunity's
   status row; defaults New 10, Qualified 25, Proposal 50 (inactive), Negotiation 75, Won 100,
   Lost 0.
@@ -152,6 +186,18 @@ WhatsApp message; the **dealer**, who may receive a WhatsApp message.
 - **S1-16 [E2E] (J1 to J5)** From `/`, Sales > Targets; set a 3-month, per-month target on one
   agent with a category scope, reload, it persists; change one period; duplicate it; add a dealer
   target; usable and unclipped at 1280 and 375.
+- **S1-17 [FE][E2E] (J1, Owner ruling 26 Sep (Lavish), L1)** In the sidebar, the **Sales** group
+  lists Targets, Opportunities (from S2) and **Sales Agents**; Sales Agents no longer appears under
+  Users & Access > People. Its path (`/master-data-management/sales-agents`) and permission
+  (`master_data.sales_agents.view`) are unchanged, and it stays visible when the `sales` module is
+  switched off but the module owning the Sales Agents page is on (each child carries its own
+  `moduleKey`). Reached by sidebar clicks from `/` in the E2E run.
+- **S1-18 [FE][E2E] (J1, J2, Owner ruling 26 Sep (Lavish), L3)** The Targets page header shows a
+  **Set target** primary button alone at the top right, on the Agents, Dealers and Recipients tabs
+  (and Teams from S6), at 1280 and at 375, and only for holders of `sales.targets.add`. It opens
+  the Set target modal with "Target for" preset to the open tab's kind (Agent on the Recipients
+  tab) and an empty searchable subject select; Save is disabled until a subject is picked. The
+  month picker sits in the toolbar under the tabs, not beside the CTA.
 
 ## S2. Opportunities, logged by salespeople in the portal
 
@@ -210,6 +256,10 @@ WhatsApp message; the **dealer**, who may receive a WhatsApp message.
   `pipeline_unweighted_count`, never guessed.
 - **S3-4 [FE] (J9)** The Pipeline cell and KPI link to Sales > Opportunities filtered to that agent
   and month; a non-zero unweighted count shows a hint in the cell's title.
+- **S3-5 [BE][FE] (J9, J13, Owner ruling 26 Sep (Lavish), L2)** Each team row carries
+  `pipeline_value` and `pipeline_count` equal to the sums over the team's current member agents
+  (S3-1 rules unchanged); the Pipeline cell links to Opportunities filtered to those agents and
+  the month.
 
 ## S4. Commission tiers
 
@@ -234,6 +284,9 @@ WhatsApp message; the **dealer**, who may receive a WhatsApp message.
   the unit label follows the metric (% of RM, or RM per unit).
 - **S4-9 [FE] (J10)** The Commission column shows commission plus bonus, with a popover of the
   breakdown; `none` shows a dash.
+- **S4-10 [BE][FE] (J10, J13, Owner ruling 26 Sep (Lavish), L2, T4)** Tiers on a team target work
+  exactly as on an agent target and give one team commission figure per period, shown on the team
+  row as "Team pool"; it is never split to agents and never added to any agent's commission.
 
 ## S5. Per-contact WhatsApp broadcast
 
@@ -271,6 +324,67 @@ WhatsApp message; the **dealer**, who may receive a WhatsApp message.
   toasts the recipient's name.
 - **S5-13 [E2E] (J11, J12)** Add a recipient, preview, Send now against a stubbed Respond client;
   the Respond Outbox shows the row; 1280 and 375.
+- **S5-14 [BE][FE] (J11, J12, Owner ruling 26 Sep (Lavish), L2)** A `team` recipient takes an
+  optional `sales_team_id`: set, it receives that team's target figures plus one line per member
+  agent; null, it receives every agent (the round 2 behaviour). A team recipient never receives
+  another team's lines. The recipient modal shows a searchable team select, clearable, under
+  "Follows: Team" (empty = "All agents").
+
+## S6. Sales teams and team targets (built second, right after S1)
+
+Owner ruling 26 Sep (Lavish), L2 and L4. Written to round 3 recommendations T1 (new `sales_teams`
+table, not the existing `teams`), T2 (one team per agent, current membership), T3 (a team target
+is set on its own, not split from or summed from agent targets) and T4 (team commission is a
+figure only, S4).
+
+- **S6-1 [BE] (J13)** `POST /api/v1/sales/teams` with `{name, sales_agent_ids}` creates a team and
+  its members; a blank name is 422; a second team with the same name (case-insensitive) in the
+  company is 409. `GET /sales/teams` lists teams with member count; `GET /sales/teams/{id}`
+  returns members as agent code and name.
+- **S6-2 [BE] (J13, T2)** `PUT /sales/teams/{id}/members` with `{sales_agent_ids}` sets the member
+  list; an agent who was in another team of the same company is moved (the response names the
+  team they left); an agent is never in two teams of one company.
+- **S6-3 [BE] (J13)** `PATCH` renames or sets `is_active`; an inactive team gets no "No target" row
+  and cannot be picked for a new target, and its existing targets still show. `DELETE` hard
+  deletes the team, its memberships and its targets (with their periods, scope and tiers); the
+  agents themselves are untouched.
+- **S6-4 [BE] (J13, L2)** `POST /sales/targets` with `subject_kind: "team"` and `sales_team_id`
+  creates a team target under every S1 rule (periods, scope, metric, basis); `team` without a
+  team, or with an agent or customer id as well, is 422; an inactive team is 422.
+- **S6-5 [BE] (J13, L2)** Team achievement golden set: team N with agents A and B; orders of A,
+  B and C (not in N) in October. An amount-ordered team target counts exactly A's and B's
+  non-cancelled October lines; a quantity-delivered, category-scoped team target counts A's and B's
+  confirmed units in that category only; the team figure equals the sum of the same target
+  evaluated on A and on B alone.
+- **S6-6 [BE] (J13, T2)** Moving B from team N to team S changes N's and S's achieved figures for
+  every period, past ones included (current membership); an agent with no team counts for no team
+  target.
+- **S6-7 [BE] (J13)** `GET /sales/targets?month=2026-10-01&subject=team` returns one row per team
+  target period covering October, with achieved and %, plus one `target_id: null` row per active
+  team with no covering target. `GET /sales/targets?subject=agent&sales_team_id=...` returns only
+  that team's agents.
+- **S6-8 [BE] (J13, G9)** `sales.teams.view|add|edit|delete` gate each team route (403 without);
+  team targets use the `sales.targets.*` slugs of S1-13. Another company's teams are invisible
+  under company scope.
+- **S6-9 [FE] (J13, L1, L2)** The Sales group gains **Sales Teams** (`moduleKey: 'sales'`). The
+  Sales Teams page is a DataGrid (name, agents, active, targets this month) with **Add team**;
+  create and edit are one modal (name, a searchable multi-select of active agents, each labelled
+  with their current team); the team detail page shows Members and Targets sections, each with an
+  empty state and a next-step CTA (Add agents, Set target), `RecordNavigation`, and deferred
+  delete with no dialog.
+- **S6-10 [FE] (J13, L2, L3)** The Targets page has a **Teams** tab (between Agents and Dealers)
+  with the Agents columns plus an Agents count; "No target" rows with Set target; the header Set
+  target on this tab presets "Target for: Team". The Agents tab gains a clearable searchable Team
+  filter.
+- **S6-11 [E2E] (J13)** From `/`, Sales > Sales Teams; create "North" with two agents; move one
+  agent to a second team; on Targets, set a team target for North from the header CTA; its
+  achieved equals the sum of its agents' rows for the same basis; 1280 and 375.
+
+## Round 3 (Lavish) additions (nothing deleted)
+
+Every round 2 AC above stands with its id and text. Round 3 only appended the (Lavish) notes to
+J1 and J2 and added J13, S1-17, S1-18, S3-5, S4-10, S5-14 and S6-1 to S6-11. Slice ids are stable;
+the build order is S1, S6, S2, S3, S4, S5 (plan section 6).
 
 ## Round 1 criteria carried forward (nothing deleted)
 
