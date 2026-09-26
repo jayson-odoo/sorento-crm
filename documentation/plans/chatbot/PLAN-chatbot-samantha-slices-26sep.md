@@ -1,6 +1,6 @@
 # PLAN: the Samantha case, slices 1 to 11 (issue #1262)
 
-Status: reviewed (reviewer + security-reviewer ready), PR open. Track: full (migration for the prompt versions, MCP tool
+Status: fix lane round 2 done (reviewer pass at 4719a829: B1, S1 to S4, N1 to N6 addressed), PR open. Track: full (migration for the prompt versions, MCP tool
 argument, more than 300 lines). UAC: `chatbot-samantha-slices-26sep-acceptance-criteria.md`.
 
 Owner ruling 26 Sep ~11:05Z: "samantha one all also need to fix bro" - every slice of the
@@ -59,6 +59,10 @@ Code anchors are the scout's (issue #1262); lines may have drifted a little on m
 9. **F5 cap:** above 5 codes the miss line says "the N products searched".
 10. **Prompt versions:** the amended parser prompt ships as a new unlabelled version; the owner
     promotes it (one label move), as for migrations 475 / 480 / 490 / 521.
+11. **Kind-pick order (round 2, N1):** options are ordered by the resolver's hit count per
+    kind, most first, ties alphabetical.
+12. **Quantity lifetime (round 2, S1 nit):** the parser's quantity belongs to the message that
+    typed it; a carried product row drops it (`turn/state.py::focus_from_wire`).
 
 ## Tests
 
