@@ -112,7 +112,9 @@ def test_ac_s1_1_product_kind_compiles():
 
 def test_ac_s1_1_every_shipped_rule_compiles_from_its_builder():
     """The rewritten `_rules_from_shipped_tables()` returns builder-only rules,
-    202 over 49 keys, no brand - and every one of them compiles."""
+    203 over 49 keys, no brand - and every one of them compiles. (202 in the appendix
+    as first written; fix round 1 added Length rule 4, "the number between LENGTH and
+    MM".)"""
     from app.services.product_spec_registry import _rules_from_shipped_tables
     from app.services.product_spec_rules import compile_builder
 
@@ -120,7 +122,7 @@ def test_ac_s1_1_every_shipped_rule_compiles_from_its_builder():
     assert "brand" not in shipped
     total = sum(len(rules) for rules in shipped.values())
     assert len(shipped) == 49
-    assert total == 202
+    assert total == 203
 
     for spec_key, rules in shipped.items():
         for rule in rules:
@@ -925,8 +927,9 @@ def _parity_inputs(entry):
     return product, category
 
 
-# The four groups plan D5 names, then the two differences the parity run found that the
-# plan does not name (reported to the captain for a ruling, #1286 S1). Each takes one
+# The four groups plan D5 names, and nothing else: the three differences the first
+# parity run found outside them (hose length on bathtubs, "LENGTH-200MM", a model number
+# read as bowls) were fixed in the shipped rules (fix round 1). Each takes one
 # difference and says whether it is that group's.
 def _group_two_digit_counts(diff):
     return diff["key"] in {"way_count", "spray_functions"} and isinstance(diff["after"], int) \
@@ -953,24 +956,15 @@ def _group_flyer_labelled_size(diff):
     return False
 
 
-def _outside_plan_hose_two_decimals(diff):
-    """NOT in plan D5: "1.75M" now reads as 1750 mm of hose. The old reader took one
-    decimal place only, so a bathtub's "1.70M" length was never a hose."""
-    return diff["key"] == "hose_length" and diff["before"] is None
-
-
-def _outside_plan_number_after_hyphen(diff):
-    """NOT in plan D5: "(LENGTH-200MM)" is no longer a length. A number touched by a
-    letter across a hyphen is never read (contract section 2, the F-809L case), and the
-    old lone-size reader allowed the hyphen."""
-    return diff["key"] == "dim_length" and diff["after"] is None \
-        and re.search(r"[A-Z]-" + str(diff["before"]) + r"\s*MM", diff["description"]) is not None
-
-
-def _outside_plan_bowl_count_digits(diff):
-    """NOT in plan D5: the bowl count, like Ways and Spray functions, now reads a number
-    of more than one digit, so "6086 BOWL ONLY" (a model number) reads 6086 bowls."""
-    return diff["key"] == "bowl_count" and isinstance(diff["after"], int) and diff["after"] >= 10
+def _fix_no_hose_on_a_tub(diff):
+    """Fix round 1, and a correction of the OLD engine too: "BRAVAT 1.5M ... BATHTUB"
+    read as a 1500 mm hose before this lane. A hose length is never read on a product
+    whose class is Bathtub, Jacuzzi or Bathtub and Jacuzzi."""
+    return (
+        diff["key"] == "hose_length"
+        and diff["after"] is None
+        and re.search(r"BATHTUB|BATH TUB|JACUZZI", diff["description"]) is not None
+    )
 
 
 _D5_GROUPS = (
@@ -978,9 +972,7 @@ _D5_GROUPS = (
     ("D5 2: power needs a number standing on its own", _group_power_stands_alone),
     ("D5 3: a hyphen, a double space or nothing between a phrase's words", _group_phrase_gap),
     ("D5 4: the flyer's labelled L, W, H", _group_flyer_labelled_size),
-    ("NOT IN D5: hose length reads two decimal places", _outside_plan_hose_two_decimals),
-    ("NOT IN D5: a number after a letter and a hyphen", _outside_plan_number_after_hyphen),
-    ("NOT IN D5: bowl count reads more than one digit", _outside_plan_bowl_count_digits),
+    ("Fix round 1: no hose length on a bathtub or jacuzzi (the old value was wrong)", _fix_no_hose_on_a_tub),
 )
 
 
@@ -1067,3 +1059,80 @@ def test_ac_s1_4_golden_parity_differences_fall_only_in_the_named_groups():
     for row in unexplained:
         print("UNEXPLAINED", row)
     assert not unexplained, f"{len(unexplained)} differences in no named group (printed above)"
+
+
+# --------------------------------------------------------------------------- #
+# Fix round 1 (#1286): the three parity differences outside plan D5 are defects in the
+# shipped rules, fixed there. Each pinned with the real golden-sample phrases.
+# --------------------------------------------------------------------------- #
+def _golden_entry(code: str) -> dict:
+    sample = json.loads(_GOLDEN_SAMPLE.read_text())["products"]
+    return next(entry for entry in sample if entry["code"] == code)
+
+
+def _derive_golden(code: str):
+    from app.services.product_spec_derivation import derive, shipped_rules
+    from app.services.product_spec_registry import shipped_max_values, shipped_scopes
+
+    product, category = _parity_inputs(_golden_entry(code))
+    return derive(
+        product,
+        category,
+        rules_by_key=shipped_rules(),
+        scopes_by_key=shipped_scopes(),
+        max_values=shipped_max_values(),
+    )
+
+
+@pytest.mark.parametrize("code", ["BRBTB25801W", "BRJC25828W-2", "BRJCB25730W25-2"])
+def test_fix1_a_bathtubs_length_in_metres_is_not_a_hose_length(code):
+    """"BRAVAT 1.75M DECK MOUNTED SIMPLE BATHTUB": 1.75 m is the tub, not a hose."""
+    result = _derive_golden(code)
+    assert "hose_length" not in result.values, result.values.get("hose_length")
+
+
+def test_fix1_a_hand_bidet_still_reads_its_hose_length():
+    from app.services.product_spec_derivation import apply_rules, shipped_rules
+
+    texts = {"description": "SORENTO HAND BIDET C/W 1.2M HOSE", "flyer": "", "class_tail": "HAND BIDET"}
+    found = apply_rules(shipped_rules(), texts, "ZZT-BIDET")
+    assert found["hose_length"]["value"] == 1200
+
+
+@pytest.mark.parametrize(
+    "code,length",
+    [("BRD314CP-2", 200), ("BRD314CP-4", 70), ("BRD314CP-4-ENG", 54), ("BRD323BTC-ENG", 400)],
+)
+def test_fix1_a_length_written_as_length_hyphen_mm_is_read(code, length):
+    """"BRAVAT SHOWER ARM CHROME (LENGTH-200MM)" states its length in words."""
+    result = _derive_golden(code)
+    assert result.values["dim_length"]["value"] == length
+
+
+def test_fix1_the_length_after_the_word_length_is_rule_4_of_length():
+    from app.services.product_spec_derivation import shipped_rules
+
+    builder = shipped_rules()["dim_length"][3]["builder"]
+    assert builder == {
+        "kind": "number",
+        "look_in": "description",
+        "after": ["LENGTH"],
+        "before": ["MM"],
+        "only_when": {"spec": "shape", "is": False, "values": ["round", "square"]},
+    }
+
+
+def test_fix1_a_model_number_before_bowl_is_flagged_not_stored():
+    """"MOCHA GLASS BASIN (650x420MM) 6086 BOWL ONLY": 6086 is a model number."""
+    result = _derive_golden("MGB6086B")
+    assert "bowl_count" not in result.values
+    assert any(
+        flag["spec_key"] == "bowl_count" and flag["reason"] == "implausible_dimension"
+        for flag in result.exceptions
+    )
+
+
+def test_fix1_bowl_count_ships_a_cap_of_nine():
+    from app.services.product_spec_registry import shipped_max_values
+
+    assert shipped_max_values()["bowl_count"] == 9

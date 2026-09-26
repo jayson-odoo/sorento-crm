@@ -2408,7 +2408,16 @@
       "before": [
         "M"
       ],
-      "written_in": "metres"
+      "written_in": "metres",
+      "only_when": {
+        "spec": "class",
+        "is": false,
+        "values": [
+          "Bathtub",
+          "Jacuzzi",
+          "Bathtub and Jacuzzi"
+        ]
+      }
     },
     "compiled": {
       "kind": "number",
@@ -4526,6 +4535,40 @@
       "skip": "(?<![A-Z])(?:(?<![A-Z])S[\\s\\-]*TRAP(?![A-Z])|(?<![A-Z])P[\\s\\-]*TRAP(?![A-Z]))[\\s\\-:,(]*$",
       "scale": null,
       "min": 10,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "dim_length",
+    "builder": {
+      "kind": "number",
+      "look_in": "description",
+      "before": [
+        "MM"
+      ],
+      "after": [
+        "LENGTH"
+      ],
+      "only_when": {
+        "spec": "shape",
+        "is": false,
+        "values": [
+          "round",
+          "square"
+        ]
+      }
+    },
+    "compiled": {
+      "kind": "number",
+      "scope": "description",
+      "pattern": "(?:(?<![A-Z])LENGTH(?![A-Z]))[\\s\\-:,]*(\\d+(?:\\.\\d+)?)[\\s\\-]*(?:(?<![A-Z])MM(?![A-Z]))(?![A-Z])",
+      "capture": 1,
+      "skip": null,
+      "scale": null,
+      "min": null,
       "pick": null,
       "code_match": null,
       "texts": null,

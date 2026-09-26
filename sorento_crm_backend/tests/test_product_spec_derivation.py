@@ -1049,13 +1049,16 @@ ROUND = ("round", "square")
 def test_the_column_the_size_triple_and_the_lone_size_are_shipped_rules(db):
     """AC-A.1 - dim_length, in the order the engine has always run them.
 
-    R5: the column, then `L x W x H`, then the lone size, then the flyer's labelled size.
+    R5: the column, then `L x W x H`, then the lone size, then "LENGTH ... MM", then the
+    flyer's labelled size.
     """
     assert _rows("dim_length") == [
         ("product", None, "length", ("unless", ROUND)),
         ("size", "description", 1, ("unless", ROUND)),
         # The lone size is a Number rule that ignores anything below 10 (`GLASS SHELF
         # 8MM` is not an 8 mm long shelf) and skips a number right after a trap.
+        ("number", "description", None, ("unless", ROUND)),
+        # "(LENGTH-200MM)": a length stated in words (#1286 fix round 1).
         ("number", "description", None, ("unless", ROUND)),
         ("size", "flyer", "L", None),
     ]

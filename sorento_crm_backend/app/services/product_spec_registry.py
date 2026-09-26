@@ -164,6 +164,10 @@ def _rule_identity(rule: dict) -> str:
 compile_builder = _compile_builder
 
 
+# Classes a hose length is never read on (#1286): their "1.75M" is the product itself.
+_NO_HOSE_CLASSES = ("Bathtub", "Jacuzzi", "Bathtub and Jacuzzi")
+
+
 def _rules_from_shipped_tables() -> dict[str, list[dict]]:
     """The shipped rules, as builders (#1286, D5).
 
@@ -242,7 +246,15 @@ def _rules_from_shipped_tables() -> dict[str, list[dict]]:
         "spray_functions": number(before=["FUNCTION", "FUNCTIONS"]),
         # Printed in metres off the card ("c/w 1.2m"), stored in millimetres like every
         # other length, because that is the unit the ranker compares in.
-        "hose_length": number(before=["M"], written_in="metres"),
+        # Not on a bathtub or jacuzzi: "BRAVAT 1.75M ... BATHTUB" is the tub's own length,
+        # and reading it as a 1750 mm hose was the parity run's finding (#1286). The
+        # values are the class labels as the class choices store them, the category's
+        # broader "Bathtub and Jacuzzi" included.
+        "hose_length": number(
+            before=["M"],
+            written_in="metres",
+            only_when={"spec": "class", "is": False, "values": list(_NO_HOSE_CLASSES)},
+        ),
         "is_frameless": flag("FRAMELESS"),
         "has_led": flag("LED"),
         "is_honeycomb": flag("HONEYCOMB"),
@@ -300,6 +312,16 @@ def _rules_from_shipped_tables() -> dict[str, list[dict]]:
                 "before": ["MM"],
                 "ignore_below": 10,
                 "skip_after": ["S TRAP", "P TRAP"],
+                "only_when": only_when_round(False),
+            },
+            # "BRAVAT SHOWER ARM (LENGTH-200MM)": a length stated in words. The lone size
+            # above never reads it, because a number touched by a letter across a hyphen
+            # is part of a code (#1286 parity run).
+            {
+                "kind": "number",
+                "look_in": "description",
+                "after": ["LENGTH"],
+                "before": ["MM"],
                 "only_when": only_when_round(False),
             },
             size("L", look_in="flyer"),
@@ -1064,6 +1086,10 @@ SPEC_REGISTRY_SEED: list[dict] = [
         # says it, it decides the answer. Weighted accordingly, and NULL elsewhere.
         "measured_coverage": 106,
         "rank_weight": 3.0,
+        # A count, so any number above this is a model number, not bowls: "MOCHA GLASS
+        # BASIN (650x420MM) 6086 BOWL ONLY" read 6086 bowls (#1286 parity run). Flagged
+        # and dropped like an implausible size, and editable like every cap.
+        "max_value": 9,
     },
     {
         "spec_key": "seat_material",
@@ -1526,14 +1552,17 @@ def shipped_scopes() -> dict[str, dict]:
 def shipped_max_values() -> dict[str, float]:
     """The plausibility cap each key ships with, for a caller with no database.
 
-    Millimetres only. A count, a capacity in litres and a horsepower have no such
-    number, and inventing one for them would drop real values.
+    Every millimetre key, plus a key whose seed entry names its own `max_value` (the
+    bowl count). A capacity in litres and a horsepower have no such number, and
+    inventing one for them would drop real values.
     """
-    return {
-        entry["spec_key"]: float(DEFAULT_MM_MAX_VALUE)
-        for entry in SPEC_REGISTRY_SEED
-        if entry.get("unit") == "mm"
-    }
+    caps: dict[str, float] = {}
+    for entry in SPEC_REGISTRY_SEED:
+        if entry.get("max_value") is not None:
+            caps[entry["spec_key"]] = float(entry["max_value"])
+        elif entry.get("unit") == "mm":
+            caps[entry["spec_key"]] = float(DEFAULT_MM_MAX_VALUE)
+    return caps
 
 
 def numeric_product_columns() -> set[str]:

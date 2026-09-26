@@ -270,7 +270,7 @@ a value with underscores in it.
 
   **Why this covers every case:** the appendix restates all 268 remaining built-in rules in these
   five kinds with none left over (231 Words, 10 Number, 10 Size, 12 Code, 5 Product). Rules next to
-  each other with the same answer fold into one rule with several words, so 268 rows become 202.
+  each other with the same answer fold into one rule with several words, so 268 rows become 202 (203 after the lane added a Length rule for "(LENGTH-200MM)", see the appendix).
   If a future case does not fit, that is a defect in the engine to fix in the engine (owner
   ruling, Q6), not a reason to reopen patterns.
 

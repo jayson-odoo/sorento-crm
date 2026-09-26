@@ -1,5 +1,5 @@
 {
-"note": "Derivation output for a deterministic sample of the live catalogue, taken with the engine as it stood before the readable-rules change (AC-A.2). Regenerate only with a measured reason: a diff here is a catalogue-wide change to what every product is read as. Amended 31 Aug 2026 (PLAN-flyer-family-proposals.md): the shipped `seat_material` list gained a `code_contains -UF` row at its END, and 24 of these codes now read `uf` where they read nothing. ONLY `seat_material` moved - the regeneration refused to write if any other key had. Why the row exists: #447 took the flyer out of `derive()`, and the two rules that read the word UF beside SEAT are scoped `source: flyer`, so a description saying WITH UF SEAT COVER is no longer read on a catalogue derivation at all. The code is the only fact left, and the family proposal pass needs it (AC-A.3) or a UF sibling gets offered the card's PP. Catalogue-wide effect measured on the dev copy: 143 water closets. Amended 26 Sep 2026 (#1286, PLAN-product-specs-non-technical-26sep.md D1 and D5): the Brand specification is gone (brand is the product's own field, so no `brand` value, provenance or company_copies_disagree exception), and the shipped rules are builders run by the new engine. Every value that moved is one of the groups `tests/test_product_spec_rule_engine.py::test_ac_s1_4_golden_parity_differences_fall_only_in_the_named_groups` names (power needs a number standing on its own; a hyphen, a double space or nothing between a phrase's words; hose length reads two decimal places; a number after a letter and a hyphen; bowl count reads more than one digit). Evidence strings moved where the matched words now include a hyphen or a doubled space.",
+"note": "Derivation output for a deterministic sample of the live catalogue, taken with the engine as it stood before the readable-rules change (AC-A.2). Regenerate only with a measured reason: a diff here is a catalogue-wide change to what every product is read as. Amended 31 Aug 2026 (PLAN-flyer-family-proposals.md): the shipped `seat_material` list gained a `code_contains -UF` row at its END, and 24 of these codes now read `uf` where they read nothing. ONLY `seat_material` moved - the regeneration refused to write if any other key had. Why the row exists: #447 took the flyer out of `derive()`, and the two rules that read the word UF beside SEAT are scoped `source: flyer`, so a description saying WITH UF SEAT COVER is no longer read on a catalogue derivation at all. The code is the only fact left, and the family proposal pass needs it (AC-A.3) or a UF sibling gets offered the card's PP. Catalogue-wide effect measured on the dev copy: 143 water closets. Amended 26 Sep 2026 (#1286, PLAN-product-specs-non-technical-26sep.md D1 and D5): the Brand specification is gone (brand is the product's own field, so no `brand` value, provenance or company_copies_disagree exception), and the shipped rules are builders run by the new engine. Every value that moved is one of the groups `tests/test_product_spec_rule_engine.py::test_ac_s1_4_golden_parity_differences_fall_only_in_the_named_groups` names (power needs a number standing on its own; a hyphen, a double space or nothing between a phrase's words; no hose length on a bathtub or jacuzzi). Evidence strings moved where the matched words now include a hyphen or a doubled space. Amended again 26 Sep 2026 (#1286 fix round 1): the shipped hose length rule no longer reads a bathtub or jacuzzi (\"1.5M ... BATHTUB\" was the tub, not a hose), Length gained the rule \"the number between LENGTH and MM\" (\"(LENGTH-200MM)\"), and bowl count ships a cap of 9 (\"6086 BOWL ONLY\" is flagged, not stored).",
 "owned_class_rules": [
 {
 "match": "code_contains",
@@ -10803,20 +10803,11 @@
 "confidence": 1.0,
 "evidence": "BRT-JC",
 "source": "category"
-},
-"hose_length": {
-"confidence": 1.0,
-"evidence": "1.5M",
-"source": "derived"
 }
 },
 "values": {
 "class": {
 "value": "Bathtub and Jacuzzi"
-},
-"hose_length": {
-"unit": "mm",
-"value": 1500
 }
 }
 },
@@ -10827,20 +10818,11 @@
 "confidence": 1.0,
 "evidence": "BRT-JC",
 "source": "category"
-},
-"hose_length": {
-"confidence": 1.0,
-"evidence": "1.5M",
-"source": "derived"
 }
 },
 "values": {
 "class": {
 "value": "Bathtub and Jacuzzi"
-},
-"hose_length": {
-"unit": "mm",
-"value": 1500
 }
 }
 }
@@ -10861,20 +10843,11 @@
 "confidence": 1.0,
 "evidence": "BRT-JC",
 "source": "category"
-},
-"hose_length": {
-"confidence": 1.0,
-"evidence": "1.5M",
-"source": "derived"
 }
 },
 "values": {
 "class": {
 "value": "Bathtub and Jacuzzi"
-},
-"hose_length": {
-"unit": "mm",
-"value": 1500
 }
 }
 },
@@ -10885,20 +10858,11 @@
 "confidence": 1.0,
 "evidence": "BRT-JC",
 "source": "category"
-},
-"hose_length": {
-"confidence": 1.0,
-"evidence": "1.5M",
-"source": "derived"
 }
 },
 "values": {
 "class": {
 "value": "Bathtub and Jacuzzi"
-},
-"hose_length": {
-"unit": "mm",
-"value": 1500
 }
 }
 }
@@ -10919,20 +10883,11 @@
 "confidence": 1.0,
 "evidence": "BRT-JC",
 "source": "category"
-},
-"hose_length": {
-"confidence": 1.0,
-"evidence": "1.5M",
-"source": "derived"
 }
 },
 "values": {
 "class": {
 "value": "Bathtub and Jacuzzi"
-},
-"hose_length": {
-"unit": "mm",
-"value": 1500
 }
 }
 },
@@ -10943,20 +10898,11 @@
 "confidence": 1.0,
 "evidence": "BRT-JC",
 "source": "category"
-},
-"hose_length": {
-"confidence": 1.0,
-"evidence": "1.5M",
-"source": "derived"
 }
 },
 "values": {
 "class": {
 "value": "Bathtub and Jacuzzi"
-},
-"hose_length": {
-"unit": "mm",
-"value": 1500
 }
 }
 }
@@ -11048,11 +10994,6 @@
 "confidence": 1.0,
 "evidence": "L 1750 X W 800 X H 460MM",
 "source": "derived"
-},
-"hose_length": {
-"confidence": 1.0,
-"evidence": "1.75M",
-"source": "derived"
 }
 },
 "values": {
@@ -11070,10 +11011,6 @@
 "dim_width": {
 "unit": "mm",
 "value": 800
-},
-"hose_length": {
-"unit": "mm",
-"value": 1750
 }
 }
 },
@@ -11099,11 +11036,6 @@
 "confidence": 1.0,
 "evidence": "L 1750 X W 800 X H 460MM",
 "source": "derived"
-},
-"hose_length": {
-"confidence": 1.0,
-"evidence": "1.75M",
-"source": "derived"
 }
 },
 "values": {
@@ -11121,10 +11053,6 @@
 "dim_width": {
 "unit": "mm",
 "value": 800
-},
-"hose_length": {
-"unit": "mm",
-"value": 1750
 }
 }
 }
@@ -14728,6 +14656,11 @@
 "evidence": "BRT-SH",
 "source": "category"
 },
+"dim_length": {
+"confidence": 1.0,
+"evidence": "LENGTH-200MM",
+"source": "derived"
+},
 "finish": {
 "confidence": 1.0,
 "evidence": "CHROME",
@@ -14737,6 +14670,10 @@
 "values": {
 "class": {
 "value": "Shower"
+},
+"dim_length": {
+"unit": "mm",
+"value": 200
 },
 "finish": {
 "value": "chrome"
@@ -14751,6 +14688,11 @@
 "evidence": "BRT-SH",
 "source": "category"
 },
+"dim_length": {
+"confidence": 1.0,
+"evidence": "LENGTH-200MM",
+"source": "derived"
+},
 "finish": {
 "confidence": 1.0,
 "evidence": "CHROME",
@@ -14760,6 +14702,10 @@
 "values": {
 "class": {
 "value": "Shower"
+},
+"dim_length": {
+"unit": "mm",
+"value": 200
 },
 "finish": {
 "value": "chrome"
@@ -14783,11 +14729,20 @@
 "confidence": 1.0,
 "evidence": "BRT-SH",
 "source": "category"
+},
+"dim_length": {
+"confidence": 1.0,
+"evidence": "LENGTH-70MM",
+"source": "derived"
 }
 },
 "values": {
 "class": {
 "value": "Shower"
+},
+"dim_length": {
+"unit": "mm",
+"value": 70
 }
 }
 },
@@ -14798,11 +14753,20 @@
 "confidence": 1.0,
 "evidence": "BRT-SH",
 "source": "category"
+},
+"dim_length": {
+"confidence": 1.0,
+"evidence": "LENGTH-70MM",
+"source": "derived"
 }
 },
 "values": {
 "class": {
 "value": "Shower"
+},
+"dim_length": {
+"unit": "mm",
+"value": 70
 }
 }
 }
@@ -14824,6 +14788,11 @@
 "evidence": "BRT-SH",
 "source": "category"
 },
+"dim_length": {
+"confidence": 1.0,
+"evidence": "LENGTH-54MM",
+"source": "derived"
+},
 "finish": {
 "confidence": 1.0,
 "evidence": "CHROME",
@@ -14833,6 +14802,10 @@
 "values": {
 "class": {
 "value": "Shower"
+},
+"dim_length": {
+"unit": "mm",
+"value": 54
 },
 "finish": {
 "value": "chrome"
@@ -14847,6 +14820,11 @@
 "evidence": "BRT-SH",
 "source": "category"
 },
+"dim_length": {
+"confidence": 1.0,
+"evidence": "LENGTH-54MM",
+"source": "derived"
+},
 "finish": {
 "confidence": 1.0,
 "evidence": "CHROME",
@@ -14856,6 +14834,10 @@
 "values": {
 "class": {
 "value": "Shower"
+},
+"dim_length": {
+"unit": "mm",
+"value": 54
 },
 "finish": {
 "value": "chrome"
@@ -14880,6 +14862,11 @@
 "evidence": "BRT-SH",
 "source": "category"
 },
+"dim_length": {
+"confidence": 1.0,
+"evidence": "LENGTH-400MM",
+"source": "derived"
+},
 "finish": {
 "confidence": 1.0,
 "evidence": "BLACK",
@@ -14889,6 +14876,10 @@
 "values": {
 "class": {
 "value": "Shower"
+},
+"dim_length": {
+"unit": "mm",
+"value": 400
 },
 "finish": {
 "value": "black"
@@ -14903,6 +14894,11 @@
 "evidence": "BRT-SH",
 "source": "category"
 },
+"dim_length": {
+"confidence": 1.0,
+"evidence": "LENGTH-400MM",
+"source": "derived"
+},
 "finish": {
 "confidence": 1.0,
 "evidence": "BLACK",
@@ -14912,6 +14908,10 @@
 "values": {
 "class": {
 "value": "Shower"
+},
+"dim_length": {
+"unit": "mm",
+"value": 400
 },
 "finish": {
 "value": "black"
@@ -15726,11 +15726,6 @@
 "confidence": 1.0,
 "evidence": "L 1400 X W 1400 X H 650MM",
 "source": "derived"
-},
-"hose_length": {
-"confidence": 1.0,
-"evidence": "1.40M",
-"source": "derived"
 }
 },
 "values": {
@@ -15746,10 +15741,6 @@
 "value": 1400
 },
 "dim_width": {
-"unit": "mm",
-"value": 1400
-},
-"hose_length": {
 "unit": "mm",
 "value": 1400
 }
@@ -15777,11 +15768,6 @@
 "confidence": 1.0,
 "evidence": "L 1400 X W 1400 X H 650MM",
 "source": "derived"
-},
-"hose_length": {
-"confidence": 1.0,
-"evidence": "1.40M",
-"source": "derived"
 }
 },
 "values": {
@@ -15797,10 +15783,6 @@
 "value": 1400
 },
 "dim_width": {
-"unit": "mm",
-"value": 1400
-},
-"hose_length": {
 "unit": "mm",
 "value": 1400
 }
@@ -15839,11 +15821,6 @@
 "evidence": "L 1700 X W 780 X H 650MM",
 "source": "derived"
 },
-"hose_length": {
-"confidence": 1.0,
-"evidence": "1.70M",
-"source": "derived"
-},
 "shape": {
 "confidence": 1.0,
 "evidence": "RECTANGULAR",
@@ -15865,10 +15842,6 @@
 "dim_width": {
 "unit": "mm",
 "value": 780
-},
-"hose_length": {
-"unit": "mm",
-"value": 1700
 },
 "shape": {
 "value": "rectangular"
@@ -15898,11 +15871,6 @@
 "evidence": "L 1700 X W 780 X H 650MM",
 "source": "derived"
 },
-"hose_length": {
-"confidence": 1.0,
-"evidence": "1.70M",
-"source": "derived"
-},
 "shape": {
 "confidence": 1.0,
 "evidence": "RECTANGULAR",
@@ -15924,10 +15892,6 @@
 "dim_width": {
 "unit": "mm",
 "value": 780
-},
-"hose_length": {
-"unit": "mm",
-"value": 1700
 },
 "shape": {
 "value": "rectangular"
@@ -85911,13 +85875,18 @@
 "dimensions_length": null,
 "dimensions_width": null,
 "owned_class": {
-"exceptions": [],
-"provenance": {
-"bowl_count": {
-"confidence": 1.0,
+"exceptions": [
+{
+"proposed": {
 "evidence": "6086 BOWL",
-"source": "derived"
+"value": 6086
 },
+"reason": "implausible_dimension",
+"spec_key": "bowl_count",
+"stored": null
+}
+],
+"provenance": {
 "class": {
 "confidence": 1.0,
 "evidence": "M-WB",
@@ -85940,9 +85909,6 @@
 }
 },
 "values": {
-"bowl_count": {
-"value": 6086
-},
 "class": {
 "value": "Wash Basin"
 },
@@ -85960,13 +85926,18 @@
 }
 },
 "shipped": {
-"exceptions": [],
-"provenance": {
-"bowl_count": {
-"confidence": 1.0,
+"exceptions": [
+{
+"proposed": {
 "evidence": "6086 BOWL",
-"source": "derived"
+"value": 6086
 },
+"reason": "implausible_dimension",
+"spec_key": "bowl_count",
+"stored": null
+}
+],
+"provenance": {
 "class": {
 "confidence": 1.0,
 "evidence": "M-WB",
@@ -85989,9 +85960,6 @@
 }
 },
 "values": {
-"bowl_count": {
-"value": 6086
-},
 "class": {
 "value": "Wash Basin"
 },

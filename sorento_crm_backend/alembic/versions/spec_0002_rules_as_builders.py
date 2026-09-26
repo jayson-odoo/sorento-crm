@@ -407,8 +407,69 @@ def convert_rules(spec_key: str, rules: list) -> list[dict]:
     return _fold(converted)
 
 
+# The three corrections the parity run found (#1286 fix round 1), frozen. Applied to a
+# key's stored rules only where the shipped rule they correct is still there, carrying
+# the seed's marker: a rule a person edited is theirs and is left alone.
+_ROUND = {"spec": "shape", "is": False, "values": ["round", "square"]}
+_OLD_HOSE = {"kind": "number", "look_in": "any", "before": ["M"], "written_in": "metres"}
+_NEW_HOSE = {
+    **_OLD_HOSE,
+    "only_when": {
+        "spec": "class",
+        "is": False,
+        "values": ["Bathtub", "Jacuzzi", "Bathtub and Jacuzzi"],
+    },
+}
+_LONE_SIZE = {
+    "kind": "number",
+    "look_in": "description",
+    "before": ["MM"],
+    "ignore_below": 10,
+    "skip_after": ["S TRAP", "P TRAP"],
+    "only_when": _ROUND,
+}
+_LENGTH_WORD = {
+    "kind": "number",
+    "look_in": "description",
+    "after": ["LENGTH"],
+    "before": ["MM"],
+    "only_when": _ROUND,
+}
+_BOWL_COUNT_CAP = 9
+
+
+def _corrected(spec_key: str, rules: list[dict]) -> list[dict]:
+    if spec_key == "hose_length":
+        return [
+            {"builder": _NEW_HOSE, _SEED: True}
+            if rule.get(_SEED) and rule.get("builder") == _OLD_HOSE
+            else rule
+            for rule in rules
+        ]
+    if spec_key == "dim_length" and not any(r.get("builder") == _LENGTH_WORD for r in rules):
+        for index, rule in enumerate(rules):
+            if rule.get(_SEED) and rule.get("builder") == _LONE_SIZE:
+                return (
+                    rules[: index + 1]
+                    + [{"builder": _LENGTH_WORD, _SEED: True}]
+                    + rules[index + 1 :]
+                )
+    return rules
+
+
 def upgrade() -> None:
     bind = op.get_bind()
+    # A count has a ceiling: "6086 BOWL ONLY" is a model number. Set where no cap was
+    # ever set - before this there was none to clear.
+    capped = bind.execute(
+        text(
+            "UPDATE product_spec_registry SET max_value = :cap"
+            " WHERE spec_key = 'bowl_count' AND max_value IS NULL RETURNING spec_key"
+        ),
+        {"cap": _BOWL_COUNT_CAP},
+    ).all()
+    if capped:
+        logger.warning("spec_0002: bowl_count capped at %s", _BOWL_COUNT_CAP)
     rows = bind.execute(
         text(
             "SELECT spec_key, derivation_rules FROM product_spec_registry"
@@ -418,7 +479,7 @@ def upgrade() -> None:
         )
     ).all()
     for spec_key, rules in rows:
-        converted = convert_rules(spec_key, list(rules or []))
+        converted = _corrected(spec_key, convert_rules(spec_key, list(rules or [])))
         if converted == rules:
             continue
         bind.execute(
@@ -429,7 +490,7 @@ def upgrade() -> None:
             {"rules": json.dumps(converted), "key": spec_key},
         )
         logger.warning(
-            "spec_0002: %s rules converted to builders: %s stored, %s after folding",
+            "spec_0002: %s rules converted to builders: %s before, %s after folding and corrections",
             spec_key,
             len(rules or []),
             len(converted),
