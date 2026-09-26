@@ -111,3 +111,61 @@ def test_two_ambiguous_tokens_are_asked_one_at_a_time():
     )
     second_labels = {o.get("label") for o in plan2.ask.options}
     assert all("Mocha" in (label or "") for label in second_labels), second_labels
+
+
+def test_t4_kind_pick_answer_sets_only_the_picked_kind():
+    """AC-S8-2 (coordinator follow-up, 26 Sep, pinned via a full-engine replay before
+    this test was written): a kind pick over a SINGLE ambiguous token
+    ("Sorento" - customer or transporter) is a one-shot disambiguation, not a roster
+    with several rows left to pick over time. Once position 2 ("customer") is
+    answered:
+
+    `state_out.focus.customers` is ALREADY correct today - it holds ONLY the picked
+    customer entity (`raw: "Sorento"`), nothing lands in `focus.extra["transporter"]`
+    at all. That is NOT the bug (asserted here as a guard, so a regression there is
+    still caught).
+
+    The real defect: `state_out.pending` is NOT cleared - `kind_pick` is one of
+    `turn/pending.py::ROSTER_KINDS`, so `turn/apply.py::_answer_pending`'s roster arm
+    (`if is_roster(pending.kind): return focus, with_answered_positions(pending,
+    positions), None, True`) keeps the SAME kind_pick open forever, now carrying
+    `answered_positions: [2]` - even though there is nothing left to disambiguate (a
+    kind pick only ever has ONE useful answer). Measured on a full `engine.run_turn`
+    replay (scratch, not committed): the session's `open_question` after T4 was still
+    `{"kind": "kind_pick", "options": [...both...], "payload": {"answered_positions":
+    [2]}}`, and it is THIS still-open pending's own unanswered option ("Sorento
+    (transporter)") that a later lane reads as a second subject - the T4 reply printed
+    "Transporter: Sorento" / "escalate to customer service team" alongside the correct
+    "Customer: Sorento", even though `focus` itself never carried a transporter entity.
+    Closing the kind pick once ANY position answers it removes the stale option a
+    downstream reader could echo, and (a corollary AC-S11 would then cover cleanly)
+    stops `escalate_offered` from being stamped onto a question that has nothing left
+    to ask.
+    """
+    from app.services.chatbot.turn.apply import apply
+    from app.services.chatbot.turn.state import Focus, Profile, State
+
+    state = State(focus=Focus(), pending=None, profile=Profile(tier="office"))
+    v1 = verdict(domain_hint=None, entities=[entity("Sorento", hint="customer")])
+    resolved = {"Sorento": {"customer": 1, "transporter": 1}}
+
+    state1, plan1 = apply(state, v1, build_policy(), resolved=resolved)
+    assert plan1.ask is not None and plan1.ask.kind == "kind_pick"
+
+    state1 = State(focus=state1.focus, pending=plan1.ask, profile=state1.profile)
+    v2 = verdict(reference_positions=[2])
+    state2, _plan2 = apply(state1, v2, build_policy())
+
+    # Guard (already true today): the picked kind lands cleanly, nothing else.
+    names = [e.get("raw") for e in state2.focus.customers]
+    assert names == ["Sorento"], state2.focus.customers
+    assert not state2.focus.extra.get("transporter"), (
+        f"no transporter entity may land on focus from answering the CUSTOMER pick: {state2.focus.extra!r}"
+    )
+
+    # Red: a single ambiguous token's kind pick, once answered, has nothing left to
+    # ask - it must close, not stay open as a roster.
+    assert state2.pending is None, (
+        f"a one-shot kind pick must close once answered, not stay open carrying its "
+        f"own unanswered sibling option: {state2.pending!r}"
+    )
