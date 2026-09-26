@@ -318,6 +318,13 @@ def test_ac21_route_enqueues_dispatch_identically_then_dispatch_creates_code_onl
 
 
 def test_ac21_contact_with_no_user_gets_no_code_and_creates_no_user(rate_limit_cleanup):
+    """Security round S1: the route no longer checks eligibility (that moved
+    to `dispatch_phone_signin_code`, proved end-to-end above), so this now
+    asserts the request-code route's own invariants (200, no user created)
+    plus the eligibility decision itself (`find_eligible`), which is what
+    actually determines "gets no code"."""
+    from app.services.phone_signin_service import find_eligible
+
     with blank_session() as db:
         ws = _workspace(db)
         digits = _digits()
@@ -325,20 +332,20 @@ def test_ac21_contact_with_no_user_gets_no_code_and_creates_no_user(rate_limit_c
         rate_limit_cleanup.append(digits)
         users_before = db.query(User).count()
 
-        with _phone_client(db) as client, patch(
-            "app.services.queue_service.enqueue_job"
-        ) as mock_enqueue:
+        with _phone_client(db) as client, patch("app.services.queue_service.enqueue_job"):
             resp = client.post("/api/v1/auth/phone/request-code", json={"phone": digits})
 
         assert resp.status_code == 200, resp.text
-        assert mock_enqueue.call_count == 0
         assert db.query(User).count() == users_before
+        assert find_eligible(db, digits) is None
         assert (
             db.query(PortalOtpCode).filter(PortalOtpCode.contact_id == contact.id).count() == 0
         )
 
 
 def test_ac21_user_whose_phone_differs_from_linked_contact_gets_no_code(rate_limit_cleanup):
+    from app.services.phone_signin_service import find_eligible
+
     with blank_session() as db:
         ws = _workspace(db)
         contact_phone = _digits()
@@ -352,13 +359,11 @@ def test_ac21_user_whose_phone_differs_from_linked_contact_gets_no_code(rate_lim
         )
         rate_limit_cleanup.extend([contact_phone, user_phone])
 
-        with _phone_client(db) as client, patch(
-            "app.services.queue_service.enqueue_job"
-        ) as mock_enqueue:
+        with _phone_client(db) as client, patch("app.services.queue_service.enqueue_job"):
             resp = client.post("/api/v1/auth/phone/request-code", json={"phone": user_phone})
 
         assert resp.status_code == 200, resp.text
-        assert mock_enqueue.call_count == 0
+        assert find_eligible(db, user_phone) is None
 
 
 @pytest.mark.parametrize(
@@ -372,6 +377,8 @@ def test_ac21_user_whose_phone_differs_from_linked_contact_gets_no_code(rate_lim
     ids=["inactive", "blocked", "trashed", "integration"],
 )
 def test_ac21_ineligible_user_states_get_no_code(rate_limit_cleanup, bad_state):
+    from app.services.phone_signin_service import find_eligible
+
     with blank_session() as db:
         ws = _workspace(db)
         digits = _digits()
@@ -385,16 +392,16 @@ def test_ac21_ineligible_user_states_get_no_code(rate_limit_cleanup, bad_state):
         )
         rate_limit_cleanup.append(digits)
 
-        with _phone_client(db) as client, patch(
-            "app.services.queue_service.enqueue_job"
-        ) as mock_enqueue:
+        with _phone_client(db) as client, patch("app.services.queue_service.enqueue_job"):
             resp = client.post("/api/v1/auth/phone/request-code", json={"phone": digits})
 
         assert resp.status_code == 200, resp.text
-        assert mock_enqueue.call_count == 0
+        assert find_eligible(db, digits) is None
 
 
 def test_ac21_user_with_no_linked_contact_gets_no_code(rate_limit_cleanup):
+    from app.services.phone_signin_service import find_eligible
+
     with blank_session() as db:
         digits = _digits()
         _user(
@@ -405,16 +412,21 @@ def test_ac21_user_with_no_linked_contact_gets_no_code(rate_limit_cleanup):
         )
         rate_limit_cleanup.append(digits)
 
-        with _phone_client(db) as client, patch(
-            "app.services.queue_service.enqueue_job"
-        ) as mock_enqueue:
+        with _phone_client(db) as client, patch("app.services.queue_service.enqueue_job"):
             resp = client.post("/api/v1/auth/phone/request-code", json={"phone": digits})
 
         assert resp.status_code == 200, resp.text
-        assert mock_enqueue.call_count == 0
+        assert find_eligible(db, digits) is None
 
 
 def test_ac21_national_format_with_spaces_and_dashes_still_resolves(rate_limit_cleanup):
+    """Security round S1: the route's own enqueue no longer distinguishes
+    eligibility, so this proves normalisation the way it now matters - the
+    NORMALISED number (the exact arg the route hands to `enqueue_job`, and
+    what `dispatch_phone_signin_code` receives) is the stored digits, which
+    `find_eligible` then resolves."""
+    from app.services.phone_signin_service import find_eligible
+
     with blank_session() as db:
         ws, contact, user, digits = _eligible_chain(db)
         typed = _national_variant(digits)
@@ -426,7 +438,10 @@ def test_ac21_national_format_with_spaces_and_dashes_still_resolves(rate_limit_c
             resp = client.post("/api/v1/auth/phone/request-code", json={"phone": typed})
 
         assert resp.status_code == 200, resp.text
-        assert mock_enqueue.call_count == 1, "typed national format must normalise to the stored digits"
+        assert mock_enqueue.call_count == 1
+        normalised = mock_enqueue.call_args.args[1]
+        assert normalised == digits, "typed national format must normalise to the stored digits"
+        assert find_eligible(db, normalised) is not None
 
 
 @pytest.mark.parametrize("bad", ["not-a-phone-at-all", "12"])
@@ -638,25 +653,30 @@ def test_ac23_eleventh_request_in_24h_is_429(rate_limit_cleanup):
     assert resp.json().get("code") == "RATE_LIMITED"
 
 
-def test_ac23_verify_per_ip_limit_is_429(rate_limit_cleanup):
-    """ASSUMPTION: verify's own per-IP limit is assumed to share the
-    rate_limit_portal_otp_* magnitude (the contract only says 'Also the
-    per-IP limit' without naming a distinct setting). A large preset makes the
-    assertion robust to the exact configured number."""
-    from app.services.queue_service import redis_conn
-
-    key = "rate_limit:v1:phone_signin_verify:testclient"
-    redis_conn.set(key, 10_000)
-    redis_conn.expire(key, 60)
-
+def test_ac23_verify_burst_for_different_numbers_from_one_client_is_not_globally_blocked(
+    rate_limit_cleanup,
+):
+    """Security round S4 (renamed and rewritten; the old
+    `test_ac23_verify_per_ip_limit_is_429` pinned a per-IP 429 on
+    `/phone/verify` that has been REMOVED, not just re-tuned): NextAuth calls
+    this route server-to-server, so `request.client.host` is the Next.js
+    server's own address for EVERY signed-in user - a per-IP bucket here
+    would let one attacker's burst 429 every real sign-in at once. The
+    per-number atomic reservation (B2) is the real bound, so a burst of
+    verifies for DIFFERENT numbers from the SAME client must NOT trip a
+    shared limit; each just answers its own 401 for its own wrong code."""
     with blank_session() as db:
         with _phone_client(db) as client:
-            resp = client.post(
-                "/api/v1/auth/phone/verify", json={"phone": _digits(), "code": "000000"}
-            )
+            statuses = []
+            for _ in range(35):
+                number = _digits()
+                rate_limit_cleanup.append(number)
+                resp = client.post(
+                    "/api/v1/auth/phone/verify", json={"phone": number, "code": "000000"}
+                )
+                statuses.append(resp.status_code)
 
-    assert resp.status_code == 429, resp.text
-    assert resp.json().get("code") == "RATE_LIMITED"
+    assert all(s == 401 for s in statuses), statuses
 
 
 def test_ac23_five_wrong_verify_attempts_count_down_then_lock_identically(rate_limit_cleanup):
@@ -714,9 +734,9 @@ def test_ac23_new_request_code_does_not_lift_the_verify_lock(rate_limit_cleanup)
         ws, contact, user, digits = _eligible_chain(db)
         rate_limit_cleanup.append(digits)
         with _phone_client(db) as client:
-            with patch("app.services.queue_service.enqueue_job") as mock_enqueue:
+            with patch("app.services.queue_service.enqueue_job"):
                 client.post("/api/v1/auth/phone/request-code", json={"phone": digits})
-            code = mock_enqueue.call_args.args[4]
+            code = _seed_signin_code(db, contact)
 
             for _ in range(5):
                 client.post("/api/v1/auth/phone/verify", json={"phone": digits, "code": "000000"})
@@ -745,10 +765,10 @@ def test_ac24_verify_success_returns_login_shape_and_mints_session(rate_limit_cl
         ws, contact, user, digits = _eligible_chain(db)
         rate_limit_cleanup.append(digits)
         with _phone_client(db) as client:
-            with patch("app.services.queue_service.enqueue_job") as mock_enqueue:
+            with patch("app.services.queue_service.enqueue_job"):
                 req = client.post("/api/v1/auth/phone/request-code", json={"phone": digits})
             assert req.status_code == 200, req.text
-            code = mock_enqueue.call_args.args[4]
+            code = _seed_signin_code(db, contact)
 
             before = datetime.now(timezone.utc).replace(tzinfo=None)
             resp = client.post("/api/v1/auth/phone/verify", json={"phone": digits, "code": code})
@@ -818,10 +838,10 @@ def test_ac27_staff_user_signs_in_by_phone_code_with_normal_permissions(rate_lim
         db.commit()
 
         with _phone_client(db) as client:
-            with patch("app.services.queue_service.enqueue_job") as mock_enqueue:
+            with patch("app.services.queue_service.enqueue_job"):
                 req = client.post("/api/v1/auth/phone/request-code", json={"phone": digits})
             assert req.status_code == 200, req.text
-            code = mock_enqueue.call_args.args[4]
+            code = _seed_signin_code(db, contact)
             resp = client.post("/api/v1/auth/phone/verify", json={"phone": digits, "code": code})
 
         assert resp.status_code == 200, resp.text
@@ -850,10 +870,10 @@ def test_ac27_superadmin_signs_in_by_phone_code(rate_limit_cleanup):
         db.commit()
 
         with _phone_client(db) as client:
-            with patch("app.services.queue_service.enqueue_job") as mock_enqueue:
+            with patch("app.services.queue_service.enqueue_job"):
                 req = client.post("/api/v1/auth/phone/request-code", json={"phone": digits})
             assert req.status_code == 200, req.text
-            code = mock_enqueue.call_args.args[4]
+            code = _seed_signin_code(db, contact)
             resp = client.post("/api/v1/auth/phone/verify", json={"phone": digits, "code": code})
 
         assert resp.status_code == 200, resp.text

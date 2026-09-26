@@ -1,9 +1,11 @@
-"""Identity S1 security-review fix round (#1280): B1-B3, S2, S4, S5, and the
-note fix. Written against the captain's fix-round brief BEFORE the fixes
-existed in this file's own history (see the coder's report for the red-run
-evidence: the whole set was verified red-for-cause with `git stash` against
-HEAD 21f26334, since B2/S1/S4 share the same two routes and are easiest to
-verify coherently as one revert/reapply rather than one file at a time).
+"""Identity S1 security-review fix round (#1280): B1, B2, B3, S2, S5, and the
+note fix. (S4's own regression test lives in
+tests/test_identity_s1_phone_signin.py, replacing the existing S1 test it
+made wrong - see that file's module docstring.) Written against the
+captain's fix-round brief; verified red-for-cause against the pre-fix
+baseline (commit 21f263349) by reverting the fix files to that commit,
+confirming 12 of 14 failed for the stated reasons (the other 2 are documented
+regression guards, not red-before-fix cases), then restoring the fixes.
 
 Postgres only (`tests/_pg_fixture.py`), one rolled-back transaction per test,
 except the B1 tests which exercise the real `app.database.SessionLocal`
@@ -505,30 +507,13 @@ def test_s2_no_password_user_login_still_runs_the_dummy_bcrypt_check():
 
 # --------------------------------------------------------------------------- #
 # S4: /auth/phone/verify must not share one global per-IP bucket              #
+#                                                                              #
+# Test lives in tests/test_identity_s1_phone_signin.py, in place of the old  #
+# test_ac23_verify_per_ip_limit_is_429 it replaces (renamed                  #
+# test_ac23_verify_burst_for_different_numbers_from_one_client_is_not_       #
+# globally_blocked) - that is an EXISTING S1 file pinning the exact per-IP    #
+# behaviour this removes, so the fix belongs there, not in a new file.       #
 # --------------------------------------------------------------------------- #
-def test_s4_verify_burst_for_different_numbers_from_one_client_is_not_globally_blocked(
-    rate_limit_cleanup,
-):
-    """RED reason (pre-fix): verify's own `rate_limit.hit("phone_signin_verify",
-    ip, ...)` bucket is keyed on `request.client.host` alone - since NextAuth
-    calls this route server-to-server, that host is the SAME Next.js server
-    for every real user, so enough distinct sign-in attempts (each for a
-    DIFFERENT number, i.e. different people) would trip one shared bucket and
-    429 everyone, a sign-in DoS. `rate_limit_portal_otp_max` defaults to 30,
-    so 35 calls from `testclient` reliably crossed it before this fix."""
-    with blank_session() as db:
-        with _client_ctx(db) as client:
-            statuses = []
-            for _ in range(35):
-                number = _digits()
-                rate_limit_cleanup.append(number)
-                resp = client.post(
-                    "/api/v1/auth/phone/verify",
-                    json={"phone": number, "code": "000000"},
-                )
-                statuses.append(resp.status_code)
-
-        assert all(s == 401 for s in statuses), statuses
 
 
 # --------------------------------------------------------------------------- #

@@ -14,6 +14,13 @@ contract names `GET /api/v1/user-management/account/` for `has_password` /
 frontend's own account page proxy (`app/api/user-management/account/route.ts`)
 forwards to `GET /api/v1/user-management/users/me` today, so
 `test_s1_account_payload_carries_has_password` targets that route instead.
+
+SECURITY ROUND (#1280): `test_s1_blocked_or_trashed_user_cannot_phone_sign_in_
+even_with_valid_code` used to read the OTP code back from a mocked
+`enqueue_job`'s call args - S1 moved code creation into the
+`dispatch_phone_signin_code` job the route now enqueues, so that mock no
+longer carries it; it seeds a real code via `_seed_signin_code` instead
+(mirrors `test_identity_s1_phone_signin.py`'s own helper of the same name).
 """
 from __future__ import annotations
 
@@ -74,6 +81,30 @@ def _user(db, *, phone=None, contact_id=None, status="ACTIVE", is_trashed=False,
     db.add(u)
     db.commit()
     return u
+
+
+def _seed_signin_code(db, contact) -> str:
+    """S1 moved OTP creation out of the request-code route and into the
+    background job; seed a real one directly the same way that job does,
+    without touching the real Respond.io send or the real Redis queue."""
+    from app.services.phone_signin_service import SIGNIN_OTP_TEXT
+    from app.services.portal_service import PortalService
+
+    captured: dict = {}
+
+    def _fake_task(otp_id, identifier, message_text, otp_code, space_id):
+        captured["code"] = otp_code
+        return {"status": "success"}
+
+    space_id = ""
+    workspace = getattr(contact, "workspace", None)
+    if workspace is not None:
+        space_id = getattr(workspace, "space_id", None) or ""
+
+    PortalService(db).create_and_dispatch_otp(
+        contact, space_id, SIGNIN_OTP_TEXT, _fake_task, dispatch_inline=True
+    )
+    return captured["code"]
 
 
 @pytest.fixture()
@@ -319,10 +350,10 @@ def test_s1_blocked_or_trashed_user_cannot_phone_sign_in_even_with_valid_code(
             rate_limit_cleanup.append(digits)
 
             with TestClient(app) as client:
-                with patch("app.services.queue_service.enqueue_job") as mock_enqueue:
+                with patch("app.services.queue_service.enqueue_job"):
                     req = client.post("/api/v1/auth/phone/request-code", json={"phone": digits})
                 assert req.status_code == 200, req.text
-                code = mock_enqueue.call_args.args[4]
+                code = _seed_signin_code(db, contact)
 
                 for field, value in bad_state.items():
                     setattr(user, field, value)
