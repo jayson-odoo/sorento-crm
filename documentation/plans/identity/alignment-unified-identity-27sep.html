@@ -1,0 +1,571 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Unified Sign-in Alignment</title>
+<style>
+  :root {
+    --bg: #f6f5f2;
+    --paper: #ffffff;
+    --ink: #1d1d1f;
+    --muted: #5f6368;
+    --line: #e2e0da;
+    --accent: #0b6e4f;
+    --accent-soft: #e5f2ec;
+    --warn: #8a5a00;
+    --warn-soft: #fbf1dc;
+    --quote: #f1efe9;
+    --hand: #7a2e8c;
+    --hand-soft: #f3e8f6;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 32px 16px 64px; }
+  header.top { margin-bottom: 28px; }
+  .eyebrow { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 0 0 6px; }
+  h1 { font-size: 30px; line-height: 1.2; margin: 0 0 10px; }
+  .lede { color: var(--muted); margin: 0; max-width: 680px; }
+  .meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  .chip { display: inline-block; font-size: 13px; padding: 3px 10px; border-radius: 999px; background: var(--paper); border: 1px solid var(--line); color: var(--muted); }
+  nav.toc { background: var(--paper); border: 1px solid var(--line); border-radius: 12px; padding: 14px 18px; margin-bottom: 28px; }
+  nav.toc ol { margin: 0; padding-left: 20px; }
+  nav.toc a { color: var(--accent); text-decoration: none; }
+  section { background: var(--paper); border: 1px solid var(--line); border-radius: 14px; padding: 22px 22px 24px; margin-bottom: 22px; }
+  h2 { font-size: 22px; margin: 0 0 4px; }
+  h2 .n { color: var(--accent); margin-right: 6px; }
+  .sub { color: var(--muted); margin: 0 0 16px; font-size: 15px; }
+  h3 { font-size: 17px; margin: 18px 0 6px; }
+  blockquote { margin: 12px 0; padding: 12px 16px; background: var(--quote); border-left: 4px solid var(--accent); border-radius: 0 8px 8px 0; font-style: italic; }
+  blockquote cite { display: block; font-style: normal; font-size: 13px; color: var(--muted); margin-top: 6px; }
+  p { margin: 8px 0; }
+  ul { padding-left: 20px; margin: 8px 0; }
+  li { margin: 4px 0; }
+
+  /* Rulings */
+  .ruling { border-top: 1px solid var(--line); padding: 14px 0 4px; display: grid; grid-template-columns: 64px 1fr; gap: 4px 14px; }
+  .ruling:first-of-type { border-top: 0; padding-top: 4px; }
+  .ruling .q { font-weight: 700; color: var(--accent); font-size: 15px; }
+  .ruling .date { font-size: 13px; color: var(--muted); }
+  .ruling .asked { font-weight: 600; }
+  .ruling .said { font-style: italic; background: var(--quote); padding: 2px 8px; border-radius: 6px; display: inline-block; margin: 4px 0; }
+  .ruling .so { margin: 4px 0 0; }
+  .ruling .so b { color: var(--accent); }
+
+  /* Slices */
+  .order { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 4px 0 18px; font-size: 14px; }
+  .order .s { background: var(--accent-soft); color: var(--accent); font-weight: 700; padding: 4px 10px; border-radius: 8px; }
+  .order .par { display: inline-flex; gap: 4px; padding: 3px; border: 1px dashed var(--accent); border-radius: 10px; }
+  .order .arrow { color: var(--muted); }
+  .slice { border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; margin-bottom: 14px; }
+  .slice-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 12px; margin-bottom: 6px; }
+  .slice-head .tag { font-weight: 800; color: var(--accent); }
+  .slice-head .title { font-weight: 700; font-size: 17px; }
+  .hand { font-size: 12px; font-weight: 700; padding: 3px 9px; border-radius: 999px; }
+  .hand.yes { background: var(--hand-soft); color: var(--hand); }
+  .hand.no { background: #eeeeee; color: var(--muted); }
+  .ba { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+  .ba > div { border-radius: 10px; padding: 10px 12px; font-size: 15px; }
+  .ba .before { background: #f3f3f3; }
+  .ba .after { background: var(--accent-soft); }
+  .ba .lbl { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); display: block; margin-bottom: 2px; }
+  .ba .after .lbl { color: var(--accent); }
+
+  /* Open questions */
+  .oq { border-top: 1px solid var(--line); padding: 14px 0 6px; }
+  .oq:first-of-type { border-top: 0; padding-top: 4px; }
+  .oq h3 { margin: 0 0 6px; }
+  .oq .rec { background: var(--accent-soft); border-radius: 8px; padding: 8px 12px; margin: 6px 0; }
+  .oq .other { background: var(--warn-soft); border-radius: 8px; padding: 8px 12px; margin: 6px 0; }
+  .oq .other b { color: var(--warn); }
+
+  /* Sketches */
+  .sketch-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 18px; margin-top: 10px; }
+  figure { margin: 0; }
+  figcaption { font-size: 13px; color: var(--muted); margin-top: 8px; }
+  .phone { max-width: 300px; margin: 0 auto; border: 10px solid #222; border-radius: 30px; background: #fff; padding: 22px 16px 26px; min-height: 420px; font-size: 14px; }
+  .phone .brand { font-weight: 800; text-align: center; margin-bottom: 16px; letter-spacing: .02em; }
+  .phone h4 { font-size: 17px; margin: 0 0 10px; text-align: center; }
+  .field-lbl { font-size: 13px; font-weight: 600; margin: 10px 0 4px; display: block; }
+  .field { border: 1px solid #c9c7c1; border-radius: 8px; padding: 9px 10px; color: #333; background: #fff; min-height: 38px; }
+  .field.ph { color: #9a9a9a; }
+  .field.ro { background: #f3f3f3; color: #555; }
+  .btn { display: block; text-align: center; background: var(--accent); color: #fff; border-radius: 8px; padding: 10px; font-weight: 700; margin-top: 14px; }
+  .btn.ghost { background: #fff; color: var(--accent); border: 1px solid var(--accent); }
+  .btn.inline { display: inline-block; padding: 6px 12px; margin: 0; font-size: 13px; }
+  .link { color: var(--accent); font-size: 13px; text-align: center; display: block; margin-top: 10px; }
+  .boxes { display: flex; justify-content: center; gap: 6px; margin: 14px 0 6px; }
+  .boxes span { width: 34px; height: 42px; border: 1px solid #c9c7c1; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 18px; }
+  .masked { text-align: center; color: var(--muted); }
+  .err { color: #a4262c; font-size: 13px; text-align: center; margin-top: 6px; }
+  .muted-c { text-align: center; color: #9a9a9a; font-size: 13px; }
+
+  .window { border: 1px solid #c9c7c1; border-radius: 12px; overflow: hidden; background: #fff; font-size: 14px; }
+  .window .bar { background: #efede8; padding: 8px 12px; font-weight: 700; font-size: 13px; border-bottom: 1px solid #ddd; }
+  .window .body { padding: 14px; }
+  .modal { max-width: 440px; margin: 0 auto; }
+  .pill { display: inline-block; font-size: 12px; padding: 2px 8px; border-radius: 999px; background: #eee; margin: 2px 4px 2px 0; }
+  .pill.g { background: var(--accent-soft); color: var(--accent); }
+  .pill.w { background: var(--warn-soft); color: var(--warn); }
+  .pill.x { background: #eee; color: #555; }
+  .inline-409 { background: var(--warn-soft); color: var(--warn); border-radius: 8px; padding: 8px 10px; margin-top: 10px; font-size: 13px; }
+  .inline-409 u { color: var(--accent); text-decoration: none; font-weight: 700; }
+
+  .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  table.grid { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 560px; table-layout: fixed; }
+  table.grid th, table.grid td { text-align: left; padding: 8px; border-bottom: 1px solid #eee; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  table.grid th { background: #faf9f6; font-weight: 700; color: #444; }
+  table.grid td.act { color: var(--accent); font-weight: 600; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+  .toolbar .field { flex: 1 1 160px; min-height: 32px; padding: 6px 10px; }
+
+  .section-card { border: 1px solid #e5e3de; border-radius: 10px; padding: 12px 14px; }
+  .section-card .h { font-weight: 700; margin-bottom: 6px; }
+  .row { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 4px 0; border-bottom: 1px dashed #eee; }
+  .row:last-child { border-bottom: 0; }
+  .row .k { color: var(--muted); }
+  .countdown { display: inline-block; border: 1px solid #a4262c; color: #a4262c; border-radius: 8px; padding: 5px 10px; font-size: 13px; font-weight: 700; }
+
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .two-col > *, .sketch-grid > *, .ba > * { min-width: 0; }
+  .risk { margin: 6px 0; }
+  .note { font-size: 13px; color: var(--muted); }
+
+  @media (max-width: 640px) {
+    h1 { font-size: 24px; }
+    section { padding: 18px 16px 20px; }
+    .ba, .two-col { grid-template-columns: 1fr; }
+    .ruling { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="top">
+  <p class="eyebrow">For owner review &middot; 27 Sep 2026</p>
+  <h1>One sign-in for the portal and the CRM</h1>
+  <p class="lede">What you asked for, what you have decided so far, what each step will give you, and the few questions still open. Everything here matches the written plan; nothing on this page is built yet.</p>
+  <div class="meta">
+    <span class="chip">Issue #1280</span>
+    <span class="chip">Plan PR #1285, round 3</span>
+    <span class="chip">9 of 15 questions ruled</span>
+    <span class="chip">5 steps (slices)</span>
+  </div>
+</header>
+
+<nav class="toc" aria-label="Contents">
+  <ol>
+    <li><a href="#ask">The ask, in your words</a></li>
+    <li><a href="#decisions">Decisions made so far</a></li>
+    <li><a href="#slices">What each step ships</a></li>
+    <li><a href="#open">Open questions</a></li>
+    <li><a href="#screens">Screen sketches</a></li>
+    <li><a href="#scope">Out of scope and risks</a></li>
+  </ol>
+</nav>
+
+<!-- 1 -->
+<section id="ask">
+  <h2><span class="n">1</span>The ask, in your words</h2>
+  <p class="sub">Quoted exactly as written. This is what the whole plan answers to.</p>
+
+  <blockquote>
+    "I think eventually all our portal and user sign in needs to be unified. Because the one who use the portal for basic portal submission function will grow to use our project sales modules, use our sales opportunities module. So I think we need to find a way to unify. I'm thinking that we should support like user login, user email and password login, or also a phone number login. We should unify this. So for all the contacts that are like for product salesperson, retail salesperson, we also need to create like a counterpart user for them so in the future all of them can use our system and be audit trailed by our system."
+    <cite>Issue #1280, 26 Sep 2026</cite>
+  </blockquote>
+
+  <p>And how you want users to come into being:</p>
+  <blockquote>
+    "hmm i should be able to consciously create and setup at the backend first, it should be controlled by me"
+    <cite>Your ruling on question 3, 26 Sep 2026 23:45 MYT</cite>
+  </blockquote>
+  <blockquote>
+    "no it shouldn't, it should be consciously by me"
+    <cite>Your ruling on question 4, 26 Sep 2026 23:45 MYT</cite>
+  </blockquote>
+
+  <h3>Read as four things</h3>
+  <ul>
+    <li><b>One sign-in</b> for the portal and the CRM.</li>
+    <li><b>Email and password, or phone number</b> to get in.</li>
+    <li><b>A user for every product and retail salesperson</b>, created by you, not by the system.</li>
+    <li><b>Everything they do is recorded as them</b> in the history.</li>
+  </ul>
+</section>
+
+<!-- 2 -->
+<section id="decisions">
+  <h2><span class="n">2</span>Decisions made so far</h2>
+  <p class="sub">Every ruling you have given, word for word, and what it does to the design.</p>
+
+  <div class="ruling">
+    <div class="q">Q1</div>
+    <div>
+      <div class="date">26 Sep 2026 23:45 MYT</div>
+      <div class="asked">Who counts as a product or retail salesperson?</div>
+      <div class="said">"yeah"</div>
+      <p class="so"><b>So:</b> a salesperson is any contact in a market segment that shows up in the "Requested by / Salesperson" picker (today Retail and Project, reading "product" as "project"), plus any contact tied to a sales agent. That decides who appears on your to-do list of people to set up.</p>
+    </div>
+  </div>
+
+  <div class="ruling">
+    <div class="q">Q2</div>
+    <div>
+      <div class="date">26 Sep 2026 23:45 MYT</div>
+      <div class="asked">Does this replace the 14 Aug ruling that salespeople get no user account?</div>
+      <div class="said">"yeah correct"</div>
+      <p class="so"><b>So:</b> salespeople can now have a user. The old note is marked as replaced when the user-setup step ships.</p>
+    </div>
+  </div>
+
+  <div class="ruling">
+    <div class="q">Q3</div>
+    <div>
+      <div class="date">26 Sep 2026 23:45 MYT</div>
+      <div class="asked">Dealer contacts: users up front, or at their first portal sign-in?</div>
+      <div class="said">"hmm i should be able to consciously create and setup at the backend first, it should be controlled by me"</div>
+      <p class="so"><b>So:</b> neither. You create each user yourself from the backend. Our first recommendation (create at first sign-in) is withdrawn.</p>
+    </div>
+  </div>
+
+  <div class="ruling">
+    <div class="q">Q4</div>
+    <div>
+      <div class="date">26 Sep 2026 23:45 MYT</div>
+      <div class="asked">Does every portal contact quietly become a user when it next signs in?</div>
+      <div class="said">"no it shouldn't, it should be consciously by me"</div>
+      <p class="so"><b>So:</b> nothing ever creates a user by itself: no bulk run, no sync, no sign-in. A contact you have not set up keeps using the portal exactly as today, so nobody is locked out while you work through the list.</p>
+    </div>
+  </div>
+
+  <div class="ruling">
+    <div class="q">Q5</div>
+    <div>
+      <div class="date">27 Sep 2026 00:20 MYT</div>
+      <div class="asked">May a user have no email (phone only)?</div>
+      <div class="said">"identity plan q5 - yeah can"</div>
+      <p class="so"><b>So:</b> a user needs at least one of email or phone. A WhatsApp-only salesperson gets a user with just a phone and signs in by WhatsApp code. No made-up placeholder emails, ever.</p>
+    </div>
+  </div>
+
+  <div class="ruling">
+    <div class="q">Q6</div>
+    <div>
+      <div class="date">26 Sep 2026 23:45 MYT</div>
+      <div class="asked">Sign-in codes by WhatsApp only, or SMS too?</div>
+      <div class="said">"yeap whatsapp codes"</div>
+      <p class="so"><b>So:</b> codes go by WhatsApp only, the same way the portal sends them today. No SMS service is added.</p>
+    </div>
+  </div>
+
+  <div class="ruling">
+    <div class="q">Q7</div>
+    <div>
+      <div class="date">26 Sep 2026 23:45 MYT</div>
+      <div class="asked">Sign-in screen: one "Email or phone number" field, or two tabs?</div>
+      <div class="said">"hmm we can just link the user to respond contact right?"</div>
+      <p class="so"><b>So:</b> yes, linking each user to one WhatsApp contact is exactly the design. The link tells the system where to send the code; the code is what proves it is really that person. The link alone does not sign anyone in. The screen layout itself was not ruled (see open question 1).</p>
+    </div>
+  </div>
+
+  <div class="ruling">
+    <div class="q">Q8</div>
+    <div>
+      <div class="date">26 Sep 2026 23:45 MYT</div>
+      <div class="asked">What can a salesperson do in the CRM on day one?</div>
+      <div class="said">"yeah now salesperson gets nothing other than portal submission"</div>
+      <p class="so"><b>So:</b> the Salesperson role starts empty and stays empty. When one of them grows into project sales, you give that person a CRM role; no code change needed.</p>
+    </div>
+  </div>
+
+  <div class="ruling">
+    <div class="q">Q9</div>
+    <div>
+      <div class="date">26 Sep 2026 23:45 MYT</div>
+      <div class="asked">Where does someone land after signing in?</div>
+      <div class="said">"hmm for now salesperson still land at portal first"</div>
+      <p class="so"><b>So:</b> a salesperson always lands on their portal home, even after you give them a CRM role; they then see an "Open CRM" link. Staff land on the CRM as today.</p>
+    </div>
+  </div>
+
+  <div class="ruling">
+    <div class="q">Q10</div>
+    <div>
+      <div class="date">26 Sep 2026 23:45 MYT</div>
+      <div class="asked">Phone sign-in for staff and admins too?</div>
+      <div class="said">"yeah correct"</div>
+      <p class="so"><b>So:</b> any active user whose phone matches their linked WhatsApp contact can sign in by code, admins included. Email and password keep working for everyone who has one.</p>
+    </div>
+  </div>
+</section>
+
+<!-- 3 -->
+<section id="slices">
+  <h2><span class="n">3</span>What each step ships</h2>
+  <p class="sub">Five steps, shipped one at a time. The two in the dashed box can run side by side.</p>
+
+  <div class="order" aria-label="Order of steps">
+    <span class="s">S0</span><span class="arrow">&rarr;</span>
+    <span class="par"><span class="s">S1</span><span class="s">S3</span></span><span class="arrow">&rarr;</span>
+    <span class="s">S2</span><span class="arrow">&rarr;</span>
+    <span class="s">S4</span>
+  </div>
+
+  <div class="slice">
+    <div class="slice-head">
+      <span class="tag">S0</span><span class="title">Groundwork and a clearer history</span>
+      <span class="hand no">No hand test needed</span>
+    </div>
+    <p>Behind the scenes: a user may now be phone-only, emails match regardless of capitals, each WhatsApp contact belongs to at most one user, and every entry in the history says who did it and how. Existing staff whose phone exactly matches one WhatsApp contact are linked to it; you get that list by name to check before it goes live.</p>
+    <div class="ba">
+      <div class="before"><span class="lbl">Today</span>A nightly job or an n8n update shows as "System" in a record's history, and an admin using "view as contact" is recorded as the contact.</div>
+      <div class="after"><span class="lbl">After</span>The history reads "Background job for Aisyah", "Integration: n8n as Ops Bot", "Nurain on behalf of Aisyah", "Aisyah (phone)".</div>
+    </div>
+    <p class="note">Your part: read the list of automatic phone-match links before it merges. Nobody signs in any differently.</p>
+  </div>
+
+  <div class="slice">
+    <div class="slice-head">
+      <span class="tag">S1</span><span class="title">Sign in with a phone number</span>
+      <span class="hand yes">Needs your hand test</span>
+    </div>
+    <p>The sign-in page gets one field, "Email or phone number". Type an email and you get the password step as today. Type a phone number and a 6-digit code arrives on WhatsApp.</p>
+    <div class="ba">
+      <div class="before"><span class="lbl">Today</span>Only email and password. Typing an unknown email says "User not found. Please register first.", which tells a stranger who has an account.</div>
+      <div class="after"><span class="lbl">After</span>A staff member types 012-345 6789, gets a code on WhatsApp, enters it, and is in. An unknown email and a wrong password get the same answer.</div>
+    </div>
+    <p class="note">Your hand test: sign in on your phone with your own number, and once with email and password.</p>
+  </div>
+
+  <div class="slice">
+    <div class="slice-head">
+      <span class="tag">S3</span><span class="title">You create and link users</span>
+      <span class="hand yes">Needs your hand test</span>
+    </div>
+    <p>A new "Salesperson accounts" list under User Management shows every salesperson contact and whether they have a user yet. "Create user" opens the usual Add user form already filled in from the contact. A contact's page gets a "User account" part with Create user and Link existing user.</p>
+    <div class="ba">
+      <div class="before"><span class="lbl">Today</span>There is no way to give Aisyah, a retail salesperson with only WhatsApp, a user; every user needs an email, and nothing shows which salespeople still need setting up.</div>
+      <div class="after"><span class="lbl">After</span>You open Salesperson accounts, click Create user on Aisyah's row, check her name, phone, Salesperson role and companies, save. Her row turns "Linked".</div>
+    </div>
+    <p class="note">Your hand test: create one salesperson from the list, and link an existing staff member who is also a salesperson (the form offers "Link to &lt;name&gt; instead" when the phone is already a user's).</p>
+  </div>
+
+  <div class="slice">
+    <div class="slice-head">
+      <span class="tag">S2</span><span class="title">The portal uses the same sign-in</span>
+      <span class="hand yes">Needs your hand test</span>
+    </div>
+    <p>For a person you have set up, the portal link they already have now signs them in as their user. Same card, same code, same forms, same submissions. For a contact you have not set up, nothing changes at all.</p>
+    <div class="ba">
+      <div class="before"><span class="lbl">Today</span>Aisyah taps her months-old WhatsApp link, enters the code, and uses the portal on a separate portal-only session with no user behind it.</div>
+      <div class="after"><span class="lbl">After</span>She taps the same link, enters the same code, lands on the same portal home, now signed in as her user. If you later give her a CRM role, "Open CRM" takes her there without a second sign-in.</div>
+    </div>
+    <p class="note">Your hand test: open an old link for a set-up salesperson and for a dealer you have not set up; both should look exactly as before.</p>
+  </div>
+
+  <div class="slice">
+    <div class="slice-head">
+      <span class="tag">S4</span><span class="title">Screens to look after sign-ins</span>
+      <span class="hand yes">Needs your hand test</span>
+    </div>
+    <p>The Users list gets a Kind filter (Staff, Salesperson, Portal) and a Sign-in column (Email, Phone, both). Each user's page gets a Sign-in part: email, phone and whether it is verified, linked WhatsApp contact, last sign-in and how.</p>
+    <div class="ba">
+      <div class="before"><span class="lbl">Today</span>If a salesperson's WhatsApp number changes, nothing tells you, and there is no one place to see how a person signs in.</div>
+      <div class="after"><span class="lbl">After</span>The user shows "Needs attention: phone differs from WhatsApp contact" with "Use new number". Taking it signs them out everywhere; their next code confirms the new number.</div>
+    </div>
+    <p class="note">Your hand test: filter the Users list by Salesperson, open one, and check the Sign-in part on your phone and on a laptop.</p>
+  </div>
+</section>
+
+<!-- 4 -->
+<section id="open">
+  <h2><span class="n">4</span>Open questions</h2>
+  <p class="sub">Not ruled yet. The plan is written to the recommendation; a different answer changes only what is listed under it.</p>
+
+  <div class="oq">
+    <h3>1. Sign-in screen: one field or two tabs? <span class="note">(was Q7)</span></h3>
+    <div class="rec"><b>Recommend: one field, "Email or phone number". The page works out which you typed.</b></div>
+    <div class="other"><b>If two tabs instead:</b> the page shows "Email" and "Phone" tabs and the person picks first. Only the sign-in screen changes; everything behind it stays the same.</div>
+  </div>
+
+  <div class="oq">
+    <h3>2. Old portal sessions of people you set up <span class="note">(Q11)</span></h3>
+    <div class="rec"><b>Recommend: contacts you have not set up keep their portal session as today, with no end date. Once you set someone up, their old portal session stops renewing and ends within 30 days. Old WhatsApp links keep working for everyone.</b></div>
+    <div class="other"><b>If old sessions keep renewing for set-up people too:</b> that person carries two separate sessions for good, and signing out of one does not end the other.</div>
+  </div>
+
+  <div class="oq">
+    <h3>3. Admin "view as contact" <span class="note">(Q12)</span></h3>
+    <div class="rec"><b>Recommend: keep it, and record what the admin does there as "the admin on behalf of the contact".</b></div>
+    <div class="other"><b>If removed:</b> admins can no longer see the portal the way a contact sees it, which is how portal problems are checked today.</div>
+  </div>
+
+  <div class="oq">
+    <h3>4. Someone loses their phone <span class="note">(Q13)</span></h3>
+    <div class="rec"><b>Recommend: an admin changes the number on the user. That signs them out everywhere, and their next code confirms the new number.</b></div>
+    <div class="other"><b>If people change it themselves:</b> they need a second way to prove who they are, which a phone-only person does not have, and a new self-service screen gets built.</div>
+  </div>
+
+  <div class="oq">
+    <h3>5. A salesperson's phone already belongs to a staff user <span class="note">(Q14)</span></h3>
+    <div class="rec"><b>Recommend: the Create user form stops and offers "Link this contact to &lt;name&gt; instead". You decide; nothing links by itself.</b></div>
+    <div class="other"><b>If linked automatically:</b> quicker, but a link is made without you seeing it, which goes against your rulings on Q3 and Q4.</div>
+  </div>
+
+  <div class="oq">
+    <h3>6. How long a phone or portal sign-in lasts <span class="note">(Q15)</span></h3>
+    <div class="rec"><b>Recommend: 30 days, renewed while in use, the same as the portal today.</b></div>
+    <div class="other"><b>If shorter (for example 8 hours):</b> salespeople ask for a WhatsApp code far more often, and each code is a WhatsApp message sent.</div>
+  </div>
+</section>
+
+<!-- 5 -->
+<section id="screens">
+  <h2><span class="n">5</span>Screen sketches</h2>
+  <p class="sub">Simplified drawings of what the plan describes. No designed mockups exist yet; these show layout and wording, not final styling.</p>
+
+  <h3>Sign-in on a phone (S1)</h3>
+  <div class="sketch-grid">
+    <figure>
+      <div class="phone">
+        <div class="brand">SORENTO</div>
+        <h4>Sign in</h4>
+        <span class="field-lbl">Email or phone number</span>
+        <div class="field">012-345 6789</div>
+        <span class="btn">Continue</span>
+        <span class="link">Forgot password?</span>
+      </div>
+      <figcaption>Step 1: one field. A number goes to the code step; an email goes to the password step.</figcaption>
+    </figure>
+    <figure>
+      <div class="phone">
+        <div class="brand">SORENTO</div>
+        <h4>Enter the code sent to your WhatsApp</h4>
+        <p class="masked">+60 12-*** 6789 &middot; <span style="color:var(--accent)">Change number</span></p>
+        <div class="boxes"><span>4</span><span>8</span><span>1</span><span>0</span><span></span><span></span></div>
+        <p class="err">That code is not right. 4 tries left.</p>
+        <p class="muted-c">Resend code in 0:42</p>
+        <span class="link">Use password instead</span>
+      </div>
+      <figcaption>Step 2: six boxes, WhatsApp autofill offered, signs in on the sixth digit. "Use password instead" only for people who have one.</figcaption>
+    </figure>
+  </div>
+
+  <h3>Creating a salesperson's user (S3)</h3>
+  <div class="two-col">
+    <figure>
+      <div class="window">
+        <div class="bar">User Management &rsaquo; Salesperson accounts</div>
+        <div class="body">
+          <div class="toolbar">
+            <div class="field ph">Search contacts</div>
+            <span class="pill">State: All</span>
+          </div>
+          <div class="table-scroll">
+            <table class="grid">
+              <colgroup><col style="width:22%"><col style="width:20%"><col style="width:16%"><col style="width:14%"><col style="width:14%"><col style="width:14%"></colgroup>
+              <thead><tr><th>Contact</th><th>Phone</th><th>Segment / Agent</th><th>User</th><th>State</th><th></th></tr></thead>
+              <tbody>
+                <tr><td>Aisyah Rahman</td><td>+60 12-*** 6789</td><td>Retail</td><td></td><td><span class="pill x">No user yet</span></td><td class="act">Create user</td></tr>
+                <tr><td>Daniel Lim</td><td>+60 16-*** 2210</td><td>Project</td><td>Daniel Lim</td><td><span class="pill g">Linked</span></td><td class="act">Open user</td></tr>
+                <tr><td>Farah Aziz</td><td>+60 11-*** 4432</td><td>Agent FA01</td><td></td><td><span class="pill w">Needs attention</span></td><td class="act" title="Phone belongs to Nurain: Link to Nurain">Link to Nurain</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      <figcaption>Your to-do list. "Needs attention" always says why in words, with the one action that fixes it.</figcaption>
+    </figure>
+    <figure>
+      <div class="window modal">
+        <div class="bar">Add user</div>
+        <div class="body">
+          <span class="field-lbl">Name</span><div class="field">Aisyah Rahman</div>
+          <span class="field-lbl">WhatsApp contact</span><div class="field ro">Aisyah Rahman (locked)</div>
+          <span class="field-lbl">Phone</span><div class="field ro">+60 12-345 6789</div>
+          <span class="field-lbl">Email (optional)</span><div class="field ph">none</div>
+          <span class="field-lbl">Roles</span><div class="field"><span class="pill g">Salesperson</span></div>
+          <span class="field-lbl">Companies</span><div class="field"><span class="pill">Sorento KL</span><span class="pill">Sorento Penang</span></div>
+          <div class="inline-409">This phone already belongs to Nurain. <u>Link this contact to Nurain instead</u></div>
+          <span class="btn">Save</span>
+        </div>
+      </div>
+      <figcaption>Filled in from the contact. Salesperson is suggested, never forced; you can change anything before saving. The warning shows only when the phone is already a user's.</figcaption>
+    </figure>
+  </div>
+
+  <h3>A contact's User account part (S3) and a user's Sign-in part (S4)</h3>
+  <div class="two-col">
+    <figure>
+      <div class="section-card">
+        <div class="h">User account</div>
+        <div class="row"><span class="k">User</span><span>No user yet</span></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+          <span class="btn inline">Create user</span>
+          <span class="btn inline ghost">Link existing user</span>
+        </div>
+      </div>
+      <div class="section-card" style="margin-top:10px">
+        <div class="h">User account</div>
+        <div class="row"><span class="k">User</span><span>Daniel Lim</span></div>
+        <div style="margin-top:10px"><span class="countdown">Unlinking in 4s &middot; Cancel</span></div>
+      </div>
+      <figcaption>On a contact's page. Unlink counts down with a Cancel, never a pop-up question.</figcaption>
+    </figure>
+    <figure>
+      <div class="section-card">
+        <div class="h">Sign-in</div>
+        <div class="row"><span class="k">Email</span><span>none</span></div>
+        <div class="row"><span class="k">Phone</span><span>+60 12-*** 6789 <span class="pill g">verified</span></span></div>
+        <div class="row"><span class="k">WhatsApp contact</span><span style="color:var(--accent)">Aisyah Rahman</span></div>
+        <div class="row"><span class="k">Last sign-in</span><span>Today 09:14, phone</span></div>
+        <div class="inline-409">Needs attention: phone differs from WhatsApp contact. <u>Use new number</u></div>
+      </div>
+      <figcaption>On a user's page, in the same place when viewing and editing.</figcaption>
+    </figure>
+  </div>
+
+  <h3>The portal verify card (S2)</h3>
+  <p>Unchanged on screen: the name, the masked number and the code boxes the contact already knows. Only what happens after the code differs, and only for people you have set up.</p>
+</section>
+
+<!-- 6 -->
+<section id="scope">
+  <h2><span class="n">6</span>Out of scope and risks</h2>
+
+  <div class="two-col">
+    <div>
+      <h3>Not in this plan</h3>
+      <ul>
+        <li>Creating users automatically, in bulk or at sign-in (your Q3 and Q4 rulings). Comes back only if you ask.</li>
+        <li>Switching off the old portal session for contacts you have not set up.</li>
+        <li>SMS codes. Only if a salesperson cannot receive WhatsApp.</li>
+        <li>CRM permissions for salespeople (your Q8 ruling). Later a role change, no code.</li>
+        <li>Self sign-up by the public.</li>
+        <li>Rewriting the older "who did this" fields across every module; the history-trail work in #1281 decides that.</li>
+        <li>Stronger storage of sign-in sessions; logged as its own security job.</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Risks</h3>
+      <ul>
+        <li class="risk"><b>Only people you set up get the one sign-in.</b> Until your list is done, the rest stay portal-only and their actions are recorded against their WhatsApp contact.</li>
+        <li class="risk"><b>WhatsApp code message.</b> If the approved code message is paused or rejected, phone sign-in stops; email and password still work. If its wording names the portal, you will be asked whether it can also be used for CRM sign-in before S1 starts.</li>
+        <li class="risk"><b>No background worker, no codes</b>, as already true for the portal.</li>
+        <li class="risk"><b>Admins signing in by code</b> is weaker than a password if a SIM is stolen; you accepted it, and it can be switched off for admins with one small change.</li>
+        <li class="risk"><b>A changed WhatsApp number</b> blocks that person's phone sign-in until you confirm the new number.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+</div>
+</body>
+</html>
