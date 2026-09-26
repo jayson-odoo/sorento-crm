@@ -689,7 +689,13 @@ class ProductService:
                         "value": entry["value"],
                         # R7 (round 4 on PR #833): the value in plain words, off the
                         # registry's own `value_labels`, for every reader that shows it.
-                        "display_value": display_spec_value(entry["value"], reg.value_labels),
+                        # A LIST value (two finishes on one product) reads as its values
+                        # joined (PR #833 round 5 N1).
+                        "display_value": (
+                            " / ".join(display_spec_value(v, reg.value_labels) for v in entry["value"])
+                            if isinstance(entry["value"], list)
+                            else display_spec_value(entry["value"], reg.value_labels)
+                        ),
                         "unit": entry.get("unit") or reg.unit,
                         "rank_weight": float(reg.rank_weight) if reg.rank_weight is not None else 1.0,
                     }

@@ -21,6 +21,10 @@ from sqlalchemy import text
 
 from tests._pg_fixture import pg_session, unique_code
 
+# ALTER TABLE brands and an unbounded UPDATE on the shared schema: out of the xdist pool
+# (tests/conftest.py `serial_ddl`; PR #833 round 5 S3).
+pytestmark = pytest.mark.serial_ddl
+
 _MIGRATION_PATH = (
     Path(__file__).resolve().parent.parent / "alembic" / "versions" / "bcw_0001_brand_chatbot_weight.py"
 )

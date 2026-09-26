@@ -30,8 +30,9 @@ from typing import Any, Callable
 
 from sqlalchemy import String as _String
 from sqlalchemy import cast as _cast
-from sqlalchemy import exists, func, or_
+from sqlalchemy import case, exists, func, or_
 from sqlalchemy.dialects.postgresql import ARRAY as _ARRAY
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session, aliased
 from sqlalchemy.sql import ColumnElement
 
@@ -718,12 +719,22 @@ def _near_miss(db: Session, *, membership: dict[str, list[str]], legs: list, bra
     parent = aliased(Product)
     family = func.coalesce(parent.product_code, Product.product_code)
     stored = ProductSpecifications.values[key]["value"]
+    # Round 5 S1 (reviewer pass at d6fa2b31): a LIST value ("Rose Gold + Matt Black" on
+    # one product) is a member of each of its values, exactly as `membership_clause`
+    # matches it by containment, so it is grouped under each. A scalar string is a list
+    # of one; any other JSON type holds no value to name.
+    as_list = case(
+        (func.jsonb_typeof(stored) == "array", stored),
+        (func.jsonb_typeof(stored) == "string", func.jsonb_build_array(stored)),
+        else_=_cast("[]", JSONB),
+    )
+    element = func.jsonb_array_elements_text(as_list)
     query = (
-        db.query(stored.astext, func.count(func.distinct(family)))
+        db.query(family.label("family"), element.label("value"))
         .select_from(Product)
         .outerjoin(parent, parent.id == Product.variant_of_id)
         .join(ProductSpecifications, ProductSpecifications.product_id == Product.id)
-        .filter(Product.is_active.is_(True), *legs, func.jsonb_typeof(stored) == "string")
+        .filter(Product.is_active.is_(True), *legs)
     )
     clause = membership_clause(rest)
     if clause is not None:
@@ -732,13 +743,20 @@ def _near_miss(db: Session, *, membership: dict[str, list[str]], legs: list, bra
         query = query.join(Brand, Brand.id == Product.brand_id).filter(
             func.lower(Brand.brand_name) == brand.strip().lower()
         )
-    rows = query.group_by(stored.astext).all()
+    members = query.subquery()
+    per_value = db.query(members.c.value, func.count(func.distinct(members.c.family))).group_by(members.c.value).all()
+    # A product with two other values is ONE product in the total, however many values
+    # it is listed under.
+    others_only = func.lower(members.c.value) != str(value).lower()
+    other_total = int(
+        db.query(func.count(func.distinct(members.c.family))).filter(others_only).scalar() or 0
+    )
     registry = db.query(ProductSpecRegistry).filter(ProductSpecRegistry.spec_key == key).first()
     labels = dict(getattr(registry, "value_labels", None) or {})
     others = sorted(
         (
             {"value": display_spec_value(v, labels), "count": int(n)}
-            for v, n in rows
+            for v, n in per_value
             if n and str(v).lower() != str(value).lower()
         ),
         key=lambda o: (-o["count"], o["value"]),
@@ -749,7 +767,7 @@ def _near_miss(db: Session, *, membership: dict[str, list[str]], legs: list, bra
         "value": display_spec_value(value, labels),
         "class_labels": sorted(classes),
         "other_values": others,
-        "other_total": sum(o["count"] for o in others),
+        "other_total": other_total,
     }
 
 

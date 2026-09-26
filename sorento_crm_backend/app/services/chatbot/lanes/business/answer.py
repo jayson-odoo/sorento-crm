@@ -2784,7 +2784,9 @@ def near_miss_sentence(near: Any, require: dict[str, Any]) -> str:
     value = jsc.js_string(jsc.get(near, "value")).strip()
     with_what = _predicate_phrase(require)
     has_what = _header_predicate_phrase(require)
-    said = f"No {value.lower()} {noun} with {with_what} (I looked for {label}: {value} among {noun})."
+    # An acronym value keeps its capitals ("No PVC wash basins"; PR #833 round 5 N2).
+    named = value if value.isupper() else value.lower()
+    said = f"No {named} {noun} with {with_what} (I looked for {label}: {value} among {noun})."
     total = int(jsc.get(near, "other_total") or 0)
     if not total:
         return f"{said} No {noun} have {with_what} in any {label.lower()}."

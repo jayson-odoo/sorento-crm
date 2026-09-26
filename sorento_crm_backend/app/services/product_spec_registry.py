@@ -575,7 +575,7 @@ SPEC_ACRONYMS = frozenset({"pvc", "abs", "pp", "led", "uv", "ss", "sus"})
 _SLUG_RE = re.compile(r"^[a-z0-9]+(?:_[a-z0-9]+)*$")
 
 
-def display_spec_value(raw: Any, value_labels: dict | None = None) -> str:
+def display_spec_value(raw: Any, value_labels: dict | None = None, *, title_case: bool = False) -> str:
     """One stored spec value in the words a customer reads (round 4 R7 on PR #833, owner
     console test 27 Sep 2026: "why all the values are snake case? too technical").
 
@@ -586,7 +586,11 @@ def display_spec_value(raw: Any, value_labels: dict | None = None) -> str:
     stored ("White"), save that no "_" ever survives. `True` / `False` read Yes / No, a
     whole number has no ".0". Every enum value of the seed reads plain through here
     (`test_attribute_asks_round4`), so nothing needs a label typed in to stop a
-    snake_case value reaching a reply."""
+    snake_case value reaching a reply.
+
+    `title_case=True` is the dealer kit tag's reading ("Stainless Steel"), the one other
+    reader: round 5 S2 (reviewer pass at d6fa2b31) folded its copy of this function in
+    here, so the two share one acronym list and one set of rules."""
     if isinstance(raw, bool):
         return "Yes" if raw else "No"
     if isinstance(raw, float) and raw.is_integer():
@@ -597,7 +601,10 @@ def display_spec_value(raw: Any, value_labels: dict | None = None) -> str:
         return str(labels[text])
     if _SLUG_RE.match(text):
         words = text.split("_")
-        shown = [w.upper() if w in SPEC_ACRONYMS else (w.capitalize() if n == 0 else w) for n, w in enumerate(words)]
+        shown = [
+            w.upper() if w in SPEC_ACRONYMS else (w.capitalize() if n == 0 or title_case else w)
+            for n, w in enumerate(words)
+        ]
         return " ".join(shown)
     return " ".join(text.replace("_", " ").split())
 

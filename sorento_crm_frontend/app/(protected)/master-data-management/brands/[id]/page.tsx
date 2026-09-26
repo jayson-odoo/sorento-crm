@@ -172,6 +172,7 @@ export default function BrandDetailPage({ params }: { params: Promise<{ id: stri
     draft.brand_code.trim().length > 0 &&
     draft.brand_name.trim().length > 0 &&
     Number(draft.chatbot_weight) >= 0 &&
+    Number(draft.chatbot_weight) <= 9999 &&
     !update.isPending;
 
   const actions: RecordAction[] = [
@@ -324,6 +325,7 @@ export default function BrandDetailPage({ params }: { params: Promise<{ id: stri
                       id="brand-chatbot-weight"
                       type="number"
                       min={0}
+                      max={9999}
                       step={0.1}
                       inputMode="decimal"
                       className="w-32"

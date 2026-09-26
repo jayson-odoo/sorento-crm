@@ -735,6 +735,43 @@ def _words_of(text: Any) -> list[str]:
     return _WORD_RE.findall(str(text or "").lower())
 
 
+def _one_edit(a: str, b: str) -> bool:
+    """True when `a` and `b` differ by exactly one insert, delete or substitution."""
+    if a == b or abs(len(a) - len(b)) > 1:
+        return False
+    if len(a) == len(b):
+        return sum(x != y for x, y in zip(a, b)) == 1
+    short, long_ = (a, b) if len(a) < len(b) else (b, a)
+    return any(long_[:i] + long_[i + 1 :] == short for i in range(len(long_)))
+
+
+def _in_value_position(modifier: str, known: set[str]) -> bool:
+    """Round 5 B1 (reviewer pass at d6fa2b31 on PR #833): is `modifier` shaped like one
+    of the words the registry puts in front of this head word? A single letter where the
+    known ones are single letters ("t" beside "p" and "s" before "trap"), or a one-edit
+    neighbour of a known word of three letters or more (a misspelt value). A plain word
+    ("deck" before "mounted", "long" before "spout", "grease" before "trap") is not: it
+    is an ordinary product word and is searched."""
+    if len(modifier) == 1:
+        return any(len(m) == 1 for m in known)
+    return len(modifier) >= 3 and any(len(m) >= 3 and _one_edit(modifier, m) for m in known)
+
+
+def _names_a_product(db: Session, phrase: str) -> bool:
+    """Round 5 B1: a phrase some active product carries in its name or description is a
+    product name, never an unknown value; the search runs for it."""
+    pattern = f"%{phrase}%"
+    hit = (
+        db.query(Product.id)
+        .filter(
+            Product.is_active.is_(True),
+            or_(Product.product_name.ilike(pattern), Product.description.ilike(pattern)),
+        )
+        .first()
+    )
+    return hit is not None
+
+
 def unknown_spec_values(db: Session, text: str, *, registry_rows=None) -> list[dict]:
     """The attribute values a message names that the registry does not know, each with
     the values it does: `[{"key", "label", "said", "known"}]`, `[]` when there are none.
@@ -748,7 +785,13 @@ def unknown_spec_values(db: Session, text: str, *, registry_rows=None) -> list[d
     the nearest one. Not an unknown value: a phrase that is a synonym; a modifier that is
     a known word elsewhere ("closet trap", "chrome trap"), a number ("250mm trap") or a
     stopword ("the trap"); a head word that is itself a class word ("tap"). No word list
-    in code: the registry's synonyms and the class vocabulary decide."""
+    in code: the registry's synonyms and the class vocabulary decide.
+
+    Round 5 B1 (reviewer pass at d6fa2b31): the modifier must also sit in a VALUE
+    position (`_in_value_position`: shaped like the key's own modifiers), and the phrase
+    must be no product's name or description (`_names_a_product`). Without that, every
+    unknown word before a head word ("deck mounted", "long spout", "grease trap", "click
+    clack waste") was said back and nothing was searched."""
     from app.services.product_class_signal import CLASS_SYNONYMS
     from app.services.product_spec_registry import display_spec_value
 
@@ -781,6 +824,14 @@ def unknown_spec_values(db: Session, text: str, *, registry_rows=None) -> list[d
                 if len(words) >= 2:
                     enders.setdefault(words[-1], set()).add(value)
         heads = {w for w, values in enders.items() if len(values) >= 2 and w not in class_words}
+        # Round 5 B1: the words that sit in front of each head word in a known phrase
+        # ("p" and "s" before "trap", "wall" and "counter" before "mounted").
+        modifiers: dict[str, set[str]] = {}
+        for value, ps in synonyms.items():
+            for p in [str(value).replace("_", " "), *ps]:
+                words = _words_of(p)
+                if len(words) >= 2 and words[-1] in heads:
+                    modifiers.setdefault(words[-1], set()).add(words[-2])
         # Every token a known phrase of this key already covers ("wall" in "wall hung",
         # "trap" in "s trap"): a head word inside a phrase the registry knows is no
         # unknown value.
@@ -796,8 +847,10 @@ def unknown_spec_values(db: Session, text: str, *, registry_rows=None) -> list[d
             modifier = tokens[j - 1]
             if modifier in known_words or any(ch.isdigit() for ch in modifier):
                 continue
+            if not _in_value_position(modifier, modifiers.get(tokens[j], set())):
+                continue
             said = f"{modifier} {tokens[j]}"
-            if any(u["key"] == row.spec_key for u in out):
+            if any(u["key"] == row.spec_key for u in out) or _names_a_product(db, said):
                 continue
             labels = dict(getattr(row, "value_labels", None) or {})
             known = sorted({display_spec_value(v, labels) for v in merged_allowed_values(row)})

@@ -38,7 +38,7 @@ const BrandFormSchema = z.object({
   // raises an Order Inquiry (PLAN-brand-flows-to-purchasing.md).
   flows_to_purchasing: z.boolean(),
   // The chatbot's brand preference: higher weights are answered first (0 = none).
-  chatbot_weight: z.coerce.number().min(0, 'Enter 0 or more'),
+  chatbot_weight: z.coerce.number().min(0, 'Enter 0 or more').max(9999, 'Enter 9999 or less'),
 });
 
 interface BrandFormDialogProps {
@@ -144,7 +144,9 @@ export default function BrandFormDialog({
           </DialogTitle>
         </DialogHeader>
         <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+          {/* noValidate: the zod schema says why a value is refused ("Enter 9999 or less");
+              the browser's own min/max check would stop the submit before it could. */}
+          <form noValidate onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
             <FormField
               control={form.control}
               name="brand_code"
@@ -274,6 +276,8 @@ export default function BrandFormDialog({
                   <FormControl>
                     <Input
                       type="number"
+                      min={0}
+                      max={9999}
                       step={0.1}
                       inputMode="decimal"
                       className="w-32"

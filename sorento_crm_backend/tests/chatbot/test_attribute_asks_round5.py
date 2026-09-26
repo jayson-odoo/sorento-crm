@@ -185,13 +185,16 @@ def test_s1_a_dual_finish_product_is_counted_once_beside_the_scalar_ones(chat, w
 # --------------------------------------------------------------------------- #
 
 
-def test_s2_the_dealer_kit_tag_reads_values_through_the_registry_helper():
+def test_s2_the_dealer_kit_tag_reads_values_through_the_registry_helper(monkeypatch):
     """The tag and the chatbot share one helper and one acronym list; the tag keeps its
     title case."""
     from app.services import product_spec_registry
     from app.services.dealer_kit import tag_data_service
 
-    assert tag_data_service.SPEC_ACRONYMS is product_spec_registry.SPEC_ACRONYMS
+    monkeypatch.setattr(product_spec_registry, "SPEC_ACRONYMS", product_spec_registry.SPEC_ACRONYMS | {"wc"})
+    assert tag_data_service._spec_display_value("wc_seat") == "WC Seat"
+    assert product_spec_registry.display_spec_value("wc_seat") == "WC seat"
+    monkeypatch.undo()
     assert product_spec_registry.display_spec_value("stainless_steel") == "Stainless steel"
     assert product_spec_registry.display_spec_value("stainless_steel", title_case=True) == "Stainless Steel"
     assert tag_data_service._spec_display_value("stainless_steel") == "Stainless Steel"
