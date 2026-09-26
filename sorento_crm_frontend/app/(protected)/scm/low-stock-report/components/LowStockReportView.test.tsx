@@ -151,6 +151,61 @@ describe('LowStockReportView', () => {
     });
   });
 
+  it('holds Download back while a changed split and filter settle, then sends the new ones', async () => {
+    // Review B2 (AC-13 / AC-14): a click inside the debounce, or while the new view is still
+    // loading, would build a file for a split the grid does not show yet.
+    getLowStockView.mockResolvedValueOnce(view());
+    let answer: (v: LowStockView) => void = () => {};
+    getLowStockView.mockImplementation(
+      () => new Promise<LowStockView>((resolve) => (answer = resolve)),
+    );
+    renderPage();
+    await screen.findByText('2 rows, 2 sheets');
+    const download = () => screen.getByRole('button', { name: /Download/ });
+    expect(download()).toBeEnabled();
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Supplier' }));
+    fireEvent.click(screen.getByRole('combobox', { name: 'Suppliers' }));
+    fireEvent.click(await screen.findByRole('option', { name: /Kohler/ }));
+
+    // Inside the debounce: the old grid is still on screen.
+    expect(download()).toBeDisabled();
+    // The debounced request has gone out and is still loading.
+    await waitFor(() =>
+      expect(lastViewCall()).toEqual({
+        runId: RUN_ID,
+        split: 'supplier',
+        suppliers: ['Kohler'],
+        categories: [],
+      }),
+    );
+    expect(download()).toBeDisabled();
+    await userEvent.click(download());
+    expect(start).not.toHaveBeenCalled();
+
+    answer(
+      view({
+        split: 'supplier',
+        sheets: [
+          { title: 'Kohler - Low', row_indexes: [], low: true },
+          { title: 'Kohler', row_indexes: [1], low: false },
+        ],
+        counts: { rows: 1, low: 0, sheets: 2 },
+      }),
+    );
+    await screen.findByText('1 row, 2 sheets');
+    await waitFor(() => expect(download()).toBeEnabled());
+    await userEvent.click(download());
+
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(start).toHaveBeenCalledWith({
+      runId: RUN_ID,
+      split: 'supplier',
+      suppliers: ['Kohler'],
+      categories: [],
+    });
+  });
+
   it('the newest-run page downloads the run the view answered with', async () => {
     getLowStockView.mockResolvedValue(view());
     renderPage(null);
