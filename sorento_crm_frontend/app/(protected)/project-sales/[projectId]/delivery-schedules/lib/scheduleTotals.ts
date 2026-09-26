@@ -527,6 +527,27 @@ export function buildColumnStates(
   });
 }
 
+/**
+ * Whether this column holds up Confirm schedule. The ONE rule the screen uses for it: the
+ * header's Confirm, the confirm dialog's list and the "Need attention" filter all read this,
+ * and it is the same test the server's `confirm` makes (`not entry["reconciled"]`, with a
+ * dismissal counting as reconciled). A screen that shows nothing to do while the server
+ * refuses is the defect this exists to prevent (owner re-test on PR #1237, 25 Sep 2026).
+ */
+export function blocksConfirm(column: ColumnState): boolean {
+  return !column.reconciled;
+}
+
+/** What a column's Flag cell says: the S3 severity set plus the two states either side of it. */
+export type ColumnFlag = 'blocked' | 'warning' | 'dismissed' | 'agrees';
+
+export function columnFlag(column: ColumnState): ColumnFlag {
+  if (blocksConfirm(column)) return 'blocked';
+  if (column.dismissed) return 'dismissed';
+  if (column.warning) return 'warning';
+  return 'agrees';
+}
+
 export interface PhaseGroup {
   area: string | null;
   phases: PhaseLike[];

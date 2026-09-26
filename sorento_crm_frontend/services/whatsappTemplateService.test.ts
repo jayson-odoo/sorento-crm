@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { renderTemplateBody } from './whatsappTemplateService';
+import { renderTemplateBody, USE_CASES } from './whatsappTemplateService';
 
 describe('renderTemplateBody', () => {
   it('fills positional params', () => {
@@ -18,5 +18,18 @@ describe('renderTemplateBody', () => {
 
   it('repeats a param used multiple times', () => {
     expect(renderTemplateBody('{{1}} and {{1}}', { '1': 'x' })).toBe('x and x');
+  });
+});
+
+describe('USE_CASES', () => {
+  it('lists ideation_draft_reminder with its label', () => {
+    const entry = USE_CASES.find((u) => u.key === 'ideation_draft_reminder');
+    expect(entry?.label).toBe('Ideation - Draft Reminder');
+  });
+
+  it('lists supplier_request_chat with its label, grouped as chat', () => {
+    const entry = USE_CASES.find((u) => u.key === 'supplier_request_chat');
+    expect(entry?.label).toBe('Supplier Request - Chat Reply');
+    expect(entry?.group).toBe('chat');
   });
 });
