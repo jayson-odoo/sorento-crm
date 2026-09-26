@@ -22,6 +22,24 @@
   --min-font-size-inv: calc(1 / var(--min-font-size));
 }
 
+/*
+ * A rotated scan (e.g. `/Rotate 270`): pdf.js sizes the text layer in the page's
+ * UNROTATED units and marks it with `data-main-rotation`, then rotates the whole
+ * layer with these three rules (`web/pdf_viewer.css`). Without them the layer keeps
+ * its unrotated box - wider than the canvas at fit width, forcing a horizontal
+ * scrollbar - and its glyphs sit turned 90/180/270 degrees off the rendered page,
+ * so a drag-select lands nowhere near the visible text.
+ */
+[data-slot='pdf-viewer'] .textLayer[data-main-rotation='90'] {
+  transform: rotate(90deg) translateY(-100%);
+}
+[data-slot='pdf-viewer'] .textLayer[data-main-rotation='180'] {
+  transform: rotate(180deg) translate(-100%, -100%);
+}
+[data-slot='pdf-viewer'] .textLayer[data-main-rotation='270'] {
+  transform: rotate(270deg) translateX(-100%);
+}
+
 [data-slot='pdf-viewer'] .textLayer :is(span, br) {
   color: transparent;
   position: absolute;
