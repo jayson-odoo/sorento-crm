@@ -1,7 +1,8 @@
 # PLAN: In-app Excel preview, low stock report first
 
 Status: grilled, owner answers folded in (26 Sep 2026, section 0). S1 built on branch
-`claude/low-stock-report-preview-s1-co31pg`, in review (evidence: `evidence/excel-preview-s1/`);
+`claude/low-stock-report-preview-s1-co31pg`, in review, owner hand test round 2 fixes applied
+(evidence: `evidence/excel-preview-s1/`, round 2 in `round2/`);
 S2 and S3 not started. Track: full (new read route, a new automation trigger, a shared
 viewer across about 12 sites; well over 300 lines). No migration, no new permission, no new
 ingest surface.
@@ -26,6 +27,13 @@ folded into the section it changes; the dated line here is the record.
   must open the new page. Section 2F is corrected and section 5 rewritten.
 - **Owner ruling 26 Sep, Q2 (finding the page):** ok. A "Low stock report" sidebar item under
   Procurement > Supply Chain opens the newest run, same permission as Reorder Planning.
+  **Superseded by the owner's hand test, 26 Sep ~08:45Z:** "we don't need sidebar for low stock
+  report, i want the user to go from reorder planning > actions > low stock report, then we
+  provide a button at the top right to go back to the reorder planning". The sidebar item is
+  gone; the bare `/scm/low-stock-report` redirects to Reorder planning; the page carries "Back
+  to Reorder planning" to the plan it reads. Same hand test: no "N low of M" in the filter
+  options, no "Go to sheet" dropdown, the sheet list searched from a "..." on the tab strip
+  (Excel style), and a product code search in its place.
 - **Owner ruling 26 Sep, Q3 (Reorder Planning's action):** ok. Actions > Low stock report Excel
   opens the new page for that run; the split dialog is deleted.
 - **Owner ruling 26 Sep, Q4 (Download):** accepted. "Preparing..." while the worker builds the
@@ -207,8 +215,10 @@ already has them; loading skeleton shaped like the grid; "This file could not be
 Download on a parse error. Grid styles copied from `DataGrid`: sticky header
 (`sticky top-0 bg-background/90 backdrop-blur-xs`, `data-grid-table.tsx:207-214`), cell borders,
 `--text-2sm`, numbers right-aligned tabular, first column pinned. Sheet tabs are
-`TabsList variant="line"`, scrolling, never wrapping; over 12 sheets a "Go to sheet"
-`SearchableSelect` sits beside them (a supplier x category low stock split can reach 100+ sheets).
+`TabsList variant="line"`, scrolling, never wrapping; a "..." at the strip's end opens a
+searchable list of every sheet (a supplier x category low stock split can reach 100+ sheets),
+Excel's own sheet list (owner hand test 26 Sep). An optional row search on named columns sits
+under the strip.
 No motion beyond the lightbox spring the modal already has.
 
 Dependency note: SheetJS on npm is frozen at 0.18.5, which carries two published advisories
@@ -274,9 +284,9 @@ Routes (`BE/api/v1/scm/order_summary.py`, beside the export):
 
 ### Frontend
 
-- `app/(protected)/scm/low-stock-report/[runId]/page.tsx` and `.../low-stock-report/page.tsx`
-  (newest completed run). Sidebar item "Low stock report" under Procurement > Supply Chain, same
-  `moduleKey` and permission as Reorder Planning (grill Q2).
+- `app/(protected)/scm/low-stock-report/[runId]/page.tsx`; `.../low-stock-report/page.tsx`
+  redirects to `/scm/reorder` (no plan named). No sidebar item (hand test 26 Sep, superseding
+  grill Q2); "Back to Reorder planning" in the page header returns to `/scm/reorder/<run>`.
 - Layering: `LowStockReportView` -> `useLowStockView(runId, split, suppliers, categories)`
   (`placeholderData: keepPreviousData`, debounced 250 ms) -> `lowStockReportService.getView()` ->
   `apiFetch`. Mock branch under the existing `USE_SUMMARY_ORDER_MOCKS` for Phase 1.
@@ -290,8 +300,8 @@ Routes (`BE/api/v1/scm/order_summary.py`, beside the export):
 - Reorder Planning's Actions > "Low stock report Excel" becomes a link to the page for that run;
   `LowStockExportDialog.tsx` is deleted (owner ruling 26 Sep, Q3). One surface, not two that can
   drift.
-- `SpreadsheetViewer` ships in S1 with the JSON feeder only (sheet tabs, "Go to sheet" over 12
-  sheets, frozen header, first column pinned, rows virtualised with `@tanstack/react-virtual`,
+- `SpreadsheetViewer` ships in S1 with the JSON feeder only (sheet tabs with the "..." sheet
+  search, the row search, frozen header, first column pinned, rows virtualised with `@tanstack/react-virtual`,
   the grid scrolling sideways inside its own container). The SheetJS feeder joins it in S2.
 
 ## 5. The daily email: the automation's link (S1, owner rulings 26 Sep, Q1 and Q5)
@@ -315,8 +325,8 @@ knows the run:
 - The admin, in System > Automations, sets the existing low stock rule's trigger to "Low stock
   report ready" and puts `{{ report.link }}` in its template (subject, for example,
   `Low stock report {{ report.date_label }}: {{ report.low }} low`). A template that cannot carry
-  a variable can link `<FRONTEND_BASE_URL>/scm/low-stock-report`, which always opens the newest
-  completed run.
+  a variable can link `<FRONTEND_BASE_URL>/scm/reorder`; the bare report path now redirects
+  there, since the report is always one named plan's (hand test 26 Sep).
 - The email carries a link, not the file: the owner's point is to look first.
 
 ## 6. My Downloads (S2)

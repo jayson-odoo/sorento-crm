@@ -14,6 +14,12 @@ DataGrid Export excluded, ok; Q7 SheetJS 0.20.3 tarball with no regression; Q8 c
 rows, and the download as fast as reasonably possible. Slices re-ordered: S1 page + email link,
 S2 viewer + SheetJS + My Downloads, S3 remaining sources.
 
+Owner hand test 26 Sep ~08:45Z (binding, supersedes Q2 and the matching parts of AC-10 to AC-12,
+AC-16b and AC-18): no "N low of M" in the supplier / category options; no "Go to sheet"
+dropdown; the sheet list is searched from a "..." on the tab strip itself, Excel style; a
+product code search in its place; no sidebar item, the report is reached from a plan
+(Reorder planning > Actions) and a "Back to Reorder planning" button returns to that plan.
+
 Tags: `[BE]` backend, `[FE]` frontend, `[E2E]` browser pass via sidebar, `[T]` a named test.
 
 ## Journey
@@ -101,17 +107,23 @@ Tags: `[BE]` backend, `[FE]` frontend, `[E2E]` browser pass via sidebar, `[T]` a
 
 ### Frontend
 
-- AC-10 [FE] Route `/scm/low-stock-report/[runId]` and `/scm/low-stock-report` (newest
-  completed run). `PageHeader` title "Low stock report", the run's date as the subtitle. No
+- AC-10 [FE] Route `/scm/low-stock-report/[runId]`: always the plan named in the URL.
+  `/scm/low-stock-report` names no plan and redirects to `/scm/reorder` (an old bookmark;
+  hand test 26 Sep, W5). `PageHeader` title "Low stock report", the run's date as the subtitle,
+  and in its actions "Back to Reorder planning" (`BackToList`, as "Back to purchase orders" on
+  the purchase order page) to `/scm/reorder/<run id>` (W6). No
   reorder planning grid, actions or budget on the page. (J-A 4)
 - AC-11 [FE] Toolbar, left to right, wrapping as whole groups at 375px: Split (pill toggle,
   `Tabs variant="default"`: Supplier and category / Supplier / Category / None, Supplier and
-  category selected on load), Suppliers (`SearchableMultiSelect`, clearable, each option shows
-  its row count), Categories (same), the count line "N rows, M sheets", Download (primary
+  category selected on load), Suppliers (`SearchableMultiSelect`, clearable, plain names: no
+  "N low of M", hand test 26 Sep, W1), Categories (same), the count line "N rows, M sheets", Download (primary
   button, right). (J-A 5)
 - AC-12 [FE] The body is the shared `SpreadsheetViewer` fed from the view response: sheet tabs
-  (`TabsList variant="line"`, scrolling, never wrapping), a "Go to sheet" `SearchableSelect`
-  when there are more than 12 sheets, frozen header row, rows virtualised, numbers right-aligned
+  (`TabsList variant="line"`, scrolling, never wrapping, its left / right chevrons kept) with a
+  "..." at the strip's end that opens a searchable list of every sheet; picking one opens it and
+  the strip scrolls to it (Excel's sheet list, W3). No separate "Go to sheet" dropdown (W2).
+  Under the strip, a "Search product code" box filters the open sheet's rows by item code or
+  description, the "N rows" label following (W4). Frozen header row, rows virtualised, numbers right-aligned
   and tabular, the first sheet open. An empty ` - Low` sheet shows "Nothing low here". (J-A 4)
 - AC-13 [FE] Changing split or a filter refetches the view (debounced 250 ms, previous rows kept
   on screen dimmed until the new ones arrive); the open sheet stays open when a sheet with the
@@ -128,13 +140,12 @@ Tags: `[BE]` backend, `[FE]` frontend, `[E2E]` browser pass via sidebar, `[T]` a
 - AC-16 [FE] Reorder Planning's Actions > "Low stock report Excel" navigates to
   `/scm/low-stock-report/<run id>` for that run. `LowStockExportDialog` and
   `GET /low-stock-preview` are removed (the page replaces both). (Owner ruling 26 Sep, Q3.)
-- AC-16b [FE] Sidebar: Procurement > Supply Chain > "Low stock report", right after Reorder
-  Planning, path `/scm/low-stock-report`, Reorder Planning's permission and `moduleKey`. (Owner
-  ruling 26 Sep, Q2.)
+- AC-16b [FE] No sidebar item: the report is opened from a plan (Reorder planning > Actions)
+  or the daily email's run link. (Hand test 26 Sep, W5, superseding Q2's sidebar item.)
 - AC-17 [FE] No UUID rendered (the run shows as its date), no feature explanation text, usable
   at 375px and 1280px.
-- AC-18 [E2E] From `/`, sidebar: Procurement > Supply Chain > Low stock report opens the newest
-  run; choose Supplier, pick two suppliers, the sheets become four; Download; the saved file's
+- AC-18 [E2E] From `/`, sidebar: Procurement > Supply Chain > Reorder Planning, a plan,
+  Actions > Low stock report Excel opens that plan's report; choose Supplier, pick two suppliers, the sheets become four; Download; the saved file's
   sheet titles and first rows match the screen. Second pass: open the email link for a named run
   while signed out, sign in, land on that run's page.
 
@@ -222,7 +233,8 @@ Frontend (vitest):
 12. `LowStockReportPage.test.tsx`: default split pill, filters send repeated params, count line,
     over-cap disables Download, error + Retry, no UUID (AC-10..AC-17)
 13. `useLowStockDownload.test.ts`: pending -> saves via `/file` -> toast; 409 toast (AC-14)
-14. `SpreadsheetViewer.test.tsx`: tabs, "Go to sheet" over 12, frozen header class, virtualised
+14. `SpreadsheetViewer.test.tsx`: tabs, no "Go to sheet", the strip's "..." sheet search,
+    the row search, frozen header class, virtualised
     row count in DOM stays bounded on 50,000 rows, footnote on cut, `fileActions` off (AC-12,
     AC-24, AC-25)
 15. `parseWorkbook.test.ts`: declared-range trap (a sheet claiming 1,048,000 rows scans the cap
@@ -230,6 +242,7 @@ Frontend (vitest):
 16. `DownloadRow.test.tsx`: Excel row click opens preview, icon downloads, PDF too, other kinds
     download (AC-27, AC-28)
 17. `ReorderPlanView.lowStock.test.tsx` rewritten: the item navigates to the page (AC-16)
-18. `menu.config.test.ts`: the Low stock report item, its place, path and gate (AC-16b)
+18. `menu.config.test.ts`: no Low stock report item (AC-16b); `low-stock-report/page.test.tsx`:
+    the bare route redirects to Reorder planning (AC-10)
 18b. One regression vitest per current SheetJS caller, green on 0.18.5 and 0.20.3 (AC-29b)
 19. One vitest per S3 site: its action opens the preview, not a save (AC-30, AC-31)
