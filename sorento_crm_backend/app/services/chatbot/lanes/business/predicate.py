@@ -57,11 +57,27 @@ _BARE_CERT_WORDS: frozenset[str] = frozenset(
 _BARE_CERT_WORD_RE = re.compile(r"\b(?:certs?|certif\w*|sijil)\b", re.IGNORECASE)
 
 
+# Words that describe a certificate's own PROPERTY (its validity, expiry, number),
+# never a scheme: "valid cert", "cert validity", "certificate expiry", "cert no".
+# Reviewer B1 on PR #833: before this they split off as scheme "valid", which no
+# register holds, so the answer said "0 products" over an unfiltered list. Validity
+# is flagged on every row, never filtered (D-lane), so these read as the bare leg.
+_CERT_PROPERTY_WORDS: frozenset[str] = frozenset(
+    {
+        "valid", "validity", "invalid", "expiry", "expired", "expire", "expires",
+        "expiration", "no", "no.", "number", "num", "status", "date", "copy",
+        "latest", "current", "active", "still", "sah", "tamat",
+    }
+)
+
+
 def _cert_scheme_from_raw(raw: str) -> str | None:
-    """What is left of `raw` once every bare cert word is removed, or None when
-    nothing is - the raw WAS only the cert word."""
+    """What is left of `raw` once every bare cert word and every certificate
+    PROPERTY word is removed, or None when nothing is - the raw named no scheme."""
     words = [w for w in re.split(r"\s+", raw.strip()) if w]
-    remainder = [w for w in words if w.lower() not in _BARE_CERT_WORDS]
+    remainder = [
+        w for w in words if w.lower() not in _BARE_CERT_WORDS and w.lower() not in _CERT_PROPERTY_WORDS
+    ]
     return " ".join(remainder).strip() or None
 
 
