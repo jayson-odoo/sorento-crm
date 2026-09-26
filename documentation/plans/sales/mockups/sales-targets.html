@@ -7,6 +7,7 @@
 <!-- Issue #1170. Annotated mockup, not shipped code. Plain inline CSS so it opens from a file.
      Plan: documentation/plans/sales/PLAN-sales-targets-opportunities-26sep.md
      UAC:  documentation/plans/sales/sales-targets-opportunities-26sep-acceptance-criteria.md
+     Round 2 (26 Sep 2026): redrawn to the owner's rulings G1 to G10.
      Figures are illustrative. Numbered pins map to the notes beside each frame. -->
 <style>
 :root{
@@ -28,7 +29,7 @@ h2.frame-title{font-size:15px;margin:28px 0 10px;color:var(--muted);font-weight:
 .layout{display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap}
 .scroll{overflow-x:auto;max-width:100%;border-radius:12px}
 .frame{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.06);position:relative;overflow:hidden}
-.w1280{width:1280px}.w375{width:375px;flex:none}.w560{width:560px;flex:none;max-width:100%}
+.w1280{width:1280px}.w375{width:375px;flex:none;max-width:100%}.w640{width:640px;flex:none;max-width:100%}
 .notes{flex:1 1 320px;min-width:280px;max-width:520px}
 .notes ol{margin:0;padding:0;list-style:none}
 .notes li{display:flex;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px;margin-bottom:8px}
@@ -36,9 +37,8 @@ h2.frame-title{font-size:15px;margin:28px 0 10px;color:var(--muted);font-weight:
 .notes .ref{display:block;color:var(--muted);font-size:12px;margin-top:4px}
 .co{display:inline-flex;align-items:center;justify-content:center;flex:none;width:22px;height:22px;border-radius:50%;background:var(--callout);color:#fff;font-size:12px;font-weight:700;box-shadow:0 0 0 2px #fff}
 .pin{position:absolute;z-index:5}
-/* app shell */
-.shell{display:flex;min-height:560px}
-.side{width:220px;border-right:1px solid var(--line);padding:16px 10px;background:#fbfbfc}
+.shell{display:flex;min-height:520px}
+.side{width:170px;border-right:1px solid var(--line);padding:16px 10px;background:#fbfbfc}
 .side .grp{font-size:11px;text-transform:uppercase;color:var(--muted);margin:14px 8px 6px;letter-spacing:.05em}
 .side a{display:block;padding:6px 10px;border-radius:6px;color:var(--fg);text-decoration:none}
 .side a.on{background:var(--primary-soft);color:var(--primary);font-weight:600}
@@ -59,6 +59,7 @@ h2.frame-title{font-size:15px;margin:28px 0 10px;color:var(--muted);font-weight:
 table{width:100%;border-collapse:collapse;table-layout:fixed}
 th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 th{font-size:12px;color:var(--muted);font-weight:600;background:#fafafa}
+td.wrap{white-space:normal}
 td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
 .bar{height:6px;background:var(--grey-soft);border-radius:3px;overflow:hidden;margin-top:4px}
 .bar i{display:block;height:100%;background:var(--primary)}
@@ -66,24 +67,33 @@ td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
 .badge{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;background:var(--grey-soft);color:var(--muted)}
 .badge.ok{background:var(--green-soft);color:var(--green)}
 .badge.warn{background:var(--amber-soft);color:var(--amber)}
+.badge.pri{background:var(--primary-soft);color:var(--primary)}
+.chip{display:inline-block;padding:0 6px;border:1px solid var(--line);border-radius:4px;font-size:11px;color:var(--muted);margin-right:4px}
 .muted{color:var(--muted)}
+.sub2{display:block;font-size:12px;color:var(--muted)}
+tr.grp td{background:#fafafa;font-weight:600}
 tr.unassigned td{background:#fcfcfd;color:var(--muted);font-style:italic}
-/* mobile card list */
 .m-head{padding:14px 16px;border-bottom:1px solid var(--line)}
 .m-card{padding:12px 16px;border-bottom:1px solid var(--line-soft)}
 .m-row{display:flex;justify-content:space-between;gap:8px}
-/* modal */
 .modal{padding:18px 20px}
 .modal h4{margin:0 0 14px;font-size:16px}
+.modal h5{margin:16px 0 8px;font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
 .f{margin-bottom:12px}
 .f label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
-.inp{border:1px solid var(--line);border-radius:6px;padding:7px 10px;background:#fff}
+.inp{border:1px solid var(--line);border-radius:6px;padding:7px 10px;background:#fff;min-height:34px}
 .inp.ro{background:var(--grey-soft)}
-.seg{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden;flex-wrap:wrap}
 .seg span{padding:6px 12px}.seg span.on{background:var(--primary-soft);color:var(--primary);font-weight:600}
 .two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.three{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
 .foot{display:flex;justify-content:flex-end;gap:8px;margin-top:6px}
-/* whatsapp */
+.hint{font-size:12px;color:var(--muted);margin-top:4px}
+.pill{display:inline-block;background:var(--primary-soft);color:var(--primary);border-radius:999px;padding:1px 8px;font-size:12px;margin:2px 4px 2px 0}
+.sw{display:inline-block;width:30px;height:17px;border-radius:999px;background:var(--line);position:relative;vertical-align:middle;margin-right:6px}
+.sw::after{content:"";position:absolute;top:2px;left:2px;width:13px;height:13px;border-radius:50%;background:#fff}
+.sw.on{background:var(--primary)}.sw.on::after{left:15px}
+.portal-top{background:#0f172a;color:#fff;padding:12px 16px;font-weight:600}
 .wa{background:var(--wa-bg);padding:16px;min-height:300px}
 .wa .top{background:#075e54;color:#fff;padding:10px 14px;font-weight:600}
 .bubble{background:var(--wa-in);border-radius:8px;padding:8px 10px;max-width:92%;box-shadow:0 1px 1px rgba(0,0,0,.1);white-space:pre-line;font-size:13.5px}
@@ -92,10 +102,10 @@ tr.unassigned td{background:#fcfcfd;color:var(--muted);font-style:italic}
 </head>
 <body>
 <div class="doc">
-<h1>Sales targets (issue #1170)</h1>
-<p class="sub">The Targets screen at 1280 and 375, the Set target modal, and the WhatsApp message an agent and a dealer receive on Monday morning. Figures are made up. Every choice shown follows the recommended answers to the grill questions (G1 to G10) in the plan.</p>
+<h1>Sales targets (issue #1170), round 2</h1>
+<p class="sub">Redrawn to the owner's rulings of 26 Sep 2026. The Targets screen at 1280 and 375, the Set target modal (metric, basis, product scope, validity, commission tiers), the portal form a salesperson uses to log an opportunity, the Recipients tab, and the WhatsApp message two recipients receive. Figures are made up.</p>
 
-<h2 class="frame-title">1. Targets, Agents tab, 1280</h2>
+<h2 class="frame-title">1. Targets, Agents tab, 1280 (S1, S3, S4)</h2>
 <div class="layout">
 <div class="scroll"><div class="frame w1280">
   <div class="shell">
@@ -105,110 +115,190 @@ tr.unassigned td{background:#fcfcfd;color:var(--muted);font-style:italic}
       <div class="grp">Master Data</div><a>Sales Agents</a>
     </nav>
     <div class="main">
-      <span class="pin co" style="left:420px;top:26px">1</span>
+      <span class="pin co" style="left:430px;top:26px">1</span>
       <div class="ph">
-        <div><h3>Sales targets</h3><div class="meta">September 2026 &middot; 8 days left &middot; achievement = ordered value, tax inclusive</div></div>
+        <div><h3>Sales targets</h3><div class="meta">Showing targets that cover October 2026</div></div>
         <div style="display:flex;gap:8px">
-          <span class="btn">&lsaquo; Aug</span><span class="btn">September 2026</span><span class="btn">Oct &rsaquo;</span>
-          <span class="btn">Copy last month</span>
-          <span class="pin co" style="right:20px;top:60px">3</span>
+          <span class="btn">&lsaquo; Sep</span><span class="btn">October 2026</span><span class="btn">Nov &rsaquo;</span>
+          <span class="btn pri">Set target</span>
         </div>
       </div>
-      <div class="tabs"><span class="on">Agents</span><span>Dealers</span></div>
+      <div class="tabs"><span class="on">Agents</span><span>Dealers</span><span>Recipients</span></div>
       <div class="kpis">
-        <div class="kpi"><div class="l">Team target</div><div class="v">RM 540,000</div></div>
-        <div class="kpi"><div class="l">Achieved</div><div class="v">RM 461,010</div></div>
-        <div class="kpi"><div class="l">% achieved</div><div class="v">85%</div></div>
-        <div class="kpi"><div class="l">Pipeline this month (weighted)</div><div class="v">RM 96,250</div></div>
+        <div class="kpi"><div class="l">Amount targets this month</div><div class="v">RM 540,000</div></div>
+        <div class="kpi"><div class="l">Achieved (ordered)</div><div class="v">RM 461,010</div></div>
+        <div class="kpi"><div class="l">Pipeline closing this month (weighted)</div><div class="v">RM 96,250</div></div>
+        <div class="kpi"><div class="l">Commission earned so far</div><div class="v">RM 6,221</div></div>
       </div>
-      <span class="pin co" style="left:880px;top:218px">2</span>
+      <span class="pin co" style="left:470px;top:216px">2</span>
+      <span class="pin co" style="left:590px;top:216px">3</span>
       <table>
-        <colgroup><col style="width:210px"><col style="width:120px"><col style="width:120px"><col style="width:150px"><col style="width:140px"><col style="width:160px"><col style="width:100px"></colgroup>
-        <thead><tr><th>Sales agent</th><th class="n">Target</th><th class="n">Achieved</th><th>% achieved</th><th class="n">Pipeline</th><th class="n">Commission</th><th></th></tr></thead>
+        <colgroup><col style="width:190px"><col style="width:130px"><col style="width:90px"><col style="width:110px"><col style="width:110px"><col style="width:80px"><col style="width:125px"><col style="width:120px"><col style="width:54px"></colgroup>
+        <thead><tr><th>Target</th><th>Measures</th><th>Period</th><th class="n">Target</th><th class="n">Achieved</th><th>%</th><th class="n">Pipeline</th><th class="n">Commission</th><th></th></tr></thead>
         <tbody>
-          <tr><td>ALI - Ali Hassan</td><td class="n">RM 150,000</td><td class="n">RM 158,420</td><td><span class="badge ok">106%</span><div class="bar ok"><i style="width:100%"></i></div></td><td class="n">RM 12,500 (2)</td><td class="n">RM 3,960 + RM 500</td><td><span class="btn sm">&hellip;</span></td></tr>
-          <tr><td>MEI - Tan Mei Ling</td><td class="n">RM 120,000</td><td class="n">RM 88,300</td><td><span class="badge">74%</span><div class="bar"><i style="width:74%"></i></div></td><td class="n">RM 41,000 (5)</td><td class="n">RM 2,208</td><td><span class="btn sm">&hellip;</span></td></tr>
-          <tr><td>RAJ - Rajesh Kumar</td><td class="n">RM 150,000</td><td class="n">RM 101,150</td><td><span class="badge warn">67%</span><div class="bar"><i style="width:67%"></i></div></td><td class="n">RM 30,750 (4)</td><td class="n">RM 2,529</td><td><span class="btn sm">&hellip;</span></td></tr>
-          <tr><td>SIT - Siti Aminah</td><td class="n">RM 120,000</td><td class="n">RM 84,000</td><td><span class="badge">70%</span><div class="bar"><i style="width:70%"></i></div></td><td class="n">RM 12,000 (1)</td><td class="n"><span class="muted">-</span></td><td><span class="btn sm">&hellip;</span></td></tr>
-          <tr><td>WON - Wong Kah Wai</td><td class="n muted">No target</td><td class="n">RM 22,600</td><td class="muted">-</td><td class="n">RM 0</td><td class="n muted">-</td><td><span class="btn sm pri">Set target</span></td></tr>
-          <tr class="unassigned"><td>Unassigned (no agent on order)</td><td class="n">-</td><td class="n">RM 6,540</td><td>-</td><td class="n">-</td><td class="n">-</td><td></td></tr>
+          <tr class="grp"><td colspan="9">ALI - Ali Hassan</td></tr>
+          <tr><td>TGT-000014 FY26 H2 all products<span class="sub2">Oct 2026 to Mar 2027, monthly</span></td><td class="wrap"><span class="chip">Amount</span><span class="chip">Ordered</span><span class="chip">All products</span></td><td>Oct 2026</td><td class="n">RM 150,000</td><td class="n">RM 158,420</td><td><span class="badge ok">106%</span><div class="bar ok"><i style="width:100%"></i></div></td><td class="n">RM 12,500 (2)</td><td class="n">RM 3,837<span class="sub2">incl. bonus 500</span></td><td><span class="btn sm">&hellip;</span></td></tr>
+          <tr><td>TGT-000015 Basins push Q4<span class="sub2">Oct to Dec 2026, one quarter</span></td><td class="wrap"><span class="chip">Quantity</span><span class="chip">Delivered</span><span class="chip">2 categories</span></td><td>Q4 2026 to date</td><td class="n">900 units</td><td class="n">412 units</td><td><span class="badge warn">46%</span><div class="bar"><i style="width:46%"></i></div></td><td class="n muted">-</td><td class="n">RM 618</td><td><span class="btn sm">&hellip;</span></td></tr>
+          <tr class="grp"><td colspan="9">MEI - Tan Mei Ling</td></tr>
+          <tr><td>TGT-000016 FY26 H2 all products<span class="sub2">Oct 2026 to Mar 2027, monthly</span></td><td class="wrap"><span class="chip">Amount</span><span class="chip">Ordered</span><span class="chip">All products</span></td><td>Oct 2026</td><td class="n">RM 120,000</td><td class="n">RM 88,300</td><td><span class="badge">74%</span><div class="bar"><i style="width:74%"></i></div></td><td class="n">RM 41,000 (5)</td><td class="n">RM 1,766</td><td><span class="btn sm">&hellip;</span></td></tr>
+          <tr class="grp"><td colspan="9">WON - Wong Kah Wai</td></tr>
+          <tr><td class="muted">No target covering October</td><td></td><td></td><td class="n muted">-</td><td class="n">RM 22,600</td><td class="muted">-</td><td class="n">RM 0</td><td class="n muted">-</td><td><span class="btn sm pri">Set</span></td></tr>
+          <tr class="unassigned"><td>Unassigned (no agent on order)</td><td></td><td>Oct 2026</td><td class="n">-</td><td class="n">RM 6,540</td><td>-</td><td class="n">-</td><td class="n">-</td><td></td></tr>
         </tbody>
       </table>
-      <span class="pin co" style="left:1225px;top:300px">4</span>
-      <span class="pin co" style="left:200px;top:470px">5</span>
+      <span class="pin co" style="left:1236px;top:296px">4</span>
+      <span class="pin co" style="left:180px;top:664px">5</span>
     </div>
   </div>
 </div></div>
 <div class="notes"><ol>
-  <li><span class="co">1</span><div><b>Opens on this month, nothing to choose.</b>Sidebar Sales &gt; Targets. Every active agent is listed, target or not, so a missing target is visible.<span class="ref">J1 &middot; S1-3, S1-7</span></div></li>
-  <li><span class="co">2</span><div><b>Achieved comes from sales orders; Pipeline is shown beside it, never added.</b>Pipeline = open opportunities closing this month x stage probability, with the count in brackets; it links to the filtered Opportunities list.<span class="ref">J7 &middot; S5-1 to S5-3 &middot; G1</span></div></li>
-  <li><span class="co">3</span><div><b>Copy last month</b> appears only while this month has no targets, then disappears.<span class="ref">J3 &middot; S2-1, S2-5</span></div></li>
-  <li><span class="co">4</span><div><b>Row menu:</b> Edit, Send now (WhatsApp this agent's progress), Delete (deferred countdown, no dialog). Send now is disabled with the reason in its title when the agent has no WhatsApp contact.<span class="ref">J8 &middot; S6-7, S6-8</span></div></li>
-  <li><span class="co">5</span><div><b>Unassigned row.</b> Orders AutoCount sent with no agent code are totalled, not silently dropped.<span class="ref">S1-11 &middot; G2</span></div></li>
+  <li><span class="co">1</span><div><b>Opens on this month, nothing to choose.</b> Every target whose validity covers the month is listed under its agent; an active agent with none shows a "No target" row, so a missing target is visible.<span class="ref">J1 &middot; S1-6, S1-15</span></div></li>
+  <li><span class="co">2</span><div><b>Each target says what it measures.</b> Metric (amount or quantity), basis (ordered or delivered) and product scope are chips, because two targets for the same person can measure different things.<span class="ref">Owner ruling 26 Sep, G1, G4 &middot; S1-7 to S1-9</span></div></li>
+  <li><span class="co">3</span><div><b>Period is the target's own.</b> A monthly target shows this month; a quarterly or whole-period target shows its period to date. Validity is a start month and a number of months, Odoo style.<span class="ref">Owner ruling 26 Sep, G3 &middot; S1-1, S1-2, S1-6</span></div></li>
+  <li><span class="co">4</span><div><b>Row menu:</b> Open (detail page with the periods and tiers), Edit, Duplicate (starts the month after this one ends), Delete (deferred countdown, no dialog).<span class="ref">J3, J4 &middot; S1-4, S1-12, S1-13</span></div></li>
+  <li><span class="co">5</span><div><b>Unassigned row.</b> Orders AutoCount sent with no agent code are totalled, not silently dropped.<span class="ref">S1-14 &middot; G2</span></div></li>
 </ol></div>
 </div>
 
 <h2 class="frame-title">2. Same screen, 375</h2>
 <div class="layout">
 <div class="frame w375">
-  <div class="m-head"><b style="font-size:17px">Sales targets</b><div class="muted" style="font-size:12px">September 2026 &middot; 8 days left</div>
-    <div style="display:flex;gap:6px;margin-top:10px"><span class="btn sm">&lsaquo;</span><span class="btn sm" style="flex:1;justify-content:center">September 2026</span><span class="btn sm">&rsaquo;</span></div>
-    <div class="tabs" style="margin:10px 0 0"><span class="on">Agents</span><span>Dealers</span></div></div>
-  <div class="m-card"><div class="m-row"><b>ALI - Ali Hassan</b><span class="badge ok">106%</span></div><div class="bar ok"><i style="width:100%"></i></div><div class="m-row muted" style="font-size:12px;margin-top:6px"><span>RM 158,420 of RM 150,000</span><span>Pipeline RM 12,500</span></div></div>
-  <div class="m-card"><div class="m-row"><b>MEI - Tan Mei Ling</b><span class="badge">74%</span></div><div class="bar"><i style="width:74%"></i></div><div class="m-row muted" style="font-size:12px;margin-top:6px"><span>RM 88,300 of RM 120,000</span><span>Pipeline RM 41,000</span></div></div>
+  <div class="m-head"><b style="font-size:17px">Sales targets</b><div class="muted" style="font-size:12px">Targets covering October 2026</div>
+    <div style="display:flex;gap:6px;margin-top:10px"><span class="btn sm">&lsaquo;</span><span class="btn sm" style="flex:1;justify-content:center">October 2026</span><span class="btn sm">&rsaquo;</span></div>
+    <div class="tabs" style="margin:10px 0 0"><span class="on">Agents</span><span>Dealers</span><span>Recipients</span></div></div>
+  <div class="m-card"><div class="m-row"><b>ALI - Ali Hassan</b><span class="badge ok">106%</span></div><div class="muted" style="font-size:12px">FY26 H2 all products &middot; Amount, ordered</div><div class="bar ok"><i style="width:100%"></i></div><div class="m-row muted" style="font-size:12px;margin-top:6px"><span>RM 158,420 of RM 150,000</span><span>Comm. RM 3,837</span></div></div>
+  <div class="m-card"><div class="m-row"><b>ALI - Ali Hassan</b><span class="badge warn">46%</span></div><div class="muted" style="font-size:12px">Basins push Q4 &middot; Quantity, delivered</div><div class="bar"><i style="width:46%"></i></div><div class="m-row muted" style="font-size:12px;margin-top:6px"><span>412 of 900 units</span><span>Q4 to date</span></div></div>
   <div class="m-card"><div class="m-row"><b>WON - Wong Kah Wai</b><span class="btn sm pri">Set target</span></div><div class="muted" style="font-size:12px;margin-top:6px">No target &middot; RM 22,600 achieved</div></div>
 </div>
 <div class="notes"><ol>
-  <li><span class="co">6</span><div><b>At phone width the grid keeps its columns and scrolls sideways inside the DataGrid,</b> as every other listing does; this card view is only the minimum that must stay readable. The coder picks whichever the shared DataGrid already supports at 375, no new component.<span class="ref">PRINCIPLES "Responsive" &middot; S1-10</span></div></li>
+  <li><span class="co">6</span><div><b>At phone width the grid keeps its columns and scrolls sideways inside the DataGrid,</b> as every other listing does; this card view is only the minimum that must stay readable. The coder picks whichever the shared DataGrid already supports at 375, no new component.<span class="ref">PRINCIPLES "Responsive" &middot; S1-16</span></div></li>
 </ol></div>
 </div>
 
-<h2 class="frame-title">3. Set target modal</h2>
+<h2 class="frame-title">3. Set target modal (S1, S4)</h2>
 <div class="layout">
-<div class="frame w560"><div class="modal">
+<div class="frame w640"><div class="modal">
   <h4>Set target</h4>
   <div class="two">
-    <div class="f"><label>Sales agent</label><div class="inp ro">WON - Wong Kah Wai</div></div>
-    <div class="f"><label>Month</label><div class="inp ro">September 2026</div></div>
+    <div class="f"><label>Sales agent</label><div class="inp ro">ALI - Ali Hassan</div></div>
+    <div class="f"><label>Name</label><div class="inp">Basins push Q4</div></div>
   </div>
-  <div class="f"><label>Measure</label><div class="seg"><span class="on">Amount (RM)</span><span>Quantity</span></div></div>
-  <div class="f"><label>Target (RM)</label><div class="inp">100,000</div></div>
   <div class="two">
-    <div class="f"><label>Commission % (optional)</label><div class="inp">2.5</div></div>
-    <div class="f"><label>Incentive at 100% (RM, optional)</label><div class="inp">500</div></div>
+    <div class="f"><label>Metric</label><div class="seg"><span>Amount (RM)</span><span class="on">Quantity</span></div></div>
+    <div class="f"><label>Counts</label><div class="seg"><span>Ordered</span><span class="on">Delivered</span></div></div>
   </div>
+  <div class="f"><label>Applies to</label><div class="seg"><span>All products</span><span class="on">Categories</span><span>Products</span></div>
+    <div class="inp" style="margin-top:6px"><span class="pill">Basins &times;</span><span class="pill">Vanity cabinets &times;</span></div>
+    <div class="hint">Sub-categories are included.</div></div>
+  <div class="three">
+    <div class="f"><label>Starts</label><div class="inp">October 2026</div></div>
+    <div class="f"><label>Runs for (months)</label><div class="inp">3</div></div>
+    <div class="f"><label>Target figure is</label><div class="inp">One per quarter</div></div>
+  </div>
+  <div class="f"><label>Target per quarter (units)</label><div class="inp">900</div><div class="hint">Oct 2026 to Dec 2026 &middot; 1 period. Each period can be changed on the target's page.</div></div>
+  <h5>Commission</h5>
+  <div class="f"><label>How tiers pay</label><div class="seg"><span>None</span><span class="on">Higher rate above each threshold only</span><span>Highest rate on everything</span></div></div>
+  <table style="margin-bottom:8px">
+    <colgroup><col><col><col><col style="width:40px"></colgroup>
+    <thead><tr><th>From % achieved</th><th>Rate (RM per unit)</th><th>One-off bonus (RM)</th><th></th></tr></thead>
+    <tbody>
+      <tr><td>0</td><td>1.50</td><td class="muted">-</td><td>&times;</td></tr>
+      <tr><td>100</td><td>2.50</td><td>300</td><td>&times;</td></tr>
+    </tbody>
+  </table>
+  <span class="btn sm">+ Add tier</span>
   <div class="foot"><span class="btn">Cancel</span><span class="btn pri">Save</span></div>
 </div></div>
 <div class="notes"><ol>
-  <li><span class="co">7</span><div><b>One decision: the number.</b> Agent and month come from the row. Commission and incentive pre-fill from the agent's previous month.<span class="ref">J2 &middot; S1-8</span></div></li>
-  <li><span class="co">8</span><div><b>Quantity</b> swaps the unit to "units" and adds a required, searchable product category select.<span class="ref">G4 &middot; S2-4, S2-7</span></div></li>
-  <li><span class="co">9</span><div><b>Dealer targets</b> use the same modal from the Dealers tab, with a searchable dealer select (code - name) as the first field instead of the fixed agent.<span class="ref">J4 &middot; S2-6</span></div></li>
+  <li><span class="co">7</span><div><b>Metric, basis and products are set per target.</b> Amount or quantity; ordered, or delivered (the sales report's confirmed figure); all products, some categories or some products.<span class="ref">Owner ruling 26 Sep, G1, G4 &middot; S1-1, S1-3</span></div></li>
+  <li><span class="co">8</span><div><b>Validity, Odoo style.</b> A start month, a number of months, and whether the figure is per month, per quarter or one for the whole period. Periods are generated with the one figure typed here and each can be changed later.<span class="ref">Owner ruling 26 Sep, G3 &middot; S1-2, S1-4, S1-5</span></div></li>
+  <li><span class="co">9</span><div><b>Commission tiers.</b> Each tier starts at an achievement %; the rate is % of RM on an amount target and RM per unit on a quantity target; a bonus is paid once when its tier is reached. The owner picks whether a higher rate pays only above its threshold or on everything.<span class="ref">Owner ruling 26 Sep, G6 &middot; S4-1 to S4-8</span></div></li>
+  <li><span class="co">10</span><div><b>Dealer targets</b> use the same modal from the Dealers tab, with a searchable dealer select (code - name) in place of the fixed agent.<span class="ref">J5 &middot; S1-11</span></div></li>
 </ol></div>
 </div>
 
-<h2 class="frame-title">4. The Monday WhatsApp message</h2>
+<h2 class="frame-title">4. Portal: a salesperson logs an opportunity, 375 (S2)</h2>
+<div class="layout">
+<div class="frame w375">
+  <div class="portal-top">Sorento portal &middot; Sales Opportunities</div>
+  <div class="m-card"><div class="m-row"><b>OPP-000031 New showroom Klang</b><span class="badge pri">Qualified</span></div><div class="muted" style="font-size:12px">Kedai Paip Maju &middot; RM 40,000 &middot; Nov 2026</div></div>
+  <div class="m-card"><div class="m-row"><b>OPP-000029 Condo fit-out</b><span class="badge">New</span></div><div class="muted" style="font-size:12px">Prospect: Seri Indah Renovation &middot; RM 18,500 &middot; Dec 2026</div></div>
+  <div class="modal" style="border-top:1px solid var(--line)">
+    <h4>New opportunity</h4>
+    <div class="f"><label>Customer</label><div class="inp">Search your customers</div><div class="hint"><span class="sw"></span>Not a customer yet</div></div>
+    <div class="f"><label>Title</label><div class="inp">New showroom Klang</div></div>
+    <div class="two">
+      <div class="f"><label>Expected amount (RM)</label><div class="inp">40,000</div></div>
+      <div class="f"><label>Expected to close</label><div class="inp">Nov 2026</div></div>
+    </div>
+    <div class="f"><label>What they want (optional)</label><div class="inp">200 basins, white</div></div>
+    <div class="foot"><span class="btn pri" style="flex:1;justify-content:center">Save</span></div>
+  </div>
+</div>
+<div class="notes"><ol>
+  <li><span class="co">11</span><div><b>Salespeople log their own, in the portal.</b> Shown only to a contact granted the Sales Opportunities form who is linked to a sales agent; the agent is taken from the login, never picked.<span class="ref">Owner ruling 26 Sep, G9, G10 &middot; S2-3, S2-4, S2-10</span></div></li>
+  <li><span class="co">12</span><div><b>Own customers only, or a prospect.</b> The customer search lists only this salesperson's customers; "Not a customer yet" swaps it for a prospect name.<span class="ref">S2-5</span></div></li>
+  <li><span class="co">13</span><div><b>Stages are the owner's.</b> They come from the stage table the Project Sales lead funnel already uses, edited in System &gt; Status Graphs. Proposal ships switched off and can be switched on there.<span class="ref">Owner ruling 26 Sep, G5 &middot; S2-1, S2-2, S2-11</span></div></li>
+</ol></div>
+</div>
+
+<h2 class="frame-title">5. Recipients tab and recipient modal, 1280 (S5)</h2>
+<div class="layout">
+<div class="scroll"><div class="frame w1280"><div class="main">
+  <div class="ph"><div><h3>Sales targets</h3></div><div style="display:flex;gap:8px"><span class="btn">Add suggested</span><span class="btn pri">Add recipient</span></div></div>
+  <div class="tabs"><span>Agents</span><span>Dealers</span><span class="on">Recipients</span></div>
+  <table>
+    <colgroup><col style="width:220px"><col style="width:200px"><col style="width:240px"><col style="width:260px"><col style="width:90px"><col style="width:160px"><col style="width:80px"></colgroup>
+    <thead><tr><th>Contact</th><th>Follows</th><th>When</th><th>Sees</th><th>Enabled</th><th>Next send</th><th></th></tr></thead>
+    <tbody>
+      <tr><td>Ali Hassan</td><td>Agent ALI</td><td>Weekly, Monday 09:00</td><td>Figures, commission, pipeline</td><td><span class="sw on"></span></td><td>Mon 5 Oct, 09:00</td><td><span class="btn sm">&hellip;</span></td></tr>
+      <tr><td>Tan Mei Ling</td><td>Agent MEI</td><td>Daily, 18:00</td><td>Figures, pipeline</td><td><span class="sw on"></span></td><td>Today, 18:00</td><td><span class="btn sm">&hellip;</span></td></tr>
+      <tr><td>Kedai Paip Maju (Lim)</td><td>Dealer KPM001</td><td>Monthly, day 15, 10:00</td><td>Figures</td><td><span class="sw"></span></td><td class="muted">Off</td><td><span class="btn sm">&hellip;</span></td></tr>
+      <tr><td>Owner</td><td>Team</td><td>Weekly, Friday 17:30</td><td>Figures, commission, pipeline, one line per target</td><td><span class="sw on"></span></td><td>Fri 2 Oct, 17:30</td><td><span class="btn sm">&hellip;</span></td></tr>
+    </tbody>
+  </table>
+</div></div></div>
+<div class="frame w375"><div class="modal">
+  <h4>Recipient</h4>
+  <div class="f"><label>WhatsApp contact</label><div class="inp">Tan Mei Ling</div></div>
+  <div class="f"><label>Follows</label><div class="seg"><span class="on">Agent</span><span>Dealer</span><span>Team</span></div><div class="inp" style="margin-top:6px">MEI - Tan Mei Ling</div></div>
+  <div class="f"><label>How often</label><div class="seg"><span class="on">Daily</span><span>Weekly</span><span>Monthly</span></div></div>
+  <div class="two"><div class="f"><label>Time</label><div class="inp">18:00</div></div><div class="f"><label>Time zone</label><div class="inp">Asia/Kuala_Lumpur</div></div></div>
+  <div class="f"><label>Shows</label>
+    <div><span class="sw"></span>Commission earned</div>
+    <div style="margin-top:6px"><span class="sw on"></span>Pipeline</div>
+    <div style="margin-top:6px"><span class="sw"></span>One line per target</div></div>
+  <div class="foot"><span class="btn">Preview</span><span class="btn">Send now</span><span class="btn pri">Save</span></div>
+</div></div>
+<div class="notes"><ol>
+  <li><span class="co">14</span><div><b>Every recipient has their own schedule.</b> Daily at a time, weekly on a weekday, or monthly on a day (or the last day). One background task checks every few minutes and sends whoever is due.<span class="ref">Owner ruling 26 Sep, G7 &middot; S5-1, S5-3, S5-4</span></div></li>
+  <li><span class="co">15</span><div><b>Every recipient sees what they are set to see.</b> Commission, pipeline and a per-target breakdown are switches on the contact; an agent's defaults show commission and pipeline, a dealer's show neither. Nobody gets another subject's figures unless they follow the team.<span class="ref">Owner ruling 26 Sep, G6, G8 &middot; S5-2, S5-5, S5-6</span></div></li>
+  <li><span class="co">16</span><div><b>Each row ships switched off.</b> Preview, Send now to check it, then switch it on. Add suggested proposes every agent with a WhatsApp contact and every dealer target's primary contact.<span class="ref">S5-11, S5-12</span></div></li>
+</ol></div>
+</div>
+
+<h2 class="frame-title">6. The WhatsApp message (S5)</h2>
 <div class="layout">
 <div class="frame w375"><div class="wa" style="padding:0"><div class="top">Sorento</div><div style="padding:16px">
-  <div class="bubble">Hi Tan Mei Ling, your September sales so far:
-Target: RM 120,000
-Achieved: RM 88,300 (74%)
-To go: RM 31,700 in 8 days
-Commission earned so far: RM 2,208
+  <div class="bubble">Hi Ali Hassan, your sales so far:
+FY26 H2 all products (October): RM 158,420 of RM 150,000 (106%). Target reached.
+Basins push Q4 (Oct to Dec): 412 of 900 units delivered (46%), 488 to go in 88 days.
+Commission earned so far: RM 4,455
 
-Open opportunities closing this month: 5 (RM 41,000 weighted).<span class="t">Mon 09:00</span></div>
+Open opportunities closing this month: 2 (RM 12,500 weighted).<span class="t">Mon 09:00</span></div>
 </div></div></div>
 <div class="frame w375"><div class="wa" style="padding:0"><div class="top">Sorento</div><div style="padding:16px">
-  <div class="bubble">Hi Kedai Paip Maju, your September purchases with Sorento so far:
+  <div class="bubble">Hi Kedai Paip Maju, your purchases with Sorento this month:
 Target: RM 40,000
 Achieved: RM 27,450 (69%)
-To go: RM 12,550 in 8 days
+To go: RM 12,550 in 17 days
 
-Thank you for your support. Your sales agent: Ali Hassan.<span class="t">Mon 09:00</span></div>
+Thank you for your support. Your sales agent: Ali Hassan.<span class="t">Thu 15 Oct 10:00</span></div>
 </div></div></div>
 <div class="notes"><ol>
-  <li><span class="co">10</span><div><b>Agent message (left).</b> Own figures only, with commission (G6) and pipeline. Sent to the agent's WhatsApp contact on the Sales Agents master.<span class="ref">J8 &middot; S6-1, S6-2 &middot; G7, G8</span></div></li>
-  <li><span class="co">11</span><div><b>Dealer message (right).</b> Own figures only, never commission, sent to the dealer's primary WhatsApp contact.<span class="ref">J8 &middot; S6-1, S6-2 &middot; G8</span></div></li>
-  <li><span class="co">12</span><div><b>Outside the 24 hour window this must be an approved WhatsApp template,</b> so the wording above is what goes to Meta for approval; changing it later means a new approval.<span class="ref">Plan 3.3 &middot; S6-5</span></div></li>
+  <li><span class="co">17</span><div><b>Agent (left), commission and pipeline switched on, one line per target.</b><span class="ref">J12 &middot; S5-5</span></div></li>
+  <li><span class="co">18</span><div><b>Dealer (right), figures only.</b> Its own target, never commission or anyone else's numbers.<span class="ref">J12 &middot; S5-5, S5-6</span></div></li>
+  <li><span class="co">19</span><div><b>Outside the 24 hour window this must be an approved WhatsApp template,</b> so the wording above is what goes to Meta for approval; changing it later means a new approval.<span class="ref">Plan 3.6 &middot; S5-9</span></div></li>
 </ol></div>
 </div>
 </div>

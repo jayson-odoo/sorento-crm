@@ -4,180 +4,308 @@ Plan: `documentation/plans/sales/PLAN-sales-targets-opportunities-26sep.md`. Moc
 `documentation/plans/sales/mockups/sales-targets.html`. Slice 1 of #1170 (a sales agent on a
 customer) shipped in PR #1177 and is not repeated here.
 
+Status: grilled. Round 1 answered by the owner 26 Sep 2026 (PR #1260 comment, 05:25Z); every AC
+is now written to the ruling, marked "(Owner ruling 26 Sep, G#)". Round 2 questions R1 to R5
+(plan section 9) may still adjust the ACs marked "(R#)"; each is written to its recommendation.
+
 Tags: `[BE]` pytest, `[FE]` vitest, `[E2E]` recorded agent-browser run (no new Playwright spec),
-`[T]` text or copy check. Every AC traces to a journey step (J1 to J9). Every AC marked
-"(G#)" depends on the answer to that grill question in the plan; the AC is written to the
-recommended answer and is rewritten if the owner rules otherwise.
+`[T]` text or copy check. Every AC traces to a journey step (J1 to J12).
+
+## Owner rulings 26 Sep (one line each)
+
+- **G1, Owner ruling 26 Sep:** achievement basis is set per target: ordered, or delivered (confirmed).
+- **G2, Owner ruling 26 Sep:** an agent target counts the sales order's agent; a dealer target counts all that dealer's orders.
+- **G3, Owner ruling 26 Sep:** a target has its own validity, a start month and a number of months, Odoo style.
+- **G4, Owner ruling 26 Sep:** metric (amount or quantity), product scope (all, categories, products) and date range are all set per target.
+- **G5, Owner ruling 26 Sep:** opportunity stages live on the existing configurable stage table; Proposal is optional.
+- **G6, Owner ruling 26 Sep:** full commission suite (tiers, higher rate above target, quantity commission); commission shown or hidden per contact.
+- **G7, Owner ruling 26 Sep:** the broadcast schedule is set per contact.
+- **G8, Owner ruling 26 Sep:** what each recipient sees is set per contact.
+- **G9, Owner ruling 26 Sep:** targets by admins and holders of "sales targets: edit"; salespeople log opportunities in the portal.
+- **G10, Owner ruling 26 Sep:** project sales count when they are the agent's sales; opened to dealer salespeople first.
 
 ## Journey
 
-Actors: the **sales manager** (a CRM user, today the owner or a sales admin) who sets targets and
-logs opportunities; the **sales agent** and the **dealer**, who have no CRM login (sales agents
-are not users, ruling 14 Aug 2026, `app/models/sales_agent.py:1-17`) and meet this feature only as
-a WhatsApp message.
+Actors: the **sales manager** (a CRM user: the owner or a sales admin) who sets targets and
+chooses who receives what; the **salesperson** (a sales agent with no CRM login, ruling 14 Aug
+2026, `app/models/sales_agent.py:1-17`) who logs opportunities in the portal and receives a
+WhatsApp message; the **dealer**, who may receive a WhatsApp message.
 
 - **J1. First screen.** From `/`, the manager expands **Sales** and clicks **Targets**. The page
-  opens on the current month, **Agents** tab, one row per active sales agent: Target, Achieved,
-  % achieved, Pipeline, Commission. The system already knows every agent, every sales order and
-  the month; the manager is asked for nothing to see where the team stands. An agent with no
-  target this month shows "No target" and a **Set target** action on the row.
-- **J2. Set a target.** **Set target** opens a modal with the agent and month already filled. The
-  one decision is the number. Measure defaults to Amount (RM); Quantity is one switch away and,
-  when chosen, asks for a product category (G4). Commission % and Incentive (RM) are optional and
-  pre-fill from the agent's previous month. Save closes the modal and the row shows the target.
-- **J3. Copy last month.** At the start of a month with no targets yet, **Copy last month** creates
-  this month's targets from last month's in one click (same measure, value, commission and
-  incentive); the manager then edits the few that change.
-- **J4. Dealers.** The **Dealers** tab lists every dealer (customer) that has a target this month,
-  with the same columns and an **Add dealer target** button whose modal asks for the dealer first
-  (searchable, by code and name), then the same fields as J2.
-- **J5. Log an opportunity.** On a customer's detail page an **Opportunities** section lists that
-  customer's open and closed opportunities (empty state: "No opportunities yet" plus **Log
-  opportunity**). The modal asks for a title, expected amount, expected close month and product
-  interest (optional category and a short note). Stage starts at New. The agent is taken from the
-  customer (`customers.sales_agent_id`), never asked.
-- **J6. Move it along.** From **Sales > Opportunities** (DataGrid, filter by stage, agent,
-  customer, close month) or the customer section, the manager changes the stage: New, Qualified,
-  Proposal, Negotiation, Won, Lost. Lost asks for a reason. Won optionally links the sales order
-  that came of it.
-- **J7. See the roll-up.** Back on Targets, each agent's **Pipeline** column is the weighted value
-  of that agent's open opportunities expected to close this month (expected amount x stage
-  probability). Achievement never includes opportunities; it comes from sales orders only.
-- **J8. The broadcast.** Every Monday at 09:00 Malaysia time (G7) each agent with a target and a
-  WhatsApp contact, and each dealer with a target and a primary contact, receives one WhatsApp
-  message: this month's target, achieved so far, % and the gap, plus the days left. The manager
-  can see every send in the Respond Outbox and can press **Send now** on a row to send that one
-  message immediately.
-- **J9. Month end.** On a closed month, the Commission column shows commission earned (commission
-  % x achieved amount) plus the incentive when achievement reached 100%.
+  opens on the current month, **Agents** tab: one row per target period that covers this month,
+  grouped by agent, with Target, Achieved, %, Pipeline and Commission. An active agent with no
+  target covering this month shows one "No target" row with **Set target**. The manager is asked
+  for nothing to see where the team stands.
+- **J2. Set a target.** **Set target** opens a modal with the agent (or dealer) and the start
+  month filled in. It asks for a name, the metric (Amount or Quantity), the basis (Ordered or
+  Delivered), the products it applies to (All, Categories, Products), how many months it runs and
+  how the figure is split (per month, per quarter, or one figure for the whole period), and the
+  target figure per period. Defaults: Amount, Ordered, All products, 1 month, per month. Save shows
+  the new row.
+- **J3. Tune the periods.** The target's detail page lists its periods; the manager changes one
+  period's figure (a lower December) in place.
+- **J4. Duplicate.** **Duplicate** on a target creates a copy starting the month after it ends,
+  with the same settings, figures, scope and tiers, for the manager to adjust.
+- **J5. Dealers.** The **Dealers** tab lists dealer targets covering this month; **Add dealer
+  target** opens the same modal with a searchable dealer select first.
+- **J6. Salesperson logs an opportunity.** In the portal, a salesperson who has been granted it
+  opens **Sales Opportunities**, taps **New**, picks one of their own customers (or types a
+  prospect name when the buyer is not a customer yet), and enters a title, expected amount,
+  expected close month and a short product note. Stage starts at the first stage. The agent is
+  the salesperson, never asked.
+- **J7. Salesperson moves it along.** The salesperson opens their opportunity and moves it to the
+  next stage; Lost asks for a reason from a list. They see only their own opportunities.
+- **J8. Manager sees opportunities.** **Sales > Opportunities** (DataGrid, filter by stage, agent,
+  customer, close month) and an **Opportunities** section on the customer page show the same
+  rows; the manager can log or edit on an agent's behalf and link a won one to its sales order.
+- **J9. Pipeline beside the target.** On Targets, each agent's **Pipeline** is the weighted value
+  of their open opportunities expected to close this month (expected amount x the stage's
+  probability). Achievement never includes opportunities.
+- **J10. Commission.** In the Set target modal, the manager adds commission tiers (from what %
+  achieved, at what rate, with an optional one-off bonus) and picks whether a higher rate applies
+  only above its threshold or to everything. The Commission column shows what each period has
+  earned so far.
+- **J11. Choose recipients.** On the **Recipients** tab, the manager adds a WhatsApp contact,
+  chooses what they follow (an agent, a dealer, or the team), when they receive it (daily, weekly
+  on a weekday, or monthly on a day, at a time) and what they see (commission, pipeline, one line
+  per target). **Preview** shows the message; **Send now** sends it; **Enabled** turns the
+  schedule on.
+- **J12. The message arrives.** At each recipient's own time, they receive one WhatsApp message
+  with the figures they are set to see and nothing else.
 
 ## Definitions the ACs rely on
 
-- **Achieved amount** (G1): the sum of `sales_order_lines.line_total` over lines whose order is
-  not `cancelled` and whose `line_status` is not `cancelled`, where `sales_orders.order_date`
-  falls inside the target's month. `line_total` is the AutoCount "Total (Inc)" figure, so the
-  amount is tax inclusive. This is the sales report's "ordered" figure
-  (`app/services/sales_report_service.py:202-247`) bucketed by `order_date` instead of
-  `coalesce(required_date, order_date)`.
-- **Achieved quantity**: the sum of `qty_ordered` under the same filter, restricted to products in
-  the target's category.
-- **Attribution** (G2): an agent target counts orders whose `sales_orders.sales_agent_id` is that
-  agent; a dealer target counts orders whose `sales_orders.customer_id` is that dealer.
-- **Stage probability** (fixed, G5): New 10%, Qualified 25%, Proposal 50%, Negotiation 75%,
-  Won 100%, Lost 0%.
+- **Period.** A row of `sales_target_periods`: `[period_start, period_end)`, month aligned. A
+  target covers month M when one of its periods contains M.
+- **Achieved value** of a period (Owner ruling 26 Sep, G1, G2, G4, G10): over
+  `sales_order_lines` whose order is not `cancelled`, whose `line_status` is not `cancelled`, and
+  whose `sales_orders.order_date` is inside the period; attributed by `sales_orders.sales_agent_id`
+  for an agent target (R2 may widen this to the person's other codes) or `sales_orders.customer_id`
+  for a dealer target; `demand_class` not filtered; restricted to the scope (all; categories
+  including sub-categories; or products). Value:
+  - amount, ordered: `line_total` (tax inclusive, R4);
+  - amount, delivered: `round(line_total x least(qty_delivered, qty_ordered) / qty_ordered, 2)`,
+    0 when `qty_ordered = 0` (the sales report's confirmed value; bucketed by order date, R3);
+  - quantity, ordered: `qty_ordered`;
+  - quantity, delivered: `least(qty_delivered, qty_ordered)`.
+- **Stage probability** (Owner ruling 26 Sep, G5): the `win_probability` of the opportunity's
+  status row; defaults New 10, Qualified 25, Proposal 50 (inactive), Negotiation 75, Won 100,
+  Lost 0.
+- **Commission** (Owner ruling 26 Sep, G6): per period from the target's tiers; `marginal` applies
+  each tier's rate to the slice between its threshold and the next; `retroactive` applies the
+  highest reached tier's rate to the whole; each reached tier's bonus is paid once per period;
+  rate is % of amount for amount targets and RM per unit for quantity targets; rounded half up to
+  2 dp per period.
 
-## S1. Agent amount targets with live achievement
+## S1. Flexible targets with live achievement in the CRM
 
-- **S1-1 [BE] (J2)** `POST /api/v1/sales/targets` with `{sales_agent_id, period_month, measure:
-  "amount", target_value}` creates a row and returns it with `achieved_value`, `achieved_pct`,
-  agent code and name. `period_month` not on the 1st of a month is 422.
-- **S1-2 [BE] (J2)** A second target for the same agent, month, measure and category is 409 with a
-  message naming the agent and month.
-- **S1-3 [BE] (J1)** `GET /api/v1/sales/targets?period_month=2026-09-01&subject=agent` returns one
-  row per active sales agent in scope, including agents with no target (`target_id: null`,
-  `target_value: null`), each with its achieved amount.
-- **S1-4 [BE] (J1, G1, G2)** Achievement golden set: seeded orders for agent A in September (one
-  open, one fulfilled, one cancelled order, one open order with a cancelled line, one order dated
-  31 Aug, one order with `order_date` null) produce exactly the sum of the non-cancelled lines of
-  the September orders. Agent B's orders never count for A.
-- **S1-5 [BE] (J1)** A user without `sales.targets.view` gets 403; without `sales.targets.add` the
-  POST is 403. An agent or order from another company is invisible under company scope.
-- **S1-6 [BE] (J2)** `PATCH` changes value, commission and incentive; `DELETE` hard deletes
-  (deferred-action countdown on the FE, no dialog).
-- **S1-7 [FE] (J1)** Targets page renders the agents grid for the current month with a month
-  picker; an agent without a target shows "No target" and a Set target action; loading, empty
-  (no active agents) and error states render.
-- **S1-8 [FE] (J2)** The Set target modal pre-fills agent and month, defaults measure to Amount,
-  and the payload carries the typed value; commission and incentive pre-fill from the previous
-  month when one exists.
-- **S1-9 [FE] (J1)** Achieved over target renders as a percentage with a bar; over 100% is shown
-  in the success tone and the number is not capped.
-- **S1-11 [BE][FE] (J1, G2)** Orders in the month with a null `sales_agent_id` are totalled in one
-  "Unassigned" row at the foot of the Agents grid (no target, no actions), so unattributed sales
-  are visible rather than silently dropped.
-- **S1-10 [E2E] (J1, J2)** Sidebar Sales > Targets from `/`, set a target on one agent, reload,
-  value persists; usable and unclipped at 1280 and 375.
+- **S1-1 [BE] (J2, Owner ruling 26 Sep, G3, G4)** `POST /api/v1/sales/targets` with `{subject_kind:
+  "agent", sales_agent_id, name, metric: "amount", basis: "ordered", product_scope: "all",
+  start_month: "2026-10-01", months: 6, periodicity: "month", target_value: 120000}` creates the
+  header, six period rows of 120,000 (Oct to Mar) and returns `target_no` (`TGT-...`), the agent
+  code and name, and the periods.
+- **S1-2 [BE] (J2, G3)** `periodicity: "quarter"` with `months: 6` creates two periods; with
+  `months: 4` it is 422. `periodicity: "whole"` creates one period spanning all months.
+  `start_month` not on the 1st is 422; `months` outside 1 to 36 is 422.
+- **S1-3 [BE] (J2, G4)** `product_scope: "categories"` without category ids is 422; with product
+  ids is 422; `"products"` without product ids is 422; `"all"` with any scope ids is 422.
+- **S1-4 [BE] (J3)** `PATCH /sales/targets/{id}/periods/{period_id}` changes one period's
+  `target_value`; the other periods are unchanged.
+- **S1-5 [BE] (J2, G3)** Changing `months` from 6 to 8 on the header adds two periods and keeps
+  the six existing figures; changing `periodicity` regenerates periods and keeps any figure whose
+  `period_start` is unchanged.
+- **S1-6 [BE] (J1)** `GET /api/v1/sales/targets?month=2026-10-01&subject=agent` returns one row per
+  target period covering October (for a quarterly target, the quarter containing October), with
+  `achieved_value`, `achieved_pct`, the period bounds, and one `target_id: null` row per active
+  agent with no covering target.
+- **S1-7 [BE] (J1, Owner ruling 26 Sep, G1, G2)** Achievement golden set, amount: seeded orders for
+  agent A in October (open, fulfilled, cancelled order, open order with a cancelled line, one
+  dated 30 Sep, one with `order_date` null, one with agent B) give exactly the sum of the
+  non-cancelled October lines of agent A, for `ordered`; for `delivered` the same lines give the
+  sum of their confirmed values, and a line with `qty_ordered = 0` adds 0.
+- **S1-8 [BE] (J1, G4)** Achievement golden set, quantity: `ordered` sums `qty_ordered`,
+  `delivered` sums `least(qty_delivered, qty_ordered)` (a line over-delivered by AutoCount never
+  counts more than ordered).
+- **S1-9 [BE] (J1, G4)** Scope: a `categories` target on "Basins" counts a product in
+  "Basins > Countertop" and not one in "Taps"; a `products` target counts only the listed
+  products; `all` counts everything.
+- **S1-10 [BE] (J1, Owner ruling 26 Sep, G10)** An agent's `demand_class = "project"` order counts
+  toward that agent's target exactly as a retail one does.
+- **S1-11 [BE] (J5, G2)** A dealer target counts that customer's orders whichever agent is on
+  them; a target with both or neither of agent and customer is 422.
+- **S1-12 [BE] (J4)** `POST /sales/targets/{id}/duplicate` creates a new header starting the month
+  after the source ends, with the same settings, period figures in order and scope rows, and a new
+  `target_no`.
+- **S1-13 [BE] (J1, Owner ruling 26 Sep, G9)** Without `sales.targets.view` the list is 403;
+  without `sales.targets.add` create is 403; without `sales.targets.edit` PATCH, period edit and
+  duplicate are 403; without `sales.targets.delete` DELETE is 403. Another company's target,
+  agent or order is invisible under company scope. `DELETE` hard deletes header, periods and scope.
+- **S1-14 [BE][FE] (J1)** Orders in the month with a null `sales_agent_id` are totalled in one
+  "Unassigned" row at the foot of the Agents grid (no target, no actions).
+- **S1-15 [FE] (J1, J2, J3)** Targets page renders the month picker, Agents and Dealers tabs, rows
+  showing name, metric and basis chip, scope summary ("All products", "3 categories"), period,
+  target, achieved, a % bar (over 100% in the success tone and not capped); "No target" rows with
+  Set target; loading, empty and error states. The Set target modal defaults as in J2, reveals the
+  category or product multi-select for the chosen scope, changes the unit label between RM and
+  units, and sends the payload of S1-1. The detail page edits a period figure in place; view and
+  edit are the same layout; delete is a deferred-action countdown with no dialog.
+- **S1-16 [E2E] (J1 to J5)** From `/`, Sales > Targets; set a 3-month, per-month target on one
+  agent with a category scope, reload, it persists; change one period; duplicate it; add a dealer
+  target; usable and unclipped at 1280 and 375.
 
-## S2. Copy last month, dealer targets, quantity targets
+## S2. Opportunities, logged by salespeople in the portal
 
-- **S2-1 [BE] (J3)** `POST /api/v1/sales/targets/copy {from_month, to_month}` copies every target
-  of `from_month` that has no counterpart in `to_month`, returns the count created, and is a
-  no-op (count 0) when run twice.
-- **S2-2 [BE] (J4)** A target with `customer_id` instead of `sales_agent_id` is accepted; one with
-  both or neither is 422.
-- **S2-3 [BE] (J4, G2)** A dealer target's achievement counts that customer's orders regardless of
-  which agent is on the order.
-- **S2-4 [BE] (J2, G4)** `measure: "quantity"` without `product_category_id` is 422; with it,
-  achievement is the `qty_ordered` sum over products in that category only.
-- **S2-5 [FE] (J3)** Copy last month is shown only when the month has no targets and the previous
-  month has some; after it, the grid shows the copied rows.
-- **S2-6 [FE] (J4)** Dealers tab lists dealer targets; Add dealer target asks for the dealer via a
-  searchable, clearable select showing `code - name`, never a UUID.
-- **S2-7 [FE] (J2)** Switching Measure to Quantity reveals a required category select and changes
-  the unit label from RM to units.
+- **S2-1 [BE] (J6, Owner ruling 26 Sep, G5)** At startup the `sales_opportunity` status graph is
+  seeded once with New (initial, 10), Qualified (25), Proposal (50, **inactive**), Negotiation
+  (75), Won (terminal, 100), Lost (terminal, 0) and edges between live stages, back one step, and
+  to Won and Lost; a second startup changes nothing, and an admin's later edits survive restarts.
+- **S2-2 [BE] (J7, G5)** After an admin activates Proposal in System > Status Graphs, an
+  opportunity can move Qualified to Proposal with no code change; renaming Won keeps won
+  semantics (detected by key).
+- **S2-3 [BE] (J6, Owner ruling 26 Sep, G9)** `POST /api/v1/public/portal/sales-opportunities`
+  with a portal token whose contact is granted `sales_opportunity` and is linked to an active
+  sales agent creates an opportunity at the initial stage, `source = "portal"`,
+  `created_by_contact_id` set, and `sales_agent_id` = that agent, ignoring any agent id in the
+  body.
+- **S2-4 [BE] (J6, G9, G10)** A contact without the grant gets 403 `FORM_TYPE_NOT_VISIBLE`; a
+  granted contact not linked to a sales agent gets 403 `NOT_A_SALES_AGENT`; the kind is not in the
+  base kinds, so a contact with no segment and no override does not see it.
+- **S2-5 [BE] (J6)** The portal customer lookup returns only customers whose `sales_agent_id` is
+  the salesperson's agent; creating with another agent's customer is 422. With no customer,
+  `prospect_name` is required (422 without it).
+- **S2-6 [BE] (J7)** A salesperson lists and opens only opportunities whose `sales_agent_id` is
+  theirs; another agent's id is 404. Stage changes follow the graph's edges only (422 otherwise);
+  Lost without a `lost_reason` from `sales_opportunity_lost_reasons` is 422.
+- **S2-7 [BE] (J8)** CRM `POST /api/v1/sales/opportunities` stamps `sales_agent_id` from the
+  customer (null agent accepted), `source = "crm"`; `PATCH` to Won accepts an optional
+  `sales_order_id` of the same customer (422 otherwise); `outcome` follows the terminal stage key.
+- **S2-8 [BE] (J8)** `GET /api/v1/sales/opportunities` filters by stage, agent, customer and close
+  month through the list-query contract; `sales.opportunities.view|add|edit|delete` gate each CRM
+  route; company scope applies.
+- **S2-9 [BE] (J7)** Every stage change is in the audit timeline, attributed to the contact for
+  portal changes and to the user for CRM changes.
+- **S2-10 [FE] (J6, J7)** Portal: the landing shows a Sales Opportunities card only when the kind
+  is visible; the list shows number, title, customer or prospect, stage `Badge`, amount and close
+  month; the form uses searchable selects, a "Not a customer yet" switch revealing Prospect name,
+  and at 375 has no horizontal scroll.
+- **S2-11 [FE] (J7)** Portal detail: stage buttons offer only the allowed next stages; Lost reveals
+  a required reason select.
+- **S2-12 [FE] (J8)** CRM: Opportunities DataGrid with fixed layout, resizable columns, stage
+  `Badge`, `rowHref` to the detail page with `RecordNavigation`; the customer page shows an
+  Opportunities section in view and edit, with "No opportunities yet" and **Log opportunity**.
+- **S2-13 [FE] (J8)** Choosing Won reveals an optional sales order select limited to that
+  customer; the Source column shows Portal or CRM.
+- **S2-14 [E2E] (J6 to J8)** As a granted salesperson in the portal at 375: log an opportunity on
+  own customer, move it to Qualified, then Lost with a reason; as the manager in the CRM at 1280
+  the list and the customer section show each step with the salesperson as the actor.
 
-## S3. Commission and incentive
+## S3. Pipeline beside the target
 
-- **S3-1 [BE] (J9)** Each target row returns `commission_earned = round(achieved_value x
-  commission_pct / 100, 2)` for amount targets, and `incentive_earned = incentive_amount` when
-  `achieved_pct >= 100` else 0. A quantity target returns `commission_earned: null` (G6).
-- **S3-2 [BE] (J9)** Golden numbers: target 100,000, achieved 104,250.50, 2.5% and incentive 500
-  give commission 2,606.26 and incentive 500; achieved 99,999.99 gives incentive 0.
-- **S3-3 [FE] (J9)** Commission column shows earned commission plus incentive, with the incentive
-  shown separately in the row's tooltip or detail; blank commission % shows a dash.
+- **S3-1 [BE] (J9)** Each agent row carries `pipeline_value` = sum over that agent's
+  opportunities on non-terminal stages with `expected_close_month` in the chosen month of
+  `expected_amount x win_probability / 100`, and `pipeline_count`.
+- **S3-2 [BE] (J9)** Won and Lost never add to `pipeline_value`; no opportunity ever adds to
+  `achieved_value`.
+- **S3-3 [BE] (J9)** An opportunity on a stage with null `win_probability` adds 0 and is counted in
+  `pipeline_unweighted_count`, never guessed.
+- **S3-4 [FE] (J9)** The Pipeline cell and KPI link to Sales > Opportunities filtered to that agent
+  and month; a non-zero unweighted count shows a hint in the cell's title.
 
-## S4. Opportunities on the customer
+## S4. Commission tiers
 
-- **S4-1 [BE] (J5)** `POST /api/v1/sales/opportunities` with `{customer_id, title,
-  expected_amount, expected_close_month}` creates stage `new`, stamps `sales_agent_id` from the
-  customer, and returns agent code and name. A customer with no agent is accepted with a null
-  agent.
-- **S4-2 [BE] (J6)** `PATCH stage` accepts the six stages only; `lost` without `lost_reason` is
-  422; `won` accepts an optional `sales_order_id` that must belong to the same customer (422
-  otherwise).
-- **S4-3 [BE] (J6)** `GET /api/v1/sales/opportunities` filters by stage, agent, customer and close
-  month, paginated through the list-query contract.
-- **S4-4 [BE] (J5)** Permissions `sales.opportunities.view|add|edit|delete` gate each route; company
-  scope applies.
-- **S4-5 [FE] (J5)** Customer detail renders an Opportunities section in both view and edit, with
-  the empty state and Log opportunity CTA when there are none.
-- **S4-6 [FE] (J6)** Opportunities DataGrid has fixed layout, resizable columns, stage shown as a
-  `Badge`, `rowHref` to the opportunity detail, stage filter as a SearchableSelect.
-- **S4-7 [FE] (J6)** Choosing Lost reveals a required reason field; choosing Won reveals an
-  optional sales order select limited to that customer.
-- **S4-8 [E2E] (J5, J6)** Log an opportunity on a customer, move it to Proposal, then Lost with a
-  reason; the list reflects each step; 1280 and 375.
+- **S4-1 [BE] (J10, Owner ruling 26 Sep, G6)** Create and update accept `commission_method` and
+  `tiers: [{from_pct, rate, bonus_amount}]`; `from_pct` must be unique per target and at least 0;
+  method `none` with tiers is 422, and `marginal` or `retroactive` without tiers is 422.
+- **S4-2 [BE] (J10)** Flat: one tier `{0, 2.5}`; target 100,000, achieved 104,250.50 gives
+  commission 2,606.26.
+- **S4-3 [BE] (J10)** Marginal accelerator: tiers `{0, 2}`, `{100, 4}`; target 100,000, achieved
+  120,000 gives 2,000 + 800 = 2,800.00.
+- **S4-4 [BE] (J10)** Retroactive: the same tiers and figures give 4,800.00; achieved 99,999.99
+  gives 2,000.00 (100% not reached).
+- **S4-5 [BE] (J10)** Bonus: tier `{100, 2, bonus 500}` pays 500 at 100.00% and 0 at 99.99%, once
+  per period.
+- **S4-6 [BE] (J10, G6)** Quantity: tiers `{0, 1.50}` on a quantity target, achieved 1,200 units,
+  gives RM 1,800.00.
+- **S4-7 [BE] (J10)** Each period row returns `commission_earned`, `bonus_earned` and
+  `commission_breakdown` (per tier: slice, rate, amount); a `none` target returns nulls.
+  Duplicate copies tiers.
+- **S4-8 [FE] (J10)** The modal's Commission section offers method (None, Higher rate above each
+  threshold only, Highest rate on everything) and a tier editor (add, remove, reorder by from %);
+  the unit label follows the metric (% of RM, or RM per unit).
+- **S4-9 [FE] (J10)** The Commission column shows commission plus bonus, with a popover of the
+  breakdown; `none` shows a dash.
 
-## S5. Pipeline roll-up on targets
+## S5. Per-contact WhatsApp broadcast
 
-- **S5-1 [BE] (J7)** Each agent row carries `pipeline_value` = sum over that agent's opportunities
-  in stages new to negotiation with `expected_close_month` equal to the target month of
-  `expected_amount x probability`, and `pipeline_count`.
-- **S5-2 [BE] (J7)** Won and lost opportunities never add to `pipeline_value`, and no opportunity
-  ever adds to `achieved_value`.
-- **S5-3 [FE] (J7)** The Pipeline cell links to Sales > Opportunities filtered to that agent and
-  month.
+- **S5-1 [BE] (J11, Owner ruling 26 Sep, G7, G8)** `POST /api/v1/sales/recipients` creates a
+  recipient with `contact_id`, `follows_kind` (`agent`, `dealer`, `team`) and its subject,
+  schedule (`frequency`, `weekday` or `day_of_month`, `send_time`, `timezone`) and content flags;
+  weekly without a weekday or monthly without a day is 422; the same contact following the same
+  subject twice is 409.
+- **S5-2 [BE] (J11, G6, G8)** Defaults when omitted: `show_commission` true for agent, false for
+  dealer and team; `show_pipeline` true for agent and team, false for dealer; `show_breakdown`
+  false; `enabled` false; weekly, Monday, 09:00, Asia/Kuala_Lumpur.
+- **S5-3 [BE] (J12, G7)** `next_run_for` golden table: weekly Monday 09:00 computed on Monday 09:01
+  gives next Monday; monthly last day from 31 Jan gives 28 Feb (29 in a leap year); monthly 15 at
+  08:00 KL is stored as 00:00 UTC; enabling a recipient sets `next_run_at`, disabling clears it.
+- **S5-4 [BE] (J12)** The seeded `sales_target_broadcast_runner` task sends for every enabled
+  recipient whose `next_run_at` has passed, one message each, then advances `next_run_at`.
+- **S5-5 [BE] (J12, G8)** Golden text for three recipients: an agent with commission shown, the
+  same agent with commission hidden (no commission line at all), and a dealer (own figures only,
+  no commission, no pipeline); a team recipient gets totals plus one line per agent.
+- **S5-6 [BE] (J12, G8)** A dealer recipient's message never contains another customer's or any
+  agent's figures; an agent recipient's never contains another agent's.
+- **S5-7 [BE] (J12)** A recipient whose contact has `outbound_enabled = false` is skipped and
+  counted in the run summary; no send is attempted.
+- **S5-8 [BE] (J12)** Every attempt writes an `integration_log` row on success AND failure with
+  `business_table = "sales_target_recipients"` and `business_id` = the recipient id.
+- **S5-9 [BE] (J12)** Sends go through `send_text_or_template(..., use_case="sales_target_progress")`;
+  the use case is in `TEMPLATE_DEFAULT_USE_CASES`.
+- **S5-10 [BE] (J12)** Running the handler twice for the same due time sends once.
+- **S5-11 [BE] (J11, G9)** `POST /sales/recipients/{id}/send-now` and `GET .../preview` are gated by
+  `sales.targets.edit`; recipients CRUD by `sales.targets.view|edit`.
+- **S5-12 [FE] (J11)** Recipients tab: DataGrid (contact, follows, schedule in words, shows,
+  enabled, next send); modal with a searchable contact select, follows select, schedule fields
+  that appear for the chosen frequency, content switches; Preview renders the golden text; Add
+  suggested lists agents with a contact and dealers with a primary contact, disabled; Send now
+  toasts the recipient's name.
+- **S5-13 [E2E] (J11, J12)** Add a recipient, preview, Send now against a stubbed Respond client;
+  the Respond Outbox shows the row; 1280 and 375.
 
-## S6. Scheduled WhatsApp broadcast
+## Round 1 criteria carried forward (nothing deleted)
 
-- **S6-1 [BE] (J8)** A `scheduled_tasks` row `sales_target_broadcast` (seeded by migration,
-  weekly, Monday 09:00 Asia/Kuala_Lumpur, G7) runs a handler that sends one message per agent
-  target of the current month to `sales_agents.contact_id`, and one per dealer target to the
-  customer's primary `respond_contact_customers` contact.
-- **S6-2 [BE] (J8)** The message text carries target, achieved, % and gap in RM (or units) and the
-  days left in the month; the golden text is asserted for one agent and one dealer.
-- **S6-3 [BE] (J8)** A recipient with no contact, or with `outbound_enabled = false`, is skipped
-  and counted in the run summary; no send is attempted.
-- **S6-4 [BE] (J8)** Every attempt writes an `integration_log` row on success AND failure with
-  `business_table = "sales_targets"` and `business_id` = the target id.
-- **S6-5 [BE] (J8)** Sends go through `send_text_or_template(..., use_case="sales_target_progress")`;
-  the use case is in `TEMPLATE_DEFAULT_USE_CASES`, so outside the 24h window the approved template
-  is used.
-- **S6-6 [BE] (J8)** Running the handler twice on the same day sends nothing the second time
-  (idempotent on target id + local date via `integration_log`).
-- **S6-7 [BE] (J8)** `POST /api/v1/sales/targets/{id}/send-now` sends that one message and is gated
-  by `sales.targets.edit`.
-- **S6-8 [FE] (J8)** The row menu has Send now; the toast names the recipient; a target whose
-  recipient has no contact shows the action disabled with the reason in its title.
-- **S6-9 [E2E] (J8)** Send now on one agent target against the local Respond sandbox or a stubbed
-  client; the Respond Outbox shows the row.
+Every round 1 AC is kept, as rewritten to the ruling or as noted.
+
+| Round 1 | Now | Change |
+| --- | --- | --- |
+| S1-1 | S1-1, S1-2 | monthly `period_month` replaced by validity (G3) |
+| S1-2 (409 duplicate) | S1-13 note | overlapping targets allowed (plan 3.1); 409 retired by G4's flexibility |
+| S1-3 | S1-6 | |
+| S1-4 | S1-7, S1-8 | basis added (G1) |
+| S1-5 | S1-13 | |
+| S1-6 | S1-4, S1-13 | |
+| S1-7, S1-8, S1-9 | S1-15 | |
+| S1-10 | S1-16 | |
+| S1-11 | S1-14 | |
+| S2-1 (copy last month) | S1-12 | Duplicate replaces copy month, since targets now span months (G3) |
+| S2-2, S2-3 | S1-11 | |
+| S2-4 (quantity needs a category) | S1-3, S1-9 | quantity on all products allowed (G4) |
+| S2-5 | S1-15 | Duplicate button replaces Copy last month |
+| S2-6, S2-7 | S1-15 | |
+| S3-1, S3-2 | S4-2, S4-5, S4-7 | flat % and incentive are now tier cases (G6) |
+| S3-3 | S4-9 | |
+| S4-1 | S2-3, S2-7 | portal create added (G9) |
+| S4-2 | S2-6, S2-7 | stages from the status engine (G5) |
+| S4-3, S4-4 | S2-8 | |
+| S4-5, S4-6, S4-7 | S2-12, S2-13, S2-11 | |
+| S4-8 | S2-14 | |
+| S5-1, S5-2, S5-3 | S3-1, S3-2, S3-4 | probability from the stage row (G5) |
+| S6-1 | S5-1, S5-4 | global schedule replaced by per contact (G7) |
+| S6-2 | S5-5 | |
+| S6-3 | S5-7 | |
+| S6-4 | S5-8 | business table is now the recipient |
+| S6-5 | S5-9 | |
+| S6-6 | S5-10 | |
+| S6-7 | S5-11 | send now per recipient (G8) |
+| S6-8 | S5-12 | |
+| S6-9 | S5-13 | |
