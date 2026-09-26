@@ -11,19 +11,12 @@ import { RecordNavigation } from '@/components/common/RecordNavigation';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
 import { formatCurrency, formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { getSalesOpportunitySalesOrderOptions } from '../../services/salesOpportunityService';
-import { useSalesOpportunity, useSaveSalesOpportunity } from '../../hooks/useSalesOpportunities';
+import {
+  useSalesOpportunity,
+  useSalesOpportunityMeta,
+  useSaveSalesOpportunity,
+} from '../../hooks/useSalesOpportunities';
 import type { SalesOpportunityTransition } from '../../types/salesOpportunity.types';
-
-/** The backend's seeded defaults (plan 3.4, section 16) - a synchronous fallback so the
- * reason picker has something to offer the instant Lost is chosen, before the server's
- * own (editable) list arrives. */
-const FALLBACK_LOST_REASONS: SearchableSelectOption[] = [
-  { value: 'price', label: 'Price' },
-  { value: 'competitor', label: 'Went to competitor' },
-  { value: 'project_cancelled', label: 'Project cancelled' },
-  { value: 'no_response', label: 'No response' },
-  { value: 'other', label: 'Other' },
-];
 
 /**
  * `/sales/opportunities/{id}` detail page (UAC S2-11, S2-12, S2-13; plan section 16).
@@ -35,12 +28,12 @@ const FALLBACK_LOST_REASONS: SearchableSelectOption[] = [
  */
 export default function SalesOpportunityDetail({ id }: { id: string }) {
   const { data: opportunity, isLoading, isError } = useSalesOpportunity(id);
+  const { data: meta } = useSalesOpportunityMeta();
   const save = useSaveSalesOpportunity();
 
   const [pending, setPending] = useState<SalesOpportunityTransition | null>(null);
   const [lostReason, setLostReason] = useState('');
   const [salesOrderId, setSalesOrderId] = useState('');
-  const [salesOrderOptions, setSalesOrderOptions] = useState<SearchableSelectOption[]>([]);
 
   useEffect(() => {
     setPending(null);
@@ -48,21 +41,21 @@ export default function SalesOpportunityDetail({ id }: { id: string }) {
     setSalesOrderId('');
   }, [id]);
 
-  useEffect(() => {
-    if (pending?.key !== 'won') return;
-    let active = true;
-    getSalesOpportunitySalesOrderOptions(id)
-      .then((rows) => {
-        if (!active) return;
-        setSalesOrderOptions(rows.map((r) => ({ value: r.id, label: r.so_number })));
-      })
-      .catch(() => {
-        // The picker just stays empty; Won never requires a sales order (S2-7).
-      });
-    return () => {
-      active = false;
-    };
-  }, [pending, id]);
+  const lostReasonOptions: SearchableSelectOption[] = (meta?.lost_reasons ?? []).map((r) => ({
+    value: r.value,
+    label: r.label,
+  }));
+
+  // Reviewer should-fix 3: a live search over every sales order, not a fetch-once list -
+  // the same reasoning every other id picker in this app follows for a catalog that can
+  // outgrow one page (LESSONS 70).
+  const fetchSalesOrderOptions = async (q: string): Promise<SearchableSelectOption[]> => {
+    const rows = await getSalesOpportunitySalesOrderOptions(id, q);
+    return rows.map((r) => ({
+      value: r.id,
+      label: r.customer_name ? `${r.so_number} - ${r.customer_name}` : r.so_number,
+    }));
+  };
 
   if (isLoading) {
     return (
@@ -188,6 +181,21 @@ export default function SalesOpportunityDetail({ id }: { id: string }) {
       <Card>
         <section aria-label="Stage" className="flex flex-col gap-3 p-4">
           <h3 className="text-sm font-semibold">Stage</h3>
+          {/* Reviewer should-fix 3: once a move has landed, say what it landed with -
+              otherwise the linked order/reason only ever appeared during the confirm step
+              that set it, never again after. */}
+          {opportunity.sales_order_no ? (
+            <p className="text-sm text-muted-foreground">
+              Sales order:{' '}
+              <span className="font-medium text-foreground">{opportunity.sales_order_no}</span>
+            </p>
+          ) : null}
+          {opportunity.lost_reason_label ? (
+            <p className="text-sm text-muted-foreground">
+              Lost reason:{' '}
+              <span className="font-medium text-foreground">{opportunity.lost_reason_label}</span>
+            </p>
+          ) : null}
           {transitions.length === 0 ? (
             <p className="text-sm text-muted-foreground">This is the last stage.</p>
           ) : (
@@ -216,7 +224,7 @@ export default function SalesOpportunityDetail({ id }: { id: string }) {
                     aria-label="Lost reason"
                     value={lostReason}
                     onChange={setLostReason}
-                    options={FALLBACK_LOST_REASONS}
+                    options={lostReasonOptions}
                     placeholder="Pick a reason"
                     wrapOptions
                   />
@@ -230,8 +238,8 @@ export default function SalesOpportunityDetail({ id }: { id: string }) {
                     aria-label="Sales order"
                     value={salesOrderId}
                     onChange={setSalesOrderId}
-                    options={salesOrderOptions}
-                    placeholder="No sales order"
+                    fetchOptions={fetchSalesOrderOptions}
+                    placeholder="Search sales orders..."
                     clearable
                     wrapOptions
                   />
