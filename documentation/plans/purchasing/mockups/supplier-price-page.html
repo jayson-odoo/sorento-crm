@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Supplier price page</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* Mockup for PLAN-cost-price-supplier-26sep.md, slice S3 (the supplier page) and the staff
+   "Share with supplier" dialog that issues its link. Static sample data; not the shipped UI.
+   Mobile first: the phone frames are 375px wide, the page is opened from WeChat's in-app browser.
+   Labels are Chinese first with English beneath (Q12). Tokens mirror css/config.reui.css names. */
+:root {
+  --background: #ffffff; --foreground: #0a0a0a; --muted: #f4f4f5; --muted-foreground: #71717a;
+  --border: #e4e4e7; --primary: #1b84ff; --primary-foreground: #ffffff;
+  --up-bg: #fef3f2; --up-fg: #b42318; --down-bg: #ecfdf3; --down-fg: #067647;
+  --warn-bg: #fff4e5; --warn-fg: #b54708; --info-bg: #eff8ff; --info-fg: #175cd3;
+  --radius: 0.5rem; --text-2sm: 0.8125rem; --text-xs: 0.75rem;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --background: #0b0b0d; --foreground: #f4f4f5; --muted: #18181b; --muted-foreground: #a1a1aa;
+    --border: #27272a; --up-bg: #3b1412; --up-fg: #fda29b; --down-bg: #0c2e1d; --down-fg: #75e0a7;
+    --warn-bg: #3a2410; --warn-fg: #fdb022; --info-bg: #102a4c; --info-fg: #84caff;
+  }
+}
+:root[data-theme="dark"] {
+  --background: #0b0b0d; --foreground: #f4f4f5; --muted: #18181b; --muted-foreground: #a1a1aa;
+  --border: #27272a; --up-bg: #3b1412; --up-fg: #fda29b; --down-bg: #0c2e1d; --down-fg: #75e0a7;
+  --warn-bg: #3a2410; --warn-fg: #fdb022; --info-bg: #102a4c; --info-fg: #84caff;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--background); color: var(--foreground);
+  font: 400 14px/1.45 Inter, "PingFang SC", "Microsoft YaHei", "Noto Sans SC", ui-sans-serif, system-ui, sans-serif; }
+.wrap { max-width: 1280px; margin: 0 auto; padding: 16px; }
+.note { font-size: var(--text-xs); color: var(--muted-foreground); margin: 0 0 8px; }
+h2.section { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted-foreground);
+  margin: 32px 0 8px; font-weight: 600; }
+.row { display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start; }
+.phone { width: 375px; max-width: 100%; border: 1px solid var(--border); border-radius: 22px; overflow: hidden;
+  background: var(--background); box-shadow: 0 8px 24px rgba(0,0,0,.08); }
+.wx { background: var(--muted); padding: 10px 14px; font-size: var(--text-xs); color: var(--muted-foreground);
+  display: flex; justify-content: space-between; border-bottom: 1px solid var(--border); }
+.top { padding: 14px 16px 10px; border-bottom: 1px solid var(--border); }
+.top .brand { font-size: var(--text-xs); color: var(--muted-foreground); display: flex; justify-content: space-between; align-items: center; }
+.lang { display: inline-flex; border: 1px solid var(--border); border-radius: 999px; padding: 2px; }
+.lang button { border: 0; background: transparent; font: inherit; font-size: var(--text-xs); padding: 2px 10px; border-radius: 999px; color: var(--muted-foreground); }
+.lang button[aria-pressed="true"] { background: var(--foreground); color: var(--background); }
+.top h1 { font-size: 18px; margin: 8px 0 2px; font-weight: 600; }
+.en { display: block; font-size: var(--text-xs); color: var(--muted-foreground); font-weight: 400; }
+.top .who { font-size: var(--text-2sm); margin-top: 6px; }
+.badge { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 2px 9px;
+  font-size: var(--text-xs); font-weight: 500; white-space: nowrap; }
+.badge::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.b-pending { background: var(--info-bg); color: var(--info-fg); }
+.b-warn { background: var(--warn-bg); color: var(--warn-fg); }
+.b-up { background: var(--up-bg); color: var(--up-fg); }
+.b-down { background: var(--down-bg); color: var(--down-fg); }
+.b-muted { background: var(--muted); color: var(--muted-foreground); }
+.tabs { display: flex; gap: 18px; padding: 0 16px; border-bottom: 1px solid var(--border); overflow-x: auto; white-space: nowrap; }
+.tabs button { border: 0; background: none; font: inherit; font-size: var(--text-2sm); color: var(--muted-foreground);
+  padding: 10px 0; border-bottom: 2px solid transparent; }
+.tabs button[aria-selected="true"] { color: var(--foreground); border-color: var(--foreground); font-weight: 500; }
+.tools { display: flex; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--border); }
+.search { flex: 1; border: 1px solid var(--border); border-radius: var(--radius); padding: 7px 10px; color: var(--muted-foreground); font-size: var(--text-2sm); }
+.chip { border: 1px solid var(--border); border-radius: 999px; padding: 6px 10px; font-size: var(--text-xs); white-space: nowrap; }
+.item { padding: 12px 16px; border-bottom: 1px solid var(--border); display: grid; grid-template-columns: minmax(0,1fr) 116px; gap: 4px 12px; align-items: center; }
+.item .code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; font-weight: 500; }
+.item .cfg { font-size: var(--text-xs); color: var(--muted-foreground); grid-column: 1; }
+.item .cur { font-size: var(--text-xs); color: var(--muted-foreground); grid-column: 1; }
+.price { grid-row: 1 / span 3; grid-column: 2; display: flex; flex-direction: column; gap: 4px; align-items: stretch; }
+.price input { width: 100%; font: inherit; font-size: 16px; text-align: right; padding: 8px 10px; border: 1px solid var(--border);
+  border-radius: var(--radius); background: var(--background); color: var(--foreground); font-variant-numeric: tabular-nums; }
+.price input.changed { border-color: var(--primary); box-shadow: inset 0 0 0 1px var(--primary); }
+.price .d { text-align: right; }
+.sticky { position: sticky; bottom: 0; background: var(--background); border-top: 1px solid var(--border); padding: 12px 16px;
+  display: flex; flex-direction: column; gap: 8px; }
+.btn { border: 1px solid var(--border); background: var(--background); color: var(--foreground); font: inherit;
+  font-size: var(--text-2sm); padding: 10px 12px; border-radius: var(--radius); text-align: center; cursor: pointer; }
+.btn.primary { background: var(--primary); border-color: var(--primary); color: var(--primary-foreground); font-weight: 500; }
+.btn .en { color: inherit; opacity: .8; }
+.summary { font-size: var(--text-2sm); display: flex; justify-content: space-between; }
+.drop { margin: 16px; border: 1.5px dashed var(--border); border-radius: var(--radius); padding: 24px 12px; text-align: center; font-size: var(--text-2sm); }
+.body { padding: 16px; font-size: var(--text-2sm); }
+.list { margin: 0; padding: 0; list-style: none; }
+.list li { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.dialog { width: 460px; max-width: 100%; border: 1px solid var(--border); border-radius: calc(var(--radius) + 4px);
+  box-shadow: 0 12px 32px rgba(0,0,0,.14); background: var(--background); }
+.dialog .dh { padding: 16px; border-bottom: 1px solid var(--border); font-weight: 600; }
+.dialog .db { padding: 16px; display: flex; flex-direction: column; gap: 14px; font-size: var(--text-2sm); }
+.dialog .df { padding: 12px 16px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 8px; }
+.dialog .btn { padding: 6px 12px; }
+.qr { display: flex; gap: 14px; align-items: center; }
+.qr svg { width: 120px; height: 120px; flex: none; border: 1px solid var(--border); border-radius: 6px; background: #fff; }
+.url { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 7px 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kv { display: grid; grid-template-columns: 110px minmax(0,1fr); gap: 6px 10px; }
+.kv dt { color: var(--muted-foreground); }
+.kv dd { margin: 0; }
+.msg { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px; background: var(--muted); white-space: pre-line; font-size: var(--text-xs); }
+</style>
+</head>
+<body>
+<div class="wrap">
+<p class="note">Mockup, S3 of PLAN-cost-price-supplier-26sep.md. Frame A is the staff side: the supplier record's "Share price page" dialog, which issues the link as a plain URL, a QR code and a ready-to-paste WeChat message. Frames B to E are the supplier's phone, opened from WeChat. Grey captions are for the plan reader, not UI copy.</p>
+
+<h2 class="section">Frame A: Suppliers &gt; XIAMEN TAIYANG &gt; Share price page (staff, modal)</h2>
+<div class="dialog" role="dialog" aria-label="Share price page">
+  <div class="dh">Share price page</div>
+  <div class="db">
+    <dl class="kv">
+      <dt>Contact</dt><dd>Mr Chen Wei (sales), +86 138 **** 5521</dd>
+      <dt>Products</dt><dd>258 linked to this supplier</dd>
+      <dt>Expires</dt><dd>26 Oct 2026 (30 days)</dd>
+    </dl>
+    <div class="qr">
+      <svg viewBox="0 0 29 29" aria-label="QR code for the price page link" role="img">
+        <rect width="29" height="29" fill="#fff"/>
+        <g fill="#000">
+          <rect x="1" y="1" width="7" height="7"/><rect x="2" y="2" width="5" height="5" fill="#fff"/><rect x="3" y="3" width="3" height="3"/>
+          <rect x="21" y="1" width="7" height="7"/><rect x="22" y="2" width="5" height="5" fill="#fff"/><rect x="23" y="3" width="3" height="3"/>
+          <rect x="1" y="21" width="7" height="7"/><rect x="2" y="22" width="5" height="5" fill="#fff"/><rect x="3" y="23" width="3" height="3"/>
+          <rect x="10" y="2" width="1" height="1"/><rect x="12" y="3" width="2" height="1"/><rect x="15" y="1" width="1" height="3"/><rect x="18" y="4" width="1" height="2"/>
+          <rect x="10" y="9" width="3" height="1"/><rect x="14" y="10" width="1" height="3"/><rect x="17" y="9" width="2" height="2"/><rect x="21" y="11" width="3" height="1"/>
+          <rect x="2" y="11" width="2" height="1"/><rect x="5" y="13" width="1" height="2"/><rect x="9" y="14" width="2" height="1"/><rect x="12" y="15" width="3" height="1"/>
+          <rect x="18" y="14" width="1" height="3"/><rect x="22" y="15" width="2" height="2"/><rect x="25" y="13" width="1" height="3"/><rect x="11" y="19" width="1" height="2"/>
+          <rect x="14" y="21" width="3" height="1"/><rect x="19" y="20" width="1" height="3"/><rect x="22" y="23" width="3" height="1"/><rect x="11" y="25" width="2" height="2"/>
+          <rect x="16" y="25" width="1" height="2"/><rect x="20" y="26" width="3" height="1"/><rect x="26" y="20" width="1" height="2"/><rect x="25" y="26" width="2" height="1"/>
+        </g>
+      </svg>
+      <div style="display:flex;flex-direction:column;gap:8px;min-width:0">
+        <div class="url">https://crm.sorento.com.my/s/p/Hq7x2Lk9</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn">Copy link</button><button class="btn">Save QR image</button></div>
+      </div>
+    </div>
+    <div class="msg">Sorento 价格维护 / Sorento price page
+请在此更新贵司的产品价格:
+https://crm.sorento.com.my/s/p/Hq7x2Lk9
+(30天内有效 / valid for 30 days)</div>
+  </div>
+  <div class="df"><button class="btn">Close</button><button class="btn primary">Copy message</button></div>
+</div>
+<p class="note" style="margin-top:8px">Captions: the link is short so it survives WeChat's link handling and can be read aloud. The QR image is for a supplier who scans from a desktop screen. Revoke lives in the supplier record's gear menu as a 5s deferred action (reversible: a new link can be issued).</p>
+
+<h2 class="section">Frames B to E: the supplier's phone (375px, WeChat in-app browser)</h2>
+<div class="row">
+
+  <div class="phone" aria-label="Frame B, price list">
+    <div class="wx"><span>WeChat</span><span>crm.sorento.com.my</span></div>
+    <div class="top">
+      <div class="brand"><span>SORENTO</span><span class="lang"><button aria-pressed="true">中文</button><button aria-pressed="false">EN</button></span></div>
+      <h1>产品价格 <span class="en">Product prices</span></h1>
+      <div class="who">厦门太阳科技有限公司 <span class="en">XIAMEN TAIYANG TECHNOLOGY</span></div>
+      <div style="margin-top:6px"><span class="badge b-muted">币种 CNY</span></div>
+    </div>
+    <div class="tabs" role="tablist">
+      <button role="tab" aria-selected="true">价格表 Prices</button>
+      <button role="tab" aria-selected="false">上传Excel Upload</button>
+      <button role="tab" aria-selected="false">记录 History</button>
+    </div>
+    <div class="tools"><div class="search">搜索型号 Search model</div><span class="chip">19系列 &#9662;</span></div>
+    <div class="item">
+      <span class="code">SRTWT1900-BL-DIY</span>
+      <span class="cfg">不锈钢面板, 黑色, DIY安装</span>
+      <span class="cur">当前 Current: 486.00</span>
+      <div class="price"><input class="changed" value="512.00" aria-label="新价格 New price SRTWT1900-BL-DIY"><span class="d"><span class="badge b-up">+5.3%</span></span></div>
+    </div>
+    <div class="item">
+      <span class="code">SRTWT1900-WH-DIY</span>
+      <span class="cfg">不锈钢面板, 白色, DIY安装</span>
+      <span class="cur">当前 Current: 486.00</span>
+      <div class="price"><input value="486.00" aria-label="新价格 New price SRTWT1900-WH-DIY"></div>
+    </div>
+    <div class="item">
+      <span class="code">SRTWT1901-BL</span>
+      <span class="cfg">钢化玻璃, 黑色</span>
+      <span class="cur">当前 Current: 530.00</span>
+      <div class="price"><input value="530.00" aria-label="新价格 New price SRTWT1901-BL"></div>
+    </div>
+    <div class="sticky">
+      <div class="summary"><span>已修改 Changed: 1</span><span>共 Total: 258</span></div>
+      <button class="btn primary">提交审核 <span class="en">Submit for review</span></button>
+    </div>
+  </div>
+
+  <div class="phone" aria-label="Frame C, upload">
+    <div class="wx"><span>WeChat</span><span>crm.sorento.com.my</span></div>
+    <div class="top">
+      <div class="brand"><span>SORENTO</span><span class="lang"><button aria-pressed="true">中文</button><button aria-pressed="false">EN</button></span></div>
+      <h1>上传价格表 <span class="en">Upload price list</span></h1>
+    </div>
+    <div class="tabs" role="tablist">
+      <button role="tab" aria-selected="false">价格表 Prices</button>
+      <button role="tab" aria-selected="true">上传Excel Upload</button>
+      <button role="tab" aria-selected="false">记录 History</button>
+    </div>
+    <div class="drop">
+      <strong>选择文件 Choose file</strong><br>
+      <span class="en">.xlsx, 同样的格式 same layout as your price list</span>
+    </div>
+    <div class="body">
+      <ul class="list">
+        <li><span>识别行数 <span class="en">Rows read</span></span><strong>258</strong></li>
+        <li><span>价格变动 <span class="en">Price changed</span></span><strong>31</strong></li>
+        <li><span>未识别型号 <span class="en">Models we do not know</span></span><strong>9</strong></li>
+      </ul>
+    </div>
+    <div class="sticky">
+      <button class="btn">查看变动 <span class="en">Review changes</span></button>
+      <button class="btn primary">提交审核 <span class="en">Submit for review</span></button>
+    </div>
+  </div>
+
+  <div class="phone" aria-label="Frame D, submitted">
+    <div class="wx"><span>WeChat</span><span>crm.sorento.com.my</span></div>
+    <div class="top">
+      <div class="brand"><span>SORENTO</span><span class="lang"><button aria-pressed="true">中文</button><button aria-pressed="false">EN</button></span></div>
+      <h1>已提交 <span class="en">Submitted</span></h1>
+    </div>
+    <div class="body">
+      <p style="margin:0 0 12px"><span class="badge b-pending">审核中 Pending review</span></p>
+      <ul class="list">
+        <li><span>编号 <span class="en">Reference</span></span><strong>CPC-0008</strong></li>
+        <li><span>价格变动 <span class="en">Price changes</span></span><strong>31</strong></li>
+        <li><span>提交时间 <span class="en">Submitted</span></span><strong>26 Sep 2026 15:10</strong></li>
+      </ul>
+      <p class="note" style="margin-top:12px">Caption: while a set is pending the Prices tab shows the submitted values read-only; the supplier cannot open a second set until Sorento verifies or returns this one (Q10).</p>
+    </div>
+  </div>
+
+  <div class="phone" aria-label="Frame E, history">
+    <div class="wx"><span>WeChat</span><span>crm.sorento.com.my</span></div>
+    <div class="top">
+      <div class="brand"><span>SORENTO</span><span class="lang"><button aria-pressed="false">中文</button><button aria-pressed="true">EN</button></span></div>
+      <h1>History <span class="en">记录</span></h1>
+    </div>
+    <div class="body">
+      <ul class="list">
+        <li><span>CPC-0008 <span class="en">26 Sep 2026</span></span><span class="badge b-pending">Pending review</span></li>
+        <li><span>CPC-0005 <span class="en">2 Aug 2026, 12 of 14 accepted</span></span><span class="badge b-down">Applied</span></li>
+        <li><span>CPC-0002 <span class="en">12 Mar 2026</span></span><span class="badge b-down">Applied</span></li>
+      </ul>
+      <p class="note" style="margin-top:12px">Caption: EN toggled; English leads and Chinese sits beneath. The supplier sees the outcome per set and per row, never the verifier's internal reason text (Q11).</p>
+    </div>
+  </div>
+
+</div>
+
+<h2 class="section">Frame F: expired or revoked link (375px)</h2>
+<div class="phone" aria-label="Frame F, expired">
+  <div class="wx"><span>WeChat</span><span>crm.sorento.com.my</span></div>
+  <div class="body" style="text-align:center;padding:40px 16px">
+    <h1 style="font-size:18px;margin:0 0 6px">链接已失效 <span class="en">This link is no longer valid</span></h1>
+    <p style="margin:0">请联系您的Sorento采购联系人获取新链接。<span class="en">Ask your Sorento purchasing contact for a new link.</span></p>
+  </div>
+</div>
+</div>
+</body>
+</html>
