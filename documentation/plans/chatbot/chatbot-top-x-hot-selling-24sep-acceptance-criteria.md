@@ -1,7 +1,7 @@
 # UAC - Chatbot: top X hot selling items by category / customer / sales agent / date range
 
 Plan: `PLAN-chatbot-top-x-hot-selling-24sep.md`. Numbering: AC-19xx. Status: grilled
-(26 Sep 2026; owner rulings from PR #1175 folded in as dated "Owner ruling 26 Sep" lines). Each criterion names its evidence (pytest / golden fixture / console check).
+(26 Sep 2026; S2 + S3 built on PR #1263, "As built" lines below; owner rulings from PR #1175 folded in as dated "Owner ruling 26 Sep" lines). Each criterion names its evidence (pytest / golden fixture / console check).
 "Contact" = a Respond.io contact through `/api/v1/external/chat/turn`. Issue #1171.
 
 Defaults written as `[Qn]` were proposals awaiting the grill answer to question n in the plan.
@@ -134,21 +134,28 @@ mirror `sorento_crm_mcp/tests/fixtures/top_selling/`.
 - **AC-1915 [FE][T]** (Owner ruling 26 Sep) A body carrying `agent_fill_pct` prints `Note:
   only p% of sales orders in this period carry a sales agent.` directly under `Sales agent:`;
   absent, no line. Evidence: golden `top-selling-agent`.
+  As built (PR #1263): the route sends `sales_agent_fill_rate` (0 to 1) whenever an agent
+  filter is used; the presenter derives the percentage and the threshold.
 
 ## Phase 2 - route and service
+
 
 - **AC-1920 [BE][T]** Given seeded lines over four products, `rank_by=qty` orders by summed
   `qty_ordered` desc, ties by summed `line_total` desc, then `product_code` asc; `rank_by=amount`
   orders by summed `line_total` desc, ties by qty desc, then code asc. Any other `rank_by` is
   422. Evidence: pytest, Postgres.
+  As built (PR #1263): `rank_by` is `quantity` | `amount`; the metric follows `basis`.
 - **AC-1921 [BE][T]** No `top_n` returns 5 rows (H4); `top_n=25` returns 10 and echoes
   `top_n: 10`; `top_n=0` is 422. Owner ruling 26 Sep (superseding): no `top_n` returns every
   row and echoes `top_n: null` when `total` fits the one-message setting, and no rows with
   the real `total` when it does not; `top_n=250` returns 100 and echoes `top_n: 100`;
   `top_n=0` is 422; a missing `rank_by` is 422. Evidence: pytest.
+  As built (PR #1263, relaunch rule): the param is `n`; absent = every row and `total_count`;
+  0, negative or above 100 is 422 (no clamp); missing `rank_by` is 422.
 - **AC-1922 [BE][T]** `date_from` / `date_to` filter on `COALESCE(required_date, order_date)`,
   accept `_parse_flex_date` formats, 422 otherwise; no dates = every line (the default window is
   the lane's, not the route's). Evidence: pytest.
+  As built (PR #1263): no dates = the current calendar year, set in the route and echoed.
 - **AC-1923 [BE][T]** `customer_ids` filters `sales_orders.customer_id IN`; `customer_query`
   ILIKEs `customer_name`, under 3 characters is 422; the echo `customer_name` is built by
   `_customer_echo`. Evidence: pytest.
@@ -172,19 +179,29 @@ mirror `sorento_crm_mcp/tests/fixtures/top_selling/`.
 - **AC-1931 [BE][T]** (Owner ruling 26 Sep) `basis` absent = delivered
   (`LEAST(qty_delivered, qty_ordered)` and its amount); `basis=ordered` = `qty_ordered` /
   `line_total`; the echo carries the basis; any other value 422. Evidence: pytest.
+  As built (PR #1263): as written; `line_total` null counts 0; a closed, short-delivered
+  line counts its whole `qty_ordered` / `line_total`.
 - **AC-1932 [BE][T]** (Owner ruling 26 Sep) `group=category` ranks `product_categories` by
   the summed metric; products with no category rank as one null-category row. Evidence:
   pytest.
 - **AC-1933 [BE][T]** (Owner ruling 26 Sep 01:55Z) With no `top_n`, `total` above the setting
   returns `rows: []` and the true `total`; at or below it returns every row. Evidence: pytest.
+  As built (PR #1263): superseded by the relaunch rule; no setting, the route never
+  withholds rows. The lane decides the how-many reply off `total_count`.
 - **AC-1934 [BE][T]** (Owner ruling 26 Sep) A dealer contact's request is scoped to its own
   ledgers whatever `customer_ids` says, and a customer outside them is 403 `other_customer`;
   a staff contact sees any customer. Evidence: pytest.
+  As built (PR #1263): the code is `customer_not_permitted`; an unlinked contact that is not
+  office staff is refused the same way (fail closed); a dealer `customer_query` matching only
+  other customers or nobody is one answer.
 - **AC-1935 [BE][T]** (Owner ruling 26 Sep, detail offer) `detail_code` returns that code's
   `by_customer` and `by_month` under the same filters, sorted by the metric desc; the detail
   presenter renders it (golden lands with S2). Evidence: pytest plus golden.
+  As built (PR #1263): on the route; `rows` / `totals` narrow to the code and `detail`
+  carries both lists; the detail presenter and golden are S1's.
 
 ## Phase 2 - MCP tool
+
 
 - **AC-1940 [BE][T]** The catalog lists `crm_top_selling_report` with path
   `/api/v1/order-management/top-selling`, domain `orders`, params `top_n`, `rank_by`,

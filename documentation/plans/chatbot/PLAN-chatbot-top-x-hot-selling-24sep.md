@@ -1,7 +1,10 @@
 # PLAN - Chatbot: top X hot selling items by category / customer / sales agent / date range
 
 Status: grilled (26 Sep 2026; owner rulings on PR #1175 folded in below, S1 in build on
-`feat/chatbot-top-selling-s1`). Track: full track (new route + MCP tool = a new external
+`feat/chatbot-top-selling-s1`). S2 + S3 built on PR #1263 (branch
+`claude/top-selling-s2-s3-j8nhan`), reviewer pass of 26 Sep 05:52Z fixed on the same PR; see
+"As built (S2 + S3, PR #1263)" for where the route differs from the contract below and which
+ruling decides it. S1, S4, S6, S7 open. Track: full track (new route + MCP tool = a new external
 ingest surface, one policy-row migration, one prompt migration, one entity-kind migration;
 the diff will pass 300 lines).
 Issue: #1171. UAC: `chatbot-top-x-hot-selling-24sep-acceptance-criteria.md` (AC-19xx).
@@ -309,6 +312,59 @@ Aggregated in SQL (S17 of the sales report). Decimal throughout, quantised at th
 Company scope through the ORM classes, never raw text SQL. Zero-value lines included (owner
 ruling).
 
+### As built (S2 + S3, PR #1263)
+
+The route shipped under the relaunch rules (26 Sep: no paging; absent `n` = every ranked row
+plus `total_count`), which supersede the contract above where the two disagree. Each line says
+what shipped and what decides it.
+
+- `n`, not `top_n`: 1 to 100, and 0, negative or above 100 is 422 `invalid_n` (no clamp).
+  Absent = every ranked row. The lane maps the parser's `top_n` to `n`.
+- `total_count`, not `total`; `totals {quantity, amount}` over the whole ranked set, so `n`
+  never changes them. Rows carry `quantity` / `amount`, not `qty` / `amount`.
+- `rank_by` values are `quantity` | `amount` (not `qty`); missing is 422 `rank_by_required`.
+- No one-message setting (`chatbot_top_selling_one_message_rows`, AC-1933): the relaunch rule
+  supersedes it. The route always returns every row when `n` is absent; the how-many question
+  (AC-1911) is S4's, decided off `total_count`.
+- Date default is set in the ROUTE (current calendar year, Malaysia time, echoed as the
+  resolved `date_from` / `date_to`), not the lane. Supersedes AC-1922's "no dates = every
+  line" and AC-1953's "built in the lane". One side absent takes that side of the current year;
+  `date_from > date_to` is 422.
+- Basis: delivered = the sales report's confirmed pair; ordered = `qty_ordered` /
+  `coalesce(line_total, 0)`, whatever the line's status (AC-1931 as written; review B1).
+- Filters echo under `filters {customer_name, category_name, sales_agent, channel,
+  dealer_scoped}`. Parameter names are the plural csv forms (`customer_ids`, `category_ids`,
+  `sales_agent_ids`).
+- `sales_agent_fill_rate` (0 to 1, four places) is sent whenever an agent filter is used,
+  not `agent_fill_pct` only below 95% (AC-1915). S1 / S4 turn it into the note and decide the
+  threshold.
+- Refusal code is 403 `customer_not_permitted`, not `other_customer` (AC-1934).
+- Who is staff (review S2, fail closed): a contact linked to any customer
+  (`respond_contact_customers`) is a dealer, forced to those ledgers, whatever else it holds.
+  An unlinked contact is staff only when every access type it holds reads as the office tier
+  (`tier_gate.parse_level`: "Sorento Office", "Mocha Office", "Cabana Office") and one of them
+  is active. Every other unlinked contact (no type, end user, dealer with no link, a type
+  nobody classified) is refused 403 `customer_not_permitted` with no figures.
+- A dealer's `customer_query` is refused unless it matches one of its own ledgers: matching
+  only other customers and matching nobody get the same 403, so the route is no name oracle
+  (review S1).
+- `detail_code` (AC-1935, review S4) is on the route: one product code (item grain) or
+  category code (category grain), case-insensitive. `rows` / `totals` narrow to that code and
+  `detail {code, name, by_customer[{customer_name, quantity, amount}], by_month[{month,
+  quantity, amount}]}` follows, same filters and basis, each sorted by the metric desc (then
+  the other metric desc, then name / month asc). A code with no sales returns no rows and
+  `detail: null`. The detail PRESENTER and its golden are S1's (the presenter is not on main
+  yet).
+- The `chatbot_domains` migration that adds the tool to the `order` row
+  (`chatbot_top_selling_tool`) shipped with S3; S4 adds no second one.
+
+Lane notes for S4 (review nits):
+
+- N1: absent `n` returns the whole book (a full year was 13,230 rows / about 1 MB on a
+  750k-line seed). S4 sends `n` whenever it will print rows; only the how-many path omits it.
+- N2: dealer scope applies only when `contact_id` + `space_id` are sent (the sales report's
+  posture). S4 must always send both on every call.
+
 ### Parser (S4)
 
 - `order_status` gains `top_selling`: "top 5 selling", "best selling", "hot selling", "top
@@ -508,6 +564,10 @@ categories, products, agents, SOs and lines (CI's database is empty).
   five colours of one sink.
 
 ## Risks
+
+- Item grain groups by `products.id` (review N3). Under a multi-company scope two products
+  sharing a code print as two rows with the same code; harmless under one company. Trigger to
+  change it: the first multi-company contact that holds the sales report key.
 
 - `_DOMAIN_HINT_EXPANSIONS["order"]["category"]` (resolver) is the one seam that can
   silently turn a category into a customer. Pinned by AC-1954 before S4 is called done.
