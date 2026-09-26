@@ -1090,7 +1090,9 @@ def _push_low_stock_to_chat(db, download_id: str, *, provider: str, key: str) ->
 
 
 def generate_low_stock_report(download_id: str, run_id: str, user_id: str, *,
-                              include_supplier: bool = True, split: str = "none") -> dict:
+                              include_supplier: bool = True, split: str = "none",
+                              suppliers: Optional[list] = None,
+                              categories: Optional[list] = None) -> dict:
     """Render the run's low stock workbook, store it, and update the download row.
 
     PLAN-low-stock-report S3 (AC-36; `split` added PLAN-low-stock-export-split-25sep,
@@ -1115,6 +1117,8 @@ def generate_low_stock_report(download_id: str, run_id: str, user_id: str, *,
       a combination the route can never produce (it never sends `include_supplier=False`,
       only the chat route does, and that route never sends a split), so the check for it
       lives inside `export_low_stock` itself (R5) rather than here.
+    * `suppliers` / `categories` (PLAN-excel-preview-26sep AC-6) are the page's filters,
+      forwarded only when set, so the chat route's call shape is unchanged.
 
     `_record_failure` on any exception, never raising into RQ: a poisoned job retries for
     ever and the buyer's row sits `processing` until it goes stale.
@@ -1153,9 +1157,15 @@ def generate_low_stock_report(download_id: str, run_id: str, user_id: str, *,
         # both row sets, and a second `row_counts()` call re-serialised the whole frozen
         # run on the worker. `split` is always forwarded, `"none"` included (AC-14) - the
         # task states its own contract plainly rather than varying its call shape by value.
+        filters = {}
+        if suppliers:
+            filters["suppliers"] = list(suppliers)
+        if categories:
+            filters["categories"] = list(categories)
         file_bytes, content_type, fallback_filename, counts = (
             low_stock_report_service.export_low_stock(
                 db, run_id=run_id, include_supplier=include_supplier, split=split,
+                **filters,
             )
         )
         filename = filename or fallback_filename

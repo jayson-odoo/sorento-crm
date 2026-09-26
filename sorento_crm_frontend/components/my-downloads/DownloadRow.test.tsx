@@ -3,6 +3,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock('@/components/common/pdf-viewer/pdfjs', async () =>
+  (await import('@/test-utils/fakePdfJs')).fakePdfJsModule,
+);
+const apiFetch = vi.fn();
+vi.mock('@/lib/api', () => ({ apiFetch: (...args: unknown[]) => apiFetch(...args) }));
 vi.mock('@/services/myDownloadsService', () => ({
   fetchDownloadUrl: vi.fn(),
   downloadFilePath: (id: string) => `/api/v1/downloads/${id}/file`,
@@ -48,6 +53,7 @@ describe('DownloadRow', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.stubGlobal('open', vi.fn());
+    apiFetch.mockResolvedValue({ ok: true, arrayBuffer: async () => new ArrayBuffer(4) });
   });
 
   it('renders filename and Ready status', () => {
@@ -122,8 +128,8 @@ describe('DownloadRow', () => {
   describe('preview', () => {
     it('opens the shared previewer on the resolved URL, alongside the download', async () => {
       // Preview is an ADDITION: the same row still downloads. What it resolves is both URLs the
-      // previewer needs - the signed one an <iframe>/<img> can load itself, and the
-      // same-origin /file path it reads spreadsheet bytes and saves through (a presigned URL is
+      // previewer needs - the signed one an <img> can load itself, and the
+      // same-origin /file path it reads PDF and spreadsheet bytes and saves through (a presigned URL is
       // cross-origin and sends no CORS headers, so fetching it fails).
       mockFetchUrl.mockResolvedValue({
         url: 'https://cdn/quotation.pdf',
@@ -139,10 +145,15 @@ describe('DownloadRow', () => {
       expect(
         within(dialog).getByText('quotation-SRT-Q-2026-0141-R1.pdf'),
       ).toBeInTheDocument();
-      expect(dialog.querySelector('iframe')).toHaveAttribute(
-        'src',
-        'https://cdn/quotation.pdf',
-      );
+      // Drawn in the themed viewer from the same-origin /file bytes; the signed url is
+      // cross-origin with no CORS headers, so a script cannot read it.
+      expect(
+        await within(dialog).findByRole('group', {
+          name: 'quotation-SRT-Q-2026-0141-R1.pdf page 1',
+        }),
+      ).toBeInTheDocument();
+      expect(apiFetch).toHaveBeenCalledWith('/api/v1/downloads/d1/file');
+      expect(dialog.querySelector('iframe')).toBeNull();
       expect(window.open).not.toHaveBeenCalled();
     });
 

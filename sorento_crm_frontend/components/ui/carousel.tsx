@@ -89,8 +89,14 @@ function Carousel({
   // press and move two slides - and the next/previous buttons render inside
   // this region, so a click on them leaves focus exactly where that happens.
   // Only the two arrows are stopped; every other key still bubbles out.
+  //
+  // Not inside a text box in a slide (the PDF viewer's search): there the arrows
+  // move the caret, and this capture listener would otherwise take them first.
   const handleKeyDown = React.useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
+      const target = event.target as HTMLElement;
+      if (target.closest('input, textarea, select, [contenteditable="true"]'))
+        return;
       if (event.key === 'ArrowLeft') {
         event.preventDefault();
         event.stopPropagation();

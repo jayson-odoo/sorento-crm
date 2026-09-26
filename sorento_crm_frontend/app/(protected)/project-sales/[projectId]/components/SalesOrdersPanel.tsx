@@ -17,7 +17,6 @@ import {
   Hammer,
   Pencil,
   Trash2,
-  TriangleAlert,
   X,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -44,7 +43,8 @@ import type { Project } from '../../_shared/types/project.types';
 import type { ProjectSalesOrderRow } from '../../_shared/types/projectSalesOrder.types';
 import { formatMoney, sumMoney } from './SalesOrderMoney';
 import { ReviewStatePill } from '../../_shared/components/ReviewStatePill';
-import { GroupingOriginNote, SalesOrderStatusPill } from './SalesOrderStatusPill';
+import { GROUPING_ORIGIN_LABEL, SalesOrderStatusPill } from './SalesOrderStatusPill';
+import { FINDING_SEVERITY_BADGE_VARIANT, FINDING_SEVERITY_LABEL } from '../../_shared/lib/findings';
 import { SalesOrderBuildDialog } from './SalesOrderBuildDialog';
 import { projectTabOriginHref, withReviewOrigin } from '../../_shared/lib/reviewOrigin';
 
@@ -109,13 +109,16 @@ export function SalesOrdersPanel({ project }: { project: Project }) {
   const rows = React.useMemo(() => salesOrders.data?.data ?? [], [salesOrders.data]);
   const total = salesOrders.data?.total ?? 0;
 
-  // Summed as decimal strings: 99 line values added as floats drift, and this figure is
-  // read next to the printed sales order.
-  const committedValue = React.useMemo(
-    () => sumMoney(rows.map((row) => row.total_amount)),
-    [rows],
-  );
-  const blockedCount = rows.filter((row) => row.hard_findings > 0).length;
+  // Owner hand test, PR #1264 note 5: the total is a sum at the foot of the Value column, not a
+  // chip above the grid. Summed as decimal strings: 99 line values added as floats drift, and
+  // this figure is read next to the printed sales order. Read through a ref so the columns keep
+  // their identity across refetches; the footer renders after this line runs.
+  const footerRef = React.useRef({ value: '0', label: 'Total' });
+  footerRef.current = {
+    value: sumMoney(rows.map((row) => row.total_amount)) ?? '0',
+    // The list pages on the server, so past one page the sum is this page's, and says so.
+    label: total > rows.length ? 'Page total' : 'Total',
+  };
 
   const columns = React.useMemo<ColumnDef<ProjectSalesOrderRow>[]>(
     () => [
@@ -137,26 +140,26 @@ export function SalesOrdersPanel({ project }: { project: Project }) {
         header: ({ column }) => <DataGridColumnHeader title="Reference" column={column} />,
         cell: ({ row }) => {
           const reference = row.original.autocount_doc_no || row.original.provisional_ref;
+          // One line (PR #1264 note 4): the kind badge sits beside the reference, not under it.
           return (
-            <div className="min-w-0">
-              <span className="block truncate font-medium" title={reference}>
+            <div className="flex min-w-0 items-center gap-1">
+              <span className="truncate font-medium" title={reference}>
                 {reference}
               </span>
-              <span className="flex flex-wrap gap-1">
-                {row.original.is_pre_order && (
-                  <Badge variant="secondary" appearance="light" size="sm">
-                    Pre-order
-                  </Badge>
-                )}
-                {row.original.is_sponsorship && (
-                  <Badge variant="secondary" appearance="light" size="sm">
-                    Sponsorship
-                  </Badge>
-                )}
-              </span>
+              {row.original.is_pre_order && (
+                <Badge variant="secondary" appearance="light" size="sm" className="shrink-0">
+                  Pre-order
+                </Badge>
+              )}
+              {row.original.is_sponsorship && (
+                <Badge variant="secondary" appearance="light" size="sm" className="shrink-0">
+                  Sponsorship
+                </Badge>
+              )}
             </div>
           );
         },
+        footer: () => footerRef.current.label,
         size: 170,
         minSize: 130,
         meta: { headerTitle: 'Reference', skeleton: <Skeleton className="h-4 w-24" /> },
@@ -166,13 +169,13 @@ export function SalesOrdersPanel({ project }: { project: Project }) {
         header: ({ column }) => <DataGridColumnHeader title="Area group" column={column} />,
         cell: ({ row }) => {
           const area = row.original.area_group || 'No area';
+          const origin = row.original.grouping_origin;
+          // One truncated line; how the split was made rides in the tooltip (PR #1264 note 4).
+          const title = origin ? `${area} (${GROUPING_ORIGIN_LABEL[origin] ?? origin})` : area;
           return (
-            <div className="min-w-0">
-              <span className="block truncate" title={area}>
-                {area}
-              </span>
-              <GroupingOriginNote origin={row.original.grouping_origin} />
-            </div>
+            <span className="block truncate" title={title}>
+              {area}
+            </span>
           );
         },
         size: 200,
@@ -186,7 +189,7 @@ export function SalesOrdersPanel({ project }: { project: Project }) {
         // absent on every order that has not been published, and an empty column reads as a
         // broken one. Renders nothing until the backend derives it.
         cell: ({ row }) => (
-          <div className="flex min-w-0 flex-col items-start gap-1">
+          <div className="flex min-w-0 items-center gap-1 overflow-hidden">
             <SalesOrderStatusPill status={row.original.status} />
             {/* No exception count here: the count is the fulfilment planning worklist's
                 instruction, and it does not fit beside a status in this grid. */}
@@ -200,24 +203,28 @@ export function SalesOrdersPanel({ project }: { project: Project }) {
       {
         id: 'findings',
         header: ({ column }) => <DataGridColumnHeader title="To review" column={column} />,
+        // One compact pill, in the lines table's own words (PR #1264 note 4): the most severe
+        // kind and how many are open, the split in its tooltip.
         cell: ({ row }) => {
           const { hard_findings: hard, warn_findings: warn } = row.original;
-          if (hard === 0 && warn === 0) {
-            return <span className="text-muted-foreground">Nothing flagged</span>;
-          }
+          if (hard === 0 && warn === 0) return <span className="text-muted-foreground">-</span>;
+          const severity = hard > 0 ? 'hard' : 'warn';
+          const split = [
+            hard > 0 ? `${hard} blocking` : null,
+            warn > 0 ? `${warn} warning${warn === 1 ? '' : 's'}` : null,
+          ]
+            .filter(Boolean)
+            .join(', ');
           return (
-            <span className="flex flex-wrap gap-1">
-              {hard > 0 && (
-                <Badge variant="destructive" appearance="light" size="sm">
-                  {`${hard} blocking`}
-                </Badge>
-              )}
-              {warn > 0 && (
-                <Badge variant="warning" appearance="light" size="sm">
-                  {`${warn} warning${warn === 1 ? '' : 's'}`}
-                </Badge>
-              )}
-            </span>
+            <Badge
+              variant={FINDING_SEVERITY_BADGE_VARIANT[severity]}
+              appearance="light"
+              size="sm"
+              className="max-w-full truncate"
+              title={split}
+            >
+              {`${FINDING_SEVERITY_LABEL[severity]} ${hard + warn}`}
+            </Badge>
           );
         },
         size: 190,
@@ -245,6 +252,11 @@ export function SalesOrdersPanel({ project }: { project: Project }) {
             </span>
           );
         },
+        footer: () => (
+          <span className="block truncate tabular-nums">
+            {formatMoney(footerRef.current.value)}
+          </span>
+        ),
         size: 150,
         minSize: 120,
         meta: { headerTitle: 'Value', skeleton: <Skeleton className="h-4 w-20" /> },
@@ -436,9 +448,8 @@ export function SalesOrdersPanel({ project }: { project: Project }) {
             </div>
 
             {/* The bulk strip, in the toolbar's own grammar: a count badge, the destructive
-                action, then Clear. It REPLACES the counts row rather than appearing under it,
-                so the header states one thing at a time - what the list holds, or what is
-                selected. */}
+                action, then Clear. Nothing stands here otherwise (PR #1264 note 5): the count
+                is the pagination's and the value is the Value column's footer. */}
             {selectedIds.length > 0 ? (
               <div className="flex flex-wrap items-center gap-2">
                 <Badge variant="secondary" className="h-8 gap-1 px-2.5 text-sm">
@@ -468,22 +479,7 @@ export function SalesOrdersPanel({ project }: { project: Project }) {
                   Clear
                 </Button>
               </div>
-            ) : (
-            <div className="flex flex-wrap items-center gap-2 text-xs">
-              <Badge variant="outline">
-                {`${total.toLocaleString()} sales order${total === 1 ? '' : 's'}`}
-              </Badge>
-              {rows.length > 0 && (
-                <Badge variant="outline">{`${formatMoney(committedValue)} on this page`}</Badge>
-              )}
-              {blockedCount > 0 && (
-                <Badge variant="destructive" appearance="light" className="gap-1">
-                  <TriangleAlert className="size-3" aria-hidden />
-                  {`${blockedCount} cannot publish yet`}
-                </Badge>
-              )}
-            </div>
-            )}
+            ) : null}
           </CardHeader>
 
           <CardTable>

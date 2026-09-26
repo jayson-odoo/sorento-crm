@@ -171,6 +171,10 @@ class ProjectSalesOrderDetail(ProjectSalesOrderRow):
     quotation_ref: Optional[str] = None
     term_days: Optional[int] = None
     published_at: Optional[datetime] = None
+    # Derived from the customer's sales agent's location group (`BRW-<group>`), never picked;
+    # when it cannot be, `stock_location_gap` names the missing link (PR #1264 note 3).
+    stock_location: Optional[str] = None
+    stock_location_gap: Optional[str] = None
     lines: List[ProjectSalesOrderLineRow] = []
     findings: List[SODraftFindingRow] = []
 

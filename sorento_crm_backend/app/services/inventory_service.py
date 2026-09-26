@@ -959,32 +959,46 @@ class StockService:
         offset = (page - 1) * limit
         stock_items = q.offset(offset).limit(limit).all()
 
-        # "Data last updated" semantics: report the latest genuine stock UPLOAD
-        # (BULK_IMPORT) time - i.e. when the stock dataset was last refreshed at all,
-        # NOT the raw Stock.updated_at. Two reasons the raw column is wrong here:
+        # "Data last updated" semantics: report when the stock dataset was last
+        # CONFIRMED - the latest of the company's last genuine UPLOAD (BULK_IMPORT)
+        # and its last accepted AutoCount push batch (`companies.
+        # stock_push_confirmed_at`) - NOT the raw Stock.updated_at. Reasons the raw
+        # column is wrong here:
         #  1. It is also bumped by SYSTEM_ADJUSTMENT zeroing ("missing from full stock
         #     take"), so a stock-take that zeros a discontinued row masquerades as a
         #     fresh upload.
         #  2. A discontinued SKU that is simply absent from every recent upload file
         #     gets no new BULK_IMPORT row, so its own last-import time is frozen far in
         #     the past and reads as stale even though stock data as a whole is fresh.
-        # We therefore stamp every returned row with the SYSTEM-WIDE latest BULK_IMPORT
-        # time (one scalar query). The MCP render envelope's `last_updated_at` maxes
-        # over row `updated_at`, so this makes the MCP report the last real import
-        # globally. FE never renders `updated_at` (type-only field), so this override
-        # is invisible there.
+        #  3. The push (contract 2.5) skips `updated_at` when a value is unchanged
+        #     and writes no ledger row, yet every batch confirms the stock is current.
+        # So the time is per COMPANY, not per row, and every returned row is stamped
+        # with its own company's time: a Mocha row never borrows Sorento's push. The
+        # MCP render envelope's `last_updated_at` maxes over row `updated_at`, so the
+        # footer reports the freshest company in the answer. FE never renders
+        # `updated_at` (type-only field), so this override is invisible there.
         last_import_at = None
         if stock_items or policy is not None:
-            last_import_at = (
-                self.db.query(func.max(StockLedger.created_at))
-                .filter(StockLedger.transaction_type == "BULK_IMPORT")
-                .scalar()
-            )
-            if last_import_at is not None:
-                for s in stock_items:
+            answer_company_ids = {str(s.company_id) for s in stock_items if s.company_id}
+            if policy is not None:
+                # The summary modes carry no rows: the answer covers every company
+                # the policy query spans, plus the companies of products named.
+                answer_company_ids.update(
+                    str(cid)
+                    for (cid,) in policy_q.with_entities(Stock.company_id).distinct().all()
+                    if cid
+                )
+                answer_company_ids.update(
+                    self.company_id_by_product(list(resolved_input_product_ids or [])).values()
+                )
+            times = self.stock_last_updated_by_company(answer_company_ids)
+            last_import_at = max(times.values(), default=None)
+            for s in stock_items:
+                company_time = times.get(str(s.company_id))
+                if company_time is not None:
                     # Bypass the ORM instrumented descriptor so this transient
                     # override is never marked dirty / flushed to the stock row.
-                    s.__dict__["updated_at"] = last_import_at
+                    s.__dict__["updated_at"] = company_time
 
         payload = {
             "data": stock_items,
@@ -1046,6 +1060,45 @@ class StockService:
                 payload["alternatives"] = alternatives
                 payload["relaxed_axis"] = "entity"
         return payload
+
+    def stock_last_updated_by_company(self, company_ids) -> dict[str, datetime]:
+        """`{company_id: when its stock was last confirmed}` = the latest of the
+        company's last BULK_IMPORT ledger row and its last accepted AutoCount push
+        batch. SYSTEM_ADJUSTMENT never counts (see the note in `list_stock`). A
+        company with neither is absent. AUTOCOUNT_PUSH ledger rows are not read:
+        the batch that writes one stamps the push time in the same transaction,
+        at least as late, and the stamp also covers unchanged batches.
+
+        One `max()` per company rather than a GROUP BY: each can walk
+        `ix_stock_ledger_created_at` backwards and stop at the first hit, where a
+        grouped max reads every BULK_IMPORT row ever written. There are a handful
+        of companies."""
+        from app.models.company import Company
+
+        ids = sorted({str(c) for c in company_ids if c})
+        if not ids:
+            return {}
+        times: dict[str, datetime] = {}
+        for cid in ids:
+            imported = (
+                self.db.query(func.max(StockLedger.created_at))
+                .filter(
+                    StockLedger.transaction_type == "BULK_IMPORT",
+                    StockLedger.company_id == cid,
+                )
+                .scalar()
+            )
+            if imported is not None:
+                times[cid] = imported
+        for cid, pushed in (
+            self.db.query(Company.id, Company.stock_push_confirmed_at)
+            .filter(Company.id.in_(ids), Company.stock_push_confirmed_at.isnot(None))
+            .all()
+        ):
+            cid = str(cid)
+            if cid not in times or pushed > times[cid]:
+                times[cid] = pushed
+        return times
 
     def warehouse_ids_by_code(self, codes: list[str]) -> dict[str, str]:
         """`{warehouse_code: id}` for the codes given (D1): the compact stock block names
