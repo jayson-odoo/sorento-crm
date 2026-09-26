@@ -16,6 +16,7 @@ from app.models.sales_agent import SalesAgent
 from app.models.sales import SalesTeam, SalesTeamMember
 from app.models.inventory import Warehouse, StorageZone, Stock, StockBatch, StockLedger
 from app.models.procurement import Supplier, ProductSupplier, InboundShipment, InboundShipmentLine, SPOAllocation, PickingHeader, PickingLine, StockInquiry, PurchaseRequestHeader, PurchaseRequestLine, PurchaseOrder, PurchaseOrderLine
+from app.models.cost_price import ProductSupplierCost, CostPriceChangeSet, CostPriceChangeLine, SupplierPriceLink
 from app.models.supplier_notice import SupplierNotice, SupplierNoticeLine
 from app.models.marketing import Promotion, PromotionGroup, PromotionProduct, CampaignType, MarketingCampaign
 from app.models.forms import Form, FormSection, FormField, FormVersion, FormSubmission

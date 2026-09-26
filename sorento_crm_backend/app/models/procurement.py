@@ -95,7 +95,9 @@ class Supplier(Base, CompanyScopedMixin):
 
 class ProductSupplier(Base, CompanyScopedMixin):
     __tablename__ = "product_suppliers"
-    
+    # AC-AU-01: today a price can change with no trace at all - cost-price Lane A closes that.
+    __audit_track__ = True
+
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     product_id = Column(UUID(as_uuid=False), ForeignKey("products.id", ondelete="CASCADE"), nullable=False)
     supplier_id = Column(UUID(as_uuid=False), ForeignKey("suppliers.id", ondelete="CASCADE"), nullable=False)
