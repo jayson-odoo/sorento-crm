@@ -29,7 +29,6 @@ from app.models.user_session import UserSession
 from app.schemas.auth import LoginResponse
 from app.services.phone_utils import normalize_msisdn
 from app.services.portal_service import (
-    OTP_MAX_ATTEMPTS,
     PortalService,
     _hash_otp,
     _utcnow,
@@ -99,8 +98,13 @@ def find_eligible(db: Session, num: str) -> Optional[tuple[User, RespondContact]
     changed out from under a stale contact link is refused, plan 5.3 "lost
     phone"). Both branches - a user found and not - run the same two queries
     (a user lookup, then a contact lookup) so the timing carries no tell.
+
+    Security round S5 (#1280): ``.limit(2).all()`` rather than ``.first()`` -
+    a stray second row with the same number in a different format (``num``
+    vs ``+num``) must not silently pick whichever one the query planner
+    happens to return first; MORE than one match is treated as ineligible.
     """
-    user = (
+    users = (
         db.query(User)
         .filter(
             User.contact_number.in_([num, f"+{num}"]),
@@ -109,22 +113,27 @@ def find_eligible(db: Session, num: str) -> Optional[tuple[User, RespondContact]
             User.is_integration.is_(False),
             User.respond_contact_id.isnot(None),
         )
-        .first()
+        .limit(2)
+        .all()
     )
+    user = users[0] if len(users) == 1 else None
     if user is not None:
-        contact = (
+        contacts = (
             db.query(RespondContact)
             .filter(RespondContact.id == user.respond_contact_id)
-            .first()
+            .limit(2)
+            .all()
         )
     else:
         # Equivalent lookup so an unknown number pays for the same two
         # queries a known-but-ineligible one does.
-        contact = (
+        contacts = (
             db.query(RespondContact)
             .filter(RespondContact.phone_number.in_([num, f"+{num}"]))
-            .first()
+            .limit(2)
+            .all()
         )
+    contact = contacts[0] if len(contacts) == 1 else None
 
     if user is None or contact is None:
         return None
@@ -133,12 +142,14 @@ def find_eligible(db: Session, num: str) -> Optional[tuple[User, RespondContact]
     return user, contact
 
 
-def send_signin_code(db: Session, contact: RespondContact) -> None:
+def send_signin_code(db: Session, contact: RespondContact, *, dispatch_inline: bool = False) -> None:
     """Create + dispatch a sign-in OTP for an eligible contact.
 
-    Swallows every failure (the contact's own DB cooldown/cap, or an enqueue
-    failure) - AC-21's 200 answer never depends on whether a send actually
-    went out.
+    Swallows every failure (the contact's own DB cooldown/cap, or a
+    dispatch/send failure) - AC-21's 200 answer never depends on whether a
+    send actually went out. ``dispatch_inline`` (security round S1) is set by
+    :func:`app.tasks.respond_io_tasks.dispatch_phone_signin_code`, which is
+    already running inside the ``respond_io`` queue's own job.
     """
     from app.tasks.respond_io_tasks import send_login_otp_respond_message
 
@@ -149,7 +160,8 @@ def send_signin_code(db: Session, contact: RespondContact) -> None:
 
     try:
         PortalService(db).create_and_dispatch_otp(
-            contact, space_id, SIGNIN_OTP_TEXT, send_login_otp_respond_message
+            contact, space_id, SIGNIN_OTP_TEXT, send_login_otp_respond_message,
+            dispatch_inline=dispatch_inline,
         )
     except Exception as e:  # noqa: BLE001
         logger.warning("Phone sign-in OTP not sent for contact %s: %s", contact.id, e)
@@ -216,8 +228,22 @@ class WrongAttemptResult:
     retry_after_seconds: Optional[int] = None
 
 
-def record_wrong_attempt(num: str) -> WrongAttemptResult:
-    """INCR the typed number's wrong-attempt counter (900s TTL from the first)."""
+def reserve_verify_attempt(num: str) -> WrongAttemptResult:
+    """INCR the typed number's attempt counter BEFORE the code is compared
+    (900s TTL from the first call), and report whether that reservation is
+    already at the lock threshold.
+
+    Security round B2 (#1280): this used to run only AFTER a wrong compare
+    (``record_wrong_attempt``), which is exactly the race - two parallel
+    verify calls could both read the pre-increment count, both decide they
+    still had guesses left, and both compare, so parallel requests got far
+    more than 5 tries per code. INCR happening first and unconditionally (on
+    every call, right code or wrong) closes that: whichever call's INCR lands
+    second sees the first one's result and can be turned away before it ever
+    looks at the code. A caller whose compare then succeeds calls
+    :func:`clear_redis_state` so a right answer does not count against the
+    budget.
+    """
     r = _redis()
     if r is None:
         return WrongAttemptResult(locked=False)
@@ -329,13 +355,29 @@ def attempt_verify(
     """AC-24: the right code for an eligible number mints a `user_sessions`
     row and returns the shared login shape; anything else (unknown number, an
     ineligible user, no outstanding code, a wrong code) answers ``None`` -
-    the router's 401 carries no enumeration tell either way. A real OTP row
-    still gets its ``attempts`` bumped on a miss, mirroring the portal's own.
+    the router's 401 carries no enumeration tell either way.
+
+    Security round B2 (#1280): the attempt is RESERVED (an atomic
+    ``UPDATE ... RETURNING`` on ``portal_otp_codes.attempts``,
+    :meth:`PortalService.reserve_attempt`) before the code is ever compared,
+    and a match is CONSUMED (:meth:`PortalService.consume_reserved`) with the
+    same atomicity before a session is minted - closing the race where two
+    parallel requests could each read a stale ``attempts`` value, or both
+    read "not yet consumed" and each mint a session for the same one-time
+    code. An unknown/ineligible number still pays for the same two UPDATE
+    statements, against :data:`app.services.portal_service.NIL_OTP_ID` (which
+    can never match a row), so the timing carries no eligibility tell.
     """
+    import hmac
+
+    from app.services.portal_service import NIL_OTP_ID
     from app.services.user_session_service import mint_session
 
+    portal = PortalService(db)
     eligible = find_eligible(db, num)
     if eligible is None:
+        portal.reserve_attempt(NIL_OTP_ID)
+        portal.consume_reserved(NIL_OTP_ID, _utcnow())
         return None
     user, contact = eligible
 
@@ -348,22 +390,27 @@ def attempt_verify(
         .order_by(PortalOtpCode.created_at.desc())
         .first()
     )
-    if otp is None:
+    # No OTP row, or an expired one, reserves against the nil id instead (0
+    # rows either way) - reserve_attempt's own WHERE clause already guards
+    # expiry, so this pays for the identical two statements as the eligible
+    # path without a separate early return.
+    otp_id = otp.id if otp is not None else NIL_OTP_ID
+
+    reserved = portal.reserve_attempt(otp_id)
+    if reserved is None:
+        # Timing parity even on the "can't reserve" path (locked out, no code,
+        # expired, or nil) - still pays for the second UPDATE, a no-op either way.
+        portal.consume_reserved(NIL_OTP_ID, _utcnow())
         return None
-    if otp.expires_at <= _utcnow():
-        return None
-    if otp.attempts >= OTP_MAX_ATTEMPTS:
+    _attempts_after, code_hash = reserved
+
+    if not hmac.compare_digest(code_hash, _hash_otp(code)):
         return None
 
-    import hmac
-
-    if not hmac.compare_digest(otp.code_hash, _hash_otp(code)):
-        otp.attempts += 1
-        db.commit()
+    if not portal.consume_reserved(otp_id, _utcnow()):
+        # A parallel verify consumed this exact code first - refuse rather
+        # than mint a second session for a one-time code.
         return None
-
-    otp.consumed_at = _utcnow()
-    db.commit()
 
     now = _utcnow()
     user.phone_verified_at = now

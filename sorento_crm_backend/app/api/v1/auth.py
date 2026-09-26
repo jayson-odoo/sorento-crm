@@ -86,7 +86,14 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
 
     pw_raw = getattr(user, "password", None)
     if pw_raw is None or str(pw_raw).strip() == "":
+        # Security round S2 (#1280): a phone-only/OAuth-only user with no
+        # password hash at all must not answer any faster than a wrong
+        # password does - same throwaway check as the unknown/trashed branch.
         login_throttle.record_failure(payload.email, ip)
+        try:
+            bcrypt.checkpw(payload.password.encode("utf-8"), _DUMMY_PASSWORD_HASH.encode("utf-8"))
+        except Exception:
+            pass
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid credentials.",
@@ -548,9 +555,20 @@ def _rate_limited_response(retry_after_seconds: int) -> JSONResponse:
 def phone_request_code(
     payload: PhoneRequestCodeRequest, request: Request, db: Session = Depends(get_db)
 ):
-    """Always answers the same 200 for every number, known or not (AC-21)."""
+    """Always answers the same 200 for every number, known or not (AC-21).
+
+    Security round S1 (#1280): the eligibility check used to run HERE, so an
+    eligible number paid for `find_eligible`'s two queries plus an
+    `enqueue_job` call and an ineligible one paid for neither - a timing
+    side-channel. Now every normalised number, known or not, gets the exact
+    same one `enqueue_job` call for `dispatch_phone_signin_code`; that job
+    (running on the worker, not this request) is where eligibility is
+    actually decided.
+    """
     from app.services import phone_signin_service as svc
     from app.services import rate_limit
+    from app.services.queue_service import enqueue_job
+    from app.tasks.respond_io_tasks import dispatch_phone_signin_code
 
     ip = request.client.host if request.client else None
     num = svc.normalize(payload.phone)
@@ -571,10 +589,12 @@ def phone_request_code(
     if not daily_gate.allowed:
         return _rate_limited_response(daily_gate.retry_after_seconds or 86400)
 
-    eligible = svc.find_eligible(db, num)
-    if eligible is not None:
-        _user, contact = eligible
-        svc.send_signin_code(db, contact)
+    try:
+        enqueue_job(
+            dispatch_phone_signin_code, num, queue_name="respond_io", job_timeout=180
+        )
+    except Exception as e:  # noqa: BLE001 - Redis down: swallow, answer 200 anyway
+        logger.warning("Phone sign-in dispatch enqueue failed: %s", e)
 
     svc.mark_code_requested(num)
 
@@ -587,24 +607,25 @@ def phone_request_code(
 
 @router.post("/phone/verify", response_model=LoginResponse)
 def phone_verify(payload: PhoneVerifyRequest, request: Request, db: Session = Depends(get_db)):
-    """The right code for an eligible number mints a session (AC-24)."""
+    """The right code for an eligible number mints a session (AC-24).
+
+    Security round S4 (#1280): no per-IP rate limit here. NextAuth's
+    `phone-otp` provider calls this route server-to-server, so
+    `request.client.host` is the Next.js server's own address for EVERY
+    signed-in user - a shared bucket an attacker could exhaust to lock every
+    real sign-in out at once. The per-number atomic reservation (B2,
+    `reserve_verify_attempt` + `PortalService.reserve_attempt`) is the real
+    bound: it caps guesses per TYPED NUMBER regardless of which IP they came
+    from, which is the bound that actually matters here.
+    """
     from app.services import phone_signin_service as svc
-    from app.services import rate_limit
 
     ip = request.client.host if request.client else None
     num = svc.normalize(payload.phone)
 
-    ip_gate = rate_limit.hit(
-        "phone_signin_verify", ip,
-        limit=app_settings.rate_limit_portal_otp_max,
-        window_seconds=app_settings.rate_limit_portal_otp_window_seconds,
-    )
-    if not ip_gate.allowed:
-        return _rate_limited_response(ip_gate.retry_after_seconds or app_settings.rate_limit_portal_otp_window_seconds)
-
-    locked_retry_after = svc.check_locked(num)
-    if locked_retry_after is not None:
-        return _rate_limited_response(locked_retry_after)
+    reservation = svc.reserve_verify_attempt(num)
+    if reservation.locked:
+        return _rate_limited_response(reservation.retry_after_seconds or 900)
 
     if not svc.code_was_requested(num):
         return JSONResponse(
@@ -624,16 +645,12 @@ def phone_verify(payload: PhoneVerifyRequest, request: Request, db: Session = De
         svc.clear_redis_state(num)
         return login_response
 
-    result = svc.record_wrong_attempt(num)
-    if result.locked:
-        return _rate_limited_response(result.retry_after_seconds or 900)
-
-    if result.attempts_left is not None:
-        tries_word = "try" if result.attempts_left == 1 else "tries"
+    if reservation.attempts_left is not None:
+        tries_word = "try" if reservation.attempts_left == 1 else "tries"
         content = {
             "code": "CODE_WRONG",
-            "message": f"That code is not right. {result.attempts_left} {tries_word} left.",
-            "attempts_left": result.attempts_left,
+            "message": f"That code is not right. {reservation.attempts_left} {tries_word} left.",
+            "attempts_left": reservation.attempts_left,
         }
     else:
         # Redis down: fail open on the count, not on the refusal itself.
@@ -651,9 +668,24 @@ def set_password(
     """Set/change the signed-in user's password (plan 5.3).
 
     A phone-only user sets one with no ``current_password`` to prove; a user
-    who already has one must supply and pass it. Every OTHER session is
-    revoked on success - the current one stays (mirrors `/sessions/revoke-others`).
+    who already has one must supply and pass it. Every OTHER session of
+    ``current_user`` is revoked on success - the current one stays (mirrors
+    `/sessions/revoke-others`).
+
+    Security round B3 (#1280): refused outright while impersonating. Under
+    impersonation, ``current_user`` is the TARGET (see
+    ``dependencies._maybe_apply_impersonation``), so this would otherwise let
+    an admin set the target's password with no current-password check at all
+    (an account takeover, not just a support action), while revoking the
+    ADMIN's own other sessions instead of the target's - the wrong person's
+    devices, for the wrong person's password change.
     """
+    if getattr(request.state, "impersonation_session_id", None):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not available while impersonating.",
+        )
+
     user = db.query(User).filter(User.id == current_user["id"]).first()
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
@@ -683,10 +715,13 @@ def set_password(
     db.add(user)
     db.commit()
 
+    # current_user["id"], not get_actor_user_id: impersonation is refused
+    # above, so the acting principal and the user whose password just changed
+    # are always the same person here - this revokes THEIR other devices.
     current_session_id = getattr(request.state, "session_id", None)
     user_session_service.revoke_all_for_user(
         db,
-        get_actor_user_id(request, current_user),
+        current_user["id"],
         except_session_id=str(current_session_id) if current_session_id else None,
     )
 
