@@ -113,6 +113,8 @@ def test_purge_empties_the_module_and_leaves_sales_agents():
 
             counts = purge(db)
             assert counts == {
+                "sales.opportunity_lines": 0,
+                "sales.opportunities": 0,
                 "sales.team_members": 1,
                 "sales.teams": 1,
             }

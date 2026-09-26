@@ -80,7 +80,7 @@ SUPPORTED_TYPES = ("complaint", "stock_inquiry", "purchase_request", "sponsorshi
 # question: it is about what the portal LANDING offers a contact, and the price
 # tag request has a landing card like the rest. `portal_form_types` is validated
 # against this one.
-GRANTABLE_PORTAL_FORM_TYPES = SUPPORTED_TYPES + ("price_tag_request",)
+GRANTABLE_PORTAL_FORM_TYPES = SUPPORTED_TYPES + ("price_tag_request", "sales_opportunity")
 PORTAL_ATTACHMENT_TYPE_CODE = "portal_submission"
 
 # Crockford base32 alphabet - excludes I, L, O, U to eliminate look-alike

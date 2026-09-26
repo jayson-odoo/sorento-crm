@@ -98,6 +98,12 @@ export type SearchableSelectProps = {
   size?: SelectTriggerSize;
   /** Forwarded to the trigger so a <Label htmlFor> can point at it. */
   id?: string;
+  /**
+   * Forwarded to the trigger's `aria-label`, for a caller whose accessible name isn't the
+   * DOM `id` - an `id` is a stable, kebab-case identifier, not necessarily the readable
+   * name a label or a test's `getByLabelText` wants.
+   */
+  'aria-label'?: string;
   placeholder?: string;
   emptyMessage?: string;
   disabled?: boolean;
@@ -153,6 +159,7 @@ export function SearchableSelect({
   onSearchChange,
   initialQuery = '',
   id,
+  'aria-label': ariaLabel,
   size,
   placeholder = 'Select...',
   emptyMessage = 'No results found.',
@@ -349,6 +356,7 @@ export function SearchableSelect({
           type="button"
           disabled={isDisabled}
           id={id}
+          aria-label={ariaLabel}
           data-slot="searchable-select-trigger"
           // Radix SelectTrigger exposes role=combobox; keep parity so callers and tests
           // can find the trigger by role, and screen readers announce expanded state.

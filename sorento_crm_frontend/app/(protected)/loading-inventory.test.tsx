@@ -259,7 +259,10 @@ describe('every DataGrid list segment has a loading.tsx (M5-01)', () => {
     // Sales module S6 (PLAN-sales-targets-opportunities-26sep.md): `sales/teams` is a new
     // DataGrid list segment with its own `loading.tsx`, found by the walk itself - no
     // BODY_ONLY_SEGMENTS entry needed. Total: 144.
-    expect(requiredSegmentNames.length).toBe(144);
+    // Sales module S2 (same plan): `sales/opportunities` is a new DataGrid list segment
+    // with its own `loading.tsx`, found by the walk itself - no BODY_ONLY_SEGMENTS entry
+    // needed. Total: 145.
+    expect(requiredSegmentNames.length).toBe(145);
 
     for (const name of requiredSegmentNames) {
       const dir = path.join(PROTECTED_ROOT, name);

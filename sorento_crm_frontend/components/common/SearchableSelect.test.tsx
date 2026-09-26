@@ -55,6 +55,27 @@ describe('SearchableSelect filtering', () => {
   });
 });
 
+// A DOM `id` is a stable, kebab-case identifier, not necessarily the readable name a
+// <Label> or a test's getByLabelText wants - `aria-label` lets a caller give the trigger
+// its own accessible name independent of `id` (sales opportunities S2 fix round).
+describe('SearchableSelect aria-label', () => {
+  it('gives the trigger the accessible name passed as aria-label', () => {
+    render(
+      <SearchableSelect
+        value=""
+        onChange={vi.fn()}
+        options={OPTIONS}
+        id="opportunity-customer"
+        aria-label="Customer or prospect"
+      />,
+    );
+    expect(screen.getByRole('combobox', { name: 'Customer or prospect' })).toHaveAttribute(
+      'id',
+      'opportunity-customer',
+    );
+  });
+});
+
 // A supplier picker sat on 21 rows literally named "Testing Company" (prod data): cmdk used
 // to key each item's identity off `searchText ?? label + description`, so every option sharing
 // a label collided on the SAME identity and hovering/arrowing to one highlighted all of them.

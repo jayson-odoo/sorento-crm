@@ -38,6 +38,7 @@ _KIND_LABELS: dict[str, str] = {
     "purchase_request": "Purchase Request",
     "sponsorship_form": "Sponsorship Form",
     "price_tag_request": "Price Tag Request",
+    "sales_opportunity": "Sales Opportunities",
 }
 
 

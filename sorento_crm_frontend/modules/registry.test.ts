@@ -24,9 +24,14 @@ describe('module registry purge manifests', () => {
     expect(discovered.description).toBe(projectsPurgeTables.description);
   });
 
-  it('exposes the sales module with its schema-qualified tables (plan 3.7)', () => {
+  it('exposes the sales module with its schema-qualified tables (plan 3.7, widened S2)', () => {
     expect(modulesWithDataPurge()).toContain('sales');
-    expect(modulePurgeTables().sales.tables).toEqual(['sales.team_members', 'sales.teams']);
+    expect(modulePurgeTables().sales.tables).toEqual([
+      'sales.opportunity_lines',
+      'sales.opportunities',
+      'sales.team_members',
+      'sales.teams',
+    ]);
   });
 
   it('names every table once, so the dialog cannot list one twice', () => {

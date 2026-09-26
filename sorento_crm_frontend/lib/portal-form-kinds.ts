@@ -53,12 +53,6 @@ export const LANDING_KINDS: readonly PortalLandingKind[] = [
   GATED_FORM_TYPE,
 ] as const;
 
-export function isLandingKind(
-  value: string | null | undefined,
-): value is PortalLandingKind {
-  return (LANDING_KINDS as readonly string[]).includes(value ?? '');
-}
-
 /**
  * Every contact already gets `SUBMISSION_KINDS` (the base default,
  * PLAN-portal-forms-market-segment D3) - a market segment can only grant more
@@ -67,8 +61,24 @@ export function isLandingKind(
  * is `price_tag_request` alone, and the next opt-in kind joins `LANDING_KINDS`
  * above and appears here automatically.
  */
-export const ADDITIONAL_LANDING_KINDS: readonly PortalLandingKind[] =
-  LANDING_KINDS.filter((k) => !isSubmissionKind(k));
+/**
+ * sales_opportunity (plan S2, section 16) is grantable the same way
+ * `price_tag_request` is, but it has its own bespoke portal pages
+ * (`app/(auth)/portal/sales_opportunity/`) rather than the generic `[type]`
+ * submission-table machinery `LANDING_KINDS` backs (the tab list, `EMPTY_LISTS`,
+ * the shared submissions fetch) - so it stays OUT of `LANDING_KINDS` itself, and
+ * gets its own card on the landing (`PortalLanding.tsx`) instead of a tab.
+ */
+export const SALES_OPPORTUNITY_KIND = 'sales_opportunity' as const;
+
+export const ADDITIONAL_LANDING_KINDS: readonly (PortalLandingKind | typeof SALES_OPPORTUNITY_KIND)[] =
+  [...LANDING_KINDS.filter((k) => !isSubmissionKind(k)), SALES_OPPORTUNITY_KIND];
+
+export function isLandingKind(
+  value: string | null | undefined,
+): value is PortalLandingKind {
+  return (LANDING_KINDS as readonly string[]).includes(value ?? '') || value === SALES_OPPORTUNITY_KIND;
+}
 
 export const SUBMISSION_LABELS: Record<PortalSubmissionKind, string> = {
   complaint: 'Complaint',
@@ -83,7 +93,16 @@ export const LANDING_LABELS: Record<PortalLandingKind, string> = {
   price_tag_request: 'Price Tag Request',
 };
 
+/** Kinds with their own bespoke page rather than a LANDING_KINDS tab (see above). */
+const EXTRA_LABELS: Record<typeof SALES_OPPORTUNITY_KIND, string> = {
+  sales_opportunity: 'Sales Opportunities',
+};
+
 /** The label for any kind, falling back to the raw code for one we do not know. */
 export function portalFormKindLabel(kind: string): string {
-  return LANDING_LABELS[kind as PortalLandingKind] ?? kind;
+  return (
+    LANDING_LABELS[kind as PortalLandingKind] ??
+    EXTRA_LABELS[kind as typeof SALES_OPPORTUNITY_KIND] ??
+    kind
+  );
 }
