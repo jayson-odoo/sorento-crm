@@ -2173,6 +2173,15 @@ def _run_stages(  # noqa: PLR0915
                     resolver_payload.get("gate") if isinstance(resolver_payload, dict) else None,
                     "routing_brand",
                 ),
+                # No resolver ran at all (the focus product is settled, so it is not
+                # re-resolved): `_team_pick_question` still takes the focus product's
+                # brand (#865 sibling), the same read `_focus_brand_payload` makes. A
+                # thunk, so the read runs only when compose mints (fix round 2, N2).
+                focus_brand=(
+                    (lambda: _focus_brand(db, state_out.focus))
+                    if not isinstance(resolver_payload, dict)
+                    else None
+                ),
             )
             # Will `answer_bridge.answer_for` (R4/R5) answer this turn's miss? ONE
             # rule, computed once, read TWICE below: it gates that call, and it is
@@ -2290,7 +2299,17 @@ def _run_stages(  # noqa: PLR0915
                     from app.services.chatbot import copy as copy_mod
 
                     answer = answer_bridge.answer_for(
-                        resolver_payload or {},
+                        # No resolver ran (the focus product is settled, so "eta" after
+                        # a product answer re-resolves nothing): the miss still mints its
+                        # offer with the focus product's brand (#865 sibling).
+                        # Read only when the bridge will answer a miss, so a hit never
+                        # pays for it (fix round 2, N2).
+                        resolver_payload
+                        or (
+                            _focus_brand_payload(db, state_out.focus)
+                            if answer_bridge.answers_a_miss({}, envelopes[0])
+                            else {}
+                        ),
                         envelope=envelopes[0],
                         parser=answer_parse_output,
                         ctx=ctx,
@@ -3593,6 +3612,11 @@ def _run_escalation_arm(
     any of it, so "assigned but no SLA row" is not a state this can produce.
     """
     stage[0] = "looked_up"
+    # #865: the product this escalation is about, from THIS turn's applied focus (this
+    # turn's named product, else the one the previous turn left in focus; a topic reset
+    # or a newer product already replaced it). The lane reads its brand off the product
+    # row. On the lane's item only: the row keeps the route-turn item it always had.
+    lane_item = {**item, "focus_products": _focus_products(state)}
     try:
         # The lane opens its OWN session (its writes are a unit of work of their own), and
         # it opens it off THIS factory rather than `SessionLocal`, so the contact's company
@@ -3600,7 +3624,7 @@ def _run_escalation_arm(
         # scope before it reads `Team` / `AgentTeam`, so the draw was not failing; the
         # pre-pin reads and the lane's unit of work were the unscoped half.
         fragment = run_escalation_lane(
-            ctx, item, dry_run=dry_run, session_factory=session_factory
+            ctx, lane_item, dry_run=dry_run, session_factory=session_factory
         )
     except Exception as exc:  # noqa: BLE001 - a failed lane is recorded, never dropped
         message = f"{type(exc).__name__}: {exc}"
@@ -3652,6 +3676,10 @@ def _run_escalation_arm(
             "arm": arm,
             "actions": [a.get("kind") for a in lane_actions],
             "dry_run": dry_run,
+            # #865 observability: the next-assignee body's routing axes, the rung that
+            # chose the brand, and the round-robin cursor key the draw used. Before this
+            # the brand a lane sent was visible only by joining the SLA row by time.
+            "routing": fragment.get("routing"),
         },
         raw={"clarify": clarify, "pending": pending},
     )
@@ -3784,6 +3812,45 @@ def _casual_failure_summary(failed: str, setup_error: str | None) -> str:
     if "configuration is not set" in lowered:
         return "The clarifier is not configured: the AI assistant settings are empty."
     return "Could not prepare the clarifier call."
+
+
+def _focus_products(state: Any) -> list[dict[str, Any]]:
+    """The product entries of a turn's applied focus, or `[]` (#865)."""
+    focus = getattr(state, "focus", None)
+    products = getattr(focus, "products", None)
+    return [p for p in products if isinstance(p, dict)] if isinstance(products, list) else []
+
+
+def _focus_brand(db: Session, focus: Any) -> str | None:
+    """The brand of the focus product, off the product row, or None (#865).
+
+    `escalation_services.focus_product_brand` is the one read, shared with the escalation
+    lane's `product_brand` seam so the offer and the draw cannot disagree about a brand.
+    Fails soft: a brand nobody could read leaves the offer exactly as it was before.
+    """
+    products = getattr(focus, "products", None)
+    if not products:
+        return None
+    from app.services.chatbot.lanes.escalation_services import focus_product_brand
+
+    try:
+        return focus_product_brand(db, products)
+    except Exception:  # noqa: BLE001 - a missing brand is not a failed turn
+        logger.warning("chatbot: the focus product's brand could not be read", exc_info=True)
+        return None
+
+
+def _focus_brand_payload(db: Session, focus: Any) -> dict[str, Any]:
+    """A resolver-shaped payload carrying only the focus product's brand, or `{}` (#865).
+
+    For a turn whose resolver never ran: the bridge's miss arm reads the brand off
+    `payload["gate"]["routing_brand"]` like every other mint site, and a gate holding
+    nothing else reads as `{}` for every other key.
+    """
+    brand = _focus_brand(db, focus)
+    if not brand:
+        return {}
+    return {"gate": {"routing_brand": brand, "routing_brand_source": "focus_product"}}
 
 
 def _stamp_item(access: dict, branch_kind: str, tier_stamp: dict) -> dict[str, Any]:

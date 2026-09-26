@@ -13,6 +13,7 @@ is what lets the 66-fixture replay run as JSON in, JSON out.
 | (B-HB-1, not live) | `resolve_and_gate` | S6a's `business.run_until_exit` |
 | (the member roster) | `team_members` | `app.api.v1.external.team_members` |
 | (new, 6 Sep 2026) | `staff_lookup` | `users` x `team_members` x `agent_teams`, read here |
+| (new, 27 Sep 2026, #865) | `product_brand` | `products` x `brands`, read here (`focus_product_brand`) |
 
 Every test in `test_s5_escalation_lane.py` injects its own `services`, which is the point
 of the seam; `test_s5_escalation_seams.py` covers THIS module - the wiring that runs once
@@ -29,6 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
@@ -57,6 +59,10 @@ class EscalationServices:
     sla_create: Any
     team_members: Any
     staff_lookup: Any
+    # #865 (owner ruling 27 Sep 2026, fix option 1): the brand of the product the
+    # escalation is about, read off the product row. Defaulted so an older injected
+    # bundle keeps working and simply resolves no brand, exactly as before.
+    product_brand: Any = None
 
 
 def _next_assignee(db: Any):
@@ -198,6 +204,74 @@ def _staff_lookup(db: Any):
     return call
 
 
+def _product_refs(products: Any) -> tuple[set[str], set[str]]:
+    """`(uuids, upper-cased codes)` off focus product entries. A settled entry names its
+    row by `uuid`; an unsettled one only by its code (`canonical_code`, else `raw`)."""
+    uuids: set[str] = set()
+    codes: set[str] = set()
+    for entry in products or []:
+        if not isinstance(entry, dict):
+            continue
+        hint = entry.get("hint")
+        if hint not in (None, "product"):
+            continue
+        uid = entry.get("uuid")
+        if isinstance(uid, str) and uid.strip():
+            try:
+                uuids.add(str(uuid.UUID(uid.strip())))
+                continue
+            except ValueError:
+                pass  # not a row id; fall through to the code, as an unsettled entry
+        code = entry.get("canonical_code") or entry.get("raw")
+        if isinstance(code, str) and code.strip():
+            codes.add(code.strip().upper())
+    return uuids, codes
+
+
+def focus_product_brand(db: Any, products: Any) -> str | None:
+    """The brand of the product(s) the conversation is about, off the product row (#865).
+
+    The brand is a fact the product row owns, so it is read here at the point of use rather
+    than persisted beside the product in the session (contract 129 keeps the five-key wire
+    shape byte-compatible). One brand is the answer; products that disagree name none,
+    because a guess there picks a person for the wrong brand. The session is the turn's
+    own, so the read is scoped to the contact's company like every other read the turn
+    makes. Lower-cased, the spelling `next-assignee` narrows by.
+    """
+    uuids, codes = _product_refs(products)
+    if not uuids and not codes:
+        return None
+    from sqlalchemy import func, or_
+
+    from app.models.product import Brand, Product
+
+    clauses = []
+    if uuids:
+        clauses.append(Product.id.in_(sorted(uuids)))
+    if codes:
+        clauses.append(func.upper(Product.product_code).in_(sorted(codes)))
+    # A savepoint, so a read that fails aborts only itself and never the caller's unit of
+    # work (the turn's, or the lane's own before it draws an assignee).
+    with db.begin_nested():
+        rows = (
+            db.query(func.lower(Brand.brand_code))
+            .select_from(Product)
+            .join(Brand, Brand.id == Product.brand_id)
+            .filter(or_(*clauses))
+            .distinct()
+            .all()
+        )
+    brands = sorted({str(code).strip() for (code,) in rows if code and str(code).strip()})
+    return brands[0] if len(brands) == 1 else None
+
+
+def _product_brand(db: Any):
+    def call(products: Any) -> str | None:
+        return focus_product_brand(db, products)
+
+    return call
+
+
 def _not_live(name: str):
     def call(*_args: Any, **_kwargs: Any) -> Any:
         raise NotImplementedError(
@@ -263,4 +337,5 @@ def build(db: Any) -> EscalationServices:
         sla_create=_sla_create(db),
         team_members=_not_live("team_members"),
         staff_lookup=_staff_lookup(db),
+        product_brand=_product_brand(db),
     )

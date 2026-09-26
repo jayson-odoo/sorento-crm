@@ -96,6 +96,9 @@ def _format_assignee_response(result: dict) -> dict:
         "assignee_email": result.get("email"),
         "assignee_name": result.get("name"),
         "assignee_respond_user_id": result.get("respond_user_id"),
+        # The round-robin cursor the draw used; None for a preferred-assignee pick, which
+        # draws from no rotation (#865 observability).
+        "cursor_key": result.get("cursor_key"),
     }
 
 

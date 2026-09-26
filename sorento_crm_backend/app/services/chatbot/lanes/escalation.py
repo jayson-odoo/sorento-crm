@@ -12,9 +12,13 @@ assignment path inside `sub-human-intervention` (@ `ae310ea1`). The live graph i
 they belong to unpromoted builds (B-HB-1 and B-TEAM-1'). Porting them would have shipped
 behaviour production has never run, so:
 
-* **H26 stays open.** The lane never calls the resolver, so escalation routing is
-  brand-blind exactly as it is today. `resolve_and_gate` is in the services bundle for the
-  day B-HB-1 promotes and is never invoked.
+* **H26, the brand half, is closed (#865, owner ruling 27 Sep 2026, fix option 1).** The
+  lane still never calls `resolve_and_gate`, but it no longer routes brand-blind: the brand
+  of the product the escalation is about (this turn's named product, else the product the
+  conversation is focused on) is read off the product row through the `product_brand`
+  seam, at the point of use (`_apply_focus_brand`). It used to survive into the escalation
+  turn only when some earlier turn happened to mint an offer that stamped it, so a spec
+  question answered successfully and then "escalate to marketing" drew the whole team.
 * **H27 stays open.** There is no team clarify. A null team is not reachable through the
   real pipeline anyway - `head/output_exchange.derive_routing`'s nullish chain hard-defaults
   `suggested_team` to `customer_service` long before this lane sees it - so the hazard is
@@ -210,6 +214,14 @@ def escalation_context(item: dict[str, Any], *, ctx: dict[str, Any]) -> dict[str
        Packing List team rotated instead of drawing the brand-tagged member;
     5. `stated_brand` - a brand the customer named when no roster was involved at all;
     6. `none`.
+
+    **`focus_product` (#865) outranks rungs 4 and 6, never rung 5** and is applied after
+    this function, by `_apply_focus_brand`, because it needs a seam and this function is
+    pure. Rung 5 is this turn's own `query_brands`, the customer's explicit brand word, and
+    it wins over a product carried in focus (fix round 2, S1). The focus rung is the brand
+    of the product the escalation is about, read off the product row. It is not a carry
+    that can go stale: the focus product itself drops on a topic reset or a newer product
+    (`turn/apply.py::_focus_rules`), and the brand is re-read from the row every time.
 
     Both axes are always what the `get-cs-members` call USED, never re-derived from this
     turn's `query_brands`: re-deriving would narrow the assignee pool to one the customer
@@ -596,7 +608,7 @@ def run(
             "due_at": PREVIEW,
             "due_at_resolution": PREVIEW,
         }
-        routed, preview_assignee = _preview_routing(
+        routed, preview_assignee, routing = _preview_routing(
             ctx, context_item, team, services, session_factory
         )
         if routed is not None and routed["kind"] == "clarify":
@@ -615,6 +627,7 @@ def run(
                     "kind": "team_clarify",
                     "options": routed.get("option_pairs") or [],
                 },
+                "routing": routing,
             }
         if routed is not None and routed["kind"] == "assign":
             team = routed["team"]
@@ -627,7 +640,7 @@ def run(
             dry_run=True,
             preview=True,
         )
-        return {**result, "actions": actions, "pending": None}
+        return {**result, "actions": actions, "pending": None, "routing": routing}
 
     if services is not None:
         return _human_intervention(ctx, context_item, team, services, result)
@@ -653,8 +666,10 @@ def _human_intervention(
     """Assign the conversation, or ask which team - one place, both seam sources.
 
     The person / team decision needs a seam, so it happens HERE rather than in `run()`,
-    where the production bundle does not exist yet.
+    where the production bundle does not exist yet. So does the focus product's brand
+    (#865), for the same reason.
     """
+    context_item = _apply_focus_brand(context_item, services)
     routed = _person_routing(ctx, context_item, team, services)
     if routed is not None and routed["kind"] == "clarify":
         # The tail keys on `clarify_text` (`compile_state`'s clarify arm), the same field
@@ -680,18 +695,90 @@ def _human_intervention(
                 "kind": "team_clarify",
                 "options": routed.get("option_pairs") or [],
             },
+            "routing": _routing_record(context_item, None, None),
         }
     if routed is not None and routed["kind"] == "assign":
-        actions = _assign(
+        actions, routing = _assign(
             ctx,
             context_item,
             routed["team"],
             services,
             assignee=routed["assignee"],
         )
-        return {**result, "actions": actions, "pending": None}
-    actions = _assign(ctx, context_item, team, services)
-    return {**result, "actions": actions, "pending": None}
+        return {**result, "actions": actions, "pending": None, "routing": routing}
+    actions, routing = _assign(ctx, context_item, team, services)
+    return {**result, "actions": actions, "pending": None, "routing": routing}
+
+
+def _apply_focus_brand(context_item: dict[str, Any], services: Any) -> dict[str, Any]:
+    """#865: the brand of the product this escalation is about, from the product row.
+
+    Owner ruling 27 Sep 2026 (fix option 1 of the root-cause report on #865): the brand is
+    a fact about the product the conversation is about, so the lane reads it at the point
+    of use instead of depending on whichever offer an earlier turn happened to mint. The
+    product is `item["focus_products"]`, which the engine hands over from THIS turn's
+    applied focus: this turn's named product when it named one, else the product the
+    previous turn left in focus. Nothing here decides when that carry ends; the focus
+    rules already drop it on a topic reset or a newer product.
+
+    It outranks the offer carry and `none` (rungs 4 and 6 of `escalation_context`). It
+    never outranks `stated_brand` (rung 5), the brand the customer named on THIS turn:
+    "I need the Mocha catalogue, escalate to marketing" after a SORENTO spec answer is a
+    Mocha escalation (fix round 2, S1). Nor the three roster arms above them, whose brand
+    is a SPECIFIC row the customer was shown. A product with no brand row, products that
+    disagree on the brand, a bundle without the seam, or a read that raises leave the item
+    exactly as `escalation_context` built it: the escalation is real whether or not the
+    brand can be named.
+    """
+    if jsc.get(context_item, "routing_source") not in _FOCUS_OUTRANKS:
+        return context_item
+    products = jsc.array(jsc.get(context_item, "focus_products"))
+    seam = getattr(services, "product_brand", None) if services is not None else None
+    if not products or seam is None:
+        return context_item
+    try:
+        brand = seam(products)
+    except Exception:  # noqa: BLE001 - a brand nobody could read is not a failed turn
+        logger.warning("chatbot: the focus product's brand could not be read", exc_info=True)
+        return context_item
+    if not jsc.truthy(brand):
+        return context_item
+    return {
+        **context_item,
+        "brand_code": jsc.js_string(brand).strip().lower(),
+        "routing_source": "focus_product",
+    }
+
+
+# The `escalation_context` outcomes the focus product's brand replaces (#865). The roster
+# arms (`picked_member`, `company_pick`, the `prior_state*` / `multi_company_unpicked`
+# family) are a specific row the customer was shown and keep their own brand, and
+# `stated_brand` is the customer's own word on this turn (fix round 2, S1).
+_FOCUS_OUTRANKS = frozenset({"carried_brand", "none"})
+
+
+def _routing_record(
+    context_item: dict[str, Any], body: dict[str, Any] | None, assignee: Any
+) -> dict[str, Any]:
+    """What the escalation trace records about the draw (#865 observability).
+
+    The next-assignee body's routing axes and the rung that chose the brand, plus the
+    round-robin cursor key the draw used (`next-assignee` echoes it as `cursor_key`: the
+    segment key, with a `~b:<brand>` suffix when the pool narrowed). Before this, the brand
+    a lane sent was visible only by joining the SLA row by time.
+    """
+    source = body if body is not None else {
+        "team_code": jsc.get(context_item, "team"),
+        "brand_code": jsc.get(context_item, "brand_code"),
+    }
+    return {
+        "team_code": jsc.get(source, "team_code"),
+        "brand_code": jsc.get(source, "brand_code"),
+        "routing_source": jsc.get(context_item, "routing_source"),
+        "cursor_key": jsc.get(assignee, "cursor_key") if isinstance(assignee, dict) else None,
+        "assignee_name": jsc.get(assignee, "assignee_name") if isinstance(assignee, dict) else None,
+        "brand_matched": jsc.get(assignee, "brand_matched") if isinstance(assignee, dict) else None,
+    }
 
 
 def _parser_team(ctx: dict[str, Any], team: Any) -> Any:
@@ -994,8 +1081,10 @@ def _preview_routing(
     team: Any,
     services: Any,
     session_factory: Any,
-) -> tuple[dict[str, Any] | None, Any]:
-    """`(routing decision, assignee)` for a dry run - both READS, in one unit of work.
+) -> tuple[dict[str, Any] | None, Any, dict[str, Any] | None]:
+    """`(routing decision, assignee, routing record)` for a dry run - READS only, in one
+    unit of work. The record is `_routing_record`'s, so a dry run's trace shows the same
+    next-assignee body a live turn's does.
 
     Fails soft throughout, on purpose: a bundle with no preview seam (an older injected
     stub), a lookup that raises, or no session factory at all leave the assignee null,
@@ -1003,22 +1092,25 @@ def _preview_routing(
     extra detail it is trying to show.
     """
 
-    def _both(bundle: Any) -> tuple[dict[str, Any] | None, Any]:
-        routed = _person_routing(ctx, context_item, team, bundle)
+    def _both(bundle: Any) -> tuple[dict[str, Any] | None, Any, dict[str, Any] | None]:
+        item = _apply_focus_brand(context_item, bundle)
+        routed = _person_routing(ctx, item, team, bundle)
         if routed is not None:
             # A named person IS the assignee, and a clarify assigns nobody. Either way
             # there is no rotation to preview.
-            return routed, routed.get("assignee")
+            return routed, routed.get("assignee"), _routing_record(item, None, routed.get("assignee"))
         seam = getattr(bundle, "preview_assignee", None)
+        body = _next_assignee_body(ctx, item)
         if seam is None:
-            return None, None
-        return None, seam({**_next_assignee_body(ctx, context_item), "preview": True})
+            return None, None, _routing_record(item, body, None)
+        assignee = seam({**body, "preview": True})
+        return None, assignee, _routing_record(item, body, assignee)
 
     try:
         if services is not None:
             return _both(services)
         if session_factory is None:
-            return None, None
+            return None, None, None
         # Production dry run: the same read-only unit of work the live branch uses, so both
         # reads are scoped to the contact's company exactly as the draw would be (H56).
         from app.services.chatbot.lanes import escalation_services
@@ -1027,7 +1119,7 @@ def _preview_routing(
             return _both(escalation_services.build(db))
     except Exception:  # noqa: BLE001 - a preview is never worth failing a test turn for
         logger.warning("chatbot: dry-run routing preview did not run", exc_info=True)
-        return None, None
+        return None, None, None
 
 
 def _assign(
@@ -1037,8 +1129,10 @@ def _assign(
     services: Any,
     *,
     assignee: Any = None,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Draw an assignee, start the SLA clock, and build the four actions in live's order.
+
+    Returns `(actions, routing record)`; the record is what the trace shows (#865).
 
     Both seams run before a single action is built, which is what makes the failure shape
     in `engine.py` true: the lane returns its whole list or raises before returning any of
@@ -1048,10 +1142,12 @@ def _assign(
     a direct pick is not a rotation, so the round robin is not drawn from at all. The SLA
     clock still starts, because the escalation is just as real.
     """
+    body = None
     if assignee is None:
-        assignee = services.next_assignee(_next_assignee_body(ctx, context_item))
+        body = _next_assignee_body(ctx, context_item)
+        assignee = services.next_assignee(body)
     sla = services.sla_create(_sla_body(ctx, context_item, assignee))
-    return _assignment_actions(
+    actions = _assignment_actions(
         ctx,
         team,
         assignee=assignee,
@@ -1062,6 +1158,7 @@ def _assign(
         dry_run=False,
         preview=False,
     )
+    return actions, _routing_record(context_item, body, assignee)
 
 
 def _assignment_actions(
