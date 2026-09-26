@@ -413,3 +413,40 @@ def test_present_response_dispatches_the_top_selling_envelope():
         assert json.loads(present_response("crm_top_selling_report", json.dumps(body))) == (
             _top_selling_envelope(body)
         )
+
+
+# --------------------------------------------------------------------------
+# S4: a route refusal reaches the presenter as the AppException body
+# (`{message, detail, code}`); it must never render as a ranking header.
+# --------------------------------------------------------------------------
+
+
+def test_customer_not_permitted_renders_the_refusal_line():
+    """AC-1963 presenter half: a dealer naming a customer outside its own ledgers is
+    refused by the route (403 `customer_not_permitted`, the same answer for another
+    customer and for nobody). The reply is the fixed refusal line and nothing else;
+    `has_result` is true so nothing escalates."""
+    body = {"message": "You can only see sales for your own account.", "detail": None, "code": "customer_not_permitted"}
+    envelope = json.loads(present_response("crm_top_selling_report", json.dumps(body)))
+    assert envelope == {
+        "result_type": "top_selling_refused",
+        "response": TOP_SELLING_REFUSED_OTHER_CUSTOMER,
+        "has_result": True,
+        "result_set": [],
+    }
+
+
+def test_sales_report_not_enabled_renders_the_denial_line():
+    body = {"message": "Sales report is not enabled for your account.", "detail": None, "code": "sales_report_not_enabled"}
+    envelope = _top_selling_envelope(body)
+    assert envelope["response"] == "Sales report is not enabled for your account."
+    assert envelope["has_result"] is True
+    assert envelope["result_set"] == []
+
+
+def test_any_other_route_error_is_an_error_envelope():
+    """A 422 (or anything else the route refuses) is an infrastructure failure for the
+    lane (`envelope["error"]`), never a header over "No sales found."."""
+    body = {"message": "n must be between 1 and 100", "detail": "0", "code": "invalid_n"}
+    envelope = _top_selling_envelope(body)
+    assert envelope == {"error": "invalid_n: n must be between 1 and 100"}

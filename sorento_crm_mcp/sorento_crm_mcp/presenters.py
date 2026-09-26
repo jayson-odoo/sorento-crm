@@ -2655,7 +2655,25 @@ def _top_selling_envelope(report: dict) -> dict:
     under its own `result_type`, which the lane reads to arm nothing. `result_set`
     is the pick list the lane arms as a sticky `top_selling_pick` roster (backend
     `turn/pending.top_selling_pick`); empty whenever no ranked list was printed,
-    the detail reply included (the list it answers stays open on its own)."""
+    the detail reply included (the list it answers stays open on its own).
+
+    A route refusal arrives here as the AppException body (`{message, detail,
+    code}`, no `rank_by`): the two the customer is meant to read become their fixed
+    lines, and anything else is an `error` envelope the lane treats as a failure."""
+    if "rank_by" not in report and _filled(report.get("code")):
+        code = str(report.get("code"))
+        refusal = {
+            "customer_not_permitted": TOP_SELLING_REFUSED_OTHER_CUSTOMER,
+            "sales_report_not_enabled": "Sales report is not enabled for your account.",
+        }.get(code)
+        if refusal is None:
+            return {"error": f"{code}: {report.get('message') or ''}".strip()}
+        return {
+            "result_type": "top_selling_refused",
+            "response": refusal,
+            "has_result": True,
+            "result_set": [],
+        }
     if isinstance(report.get("detail"), dict):
         return {
             "result_type": "top_selling_detail",
