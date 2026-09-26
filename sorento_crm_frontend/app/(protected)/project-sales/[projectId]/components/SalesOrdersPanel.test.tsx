@@ -234,22 +234,60 @@ describe('SalesOrdersPanel', () => {
     expect(await screen.findByText('PSO-000123')).toBeInTheDocument();
     // A published order is known by its AutoCount number, never by an id.
     expect(screen.getByText('SO376200')).toBeInTheDocument();
-    // Both area splits say so on their own row; the subset says it had no area logic.
-    expect(screen.getAllByText('Split by schedule area')).toHaveLength(2);
-    expect(screen.getByText('Product subset, no area')).toBeInTheDocument();
-    expect(screen.getByText('No area')).toBeInTheDocument();
+    // Owner hand test, PR #1264 note 4: every row is one line. The area group is one
+    // truncated line and the grouping origin rides in its tooltip, not a second line.
+    const tower = screen.getByText('PSO-000123').closest('tr') as HTMLElement;
+    expect(within(tower).getByText('TOWER')).toHaveAttribute(
+      'title',
+      'TOWER (Split by schedule area)',
+    );
+    expect(screen.queryByText('Split by schedule area')).not.toBeInTheDocument();
+    expect(screen.getByText('No area')).toHaveAttribute(
+      'title',
+      'No area (Product subset, no area)',
+    );
 
     // Cents survive: 1,611,107.81 is what the printed sales order says.
     expect(screen.getByText('RM 1,611,107.81')).toBeInTheDocument();
-    expect(screen.getByText('2 blocking')).toBeInTheDocument();
-    expect(screen.getByText('2 warnings')).toBeInTheDocument();
-    expect(screen.getByText('1 warning')).toBeInTheDocument();
-    expect(screen.getByText('Nothing flagged')).toBeInTheDocument();
-    expect(screen.getByText('1 cannot publish yet')).toBeInTheDocument();
+
+    // To review is ONE compact pill, the Flag pill's words: the most severe kind and the
+    // count of everything open, with the split in its tooltip.
+    const common = screen.getByText('PSO-000124').closest('tr') as HTMLElement;
+    expect(within(common).getByText('Blocks publish 3')).toHaveAttribute(
+      'title',
+      '2 blocking, 1 warning',
+    );
+    expect(within(tower).getByText('Needs acknowledgement 2')).toBeInTheDocument();
+    const subset = screen.getByText('SO376200').closest('tr') as HTMLElement;
+    expect(within(subset).queryByText(/Blocks publish|Needs acknowledgement/)).toBeNull();
+    expect(screen.queryByText('2 blocking')).not.toBeInTheDocument();
+    expect(screen.queryByText('Nothing flagged')).not.toBeInTheDocument();
     expect(screen.getByText('Pre-order')).toBeInTheDocument();
+
+    // Note 5: no count, page-value or cannot-publish chips above the grid.
+    expect(screen.queryByText(/sales orders?$/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/on this page/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/cannot publish yet/)).not.toBeInTheDocument();
   });
 
-  it('sums the page value as decimals, not floats', async () => {
+  it('keeps every row one line: no stacked status, badge or origin line in any cell', async () => {
+    listProjectSalesOrders.mockResolvedValue({
+      data: [row({ is_sponsorship: true, review_state: 'needs_cs_review' })],
+      total: 1,
+      page: 1,
+      limit: 25,
+    });
+
+    renderPanel();
+
+    const tr = (await screen.findByText('PSO-000123')).closest('tr') as HTMLElement;
+    // No cell lays its content out as a column, and none lets it wrap.
+    expect(tr.querySelector('.flex-col')).toBeNull();
+    expect(tr.querySelector('.flex-wrap')).toBeNull();
+    expect(tr.querySelector('.block.truncate.text-xs')).toBeNull();
+  });
+
+  it('sums the Value column in a footer row, as decimals, not floats', async () => {
     listProjectSalesOrders.mockResolvedValue({
       data: [
         row({ id: 'a', total_amount: '0.07' }),
@@ -262,8 +300,28 @@ describe('SalesOrdersPanel', () => {
 
     renderPanel();
 
+    await screen.findByText('PSO-000124');
+    const footer = document.querySelector('tfoot') as HTMLElement;
+    expect(footer).not.toBeNull();
     // 0.07 + 0.01 is exactly 0.08. As floats it is 0.07999999999999999.
-    expect(await screen.findByText('RM 0.08 on this page')).toBeInTheDocument();
+    expect(within(footer).getByText('RM 0.08')).toBeInTheDocument();
+    expect(within(footer).getByText('Total')).toBeInTheDocument();
+  });
+
+  it('labels the footer a page total when the list runs past one page', async () => {
+    listProjectSalesOrders.mockResolvedValue({
+      data: [row({ id: 'a', total_amount: '10.00' })],
+      total: 30,
+      page: 1,
+      limit: 25,
+    });
+
+    renderPanel();
+
+    await screen.findByText('PSO-000123');
+    const footer = document.querySelector('tfoot') as HTMLElement;
+    expect(within(footer).getByText('Page total')).toBeInTheDocument();
+    expect(within(footer).getByText('RM 10.00')).toBeInTheDocument();
   });
 
   it('builds only after the pair is confirmed, and warns that drafts are replaced', async () => {

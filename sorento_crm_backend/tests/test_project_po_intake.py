@@ -1310,6 +1310,58 @@ def test_the_version_reports_how_much_of_the_document_was_read(seeded):
     assert body["failed_pages"] == [2]
 
 
+def test_the_version_names_its_scan_so_the_viewer_can_read_the_bytes(seeded, monkeypatch):
+    """The in-app PDF viewer draws the scan from its bytes, and the signed URL is
+    cross-origin with no CORS headers, so a script cannot read it. The version carries
+    the attachment id, which the authenticated same-origin download route takes."""
+    from app.models.resources import Attachment
+    from app.schemas.project_po_intake import POVersionDetailResponse
+    from app.services import storage_router
+
+    class _FakeBackend:
+        def file_exists(self, key):
+            return True
+
+    monkeypatch.setattr(
+        storage_router, "resolve_signed_url", lambda path, provider=None: f"{path}?sig=1"
+    )
+    monkeypatch.setattr(storage_router, "get_backend", lambda provider: _FakeBackend())
+    db, project, owner = seeded
+    service = ProjectPOExtractionService(db)
+    version = _version(db, _po(db, project, owner, "PO-SCAN-ID"))
+    attachment = Attachment(
+        id=str(uuid.uuid4()),
+        original_filename=f"{MARKER}.pdf",
+        stored_filename=f"{MARKER}.pdf",
+        file_path=f"https://cdn.example.test/po/{MARKER}.pdf",
+        mime_type="application/pdf",
+        storage_provider="s3",
+        company_id=version.company_id,
+        is_deleted=False,
+    )
+    db.add(attachment)
+    db.flush()
+    version.attachment_id = attachment.id
+    db.flush()
+
+    body = service.serialize_version(version)
+
+    assert body["attachment_id"] == str(attachment.id)
+    assert body["document_url"] == f"https://cdn.example.test/po/{MARKER}.pdf?sig=1"
+    assert POVersionDetailResponse.model_validate(body).attachment_id == str(attachment.id)
+
+
+def test_a_version_with_no_scan_has_no_attachment_id(seeded):
+    db, project, owner = seeded
+    service = ProjectPOExtractionService(db)
+    version = _version(db, _po(db, project, owner, "PO-NO-SCAN"))
+
+    body = service.serialize_version(version)
+
+    assert body["attachment_id"] is None
+    assert body["document_url"] is None
+
+
 def test_document_url_is_none_when_the_object_behind_the_attachment_is_gone(seeded, monkeypatch):
     """B1 (PR #1237 review, R9/R13): an attachment ROW can outlive its OBJECT. Presigning
     a URL for a missing object hands the FE a link that 404s inside an iframe it cannot

@@ -57,12 +57,32 @@ reading the `stock` table.
   `integration_foundryx_esb`.
 - D10. Envelopes unchanged: ingest summary `{total, created, updated, failed, retryable}`, deletions
   summary `{total, deleted, deactivated, not_found, failed}`. No `warningCounts`.
-- D11. No stock ledger rows, no per-row audit beyond the generic SQLAlchemy audit listeners.
+- D11. No stock ledger rows, no per-row audit beyond the generic SQLAlchemy audit listeners. Superseded for ledger rows by D14.
   No Stock List xlsx on this path.
 - D12. SR5b DROPPED (owner ruling 25 Sep 2026, via the shared-service session). Stock Pull and the
   manual stock Excel import stay visible and working for every company; the owner does not use
   them on pushed companies. No `stock_pushed_at`, no mode read. Pull keeps its 409 `PUSH_ACTIVE`
   handling unchanged.
+
+- D13. Follow-up fix (small fix track, 26 Sep 2026): the chatbot stock "Data last updated"
+  footer read only the system-wide last BULK_IMPORT, and a push writes no ledger row (D11) and
+  skips `updated_at` on an unchanged value, so it never moved. Every non-dry batch with at least
+  one accepted record (ingest `created`/`updated`, deletions `deleted`) now stamps
+  `companies.stock_push_confirmed_at` (migration sb3), and `StockService.list_stock` stamps each
+  row with its own company's latest of (last BULK_IMPORT, last push batch).
+  Tests: `tests/test_stock_last_updated_push.py`.
+
+- D14. Fix round 2 (26 Sep 2026, owner: "i don't see any log from ledger side also"): a push
+  that CHANGES a quantity writes one Stock Ledger row, `transaction_type = AUTOCOUNT_PUSH`,
+  previous/new/change, `created_by` = the integration's act-as user, `reference_type =
+  autocount_push`, `reference_id` = the record's `source_ref`. A new pair counts from 0 (no row
+  when it lands at 0, the BULK_IMPORT rule), a deletion zeroing counts down to 0, an unchanged
+  value writes nothing, a dry run or a rolled-back record writes nothing. The Stock Ledger
+  screen's Type column labels it "AutoCount push" and its Type filter is a dropdown offering it.
+  "Data last updated" is unchanged from D13: it does not read AUTOCOUNT_PUSH rows, because every
+  batch that writes one also stamps `stock_push_confirmed_at` in the same transaction, at least
+  as late, and the stamp also covers the unchanged batches that write no row. Tests:
+  `tests/test_stock_push_ledger.py`, `StockLedgerList.test.tsx`.
 
 ## Slices
 
