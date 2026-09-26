@@ -5,7 +5,7 @@ Status: draft, round 4 (26 Sep 2026). The owner's answers to round 2's Q1 to Q5 
 R4 carries an "Owner ruling 26 Sep 07:16 Q<n>" line per answer, reconciles round 3 (which was
 written before these answers: the WhatsApp file rule, the scheduled sends, the module), the
 reconciled slice list with parallel lanes (R4.5) and the open questions Q6 to Q8 plus Q9 (R4.6),
-posted on PR #1269 as the "Round 4" comment. Round 1 to 3 text is kept; a "Round 4:" note marks
+posted on PR #1269 as comment 5844247992 ("Round 4"). Round 1 to 3 text is kept; a "Round 4:" note marks
 each place a ruling changes. Track per slice unchanged (R4.5). Nothing built.
 
 Round 3 status line, kept: draft, round 3 (26 Sep 2026). The owner's grill answers (PR #1269 comment 5844136277,
