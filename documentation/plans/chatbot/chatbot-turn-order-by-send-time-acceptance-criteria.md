@@ -34,8 +34,10 @@ Plan: `PLAN-chatbot-turn-order-by-send-time.md`. Tests:
 - AC-12 Contact isolation: a turn never claims or answers another contact's queued row or
   ledger photo. `T::TestContactIsolation::*` (2)
 - AC-13 Bounded per turn: at most 2 earlier messages, and the media waits stay below n8n's 90 s
-  timeout; the rest are left to their own deliveries and this turn's trace says so.
-  `T::TestPreStepBounds::*` (2)
+  timeout; the rest are left to their own deliveries and this turn's trace says so. A ledger
+  photo over the media budget is skipped and the take goes on; a queued row over it ends the
+  take (review round 4, S1). `T::TestPreStepBounds::*` (2), `T::TestWithinBounds::*` (2),
+  `T::TestReviewRound3::test_a_ledger_photo_over_the_media_budget_does_not_hold_back_a_later_known_text`
 - AC-14 A ledger photo whose extraction fails or outlives the wait is not answered ahead: no
   turn row, nothing sent for it, only this turn's reply.
   `T::TestLedgerPhotoNotReadWhileAnsweredAhead::*` (2)
@@ -51,7 +53,11 @@ Plan: `PLAN-chatbot-turn-order-by-send-time.md`. Tests:
 - AC-18 A wait on an earlier photo's job that raises leaves that photo alone; an earlier message
   already answered keeps its reply and this turn still answers, with no generic error.
   `T::TestReviewRound3::test_a_raising_wait_on_the_ledger_job_leaves_the_photo_and_keeps_the_rest`
-- AC-19 A photo still being read when the wait ends ends the take: a text sent after it stays
-  queued for its own request. A failed photo does not hold back the later text.
-  `T::TestReviewRound3::test_a_photo_that_outlives_the_wait_ends_the_take`,
+- AC-19 (inverted in review round 4, S1) A ledger photo that is not read (still being read
+  when the wait ends, the wait raised, or its extraction failed) never holds back a known text
+  sent after it: that text is still answered ahead of this turn, in send order, and only the
+  photo is left to its own delivery. The queued text in these tests is inserted after this
+  turn's row, as the FIFO ticket requires (review round 4, N1).
+  `T::TestReviewRound3::test_a_photo_still_being_read_is_left_and_a_later_known_text_is_still_answered_ahead`,
+  `T::TestReviewRound3::test_a_raising_wait_on_a_photo_does_not_hold_back_a_later_known_text`,
   `T::TestReviewRound3::test_a_failed_photo_does_not_hold_back_a_later_text`

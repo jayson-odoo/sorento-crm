@@ -1,6 +1,6 @@
 # PLAN: a contact's turns are answered in WhatsApp send order, not arrival order
 
-Status: implemented, fix lane round 3 done (reviewer B1, S1, S2, N1, N2 of the 57c0c9f7 pass), awaiting review. Track: feature by line count (product code is ~480 lines
+Status: implemented, fix lane round 4 done (reviewer S1, N1 of the 680e23e8 pass), awaiting review. Track: feature by line count (product code is ~480 lines
 including docstrings, over the ~300 small-fix line), otherwise small-fix shaped: no migration,
 no auth / RBAC change, no new ingest surface, no frontend. One lane, one PR.
 UAC: `chatbot-turn-order-by-send-time-acceptance-criteria.md`.
@@ -64,8 +64,9 @@ filtered to this contact, so one customer's turn never answers another's message
 Bounded per turn, by counts and the existing per-item wait (review round 2, S1): at most 2
 earlier messages (`send_order.MAX_EARLIER_PER_TURN`), and the worst-case media waits taken on,
 this turn's own included, stay below n8n's 90 s `chat-turn` timeout (below
-`chatbot_turn_wait_seconds` when turns are offloaded). The first message that does not fit ends
-the take; it and everything after it go to their own deliveries. This turn's `received` trace
+`chatbot_turn_wait_seconds` when turns are offloaded). A queued row that does not fit ends the
+take; it and everything after it go to their own deliveries. A ledger photo that does not fit
+is only skipped, and the take goes on (review round 4, S1): see the next paragraph for why. This turn's `received` trace
 record says how many were answered ahead, how many were left, and which bound left them.
 
 A ledger photo is answered ahead only once it has been READ (review round 2, S2): the pre-step
@@ -73,9 +74,11 @@ first takes the existing bounded wait on its job, and a job that fails or outliv
 left alone, with no turn row and nothing sent. n8n's own `media-route` reply arm owns that
 outcome today, so the customer never gets two messages, and a later delivery of the photo runs
 as its own turn. A wait that raises (a DB blip on a poll) counts as not read (review round 3,
-S1). A photo still being read when the wait ends will run later as its own turn, so it ends the
-take like any other bound: nothing sent after it is answered ahead of it (review round 3, S2).
-A failed photo does not: n8n answers it on its reply arm and it never reaches `/chat/turn`. The row answered ahead records the message whose response carried it
+S1). A photo that is not read (failed, still being read when the wait ends, or the wait raised)
+never ends the take (review round 4, S1, reversing round 3's S2): a ledger-only photo reaches
+`/chat/turn` after every queued row, or never (n8n answers it on its reply arm), so stopping at
+it would put a known, earlier-sent text behind this turn and gain the photo nothing. It is
+counted as left and the pre-step goes on to the next earlier message. The row answered ahead records the message whose response carried it
 (`answered_ahead_by_message` in its first trace record's facts, the carrying turn id in `raw`).
 
 Not covered, and accepted:
