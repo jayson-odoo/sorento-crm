@@ -793,6 +793,20 @@ def test_ac24_verify_success_returns_login_shape_and_mints_session(rate_limit_cl
             assert user.phone_verified_at is not None
             assert user.last_sign_in_at is not None
 
+            # Kill-test finding (captain, S1 security round): a successful
+            # verify must actually CONSUME the row, not just answer 200 -
+            # asserted directly here rather than only inferred from the
+            # "reused" check below, which (see the next test) can pass for
+            # the wrong reason once the Redis marker is gone.
+            otp = (
+                db.query(PortalOtpCode)
+                .filter(PortalOtpCode.contact_id == contact.id)
+                .order_by(PortalOtpCode.created_at.desc())
+                .first()
+            )
+            assert otp is not None
+            assert otp.consumed_at is not None
+
             reused = client.post(
                 "/api/v1/auth/phone/verify", json={"phone": digits, "code": code}
             )
@@ -803,6 +817,50 @@ def test_ac24_verify_success_returns_login_shape_and_mints_session(rate_limit_cl
                 headers={"Authorization": f"Bearer {body['token']}"},
             )
             assert sessions_resp.status_code == 200, sessions_resp.text
+
+
+def test_ac24_consumed_code_is_refused_even_with_a_fresh_request_marker(rate_limit_cleanup):
+    """Kill-test finding (captain, S1 security round): mutating out the
+    consumption logic in `attempt_verify`/`PortalService.reserve_attempt`
+    left `test_ac24_verify_success_returns_login_shape_and_mints_session`'s
+    own "reused" check green, because that check's second verify call hits
+    CODE_EXPIRED (the Redis request marker was cleared by the FIRST success)
+    before the code is ever compared - it never actually exercises the
+    `consumed_at` guard. This test restores the "a code was requested"
+    marker directly (no new code, exactly what a real fresh request-code
+    would leave behind) so the SAME already-consumed code has to be refused
+    by the DB check, not by an absent marker.
+    """
+    from app.services import phone_signin_service as svc
+
+    with blank_session() as db:
+        ws, contact, user, digits = _eligible_chain(db)
+        rate_limit_cleanup.append(digits)
+        with _phone_client(db) as client:
+            with patch("app.services.queue_service.enqueue_job"):
+                client.post("/api/v1/auth/phone/request-code", json={"phone": digits})
+            code = _seed_signin_code(db, contact)
+
+            first = client.post(
+                "/api/v1/auth/phone/verify", json={"phone": digits, "code": code}
+            )
+            assert first.status_code == 200, first.text
+
+            otp = (
+                db.query(PortalOtpCode)
+                .filter(PortalOtpCode.contact_id == contact.id)
+                .order_by(PortalOtpCode.created_at.desc())
+                .first()
+            )
+            assert otp is not None and otp.consumed_at is not None
+
+            svc.mark_code_requested(digits)
+
+            reused = client.post(
+                "/api/v1/auth/phone/verify", json={"phone": digits, "code": code}
+            )
+            assert reused.status_code != 200, reused.text
+            assert reused.json().get("code") != "CODE_EXPIRED", reused.json()
 
 
 # --------------------------------------------------------------------------- #
