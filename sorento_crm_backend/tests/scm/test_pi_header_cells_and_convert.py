@@ -20,7 +20,9 @@ import re
 import uuid
 from datetime import date
 from decimal import Decimal
+from io import BytesIO
 
+import openpyxl
 from fastapi.testclient import TestClient
 from sqlalchemy import event, text
 
@@ -834,6 +836,48 @@ def test_E1_export_endpoint_creates_download_row_and_lists_it(scm_app, monkeypat
     assert body["id"] in ids, ids
 
 
+def _xlsx_content_snapshot(data: bytes) -> dict:
+    """Every cell value/formula, number format, font, alignment, merged range, row
+    height and column width `to_xlsx` renders - everything E2 needs to prove the task's
+    render matches the sync export.
+
+    Issue #1255: comparing the two RAW byte strings flaked whenever the two renders
+    straddled a second boundary, because openpyxl stamps `docProps/core.xml`'s
+    created/modified timestamps at one-second resolution and each render gets its own.
+    The repo has no freezegun dependency and no existing clock-freeze test helper, so
+    this compares by rendered content instead - which is what "same export" actually
+    means - rather than pinning the clock for two renders that already run
+    back-to-back inside one test.
+    """
+    wb = openpyxl.load_workbook(BytesIO(data))
+    sheets = {}
+    for ws in wb.worksheets:
+        cells = {}
+        for row in ws.iter_rows():
+            for cell in row:
+                if cell.value is None:
+                    continue
+                font = cell.font
+                alignment = cell.alignment
+                cells[cell.coordinate] = (
+                    cell.value,
+                    cell.number_format,
+                    (font.name, font.size, font.bold, font.color.rgb if font.color else None),
+                    (alignment.horizontal, alignment.vertical, alignment.wrap_text),
+                )
+        sheets[ws.title] = {
+            "cells": cells,
+            "merged_cells": sorted(str(r) for r in ws.merged_cells.ranges),
+            "row_heights": {
+                r: d.height for r, d in ws.row_dimensions.items() if d.height is not None
+            },
+            "column_widths": {
+                c: d.width for c, d in ws.column_dimensions.items() if d.width is not None
+            },
+        }
+    return sheets
+
+
 def test_E2_generate_packing_list_xlsx_task_renders_same_bytes_and_marks_ready(scm_app, monkeypatch):
     """AC-D2: the RQ task renders the SAME workbook bytes the existing synchronous export
     (`consolidated_packing_list.to_xlsx`) produces for the same shipment, and marks the
@@ -889,7 +933,11 @@ def test_E2_generate_packing_list_xlsx_task_renders_same_bytes_and_marks_ready(s
     result = export_tasks.generate_packing_list_xlsx(str(dl.id), str(shipment.id))
 
     assert result["status"] == "ready", result
-    assert backend.uploaded == expected_bytes, "rendered bytes must match the sync export"
+    assert backend.uploaded is not None, "no bytes were uploaded"
+    # Compared by rendered CONTENT rather than raw bytes - see `_xlsx_content_snapshot`.
+    assert _xlsx_content_snapshot(backend.uploaded) == _xlsx_content_snapshot(expected_bytes), (
+        "rendered workbook content must match the sync export"
+    )
     row = DownloadService(db).get(str(dl.id))
     assert row.status == "ready", row.status
     assert row.storage_key, "no storage_key was written"

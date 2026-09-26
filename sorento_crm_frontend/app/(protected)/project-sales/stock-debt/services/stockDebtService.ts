@@ -133,8 +133,9 @@
  *         `user_downloads` row; `generate_stock_debt_xlsx` runs on the `imports`
  *         queue and the workbook is fetched later from My Downloads, once the
  *         worker marks the row ready. Same pipeline as the low stock report
- *         (`exportLowStockReport` in `summaryOrderService.ts`), a different route
- *         because this screen has its own filters and its own `split`, not a
+ *         (`exportLowStockReport` in `scm/low-stock-report/services/
+ *         lowStockReportService.ts`), a different route because this screen has
+ *         its own filters and its own `split`, not a
  *         `run_id` off a reorder run.
  *      -> 422 above `MAX_LOW_STOCK_ROWS` rows, same reason and same cap as the
  *         low stock report; nothing is written.
@@ -264,7 +265,7 @@ export async function getStockDebtCell(
 /**
  * Starts the workbook export through My Downloads (R10/R12, AC-12 to AC-18, AC-33/AC-34).
  * Returns a `MyDownload` row shaped exactly like the low stock report's
- * (`exportLowStockReport` in `summaryOrderService.ts`) so the same drawer / toast plumbing
+ * (`exportLowStockReport` in `scm/low-stock-report/services/lowStockReportService.ts`) so the same drawer / toast plumbing
  * serves both.
  */
 export async function exportStockDebt(params: StockDebtExportParams): Promise<MyDownload> {

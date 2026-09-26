@@ -87,3 +87,14 @@ export async function fetchDownloadUrl(
 export function downloadFilePath(id: string): string {
   return `/api/v1/downloads/${id}/file`;
 }
+
+/**
+ * The bytes of a ready download, read same-origin (`downloadFilePath`), for a page that saves
+ * the file itself once the worker has built it (PLAN-excel-preview-26sep S1: the low stock
+ * report). A 409 (not ready) or any other refusal throws the extracted message.
+ */
+export async function fetchDownloadFile(id: string): Promise<Blob> {
+  const res = await apiFetch(downloadFilePath(id));
+  if (!res.ok) throw new Error(await extractApiError(res, 'Could not read the file'));
+  return res.blob();
+}

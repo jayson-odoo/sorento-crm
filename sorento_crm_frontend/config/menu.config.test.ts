@@ -416,6 +416,8 @@ describe('menu.config - Procurement > Supply Chain sub-group (AC-A1)', () => {
     expect(supplyChain).toBeDefined();
     expect(supplyChain!.children!.map((item) => item.title)).toEqual([
       'Reorder Planning',
+      // No "Low stock report" (owner hand test 26 Sep, W5): it is opened from a plan,
+      // Reorder planning > Actions, never from the sidebar.
       // Moved from Supply Chain > Project Demand (PLAN-stock-debt-filters-totals-export-
       // 24sep.md, R6/AC-36): beside the rest of purchasing's worklists, right after
       // Reorder Planning, not under the board that decides.
@@ -430,6 +432,7 @@ describe('menu.config - Procurement > Supply Chain sub-group (AC-A1)', () => {
       permission: 'scm.reorder.run',
       moduleKey: 'scm',
     });
+    expect(JSON.stringify(MENU_SIDEBAR)).not.toContain('/scm/low-stock-report');
     expect(findLeaf(supplyChain!.children!, 'Stock Debt')).toMatchObject({
       path: '/project-sales/stock-debt',
       permission: 'projects.stock_debt.view',
