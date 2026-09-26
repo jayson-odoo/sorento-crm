@@ -225,6 +225,18 @@ const ALL_AGREE: Partial<DeliveryScheduleVersion> = {
   reconciliation: { reconciled_columns: 1, total_columns: 1 },
 };
 
+/** What the server answers once the flush valve's Area 3 cell is saved as 16: it adds up. */
+function flushValveFixed() {
+  return version({
+    products: version().products.map((product) =>
+      product.product_index === 1 ? { ...product, column_total: '16', reconciled: true } : product,
+    ),
+    cells: version().cells.map((cell) =>
+      cell.product_index === 1 ? { ...cell, qty: '16' } : cell,
+    ),
+  });
+}
+
 async function openAllRows() {
   fireEvent.click(await screen.findByRole('radio', { name: /^All rows/ }));
 }
@@ -759,8 +771,81 @@ describe('DeliveryScheduleReviewClient Need attention (S5-4)', () => {
     await screen.findByTestId('schedule-matrix');
 
     expect(screen.getByRole('radio', { name: 'Need attention (1)' })).toBeInTheDocument();
+    // The default view's ROWS follow the same rule as its count: the dismissed row is not in it.
+    expect(matrixRows()).toEqual([expect.stringContaining('BUI-HB-SRTWB7055')]);
     await openAllRows();
     expect(matrix().getByRole('button', { name: /^Dismissed, 2 on SRTFV1001/ })).toBeInTheDocument();
+  });
+
+  /**
+   * B1 (review of #1265): the default view used to rebuild its rows from the drafts on every
+   * keystroke, so the keystroke that made a row add up unmounted the input being typed into.
+   * An unmounted input never blurs, the save never went out, and the Confirm dialog then
+   * listed fewer columns than the server's confirm refuses.
+   */
+  it('keeps a row being typed into in the default Need attention view, and saves it', async () => {
+    saveDeliveryScheduleCells.mockImplementation(async () => flushValveFixed());
+    renderReview();
+    await screen.findByTestId('schedule-matrix');
+
+    const cell = matrix().getByLabelText('Area 3, SRTFV1001');
+    cell.focus();
+    fireEvent.change(cell, { target: { value: '16' } });
+
+    expect(cell).toBeInTheDocument();
+    expect(cell).toHaveFocus();
+    expect(matrixRows()).toEqual([
+      expect.stringContaining('SRTFV1001'),
+      expect.stringContaining('BUI-HB-SRTWB7055'),
+    ]);
+
+    fireEvent.blur(cell);
+    await waitFor(() =>
+      expect(saveDeliveryScheduleCells).toHaveBeenCalledWith('v2', [
+        { phase_id: 'ph2', product_id: 'p2', qty: '16' },
+      ]),
+    );
+
+    // The screen matches the server once the save lands: one column blocks, and the dialog
+    // names exactly that one.
+    await waitFor(() =>
+      expect(screen.getByRole('radio', { name: 'Need attention (1)' })).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByRole('button', { name: /^Confirm schedule$/ }));
+    const dialog = within(await screen.findByRole('dialog'));
+    expect(dialog.getByText('1 column does not add up yet.')).toBeInTheDocument();
+    expect(dialog.getByText('BUI-HB-SRTWB7055')).toBeInTheDocument();
+  });
+
+  it('keeps a row in Need attention when a keystroke turns its blocker into a warning', async () => {
+    renderReview();
+    await screen.findByTestId('schedule-matrix');
+
+    // First Backspace on 8: the column now totals nothing, a shortfall, which blocks nothing.
+    const cell = matrix().getByLabelText('Area 3, SRTFV1001');
+    fireEvent.change(cell, { target: { value: '' } });
+
+    expect(matrix().getByLabelText('Area 3, SRTFV1001')).toBe(cell);
+    fireEvent.change(cell, { target: { value: '16' } });
+    fireEvent.blur(cell);
+    await waitFor(() =>
+      expect(saveDeliveryScheduleCells).toHaveBeenCalledWith('v2', [
+        { phase_id: 'ph2', product_id: 'p2', qty: '16' },
+      ]),
+    );
+  });
+
+  it('lets a row that was fixed leave Need attention when the view is chosen again', async () => {
+    saveDeliveryScheduleCells.mockImplementation(async () => flushValveFixed());
+    renderReview();
+    await screen.findByTestId('schedule-matrix');
+
+    fireEvent.change(matrix().getByLabelText('Area 3, SRTFV1001'), { target: { value: '16' } });
+    fireEvent.blur(matrix().getByLabelText('Area 3, SRTFV1001'));
+    await openAllRows();
+    fireEvent.click(screen.getByRole('radio', { name: /^Need attention/ }));
+
+    expect(matrixRows()).toEqual([expect.stringContaining('BUI-HB-SRTWB7055')]);
   });
 
   it('says plainly when nothing needs attention (S5-6)', async () => {

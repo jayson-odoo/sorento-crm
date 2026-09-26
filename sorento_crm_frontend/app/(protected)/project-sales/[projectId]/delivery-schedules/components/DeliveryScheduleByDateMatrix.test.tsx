@@ -156,4 +156,26 @@ describe('DeliveryScheduleByDateMatrix', () => {
     const firstCell = within(p2Row as HTMLElement).getAllByRole('cell')[1];
     expect(firstCell.textContent?.trim()).toBe('');
   });
+
+  /**
+   * By date renders on every width, so at 375 the columns pinned to the left must leave the
+   * dates room to scroll into. The scroller is 341px wide there (375 less the page gutters);
+   * Product (240) plus a pinned Flag (190) was 430px and no date ever came into view.
+   * jsdom lays nothing out, so this reads the classes a phone width applies: an unprefixed
+   * `sticky` with an unprefixed `left-*` is pinned sideways at every width.
+   */
+  it('pins less than a 375 scroller is wide below md, so the dates can scroll into view', () => {
+    const columns = dateColumns({ phases, cells });
+    render(<DeliveryScheduleByDateMatrix controller={controller()} dateColumns={columns} />);
+
+    const grid = screen.getByTestId('schedule-by-date-matrix');
+    for (const row of Array.from(grid.querySelectorAll('tr'))) {
+      const pinnedWidth = Array.from(row.children)
+        .map((cell) => cell.className.split(/\s+/))
+        .filter((tokens) => tokens.includes('sticky') && tokens.some((t) => /^left-/.test(t)))
+        .map((tokens) => Number(tokens.find((t) => /^w-\[\d+px\]$/.test(t))?.slice(3, -3) ?? 0))
+        .reduce((sum, width) => sum + width, 0);
+      expect(pinnedWidth).toBeLessThanOrEqual(341);
+    }
+  });
 });
