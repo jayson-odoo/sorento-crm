@@ -119,6 +119,24 @@ TOOL_OPTIONAL_BODY_PARAMS: dict[str, tuple[str, ...]] = {
 }
 
 
+# Ported from PR #1118 (feat/chatbot-dealer-stock-verdict, not merged, owner ruling
+# 24 Sep 2026) for chatbot-stock-ask-v2 S3 parity. Query params whose value is a JSON
+# OBJECT, not a scalar. Generated as `dict[str, int] | str` instead of the
+# `_scalar_union` below, because FastMCP's `pre_parse_json`
+# (mcp/server/fastmcp/utilities/func_metadata.py) json.loads ANY string argument whose
+# declared annotation is not exactly `str` - so the compact JSON string the backend
+# route expects is turned into a native dict BEFORE Pydantic validation, and a
+# scalar-only union then rejects it ("Input should be a valid string ...
+# input_type=dict"). Both shapes therefore have to validate; `_normalize_query_value`
+# re-serializes a dict to the same compact JSON string on the way out, so the backend
+# keeps receiving its `Optional[str]` either way.
+TOOL_OBJECT_QUERY_PARAMS: dict[str, tuple[str, ...]] = {
+    # Chatbot stock ask v2 (ported from PR #1118): the per-product
+    # {product_id: quantity} map, parsed backend-side by `parse_requested_quantities`.
+    "crm_inventory_stock_balance_list": ("requested_quantities",),
+}
+
+
 TOOL_DEFAULT_QUERY_PARAMS: dict[str, dict[str, str]] = {
     # NOTE: promotions list intentionally has NO status/active default - the
     # backend owns the semantics (active-first, fallback to expired rows with
@@ -284,17 +302,24 @@ _PRODUCT_CODE_RESOLVABLE_TOOLS: set[str] = {
 def _normalize_query_value(value: Any) -> Any:
     """Coerce LLM-supplied query values.
 
-    Accepts str | int | float | bool | list[str] | None. Lists pass through so
-    httpx serializes them as repeated query params (?k=a&k=b), which FastAPI's
-    `List[str] = Query(...)` consumes natively. Numeric scalars are stringified
-    so httpx emits them verbatim. Booleans are stringified to lowercase so
-    FastAPI's bool parser (`true` / `false`) accepts them; the same coercion
-    applies to string "True" / "False" passed by older callers.
+    Accepts str | int | float | bool | list[str] | dict | None. Lists pass
+    through so httpx serializes them as repeated query params (?k=a&k=b), which
+    FastAPI's `List[str] = Query(...)` consumes natively. Numeric scalars are
+    stringified so httpx emits them verbatim. Booleans are stringified to
+    lowercase so FastAPI's bool parser (`true` / `false`) accepts them; the same
+    coercion applies to string "True" / "False" passed by older callers. A dict
+    (only reachable for a param declared in TOOL_OBJECT_QUERY_PARAMS, either
+    because the caller sent an object or because FastMCP's `pre_parse_json`
+    turned the caller's JSON string into one) is re-serialized to the same
+    compact, key-sorted JSON string the backend route parses. Ported from PR
+    #1118 (not merged) for chatbot-stock-ask-v2 S3 parity.
     """
     if value is None:
         return None
     if isinstance(value, bool):
         return "true" if value else "false"
+    if isinstance(value, dict):
+        return json.dumps(value, separators=(",", ":"), sort_keys=True)
     if isinstance(value, (int, float)):
         return str(value)
     if isinstance(value, list):
@@ -1646,8 +1671,23 @@ def _compile_tool(spec: ToolSpec):
     # type validation. `_normalize_query_value` + httpx serialize scalars to
     # str for the outbound HTTP query.
     _scalar_union = "str | int | float | bool | list[str]"
+    # Ported from PR #1118 (not merged): params declared as JSON objects take an
+    # object-first union instead, so the value survives FastMCP's `pre_parse_json`
+    # (see TOOL_OBJECT_QUERY_PARAMS).
+    _object_union = "dict[str, int] | str"
+    object_query_set = {
+        q for q in TOOL_OBJECT_QUERY_PARAMS.get(spec.name, ()) if q in qp_for_sig
+    }
+
+    def _union_for(q: str) -> str:
+        return _object_union if q in object_query_set else _scalar_union
+
     qp_sig = ", ".join(
-        (f"{q}: {_scalar_union}" if q in required_query_set else f"{q}: {_scalar_union} | None = None")
+        (
+            f"{q}: {_union_for(q)}"
+            if q in required_query_set
+            else f"{q}: {_union_for(q)} | None = None"
+        )
         for q in qp_for_sig
     )
     bp_sig = ", ".join(

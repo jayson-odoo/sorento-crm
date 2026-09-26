@@ -21,6 +21,7 @@ because they are about THIS feature's blocks: `_STOCK_HIDDEN_FIELDS` contains
 the policy blocks deletes the reply it was meant to protect.
 """
 import json
+import re
 
 import pytest
 
@@ -316,72 +317,105 @@ def _availability_payload(entries):
     }
 
 
-def _entry(code, *, needs_quantity=False, requested_qty=50, available=True):
+def _entry(
+    code,
+    *,
+    needs_quantity=False,
+    requested_qty=50,
+    branch="in_stock",
+    eta=None,
+    cap_unset=None,
+    category_name="Category",
+    packing_list=None,
+):
     return {
         "product_id": "33333333-3333-4333-8333-333333333333",
         "product_code": code,
         "product_name": code,
         "needs_quantity": needs_quantity,
         "requested_qty": requested_qty,
-        "available": available,
+        "branch": branch,
+        "cap_unset": cap_unset,
+        "category_name": category_name,
+        "eta": eta,
+        "packing_list": packing_list,
     }
 
 
 def test_render_availability_ask():
-    """D4. No number yet: the whole reply is the question. `fields` is empty and
-    stays empty - a dealer is told yes or no, never a quantity, so there is no
-    field for one to leak through."""
+    """No number yet: the whole reply is the question. `fields` is empty and
+    stays empty - a dealer is told a branch, never a quantity of ours, so there
+    is no field for one to leak through."""
     out = env(
         _availability_payload(
-            [_entry("SRTBF11201-NEW", needs_quantity=True, requested_qty=None, available=None)]
+            [_entry("SRTBF11201-NEW", needs_quantity=True, requested_qty=None, branch=None)]
         )
     )
 
     assert out["result_type"] == "stock_availability"
     assert out["intro"] == "How many units do you need?"
-    assert out["items"] == [
-        {
-            "title": "SRTBF11201-NEW",
-            "fields": [],
-            "flags": {"needs_quantity": True, "available": None},
-        }
-    ]
+    assert out["items"][0]["title"] == "SRTBF11201-NEW"
+    assert out["items"][0]["fields"] == []
+    assert out["items"][0]["flags"] == {"needs_quantity": True, "branch": None}
     assert out["has_result"] is True
 
 
 def test_render_availability_answer():
-    """D5. The two answers, in the exact words the dealer reads."""
-    yes = env(_availability_payload([_entry("SRTBF11201-NEW", available=True)]))
-    no = env(_availability_payload([_entry("SRTBF11201-NEW", available=False)]))
+    """Chatbot stock ask v2 S3 fix round 1, Blocking 1 (R6/R14, AC-SA313): once every
+    entry has a branch, the item title carries the whole per-product sentence and the
+    intro says nothing at all - a shared intro cannot be true for every entry at once,
+    and for `too_big` it would be a statement about our stock, which R6 B1 forbids."""
+    yes = env(_availability_payload([_entry("SRTBF11201-NEW", branch="in_stock")]))
+    no = env(_availability_payload([_entry("SRTBF11201-NEW", branch="too_big")]))
 
-    assert yes["intro"] == "Yes, we have stock."
-    assert yes["items"][0]["flags"] == {"needs_quantity": False, "available": True}
-    assert no["intro"] == "Sorry, we do not have enough stock for that quantity."
-    assert no["items"][0]["flags"] == {"needs_quantity": False, "available": False}
+    assert yes["intro"] == ""
+    assert yes["items"][0]["title"] == (
+        "SRTBF11201-NEW x 50: yes, we have stock, please refer to your salesman "
+        "to proceed."
+    )
+    assert yes["items"][0]["flags"] == {"needs_quantity": False, "branch": "in_stock"}
+    assert no["intro"] == ""
+    assert no["items"][0]["title"] == (
+        "SRTBF11201-NEW x 50: the quantity is more than what I can confirm here, "
+        "please refer to your salesman."
+    )
+    assert no["items"][0]["flags"] == {"needs_quantity": False, "branch": "too_big"}
 
 
-def test_render_availability_several_products_that_disagree():
-    """D5. Two products, one in stock and one not: a single yes or no would be a
-    lie about one of them, so the intro stops answering and the items carry
-    their own flags."""
+def test_render_availability_incoming_names_the_eta():
+    """AC-SA313: the `incoming` branch's line is the only one that carries a
+    date, and it is exactly `entry["eta"]` (already dd/mm/yyyy)."""
     out = env(
         _availability_payload(
-            [_entry("SRTBF11201-NEW", available=True), _entry("SRTWB7109", available=False)]
+            [_entry("SRTBF11201-NEW", branch="incoming", eta="19/10/2026")]
         )
     )
 
-    assert out["intro"] == "Here is the stock availability for the requested products."
-    assert [i["flags"]["available"] for i in out["items"]] == [True, False]
+    assert out["items"][0]["title"] == "SRTBF11201-NEW x 50: no stock at the moment, ETA 19/10/2026."
+
+
+def test_render_availability_several_products_that_disagree():
+    """Two products, one in stock and one not: a single yes or no would be a
+    lie about one of them, so the intro stays empty (Blocking 1) and the items
+    carry their own titles/flags, in asked order."""
+    out = env(
+        _availability_payload(
+            [_entry("SRTBF11201-NEW", branch="in_stock"), _entry("SRTWB7109", branch="no_incoming")]
+        )
+    )
+
+    assert out["intro"] == ""
+    assert [i["flags"]["branch"] for i in out["items"]] == ["in_stock", "no_incoming"]
 
 
 def test_render_availability_ask_wins_over_a_mixed_answer():
-    """D5. One product still missing its quantity means the turn is not an
+    """One product still missing its quantity means the turn is not an
     answer yet - ask, and say nothing about the other product."""
     out = env(
         _availability_payload(
             [
-                _entry("SRTBF11201-NEW", available=True),
-                _entry("SRTWB7109", needs_quantity=True, requested_qty=None, available=None),
+                _entry("SRTBF11201-NEW", branch="in_stock"),
+                _entry("SRTWB7109", needs_quantity=True, requested_qty=None, branch=None),
             ]
         )
     )
@@ -389,18 +423,24 @@ def test_render_availability_ask_wins_over_a_mixed_answer():
     assert out["intro"] == "How many units do you need?"
 
 
-def test_render_availability_carries_no_quantity_anywhere():
-    """D4. The point of the mode: walk the whole envelope and prove no number
-    from the stock table can be read out of it."""
-    out = env(_availability_payload([_entry("SRTBF11201-NEW", available=True)]))
+def test_render_availability_carries_no_stock_figure_of_ours():
+    """AC-SA312: the only digits in a rendered line are the dealer's own asked
+    quantity and the ETA date - never an on-hand/incoming figure. `fields` stays
+    empty on every entry (no location, no quantity of ours as a structured field)."""
+    out = env(
+        _availability_payload(
+            [_entry("SRT-ABC", branch="incoming", eta="19/10/2026", requested_qty=50)]
+        )
+    )
 
-    dumped = json.dumps(out)
     for item in out["items"]:
         assert item["fields"] == []
-    # `needs_quantity` is a boolean and stays; nothing counted in units does.
-    assert "on_hand" not in dumped
-    assert "requested_qty" not in dumped
-    assert "50" not in dumped
+    title = out["items"][0]["title"]
+    digits = re.findall(r"\d+", title)
+    # Q (50) and the three ETA components (19, 10, 2026) - nothing else. The
+    # product code is digit-free on purpose, so any other figure (an on-hand or
+    # incoming total) would show up here.
+    assert digits == ["50", "19", "10", "2026"]
 
 
 def test_render_availability_no_products_says_nothing_found():
@@ -449,13 +489,12 @@ def test_last_updated_at_survives_the_summary_modes():
 
 
 def test_sanitizer_keeps_the_availability_answer():
-    """`available` is in `_STOCK_HIDDEN_FIELDS` - it is a quantity-shaped word on
-    a stock ROW, where it means quantity_available and must never be shown. On
-    the availability block it is the entire answer, so the recursive strip would
-    delete the reply and every dealer would be told "no matching results"."""
-    out = sanitized(_availability_payload([_entry("SRTBF11201-NEW", available=True)]))
+    """The whole `stock_availability` block is held out of the stock-row
+    sanitizer (`_STOCK_POLICY_BLOCK_KEYS`) - it is the dealer's entire answer,
+    so a recursive strip built for a stock ROW must never take it apart."""
+    out = sanitized(_availability_payload([_entry("SRTBF11201-NEW", branch="in_stock")]))
 
-    assert out["stock_availability"][0]["available"] is True
+    assert out["stock_availability"][0]["branch"] == "in_stock"
     assert out["stock_availability"][0]["needs_quantity"] is False
 
 
@@ -526,12 +565,12 @@ def test_sanitized_availability_renders_end_to_end():
     out = json.loads(
         present_response(
             TOOL,
-            json.dumps(sanitized(_availability_payload([_entry("SRTBF11201-NEW", available=False)]))),
+            json.dumps(sanitized(_availability_payload([_entry("SRTBF11201-NEW", branch="too_big")]))),
         )
     )
 
-    assert out["intro"] == "Sorry, we do not have enough stock for that quantity."
-    assert out["items"][0]["flags"] == {"needs_quantity": False, "available": False}
+    assert out["intro"] == ""
+    assert out["items"][0]["flags"] == {"needs_quantity": False, "branch": "too_big"}
 
 
 # ------------------------------------- the escalation hint, before the render
@@ -574,7 +613,7 @@ async def test_a_summary_answer_is_not_treated_as_nothing_found(monkeypatch):
     """
     compact = await _attach(_compact_payload(), monkeypatch)
     availability = await _attach(
-        _availability_payload([_entry("SRTBF11201-NEW", available=True)]), monkeypatch
+        _availability_payload([_entry("SRTBF11201-NEW", branch="in_stock")]), monkeypatch
     )
 
     assert "suggested_escalation" not in compact

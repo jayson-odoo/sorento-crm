@@ -25,8 +25,10 @@ from dataclasses import replace
 from typing import Any
 
 from app.services.chatbot import contracts
+from app.services.chatbot.turn import task as task_mod
 from app.services.chatbot.turn.decide import (
     ANSWER,
+    CARRY,
     DOCUMENT_BY_SCOPE,
     NEW_ASK,
     OUTSTANDING_KINDS,
@@ -542,6 +544,29 @@ def _answer_pending(state: State, decision: Decision, trace: Trace):
         answered = _answer_outstanding(pending, decision, focus, trace)
         if answered is not None:
             return answered
+
+    if _stock_pick(pending):
+        # Owner ruling 26 Sep 2026 (hand test F1): "Couldn't find ELP3753. Did you mean
+        # ELP3754?" is a yes/no over its one option. A yes picks it (the carried quantity
+        # rides on the pick, `_spend_stock_pick`); a no refers the dealer to their
+        # salesman, with nothing left open - a dealer's stock ask is never escalated.
+        if decision.answers and decision.why == "affirmative" and len(pending.options) == 1:
+            decision = replace(decision, positions=(pending.options[0].get("position"),))
+            trace.rules_fired.append("stock_pick_yes")
+        elif not decision.positions and (
+            decision.declined or (decision.negated and not decision.entities)
+        ):
+            # A "no" that also names a position ("no, the 2nd one") is a pick, not a
+            # decline.
+            trace.rules_fired.append("stock_pick_declined")
+            trace.task_question = task_mod.REFER_TO_SALESMAN
+            focus.domains = ["inventory"]
+            return (
+                focus,
+                None,
+                Plan(domains=["inventory"], fetch=[], ask=None, denied=[], trace=trace),
+                False,
+            )
 
     if pending.kind in ESCALATION_OFFER_KINDS or _picks_a_member_option(pending, decision):
         # BEFORE the roster path: an accepted escalation offer is a handover, never a
@@ -1288,6 +1313,110 @@ def is_product_shaped_entity(entity: dict[str, Any]) -> bool:
 _REFUSES_EMPTY_SUBJECT: frozenset[str] = frozenset({"inventory"})
 
 
+# --------------------------------------------------------------------------- #
+# Ported from PR #1118 (feat/chatbot-dealer-stock-verdict, not merged, owner ruling
+# 24 Sep 2026) for chatbot-stock-ask-v2 S3: D29's exact-code narrowing and D13's
+# demand_qty normalisation. Neither is task-kind arbitration (they run whether or not
+# a task is open), so both stay in scope of the R1 port even though #1118's own
+# IdeationTask / task_pick tie is deliberately left out (see turn/task.py).
+# --------------------------------------------------------------------------- #
+
+
+def _stated_quantity(value: Any) -> int | None:
+    """A quantity the message stated, or None. Mirrors `turn/task.py::_number`."""
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str) and value.strip().lstrip("+").isdigit():
+        return int(value.strip())
+    return None
+
+
+def _row_codes(row: dict[str, Any]) -> set[str]:
+    out = set()
+    for name in ("canonical_code", "code", "raw"):
+        value = row.get(name)
+        if isinstance(value, str) and value.strip():
+            out.add(value.strip().casefold())
+    return out
+
+
+def _row_code(row: dict[str, Any]) -> str | None:
+    for name in ("canonical_code", "code"):
+        value = row.get(name)
+        if isinstance(value, str) and value.strip():
+            return value.strip().casefold()
+    return None
+
+
+def _in_family_of(row: dict[str, Any], code: str) -> bool:
+    """Is this resolved row the typed code itself, or one of the family the resolver
+    expanded it into? Prefix on the row's own code, case-blind."""
+    return any(
+        value == code or value.startswith(code) for value in _row_codes(row) if value
+    )
+
+
+def _exact_code_when_a_quantity_is_named(plan: Plan, verdict: dict[str, Any], trace: Trace) -> None:
+    """D29 (#1118 review round 6 finding C, re-ruled in round 7): an inventory entity
+    that CARRIES A QUANTITY fetches its exact code and nothing else.
+
+    "stock for CB313 1200?" is one literal product code with one number attached to
+    it. The resolver groups product families, so it placed CB313, CB313A-NL, CB313-NL
+    and CB313-L - the reply then verdicted a product the dealer had asked about and
+    ASKED for quantities on three they had never mentioned. A quantity is stated about
+    a product, so it settles which product was meant.
+
+    Deliberately policy-blind, and deliberately not just the dealer's: a staff caller
+    typing a quantity beside a family-grouped code gets the exact code too. That is
+    the cost of one rule instead of two that could disagree, and the caller who wants
+    the family asks for it without a number.
+
+    An entity with NO quantity keeps today's expansion for everybody ("stock for
+    CB313?" still lists the family, and the stock task then collects a quantity per
+    product). When the typed token matches no exact code at all - a family PREFIX
+    that is not a product of its own - there is nothing to narrow to and the family
+    stands.
+
+    Review round 8: a candidate row does NOT carry the token the customer typed.
+    `turn_runtime.candidates_by_kind` builds every row as `{"raw": code,
+    "canonical_code": code, ...}` off the resolver's own match, so the family is
+    recognised by the only link the rows still have to each other - the typed code is
+    a PREFIX of its siblings (CB313 -> CB313A-NL / CB313-NL / CB313-L).
+    """
+    wanted: set[str] = set()
+    for e in verdict.get("entities") or []:
+        if not isinstance(e, dict) or _stated_quantity(e.get("quantity")) is None:
+            continue
+        for name in ("canonical_code", "code", "raw"):
+            value = e.get(name)
+            if isinstance(value, str) and value.strip():
+                wanted.add(value.strip().casefold())
+    if not wanted:
+        return
+    for spec in plan.fetch:
+        if spec.domain != "inventory" or spec.filters.get("task") or not spec.entities:
+            continue
+        keep = list(spec.entities)
+        for code in wanted:
+            group = [row for row in keep if _in_family_of(row, code)]
+            exact = [row for row in group if _row_code(row) == code]
+            if not exact or len(exact) == len(group):
+                continue
+            # PR #1247 round 8, item 4 (owner rows 9 and 11): a sibling the message
+            # named with a quantity of its own is asked for, never dropped.
+            # "SRTWC286-SH-150 - 5" beside "SRTWC286-SH - 1" lost the first line.
+            dropped = {
+                id(row) for row in group if row not in exact and _row_code(row) not in wanted
+            }
+            if not dropped:
+                continue
+            keep = [row for row in keep if id(row) not in dropped]
+            trace.rules_fired.append("quantity_names_its_exact_code")
+        spec.entities = keep
+
+
 def _narrow_and_plan(
     focus: Focus,
     policy: Policy,
@@ -1297,6 +1426,7 @@ def _narrow_and_plan(
     attributes: tuple[str, ...] = (),
     candidates: dict[str, list[dict[str, Any]]] | None = None,
     unplaced: frozenset[str] | set[str] | None = None,
+    refuse_empty_subject: bool = False,
 ) -> Plan:
     denied: list[str] = []
     ask: Pending | None = None
@@ -1420,7 +1550,7 @@ def _narrow_and_plan(
             row = policy.domain(name)
             date_window = focus.date_window if row and row.takes_date_filter else None
             if (
-                len(domains) > 1
+                (len(domains) > 1 or refuse_empty_subject)
                 and not entities
                 and not filters
                 and not date_window
@@ -1434,6 +1564,16 @@ def _narrow_and_plan(
                 # broad (`_REFUSES_EMPTY_SUBJECT`'s own docstring); the OTHER domains
                 # this turn asked about (D5(b)'s own incoming/PO, allowed broad by
                 # main's design) still fetch normally.
+                #
+                # `refuse_empty_subject` (ported from PR #1118, not merged, review
+                # round 9 finding 4) is the OTHER way a fetch can end up with nothing
+                # to scope it by: a bare "60" typed after a task/carry that names no
+                # product and carries a quantity is not a subject, and an unscoped
+                # inventory fetch answered it with a catalogue page. D34 (round 11) is
+                # the same shape once more: "never mind the stock check" parses as a
+                # topic_reset with no entities at all, and closing the task is the
+                # whole turn - a cancel is not an ask. See `apply()`'s own
+                # `refuse_empty_subject=` call below for the two triggers.
                 #
                 # `len(domains) > 1` deliberately excludes a SINGLE-domain inventory
                 # ask with nothing to scope by (a "low stock report" with no
@@ -1457,6 +1597,705 @@ def _narrow_and_plan(
     return Plan(domains=list(domains), fetch=fetch, ask=ask, denied=denied, trace=trace)
 
 
+def _is_the_bare_quantity(entity: Any, bare: int) -> bool:
+    if not isinstance(entity, dict) or entity.get("confident") is not False:
+        return False
+    raw = entity.get("raw")
+    return isinstance(raw, str) and raw.strip().isdigit() and int(raw.strip()) == bare
+
+
+def _normalise_demand_qty(verdict: dict[str, Any]) -> None:
+    """D13, ported from PR #1118 (not merged), review round 9 (finding 5): one
+    statement, one shape.
+
+    The SAME sentence can parse two ways one turn apart - "CB313 1200" puts the
+    number on `entities[].quantity`, "CB313 361" puts it on the top-level
+    `demand_qty`. Every rule that reads a quantity then has to know about both
+    fields, and one that did not - D29's exact-code narrowing - fetched the whole
+    product family again on the second shape.
+
+    With exactly ONE product code named, the top-level number can only be that
+    product's, so it is written onto the entity HERE, before the task step, the focus
+    rules, the narrowing or the fetch read anything. Two codes and it belongs to
+    neither (the boundary `StockQtyTask.fill`'s own single-slot fallback keeps for the
+    same reason). The entity dicts are the ones `turn_runtime.lane_parse_output`
+    carries to the fetch, which is why this is the one place it has to happen.
+    """
+    bare = _stated_quantity(verdict.get("demand_qty"))
+    if bare is None:
+        return
+    raw_entities = verdict.get("entities")
+    if isinstance(raw_entities, list):
+        # Owner hand test 26 Sep, slice 5 (T8): "how about 100?" parsed as demand_qty
+        # 100 AND a product entity "100" the parser was not confident of, and the spec
+        # tier then matched four products to it. A not-confident entity that is only
+        # the digits of this message's own quantity IS that quantity, not a product.
+        kept = [e for e in raw_entities if not _is_the_bare_quantity(e, bare)]
+        if len(kept) != len(raw_entities):
+            verdict["entities"] = kept
+    products = [
+        e
+        for e in (verdict.get("entities") or [])
+        if isinstance(e, dict) and e.get("hint") == "product"
+    ]
+    if not products:
+        return
+    # "Exactly one code" counts CODES, not rows: the same code named once is one
+    # product, and a code that resolves to two company rows is still one product to
+    # this reader.
+    code_sets = {frozenset(_row_codes(e)) for e in products}
+    if len(code_sets) != 1 or not next(iter(code_sets)):
+        return
+    if any(_stated_quantity(e.get("quantity")) is not None for e in products):
+        # The parser said it per entity; that is already the shape everything reads.
+        return
+    for e in products:
+        e["quantity"] = bare
+
+
+def _did_you_mean_keeps_quantity(focus: Focus, verdict: dict[str, Any], trace: Trace) -> None:
+    """Owner hand test 26 Sep, slice 6 (T15 -> T16): "ELP3753 10" missed and the reply
+    offered ELP3754; the dealer typed "ELP3754" back and lost the 10, because the fetch
+    reads only this message's quantities. The miss is still on the focus - a product
+    row the resolver never placed (no uuid) carrying the quantity it was asked with -
+    so a message that names exactly one product and states no quantity of its own is
+    that ask, retried: the quantity is copied onto the entity, before the task step, the
+    narrowing or the fetch read anything (the same seam D13 writes at)."""
+    if _stated_quantity(verdict.get("demand_qty")) is not None:
+        return
+    named = [
+        e
+        for e in verdict.get("entities") or []
+        if isinstance(e, dict)
+        and e.get("current_message") is True
+        and e.get("hint") in (None, "product")
+    ]
+    if len(named) != 1 or _stated_quantity(named[0].get("quantity")) is not None:
+        return
+    missed = {
+        _stated_quantity(row.get("quantity"))
+        for row in (focus.products or [])
+        if isinstance(row, dict)
+        and not row.get("uuid")
+        and _stated_quantity(row.get("quantity")) is not None
+    }
+    if len(missed) != 1:
+        return
+    named[0]["quantity"] = next(iter(missed))
+    trace.rules_fired.append("did_you_mean_keeps_quantity")
+
+
+def _stock_task_owed_a_number(focus: Focus) -> Any:
+    """The stock check a bare number is for, or None: one still asking its quantities
+    (any number of products - round 6, "one number like 10 to apply to all"), or a
+    one-product check just answered (the number revises it, round 5)."""
+    for task in focus.tasks or ():
+        if task.kind != "stock_qty":
+            continue
+        if task.status == task_mod.OPEN and task.slots:
+            return task
+        if task.status == task_mod.ANSWERED and len(task.slots) == 1:
+            return task
+    return None
+
+
+def _lone_position(verdict: dict[str, Any]) -> int | None:
+    """The one position this message names and nothing else beside it: no quantity, no
+    product of its own, no proceed and no reset."""
+    raw = verdict.get("reference_positions")
+    positions = [
+        int(p) for p in (raw if isinstance(raw, list) else [])
+        if isinstance(p, (int, float)) and not isinstance(p, bool)
+    ]
+    if len(positions) != 1 or positions[0] < 1:
+        return None
+    if (
+        _message_states_a_quantity(verdict)
+        or _names_a_product(verdict)
+        or verdict.get("proceed_anyway") is True
+        or verdict.get("topic_reset") is True
+    ):
+        return None
+    return positions[0]
+
+
+def _bare_position_is_the_quantity(state: State, verdict: dict[str, Any], trace: Trace) -> None:
+    """Owner ruling 26 Sep 2026 (round 3 hand test, ruling 2): once the which-one pick is
+    spent and the stock check is about one product, a bare number is that product's
+    quantity (round 6: over the point-form question for several products it is every
+    product's, and "10" is never its tenth line) - a revision when it was already answered ("2" after SRTWC286-SH x 10 is
+    SRTWC286-SH x 2), the answer when it is still asked. Never a pick from the old list:
+    the picker is not sticky (owner ruling 26 Sep ~08:25Z, round 5), so once one product
+    is picked the list is closed and forgotten, and a "no" beside the number ("no, 2")
+    reopens nothing. A new "check stock <code>" starts a new pick.
+
+    The live parser read "2" as `reference_positions: [2]` (the list is still in the
+    conversation), and with no open question a position answers nothing: the turn fell
+    through as a CARRY, re-fetched the carried product with no quantity, and the stock
+    tool asked "How many units of SRTWC286-SH?" again. Written onto `demand_qty` here,
+    before any reader, the same way `_normalise_demand_qty` settles its own two shapes.
+    """
+    if state.pending is not None:
+        return
+    if _stock_task_owed_a_number(state.focus) is None:
+        return
+    position = _lone_position(verdict)
+    if position is None:
+        return
+    verdict["demand_qty"] = position
+    verdict["reference_positions"] = []
+    trace.rules_fired.append("bare_number_is_the_quantity")
+
+
+def _open_point_form_task(focus: Focus) -> Any:
+    """The stock check still asking its point-form question (two or more lines), or
+    None."""
+    for task in focus.tasks or ():
+        if task.kind == "stock_qty" and task.status == task_mod.OPEN and len(task.slots) > 1:
+            return task
+    return None
+
+
+def _codes_named(entity: dict[str, Any]) -> set[str]:
+    return {
+        value.strip().casefold()
+        for value in (entity.get("canonical_code"), entity.get("raw"), entity.get("uuid"))
+        if isinstance(value, str) and value.strip()
+    }
+
+
+def _line_number(entity: dict[str, Any]) -> int | None:
+    """The line number an entity carries as its whole text ("1", "2.", "3)"), or None.
+    A structured field of the parser's answer, not the message."""
+    for name in ("raw", "canonical_code"):
+        value = entity.get(name)
+        if isinstance(value, str):
+            digits = value.strip().rstrip(".)").strip()
+            if digits.isascii() and digits.isdigit() and len(digits) <= 2:
+                return int(digits)
+    return None
+
+
+def _numbered_lines_are_the_products(state: State, verdict: dict[str, Any], trace: Trace) -> None:
+    """PR #1247 round 7 (W2): a numbered-lines reply ("1. 10, 2. 5") to the open
+    point-form question, as the PARSER read it, is those lines' products at those
+    quantities. Round 6 read the lines off the message's shape with no parser; the owner
+    dropped that (26 Sep ~08:33Z, every message goes through the parser), so this maps
+    the parser's own reading onto the question's lines. Two readings are mapped:
+
+    * the entities keep the dealer's line numbers as their text (raw "1", quantity 10);
+    * the line numbers came back as `reference_positions` [1, 2], beside as many
+      entities that carry the quantities and name no product of the list.
+
+    An entity that names a product of the list is already that line and is left as it
+    is (`StockQtyTask.fill` matches it by code). A line number off the list maps
+    nothing, and then nothing in this message is rewritten.
+    """
+    if state.pending is not None:
+        return
+    task = _open_point_form_task(state.focus)
+    if task is None:
+        return
+    slots = list(task.slots)
+    known = {
+        value.strip().casefold()
+        for slot in slots
+        for value in (slot.key, slot.label)
+        if isinstance(value, str) and value.strip()
+    }
+    unnamed = [
+        entity
+        for entity in verdict.get("entities") or []
+        if isinstance(entity, dict)
+        and _stated_quantity(entity.get("quantity")) is not None
+        and not (_codes_named(entity) & known)
+    ]
+    if not unnamed:
+        return
+    raw_positions = verdict.get("reference_positions")
+    positions = [
+        int(p) for p in (raw_positions if isinstance(raw_positions, list) else [])
+        if isinstance(p, (int, float)) and not isinstance(p, bool)
+    ]
+    if positions and len(positions) == len(unnamed):
+        pairs = list(zip(positions, unnamed))
+    else:
+        pairs = [(_line_number(entity), entity) for entity in unnamed]
+    if any(line is None or not 1 <= line <= len(slots) for line, _ in pairs):
+        return
+    if len({line for line, _ in pairs}) != len(pairs):
+        return
+    for line, entity in pairs:
+        label = slots[line - 1].label
+        entity.update(raw=label, canonical_code=label, hint="product", current_message=True)
+    if positions:
+        verdict["reference_positions"] = []
+    trace.rules_fired.append("numbered_lines_are_the_products")
+
+
+#: The parser's declared answer to the `Open question:` object (PR #1247 round 8).
+OPEN_QUESTION_ANSWER = "open_question_answer"
+#: The per-option quantities a declared pick stated, on the stock pick's payload, keyed
+#: by the option's code (casefolded) - round 9, "the first 2 and the second 5".
+STOCK_QTY_BY_CODE = "stock_qty_by_code"
+
+
+def _open_question_task(focus: Focus) -> Any:
+    """The stock check the `Open question:` object states: still asking, or just
+    answered (`task.open_question` picks the same one)."""
+    for task in focus.tasks or ():
+        # A parked check is not the question on the table (review S3): "ok that's all"
+        # under another subject must not answer it.
+        if task.kind == "stock_qty" and task.slots and task.status in (
+            task_mod.OPEN,
+            task_mod.ANSWERED,
+        ):
+            return task
+    return None
+
+
+def _placed_line(item: dict[str, Any], slots: list[Any]) -> int | None:
+    """The line an answer item is for: its code (case-blind), else its position."""
+    code = item.get("code")
+    if isinstance(code, str) and code.strip():
+        wanted = code.strip().casefold()
+        for index, slot in enumerate(slots):
+            if wanted in {str(slot.label).strip().casefold(), str(slot.key).strip().casefold()}:
+                return index
+    position = item.get("position")
+    if isinstance(position, (int, float)) and not isinstance(position, bool):
+        if 1 <= int(position) <= len(slots):
+            return int(position) - 1
+    return None
+
+
+def _positive(value: Any) -> int | None:
+    """A declared quantity the stock tool can be sent: a whole number above zero."""
+    quantity = _stated_quantity(value)
+    return quantity if quantity is not None and quantity > 0 else None
+
+
+def _take_asked_quantity(state: State) -> tuple[State, int | None]:
+    """The number "Is 10 for all 3 products, or for one of them?" asked about, taken
+    off the task: it answers the ONE next turn or is forgotten (review S1)."""
+    tasks = tuple(state.focus.tasks or ())
+    asked = next((t.asked_qty for t in tasks if t.asked_qty is not None), None)
+    if asked is None:
+        return state, None
+    cleared = tuple(replace(t, asked_qty=None) for t in tasks)
+    return replace(state, focus=replace(state.focus, tasks=cleared)), asked
+
+
+def _asked_quantity_placed(
+    state: State, verdict: dict[str, Any], trace: Trace, asked: int | None
+) -> None:
+    """The fallback half of the row 12 clarify: "2" after "Is 10 for all 3 products,
+    or for one of them?" is line 2 at 10, never 2 units (review S1). The parser's own
+    `open_question_answer` is read first; this runs only when it declared nothing."""
+    if asked is None or state.pending is not None:
+        return
+    task = _open_question_task(state.focus)
+    if task is None or task.status != task_mod.ANSWERED:
+        return
+    position = _lone_position(verdict)
+    if position is None:
+        bare = _stated_quantity(verdict.get("demand_qty"))
+        position = bare if not _names_a_product(verdict) else None
+    if position is None or not 1 <= position <= len(task.slots):
+        return
+    verdict[task_mod.SLOT_QUANTITIES] = {task.slots[position - 1].key: asked}
+    verdict["demand_qty"] = None
+    verdict["reference_positions"] = []
+    trace.rules_fired.append("asked_quantity_placed")
+
+
+def _open_question_answer(
+    state: State, verdict: dict[str, Any], trace: Trace, asked: int | None = None
+) -> bool:
+    """PR #1247 round 8 (owner console test of round 7, 26 Sep 2026): the parser's own
+    `open_question_answer` drives the stock question, before any shape rule.
+
+    * fill: the items' quantities go on their lines (by code, else by position); lines
+      still owed are asked again ("10 / 20 / 30 / 40 / 5" fills lines 1 to 5).
+    * done: the same, then answer NOW with what is filled; owed lines are skipped and
+      named as not checked (the list pasted back with blanks, "that's it", "itu saja").
+    * all: `qty_for_all` on every line of the list ("3 for all of them"), asked or just
+      answered.
+    * cancel: the question is dropped.
+
+    Written onto the verdict as the fields the task step already reads
+    (`SLOT_QUANTITIES`, `proceed_anyway`, `topic_reset`), so nothing downstream learns a
+    second shape. Returns False, and touches nothing, when the object is absent, mode
+    null, or not usable (an item that places on no line, two on one line, "all" with no
+    number): then the shape rules run as the fallback. Nothing here reads a word.
+
+    `asked` is the number the row 12 clarify asked about: "all" with no number of its
+    own gives every line that number.
+    """
+    answer = verdict.get(OPEN_QUESTION_ANSWER)
+    if not isinstance(answer, dict) or state.pending is not None:
+        return False
+    mode = answer.get("mode")
+    if mode not in ("fill", "all", "done", "cancel"):
+        return False
+    task = _open_question_task(state.focus)
+    if task is None:
+        return False
+    slots = list(task.slots)
+    answered = task.status == task_mod.ANSWERED
+    quantities: dict[str, int] = {}
+    if mode == "all":
+        each = _positive(answer.get("qty_for_all"))
+        if each is None and answer.get("qty_for_all") is None:
+            each = asked
+        if each is None:
+            return False
+        quantities = {slot.key: each for slot in slots}
+    elif mode in ("fill", "done"):
+        for item in answer.get("items") or []:
+            if not isinstance(item, dict):
+                continue
+            if item.get("qty") is None:
+                # A blank line of a pasted list is skipped, never a quantity.
+                continue
+            qty = _positive(item.get("qty"))
+            if qty is None:
+                return False
+            index = _placed_line(item, slots)
+            if index is None or slots[index].key in quantities:
+                return False
+            quantities[slots[index].key] = qty
+        if not quantities and (mode == "fill" or answered):
+            # Nothing to fill, or "that's it" after the check is already answered.
+            return False
+    known = {
+        value.strip().casefold()
+        for slot in slots
+        for value in (slot.key, slot.label)
+        if isinstance(value, str) and value.strip()
+    }
+    others = [
+        entity
+        for entity in verdict.get("entities") or []
+        if isinstance(entity, dict)
+        and not (_codes_named(entity) & known)
+        and _line_number(entity) is None
+        and not str(entity.get("raw") or "").strip().isdigit()
+    ]
+    if mode != "cancel" and any(
+        entity.get("hint") in (None, "product") and entity.get("current_message") is True
+        for entity in others
+    ):
+        # The message also names a product that is not on the list: a new stock ask,
+        # read by the ordinary path.
+        return False
+
+    verdict["entities"] = others
+    verdict["demand_qty"] = None
+    verdict["reference_positions"] = []
+    verdict["message_type"] = "business_query"
+    if mode == "cancel":
+        verdict["topic_reset"] = True
+        verdict["domain_hint"] = task.domain or verdict.get("domain_hint")
+        verdict["entities"] = []
+    else:
+        verdict["topic_reset"] = False
+        verdict[task_mod.SLOT_QUANTITIES] = quantities
+        verdict["proceed_anyway"] = True if (mode == "done" and not answered) else None
+        if mode == "done" and not answered and quantities:
+            # Review B1: the pasted list is the whole answer. A line left blank in it is
+            # skipped, even when an earlier turn noted a quantity on it.
+            verdict[task_mod.ONLY_THESE_LINES] = True
+    trace.rules_fired.append(f"open_question_answer_{mode}")
+    return True
+
+
+def _option_position(item: dict[str, Any], options: list[dict[str, Any]]) -> int | None:
+    """The offered position an answer item names: its code (case-blind, against the
+    option's code or printed label), else its position when that is on offer."""
+    code = item.get("code")
+    if isinstance(code, str) and code.strip():
+        wanted = code.strip().casefold()
+        for option in options:
+            names = {
+                str(value).strip().casefold()
+                for value in (option.get("code"), option.get("label"))
+                if value
+            }
+            if wanted in names:
+                return option.get("position")
+        return None
+    position = item.get("position")
+    if isinstance(position, int) and not isinstance(position, bool):
+        if any(option.get("position") == position for option in options):
+            return position
+    return None
+
+
+def _open_pick_answer(state: State, verdict: dict[str, Any], trace: Trace) -> tuple[State, bool]:
+    """PR #1247 round 9 (issue #1293): the parser's declared answer to the open pick or
+    offer (`turn/question.py`: pick_one, choose_brand, confirm), before any shape rule.
+
+    * pick: the positions in `picked`, plus any item placed by its code or position,
+      become the `reference_positions` `decide()` already reads. A quantity stated in
+      the same message ("the first one, I need 2") rides on a stock pick and is stamped
+      onto the product the pick settles (`_spend_stock_pick`), so nothing re-asks it.
+    * yes: `is_affirmative` true, for a question that has one option or expects yes/no.
+    * no / cancel: `is_affirmative` false: the decline the question's own arm answers
+      ("none of them" to a dealer's did-you-mean is "Please refer to your salesman.").
+
+    Only the fields `decide()` and `_answer_pending` already read are written, so every
+    guard they keep (no handover on a position over a yes/no offer) still holds. Returns
+    `(state, applied)`; not applied, and nothing touched, when there is no open pick,
+    the object is absent or mode null, or it does not fit the question (a position not
+    offered, a code not on the list, a quantity of zero). Nothing here reads a word.
+    """
+    pending = state.pending
+    answer = verdict.get(OPEN_QUESTION_ANSWER)
+    if pending is None or not isinstance(answer, dict):
+        return state, False
+    mode = answer.get("mode")
+    if mode in ("no", "cancel"):
+        verdict["is_affirmative"] = False
+        verdict["reference_positions"] = []
+        verdict["broaden_axis"] = None
+        trace.rules_fired.append(f"open_question_answer_{mode}")
+        return state, True
+    if mode == "yes":
+        if len(pending.options) != 1 and pending.expects != "yes_no":
+            # A yes over a list of several names none of them.
+            return state, False
+        verdict["is_affirmative"] = True
+        verdict["reference_positions"] = []
+        trace.rules_fired.append("open_question_answer_yes")
+        return state, True
+    if mode != "pick":
+        return state, False
+    offered = {o.get("position") for o in pending.options}
+    picked: list[int] = []
+    for position in answer.get("picked") or []:
+        if isinstance(position, bool) or not isinstance(position, int) or position not in offered:
+            return state, False
+        if position not in picked:
+            picked.append(position)
+    quantities: dict[int, int] = {}
+    for item in answer.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        position = _option_position(item, pending.options)
+        if position is None:
+            return state, False
+        if position not in picked:
+            picked.append(position)
+        if item.get("qty") is not None:
+            qty = _positive(item.get("qty"))
+            if qty is None:
+                return state, False
+            quantities[position] = qty
+    if not picked:
+        return state, False
+    if answer.get("qty_for_all") is not None:
+        each = _positive(answer.get("qty_for_all"))
+        if each is None:
+            return state, False
+        for position in picked:
+            quantities.setdefault(position, each)
+    verdict["reference_positions"] = sorted(picked)
+    verdict["broaden_axis"] = None
+    trace.rules_fired.append("open_question_answer_pick")
+    if not quantities or not _stock_pick(pending):
+        return state, True
+    # The quantity is the pick's, not a bare number for `_stock_pick_requantified`.
+    verdict["demand_qty"] = None
+    by_code = {
+        str(option.get("code") or option.get("label")).strip().casefold(): quantities[
+            option.get("position")
+        ]
+        for option in pending.options
+        if option.get("position") in quantities and (option.get("code") or option.get("label"))
+    }
+    carried = replace(pending, payload={**pending.payload, STOCK_QTY_BY_CODE: by_code})
+    return replace(state, pending=carried), True
+
+
+def _stock_pick_takes_position_and_quantity(
+    state: State, verdict: dict[str, Any], trace: Trace
+) -> State:
+    """The fallback half of round 9 (a recorded emission, or the object left null): a
+    position on the open stock pick beside a stated quantity is the pick AND the
+    quantity, from the parser's own two fields. One number that is both the position
+    and the quantity ("2") stays the quantity, round 5's rule."""
+    pending = state.pending
+    if not _stock_pick(pending) or _names_a_product(verdict):
+        return state
+    quantity = _stated_quantity(verdict.get("demand_qty"))
+    raw = verdict.get("reference_positions")
+    positions = [
+        p for p in (raw if isinstance(raw, list) else [])
+        if isinstance(p, int) and not isinstance(p, bool)
+    ]
+    offered = {o.get("position") for o in pending.options}
+    if quantity is None or quantity <= 0 or not positions or not set(positions) <= offered:
+        return state
+    if positions == [quantity]:
+        return state
+    verdict["demand_qty"] = None
+    trace.rules_fired.append("stock_pick_takes_position_and_quantity")
+    return replace(state, pending=replace(pending, payload={**pending.payload, "stock_qty": quantity}))
+
+
+def _bare_number_over_a_finished_answer(
+    state: State, verdict: dict[str, Any], trace: Trace
+) -> tuple[State, Plan] | None:
+    """PR #1247 round 8 (owner row 12): one bare number after a stock check answered for
+    two or more products does not say which product it is for, so it is asked, over
+    the SAME products and never a bigger list. The parser's declared answer ("all",
+    "2. 10") is what settles it; this is the fallback when the parser declared none.
+    A one-product check keeps round 5's rule: the number revises it."""
+    if state.pending is not None:
+        return None
+    task = _open_question_task(state.focus)
+    if task is None or task.status != task_mod.ANSWERED or len(task.slots) < 2:
+        return None
+    if any(
+        t.kind == "stock_qty" and t.status == task_mod.OPEN for t in state.focus.tasks or ()
+    ):
+        return None
+    quantity = _stated_quantity(verdict.get("demand_qty"))
+    if quantity is None:
+        quantity = _lone_position(verdict)
+    if (
+        quantity is None
+        or verdict.get("entities")
+        or verdict.get("domain_hint") not in (None, "inventory")
+        or verdict.get("proceed_anyway") is True
+        or verdict.get("topic_reset") is True
+    ):
+        # A number beside anything of its own, or about another domain ("any promo for
+        # 10 units?"), is not this question (review S2).
+        return None
+    labels = [str(slot.label) for slot in task.slots]
+    trace.rules_fired.append("bare_number_over_a_finished_answer_asks_which")
+    trace.task_question = "\n".join(
+        [
+            f"Is {quantity} for all {len(labels)} products, or for one of them?",
+            *task_mod.numbered(labels),
+        ]
+    )
+    focus = copy.deepcopy(state.focus)
+    focus.domains = ["inventory"]
+    # The number rides on the task for the one next turn, so "2" or "all" can place it.
+    focus.tasks = tuple(
+        replace(t, asked_qty=quantity) if t is task else t for t in state.focus.tasks
+    )
+    asked = State(
+        focus=focus,
+        pending=None,
+        profile=state.profile,
+        turn_no=state.turn_no,
+        ideation=state.ideation,
+    )
+    return asked, Plan(domains=["inventory"], fetch=[], ask=None, denied=[], trace=trace)
+
+
+def _stock_pick(pending: Any) -> bool:
+    """Is the open question a stock pick (owner hand test 26 Sep, slice 2 and F1): the
+    which-one question `turn/task.py::after_reply` asks over a product family, or the
+    dealer's did-you-mean? Both carry the typed quantity on their own payload."""
+    return pending is not None and bool((pending.payload or {}).get("stock_pick"))
+
+
+def _message_states_a_quantity(verdict: dict[str, Any]) -> bool:
+    if _stated_quantity(verdict.get("demand_qty")) is not None:
+        return True
+    return any(
+        isinstance(e, dict) and _stated_quantity(e.get("quantity")) is not None
+        for e in verdict.get("entities") or []
+    )
+
+
+def _names_a_product(verdict: dict[str, Any]) -> bool:
+    return any(
+        isinstance(e, dict)
+        and e.get("current_message") is True
+        and e.get("hint") in (None, "product")
+        for e in verdict.get("entities") or []
+    )
+
+
+def _stock_pick_requantified(state: State, verdict: dict[str, Any], trace: Trace):
+    """A bare number under an open family pick ("88" under "SRTWC286 matches 10 products.
+    Which one?") is the quantity, not a pick: the pick is asked again carrying it, and
+    nothing is fetched. A number is never read as a position here - the options are
+    codes, and the code is the answer."""
+    pending = state.pending
+    if not _stock_pick(pending) or len(pending.options) < 2:
+        return None
+    quantity = _stated_quantity(verdict.get("demand_qty"))
+    if quantity is None or _names_a_product(verdict):
+        return None
+    payload = {**pending.payload, "stock_qty": quantity}
+    kept = replace(pending, payload=payload)
+    trace.rules_fired.append("stock_pick_takes_quantity")
+    trace.task_question = task_mod.pick_question(
+        str(payload.get("typed") or ""),
+        [str(o.get("label")) for o in pending.options if o.get("label")],
+        quantity,
+        payload.get("count"),
+        # Round 9: a did-you-mean's typed code is one the resolver did not recognise,
+        # and a header never leads with it.
+        recognised=not payload.get("did_you_mean"),
+    )
+    focus = copy.deepcopy(state.focus)
+    focus.domains = ["inventory"]
+    asked = State(
+        focus=focus,
+        pending=kept,
+        profile=state.profile,
+        turn_no=state.turn_no,
+        ideation=state.ideation,
+    )
+    return asked, Plan(domains=["inventory"], fetch=[], ask=None, denied=[], trace=trace)
+
+
+def _spend_stock_pick(
+    asked: Any, verdict: dict[str, Any], plan: Plan, new_state: State, trace: Trace
+) -> None:
+    """A stock pick is spent the moment this turn fetches stock, whichever way the dealer
+    answered it (a code off the list, a position, a "yes", or a fresh "check stock X"):
+    left open, the next bare "10" would be read against its options. The quantity the
+    pick carried is stamped onto the product it settled, unless this message stated
+    its own."""
+    if not _stock_pick(asked):
+        return
+    specs = [
+        spec
+        for spec in plan.fetch
+        if spec.domain == "inventory" and not spec.filters.get("task")
+    ]
+    if not specs:
+        return
+    if _stock_pick(new_state.pending):
+        new_state.pending = None
+    trace.rules_fired.append("stock_pick_spent")
+    quantity = _stated_quantity(asked.payload.get("stock_qty"))
+    by_code = asked.payload.get(STOCK_QTY_BY_CODE) or {}
+    if (quantity is None and not by_code) or _message_states_a_quantity(verdict):
+        return
+    labels = {str(o.get("label")).strip().casefold() for o in asked.options if o.get("label")}
+    for spec in specs:
+        stamped = {}
+        for e in spec.entities:
+            if not isinstance(e, dict) or not e.get("uuid") or not _row_codes(e) & labels:
+                continue
+            own = next((by_code[c] for c in _row_codes(e) if c in by_code), None)
+            if own is not None or quantity is not None:
+                stamped[str(e["uuid"])] = own if own is not None else quantity
+        if stamped:
+            spec.filters["requested_quantities"] = stamped
+            trace.rules_fired.append("stock_pick_carries_quantity")
+
+
 def apply(
     state: State,
     verdict: dict[str, Any],
@@ -1469,6 +2308,28 @@ def apply(
     could not place (`turn_runtime.unplaced_tokens`, folded). It is read at one seam
     only: a roster is never built out of a word that matched nothing."""
     trace = Trace()
+    # PR #1247 round 8: the parser's declared answer to the open stock question comes
+    # first. The two shape rules below are the fallback, for a verdict that declares
+    # none (a recorded emission, or a parser that left mode null).
+    state, asked_qty = _take_asked_quantity(state)
+    # PR #1247 round 9 (issue #1293): the same object answers an open pick or offer.
+    state, picked = _open_pick_answer(state, verdict, trace)
+    if not picked:
+        state = _stock_pick_takes_position_and_quantity(state, verdict, trace)
+    if not _open_question_answer(state, verdict, trace, asked_qty):
+        _asked_quantity_placed(state, verdict, trace, asked_qty)
+        # Owner hand test 26 Sep, round 3, and the round 5 ruling ("make the picker not
+        # sticky"): once the which-one pick is spent, a lone position is the product's
+        # quantity, never a pick. Before any reader.
+        _bare_position_is_the_quantity(state, verdict, trace)
+        # PR #1247 round 7: "1. 10, 2. 5" as the parser read it, onto the open
+        # question's lines, before any reader matches a code.
+        _numbered_lines_are_the_products(state, verdict, trace)
+    # Ported from PR #1118 (not merged), D13: before ANY reader - the task step, the
+    # focus rules, the narrowing and the fetch all see one shape for "how many of this
+    # product".
+    _normalise_demand_qty(verdict)
+    _did_you_mean_keeps_quantity(state.focus, verdict, trace)
 
     if state.pending is not None and _fully_answered_roster(state.pending):
         # Defect 2 (owner hand pass 6, 17 Sep 2026): a roster every option of which is
@@ -1528,6 +2389,29 @@ def apply(
     decision = decide(verdict, state.focus, state.pending)
     trace.decision = decision.as_trace()
 
+    requantified = _stock_pick_requantified(state, verdict, trace)
+    if requantified is not None:
+        return requantified
+    which = _bare_number_over_a_finished_answer(state, verdict, trace)
+    if which is not None:
+        return which
+
+    # Ported from PR #1118 (not merged), the OPEN TASKS, before decide's four outcomes
+    # are acted on: a task is filled by any turn whose verdict carries a value its
+    # kind claims, whatever the current subject, so this runs ahead of the arms that
+    # read the subject - and its result is written back onto the focus AFTER
+    # `_focus_rules`, which empties every other axis on a topic reset and would take
+    # the tasks with it.
+    task_outcome = task_mod.run(
+        tuple(state.focus.tasks or ()),
+        verdict,
+        decision_kind=decision.kind,
+        positions=list(decision.positions) if decision.answers else [],
+        pending=state.pending,
+        turn_no=state.turn_no,
+    )
+    trace.rules_fired.extend(task_outcome.rules)
+
     verdict_entities = list(verdict.get("entities") or [])
     entities, domain_override, reconcile_short_circuit = _reconcile_step(
         verdict_entities, resolved, policy, verdict, trace
@@ -1539,7 +2423,19 @@ def apply(
         state, decision, trace
     )
     if pending_short_circuit is not None:
-        unchanged = replace(state, pending=pending_after)
+        # Ported from PR #1118 (not merged), D23, review round 8 (finding 3): "never
+        # mind the stock check" typed under an open escalation offer is BOTH a decline
+        # of the offer and a topic reset aimed at the task. The decline owns the REPLY
+        # and returns here before the focus rules ever run, which would otherwise
+        # throw the task step's own answer away with the rest of the turn. The task
+        # step has already decided; this carries that decision, and nothing else about
+        # the turn.
+        closed_focus = state.focus
+        if task_outcome.tasks != tuple(state.focus.tasks or ()):
+            closed_focus = replace(state.focus, tasks=task_outcome.tasks)
+            if "stock_qty" in task_outcome.closed_kinds:
+                _set_kind_field(closed_focus, "product", [])
+        unchanged = replace(state, focus=closed_focus, pending=pending_after)
         return unchanged, pending_short_circuit
 
     focus = _focus_rules(
@@ -1551,9 +2447,70 @@ def apply(
         domain_override=domain_override,
         trace=trace,
     )
+    # Ported from PR #1118 (not merged). AFTER the focus rules, never before: a topic
+    # reset rebuilds the focus from `RESET_KEEPS` alone, and the tasks it KEEPS (the
+    # ones aimed elsewhere, parked by D23) are what the task step above already
+    # decided. One writer, one answer.
+    focus.tasks = task_outcome.tasks
+    if "stock_qty" in task_outcome.closed_kinds:
+        # D23, review round 6 (case F turn 3, #1118): "never mind the stock check"
+        # ends the task, and what the task was ABOUT ends with it. The reset already
+        # empties the focus, but the rules below it refill `products` from THIS
+        # message's entities - and the parser hands back the products it has been
+        # discussing, so the closed question's own products came straight back and a
+        # bare number typed next re-asked it.
+        _set_kind_field(focus, "product", [])
+        trace.rules_fired.append("task_close_clears_products")
+
+    # A task that just took a value re-runs its own domain's fetch. The domain is the
+    # TASK's, locked the same way a pick locks a turn - a detour left `focus.domains`
+    # pointing somewhere else entirely - and the SUBJECT is the task's own slots,
+    # every product it is still collecting for. `_set_kind_field` keeps only what
+    # THIS message named on `focus.products`, so the task is the one honest record of
+    # what the question is about.
+    task_locked = task_outcome.fetch is not None
+    task_domain = (
+        (task_outcome.fetch_domain or task_outcome.fetch.domain) if task_locked else None
+    )
+    if task_locked:
+        focus.domains = [task_domain]
+        if task_outcome.fetch.entities:
+            _set_kind_field(focus, "product", list(task_outcome.fetch.entities))
+
+    if task_outcome.question and not task_locked:
+        # A task RESUMED, or one a bare number could not be attributed inside:
+        # nothing is fetched and nothing is rostered - only what is still owed is
+        # asked, and nothing is asked twice. `not task_locked`: a kind that fills one
+        # task AND resumes a different one carries both `task_outcome.fetch` and
+        # `task_outcome.question` - the fetch is what this turn actually answered and
+        # must win, never dropped silently in favour of asking about the task
+        # instead.
+        trace.task_question = task_outcome.question
+        asked = State(
+            focus=focus,
+            pending=pending_after,
+            profile=state.profile,
+            turn_no=state.turn_no,
+            ideation=state.ideation,
+        )
+        domain = task_outcome.question_domain
+        if domain:
+            focus.domains = [domain]
+        return asked, Plan(
+            domains=[domain] if domain else [],
+            fetch=[],
+            ask=None,
+            denied=[],
+            trace=trace,
+        )
 
     asks = verdict.get("asks") or []
-    if domain_locked and focus.domains and not asks:
+    if task_locked:
+        # Ported from PR #1118 (not merged): the lock - this turn belongs to the task
+        # that just took a value, whatever the conversation was last about.
+        domains = [task_domain]
+        trace.rules_fired.append("domain_locked_by_task")
+    elif domain_locked and focus.domains and not asks:
         # Contract 121 / AC-1522: a pick never re-domains the turn. `_answer_pending`
         # put the domain the question was ASKED under onto the focus and `_focus_rules`
         # left it alone, and this is the second half of that: re-reading `asks` or
@@ -1673,8 +2630,61 @@ def apply(
         a for a in (verdict.get("requested_attributes") or []) if isinstance(a, str) and a
     )
     plan = _narrow_and_plan(
-        focus, policy, domains, new_state, trace, attributes, candidates, unplaced
+        focus,
+        policy,
+        domains,
+        new_state,
+        trace,
+        attributes,
+        candidates,
+        unplaced,
+        # Ported from PR #1118 (not merged), review round 9 finding 4 / D34 round 11:
+        # a bare quantity with nothing open, or a cancel that names nothing, is not a
+        # subject - see `_narrow_and_plan`'s own comment on `refuse_empty_subject`.
+        refuse_empty_subject=(
+            (
+                decision.kind == CARRY
+                and _stated_quantity(verdict.get("demand_qty")) is not None
+                and not entities
+                and not focus.tasks
+                and not _kind_field(focus, "product")
+            )
+            or (
+                verdict.get("topic_reset") is True
+                and not entities
+                and _stated_quantity(verdict.get("demand_qty")) is None
+            )
+        ),
     )
+    _exact_code_when_a_quantity_is_named(plan, verdict, trace)
+
+    if task_locked and plan.ask is None:
+        # Ported from PR #1118 (not merged): the narrower built a spec for the task's
+        # domain out of whatever THIS message resolved; the task's own spec replaces
+        # it, so the fetch carries every slot and the quantities the dealer gave on
+        # earlier turns. Replaced rather than merged: the task IS the question. If the
+        # narrower raised an ask, or the grant gate refused the domain (`plan.denied`),
+        # there is no spec to replace and the task simply stays open.
+        for index, spec in enumerate(plan.fetch):
+            if spec.domain == task_domain:
+                plan.fetch[index] = task_outcome.fetch
+                trace.rules_fired.append("task_drives_the_fetch")
+                break
+
+    if (
+        task_outcome.parked_kinds
+        and verdict.get("entities")
+        and unplaced
+        and not any(rows for rows in (candidates or {}).values())
+    ):
+        # Ported from PR #1118 (not merged), AC-1773: this turn named a subject and
+        # the resolver could place NONE of it, so the turn is a miss - "I could not
+        # find SRTWC8610-SH" - and a miss is not another answer. Parking exists so the
+        # OTHER answer can be given silently (D22); there is no other answer here, so
+        # the task stays exactly as it was.
+        focus.tasks = task_mod.unpark(
+            focus.tasks, task_outcome.parked_kinds, tuple(state.focus.tasks or ())
+        )
 
     if trace.outstanding is not None:
         # Contract 38/39: this fetch is the ANSWERED question's own report re-running.
@@ -1724,6 +2734,8 @@ def apply(
         # 2, and the "1" under its list still escalated until this clause was added.
         new_state.pending = None
         trace.rules_fired.append("new_ask_closes_stale_roster")
+
+    _spend_stock_pick(state.pending, verdict, plan, new_state, trace)
 
     return new_state, plan
 

@@ -24,6 +24,8 @@ from sqlalchemy.orm import Session
 
 from app.services.ai_prompt_registry import agent_model, render
 from app.services.chatbot.contracts import ParserOutputError  # noqa: F401 - re-export
+from app.services.chatbot.turn import question as question_mod
+from app.services.chatbot.turn import task as task_mod
 
 logger = logging.getLogger(__name__)
 
@@ -55,9 +57,17 @@ class ParserError(RuntimeError):
 
     usage: dict[str, Any]
 
-    def __init__(self, *args: object, usage: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        *args: object,
+        usage: dict[str, Any] | None = None,
+        rate_limited: bool = False,
+    ) -> None:
         super().__init__(*args)
         self.usage = usage or {}
+        # PR #1247 round 6, ruling 3: every attempt was refused with a 429, so the
+        # dealer is told `llm_call.RATE_LIMITED_REPLY`, not the generic parser error.
+        self.rate_limited = rate_limited
 
 
 @dataclass(frozen=True)
@@ -142,6 +152,17 @@ def _build_json_schema() -> dict[str, Any]:
                         # hinted kind FIRST only when this is true; a low-confidence
                         # kind hint goes straight to reconciliation instead.
                         "hint_confident": {"type": ["boolean", "null"]},
+                        # Ported from PR #1118 (feat/chatbot-dealer-stock-verdict, not
+                        # merged, owner ruling 24 Sep 2026) for chatbot-stock-ask-v2
+                        # S3, D13: the quantity the message stated FOR THIS ENTITY.
+                        # `demand_qty` below is one number for the whole turn and
+                        # cannot answer "MWT5727SS-CR 5, MHS1028 60" at all, which is
+                        # why an `availability` dealer was asked "how many units do
+                        # you need?" and never answered. REQUIRED like every other key
+                        # of this object: strict mode rejects a `properties` key
+                        # absent from `required`, and a key the provider is never
+                        # forced to reason about is a key it never fills.
+                        "quantity": {"type": ["number", "null"]},
                     },
                     "required": [
                         "raw",
@@ -150,6 +171,7 @@ def _build_json_schema() -> dict[str, Any]:
                         "current_message",
                         "confident",
                         "hint_confident",
+                        "quantity",
                     ],
                 },
             },
@@ -292,6 +314,61 @@ def _build_json_schema() -> dict[str, Any]:
             # with no way for the model to set it, so no live turn has ever reset a topic
             # or written an episode.
             "topic_reset": {"type": ["boolean", "null"]},
+            # Ported from PR #1118 (not merged), D13/D15: "go ahead without answering
+            # the open question" - said in any wording, in any language ("just
+            # proceed", "never mind those, check what you have"). Generic, not
+            # stock-specific: it is the one word that closes ANY open task with what
+            # it already holds.
+            "proceed_anyway": {"type": ["boolean", "null"]},
+            # PR #1247 round 8 (owner console test of round 7, 26 Sep 2026): the
+            # parser's own answer to the "Open question:" object the user block states,
+            # so a reply to the stock quantity question ("10 / 20 / 30", the list pasted
+            # back with blanks, "that's it", "3 for all of them") comes back as declared
+            # slots instead of being guessed from its shape by one rule per phrasing.
+            # Fixed keys and a list of fixed-shape items: strict-schema safe. Always an
+            # object; `mode` null is "this message does not answer it". Read first by
+            # `turn/apply.py::_open_question_answer`, the shape rules only as fallback.
+            # Round 9 (issue #1293): the SAME object answers every kind of question the
+            # bot asks (`turn/question.py`), so a pick, a yes or a no is declared here
+            # too, with the positions picked and any quantity stated in the same breath
+            # ("the first one, I need 2").
+            "open_question_answer": {
+                "type": "object",
+                "additionalProperties": False,
+                "description": (
+                    "The answer to the user block's 'Open question:' object, else mode null."
+                ),
+                "properties": {
+                    "mode": {
+                        "type": ["string", "null"],
+                        "enum": ["pick", "yes", "no", "fill", "all", "done", "cancel", None],
+                        "description": (
+                            "pick: the options in picked (and items by code), with any "
+                            "quantity in items or qty_for_all; yes / no: a confirm "
+                            "answered, no also for none of the options; fill: "
+                            "quantities for some lines; done: these lines (or none) then "
+                            "answer now, blanks skipped; all: qty_for_all for every line; "
+                            "cancel: drop the question; null: not an answer to it."
+                        ),
+                    },
+                    "picked": {"type": "array", "items": {"type": "integer"}},
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "properties": {
+                                "position": {"type": ["integer", "null"]},
+                                "code": string_or_null,
+                                "qty": {"type": ["number", "null"]},
+                            },
+                            "required": ["position", "code", "qty"],
+                        },
+                    },
+                    "qty_for_all": {"type": ["number", "null"]},
+                },
+                "required": ["mode", "picked", "items", "qty_for_all"],
+            },
             "anaphora": {
                 "type": "object",
                 "additionalProperties": False,
@@ -340,6 +417,8 @@ def _build_json_schema() -> dict[str, Any]:
             "status",
             "asks",
             "topic_reset",
+            "proceed_anyway",
+            "open_question_answer",
             "anaphora",
         ],
     }
@@ -364,8 +443,23 @@ DECLARED_KEYS: frozenset[str] = frozenset(PARSE_OUTPUT_JSON_SCHEMA["required"])
 #: it HAS to be declared at the wire, and no prompt version before the sales report
 #: addendum ever emits it - so every recorded emission and every `mock_reformulator_
 #: output` a console case carries lacks it, and reads as null.
+#: `proceed_anyway` joins them by the SAME rule (ported from PR #1118, not merged,
+#: D13): it has to be declared at the wire to exist at all, and no prompt version
+#: before this lane's addendum emits it, so every recorded emission and every
+#: `mock_reformulator_output` a console case carries lacks it and reads as null.
+#: `entities[].quantity` needs no tolerance - this check is TOP-LEVEL keys only, and a
+#: nested entity field is validated by the provider's own strict schema, never
+#: against a replay emission.
+#: `open_question_answer` joins them by the same rule (PR #1247 round 8): no recorded
+#: emission and no console case carries it, and absent reads as mode null.
 TOLERATED_ABSENT: frozenset[str] = frozenset(
-    {"broaden_to", "domain_in_message", "sales_channel"}
+    {
+        "broaden_to",
+        "domain_in_message",
+        "sales_channel",
+        "proceed_anyway",
+        "open_question_answer",
+    }
 )
 
 
@@ -474,6 +568,8 @@ def build_user_block(
     profile_block: str | None = None,
     episodes_block: str | None = None,
     focus: Any = None,
+    open_question: dict[str, Any] | None = None,
+    recent_exchanges: list[tuple[str, str]] | None = None,
 ) -> str:
     """The user turn, in the same two lines the n8n `AI Agent` node sends.
 
@@ -490,6 +586,19 @@ def build_user_block(
     `focus` is the third (hand pass 3, 17 Sep 2026): the "Current subject" line, so a
     refinement and a domain switch are read against what the conversation is about rather
     than against the previous reply alone.
+
+    The fourth is the OPEN TASK lines (ported from PR #1118, not merged, D21): one
+    `Open task: ...` line per task the focus carries, most recently touched first, so
+    the model can fill a quantity for a product the task named whatever the current
+    subject is, and can read "add", "drop", "make B 80", "proceed" and "never mind
+    the stock check" as instructions on that task.
+
+    The fifth and sixth are PR #1247 round 8 (owner console test of round 7, 26 Sep
+    2026: "is the parameter from the parser too less already, is the context too less
+    already?"): the stock question as a structured `Open question:` object
+    (`task.open_question`), which the parser answers in `open_question_answer`, and the
+    last three exchanges, so a short reply is read against what was actually asked.
+    Both omitted, and the block is unchanged.
     """
     import re
 
@@ -506,6 +615,18 @@ def build_user_block(
         # and a domain switch are judged against something. One line, omitted whole when
         # the focus is empty.
         lines.append(subject)
+    for task_line in task_mod.hint_lines(
+        getattr(focus, "tasks", None),
+        # Round 9: a pick or an offer is not the stock question, so the task's own
+        # line still prints under it.
+        open_question_shown=question_mod.is_the_stock_question(open_question),
+    ):
+        lines.append(task_line)
+    if open_question:
+        lines.append(
+            "Open question: "
+            + json.dumps(open_question, separators=(",", ":"), ensure_ascii=False)
+        )
     if pending_kind:
         lines.append(f"Pending: the assistant is waiting for a {pending_kind} reply.")
     if pending_options:
@@ -524,7 +645,35 @@ def build_user_block(
         # AC-1547: the recalled frames, on the SECOND parse of a turn that pointed
         # backwards. Absent on every other turn, which keeps their block unchanged.
         lines.append(episodes_block)
+    if recent_exchanges:
+        lines.append("Recent exchanges, oldest first:")
+        last = len(recent_exchanges) - 1
+        for index, (user_text, assistant_text) in enumerate(recent_exchanges):
+            lines.append(f"User: {_exchange_text(user_text)}")
+            # The newest reply IS the Previous response line; not paid for twice. Only
+            # when it really is that reply (review S4): otherwise it is printed.
+            lines.append(
+                "Assistant: (the Previous response)"
+                if index == last and str(assistant_text or "").strip() == previous.strip()
+                else f"Assistant: {_exchange_text(assistant_text)}"
+            )
     return "\n".join(lines)
+
+
+#: How much of one exchange's text the parser reads (round 8). A ten-line point-form
+#: question is about 250 characters; a stock answer for ten products is longer, and its
+#: head is what a short reply refers to.
+EXCHANGE_TEXT_CAP = 500
+
+
+def _exchange_text(value: Any) -> str:
+    """One line of one exchange: newlines become " / ", at most `EXCHANGE_TEXT_CAP`."""
+    text = " / ".join(
+        part.strip() for part in str(value or "").splitlines() if part.strip()
+    )
+    if len(text) > EXCHANGE_TEXT_CAP:
+        return text[:EXCHANGE_TEXT_CAP] + "..."
+    return text
 
 
 class ParsedOutput(dict):
@@ -579,22 +728,26 @@ def parse(config: ParserConfig, user_block: str) -> ParsedOutput:
     NOTHING here touches the database. That is the rule the capacity section states and
     the reason `ParserConfig` exists.
     """
-    from app.services.llm_provider import get_provider
+    from app.services.chatbot import llm_call
 
     messages = [
         {"role": "system", "content": config.system_prompt},
         {"role": "user", "content": user_block},
     ]
     try:
-        provider = get_provider(config.provider, config.api_key, config.model)
-        result = provider.chat(
+        # A rate limit is waited out inside the call (PR #1247 round 6, ruling 3).
+        result = llm_call.chat(
+            config.provider,
+            config.api_key,
+            config.model,
             messages,
             temperature=0.0,
-            model=config.model,
             max_tokens=PARSER_MAX_TOKENS,
             json_schema=PARSE_OUTPUT_JSON_SCHEMA,
             json_schema_name=PARSE_OUTPUT_SCHEMA_NAME,
         )
+    except llm_call.RateLimited as exc:
+        raise ParserError(f"parser provider call failed: {exc}", rate_limited=True) from exc
     except Exception as exc:  # noqa: BLE001 - provider/transport failure is a failed stage
         raise ParserError(f"parser provider call failed: {exc}") from exc
 

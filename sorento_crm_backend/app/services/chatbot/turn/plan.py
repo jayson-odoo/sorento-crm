@@ -66,6 +66,14 @@ class Trace:
     # the table, whatever the domain's policy would say about the same rows carried in
     # from an earlier turn (owner hand pass 2, item 10).
     picked_kinds: list[str] = field(default_factory=list)
+    # Ported from PR #1118 (feat/chatbot-dealer-stock-verdict, not merged, owner ruling
+    # 24 Sep 2026) for chatbot-stock-ask-v2 S3: the OPEN TASK's own re-ask, when this
+    # turn resumes a task rather than filling it - the question text, and nothing
+    # else. It lives on the Trace for the same reason `lane` and `outstanding` do -
+    # the Plan's own field set is the contract - and it has two readers:
+    # `turn/route.py`, which keeps the turn on the task's own arm although nothing is
+    # being fetched, and `engine.py`, which composes it as the whole reply.
+    task_question: str | None = None
 
 
 @dataclass

@@ -92,6 +92,17 @@ MEASURED_VERDICT_READS: dict[str, str] = {
     # sales_channel` when a filter answer names a channel and to settle a fresh channel
     # word onto the focus directly. 35 declared keys -> 36.
     "sales_channel": "app/services/chatbot/turn/apply.py",
+    # Ported from PR #1118 (feat/chatbot-dealer-stock-verdict, not merged, owner
+    # ruling 24 Sep 2026) for chatbot-stock-ask-v2 S3, D13: "go ahead without
+    # answering the open question", read by `turn/task.py::StockQtyTask.claims`/
+    # `fill`, which `apply.py` runs before decide's four outcomes. 36 declared keys ->
+    # 37. The per-entity `entities[].quantity` is NOT a row here: this table is
+    # top-level verdict keys, and that one is a nested field of the `entities` row
+    # above.
+    "proceed_anyway": "app/services/chatbot/turn/task.py",
+    # PR #1247 round 8: the parser's declared answer to the "Open question:" object,
+    # read by `turn/apply.py::_open_question_answer` before any shape rule. 37 -> 38.
+    "open_question_answer": "app/services/chatbot/turn/apply.py",
 }
 
 

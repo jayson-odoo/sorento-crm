@@ -305,23 +305,32 @@ def call_clarifier(config: ClarifierConfig, user_prompt: str) -> str:
     n8n that parse happens in a different sub-workflow and a turn where the model answers
     but the JSON is malformed must fail in the same place it does today.
     """
-    from app.services.llm_provider import get_provider
+    from app.services.chatbot import llm_call
 
     messages = [
         {"role": "system", "content": config.system_prompt},
         {"role": "user", "content": user_prompt},
     ]
     try:
-        provider = get_provider(config.provider, config.api_key, config.model)
-        result = provider.chat(
+        # A rate limit is waited out inside the call (PR #1247 round 6, ruling 3).
+        result = llm_call.chat(
+            config.provider,
+            config.api_key,
+            config.model,
             messages,
             temperature=0.0,
-            model=config.model,
             max_tokens=CLARIFIER_MAX_TOKENS,
         )
+    except llm_call.RateLimited as exc:
+        raise ClarifierRateLimited(str(exc)) from exc
     except Exception as exc:  # noqa: BLE001 - any provider/transport failure is the lane's
         raise ClarifierError(str(exc)) from exc
     return (result.content or "").strip()
+
+
+class ClarifierRateLimited(ClarifierError):
+    """Every attempt was refused with a 429 (PR #1247 round 6, ruling 3). The dealer is
+    told `llm_call.RATE_LIMITED_REPLY`, never the provider's text."""
 
 
 class ClarifierAnswerEmpty(ClarifierError):

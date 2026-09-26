@@ -1,0 +1,134 @@
+# Console case for chatbot-stock-ask-v2 S3 (PLAN-chatbot-stock-ask-v2-24sep.md "S3", UAC
+# AC-SA318): the B3 "incoming" branch, run TWICE against this SAME file - once with the
+# console contact's `packing_list_allowed` toggle on, once with it off - to prove AC-SA311
+# / AC-SA314 (the shipment's packing list is attached only when the toggle is on).
+#
+# The console-check script grades REPLY TEXT only (`reply_contains`); it does not inspect
+# a turn's `send_attachments` action. That half of the evidence - whether the action
+# actually appeared - is a direct SQL read of the dry-run row's `chatbot.turns.response`
+# for each run (dry runs still write `chatbot.turns`, per
+# documentation/agents/chatbot-verification.md), recorded in the evidence file alongside
+# this file's two `reply_contains` passes.
+#
+# NOT collected by pytest. Requires the S3 seed data (see
+# 2026-09-25-stock-ask-v2-s3-branches.yaml's header for the shape; this case additionally
+# needs product SA318D with a qualifying R5 shipment - non-draft, a line not fully
+# received, `attachment_id` set, `estimated_arrival_date` 2026-10-12 - and SA318D's
+# category Y = 7, so the told date is 19/10/2026) and the lane's MCP server running.
+#
+#   cd sorento_crm_backend
+#   venv/bin/python scripts/chatbot_console_check.py \
+#       tests/chatbot/console_cases/2026-09-25-stock-ask-v2-s3-incoming-packing-list.yaml \
+#       --base-url http://127.0.0.1:8000 --api-key <EXTERNAL_API_KEY> --mock-parser
+#
+# Run once with:
+#   UPDATE respond_contacts SET packing_list_allowed = true  WHERE respond_io_id = '437264483';
+# and once with:
+#   UPDATE respond_contacts SET packing_list_allowed = false WHERE respond_io_id = '437264483';
+# `--mock-parser` is mandatory (no OPENAI_API_KEY in the sandbox this file was authored in).
+#
+# Round 2 review, Should fix 1: the seed database must ALSO carry a `stock_ledger` row
+# with `transaction_type = 'BULK_IMPORT'` - see the branches file's header for why.
+
+contact: "437264483"
+
+cases:
+  - name: "B3 - incoming with ETA (run with packing_list_allowed both true and false)"
+    cold: true
+    turns:
+      - text: "Do you have SA318D?"
+        parser:
+          message_type: "business_query"
+          intent_hint: "check_stock"
+          domain_hint: "inventory"
+          scope_intent: "specific"
+          is_affirmative: null
+          user_goal: "asking about stock"
+          continuation: null
+          access_levels: []
+          broaden_axis: null
+          broaden_to: null
+          date_mode: null
+          date_filter_start: null
+          date_filter_end: null
+          match_mode: "and"
+          demand_qty: null
+          entities:
+            - raw: "SA318D"
+              hint: "product"
+              canonical_code: "SA318D"
+              current_message: true
+              confident: true
+          entity_op: "replace_combine"
+          domain_in_message: true
+          requested_attributes: []
+          contains_flyer: false
+          reference_positions: []
+          reference_target: null
+          person_mention: null
+          is_active: null
+          order_status: null
+          group_by: null
+          top_n: null
+          sales_channel: null
+          correction: false
+          routing: {suggested_team: null, suggested_agent: null}
+          escalation: {is_escalation_confirmation: false, company_pick: null}
+          document: null
+          status: null
+          asks: []
+          topic_reset: false
+          anaphora: {backward_reference: false}
+        expect:
+          branch_kind: business_query
+      - text: "need 150 units"
+        parser:
+          message_type: "business_query"
+          intent_hint: "check_stock"
+          domain_hint: "inventory"
+          scope_intent: "specific"
+          is_affirmative: null
+          user_goal: "stating the quantity"
+          continuation: null
+          access_levels: []
+          broaden_axis: null
+          broaden_to: null
+          date_mode: null
+          date_filter_start: null
+          date_filter_end: null
+          match_mode: "and"
+          demand_qty: null
+          entities:
+            - raw: "SA318D"
+              hint: "product"
+              canonical_code: "SA318D"
+              current_message: true
+              confident: true
+              quantity: 150
+          entity_op: "replace_combine"
+          domain_in_message: false
+          requested_attributes: []
+          contains_flyer: false
+          reference_positions: []
+          reference_target: null
+          person_mention: null
+          is_active: null
+          order_status: null
+          group_by: null
+          top_n: null
+          sales_channel: null
+          correction: false
+          routing: {suggested_team: null, suggested_agent: null}
+          escalation: {is_escalation_confirmation: false, company_pick: null}
+          document: null
+          status: null
+          asks: []
+          topic_reset: false
+          anaphora: {backward_reference: false}
+        expect:
+          branch_kind: business_query
+          reply_contains:
+            - "SA318D x 150: no stock at the moment, ETA 19/10/2026."
+          reply_not_contains:
+            - "Data last updated"
+          no_uuid: true

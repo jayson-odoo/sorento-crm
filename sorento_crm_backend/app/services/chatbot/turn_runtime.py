@@ -253,6 +253,68 @@ def previous_reply_text(
     return str(text_value) if text_value else None
 
 
+def _envelope_text(envelope: Any) -> str | None:
+    """The message text a stored envelope carries (the respond.io payload,
+    `message.message.message.text`), else an attachment's description."""
+    inner = envelope
+    for key in ("message", "message", "message"):
+        inner = inner.get(key) if isinstance(inner, dict) else None
+    if not isinstance(inner, dict):
+        return None
+    text = inner.get("text")
+    if not (isinstance(text, str) and text.strip()):
+        attachment = inner.get("attachment")
+        text = attachment.get("description") if isinstance(attachment, dict) else None
+    return text if isinstance(text, str) and text.strip() else None
+
+
+def recent_exchanges(
+    db: Session,
+    *,
+    contact_respond_id: str,
+    ingress: str | None,
+    is_test: bool,
+    limit: int = 3,
+) -> list[tuple[str, str]]:
+    """The last `limit` completed exchanges with this contact, oldest first, as (what
+    the contact said, what the bot answered) - the parser's "Recent exchanges" lines
+    (PR #1247 round 8: the owner's "is the context too less already?").
+
+    Read from the same rows and under the same three scopes as `previous_reply_text`,
+    so the newest pair's answer IS the Previous response. A row with no reply text is
+    skipped; a row whose envelope carries no text (a photo or voice note) is "(media)".
+    A lookup failure is no exchanges, never a failed turn.
+    """
+    from app.models.chatbot_turn import ChatbotTurn
+
+    try:
+        query = db.query(ChatbotTurn.envelope, ChatbotTurn.response).filter(
+            ChatbotTurn.contact_respond_id == str(contact_respond_id),
+            ChatbotTurn.status == "done",
+            ChatbotTurn.is_test.is_(bool(is_test)),
+        )
+        if str(ingress or "") == _CONSOLE_INGRESS:
+            query = query.filter(ChatbotTurn.ingress == _CONSOLE_INGRESS)
+        else:
+            query = query.filter(ChatbotTurn.ingress != _CONSOLE_INGRESS)
+        rows = query.order_by(ChatbotTurn.created_at.desc()).limit(limit * 2).all()
+    except Exception:  # noqa: BLE001 - no history is no lines, never a failure
+        logger.warning(
+            "chatbot: recent exchanges lookup failed for %s", contact_respond_id, exc_info=True
+        )
+        return []
+    pairs: list[tuple[str, str]] = []
+    for envelope, response in rows:
+        reply = response.get("reply") if isinstance(response, dict) else None
+        answer = reply.get("text") if isinstance(reply, dict) else None
+        if not (isinstance(answer, str) and answer.strip()):
+            continue
+        pairs.append((_envelope_text(envelope) or "(media)", answer))
+        if len(pairs) == limit:
+            break
+    return list(reversed(pairs))
+
+
 def load_profile(
     db: Session, contact_respond_id: str, *, space_id: str | None = None
 ) -> tuple[Profile, bool]:
@@ -310,9 +372,31 @@ def load_profile(
             # somehow did, matching these two columns' default-OFF rule.
             notify_salesman=row[3] is True,
             packing_list_allowed=row[4] is True,
+            stock_availability_only=_stock_availability_only(
+                db, contact_respond_id, space_id
+            ),
         ),
         bool(row[1]),
     )
+
+
+def _stock_availability_only(db: Session, contact_respond_id: str, space_id: str | None) -> bool:
+    """Is this contact's stock visibility policy "Availability only" (hand test F1)?
+
+    The same resolution the stock balance read applies (`stock_visibility.
+    resolve_policy`: the contact override, else the merged access types, else the
+    default), so the engine and the tool can never disagree about who is a dealer. A
+    read that fails is not a dealer: today's behaviour, never a silent refusal."""
+    try:
+        from app.services.stock_visibility import resolve_policy
+
+        # A savepoint, so a failed read cannot leave the turn's session aborted.
+        with db.begin_nested():
+            policy = resolve_policy(db, contact_respond_id, space_id)
+    except Exception:  # noqa: BLE001 - a policy read is a profile fact, not the turn
+        logger.warning("chatbot: stock visibility policy unreadable for %s", contact_respond_id)
+        return False
+    return policy is not None and policy.mode == "availability"
 
 
 def load_state(session_block: Any, *, profile: Profile, turn_no: int) -> State:
@@ -1448,6 +1532,86 @@ def _spec_window(out: dict[str, Any], spec: FetchSpec) -> dict[str, Any]:
     return out
 
 
+# Ported from PR #1118 (feat/chatbot-dealer-stock-verdict, not merged, owner ruling
+# 24 Sep 2026) for chatbot-stock-ask-v2 S3.
+def _int(value: Any) -> int | None:
+    """A quantity as an int, or None for anything that is not one.
+
+    SEC-N4 (#1118 security review, round 1): a digit STRING counts, because a value
+    read back off a session row written by an older build (or by hand) is whatever
+    JSON carried - and `requested_quantities` is validated at the route, where one
+    bad value is a 400 that kills the whole fetch rather than one product. `bool` is
+    not a number here: `True` is 1 in Python and a quantity of one is not what a
+    boolean meant.
+    """
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return None
+
+
+def _spec_quantities(
+    out: dict[str, Any], spec: FetchSpec, entities: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """`{product uuid: quantity}` for this fetch, as the lane's own key (D13, D20,
+    ported from PR #1118, not merged).
+
+    Two sources, one shape, and this is the one seam where both halves exist. The
+    OPEN TASK's own slots win where a task drove the fetch (`turn/task.py::
+    StockQtyTask.to_fetch` stamps them on the spec) - they carry quantities this
+    message never repeated, which is the whole point of the task. Otherwise it is
+    the quantities THIS message stated per entity, joined by CODE to the uuid the
+    resolver placed: the first turn of a stock ask has no task yet, because nothing
+    has told the engine a quantity is required until the reply says so (D25).
+    """
+    carried = spec.filters.get("requested_quantities")
+    if isinstance(carried, dict) and carried:
+        # SEC-N4: coerced here too, not only in `StockQtyTask.to_fetch` - this is the
+        # LAST seam before the value becomes a query param, and a caller that built
+        # the spec by hand must not be able to 400 the whole fetch with one bad slot.
+        coerced = {
+            str(key): _int(value)
+            for key, value in carried.items()
+            if _int(value) is not None
+        }
+        return {**out, "requested_quantities": coerced} if coerced else out
+    by_code: dict[str, int] = {}
+    for e in jsc.array(out.get("entities")):
+        if not isinstance(e, dict):
+            continue
+        quantity = _int(e.get("quantity"))
+        if quantity is None:
+            continue
+        for name in ("canonical_code", "raw"):
+            code = e.get(name)
+            if isinstance(code, str) and code.strip():
+                by_code[code.strip().casefold()] = quantity
+    if not by_code:
+        # D13 lives in ONE place (review round 9, finding 5): `turn/apply.py::
+        # _normalise_demand_qty` writes a single named code's top-level `demand_qty`
+        # onto the entity itself, before the task step, the narrowing or this seam
+        # read anything - so by the time a fetch is built the quantity is always per
+        # entity, whichever field the parser happened to fill.
+        return out
+    quantities: dict[str, int] = {}
+    for e in entities:
+        uuid = e.get("uuid") if isinstance(e, dict) else None
+        if not isinstance(uuid, str) or not uuid:
+            continue
+        for name in ("code", "canonical_code", "raw"):
+            code = e.get(name)
+            if not isinstance(code, str) or not code.strip():
+                continue
+            quantity = by_code.get(code.strip().casefold())
+            if quantity is not None:
+                quantities[uuid] = quantity
+                break
+    return {**out, "requested_quantities": quantities} if quantities else out
+
+
 def outstanding_carry(
     out: dict[str, Any], focus: Focus, answered: dict[str, Any]
 ) -> dict[str, Any]:
@@ -1743,14 +1907,22 @@ def make_tool_runner(
             **ctx,
             "parse": {**(ctx.get("parse") or {}), "output": lane_out},
         }
-        entities = (
-            [
+        if page_predicate is not None:
+            entities = [
                 {"uuid": pid, "entity_type": "product", "canonical_code": None}
                 for pid in page_ids
             ]
-            if page_predicate is not None
-            else _entities_for(spec, compatible_entities)
-        )
+        elif spec.filters.get("task"):
+            # Ported from PR #1118 (not merged): an OPEN TASK's own fetch is about the
+            # TASK's subjects, all of them (`turn/task.py::StockQtyTask.to_fetch`): a
+            # turn answering two of four products resolves only those two, and
+            # `_entities_for` below would keep exactly the resolver's two - so the
+            # answer would silently drop the two the dealer had already given a
+            # quantity for. The task is the only honest record of what the question is
+            # about.
+            entities = [_spec_row(e) for e in spec.entities]
+        else:
+            entities = _entities_for(spec, compatible_entities)
         # Hand pass 12, Group F: a multi-ledger customer pick's own entities carry no
         # `display_name` at all (`turn/apply.py::_answer_pending` leaves it off on
         # purpose for an option covering several uuids) - filled in here, the same
@@ -1758,6 +1930,11 @@ def make_tool_runner(
         # (line ~906 above), so the miss header can name each ledger rather than
         # falling back to the option's own rollup code.
         fill_customer_names(db, entities)
+        # Ported from PR #1118 (not merged), D13/D20: the dealer's own quantity per
+        # product, resolved to uuids here - `lanes/business/fetch.py` reads it
+        # straight off the lane input.
+        lane_out = _spec_quantities(lane_out, spec, entities)
+        lane_ctx = {**lane_ctx, "parse": {**(lane_ctx.get("parse") or {}), "output": lane_out}}
         # R2: start from the resolver's own gate (gate_reason, require_specific,
         # customer_probe_entities, company_team, gate_debug, ...) - `compatible_entities`
         # and `predicate` are still set exactly as today, below, overriding whatever
@@ -2715,6 +2892,22 @@ def envelope_of(
         # sections, stock rows included (turn d5128c67). A code is not a class, so its
         # answer keeps the domain's own header.
         "header_override": fetched.get("set_header") if counted_set else None,
+        # Ported from PR #1118 (not merged), D25: what the stock reply said about a
+        # quantity being required, per product. The composer never reads it (the
+        # sentence is the presenter's); `engine.py` rebuilds the open stock task from
+        # it (`turn/task.py::tasks_after_reply`).
+        "stock_availability": (
+            fetched.get("stock_availability")
+            if isinstance(fetched.get("stock_availability"), list)
+            else []
+        ),
+        # Ported from PR #1118 (not merged), D15: the products a "just proceed"
+        # dropped, named by the reply so the dealer can see what was not checked.
+        # Stamped on the spec by the task, carried here because the composer prints
+        # it under the section it belongs to.
+        "not_checked": [
+            name for name in (spec.filters.get("not_checked") or []) if isinstance(name, str)
+        ],
         # The lane's OWN question, when the fetch asked one instead of (or beside)
         # answering: contract 38's "which document?" and contract 39's detail offer both
         # come back as `outstanding_ask` = `{kind, last_result_set, filters}`. The

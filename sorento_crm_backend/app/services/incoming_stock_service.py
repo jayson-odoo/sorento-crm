@@ -166,6 +166,61 @@ def _attachment_payload(attachment: Optional[Attachment]) -> Optional[dict[str, 
     }
 
 
+def earliest_packing_list_shipment(
+    db: Session, product_ids: list[str]
+) -> dict[str, tuple[str, date, str]]:
+    """R5 (chatbot stock ask v2 S3): the earliest still-incoming shipment WITH a
+    packing list, for each product id, at ANY location (AC-SA304 to AC-SA309).
+
+    A candidate line must be `_still_incoming_filter()` (not received, remaining
+    quantity > 0) on a `_not_draft_shipment_filter()` shipment that carries an
+    `attachment_id` (the packing list) AND a non-NULL `estimated_arrival_date` -
+    lavish review R10: a shipment lacking a date never qualifies, there is no
+    "ETA to be confirmed" answer. `eta_delay_date` is never read (R5). No warehouse
+    join: `spo_allocations` and purchase order lines are never a source for this
+    read, so a shipment's line landing outside the asking contact's policy
+    locations still qualifies (AC-SA307 - this read has no location dimension to
+    filter by in the first place).
+
+    Returns `{product_id: (shipment_id, estimated_arrival_date, attachment_id)}` -
+    one entry per product id with a qualifying shipment; a product id with none is
+    simply absent.
+    """
+    if not product_ids:
+        return {}
+    rows = (
+        db.query(
+            InboundShipmentLine.product_id,
+            InboundShipment.id,
+            InboundShipment.estimated_arrival_date,
+            InboundShipment.attachment_id,
+        )
+        .join(InboundShipment, InboundShipment.id == InboundShipmentLine.shipment_id)
+        .filter(
+            InboundShipmentLine.product_id.in_(product_ids),
+            _not_draft_shipment_filter(),
+            _still_incoming_filter(),
+            InboundShipment.attachment_id.isnot(None),
+            InboundShipment.estimated_arrival_date.isnot(None),
+        )
+        .order_by(
+            InboundShipmentLine.product_id,
+            InboundShipment.estimated_arrival_date.asc(),
+            # Nit, review round 1: two qualifying shipments on the same
+            # `estimated_arrival_date` otherwise pick an arbitrary one (Postgres
+            # makes no promise about which `DISTINCT ON` row wins a tie) - id is
+            # not a meaningful order, only a deterministic one.
+            InboundShipment.id.asc(),
+        )
+        .distinct(InboundShipmentLine.product_id)
+        .all()
+    )
+    return {
+        str(product_id): (str(shipment_id), eta, str(attachment_id))
+        for product_id, shipment_id, eta, attachment_id in rows
+    }
+
+
 class IncomingStockService:
     """User-facing incoming-stock retrieval."""
 

@@ -1,9 +1,14 @@
 # State: focus + pending + profile (PLAN-chatbot-turn-rearch.md "APPLY contract").
-# Dataclasses only - no pydantic here, no I/O, nothing imported outside the stdlib.
+# Dataclasses only - no pydantic here, no I/O, and nothing imported outside the stdlib
+# but `turn/task.py`, the one axis that carries a dataclass of its own (ported from PR
+# #1118, feat/chatbot-dealer-stock-verdict, not merged, owner ruling 24 Sep 2026, for
+# chatbot-stock-ask-v2 S3).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Mapping
+
+from app.services.chatbot.turn.task import Task, task_from_wire, task_to_wire
 
 
 def focus_row_label(row: Mapping[str, Any]) -> Any:
@@ -108,6 +113,14 @@ class Focus:
     # re-counting it. Its own slot rather than a bag entry: a page position is a focus
     # axis like any other, and it has to be cleared by a topic reset with the rest.
     set_page: dict[str, Any] | None = None
+    # Ported from PR #1118 (not merged) for chatbot-stock-ask-v2 S3: what the
+    # conversation still OWES (Focus.tasks, D21). A tuple of `turn/task.py::Task`, at
+    # most one per kind. Its own axis rather than a flag on `products`, because
+    # `apply._set_kind_field` REPLACES an axis wholesale on any turn that names
+    # entities of that kind - turn 1's four products would be gone the moment turn 2
+    # answered two of them - and rather than a `pending`, because a new ask CLOSES a
+    # roster and must only PARK a task.
+    tasks: tuple[Task, ...] = ()
     extra: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
 
 
@@ -131,6 +144,13 @@ class Profile:
     # gets no salesman notification and no packing list attachment by default.
     notify_salesman: bool = False
     packing_list_allowed: bool = False
+    # Owner ruling 26 Sep 2026 (hand test F1): "dealer ask cannot have escalation,
+    # cannot have direct escalation to warehouse, their contact point is sales person".
+    # A dealer is a contact whose stock visibility policy is "Availability only"
+    # (`stock_visibility.resolve_policy(...).mode == "availability"`), read once with the
+    # rest of the profile so the stock ask can refer them to their salesman instead of
+    # offering a team. Default OFF: an unresolved contact keeps today's behaviour.
+    stock_availability_only: bool = False
 
 
 @dataclass
@@ -164,6 +184,10 @@ def focus_to_wire(focus: Focus) -> dict[str, Any]:
     wire["sales_channel"] = focus.sales_channel
     wire["date_window"] = focus.date_window
     wire["set_page"] = focus.set_page
+    # Ported from PR #1118 (not merged): the open tasks travel INSIDE the focus, not
+    # on a session key of their own - the focus is the context, and a second key
+    # could disagree with it.
+    wire["tasks"] = [task_to_wire(task) for task in (focus.tasks or ())]
     wire["extra"] = {k: list(v) for k, v in (focus.extra or {}).items()}
     return wire
 
@@ -213,6 +237,14 @@ def focus_from_wire(raw: Any) -> Focus:
     focus.date_window = window if isinstance(window, dict) else None
     page = raw.get("set_page")
     focus.set_page = page if isinstance(page, dict) else None
+    tasks = raw.get("tasks")
+    if isinstance(tasks, list):
+        # Ported from PR #1118 (not merged): a focus persisted before this slice
+        # shipped carries no `tasks` key at all, which reads as "nothing owed", never
+        # as a broken read.
+        focus.tasks = tuple(
+            task for task in (task_from_wire(row) for row in tasks) if task is not None
+        )
     extra = raw.get("extra")
     if isinstance(extra, dict):
         focus.extra = {

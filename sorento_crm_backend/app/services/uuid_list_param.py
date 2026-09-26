@@ -69,3 +69,67 @@ def _consume(value, out: list[str], seen: set[str], param_name: str) -> None:
         return
     seen.add(canonical)
     out.append(canonical)
+
+
+def parse_requested_quantities(
+    raw: Optional[str], *, param_name: str = "requested_quantities"
+) -> Optional[dict]:
+    """Ported from PR #1118 (feat/chatbot-dealer-stock-verdict, not merged, owner
+    ruling 24 Sep 2026) for chatbot-stock-ask-v2 S3 parity.
+
+    `requested_quantities`: a JSON object, product UUID -> int, over `<entity>_ids`'
+    plumbing rather than a list.
+
+    Returns None for a blank/absent value. Raises 400 on anything that is not a JSON
+    object, a key that fails UUID parsing, or a value that is not a plain int (a bool
+    is rejected too - `isinstance(True, int)` is true in Python, but a bare `true` is
+    never a quantity).
+    """
+    if raw is None:
+        return None
+    s = raw.strip()
+    if not s:
+        return None
+    try:
+        parsed = json.loads(s)
+    except json.JSONDecodeError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "INVALID_REQUESTED_QUANTITIES",
+                "message": f"`{param_name}` must be a JSON object.",
+                "param": param_name,
+            },
+        )
+    if not isinstance(parsed, dict):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "INVALID_REQUESTED_QUANTITIES",
+                "message": f"`{param_name}` must be a JSON object, not a {type(parsed).__name__}.",
+                "param": param_name,
+            },
+        )
+    out: dict[str, int] = {}
+    for key, value in parsed.items():
+        key_s = str(key).strip()
+        if not _UUID_RE.match(key_s):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "code": "INVALID_UUID",
+                    "message": f"`{param_name}` contains a non-UUID key: {key_s!r}",
+                    "param": param_name,
+                },
+            )
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "code": "INVALID_REQUESTED_QUANTITIES",
+                    "message": f"`{param_name}` value for {key_s!r} must be an integer.",
+                    "param": param_name,
+                },
+            )
+        out[key_s.lower()] = value
+    return out or None
