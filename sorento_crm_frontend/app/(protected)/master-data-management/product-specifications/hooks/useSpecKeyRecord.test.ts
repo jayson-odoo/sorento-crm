@@ -175,4 +175,30 @@ describe('useSpecKeyRecord', () => {
     expect(result.current.mode).toBe('edit');
     expect(result.current.draft?.label).toBe('Finish colour');
   });
+
+  it('security review fix round (#1286, S1) - a 409 (another catalogue read running) toasts the exact server message and keeps the draft', async () => {
+    const BUSY = 'Products are still being updated from another change. Try again in a moment.';
+    const row = finishWithASuppressedValue();
+    // `updateSpecKey` itself is what turns the 409 body into this message, through
+    // `extractApiError` (`productSpecService.conflict.test.ts`) - mocked here with
+    // the SAME message so this proves what happens once it reaches the hook.
+    updateSpecKey.mockRejectedValue(new Error(BUSY));
+    const { result } = renderHook(() => useSpecKeyRecord(row), { wrapper });
+
+    act(() => result.current.edit());
+    act(() => {
+      result.current.setDraft((draft) => ({
+        ...draft,
+        rules: [...draft.rules, { builder: { kind: 'words', words: ['NEW'], value: 'chrome' } }],
+      }));
+    });
+    await act(async () => {
+      const ok = await result.current.save();
+      expect(ok).toBe(false);
+    });
+
+    expect(toast.error).toHaveBeenCalledWith(BUSY, { duration: 10_000 });
+    expect(result.current.mode).toBe('edit');
+    expect(result.current.draft?.rules).toHaveLength(1);
+  });
 });

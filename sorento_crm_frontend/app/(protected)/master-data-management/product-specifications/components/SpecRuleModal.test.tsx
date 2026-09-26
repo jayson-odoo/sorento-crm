@@ -154,3 +154,60 @@ describe('AC-S1.18 - the rule modal, every kind', () => {
     assertNoRawControls(document.body);
   });
 });
+
+/** Opens the multi-select under `label` (Radix Popover, portalled to
+ *  `document.body`) - once per field. Reclicking the trigger while it is
+ *  already open would toggle it CLOSED, so a run of `createWord` calls opens
+ *  it exactly once and adds every word into that same open popover. */
+function openMultiSelect(label: string) {
+  const field = screen.getByText(label).closest('div')!;
+  fireEvent.click(field.querySelector('button[role="combobox"]')!);
+}
+
+function createWord(word: string) {
+  const input = screen.getByPlaceholderText('Search...');
+  fireEvent.change(input, { target: { value: word } });
+  fireEvent.click(document.body.querySelector('[data-slot="searchable-multi-select-create"]')!);
+}
+
+function saveButton() {
+  return screen.getByRole('button', { name: 'Save rule' });
+}
+
+describe('Security review fix round (#1286, B1) - the same three limits the server refuses', () => {
+  it('a phrase with more than one ... is refused inline under the words multi-select, Save disabled', () => {
+    renderModal();
+    openMultiSelect('What to find');
+    createWord('A ... B ... C');
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Use at most one ... in a phrase.');
+    expect(saveButton()).toBeDisabled();
+  });
+
+  it('a word over 60 characters is refused inline, Save disabled', () => {
+    renderModal();
+    openMultiSelect('What to find');
+    createWord('X'.repeat(61));
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Keep each word to 60 characters or fewer.');
+    expect(saveButton()).toBeDisabled();
+  });
+
+  it('more than 20 words in one list is refused inline, Save disabled', () => {
+    renderModal();
+    openMultiSelect('What to find');
+    for (let i = 0; i < 21; i += 1) createWord(`WORD${i}`);
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Use at most 20 words in a list.');
+    expect(saveButton()).toBeDisabled();
+  });
+
+  it('within every limit, no alert renders and Save stays enabled', () => {
+    renderModal();
+    openMultiSelect('What to find');
+    createWord('ROUND');
+
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(saveButton()).not.toBeDisabled();
+  });
+});
