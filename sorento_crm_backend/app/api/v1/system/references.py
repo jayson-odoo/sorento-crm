@@ -2826,6 +2826,14 @@ def resolve_reference_post(
             result["predicate"]["description"] = outcome["description"]
         if outcome.get("brand"):
             result["predicate"]["brand"] = outcome["brand"]
+            # The brand word IS placed: it scopes the set. Left in `unresolved_tokens`
+            # it closed a Sorento answer with "I could not find sorento."
+            brand_key = str(outcome["brand"]).strip().lower()
+            result["unresolved_tokens"] = [
+                t for t in (result.get("unresolved_tokens") or []) if str(t).strip().lower() != brand_key
+            ]
+        if outcome.get("row_labels"):
+            result["predicate"]["row_labels"] = outcome["row_labels"]
         _emit_spec_matches(result, outcome["candidates"], payload.query or "")
         # R2 only fires on a genuine HAS answer (qualifying_total > 0): the
         # existing zero-qualifying miss flow names its own candidate codes off

@@ -243,6 +243,8 @@ def test_w1_sorento_wash_basin_is_the_sorento_basin_set_never_wider(chat, world,
     )
     assert "5 wash basins have stock." in text, text
     assert _codes_in(text, world) == _codes(world["srt_basins"][:3] + world["srt_wall"]), text
+    # The brand word scoped the set, so it was found.
+    assert "could not find" not in text, text
 
 
 @pytest.mark.parametrize("shape", [0, 1], ids=["brand_entity", "brand_in_class_raw"])
@@ -352,14 +354,14 @@ def test_w3_each_row_leads_with_the_product_name_and_key_spec_then_code_and_stoc
     for p in world["srt_wall"]:
         [line] = [ln for ln in lines if p.product_code in ln]
         assert re.match(
-            rf"^\d+\. {re.escape(p.product_name)} \(Mounting: Wall hung, Finish: White\) \| "
-            rf"{re.escape(p.product_code)} \| \*Total:\* 10$",
+            rf"^\d+\. {re.escape(p.product_name)} \(Mounting: Wall hung, Finish or colour: White\) \| "
+            rf"\*Product Code:\* {re.escape(p.product_code)} \| \*Total:\* 10$",
             line,
         ), text
     for p in world["srt_basins"][:3]:
         [line] = [ln for ln in lines if p.product_code in ln]
         assert re.match(
-            rf"^\d+\. {re.escape(p.product_name)} \(Finish: White\) \| {re.escape(p.product_code)} \| \*Total:\* 10$",
+            rf"^\d+\. {re.escape(p.product_name)} \(Finish or colour: White\) \| \*Product Code:\* {re.escape(p.product_code)} \| \*Total:\* 10$",
             line,
         ), text
     # One line per row: no field is left dangling on a line of its own.

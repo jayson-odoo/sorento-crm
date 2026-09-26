@@ -645,6 +645,71 @@ def describe_set(db: Session, *, brand: str | None, membership: dict[str, list[s
     return out
 
 
+#: Spec values a row names after the product name (owner brief W3 on PR #833).
+ROW_SPEC_MAX = 2
+
+
+def _spec_value_text(row: Any, value: Any) -> str | None:
+    """One stored spec value as a dealer reads it, or None when it says nothing."""
+    if value is None or value is False or value == "" or value == []:
+        return None
+    if value is True:
+        return "Yes"
+    if isinstance(value, list):
+        parts = [_spec_value_text(row, v) for v in value]
+        return " / ".join(p for p in parts if p) or None
+    labels = dict(getattr(row, "value_labels", None) or {})
+    if isinstance(value, (int, float)):
+        number = f"{value:g}"
+        unit = (getattr(row, "unit", None) or "").strip()
+        return f"{number}{unit}" if unit else number
+    return labels.get(value) or _sentence_case(str(value))
+
+
+def row_labels(db: Session, candidates: list[dict], *, skip_keys: set[str]) -> dict[str, str]:
+    """`{product_code: "Sorento Wall Basin (Mounting: Wall hung, Finish: White)"}` for the
+    candidates: the product's own name, then its top `ROW_SPEC_MAX` spec values by the
+    registry's `rank_weight`, leaving out what the header already says (`skip_keys`).
+
+    Owner brief W3 on PR #833: "codes alone are useless to the user". One query for the
+    names, one for the registry rows."""
+    from app.models.product_spec import ProductSpecRegistry
+
+    ids = [c.get("product_id") for c in candidates if c.get("product_id")]
+    if not ids:
+        return {}
+    names = {
+        str(pid): (name or "").strip()
+        for pid, name in db.query(Product.id, Product.product_name).filter(Product.id.in_(ids)).all()
+    }
+    registry = {
+        row.spec_key: row
+        for row in db.query(ProductSpecRegistry).filter(ProductSpecRegistry.is_active.is_(True)).all()
+    }
+    out: dict[str, str] = {}
+    for cand in candidates:
+        code = cand.get("product_code")
+        if not code:
+            continue
+        name = names.get(str(cand.get("product_id"))) or ""
+        specs = cand.get("specifications") or {}
+        keys = [k for k in specs if k not in skip_keys and k in registry]
+        keys.sort(key=lambda k: (-float(registry[k].rank_weight or 0), k))
+        shown: list[str] = []
+        for key in keys:
+            text = _spec_value_text(registry[key], specs[key])
+            if text:
+                shown.append(f"{registry[key].label}: {text}")
+            if len(shown) >= ROW_SPEC_MAX:
+                break
+        label = name if name and name != code else ""
+        if shown:
+            label = f"{label} ({', '.join(shown)})" if label else ", ".join(shown)
+        if label:
+            out[code] = label
+    return out
+
+
 def resolve_product_set(
     db: Session,
     *,
@@ -992,6 +1057,12 @@ def resolve_product_set(
     description = describe_set(db, brand=brand, membership=verdict.get("membership") or {})
     if description:
         outcome["description"] = description
+    # W3: a readable lead for every row the fetch will render.
+    labels = row_labels(
+        db, candidates, skip_keys={"class", "brand", "product_type", *(verdict.get("membership") or {})}
+    )
+    if labels:
+        outcome["row_labels"] = labels
     if certificate_ids is not None:
         outcome["certificate_ids"] = certificate_ids
     return outcome

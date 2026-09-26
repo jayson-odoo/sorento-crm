@@ -2486,7 +2486,39 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     if len(action_links):
         msg += "\n"
 
+    # W3 (owner hand test round 2 on PR #833): a counted-set row leads with the product's
+    # own name and key spec, then its code, then the tool's fields, on ONE line - "codes
+    # alone are useless to the user". The lead comes from the resolver
+    # (`predicate.row_labels`, keyed by product code).
+    set_predicate = ctx.get("predicate") if isinstance(ctx.get("predicate"), dict) else None
+    set_row_labels = jsc.get(set_predicate, "row_labels") if set_predicate is not None else None
+    set_row_labels = set_row_labels if isinstance(set_row_labels, dict) else None
+
+    def _set_item_line(position: int, it: Any) -> str:
+        fields = [f for f in (jsc.get(it, "fields") or []) if isinstance(f, dict)]
+        code_field = next((f for f in fields if jsc.js_string(f.get("key") or "") == "product_code"), None)
+        code = jsc.nullish_str(code_field.get("value") if code_field else jsc.get(it, "title")).strip()
+        rest = " | ".join(
+            f"*{jsc.js_string(f.get('label', jsc.UNDEFINED))}:* {_fmt_value(f.get('value'))}"
+            for f in fields
+            if f is not code_field
+        )
+        lead = jsc.js_string(set_row_labels.get(code) or "").strip() if set_row_labels else ""
+        code_part = (
+            f"*{jsc.js_string(code_field.get('label', jsc.UNDEFINED))}:* {code}" if code_field else code
+        )
+        parts = [p for p in (lead, code_part, rest) if p]
+        return f"{position}. " + " | ".join(parts)
+
     def _item_line(position: int, it: Any) -> str:
+        if set_row_labels is not None:
+            line = _set_item_line(position, it)
+            flags = jsc.get(it, "flags")
+            if jsc.truthy(flags) and jsc.truthy(jsc.get(flags, "discontinued")):
+                line += " | ⚠️ *(PRODUCT DISCONTINUED)*"
+            if jsc.truthy(flags) and jsc.truthy(jsc.get(flags, "expired")):
+                line += " | ⚠️ *(EXPIRED)*"
+            return line
         field_lines = "\n".join(
             f"*{jsc.js_string(jsc.get(f, 'label', jsc.UNDEFINED))}:* "
             f"{_fmt_value(jsc.get(f, 'value'))}"

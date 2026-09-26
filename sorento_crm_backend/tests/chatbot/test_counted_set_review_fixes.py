@@ -344,8 +344,10 @@ def test_an_availability_row_is_numbered_with_its_product_code(
 
     lines = text.splitlines()
     listed = sorted([taps[0].product_code, taps[2].product_code])
-    assert f"1. {listed[0]}" in lines, text
-    assert f"2. {listed[1]}" in lines, text
+    # W3 (owner hand test round 2): the row leads with the product's key spec, and its
+    # code still closes the line, never a bare "1. ".
+    assert any(line.startswith("1. ") and line.endswith(listed[0]) for line in lines), text
+    assert any(line.startswith("2. ") and line.endswith(listed[1]) for line in lines), text
 
 
 # --------------------------------------------------------------------------- #
