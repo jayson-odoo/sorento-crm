@@ -1207,20 +1207,27 @@ def resolve_kinds(
     # never through the shared resolver - no order-domain fan-out to
     # customer/transporter (`entity_resolver._DOMAIN_HINT_EXPANSIONS["order"]
     # ["brand"]`, untouched - it still serves n8n/MCP callers), no reconcile
-    # re-type, no roster, no kind pick. Stripped from the CTX handed to
-    # `resolve_gate.run` only - `apply()` reads `verdict.get("entities")`
-    # directly (never this function's own ctx copy), so the entity still
-    # settles onto `focus.brands` exactly as any other confident entity would
-    # (`turn/apply.py::_focus_rules`'s generic per-hint grouping).
+    # re-type, no roster, no kind pick.
     #
-    # Security B1 / SF3 (review round, 26 Sep 2026): ORDER domain only. The strip
-    # ran unconditionally for every domain, which also blinded promotion/inventory
-    # turns naming only a brand - `gate.py`'s own brand-grouping code (~1546-1556)
-    # reads `parser.get("entities")` for a `hint: "brand"` entity ON PURPOSE for
-    # those domains, and `tier_gate.py` (~207-223) reads the SAME entities for
-    # `query_brands` - stripping it there made an unheld brand's promo ask fail
-    # OPEN (`query_brands` empty -> `recompose()` falls back to the full
-    # entitlement) instead of failing closed.
+    # Security B1 / SF3 (review round, 26 Sep 2026, two passes): ORDER domain only -
+    # the strip ran unconditionally for every domain, which also blinded
+    # promotion/inventory turns naming only a brand (`gate.py`'s own brand-grouping
+    # code ~1546-1556 and `tier_gate.py`'s own `query_brands` derivation ~207-223
+    # both read `parser.get("entities")` for a `hint: "brand"` entity ON PURPOSE).
+    #
+    # Second pass: dropped from the TOKEN LIST that reaches the resolver only
+    # (`resolver_excluded_entity_ids`, threaded through `resolve_gate.run` into
+    # `resolve_entity_body`'s own token building) - NEVER from `ctx.parse.output.
+    # entities` itself. A mixed order+promotion turn (`branch_kind: "check_promotion"`,
+    # `domain_hint: "order"`) enters `resolve_gate.run` at `entry == "access_check"`,
+    # which reads `parser = ctx.parse.output` (the SAME object, not a copy) to run
+    # `tier_gate` BEFORE resolve-entity is even called - mutating that object here
+    # blinded `tier_gate`'s own `query_brands` fallback exactly the same way the
+    # domain-unscoped version blinded promotion/inventory, just narrowed to this one
+    # mixed shape. `apply()` reads `verdict.get("entities")` directly (never this
+    # function's own ctx), so the entity still settles onto `focus.brands` exactly as
+    # any other confident entity would (`turn/apply.py::_focus_rules`'s generic
+    # per-hint grouping) - untouched by either strip.
     is_order_domain = (
         jsc.nullish_str(output_block_for_domain.get("domain_hint")).strip().lower() == "order"
     )
@@ -1234,16 +1241,17 @@ def resolve_kinds(
         # matches either; the token falls through to the shared resolver
         # unchanged, exactly as it did before this slice.
         matched_brands = []
-    if matched_brands:
-        matched_ids = {id(e) for e in matched_brands}
-        remaining = [e for e in entities if id(e) not in matched_ids]
-        if len(remaining) != len(entities):
-            parse_block = dict(jsc.get(ctx, "parse") or {})
-            output_block = dict(parse_block.get("output") or {})
-            output_block["entities"] = remaining
-            parse_block["output"] = output_block
-            ctx = {**ctx, "parse": parse_block}
-            entities = remaining
+    resolver_excluded_entity_ids = (
+        frozenset(id(e) for e in matched_brands) if matched_brands else None
+    )
+    # The entities THIS call would resolve against, brand-excluded ids aside - used
+    # ONLY for the entity-less early return just below, never handed to the resolver
+    # itself as a replacement list (that stays `ctx`'s own, unmutated).
+    entities_after_exclusion = (
+        [e for e in entities if id(e) not in resolver_excluded_entity_ids]
+        if resolver_excluded_entity_ids
+        else entities
+    )
     # Security B1/S1 (review round, 20 Sep 2026): the `access_check` entry is about the
     # CONTACT, not about anything the message named - `resolve_gate.run` reads the
     # entitlement and runs the tier gate BEFORE resolve-entity is even called, and main's
@@ -1253,7 +1261,7 @@ def resolve_kinds(
     # (no product) fell through to `narrow.py`'s entitlement-BLIND tier menu, and the turn
     # that ANSWERS a tier pick (a bare "1", no entity of its own) reached `_tier_gate`
     # with no entitlement to recompose against at all.
-    if not entities and entry != "access_check":
+    if not entities_after_exclusion and entry != "access_check":
         return ResolveOutcome({}, [], None, {}, {}, False, None)
     if roster_caps is None:
         from app.models.chatbot_policy import ChatbotEntityKind
@@ -1279,6 +1287,7 @@ def resolve_kinds(
             probe_default_start=resolve_gate.default_probe_start(),
             dry_run=dry_run,
             roster_caps=roster_caps,
+            resolver_excluded_entity_ids=resolver_excluded_entity_ids,
         )
     except Exception:  # noqa: BLE001 - see the docstring: nothing to reconcile, not a failure
         logger.warning("chatbot: the resolver did not answer", exc_info=True)

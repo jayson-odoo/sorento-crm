@@ -1674,11 +1674,20 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
     )
 
     # ── Q23 - a stated access level the contact does not hold ───────────────
-    # Say so, then still show what they DO have. F5: `Aggregate` only runs on the promotion
-    # lane, so requiring the domain AND a real entitlement read is what stops a false
-    # "You don't have access to End User promotions" on a stock question.
+    # Say so, then still show what they DO have. F5: `Aggregate` (and `tier_gate`)
+    # only run on the promotion lane (`resolve_gate.run`'s own `entry == "access_
+    # check"` step, which only ever fires for `branch_kind == "check_promotion"`) -
+    # `tg is not None` IS that same condition, read directly off whether the node
+    # actually ran, rather than off `domain == "promotion"` (review round 2, 26 Sep
+    # 2026, security follow-up): a MIXED order+promotion turn sends `domain_hint:
+    # "order"` (the order half won the parser's own domain read) through this exact
+    # entry regardless, and the literal-string check discarded `tier_gate`'s own,
+    # correctly-computed `brand_gate_empty` for that shape - the SAME "You don't
+    # have access to Cabana promotions" the bare-promotion turn gets, silently
+    # replaced with "gate closed, no notice at all". A turn where tier_gate never
+    # ran (`tg is None`, the ELSE branch below) is unaffected either way.
     tg = tier_gate if isinstance(tier_gate, dict) else None
-    if domain == "promotion" and tg is not None:
+    if tg is not None:
         stated_t = tg["tier_stated"] if isinstance(tg.get("tier_stated"), list) else []
         ent_t = tg["entitled_tiers"] if isinstance(tg.get("entitled_tiers"), list) else []
         held_t = [t for t in stated_t if t in ent_t]

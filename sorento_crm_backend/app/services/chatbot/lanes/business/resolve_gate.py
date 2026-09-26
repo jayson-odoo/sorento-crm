@@ -636,6 +636,7 @@ def resolve_entity_body(
     space_id: str | None = None,
     dry_run: bool = False,
     tier_gate: dict[str, Any] | None = None,
+    excluded_entity_ids: frozenset | None = None,
 ) -> dict[str, Any]:
     """The `resolve-entity` httpRequest jsonBody, key for key.
 
@@ -661,6 +662,13 @@ def resolve_entity_body(
     ran) or an empty recomposed list (nothing to state) both fall back to today's
     behaviour unchanged - the `set_page` reply path keeps its own carry-based tiers and
     never reaches this function at all.
+
+    `excluded_entity_ids` (#1262 slice 9 F1a, security review round 2, 26 Sep 2026) is
+    `run()`'s own `resolver_excluded_entity_ids` - a live-brand entity `turn_runtime.
+    resolve_kinds` intercepted, dropped from the TOKEN LIST this body builds (`tokens`,
+    `allowed_entity_types`, `entity_pins`) only. `parse_output.get("entities")` itself
+    is read UNFILTERED everywhere else in this function (`scope_terms` below) - the
+    entity still exists on `ctx.parse.output`, just never sent to the shared resolver.
     """
     parse_output = _parser_output(ctx)
     entities = parse_output.get("entities")
@@ -672,6 +680,8 @@ def resolve_entity_body(
             "resolve-entity: ctx.parse.output.entities is not an array, so the token map "
             "cannot be built (n8n throws on the same read)"
         )
+    if excluded_entity_ids:
+        entities = [e for e in entities if id(e) not in excluded_entity_ids]
 
     match_mode = parse_output.get("match_mode")
     match_mode = match_mode if jsc.truthy(match_mode) else "and"
@@ -1009,6 +1019,7 @@ def run(
     probe_default_start: str | None = None,
     dry_run: bool = False,
     roster_caps: Mapping[str, int] | None = None,
+    resolver_excluded_entity_ids: frozenset | None = None,
 ) -> dict[str, Any]:
     """One pass through `sub-resolve-and-gate`. Returns the exit arm's item.
 
@@ -1017,6 +1028,16 @@ def run(
     `$now.minus({days: 90})` the customer probe injects, passed in rather than computed so
     a replay is deterministic. `roster_caps` (PLAN-chatbot-answer-half-reattach.md
     "Roster cap") is handed straight through to `gate.run_gate`.
+
+    `resolver_excluded_entity_ids` (#1262 slice 9 F1a, security review round 2, 26 Sep
+    2026) is `turn_runtime.resolve_kinds`'s own live-brand intercept - a set of
+    `id(entity dict)` to drop from the TOKEN LIST `resolve_entity_body` builds for the
+    shared resolver only. `ctx` itself is never touched here: `parser = _parser_output
+    (ctx)` two lines down is the SAME object `tier_gate` (the `access_check` arm,
+    right below) and `gate.run_gate` (further down) both read - excluding an entity
+    from THAT would blind their own, on-purpose brand reads (`tier_gate.py`'s
+    `query_brands` fallback, `gate.py`'s brand-grouping) exactly the bug this
+    parameter exists to avoid.
     """
     # The two carriers' contract throws, against the values this function was handed.
     # `build_ctx` / `carry_item` themselves take the TRIGGER and are what `run_from_trigger`
@@ -1076,7 +1097,13 @@ def run(
     # R25/AC-1349: the tier gate's own recomposed access_levels, when it ran
     # and produced any - see `resolve_entity_body`'s own docstring.
     resolved = services.resolve_entity(
-        resolve_entity_body(ctx, space_id=space_id, dry_run=dry_run, tier_gate=tier_gate_out)
+        resolve_entity_body(
+            ctx,
+            space_id=space_id,
+            dry_run=dry_run,
+            tier_gate=tier_gate_out,
+            excluded_entity_ids=resolver_excluded_entity_ids,
+        )
     )
 
     # ── a container-hinted token that is ONLY a product is a product (item F) ─
