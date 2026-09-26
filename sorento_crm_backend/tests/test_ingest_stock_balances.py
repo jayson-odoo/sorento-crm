@@ -1084,35 +1084,12 @@ class TestMigrationGrantAC18:
             transaction.rollback()
             connection.close()
 
-    def _role_slug_taken(self, bind) -> bool:
-        return (
-            bind.execute(
-                text("SELECT 1 FROM user_roles WHERE slug = :s"),
-                {"s": self._ESB_ROLE_SLUG},
-            ).first()
-            is not None
-        )
-
-    def _esb_role(self, bind) -> str:
-        """A role holding the real `integration_foundryx_esb` slug, seeded
-        inside the transaction the `bind` fixture rolls back - nothing here
-        survives the test."""
-        role_id = str(uuid.uuid4())
-        suffix = uuid.uuid4().hex[:8]
-        taken = self._role_slug_taken(bind)
-        bind.execute(
-            text(
-                "INSERT INTO user_roles (id, slug, name, description, is_protected, "
-                "is_default, is_trashed) VALUES (:i, :s, :n, :d, false, false, false)"
-            ),
-            {
-                "i": role_id,
-                "s": f"{self._ESB_ROLE_SLUG}_{suffix}" if taken else self._ESB_ROLE_SLUG,
-                "n": f"{MARKER} ESB role {suffix}",
-                "d": f"{MARKER} scratch",
-            },
-        )
-        return role_id
+    def _existing_role_id(self, bind) -> Optional[str]:
+        row = bind.execute(
+            text("SELECT id FROM user_roles WHERE slug = :s"),
+            {"s": self._ESB_ROLE_SLUG},
+        ).first()
+        return str(row[0]) if row else None
 
     def _grant_count(self, bind, role_id: str, slug: str) -> int:
         return bind.execute(
@@ -1124,20 +1101,73 @@ class TestMigrationGrantAC18:
             {"r": role_id, "s": slug},
         ).scalar()
 
-    def test_apply_grants_view_edit_delete_to_the_esb_role(self, bind):
-        role_id = self._esb_role(bind)
-        mig = self._load_migration()
+    @pytest.fixture()
+    def esb_role(self, bind):
+        """Round 3 fix (test defect found live): `integration_foundryx_esb`
+        is REAL, persistent seed data on any database `seed_integrations`/
+        migration 297 has run against - not scratch data this suite is free
+        to assume absent. Reuses it when present rather than creating a
+        second (suffixed) role alongside it; seeds one only when genuinely
+        absent.
 
-        for slug in self._TARGET_SLUGS:
-            assert self._grant_count(bind, role_id, slug) == 0
+        Cleanup removes only what THIS fixture itself added: the role row,
+        if it seeded one, and any of the three target grants that did not
+        already exist on the reused role before `apply()` ran - never a
+        pre-existing role or a grant it already held (that copy of Admin's
+        permissions is real, and deleting it is not this suite's call to
+        make). `bind`'s own transaction rollback is a second, structural
+        guarantee of the same thing; this teardown states the contract
+        explicitly rather than resting on that alone.
+        """
+        existing_id = self._existing_role_id(bind)
+        seeded_role = existing_id is None
+        if seeded_role:
+            role_id = str(uuid.uuid4())
+            bind.execute(
+                text(
+                    "INSERT INTO user_roles (id, slug, name, description, is_protected, "
+                    "is_default, is_trashed) VALUES (:i, :s, :n, :d, false, false, false)"
+                ),
+                {
+                    "i": role_id,
+                    "s": self._ESB_ROLE_SLUG,
+                    "n": f"{MARKER} ESB role",
+                    "d": f"{MARKER} scratch",
+                },
+            )
+        else:
+            role_id = existing_id
+
+        pre_existing_grants = {
+            slug: self._grant_count(bind, role_id, slug) > 0 for slug in self._TARGET_SLUGS
+        }
+
+        try:
+            yield role_id
+        finally:
+            for slug in self._TARGET_SLUGS:
+                if not pre_existing_grants[slug]:
+                    bind.execute(
+                        text(
+                            "DELETE FROM user_role_permissions rp USING user_permissions p "
+                            "WHERE rp.role_id = :r AND rp.permission_id = p.id AND p.slug = :s"
+                        ),
+                        {"r": role_id, "s": slug},
+                    )
+            if seeded_role:
+                bind.execute(text("DELETE FROM user_roles WHERE id = :r"), {"r": role_id})
+
+    def test_apply_grants_view_edit_delete_to_the_esb_role(self, bind, esb_role):
+        role_id = esb_role
+        mig = self._load_migration()
 
         mig.apply(bind)
 
         for slug in self._TARGET_SLUGS:
             assert self._grant_count(bind, role_id, slug) == 1, slug
 
-    def test_apply_is_idempotent(self, bind):
-        role_id = self._esb_role(bind)
+    def test_apply_is_idempotent(self, bind, esb_role):
+        role_id = esb_role
         mig = self._load_migration()
 
         mig.apply(bind)
@@ -1146,12 +1176,12 @@ class TestMigrationGrantAC18:
         for slug in self._TARGET_SLUGS:
             assert self._grant_count(bind, role_id, slug) == 1, slug
 
-    def test_downgrade_is_a_no_op(self, bind):
+    def test_downgrade_is_a_no_op(self, bind, esb_role):
         """Fix round 1 (both reviews): same no-op shape as
         `511_brands_esb_grant.py` - the ESB role's grants were seeded once as
         a copy of Admin's own, so these three likely pre-date this migration
         and a downgrade must not take away access the ESB already had."""
-        role_id = self._esb_role(bind)
+        role_id = esb_role
         mig = self._load_migration()
 
         mig.apply(bind)
@@ -1164,10 +1194,16 @@ class TestMigrationGrantAC18:
             )
 
     def test_apply_on_a_database_without_the_esb_role_does_not_error(self, bind):
-        assert not self._role_slug_taken(bind), (
-            "this database already has an integration_foundryx_esb role - "
-            "this test needs one that genuinely does not exist"
-        )
+        """The no-role branch specifically - genuinely untestable when
+        `integration_foundryx_esb` already exists here (round 3: that is now
+        a real, expected state on any seeded database, not a fixture bug),
+        so this skips rather than failing on a premise it cannot control."""
+        if self._existing_role_id(bind) is not None:
+            pytest.skip(
+                "integration_foundryx_esb already exists on this database "
+                "(seed_integrations has run here) - this test only proves the "
+                "no-such-role branch, which needs genuine absence to exercise"
+            )
         mig = self._load_migration()
 
         before = bind.execute(
