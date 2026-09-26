@@ -15,7 +15,8 @@ from sorento_crm_mcp.catalog import CATALOG
 from sorento_crm_mcp.presenters import PRESENTER_TOOLS, present_response
 
 TOOL = "crm_sales_analysis"
-SAMPLES = Path(__file__).resolve().parents[2] / "documentation" / "plans" / "sales" / "samples"
+# Inside the package tree: the MCP image is built from sorento_crm_mcp/ alone.
+SAMPLES = Path(__file__).resolve().parent / "fixtures" / "sales_analysis"
 _UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 
 
