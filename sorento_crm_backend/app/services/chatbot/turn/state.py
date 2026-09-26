@@ -133,6 +133,16 @@ class Profile:
     packing_list_allowed: bool = False
 
 
+def is_staff_profile(profile: "Profile | None") -> bool:
+    """#1262 slice 11 (F8), owner ruling 2: staff (a Mocha CS sales rep) is
+    `respond_contacts.chatbot_profile.tier == "office"`. The ONE check every
+    bot-initiated escalation offer site reads (`turn/compose.py`'s own composer
+    offer, `answer_bridge.py`'s cross-domain ladder offer) - staff get no offer,
+    dealer/end_user keep R6 (22 Sep) unchanged.
+    """
+    return getattr(profile, "tier", None) == "office"
+
+
 @dataclass
 class State:
     focus: Focus

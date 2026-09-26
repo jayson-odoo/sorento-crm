@@ -101,6 +101,7 @@ from app.services.chatbot.tail import scope_block
 from app.services.chatbot.turn import compose as turn_compose
 from app.services.chatbot.turn import fetch as run_fetch
 from app.services.chatbot.turn import pending
+from app.services.chatbot.turn.state import is_staff_profile
 
 # AC-1691's umbrella: no roster is ever asked with fewer than two options, in any
 # domain and for any entity kind - `narrow.decide`'s own rule for every other roster
@@ -179,6 +180,7 @@ def apply_crossdomain_hit(
     asked_at_turn: int | None = None,
     turn_id: str | None = None,
     focus_products: Any = None,
+    profile: Any = None,
 ) -> turn_compose.Answer:
     """Hand pass 11, defect 1: a single-domain inventory/incoming HIT whose rows all
     read 0 on hand climbs the SAME cross-domain ladder a miss does, instead of
@@ -254,14 +256,21 @@ def apply_crossdomain_hit(
         result = _prefix_zero_note(result)
         from dataclasses import replace
 
-        text = _apply_crossdomain_render(answer.text, result, answered=True)
+        is_staff = is_staff_profile(profile)
+        text = _apply_crossdomain_render(answer.text, result, answered=True, include_offer=not is_staff)
         if text == answer.text:
             return answer
-        # Reviewer N-d: no `else answer.question` arm, because it was unreachable -
-        # `_apply_crossdomain_render` changed the text, and that is the SAME `_xdBlock`
-        # `any`/`block` gate `_crossdomain_offer_pending` reads, so the pending is never
-        # `None` past the equality check above.
-        return replace(answer, text=text, question=_crossdomain_offer_pending(result, asked_at_turn=asked_at_turn))
+        # #1262 slice 11 (F8): staff get the rung's own rendered block (the text
+        # change above still fires) but no escalation offer ARMED either - a
+        # `team_pick` with no visible sentence pointing at it is the same "offer
+        # nobody was shown" gap the composer's own arm closes.
+        #
+        # Reviewer N-d: no `else answer.question` arm otherwise, because it was
+        # unreachable - `_apply_crossdomain_render` changed the text, and that is the
+        # SAME `_xdBlock` `any`/`block` gate `_crossdomain_offer_pending` reads, so
+        # the pending is never `None` past the equality check above.
+        question = None if is_staff else _crossdomain_offer_pending(result, asked_at_turn=asked_at_turn)
+        return replace(answer, text=text, question=question)
     except Exception:  # noqa: BLE001 - a disclosure bug must never block the answer
         logger.warning(
             "chatbot turn %s: the cross-domain zero-stock ladder did not run", turn_id, exc_info=True
@@ -1383,7 +1392,7 @@ def _prefix_zero_note(result: Mapping[str, Any]) -> Mapping[str, Any]:
 
 
 def _apply_crossdomain_render(
-    text: str, result: Mapping[str, Any], *, answered: bool = False
+    text: str, result: Mapping[str, Any], *, answered: bool = False, include_offer: bool = True
 ) -> str:
     """The rung's own rendered block, folded above the escalate marker, from the
     ALREADY-COMPUTED `result` `_run_crossdomain_ladder` (above) returned - this
@@ -1399,6 +1408,10 @@ def _apply_crossdomain_render(
     last_result_set` for non-emptiness only - never its contents - so a single
     truthy sentinel is enough to say "this turn answered something", the same fact
     `text` already carrying real rows establishes.
+
+    `include_offer` (#1262 slice 11, F8): both call sites pass `not is_staff_profile
+    (profile)` - the rung's own block still renders for a staff rep, only the
+    escalate phrase is withheld.
     """
     render = result.get("render")
     if not isinstance(render, Mapping):
@@ -1409,7 +1422,10 @@ def _apply_crossdomain_render(
     variables: dict[str, Any] = {"last_result_set": [True]} if answered else {}
     sealed = {"reply": {"text": text, "session_patch": {"user_response": text, "variables": variables}}}
     merged = tail_compose.crossdomain_compose(
-        sealed, result={"result": {"xd": {"block": dict(block)}}}, answered=answered
+        sealed,
+        result={"result": {"xd": {"block": dict(block)}}},
+        answered=answered,
+        include_offer=include_offer,
     )
     merged_text = (merged.get("reply") or {}).get("session_patch", {}).get("user_response")
     return merged_text if isinstance(merged_text, str) and merged_text else text
@@ -1431,6 +1447,7 @@ def answer_for(
     trace: Any = None,
     dry_run: bool = True,
     carried_pending: Any = None,
+    profile: Any = None,
 ) -> turn_compose.Answer | None:
     """The MISS seam (R4): `None` outside its own two triggers (see module docstring),
     so a hit, an `access_denied` refusal, an infrastructure error and a multi-domain plan
@@ -1694,5 +1711,8 @@ def answer_for(
             team=carried_pending.team or question.team,
             payload={**carried_pending.payload, "escalate_offered": True},
         )
-    text = _apply_crossdomain_render(text, crossdomain_result)
+    # #1262 slice 11 (F8): same audience gate as the HIT-side ladder rung above.
+    text = _apply_crossdomain_render(
+        text, crossdomain_result, include_offer=not is_staff_profile(profile)
+    )
     return turn_compose.Answer(text=text, question=question)

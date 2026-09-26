@@ -61,8 +61,16 @@ def crossdomain_compose(
     *,
     result: Any = None,
     answered: bool = False,
+    include_offer: bool = True,
 ) -> dict[str, Any]:
-    """`{reply}` in, `{reply}` out. `result` is the `build-result` carrier (nullable)."""
+    """`{reply}` in, `{reply}` out. `result` is the `build-result` carrier (nullable).
+
+    `include_offer` (#1262 slice 11, F8): staff (`turn.state.is_staff_profile`) get
+    the rung's own block folded in exactly as before, but no bot-initiated "Would you
+    like me to escalate" phrase - the ladder's own offer site, the ONE gate shared
+    with `turn/compose.py`'s (that module's own composer offer, this one's
+    cross-domain rung).
+    """
     if result is None:
         return dict(item)  # build-result did not run: pass the turn through byte-identical
 
@@ -91,20 +99,29 @@ def crossdomain_compose(
         last_result_set = variables.get("last_result_set")
         if not jsc.is_array(last_result_set) or len(last_result_set) == 0:
             return dict(item)
-        out["user_response"] = f"{user_response}\n{jsc.js_string(jsc.get(block, 'block'))}\n\n{phrase}"
+        block_text = jsc.js_string(jsc.get(block, "block"))
+        out["user_response"] = (
+            f"{user_response}\n{block_text}\n\n{phrase}"
+            if include_offer
+            else f"{user_response}\n{block_text}"
+        )
         # BOTH strings: the visible text so the customer can act, the state so the parser
         # can reconcile the "yes".
-        variables["response"] = f"{jsc.js_string(variables.get('response'))}. {phrase}"
-        existing = out.get("quick_reply")
-        out["quick_reply"] = (
-            f"{jsc.js_string(existing)},Yes escalate,No it's okay"
-            if jsc.truthy(existing)
-            else "Yes escalate,No it's okay"
-        )
+        if include_offer:
+            variables["response"] = f"{jsc.js_string(variables.get('response'))}. {phrase}"
+            existing = out.get("quick_reply")
+            out["quick_reply"] = (
+                f"{jsc.js_string(existing)},Yes escalate,No it's okay"
+                if jsc.truthy(existing)
+                else "Yes escalate,No it's okay"
+            )
     else:
         # TOTAL MISS: the block goes directly under the miss sentence and ABOVE whatever
         # continues the message. State already carries the phrase on this branch, so
-        # state is left alone.
+        # state is left alone. `include_offer=False` (staff) never printed the phrase
+        # onto `user_response` in the first place (the miss arm that built it reads the
+        # SAME gate), so there is nothing to hold back here - the markers below are
+        # about WHERE the block goes, not whether the phrase exists.
         hay = user_response.lower()
         index = -1
         for marker in MARKERS:

@@ -15,7 +15,12 @@ from app.services.chatbot.turn.fetch import envelope_missed
 from app.services.chatbot.turn.narrow import ledger_family_key, ledger_family_label
 from app.services.chatbot.turn.pending import ask as pending_ask, is_roster, quick_replies_suppressed
 from app.services.chatbot.turn.policy import Policy
-from app.services.chatbot.turn.state import KIND_FIELD_MAP, State, focus_row_label
+from app.services.chatbot.turn.state import (
+    KIND_FIELD_MAP,
+    State,
+    focus_row_label,
+    is_staff_profile,
+)
 
 _ATTACHED_SENTENCE = "I have attached the file(s) below."
 
@@ -419,7 +424,7 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
             #   carried in, never resolved by `_lane_question` above because it is
             #   not THIS turn's own ask) must stay the only open question - a
             #   second one piled on top is what the finding measured.
-            is_staff = getattr(getattr(state, "profile", None), "tier", None) == "office"
+            is_staff = is_staff_profile(getattr(state, "profile", None))
             clarifying_open = getattr(state, "pending", None) is not None
             if not is_staff and not clarifying_open:
                 offer = Offer(teams=teams)
@@ -481,7 +486,12 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
                         ),
                     },
                 )
-            else:
+            elif not is_staff:
+                # #1262 slice 11 (F8): no carried roster to attach the offer to, and
+                # staff get no BOT-INITIATED one at all - a fresh `team_pick` here
+                # would be an escalation offer nobody was shown any sentence for,
+                # which is exactly what AC-S11-1 says must not be armed.
+                #
                 # SRTSC07 (prod transcript, 22 Sep 2026): `ctx.suggested_agent` is this
                 # turn's own `routing.suggested_agent` (`TurnContext`, set by
                 # `engine.py` off the SAME verdict the team half above is read from),

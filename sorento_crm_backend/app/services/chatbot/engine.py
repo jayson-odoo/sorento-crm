@@ -2316,6 +2316,9 @@ def _run_stages(  # noqa: PLR0915
                         # than replacing it - the same rule `turn_compose.compose`
                         # already applies on its own miss arm below.
                         carried_pending=state_out.pending,
+                        # #1262 slice 11 (F8): same ladder-rung audience gate as the
+                        # HIT arm below.
+                        profile=state_out.profile,
                     )
                     if answer is not None:
                         bridge_answered = True
@@ -2426,6 +2429,9 @@ def _run_stages(  # noqa: PLR0915
                             asked_at_turn=turn_no,
                             turn_id=turn_id,
                             focus_products=state_out.focus.products,
+                            # #1262 slice 11 (F8): the ladder rung's own audience
+                            # gate reads the SAME profile the composer's arm does.
+                            profile=state_out.profile,
                         )
                         # BRIDGE (hand pass 11, defect 3): a HIT in one of several
                         # searched companies still offers the SILENT company's own
