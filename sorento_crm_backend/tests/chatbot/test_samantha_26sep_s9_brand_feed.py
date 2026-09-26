@@ -111,6 +111,14 @@ class TestKnownBrandsLineAbsentWhenEmpty:
         assert "Known brands" not in block_none, block_none
 
 
+#: `stub_access()` (test_engine.py) points `engine_mod.default_space_id` at this
+#: literal - the seeded `respond_workspaces` row below must carry the SAME value or
+#: `_contact_company_scope`'s Respond.io-id branch (which JOINS `respond_workspaces`
+#: on `space_id`) finds nothing and the scope resolves empty, same gotcha
+#: `test_outstanding_lane.py::_seed_contact`'s own comment names.
+_SPACE_ID = "364817"
+
+
 def _seed_contact_with_brand(session_factory) -> None:
     """A contact scoped to Sorento (`DEFAULT_COMPANY_ID`, already seeded on every blank
     schema - `tests/_pg_fixture.py`'s own `after_create` DDL event) - see
@@ -118,10 +126,19 @@ def _seed_contact_with_brand(session_factory) -> None:
     db = session_factory()
     db.execute(
         text(
-            "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars) "
-            "VALUES (gen_random_uuid()::text, :cid, :phone, CAST(:sv AS jsonb))"
+            "INSERT INTO respond_workspaces (id, space_id, name, api_key_ciphertext) "
+            "VALUES (gen_random_uuid(), :sid, 'ZZT s9 brand-feed workspace', 'ZZT-cipher') "
+            "ON CONFLICT DO NOTHING"
         ),
-        {"cid": str(CONTACT_ID), "phone": "+60000000031", "sv": json.dumps({"variables": {}})},
+        {"sid": _SPACE_ID},
+    )
+    db.execute(
+        text(
+            "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars, workspace_id) "
+            "VALUES (gen_random_uuid()::text, :cid, :phone, CAST(:sv AS jsonb), "
+            "(SELECT id FROM respond_workspaces WHERE space_id = :sid LIMIT 1))"
+        ),
+        {"cid": str(CONTACT_ID), "phone": "+60000000031", "sv": json.dumps({"variables": {}}), "sid": _SPACE_ID},
     )
     db.execute(
         text(
@@ -233,24 +250,48 @@ class TestPromptHasNoHardCodedBrandList:
     hard-coding "Sorento, Mocha, or Cabana" - shipped as a new UNLABELLED version of
     `chatbot_semantic_parser` (owner ruling 10, same immutable-versions-plus-movable-
     labels split as migrations 475/480/490/521), never by editing the `production`
-    label directly."""
+    label directly.
 
-    def test_a_prompt_version_refers_to_known_brands_and_drops_the_hardcoded_list(
-        self, session_factory
-    ) -> None:
-        db = session_factory()
-        rows = db.execute(
-            text("SELECT template FROM ai_prompt_versions WHERE name = :n"),
-            {"n": "chatbot_semantic_parser"},
-        ).fetchall()
-        assert rows, "no chatbot_semantic_parser prompt versions exist at all"
-        matches = [
-            r.template
-            for r in rows
-            if "Known brands" in (r.template or "") and "Sorento, Mocha, or Cabana" not in (r.template or "")
-        ]
-        assert matches, (
-            "no chatbot_semantic_parser version refers to the 'Known brands' line "
-            "while dropping the hard-coded 'Sorento, Mocha, or Cabana' list "
-            f"(found {len(rows)} version(s) total)"
+    Coordinator round, 26 Sep 2026: `create_all` (the blank-schema fixture every
+    other test in this file uses) never runs an alembic migration, so a DB read of
+    `ai_prompt_versions` on that schema finds nothing regardless of whether the
+    migration exists - the wrong seam to grade this from. Follows
+    `test_parser_growth_r1_reachability.py::TestTheOutstandingVocabularyIsPublished`
+    instead: import the migration module directly and assert on its own
+    `_full_text()`/`_slim_text()` (the exact bodies it publishes), no DB needed."""
+
+    def _migration(self):
+        import importlib.util
+        from pathlib import Path
+
+        path = (
+            Path(__file__).resolve().parents[2]
+            / "alembic"
+            / "versions"
+            / "chatbot_known_brands.py"
         )
+        assert path.exists(), (
+            "no migration publishes the Known-brands prompt, so it reaches no live "
+            "prompt version (AC-S9-2)"
+        )
+        spec = importlib.util.spec_from_file_location("zzt_known_brands_migration", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_the_migration_publishes_known_brands_and_drops_the_hardcoded_list(self) -> None:
+        """`_full_text()` is `SEMANTIC_PARSER_PROMPT` (the body `production` sits on) -
+        the one this AC is about. `_slim_text()` is a frozen legacy body
+        (`_legacy_prompt_bodies.SEMANTIC_PARSER_PROMPT_SLIM_V1`, "retired from the
+        live module" per this migration's own comment) that this migration keeps
+        republishing byte-for-byte, unrelated to this addendum - it never carried
+        the hard-coded brand list either, so only THAT half of the guard applies
+        to it."""
+        module = self._migration()
+        assert callable(module.publish)
+        full = module._full_text()
+        assert "Known brands" in full, full[:200]
+        assert "Sorento, Mocha, or Cabana" not in full, (
+            "the published FULL prompt must no longer hard-code the brand list"
+        )
+        assert "Sorento, Mocha, or Cabana" not in module._slim_text()

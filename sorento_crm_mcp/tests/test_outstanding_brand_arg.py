@@ -33,12 +33,21 @@ class _FakeCtx:
 
 
 class _RecordingClient:
+    """`_compile_tool`'s generated body calls `client.request(method, path, ...)`
+    (`server.py::_execute_tool_request`), never `client.get` directly - the same
+    fake shape `test_catalog_compile.py::_FakeClient` uses. `is_active: true` keeps
+    any promotion-activity precheck happy for tools this file does not exercise."""
+
     def __init__(self):
         self.calls: list[dict] = []
 
     async def get(self, path, path_params=None, query=None, tool_name=None):
         self.calls.append({"path": path, "query": dict(query or {})})
-        return '{"has_result": false, "items": []}'
+        return '{"has_result": false, "items": [], "is_active": true}'
+
+    async def request(self, method, path, path_params=None, query=None, body=None, tool_name=None):
+        self.calls.append({"path": path, "query": dict(query or {}), "method": method})
+        return '{"has_result": false, "items": [], "is_active": true}'
 
 
 def test_catalog_exposes_brand_ids_on_outstanding_report():
@@ -57,7 +66,7 @@ def test_catalog_exposes_brand_ids_on_order_list_tools():
         assert "brand_ids" in spec.query_params, f"{name} must expose brand_ids: {spec.query_params}"
 
 
-BRAND_UUID = "11111111-1111-1111-1111-111111111111"
+BRAND_UUID = "11111111-1111-4111-8111-111111111111"
 
 
 async def _call_with_brand_ids(spec_name: str):

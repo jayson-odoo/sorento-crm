@@ -127,6 +127,17 @@ def _seed_contact_scoped_to_sorento(session_factory) -> None:
     db.commit()
 
 
+def _open_question_of(session_factory) -> dict[str, Any]:
+    db = session_factory()
+    row = db.execute(
+        text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :cid"),
+        {"cid": str(CONTACT_ID)},
+    ).first()
+    raw = row.session_vars if row is not None else {}
+    parsed = json.loads(raw) if isinstance(raw, str) else (raw or {})
+    return parsed.get("open_question") or {}
+
+
 class TestT2BrandTokenNotResolvedAsCustomerInOrderDomain:
     """T2/T3 end to end (AC-S9-3, AC-S9-5): "brand Sorento" + dealer "Cheng Huat
     Sentul" under `domain_hint: order`. Today NOTHING intercepts a `brand`-hinted
@@ -136,6 +147,21 @@ class TestT2BrandTokenNotResolvedAsCustomerInOrderDomain:
     at all, and no `brand_ids` ever reaches the tool call. Once the slice lands,
     "Sorento" must resolve locally against the live `brands` table and never reach
     this resolver stub.
+
+    TWO real turns, not one (coordinator round, 26 Sep 2026): granting the SO reveal
+    and naming no document word is exactly Contract 38 / AC-1130's own bare-outstanding
+    override - `test_outstanding_lane.py::TestCustomerOnlyOutstandingAskReachesTheReport
+    ::test_bare_outstanding_customer_only_arms_the_scope_question` pins that a
+    customer-only (or, now, customer+brand) subject on the bare word "outstanding"
+    arms `outstanding_scope` ("Outstanding for which document?") rather than calling
+    the report directly - so turn 1 here grades the brand-resolve half only (no
+    tool call yet, brand never reaches the shared resolver, no customer/kind pick),
+    and turn 2 answers the scope question ("3" = Both) and grades that the CARRIED
+    brand reaches `crm_outstanding_report` alongside the carried customer. Turn 2 is
+    the one this file expects to find still red: Samantha's real chat went through
+    this exact question (T2), and the coder's own brand-resolve wiring
+    (`lanes/business/__init__.py`'s `outstanding_brand_ids` on `semantic_input`) does
+    not yet carry it into the scope-ask's own stored `filters`.
     """
 
     CUSTOMER_UUID = "22222222-2222-2222-2222-222222222222"
@@ -271,6 +297,7 @@ class TestT2BrandTokenNotResolvedAsCustomerInOrderDomain:
             ),
         )
 
+        # -- turn 1: "outstanding brand Sorento dealer Cheng Huat Sentul" -------- #
         envelope = _envelope()
         envelope.message["message"]["message"]["text"] = "outstanding brand Sorento dealer Cheng Huat Sentul"
         result = engine_mod.run_turn(envelope, session_factory=session_factory)
@@ -285,10 +312,42 @@ class TestT2BrandTokenNotResolvedAsCustomerInOrderDomain:
         assert "transporter" not in reply_text.lower(), reply_text
         assert "which customer" not in reply_text.lower(), reply_text
 
-        assert captured, "crm_outstanding_report was never called"
-        name, args = captured[0]
-        assert name == "crm_outstanding_report", (name, args)
-        assert args.get("brand_ids") == [brand_id], (
-            f"the report must be scoped to Sorento's brand id(s): {args}"
+        # Contract 38 / AC-1130: a customer-only (now customer+brand) subject on the
+        # BARE "outstanding" word arms the scope question rather than calling the
+        # report this turn - `TestCustomerOnlyOutstandingAskReachesTheReport::
+        # test_bare_outstanding_customer_only_arms_the_scope_question` pins the
+        # identical shape for a customer alone.
+        assert captured == [], (
+            f"no report/order tool may be called while the scope question is open: {captured}"
         )
-        assert args.get("customer_ids") == [self.CHENG_HUAT_UUID], args
+        assert "Outstanding for which document?" in reply_text, reply_text
+        open_question = _open_question_of(session_factory)
+        assert open_question.get("kind") == "outstanding_scope", (
+            f"a customer+brand outstanding ask must arm the scope question exactly "
+            f"like a product/customer ask does: {open_question!r}"
+        )
+
+        # -- turn 2: "3" (Both) answers the scope question ----------------------- #
+        qf_turn2 = _parser_output(
+            message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+            reference_positions=[3],
+        )
+        monkeypatch.setattr(parser_mod, "parse", lambda config, user_block: qf_turn2)
+        envelope2 = _envelope()
+        envelope2.message["message"]["messageId"] = "ZZT-s9-brand-scope-answer-1"
+        envelope2.message["message"]["message"]["text"] = "3"
+        engine_mod.run_turn(envelope2, session_factory=session_factory)
+
+        assert captured, (
+            "the scope answer must run crm_outstanding_report on the carried "
+            "customer AND brand - it never called any tool at all"
+        )
+        name, args = captured[-1]
+        assert name == "crm_outstanding_report", (name, args)
+        assert args.get("customer_ids") == [self.CHENG_HUAT_UUID], (
+            f"the carried customer must survive the scope answer: {args}"
+        )
+        assert args.get("brand_ids") == [brand_id], (
+            f"the carried BRAND must survive the scope answer too - the scope-ask's "
+            f"own stored filters do not carry `outstanding_brand_ids` yet: {args}"
+        )
