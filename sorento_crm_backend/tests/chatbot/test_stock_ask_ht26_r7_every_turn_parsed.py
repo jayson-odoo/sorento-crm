@@ -237,11 +237,17 @@ def test_a_line_number_off_the_list_is_not_a_line():
 
 
 def test_the_open_question_hint_prints_its_lines_for_the_parser():
-    """The parser reads the lines it is answering, so "1. 10" can be named by code."""
+    """PR #1247 round 8: the point-form question's own lines ride on the parser's
+    "Open question: {...}" object now (`task_mod.open_question`), not on the hint - the
+    hint states only what is open/answered and no longer repeats the numbered lines."""
     console = _after_all()
     (task,) = [t for t in console.state.focus.tasks if t.kind == "stock_qty"]
+    open_question = task_mod.open_question((task,))
+    assert open_question is not None
+    codes = [item["code"] for item in open_question["items"]]
+    assert codes[0] == "SRTWC286-SH" and codes[-1] == "SRTWC286-SH-UF"
     (hint,) = task_mod.hint_lines((task,))
-    assert "1. SRTWC286-SH" in hint and "10. SRTWC286-SH-UF" in hint
+    assert "1. SRTWC286-SH" not in hint
 
 
 # --------------------------------------------------------------------------- #
