@@ -22,3 +22,17 @@ matrix scrolls inside its own container (1520px of overflow at 1280).
 | `s5-7-schedule-need-attention-375.png` | The phone cards, one Flag pill each |
 | `s5-8-flag-popover-375.png` | The same popover at 375 |
 | `s5-9-documents-375.png` | Documents at 375 |
+
+## Review fixes (reviewer pass on #1265, 26 Sep)
+
+Same method: the real client off `?demo=data` on an uncommitted scratch route under `next dev`,
+in the preinstalled Chromium, driven by a throwaway script. No console errors, no failed
+requests; page horizontal overflow 0 at 1280 and at 375.
+
+| File | Shows | Measured |
+| --- | --- | --- |
+| `s5-fix-b1-row-kept-mid-edit-1280.png` | B1: "8" typed into "Level 2 & 7, SRTFV1001" in the default Need attention view | The row stays, focus stays in that input (value "8"), both rows still listed; the count reads Need attention (1) |
+| `s5-fix-b2-by-date-scrolled-1280.png` | B2 at 1280: By date scrolled 600px | Product and Flag both still pinned (left 1 and 241) |
+| `s5-fix-b2-by-date-375.png` | B2 at 375: By date at rest | Scroller 341px wide, one pinned column (Product, 240px) |
+| `s5-fix-b2-by-date-scrolled-375.png` | B2 at 375: By date scrolled | The first date column's quantities (135, total 410) in view beside the pinned product |
+| `s5-fix-need-attention-375.png` | By area at 375 after the fixes | Phone cards unchanged |
