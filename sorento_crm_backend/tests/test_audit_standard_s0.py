@@ -646,7 +646,10 @@ def test_ac_s0_23_the_list_route_returns_the_new_fields(db):
     real_app.dependency_overrides[get_db] = _db
     real_app.dependency_overrides[get_current_user_or_api_key] = lambda: admin
     try:
-        with patch("app.services.company_scope.admin_listing_company_filter", return_value=None):
+        # The read gate is S-1's (#1298, tests/test_audit_read_gate.py); this test is about
+        # the fields, so the caller is simply an audit admin.
+        with patch("app.services.company_scope.admin_listing_company_filter", return_value=None), \
+                patch("app.api.v1.audit.audit_logs._is_audit_admin", return_value=True):
             r = TestClient(real_app).get(f"/api/v1/audit/logs/?entity_type=probe&entity_id={eid}")
     finally:
         real_app.dependency_overrides.pop(get_db, None)

@@ -36,6 +36,9 @@ SECRET_KEYS = (
 
 
 def upgrade() -> None:
+    # A no-op before aud_0001 exists; once its append-only trigger is in place (a create_all
+    # schema builds it with the table), this scrub is exactly the maintenance it allows.
+    op.execute("SET LOCAL sorento.audit_maintenance = 'on'")
     keys = "ARRAY[" + ", ".join(f"'{k}'" for k in SECRET_KEYS) + "]::text[]"
     for column in ("old_values", "new_values"):
         op.execute(

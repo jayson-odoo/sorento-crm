@@ -11,6 +11,7 @@ import uuid
 from datetime import datetime, timedelta
 
 import pytest
+from sqlalchemy import text
 from fastapi.testclient import TestClient
 
 from app.main import app  # noqa: E402 (import first to settle app wiring)
@@ -133,6 +134,8 @@ def client(db):
     db.add(UserRoleAssignment(user_id=reader_id, role_id=role.id))
     db.commit()
     # The reader's own CREATE row would join the listing; the tests count their own rows.
+    # audit_logs is append-only (#1281 S0), so the wipe runs under the maintenance flag.
+    db.execute(text("SET LOCAL sorento.audit_maintenance = 'on'"))
     db.query(AuditLog).delete()
     db.commit()
 

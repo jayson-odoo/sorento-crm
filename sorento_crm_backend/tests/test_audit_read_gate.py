@@ -18,6 +18,7 @@ from __future__ import annotations
 import uuid
 
 import pytest
+from sqlalchemy import text
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -70,7 +71,9 @@ def env():
             "plain": _user(db, "plain"),
         }
         db.commit()
-        # The seed users' own CREATE rows are not under test.
+        # The seed users' own CREATE rows are not under test. audit_logs is append-only
+        # (#1281 S0), so the wipe runs under the maintenance flag.
+        db.execute(text("SET LOCAL sorento.audit_maintenance = 'on'"))
         db.query(AuditLog).delete()
         complaint_id = str(uuid.uuid4())
         db.add(AuditLog(
