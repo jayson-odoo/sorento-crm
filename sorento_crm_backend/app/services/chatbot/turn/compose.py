@@ -425,8 +425,19 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
             #   not THIS turn's own ask) must stay the only open question - a
             #   second one piled on top is what the finding measured.
             is_staff = is_staff_profile(getattr(state, "profile", None))
-            clarifying_open = getattr(state, "pending", None) is not None
-            if not is_staff and not clarifying_open:
+            # Phase 3 fix round (26 Sep 2026), review B1/B2: "a clarifying question
+            # open" means a question ASKED THIS TURN (a fresh kind pick / did-you-mean
+            # / roster the lane just armed), never any carried pending regardless of
+            # age - `state.pending is not None` could not tell "a roster still being
+            # asked" from "an old, fully-answered one just sitting on state" and hid a
+            # DEALER's legitimate offer over the old one too (hand pass 2 item 8).
+            carried_for_gate = getattr(state, "pending", None)
+            clarifying_open = (
+                carried_for_gate is not None
+                and carried_for_gate.asked_at_turn == getattr(state, "turn_no", None)
+            )
+            offer_withheld = is_staff or clarifying_open
+            if not offer_withheld:
                 offer = Offer(teams=teams)
                 # R-f (owner hand pass 7, 19 Sep 2026): a SINGLE team names itself in
                 # the offer, the same tail wording `CHATBOT_REPLY_ESCALATE_OFFER`
@@ -439,7 +450,7 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
                     if len(teams) == 1
                     else "\n\nWould you like me to escalate?"
                 )
-            carried = getattr(state, "pending", None)
+            carried = carried_for_gate
             if carried is not None and is_roster(carried.kind):
                 # Owner hand pass 2, item 8 (turns 29605e65 miss, then 586746d3 "5" and
                 # a253e14f "3"): the escalate offer REPLACED the sticky roster the miss
@@ -449,48 +460,59 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
                 # SENTENCE appended under the answer, not a second question. The team it
                 # would escalate to rides on the roster, so a "yes" over this state still
                 # reaches the right team.
-                question = replace(
-                    carried,
-                    team=carried.team or teams[0],
-                    payload={
-                        **carried.payload,
-                        "escalate_offered": True,
-                        # SRTSC07 review round 2, SHOULD-A: both halves come from
-                        # the SAME source as the `team` expression right above, not
-                        # independently. A roster CAN carry a team with no agent at
-                        # all (`answer_bridge.py`'s D4 narrower roster,
-                        # `turn/apply.py`'s narrow ask) - `carried.payload.get(
-                        # "agent") or ctx.suggested_agent` mixed a STALE carried
-                        # team with THIS turn's fresh agent whenever that happened,
-                        # a pair `/external/next-assignee` has no link for
-                        # (measured: an incoming miss with no agent, re-armed under
-                        # a later order-domain miss, paired `order_enquiries` with
-                        # the old `purchasing` team). When the team is the roster's
-                        # OWN (`carried.team` truthy), the agent is the roster's own
-                        # too, carried or not - never THIS turn's, which named no
-                        # opinion about the roster's team at all. Only when the team
-                        # itself falls to `teams[0]` (this turn's own) does the
-                        # agent follow it.
-                        "agent": (
-                            carried.payload.get("agent")
-                            if carried.team
-                            else getattr(ctx, "suggested_agent", None)
-                        ),
-                        # Round 4 (owner-approved, 22 Sep 2026): the SAME one-source
-                        # rule, one axis over - the brand travels with whichever
-                        # source the team came from.
-                        "brand_code": (
-                            carried.payload.get("brand_code")
-                            if carried.team
-                            else getattr(ctx, "routing_brand", None)
-                        ),
-                    },
-                )
-            elif not is_staff:
+                #
+                # Phase 3 fix round, review B1: the roster ITSELF always survives (a
+                # withheld offer must not also drop the customer's still-open pick),
+                # but the escalate stamp below - `escalate_offered` and the team/agent/
+                # brand that ride with it - is added ONLY when the offer was actually
+                # shown. This ran unconditionally before, so a withheld offer (staff, or
+                # a question asked THIS turn) still armed `escalate_offered: True` on
+                # the pending, and a later bare "yes" over it routed to an escalation
+                # nobody was ever shown.
+                payload = dict(carried.payload)
+                team = carried.team
+                if not offer_withheld:
+                    team = carried.team or teams[0]
+                    payload["escalate_offered"] = True
+                    # SRTSC07 review round 2, SHOULD-A: both halves come from
+                    # the SAME source as the `team` expression right above, not
+                    # independently. A roster CAN carry a team with no agent at
+                    # all (`answer_bridge.py`'s D4 narrower roster,
+                    # `turn/apply.py`'s narrow ask) - `carried.payload.get(
+                    # "agent") or ctx.suggested_agent` mixed a STALE carried
+                    # team with THIS turn's fresh agent whenever that happened,
+                    # a pair `/external/next-assignee` has no link for
+                    # (measured: an incoming miss with no agent, re-armed under
+                    # a later order-domain miss, paired `order_enquiries` with
+                    # the old `purchasing` team). When the team is the roster's
+                    # OWN (`carried.team` truthy), the agent is the roster's own
+                    # too, carried or not - never THIS turn's, which named no
+                    # opinion about the roster's team at all. Only when the team
+                    # itself falls to `teams[0]` (this turn's own) does the
+                    # agent follow it.
+                    payload["agent"] = (
+                        carried.payload.get("agent")
+                        if carried.team
+                        else getattr(ctx, "suggested_agent", None)
+                    )
+                    # Round 4 (owner-approved, 22 Sep 2026): the SAME one-source
+                    # rule, one axis over - the brand travels with whichever
+                    # source the team came from.
+                    payload["brand_code"] = (
+                        carried.payload.get("brand_code")
+                        if carried.team
+                        else getattr(ctx, "routing_brand", None)
+                    )
+                question = replace(carried, team=team, payload=payload)
+            elif not offer_withheld:
                 # #1262 slice 11 (F8): no carried roster to attach the offer to, and
                 # staff get no BOT-INITIATED one at all - a fresh `team_pick` here
                 # would be an escalation offer nobody was shown any sentence for,
-                # which is exactly what AC-S11-1 says must not be armed.
+                # which is exactly what AC-S11-1 says must not be armed. Phase 3 fix
+                # round: a question asked THIS turn withholds it the same way -
+                # arming a second, fresh team_pick under an already-open clarifying
+                # question is the same double-ask the roster-carry branch above
+                # exists to avoid.
                 #
                 # SRTSC07 (prod transcript, 22 Sep 2026): `ctx.suggested_agent` is this
                 # turn's own `routing.suggested_agent` (`TurnContext`, set by

@@ -1655,6 +1655,21 @@ def answer_for(
         text=text,
         combined_member_rows=combined_member_rows,
     )
+    # Phase 3 fix round (26 Sep 2026), review B1/SF2: the SAME audience gate the
+    # crossdomain ladder rung above already applies to its own offer TEXT
+    # (`include_offer=not is_staff_profile(profile)`) - `_miss_question`'s
+    # escalate-catalog branch mints a bare "Yes" `team_pick` with no staff check at
+    # all, so a staff contact's order miss armed a hidden escalation nobody was ever
+    # shown a sentence for. A genuine ambiguity roster (`pending.is_roster`, e.g. a
+    # did-you-mean or member pick) is not an escalation offer and stays for staff;
+    # only an OFFER_KIND question (or one already carrying the escalate stamp) is
+    # withheld.
+    if (
+        is_staff_profile(profile)
+        and question is not None
+        and (question.kind in pending.OFFER_KINDS or question.payload.get("escalate_offered") is True)
+    ):
+        question = None
     if combined_member_rows and question is not None:
         member_options = [o for o in question.options if o.get("entity_type") == "member"]
         if member_options and any(o.get("entity_type") != "member" for o in question.options):
