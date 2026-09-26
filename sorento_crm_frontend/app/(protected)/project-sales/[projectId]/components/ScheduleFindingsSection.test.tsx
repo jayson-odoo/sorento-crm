@@ -56,22 +56,20 @@ describe('ScheduleFindingsSection', () => {
     expect(screen.getByText('Cleared by Eling')).toBeInTheDocument();
   });
 
-  it('hides the clear action when the reader cannot edit', () => {
+  it('hides the dismiss action when the reader cannot edit', () => {
     render(<ScheduleFindingsSection findings={[OPEN]} canEdit={false} onAcknowledge={vi.fn()} />);
-    expect(screen.queryByRole('button', { name: 'Clear with a reason' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Dismiss with a reason' })).not.toBeInTheDocument();
   });
 
-  it('records a reason through the same acknowledge dialog an order finding uses', async () => {
+  it('records a reason through the same one-step dismiss dialog an order finding uses', async () => {
     const onAcknowledge = vi.fn().mockResolvedValue(undefined);
     render(<ScheduleFindingsSection findings={[OPEN]} canEdit onAcknowledge={onAcknowledge} />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Clear with a reason' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss with a reason' }));
     fireEvent.change(screen.getByLabelText(/Reason/), {
       target: { value: 'Confirmed against the printed total.' },
     });
-    // A hard finding, like an order's own, asks for a second confirmation before it writes.
-    fireEvent.click(screen.getByRole('button', { name: 'Override' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Override and record' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss 1' }));
 
     await waitFor(() =>
       expect(onAcknowledge).toHaveBeenCalledWith('bf1', 'Confirmed against the printed total.'),

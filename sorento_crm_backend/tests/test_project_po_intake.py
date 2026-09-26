@@ -679,6 +679,153 @@ def test_confirm_is_refused_while_a_card_is_still_proposed(seeded):
     assert version.confirmed_at is None
 
 
+# The owner's re-test document, HQ/26/01/121 v3 (25 Sep 2026): line 7 crossed out with a
+# pencil cancellation beside it, and ten pencil notes that name no line at all - the
+# signature, "Continue To Next Page" on every page break, the delivery instructions.
+_LINELESS_NOTES = [
+    "Signature",
+    "Continue To Next Page",
+    "Continue To Next Page (2)",
+    "Continue To Next Page (3)",
+    "Deliver to site office before 10am",
+    "Call Maryam before delivery",
+    "Received by store",
+    "Checked",
+    "Chop company stamp",
+    "Refer attached schedule",
+]
+
+
+def _po_121_v3_page(*, pending_on: tuple[int, ...] = ()) -> PageResult:
+    """Eight printed lines, line 7 struck and cancelled in pencil, ten notes naming no line.
+
+    ``pending_on`` adds one extra amend-description note per named line, for the tests that
+    need notes tied to more than one line.
+    """
+    lines = [
+        {
+            "no": n,
+            "stock_code": f"SRT121-{n}",
+            "description": f"Item {n}",
+            "qty": 1,
+            "uom": "NOS",
+            "unit_price": 10,
+            "amount": 10,
+            "struck_through": n == 7,
+        }
+        for n in range(1, 9)
+    ]
+    annotations = [
+        {
+            "text": "cancel - refer to New P/O HQ/26/05/121",
+            "date": "15/5/26",
+            "refers_to_items": [7],
+            "meaning": "cancel this line",
+        }
+    ] + [{"text": text, "kind": "other"} for text in _LINELESS_NOTES]
+    annotations += [
+        {"text": f"description should read Item {n} revised", "refers_to_items": [n],
+         "kind": "amend_description", "description": f"Item {n} revised"}
+        for n in pending_on
+    ]
+    return _page(1, header={"po_number": "HQ/26/01/121"}, lines=lines, annotations=annotations)
+
+
+def test_notes_naming_no_line_never_block_confirm(seeded):
+    """Owner re-test 25 Sep 2026: "i can't confirm PO due to this error". The screen stopped
+    listing notes that name no line, but the gate still counted them, so Confirm said 11
+    notes needed a decision that nothing on the screen showed. Only line 7's note holds it."""
+    db, project, owner = seeded
+    service = ProjectPOExtractionService(db)
+    version = _version(db, _po(db, project, owner, "HQ/26/01/121"))
+    service.persist_pages(version, [_po_121_v3_page()])
+
+    notes = service._annotations(version.id)
+    assert sum(1 for note in notes if note.state == ANNOTATION_PROPOSED) == 11
+    assert sum(1 for note in notes if not note.refers_to_lines) == 10
+
+    with pytest.raises(AppException) as caught:
+        service.confirm_version(version=version, actor_user_id=owner)
+    assert _code(caught.value) == "po_version_annotations_pending"
+    assert _message(caught.value) == (
+        "Line 7 has a handwritten note to accept or reject. Open the note icon on that line."
+    )
+
+    cancel = next(note for note in notes if note.refers_to_lines == [7])
+    service.accept_annotation(annotation=cancel, actor_user_id=owner)
+
+    result = service.confirm_version(version=version, actor_user_id=owner)
+
+    assert version.confirmed_at is not None
+    assert result["line_count"] == 7
+    # The line-less notes are left as they were: not decided, just no longer a gate.
+    assert sum(1 for note in notes if note.state == ANNOTATION_PROPOSED) == 10
+
+
+def test_every_blocking_note_sits_on_a_line_the_screen_shows(seeded):
+    """N pending notes naming a line, over K lines: the server counts exactly N, each of the
+    K lines is one the Lines tab's "Need attention" lists (a line a proposed note names), and
+    the message names those lines and no others."""
+    from app.services.project_po_confirm import blocking_annotations
+
+    db, project, owner = seeded
+    service = ProjectPOExtractionService(db)
+    version = _version(db, _po(db, project, owner, "HQ/26/01/121"))
+    service.persist_pages(version, [_po_121_v3_page(pending_on=(2, 5, 7))])
+
+    lines = service._lines(version.id)
+    blocking = blocking_annotations(service._annotations(version.id), lines)
+    assert len(blocking) == 4  # line 7's cancellation, and one amend on each of 2, 5, 7
+    named = sorted({n for note in blocking for n in note.refers_to_lines})
+    assert named == [2, 5, 7]
+    assert set(named) <= {line.line_no for line in lines}
+
+    with pytest.raises(AppException) as caught:
+        service.confirm_version(version=version, actor_user_id=owner)
+    assert _message(caught.value) == (
+        "Line 2, line 5 and line 7 have handwritten notes to accept or reject. "
+        "Open the note icon on each line."
+    )
+    assert "--" not in _message(caught.value)
+
+
+def test_the_blocking_message_names_a_few_lines_then_counts_the_rest(seeded):
+    db, project, owner = seeded
+    service = ProjectPOExtractionService(db)
+    version = _version(db, _po(db, project, owner, "HQ/26/01/121"))
+    service.persist_pages(version, [_po_121_v3_page(pending_on=(1, 2, 3, 4, 5))])
+
+    with pytest.raises(AppException) as caught:
+        service.confirm_version(version=version, actor_user_id=owner)
+    assert _message(caught.value) == (
+        "Line 1, line 2, line 3 and 3 more lines have handwritten notes to accept or "
+        "reject. Open the note icon on each line."
+    )
+
+
+def test_a_note_naming_a_line_the_version_does_not_have_does_not_block(seeded):
+    """A note naming line 99 on an eight-line document has no row to be reviewed from, so it
+    is the same as a note naming no line: the screen cannot show it, the gate ignores it."""
+    db, project, owner = seeded
+    service = ProjectPOExtractionService(db)
+    version = _version(db, _po(db, project, owner, "PO-GHOST-LINE"))
+    service.persist_pages(
+        version,
+        [
+            _page(
+                1,
+                lines=[{"no": 1, "stock_code": "A", "qty": 1, "unit_price": 10, "amount": 10}],
+                annotations=[{"text": "see item 99", "refers_to_items": [99], "kind": "other"}],
+            )
+        ],
+    )
+    assert service._annotations(version.id)[0].state == ANNOTATION_PROPOSED
+
+    service.confirm_version(version=version, actor_user_id=owner)
+
+    assert version.confirmed_at is not None
+
+
 def test_confirm_writes_the_phase_one_po_lines(seeded):
     """The confirmed state lands on `project_purchase_order_lines`, where the quotation
     cross-check already lives. The version keeps what the document said, untouched."""
@@ -1161,6 +1308,47 @@ def test_the_version_reports_how_much_of_the_document_was_read(seeded):
 
     assert body["pages_extracted"] == 1
     assert body["failed_pages"] == [2]
+
+
+def test_document_url_is_none_when_the_object_behind_the_attachment_is_gone(seeded, monkeypatch):
+    """B1 (PR #1237 review, R9/R13): an attachment ROW can outlive its OBJECT. Presigning
+    a URL for a missing object hands the FE a link that 404s inside an iframe it cannot
+    see past, so the R13 empty state - which only shows on a falsy document_url - never
+    fires. The object's existence has to gate the URL, not just the row's presence."""
+    from app.models.resources import Attachment
+    from app.services import storage_router
+
+    db, project, owner = seeded
+    service = ProjectPOExtractionService(db)
+    version = _version(db, _po(db, project, owner, "PO-MISSING-OBJECT"))
+    attachment = Attachment(
+        original_filename="po.pdf",
+        stored_filename="po.pdf",
+        file_path="project-po/some-version/po.pdf",
+        entity_type="project_po_version",
+        entity_id=version.id,
+        storage_provider="s3",
+    )
+    db.add(attachment)
+    db.flush()
+    version.attachment_id = attachment.id
+    db.flush()
+
+    class _FakeBackend:
+        def __init__(self, exists: bool):
+            self._exists = exists
+
+        def file_exists(self, key):
+            return self._exists
+
+        def get_signed_url(self, key, expires_in=3600):
+            return f"https://signed.example/{key}"
+
+    monkeypatch.setattr(storage_router, "get_backend", lambda provider: _FakeBackend(False))
+    assert service.serialize_version(version)["document_url"] is None
+
+    monkeypatch.setattr(storage_router, "get_backend", lambda provider: _FakeBackend(True))
+    assert service.serialize_version(version)["document_url"] is not None
 
 
 def test_run_extraction_commits_progress_once_per_page(seeded, monkeypatch):

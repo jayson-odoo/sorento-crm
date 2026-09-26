@@ -24,6 +24,7 @@ import type { Project, ProjectPurchaseOrder } from '../../_shared/types/project.
 import { formatMyr } from './QuotationsPanel';
 import { PurchaseOrderDialog } from './PurchaseOrderDialog';
 import { POIntakeUploadDialog } from './POIntakeUploadDialog';
+import { projectTabOriginHref } from '../../_shared/lib/reviewOrigin';
 
 /** Shared with the PO detail page, so a source reads the same in the list and on the record. */
 export const SOURCE_LABELS: Record<string, string> = {
@@ -307,6 +308,7 @@ export function PurchaseOrdersPanel({ project }: { project: Project }) {
           purchaseOrderId={uploadingFor.po?.id ?? null}
           purchaseOrderNumber={uploadingFor.po?.po_number ?? null}
           onDone={() => setUploadingFor(null)}
+          originHref={projectTabOriginHref(project.id, 'pos')}
         />
       )}
 

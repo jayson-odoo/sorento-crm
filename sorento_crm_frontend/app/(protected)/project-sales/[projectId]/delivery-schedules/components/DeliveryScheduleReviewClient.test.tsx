@@ -63,10 +63,11 @@ vi.mock('@/components/ui/dropdown-menu', () => ({
 }));
 
 const push = vi.fn();
+let originParam: string | null = null;
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push, replace: vi.fn() }),
   usePathname: () => '/project-sales/p1/delivery-schedules/v2',
-  useSearchParams: () => new URLSearchParams(''),
+  useSearchParams: () => new URLSearchParams(originParam ? { from: originParam } : ''),
 }));
 
 const getDeliveryScheduleVersion = vi.fn();
@@ -265,6 +266,7 @@ function poVersion() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  originParam = null;
   getDeliveryScheduleVersion.mockResolvedValue(version());
   listDeliveryScheduleVersions.mockResolvedValue([]);
   getPOVersion.mockResolvedValue(poVersion());
@@ -761,6 +763,73 @@ describe('DeliveryScheduleReviewClient', () => {
     await waitFor(() =>
       expect(confirmDeliveryScheduleVersion).toHaveBeenCalledWith('v2', {}),
     );
+  });
+
+  it('returns to the origin after a successful Confirm schedule, when it carries one (S4-2)', async () => {
+    originParam = '/project-sales/p1?tab=schedules';
+    getDeliveryScheduleVersion.mockResolvedValue(
+      version({
+        products: [
+          {
+            product_id: 'p1',
+            product_code: 'SRTWC8613-RL',
+            product_name: 'One-Piece WC',
+            customer_code_raw: 'BUI-HB-SRTWC8613-RL',
+            resolution_source: 'code',
+            column_total: '927',
+            reported_total: '927',
+            po_qty: '927',
+            reconciled: true,
+            product_index: 0,
+          },
+        ],
+        cells: [{ phase_id: 'ph1', product_id: 'p1', product_index: 0, qty: '927' }],
+        reconciliation: { reconciled_columns: 1, total_columns: 1 },
+      }),
+    );
+    renderReview();
+    await screen.findByTestId('schedule-matrix');
+
+    fireEvent.click(screen.getByRole('button', { name: /^Confirm schedule$/ }));
+    const dialog = within(await screen.findByRole('dialog'));
+    fireEvent.click(dialog.getByRole('button', { name: /^Confirm schedule$/ }));
+
+    await waitFor(() =>
+      expect(push).toHaveBeenCalledWith('/project-sales/p1?tab=schedules'),
+    );
+  });
+
+  it('stays on the page after Confirm schedule with no origin (S4-3)', async () => {
+    originParam = null;
+    getDeliveryScheduleVersion.mockResolvedValue(
+      version({
+        products: [
+          {
+            product_id: 'p1',
+            product_code: 'SRTWC8613-RL',
+            product_name: 'One-Piece WC',
+            customer_code_raw: 'BUI-HB-SRTWC8613-RL',
+            resolution_source: 'code',
+            column_total: '927',
+            reported_total: '927',
+            po_qty: '927',
+            reconciled: true,
+            product_index: 0,
+          },
+        ],
+        cells: [{ phase_id: 'ph1', product_id: 'p1', product_index: 0, qty: '927' }],
+        reconciliation: { reconciled_columns: 1, total_columns: 1 },
+      }),
+    );
+    renderReview();
+    await screen.findByTestId('schedule-matrix');
+
+    fireEvent.click(screen.getByRole('button', { name: /^Confirm schedule$/ }));
+    const dialog = within(await screen.findByRole('dialog'));
+    fireEvent.click(dialog.getByRole('button', { name: /^Confirm schedule$/ }));
+
+    await waitFor(() => expect(confirmDeliveryScheduleVersion).toHaveBeenCalled());
+    expect(push).not.toHaveBeenCalled();
   });
 
   it('is read-only once confirmed', async () => {

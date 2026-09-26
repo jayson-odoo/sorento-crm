@@ -57,7 +57,12 @@ vi.mock('../../_shared/services/projectService', async (importOriginal) => {
 import { POIntakeUploadDialog } from './POIntakeUploadDialog';
 
 function renderDialog(
-  props: { projectId?: string; purchaseOrderId?: string | null } = {},
+  props: {
+    projectId?: string;
+    purchaseOrderId?: string | null;
+    originHref?: string;
+    pipelineListQuery?: string;
+  } = {},
 ) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -69,6 +74,8 @@ function renderDialog(
         purchaseOrderId={props.purchaseOrderId ?? null}
         purchaseOrderNumber={props.purchaseOrderId ? 'HQ/26/01/041' : null}
         onDone={() => {}}
+        originHref={props.originHref}
+        pipelineListQuery={props.pipelineListQuery}
       />
     </QueryClientProvider>,
   );
@@ -211,7 +218,60 @@ describe('POIntakeUploadDialog', () => {
     await waitFor(() =>
       expect(uploadPurchaseOrderDocument).toHaveBeenCalledWith('p-setia-alam', expect.any(Object)),
     );
-    expect(push).toHaveBeenCalledWith('/project-sales/p-setia-alam/purchase-orders/v9');
+    // S4-5: a Start-driven upload's review page always carries the Pipeline list as its origin.
+    const [pushedUrl] = push.mock.calls[0];
+    expect(pushedUrl).toMatch(/^\/project-sales\/p-setia-alam\/purchase-orders\/v9\?from=/);
+    expect(new URLSearchParams(pushedUrl.split('?')[1]).get('from')).toBe(
+      '/project-sales/pipeline?from=p-setia-alam',
+    );
     expect(push).not.toHaveBeenCalledWith(expect.stringContaining('/project-sales//'));
+  });
+
+  it('carries the Pipeline grid\'s own list state alongside the picked project (S4-1)', async () => {
+    listEditableProjectOptions.mockResolvedValue([
+      { value: 'p-setia-alam', label: 'Setia Alam', description: 'PRJ-000009 · SP Setia' },
+    ]);
+    uploadPurchaseOrderDocument.mockResolvedValue({
+      purchase_order_id: 'po1',
+      po_version_id: 'v9',
+      version_no: 1,
+      extraction_state: 'queued',
+      page_count: 3,
+    });
+
+    renderDialog({ projectId: undefined, pipelineListQuery: 'page=2&sort=created_at&dir=desc' });
+
+    fireEvent.click(screen.getByLabelText(/^Project/));
+    fireEvent.click(await screen.findByText('Setia Alam'));
+    fireEvent.change(screen.getByLabelText('PO document'), { target: { files: [pdf()] } });
+    fireEvent.click(screen.getByRole('button', { name: 'Upload' }));
+
+    await waitFor(() => expect(push).toHaveBeenCalled());
+    const [pushedUrl] = push.mock.calls[0];
+    expect(new URLSearchParams(pushedUrl.split('?')[1]).get('from')).toBe(
+      '/project-sales/pipeline?page=2&sort=created_at&dir=desc&from=p-setia-alam',
+    );
+  });
+
+  it('forwards the given originHref when opened from a project tab with a fixed project (S4-1)', async () => {
+    uploadPurchaseOrderDocument.mockResolvedValue({
+      purchase_order_id: 'po1',
+      po_version_id: 'v9',
+      version_no: 1,
+      extraction_state: 'queued',
+      page_count: 3,
+    });
+
+    renderDialog({ originHref: '/project-sales/p1?tab=pos' });
+
+    fireEvent.change(screen.getByLabelText('PO document'), { target: { files: [pdf()] } });
+    fireEvent.change(screen.getByLabelText('PO number'), { target: { value: 'HQ/26/01/041' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Upload' }));
+
+    await waitFor(() => expect(push).toHaveBeenCalled());
+    const [pushedUrl] = push.mock.calls[0];
+    expect(new URLSearchParams(pushedUrl.split('?')[1]).get('from')).toBe(
+      '/project-sales/p1?tab=pos',
+    );
   });
 });
