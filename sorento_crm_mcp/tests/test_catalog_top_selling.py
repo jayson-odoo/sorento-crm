@@ -30,6 +30,7 @@ REQUIRED_QUERY_PARAMS = (
     "date_to",
     "contact_id",
     "space_id",
+    "detail_code",
 )
 
 

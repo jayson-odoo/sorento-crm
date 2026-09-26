@@ -608,10 +608,78 @@ def test_response_model_keeps_every_field(client, db):
         "total_count", "rows", "totals", "sales_agent_fill_rate",
     ):
         assert key in body, key
+    assert "detail" in body
     for key in ("customer_name", "category_name", "sales_agent", "channel", "dealer_scoped"):
         assert key in body["filters"], key
     assert set(body["rows"][0]) == {"rank", "code", "name", "quantity", "amount"}
     assert set(body["totals"]) == {"quantity", "amount"}
+
+
+# --------------------------------------------------------------------- detail offer
+
+
+def test_detail_code_customers_and_months(client, db):
+    """AC-1935: `detail_code` returns that code's `by_customer` and `by_month`
+    under the same filters and basis, each sorted by the metric desc (ties by
+    the other metric desc, then name / month asc). `rows` / `totals` narrow to
+    that one code; other codes and filtered-out lines contribute nothing."""
+    cat = _category(db, "ZZT DETAIL CAT")
+    other_cat = _category(db, "ZZT DETAIL OTHER")
+    a = customer(db, company_id=DEFAULT_COMPANY_ID, name="ZZT DETAIL ALPHA")
+    b = customer(db, company_id=DEFAULT_COMPANY_ID, name="ZZT DETAIL BRAVO")
+    p = _product(db, "ZZTDETAIL-P", category=cat)
+    q = _product(db, "ZZTDETAIL-Q", category=other_cat)
+    _line(db, product_id=p.id, ordered=4, delivered=4, line_total=Decimal("400.00"), customer_id=a.id,
+          order_date=date(2026, 3, 5))
+    _line(db, product_id=p.id, ordered=6, delivered=6, line_total=Decimal("300.00"), customer_id=b.id,
+          order_date=date(2026, 3, 20))
+    _line(db, product_id=p.id, ordered=5, delivered=5, line_total=Decimal("900.00"), customer_id=a.id,
+          order_date=date(2026, 7, 1))
+    # Foils: another code, a cancelled line, a line outside the window, a project line.
+    _line(db, product_id=q.id, ordered=50, delivered=50, line_total=Decimal("50.00"), customer_id=a.id)
+    _line(db, product_id=p.id, ordered=70, delivered=70, customer_id=a.id, line_status="cancelled")
+    _line(db, product_id=p.id, ordered=80, delivered=80, customer_id=b.id, order_date=date(2025, 5, 1))
+    _line(db, product_id=p.id, ordered=90, delivered=90, customer_id=b.id, demand_class="project")
+    db.commit()
+
+    resp = _get(client, rank_by="quantity", detail_code="zztdetail-p")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    detail = body["detail"]
+    assert detail["code"] == "ZZTDETAIL-P"
+    assert detail["name"] == "Name of ZZTDETAIL-P"
+    by_customer = [(r["customer_name"], r["quantity"], _money(r["amount"])) for r in detail["by_customer"]]
+    assert by_customer[0] == ("ZZT DETAIL BRAVO", 96, Decimal("300.00"))
+    assert by_customer[1] == ("ZZT DETAIL ALPHA", 9, Decimal("1300.00"))
+    by_month = [(r["month"], r["quantity"]) for r in detail["by_month"]]
+    assert by_month == [("2026-06", 90), ("2026-03", 10), ("2026-07", 5)]
+    assert _codes(body) == ["ZZTDETAIL-P"]
+    assert body["total_count"] == 1
+    assert body["totals"]["quantity"] == 105
+
+    # The same filters narrow the detail: dealer channel drops the project line,
+    # and ranking by amount re-sorts both lists.
+    dealer = _get(client, rank_by="amount", detail_code="ZZTDETAIL-P", channel="dealer").json()
+    assert dealer["detail"] is None and dealer["rows"] == []  # no line is demand_class retail
+    by_amount = _get(client, rank_by="amount", detail_code="ZZTDETAIL-P").json()["detail"]
+    assert [r["customer_name"] for r in by_amount["by_customer"]] == ["ZZT DETAIL ALPHA", "ZZT DETAIL BRAVO"]
+    assert [r["month"] for r in by_amount["by_month"]][:2] == ["2026-07", "2026-03"]
+
+    # Category grain takes a category code.
+    by_cat = _get(client, rank_by="quantity", group="category", detail_code=cat.category_code).json()
+    assert by_cat["detail"]["code"] == cat.category_code
+    assert by_cat["detail"]["name"] == "ZZT DETAIL CAT"
+    assert by_cat["totals"]["quantity"] == 105
+
+    # A code with no sales is a miss, not an error; no detail_code, no detail.
+    miss = _get(client, rank_by="quantity", detail_code="ZZTDETAIL-NONE").json()
+    assert miss["detail"] is None and miss["rows"] == [] and miss["total_count"] == 0
+    assert _get(client, rank_by="quantity").json()["detail"] is None
+
+
+def test_detail_code_too_long_is_422(client, db):
+    resp = _get(client, rank_by="quantity", detail_code="X" * 101)
+    assert resp.status_code == 422, resp.text
 
 
 # --------------------------------------------------------------------- contact gates
