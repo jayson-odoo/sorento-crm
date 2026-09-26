@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import Column, DateTime, Index, String, Text
+from sqlalchemy import Boolean, Column, DateTime, Index, String, Text, text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.sql import func
 
@@ -67,8 +67,33 @@ class ConversationFrame(Base):
     )
     closed_at = Column(DateTime(timezone=False), nullable=True)
 
+    # Chatbot memory lane A (contract section 3, D14 third exception): a CONSOLE dry run
+    # may write a frame of its own WORLD, never mixed with live turns. False for every
+    # frame the live engine writes.
+    is_test = Column(Boolean, nullable=False, server_default=text("false"), default=False)
+
     __table_args__ = (
         Index("ix_conversation_frames_contact_status", "contact_id", "status"),
         Index("ix_conversation_frames_contact_closed_at", "contact_id", "closed_at"),
         Index("ix_conversation_frames_contact_space_channel", "contact_id", "space_id", "channel"),
+        # Contract section 3: newest-first read of one contact's closed episodes, one
+        # WORLD at a time (a console dry run never sees a live frame or vice versa).
+        Index(
+            "ix_conversation_frames_contact_test_last",
+            "contact_respond_id",
+            "is_test",
+            text("last_activity_at DESC"),
+        ),
+        # Idempotent close (contract section 3): `write_episode_for_reset` inserts with
+        # `ON CONFLICT DO NOTHING` against this index, so two concurrent writers closing
+        # the SAME range never produce two frames. A functional index on the range's
+        # first turn id - `create_all` builds this from the model, same as every other
+        # index here, so a blank-schema test database carries it too.
+        Index(
+            "uq_conversation_frames_contact_test_first_turn",
+            "contact_respond_id",
+            "is_test",
+            text("(turn_ids[1])"),
+            unique=True,
+        ),
     )

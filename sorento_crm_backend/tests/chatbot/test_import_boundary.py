@@ -38,6 +38,11 @@ ALLOWED = {
     # boundary this script is exactly the kind of file that has to be updated with it - so
     # it belongs in the list that says so.
     "scripts/chatbot_parser_parity.py",
+    # Chatbot memory lane A (contract section 3/5.3): a maintenance script, not core, not
+    # on any request path - it seeds closed episodes over EXISTING history by calling
+    # `turn.memory.write_episode_for_reset` (the SAME writer the live engine calls, so a
+    # backfilled frame and a live one can never disagree, AC-MEM029) and needs it directly.
+    "scripts/backfill_chatbot_episodes.py",
 }
 ALLOWED_PREFIXES = (
     "app/services/chatbot/",

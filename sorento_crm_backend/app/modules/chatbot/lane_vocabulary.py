@@ -91,25 +91,25 @@ def default_tier_order() -> list[str]:
     return ["dealer", "office", "end_user"]
 
 
-# The Memory card's defaults (AC-1513, AC-1561). One declaration, read by
-# `SystemSetting.chatbot_memory`'s Python default and by the settings endpoint's own
-# null-reset table, through this doorway for the same AC-002 reason as the rest of this
-# module: core may not import `app/services/chatbot/`.
+# The Memory card's defaults (chatbot memory lane A, contract section 2/5). One
+# declaration, read by `SystemSetting.chatbot_memory`'s Python default and by the
+# settings endpoint's own null-reset table, through this doorway for the same AC-002
+# reason as the rest of this module: core may not import `app/services/chatbot/`.
 CHATBOT_MEMORY_KEYS: tuple[str, ...] = (
-    "recall_default",
-    "episode_retention_days",
-    "profile_fields",
-    "focus_reset_events",
+    "enabled",
+    "default_level",
 )
+
+#: `default_level` may never be "off" (contract section 2: the select has no clear) -
+#: shared by the settings PUT's value-range check and anything else that needs the
+#: vocabulary without hardcoding it a second time.
+CHATBOT_MEMORY_DEFAULT_LEVELS: tuple[str, ...] = ("conversation", "past", "full")
 
 
 def default_chatbot_memory() -> dict:
-    """Recall off by default (D3: "global default off"), a six-month episode horizon,
-    the three profile slots the parser is told about, and the one event that resets the
-    focus besides an explicit topic reset."""
+    """Memory off by default (owner ruling, Q1: "off first i need to test"), and the
+    level a contact gets once it is switched on with no level of its own."""
     return {
-        "recall_default": False,
-        "episode_retention_days": 180,
-        "profile_fields": ["tier", "language", "default_ledgers"],
-        "focus_reset_events": ["topic_switch"],
+        "enabled": False,
+        "default_level": "full",
     }

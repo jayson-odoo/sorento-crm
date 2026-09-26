@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field
 from app.database import get_db
 from app.dependencies import get_current_user, require_permission
+from app.models.access import RespondContact
 from app.models.product import UnitOfMeasure
 from app.models.user import SystemSetting, User, UserRole
 from app.services.error_handler import handle_internal_error
@@ -425,7 +426,18 @@ async def get_settings(
                 "chatbot_unsupported_domains": getattr(settings, "chatbot_unsupported_domains", None) if settings else None,
                 "chatbot_crossdomain_ladder": getattr(settings, "chatbot_crossdomain_ladder", None) if settings else None,
                 "chatbot_tier_order": getattr(settings, "chatbot_tier_order", None) if settings else None,
-                "chatbot_memory": getattr(settings, "chatbot_memory", None) if settings else None,
+                # Chatbot memory lane A (contract section 5): `own_level_count` is a
+                # LIVE count of a DIFFERENT table, never stored on this row - merged
+                # in here so the GET response carries exactly {enabled, default_level,
+                # own_level_count}.
+                "chatbot_memory": (
+                    {
+                        **(getattr(settings, "chatbot_memory", None) or {}),
+                        "own_level_count": _chatbot_memory_own_level_count(db),
+                    }
+                    if settings
+                    else None
+                ),
                 "chatbot_completed_lanes": getattr(settings, "chatbot_completed_lanes", None) or [] if settings else None,
                 "chatbot_business_lane_enabled": getattr(settings, "chatbot_business_lane_enabled", False) if settings else None,
                 "chatbot_ordering_enabled": getattr(settings, "chatbot_ordering_enabled", False) if settings else None,
@@ -499,6 +511,18 @@ async def get_app_config(
         )
     except Exception as e:
         raise handle_internal_error(str(e))
+
+
+def _chatbot_memory_own_level_count(db: Session) -> int:
+    """Read-only: how many contacts carry their own `chatbot_memory_level`, for the
+    Memory card's "Contacts with their own level" line (chatbot memory lane A,
+    contract section 2/5). Never stored on the settings row - it is a live count of a
+    DIFFERENT table, not a setting."""
+    return (
+        db.query(RespondContact)
+        .filter(RespondContact.chatbot_memory_level.isnot(None))
+        .count()
+    )
 
 
 def _completed_lane_vocabulary() -> frozenset[str]:
@@ -729,13 +753,16 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
                 ),
             )
 
-    # `chatbot_memory` is one JSONB carrying four named keys (AC-1513). An unknown key
-    # would be stored, returned and read by nobody, and the card that was meant to set it
-    # would read as broken with no error anywhere - the same silent failure the
-    # `chatbot_completed_lanes` check above exists for. A key set is validated, not the
-    # values: those are the owner's to get wrong and fix.
+    # `chatbot_memory` is one JSONB carrying two named keys (chatbot memory lane A,
+    # contract section 2/5). An unknown key would be stored, returned and read by
+    # nobody, and the card that was meant to set it would read as broken with no error
+    # anywhere - the same silent failure the `chatbot_completed_lanes` check above
+    # exists for.
     if update_data.get("chatbot_memory") is not None:
-        from app.modules.chatbot.lane_vocabulary import CHATBOT_MEMORY_KEYS
+        from app.modules.chatbot.lane_vocabulary import (
+            CHATBOT_MEMORY_DEFAULT_LEVELS,
+            CHATBOT_MEMORY_KEYS,
+        )
 
         memory = update_data["chatbot_memory"]
         if not isinstance(memory, dict):
@@ -751,6 +778,21 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
                     + ", ".join(unknown_keys)
                     + ". Its keys are: "
                     + ", ".join(CHATBOT_MEMORY_KEYS)
+                    + "."
+                ),
+            )
+        if "enabled" in memory and not isinstance(memory["enabled"], bool):
+            raise HTTPException(
+                status_code=422, detail="chatbot_memory.enabled must be a boolean."
+            )
+        # Never "off" and never null (contract section 2): the select has no clear,
+        # and "off" is what a contact's OWN level is for, not the system default.
+        if "default_level" in memory and memory["default_level"] not in CHATBOT_MEMORY_DEFAULT_LEVELS:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "chatbot_memory.default_level must be one of: "
+                    + ", ".join(CHATBOT_MEMORY_DEFAULT_LEVELS)
                     + "."
                 ),
             )

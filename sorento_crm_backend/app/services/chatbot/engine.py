@@ -662,6 +662,7 @@ def _record_parser_usage(
     contact_respond_id: str,
     dry_run: bool,
     answered: bool,
+    turn_id: str | None = None,
 ) -> None:
     """One `ai_assistant_usage_logs` row for the turn's parser call.
 
@@ -677,6 +678,7 @@ def _record_parser_usage(
         response_time_ms=int((time.perf_counter() - started) * 1000),
         contact_respond_id=contact_respond_id,
         answered=answered,
+        chatbot_turn_id=turn_id,
     )
 
 
@@ -1471,6 +1473,7 @@ def _run_stages(  # noqa: PLR0915
                 contact_respond_id=contact_respond_id,
                 dry_run=dry_run,
                 answered=False,
+                turn_id=turn_id,
             )
             _close_turn(
                 db,
@@ -1539,6 +1542,10 @@ def _run_stages(  # noqa: PLR0915
             "entities": len(verdict.get("entities") or []),
             "prompt_version": parser_config.prompt_version,
             "tokens": int(parser_usage.get("total_tokens") or 0),
+            # Chatbot memory lane A (contract section 6): the provider's own split,
+            # alongside the total the trace already carried.
+            "prompt_tokens": int(parser_usage.get("prompt_tokens") or 0),
+            "completion_tokens": int(parser_usage.get("completion_tokens") or 0),
             "parser_bypassed": parser_bypassed,
             "recalled_frames": len(recalled),
             # D17: WHICH options the parser was shown, on the record.
@@ -1568,6 +1575,7 @@ def _run_stages(  # noqa: PLR0915
             contact_respond_id=contact_respond_id,
             dry_run=dry_run,
             answered=True,
+            turn_id=turn_id,
         )
         suggested_agent = jsc.get(verdict.get("routing"), "suggested_agent")
         access = check_access(
@@ -1875,18 +1883,47 @@ def _run_stages(  # noqa: PLR0915
             branch_kind = turn_route(plan)
         item = _stamp_item(access, branch_kind, {})
 
-        # AC-1546: the episode belongs to the topic that just CLOSED, and a topic closes
-        # because the customer changed subject - not because this turn's lane went on to
-        # answer. Written HERE, where the reset is decided, so a turn whose fetch failed
-        # or whose lane refused still remembers the topic it ended. Once per turn, never
-        # mid-topic, never on a dry run.
-        if not dry_run and verdict.get("topic_reset") is True:
-            _write_episode(
-                db,
-                contact_respond_id=contact_respond_id,
-                before=remembered_before,
-                turn_id=turn_id,
-            )
+        # AC-1546 / chatbot memory lane A (contract section 3): the episode belongs to
+        # the topic that just CLOSED, and a topic closes because the customer changed
+        # subject - not because this turn's lane went on to answer. Written HERE, where
+        # the reset is decided, so a turn whose fetch failed or whose lane refused
+        # still remembers the topic it ended. Once per turn, never mid-topic.
+        #
+        # Human intervention closes nothing (Q2 ruling): the topic is whatever it was
+        # when the bot resumes. D14's third named exception (Q15) is the one write a
+        # dry run may make: a CONSOLE turn writes an `is_test=true` frame of its own
+        # world; every other dry run (clone/replay/harness) writes nothing.
+        is_console_dry_run = dry_run and envelope.ingress == "console"
+        written_frame = None
+        if (
+            verdict.get("topic_reset") is True
+            and (not dry_run or is_console_dry_run)
+            and not _is_human_intervened(envelope)
+        ):
+            try:
+                written_frame = memory_mod.write_episode_for_reset(
+                    db,
+                    contact_respond_id=contact_respond_id,
+                    is_test=dry_run,
+                    resetting_turn_id=turn_id,
+                )
+            except Exception:  # noqa: BLE001 - a lost episode is never a lost turn
+                logger.warning("chatbot: the episode write did not run", exc_info=True)
+        # Stashed on the shared `before` box (the same object `_run_answer` and
+        # `_run_entities_only_arm` already receive as `remembered_before`) so
+        # `_record_memory_trace`, several call frames later, can report what THIS turn
+        # closed without a new parameter threaded through every arm between here and
+        # there.
+        remembered_before["_episode_written"] = (
+            {
+                "id": written_frame.id,
+                "turn_count": len(written_frame.turn_ids or []),
+                "close_reason": written_frame.close_reason,
+                "summary": written_frame.summary,
+            }
+            if written_frame is not None
+            else None
+        )
 
         turn_trace.add(
             "apply",
@@ -2850,7 +2887,9 @@ def _run_answer(
             _log_session_write(db, turn_id=turn_id, contact_respond_id=contact_respond_id)
             written = True
         _record_memory_trace(
+            db,
             turn_trace,
+            contact_respond_id=contact_respond_id,
             before=remembered_before,
             state=state,
             answer=answer,
@@ -3270,8 +3309,10 @@ def _demand_qty_missing(verdict: dict[str, Any]) -> bool:
 
 
 def _record_memory_trace(
+    db: Session,
     turn_trace: Any,
     *,
+    contact_respond_id: str,
     before: dict[str, Any],
     state: Any,
     answer: Any,
@@ -3279,28 +3320,52 @@ def _record_memory_trace(
     dry_run: bool,
     written: bool,
 ) -> None:
-    """The `memory` trace record: three shelves, before and after, writer per shelf."""
+    """The `memory` trace record (chatbot memory lane A, contract section 6): the
+    contact's context level, the three shelves before/after with their writer, what
+    THIS turn closed (`episodes.written`, stashed on `before` by the topic-reset write
+    a few call frames back) and what it fed the parser (`episodes.read`), and the
+    facts it saved - always `[]` until S2's profile-facts writer lands."""
+    from app.models.access import RespondContact
+    from app.models.user import SystemSetting
     from app.services.chatbot.turn.pending import to_wire
     from app.services.chatbot.turn.state import focus_to_wire
+
+    contact_row = (
+        db.query(RespondContact.chatbot_memory_level, RespondContact.chatbot_profile)
+        .filter(RespondContact.respond_io_id == contact_respond_id)
+        .first()
+    )
+    own_level = contact_row[0] if contact_row is not None else None
+    chatbot_profile = (contact_row[1] if contact_row is not None else None) or {}
+    facts_count = len(chatbot_profile.get("facts") or {})
+    system_memory = db.query(SystemSetting.chatbot_memory).scalar()
+    effective = memory_mod.effective_level(own_level, system_memory)
+    profile_snapshot = {
+        "facts_count": facts_count,
+        "tier": state.profile.tier,
+        "language": state.profile.language,
+    }
 
     turn_trace.add(
         "memory",
         {
+            "level": {"own": own_level, "effective": effective},
             "focus": {
                 "before": before.get("focus") or {},
                 "after": focus_to_wire(state.focus),
                 "writer": "apply",
             },
             "profile": {
-                "before": {"tier": state.profile.tier, "language": state.profile.language},
-                "after": {"tier": state.profile.tier, "language": state.profile.language},
+                "before": profile_snapshot,
+                "after": profile_snapshot,
                 "writer": "contact",
             },
             "episodes": {
-                "before": [f.get("id") for f in recalled],
-                "after": [f.get("id") for f in recalled],
+                "read": [f.get("id") for f in recalled],
+                "written": before.get("_episode_written"),
                 "writer": "tail",
             },
+            "facts_saved": [],
             "open_question": {
                 "before": before.get("open_question"),
                 "after": to_wire(answer.question) if answer is not None else None,
@@ -3321,62 +3386,6 @@ def _record_memory_trace(
         facts={"written": written, "dry_run": dry_run},
         raw=None,
     )
-
-
-def _write_episode(
-    db: Session, *, contact_respond_id: str, before: dict[str, Any], turn_id: str
-) -> None:
-    """AC-1546: the topic this turn RESET is the one that just closed, so it is the one
-    written. Never mid-topic, and never the topic this turn is opening.
-
-    **It writes on the TURN's session, and `memory.write_episode` commits it.** Review
-    asked for a session of its own, the way the escalation lane owns one
-    (`escalation_services.production_session`); both ways of doing that were measured on
-    16 Sep 2026 and neither works today:
-
-    * An own session NESTED inside this stage's block loses the write in every test.
-      `tests/chatbot/conftest.py::session_factory` binds every session to ONE connection
-      with `join_transaction_mode="create_savepoint"`, so an inner session's commit only
-      releases into the enclosing session's savepoint and the enclosing session's close
-      rolls it back. Probed directly: the frame was written, read back as 1 immediately
-      after, and 0 at the end of the test. Production is unaffected (each `SessionLocal`
-      takes its own connection), but the whole engine suite would be red.
-    * Moving the call out of the stage block instead reintroduces the bug this line was
-      put here to fix: a turn whose fetch failed or whose lane refused must still close
-      the topic it ended, which is why the write sits where APPLY decides `topic_reset`
-      rather than on the answer arm.
-
-    Trigger for revisiting: a test fixture that gives each session its OWN connection.
-    At that point this takes `session_factory` and opens one through `_session`, and the
-    nesting stops mattering.
-    """
-    focus_before = before.get("focus") if isinstance(before.get("focus"), dict) else {}
-    domains = focus_before.get("domains") or []
-    domain = domains[0] if domains else None
-    if not domain:
-        return
-    try:
-        memory_mod.write_episode(
-            db,
-            contact_respond_id=contact_respond_id,
-            domain=domain,
-            intent=None,
-            entities={
-                key: [
-                    jsc.js_string(e.get("canonical_code") or e.get("raw"))
-                    for e in value
-                    if isinstance(e, dict)
-                ]
-                for key, value in focus_before.items()
-                if isinstance(value, list) and value and isinstance(value[0], dict)
-            },
-            tools_used=[],
-            turn_ids=[turn_id],
-            summary=f"Closed the {domain} topic.",
-            close_reason="topic_switch",
-        )
-    except Exception:  # noqa: BLE001 - a lost episode is never a lost turn
-        logger.warning("chatbot: the episode write did not run", exc_info=True)
 
 
 def _run_casual_lane(

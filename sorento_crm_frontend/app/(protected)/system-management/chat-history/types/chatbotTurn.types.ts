@@ -367,25 +367,95 @@ export interface TurnDetailApply {
   prompt_text: string | null;
 }
 
-export interface TurnDetailMemorySlot {
-  key: string;
-  value: unknown;
-  /** Who last wrote this slot, and when - "turn 9, pick", "set this turn". */
+/**
+ * Memory, repaired to the backend's own `memory` trace event (chatbot memory lane A,
+ * contract section 6) - the `recall_hit`/`reason`/`last_frame_summary`/`frame_count`
+ * keys and the array-of-slots shape for `focus` are gone; the S3 recall re-parse they
+ * described was deleted in the same lane.
+ */
+export interface TurnDetailMemoryLevel {
+  own: string | null;
+  effective: string;
+}
+
+export interface TurnDetailMemoryFocus {
+  before: unknown;
+  /** The current subject, rendered as "Current subject" in the drawer. */
+  after: unknown;
   writer: string | null;
 }
 
+export interface TurnDetailMemoryProfile {
+  before: Record<string, unknown>;
+  after: Record<string, unknown>;
+  writer: string | null;
+}
+
+export interface TurnDetailMemoryEpisodeWritten {
+  id: string;
+  turn_count: number;
+  close_reason: string;
+  summary: string;
+}
+
 export interface TurnDetailMemoryEpisodes {
-  recall_hit: boolean;
-  /** Why recall did or did not fire, e.g. "no backward reference". */
-  reason: string | null;
-  last_frame_summary: string | null;
-  frame_count: number | null;
+  /** Frame ids fed to the parser this turn. */
+  read: string[];
+  written: TurnDetailMemoryEpisodeWritten | null;
+  writer: string;
+}
+
+export interface TurnDetailFactSaved {
+  key: string;
+  source: string;
 }
 
 export interface TurnDetailMemory {
-  focus: TurnDetailMemorySlot[];
-  profile: TurnDetailMemorySlot[];
-  episodes: TurnDetailMemoryEpisodes | null;
+  level: TurnDetailMemoryLevel;
+  focus: TurnDetailMemoryFocus;
+  profile: TurnDetailMemoryProfile;
+  episodes: TurnDetailMemoryEpisodes;
+  facts_saved: TurnDetailFactSaved[];
+  open_question?: unknown;
+  written?: boolean;
+  dry_run?: boolean;
+}
+
+/**
+ * "Context sent to the AI" (chatbot memory lane A, contract section 6's `context`
+ * trace event).
+ */
+export interface TurnDetailContextLayer {
+  /** Machine key from the backend - "L3" / "L4" / "L5" / "current_subject" / etc. */
+  layer: string;
+  est_tokens: number;
+  cap: number;
+  /** Absent/false = nothing dropped from this layer; a list names what was cut. */
+  dropped?: boolean | string[] | null;
+}
+
+export interface TurnDetailContext {
+  level: string;
+  layers: TurnDetailContextLayer[];
+  total_est_tokens: number;
+  cap: number;
+}
+
+/**
+ * The per-contact ordering ticket (chatbot memory lane A, contract section 6's `order`
+ * trace event) - read-only, nothing to set.
+ */
+export interface TurnDetailOrderNeighbor {
+  turn_id: string;
+  created_at: string;
+  message: string;
+}
+
+export interface TurnDetailOrder {
+  ticket: number;
+  waited_ms: number;
+  previous: TurnDetailOrderNeighbor | null;
+  next: TurnDetailOrderNeighbor | null;
 }
 
 export interface TurnDetail {
@@ -393,6 +463,8 @@ export interface TurnDetail {
   parse: TurnDetailParse | null;
   apply?: TurnDetailApply | null;
   memory?: TurnDetailMemory | null;
+  context?: TurnDetailContext | null;
+  order?: TurnDetailOrder | null;
   decay: TurnDetailDecay[];
   open_question: TurnDetailOpenQuestion | null;
   focus: TurnDetailFocus[];

@@ -1,0 +1,24 @@
+{
+  "name": "stock-m483bl-after-srtwb1455-summary-keeps-only-m483bl",
+  "needs_memory": false,
+  "given": {
+    "memory_level": "full",
+    "frames": [
+      {
+        "summary": "Thu 25 Sep: stock SRTWB1455 (answered).",
+        "days_ago": 1,
+        "entities": {"product": ["SRTWB1455"]}
+      }
+    ]
+  },
+  "turn": {
+    "message": "stock M483-BL",
+    "verdict": {
+      "domain_hint": "inventory",
+      "entities": [{"raw": "M483-BL", "hint": "product", "canonical_code": "M483-BL", "current_message": true, "confident": true}]
+    }
+  },
+  "expected": {
+    "focus_products_only": ["M483-BL"]
+  }
+}

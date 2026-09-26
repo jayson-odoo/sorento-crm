@@ -9,14 +9,16 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { SearchableCode } from '@/components/common/find-in-text/SearchableCode';
 import { useChatbotTurn } from '../hooks/useChatbotTurns';
 import { shortTurnId } from '../turnPresentation';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import type {
   TurnDetail,
   TurnDetailApplyDiff,
   TurnDetailApplyDiffEntry,
+  TurnDetailContextLayer,
   TurnDetailCrossdomain,
   TurnDetailDecay,
   TurnDetailFocus,
-  TurnDetailMemorySlot,
+  TurnDetailOrderNeighbor,
 } from '../types/chatbotTurn.types';
 
 /**
@@ -74,6 +76,9 @@ export function TurnDetailDrawer({
 function Sections({ detail }: { detail: TurnDetail }) {
   return (
     <>
+      <Section title="Order" testId="section-order" defaultOpen>
+        <OrderSection order={detail.order ?? null} />
+      </Section>
       <Section title="Stages" testId="section-stages" defaultOpen>
         <StagesSection stages={detail.stages} />
       </Section>
@@ -85,6 +90,9 @@ function Sections({ detail }: { detail: TurnDetail }) {
       </Section>
       <Section title="Memory" testId="section-memory">
         <MemorySection memory={detail.memory ?? null} />
+      </Section>
+      <Section title="Context sent to the AI" testId="section-context">
+        <ContextSection context={detail.context ?? null} />
       </Section>
       <Section title="Decay" testId="section-decay">
         <DecaySection decay={detail.decay} />
@@ -372,76 +380,136 @@ function ApplySection({ apply }: { apply: TurnDetail['apply'] }) {
   );
 }
 
-function MemorySlotTable({ slots }: { slots: TurnDetailMemorySlot[] }) {
-  if (slots.length === 0) return <Empty>Nothing on this shelf.</Empty>;
-  return (
-    <table className="w-full text-xs">
-      <tbody>
-        {slots.map((slot) => (
-          <tr key={slot.key} className="border-b last:border-0">
-            <td className="w-24 py-1 pe-2 align-top font-medium">{slot.key}</td>
-            <td className="py-1 align-top text-muted-foreground">
-              {typeof slot.value === 'string' ? slot.value : JSON.stringify(slot.value)}
-              {slot.writer && (
-                <Badge variant="secondary" appearance="light" size="sm" className="ms-1.5">
-                  {slot.writer}
-                </Badge>
-              )}
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
+/**
+ * The current subject, from `focus.after` (chatbot memory lane A, contract section 6).
+ * The backend has not fixed a shape for it - the mockup's sample joins a few plain
+ * fields with " · " ("stock · SRTWB1455 · Kuching") - so an object is
+ * rendered the same way, a string as itself, and nothing at all as absent.
+ */
+function currentSubjectText(after: unknown): string | null {
+  if (after == null) return null;
+  if (typeof after === 'string') return after || null;
+  if (typeof after === 'object') {
+    const parts = Object.values(after as Record<string, unknown>).filter(
+      (v): v is string | number => typeof v === 'string' || typeof v === 'number',
+    );
+    return parts.length ? parts.join(' · ') : null;
+  }
+  return String(after);
 }
 
 function MemorySection({ memory }: { memory: TurnDetail['memory'] }) {
-  if (!memory) return <Empty>Not recorded on this turn (Memory shipped in S3).</Empty>;
+  if (!memory) return <Empty>Not recorded on this turn.</Empty>;
+  const ownSet = memory.level.own != null;
+  const subject = currentSubjectText(memory.focus?.after);
+  const written = memory.episodes.written;
+  const factsSaved = memory.facts_saved ?? [];
+
   return (
-    <div className="space-y-3 text-xs">
-      <div>
-        <div className="mb-1 font-medium text-muted-foreground">Focus - writer: APPLY</div>
-        <MemorySlotTable slots={memory.focus} />
-      </div>
-      <div>
-        <div className="mb-1 font-medium text-muted-foreground">Profile - writer: explicit picks</div>
-        <MemorySlotTable slots={memory.profile} />
-      </div>
-      <div>
-        <div className="mb-1 font-medium text-muted-foreground">
-          Episodes - writer: TAIL on topic switch
-        </div>
-        {memory.episodes ? (
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              {memory.episodes.recall_hit ? (
-                <Badge variant="success" appearance="light" size="sm">
-                  recall hit
-                </Badge>
-              ) : (
-                <Badge variant="secondary" appearance="light" size="sm">
-                  not triggered
-                </Badge>
-              )}
-              {memory.episodes.reason && (
-                <span className="text-muted-foreground">{memory.episodes.reason}</span>
-              )}
+    <dl className="grid grid-cols-[auto_1fr] gap-x-2.5 gap-y-1.5 text-xs">
+      <dt className="text-muted-foreground">Context level</dt>
+      <dd>
+        {memory.level.effective}{' '}
+        <Badge variant="secondary" appearance="light" size="sm" className="ms-1">
+          {ownSet ? 'own level' : 'system default'}
+        </Badge>
+      </dd>
+      <dt className="text-muted-foreground">Current subject</dt>
+      <dd className="text-muted-foreground">{subject ?? 'Not recorded on this turn.'}</dd>
+      <dt className="text-muted-foreground">Conversation closed</dt>
+      <dd className="text-muted-foreground">{written ? written.summary : 'none this turn'}</dd>
+      <dt className="text-muted-foreground">Facts saved</dt>
+      <dd className="text-muted-foreground">
+        {factsSaved.length === 0
+          ? 'none this turn'
+          : factsSaved.map((f) => `${f.key} (${f.source})`).join(', ')}
+      </dd>
+    </dl>
+  );
+}
+
+/**
+ * "Context sent to the AI" (chatbot memory lane A, contract section 6's `context`
+ * trace event) - each layer's estimated tokens against its own cap, and the total
+ * against the turn cap.
+ */
+const CONTEXT_LAYER_LABEL: Record<string, string> = {
+  L3: 'This conversation',
+  L4: 'Past conversations',
+  L5: 'About this contact',
+  current_subject: 'Current subject',
+  current_message: 'Current message',
+};
+
+function layerLabel(layer: TurnDetailContextLayer): string {
+  return CONTEXT_LAYER_LABEL[layer.layer] ?? layer.layer;
+}
+
+function layerDropped(layer: TurnDetailContextLayer): string[] {
+  if (Array.isArray(layer.dropped)) return layer.dropped;
+  return layer.dropped ? [layerLabel(layer)] : [];
+}
+
+function ContextSection({ context }: { context: TurnDetail['context'] }) {
+  if (!context) return <Empty>Not recorded on this turn.</Empty>;
+  const dropped = context.layers.flatMap(layerDropped);
+  return (
+    <div className="space-y-2 text-xs">
+      {context.layers.map((layer, i) => {
+        const pct = layer.cap > 0 ? Math.min(100, (layer.est_tokens / layer.cap) * 100) : 0;
+        return (
+          <div key={`${layer.layer}-${i}`} className="flex items-center gap-2">
+            <span className="w-36 shrink-0 truncate text-muted-foreground" title={layerLabel(layer)}>
+              {layerLabel(layer)}
+            </span>
+            <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
+              <div className="h-full rounded-full bg-primary" style={{ width: `${pct}%` }} />
             </div>
-            {memory.episodes.last_frame_summary && (
-              <p className="text-muted-foreground">{memory.episodes.last_frame_summary}</p>
-            )}
-            {memory.episodes.frame_count != null && (
-              <p className="text-muted-foreground">
-                {memory.episodes.frame_count} frame{memory.episodes.frame_count === 1 ? '' : 's'}{' '}
-                for this contact
-              </p>
-            )}
+            <span className="w-20 shrink-0 text-end tabular-nums text-muted-foreground">
+              {layer.est_tokens} / {layer.cap}
+            </span>
           </div>
-        ) : (
-          <Empty>No episode recorded yet.</Empty>
-        )}
+        );
+      })}
+      <div className="flex items-center gap-2 font-medium">
+        <span className="w-36 shrink-0">Total memory + message</span>
+        <div className="flex-1" />
+        <span className="w-20 shrink-0 text-end tabular-nums">
+          {context.total_est_tokens} / {context.cap}
+        </span>
       </div>
+      <p className="text-muted-foreground">
+        Dropped: {dropped.length === 0 ? 'nothing' : dropped.join(', ')}
+      </p>
     </div>
+  );
+}
+
+/**
+ * The per-contact ordering ticket (chatbot memory lane A, contract section 6's `order`
+ * trace event) - read-only, nothing to set.
+ */
+function orderNeighborText(neighbor: TurnDetailOrderNeighbor): string {
+  return `${formatDateTimeInMalaysia(neighbor.created_at)} "${neighbor.message}"`;
+}
+
+function OrderSection({ order }: { order: TurnDetail['order'] }) {
+  if (!order) return <Empty>Not recorded on this turn.</Empty>;
+  return (
+    <dl className="grid grid-cols-[auto_1fr] gap-x-2.5 gap-y-1.5 text-xs">
+      <dt className="text-muted-foreground">Place in line</dt>
+      <dd>#{order.ticket} for this contact</dd>
+      <dt className="text-muted-foreground">Waited</dt>
+      <dd>{(order.waited_ms / 1000).toFixed(1)} s</dd>
+      <dt className="text-muted-foreground">Ran after</dt>
+      <dd className="text-muted-foreground">
+        {order.previous ? orderNeighborText(order.previous) : 'Not recorded on this turn.'}
+      </dd>
+      <dt className="text-muted-foreground">Next</dt>
+      <dd className="text-muted-foreground">
+        {order.next ? orderNeighborText(order.next) : 'Not recorded on this turn.'}
+      </dd>
+    </dl>
   );
 }
 

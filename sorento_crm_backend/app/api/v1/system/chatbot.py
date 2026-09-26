@@ -437,7 +437,7 @@ def get_turn(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Turn not found.")
     return ChatbotTurnDetailResponse(
         **{**ChatbotTurnResponse.model_validate(row).model_dump(), "media": _media_block(db, row)},
-        trace_detail=compose_trace_detail(row),
+        trace_detail=compose_trace_detail(row, db),
     )
 
 

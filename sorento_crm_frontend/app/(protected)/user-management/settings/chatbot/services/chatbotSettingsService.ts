@@ -92,39 +92,47 @@ export async function saveChatbotSettings(input: ChatbotSettings): Promise<Chatb
   return pickChatbotSettings(data?.data);
 }
 
-/** Settings > Chatbot > Memory card (chatbot turn re-architecture, AC-1513, AC-1561). */
+/**
+ * Settings > Chatbot > Memory card (chatbot memory lane A, round 3 mockup
+ * `chatbot-memory-27sep-mockup-settings.html`; contract sections 2 and 5).
+ *
+ * `system_settings.chatbot_memory` is now exactly `{enabled, default_level,
+ * own_level_count}` - the four dead settings this card used to carry (recall_default,
+ * episode_retention_days, profile_fields, focus_reset_events) are gone from the type,
+ * this service and the card itself; the S0 migration drops them from the column.
+ */
 export interface ChatbotMemorySettings {
-  recall_default: boolean;
-  episode_retention_days: number;
-  profile_fields: string[];
-  focus_reset_events: string[];
+  enabled: boolean;
+  /** Never `off`, never null - the select has no clear (contract section 2). */
+  default_level: 'conversation' | 'past' | 'full';
+  /** Read-only: contacts with their own level (contract section 2's per-contact override). */
+  own_level_count: number;
 }
 
 const MEMORY_FALLBACK: ChatbotMemorySettings = {
-  recall_default: false,
-  episode_retention_days: 180,
-  profile_fields: ['tier', 'language', 'default_ledgers'],
-  focus_reset_events: ['topic_switch'],
+  enabled: false,
+  default_level: 'full',
+  own_level_count: 0,
 };
 
 function pickChatbotMemory(row: Record<string, unknown> | null | undefined): ChatbotMemorySettings {
   const memory = row?.chatbot_memory as Partial<ChatbotMemorySettings> | null | undefined;
   if (!memory) return MEMORY_FALLBACK;
   return {
-    recall_default: Boolean(memory.recall_default),
-    episode_retention_days:
-      typeof memory.episode_retention_days === 'number'
-        ? memory.episode_retention_days
-        : MEMORY_FALLBACK.episode_retention_days,
-    profile_fields: Array.isArray(memory.profile_fields)
-      ? memory.profile_fields
-      : MEMORY_FALLBACK.profile_fields,
-    focus_reset_events: Array.isArray(memory.focus_reset_events)
-      ? memory.focus_reset_events
-      : MEMORY_FALLBACK.focus_reset_events,
+    enabled: Boolean(memory.enabled),
+    default_level:
+      memory.default_level === 'conversation' ||
+      memory.default_level === 'past' ||
+      memory.default_level === 'full'
+        ? memory.default_level
+        : MEMORY_FALLBACK.default_level,
+    own_level_count: typeof memory.own_level_count === 'number' ? memory.own_level_count : 0,
   };
 }
 
+// S0 migration landed (contract section 5): `chatbot_memory` is the real two-key shape
+// plus a live `own_level_count`, so this card reads/saves through the same GET/PUT the
+// Switches card already uses.
 export async function getChatbotMemorySettings(): Promise<ChatbotMemorySettings> {
   const response = await apiFetch('/api/user-management/settings');
   if (!response.ok) {
@@ -137,16 +145,22 @@ export async function getChatbotMemorySettings(): Promise<ChatbotMemorySettings>
 export async function saveChatbotMemorySettings(
   input: ChatbotMemorySettings,
 ): Promise<ChatbotMemorySettings> {
+  // own_level_count is read-only (set per-contact, on the contact's own card) - never
+  // sent; the backend 422s an unrecognised chatbot_memory key regardless.
   const response = await apiFetch('/api/user-management/settings/general', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chatbot_memory: input }),
+    body: JSON.stringify({
+      chatbot_memory: { enabled: input.enabled, default_level: input.default_level },
+    }),
   });
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Failed to save memory settings'));
   }
-  const data = await response.json();
-  return pickChatbotMemory(data?.data);
+  // The PUT's own response echoes the stored `{enabled, default_level}` only -
+  // `own_level_count` is a live count the GET dict builder merges in, so a fresh GET
+  // is what actually reflects it (never 0, freshly reset, right after a save).
+  return getChatbotMemorySettings();
 }
 
 /** Office / Dealer / End user, orderable (AC-1502's tier axis; replaces the three

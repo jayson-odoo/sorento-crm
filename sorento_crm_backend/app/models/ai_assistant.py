@@ -148,6 +148,10 @@ class AIAssistantUsageLog(Base):
     feature: Mapped[str | None] = mapped_column(String(32), nullable=True)
     # When feature="ai_extract", the portal form_key, e.g. "portal.stock_inquiry".
     form_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Chatbot memory lane A (contract section 7): `chatbot.turns.id` this row bills,
+    # for feature="chatbot_parser" rows. Not a FK - `chatbot.turns` is a log the module
+    # owns, and this table must survive a turn row's own retention independently.
+    chatbot_turn_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     __table_args__ = (

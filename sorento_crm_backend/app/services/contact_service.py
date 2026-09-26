@@ -287,12 +287,20 @@ class ContactService:
     def delete_contact(self, contact_id: str) -> None:
         """Delete a respond contact and all contact - agent linkages. Related contact_agent_access rows are deleted; conversation_sla_tracking.respond_contact_id is SET NULL."""
         from app.models.access import ContactAgentAccess
+        from app.models.conversation_frame import ConversationFrame
 
         contact = self.get_contact(contact_id)
         # Delete contact - agent access linkages first so the contact can be removed
         self.db.query(ContactAgentAccess).filter(
             ContactAgentAccess.respond_contact_id == contact_id
         ).delete(synchronize_session=False)
+        # Chatbot memory lane A (contract section 3): a deleted contact's episodes go
+        # with it. Keyed by `respond_io_id` - the episode store's own contact key,
+        # never the internal `respond_contacts.id`.
+        if contact.respond_io_id:
+            self.db.query(ConversationFrame).filter(
+                ConversationFrame.contact_respond_id == contact.respond_io_id
+            ).delete(synchronize_session=False)
         self.db.delete(contact)
         self.db.commit()
 
@@ -301,6 +309,7 @@ class ContactService:
         if not contact_ids:
             return {"deleted_count": 0, "message": "No contacts to delete."}
         from app.models.access import ContactAgentAccess
+        from app.models.conversation_frame import ConversationFrame
         deleted = 0
         for contact_id in contact_ids:
             contact = self.db.query(RespondContact).filter(RespondContact.id == contact_id).first()
@@ -308,6 +317,10 @@ class ContactService:
                 self.db.query(ContactAgentAccess).filter(
                     ContactAgentAccess.respond_contact_id == contact_id
                 ).delete(synchronize_session=False)
+                if contact.respond_io_id:
+                    self.db.query(ConversationFrame).filter(
+                        ConversationFrame.contact_respond_id == contact.respond_io_id
+                    ).delete(synchronize_session=False)
                 self.db.delete(contact)
                 deleted += 1
         self.db.commit()
@@ -343,6 +356,9 @@ class ContactService:
             # Chatbot turn re-architecture (AC-1503) - same rule as every field above.
             "chatbot_profile": getattr(contact, "chatbot_profile", None) or {},
             "chatbot_recall_enabled": bool(getattr(contact, "chatbot_recall_enabled", False)),
+            # Chatbot memory lane A (contract section 5): null = follow the system
+            # default. Must be listed explicitly, same rule as every field above.
+            "chatbot_memory_level": getattr(contact, "chatbot_memory_level", None),
             # S6: the stock allowance, default ON - a row without the attribute is allowed.
             "chatbot_stock_allowed": bool(getattr(contact, "chatbot_stock_allowed", True)),
             # Chatbot stock ask v2 S2 (PLAN-chatbot-stock-ask-v2-24sep.md, R7): both

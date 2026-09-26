@@ -264,6 +264,12 @@ class RespondContact(Base):
     # re-parse with an `Episodes:` block, AC-1547) and defaults OFF per contact.
     chatbot_profile = Column(JSONB(astext_type=Text()), nullable=False, server_default=text("'{}'::jsonb"))
     chatbot_recall_enabled = Column(Boolean, nullable=False, server_default=text("false"), default=False)
+    # Chatbot memory lane A (contract section 2): the contact's OWN context level, one
+    # of "off" | "conversation" | "past" | "full". NULL = follow the system default
+    # (`system_settings.chatbot_memory.default_level`). Replaces `chatbot_recall_enabled`
+    # above, which the S3 build stops reading (the column itself stays, untouched - Q1
+    # ruling: no data change).
+    chatbot_memory_level = Column(String(16), nullable=True)
     # S6 (owner ruling, 16 Sep 2026): whether this contact may ask for stock is a CRM
     # fact, default ON; the respond.io `is_allowed_stock` custom field is not read.
     chatbot_stock_allowed = Column(Boolean, nullable=False, server_default=text("true"), default=True)
