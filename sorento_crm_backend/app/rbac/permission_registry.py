@@ -819,6 +819,8 @@ PERMISSION_REGISTRY.extend([
 # them to admin and superadmin; declared here as well so a database built with create_all +
 # sync_permissions (CI, `scripts/bootstrap_env`) has them.
 PERMISSION_REGISTRY.extend(_crud("sales", "teams", "Sales Teams"))
+# Slice S2 (opportunities). Migration `sales_0003_opportunities` grants these the same way.
+PERMISSION_REGISTRY.extend(_crud("sales", "opportunities", "Sales Opportunities"))
 
 
 def sync_permissions(db: Session, created_by_user_id: Optional[str] = None) -> int:
