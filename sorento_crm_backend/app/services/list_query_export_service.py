@@ -1,7 +1,7 @@
 """Dynamic export rows (flattened for order lines) using same filter compiler as list search."""
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -16,7 +16,9 @@ from app.models.workflow_forms import WorkflowFormDefinition, WorkflowSubmission
 from app.schemas.list_query import ListExportRequest
 from app.services.list_query_metadata_service import ListQueryMetadataService
 from app.services.list_query_registry import require_adapter
+from app.services.product_service import malaysia_day_start_utc
 from app.services.query.filter_compiler import compile_optional_filter
+from app.services.sla_service import MALAYSIA_TZ
 from app.services.workflow_submission_dynamic_list_query import merge_submission_field_maps
 
 
@@ -43,6 +45,18 @@ def _value_from_supplier(obj: Any, compile_key: str) -> Any:
     `_value_from_obj`'s plain `getattr(obj, attr)` used to read) is gone."""
     if compile_key == "country.name":
         return _json_safe(getattr(obj, "country_name", None))
+    return _value_from_obj(obj, compile_key)
+
+
+def _value_from_product(obj: Any, compile_key: str) -> Any:
+    """Discontinued at (issue #1287): the exported value is the Malaysia calendar
+    date (YYYY-MM-DD) the scheduler noticed, not the raw naive-UTC timestamp
+    `_value_from_obj`'s plain `getattr` would emit."""
+    if compile_key == "product.discontinued_notified_at":
+        dt = getattr(obj, "discontinued_notified_at", None)
+        if dt is None:
+            return None
+        return dt.replace(tzinfo=timezone.utc).astimezone(MALAYSIA_TZ).date().isoformat()
     return _value_from_obj(obj, compile_key)
 
 
@@ -226,6 +240,15 @@ class ListQueryExportService:
             q = q.filter(Product.is_active == (req.product_status == "active"))
         if req.item_type:
             q = q.filter(Product.item_type == req.item_type)
+        # "Discontinued at" range (issue #1287): inclusive by Malaysia calendar day,
+        # same bounds as `ProductService._build_list_query`.
+        if req.discontinued_from is not None:
+            q = q.filter(Product.discontinued_notified_at >= malaysia_day_start_utc(req.discontinued_from))
+        if req.discontinued_to is not None:
+            q = q.filter(
+                Product.discontinued_notified_at
+                < malaysia_day_start_utc(req.discontinued_to + timedelta(days=1))
+            )
         if req.price_min or req.price_max:
             pf = []
             if req.price_min is not None:
@@ -262,7 +285,7 @@ class ListQueryExportService:
             row = {}
             for m in selected:
                 key = m.export_column_name or m.field_key
-                row[key] = _value_from_obj(p, m.compile_key)
+                row[key] = _value_from_product(p, m.compile_key)
             out.append(row)
         return out
 

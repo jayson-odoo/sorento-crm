@@ -614,12 +614,14 @@ def seed_products_list_query_fields() -> None:
     """The `products` list-query filter catalog, minimally replayed for bootstrap.
 
     `list_query_resources` / `list_query_fields` are ENTIRELY migration-seeded data
-    (101, 128, 503, ...) with no seed function of their own anywhere in this script, so a
-    bootstrapped database carries both tables completely empty - not just missing
-    `exclude_from_planning`, missing the `products` resource row itself. Only what
-    `test_product_exclude_from_planning.py` pins is replayed here: a bare `products`
-    resource (101's own shape) and the `exclude_from_planning` field (503, via its own
-    `seed()` so the two paths cannot drift). The ~40 other master fields 128 seeds are NOT
+    (101, 128, 503, prod_discontinued_at_flt, ...) with no seed function of their own
+    anywhere in this script, so a bootstrapped database carries both tables completely
+    empty - not just missing `exclude_from_planning`/`discontinued_at`, missing the
+    `products` resource row itself. Only what `test_product_exclude_from_planning.py`
+    and `test_product_discontinued_at_list.py` pin is replayed here: a bare `products`
+    resource (101's own shape), the `exclude_from_planning` field (503) and the
+    `discontinued_at` field (prod_discontinued_at_flt), each via its own `seed()` so
+    the two paths can never drift. The ~40 other master fields 128 seeds are NOT
     replayed - nothing in the suite currently reads them off a bootstrapped database, and
     the full catalog belongs in its own seed pass the day something does.
     """
@@ -653,8 +655,18 @@ def seed_products_list_query_fields() -> None:
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         inserted = module.seed(conn)
-    log.info("products list-query field catalog seeded -> exclude_from_planning: %s",
-             "added" if inserted else "already present")
+
+        spec_disc = importlib.util.spec_from_file_location(
+            "_products_flt_seed_discontinued_at", versions / "prod_discontinued_at_flt.py"
+        )
+        module_disc = importlib.util.module_from_spec(spec_disc)
+        spec_disc.loader.exec_module(module_disc)
+        inserted_disc = module_disc.seed(conn)
+    log.info(
+        "products list-query field catalog seeded -> exclude_from_planning: %s, discontinued_at: %s",
+        "added" if inserted else "already present",
+        "added" if inserted_disc else "already present",
+    )
 
 
 def seed_chatbot_policy() -> None:

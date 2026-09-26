@@ -1,6 +1,7 @@
 """Products API routes."""
 import logging
 import time
+from datetime import date
 from fastapi import APIRouter, Depends, Query, HTTPException, status, Body
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -130,6 +131,14 @@ def get_products(
         None,
         description="Filter to products reported in one 'products discontinued' notification batch.",
     ),
+    discontinued_from: Optional[date] = Query(
+        None,
+        description="Discontinued-at range start (YYYY-MM-DD), inclusive by Malaysia calendar day.",
+    ),
+    discontinued_to: Optional[date] = Query(
+        None,
+        description="Discontinued-at range end (YYYY-MM-DD), inclusive by Malaysia calendar day.",
+    ),
     price_min: Optional[float] = Query(None),
     price_max: Optional[float] = Query(None),
     item_type: Optional[str] = Query(None),
@@ -200,6 +209,8 @@ def get_products(
             brand_id=brand_id,
             status=status,
             discontinued_batch_id=discontinued_batch_id,
+            discontinued_from=discontinued_from,
+            discontinued_to=discontinued_to,
             price_min=price_min,
             price_max=price_max,
             item_type=item_type,

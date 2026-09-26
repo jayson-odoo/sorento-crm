@@ -80,6 +80,8 @@ class ListQuerySearchService:
             price_min=req.price_min,
             price_max=req.price_max,
             item_type=req.item_type,
+            discontinued_from=req.discontinued_from,
+            discontinued_to=req.discontinued_to,
             sort_field=sort_field,
             sort_dir=sort_dir,
             advanced_filter_clause=clause,

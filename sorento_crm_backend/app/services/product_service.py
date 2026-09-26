@@ -1,5 +1,5 @@
 """Product service for business logic."""
-from datetime import datetime
+from datetime import date, datetime, time, timedelta, timezone
 import logging
 import re
 import uuid
@@ -9,6 +9,7 @@ from typing import Any, Optional, List, Callable, Tuple, Iterable
 from decimal import Decimal
 from app.models.product import Product, ProductCategory, Brand, UnitOfMeasure, ProductAttachment
 from app.models.product_set import ProductSet, ProductSetMember
+from app.services.sla_service import MALAYSIA_TZ
 
 logger = logging.getLogger(__name__)
 
@@ -218,6 +219,14 @@ def is_active_from_manual_value(raw_active) -> bool:
     return True
 
 
+def malaysia_day_start_utc(day: date) -> datetime:
+    """Midnight of `day` in Malaysia time (UTC+8), converted to naive UTC - the
+    same representation `discontinued_notified_at` (and other naive-UTC columns)
+    are stored in. Used to turn a `discontinued_from`/`discontinued_to` calendar
+    day into a bound comparable against that column."""
+    return datetime.combine(day, time.min, tzinfo=MALAYSIA_TZ).astimezone(timezone.utc).replace(tzinfo=None)
+
+
 class ProductService:
     """Service for product operations."""
     
@@ -314,6 +323,8 @@ class ProductService:
         product_ids: Optional[list[str]] = None,
         discontinued_batch_id: Optional[str] = None,
         variant_filter: Optional[str] = None,
+        discontinued_from: Optional[date] = None,
+        discontinued_to: Optional[date] = None,
     ):
         """Build the filtered + sorted products query shared by ``list_products``
         and ``neighbours`` so the two can never drift.
@@ -371,6 +382,18 @@ class ProductService:
         # products reported in that batch (see product_discontinued_notify_service).
         if discontinued_batch_id:
             filters.append(Product.discontinued_notify_batch_id == discontinued_batch_id)
+
+        # "Discontinued at" date-range filter (issue #1287): inclusive by Malaysia
+        # calendar day, either bound set also excludes null (never-discontinued) rows.
+        if discontinued_from is not None:
+            filters.append(
+                Product.discontinued_notified_at >= malaysia_day_start_utc(discontinued_from)
+            )
+        if discontinued_to is not None:
+            filters.append(
+                Product.discontinued_notified_at
+                < malaysia_day_start_utc(discontinued_to + timedelta(days=1))
+            )
 
         if price_min or price_max:
             price_filters = []
@@ -463,6 +486,7 @@ class ProductService:
             "height": Product.dimensions_height,
             "largest_dimension": largest_dim,
             "smallest_dimension": smallest_dim,
+            "discontinued_at": Product.discontinued_notified_at,
         }
         sort_column = sort_map.get(sort_field, Product.created_at)
         if sort_dir == "desc":
@@ -497,6 +521,8 @@ class ProductService:
         product_ids: Optional[list[str]] = None,
         discontinued_batch_id: Optional[str] = None,
         variant_filter: Optional[str] = None,
+        discontinued_from: Optional[date] = None,
+        discontinued_to: Optional[date] = None,
     ):
         """List products with filtering and pagination.
 
@@ -553,6 +579,8 @@ class ProductService:
             product_ids=product_ids,
             discontinued_batch_id=discontinued_batch_id,
             variant_filter=variant_filter,
+            discontinued_from=discontinued_from,
+            discontinued_to=discontinued_to,
         )
         if q is self._EMPTY_RESULT:
             payload = {
