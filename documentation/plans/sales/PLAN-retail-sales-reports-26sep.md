@@ -1,17 +1,19 @@
 # PLAN: retail sales reports on the reports kernel, one query layer for the screens and the chatbot (#1267)
 
-Status: draft, round 2 (26 Sep 2026). The owner's Lavish review of the mockup (26 Sep 06:27Z, 10
-notes, PR #1269) is folded in: section 0 applies each note, and the design (section 5) and the
-slices (section 6) are rewritten on the existing reports kernel. The grill questions G1 to G10
-(section 9, PR #1269 comment 5843859424) are **not answered yet**: their recommendations stand as
-recommendations, not rulings. The round 2 questions Q1 to Q5 are in section 9.1 and posted
-on PR #1269 as comment 5844077953 ("Round 2"). Track: full for
-S1, S2, S3 and S4 (S1 adds a permission slug, a chatbot tool and kernel changes; S3 a migration
-and an ingest field). S5 is now the small fix track (shared views and an owner check, no
-migration). S0 is a measurement with no code. Nothing built.
+Status: draft, round 3 (26 Sep 2026). The owner's grill answers (PR #1269 comment 5844136277,
+26 Sep 07:06Z) are folded in: section R3 carries an "Owner ruling 26 Sep 07:06 G<n>" line per
+answer, the module and schema alignment with #1260 round 5, the new slice S6 (the weekly scheduled
+Excel by email or WhatsApp, G9), the round 3 slice waves, G7 asked again in plain words, and the
+round 3 questions Q6 to Q8. Round 2 (section 0, the Lavish review of 26 Sep 06:27Z) and round 1
+text is kept; a "Round 3:" note marks each place a ruling changes. Round 2's Q1 to Q4 are still
+unanswered and their recommendations stand; Q5 is re-answered by R3.2. Track: full for S1, S2,
+S3, S4 and S6 (S6 adds a table in the `sales` schema, a slug and an outbound send); S5 small fix
+track; S0 a measurement with no code. Nothing built.
 Domain: sales. Classification (round 2, note 2): **the Sales module** (`sales`, the module key
 #1260 creates) for the menu, the permission and the chatbot route; **no new table**, so there is
-nothing to put in a Postgres schema (section 0.2). The reports are two definitions registered on
+nothing to put in a Postgres schema (section 0.2). Round 3: superseded by R3.2, aligned with
+#1260 round 5: the `sales` module with the `sales` Postgres schema for every new table, which here
+is one table, `sales.report_subscriptions` (S6). The reports are two definitions registered on
 the existing reports kernel (`app/services/reports/`), which the sponsorship report uses today.
 UAC: `retail-sales-reports-26sep-acceptance-criteria.md` alongside (the contract; the journey J1
 to J9 lives there and is not repeated here).
@@ -22,6 +24,218 @@ Issue: #1267.
 
 Backend paths are under `sorento_crm_backend/`, frontend under `sorento_crm_frontend/`, MCP under
 `sorento_crm_mcp/`. Line numbers are on origin/main 46711c61 unless a PR branch is named.
+
+## R3. Round 3: the owner's grill answers (26 Sep 07:06Z)
+
+The owner answered G1 to G10 inline on PR #1269 (comment 5844136277, 26 Sep 07:06Z, quoting "##
+Grill questions"). The reply is binding. Each answer has one ruling line here, repeated where it
+changes the UAC and the mockup. Nothing earlier in this file is deleted: sections 0 to 10 keep
+their round 2 text, and a "Round 3:" note marks each place a ruling changes.
+
+### R3.1 Ruling lines
+
+- **Owner ruling 26 Sep 07:06 G1**: the owner kept only option (c) and the recommendation, "(c)
+  either one, chosen on the screen, with a default ... Recommend (c), with delivered as the
+  default ... The basis is printed on every header." Applied: the Basis filter (Ordered or
+  Delivered) is on both screens, the chatbot and the scheduled send; the default is Delivered; the
+  basis line prints on every header, export and reply. The reply dropped option (d) and the 2
+  percent tolerance, so no figure is ruled: the invoice feed trigger (section 4, section 7) now
+  reads "the owner asks for it after reading S0's measured gap".
+- **Owner ruling 26 Sep 07:06 G2**: "Options: the Mocha company (AutoCount db2)". Applied: Mocha
+  is the company. Connecting Mocha's AutoCount sales order feed (S4) stays a prerequisite for
+  Mocha's figures (S5).
+- **Owner ruling 26 Sep 07:06 G3**: "Recommend (a) ... Also keep (d) as a separate 'by product
+  brand' axis ... - agree". Applied: `customers.debtor_type`, AutoCount `Debtor.DebtorType`
+  stored raw (S3); plus a **Product brand** dimension and filter on the dataset (the category
+  prefix, `product_class_signal.py:30-37`), usable on screen through Configure summary and a
+  shared view "By product brand", and in the chatbot. Both land in S3.
+- **Owner ruling 26 Sep 07:06 G4**: kept "(a) the sales order's dealer or project class" and
+  answered "does report B's per-agent table include project orders, or dealer orders only? -
+  include". Applied: DEALER and PROJECT TEAM are `demand_class` retail and project. The Sales
+  report's per-agent views (By account, By month, By quarter) carry no Channel filter, so they
+  count dealer and project orders together, as the round 2 mockup already drew ("Dealer,
+  Project"). The "Dealer vs set apart" view keeps Channel = Dealer, because that table is named
+  "DEALER - SALESMAN" in the PDF.
+- **Owner ruling 26 Sep 07:06 G5**: "Recommend (a) ... - agree". Applied: total variance = this
+  year to date minus the same months of last year; months after the as-at date blank (kernel
+  extension 4, AC-S1-10).
+- **Owner ruling 26 Sep 07:06 G6**: "okay, date i think assume is ok". Applied: (b). No period in
+  the message = the current calendar year, printed in the header; ask only when the words are
+  ambiguous (AC-S1-22).
+- **Owner ruling 26 Sep 07:06 G7**: "what's this quesiton for". Not a ruling. The recommendation
+  (a) stands (a shared saved view holds the customer list), and the question is asked again in
+  plain words in the Round 3 comment (R3.5).
+- **Owner ruling 26 Sep 07:06 G8**: "Recommend (c) for now ... - ok". Applied: footnotes are typed
+  into the Excel after export; nothing is stored in the CRM. Trigger for (b): the owner asks for
+  notes kept in the CRM.
+  - Owner ruling 26 Sep 07:06 G8: (c) for now, "ok".
+- **Owner ruling 26 Sep 07:06 G9**: "build both in this plan". Applied: (a) on-demand export is
+  S1 and S2 (My Downloads, unchanged) and (b) **a weekly scheduled Excel sent to named people by
+  email or WhatsApp is a slice of this plan now, S6** (R3.3). No deferral.
+- **Owner ruling 26 Sep 07:06 G10**: "(a) is fine". Applied: one slug `sales.reports.view`,
+  granted by role; on WhatsApp staff only with the existing Sales report grant (reveal key
+  `sales_orders.sales_report`). Agents seeing only their own rows is not built; trigger: agents
+  are given access. The scheduled send re-checks the slug and the company grant of every
+  recipient at every send (R3.3).
+- **Round 2 Q1 to Q4**: not answered. Their recommendations stand: Q1 (b) both channel blocks in
+  one Excel; Q2 the file or text rule with the cut at 12 figures; Q3 person labels pre-filled
+  from the code's name part; Q4 sections as shared saved views.
+- **Round 2 Q5 changed, to align with #1260 round 5.** The sales targets plan
+  (`PLAN-sales-targets-opportunities-26sep.md` on `claude/sales-targets-opportunities-plan-7behob`,
+  round 5 header and 3.7 "Module and schema (round 5)") now recommends the `sales` module **with
+  its own `sales` Postgres schema** for every new table (`sales.teams`, `sales.targets`, ...,
+  `sales.update_subscriptions`), on the owner's ADR-0011 precedent for Project Sales. This plan
+  follows it (R3.2).
+
+### R3.2 Module and schema, aligned with #1260 (replaces the "no sales schema" half of 0.2)
+
+- **Same module:** `sales` (`app/modules/sales/bootstrap.py`, `MODULE_MANIFEST` entry, `"sales":
+  "sales"` in `permission_module_map.py`, routers under `/api/v1/sales/`, the Sales menu group).
+  #1260 S6 is that plan's wave 1 and creates it; if this plan's S1 lands first, S1 creates the
+  same files with the same content and #1260 S6 reuses them (unchanged from round 2).
+- **Same schema for every new table:** this plan's one new table, the scheduled send
+  subscriptions of S6, is `sales.report_subscriptions`, in the `sales` schema, named without the
+  `sales_` prefix as #1260's map does (`sales.update_subscriptions` is its neighbour). Whichever
+  lane creates the first `sales.*` table runs `CREATE SCHEMA IF NOT EXISTS sales` (idempotent, so
+  both plans' migrations carry it); `modules/sales/purge_tables.json` gains
+  `sales.report_subscriptions`, and uninstall purges its rows through the ORM and never drops the
+  schema (ADR-0011). Raw SQL names the schema.
+- **Saved views stay the kernel's `report_views` rows** (`app/models/report_view.py:21-22`,
+  `public`). They are a kernel table shared by every report (the sponsorship report's views live
+  there too), not a sales table, so moving them would move procurement's views. A saved view is a
+  row, not a new table.
+- **Core data stays in `public`:** `sales_orders`, `sales_order_lines`, `sales_agents`,
+  `customers` (and its new `debtor_type` column, S3). #1260 3.7 says the same ("Not recommended:
+  a `sales` schema holding `sales_agents` or `sales_orders`").
+- Round 2's AC-R2-6 ("no new table and no `sales` schema") is superseded by AC-R3-1 and keeps its
+  text with a Round 3 note.
+
+### R3.3 S6: the weekly scheduled Excel, by email or WhatsApp (G9 (b))
+
+**Does #1260 S5's per-recipient schedule fit? Its schedule does; its table does not.** Measured on
+the #1260 plan (3.6, S5): `sales.update_subscriptions` is one row per **WhatsApp contact** per
+**agent, dealer or team followed**, and its content is a target progress text built by
+`render_progress_message`. This send is a **report view** to a **CRM user** by **email or
+WhatsApp**, and its content is a file. Bending that table would add a follows kind, a view id and
+a channel column that no target row uses, and would tie this slice to #1260's last-merging lane
+(its wave 3, S5 last). So S6 has **its own table and slice**, and reuses the schedule parts that
+do fit:
+
+- `next_run_for(...)` (the weekly extension of `_next_run_for_daily`,
+  `app/services/automation_service.py:50`) in `app/services/sales/schedule.py`: whichever of this
+  S6 and #1260 S5 lands first writes it, the other imports it.
+- The runner shape: one seeded `scheduled_tasks` row that dispatches every due row
+  (`automation_runner`, `app/scheduler/task_scheduler.py:335-337`, and #1260 S5's
+  `sales_target_broadcast_runner`), worker only (`ENABLE_SCHEDULER`, `worker.py:74-80`).
+- The idempotency rule: `next_run_at` advanced in the same transaction as the `integration_log`
+  row; a row with a success log since its previous scheduled time is skipped.
+
+**Table `sales.report_subscriptions`** (S6 migration; `CompanyScopedMixin`):
+
+| column | type | note |
+| --- | --- | --- |
+| `id`, `company_id` | | the company the file is for (the view's Company filter) |
+| `report_view_id` | uuid FK `report_views` ON DELETE CASCADE, not null | a **shared** view of `sales` or `sales_yearly` |
+| `user_id` | FK `users` ON DELETE CASCADE, not null | the named person |
+| `channel` | varchar(16) not null, check `email` or `whatsapp` | one row per channel |
+| `weekday` | smallint not null default 0 | 0 Monday to 6 Sunday |
+| `send_time` | time not null default 09:00 | |
+| `timezone` | varchar(64) not null default `Asia/Kuala_Lumpur` | |
+| `enabled` | bool not null default false | ships off; the owner turns a row on after one Send now |
+| `next_run_at`, `last_sent_at` | timestamp null | runner bookkeeping |
+| `created_by`, `created_at`, `updated_at` | | |
+
+Unique `(report_view_id, user_id, channel)`. Weekly only, because the owner asked for "produced
+weekly"; trigger for daily or monthly: the owner asks (the shared `next_run_for` already takes a
+frequency).
+
+**The send, per due row** (runner handler `send_sales_report_subscriptions`, RQ, worker):
+1. **Access, re-checked every time:** the user is active, holds `sales.reports.view` and is
+   granted the row's company. Otherwise nothing is built or sent, the row is skipped with an
+   `integration_log` failure `no_access`, and `next_run_at` still advances (G10).
+2. **The file:** a `report_xlsx` My Downloads row owned by the user (the kernel's export,
+   `app/api/v1/reports/reports.py:238-253`), built by `generate_report_xlsx` under the row's
+   company, with the view's saved filters and pivot and the period replaced by **1 January of the
+   send date's year to the send date** ("as at" the send date, Q8). The file also sits in the
+   user's My Downloads.
+3. **Email:** `email_outbox_service.enqueue(event_key="sales_report_scheduled", to=user.email,
+   subject="<view name>, as at <dd/mm/yyyy>", body_text=<the text header>,
+   attachment_storage_provider=..., attachment_storage_key=<the download's file>)`
+   (`app/services/email_outbox_service.py:70-90`), with the event registered in
+   `email_event_registry.py`. A user with no email is skipped and logged.
+4. **WhatsApp:** to `users.respond_contact_id` (`app/models/user.py:63`); a user with no linked
+   contact, or a contact with `outbound_enabled` false, is skipped and logged.
+   - **Window open:** the text header, then the file through `send_chat_attachment_for`
+     (`app/services/respond_chat_template_service.py:682`), the low stock report's path.
+   - **Window closed:** Respond.io has no attachment-carrying template (`:697-720`, it refuses
+     with `attachment_window_closed`), so the file cannot go. The row sends the approved template
+     text through `send_text_or_template` with use case `sales_report_scheduled` (header, totals
+     line, "The Excel is in your My Downloads.") (Q6). The Meta template approval is an ops gate
+     in S6's DoD, as in #1260 S5.
+5. **The text header** is the chatbot's (0.6): report and view name, company, basis, period "as
+   at", the totals line. No UUID.
+
+**Screens** (S6 frontend; one new dialog, no new page):
+- `ReportViewsMenu` gains **Scheduled sends** for the active shared view, shown to holders of the
+  new slug `sales.reports.schedule` (granted to admin and superadmin in S6's migration, others by
+  role). It opens **Scheduled sends: <view name>**, a modal with one row per subscription (Person,
+  Channel, When "Mon 09:00", Enabled switch, Next send, row actions Send now and Delete) and
+  **Add**: Person (`SearchableSelect` of users holding `sales.reports.view` in the view's company),
+  Channel (`SearchableSelect`: Email, WhatsApp), Day (`SearchableSelect`), Time. Where it is set
+  up is Q7.
+- Delete is the deferred hard delete (countdown with Cancel, no confirm), as every delete.
+- Send now runs one send for that row in a worker job and toasts "Sending <view name> to
+  <person>"; the result is in the row's Last sent.
+- Routes `GET|POST /api/v1/sales/report-subscriptions`, `PATCH|DELETE .../{id}`, `POST
+  .../{id}/send-now`, behind `require_module_enabled_with_api_key("sales")` and
+  `sales.reports.schedule`; a view that is not shared, not a sales report, or another company's is
+  422 / 403.
+
+### R3.4 Slices, round 3: every slice in scope now, ordered for early value, with parallel lanes
+
+Each slice is its own lane and PR (one lane = one branch = one PR), Phase 1 frontend mock first,
+Phase 2 tester-first, Phase 3 reviewer plus browser at 1280 and 375. Nothing waits on a further
+ruling; G7 and Q6 to Q8 only change details inside S2 and S6.
+
+| Wave | Slice | Track | Needs merged first | Runs beside | What the owner gets |
+| --- | --- | --- | --- | --- | --- |
+| 0 (now) | **S0** measure on the prod copy (captain, no code, no PR) | none | nothing | S4, S1 | the SO vs PDF gap (G1), the raw debtor types (S3), the person split (S2) |
+| 0 (now) | **S4** Mocha's AutoCount SO feed (ESB, mostly outside this repo) | full | nothing | S0, S1, wave 2 | Mocha's orders arrive in the CRM |
+| 1 | **S1** the dataset, **Yearly comparison**, the kernel extensions (with Q1's `sheet_per`), on-demand Export to Excel (G9 (a)), `crm_sales_analysis` and the chatbot file | full | nothing (creates the `sales` module if #1260 S6 has not) | S0, S4; S3's ingest half | report A on screen, in Excel and on WhatsApp |
+| 2 | **S2** the **Sales report**: agent as a person, set apart, exclude, quarter, Sorento's shared views, project orders included (G4) | full | S1 | S3, S6 | report B for Sorento |
+| 2 | **S3** debtor type (the account columns) **and the product brand axis** (G3) | full | S1 for the dataset half; its migration and ingest half can start in wave 1 | S2, S6 | the SORENTO..SAMPLE columns; "by brand" |
+| 2 | **S6** the weekly scheduled Excel by email or WhatsApp (G9 (b)), `sales.report_subscriptions` | full | S1 | S2, S3 | Yearly comparison sent weekly at once; Sales report views as soon as S2 publishes them |
+| 3 | **S5** Mocha on the Sales report: Mocha's shared views, "Mocha Q2 by agent without Dilooma" | small fix | S2, S3, S4 | nothing | report C |
+
+- **Why this order:** S1 is the earliest value (report A needs no missing data) and holds every
+  shared piece (dataset, kernel, module). Wave 2's three lanes touch different files: S2 and S3
+  each add dimensions to `datasets/sales_order_lines.py` (a trivial merge), S6 adds a table,
+  a runner and one dialog. S5 is configuration and closes the plan.
+- **S6 beside #1260:** S6 does not wait on #1260 S5; if #1260 S5 lands first, S6 imports its
+  `next_run_for`, otherwise S6 writes it (R3.3).
+- **Merge order in wave 2:** as each is ready; the pre-PR gate (`./scripts/alembic-reparent.sh`,
+  single head) runs before each merge because S3 and S6 both carry a migration.
+
+### R3.5 G7 in plain words (asked again)
+
+In your Sorento report, HANLIM is shown as its own row, apart from the salesmen. In your Mocha
+report, DILOOMA and PINTAR are left out of the "without project" total. The question is how the
+system knows which customers to set apart or leave out: **recommend (a)**, a customer list saved
+with the report view, which an admin edits on the screen. Also: are there other customers you set
+apart the way you do HANLIM?
+
+### R3.6 Round 3 questions (at most 3, each with a recommendation)
+
+- **Q6. WhatsApp outside the 24 hour window.** Respond.io cannot send a file to someone who has
+  not messaged in the last 24 hours. Options: (a) send the approved template text with the totals
+  line and "The Excel is in your My Downloads"; (b) skip the WhatsApp send and email only.
+  **Recommend (a).**
+- **Q7. Where a scheduled send is set up.** Options: (a) on the report screen, in the Views menu,
+  for the view being sent; (b) on the person's contact record, beside #1260's Sales updates tab.
+  **Recommend (a)**: a send is a view plus people, and the view lives on the report screen.
+- **Q8. The period of a scheduled file.** Options: (a) this year to date, as at the send date; (b)
+  the period saved in the view, unchanged. **Recommend (a)**: your PDFs are "as at" the day they
+  are produced, and a saved fixed range would send the same old figures every week.
 
 ## 0. Round 2: the owner's Lavish review (26 Sep 06:27Z)
 
@@ -161,6 +375,9 @@ No new table, no registry, no rule engine.
   it. A `sales` Postgres schema would hold nothing, and #1260 already chose `public` for its own
   tables. Named trigger: if #1260 ever moves its tables to a `sales` schema, nothing here moves,
   because nothing here is a table.
+  - Round 3: superseded by R3.2. #1260 round 5 now puts its tables in a `sales` schema, and this
+    plan's S6 adds one table, `sales.report_subscriptions`, in the same schema. Saved views stay
+    the kernel's `report_views` rows; core sales data stays in `public`.
 - **Why not the `order` module**: round 1 put the routes under `order_management` because the
   `sales` module did not exist. Now that #1260 creates it and the owner asked, the reports go
   where the owner looks for them. The data stays owned by `order`; the report only reads it.
@@ -275,6 +492,8 @@ amount. Round 2 builds them on the report screen you already have for sponsorshi
 - **Export to Excel** lands in **My Downloads**, like every other export.
 - **On WhatsApp**, short answers come as text; a table (such as dealer sales 2025 vs 2026 by
   month) comes as an Excel file with a short summary, like the low stock report.
+- Round 3 (G9): **every week**, the report views you choose are sent as an Excel file to the
+  people you name, by email or WhatsApp (S6).
 
 Every figure is a **sales order** figure, not an invoice figure: the CRM has no customer invoice
 table. Your spreadsheets look like invoiced sales. Section 4 says what that means and G1 asks you
@@ -497,6 +716,10 @@ the gap in S0 on three months against the PDF totals, and name the trigger for a
 ingest lane is planned (cross-repo ESB work plus one `sales_invoices` table), and the reports gain
 an `invoiced` basis on the same query layer.** Not built before that.
 
+Round 3 (Owner ruling 26 Sep 07:06 G1): the owner kept option (c) with Delivered as the default
+and dropped option (d) and its tolerance from the reply, so no percentage is ruled. The trigger
+becomes: the owner asks for the invoice feed after reading S0's measured gap.
+
 ## 5. Design: two kernel definitions on one dataset (round 2)
 
 **One new dataset, two definitions, two route wrapper pages, one new component
@@ -531,6 +754,9 @@ lists every reuse and every new piece with file:line.
   Set apart (multi customer, feeds the `agent` and `seller_group` dimensions through
   `QueryContext.values`, so set-apart lines leave every agent row and appear as one row per group,
   sorted last), Exclude customers (multi customer, `notin_`; the header names them).
+- Round 3 (Owner ruling 26 Sep 07:06 G3): a **Product brand** filter (multi) beside the `brand`
+  dimension, and a shared view "By product brand" (agent x product brand), both in S3. Round 3
+  (G4): the per-agent shared views carry no Channel filter, so project orders are included.
 
 ### 5.2 Two definitions
 
@@ -620,11 +846,18 @@ lists every reuse and every new piece with file:line.
   the fail-closed company arm) and S3 (ingest field).
 - Saved views: the kernel's own rules; publishing a shared view needs `reports.views.publish`
   (`ReportViewsMenu.tsx:30-33`).
+- Round 3 (Owner ruling 26 Sep 07:06 G10 and G9): `sales.reports.view` confirmed. S6 adds
+  `sales.reports.schedule` (set up scheduled sends), granted to admin and superadmin in its
+  migration; every scheduled send re-checks the recipient's `sales.reports.view` and company grant.
+  `security-reviewer` runs on S6 (outbound business figures, a new slug, a new table).
 
 ## 6. Slices (round 2; thin, vertical, ordered for early owner value)
 
 Each slice is its own lane and PR, Phase 1 frontend mock first, Phase 2 tester-first, Phase 3
 reviewer plus browser at 1280 and 375.
+
+Round 3: the waves, dependencies and parallel lanes are in R3.4, which governs the order. The
+slice bodies below stay, with Round 3 notes; S6 is new.
 
 ### S0. Measure (captain, read-only SQL on the prod copy; no code, no PR)
 
@@ -654,6 +887,9 @@ codes the name split would group, HANLIM's ledger ids, Mocha SO count and `so_fe
   sidebar at 1280 and 375.
 - DoD: three months reconcile with S0 on the prod copy; the owner reads the yearly comparison
   beside the PDF.
+- Round 3: wave 1. Basis filter with Delivered default (G1); variance as (a) (G5); no period =
+  current calendar year (G6); Q1's `WorkbookSpec.sheet_per` is built here (recommendation
+  stands). On-demand Export to Excel is G9 (a).
 
 ### S2. The Sales report: person, set apart, exclude, quarter, both companies (full)
 
@@ -671,6 +907,8 @@ codes the name split would group, HANLIM's ledger ids, Mocha SO count and `so_fe
   12 cells = text, 13 cells = file, "in Excel" = file).
 - DoD: every active Sorento code has a `person_label` after the owner's review of the pre-fill;
   the count is pasted in the PR.
+- Round 3: wave 2, beside S3 and S6. The per-agent views include project orders (G4); the
+  set-apart and exclude lists are saved in the shared views (G7 recommendation (a), asked again).
 
 ### S3. Debtor type (the account columns) and the chatbot "by account" (full)
 
@@ -679,11 +917,17 @@ default "By account" view: migration `customers.debtor_type` varchar(50) null, w
 masters push and the document back-create, both customer dict builders, the customer header
 read-only, the Debtor type filter; "Sean's sales this month by brand" (text, note 7).
 `security-reviewer`: yes (ingest).
+- Round 3 (Owner ruling 26 Sep 07:06 G3): agreed. S3 also carries the **product brand** axis
+  (dimension `brand`, the Product brand filter, the shared view "By product brand"), so "by brand"
+  on WhatsApp can mean either; the bot asks "Debtor type or product brand?" only when the words do
+  not say. Wave 2; its migration and ingest half can start in wave 1.
 
 ### S4. Mocha sales order feed (dependency, mostly outside this repo)
 
 Unchanged from round 1. The only CRM-visible change: Mocha's figures appear in the same two
 reports through the Company filter (no menu item appears; there is none to hide).
+Round 3 (Owner ruling 26 Sep 07:06 G2): Mocha is the company (AutoCount db2), so S4 stays the
+prerequisite for S5. Wave 0: it starts now, because its work is outside this repo.
 
 ### S5. Mocha on the Sales report (small fix track)
 
@@ -693,13 +937,39 @@ chatbot golden "Mocha Q2 by agent without Dilooma" (text, note 8); the owner rea
 report for Mocha beside the PDF. Under 300 lines, no migration, no permission change: small fix
 track.
 
+Round 3: wave 3, after S2, S3 and S4.
+
 ### After S5 (only on a ruling)
 
 Weekly delivery (G9), footnotes (G8).
+- Round 3 (Owner ruling 26 Sep 07:06 G9, "build both in this plan"): weekly delivery is no longer
+  after S5; it is S6 below, in wave 2. Footnotes stay out (G8 (c), the owner's "ok").
+
+### S6. The weekly scheduled Excel, by email or WhatsApp (full; round 3, G9 (b))
+
+- Backend: migration (`CREATE SCHEMA IF NOT EXISTS sales`, `sales.report_subscriptions`, the
+  runner's `scheduled_tasks` row, the `sales.reports.schedule` slug and its grant sweep); the
+  `sales_report_scheduled` email event; the `sales_report_scheduled` WhatsApp use case in
+  `TEMPLATE_DEFAULT_USE_CASES`; `next_run_for` (shared with #1260 S5); the runner handler; the
+  routes of R3.3; `purge_tables.json`. Worker restart after the handler lands.
+- Frontend: **Scheduled sends** in `ReportViewsMenu` for a shared view, the Scheduled sends
+  dialog (rows, Add, Enabled, Send now, deferred Delete).
+- Tests: next-run golden table (weekly across a week boundary, timezone); the file is YTD as at
+  the send date (Q8) with the view's filters; access re-checked (a user who lost the slug or the
+  company gets nothing, logged, `next_run_at` advances); email carries the attachment from the
+  download's storage key; WhatsApp in window sends text then file, out of window sends the
+  template text (Q6), no linked contact or `outbound_enabled` false is skipped and logged;
+  idempotency (a second runner tick sends nothing); a non-shared view, another company's view or a
+  non-sales report is 422 / 403; route 401 / 403; the row lands a `report_xlsx` in the user's My
+  Downloads; purge invariants test; agent-browser run from the sidebar at 1280 and 375.
+- DoD: the Meta-approved template is mapped on prod before any WhatsApp row is enabled; the owner
+  enables their own row after one Send now looks right, by email and by WhatsApp.
+  `security-reviewer`: yes.
 
 ## 7. What is not built, and the trigger for each
 
-- **An invoice (IV) feed and an invoiced basis**: S0 gap above the G1 tolerance.
+- **An invoice (IV) feed and an invoiced basis**: S0 gap above the G1 tolerance. Round 3: no
+  tolerance was ruled (G1), so the trigger is the owner asking after reading S0's gap.
 - **A separate sales query primitive** (round 1's `sales_grid`): the kernel cannot express an ask
   the owner makes, after the extensions of 5.3.
 - **Pinned row order** (the owner's own agent order, round 1 AC-S2-5): the owner asks for it
@@ -708,6 +978,9 @@ Weekly delivery (G9), footnotes (G8).
 - **A quantity measure**: an owner ask.
 - **Dated person labels**: an owner ask.
 - **Text + file on every answer**: the owner rules Q2 the other way.
+- Round 3: **Agents seeing only their own rows** (G10 (b)): agents are given access.
+  **Footnotes stored in the CRM** (G8 (b)): the owner asks. **Daily or monthly scheduled sends**:
+  the owner asks (S6 is weekly, "produced weekly").
 
 ## 8. Risks
 
@@ -723,6 +996,12 @@ Weekly delivery (G9), footnotes (G8).
 - **The chatbot file needs the 24 hour window** for the worker push; outside it the pending
   reply is the only message, as for the low stock report (`respond_chat_template_service.py:697-720`).
 - **Tax inclusive amounts.** `line_total` is Total (Inc). S0 measures, G1 decides.
+- Round 3: **Scheduled sends go to people outside the screen's session.** Access is re-checked
+  per send (R3.3), rows ship disabled, and `security-reviewer` runs on S6.
+- Round 3: **WhatsApp cannot carry the file outside the 24 hour window**
+  (`respond_chat_template_service.py:697-720`). Q6 decides the fallback; email always carries it.
+- Round 3: **Two plans write the `sales` schema and `next_run_for`.** Both migrations use `CREATE
+  SCHEMA IF NOT EXISTS`, and the helper lives in one file whichever lane lands first.
 
 ## 9. Grill questions (posted on the PR, at most 10)
 
@@ -732,29 +1011,38 @@ Weekly delivery (G9), footnotes (G8).
   totals is acceptable before we build (d)? **Recommend (c) with delivered as the default** (the
   top X ruling: "selling" means delivered), printed on every header, and (d) only if S0 shows a
   monthly gap above 2 percent.
+  - Owner ruling 26 Sep 07:06 G1: (c), Delivered default, basis on every header; (d) and the
+    tolerance dropped from the reply (R3.1).
 - **G2. Is "Mocha" in report C the Mocha company (AutoCount db2) or the Mocha brand inside
   Sorento?** Options: company; brand; both. **Recommend company** (report C's agents and debtor
   types are a separate ledger), which makes S4 (connecting Mocha's SO feed) a prerequisite.
+  - Owner ruling 26 Sep 07:06 G2: the company (AutoCount db2); S4 stays a prerequisite.
 - **G3. Where do the account columns come from?** Options: (a) AutoCount `Debtor.DebtorType`,
   stored raw on the customer; (b) the ledger suffix in the customer name (`[A/C I]`, `(PROJECT)`);
   (c) a mapping you maintain per customer in the CRM; (d) for SORENTO / BRAVAT / CABANA, the
   product brand on each line instead of the customer. **Recommend (a)**, confirmed by S0's raw
   values, with (d) kept as a separate "by product brand" axis for the chatbot.
+  - Owner ruling 26 Sep 07:06 G3: agree, (a) plus (d) as a separate axis (S3).
 - **G4. "DEALER" and "PROJECT TEAM" in report A.** Options: (a) the sales order's dealer / project
   class (`demand_class`); (b) the agents in a "Project team" sales team (#1260 S6); (c) the
   customer's debtor type PROJECT. **Recommend (a)**, the classification every other sales answer
   already uses. Does report B's per-agent table include project orders or dealer only?
+  - Owner ruling 26 Sep 07:06 G4: (a); report B's per-agent table includes project orders.
 - **G5. The variance row as at a date.** Options: (a) total variance = current year to date minus
   the prior year's same months; (b) minus the prior full year; months after the as-at date blank
   either way. **Recommend (a)**, so a September report does not show a large negative that is only
   "October to December not happened yet".
+  - Owner ruling 26 Sep 07:06 G5: agree, (a).
 - **G6. Chatbot period when none is said.** Options: (a) ask ("This month, this year, or a
   range?"); (b) the current calendar year, printed in the header (the top X ruling). **Recommend
   (b)**, since it is stated rather than silent, and ask only when the words are ambiguous ("last
   quarter" at the start of a year).
+  - Owner ruling 26 Sep 07:06 G6: (b), "date i think assume is ok".
 - **G7. HANLIM and the named project debtors.** Options: (a) a customer list stored with the report
   (a saved view), editable by admins; (b) hard-coded names; (c) a "set apart" flag on the customer.
   **Recommend (a)**. Are there other customers you set apart like HANLIM?
+  - Owner ruling 26 Sep 07:06 G7: the owner asked "what's this quesiton for"; (a) stands and
+    the question is asked again in plain words (R3.5).
 - **G8. Footnotes such as "*Nov'24 whole project team sales 16pax".** Options: (a) not carried;
   (b) a free-text note per report, company and month, typed on the screen and printed in the
   export; (c) typed into the Excel after export. **Recommend (c) for now**, (b) when you want the
@@ -762,9 +1050,12 @@ Weekly delivery (G9), footnotes (G8).
 - **G9. "Produced weekly".** Options: (a) on demand only (open the screen, export); (b) a weekly
   scheduled Excel sent to named people by email or WhatsApp. **Recommend (a) first**, (b) as its
   own slice after S5, reusing the per-recipient schedule #1260 S5 builds.
+  - Owner ruling 26 Sep 07:06 G9: build both in this plan; (b) is S6, its own table with
+    #1260 S5's schedule helper and runner shape (R3.3).
 - **G10. Who may see these reports.** Options: (a) a new "sales reports: view" permission, granted
   by role, and on WhatsApp staff only with the existing Sales report grant; (b) sales agents see
   only their own rows. **Recommend (a)**; (b) when agents are given access.
+  - Owner ruling 26 Sep 07:06 G10: (a) is fine.
 
 
 Round 2 note: G1 to G10 are still unanswered and stay recommendations. Round 2 changes only their
@@ -801,9 +1092,13 @@ the slug `sales.reports.view` (0.2). G6's recommendation (b) matches the top X o
   data stays in the sales order tables, and no table is added, so there is no sales schema (the
   targets plan keeps its tables in the main schema too). **Recommend this.** Whichever of this
   lane or #1260's first lane lands first creates the Sales module.
+  - Round 3: unanswered; re-answered to align with #1260 round 5: the `sales` module **with** the
+    `sales` schema for every new table (`sales.report_subscriptions`), saved views staying the
+    kernel's rows (R3.2). Q1 to Q4 unanswered, recommendations stand.
 
 ## 10. Out of scope
 
 A report designer beyond the kernel's Configure summary, a dashboard of KPIs, a quantity measure,
 targets and commissions (#1260), an invoice feed (named trigger, section 7), a scheduled send
 (G9), footnote storage (G8), and any change to the existing sales report or top X answers.
+Round 3: the scheduled send is in scope now (G9, S6); footnote storage stays out (G8 (c)).
