@@ -1,7 +1,8 @@
 'use client';
 
 /**
- * The target action set (D15): Duplicate and Delete.
+ * The target page's actions (D15, S1-23): Duplicate, a visible header button beside Edit, and
+ * Delete, in the row menu.
  *
  * Edit is the target page's primary button, so it is not in this menu. Delete asks nothing
  * (D7): it parks `sales_target.delete` on the server for the hard-delete window and the
@@ -9,9 +10,14 @@
  * so the countdown names them: "Deleting North FY26 H2 and 2 agent targets" (plan 3.8).
  */
 
+import type React from 'react';
 import { useRouter } from 'next/navigation';
 import { Copy, Trash2 } from 'lucide-react';
-import type { RecordAction, RecordActionSet } from '@/components/common/recordActions';
+import { Button } from '@/components/ui/button';
+import type {
+  RecordAction,
+  RecordActionSet,
+} from '@/components/common/recordActions';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { useDuplicateSalesTarget } from './hooks/useSalesTargets';
@@ -32,7 +38,7 @@ export function deleteSubject(target: TargetRef): string {
 export function useSalesTargetActions(
   target: TargetRef | undefined | null,
   { onDeleted }: { onDeleted?: () => void } = {},
-): RecordActionSet {
+): RecordActionSet & { duplicateButton: React.ReactNode } {
   const router = useRouter();
   const canEdit = useHasPermission('sales.targets.edit');
   const canDelete = useHasPermission('sales.targets.delete');
@@ -52,26 +58,32 @@ export function useSalesTargetActions(
   });
 
   const actions: RecordAction[] = [];
-  if (!target) return { actions, dialogs: null, pending: null };
+  if (!target)
+    return { actions, dialogs: null, pending: null, duplicateButton: null };
 
-  if (canEdit) {
-    actions.push({
-      key: 'sales_target.duplicate',
-      label: 'Duplicate',
-      icon: Copy,
-      kind: 'secondary',
-      disabled: duplicate.isPending || deletion.isPending,
-      run: async () => {
-        try {
-          const copy = await duplicate.mutateAsync(target.id);
-          router.push(`/sales/targets/${copy.id}`);
-        } catch {
-          // The hook toasted the reason; the page stays on the source target.
-          return false;
-        }
-      },
-    });
-  }
+  const runDuplicate = async () => {
+    try {
+      const copy = await duplicate.mutateAsync(target.id);
+      router.push(`/sales/targets/${copy.id}`);
+    } catch {
+      // The hook toasted the reason; the page stays on the source target.
+    }
+  };
+  // Hidden while a delete counts down: the record on its way out offers only Cancel.
+  const duplicateButton =
+    canEdit && !deletion.countdown ? (
+      <Button
+        variant="outline"
+        size="sm"
+        className="gap-1.5"
+        disabled={duplicate.isPending}
+        onClick={runDuplicate}
+      >
+        <Copy className="size-4" />
+        Duplicate
+      </Button>
+    ) : null;
+
   if (canDelete) {
     actions.push({
       key: 'sales_target.delete',
@@ -83,5 +95,10 @@ export function useSalesTargetActions(
     });
   }
 
-  return { actions, dialogs: null, pending: deletion.countdown };
+  return {
+    actions,
+    dialogs: null,
+    pending: deletion.countdown,
+    duplicateButton,
+  };
 }

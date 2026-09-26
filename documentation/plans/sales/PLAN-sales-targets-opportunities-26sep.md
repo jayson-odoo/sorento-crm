@@ -2040,6 +2040,28 @@ the root `services/`.
 - Menu: "Targets" first in the Sales group, `/sales/targets`, `sales.targets.view`, `moduleKey:
   'sales'`, in both `MENU_SIDEBAR` (`menu.config.tsx:84-99`) and `MENU_SIDEBAR_COMPACT` (:1851-1866).
 
+**16.4a As built (S1 lane, fix round 1; captain's rulings on the coder's interpretations).**
+- Contract additions: each list row also carries `end_date` (the target's last day, which the
+  one-line fold orders by); detail `children[].periods[]` carry the period `id` (the Agents
+  section edits a child's figure in place), and `children[]` and `parent` carry `target_no`.
+- The Targets list: the No team and Unassigned lines render as a footer under the grid, inside
+  the same card, not as grid rows. A subject with one target shows its name as a plain link in
+  the Targets cell; the `PillOverflow` appears from two targets up.
+- The Set target modal takes Start date and End date through the shared `DateRangePicker`
+  (S1-25).
+- The target page: `[id]/components/SalesTargetPage.tsx` is a thin wrapper holding the
+  permissions (`readOnly`, the agent link for `master_data.sales_agents.view`), the header
+  actions and prev/next; `SalesTargetDetail` is the form itself. Duplicate is a visible header
+  button beside Edit; Delete stays in the row menu as the deferred action.
+- The team page: Set target is the primary header action, presetting the team and gated on
+  `sales.targets.add`; Edit is secondary.
+- Migration `sales_0003_targets`: the objects on core tables (`ix_sales_orders_order_date`,
+  `order_lines.sales_order_line_id`, its foreign key and index) are created with IF NOT EXISTS,
+  so a database where the DO lane or `create_all` already made them is left as it is.
+- Target routes: every write runs inside `db.begin_nested()` and a refusal (`AppException`) is
+  re-raised without rolling the whole session back, since its savepoint is already undone; any
+  other error still rolls back.
+
 **16.5 Tests (tester writes them red first).** `tests/test_migration_sales_0003_targets.py`:
 `test_upgrade_creates_tables_constraints_indexes`, `test_subject_and_parent_checks`,
 `test_split_pair_and_dates_checks`, `test_scope_row_exactly_one`,

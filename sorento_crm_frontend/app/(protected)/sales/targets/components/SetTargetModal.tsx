@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { LoaderCircleIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { DateRangePicker } from '@/components/ui/date-range-picker';
 import {
   Dialog,
   DialogBody,
@@ -17,7 +18,11 @@ import { Switch } from '@/components/ui/switch';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { todayMalaysiaYyyyMmDd } from '@/lib/helpers';
-import { useCreateSalesTarget, useSalesTargetOptions, useTargetProductSearch } from '../hooks/useSalesTargets';
+import {
+  useCreateSalesTarget,
+  useSalesTargetOptions,
+  useTargetProductSearch,
+} from '../hooks/useSalesTargets';
 import { endOfMonth, formatFigure, shortDate, unitOf } from '../lib/format';
 import { generatePeriods } from '../lib/periods';
 import type {
@@ -63,12 +68,16 @@ function membersInRange(
   if (!team) return [];
   const seen = new Map<string, string>();
   for (const m of team.members) {
-    const inRange = (!m.valid_from || m.valid_from <= end) && (!m.valid_to || m.valid_to >= start);
-    if (inRange && !seen.has(m.sales_agent_id)) seen.set(m.sales_agent_id, m.label);
+    const inRange =
+      (!m.valid_from || m.valid_from <= end) &&
+      (!m.valid_to || m.valid_to >= start);
+    if (inRange && !seen.has(m.sales_agent_id))
+      seen.set(m.sales_agent_id, m.label);
   }
-  return Array.from(seen, ([sales_agent_id, label]) => ({ sales_agent_id, label })).sort((a, b) =>
-    a.label.localeCompare(b.label),
-  );
+  return Array.from(seen, ([sales_agent_id, label]) => ({
+    sales_agent_id,
+    label,
+  })).sort((a, b) => a.label.localeCompare(b.label));
 }
 
 function toNumber(value: string): number {
@@ -82,7 +91,8 @@ function toNumber(value: string): number {
  *
  * Every picker is the standard `SearchableSelect` (N8); only Split unit is clearable, and
  * clearing it turns the split off. The range is a start and an end date (N6), split optionally
- * every N days, weeks or months (N7). An agent target takes one figure, for the whole range
+ * every N days, weeks or months (N7), picked with the shared `DateRangePicker` (S1-25). An
+ * agent target takes one figure, for the whole range
  * or per period. A team target takes one figure per agent in the team during the range and
  * shows their sum read-only: the team figure IS that sum (owner ruling 26 Sep 06:09, T3).
  *
@@ -103,7 +113,8 @@ export default function SetTargetModal({
   const { data: options } = useSalesTargetOptions(open);
   const save = useCreateSalesTarget();
 
-  const initialKind: Kind | '' = presetKind === 'agent' || presetKind === 'team' ? presetKind : '';
+  const initialKind: Kind | '' =
+    presetKind === 'agent' || presetKind === 'team' ? presetKind : '';
   const today = todayMalaysiaYyyyMmDd();
   const [kind, setKind] = useState<Kind | ''>(initialKind);
   const [subjectId, setSubjectId] = useState(presetSubjectId ?? '');
@@ -142,38 +153,70 @@ export default function SetTargetModal({
   }, [open, presetKind, presetSubjectId]);
 
   const subjectOptions = useMemo(() => {
-    if (kind === 'agent') return (options?.agents ?? []).map((a) => ({ value: a.id, label: a.label }));
-    if (kind === 'team') return (options?.teams ?? []).map((t) => ({ value: t.id, label: t.name }));
+    if (kind === 'agent')
+      return (options?.agents ?? []).map((a) => ({
+        value: a.id,
+        label: a.label,
+      }));
+    if (kind === 'team')
+      return (options?.teams ?? []).map((t) => ({
+        value: t.id,
+        label: t.name,
+      }));
     return [];
   }, [kind, options]);
   const categoryOptions = useMemo(
-    () => (options?.categories ?? []).map((c) => ({ value: c.id, label: c.label })),
+    () =>
+      (options?.categories ?? []).map((c) => ({ value: c.id, label: c.label })),
     [options],
   );
 
-  const team = kind === 'team' ? options?.teams.find((t) => t.id === subjectId) : undefined;
-  const members = useMemo(() => membersInRange(team, startDate, endDate), [team, startDate, endDate]);
-  const teamSum = members.reduce((sum, m) => sum + toNumber(agentFigures[m.sales_agent_id] ?? ''), 0);
+  const team =
+    kind === 'team'
+      ? options?.teams.find((t) => t.id === subjectId)
+      : undefined;
+  const members = useMemo(
+    () => membersInRange(team, startDate, endDate),
+    [team, startDate, endDate],
+  );
+  const teamSum = members.reduce(
+    (sum, m) => sum + toNumber(agentFigures[m.sales_agent_id] ?? ''),
+    0,
+  );
 
   const every = Number(splitEvery);
-  const splitOn = split && !!splitUnit && Number.isInteger(every) && every >= 1 && every <= 99;
+  const splitOn =
+    split &&
+    !!splitUnit &&
+    Number.isInteger(every) &&
+    every >= 1 &&
+    every <= 99;
   let periodHint = '';
   let periodError = '';
   if (startDate && endDate) {
     try {
-      const periods = generatePeriods(startDate, endDate, splitOn ? every : null, splitOn ? (splitUnit as TargetSplitUnit) : null);
+      const periods = generatePeriods(
+        startDate,
+        endDate,
+        splitOn ? every : null,
+        splitOn ? (splitUnit as TargetSplitUnit) : null,
+      );
       const last = periods[periods.length - 1];
       periodHint =
         periods.length === 1
           ? `1 period, ${shortDate(last.start)} to ${shortDate(last.end)}`
           : `${periods.length} periods, the last ${shortDate(last.start)} to ${shortDate(last.end)}`;
     } catch (error) {
-      periodError = error instanceof Error ? error.message : 'These dates do not make periods.';
+      periodError =
+        error instanceof Error
+          ? error.message
+          : 'These dates do not make periods.';
     }
   }
 
   const scopeReady =
-    scope === 'all' || (scope === 'categories' ? categoryIds.length > 0 : productIds.length > 0);
+    scope === 'all' ||
+    (scope === 'categories' ? categoryIds.length > 0 : productIds.length > 0);
   const canSave =
     !!kind &&
     !!subjectId &&
@@ -212,11 +255,18 @@ export default function SetTargetModal({
       ...(scope === 'products' ? { product_ids: productIds } : {}),
       start_date: startDate,
       end_date: endDate,
-      ...(splitOn ? { split_every: every, split_unit: splitUnit as TargetSplitUnit } : {}),
+      ...(splitOn
+        ? { split_every: every, split_unit: splitUnit as TargetSplitUnit }
+        : {}),
     };
     const payload: SalesTargetCreatePayload =
       kind === 'agent'
-        ? { subject_kind: 'agent', sales_agent_id: subjectId, target_value: toNumber(figure), ...common }
+        ? {
+            subject_kind: 'agent',
+            sales_agent_id: subjectId,
+            target_value: toNumber(figure),
+            ...common,
+          }
         : {
             subject_kind: 'team',
             sales_team_id: subjectId,
@@ -266,8 +316,14 @@ export default function SetTargetModal({
                     value={subjectId}
                     onChange={setSubjectId}
                     options={subjectOptions}
-                    placeholder={kind === 'team' ? 'Pick a team' : 'Pick an agent'}
-                    emptyMessage={kind ? 'Nothing active to pick.' : 'Pick Target for first.'}
+                    placeholder={
+                      kind === 'team' ? 'Pick a team' : 'Pick an agent'
+                    }
+                    emptyMessage={
+                      kind
+                        ? 'Nothing active to pick.'
+                        : 'Pick Target for first.'
+                    }
                     disabled={!kind || !!presetSubjectId}
                     wrapOptions
                   />
@@ -330,36 +386,37 @@ export default function SetTargetModal({
                 </div>
               ) : null}
               {scope === 'products' ? (
-                <ProductScopePicker value={productIds} onChange={setProductIds} />
+                <ProductScopePicker
+                  value={productIds}
+                  onChange={setProductIds}
+                />
               ) : null}
             </section>
 
             <section aria-label="Dates" className="flex flex-col gap-3">
               <h3 className="text-sm font-semibold">Dates</h3>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="target-start">Start date</Label>
-                  <Input
-                    id="target-start"
-                    type="date"
-                    value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
-                  />
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="target-end">End date</Label>
-                  <Input
-                    id="target-end"
-                    type="date"
-                    min={startDate || undefined}
-                    value={endDate}
-                    onChange={(e) => setEndDate(e.target.value)}
-                  />
-                </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="target-dates">Start and end date</Label>
+                <DateRangePicker
+                  id="target-dates"
+                  aria-label="Start and end date"
+                  from={startDate || null}
+                  to={endDate || null}
+                  onChange={({ from, to }) => {
+                    setStartDate(from ?? '');
+                    setEndDate(to ?? '');
+                  }}
+                  className="sm:w-72"
+                />
               </div>
               <div className="flex flex-wrap items-center gap-3">
                 <div className="flex items-center gap-2">
-                  <Switch id="target-split" aria-label="Split" checked={split} onCheckedChange={setSplit} />
+                  <Switch
+                    id="target-split"
+                    aria-label="Split"
+                    checked={split}
+                    onCheckedChange={setSplit}
+                  />
                   <Label htmlFor="target-split">Split</Label>
                 </div>
                 {split ? (
@@ -396,24 +453,34 @@ export default function SetTargetModal({
             </section>
 
             {kind === 'team' ? (
-              <section aria-label="Agent figures" className="flex flex-col gap-3">
+              <section
+                aria-label="Agent figures"
+                className="flex flex-col gap-3"
+              >
                 <h3 className="text-sm font-semibold">{`Agent figures, ${unit} ${perWhat}`}</h3>
                 {subjectId && members.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No agents in this team during these dates.</p>
+                  <p className="text-sm text-muted-foreground">
+                    No agents in this team during these dates.
+                  </p>
                 ) : null}
                 {members.length ? (
                   <div className="overflow-x-auto rounded-lg border">
                     <table aria-label="Agents" className="w-full text-sm">
                       <thead className="bg-muted/40 text-xs text-muted-foreground">
                         <tr>
-                          <th className="px-3 py-2 text-start font-medium">Agent</th>
+                          <th className="px-3 py-2 text-start font-medium">
+                            Agent
+                          </th>
                           <th className="w-40 px-3 py-2 text-end font-medium">{`Figure (${unit})`}</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y">
                         {members.map((m) => (
                           <tr key={m.sales_agent_id}>
-                            <td className="max-w-0 truncate px-3 py-1.5" title={m.label}>
+                            <td
+                              className="max-w-0 truncate px-3 py-1.5"
+                              title={m.label}
+                            >
                               {m.label}
                             </td>
                             <td className="px-3 py-1.5">
@@ -424,7 +491,10 @@ export default function SetTargetModal({
                                 aria-label={`${m.label} figure`}
                                 value={agentFigures[m.sales_agent_id] ?? ''}
                                 onChange={(e) =>
-                                  setAgentFigures((prev) => ({ ...prev, [m.sales_agent_id]: e.target.value }))
+                                  setAgentFigures((prev) => ({
+                                    ...prev,
+                                    [m.sales_agent_id]: e.target.value,
+                                  }))
                                 }
                                 className="h-8 text-end"
                               />
@@ -456,11 +526,18 @@ export default function SetTargetModal({
             )}
           </DialogBody>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={save.isPending}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+              disabled={save.isPending}
+            >
               Cancel
             </Button>
             <Button type="submit" disabled={!canSave}>
-              {save.isPending ? <LoaderCircleIcon className="size-4 animate-spin" /> : null}
+              {save.isPending ? (
+                <LoaderCircleIcon className="size-4 animate-spin" />
+              ) : null}
               Save
             </Button>
           </DialogFooter>
@@ -471,7 +548,13 @@ export default function SetTargetModal({
 }
 
 /** Products, searched on the server (about 22,000 of them). Mounted only for Applies to: Products. */
-function ProductScopePicker({ value, onChange }: { value: string[]; onChange: (ids: string[]) => void }) {
+function ProductScopePicker({
+  value,
+  onChange,
+}: {
+  value: string[];
+  onChange: (ids: string[]) => void;
+}) {
   const search = useTargetProductSearch();
   return (
     <div className="flex flex-col gap-1.5">

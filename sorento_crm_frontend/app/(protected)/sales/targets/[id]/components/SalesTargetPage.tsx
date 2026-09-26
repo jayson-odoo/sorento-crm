@@ -11,16 +11,16 @@ import { SalesTargetDetail } from './SalesTargetDetail';
 
 /**
  * The target page's access and header actions (S1-23): what the reader may do (the
- * `sales.targets.*` slugs), Duplicate and the deferred Delete, and prev/next across the targets
- * of the same kind active today, the list the reader came from. The form itself is
- * `SalesTargetDetail`.
+ * `sales.targets.*` slugs), Duplicate (a header button beside Edit), the deferred Delete in
+ * the row menu, and prev/next across the targets of the same kind active today, the list the
+ * reader came from. The form itself is `SalesTargetDetail`.
  */
 export function SalesTargetPage({ id }: { id: string }) {
   const router = useRouter();
   const canEdit = useHasPermission('sales.targets.edit');
   const canOpenAgent = useHasPermission('master_data.sales_agents.view');
   const { data: target } = useSalesTarget(id);
-  const { actions, pending } = useSalesTargetActions(target, {
+  const { actions, pending, duplicateButton } = useSalesTargetActions(target, {
     onDeleted: () => router.push('/sales/targets'),
   });
   const { data: list } = useSalesTargets(
@@ -31,7 +31,8 @@ export function SalesTargetPage({ id }: { id: string }) {
   const ids = useMemo(() => {
     const seen: string[] = [];
     for (const row of list?.rows ?? []) {
-      if (row.target_id && !seen.includes(row.target_id)) seen.push(row.target_id);
+      if (row.target_id && !seen.includes(row.target_id))
+        seen.push(row.target_id);
     }
     return seen;
   }, [list]);
@@ -44,6 +45,7 @@ export function SalesTargetPage({ id }: { id: string }) {
       canOpenAgent={canOpenAgent}
       actions={actions}
       pendingAction={pending}
+      secondary={duplicateButton}
       pager={
         <RecordNavigation
           index={index >= 0 ? index + 1 : null}

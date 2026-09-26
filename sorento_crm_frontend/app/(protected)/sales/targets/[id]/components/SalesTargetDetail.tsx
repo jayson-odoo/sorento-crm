@@ -81,8 +81,12 @@ function draftOf(target: Detail): Draft {
     metric: target.metric,
     basis: target.basis,
     scope: target.product_scope,
-    categoryIds: target.product_scope === 'categories' ? target.scope.map((s) => s.id) : [],
-    productIds: target.product_scope === 'products' ? target.scope.map((s) => s.id) : [],
+    categoryIds:
+      target.product_scope === 'categories'
+        ? target.scope.map((s) => s.id)
+        : [],
+    productIds:
+      target.product_scope === 'products' ? target.scope.map((s) => s.id) : [],
     start: target.start_date,
     end: target.end_date,
     split: !!target.split_every,
@@ -119,7 +123,15 @@ function changes(target: Detail, draft: Draft): SalesTargetUpdatePayload {
   return out;
 }
 
-function Field({ label, htmlFor, children }: { label: string; htmlFor?: string; children: ReactNode }) {
+function Field({
+  label,
+  htmlFor,
+  children,
+}: {
+  label: string;
+  htmlFor?: string;
+  children: ReactNode;
+}) {
   return (
     <div className="flex min-w-0 flex-col gap-1">
       {htmlFor ? (
@@ -134,7 +146,15 @@ function Field({ label, htmlFor, children }: { label: string; htmlFor?: string; 
   );
 }
 
-function SectionCard({ label, action, children }: { label: string; action?: ReactNode; children: ReactNode }) {
+function SectionCard({
+  label,
+  action,
+  children,
+}: {
+  label: string;
+  action?: ReactNode;
+  children: ReactNode;
+}) {
   return (
     <Card>
       <section aria-label={label} className="flex flex-col gap-3 p-4">
@@ -211,10 +231,27 @@ function InlineFigure({
         }}
         className="h-8 w-28 text-end"
       />
-      <Button variant="ghost" size="sm" mode="icon" aria-label="Save figure" disabled={saving} onClick={() => void commit()}>
-        {saving ? <LoaderCircleIcon className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
+      <Button
+        variant="ghost"
+        size="sm"
+        mode="icon"
+        aria-label="Save figure"
+        disabled={saving}
+        onClick={() => void commit()}
+      >
+        {saving ? (
+          <LoaderCircleIcon className="size-3.5 animate-spin" />
+        ) : (
+          <Check className="size-3.5" />
+        )}
       </Button>
-      <Button variant="ghost" size="sm" mode="icon" aria-label="Cancel" onClick={() => setEditing(false)}>
+      <Button
+        variant="ghost"
+        size="sm"
+        mode="icon"
+        aria-label="Cancel"
+        onClick={() => setEditing(false)}
+      >
         <X className="size-3.5" />
       </Button>
     </span>
@@ -234,8 +271,8 @@ function InlineFigure({
  * periods are the sum of its agents' figures, so they are read-only here; each agent's figure
  * edits in the Agents section.
  *
- * The page wrapper decides what the reader may do: `readOnly`, the header `actions` (Duplicate,
- * the deferred Delete), their countdown and the prev/next `pager`.
+ * The page wrapper decides what the reader may do: `readOnly`, the `secondary` header button
+ * (Duplicate), the row menu `actions` (the deferred Delete), its countdown and the `pager`.
  */
 export function SalesTargetDetail({
   id,
@@ -243,6 +280,7 @@ export function SalesTargetDetail({
   canOpenAgent = false,
   actions,
   pendingAction,
+  secondary,
   pager,
 }: {
   id: string;
@@ -250,6 +288,8 @@ export function SalesTargetDetail({
   canOpenAgent?: boolean;
   actions?: RecordAction[];
   pendingAction?: ReactNode;
+  /** A header button beside Edit (Duplicate, S1-23). */
+  secondary?: ReactNode;
   pager?: ReactNode;
 }) {
   const { data: target, isLoading, isError } = useSalesTarget(id);
@@ -259,7 +299,10 @@ export function SalesTargetDetail({
   const [draft, setDraft] = useState<Draft | null>(null);
   const today = todayMalaysiaYyyyMmDd();
 
-  const pending = useMemo(() => (target && draft ? changes(target, draft) : {}), [target, draft]);
+  const pending = useMemo(
+    () => (target && draft ? changes(target, draft) : {}),
+    [target, draft],
+  );
 
   if (isLoading) {
     return (
@@ -274,7 +317,8 @@ export function SalesTargetDetail({
       <Card className="flex flex-col items-center gap-3 p-10 text-center">
         <div className="text-sm font-semibold">Target not found</div>
         <p className="max-w-md text-sm text-muted-foreground">
-          This target does not exist, or it was deleted after this link was made.
+          This target does not exist, or it was deleted after this link was
+          made.
         </p>
       </Card>
     );
@@ -284,7 +328,11 @@ export function SalesTargetDetail({
   const isChild = !!target.parent;
   const isTeam = target.subject_kind === 'team';
   const unit = unitOf(target.metric);
-  const canSave = isEditing && draft.name.trim().length > 0 && draft.end >= draft.start && !patchHeader.isPending;
+  const canSave =
+    isEditing &&
+    draft.name.trim().length > 0 &&
+    draft.end >= draft.start &&
+    !patchHeader.isPending;
 
   const save = async () => {
     if (!canSave) return;
@@ -299,7 +347,8 @@ export function SalesTargetDetail({
       // The hook toasted the reason; the edit stays open so nothing typed is lost.
     }
   };
-  const set = (patch: Partial<Draft>) => setDraft((d) => (d ? { ...d, ...patch } : d));
+  const set = (patch: Partial<Draft>) =>
+    setDraft((d) => (d ? { ...d, ...patch } : d));
 
   const subjectHref = isTeam
     ? `/sales/teams/${target.sales_team_id}`
@@ -314,15 +363,23 @@ export function SalesTargetDetail({
         <CardHeader className="block py-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="flex min-w-0 flex-col gap-1.5">
-              <span className="text-xs font-medium text-muted-foreground">{target.target_no}</span>
-              <h2 className="truncate text-lg font-semibold" title={target.name}>
+              <span className="text-xs font-medium text-muted-foreground">
+                {target.target_no}
+              </span>
+              <h2
+                className="truncate text-lg font-semibold"
+                title={target.name}
+              >
                 {target.name}
               </h2>
               <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
                 <span className="min-w-0 truncate">
                   {'For '}
                   {subjectHref ? (
-                    <Link href={subjectHref} className="text-primary hover:underline">
+                    <Link
+                      href={subjectHref}
+                      className="text-primary hover:underline"
+                    >
                       {target.subject_label}
                     </Link>
                   ) : (
@@ -332,40 +389,62 @@ export function SalesTargetDetail({
                 {target.parent ? (
                   <span className="min-w-0 truncate">
                     {'Part of '}
-                    <Link href={`/sales/targets/${target.parent.id}`} className="text-primary hover:underline">
+                    <Link
+                      href={`/sales/targets/${target.parent.id}`}
+                      className="text-primary hover:underline"
+                    >
                       {target.parent.name}
                     </Link>
                   </span>
                 ) : null}
                 {isTeam ? <span>{agentCount}</span> : null}
-                {target.created_at ? <span>Created {formatDateInMalaysia(target.created_at)}</span> : null}
-                {target.updated_at ? <span>Updated {formatDateInMalaysia(target.updated_at)}</span> : null}
+                {target.created_at ? (
+                  <span>Created {formatDateInMalaysia(target.created_at)}</span>
+                ) : null}
+                {target.updated_at ? (
+                  <span>Updated {formatDateInMalaysia(target.updated_at)}</span>
+                ) : null}
               </div>
             </div>
             {isEditing ? (
               <div className="flex shrink-0 flex-wrap items-center gap-2">
-                <Button variant="outline" size="sm" onClick={() => setDraft(null)} disabled={patchHeader.isPending}>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setDraft(null)}
+                  disabled={patchHeader.isPending}
+                >
                   Cancel
                 </Button>
                 <Button size="sm" onClick={save} disabled={!canSave}>
-                  {patchHeader.isPending ? <LoaderCircleIcon className="size-4 animate-spin" /> : null}
+                  {patchHeader.isPending ? (
+                    <LoaderCircleIcon className="size-4 animate-spin" />
+                  ) : null}
                   Save
                 </Button>
               </div>
             ) : (
-              <DetailActions
-                pagerNode={pager}
-                actions={actions}
-                pendingAction={pendingAction}
-                primary={
-                  readOnly ? undefined : (
-                    <Button variant="primary" size="sm" className="gap-1.5" onClick={() => setDraft(draftOf(target))}>
-                      <SquarePen className="size-4" />
-                      Edit
-                    </Button>
-                  )
-                }
-              />
+              <div className="flex shrink-0 flex-wrap items-center gap-2">
+                {secondary}
+                <DetailActions
+                  pagerNode={pager}
+                  actions={actions}
+                  pendingAction={pendingAction}
+                  primary={
+                    readOnly ? undefined : (
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        className="gap-1.5"
+                        onClick={() => setDraft(draftOf(target))}
+                      >
+                        <SquarePen className="size-4" />
+                        Edit
+                      </Button>
+                    )
+                  }
+                />
+              </div>
             )}
           </div>
         </CardHeader>
@@ -379,7 +458,10 @@ export function SalesTargetDetail({
               {target.subject_label}
             </span>
           </Field>
-          <Field label="Name" htmlFor={isEditing ? 'target-edit-name' : undefined}>
+          <Field
+            label="Name"
+            htmlFor={isEditing ? 'target-edit-name' : undefined}
+          >
             {isEditing ? (
               <Input
                 id="target-edit-name"
@@ -412,7 +494,11 @@ export function SalesTargetDetail({
             {target.scope.length ? (
               <ul className="flex flex-col gap-1 sm:col-span-3">
                 {target.scope.map((item) => (
-                  <li key={item.id} className="truncate text-sm" title={item.label}>
+                  <li
+                    key={item.id}
+                    className="truncate text-sm"
+                    title={item.label}
+                  >
                     {item.label}
                   </li>
                 ))}
@@ -429,7 +515,9 @@ export function SalesTargetDetail({
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <Field label="Start date">{shortDate(target.start_date)}</Field>
             <Field label="End date">{shortDate(target.end_date)}</Field>
-            <Field label="Split">{splitSummary(target.split_every, target.split_unit)}</Field>
+            <Field label="Split">
+              {splitSummary(target.split_every, target.split_unit)}
+            </Field>
             {target.parent ? (
               <Link
                 href={`/sales/targets/${target.parent.id}`}
@@ -457,7 +545,10 @@ export function SalesTargetDetail({
               {target.periods.map((p) => {
                 const future = p.period_start > today;
                 return (
-                  <tr key={p.id} className={p.is_current ? 'bg-primary/5' : undefined}>
+                  <tr
+                    key={p.id}
+                    className={p.is_current ? 'bg-primary/5' : undefined}
+                  >
                     <td className="whitespace-nowrap px-3 py-2">
                       <span className="inline-flex items-center gap-2">
                         {`${shortDate(p.period_start)} to ${shortDate(p.period_end)}`}
@@ -475,7 +566,11 @@ export function SalesTargetDetail({
                         editable={!readOnly && !isTeam && !isEditing}
                         saving={patchPeriod.isPending}
                         onSave={async (next) => {
-                          await patchPeriod.mutateAsync({ targetId: target.id, periodId: p.id, target_value: next });
+                          await patchPeriod.mutateAsync({
+                            targetId: target.id,
+                            periodId: p.id,
+                            target_value: next,
+                          });
                         }}
                       />
                     </td>
@@ -495,10 +590,16 @@ export function SalesTargetDetail({
 
       {isTeam ? (
         <SectionCard label="Agents">
-          {target.children.length === 0 && target.members_without_figure.length === 0 ? (
+          {target.children.length === 0 &&
+          target.members_without_figure.length === 0 ? (
             <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed py-8 text-center">
-              <span className="text-sm font-medium">No agents in this team during these dates</span>
-              <Link href={`/sales/teams/${target.sales_team_id}`} className="text-sm text-primary hover:underline">
+              <span className="text-sm font-medium">
+                No agents in this team during these dates
+              </span>
+              <Link
+                href={`/sales/teams/${target.sales_team_id}`}
+                className="text-sm text-primary hover:underline"
+              >
                 Open the team
               </Link>
             </div>
@@ -507,10 +608,16 @@ export function SalesTargetDetail({
               {target.children.map((child) => {
                 const period =
                   child.periods.find((cp) =>
-                    target.periods.some((tp) => tp.is_current && tp.period_start === cp.period_start),
+                    target.periods.some(
+                      (tp) =>
+                        tp.is_current && tp.period_start === cp.period_start,
+                    ),
                   ) ?? child.periods[0];
                 return (
-                  <li key={child.target_id} className="flex min-w-0 items-center justify-between gap-3 px-3 py-2">
+                  <li
+                    key={child.target_id}
+                    className="flex min-w-0 items-center justify-between gap-3 px-3 py-2"
+                  >
                     <Link
                       href={`/sales/targets/${child.target_id}`}
                       className="truncate text-sm text-primary hover:underline"
@@ -537,12 +644,17 @@ export function SalesTargetDetail({
                 );
               })}
               {target.members_without_figure.map((m) => (
-                <li key={m.sales_agent_id} className="flex min-w-0 items-center justify-between gap-3 px-3 py-2">
+                <li
+                  key={m.sales_agent_id}
+                  className="flex min-w-0 items-center justify-between gap-3 px-3 py-2"
+                >
                   <span className="flex min-w-0 items-center gap-2">
                     <span className="truncate text-sm" title={m.label}>
                       {m.label}
                     </span>
-                    <span className="shrink-0 text-xs text-muted-foreground">No figure yet</span>
+                    <span className="shrink-0 text-xs text-muted-foreground">
+                      No figure yet
+                    </span>
                   </span>
                   {!readOnly ? (
                     <Button
@@ -551,7 +663,11 @@ export function SalesTargetDetail({
                       disabled={addChild.isPending || isEditing}
                       onClick={() =>
                         void addChild
-                          .mutateAsync({ targetId: target.id, sales_agent_id: m.sales_agent_id, target_value: 0 })
+                          .mutateAsync({
+                            targetId: target.id,
+                            sales_agent_id: m.sales_agent_id,
+                            target_value: 0,
+                          })
                           .catch(() => undefined)
                       }
                     >
@@ -580,11 +696,18 @@ export function SalesTargetDetail({
 }
 
 /** What counts, in edit. Mounted only while editing, so the pickers' options load then. */
-function WhatCountsEditor({ draft, set }: { draft: Draft; set: (patch: Partial<Draft>) => void }) {
+function WhatCountsEditor({
+  draft,
+  set,
+}: {
+  draft: Draft;
+  set: (patch: Partial<Draft>) => void;
+}) {
   const { data: options } = useSalesTargetOptions();
   const searchProducts = useTargetProductSearch();
   const categoryOptions = useMemo(
-    () => (options?.categories ?? []).map((c) => ({ value: c.id, label: c.label })),
+    () =>
+      (options?.categories ?? []).map((c) => ({ value: c.id, label: c.label })),
     [options],
   );
   return (
@@ -646,11 +769,23 @@ function WhatCountsEditor({ draft, set }: { draft: Draft; set: (patch: Partial<D
 }
 
 /** Dates, in edit: the range and the optional split. */
-function DatesEditor({ draft, set }: { draft: Draft; set: (patch: Partial<Draft>) => void }) {
+function DatesEditor({
+  draft,
+  set,
+}: {
+  draft: Draft;
+  set: (patch: Partial<Draft>) => void;
+}) {
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
       <Field label="Start date" htmlFor="target-edit-start">
-        <Input id="target-edit-start" type="date" value={draft.start} onChange={(e) => set({ start: e.target.value })} className="h-8" />
+        <Input
+          id="target-edit-start"
+          type="date"
+          value={draft.start}
+          onChange={(e) => set({ start: e.target.value })}
+          className="h-8"
+        />
       </Field>
       <Field label="End date" htmlFor="target-edit-end">
         <Input
@@ -664,7 +799,11 @@ function DatesEditor({ draft, set }: { draft: Draft; set: (patch: Partial<Draft>
       </Field>
       <Field label="Split">
         <div className="flex flex-wrap items-center gap-2">
-          <Switch aria-label="Split" checked={draft.split} onCheckedChange={(on) => set({ split: on })} />
+          <Switch
+            aria-label="Split"
+            checked={draft.split}
+            onCheckedChange={(on) => set({ split: on })}
+          />
           {draft.split ? (
             <>
               <Label htmlFor="target-edit-every" className="text-xs">
@@ -682,7 +821,11 @@ function DatesEditor({ draft, set }: { draft: Draft; set: (patch: Partial<Draft>
               <SearchableSelect
                 id="target-edit-unit"
                 value={draft.unit}
-                onChange={(v) => (v ? set({ unit: v as TargetSplitUnit }) : set({ split: false, unit: 'month' }))}
+                onChange={(v) =>
+                  v
+                    ? set({ unit: v as TargetSplitUnit })
+                    : set({ split: false, unit: 'month' })
+                }
                 options={UNIT_OPTIONS}
                 clearable
                 className="w-28"

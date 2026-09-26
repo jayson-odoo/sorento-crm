@@ -97,7 +97,8 @@ function AgentTargets({ rows, label }: { rows: SalesTargetRow[]; label: string }
  * line carrying their own targets and the first one's Target, Achieved and %. The date is the
  * Targets page's Active on (`?on=`), today otherwise. An agent who left this month keeps a
  * muted line with a "Left 14 Oct" pill, so the team's figure for the month is explained on
- * screen. Set target in the header presets this team; on an agent's line, that agent.
+ * screen. Set target is the header's primary action and presets this team (plan 3.9), Edit
+ * the secondary one; on an agent's line, Set target presets that agent.
  * Each agent is one line, however often they left and came back (owner ruling 26 Sep ~13:05Z).
  *
  * The leader (owner ruling 26 Sep ~13:25Z, W1) is named on its own line under the team name,
@@ -313,15 +314,12 @@ export function SalesTeamDetail({ id }: { id: string }) {
               </div>
             ) : (
               <div className="flex shrink-0 flex-wrap items-center gap-2">
-              {canSetTarget ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-1.5"
-                  onClick={() => setSetTarget({ kind: 'team', subjectId: team.id })}
-                >
-                  <Target className="size-4" />
-                  Set target
+              {/* Edit is the secondary action (plan 3.9, team form view); it steps aside while a
+                  delete is counting down, as DetailActions' own primary does. */}
+              {canEdit && !pending ? (
+                <Button variant="outline" size="sm" className="gap-1.5" onClick={() => beginEdit(team)}>
+                  <SquarePen className="size-4" />
+                  Edit
                 </Button>
               ) : null}
               <DetailActions
@@ -339,10 +337,15 @@ export function SalesTeamDetail({ id }: { id: string }) {
                 actions={actions}
                 pendingAction={pending}
                 primary={
-                  canEdit ? (
-                    <Button variant="primary" size="sm" className="gap-1.5" onClick={() => beginEdit(team)}>
-                      <SquarePen className="size-4" />
-                      Edit
+                  canSetTarget ? (
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      className="gap-1.5"
+                      onClick={() => setSetTarget({ kind: 'team', subjectId: team.id })}
+                    >
+                      <Target className="size-4" />
+                      Set target
                     </Button>
                   ) : undefined
                 }
