@@ -559,7 +559,11 @@ def test_every_company_id_table_is_registered():
     # `sales.team_members` are one company's own teams and its agents' dated places in
     # them; the team routes load a team BY ID, so the mixin's filter is what hides another
     # company's team (UAC S6-8).
-    expected_owned = 140
+    # PLAN-sales-targets-opportunities-26sep.md (S1) adds 3: `sales.targets`,
+    # `sales.target_periods` and `sales.target_scope` are one company's own targets, their
+    # per-period figures and their product scope rows; every target route loads BY ID, so the
+    # mixin's filter is what hides another company's target (UAC S1-13).
+    expected_owned = 143
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )

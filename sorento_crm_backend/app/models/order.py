@@ -385,6 +385,19 @@ class OrderLine(Base, CompanyScopedMixin):
     tax = Column(Numeric(15, 4), nullable=True)
     total_excluding_tax = Column(Numeric(15, 4), nullable=True)
     total_including_tax = Column(Numeric(15, 4), nullable=True)
+    # The sales order line this DO line delivers (AutoCount's "transferred from"), the seam
+    # sales targets count delivered quantities by DO date through (sales plan 3.2, 16.1).
+    # Filled by the DO integration; NULL on every line uploaded before it. SET NULL, so
+    # deleting a sales order line never deletes a delivery.
+    sales_order_line_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey(
+            "sales_order_lines.id",
+            ondelete="SET NULL",
+            name="fk_order_lines_sales_order_line_id",
+        ),
+        nullable=True,
+    )
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -404,6 +417,7 @@ class OrderLine(Base, CompanyScopedMixin):
             unique=False,
         ),
         UniqueConstraint("order_id", "line_sequence", name="uq_order_lines_order_id_line_sequence"),
+        Index("ix_order_lines_sales_order_line_id", "sales_order_line_id"),
     )
 
 
@@ -488,6 +502,8 @@ class SalesOrder(Base, CompanyScopedMixin):
         Index("ix_sales_orders_so_number", "so_number"),
         Index("ix_sales_orders_status", "status"),
         Index("ix_sales_orders_sales_agent_id", "sales_agent_id"),
+        # Sales targets bucket achievement by order date (sales plan 3.1, 16.1).
+        Index("ix_sales_orders_order_date", "order_date"),
         # `order_link_service.book_so_numbers_by_ref` filters `source_ref IN (...)` to
         # resolve the book's own SO linkage on a purchase-order line (review of PR #764,
         # F3) - unindexed, this was a sequential scan over the whole table on every PO

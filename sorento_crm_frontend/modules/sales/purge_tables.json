@@ -1,8 +1,11 @@
 {
   "moduleKey": "sales",
   "tables": [
+    "sales.target_scope",
+    "sales.target_periods",
+    "sales.targets",
     "sales.team_members",
     "sales.teams"
   ],
-  "description": "Sales teams and their membership history. Sales agents and sales orders are core records and are not touched."
+  "description": "Sales targets with their periods and product scope, sales teams and their membership history. Sales agents and sales orders are core records and are not touched."
 }

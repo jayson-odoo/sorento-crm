@@ -1,6 +1,6 @@
 # PLAN: sales targets, opportunities and the WhatsApp achievement broadcast (#1170)
 
-Status: **building.** Wave 1, S6, is on PR #1260 (wave 1: the `sales` module and schema, Sales Teams with dated
+Status: **building, wave 2.** S1 built on PR #1297 (track: full; build contract section 16; reviewer and security-reviewer clean, awaiting the owner's hand test); S6 merged (#1260). Wave 1, S6, was on PR #1260 (wave 1: the `sales` module and schema, Sales Teams with dated
 membership, the Sales menu with Sales Agents moved in; section 15). S6 accepted on the owner's
 hand test (26 Sep ~13:25Z); fix lane round 2 on the same PR adds the team leader (W1) and lists
 a returning agent once (W2), section 15. Track: full. Next: wave 2,
@@ -1812,4 +1812,308 @@ taken while building, each the direct reading of the plan unless it says otherwi
   20 Sep, and shows once). A leader changed in place, and a leader moved into a new team (whose
   old team's leader cleared), both committed through the API, so the deferred rule ran at a real
   commit; a direct `UPDATE` naming a non-member as leader was refused by it.
+
+## 16. S1 build contract (wave 2, 26 Sep)
+
+Branch `claude/sales-targets-s1-ex0fyg` on origin/main dc10a1afb (#1260, S6, merged 26 Sep 14:19Z). Track: full (migration, new
+slugs). The tester and the coder both build against this section; every ruling above binds.
+Measured on this branch unless a line says origin/main.
+
+**16.1 Migration `sales_0003_targets`** (down_revision `sales_0002_team_leader`; shape and grant
+sweep copied from `alembic/versions/sales_0001_teams.py:43-178`). Models appended to
+`app/models/sales.py` (`SalesTarget`, `SalesTargetPeriod`, `SalesTargetScope`, `{"schema": "sales"}`,
+`CompanyScopedMixin`, FKs inside the module schema-qualified).
+- `sales.targets`: id, company_id NOT NULL, `target_no` varchar(20) NOT NULL, `name` varchar(120)
+  NOT NULL, `subject_kind` varchar(16), `sales_agent_id` FK `sales_agents` CASCADE null,
+  `sales_team_id` FK `sales.teams` CASCADE null, `metric` varchar(16), `basis` varchar(16) default
+  `ordered`, `product_scope` varchar(16) default `all`, `start_date`, `end_date` date NOT NULL,
+  `split_every` smallint null, `split_unit` varchar(8) null, `parent_target_id` FK `sales.targets`
+  CASCADE null, `created_by_user_id` uuid null, created_at, updated_at. `__audit_track__ = True`,
+  `__audit_entity_type__ = "sales_targets"` (as `SalesTeam`, `models/sales.py:52-53`). Constraints:
+  `uq_sales_targets_company_target_no` (company_id, target_no); `ck_sales_targets_subject_kind`
+  (`agent`, `team`); `ck_sales_targets_subject` (agent: agent set and team null; team: team set and
+  agent null); `ck_sales_targets_metric` (`amount`, `quantity`); `ck_sales_targets_basis`
+  (`ordered`, `delivered`); `ck_sales_targets_product_scope` (`all`, `categories`, `products`);
+  `ck_sales_targets_dates` (end >= start); `ck_sales_targets_split_every` (null or 1 to 99);
+  `ck_sales_targets_split_unit` (null or `day`, `week`, `month`); `ck_sales_targets_split_pair`
+  (`(split_every IS NULL) = (split_unit IS NULL)`); `ck_sales_targets_parent_agent` (parent null or
+  subject_kind `agent`). Indexes on company_id, sales_agent_id, sales_team_id, parent_target_id.
+  **No `commission_method`** (S4 adds it with its tiers).
+- `sales.target_periods`: id, company_id, `target_id` FK CASCADE, `period_start`, `period_end`,
+  `target_value` numeric(15,2) NOT NULL; `uq_sales_target_periods_target_start`,
+  `ck_sales_target_periods_dates` (start <= end).
+- `sales.target_scope`: id, company_id, `target_id` FK CASCADE, `product_category_id` FK
+  `product_categories` CASCADE null, `product_id` FK `products` CASCADE null;
+  `ck_sales_target_scope_one` (`num_nonnulls(product_category_id, product_id) = 1`).
+- `ix_sales_orders_order_date` on `public.sales_orders(order_date)`, also declared in
+  `SalesOrder.__table_args__` (`models/order.py:483-500` has no order_date index today).
+- DO seam: `order_lines.sales_order_line_id` uuid FK `sales_order_lines` ON DELETE SET NULL
+  (`fk_order_lines_sales_order_line_id`), index `ix_order_lines_sales_order_line_id`, also on
+  `OrderLine` (`models/order.py:360-405`). Measured: origin/main `OrderLine` has no such column (the
+  only `sales_order_line_id` in origin/main `order.py` is on the inquiry warehouse history class,
+  :587). If the DO lane merges first, S1 drops this part of its migration at the pre-PR rebase.
+- `sales.targets.{view,add,edit,delete}` inserted when absent and granted to admin and superadmin
+  (the `sales_0001` sweep), plus `PERMISSION_REGISTRY.extend(_crud("sales", "targets", "Sales
+  Targets"))` next to the teams line (`app/rbac/permission_registry.py:821`).
+- Downgrade drops `target_scope`, `target_periods`, `targets`, the order_date index and the DO
+  column with its index; keeps the schema and the permission rows (S6 precedent).
+- Shared local DB converges by `create_all` (backend CLAUDE.md): apply the additive DDL there
+  idempotently, never re-stamp.
+
+**TGT numbering: per-company max+1, not a numbering rule row.** `seed_lead_numbering_rule`
+(`project_seed_service.py:644-670`) seeds one `document_numbering_rules` row, and
+`NumberingService.get_next_number` (`numbering_service.py:14-93`) locks it `FOR UPDATE`. That is
+safe under concurrency but needs a row per company from four writers (migration, bootstrap_env,
+the test `after_create` hook, and a lazy seed in the caller), because a migration seed goes stale
+for any company created later: `numbering_defaults.py:1-25` records exactly that failure (migration
+440, `numbering_rule_missing` 500). Nobody asked to configure a TGT prefix. So
+`target_service._next_target_nos(db, company_id, n)` takes
+`pg_advisory_xact_lock(hashtext('sales.targets.target_no'), hashtext(company_id))` (precedent
+`scm/reorder_policy.py:148`), reads `max(substring(target_no from 5)::int)` for the company (a
+statement after the lock sees the previous holder's commit under READ COMMITTED) and returns `n`
+consecutive `TGT-000001` style numbers (6 digits, wider past 999999); one lock covers a team and
+its children. `uq_sales_targets_company_target_no` is the backstop. Numbers are never reused
+while a higher one exists. **Trigger for a rule row:** the owner asks to change the TGT format.
+
+**16.2 Services (`app/services/sales/`).** Every read is an ORM `select()` over mapped classes run
+through the session, so the company scope listener applies (as `sales_report_service.py:50-54`
+requires); `sales_agents` is not scoped, so agents are filtered to `company_id IS NULL OR =
+company` (`team_service._visible_agents`, :69-73). Business day = `team_service._today()` (:37).
+- `period_service.generate_periods(start, end, split_every, split_unit) -> list[(start, end)]`.
+  No split: one row. Else period k starts at `start + k*N days`, `+ 7kN days`, or `start` plus kN
+  calendar months clamped to the month's last day (always from the original start, so 31 Jan
+  gives 31 Jan, 28 Feb, 31 Mar); each ends the day before the next, the last at `end`. More than
+  104 rows: 422 `TOO_MANY_PERIODS`. Golden table (S1-19): no split 1 Oct to 15 Dec 2026 = 1 row;
+  monthly = 1 to 31 Oct, 1 to 30 Nov, 1 to 15 Dec; every 2 weeks = 1 to 14 Oct, 15 to 28 Oct, 29 Oct
+  to 11 Nov, 12 to 25 Nov, 26 Nov to 9 Dec, 10 to 15 Dec; 31 Jan to 30 Mar 2027 monthly = 31 Jan
+  to 27 Feb, 28 Feb to 30 Mar; 1 Oct to 9 Dec 2026 every 2 weeks = 5 rows of 14 days; one day = 1
+  row; 1 Jan 2026 to 29 Dec 2027 weekly = 104 rows (ok), to 31 Dec 2027 = 105 (422).
+- `target_service`:
+  - create agent: `target_value` required (>= 0) and written to every period; `agent_figures`
+    rejected. Scope per 3.1 (422 `INVALID_SCOPE`). Agent not visible in the company: 422.
+  - create team: team active (422 `TEAM_INACTIVE`), `target_value` rejected (422),
+    `agent_figures` non-empty and without repeats; each agent needs a `sales.team_members` row for
+    the team overlapping `[start, end]` (`valid_from` null or <= end, `valid_to` null or >= start),
+    else 422 `AGENT_NOT_IN_TEAM`. Creates the header, then one child per figure (name = the team
+    target's name, `parent_target_id`, metric, basis, scope rows, dates, split copied), then writes
+    each team period as the sum of its children's same-start periods.
+  - update header (name, metric, basis, product_scope with ids, dates, split): regenerate periods
+    under the keep rule (same `period_start` keeps its figure; a new period takes the figure of the
+    old period containing its start, else the nearest old period in time). On a team: every child
+    is rewritten the same way in the transaction, then re-summed. On a child: any field but `name`
+    is 422 `CHILD_FOLLOWS_PARENT`. Subject fields are not in the PATCH schema (`extra="forbid"`).
+  - PATCH period: team 422 `TEAM_TARGET_IS_SUM`; a child's edit re-sums its parent in the same
+    transaction.
+  - add child `POST /{id}/children {sales_agent_id, target_value}`: parent must be a team target
+    (422 `NOT_A_TEAM_TARGET`), agent a member in range (422 `AGENT_NOT_IN_TEAM`), no child yet
+    (422 `AGENT_HAS_FIGURE`); re-sums.
+  - duplicate: new start = source end + 1 day; month aligned source (starts on a 1st, ends on a
+    month end) spans the same number of whole months, else the same number of days. Name = source
+    name + " (copy)" (cut to 120). Split, metric, basis and scope rows copied; figures by period
+    index, the last repeated when the new split yields more. A team duplicate duplicates its
+    children and re-sums; a child duplicates as a standalone agent target (its dates no longer
+    match the parent).
+  - delete: hard delete; children go by the FK cascade; deleting a child re-sums its parent.
+    Known gap: a `sales_agents` hard delete cascades a child past the service and leaves the
+    parent's stored sum stale until the next write (agents are archived, not deleted, in practice).
+- `achievement_service`, one query per screen (all periods shown at once):
+  - Base: `sales_order_lines` join `sales_orders`, `status != 'cancelled'`, `line_status !=
+    'cancelled'` (`sales_report_service._common_filters`, :241-242), `order_date` not null (null
+    never counts, either basis), scope per 3.1 with a recursive CTE over `parent_category_id`.
+  - Agent attribution (G2, R2): `so.sales_agent_id IN` the agent's label siblings (visible
+    `sales_agents` with the same non-empty `person_label`, else the one id).
+  - Team attribution (T2, R2): `EXISTS (member m of the team whose window covers so.order_date and
+    so.sales_agent_id IN label siblings of m.sales_agent_id)`. EXISTS, never a join, so an order
+    counts once for a team even when two members share a person label. The window always uses the
+    sales order's date, also for DO-dated quantities.
+  - `achievement_value_expr(metric, basis, delivered_qty)`: amount ordered `coalesce(line_total,
+    0)`; quantity ordered `qty_ordered`; quantity delivered `delivered_qty`; amount delivered
+    `coalesce(round(coalesce(line_total,0) * delivered_qty / nullif(qty_ordered,0), 2), 0)`, per
+    line per period. Ordered bucket: `order_date` in the period.
+  - `delivered_by_date(period_start, period_end)`: DO lines `order_lines` join `orders` with
+    `sales_order_line_id` set, `orders.is_cancelled` false and `orders.deleted_at` null; `counted =
+    greatest(least(quantity, qty_ordered - coalesce(prior, 0)), 0)` where `prior` is the running
+    sum over the line's DO lines ordered by (`orders.order_date` nulls last, `orders.id`,
+    `order_lines.line_sequence`) up to the preceding row; by-DO qty = sum of `counted` with the DO
+    date in the period; residual = `greatest(least(qty_delivered, qty_ordered) - all_linked, 0)`
+    counted only when the SO `order_date` is in the period; `delivered_qty` = by-DO + residual.
+  - `unassigned_amount(on)`: sum of `coalesce(line_total, 0)` of non-cancelled lines with null
+    `sales_agent_id` whose `order_date` is in the calendar month of `on`.
+  - `achieved_pct` = round(achieved / target * 100, 1); null when target is 0 or no target.
+
+**16.3 Routes `app/api/v1/sales/targets.py`**, `router.include_router(targets.router,
+prefix="/targets", tags=["sales-targets"])` in `app/api/v1/sales/__init__.py`. Plain `def`
+handlers, `_reraise` pattern of `teams.py:37-39`. Slugs per S1-13: GET list, detail, options =
+view; POST = add; PATCH, period PATCH, duplicate, children = edit; DELETE = delete.
+`/options` is declared before `/{target_id}`.
+- `GET /sales/targets?on=&subject=agent|team&sales_team_id=<uuid>|none&query=` (on default
+  today; `none` only with `subject=agent`, else 422). Response:
+  `{on, rows: [...], unassigned_amount, no_team_count}`. `rows`: one per target period containing
+  `on`, plus one `target_id: null` row per active agent (or active team; inactive teams get none,
+  S6-3) with no target active on `on`. Row: `target_id, target_no, name, subject_kind,
+  sales_agent_id, sales_team_id, subject_label, team_id, team_name` (agent rows: the team whose
+  membership covers `on`), `left_on` (below), `members` (team rows: `[{sales_agent_id, label}]`
+  on `on`, for the Agents pills; null on agent rows), `metric, basis, product_scope, scope_labels`
+  (names, `[]` for all), `period_id, period_start, period_end, target_value, achieved_value,
+  achieved_pct, parent_target_id`. No-target rows carry nulls in every target field and in
+  `achieved_value`. Order: `subject_label`, then amount before quantity, `end_date`, `target_no`.
+  `subject=team&sales_team_id=T` limits to team T (the team page). `no_team_count` = active
+  visible agents with no membership covering `on`. Numbers are JSON numbers.
+- **Leaving agent (captain's decision, plan 3.8 "Achieved is not the sum of the children's
+  achieved").** `subject=agent&sales_team_id=T` returns the agents `team_detail` shows for T on
+  `on`: a stay in T with `valid_from` null or <= `on` and `valid_to` null or >= the 1st of `on`'s
+  month (`team_service.py:383-391`), the latest stay per agent (S6-18). An agent whose stay ended
+  on or before `on` (`team_service.py:399`) carries `left_on = valid_to`, else null. That row's
+  numbers are the agent's OWN first target (target, and achieved counting all their orders, G2),
+  drawn muted with the "Left <date>" pill; the team row's achieved counts that agent's orders
+  only up to `left_on`. S6-5's equality (team achieved = sum of member rows) holds only when
+  nobody moved in the period.
+- `POST /sales/targets` body: `subject_kind, sales_agent_id?, sales_team_id?, name, metric,
+  basis="ordered", product_scope="all", category_ids=[], product_ids=[], start_date, end_date,
+  split_every?, split_unit?, target_value?` (agent), `agent_figures?: [{sales_agent_id,
+  target_value}]` (team); `extra="forbid"`, so `start_month`, `months`, `periodicity` are 422.
+  201 with the detail. PATCH, period PATCH (`{target_value}`, >= 0), duplicate (201, the new
+  target) and children (201, the parent) all return the detail.
+- `GET /sales/targets/{id}?on=` detail: `{id, target_no, name, subject_kind, sales_agent_id,
+  sales_team_id, subject_label, subject_team_name` (agent: team on `on`), `parent: {id, name} |
+  null, metric, basis, product_scope, start_date, end_date, split_every, split_unit,
+  counts_label, scope: [{id, label}], periods: [{id, period_start, period_end, target_value,
+  achieved_value, achieved_pct, is_current}]` (`is_current`: contains `on`), `children: [{target_id,
+  sales_agent_id, label, periods: [{period_start, target_value}]}]` (team only, else `[]`),
+  `members_without_figure: [{sales_agent_id, label}]` (team members overlapping the range with no
+  child, else `[]`), `child_count, created_at, updated_at}`. `counts_label`: "Ordered";
+  "Delivered"; "Delivered (by DO date)" when basis is delivered and any `order_lines` row of the
+  company has `sales_order_line_id` set.
+- `GET /sales/targets/options` (view): `{agents: [{id, code, label, team_id, team_name}], teams:
+  [{id, name, is_active, members: [{sales_agent_id, label, valid_from, valid_to}]}], categories:
+  [{id, label, parent_category_id}]}`, active rows only. **Measured, decided:** products are NOT
+  in it; the modal reuses `GET /api/v1/master-data/products/select?query=&limit=&offset=`
+  (`products_select.py:18-25`, any authenticated user, server paged over ~22,000 products).
+  Categories cannot reuse `/master-data/product-categories/select` (`categories.py:101-104`: gated
+  by `master_data.product_categories.view`, capped at 100). Agents are not taken from
+  `/sales/teams/agent-options`, which needs `sales.teams.view`.
+- `DELETE /sales/targets/{id}` hard deletes (the screens park the action instead).
+  `record_actions.py`: `sales_target.delete`, entity type `sales_target`, `WINDOW_DESTRUCTIVE`,
+  permission `sales.targets.delete`, label "Delete target", executing
+  `target_service.delete_target_by_id` (next to `sales_team.delete`, :147-161). The countdown
+  subject is built on the FE (`useDeferredAction` `verb`/`subject`, as `teams/actions.tsx:37-47`):
+  "Deleting North FY26 H2 and 2 agent targets" from `name` and `child_count`.
+- Teams list: `targets_now` (team targets with a period containing today) added to
+  `team_service.list_teams` (:335-371) and `SalesTeamListItem` (`schemas/sales.py:79`).
+- Module purge: `PURGE_ORDER` gains `SalesTargetScope, SalesTargetPeriod, SalesTarget` before the
+  team tables (`modules/sales/purge.py:24-27`); `modules/sales/purge_tables.json` the same three.
+
+**16.4 Frontend** under `app/(protected)/sales/targets/`, with `services/`, `hooks/`, `types/`,
+`lib/` inside the feature folder as S6 did (`sales/teams/services/salesTeamService.ts`), not in
+the root `services/`.
+- `page.tsx` + `components/SalesTargetsView.tsx`: `PageHeader` "Targets", Set target
+  (`sales.targets.add`) alone at top right; line tabs Teams (landing) and Agents; toolbar under
+  the tabs: Active on date, search, and on Agents a clearable `SearchableSelect` Team filter with
+  "No team". `on`, tab and team live in the URL. DataGrid fixed layout, resizable, sized columns,
+  `truncate` + `title`; `lib/fold.ts` folds rows to one line per subject (amount before quantity,
+  soonest end, lowest target_no); Targets cell `PillOverflow` of names with % in the popover;
+  Measures cell `PillOverflow` (metric, counts, scope: "All products" or "N categories"). Teams
+  tab ends with the No team line (count, opens Agents filtered to No team) and the Unassigned
+  line. Row opens `/sales/teams/{id}?on=` or the agent's first target; "No target" rows show Set
+  target presetting the subject. `data` memoized; `DataGridTable` bare inside `CardTable`.
+- `components/SetTargetModal.tsx`: sections Target, What counts, Dates, figure. `SearchableSelect`
+  for Target for, Who, Metric, Counts, Applies to, Split unit (only Split unit clearable, clearing
+  it turns the split off); `SearchableMultiSelect` for categories and products (products paged
+  from the products select); `DateRangePicker` (`components/ui/date-range-picker.tsx`); Split
+  switch; figure labelled "for the whole range" or "per period"; hint naming the period count and
+  the last period's dates from `lib/periods.ts` (mirror of `generate_periods`). Team mode: Agents
+  table prefilled with members overlapping the range, read-only Team target sum, no team figure.
+  Defaults Amount, Ordered, All products, today to end of this month, split off; Save disabled
+  until a subject is picked.
+- `[id]/page.tsx` + `[id]/components/SalesTargetDetail.tsx`: header `target_no` + name, meta
+  "For <subject link>" (team: `/sales/teams/{id}`; agent: `/master-data-management/sales-agents/{id}`
+  for holders of `master_data.sales_agents.view`, else plain), "Part of <parent link>", Created,
+  Updated; Edit in place, Duplicate, deferred Delete, `RecordNavigation`. Sections in order:
+  Target, What counts, Dates (read-only with "Set on <parent>" link on a child), Periods (inline
+  figure edit, `is_current` marked, "-" for periods starting after today; team periods
+  read-only), Agents (team only: children with figures, Add figure per `members_without_figure`),
+  Commission (empty state "No commission", Add tier disabled until S4).
+- Team page `sales/teams/[id]`: Team targets section first (`subject=team&sales_team_id=`,
+  empty state "No team target" with Set target), Set target in the header presetting the team;
+  Agents rows gain Targets pills and Target, Achieved, % from `subject=agent&sales_team_id=` with
+  the page's `on`. Sales Teams list gains a "Targets now" column ("None" muted at 0).
+- Menu: "Targets" first in the Sales group, `/sales/targets`, `sales.targets.view`, `moduleKey:
+  'sales'`, in both `MENU_SIDEBAR` (`menu.config.tsx:84-99`) and `MENU_SIDEBAR_COMPACT` (:1851-1866).
+
+**16.4a As built (S1 lane, fix round 1; captain's rulings on the coder's interpretations).**
+- Contract additions: each list row also carries `end_date` (the target's last day, which the
+  one-line fold orders by); detail `children[].periods[]` carry the period `id` (the Agents
+  section edits a child's figure in place), and `children[]` and `parent` carry `target_no`.
+- The Targets list: the No team and Unassigned lines render as a footer under the grid, inside
+  the same card, not as grid rows. A subject with one target shows its name as a plain link in
+  the Targets cell; the `PillOverflow` appears from two targets up.
+- The Set target modal takes Start date and End date through the shared `DateRangePicker`
+  (S1-25).
+- The target page: `[id]/components/SalesTargetPage.tsx` is a thin wrapper holding the
+  permissions (`readOnly`, the agent link for `master_data.sales_agents.view`), the header
+  actions and prev/next; `SalesTargetDetail` is the form itself. Duplicate is a visible header
+  button beside Edit; Delete stays in the row menu as the deferred action.
+- The team page: Set target is the primary header action, presetting the team and gated on
+  `sales.targets.add`; Edit is secondary.
+- Migration `sales_0003_targets`: the objects on core tables (`ix_sales_orders_order_date`,
+  `order_lines.sales_order_line_id`, its foreign key and index) are created with IF NOT EXISTS,
+  so a database where the DO lane or `create_all` already made them is left as it is.
+- Target routes: every write runs inside `db.begin_nested()` and a refusal (`AppException`) is
+  re-raised without rolling the whole session back, since its savepoint is already undone; any
+  other error still rolls back.
+
+**16.5 Tests (tester writes them red first).** `tests/test_migration_sales_0003_targets.py`:
+`test_upgrade_creates_tables_constraints_indexes`, `test_subject_and_parent_checks`,
+`test_split_pair_and_dates_checks`, `test_scope_row_exactly_one`,
+`test_do_seam_column_set_null_on_so_line_delete`, `test_order_date_index`,
+`test_targets_slugs_granted_admin_superadmin`, `test_downgrade_keeps_schema_and_permissions`.
+`tests/test_sales_targets_s1.py`: `test_generate_periods_golden` (16.2 table, S1-19),
+`test_period_cap_104`, `test_create_rejects_bad_dates_and_half_split` (S1-19),
+`test_create_agent_target` (S1-1), `test_target_no_per_company_and_concurrent_unique` (S1-1),
+`test_legacy_payload_fields_422` (S1-1), `test_scope_validation` (S1-3),
+`test_patch_period_one_only` (S1-4), `test_header_change_keep_rule` (S1-5),
+`test_list_on_date_rows_and_no_target` (S1-6, S1-20), `test_period_end_inclusive` (S1-20),
+`test_ended_target_not_listed` (S1-20), `test_amount_golden` (S1-7), `test_quantity_golden_capped`
+(S1-8), `test_scope_subcategories_products_all` (S1-9), `test_project_orders_count` (S1-10),
+`test_value_expr_pinned_to_sales_report` (3.2), `test_duplicate_month_aligned`,
+`test_duplicate_day_count`, `test_duplicate_figures_scope_new_no`, `test_duplicate_team_and_child`
+(S1-12), `test_routes_403_per_slug`, `test_company_scope`, `test_delete_hard` (S1-13),
+`test_unassigned_calendar_month` (S1-14), `test_do_golden_a_to_d`, `test_do_salesman_text_ignored`,
+`test_do_rule_team_and_quantity` (S1-26), `test_team_create_children_and_sum`,
+`test_team_create_member_any_day_in_range`, `test_team_create_rejects_non_member` (S1-27),
+`test_team_period_patch_is_sum`, `test_child_edit_add_delete_resum`,
+`test_team_edit_rewrites_children`, `test_child_follows_parent_422`,
+`test_team_delete_cascades_via_record_action`, `test_child_keeps_figures_after_move` (S1-28),
+`test_person_label_agent`, `test_person_label_team_window` (S1-29),
+`test_team_create_rejects_target_value_inactive_bad_subject` (S6-4),
+`test_team_golden_and_equality` (S6-5), `test_move_on_15_oct_golden` (S6-6, S6-14: A's 10 Oct
+order counts for N not S, 15 Oct and later for S not N), `test_list_team_rows_active_only` (S6-7,
+S6-3), `test_list_agents_by_team_and_no_team` (S6-7, S6-10), `test_leaving_agent_row`
+(16.3), `test_shared_label_counts_once_for_team`, `test_teams_list_targets_now`,
+`test_options_gated_view`, `test_detail_shape_and_counts_label`. Plus
+`tests/test_sales_module_purge_invariants.py` follows the models. Vitest, next to each file:
+`lib/periods.test.ts` (the same golden table), `lib/fold.test.ts` (first-target rule, S1-21),
+`services/salesTargetService.test.ts` (params incl. `sales_team_id=none`, payloads),
+`hooks/useSalesTargets.test.tsx` (invalidation, toasts), `SalesTargetsView.test.tsx` (Teams
+landing and tab order, S1-22; Set target by permission and preset, S1-18; one line and pills,
+S1-21; No team and Unassigned lines, S1-14; Team filter with No team, S6-10; loading, empty,
+error, S1-15), `SetTargetModal.test.tsx` (S1-24, S1-25, S1-27 table and sum, defaults, Save
+disabled, payloads), `SalesTargetDetail.test.tsx` (S1-23 order and header, inline edit, team
+read-only periods, Add figure, Commission empty state, delete subject with child count),
+`SalesTeamDetail.test.tsx` and `SalesTeamsView.test.tsx` extended (Team targets section, agent
+figures with Left pill, Targets now), `config/menu.config.sales.test.ts` (Targets first, both
+sidebars). The grid census tests (`components/ui/data-grid*.inventory.test.ts`,
+`PageHeader.inventory.test.ts`) stay green untouched: no `ScrollArea` round a grid, no literal
+`data`, `PageHeader` not an `h1`; add the new lists to `ROW_HREF` in
+`data-grid.row-open.inventory.test.ts` since they pass `rowHref`.
+
+**16.6 Shared with S2 (wave 2, beside S1).** Both lanes: leave `app/modules/sales/bootstrap.py`
+untouched; add their `_crud` line next to `permission_registry.py:821`; add an `include_router`
+line to `app/api/v1/sales/__init__.py`; append models to `app/models/sales.py`; append to
+`purge.py` `PURGE_ORDER` and `purge_tables.json`; each migration chains on
+`sales_0002_team_leader`, and whichever merges second re-parents with
+`./scripts/alembic-reparent.sh`. **Left for later lanes:** S7 widens `ck_sales_targets_subject_kind`
+and `ck_sales_targets_subject` to `dealer` with `customer_id`; S4 adds `commission_method` and
+the tiers table (the Commission section and Add tier are waiting); S3 adds the Pipeline cells
+and `pipeline_value`, `pipeline_count` on each row.
 

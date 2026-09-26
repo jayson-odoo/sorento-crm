@@ -27,6 +27,9 @@ const ROW_HREF = [
   // page could only be typed. The record now reads and edits in one layout, and
   // the row opens it; Add is still a lightbox.
   'app/(protected)/master-data-management/brands/components/BrandsList.tsx',
+  // Targets folds every subject's rows into one line and opens the subject's own page
+  // (S1-21, S1-22): the team page, or the agent's first target.
+  'app/(protected)/sales/targets/components/SalesTargetsView.tsx',
 ];
 
 /**

@@ -16,6 +16,8 @@ export interface SalesTeamListItem {
   leader_sales_agent_id: string | null;
   member_count: number;
   members: SalesTeamAgentRef[];
+  /** Team targets with a period containing today (S1). */
+  targets_now: number;
   created_at: string | null;
   updated_at: string | null;
 }

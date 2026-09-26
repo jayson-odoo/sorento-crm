@@ -28,7 +28,7 @@ import SalesTeamModal from './SalesTeamModal';
  * search, and the list is a DataGrid with one line per team (N4): name, agents as pills with
  * "+N", the Active badge. The leader's pill comes first and reads "(Leader)" (W1): a word,
  * not an icon, so it needs no legend. The whole row opens the team page. No tree and no drag nesting:
- * sales teams have no parent. "Targets now" arrives with S1.
+ * sales teams have no parent. "Targets now" counts the team targets active today (S1).
  *
  * Unpaged on purpose: a company has a handful of teams, and the team page steps through
  * this same in-memory list for prev/next.
@@ -114,6 +114,18 @@ export default function SalesTeamsView() {
         ),
         size: 120,
         meta: { headerTitle: 'Active', skeleton: <Skeleton className="h-5 w-16" /> },
+      },
+      {
+        accessorKey: 'targets_now',
+        header: ({ column }) => <DataGridColumnHeader title="Targets now" column={column} />,
+        cell: ({ row }) =>
+          row.original.targets_now ? (
+            <span className="tabular-nums">{row.original.targets_now}</span>
+          ) : (
+            <span className="text-muted-foreground">None</span>
+          ),
+        size: 120,
+        meta: { headerTitle: 'Targets now', skeleton: <Skeleton className="h-4 w-10" /> },
       },
       {
         id: 'actions',

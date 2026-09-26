@@ -29,11 +29,17 @@ describe.each([
   ['MENU_SIDEBAR', MENU_SIDEBAR],
   ['MENU_SIDEBAR_COMPACT', MENU_SIDEBAR_COMPACT],
 ] as const)('%s - Sales group', (_name, menu) => {
-  it('holds Sales Teams then Sales Agents, each gated by its own module', () => {
+  it('holds Targets first, then Sales Teams, then Sales Agents, each gated by its own module (S1)', () => {
     const group = salesGroup(menu);
     expect(group).toBeDefined();
     expect(group!.moduleKey).toBeUndefined();
     expect(group!.children).toEqual([
+      {
+        title: 'Targets',
+        path: '/sales/targets',
+        permission: 'sales.targets.view',
+        moduleKey: 'sales',
+      },
       {
         title: 'Sales Teams',
         path: '/sales/teams',
@@ -70,8 +76,8 @@ describe('filterMenuByModule - Sales group', () => {
     expect(kept.children!.map((c) => c.title)).toEqual(['Sales Agents']);
   });
 
-  it('shows Sales Teams once the sales module is installed', () => {
+  it('shows Targets and Sales Teams once the sales module is installed (S1)', () => {
     const [kept] = filterMenuByModule([group], new Set(['base', 'product', 'sales']));
-    expect(kept.children!.map((c) => c.title)).toEqual(['Sales Teams', 'Sales Agents']);
+    expect(kept.children!.map((c) => c.title)).toEqual(['Targets', 'Sales Teams', 'Sales Agents']);
   });
 });

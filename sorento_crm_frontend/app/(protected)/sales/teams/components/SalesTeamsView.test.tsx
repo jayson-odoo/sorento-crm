@@ -65,6 +65,8 @@ function team(over: Partial<SalesTeamListItem> = {}): SalesTeamListItem {
       { sales_agent_id: 'ali', label: 'ALI - Ali Hassan' },
       { sales_agent_id: 'mei', label: 'MEI - Tan Mei Ling' },
     ],
+    // Arrives with S1: team targets with a period containing today.
+    targets_now: 0,
     created_at: '2026-09-26T01:00:00',
     updated_at: '2026-09-26T01:00:00',
     ...over,
@@ -147,5 +149,17 @@ describe('SalesTeamsView', () => {
     withTeams([team()]);
     render(<SalesTeamsView />);
     expect(hooks.useSalesTeams).toHaveBeenCalledWith('');
+  });
+
+  it('shows a Targets now column, "None" muted at 0 (S1)', () => {
+    withTeams([
+      team({ id: 'north', targets_now: 2 }),
+      team({ id: 'central', name: 'Central', targets_now: 0 }),
+    ]);
+    render(<SalesTeamsView />);
+    const north = screen.getByText('North').closest('tr')!;
+    expect(within(north).getByText('2')).toBeTruthy();
+    const central = screen.getByText('Central').closest('tr')!;
+    expect(within(central).getByText('None')).toBeTruthy();
   });
 });

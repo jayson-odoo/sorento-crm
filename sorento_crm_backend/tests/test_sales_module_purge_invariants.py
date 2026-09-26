@@ -115,6 +115,9 @@ def test_purge_empties_the_module_and_leaves_sales_agents():
             assert counts == {
                 "sales.team_members": 1,
                 "sales.teams": 1,
+                "sales.target_periods": 0,
+                "sales.target_scope": 0,
+                "sales.targets": 0,
             }
             assert set(counts) == {m.__table__.fullname for m in PURGE_ORDER}
             assert db.query(SalesAgent).filter(SalesAgent.id == agent.id).count() == 1
