@@ -37,8 +37,8 @@ const BrandFormSchema = z.object({
   // False means every product on this brand is bought locally by CS and never
   // raises an Order Inquiry (PLAN-brand-flows-to-purchasing.md).
   flows_to_purchasing: z.boolean(),
-  // The brand the chatbot answers first when a customer names no brand.
-  is_chatbot_default: z.boolean(),
+  // The chatbot's brand preference: higher weights are answered first (0 = none).
+  chatbot_weight: z.coerce.number().min(0, 'Enter 0 or more'),
 });
 
 interface BrandFormDialogProps {
@@ -70,7 +70,7 @@ export default function BrandFormDialog({
       is_active: true,
       access_levels: [],
       flows_to_purchasing: true,
-      is_chatbot_default: false,
+      chatbot_weight: 0,
     },
   });
 
@@ -84,7 +84,7 @@ export default function BrandFormDialog({
           is_active: brand.is_active,
           access_levels: brand.access_levels ?? [],
           flows_to_purchasing: brand.flows_to_purchasing,
-          is_chatbot_default: brand.is_chatbot_default ?? false,
+          chatbot_weight: brand.chatbot_weight ?? 0,
         });
       } else if (copyFromBrand) {
         form.reset({
@@ -94,8 +94,8 @@ export default function BrandFormDialog({
           is_active: copyFromBrand.is_active,
           access_levels: copyFromBrand.access_levels ?? [],
           flows_to_purchasing: copyFromBrand.flows_to_purchasing,
-          // A copy never takes the default from the brand it was copied from.
-          is_chatbot_default: false,
+          // A copy never takes the preference of the brand it was copied from.
+          chatbot_weight: 0,
         });
       } else {
         form.reset({
@@ -105,7 +105,7 @@ export default function BrandFormDialog({
           is_active: true,
           access_levels: [],
           flows_to_purchasing: true,
-          is_chatbot_default: false,
+          chatbot_weight: 0,
         });
       }
     }
@@ -120,7 +120,7 @@ export default function BrandFormDialog({
         is_active: data.is_active,
         access_levels: data.access_levels ?? [],
         flows_to_purchasing: data.flows_to_purchasing,
-        is_chatbot_default: data.is_chatbot_default,
+        chatbot_weight: data.chatbot_weight,
       };
 
       if (brandId) {
@@ -267,18 +267,20 @@ export default function BrandFormDialog({
 
             <FormField
               control={form.control}
-              name="is_chatbot_default"
+              name="chatbot_weight"
               render={({ field }) => (
-                <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
-                  <div className="space-y-0.5">
-                    <FormLabel className="text-base">Chatbot default brand</FormLabel>
-                  </div>
+                <FormItem>
+                  <FormLabel>Chatbot brand weight</FormLabel>
                   <FormControl>
-                    <Switch
-                      checked={field.value}
-                      onCheckedChange={field.onChange}
+                    <Input
+                      type="number"
+                      step={0.1}
+                      inputMode="decimal"
+                      className="w-32"
+                      {...field}
                     />
                   </FormControl>
+                  <FormMessage />
                 </FormItem>
               )}
             />

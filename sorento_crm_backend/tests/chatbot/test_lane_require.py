@@ -24,6 +24,7 @@ from typing import Any
 
 import pytest
 
+from tests.chatbot.set_reply import legacy_lines, one_line_header, row_blocks, row_codes  # noqa: F401
 from tests._pg_fixture import blank_session
 
 # S4 fixtures: reused, not rebuilt (same convention `test_complete_turn.py` and
@@ -1270,7 +1271,8 @@ def _block_for(text: str, code: str) -> str:
     blank line), position number stripped - two replies numbering the SAME product
     differently (1 vs 2 items on the page) must not fail this on the number alone."""
     for chunk in text.split("\n\n"):
-        if f"*Product Code:* {code}" in chunk:
+        # Round 4 R3: a set row names its code on line 1, "N. <name> (<code>)".
+        if f"*Product Code:* {code}" in chunk or chunk.strip().split("\n")[0].endswith(f"({code})"):
             lines = chunk.strip().split("\n")
             lines[0] = _ITEM_NUM_RE.sub("", lines[0])
             return "\n".join(lines)
@@ -1368,9 +1370,9 @@ def test_set_answer_carries_the_header_and_lists_every_product():
         assert out.get("_exit_kind") == "continue", out.get("gate_reason")
         reply = (fragment.get("fetch") or {}).get("response") or ""
 
-    lines = reply.splitlines()
+    lines = legacy_lines(reply)
     assert lines and lines[0] == "Product type: Tap. 7 taps have certificates.", reply
-    assert reply.count("*Product Code:*") == 7, reply
+    assert len(row_codes(reply)) == 7, reply
 
 
 def test_set_answer_is_scoped_to_the_class_word():
@@ -1409,7 +1411,7 @@ def test_set_answer_is_scoped_to_the_class_word():
         reply = (fragment.get("fetch") or {}).get("response") or ""
         basin_code = basin.product_code
 
-    lines = reply.splitlines()
+    lines = legacy_lines(reply)
     assert lines and lines[0] == "Product type: Tap. 2 taps have certificates.", reply
     assert basin_code not in reply, reply
 
@@ -1437,7 +1439,7 @@ def test_set_answer_header_omits_showing_when_all_fit():
         assert out.get("_exit_kind") == "continue", out.get("gate_reason")
         reply = (fragment.get("fetch") or {}).get("response") or ""
 
-    lines = reply.splitlines()
+    lines = legacy_lines(reply)
     assert lines and lines[0] == "Product type: Tap. 3 taps have certificates.", reply
     assert "Showing" not in reply, reply
 
@@ -1468,10 +1470,10 @@ def test_expired_only_certificate_still_counts_and_is_flagged():
         assert out.get("_exit_kind") == "continue", out.get("gate_reason")
         reply = (fragment.get("fetch") or {}).get("response") or ""
 
-    lines = reply.splitlines()
+    lines = legacy_lines(reply)
     assert lines and lines[0] == "Product type: Tap. 1 tap has certificates.", reply
-    assert "*Validity:* Expired" in reply, reply
-    assert "(EXPIRED)" in reply, reply
+    # Round 4 R3: the compact row flags it inline.
+    assert "*(Expired)*" in reply, reply
 
 
 def test_unknown_term_clarifies_with_nearest_names():
@@ -1631,14 +1633,13 @@ def test_stock_set_answer_matches_forward_block_for_a_dealer():
     block_forward = _block_for(reply_forward, p1.product_code)
     block_has = _block_for(reply_has, p1.product_code)
 
-    # The SAME tool fields reach the dealer either way. The set row is a block led by the
-    # product's name and key specs (owner hand test rounds 2 and 3), so the fields are
-    # compared, not the layout, and the set row's only extra lines are its spec lines.
+    # Field reveal is the same either way. Round 4 R3 on PR #833: the set row is two lines
+    # at most (name with code, then the facts the ask was about), so it says a SUBSET of
+    # the forward block's fields and never a field the forward block does not reveal.
     def _fields(block: str) -> set[str]:
-        return {m.strip() for m in re.findall(r"\*[^*]+:\* [^|\n]+", block)}
+        return {m.strip().rstrip(",") for m in re.findall(r"\*[^*]+:\* [^,|\n]+", block)}
 
-    assert _fields(block_forward) <= _fields(block_has), (reply_forward, reply_has)
-    assert {f.split(":*")[0] for f in _fields(block_has) - _fields(block_forward)} <= {"*Finish or colour"}, reply_has
+    assert _fields(block_has) and _fields(block_has) <= _fields(block_forward), (reply_forward, reply_has)
     assert "Sellable" not in reply_forward, reply_forward
     assert "Sellable" not in reply_has, reply_has
     lines_has = reply_has.splitlines()
@@ -1738,7 +1739,7 @@ def test_set_answer_replaces_the_found_line_and_no_picker_forms():
         assert out.get("_exit_kind") == "continue", out.get("gate_reason")
         reply = (fragment.get("fetch") or {}).get("response") or ""
 
-    lines = reply.splitlines()
+    lines = legacy_lines(reply)
     assert lines and lines[0] == "Product type: Tap. 3 taps have certificates.", reply
     assert "Found:" not in reply, reply
     assert "Please choose" not in reply, reply
@@ -1819,7 +1820,7 @@ def test_brand_and_category_words_give_a_set_answer_not_a_picker():
         cert_product_code = cert_product.product_code
         srt_bidet_code = srt_bidet.product_code
 
-    lines = reply.splitlines()
+    lines = legacy_lines(reply)
     # W2 (owner hand test round 2): the line leads with what was identified.
     assert lines and lines[0].endswith(". 1 bidet has certificates."), reply
     assert lines[0].startswith("Brand: Sorento"), reply
@@ -2110,7 +2111,7 @@ def test_unresolved_word_token_is_the_description_not_a_miss():
         out, fragment = _run_has_lane(db, ctx, fake_call_tool=_cert_fake_call_tool(db))
         reply = (fragment.get("fetch") or {}).get("response") or ""
 
-    lines = reply.splitlines()
+    lines = legacy_lines(reply)
     assert lines and ". 1 " in lines[0], reply
     assert "has certificates." in lines[0], reply
     assert "ZZTWT5875" in reply, reply
@@ -2279,7 +2280,7 @@ def test_shown_counts_products_not_rows():
         assert out.get("_exit_kind") == "continue", out.get("gate_reason")
         reply = (fragment.get("fetch") or {}).get("response") or ""
 
-    lines = reply.splitlines()
+    lines = legacy_lines(reply)
     assert lines and lines[0] == "Product type: Wash basin. 5 wash basins have stock.", reply
     assert "Showing" not in reply, reply
 
@@ -2314,7 +2315,7 @@ def test_shown_counts_products_not_rows():
         assert out.get("_exit_kind") == "continue", out.get("gate_reason")
         reply = (fragment.get("fetch") or {}).get("response") or ""
 
-    lines = reply.splitlines()
+    lines = legacy_lines(reply)
     assert lines and lines[0] == "Product type: Wash basin. 7 wash basins have stock. Here are the first 4.", reply
     shown_codes = _s4_codes_in(reply)
     assert len(shown_codes) == 4, reply
@@ -2449,7 +2450,8 @@ def _s4_contact_id(tag: str) -> str:
 
 
 def _s4_codes_in(reply: str) -> set[str]:
-    return set(re.findall(r"\*Product Code:\* (\S+)", reply))
+    # A forward block names "*Product Code:* <code>"; a round 4 set row "N. <name> (<code>)".
+    return set(re.findall(r"\*Product Code:\* (\S+)", reply)) | set(row_codes(reply))
 
 
 def _s4_cert_parser_output(**overrides: Any):
@@ -3007,7 +3009,7 @@ def test_category_entity_yields_a_set_answer_not_a_clarify():
         assert out.get("_exit_kind") == "continue", out.get("gate_reason")
         reply = (fragment.get("fetch") or {}).get("response") or ""
 
-    lines = reply.splitlines()
+    lines = legacy_lines(reply)
     assert lines and lines[0] == "Product type: Tap. 3 taps have certificates.", reply
     assert "i don't know" not in reply.lower(), reply
 

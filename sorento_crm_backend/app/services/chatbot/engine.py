@@ -1560,6 +1560,10 @@ def _run_stages(  # noqa: PLR0915
     # Reviewer S1 on PR #833: the answer to "how many should I show?" must not rest on
     # the parser filling `top_n` for a bare "10" - its prompt has no example of one, and
     # its positional rule pulls a bare number toward `reference_positions`.
+    # Round 4 R5 on PR #833: the answer to an open clarify re-runs the ask it was about.
+    verdict = turn_runtime.with_clarify_answer(
+        verdict, latest_user_message, carried=state_in.focus.set_clarify
+    )
     verdict = turn_runtime.with_set_count_from_text(
         verdict, latest_user_message, carried=state_in.focus.set_page
     )
@@ -1877,6 +1881,13 @@ def _run_stages(  # noqa: PLR0915
                     resolved_candidates,
                     frozenset(unplaced_tokens),
                 )
+            # Round 4 R5: a clarify this turn is about to ask keeps the ask, so its answer
+            # re-runs it (`turn_runtime.with_clarify_answer`).
+            clarify = turn_runtime.set_clarify_carry(
+                verdict, predicate, (resolver_payload or {}).get("resolved")
+            )
+            if clarify is not None:
+                state_out.focus.set_clarify = clarify
 
         # D ROUTE. Two facts outrank the plan and neither is IN one: a refused access
         # agent (contract 58, fail closed) and the stock-denial switch, which is decided

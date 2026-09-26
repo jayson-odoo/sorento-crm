@@ -1645,6 +1645,9 @@ def apply(
     named_count = _named_count(verdict)
     carried_set = dict(focus.set_page) if isinstance(focus.set_page, dict) else None
     new_state.focus.set_page = None
+    # Round 4 R5: a clarify is answered on the very next turn or not at all; the engine
+    # re-arms it only when this turn asks another one.
+    new_state.focus.set_clarify = None
     # W4 (owner hand test round 2): a set already LISTED in part (`shown` > 0) is carried
     # too, and continues only on the customer's own "another N"
     # (`turn_runtime.with_set_count_from_text` flags it); the bot never offers it.

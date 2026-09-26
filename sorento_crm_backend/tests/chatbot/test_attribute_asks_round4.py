@@ -38,20 +38,12 @@ from tests.chatbot.test_attribute_asks_round3 import (  # noqa: F401 - fixtures 
     _product,
     world as r3world,
 )
+from tests.chatbot.set_reply import snake_tokens
 from tests.chatbot.test_engine import stub_access, stub_parser  # noqa: F401 - fixtures used by name
 from tests.chatbot.test_lane_require import _stock_for
 from tests.chatbot.test_reverse_asks_owner_phrasings import _class_category, _incoming_for
 
 _FIXTURE = Path(__file__).resolve().parent / "fixtures" / "owner_console_2026_09_27.json"
-
-#: A snake_case token: lowercase words joined by "_", not part of a file name, a path, an
-#: address or a code (those are bounded by ".", "/", "@" or "-").
-SNAKE_RE = re.compile(r"(?<![\w./@-])[a-z][a-z0-9]*(?:_[a-z0-9]+)+(?![\w./@-])")
-
-
-def snake_tokens(text: str) -> list[str]:
-    return SNAKE_RE.findall(text or "")
-
 
 # --------------------------------------------------------------------------- #
 # World                                                                         #
@@ -60,21 +52,11 @@ def snake_tokens(text: str) -> list[str]:
 
 def _weigh(db, brand, weight: float) -> None:
     """R1: a brand's chatbot weight, as Master Data > Brands stores it."""
-    if not _has_weights():
-        return
     db.execute(sql("UPDATE brands SET chatbot_weight = :w WHERE id = :id"), {"w": weight, "id": brand.id})
     db.flush()
 
 
-def _has_weights() -> bool:
-    from app.models.product import Brand
-
-    return hasattr(Brand, "chatbot_weight")
-
-
 def _zero_every_weight(db) -> None:
-    if not _has_weights():
-        return
     db.execute(sql("UPDATE brands SET chatbot_weight = 0"))
     db.flush()
 
@@ -124,16 +106,29 @@ def world(r3world):
 
 
 class _ScannedChat(_Chat):
-    """Round 3's chat, with every reply scanned for snake_case (R7)."""
+    """Round 3's chat (which scans every reply for snake_case, R7) with a round 4 name."""
 
-    def say(self, text: str, verdict: dict[str, Any]) -> str:
-        reply = super().say(text, verdict)
-        assert not snake_tokens(reply), (text, snake_tokens(reply), reply)
-        return reply
+
+def _prod_like_resolve_entity(db):
+    """The real resolver endpoint with the lane's own body, spec fallback ON as in
+    production (round 3's harness turns it off). Only the MODEL phrase reader stays off:
+    this VM has no parser key, and a turn must not depend on one."""
+    from app.api.v1.system.references import ResolveReferenceRequest, resolve_reference_post
+    from app.config import settings
+
+    def resolve_entity(body: dict[str, Any]) -> dict[str, Any]:
+        payload = {**body, "understand_phrase": False}
+        principal = {"id": getattr(settings, "external_api_key_act_as_user_id", None)}
+        return resolve_reference_post(ResolveReferenceRequest(**payload), current_user=principal, db=db)
+
+    return resolve_entity
 
 
 @pytest.fixture()
 def chat(session_factory, monkeypatch, stub_parser, stub_access, world):
+    import tests.chatbot.test_attribute_asks_round3 as round3
+
+    monkeypatch.setattr(round3, "_s4_real_resolve_entity", _prod_like_resolve_entity)
     return _ScannedChat(session_factory, monkeypatch, stub_parser, stub_access, world)
 
 
@@ -305,7 +300,7 @@ def test_r3_an_incoming_row_is_two_lines_too(chat, world):
 
 
 def test_r3_a_set_reply_of_fifty_rows_fits_one_whatsapp_message(chat, world, monkeypatch):
-    """50 two-line rows stay under WhatsApp's 4,096 characters with names this long."""
+    """50 two-line rows fit one WhatsApp message (4,096 characters) with names this long."""
     from app.services.chatbot.lanes.business import fetch as fetch_mod
 
     items = [
@@ -323,7 +318,8 @@ def test_r3_a_set_reply_of_fifty_rows_fits_one_whatsapp_message(chat, world, mon
     ]
     labels = {f"SRTWC{i:04d}-SH-NEW-P": {"name": "Sorento Close Couple WC Soft Close"} for i in range(50)}
     text = fetch_mod.set_rows_text(items, labels, require={"stock": True}, offset=0)
-    assert len(text) < 3500, len(text)
+    # Room left under 4,096 for the header lines and the other-brands line.
+    assert len(text) < 3800, len(text)
 
 
 # --------------------------------------------------------------------------- #
@@ -407,7 +403,15 @@ def test_r6_unknown_values_are_found_by_the_registry_not_by_a_list():
         seed_spec_registry(db)
         found = unknown_spec_values(db, "any water clost t trap?")
         assert [(u["said"], u["label"], u["known"]) for u in found] == [("t trap", "Trap", ["P trap", "S trap"])]
-        for fine in ("water closet p trap", "water closet s-trap 250mm", "water closet trap 250mm", "wash basin", "floor waste wc"):
+        for fine in (
+            "water closet p trap",
+            "water closet s-trap 250mm",
+            "water closet trap 250mm",
+            "wash basin",
+            "floor waste wc",
+            "check stock wall hung basin",
+            "which sorento wall hung basin has stock",
+        ):
             assert unknown_spec_values(db, fine) == [], fine
 
 
@@ -415,7 +419,7 @@ def test_r6_a_product_ask_with_an_unknown_value_is_said_back(chat, world):
     """Owner exchange 8: "any water clost t trap?" listed s trap water closets."""
     text = chat.say("any water clost t trap?", _product_ask("water clost t trap", "any water closet t trap"))
     assert text == "I don't know 't trap' as a trap. I know P trap and S trap.", text
-    assert not [c for c in chat.calls if c["name"] == "crm_master_products_list"], chat.calls
+    assert not _rows(text) and not (_codes(world["srt_strap"]) & set(text.split())), text
 
 
 def test_r6_a_set_ask_with_an_unknown_value_is_said_back_and_the_answer_reruns_it(chat, world):

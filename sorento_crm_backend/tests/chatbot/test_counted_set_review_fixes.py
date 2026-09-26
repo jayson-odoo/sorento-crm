@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 
+from tests.chatbot.set_reply import legacy_lines, one_line_header, row_blocks, row_codes  # noqa: F401
 from tests.chatbot.test_counted_set_no_paging import (  # noqa: F401 - fixture used by name
     _bare_verdict,
     _link_to_default_company,
@@ -76,7 +77,7 @@ def test_which_tap_has_valid_cert_answers_the_whole_certified_set(
 
     text = _turn(engine_mod, session_factory, contact_id=contact_id, n=1, text=f"which tap has {phrase}")
 
-    assert text.startswith("Product type: Tap. 7 taps have certificates."), text
+    assert one_line_header(text).startswith("Product type: Tap. 7 taps have certificates."), text
     assert _s4_codes_in(text) == set(codes), text
 
 
@@ -239,7 +240,7 @@ def test_a_listed_set_asks_the_tool_for_enough_rows(session_factory, stub_parser
 
     text = _turn(engine_mod, session_factory, contact_id=contact_id, n=1, text="which tap has cert")
 
-    assert text.startswith("Product type: Tap. 7 taps have certificates.\n"), text
+    assert one_line_header(text) == "Product type: Tap. 7 taps have certificates.", text
     assert _s4_codes_in(text) == set(codes), text
     assert isinstance(calls[0]["args"].get("limit"), int) and calls[0]["args"]["limit"] >= 14, calls
 
@@ -259,7 +260,7 @@ def test_a_row_cap_that_still_cuts_the_set_says_how_many_are_listed(
 
     text = _turn(engine_mod, session_factory, contact_id=contact_id, n=1, text="which tap has cert")
 
-    assert text.startswith("Product type: Tap. 7 taps have certificates. Here are the first 2."), text
+    assert one_line_header(text).startswith("Product type: Tap. 7 taps have certificates. Here are the first 2."), text
     assert len(_s4_codes_in(text)) == 2, text
 
 
@@ -321,13 +322,13 @@ def test_the_recount_after_how_many_keeps_the_dealers_stock_visibility(
     stub_parser(_tap_stock_verdict())
     stub_access()
     first = _turn(engine_mod, session_factory, contact_id=contact_id, n=1, text="which tap got stock")
-    assert first.startswith("Product type: Tap. 2 taps have stock."), first
+    assert one_line_header(first).startswith("Product type: Tap. 2 taps have stock."), first
     before = len(calls)
 
     stub_parser(_bare_verdict(top_n=1, continuation=True, user_goal="show 1"))
     text = _turn(engine_mod, session_factory, contact_id=contact_id, n=2, text="1")
 
-    assert text.startswith("Product type: Tap. 2 taps have stock. Here are the first 1."), text
+    assert one_line_header(text).startswith("Product type: Tap. 2 taps have stock. Here are the first 1."), text
     asked = {pid for c in calls[before:] for pid in (c["args"].get("product_ids") or [])}
     assert taps[1].id not in asked, asked
     assert asked <= {taps[0].id, taps[2].id} and len(asked) == 1, asked
@@ -342,13 +343,12 @@ def test_an_availability_row_is_numbered_with_its_product_code(
 
     text = _turn(engine_mod, session_factory, contact_id=contact_id, n=1, text="which tap got stock")
 
-    lines = text.splitlines()
     listed = sorted([taps[0].product_code, taps[2].product_code])
-    # Owner hand test round 3 (W1): the row is a block, the product's name on its numbered
-    # line and its code on the next, never a bare "1. ".
-    for n, code in enumerate(listed, start=1):
-        i = lines.index(f"*Product Code:* {code}")
-        assert lines[i - 1].startswith(f"{n}. ") and lines[i - 1] != f"{n}. ", text
+    # Round 4 R3: the row is "N. <name> (<code>)", never a bare "1. ".
+    rows = [b[0] for b in row_blocks(text)]
+    assert row_codes(text) == listed, text
+    for n, row in enumerate(rows, start=1):
+        assert row.startswith(f"{n}. ") and row != f"{n}. ", text
 
 
 # --------------------------------------------------------------------------- #
@@ -380,7 +380,7 @@ def test_a_bare_count_answers_the_question_whatever_the_parser_made_of_it(
     stub_parser(_bare_verdict(message_type="casual", user_goal="3", **parser_reads))
     text = _turn(engine_mod, session_factory, contact_id=contact_id, n=2, text="3")
 
-    assert text.startswith("Product type: Tap. 7 taps have certificates. Here are the first 3."), text
+    assert one_line_header(text).startswith("Product type: Tap. 7 taps have certificates. Here are the first 3."), text
     assert len(_s4_codes_in(text)) == 3, text
     assert len(calls) == before + 1 and len(calls[-1]["args"]["product_ids"]) == 3, calls
 
@@ -438,4 +438,4 @@ def test_a_count_that_names_nothing_still_arms_the_question(
     stub_parser(_bare_verdict(top_n=3, continuation=True, user_goal="show 3"))
     text = _turn(engine_mod, session_factory, contact_id=contact_id, n=2, text="3")
 
-    assert text.startswith("Product type: Tap. 7 taps have certificates. Here are the first 3."), text
+    assert one_line_header(text).startswith("Product type: Tap. 7 taps have certificates. Here are the first 3."), text

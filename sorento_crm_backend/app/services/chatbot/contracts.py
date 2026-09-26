@@ -560,6 +560,8 @@ class Focus(BaseModel):
     date_window: dict[str, Any] | None = None
     # AC-1317: where a counted-set answer got to, `{set_key, offset}`.
     set_page: dict[str, Any] | None = None
+    # Round 4 R5: the ask an open clarify question was about, `{term, options, ask}`.
+    set_clarify: dict[str, Any] | None = None
     # Any entity kind without a named axis above, keyed by kind. A kind this turn's
     # policy narrows on but the Focus never declared still has somewhere safe to sit
     # rather than being dropped on the way to the session.

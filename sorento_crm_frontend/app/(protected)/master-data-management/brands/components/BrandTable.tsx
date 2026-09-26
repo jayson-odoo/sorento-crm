@@ -102,6 +102,16 @@ export function buildBrandColumns(handlers: {
       ),
     },
     {
+      // Owner ruling R1 on PR #833: the chatbot answers the highest weighted brand first.
+      id: 'chatbot_weight',
+      accessorFn: (row) => row.chatbot_weight ?? 0,
+      header: ({ column }) => <DataGridColumnHeader title="Chatbot weight" column={column} />,
+      size: 130,
+      enableSorting: false,
+      meta: { headerTitle: 'Chatbot weight' },
+      cell: ({ row }) => <span className="tabular-nums">{row.original.chatbot_weight ?? 0}</span>,
+    },
+    {
       id: 'product_count',
       accessorFn: (row) => row.product_count ?? 0,
       header: ({ column }) => <DataGridColumnHeader title="Products" column={column} />,

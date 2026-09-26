@@ -2418,6 +2418,12 @@ def _token_requests(norm_code: str, tokens: set[str], all_norm_codes: set[str]) 
     )
 
 
+def _plain_words(value: Any) -> str:
+    """A domain key said in a sentence ("purchase_order" -> "purchase order"); anything
+    else is left as written. Round 4 R7 on PR #833: no snake_case reaches a reply."""
+    return jsc.js_string(value).replace("_", " ")
+
+
 def _prettify_type(value: Any) -> str:
     """A snake_case / kebab-ish resolver entity type, rendered for a customer.
 
@@ -2588,16 +2594,25 @@ SET_LIST_MAX = 50
 
 
 def describe_set_line(description: Any) -> str:
-    """"Brand: Sorento, Product type: Wash basin, Mounting: Wall hung" - the resolver's
-    own labelled bindings (`product_predicate_service.describe_set`), or "" when the set
-    was described by nothing it could name (owner brief W2 on PR #833)."""
-    parts = []
+    """The resolver's own labelled bindings (`product_predicate_service.describe_set`),
+    one filter per line with its label bold, or "" when the set was described by nothing
+    it could name:
+
+        *Brand:* Sorento
+        *Product type:* Wash basin
+        *Mounting:* Wall hung
+
+    Owner brief W2 on PR #833 named the bindings; round 4 R2 (owner console test, 27 Sep
+    2026: "Brand, product type needs to be line by line, label needs to be bold") put
+    each on its own line. Bold is the WhatsApp markup the rows already use ("*Label:*"),
+    the same contract #1279's console renderer reads."""
+    lines = []
     for entry in jsc.array(description):
         label = jsc.js_string(jsc.get(entry, "label") or "").strip()
         value = jsc.js_string(jsc.get(entry, "value") or "").strip()
         if label and value:
-            parts.append(f"{label}: {value}")
-    return ", ".join(parts)
+            lines.append(f"*{label}:* {value}")
+    return "\n".join(lines)
 
 
 def not_understood_line(words: Any) -> str:
@@ -2638,10 +2653,10 @@ def build_set_header(
     """
     verb = "has" if qualifying_total == 1 else "have"
     header = f"{qualifying_total:,} {set_noun} {verb} {_header_predicate_phrase(require)}."
-    # W2: what the set was identified as leads the line, in plain words.
+    # W2 / R2: what the set was identified as leads, one filter per line.
     described = describe_set_line(description)
     if described:
-        header = f"{described}. {header}"
+        header = f"{described}\n{header}"
     missed = not_understood_line(not_understood)
     if missed:
         header += f" {missed}"
@@ -2732,6 +2747,53 @@ def set_noun_for(class_labels: list[str] | None) -> str:
 #: The qualifying ids one described set is counted and fetched from - the resolver's own
 #: cap, so a 2,704-long set is counted in full but never carried as a list of that size.
 SET_ID_CAP = 200
+
+
+def unknown_values_sentence(unknown: Any) -> str:
+    """"I don't know 't trap' as a trap. I know P trap and S trap." - round 4 R6 (owner
+    console test on PR #833: "the water closet t trap ask, why it match s trap?"). One
+    sentence pair per unknown value, off `product_spec_search.unknown_spec_values`."""
+    parts = []
+    for u in jsc.array(unknown):
+        said = jsc.js_string(jsc.get(u, "said")).strip()
+        label = jsc.js_string(jsc.get(u, "label")).strip().lower()
+        known = [jsc.js_string(k) for k in jsc.array(jsc.get(u, "known")) if jsc.truthy(k)]
+        if not said or not label:
+            continue
+        line = f"I don't know '{said}' as a {label}."
+        if known:
+            line += f" I know {_and_list(known)}."
+        parts.append(line)
+    return " ".join(parts)
+
+
+def near_miss_sentence(near: Any, require: dict[str, Any]) -> str:
+    """Round 4 R4 (owner console test on PR #833, "so it got match or not? i have no
+    visibility into whether it does the matching"): a set that qualifies nothing says
+    the value it looked for and what the set holds in the key's other values:
+
+        No gunmetal wash basins with incoming stock (I looked for Finish or colour:
+        Gunmetal among wash basins). 12 wash basins have incoming stock in another
+        finish or colour: Chrome 5, Matt black 4, White 3.
+
+    `near` is the resolver's `predicate.near_miss` (`product_predicate_service._near_miss`)."""
+    labels = [jsc.js_string(c).strip() for c in jsc.array(jsc.get(near, "class_labels")) if jsc.truthy(c)]
+    noun = set_noun_for(labels)
+    singular = labels[0].lower() if len(labels) == 1 else "product"
+    label = jsc.js_string(jsc.get(near, "label")).strip()
+    value = jsc.js_string(jsc.get(near, "value")).strip()
+    with_what = _predicate_phrase(require)
+    has_what = _header_predicate_phrase(require)
+    said = f"No {value.lower()} {noun} with {with_what} (I looked for {label}: {value} among {noun})."
+    total = int(jsc.get(near, "other_total") or 0)
+    if not total:
+        return f"{said} No {noun} have {with_what} in any {label.lower()}."
+    others = ", ".join(
+        f"{jsc.js_string(jsc.get(o, 'value'))} {int(jsc.get(o, 'count') or 0):,}"
+        for o in jsc.array(jsc.get(near, "other_values"))
+    )
+    counted = f"1 {singular} has" if total == 1 else f"{total:,} {noun} have"
+    return f"{said} {counted} {has_what} in another {label.lower()}: {others}."
 
 
 def not_found_error_message(
@@ -3369,7 +3431,8 @@ def not_found_error_message(
                 entitlement_miss
                 if jsc.truthy(entitlement_miss)
                 else (
-                    f"But no{active_inactive} {domain_word}{miss_window}{access} "
+                    # R7 (round 4): "But no purchase order matched", never the domain key.
+                    f"But no{active_inactive} {_plain_words(domain_word)}{miss_window}{access} "
                     f"matched these{co_suffix}. {esc_ask}"
                 )
             )
@@ -3411,7 +3474,7 @@ def not_found_error_message(
             else:
                 escalate_message = (
                     f'I captured "{captured}" but couldn\'t tell which part is which. '
-                    f"For a {jsc.js_string(domain_hint)} enquiry, please give me a labeled "
+                    f"For a {_plain_words(domain_hint)} enquiry, please give me a labeled "
                     f"specific - e.g. {labels}."
                 )
         else:
@@ -3498,6 +3561,17 @@ def not_found_error_message(
                         f"Try a product type such as {common_text}."
                     )
                 is_clarification = True
+            elif (
+                described_set_answers
+                and jsc.get(predicate, "qualifying_total") == 0
+                and isinstance(jsc.get(predicate, "near_miss"), dict)
+            ):
+                # R4 (round 4 on PR #833): the miss says what was searched and what the
+                # set holds in the key's other values, before the escalation offer.
+                escalate_message = (
+                    f"{near_miss_sentence(jsc.get(predicate, 'near_miss'), jsc.get(predicate, 'require') or {})} "
+                    f"Would you like me to escalate to {team} team?"
+                )
             elif (
                 described_set_answers
                 and jsc.get(predicate, "qualifying_total") == 0
@@ -3711,9 +3785,20 @@ def not_found_error_message(
                     for_requested = f" for {requested}" if jsc.truthy(requested) else ""
                     escalate_message = (
                         f"Could not find{active_inactive} {status_label}"
-                        f"{jsc.js_string(domain_hint)}{for_requested}{date_range}{access}. "
+                        f"{_plain_words(domain_hint)}{for_requested}{date_range}{access}. "
                         f"Would you like me to escalate to {team} team?"
                     )
+
+    # R6 (round 4 on PR #833): an attribute value the registry does not know is said back
+    # with the values it does, on a set ask (`predicate.unknown_values`) and a product ask
+    # (`unknown_spec_values`) alike. It outranks every miss sentence above: nothing was
+    # searched for it, so no "couldn't find" is true.
+    unknown_values = jsc.array(jsc.get(predicate, "unknown_values")) if isinstance(predicate, dict) else []
+    unknown_values = unknown_values or jsc.array(jsc.get(r, "unknown_spec_values"))
+    if unknown_values:
+        escalate_message = unknown_values_sentence(unknown_values)
+        is_clarification = True
+        found_summary = ""
 
     # Q23: the customer named an access level they do not hold. The gate detects it; say so
     # here too, or an entitlement problem reads as an ordinary "couldn't find it".

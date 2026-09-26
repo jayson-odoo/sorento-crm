@@ -358,7 +358,7 @@ MCP stubbed), plus the console cases in `console_cases/2026-09-11-attribute-firs
   reported as "I could not find <brand>".
 - AC-1361 (W2) The header names the resolved spec in plain words, labels from the spec
   registry, no snake_case: "Brand: Sorento, Product type: Wash basin, Mounting: Wall hung. 2
-  wash basins have stock." The count noun is the set's class. A word that was not understood
+  wash basins have stock." (AMENDED by AC-1372, round 4: one filter per line, labels bold.) The count noun is the set's class. A word that was not understood
   is said ("I did not understand "zzqx", so it is not part of this search.").
 - AC-1362 (W3) Each set row is one line: product name (key spec) | code | the tool's fields.
   AMENDED by AC-1366 (round 3): the row is a vertical block, never one line.
@@ -368,7 +368,8 @@ MCP stubbed), plus the console cases in `console_cases/2026-09-11-attribute-firs
   by AC-1367, round 3: it is); the count
   does not change between ask and page, and when stock moved the page says so. The bot never
   offers "more"/"next".
-- AC-1364 (W5) One chatbot default brand per company, seeded to Sorento, edited on Master Data >
+- AC-1364 (W5) SUPERSEDED by AC-1371 (round 4 R1: per-brand weights replace the switch).
+  One chatbot default brand per company, seeded to Sorento, edited on Master Data >
   Brands. No brand named: "Brand: Sorento (default), ... Other brands: Mocha 3, name one to
   see them." (AMENDED by AC-1369, round 3: no "(default)", the other brands close the reply); a named brand answers that brand only; a page keeps the default; a default the
   set does not reach leaves the set whole. Evidence also `tests/test_brand_chatbot_default_route.py`,
@@ -383,7 +384,8 @@ Evidence for each: `tests/chatbot/test_attribute_asks_round3.py` (whole turns th
 `engine.run_turn`, real resolver, class vocabulary and brands table, MCP stubbed), plus the
 round 3 console cases in `console_cases/2026-09-11-attribute-first-asks.yaml`.
 
-- AC-1366 (W1) Every set list reads top to bottom. A row is a block: line 1 "N. <product
+- AC-1366 (W1) AMENDED by AC-1373 (round 4 R3: a row is at most two lines). Every set list
+  reads top to bottom. A row is a block: line 1 "N. <product
   name>" (the description when the name is only the code, never spec values), then one
   "*Label:* value" line per field: Product Code, the key specs the header does not already
   say, then the tool's fields (Total, each location; attachment type, file, certificate; ETA).
@@ -405,3 +407,54 @@ round 3 console cases in `console_cases/2026-09-11-attribute-first-asks.yaml`.
   `Product.brand_id` through the brands table, on the first answer and on a page. The GB
   glass basin line is Sorento's in the catalogue (`brand_name` SORENTO, category `SRT-WB`,
   e.g. GB3011B "SORENTO GLASS BASIN ONLY GB3011B").
+
+## K. Owner console test of round 3 (27 Sep 2026 00:03 to 00:07 MYT, contact 487555417) [BE + FE]
+
+Owner rulings R1 to R7, 27 Sep 2026 (PR #833 comment "Owner console test of round 3").
+Evidence for each: `tests/chatbot/test_attribute_asks_round4.py` (whole turns through
+`engine.run_turn`, real resolver, class vocabulary, spec registry and brands table, spec
+fallback on; parser and MCP stubbed), which also replays the owner's eight exchanges from
+`tests/chatbot/fixtures/owner_console_2026_09_27.json` and scans every reply for snake_case.
+
+- AC-1371 (R1, owner ruling 27 Sep 2026) Brand preference is a weight per brand
+  (`brands.chatbot_weight`, 0 = none, Sorento seeded 1.5 by migration
+  `bcw_0001_brand_chatbot_weight`, which drops `is_chatbot_default`). No brand named: the
+  highest weighted brand the set reaches heads the header, and "Other brands with stock:
+  Mocha 1, Cabana 2. Name one to see them." lists the rest by weight, then count; raising
+  another brand above Sorento makes it the header brand; no weighted brand in the set
+  answers every brand with no brand line. Edited on Master Data > Brands: list column
+  "Chatbot weight", record page and dialog field "Chatbot brand weight" (0 or more).
+  Evidence also `tests/test_brand_chatbot_weight_route.py`,
+  `tests/test_migration_bcw_0001_brand_chatbot_weight.py`, vitest
+  `brands/[id]/page.chatbotWeight.test.tsx`,
+  `brands/components/BrandFormDialog.chatbotWeight.test.tsx`,
+  `brands/components/BrandTable.chatbotWeight.test.tsx`.
+- AC-1372 (R2, owner ruling 27 Sep 2026) The set header is line by line, one filter per
+  line, labels bold ("*Brand:* Sorento", "*Product type:* Water closet", "*Trap:* P trap"),
+  then the count sentence on its own line. A class word with its spec after it ("water closet
+  p trap") keeps its Product type line.
+- AC-1373 (R3, owner ruling 27 Sep 2026) A counted-set row is at most two lines: "N. <name>
+  (<code>)", then the one or two facts the ask was about (stock: Total; certificate:
+  Certificate Number and Valid Until; incoming: quantity and arrival date). No spec lines, no
+  per-location lines. Fifty rows fit one WhatsApp message.
+- AC-1374 (R4, owner ruling 27 Sep 2026) A set that qualifies nothing, described by a class and
+  one value, says what it searched and the count in the other values before the escalation
+  offer: "No gunmetal wash basins with incoming stock (I looked for Finish or colour: Gunmetal
+  among wash basins). 1 wash basin has incoming stock in another finish or colour: White 1.
+  Would you like me to escalate to purchasing team?"; with none in any value, "No bathtubs have
+  a certificate in any finish or colour."
+- AC-1375 (R5, owner ruling 27 Sep 2026) The answer to "I don't know 'water tap basin' as a
+  product type. Did you mean tap or wash basin?" that is one of the options re-runs the original
+  ask with that word: "tap" answers "2 taps have stock." with the list, never a code search. A
+  reply that is not an option is its own question, and the clarify is spent after one turn.
+- AC-1376 (R6, owner ruling 27 Sep 2026) An attribute value the registry does not know is said
+  back with the values it does, on a product ask and a set ask alike: "I don't know 't trap' as a
+  trap. I know P trap and S trap." Nothing is listed; answering "p trap" re-runs the ask (AC-1375).
+  Found from the registry's own synonyms (a key's head word), no word list in code; "water closet
+  p trap", "water closet trap 250mm" and "floor waste wc" are not unknown.
+- AC-1377 (R7, owner ruling 27 Sep 2026) Every value a reply shows is plain words: the registry's
+  `value_labels`, else the stored slug in sentence case ("cold_only" -> "Cold only", "s_trap" ->
+  "S trap", "pp" -> "PP"). Every enum value in the registry seed reads without "_". The product
+  list carries `display_value` per spec; the chatbot's Specs line reads any slug that still
+  arrives. No reply in the round 4 replays, and no console case expectation, carries a
+  snake_case token (the miss copy's domain key included).

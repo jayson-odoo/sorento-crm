@@ -1,6 +1,6 @@
 # PLAN: attribute-first asks, "which products have X", across every product and domain
 
-Status: REVIVED 26 Sep 2026 on PR #833 - origin/main merged, revive repairs R35 to R38 and owner ruling R39 (no paging) built, reviewer pass fix round done; owner hand test round 2 (W1 to W6: brand binding, plain-words header, readable rows, paging keeps the set, chatbot default brand, water basin) built tester first; owner hand test of round 2 (round 3, W1 to W6: vertical rows, a count after a page continues, a new class word starts a new set, no "(default)", brand scope proven) built red first; awaiting the orchestrator's CI label, an owner console pass on the prod copy and merge go. Track: full. Lane `feat/chatbot-attribute-first-asks`.
+Status: REVIVED 26 Sep 2026 on PR #833 - origin/main merged, revive repairs R35 to R38 and owner ruling R39 (no paging) built, reviewer pass fix round done; owner hand test round 2 (W1 to W6: brand binding, plain-words header, readable rows, paging keeps the set, chatbot default brand, water basin) built tester first; owner hand test of round 2 (round 3, W1 to W6: vertical rows, a count after a page continues, a new class word starts a new set, no "(default)", brand scope proven) built red first; owner console test of round 3 (round 4, R1 to R7: brand weights, line-by-line header, two-line rows, a miss says what it searched, the clarify answer reruns the ask, unknown values said back, plain words) built red first; awaiting the orchestrator's CI label, an owner console pass on the prod copy and merge go. Track: full. Lane `feat/chatbot-attribute-first-asks`.
 Test report: `attribute-first-asks-test-report.md`.
 UAC: `attribute-first-asks-acceptance-criteria.md`.
 Supersedes: `documentation/plans/_archive/chatbot/PLAN-spec-backward-search.md` (its backend half
@@ -358,7 +358,8 @@ then green, then kill-tested; tests in `tests/chatbot/test_attribute_asks_round2
   plus "Other brands: Mocha 300, Cabana 121, name one to see them."; a default the set does
   not reach leaves the set whole. A single default rather than per-brand weights: one
   preference, one column (PRINCIPLES "simplest thing"); trigger for weights is the owner
-  asking to rank a second brand above the rest.
+  asking to rank a second brand above the rest. SUPERSEDED 27 Sep 2026 by round 4 R1: the
+  owner asked for weights, so the trigger fired and the switch is replaced.
 - W6 (AC-1365): `resolve_classes_for_term` also reads the shipped `CLASS_SYNONYMS` for a class
   the catalogue has, so "water basin" is Wash Basin on a database that never got 511's
   synonym; a section header names at most five subjects, past that it counts them.
@@ -388,6 +389,84 @@ gives weird answer, what does sorento (default) mean". Tests in
   (`tests/fixtures/spec_derivation_golden_sample.json`: all 17 `GB*` codes under `SRT-WB`
   carry `brand_name` SORENTO). Pinned by tests that list a Mocha GB-coded basin beside them.
 - W6: console bold/underline rendering is #1279's `WhatsAppText`; nothing duplicated here.
+
+## Owner console test of round 3, 27 Sep 2026 00:03 to 00:07 MYT (round 4, R1 to R7)
+
+Console :3084, head 1683cb2f1, contact 487555417. The owner, verbatim on the PR: "i want
+weights as brand preference instead of switch, ... Brand, product type needs to be line by
+line, label needs to be bold, ... bruh i said 10 but it come out so many, then the ask about
+gunmetal wash basin means what ah, so it got match or not? ... i clarify if it is tap or wash
+basin and i said tap, you supposed to do the searching ... the water closet t trap ask, why it
+match s trap? and why all the values are snake case? too technical, i don't want".
+
+Owner rulings, 27 Sep 2026 (PR #833 comment "Owner console test of round 3"):
+
+- R1 (owner ruling, 27 Sep 2026): brand preference is a weight per brand, not a single
+  default switch; the header brand and the "Other brands" line follow the weights.
+- R2 (owner ruling, 27 Sep 2026): the set header is line by line, one filter per line,
+  labels bold.
+- R3 (owner ruling, 27 Sep 2026): a count answer is compact; one product is at most 2 lines
+  (name with code, then the one or two facts the ask was about); details on request.
+- R4 (owner ruling, 27 Sep 2026): a miss says what was searched and the count in other
+  values, before any escalation offer.
+- R5 (owner ruling, 27 Sep 2026): a clarify answer re-runs the original ask as a counted
+  set; never a code search.
+- R6 (owner ruling, 27 Sep 2026): an unknown attribute value is said back with the known
+  values, never silently matched to another value.
+- R7 (owner ruling, 27 Sep 2026): every value shown to a customer is in plain words, never
+  snake_case.
+
+The eight exchanges are the fixture `tests/chatbot/fixtures/owner_console_2026_09_27.json`,
+replayed through `engine.run_turn` in `tests/chatbot/test_attribute_asks_round4.py` (real
+resolver, class vocabulary, spec registry and brands table, spec fallback on as in
+production; parser and MCP stubbed). No stored trace came with the comment, so the parser
+reading of each turn is inferred from the reply the owner saw; the fixture says so.
+
+- R1 (AC-1371): `brands.chatbot_weight` NUMERIC(6,2), default 0, replaces
+  `brands.is_chatbot_default` (migration `bcw_0001_brand_chatbot_weight` on `bcd_0001`: the
+  company's default brand becomes 1.5, else its Sorento rows, then the switch column is
+  dropped; downgrade restores the switch on the top weight). 1.5 is the owner's own example
+  value and the `value_weights` brand preference. `resolve_product_set(prefer_weighted_brand)`
+  ranks the brands the set reaches by weight, then count: the first with a weight above 0
+  scopes the set, the rest are the "Other brands" line in that order; none weighted leaves
+  the set whole. Master Data > Brands: a "Chatbot weight" list column, a "Chatbot brand
+  weight" number on the record page and in the dialog; `BrandService` loses the
+  one-default-per-company clear. Two knobs now rank brands (this weight for the counted set,
+  `product_spec_registry.value_weights` inside the spec ranker); trigger to fold them into
+  one: the owner tuning one and expecting the other to move.
+- R2 (AC-1372): `answer.describe_set_line` returns one `*Label:* value` line per binding,
+  and the count sentence is its own line under them. `_split_class_tail` also splits a
+  class HEAD from a spec tail ("water closet p trap"), the cause of exchange 3's missing
+  Product type line. The bold is WhatsApp markup, the contract #1279's console renderer
+  reads (#1279 still open; nothing of its component is used here).
+- R3 (AC-1373): `fetch.set_rows_text` renders one row per product: "N. name (code)", then
+  the facts per leg (`_SET_ROW_FACTS`: stock Total; certificate number and valid until;
+  incoming quantity and arrival date; attachment type), a count when the tool returned
+  several rows for one product, flags inline. `row_labels` is the name only now. Fifty such
+  rows stay under WhatsApp's 4,096 characters (measured 3,641 with 34-character names).
+- R4 (AC-1374): a zero set with a class and exactly one property value is recounted
+  without that value, grouped by the key's other values (`_near_miss`, same legs, brand and
+  membership clause through the new `product_spec_search.membership_clause`), and
+  `answer.near_miss_sentence` says it. Trigger to widen to two property keys: an owner turn
+  that names two.
+- R5 (AC-1375): `focus.set_clarify` keeps `{term, options, ask}` when the turn asks the
+  product-type clarify or the R6 question (`turn_runtime.set_clarify_carry`, armed after the
+  resolver); the next message that is one of the options is that ask again with the word
+  replaced (`turn_runtime.with_clarify_answer`, before the verdict reaches APPLY). Every
+  other turn clears it (`turn/apply.py`).
+- R6 (AC-1376): `product_spec_search.unknown_spec_values` reads each enum key's head words
+  off the registry (a word ending the synonyms of two or more of its values, "trap"); a
+  "<word> <head>" that is no synonym, whose modifier is no known word, number or stopword,
+  is an unknown value. The resolver answers it before any count (set path,
+  `predicate.unknown_values`) or any spec search (product path, `unknown_spec_values`), and
+  the miss copy says "I don't know 't trap' as a trap. I know P trap and S trap."
+- R7 (AC-1377): `product_spec_registry.display_spec_value` (registry `value_labels`, else a
+  slug in sentence case with acronyms in capitals, never a "_") is used by the set header,
+  the near miss, `spec_list_for_products` (new `display_value`, read by the MCP products
+  presenter) and the chatbot's own Specs line as the last guard for an older MCP. The scan
+  found one more leak and it is fixed: the miss copy printed the domain key ("But no
+  master_products matched these"), now "master products". Every reply in the round 4 tests
+  is scanned for snake_case.
 
 ## Definition of done
 

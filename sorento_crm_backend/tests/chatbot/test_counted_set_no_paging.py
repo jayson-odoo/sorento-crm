@@ -18,6 +18,7 @@ from typing import Any
 
 import pytest
 
+from tests.chatbot.set_reply import legacy_lines, one_line_header, row_blocks, row_codes  # noqa: F401
 from tests.chatbot.test_engine import stub_access, stub_parser  # noqa: F401 - fixtures used by name
 from tests.chatbot.test_lane_require import (
     _cert_capturing_fake_call_tool,
@@ -198,7 +199,7 @@ def test_a_set_that_fits_is_listed_in_full(session_factory, stub_parser, stub_ac
 
     text = _turn(engine_mod, session_factory, contact_id=contact_id, n=1, text="which tap has cert")
 
-    assert text.startswith("Product type: Tap. 7 taps have certificates."), text
+    assert one_line_header(text).startswith("Product type: Tap. 7 taps have certificates."), text
     assert "Showing" not in text, text
     assert _s4_codes_in(text) == set(codes), text
     assert len(calls) == 1 and len(calls[0]["args"]["product_ids"]) == 7, calls
@@ -230,7 +231,7 @@ def test_a_longer_set_states_the_count_asks_and_lists_nothing(
 
     text = _turn(engine_mod, session_factory, contact_id=contact_id, n=1, text="which tap has cert")
 
-    assert text.startswith("Product type: Tap. 7 taps have certificates."), text
+    assert one_line_header(text).startswith("Product type: Tap. 7 taps have certificates."), text
     assert "too many to list in one message" in text, text
     assert "How many should I show (up to 5)" in text, text
     assert _s4_codes_in(text) == set(), text
@@ -252,7 +253,7 @@ def test_answering_how_many_lists_that_many_and_then_more_pages_nothing(
     stub_parser(_bare_verdict(top_n=3, continuation=True, user_goal="show 3"))
     text = _turn(engine_mod, session_factory, contact_id=contact_id, n=2, text="3")
 
-    assert text.startswith("Product type: Tap. 7 taps have certificates. Here are the first 3."), text
+    assert one_line_header(text).startswith("Product type: Tap. 7 taps have certificates. Here are the first 3."), text
     assert len(_s4_codes_in(text)) == 3, text
     assert len(calls) == before + 1 and len(calls[-1]["args"]["product_ids"]) == 3, calls
     # W4 (owner hand test round 2): the set stays carried past what was listed, so the
@@ -280,7 +281,7 @@ def test_how_many_is_capped_at_the_list_limit(
 
     text = _turn(engine_mod, session_factory, contact_id=contact_id, n=1, text="show 40 taps with cert")
 
-    assert text.startswith("Product type: Tap. 7 taps have certificates. Here are the first 5."), text
+    assert one_line_header(text).startswith("Product type: Tap. 7 taps have certificates. Here are the first 5."), text
     assert len(_s4_codes_in(text)) == 5, text
 
 
@@ -291,7 +292,7 @@ def test_a_count_in_the_ask_itself_lists_that_many(session_factory, stub_parser,
 
     text = _turn(engine_mod, session_factory, contact_id=contact_id, n=1, text="show 2 taps with cert")
 
-    assert text.startswith("Product type: Tap. 7 taps have certificates. Here are the first 2."), text
+    assert one_line_header(text).startswith("Product type: Tap. 7 taps have certificates. Here are the first 2."), text
     assert len(_s4_codes_in(text)) == 2, text
     assert len(calls[0]["args"]["product_ids"]) == 2, calls
 

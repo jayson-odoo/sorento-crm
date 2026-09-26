@@ -67,10 +67,10 @@ def test_spec_list_only_populated_keys_ordered_by_rank_weight(db):
     specs = ProductService(db).spec_list_for_products([prod.id])[prod.id]
     assert [s["key"] for s in specs] == ["thickness", "wattage"]  # rank_weight desc
     assert specs[0] == {
-        "key": "thickness", "label": "Thickness", "value": 1.2, "unit": "mm", "rank_weight": 5.0,
+        "key": "thickness", "label": "Thickness", "value": 1.2, "display_value": "1.2", "unit": "mm", "rank_weight": 5.0,
     }
     assert specs[1] == {
-        "key": "wattage", "label": "Wattage", "value": 60, "unit": "W", "rank_weight": 3.0,
+        "key": "wattage", "label": "Wattage", "value": 60, "display_value": "60", "unit": "W", "rank_weight": 3.0,
     }
 
 
@@ -135,7 +135,8 @@ def test_route_include_specs_returns_ranked_list(client, db):
     assert resp.status_code == 200, resp.text
     row = resp.json()["data"][0]
     assert row["specs"] == [
-        {"key": "wattage", "label": "Wattage", "value": 60, "unit": "W", "rank_weight": 3.0}
+        # `display_value`: round 4 R7 on PR #833, the value in plain words.
+        {"key": "wattage", "label": "Wattage", "value": 60, "display_value": "60", "unit": "W", "rank_weight": 3.0}
     ]
 
 

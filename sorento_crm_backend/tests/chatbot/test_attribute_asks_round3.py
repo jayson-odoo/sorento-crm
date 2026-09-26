@@ -29,6 +29,7 @@ from typing import Any
 
 import pytest
 
+from tests.chatbot.set_reply import legacy_lines, one_line_header, row_blocks, row_codes, snake_tokens  # noqa: F401
 from tests.chatbot.test_attribute_asks_round2 import _brand, _product
 from tests.chatbot.test_counted_set_no_paging import _link_to_default_company
 from tests.chatbot.test_engine import stub_access, stub_parser  # noqa: F401 - fixtures used by name
@@ -72,8 +73,7 @@ def world(session_factory):
     from app.models.product import Brand
 
     db = session_factory()
-    if hasattr(Brand, "is_chatbot_default"):
-        db.query(Brand).update({Brand.is_chatbot_default: False})
+    db.query(Brand).update({Brand.chatbot_weight: 0})
     _category_id, uom_id = _seed_category_and_uom(db)
     wc_category = _class_category(db, "WC")
     basin_category = _class_category(db, "WB")
@@ -242,7 +242,10 @@ class _Chat:
             session_factory=self.session_factory,
         )
         assert turn.status == "done", turn.error
-        return (turn.reply or {}).get("text") or ""
+        reply = (turn.reply or {}).get("text") or ""
+        # Round 4 R7 on PR #833: no reply carries a snake_case token.
+        assert not snake_tokens(reply), (text, snake_tokens(reply), reply)
+        return reply
 
 
 @pytest.fixture()
@@ -270,30 +273,18 @@ def _codes_in(text: str, world) -> set[str]:
 
 
 def _blocks(text: str) -> list[list[str]]:
-    """The numbered product blocks of a reply: each a list of lines, the first "N. name"."""
-    out: list[list[str]] = []
-    current: list[str] | None = None
-    for line in text.splitlines():
-        if re.match(r"^\d+\. ", line):
-            current = [line]
-            out.append(current)
-        elif current is not None and line.strip():
-            current.append(line)
-        else:
-            current = None
-    return out
+    """The numbered product rows of a reply: each a list of lines, the first "N. name
+    (code)" (round 4 R3 layout, `set_reply.row_blocks`)."""
+    return row_blocks(text)
 
 
 def _block_code(block: list[str]) -> str | None:
-    for line in block:
-        m = re.match(r"^\*Product Code:\* (\S+)$", line)
-        if m:
-            return m.group(1)
-    return None
+    codes = row_codes(block[0]) if block else []
+    return codes[0] if codes else None
 
 
 def _listed(text: str) -> list[str]:
-    return [c for c in (_block_code(b) for b in _blocks(text)) if c]
+    return row_codes(text)
 
 
 def _wc_ptrap(**overrides):
@@ -314,6 +305,9 @@ def _wc_ptrap(**overrides):
 
 
 def test_w1_a_stock_row_is_a_vertical_block_led_by_the_product_name(chat, world):
+    """Round 3 W1 ("line by line ... vertical, don't use |"), in round 4 R3's layout (owner,
+    27 Sep 00:03 MYT: "one product is at most 2 lines"): "N. <name> (<code>)", then the
+    stock total. The header already says Trap and Product type; a row never repeats them."""
     text = chat.say("which water closet has stock, p trap", _wc_ptrap())
 
     assert "|" not in text, text
@@ -323,26 +317,23 @@ def test_w1_a_stock_row_is_a_vertical_block_led_by_the_product_name(chat, world)
     for block in blocks:
         code = _block_code(block)
         assert code in by_code, block
-        product = by_code[code]
-        # Line 1: the product name, never spec values in its place.
-        assert re.match(rf"^\d+\. {re.escape(product.product_name)}$", block[0]), block
-        # Then one "*Label:* value" line per field, Product code first.
-        assert block[1] == f"*Product Code:* {code}", block
-        for line in block[1:]:
-            assert re.match(r"^\*[^*]+:\* \S", line), block
-        # The header already says Trap and Product type; a row never repeats them.
-        assert not [ln for ln in block if ln.startswith("*Trap:*") or ln.startswith("*Product type:*")], block
-        assert "*Total:* 10" in block, block
-        assert f"*{world['warehouse'].warehouse_code}:* 10" in block, block
+        assert block[0].split(". ", 1)[1] == f"{by_code[code].product_name} ({code})", block
+        assert block[1:] == ["*Total:* 10"], block
     # A blank line between products.
     assert re.search(r"\n\n2\. ", text), text
 
 
 def test_w1_the_header_is_one_short_line(chat, world):
+    """Superseded in layout by round 4 R2 (owner: "Brand, product type needs to be line by
+    line, label needs to be bold"): one bold filter per line, then the count."""
     text = chat.say("which water closet has stock, p trap", _wc_ptrap())
-    first, second = text.splitlines()[:2]
     brand = _display(world["sorento"].brand_name)
-    assert first == f"Brand: {brand}, Product type: Water closet, Trap: P trap. 5 water closets have stock.", text
+    assert text.split("\n\n", 1)[0].splitlines() == [
+        f"*Brand:* {brand}",
+        "*Product type:* Water closet",
+        "*Trap:* P trap",
+        "5 water closets have stock.",
+    ], text
     # The tool's own intro is not repeated under the set header.
     assert "Stock summary for the requested products" not in text, text
 
@@ -358,12 +349,10 @@ def test_w1_a_certificate_row_is_a_vertical_block_too(chat, world):
     assert {_block_code(b) for b in blocks} == set(names), text
     for block in blocks:
         code = _block_code(block)
-        assert re.match(rf"^\d+\. {re.escape(names[code])}$", block[0]), block
-        assert block[1] == f"*Product Code:* {code}", block
-        # The code is said once as the code, never bare beside its labelled twin.
-        assert [ln for ln in block if ln.startswith("*Product Code:*")] == [f"*Product Code:* {code}"], block
-        assert not [ln for ln in block if ln.strip() == code], block
-        assert "*Attachment Type:* Certification" in block, block
+        assert block[0].split(". ", 1)[1] == f"{names[code]} ({code})", block
+        # The code is said once, on line 1.
+        assert sum(ln.count(code) for ln in block) == 1, block
+        assert block[1].startswith("*Certificate Number:* "), block
 
 
 def test_w1_an_incoming_row_is_a_vertical_block_too(chat, world):
@@ -376,8 +365,8 @@ def test_w1_an_incoming_row_is_a_vertical_block_too(chat, world):
     names = {p.product_code: p.product_name for p in world["srt_tubs"]}
     for block in blocks:
         code = _block_code(block)
-        assert block[0].split(". ", 1)[1] == names[code], block
-        assert block[1] == f"*Product Code:* {code}", block
+        assert block[0].split(". ", 1)[1] == f"{names[code]} ({code})", block
+        assert len(block) <= 2, block
 
 
 # --------------------------------------------------------------------------- #
@@ -401,7 +390,7 @@ def test_w2_a_count_after_a_listed_page_continues_the_same_set(chat, world, smal
     page2 = chat.say("2", _bare(**parser_reads))
 
     head = f"Brand: {brand}, Product type: Water closet, Trap: P trap. 5 water closets have stock."
-    assert page2.splitlines()[0] == f"{head} Here are 3 to 4.", page2
+    assert one_line_header(page2) == f"{head} Here are 3 to 4.", page2
     assert "Stock summary" not in page2, page2
     assert [b[0].split(".")[0] for b in _blocks(page2)] == ["3", "4"], page2
     one, two = _listed(page1), _listed(page2)
@@ -409,12 +398,12 @@ def test_w2_a_count_after_a_listed_page_continues_the_same_set(chat, world, smal
     assert one + two == every[:4], (page1, page2)
 
     page3 = chat.say("2", _bare(**parser_reads))
-    assert page3.splitlines()[0] == f"{head} Here are 5 to 5.", page3
+    assert one_line_header(page3) == f"{head} Here are 5 to 5.", page3
     assert _listed(page3) == every[4:], page3
 
     before = len(chat.calls)
     done = chat.say("2", _bare(**parser_reads))
-    assert done.splitlines()[0] == f"{head} That is all 5.", done
+    assert one_line_header(done) == f"{head} That is all 5.", done
     assert _blocks(done) == [], done
     assert len(chat.calls) == before, chat.calls[before:]
 
@@ -428,7 +417,7 @@ def test_w2_the_owner_sequence_30_then_10_lists_31_to_40(chat, world, monkeypatc
     chat.say("which water closet has stock, p trap", _wc_ptrap())
     chat.say("3", _bare(top_n=3))
     page = chat.say("10", _bare(top_n=10))
-    assert page.splitlines()[0].endswith("5 water closets have stock. Here are 4 to 5."), page
+    assert one_line_header(page).endswith("5 water closets have stock. Here are 4 to 5."), page
     assert len(_blocks(page)) == 2, page
 
 
@@ -457,7 +446,7 @@ def test_w3_which_basin_has_cert_after_a_water_closet_set_is_a_new_certificate_s
     )
 
     brand = _display(world["sorento"].brand_name)
-    assert text.splitlines()[0] == f"Brand: {brand}, Product type: Wash basin. 3 wash basins have certificates.", text
+    assert one_line_header(text) == f"Brand: {brand}, Product type: Wash basin. 3 wash basins have certificates.", text
     assert _codes_in(text, world) == _codes(world["srt_basins"]), text
     assert not text.startswith("Product:"), text
     calls = chat.calls[before:]
@@ -487,7 +476,7 @@ def test_w3_a_new_class_word_replaces_the_carried_set_whatever_the_parser_carrie
         ],
     }[carried]
     text = chat.say("which basin has cert", _ask("cert", "basin", "which basin has cert", extra=old))
-    assert "3 wash basins have certificates." in text.splitlines()[0], text
+    assert "3 wash basins have certificates." in one_line_header(text), text
     assert _codes_in(text, world) == _codes(world["srt_basins"]), text
 
 
@@ -497,7 +486,7 @@ def test_w3_a_new_attribute_word_on_the_same_class_starts_a_new_set(chat, world,
     chat.say("which water closet has stock, p trap", _wc_ptrap())
     chat.say("2", _bare(top_n=2))
     text = chat.say("which bathtub has incoming", _ask("incoming", "bathtub", "which bathtub has incoming"))
-    assert "bathtubs have incoming stock." in text.splitlines()[0], text
+    assert "bathtubs have incoming stock." in one_line_header(text), text
     assert _codes_in(text, world) == _codes(world["srt_tubs"]), text
 
 
@@ -519,7 +508,7 @@ def test_w4_the_default_brand_reads_plainly_and_the_other_brands_close_the_reply
     text = chat.say(f"which {class_word} has {kind}", _ask(kind, class_word, f"which {class_word} has {kind}"))
     brand, other = _display(world["sorento"].brand_name), _display(world["mocha"].brand_name)
     noun = "stock" if kind == "stock" else "certificates"
-    assert text.splitlines()[0] == f"Brand: {brand}, Product type: Wash basin. 3 wash basins have {noun}.", text
+    assert one_line_header(text) == f"Brand: {brand}, Product type: Wash basin. 3 wash basins have {noun}.", text
     assert "(default)" not in text, text
     assert text.splitlines()[-1] == f"{closing}: {other} 1. Name one to see them.", text
 
@@ -544,7 +533,7 @@ def test_w4_incoming_names_the_other_brands_with_incoming(chat, world):
 def test_w4_a_withheld_set_still_closes_with_the_other_brands(chat, world, small_list):
     text = chat.say("which water closet has stock, p trap", _wc_ptrap())
     assert "(default)" not in text, text
-    assert "How many should I show (up to 3)?" in text.splitlines()[0], text
+    assert "How many should I show (up to 3)?" in one_line_header(text), text
     assert text.splitlines()[-1] == f"Other brands with stock: {_display(world['mocha'].brand_name)} 1. Name one to see them.", text
 
 
@@ -554,7 +543,7 @@ def test_w4_a_named_brand_answers_that_brand_only(chat, world):
         f"which {mocha.lower()} wash basin has stock",
         _ask("stock", "wash basin", "which wash basin has stock", extra=[_entity(mocha.lower(), "brand")]),
     )
-    assert text.splitlines()[0] == f"Brand: {_display(mocha)}, Product type: Wash basin. 1 wash basin has stock.", text
+    assert one_line_header(text) == f"Brand: {_display(mocha)}, Product type: Wash basin. 1 wash basin has stock.", text
     assert "Other brands" not in text, text
 
 
@@ -577,7 +566,7 @@ def test_w5_every_listed_product_belongs_to_the_header_brand(chat, world, kind):
     brand is never listed under the default brand; one that IS that brand's is."""
     text = chat.say("which wash basin has x", _ask(kind, "wash basin", f"which wash basin has {kind}"))
     brand = world["sorento"].brand_name
-    assert text.startswith(f"Brand: {_display(brand)},"), text
+    assert one_line_header(text).startswith(f"Brand: {_display(brand)},"), text
     listed = _listed(text)
     assert listed and {_brand_of(world["db"], c) for c in listed} == {brand}, (listed, text)
     assert world["srt_basins"][2].product_code in listed, text
@@ -615,5 +604,4 @@ def test_w1_a_product_named_only_by_its_code_leads_with_its_description_never_sp
 
     outcome = resolve_product_set(db, require={"stock": True}, scope_terms=["water closet"])
     lead = outcome["row_labels"][product.product_code]
-    assert lead["name"] == product.description, lead
-    assert all(s["label"] and s["value"] for s in lead["specs"]), lead
+    assert lead == {"name": product.description}, lead

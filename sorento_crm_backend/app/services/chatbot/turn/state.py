@@ -108,6 +108,10 @@ class Focus:
     # it is a focus axis like any other, and it has to be cleared by a topic reset with
     # the rest.
     set_page: dict[str, Any] | None = None
+    # Round 4 R5 (owner console test on PR #833): the ask a clarify question was about,
+    # `{"term", "options", "ask"}`, read only by that question's answer ("tap" after "Did
+    # you mean tap or wash basin?") and cleared by every other turn.
+    set_clarify: dict[str, Any] | None = None
     extra: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
 
 
@@ -164,6 +168,7 @@ def focus_to_wire(focus: Focus) -> dict[str, Any]:
     wire["sales_channel"] = focus.sales_channel
     wire["date_window"] = focus.date_window
     wire["set_page"] = focus.set_page
+    wire["set_clarify"] = focus.set_clarify
     wire["extra"] = {k: list(v) for k, v in (focus.extra or {}).items()}
     return wire
 
@@ -213,6 +218,8 @@ def focus_from_wire(raw: Any) -> Focus:
     focus.date_window = window if isinstance(window, dict) else None
     page = raw.get("set_page")
     focus.set_page = page if isinstance(page, dict) else None
+    clarify = raw.get("set_clarify")
+    focus.set_clarify = clarify if isinstance(clarify, dict) else None
     extra = raw.get("extra")
     if isinstance(extra, dict):
         focus.extra = {

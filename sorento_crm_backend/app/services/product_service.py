@@ -657,6 +657,7 @@ class ProductService:
         `specifications_for_products`.
         """
         from app.models.product_spec import ProductSpecifications, ProductSpecRegistry
+        from app.services.product_spec_registry import display_spec_value
 
         ids = [str(pid) for pid in product_ids if pid]
         if not ids:
@@ -686,6 +687,9 @@ class ProductService:
                         "key": key,
                         "label": reg.label,
                         "value": entry["value"],
+                        # R7 (round 4 on PR #833): the value in plain words, off the
+                        # registry's own `value_labels`, for every reader that shows it.
+                        "display_value": display_spec_value(entry["value"], reg.value_labels),
                         "unit": entry.get("unit") or reg.unit,
                         "rank_weight": float(reg.rank_weight) if reg.rank_weight is not None else 1.0,
                     }
@@ -2427,7 +2431,7 @@ class BrandService:
                 # Manual dict builder: a column not listed here never reaches the FE
                 # however faithfully the response schema inherits it.
                 "flows_to_purchasing": b.flows_to_purchasing,
-                "is_chatbot_default": b.is_chatbot_default,
+                "chatbot_weight": float(b.chatbot_weight or 0),
                 "created_at": b.created_at,
                 "updated_at": b.updated_at,
                 "created_by": str(b.created_by) if b.created_by else None,
@@ -2463,18 +2467,9 @@ class BrandService:
         
         brand = Brand(**brand_data.model_dump())
         self.db.add(brand)
-        self.db.flush()
-        if brand.is_chatbot_default:
-            self._clear_other_chatbot_defaults(brand)
         self.db.commit()
         self.db.refresh(brand)
         return brand
-
-    def _clear_other_chatbot_defaults(self, brand: Brand) -> None:
-        """One chatbot default brand per company: setting one clears the rest there."""
-        q = self.db.query(Brand).filter(Brand.id != brand.id, Brand.is_chatbot_default.is_(True))
-        q = q.filter(Brand.company_id == brand.company_id) if brand.company_id else q.filter(Brand.company_id.is_(None))
-        q.update({Brand.is_chatbot_default: False}, synchronize_session=False)
 
     def update_brand(self, brand_id: str, brand_data: BrandUpdate):
         """Update a brand."""
@@ -2483,8 +2478,6 @@ class BrandService:
         update_data = brand_data.model_dump(exclude_unset=True)
         for key, value in update_data.items():
             setattr(brand, key, value)
-        if update_data.get("is_chatbot_default"):
-            self._clear_other_chatbot_defaults(brand)
         
         self.db.commit()
         self.db.refresh(brand)

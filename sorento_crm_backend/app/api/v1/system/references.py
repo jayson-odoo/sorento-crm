@@ -2688,6 +2688,22 @@ def resolve_reference_post(
         # free terms the caller sent, unchanged.
         query_text = _strip_predicate_words(payload.query or "", payload.predicate_words)
 
+        # R6 (round 4 on PR #833, "why it match s trap?"): a value the registry does not
+        # know ("t trap") is said back with the ones it does; the set is never counted
+        # with it dropped or read as its nearest neighbour.
+        from app.services.product_spec_search import unknown_spec_values
+
+        unknown = unknown_spec_values(db, " ".join([payload.query or "", *(payload.scope_terms or [])]))
+        if unknown:
+            result["predicate"] = {
+                "require": payload.require,
+                "qualifying_total": 0,
+                "truncated": False,
+                "unrecognized_terms": [u["said"] for u in unknown],
+                "unknown_values": unknown,
+            }
+            return _stamp_brand_on_products(db, result)
+
         # R14/AC-1338 (third console pass): a bare `{"certificate": True}`
         # require whose remainder still holds the scheme word (never split
         # off the attachment_type raw upstream - "which item has PPS cert"
@@ -2780,8 +2796,8 @@ def resolve_reference_post(
             # The stock leg counts only the locations the asking contact's own
             # stock visibility policy allows, as the stock tool answers them.
             stock_policy=_stock_policy_for(db, payload) if require.get("stock") else None,
-            # W5: no brand named -> the chatbot default brand's set first.
-            prefer_default_brand=True,
+            # R1: no brand named -> the highest weighted brand's set first.
+            prefer_weighted_brand=True,
         )
         # One nested block, not top-level scalars: n8n item-mutation chains
         # persist top-level keys across nodes. And never inside `by_entity_type`,
@@ -2840,6 +2856,9 @@ def resolve_reference_post(
             result["predicate"]["row_labels"] = outcome["row_labels"]
         if outcome.get("other_brands"):
             result["predicate"]["other_brands"] = outcome["other_brands"]
+        # R4 (round 4): what a zero set looked for and the count in its other values.
+        if outcome.get("near_miss"):
+            result["predicate"]["near_miss"] = outcome["near_miss"]
         # W4: what a page of this set replays - the bound specs, the brand and the ids
         # LOOKUP matched (the other half of the union) - so the page counts the same set.
         if outcome["qualifying_total"]:
@@ -2898,6 +2917,16 @@ def resolve_reference_post(
         # cannot change mid-request.
         registry_rows = active_registry(db)
         brands = brand_names(db)
+
+        # R6 (round 4 on PR #833): "any water clost t trap?" listed S trap water closets.
+        # A value the registry does not know is said back (`answer.unknown_values_sentence`),
+        # never searched for as its nearest neighbour, so no spec candidate is offered.
+        from app.services.product_spec_search import unknown_spec_values
+
+        unknown = unknown_spec_values(db, payload.query or "", registry_rows=registry_rows)
+        if unknown:
+            result["unknown_spec_values"] = unknown
+            return _stamp_brand_on_products(db, result)
 
         # The sentence is ALWAYS read - through the SAME helper the Product
         # Specifications preview page uses, which is why raw text "just works"

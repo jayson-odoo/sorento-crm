@@ -17,12 +17,21 @@ srtwc286" replies as it always has, one product's stock, no count line in front 
 
 ## The reply
 
-The first line always states the count:
+The reply opens with what the bot searched for, one filter per line with the label in bold,
+then the count:
 
-> 7 taps have certificates.
+> **Brand:** Sorento
+> **Product type:** Wash basin
+> 7 wash basins have stock.
 
-**Up to 50 qualifying products:** every one is listed below that line, each block looking
-exactly like asking about one product (files attached for a certificate or document answer).
+**Up to 50 qualifying products:** every one is listed below, two lines each at most: the
+product name with its code, then the one or two facts the question was about (the stock total,
+the certificate number and expiry, or the incoming quantity and arrival date):
+
+> 1. Sorento Close Couple WC (SRTWC286-SH-NEW-P)
+> **Total:** 34
+
+For a product's full details, ask for it by its code.
 
 **More than 50:** nothing is listed, because the list would not fit in one WhatsApp message.
 The bot states the count and asks:
@@ -42,14 +51,32 @@ first 30 lists 31 to 40, "Here are 31 to 40."), and once every product has been 
 says "That is all 62." The bot never offers "more" or "next" itself. A new product type or a
 new question ("which basin has cert" after a water closet list) starts a new set.
 
-Each product is listed top to bottom: its name, then one line per field (product code, the key
-specs the first line does not already say, then stock, certificate or incoming details), with a
-blank line between products.
+### Which brand comes first (brand weights)
 
-When the question names no brand and the company has a chatbot default brand (Master Data >
-Brands), the answer covers that brand ("Brand: Sorento, Product type: Wash basin. ...") and the
-last line names the other brands with their counts: "Other brands with stock: Bravat 79,
-Cabana 57. Name one to see them."
+Each brand has a **Chatbot brand weight** on **Master Data > Brands** (shown in the list, set
+on the brand's own page with **Edit**, or in the create and edit dialog). When the question
+names no brand, the bot answers the highest weighted brand that has products in the set, and
+the last line names the other brands in weight order, with their counts (here Cabana 0.5, Mocha
+0.1, Bravat 0):
+
+> Other brands with stock: Cabana 57, Mocha 25, Bravat 79. Name one to see them.
+
+A weight of 0 means no preference. Sorento starts at 1.5 and every other brand at 0, so the
+reply stays as before until you weight another brand; for example Sorento 1.5, Cabana 0.5,
+Mocha 0.1 lists Cabana before Mocha. If no weighted brand has products in the set, the answer
+covers every brand. A question that names a brand always answers that brand only.
+
+### When nothing matches
+
+The bot says what it searched for and what the set holds in other values, before it offers to
+escalate:
+
+> No gunmetal wash basins with incoming stock (I looked for Finish or colour: Gunmetal among
+> wash basins). 12 wash basins have incoming stock in another finish or colour: Chrome 5, Matt
+> black 4, White 3. Would you like me to escalate to purchasing team?
+
+Every value is said in plain words ("Cold only", "S trap", "Free standing"). To change how a
+value reads, edit its display label on the spec key in Product Specifications.
 
 A dealer on an **Availability only** stock visibility policy asking "which tap got stock" is
 counted over the locations their policy allows only, and is never shown a quantity: each product
@@ -80,6 +107,13 @@ asks you to try a word it knows.
   admin has taught the bot that word) clarifies and lists the document types it does know:
   > I don't know 'photo' as a document type. Types I know: Certification, Product Photos, Product
   > Videos, Technical Specifications.
+
+* An unrecognised **value** of something the bot does know (a trap type, a finish) is said back
+  with the values it knows, never swapped for the nearest one:
+  > I don't know 't trap' as a trap. I know P trap and S trap.
+
+Answer the question with one of the offered words ("tap", "p trap") and the bot runs your
+original question again with that word, for example "2 taps have stock." with the list.
 
 Once an admin adds the missing word to the matching lookup set (see below), the same question
 answers with a set instead of clarifying.

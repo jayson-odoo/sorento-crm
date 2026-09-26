@@ -638,6 +638,105 @@ def with_set_count_from_text(
     return {**verdict, "top_n": count, "reference_positions": []}
 
 
+#: The verdict keys that say WHAT was asked, kept with an open clarify so its answer
+#: re-runs that ask (round 4 R5).
+_CLARIFY_ASK_KEYS = (
+    "message_type",
+    "intent_hint",
+    "domain_hint",
+    "scope_intent",
+    "match_mode",
+    "requested_attributes",
+    "user_goal",
+    "access_levels",
+)
+_CLARIFY_LEAD_WORDS = frozenset({"the", "a", "an", "i", "mean", "meant", "yes", "ya", "its", "it", "is"})
+
+
+def set_clarify_carry(verdict: dict[str, Any], predicate: Any, resolved: Any) -> dict[str, Any] | None:
+    """What an open clarify question was about, for `focus.set_clarify`, or None.
+
+    Round 4 R5 (owner console test on PR #833: "i clarify if it is tap or wash basin and i
+    said tap, you supposed to do the searching"). Two questions carry it: the product-type
+    clarify ("I don't know 'water tap basin' as a product type. Did you mean tap or wash
+    basin?", AC-1320) and the unknown value one (R6, "I know P trap and S trap."). Kept:
+    the unknown words, the options offered, and the ask itself (intent, domain, attribute
+    and this message's own entities), so the answer is that ask with the word replaced."""
+    term: str | None = None
+    options: list[str] = []
+    unknown = []
+    if isinstance(predicate, dict):
+        unknown = [u for u in (predicate.get("unknown_values") or []) if isinstance(u, dict)]
+    if not unknown and isinstance(resolved, dict):
+        unknown = [u for u in (resolved.get("unknown_spec_values") or []) if isinstance(u, dict)]
+    if unknown:
+        term = jsc.nullish_str(unknown[0].get("said")).strip()
+        options = [jsc.nullish_str(k).strip().lower() for k in unknown[0].get("known") or []]
+    elif isinstance(predicate, dict) and not predicate.get("qualifying_total") and predicate.get("suggestions"):
+        terms = [t for t in (predicate.get("unrecognized_terms") or []) if isinstance(t, str) and t.strip()]
+        term = terms[0].strip() if terms else None
+        options = [jsc.nullish_str(o).strip().lower() for o in predicate.get("suggestions") or []]
+    options = [o for o in options if o]
+    if not term or not options:
+        return None
+    ask = {key: verdict.get(key) for key in _CLARIFY_ASK_KEYS}
+    ask["entities"] = [
+        dict(e)
+        for e in (verdict.get("entities") or [])
+        if isinstance(e, dict) and e.get("current_message") is True
+    ]
+    return {"term": term, "options": options, "ask": ask}
+
+
+def _replace_word(text: Any, term: str, option: str) -> Any:
+    if not isinstance(text, str):
+        return text
+    if text.strip().lower() == term.lower():
+        return option
+    return re.sub(re.escape(term), option, text, flags=re.IGNORECASE)
+
+
+def with_clarify_answer(verdict: dict[str, Any], message: Any, *, carried: Any) -> dict[str, Any]:
+    """The carried ask with the unknown word replaced, when this message answers the open
+    clarify with one of its options; else the verdict unchanged.
+
+    Round 4 R5 (owner console test on PR #833): "tap" after "Did you mean tap or wash
+    basin?" was read on its own, a product search that listed two codes. The answer is
+    the question's own ask again, "any water tap basin" with "water tap basin" read as
+    "tap", so the customer gets the counted set ("2 taps have stock."). A message that is
+    not one of the options is a question of its own and is left to the parser."""
+    if not isinstance(carried, dict) or not isinstance(message, str):
+        return verdict
+    term = jsc.nullish_str(carried.get("term")).strip()
+    options = [o for o in (carried.get("options") or []) if isinstance(o, str) and o]
+    ask = carried.get("ask") if isinstance(carried.get("ask"), dict) else None
+    lines = message.strip().splitlines()
+    words = re.findall(r"[a-z0-9]+", lines[0].lower()) if lines else []
+    while words and words[0] in _CLARIFY_LEAD_WORDS:
+        words = words[1:]
+    reply = " ".join(words)
+    option = next((o for o in options if " ".join(re.findall(r"[a-z0-9]+", o.lower())) == reply), None)
+    if not term or ask is None or option is None:
+        return verdict
+    entities = []
+    replaced = False
+    for e in ask.get("entities") or []:
+        if not isinstance(e, dict):
+            continue
+        raw = e.get("raw")
+        new_raw = _replace_word(raw, term, option)
+        replaced = replaced or new_raw != raw
+        entities.append({**e, "raw": new_raw, "canonical_code": None, "current_message": True})
+    if not replaced:
+        entities.append({"raw": option, "hint": "product_type", "canonical_code": None, "current_message": True, "confident": True})
+    out = {**verdict, **{k: v for k, v in ask.items() if k != "entities"}}
+    out["entities"] = entities
+    out["user_goal"] = _replace_word(ask.get("user_goal"), term, option)
+    out["top_n"] = None
+    out["reference_positions"] = []
+    return out
+
+
 #: The entity hints that describe WHICH products a set is: its class word, its spec
 #: words, its brand, and the codes of an earlier answer.
 _SET_DESCRIBING_HINTS = frozenset({"product_type", "category", "spec", "brand", "product"})

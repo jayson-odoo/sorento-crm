@@ -57,6 +57,7 @@ from app.services.chatbot import jsc
 from app.services.chatbot.contracts import UNDOMAINED_CHATBOT_TOOLS, is_timeline, named_count
 from app.services.chatbot.turn.policy import default_policy
 from app.services.chatbot.turn import policy_rows
+from app.services.product_spec_registry import display_spec_value
 
 logger = logging.getLogger(__name__)
 
@@ -523,6 +524,86 @@ def _set_list_size(semantic_input: Any) -> int:
 
     named = _set_named_count(semantic_input)
     return min(named, answer_mod.SET_LIST_MAX) if named else answer_mod.SET_LIST_MAX
+
+
+#: The facts a compact set row says per leg, in order, by the tool's own field labels
+#: (round 4 R3: "then the one or two facts the ask was about"). A leg missing here, or a
+#: tool whose rows carry none of these, falls back to the row's first two plain fields.
+_SET_ROW_FACTS: dict[str, tuple[str, ...]] = {
+    "stock": ("Total",),
+    "certificate": ("Certificate Number", "Valid Until"),
+    "incoming": ("Incoming Quantity", "Estimated Arrival Date", "ETA"),
+    "attachment_type": ("Attachment Type",),
+}
+#: Fields a fallback fact never is: identity the name line already says, and file
+#: plumbing that is not a fact about the product.
+_SET_ROW_NOT_FACTS = frozenset(
+    {"Product Code", "Product Name", "Description", "Company", "Dimensions", "List Price", "File Name", "File Link"}
+)
+_SET_ROW_FACT_MAX = 2
+
+
+def _set_row_code(it: Any) -> str:
+    fields = [f for f in (jsc.get(it, "fields") or []) if isinstance(f, dict)]
+    # The attachments presenter leaves "Product Code" unkeyed; the stock one keys it.
+    code_field = next(
+        (
+            f
+            for f in fields
+            if jsc.js_string(f.get("key") or "") == "product_code"
+            or jsc.js_string(f.get("label") or "") == "Product Code"
+        ),
+        None,
+    )
+    return jsc.nullish_str(code_field.get("value") if code_field else jsc.get(it, "title")).strip()
+
+
+def _set_row_facts(it: Any, require: Any) -> list[str]:
+    fields = [f for f in (jsc.get(it, "fields") or []) if isinstance(f, dict)]
+    by_label = {jsc.js_string(f.get("label") or ""): f for f in fields}
+    wanted = [label for key in (require or {}) for label in _SET_ROW_FACTS.get(key, ())]
+    picked = [by_label[label] for label in wanted if label in by_label]
+    if not picked:
+        picked = [f for f in fields if jsc.js_string(f.get("label") or "") not in _SET_ROW_NOT_FACTS]
+    return [
+        f"*{jsc.js_string(f.get('label'))}:* {_fmt_value(f.get('value'))}"
+        for f in picked[:_SET_ROW_FACT_MAX]
+    ]
+
+
+def set_rows_text(items: list[Any], row_labels: dict[str, Any], *, require: Any, offset: int = 0) -> str:
+    """A counted set's rows, one per product, at most two lines each (round 4 R3, owner
+    console test on PR #833: "one product is at most 2 lines (name with code, then the
+    one or two facts the ask was about); details on request"):
+
+        1. Sorento Close Couple WC (SRTWC286-SH-NEW-P)
+        *Total:* 34
+
+    Line 1 is the product's name (the resolver's `row_labels`) with its code; line 2 is
+    what the ask was about, by leg (`_SET_ROW_FACTS`). A product the tool returned as
+    several rows (three certificate files, two shipments) is one row that says how many.
+    A product with nothing to say past its name is one line. Rows are numbered from
+    `offset + 1` (a page that continues a list, W4). A blank line between products."""
+    grouped: dict[str, list[Any]] = {}
+    for it in items:
+        grouped.setdefault(_set_row_code(it), []).append(it)
+    out = ""
+    for n, (code, rows) in enumerate(grouped.items(), start=offset + 1):
+        described = row_labels.get(code) if isinstance(row_labels, dict) else None
+        name = jsc.js_string((described or {}).get("name") or "").strip() if isinstance(described, dict) else ""
+        first = f"{n}. {name} ({code})" if name and name != code else f"{n}. {code}"
+        flags = [jsc.get(r, "flags") for r in rows]
+        if any(jsc.truthy(f) and jsc.truthy(jsc.get(f, "discontinued")) for f in flags):
+            first += " *(Discontinued)*"
+        facts = _set_row_facts(rows[0], require)
+        if len(rows) > 1:
+            keys = set(require or {})
+            noun = "files" if keys & {"certificate", "attachment_type"} else "shipments" if "incoming" in keys else "rows"
+            facts.append(f"{len(rows)} {noun}")
+        if any(jsc.truthy(f) and jsc.truthy(jsc.get(f, "expired")) for f in flags):
+            facts.append("*(Expired)*")
+        out += first + ("\n" + ", ".join(facts) if facts else "") + "\n\n"
+    return out
 
 
 def _rendered_product_count(items: list[Any]) -> int | None:
@@ -1614,6 +1695,13 @@ def _project_product_specs(
             if raw_key in hidden:
                 dropped_keys.add(raw_key)
             else:
+                # R7 (round 4 on PR #833, "why all the values are snake case?"): a stored
+                # value never reaches a reply as stored. The MCP sends the CRM's plain
+                # words once it carries `display_value`; this reads any slug that still
+                # arrives the same way (`display_spec_value`), so an older MCP cannot leak
+                # "cold_only" either.
+                if isinstance(f.get("value"), str):
+                    f["value"] = display_spec_value(f["value"])
                 spec_fields.append(f)
 
         if not asked:
@@ -2491,10 +2579,8 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     if len(action_links):
         msg += "\n"
 
-    # Round 3 W1 (owner hand test on PR #833, "line by line ... vertical, don't use |"): a
-    # counted-set row is a block read top to bottom. Line 1 is the product's own name,
-    # then one "*Label:* value" line per field: the code, the key specs the header does
-    # not already say, then the tool's own fields. The name and specs come from the
+    # Round 4 R3 (owner console test on PR #833, "i said 10 but it come out so many"): a
+    # counted-set row is at most two lines, `set_rows_text`. The name comes from the
     # resolver (`predicate.row_labels`, keyed by product code).
     set_predicate = ctx.get("predicate") if isinstance(ctx.get("predicate"), dict) else None
     set_row_labels = jsc.get(set_predicate, "row_labels") if set_predicate is not None else None
@@ -2503,47 +2589,11 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     # 11 to 50." over rows 11 to 50). Display only: a set answer mints no pick roster.
     set_row_offset = int(jsc.get(set_predicate, "offset") or 0) if set_predicate is not None else 0
 
-    def _set_item_block(position: int, it: Any) -> str:
-        fields = [f for f in (jsc.get(it, "fields") or []) if isinstance(f, dict)]
-        # The attachments presenter leaves "Product Code" unkeyed; the stock one keys it.
-        code_field = next(
-            (
-                f
-                for f in fields
-                if jsc.js_string(f.get("key") or "") == "product_code"
-                or (not f.get("key") and jsc.js_string(f.get("label") or "") == "Product Code")
-            ),
-            None,
-        )
-        code = jsc.nullish_str(code_field.get("value") if code_field else jsc.get(it, "title")).strip()
-        described = set_row_labels.get(code) if set_row_labels else None
-        described = described if isinstance(described, dict) else {}
-        name = jsc.js_string(described.get("name") or "").strip() or code
-        lines = [f"{position}. {name}"]
-        if code:
-            lines.append(f"*Product Code:* {code}")
-        for spec in jsc.array(described.get("specs")):
-            label = jsc.js_string(jsc.get(spec, "label") or "").strip()
-            value = jsc.js_string(jsc.get(spec, "value") or "").strip()
-            if label and value:
-                lines.append(f"*{label}:* {value}")
-        for f in fields:
-            if f is code_field:
-                continue
-            # The name line already says it.
-            if jsc.js_string(f.get("label") or "") == "Product Name" and _fmt_value(f.get("value")) == name:
-                continue
-            lines.append(f"*{jsc.js_string(f.get('label', jsc.UNDEFINED))}:* {_fmt_value(f.get('value'))}")
-        flags = jsc.get(it, "flags")
-        if jsc.truthy(flags) and jsc.truthy(jsc.get(flags, "discontinued")):
-            lines.append("⚠️ *(PRODUCT DISCONTINUED)*")
-        if jsc.truthy(flags) and jsc.truthy(jsc.get(flags, "expired")):
-            lines.append("⚠️ *(EXPIRED)*")
-        return "\n".join(lines)
+    set_require = jsc.get(set_predicate, "require") if set_predicate is not None else None
 
     def _item_line(position: int, it: Any) -> str:
         if set_row_labels is not None:
-            return _set_item_block(position, it)
+            return set_rows_text([it], set_row_labels, require=set_require, offset=position - 1).rstrip("\n")
         field_lines = "\n".join(
             f"*{jsc.js_string(jsc.get(f, 'label', jsc.UNDEFINED))}:* "
             f"{_fmt_value(jsc.get(f, 'value'))}"
@@ -2591,7 +2641,11 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     # MESSAGE, never from the STATE - `answers` below is untouched, so a positional pick
     # still resolves against the same page rows. And ONLY the numbered list goes: the
     # multi-company note reads `e.items` for attribution and must keep seeing the real rows.
-    for i, it in enumerate([] if (qs_render or groups_render) else (e.get("items") or [])):
+    if set_row_labels is not None and not (qs_render or groups_render):
+        # R3: a counted set lists one compact row per PRODUCT, whatever number of tool
+        # rows (files, shipments) it came back as.
+        msg += set_rows_text(e.get("items") or [], set_row_labels, require=set_require, offset=set_row_offset)
+    for i, it in enumerate([] if (qs_render or groups_render or set_row_labels is not None) else (e.get("items") or [])):
         msg += _item_line(i + 1 + set_row_offset, it) + "\n\n"
     # Item 8: the product projection's miss lines, one per asked word, AFTER the items
     # (`_project_product_specs`). Byte-inert when the key is absent.

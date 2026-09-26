@@ -19,6 +19,7 @@ from typing import Any
 
 import pytest
 
+from tests.chatbot.set_reply import legacy_lines, one_line_header, row_blocks, row_codes, snake_tokens  # noqa: F401
 from tests.chatbot.test_counted_set_no_paging import _link_to_default_company
 from tests.chatbot.test_engine import stub_access, stub_parser  # noqa: F401 - fixtures used by name
 from tests.chatbot.test_lane_require import (
@@ -48,9 +49,9 @@ def _brand(db, name: str, *, default: bool = False):
         row = Brand(id=str(uuid.uuid4()), brand_code=name.upper()[:50], brand_name=name, is_active=True)
         db.add(row)
         db.flush()
-    if hasattr(row, "is_chatbot_default"):
-        row.is_chatbot_default = default
-        db.flush()
+    # Round 4 R1: the round 2 "default" brand is the one weighted above the rest.
+    row.chatbot_weight = 1.5 if default else 0
+    db.flush()
     return row
 
 
@@ -89,8 +90,7 @@ def world(session_factory):
 
     db = session_factory()
     # Clear any default a previous test left, so each test states its own.
-    if hasattr(Brand, "is_chatbot_default"):
-        db.query(Brand).update({Brand.is_chatbot_default: False})
+    db.query(Brand).update({Brand.chatbot_weight: 0})
     _category_id, uom_id = _seed_category_and_uom(db)
     basin_category = _class_category(db, "WB")
     wc_category = _class_category(db, "WC")
@@ -201,7 +201,10 @@ class _Chat:
             session_factory=self.session_factory,
         )
         assert turn.status == "done", turn.error
-        return (turn.reply or {}).get("text") or ""
+        reply = (turn.reply or {}).get("text") or ""
+        # Round 4 R7 on PR #833: no reply carries a snake_case token.
+        assert not snake_tokens(reply), (text, snake_tokens(reply), reply)
+        return reply
 
 
 @pytest.fixture()
@@ -308,7 +311,7 @@ def test_w2_the_header_names_brand_type_and_mounting_in_plain_words(chat, world,
         f"which {brand.lower()} wall hung basin has stock?",
         _stock_verdict(_brand_entity_shapes(brand.lower(), "wall hung basin")[shape], "which wall hung basin has stock"),
     )
-    first = text.splitlines()[0]
+    first = one_line_header(text)
     assert first == (
         f"Brand: {_display(brand)}, Product type: Wash basin, Mounting: Wall hung. 2 wash basins have stock."
     ), text
@@ -320,7 +323,7 @@ def test_w2_without_a_brand_the_header_still_names_the_spec(chat, world):
         "which wall hung basin has stock",
         _stock_verdict([{"raw": "wall hung basin", "hint": "product_type"}], "which wall hung basin has stock"),
     )
-    assert text.splitlines()[0] == "Product type: Wash basin, Mounting: Wall hung. 3 wash basins have stock.", text
+    assert one_line_header(text) == "Product type: Wash basin, Mounting: Wall hung. 3 wash basins have stock.", text
 
 
 def test_w2_a_word_that_was_not_understood_is_said_never_silently_dropped(chat, world):
@@ -331,7 +334,7 @@ def test_w2_a_word_that_was_not_understood_is_said_never_silently_dropped(chat, 
             "which zzqx wash basin has stock",
         ),
     )
-    first = text.splitlines()[0]
+    first = one_line_header(text)
     assert "Product type: Wash basin." in first, text
     assert "I did not understand \"zzqx\"" in first, text
 
@@ -342,8 +345,9 @@ def test_w2_a_word_that_was_not_understood_is_said_never_silently_dropped(chat, 
 
 
 def test_w3_each_row_leads_with_the_product_name_and_key_spec_then_code_and_stock(chat, world):
-    """Superseded in layout by round 3 W1 (owner, 26 Sep 13:07Z: "vertical, don't use |"):
-    the row is a block, name, then code, then the key specs, then the tool's fields."""
+    """Superseded in layout by round 3 W1 (owner, 26 Sep 13:07Z: "vertical, don't use |")
+    and again by round 4 R3 (owner, 27 Sep 00:03 MYT: "one product is at most 2 lines"):
+    the row is "N. <name> (<code>)", then the stock."""
     brand = world["sorento"].brand_name.lower()
     text = chat.say(
         f"which {brand} wash basin has stock",
@@ -351,21 +355,10 @@ def test_w3_each_row_leads_with_the_product_name_and_key_spec_then_code_and_stoc
                        f"which {brand} wash basin has stock"),
     )
     assert "|" not in text, text
-    chunks = text.split("\n\n")
-    for p in world["srt_wall"]:
-        [block] = [c for c in chunks if f"*Product Code:* {p.product_code}" in c]
-        assert re.match(
-            rf"^\d+\. {re.escape(p.product_name)}\n\*Product Code:\* {re.escape(p.product_code)}\n"
-            rf"\*Mounting:\* Wall hung\n\*Finish or colour:\* White\n\*Total:\* 10$",
-            block,
-        ), text
-    for p in world["srt_basins"][:3]:
-        [block] = [c for c in chunks if f"*Product Code:* {p.product_code}" in c]
-        assert re.match(
-            rf"^\d+\. {re.escape(p.product_name)}\n\*Product Code:\* {re.escape(p.product_code)}\n"
-            rf"\*Finish or colour:\* White\n\*Total:\* 10$",
-            block,
-        ), text
+    blocks = {b[0].rsplit(" (", 1)[-1].rstrip(")"): b for b in row_blocks(text)}
+    for p in world["srt_wall"] + world["srt_basins"][:3]:
+        assert re.match(rf"^\d+\. {re.escape(p.product_name)} \({re.escape(p.product_code)}\)$", blocks[p.product_code][0]), text
+        assert blocks[p.product_code][1:] == ["*Total:* 10"], text
 
 
 # --------------------------------------------------------------------------- #
@@ -382,15 +375,9 @@ def _bare(**overrides: Any) -> dict[str, Any]:
 
 
 def _listed(text: str, world) -> list[str]:
-    """The product codes in the order the rows list them (one "*Product Code:*" line per
-    row block, round 3 W1)."""
+    """The product codes in the order the rows list them (round 4 R3: "N. <name> (<code>)")."""
     codes = {p.product_code for p in world["every"]}
-    out = []
-    for line in text.splitlines():
-        m = re.match(r"^\*Product Code:\* (\S+)$", line)
-        if m and m.group(1) in codes:
-            out.append(m.group(1))
-    return out
+    return [c for c in row_codes(text) if c in codes]
 
 
 @pytest.fixture()
@@ -413,7 +400,7 @@ def test_w4_a_bare_count_after_the_count_question_keeps_the_brand_set(chat, worl
 
     page = chat.say("2", _bare())
 
-    first = page.splitlines()[0]
+    first = one_line_header(page)
     assert first == (
         f"Brand: {_display(brand)}, Product type: Wash basin. 5 wash basins have stock. Here are the first 2."
     ), page
@@ -433,7 +420,7 @@ def test_w4_another_n_continues_from_where_the_list_stopped(chat, world, small_l
     page1 = chat.say("2", _bare())
     page2 = chat.say("can give another 2?", _bare(top_n=parser_top_n))
 
-    first = page2.splitlines()[0]
+    first = one_line_header(page2)
     assert first == (
         f"Brand: {_display(brand)}, Product type: Wash basin. 5 wash basins have stock. Here are 3 to 4."
     ), page2
@@ -446,7 +433,7 @@ def test_w4_another_n_continues_from_where_the_list_stopped(chat, world, small_l
 
     # And again: 5 to 5, the last one.
     page3 = chat.say("another 2", _bare())
-    assert "Here are 5 to 5." in page3.splitlines()[0], page3
+    assert "Here are 5 to 5." in one_line_header(page3), page3
     assert _listed(page3, world) == every[4:], page3
 
 
@@ -476,7 +463,7 @@ def test_w4_a_count_that_moved_between_the_ask_and_the_page_is_said(chat, world,
 
     page = chat.say("2", _bare())
 
-    first = page.splitlines()[0]
+    first = one_line_header(page)
     assert "6 wash basins have stock." in first, page
     assert "It was 5 when you asked." in first, page
 
@@ -487,9 +474,9 @@ def test_w4_a_count_named_in_the_ask_itself_continues_on_another_n(chat, world, 
         f"show 2 {brand.lower()} wash basins with stock",
         _stock_verdict(_brand_entity_shapes(brand.lower(), "wash basin")[0], "show 2 wash basins with stock", top_n=2),
     )
-    assert "5 wash basins have stock. Here are the first 2." in first.splitlines()[0], first
+    assert "5 wash basins have stock. Here are the first 2." in one_line_header(first), first
     more = chat.say("another 2", _bare())
-    assert "5 wash basins have stock. Here are 3 to 4." in more.splitlines()[0], more
+    assert "5 wash basins have stock. Here are 3 to 4." in one_line_header(more), more
     assert not set(_listed(first, world)) & set(_listed(more, world)), (first, more)
 
 
@@ -509,8 +496,8 @@ def sorento_default(world):
     from app.models.product import Brand
 
     db = world["db"]
-    db.query(Brand).update({Brand.is_chatbot_default: False})
-    world["sorento"].is_chatbot_default = True
+    db.query(Brand).update({Brand.chatbot_weight: 0})
+    world["sorento"].chatbot_weight = 1.5
     db.commit()
     return world
 
@@ -521,7 +508,7 @@ def test_w5_no_brand_named_answers_the_default_brand_first_and_names_the_others(
         "which wash basin has stock",
         _stock_verdict([{"raw": "wash basin", "hint": "product_type"}], "which wash basin has stock"),
     )
-    first = text.splitlines()[0]
+    first = one_line_header(text)
     brand, other = _display(world["sorento"].brand_name), _display(world["mocha"].brand_name)
     # Round 3 W4: no "(default)"; the other brands close the reply.
     assert first == f"Brand: {brand}, Product type: Wash basin. 5 wash basins have stock.", text
@@ -536,8 +523,8 @@ def test_w5_naming_a_brand_answers_that_brand_only(chat, sorento_default):
         f"which {mocha.lower()} wash basin has stock",
         _stock_verdict(_brand_entity_shapes(mocha.lower(), "wash basin")[0], "which wash basin has stock"),
     )
-    first = text.splitlines()[0]
-    assert first.startswith(f"Brand: {_display(mocha)}, Product type: Wash basin. 3 wash basins have stock."), text
+    first = one_line_header(text)
+    assert one_line_header(first).startswith(f"Brand: {_display(mocha)}, Product type: Wash basin. 3 wash basins have stock."), text
     assert "(default)" not in text and "Other brands" not in text, text
     assert _codes_in(text, world) == _codes(world["mch_basins"] + world["mch_wall"]), text
 
@@ -547,8 +534,8 @@ def test_w5_a_default_brand_with_nothing_in_the_set_leaves_the_set_whole(chat, s
     A set the default brand does not reach at all is answered across brands."""
     world = sorento_default
     db = world["db"]
-    world["sorento"].is_chatbot_default = False
-    world["mocha"].is_chatbot_default = True
+    world["sorento"].chatbot_weight = 0
+    world["mocha"].chatbot_weight = 1.5
     db.commit()
     text = chat.say(
         "which water closet has stock",
@@ -565,7 +552,7 @@ def test_w5_a_page_of_the_default_brand_set_keeps_the_default(chat, sorento_defa
         _stock_verdict([{"raw": "wash basin", "hint": "product_type"}], "which wash basin has stock"),
     )
     page = chat.say("2", _bare())
-    first = page.splitlines()[0]
+    first = one_line_header(page)
     assert first.startswith(
         f"Brand: {_display(world['sorento'].brand_name)}, Product type: Wash basin. 5 wash basins have stock."
     ), page
@@ -596,7 +583,7 @@ def test_w6_water_basin_is_a_wash_basin_even_where_the_category_lacks_the_word(c
         "which water basin has stock",
         _stock_verdict([{"raw": "water basin", "hint": "product_type"}], "which water basin has stock"),
     )
-    assert text.splitlines()[0] == "Product type: Wash basin. 8 wash basins have stock.", text
+    assert one_line_header(text) == "Product type: Wash basin. 8 wash basins have stock.", text
     assert _codes_in(text, world) == _codes(world["srt_basins"][:3] + world["srt_wall"] + world["mch_basins"] + world["mch_wall"]), text
 
 
@@ -610,7 +597,7 @@ def test_w6_a_long_subject_list_is_counted_never_dumped_as_one_line_of_codes():
 
     answer = _compose([_envelope("inventory", entities=codes)], policy=_policy(row))
 
-    first = answer.text.splitlines()[0]
+    first = one_line_header(answer.text)
     assert first == "*stock* for 12 products:", answer.text
     assert codes[5] not in first, answer.text
 

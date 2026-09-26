@@ -725,6 +725,120 @@ def is_generic_free_term(term: str) -> bool:
 # silently undercount ("250mm" excluding every close-but-not-exact match).
 
 
+#: Keys whose value names WHAT a product is; an unknown word there is the product-type
+#: clarify's (AC-1320), not an unknown value.
+_UNKNOWN_VALUE_SKIP_KEYS = frozenset({"class", "product_type", "brand"})
+_WORD_RE = re.compile(r"[a-z0-9]+")
+
+
+def _words_of(text: Any) -> list[str]:
+    return _WORD_RE.findall(str(text or "").lower())
+
+
+def unknown_spec_values(db: Session, text: str, *, registry_rows=None) -> list[dict]:
+    """The attribute values a message names that the registry does not know, each with
+    the values it does: `[{"key", "label", "said", "known"}]`, `[]` when there are none.
+
+    Round 4 R6 (owner console test on PR #833: "the water closet t trap ask, why it match
+    s trap?"): "t trap" was answered with S trap water closets. A value is recognised as
+    a value OF a key by its key's own shape, read off the registry: a word that ends the
+    synonyms of two or more of the key's values ("trap" ends "s trap" and "p trap") is
+    that key's head word. "<word> trap" that is no synonym is an unknown trap value, said
+    back as "I don't know 't trap' as a trap. I know P trap and S trap.", never matched to
+    the nearest one. Not an unknown value: a phrase that is a synonym; a modifier that is
+    a known word elsewhere ("closet trap", "chrome trap"), a number ("250mm trap") or a
+    stopword ("the trap"); a head word that is itself a class word ("tap"). No word list
+    in code: the registry's synonyms and the class vocabulary decide."""
+    from app.services.product_class_signal import CLASS_SYNONYMS
+    from app.services.product_spec_registry import display_spec_value
+
+    tokens = _words_of(text)
+    if len(tokens) < 2:
+        return []
+    rows = active_registry(db) if registry_rows is None else registry_rows
+    class_words = {w for label, syns in CLASS_SYNONYMS.items() for phrase in [label, *syns] for w in _words_of(phrase)}
+    known_words = set(class_words) | set(_PHRASE_STOPWORDS)
+    shapes: list[tuple[Any, dict[str, list[str]]]] = []
+    for row in rows:
+        synonyms = {v: list(p) for v, p in merged_synonyms(row).items() if v != SELF_SYNONYM_KEY}
+        for value, phrases in synonyms.items():
+            for phrase in [str(value).replace("_", " "), *phrases]:
+                known_words.update(_words_of(phrase))
+        if row.data_type == "enum" and row.spec_key not in _UNKNOWN_VALUE_SKIP_KEYS:
+            shapes.append((row, synonyms))
+    out: list[dict] = []
+    for row, synonyms in shapes:
+        phrases = {
+            " ".join(_words_of(p))
+            for value, ps in synonyms.items()
+            for p in [str(value).replace("_", " "), *ps]
+            if _words_of(p)
+        }
+        enders: dict[str, set[str]] = {}
+        for value, ps in synonyms.items():
+            for p in [str(value).replace("_", " "), *ps]:
+                words = _words_of(p)
+                if len(words) >= 2:
+                    enders.setdefault(words[-1], set()).add(value)
+        heads = {w for w, values in enders.items() if len(values) >= 2 and w not in class_words}
+        # Every token a known phrase of this key already covers ("wall" in "wall hung",
+        # "trap" in "s trap"): a head word inside a phrase the registry knows is no
+        # unknown value.
+        covered: set[int] = set()
+        for phrase in phrases:
+            words = phrase.split()
+            for start in range(len(tokens) - len(words) + 1):
+                if tokens[start : start + len(words)] == words:
+                    covered.update(range(start, start + len(words)))
+        for j in range(1, len(tokens)):
+            if tokens[j] not in heads or j in covered:
+                continue
+            modifier = tokens[j - 1]
+            if modifier in known_words or any(ch.isdigit() for ch in modifier):
+                continue
+            said = f"{modifier} {tokens[j]}"
+            if any(u["key"] == row.spec_key for u in out):
+                continue
+            labels = dict(getattr(row, "value_labels", None) or {})
+            known = sorted({display_spec_value(v, labels) for v in merged_allowed_values(row)})
+            out.append({"key": row.spec_key, "label": row.label, "said": said, "known": known})
+    return out
+
+
+def membership_clause(membership: dict[str, Any]):
+    """The described set's predicate over `ProductSpecifications.values`: one clause per
+    key, ANDed; the values of one key ORed. None when nothing named a member.
+
+    Split out of `filter_specs` (round 4 R4 on PR #833) so a zero set can be recounted
+    without one of its keys ("no gunmetal wash basins with incoming ... N in another
+    finish") through the very same clause."""
+    key_clauses = []
+    for key, values in membership.items():
+        if not values:
+            continue
+        # Scalar branch is case-insensitive, matching the ranker's `_states`. The
+        # containment branch (case-sensitive, against the stored spelling the
+        # resolvers returned) exists because a value may be a LIST - two finishes
+        # on one product - and `#>>` renders a list as its JSON text.
+        lowered = [value.lower() for value in values]
+        scalar = func.lower(ProductSpecifications.values[key]["value"].astext).in_(lowered)
+        contained = [
+            ProductSpecifications.values[key]["value"].op("@>")(cast(literal(json.dumps(value)), JSONB))
+            for value in sorted(values)
+        ]
+        # R15/AC-1339 (third console pass): a category-sourced class row IS real
+        # membership - a product filed under Bathroom Accessory by its own category is
+        # a member of the described set for "bathroom accessory". Measured on the prod
+        # copy: two class labels exist ONLY through category filing (Bathroom Accessory
+        # 2,040, Bathtub and Jacuzzi 93).
+        key_clauses.append(or_(scalar, *contained))
+    if not key_clauses:
+        return None
+    # R27/AC-1352: DIFFERENT keys AND together (a water closet AND an s_trap is narrower
+    # than either alone); repeated values WITHIN one key stay unioned.
+    return key_clauses[0] if len(key_clauses) == 1 else and_(*key_clauses)
+
+
 def filter_specs(
     db: Session,
     *,
@@ -823,38 +937,7 @@ def filter_specs(
             if word not in unrecognized:
                 unrecognized.append(word)
 
-    clause = None
-    key_clauses = []
-    for key, values in membership.items():
-        if not values:
-            continue
-        # Scalar branch is case-insensitive, matching the ranker's `_states`. The
-        # containment branch (case-sensitive, against the stored spelling the
-        # resolvers returned) exists because a value may be a LIST - two finishes
-        # on one product - and `#>>` renders a list as its JSON text.
-        lowered = [value.lower() for value in values]
-        scalar = func.lower(ProductSpecifications.values[key]["value"].astext).in_(lowered)
-        contained = [
-            ProductSpecifications.values[key]["value"].op("@>")(cast(literal(json.dumps(value)), JSONB))
-            for value in sorted(values)
-        ]
-        key_clause = or_(scalar, *contained)
-        # R15/AC-1339 (third console pass): a category-sourced class row IS
-        # real membership, not excluded from it - a product filed under
-        # Bathroom Accessory by its own category is a member of the described
-        # set for "bathroom accessory" exactly as one whose description named
-        # it. Measured on the prod copy: two class labels exist ONLY through
-        # category filing (Bathroom Accessory 2,040 products, Bathtub and
-        # Jacuzzi 93) - excluding provenance.class.source == "category"
-        # reported "which bathroom accessory has stock" as zero qualifying
-        # against a real 999. The company's own filing is the strongest
-        # statement of what the product is.
-        key_clauses.append(key_clause)
-    if key_clauses:
-        # R27/AC-1352: DIFFERENT keys AND together (a water closet AND an
-        # s_trap is narrower than either alone) - repeated values WITHIN one
-        # key stayed unioned above, unchanged.
-        clause = key_clauses[0] if len(key_clauses) == 1 else and_(*key_clauses)
+    clause = membership_clause(membership)
 
     return {
         "clause": clause,
