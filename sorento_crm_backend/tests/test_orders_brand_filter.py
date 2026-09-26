@@ -261,3 +261,57 @@ class TestN5AnotherCompanysBrand:
         resp = client.get(BY_PRODUCT_BASE, params={"brand_ids": [mocha_brand.id]})
         assert resp.status_code == 200, resp.text
         assert resp.json()["data"] == [], resp.json()
+
+
+class TestN3BrandNarrowsBySubquery:
+    """Fix lane round 2, N3: a brand-only orders call must narrow through a
+    `Product.brand_id` subquery, never by reading the brand's whole product id list
+    into Python and binding it back as `IN (...)`. Pinned by watching the statements
+    the request runs: no product id of the brand is ever a bound parameter."""
+
+    def _bound_values(self, db, call) -> list:
+        from sqlalchemy import event
+
+        seen: list = []
+
+        def _capture(conn, cursor, statement, parameters, context, executemany):
+            if isinstance(parameters, dict):
+                seen.extend(str(v) for v in parameters.values())
+            elif isinstance(parameters, (list, tuple)):
+                for p in parameters:
+                    seen.extend(str(v) for v in (p.values() if isinstance(p, dict) else [p]))
+
+        engine = db.get_bind().engine
+        event.listen(engine, "before_cursor_execute", _capture)
+        try:
+            call()
+        finally:
+            event.remove(engine, "before_cursor_execute", _capture)
+        return seen
+
+    def test_brand_only_calls_never_bind_the_brands_product_ids(self, client, db):
+        brand = _brand(db, name="Sorento", code="SRT")
+        cust = customer(db, company_id=DEFAULT_COMPANY_ID, name="ZZT N3 Customer")
+        wh = warehouse(db, company_id=DEFAULT_COMPANY_ID)
+        prod = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("SRTN3"))
+        prod.brand_id = brand.id
+        db.flush()
+        order = _order_with_line(db, product_id=prod.id, cust_id=cust.id, wh_id=wh.id)
+        db.commit()
+
+        responses: list = []
+        bound = self._bound_values(
+            db,
+            lambda: responses.extend(
+                [
+                    client.get(ORDERS_BASE, params={"brand_ids": [brand.id]}),
+                    client.get(ORDERS_BASE, params={"brand_ids": [brand.id], "include_summary": "true"}),
+                    client.get(BY_PRODUCT_BASE, params={"brand_ids": [brand.id]}),
+                ]
+            ),
+        )
+        for resp in responses:
+            assert resp.status_code == 200, resp.text
+        assert order.id in {row["id"] for row in responses[0].json()["data"]}, responses[0].json()
+        assert responses[2].json()["data"], responses[2].json()
+        assert prod.id not in bound, "the brand's product ids were bound as a literal IN list"

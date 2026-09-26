@@ -18,6 +18,7 @@ from app.dependencies import (
 )
 from app.services.order_service import (
     OrderService,
+    has_product_filter,
     narrow_product_ids_by_brand,
     stamp_so_outstanding_rows,
 )
@@ -887,7 +888,7 @@ async def get_orders_by_product(
         # product_code/SKU list, partial product text, free-text query, or
         # the deprecated entity bag.
         has_product_narrower = bool(
-            parsed_product_ids
+            has_product_filter(parsed_product_ids)
             or product_id
             or (product_query and product_query.strip())
             or (query and query.strip())
