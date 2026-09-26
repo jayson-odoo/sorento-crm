@@ -1,25 +1,9 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { GripVertical } from 'lucide-react';
-import {
-  DndContext,
-  KeyboardSensor,
-  PointerSensor,
-  closestCenter,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-} from '@dnd-kit/core';
-import { restrictToParentElement, restrictToVerticalAxis } from '@dnd-kit/modifiers';
-import {
-  SortableContext,
-  arrayMove,
-  sortableKeyboardCoordinates,
-  useSortable,
-  verticalListSortingStrategy,
-} from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
+import { useMemo, useState } from 'react';
+import { MoreHorizontal } from 'lucide-react';
+import { arrayMove } from '@dnd-kit/sortable';
+import type { DragEndEvent } from '@dnd-kit/core';
 import {
   type ColumnDef,
   type SortingState,
@@ -37,10 +21,16 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridScroller, DataGridTable } from '@/components/ui/data-grid-table';
+import {
+  DataGridTableDndRowHandle,
+  DataGridTableDndRows,
+} from '@/components/ui/data-grid-table-dnd-rows';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { readableValue } from '@/lib/spec-readable';
-import { DeferredCountdown } from '@/components/common/DeferredActionButton';
+import { useDeferredAction } from '@/hooks/useDeferredAction';
+import { SPEC_REGISTRY_QUERY_KEY } from '../hooks/useSpecRegistryQuery';
 import { compileBuilder, ruleCells } from '../lib/ruleSentence';
 import type {
   SpecDerivationRule,
@@ -83,17 +73,6 @@ interface GridRow {
   uid: string;
 }
 
-/** A rule currently counting down to being removed from the DRAFT list - not yet
- *  saved. Reuses the system's deferred-action countdown UI (D7) purely client-side:
- *  the removal only reaches the server on the record's own Save. */
-interface Removal {
-  uid: string;
-  commitAt: number;
-  timer: ReturnType<typeof setTimeout>;
-}
-
-const REMOVE_WINDOW_SECONDS = 5;
-
 export interface SpecRulesGridProps {
   rules: SpecDerivationRule[];
   spec: SpecRegistryKey;
@@ -107,11 +86,18 @@ export interface SpecRulesGridProps {
   winnerIndex?: number | null;
 }
 
+const editableFindKinds = new Set(['words', 'code', 'size', 'product']);
+
 /**
  * How a spec is read: a structured grid, one row per rule, one column per part
- * (AC-S1.14). Never a sentence. Sortable headers; What to find and Value it sets
- * edit in place; drag handles only while sorted by Order (AC-S1.9); Remove is a
- * deferred 5s action (AC-S1.10).
+ * (AC-S1.14), on the shared `DataGrid` (fixed, resizable columns - fix round 1).
+ * Never a sentence. Sortable headers; What to find and Value it sets edit in
+ * place; drag handles only while sorted by Order (AC-S1.9), on the same
+ * `DataGridTableDndRows` the sales order lines table uses.
+ *
+ * Remove is `spec_rule.remove` (D7, D8, fix round 1): a server-deferred action,
+ * not a local timer - the record is the SPEC KEY (one pending removal per key
+ * across every rule), same as the Choices-and-words and Other-names grids.
  */
 export function SpecRulesGrid({
   rules,
@@ -128,24 +114,24 @@ export function SpecRulesGrid({
   const [editingCell, setEditingCell] = useState<{ uid: string; column: 'find' | 'value' } | null>(
     null,
   );
-  const [removals, setRemovals] = useState<Record<string, Removal>>({});
+  const [removingUid, setRemovingUid] = useState<string | null>(null);
 
-  // A pending removal's timer fires up to 5s later, well after the render that
-  // scheduled it - refs, not the closed-over props, so an edit made to another
-  // rule in the meantime is not clobbered by a commit still holding the old list.
-  const rulesRef = useRef(rules);
-  rulesRef.current = rules;
-  const onChangeRef = useRef(onChange);
-  onChangeRef.current = onChange;
-
-  // Cancel every pending timer on unmount, so leaving the tab mid-countdown does
-  // not fire a commit against an unmounted draft.
-  useEffect(() => {
-    return () => {
-      Object.values(removals).forEach((removal) => clearTimeout(removal.timer));
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const removal = useDeferredAction({
+    actionKey: 'spec_rule.remove',
+    entityType: 'spec_rule',
+    entityId: spec.spec_key || null,
+    verb: 'Removing',
+    subject: '',
+    surface: 'inline',
+    watchFromMount: mode === 'edit',
+    successMessage: 'Rule removed',
+    invalidateKeys: [SPEC_REGISTRY_QUERY_KEY],
+    onCommitted: () => {
+      const uid = removingUid;
+      if (uid) onChange(rules.filter((r, i) => (r._uid ?? `r${i}`) !== uid));
+      setRemovingUid(null);
+    },
+  });
 
   const lookupSpec = useMemo(
     () => (specKey: string) => registry.find((k) => k.spec_key === specKey),
@@ -178,86 +164,9 @@ export function SpecRulesGrid({
     [rules],
   );
 
-  const columns = useMemo<ColumnDef<GridRow>[]>(
-    () => [
-      { id: 'order', accessorFn: (row) => row.index, enableSorting: true, header: 'Order', size: 70 },
-      {
-        id: 'where',
-        accessorFn: (row) => ruleCells(row.rule.builder, spec, lookupSpec).whereToLook,
-        enableSorting: true,
-        header: 'Where to look',
-        size: 160,
-      },
-      {
-        id: 'kind',
-        accessorFn: (row) => ruleCells(row.rule.builder, spec, lookupSpec).kind,
-        enableSorting: true,
-        header: 'Kind',
-        size: 90,
-      },
-      {
-        id: 'find',
-        accessorFn: (row) => ruleCells(row.rule.builder, spec, lookupSpec).whatToFind.primary,
-        enableSorting: true,
-        header: 'What to find',
-        size: 300,
-      },
-      {
-        id: 'value',
-        accessorFn: (row) => ruleCells(row.rule.builder, spec, lookupSpec).valueItSets,
-        enableSorting: true,
-        header: 'Value it sets',
-        size: 140,
-      },
-      {
-        id: 'only_when',
-        accessorFn: (row) => ruleCells(row.rule.builder, spec, lookupSpec).onlyWhen,
-        enableSorting: true,
-        header: 'Only when',
-        size: 160,
-      },
-      { id: 'actions', header: '', size: 44, enableSorting: false },
-    ],
-    [spec, lookupSpec],
-  );
-
-  const table = useReactTable({
-    data,
-    columns,
-    state: { sorting },
-    onSortingChange: setSorting,
-    getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    getRowId: (row) => row.uid,
-  });
-
-  const isSortedByOrder = sorting.length === 0 || (sorting[0]?.id === 'order' && !sorting[0]?.desc);
-  const sortedRows = table.getSortedRowModel().rows;
-
-  const commitRemoval = (uid: string) => {
-    const current = rulesRef.current;
-    onChangeRef.current(current.filter((r, i) => (r._uid ?? `r${i}`) !== uid));
-    setRemovals((currentRemovals) => {
-      const next = { ...currentRemovals };
-      delete next[uid];
-      return next;
-    });
-  };
-
-  const startRemoval = (uid: string) => {
-    const commitAt = Date.now() + REMOVE_WINDOW_SECONDS * 1000;
-    const timer = setTimeout(() => commitRemoval(uid), REMOVE_WINDOW_SECONDS * 1000);
-    setRemovals((current) => ({ ...current, [uid]: { uid, commitAt, timer } }));
-  };
-
-  const cancelRemoval = (uid: string) => {
-    setRemovals((current) => {
-      const removal = current[uid];
-      if (removal) clearTimeout(removal.timer);
-      const next = { ...current };
-      delete next[uid];
-      return next;
-    });
+  const startRemoval = (uid: string, builder: SpecRuleBuilder) => {
+    setRemovingUid(uid);
+    removal.start({ builder });
   };
 
   const moveBy = (index: number, delta: number) => {
@@ -265,37 +174,6 @@ export function SpecRulesGrid({
     if (target < 0 || target >= rules.length) return;
     onChange(arrayMove(rules, index, target));
   };
-
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
-  );
-
-  const onDragEnd = ({ active, over }: DragEndEvent) => {
-    if (!over || active.id === over.id) return;
-    const from = rules.findIndex((r, i) => (r._uid ?? `r${i}`) === active.id);
-    const to = rules.findIndex((r, i) => (r._uid ?? `r${i}`) === over.id);
-    if (from < 0 || to < 0) return;
-    onChange(arrayMove(rules, from, to));
-  };
-
-  if (rules.length === 0) {
-    return (
-      <div className="flex flex-col items-center gap-2 rounded-md border border-dashed p-8 text-center">
-        <p className="text-sm font-medium">No rules yet</p>
-        <p className="text-sm text-muted-foreground">
-          Nothing will fill this specification in until a rule is added.
-        </p>
-        {mode === 'edit' && (
-          <Button type="button" size="sm" variant="outline" onClick={onAdd}>
-            Add a rule
-          </Button>
-        )}
-      </div>
-    );
-  }
-
-  const editableFindKinds = new Set(['words', 'code', 'size', 'product']);
 
   const renderFindCell = (row: GridRow, cells: ReturnType<typeof ruleCells>) => {
     const uid = row.uid;
@@ -373,6 +251,7 @@ export function SpecRulesGrid({
       }
     }
     const canEditFind = mode === 'edit' && editableFindKinds.has(builder.kind);
+    const readForRow = reads?.[row.index];
     return (
       <button
         type="button"
@@ -388,6 +267,14 @@ export function SpecRulesGrid({
             {line}
           </span>
         ))}
+        {readForRow !== undefined && (
+          <span className="block truncate text-xs text-muted-foreground">
+            Reads:{' '}
+            {readForRow?.value === null || readForRow?.value === undefined
+              ? readForRow?.evidence || 'nothing'
+              : String(readForRow.value)}
+          </span>
+        )}
       </button>
     );
   };
@@ -445,167 +332,226 @@ export function SpecRulesGrid({
     );
   };
 
+  const columns = useMemo<ColumnDef<GridRow>[]>(() => {
+    const base: ColumnDef<GridRow>[] = [
+      {
+        id: 'order',
+        accessorFn: (row) => row.index,
+        header: ({ column }) => <DataGridColumnHeader title="Order" column={column} />,
+        cell: ({ row }) => <span className="tabular-nums">{row.original.index + 1}</span>,
+        size: 70,
+        minSize: 60,
+      },
+      {
+        id: 'where',
+        accessorFn: (row) => ruleCells(row.rule.builder, spec, lookupSpec).whereToLook,
+        header: ({ column }) => <DataGridColumnHeader title="Where to look" column={column} />,
+        cell: ({ row }) => {
+          const text = ruleCells(row.original.rule.builder, spec, lookupSpec).whereToLook;
+          return (
+            <span className="block truncate" title={text}>
+              {text}
+            </span>
+          );
+        },
+        size: 160,
+        minSize: 100,
+      },
+      {
+        id: 'kind',
+        accessorFn: (row) => ruleCells(row.rule.builder, spec, lookupSpec).kind,
+        header: ({ column }) => <DataGridColumnHeader title="Kind" column={column} />,
+        cell: ({ row }) => ruleCells(row.original.rule.builder, spec, lookupSpec).kind,
+        size: 90,
+        minSize: 70,
+      },
+      {
+        id: 'find',
+        accessorFn: (row) => ruleCells(row.rule.builder, spec, lookupSpec).whatToFind.primary,
+        header: ({ column }) => <DataGridColumnHeader title="What to find" column={column} />,
+        cell: ({ row }) => renderFindCell(row.original, ruleCells(row.original.rule.builder, spec, lookupSpec)),
+        size: 300,
+        minSize: 180,
+      },
+      {
+        id: 'value',
+        accessorFn: (row) => ruleCells(row.rule.builder, spec, lookupSpec).valueItSets,
+        header: ({ column }) => <DataGridColumnHeader title="Value it sets" column={column} />,
+        cell: ({ row }) => renderValueCell(row.original, ruleCells(row.original.rule.builder, spec, lookupSpec)),
+        size: 140,
+        minSize: 100,
+      },
+      {
+        id: 'only_when',
+        accessorFn: (row) => ruleCells(row.rule.builder, spec, lookupSpec).onlyWhen,
+        header: ({ column }) => <DataGridColumnHeader title="Only when" column={column} />,
+        cell: ({ row }) => {
+          const text = ruleCells(row.original.rule.builder, spec, lookupSpec).onlyWhen;
+          return (
+            <span className="block truncate" title={text}>
+              {text || '-'}
+            </span>
+          );
+        },
+        size: 160,
+        minSize: 100,
+      },
+    ];
+
+    if (mode !== 'edit') return base;
+
+    const actionsColumn: ColumnDef<GridRow> = {
+      id: 'actions',
+      header: () => <span className="sr-only">Actions</span>,
+      enableSorting: false,
+      enableResizing: false,
+      cell: ({ row }) => {
+        const gridRow = row.original;
+        if (removingUid === gridRow.uid) return removal.countdown;
+        return (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                aria-label={`Rule ${gridRow.index + 1} actions`}
+                className="size-7 text-muted-foreground"
+                disabled={removal.isBlocked}
+              >
+                <MoreHorizontal className="size-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => onEdit(gridRow.index)}>Edit</DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={sorting[0]?.id !== 'order' || !!sorting[0]?.desc}
+                onClick={() => moveBy(gridRow.index, -1)}
+              >
+                Move up
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={sorting[0]?.id !== 'order' || !!sorting[0]?.desc}
+                onClick={() => moveBy(gridRow.index, 1)}
+              >
+                Move down
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                variant="destructive"
+                onClick={() => startRemoval(gridRow.uid, gridRow.rule.builder)}
+              >
+                Remove
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        );
+      },
+      size: 56,
+      minSize: 56,
+    };
+
+    return [...base, actionsColumn];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    spec,
+    lookupSpec,
+    mode,
+    editingCell,
+    wordChoices,
+    valueOptions,
+    reads,
+    removingUid,
+    removal.countdown,
+    removal.isBlocked,
+    sorting,
+    rules,
+    onChange,
+    onEdit,
+  ]);
+
+  const isSortedByOrder = sorting.length === 0 || (sorting[0]?.id === 'order' && !sorting[0]?.desc);
+  const reorderable = mode === 'edit' && isSortedByOrder;
+
+  // The handle leads the row whenever it may be reordered - no toggle to press first.
+  const tableColumns = useMemo<ColumnDef<GridRow>[]>(
+    () =>
+      reorderable
+        ? [
+            {
+              id: 'drag_handle',
+              header: () => <span className="sr-only">Reorder</span>,
+              cell: ({ row }) => <DataGridTableDndRowHandle rowId={row.original.uid} />,
+              size: 44,
+              minSize: 44,
+              enableResizing: false,
+              enableSorting: false,
+            },
+            ...columns,
+          ]
+        : columns,
+    [columns, reorderable],
+  );
+
+  const table = useReactTable({
+    data,
+    columns: tableColumns,
+    state: { sorting },
+    onSortingChange: setSorting,
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+    getRowId: (row) => row.uid,
+    columnResizeMode: 'onChange',
+  });
+
+  /** A drop saves straight into the draft at once, the same as the sales order
+   *  lines table - no separate "reorder mode" to press into first. */
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const from = rules.findIndex((r, i) => (r._uid ?? `r${i}`) === active.id);
+    const to = rules.findIndex((r, i) => (r._uid ?? `r${i}`) === over.id);
+    if (from < 0 || to < 0) return;
+    onChange(arrayMove(rules, from, to));
+  };
+
+  if (rules.length === 0) {
+    return (
+      <div className="flex flex-col items-center gap-2 rounded-md border border-dashed p-8 text-center">
+        <p className="text-sm font-medium">No rules yet</p>
+        <p className="text-sm text-muted-foreground">
+          Nothing will fill this specification in until a rule is added.
+        </p>
+        {mode === 'edit' && (
+          <Button type="button" size="sm" variant="outline" onClick={onAdd}>
+            Add a rule
+          </Button>
+        )}
+      </div>
+    );
+  }
+
   return (
-    <DataGrid table={table} recordCount={data.length} tableLayout={{ width: 'fixed', columnsResizable: true }}>
-      <div className="overflow-x-auto rounded-md border">
-        <table className="w-full table-fixed text-sm">
-          <colgroup>
-            <col style={{ width: 70 }} />
-            <col style={{ width: 160 }} className="hidden sm:table-column" />
-            <col style={{ width: 90 }} className="hidden sm:table-column" />
-            <col style={{ width: 300 }} />
-            <col style={{ width: 140 }} />
-            <col style={{ width: 160 }} className="hidden sm:table-column" />
-            <col style={{ width: 44 }} />
-          </colgroup>
-          <thead>
-            {table.getHeaderGroups().map((headerGroup) => (
-              <tr key={headerGroup.id} className="border-b bg-muted/40">
-                {headerGroup.headers.map((header, headerIndex) => (
-                  <th
-                    key={header.id}
-                    className={`p-2 text-left font-medium ${
-                      headerIndex === 1 || headerIndex === 2 || headerIndex === 5
-                        ? 'hidden sm:table-cell'
-                        : ''
-                    }`}
-                  >
-                    {header.column.id === 'actions' ? null : (
-                      <DataGridColumnHeader column={header.column} title={String(header.column.columnDef.header)} />
-                    )}
-                  </th>
-                ))}
-              </tr>
-            ))}
-          </thead>
-          <DndContext
-            sensors={sensors}
-            collisionDetection={closestCenter}
-            modifiers={[restrictToVerticalAxis, restrictToParentElement]}
-            onDragEnd={onDragEnd}
-          >
-            <SortableContext
-              items={sortedRows.map((r) => r.original.uid)}
-              strategy={verticalListSortingStrategy}
-            >
-              <tbody>
-                {sortedRows.map((row) => {
-                  const gridRow = row.original;
-                  const removal = removals[gridRow.uid];
-                  const cells = ruleCells(gridRow.rule.builder, spec, lookupSpec);
-                  const isWinner = winnerIndex === gridRow.index;
-                  const readForRow = reads?.[gridRow.index];
-                  const canDrag = mode === 'edit' && isSortedByOrder;
-                  return (
-                    <SpecRuleRow
-                      key={gridRow.uid}
-                      id={gridRow.uid}
-                      canDrag={canDrag}
-                      isWinner={isWinner}
-                    >
-                      {(drag) => (
-                        <>
-                      <td className="p-2 tabular-nums">
-                        <span className="flex items-center gap-1.5">
-                          {canDrag && (
-                            <button
-                              type="button"
-                              className="cursor-grab text-muted-foreground active:cursor-grabbing"
-                              aria-label={`Drag to reorder rule ${gridRow.index + 1}`}
-                              {...drag.attributes}
-                              {...drag.listeners}
-                            >
-                              <GripVertical className="size-3.5" />
-                            </button>
-                          )}
-                          {gridRow.index + 1}
-                        </span>
-                      </td>
-                      <td className="hidden truncate p-2 sm:table-cell" title={cells.whereToLook}>
-                        {cells.whereToLook}
-                      </td>
-                      <td className="hidden truncate p-2 sm:table-cell">{cells.kind}</td>
-                      <td className="p-2">
-                        {removal ? (
-                          <div className="flex flex-col gap-1">
-                            <span className="text-xs text-destructive line-through">
-                              {cells.whatToFind.primary}
-                            </span>
-                            <DeferredCountdown
-                              pending={{
-                                id: gridRow.uid,
-                                action_key: 'spec_rule.remove',
-                                entity_type: 'spec_rule',
-                                entity_id: gridRow.uid,
-                                commit_at: new Date(removal.commitAt).toISOString(),
-                                window_seconds: REMOVE_WINDOW_SECONDS,
-                              }}
-                              verb="Removing"
-                              onCancel={() => cancelRemoval(gridRow.uid)}
-                            />
-                          </div>
-                        ) : (
-                          renderFindCell(gridRow, cells)
-                        )}
-                        {readForRow !== undefined && !removal && (
-                          <div className="mt-1 text-xs text-muted-foreground">
-                            Reads:{' '}
-                            {readForRow?.value === null || readForRow?.value === undefined
-                              ? readForRow?.evidence || 'nothing'
-                              : String(readForRow.value)}
-                          </div>
-                        )}
-                      </td>
-                      <td className="p-2">{!removal && renderValueCell(gridRow, cells)}</td>
-                      <td className="hidden truncate p-2 sm:table-cell" title={cells.onlyWhen}>
-                        {cells.onlyWhen || '-'}
-                      </td>
-                      <td className="p-2">
-                        {mode === 'edit' && !removal && (
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button
-                                type="button"
-                                size="icon"
-                                variant="ghost"
-                                aria-label={`Rule ${gridRow.index + 1} actions`}
-                              >
-                                &#8943;
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              <DropdownMenuItem onClick={() => onEdit(gridRow.index)}>Edit</DropdownMenuItem>
-                              <DropdownMenuItem
-                                disabled={!isSortedByOrder}
-                                onClick={() => moveBy(gridRow.index, -1)}
-                              >
-                                Move up
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                disabled={!isSortedByOrder}
-                                onClick={() => moveBy(gridRow.index, 1)}
-                              >
-                                Move down
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                variant="destructive"
-                                onClick={() => startRemoval(gridRow.uid)}
-                              >
-                                Remove
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        )}
-                      </td>
-                        </>
-                      )}
-                    </SpecRuleRow>
-                  );
-                })}
-              </tbody>
-            </SortableContext>
-          </DndContext>
-        </table>
+    <div className="flex flex-col gap-2">
+      <div className="overflow-hidden rounded-md border">
+        <DataGrid
+          table={table}
+          recordCount={data.length}
+          isLoading={false}
+          listingKey={null}
+          tableLayout={{ width: 'fixed', columnsResizable: true }}
+          rowClassName={(row) => (winnerIndex === row.index ? 'bg-primary/5' : undefined)}
+        >
+          {reorderable ? (
+            <DataGridScroller>
+              <DataGridTableDndRows
+                handleDragEnd={handleDragEnd}
+                dataIds={table.getRowModel().rows.map((row) => row.id)}
+              />
+            </DataGridScroller>
+          ) : (
+            <DataGridTable />
+          )}
+        </DataGrid>
       </div>
       <div className="flex items-center justify-between p-2 text-xs text-muted-foreground">
         <span>
@@ -617,42 +563,7 @@ export function SpecRulesGrid({
           </Button>
         )}
       </div>
-    </DataGrid>
-  );
-}
-
-/** One draggable row. `useSortable` needs its own hook call per row, so this is a
- *  component rather than an inline closure in the parent's `.map()`; the drag
- *  handle itself renders wherever `children` puts it (the Order cell), via the
- *  render-prop, so the column count still matches the header. */
-function SpecRuleRow({
-  id,
-  canDrag,
-  isWinner,
-  children,
-}: {
-  id: string;
-  canDrag: boolean;
-  isWinner: boolean;
-  children: (drag: {
-    attributes: ReturnType<typeof useSortable>['attributes'];
-    listeners: ReturnType<typeof useSortable>['listeners'];
-  }) => React.ReactNode;
-}) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id,
-    disabled: !canDrag,
-  });
-  return (
-    <tr
-      ref={setNodeRef}
-      style={{ transform: CSS.Transform.toString(transform), transition }}
-      className={`border-b ${isDragging ? 'z-10 bg-background shadow-lg' : ''} ${
-        isWinner ? 'bg-primary/5' : ''
-      }`}
-    >
-      {children({ attributes, listeners })}
-    </tr>
+    </div>
   );
 }
 

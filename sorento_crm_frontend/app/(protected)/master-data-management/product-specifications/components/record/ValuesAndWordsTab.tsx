@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowUpDown, MoreHorizontal } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { ColumnDef, getCoreRowModel, getSortedRowModel, useReactTable } from '@tanstack/react-table';
+import { MoreHorizontal } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -10,18 +11,19 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { DeferredCountdown } from '@/components/common/DeferredActionButton';
+import { DataGrid } from '@/components/ui/data-grid';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridTable } from '@/components/ui/data-grid-table';
+import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { readableValue } from '@/lib/spec-readable';
 import { useSpecKeyProductsQuery } from '../../hooks/useSpecKeyProductsQuery';
+import { SPEC_REGISTRY_QUERY_KEY } from '../../hooks/useSpecRegistryQuery';
 import { dedupe, type SpecKeyDraft } from '../../hooks/useSpecKeyRecord';
 import type { SpecRegistryKey } from '../../types/productSpec.types';
 
 /** `_self` names the specification itself, never a choice (D7); this tab never
  *  renders it - its words live on Details as "Other names for this specification". */
 const SELF_KEY = '_self';
-
-const REMOVE_WINDOW_SECONDS = 5;
-type SortColumn = 'choice' | 'products';
 
 const normaliseValue = (raw: string) => raw.trim().toLowerCase().replace(/\s+/g, '_');
 
@@ -35,12 +37,21 @@ export interface ValuesAndWordsTabProps {
   onEnterEdit: () => void;
 }
 
+interface ChoiceRow {
+  value: string;
+}
+
 /**
- * Choices and words (AC-S1.15): a data grid, one row per choice - Choice, Words
- * customers say, Products - each header sortable. Clicking a Choice or Words cell
- * edits it in place (words as a comma list); Add a choice adds a row; Remove is a
- * deferred 5s action. No chips, no cards, no `_self` row, no "user" badge, no code
- * name (D13; owner ruling 27 Sep 2026, "this should be tabulated with data grid").
+ * Choices and words (AC-S1.15): the shared `DataGrid` (fixed, resizable columns),
+ * one row per choice - Choice, Words customers say, Products - each header
+ * sortable. Clicking a Choice or Words cell edits it in place (words as a comma
+ * list); Add a choice adds a row. No chips, no cards, no `_self` row, no "user"
+ * badge, no code name (D13; owner ruling 27 Sep 2026, "this should be tabulated
+ * with data grid").
+ *
+ * Remove is `spec_value.remove` (D7, D8, fix round 1): a server-deferred action,
+ * not a local timer - the record is the SPEC KEY (one pending removal per key
+ * across every choice), same as the rules grid and the Other-names grid.
  */
 export function ValuesAndWordsTab({
   row,
@@ -51,26 +62,12 @@ export function ValuesAndWordsTab({
 }: ValuesAndWordsTabProps) {
   const isBoolean = row.data_type === 'boolean';
   const isNumeric = row.data_type === 'numeric';
+  const canEdit = mode === 'edit' && !isBoolean;
 
-  const [sort, setSort] = useState<{ column: SortColumn; desc: boolean }>({
-    column: 'products',
-    desc: true,
-  });
   const [editing, setEditing] = useState<{ value: string; column: 'choice' | 'words' } | null>(null);
   const [adding, setAdding] = useState(false);
   const [newChoice, setNewChoice] = useState('');
-  const [removals, setRemovals] = useState<
-    Record<string, { commitAt: number; timer: ReturnType<typeof setTimeout> }>
-  >({});
-  const draftRef = useRef(draft);
-  draftRef.current = draft;
-
-  useEffect(() => {
-    return () => {
-      Object.values(removals).forEach((r) => clearTimeout(r.timer));
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const [removingValue, setRemovingValue] = useState<string | null>(null);
 
   // The counts a choice's "Products" column shows - the same aggregate the
   // Products tab already fetches, asked for zero rows: this tab needs the
@@ -83,6 +80,47 @@ export function ValuesAndWordsTab({
     }
     return map;
   }, [productCounts]);
+
+  const removal = useDeferredAction({
+    actionKey: 'spec_value.remove',
+    entityType: 'spec_value',
+    entityId: row.spec_key || null,
+    verb: 'Removing',
+    subject: '',
+    surface: 'inline',
+    watchFromMount: mode === 'edit',
+    successMessage: 'Choice removed',
+    invalidateKeys: [SPEC_REGISTRY_QUERY_KEY],
+    // The server already dropped it - this only keeps the OPEN draft in step, the
+    // same reason `WordsDataGrid` strips a removed word from its own draft.
+    onCommitted: () => {
+      const value = removingValue;
+      if (value) {
+        setDraft((d) => {
+          const nextWords = { ...d.words };
+          delete nextWords[value];
+          const nextDroppedWords = { ...d.droppedWords };
+          delete nextDroppedWords[value];
+          const nextValueLabels = { ...d.valueLabels };
+          delete nextValueLabels[value];
+          return {
+            ...d,
+            liveValues: d.liveValues.filter((v) => v !== value),
+            droppedValues: d.droppedValues.filter((v) => v !== value),
+            words: nextWords,
+            droppedWords: nextDroppedWords,
+            valueLabels: nextValueLabels,
+          };
+        });
+      }
+      setRemovingValue(null);
+    },
+  });
+
+  const startRemoval = (value: string) => {
+    setRemovingValue(value);
+    removal.start({ value });
+  };
 
   // View mode reads the row's own merged columns; edit mode reads the draft. Both
   // walk the SAME shape, so the field list cannot drift between them (G.8).
@@ -103,57 +141,8 @@ export function ValuesAndWordsTab({
     ...Object.keys(words),
   ]).filter((value) => value !== SELF_KEY);
 
-  const sorted = [...choices].sort((a, b) => {
-    if (sort.column === 'products') {
-      const diff = (countByValue.get(a) ?? 0) - (countByValue.get(b) ?? 0);
-      return sort.desc ? -diff : diff;
-    }
-    const labelA = readableValue(a, undefined, valueLabels);
-    const labelB = readableValue(b, undefined, valueLabels);
-    const diff = labelA.localeCompare(labelB);
-    return sort.desc ? -diff : diff;
-  });
-
-  const toggleSort = (column: SortColumn) =>
-    setSort((current) => ({ column, desc: current.column === column ? !current.desc : false }));
-
-  const startRemoval = (value: string) => {
-    const commitAt = Date.now() + REMOVE_WINDOW_SECONDS * 1000;
-    const timer = setTimeout(() => {
-      setDraft((d) => {
-        const nextWords = { ...d.words };
-        delete nextWords[value];
-        const nextDroppedWords = { ...d.droppedWords };
-        delete nextDroppedWords[value];
-        const nextValueLabels = { ...d.valueLabels };
-        delete nextValueLabels[value];
-        return {
-          ...d,
-          liveValues: d.liveValues.filter((v) => v !== value),
-          droppedValues: d.droppedValues.filter((v) => v !== value),
-          words: nextWords,
-          droppedWords: nextDroppedWords,
-          valueLabels: nextValueLabels,
-        };
-      });
-      setRemovals((current) => {
-        const next = { ...current };
-        delete next[value];
-        return next;
-      });
-    }, REMOVE_WINDOW_SECONDS * 1000);
-    setRemovals((current) => ({ ...current, [value]: { commitAt, timer } }));
-  };
-
-  const cancelRemoval = (value: string) => {
-    setRemovals((current) => {
-      const removal = current[value];
-      if (removal) clearTimeout(removal.timer);
-      const next = { ...current };
-      delete next[value];
-      return next;
-    });
-  };
+  const displayName = (value: string) =>
+    value === 'true' && isBoolean ? 'Yes' : readableValue(value, undefined, valueLabels);
 
   const commitAdd = () => {
     const trimmed = newChoice.trim();
@@ -173,6 +162,165 @@ export function ValuesAndWordsTab({
     setNewChoice('');
     setAdding(false);
   };
+
+  const rows = useMemo<ChoiceRow[]>(() => choices.map((value) => ({ value })), [choices]);
+
+  const columns = useMemo<ColumnDef<ChoiceRow>[]>(() => {
+    const choiceColumn: ColumnDef<ChoiceRow> = {
+      id: 'choice',
+      accessorFn: (r) => displayName(r.value),
+      header: ({ column }) => <DataGridColumnHeader title="Choice" column={column} />,
+      cell: ({ row: r }) => {
+        const value = r.original.value;
+        const name = displayName(value);
+        const editingChoice = editing?.value === value && editing.column === 'choice';
+        if (canEdit && editingChoice) {
+          return (
+            <Input
+              autoFocus
+              defaultValue={name}
+              className="h-8"
+              aria-label={`Edit ${name}`}
+              onBlur={(e) => {
+                const next = e.target.value.trim();
+                if (next) setDraft((d) => ({ ...d, valueLabels: { ...d.valueLabels, [value]: next } }));
+                setEditing(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') e.currentTarget.blur();
+                if (e.key === 'Escape') setEditing(null);
+              }}
+            />
+          );
+        }
+        return (
+          <button
+            type="button"
+            disabled={!canEdit}
+            onClick={() => canEdit && setEditing({ value, column: 'choice' })}
+            className={`block w-full truncate text-left font-medium ${canEdit ? 'hover:underline' : ''}`}
+            title={name}
+          >
+            {name}
+          </button>
+        );
+      },
+      size: 170,
+      minSize: 120,
+    };
+
+    const wordsColumn: ColumnDef<ChoiceRow> = {
+      id: 'words',
+      enableSorting: false,
+      header: ({ column }) => <DataGridColumnHeader title="Words customers say" column={column} />,
+      cell: ({ row: r }) => {
+        const value = r.original.value;
+        const wordList = words[value] ?? [];
+        const editingWords = editing?.value === value && editing.column === 'words';
+        if (mode === 'edit' && editingWords) {
+          return (
+            <Input
+              autoFocus
+              defaultValue={wordList.join(', ')}
+              className="h-8"
+              onBlur={(e) => {
+                const next = dedupe(
+                  e.target.value
+                    .split(',')
+                    .map((w) => w.trim())
+                    .filter(Boolean),
+                );
+                setDraft((d) => ({ ...d, words: { ...d.words, [value]: next } }));
+                setEditing(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') e.currentTarget.blur();
+                if (e.key === 'Escape') setEditing(null);
+              }}
+            />
+          );
+        }
+        return (
+          <button
+            type="button"
+            disabled={mode !== 'edit'}
+            onClick={() => mode === 'edit' && setEditing({ value, column: 'words' })}
+            className={`block w-full truncate text-left ${mode === 'edit' ? 'hover:underline' : ''}`}
+            title={wordList.join(', ')}
+          >
+            {wordList.length > 0 ? wordList.join(', ') : <span className="text-muted-foreground">No words yet</span>}
+          </button>
+        );
+      },
+      size: 220,
+      minSize: 140,
+    };
+
+    const productsColumn: ColumnDef<ChoiceRow> = {
+      id: 'products',
+      accessorFn: (r) => countByValue.get(r.value) ?? 0,
+      header: ({ column }) => <DataGridColumnHeader title="Products" column={column} />,
+      cell: ({ row: r }) => (
+        <span className="tabular-nums">{(countByValue.get(r.original.value) ?? 0).toLocaleString()}</span>
+      ),
+      size: 100,
+      minSize: 80,
+    };
+
+    if (!canEdit) return [choiceColumn, wordsColumn, productsColumn];
+
+    const actionsColumn: ColumnDef<ChoiceRow> = {
+      id: 'actions',
+      header: () => <span className="sr-only">Actions</span>,
+      enableSorting: false,
+      enableResizing: false,
+      cell: ({ row: r }) => {
+        const value = r.original.value;
+        const name = displayName(value);
+        if (removingValue === value) return removal.countdown;
+        return (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                aria-label={`${name} actions`}
+                className="size-7 text-muted-foreground"
+                disabled={removal.isBlocked}
+              >
+                <MoreHorizontal className="size-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => setEditing({ value, column: 'choice' })}>Edit</DropdownMenuItem>
+              <DropdownMenuItem variant="destructive" onClick={() => startRemoval(value)}>
+                Remove
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        );
+      },
+      size: 60,
+      minSize: 60,
+    };
+
+    return [choiceColumn, wordsColumn, productsColumn, actionsColumn];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canEdit, mode, editing, removingValue, removal.countdown, removal.isBlocked, words, valueLabels, countByValue]);
+
+  const table = useReactTable({
+    columns,
+    data: rows,
+    getRowId: (r) => r.value,
+    // Products, descending, by default - the same choice a person cares most
+    // about first; the header's own click still flips it.
+    initialState: { sorting: [{ id: 'products', desc: true }] },
+    enableSortingRemoval: false,
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+    columnResizeMode: 'onChange',
+  });
 
   if (choices.length === 0) {
     return (
@@ -210,204 +358,46 @@ export function ValuesAndWordsTab({
   }
 
   return (
-    <div className="overflow-hidden rounded-md border">
-      <div className="overflow-x-auto">
-      <table className="w-full table-fixed text-sm">
-        {/* At 375 (AC-S1.15), Choice and Words fit without scrolling; Products
-            and the row menu sit past them, reachable by scrolling the GRID's
-            own frame (`overflow-x-auto` above), never the page. */}
-        <colgroup>
-          <col style={{ width: 150 }} />
-          <col style={{ width: 190 }} />
-          <col style={{ width: 100 }} />
-          <col style={{ width: 44 }} />
-        </colgroup>
-        <thead>
-          <tr className="border-b bg-muted/40">
-            <th className="p-2 text-left font-medium">
-              <button
-                type="button"
-                className="inline-flex items-center gap-1 hover:underline"
-                onClick={() => toggleSort('choice')}
-              >
-                Choice <ArrowUpDown className="size-3" aria-hidden />
-              </button>
-            </th>
-            <th className="p-2 text-left font-medium">Words customers say</th>
-            <th className="p-2 text-left font-medium">
-              <button
-                type="button"
-                className="inline-flex items-center gap-1 hover:underline"
-                onClick={() => toggleSort('products')}
-              >
-                Products <ArrowUpDown className="size-3" aria-hidden />
-              </button>
-            </th>
-            <th className="p-2" aria-label="Actions" />
-          </tr>
-        </thead>
-        <tbody>
-          {sorted.map((value) => {
-            const removal = removals[value];
-            const displayName =
-              value === 'true' && isBoolean ? 'Yes' : readableValue(value, undefined, valueLabels);
-            const wordList = words[value] ?? [];
-            const productCount = countByValue.get(value) ?? 0;
-
-            if (removal) {
-              return (
-                <tr key={value} className="border-b last:border-0">
-                  <td className="p-2" colSpan={4}>
-                    <DeferredCountdown
-                      pending={{
-                        id: value,
-                        action_key: 'spec_choice.remove',
-                        entity_type: 'spec_choice',
-                        entity_id: value,
-                        commit_at: new Date(removal.commitAt).toISOString(),
-                        window_seconds: REMOVE_WINDOW_SECONDS,
-                      }}
-                      verb="Removing"
-                      subject={displayName}
-                      onCancel={() => cancelRemoval(value)}
-                    />
-                  </td>
-                </tr>
-              );
-            }
-
-            const editingChoice = editing?.value === value && editing.column === 'choice';
-            const editingWords = editing?.value === value && editing.column === 'words';
-            const canEdit = mode === 'edit' && !isBoolean;
-
-            return (
-              <tr key={value} className="border-b last:border-0">
-                <td className="truncate p-2 font-medium" title={displayName}>
-                  {canEdit && editingChoice ? (
-                    <Input
-                      autoFocus
-                      defaultValue={displayName}
-                      className="h-8"
-                      onBlur={(e) => {
-                        const next = e.target.value.trim();
-                        if (next) setDraft((d) => ({ ...d, valueLabels: { ...d.valueLabels, [value]: next } }));
-                        setEditing(null);
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') e.currentTarget.blur();
-                        if (e.key === 'Escape') setEditing(null);
-                      }}
-                    />
-                  ) : (
-                    <button
-                      type="button"
-                      disabled={!canEdit}
-                      onClick={() => canEdit && setEditing({ value, column: 'choice' })}
-                      className={canEdit ? 'hover:underline' : ''}
-                    >
-                      {displayName}
-                    </button>
-                  )}
-                </td>
-                <td className="truncate p-2" title={wordList.join(', ')}>
-                  {mode === 'edit' && editingWords ? (
-                    <Input
-                      autoFocus
-                      defaultValue={wordList.join(', ')}
-                      className="h-8"
-                      onBlur={(e) => {
-                        const next = dedupe(
-                          e.target.value
-                            .split(',')
-                            .map((w) => w.trim())
-                            .filter(Boolean),
-                        );
-                        setDraft((d) => ({ ...d, words: { ...d.words, [value]: next } }));
-                        setEditing(null);
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') e.currentTarget.blur();
-                        if (e.key === 'Escape') setEditing(null);
-                      }}
-                    />
-                  ) : (
-                    <button
-                      type="button"
-                      disabled={mode !== 'edit'}
-                      onClick={() => mode === 'edit' && setEditing({ value, column: 'words' })}
-                      className={mode === 'edit' ? 'text-left hover:underline' : 'text-left'}
-                    >
-                      {wordList.length > 0 ? (
-                        wordList.join(', ')
-                      ) : (
-                        <span className="text-muted-foreground">No words yet</span>
-                      )}
-                    </button>
-                  )}
-                </td>
-                <td className="p-2 tabular-nums">{productCount.toLocaleString()}</td>
-                <td className="p-2 text-right">
-                  {canEdit && (
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button
-                          type="button"
-                          size="icon"
-                          variant="ghost"
-                          aria-label={`${displayName} actions`}
-                          className="size-7 text-muted-foreground"
-                        >
-                          <MoreHorizontal className="size-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => setEditing({ value, column: 'choice' })}>
-                          Edit
-                        </DropdownMenuItem>
-                        <DropdownMenuItem variant="destructive" onClick={() => startRemoval(value)}>
-                          Remove
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  )}
-                </td>
-              </tr>
-            );
-          })}
-          {mode === 'edit' && !isBoolean && (
-            <tr>
-              <td colSpan={4} className="p-2">
-                {adding ? (
-                  <Input
-                    autoFocus
-                    value={newChoice}
-                    placeholder="a choice, e.g. Rose gold"
-                    className="h-8"
-                    onChange={(e) => setNewChoice(e.target.value)}
-                    onBlur={commitAdd}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') commitAdd();
-                      if (e.key === 'Escape') {
-                        setNewChoice('');
-                        setAdding(false);
-                      }
-                    }}
-                  />
-                ) : (
-                  <button
-                    type="button"
-                    className="text-primary hover:underline"
-                    onClick={() => setAdding(true)}
-                  >
-                    + Add a choice
-                  </button>
-                )}
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
+    <div className="flex flex-col gap-2">
+      <div className="overflow-hidden rounded-md border">
+        <DataGrid
+          table={table}
+          recordCount={rows.length}
+          isLoading={false}
+          listingKey={null}
+          tableLayout={{ width: 'fixed', columnsResizable: true }}
+        >
+          <DataGridTable />
+        </DataGrid>
       </div>
+
+      {mode === 'edit' &&
+        !isBoolean &&
+        (adding ? (
+          <Input
+            autoFocus
+            value={newChoice}
+            placeholder="a choice, e.g. Rose gold"
+            className="h-8"
+            onChange={(e) => setNewChoice(e.target.value)}
+            onBlur={commitAdd}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commitAdd();
+              if (e.key === 'Escape') {
+                setNewChoice('');
+                setAdding(false);
+              }
+            }}
+          />
+        ) : (
+          <button
+            type="button"
+            className="self-start text-sm text-primary hover:underline"
+            onClick={() => setAdding(true)}
+          >
+            + Add a choice
+          </button>
+        ))}
     </div>
   );
 }

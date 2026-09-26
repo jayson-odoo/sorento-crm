@@ -6,8 +6,26 @@
  */
 import React, { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { render, screen, fireEvent, within, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+
+vi.mock('@/lib/toast', () => ({
+  toast: { success: vi.fn(), error: vi.fn(), custom: vi.fn(), message: vi.fn(), dismiss: vi.fn() },
+}));
+
+const createPendingAction = vi.fn().mockResolvedValue({
+  id: 'pa-1',
+  action_key: 'spec_value.remove',
+  entity_type: 'spec_value',
+  entity_id: 'finish',
+  commit_at: new Date(Date.now() + 5000).toISOString(),
+  window_seconds: 5,
+});
+vi.mock('@/services/pendingActionService', () => ({
+  createPendingAction: (...args: unknown[]) => createPendingAction(...args),
+  cancelPendingAction: vi.fn().mockResolvedValue({}),
+  getCurrentPendingAction: vi.fn().mockResolvedValue({ pending: null, last_outcome: null }),
+}));
 
 /** The dropdown-menu stub renders children flat - Radix's own portal timing is not
  *  what this suite is testing (established pattern, see PackingListsList.test.tsx). */
@@ -150,12 +168,20 @@ describe('ValuesAndWordsTab - inline edit (edit mode, AC-S1.15)', () => {
     expect(latest?.valueLabels.satin_chrome).toBe('Satin chrome');
   });
 
-  it('Remove is a deferred action, not an instant delete', () => {
+  it('Remove parks spec_value.remove on the server, keyed by the spec key - not an instant delete', async () => {
     render(withClient(<EditHarness row={finishOrColour()} />));
 
     const chromeRow = screen.getByLabelText('Chrome actions').closest('tr')!;
     fireEvent.click(within(chromeRow).getByText('Remove'));
 
+    await waitFor(() =>
+      expect(createPendingAction).toHaveBeenCalledWith({
+        actionKey: 'spec_value.remove',
+        entityType: 'spec_value',
+        entityId: 'finish',
+        payload: { value: 'chrome' },
+      }),
+    );
     expect(screen.getByText(/Removing in \ds/)).toBeInTheDocument();
     // Still in the DOM, dimmed by the countdown - not gone yet.
     expect(screen.getByText('Cancel')).toBeInTheDocument();

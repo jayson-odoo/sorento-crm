@@ -113,6 +113,8 @@ export function HeaderTab({ row, mode, draft, setDraft }: HeaderTabProps) {
         <WordsDataGrid
           words={otherNames}
           mode={mode}
+          specKey={row.spec_key}
+          value={SELF_KEY}
           emptyMessage="No other names yet."
           addPlaceholder="e.g. oz"
           onAdd={(word) =>
@@ -132,7 +134,10 @@ export function HeaderTab({ row, mode, draft, setDraft }: HeaderTabProps) {
               },
             }))
           }
-          onRemove={(word) =>
+          // The server already dropped it (`spec_word.remove`, fix round 1) - this
+          // only keeps the OPEN draft in step, so a Save right after does not
+          // resurrect it by sending a stale `suppressed_synonyms` that omits it.
+          onRemoved={(word) =>
             setDraft((d) => {
               const current = d.words[SELF_KEY] ?? [];
               const seedWords = row.synonyms?.[SELF_KEY] ?? [];

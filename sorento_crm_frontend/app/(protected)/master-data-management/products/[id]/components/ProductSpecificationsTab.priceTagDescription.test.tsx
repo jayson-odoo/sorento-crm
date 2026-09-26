@@ -207,7 +207,7 @@ function descriptionTextarea() {
 describe('Price tag description block on the Specifications tab (AC-S4-10, AC-S2.1, AC-S2.6)', () => {
   it('renders the stored template read-only, below the values table', () => {
     mockSpecHook(baseDetail());
-    render(<ProductSpecificationsTab productId="p-1" />);
+    renderTab();
 
     // "Product description" is no longer on this tab (AC-S2.5) - it moved to
     // Details; Price tag description sits below the values table (SpecTable,
@@ -227,7 +227,7 @@ describe('Price tag description block on the Specifications tab (AC-S4-10, AC-S2
   it('shows the empty-state sentence when the product has no stored template yet (AC-S2.6)', () => {
     useProduct.mockReturnValue({ data: baseProduct({ price_tag_description: null }), isLoading: false });
     mockSpecHook(baseDetail());
-    render(<ProductSpecificationsTab productId="p-1" />);
+    renderTab();
 
     expect(
       screen.getByText('Not set, the price tag uses the product description'),
@@ -236,7 +236,7 @@ describe('Price tag description block on the Specifications tab (AC-S4-10, AC-S2
 
   it('Edit turns the box into a prefilled textarea', () => {
     mockSpecHook(baseDetail());
-    render(<ProductSpecificationsTab productId="p-1" />);
+    renderTab();
 
     fireEvent.click(editButton());
 
@@ -247,7 +247,7 @@ describe('Price tag description block on the Specifications tab (AC-S4-10, AC-S2
 
   it('Cancel discards the edit without saving', () => {
     mockSpecHook(baseDetail());
-    render(<ProductSpecificationsTab productId="p-1" />);
+    renderTab();
 
     fireEvent.click(editButton());
     fireEvent.change(descriptionTextarea(), { target: { value: 'Changed but not saved' } });
@@ -260,7 +260,7 @@ describe('Price tag description block on the Specifications tab (AC-S4-10, AC-S2
 
   it('Escape discards the edit the same way Cancel does', () => {
     mockSpecHook(baseDetail());
-    render(<ProductSpecificationsTab productId="p-1" />);
+    renderTab();
 
     fireEvent.click(editButton());
     fireEvent.change(descriptionTextarea(), { target: { value: 'Changed but not saved' } });
@@ -273,7 +273,7 @@ describe('Price tag description block on the Specifications tab (AC-S4-10, AC-S2
 
   it('Save PATCHes price_tag_description through useUpdateProduct and shows the new text', async () => {
     mockSpecHook(baseDetail());
-    render(<ProductSpecificationsTab productId="p-1" />);
+    renderTab();
 
     fireEvent.click(editButton());
     fireEvent.change(descriptionTextarea(), { target: { value: '{{spec.material}} tap' } });
@@ -289,7 +289,7 @@ describe('Price tag description block on the Specifications tab (AC-S4-10, AC-S2
   it('the Edit action is hidden without master_data.products.edit', () => {
     usePermissions.mockReturnValue({ permissionSet: new Set(['master_data.products.view']) });
     mockSpecHook(baseDetail());
-    render(<ProductSpecificationsTab productId="p-1" />);
+    renderTab();
 
     expect(
       screen.queryByRole('button', { name: /edit price tag description/i }),
@@ -300,7 +300,7 @@ describe('Price tag description block on the Specifications tab (AC-S4-10, AC-S2
 describe('Insert field from the Specifications tab (AC-S4-11)', () => {
   it('Insert field opens the dialog and picking Material inserts {{spec.material}} at the caret', () => {
     mockSpecHook(baseDetail());
-    render(<ProductSpecificationsTab productId="p-1" />);
+    renderTab();
 
     fireEvent.click(editButton());
     fireEvent.click(screen.getByRole('button', { name: /insert field/i }));
@@ -314,7 +314,7 @@ describe('Insert field from the Specifications tab (AC-S4-11)', () => {
 
   it('offers only Product and Specs - no Line, Set or part group (a description cannot address a line)', () => {
     mockSpecHook(baseDetail());
-    render(<ProductSpecificationsTab productId="p-1" />);
+    renderTab();
 
     fireEvent.click(editButton());
     fireEvent.click(screen.getByRole('button', { name: /insert field/i }));
@@ -334,7 +334,7 @@ describe('Live preview - "Prints as:" (AC-S4-12)', () => {
       data: baseProduct({ price_tag_description: '{{spec.material}} tap' }),
       isLoading: false,
     });
-    render(<ProductSpecificationsTab productId="p-1" />);
+    renderTab();
 
     expect(screen.getByText('Prints as:')).toBeInTheDocument();
     expect(screen.getByText('Stainless Steel tap')).toBeInTheDocument();
@@ -342,7 +342,7 @@ describe('Live preview - "Prints as:" (AC-S4-12)', () => {
 
   it('updates live off the textarea while editing, before Save', () => {
     mockSpecHook(baseDetail());
-    render(<ProductSpecificationsTab productId="p-1" />);
+    renderTab();
 
     fireEvent.click(editButton());
     fireEvent.change(descriptionTextarea(), { target: { value: '{{spec.material}} basin' } });
@@ -385,7 +385,7 @@ describe('Live preview against a REAL product shape - S11 browser check (AC-S4-1
       }),
       isLoading: false,
     });
-    render(<ProductSpecificationsTab productId="p-1" />);
+    renderTab();
 
     expect(screen.getByText('SRTKS8547 - 1,090')).toBeInTheDocument();
   });
@@ -400,7 +400,7 @@ describe('Live preview against a REAL product shape - S11 browser check (AC-S4-1
       }),
       isLoading: false,
     });
-    render(<ProductSpecificationsTab productId="p-1" />);
+    renderTab();
 
     expect(screen.getByText('[]')).toBeInTheDocument();
   });
@@ -415,7 +415,7 @@ describe('Live preview against a REAL product shape - S11 browser check (AC-S4-1
       }),
       isLoading: false,
     });
-    render(<ProductSpecificationsTab productId="p-1" />);
+    renderTab();
 
     expect(screen.getByText('Sorento Kitchen Sink')).toBeInTheDocument();
   });
@@ -480,7 +480,7 @@ describe('Multi-line templates (AC-S4-16)', () => {
       }),
       isLoading: false,
     });
-    render(<ProductSpecificationsTab productId="p-1" />);
+    renderTab();
 
     const box = boxContaining('{{product.code}}');
     expect(box.className).toMatch(/whitespace-pre-(line|wrap)/);
@@ -498,7 +498,7 @@ describe('Multi-line templates (AC-S4-16)', () => {
       }),
       isLoading: false,
     });
-    render(<ProductSpecificationsTab productId="p-1" />);
+    renderTab();
 
     const box = boxContaining('CBF3612');
     expect(box.className).toMatch(/whitespace-pre-(line|wrap)/);
@@ -507,7 +507,7 @@ describe('Multi-line templates (AC-S4-16)', () => {
 
   it('Save sends the multi-line text with its newlines intact', async () => {
     mockSpecHook(baseDetail());
-    render(<ProductSpecificationsTab productId="p-1" />);
+    renderTab();
 
     fireEvent.click(editButton());
     fireEvent.change(descriptionTextarea(), { target: { value: 'Line1\nLine2\nLine3' } });
@@ -539,7 +539,7 @@ describe('An all-empty line is dropped, in the tab preview (AC-S4-17)', () => {
       }),
       isLoading: false,
     });
-    render(<ProductSpecificationsTab productId="p-1" />);
+    renderTab();
 
     const box = boxContaining('CBF3612');
     expect(box.textContent).toBe('CBF3612\nKitchen Tap');
@@ -561,7 +561,7 @@ describe('An unknown field is named under "Prints as:" (AC-S4-18)', () => {
       data: baseProduct({ price_tag_description: '{{spec.type}}' }),
       isLoading: false,
     });
-    render(<ProductSpecificationsTab productId="p-1" />);
+    renderTab();
 
     const warning = screen.getByText('Unknown field: {{spec.type}}');
     expect(warning.className).toMatch(/text-destructive/);
@@ -573,7 +573,7 @@ describe('An unknown field is named under "Prints as:" (AC-S4-18)', () => {
       data: baseProduct({ price_tag_description: '{{product.nope}}' }),
       isLoading: false,
     });
-    render(<ProductSpecificationsTab productId="p-1" />);
+    renderTab();
 
     expect(screen.getByText('Unknown field: {{product.nope}}')).toBeInTheDocument();
   });
@@ -584,7 +584,7 @@ describe('An unknown field is named under "Prints as:" (AC-S4-18)', () => {
       data: baseProduct({ price_tag_description: '{{spec.type}} {{product.nope}}' }),
       isLoading: false,
     });
-    render(<ProductSpecificationsTab productId="p-1" />);
+    renderTab();
 
     expect(
       screen.getByText('Unknown field: {{spec.type}}, {{product.nope}}'),
@@ -597,14 +597,14 @@ describe('An unknown field is named under "Prints as:" (AC-S4-18)', () => {
       data: baseProduct({ price_tag_description: '{{spec.steel_grade}}' }),
       isLoading: false,
     });
-    render(<ProductSpecificationsTab productId="p-1" />);
+    renderTab();
 
     expect(screen.queryByText(/Unknown field/)).not.toBeInTheDocument();
   });
 
   it('Save stays enabled with an unknown field in the template', () => {
     mockSpecHook(baseDetail());
-    render(<ProductSpecificationsTab productId="p-1" />);
+    renderTab();
 
     fireEvent.click(editButton());
     fireEvent.change(descriptionTextarea(), { target: { value: '{{spec.type}}' } });
