@@ -625,8 +625,14 @@ def entity_ids_transformer(
         # ids by `_resolve_report_product_and_location`'s own brand step (the token
         # never reached the shared resolver, so this is the only place it becomes an
         # id) - a brand alone is a valid subject for this report (AC-S9-4).
-        brand_ids = jsc.get(semantic_input, "outstanding_brand_ids")
-        if isinstance(brand_ids, list) and brand_ids:
+        # N1 (security review, 26 Sep 2026): only real uuids ever forward - the same
+        # `is_uuid` guard every other `<entity>_ids` argument in this function uses,
+        # never a bare `isinstance(..., list)` check that would let a non-uuid string
+        # reach the tool call.
+        brand_ids = [
+            b for b in jsc.array(jsc.get(semantic_input, "outstanding_brand_ids")) if is_uuid(b)
+        ]
+        if brand_ids:
             out["brand_ids"] = brand_ids
         # AC-1105 (review round, 13 Sep 2026): the WORD the customer typed, echoed by
         # the route onto its own body so the presenter can render "IB (BRW-IB, MWH-IB)".

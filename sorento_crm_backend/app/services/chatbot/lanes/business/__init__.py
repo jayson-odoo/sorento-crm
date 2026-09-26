@@ -1015,8 +1015,11 @@ def _resolve_report_product_and_location(
         # the ids rode in on the carried filter set, already resolved, and have to ride
         # back out on it too or the re-run silently drops the very brand the question
         # was scoped to.
+        # N1 (security review, 26 Sep 2026): a carried brand id is a resolved uuid or
+        # it is nothing - the same `is_uuid` guard the customer-id carry above uses,
+        # never a bare truthiness check that would let a non-uuid string through.
         carried_brand_ids = [
-            b for b in jsc.array(parse_output.get("outstanding_carried_brand_ids")) if jsc.truthy(b)
+            b for b in jsc.array(parse_output.get("outstanding_carried_brand_ids")) if fetch_mod.is_uuid(b)
         ]
         if carried_brand_ids:
             semantic_input["outstanding_brand_ids"] = carried_brand_ids
