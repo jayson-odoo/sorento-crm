@@ -5,7 +5,6 @@ import {
   getSalesTeam,
   getSalesTeamAgentOptions,
   getSalesTeams,
-  setSalesTeamMembers,
   updateSalesTeam,
 } from '../services/salesTeamService';
 import type { SalesTeamDetail, SalesTeamSaveInput } from '../types/salesTeam.types';
@@ -53,8 +52,13 @@ export function useSaveSalesTeam() {
       if (!teamId) {
         return createSalesTeam({ name, is_active, sales_agent_ids, ...(moves_on ? { moves_on } : {}) });
       }
-      await updateSalesTeam(teamId, { name, is_active });
-      return setSalesTeamMembers(teamId, { sales_agent_ids, ...(moves_on ? { moves_on } : {}) });
+      // One PATCH, one transaction: a refused rename cannot leave the agents half-saved.
+      return updateSalesTeam(teamId, {
+        name,
+        is_active,
+        sales_agent_ids,
+        ...(moves_on ? { moves_on } : {}),
+      });
     },
     onSuccess: (team, input) => {
       queryClient.invalidateQueries({ queryKey: SALES_TEAMS_KEY });

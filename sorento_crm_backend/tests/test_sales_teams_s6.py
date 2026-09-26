@@ -500,3 +500,124 @@ def test_s6_8_another_companys_team_is_invisible(api):
     assert foreign.id not in listed
     assert client.get(f"{BASE}/{foreign.id}").status_code == 404
     assert client.delete(f"{BASE}/{foreign.id}").status_code == 404
+
+
+# --------------------------------------------------------------------------- #
+# Review round 1 (reviewer B1, N1, N2; security-reviewer test gaps)
+# --------------------------------------------------------------------------- #
+
+def test_review_b1_remove_then_place_elsewhere_the_same_day_is_a_move_today(api):
+    """Removed from North today, placed in South today, removed from South today: no 500.
+
+    Placing someone the same day they were removed counts as a move today, so North keeps
+    everything up to yesterday and no row ever starts in the future.
+    """
+    client, db, _ = api
+    kim = _agent(db, "KIM", "Kim Tan")
+    north = client.post(BASE, json={"name": "North", "sales_agent_ids": [kim.id]}).json()
+    south = client.post(BASE, json={"name": "South", "sales_agent_ids": []}).json()
+
+    assert client.put(f"{BASE}/{north['id']}/members", json={"sales_agent_ids": []}).status_code == 200
+    res = client.put(f"{BASE}/{south['id']}/members", json={"sales_agent_ids": [kim.id]})
+    assert res.status_code == 200, res.text
+    assert [m["sales_agent_id"] for m in res.json()["members"] if not m["left"]] == [kim.id]
+    assert res.json()["moved"][0]["from_team_name"] == "North"
+
+    rows = {r.sales_team_id: r for r in _membership_rows(db, kim.id)}
+    assert rows[north["id"]].valid_to == date(2026, 10, 19)
+    assert rows[south["id"]].valid_from == TODAY
+    assert all(r.valid_from is None or r.valid_from <= TODAY for r in rows.values())
+
+    res = client.put(f"{BASE}/{south['id']}/members", json={"sales_agent_ids": []})
+    assert res.status_code == 200, res.text
+
+
+def test_review_n2_a_mistaken_move_is_undone_the_same_day(api):
+    """North to South today, then back to North today: one North row, reopened, as before."""
+    client, db, _ = api
+    kim = _agent(db, "KIM", "Kim Tan")
+    north = client.post(BASE, json={"name": "North", "sales_agent_ids": [kim.id]}).json()
+    south = client.post(BASE, json={"name": "South", "sales_agent_ids": []}).json()
+    client.put(f"{BASE}/{south['id']}/members", json={"sales_agent_ids": [kim.id]})
+
+    res = client.put(f"{BASE}/{north['id']}/members", json={"sales_agent_ids": [kim.id]})
+    assert res.status_code == 200, res.text
+    rows = _membership_rows(db, kim.id)
+    assert len(rows) == 1
+    assert rows[0].sales_team_id == north["id"]
+    assert rows[0].valid_from is None
+    assert rows[0].valid_to is None
+
+
+def test_review_n1_patch_saves_name_and_members_in_one_transaction(api):
+    """The team page saves once: a refused rename leaves the members untouched too."""
+    client, db, _ = api
+    ali = _agent(db, "ALI", "Ali Hassan")
+    mei = _agent(db, "MEI", "Tan Mei Ling")
+    client.post(BASE, json={"name": "South", "sales_agent_ids": []})
+    north = client.post(BASE, json={"name": "North", "sales_agent_ids": [ali.id]}).json()
+
+    res = client.patch(
+        f"{BASE}/{north['id']}", json={"name": "south", "sales_agent_ids": [mei.id]}
+    )
+    assert res.status_code == 409, res.text
+    db.expire_all()
+    detail = client.get(f"{BASE}/{north['id']}").json()
+    assert detail["name"] == "North"
+    assert [m["sales_agent_id"] for m in detail["members"] if not m["left"]] == [ali.id]
+
+    res = client.patch(
+        f"{BASE}/{north['id']}", json={"name": "North East", "sales_agent_ids": [mei.id]}
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["name"] == "North East"
+    assert [m["sales_agent_id"] for m in body["members"] if not m["left"]] == [mei.id]
+
+
+def test_security_foreign_team_writes_are_404_and_the_parked_delete_misses(api):
+    import app.services.record_actions  # noqa: F401
+    from app.models.sales import SalesTeam
+    from app.services.form_action_registry import get_action
+
+    client, db, company_id = api
+    other = Company(id=_uid(), name="ZZT Other Co 2", code=f"Z{_uid()[:6]}")
+    db.add(other)
+    db.flush()
+    with company_scope(db, None):
+        foreign = SalesTeam(id=_uid(), company_id=other.id, name="ZZT Foreign 2")
+        db.add(foreign)
+        # Committed (onto the fixture's savepoint): a 404 route rolls the session back, and
+        # a merely flushed row would vanish with it and read as "deleted".
+        db.commit()
+
+    assert client.patch(f"{BASE}/{foreign.id}", json={"name": "Mine now"}).status_code == 404
+    assert (
+        client.put(f"{BASE}/{foreign.id}/members", json={"sales_agent_ids": []}).status_code
+        == 404
+    )
+    with company_scope(db, frozenset({company_id})):
+        get_action("sales_team.delete").execute(db, {"entity_id": foreign.id})
+        db.flush()
+    with company_scope(db, None):
+        assert db.query(SalesTeam).filter(SalesTeam.id == foreign.id).count() == 1
+
+
+def test_security_another_companys_agent_cannot_be_placed_or_listed(api):
+    client, db, _ = api
+    other = Company(id=_uid(), name="ZZT Other Co 3", code=f"Z{_uid()[:6]}")
+    db.add(other)
+    db.flush()
+    theirs = _agent(db, "THEIRS", "Not Ours", company_id=other.id)
+
+    assert (
+        client.post(BASE, json={"name": "North", "sales_agent_ids": [theirs.id]}).status_code
+        == 422
+    )
+    north = client.post(BASE, json={"name": "North", "sales_agent_ids": []}).json()
+    assert (
+        client.put(f"{BASE}/{north['id']}/members", json={"sales_agent_ids": [theirs.id]}).status_code
+        == 422
+    )
+    ids = {o["id"] for o in client.get(f"{BASE}/agent-options").json()["data"]}
+    assert theirs.id not in ids

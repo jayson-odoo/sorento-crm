@@ -123,6 +123,8 @@ export default function SalesTeamsView() {
     data: rows,
     getRowId: (row) => row.id,
     getCoreRowModel: getCoreRowModel(),
+    // The server returns teams by name, and the team page's prev/next walks that order.
+    enableSorting: false,
     columnResizeMode: 'onChange',
     enableColumnResizing: true,
   });
@@ -130,7 +132,7 @@ export default function SalesTeamsView() {
   const emptyMessage = debouncedSearch ? (
     'No sales teams match this search.'
   ) : (
-    <div className="flex flex-col items-center gap-3 py-6">
+    <div className="flex w-full flex-col items-center gap-3 py-6">
       <span className="text-sm font-medium">No sales teams yet</span>
       {canAdd ? addButton : null}
     </div>

@@ -9,6 +9,7 @@
  *   GET    /sales/teams/{id}?on          -> SalesTeamDetail                                   sales.teams.view
  *   POST   /sales/teams                  body SalesTeamCreatePayload -> SalesTeamDetail       sales.teams.add
  *   PATCH  /sales/teams/{id}             body SalesTeamUpdatePayload -> SalesTeamDetail       sales.teams.edit
+ *          (name, Active and optionally the agents with moves_on, in one transaction)
  *   PUT    /sales/teams/{id}/members     body SalesTeamMembersPayload -> SalesTeamDetail      sales.teams.edit
  * Delete is the parked action `sales_team.delete` (D7), through useDeferredAction.
  */

@@ -19,6 +19,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.sales import SalesTeam, SalesTeamMember
@@ -82,18 +83,19 @@ def get_team_or_404(db: Session, team_id: str) -> SalesTeam:
     return team
 
 
-def _assert_name_free(db: Session, company_id: str, name: str, exclude_id: Optional[str]) -> None:
-    query = db.query(SalesTeam.id).filter(
-        SalesTeam.company_id == company_id, func.lower(SalesTeam.name) == name.lower()
-    )
-    if exclude_id:
-        query = query.filter(SalesTeam.id != exclude_id)
-    if query.first() is not None:
+def _flush_name(db: Session, name: str) -> None:
+    """Flush, turning `uq_sales_teams_company_lower_name` (case-insensitive, per company) into a 409."""
+    try:
+        with db.begin_nested():
+            db.flush()
+    except IntegrityError as exc:
+        if "uq_sales_teams_company_lower_name" not in str(exc.orig):
+            raise
         raise AppException(
             status_code=409,
             message=f'A sales team called "{name}" already exists.',
             code="SALES_TEAM_NAME_TAKEN",
-        )
+        ) from exc
 
 
 def _unprocessable(message: str, code: str) -> AppException:
@@ -115,10 +117,9 @@ def create_team_with_members(
     moves_on: Optional[date] = None,
 ) -> Tuple[SalesTeam, List[Move]]:
     name = name.strip()
-    _assert_name_free(db, company_id, name, None)
     team = SalesTeam(company_id=company_id, name=name, is_active=is_active)
     db.add(team)
-    db.flush()
+    _flush_name(db, name)
     moved = set_members(db, team, sales_agent_ids, moves_on=moves_on)
     return team, moved
 
@@ -133,11 +134,10 @@ def update_team(
 ) -> SalesTeam:
     if name is not None:
         name = name.strip()
-        _assert_name_free(db, team.company_id, name, team.id)
         team.name = name
     if is_active is not None:
         team.is_active = is_active
-    db.flush()
+    _flush_name(db, name or team.name)
     return team
 
 
@@ -192,6 +192,7 @@ def set_members(
 
     moved: List[Move] = []
     new_rows: List[SalesTeamMember] = []
+    day_before = moves_on - timedelta(days=1)
     for agent_id in wanted:
         if agent_id in open_here:
             continue
@@ -204,18 +205,27 @@ def set_members(
             )
             .all()
         )
-        current = next((m for m in history if m.valid_to is None), None)
+        # The rows still counting on or after `moves_on`: the open row, or one closed by a
+        # removal earlier today. A back-dated Moves on that reaches across two of them would
+        # rewrite a stay that is already history, so it is refused (S6-14).
+        overlapping = [m for m in history if m.valid_to is None or m.valid_to >= moves_on]
+        if len(overlapping) > 1:
+            earliest = min(overlapping, key=lambda m: m.valid_to or date.max)
+            raise _unprocessable(
+                f"{agent_label(agent)} was in another team after the Moves on date; pick "
+                f"{(earliest.valid_to + timedelta(days=1)).isoformat()} or later.",
+                "MEMBERSHIP_OVERLAP",
+            )
+        covering = overlapping[0] if overlapping else None
 
-        if current is not None:
-            # A move (T2): the other team keeps everything before `moves_on`.
-            if current.valid_from is not None and current.valid_from >= moves_on:
-                raise _unprocessable(
-                    f"{agent_label(agent)} only joined their current team on "
-                    f"{current.valid_from.isoformat()}; pick a later Moves on date.",
-                    "MEMBERSHIP_OVERLAP",
-                )
-            current.valid_to = moves_on - timedelta(days=1)
-            from_team = db.query(SalesTeam).filter(SalesTeam.id == current.sales_team_id).one()
+        if covering is not None and covering.sales_team_id == team.id:
+            # Taken out of this team and put back with no gap: one continuous membership.
+            covering.valid_to = None
+            continue
+
+        valid_from: Optional[date] = moves_on
+        if covering is not None:
+            from_team = db.query(SalesTeam).filter(SalesTeam.id == covering.sales_team_id).one()
             moved.append(
                 Move(
                     sales_agent_id=agent_id,
@@ -224,16 +234,29 @@ def set_members(
                     from_team_name=from_team.name,
                 )
             )
-            valid_from: Optional[date] = moves_on
-        elif not history:
+            if covering.valid_from is None or covering.valid_from < moves_on:
+                # A move (T2): the other team keeps everything before `moves_on`.
+                covering.valid_to = day_before
+            elif covering.valid_from == moves_on == today:
+                # A stay that began today is a same-day mistake being corrected: it never
+                # counted for a full day, so it goes, and a team the agent left yesterday
+                # for it gets them back as if nothing happened.
+                db.delete(covering)
+                db.flush()  # gone before any row reopens, or the one-open-row index trips
+                history = [m for m in history if m is not covering]
+                previous = next((m for m in history if m.valid_to == day_before), None)
+                if previous is not None and previous.sales_team_id == team.id:
+                    previous.valid_to = None
+                    continue
+            else:
+                raise _unprocessable(
+                    f"{agent_label(agent)} joined {from_team.name} on "
+                    f"{covering.valid_from.isoformat()}, after the Moves on date; pick "
+                    f"{covering.valid_from.isoformat()} or later.",
+                    "MEMBERSHIP_OVERLAP",
+                )
+        if not history:
             valid_from = None  # first team: from the beginning (V1)
-        else:
-            last = max(history, key=lambda m: m.valid_to)
-            if last.sales_team_id == team.id and last.valid_to >= moves_on - timedelta(days=1):
-                # Taken out and put back with no gap: one continuous membership.
-                last.valid_to = None
-                continue
-            valid_from = max(moves_on, last.valid_to + timedelta(days=1))
 
         new_rows.append(
             SalesTeamMember(

@@ -33,6 +33,10 @@ class SalesTeamCreate(BaseModel):
 class SalesTeamUpdate(BaseModel):
     name: Optional[str] = Field(None, max_length=120)
     is_active: Optional[bool] = None
+    #: Optional: the team page saves the name, Active and the agents in ONE transaction, so a
+    #: refused rename cannot leave the agents half-saved (review round 1, N1).
+    sales_agent_ids: Optional[List[str]] = None
+    moves_on: Optional[DateType] = None
 
     @field_validator("name")
     @classmethod

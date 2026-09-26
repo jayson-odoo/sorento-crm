@@ -46,7 +46,7 @@ def upgrade() -> None:
         "teams",
         sa.Column("id", postgresql.UUID(as_uuid=False), primary_key=True),
         sa.Column(
-            "company_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("companies.id"), nullable=True
+            "company_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("companies.id"), nullable=False
         ),
         sa.Column("name", sa.String(length=120), nullable=False),
         sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.text("true")),
@@ -67,7 +67,7 @@ def upgrade() -> None:
         "team_members",
         sa.Column("id", postgresql.UUID(as_uuid=False), primary_key=True),
         sa.Column(
-            "company_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("companies.id"), nullable=True
+            "company_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("companies.id"), nullable=False
         ),
         sa.Column(
             "sales_team_id",

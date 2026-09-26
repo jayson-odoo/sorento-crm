@@ -284,7 +284,7 @@ export function SalesTeamDetail({ id }: { id: string }) {
               ))}
               {left.map((m) => (
                 <li
-                  key={`left-${m.sales_agent_id}`}
+                  key={`left-${m.sales_agent_id}-${m.valid_to}`}
                   data-left="true"
                   className="flex min-w-0 items-center gap-2 px-3 py-2 text-muted-foreground"
                 >

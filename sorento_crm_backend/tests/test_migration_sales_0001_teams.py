@@ -55,6 +55,12 @@ def test_upgrade_then_downgrade():
             _run(conn, module.upgrade)
             insp = sa.inspect(raw)
             assert set(insp.get_table_names(schema=scratch)) == {"teams", "team_members"}
+            for table in ("teams", "team_members"):
+                # Security review: the database is where an owned table's company is enforced
+                # (CompanyScopedMixin); a NULL-company row would be invisible to everyone and
+                # escape the per-company unique name.
+                cols = {c["name"]: c for c in insp.get_columns(table, schema=scratch)}
+                assert cols["company_id"]["nullable"] is False, table
             member_cols = {c["name"] for c in insp.get_columns("team_members", schema=scratch)}
             assert {"valid_from", "valid_to", "sales_team_id", "sales_agent_id"} <= member_cols
             indexes = {i["name"] for i in insp.get_indexes("team_members", schema=scratch)}

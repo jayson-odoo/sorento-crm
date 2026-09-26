@@ -72,6 +72,9 @@ export interface SalesTeamCreatePayload {
 export interface SalesTeamUpdatePayload {
   name?: string;
   is_active?: boolean;
+  /** Sent together with the name so the team page's save is one transaction. */
+  sales_agent_ids?: string[];
+  moves_on?: string;
 }
 
 export interface SalesTeamMembersPayload {
