@@ -348,12 +348,19 @@ def test_ac_r4_6_the_file_is_the_same_query_as_the_text(db, queue, monkeypatch):
 
 
 def test_ac_r4_6_the_files_figures_are_the_texts(db, queue, monkeypatch):
-    """Render the queued file and compare it with the text, figure for figure."""
+    """Render the queued file and compare its cells with the text, figure for figure
+    (review round 2 B2: the rendered file, not only the engine's data)."""
+    import io
+
+    from openpyxl import load_workbook
+
     from app.schemas.report import ReportViewConfig
     from app.services.reports import engine, registry as reg
+    from app.services.reports.xlsx_renderer import render_workbook
 
     _sale(db, "100.00", date(2025, 1, 10))
     _sale(db, "80.00", date(2025, 2, 10))
+    _sale(db, "300.00", date(2025, 3, 10))
     _sale(db, "60.00", date(2026, 1, 10))
     contact = _contact(db)
     _patch_wait(monkeypatch, _mark_ready(db))
@@ -361,15 +368,72 @@ def test_ac_r4_6_the_files_figures_are_the_texts(db, queue, monkeypatch):
         body = client.get(ROUTE, params=_q(contact, date_to="2026-12-31")).json()
     (fn, args, kwargs), = queue
     _download_id, key, params, view, _user = args
-    data = engine.run_workbook(db, reg.get(key), params, ReportViewConfig.model_validate(view),
+    definition = reg.get(key)
+    data = engine.run_workbook(db, definition, params, ReportViewConfig.model_validate(view),
                                company_grants=frozenset(kwargs["company_grants"]))
-    summary = data.blocks[0].summary if data.blocks else data.summary
+    sheet = load_workbook(io.BytesIO(render_workbook(definition, data)))["SUMMARY"]
+    file_rows = {}
+    for r in range(1, sheet.max_row + 1):
+        label = sheet.cell(row=r, column=1).value
+        if label in ("2025", "2026", "VARIANCE"):
+            file_rows[label] = [
+                None if (v := sheet.cell(row=r, column=c).value) is None
+                else str(Decimal(str(v)).quantize(Decimal("0.01")))
+                for c in range(2, 15)
+            ]
+    assert set(file_rows) == {"2025", "2026", "VARIANCE"}
     by_label = {r["label"]: r["values"] for r in body["rows"]}
-    assert summary.cells["2025"]["01"]["sales_value"] == by_label["JAN"][0] == "100.00"
-    assert summary.cells["2026"]["01"]["sales_value"] == by_label["JAN"][1] == "60.00"
-    assert summary.variance_row["01"]["sales_value"] == by_label["JAN"][2] == "-40.00"
-    assert summary.variance_total["sales_value"] == body["totals"]["values"][2]
+    months = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
+    for index, month in enumerate(months):
+        in_2025, in_2026, difference = by_label[month]
+        assert file_rows["2025"][index] == in_2025, month
+        assert file_rows["2026"][index] == in_2026, month
+        assert file_rows["VARIANCE"][index] == difference, month
+    assert file_rows["VARIANCE"][2] == "-300.00"  # March 2026 sold nothing
+    assert file_rows["VARIANCE"][12] == body["totals"]["values"][2] == "-420.00"
     assert body["period"].endswith(reg.today_malaysia().strftime("%d/%m/%Y"))
+
+
+def test_reviewer_r2_b1_the_difference_counts_a_past_month_this_year_sold_nothing(
+    db, queue, monkeypatch
+):
+    """B1 (review round 2), the reviewer's probe: 60 this year against 100 + 300 last year
+    is (340), not (40). FEB sold nothing either year, OCT is after the as-at date."""
+    _sale(db, "100.00", date(2025, 1, 10))
+    _sale(db, "300.00", date(2025, 3, 10))
+    _sale(db, "60.00", date(2026, 1, 10))
+    contact = _contact(db)
+    _patch_wait(monkeypatch, _mark_ready(db))
+    with _client(db, _actor(db), [DEFAULT_COMPANY_ID]) as client:
+        body = client.get(ROUTE, params=_q(contact)).json()
+    by_label = {r["label"]: r["values"] for r in body["rows"]}
+    assert by_label["JAN"] == ["100.00", "60.00", "-40.00"]
+    assert by_label["FEB"] == [None, None, None]
+    assert by_label["MAR"] == ["300.00", None, "-300.00"]
+    assert by_label["OCT"] == [None, None, None]
+    assert body["totals"]["values"] == ["400.00", "60.00", "-340.00"]
+
+
+def test_reviewer_r2_b1_by_channel_the_difference_is_the_same_months_last_year(
+    db, queue, monkeypatch
+):
+    """One line per channel, the years across: the Difference is this year to date against
+    the SAME months last year, so last December's 500 is not in it."""
+    _sale(db, "100.00", date(2025, 1, 10))
+    _sale(db, "500.00", date(2025, 12, 10))
+    _sale(db, "60.00", date(2026, 1, 10))
+    _sale(db, "7.00", date(2025, 2, 10), demand_class="project")
+    contact = _contact(db)
+    _patch_wait(monkeypatch, _mark_ready(db))
+    with _client(db, _actor(db), [DEFAULT_COMPANY_ID]) as client:
+        params = _q(contact, rows="channel")
+        params.pop("channel")  # both channels
+        body = client.get(ROUTE, params=params).json()
+    assert body["columns"] == ["2025", "2026", "Difference"]
+    by_label = {r["label"]: r["values"] for r in body["rows"]}
+    assert by_label["Dealer"] == ["600.00", "60.00", "-40.00"]
+    assert by_label["Project team"] == ["7.00", None, "-7.00"]
+    assert body["totals"]["values"] == ["607.00", "60.00", "-47.00"]
 
 
 def test_ac_r4_1_one_figure_is_still_text_and_file(db, queue, monkeypatch):

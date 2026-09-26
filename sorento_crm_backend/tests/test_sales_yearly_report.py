@@ -247,6 +247,41 @@ def test_ac_s1_10_variance_is_last_year_minus_the_one_before_over_this_years_mon
     assert summary.variance_label == "VARIANCE"
 
 
+def test_reviewer_r2_b1_a_past_month_this_year_sold_nothing_counts_against_last_year(db, definition):
+    """B1 (review round 2): VARIANCE runs JAN to the as-at month, a missing cell read as 0 in
+    both years. March 2026 sold nothing and March 2025 sold 300: that month is (300), and
+    the year to date is 60 minus 400, not 60 minus 100."""
+    _line(db, order_date=date(2025, 1, 10), ordered=1, delivered=1, line_total=Decimal("100.00"))
+    _line(db, order_date=date(2025, 3, 10), ordered=1, delivered=1, line_total=Decimal("300.00"))
+    _line(db, order_date=date(2026, 1, 10), ordered=1, delivered=1, line_total=Decimal("60.00"))
+    result = _run(db, definition)
+    for summary in (result.layouts.summary, result.layouts.blocks[0].summary):
+        assert summary.variance_row["01"]["sales_value"] == "-40.00"
+        assert summary.variance_row["03"]["sales_value"] == "-300.00"
+        assert "02" not in summary.variance_row  # neither year sold: blank, not 0
+        assert "10" not in summary.variance_row  # after the as-at month: blank
+        assert summary.variance_total["sales_value"] == "-340.00"
+    # The PROJECT TEAM block sold nothing either year: no variance to print.
+    assert result.layouts.blocks[1].summary.variance_row == {}
+    assert result.layouts.blocks[1].summary.variance_total == {}
+
+
+def test_reviewer_r2_b1_a_period_starting_mid_year_compares_only_months_both_years_cover(
+    db, definition
+):
+    """March 2025 onward: January and February 2025 are outside the period, so January and
+    February 2026 have nothing to be compared with and stay out of the variance."""
+    _line(db, order_date=date(2025, 3, 10), ordered=1, delivered=1, line_total=Decimal("30.00"))
+    _line(db, order_date=date(2026, 1, 10), ordered=1, delivered=1, line_total=Decimal("60.00"))
+    _line(db, order_date=date(2026, 3, 10), ordered=1, delivered=1, line_total=Decimal("50.00"))
+    summary = _run(
+        db, definition, period={"kind": "custom", "from": "2025-03-01", "to": "2026-09-26"}
+    ).layouts.summary
+    assert "01" not in summary.variance_row
+    assert summary.variance_row["03"]["sales_value"] == "20.00"
+    assert summary.variance_total["sales_value"] == "20.00"
+
+
 def test_ac_r4_7_ac_s1_11_one_block_per_ticked_channel_titled_by_company(db, definition):
     _line(db, order_date=date(2026, 1, 10), ordered=1, delivered=1, line_total=Decimal("10.00"), demand_class="retail")
     _line(db, order_date=date(2026, 1, 10), ordered=1, delivered=1, line_total=Decimal("7.00"), demand_class="project")
@@ -349,6 +384,68 @@ def test_ac_s1_17_ac_r4_7_one_sheet_both_blocks_variance_chart_and_values(db, de
     assert Decimal("-40.00") in [Decimal(str(c.value)) for c in money]
 
 
+def _block_rows(sheet, title):
+    """The block under `title`, read by coordinate: {row label: [JAN..DEC, TOTALS]}, each
+    cell a Decimal or None. Reads from the title down to the next block's title."""
+    labels = [sheet.cell(row=r, column=1).value for r in range(1, sheet.max_row + 1)]
+    start = labels.index(title) + 1
+    out = {}
+    for r in range(start + 1, sheet.max_row + 1):
+        label = sheet.cell(row=r, column=1).value
+        if isinstance(label, str) and " - " in label:
+            break  # the next block's title
+        if label is None or label == "YEAR" or label in out:
+            continue
+        out[label] = [
+            None if (v := sheet.cell(row=r, column=c).value) is None else Decimal(str(v))
+            for c in range(2, 15)
+        ]
+    return out
+
+
+def _expected(per_col, total):
+    months = [f"{m:02d}" for m in range(1, 13)]
+    values = [(per_col or {}).get(m, {}).get("sales_value") for m in months]
+    values.append((total or {}).get("sales_value"))
+    return [None if v is None else Decimal(v) for v in values]
+
+
+def test_reviewer_r2_b2_the_files_rows_are_the_runs_cells_by_coordinate(db, definition):
+    """B2 (review round 2): every year row and the VARIANCE row of each block, JAN to DEC
+    plus TOTALS, cell by cell. Writing the column totals on the VARIANCE line, or shifting
+    a row one month, turns this red."""
+    from app.services.reports import engine
+
+    _line(db, order_date=date(2025, 1, 10), ordered=1, delivered=1, line_total=Decimal("100.00"))
+    _line(db, order_date=date(2025, 3, 10), ordered=1, delivered=1, line_total=Decimal("300.00"))
+    _line(db, order_date=date(2026, 1, 10), ordered=1, delivered=1, line_total=Decimal("60.00"))
+    _line(db, order_date=date(2026, 2, 10), ordered=1, delivered=1, line_total=Decimal("9.00"),
+          demand_class="project")
+    sheet = _workbook(db, definition)["SUMMARY"]
+    dealer = _block_rows(sheet, "SORENTO - DEALER")
+    project = _block_rows(sheet, "SORENTO - PROJECT TEAM")
+    assert list(dealer) == ["2024", "2025", "2026", "VARIANCE"]
+
+    D = Decimal
+    blank = [None] * 12
+    assert dealer["2024"] == blank + [None]
+    assert dealer["2025"] == [D("100"), None, D("300")] + [None] * 9 + [D("400")]
+    assert dealer["2026"] == [D("60")] + [None] * 11 + [D("60")]
+    assert dealer["VARIANCE"] == [D("-40"), None, D("-300")] + [None] * 9 + [D("-340")]
+    assert project["2026"] == [None, D("9")] + [None] * 10 + [D("9")]
+    assert project["VARIANCE"] == [None, D("9")] + [None] * 10 + [D("9")]
+
+    view = _view()
+    data = engine.run_workbook(
+        db, definition, view.params, view, company_grants=frozenset({DEFAULT_COMPANY_ID})
+    )
+    for block, rows in zip(data.blocks, (dealer, project)):
+        pivot = block.summary
+        for year in pivot.row_values:
+            assert rows[year] == _expected(pivot.cells.get(year), pivot.row_totals.get(year))
+        assert rows["VARIANCE"] == _expected(pivot.variance_row, pivot.variance_total)
+
+
 def test_ac_s1_17_a_formula_looking_text_cell_is_escaped(db, definition):
     """A text cell starting with =, +, - or @ is text in the file: no formula, and no stray
     apostrophe in the value (Excel's quote prefix instead)."""
@@ -375,7 +472,9 @@ def _view_of(rows, cols):
     return _view(rows=rows, cols=cols)
 
 
-@pytest.mark.parametrize("rows, cols", [("month_of_year", "year"), ("channel", "year")])
+@pytest.mark.parametrize(
+    "rows, cols", [("month_of_year", "year"), ("channel", "year"), ("year", "channel")]
+)
 def test_reviewer_b1_no_variance_unless_the_rows_are_the_years(db, definition, rows, cols):
     """Re-pivoted by month or by channel, last row minus the one before means nothing: no
     VARIANCE, and the column totals come back, on screen and in the file."""

@@ -51,3 +51,31 @@ def test_existing_workbooks_are_unchanged_cell_for_cell():
         empty = json.loads(json.dumps(_dump(render_workbook(sponsorship, data))))
     assert synthetic == expected["synthetic"]
     assert empty == expected["sponsorship_empty"]
+
+
+def test_reviewer_r2_n1_no_cell_of_an_existing_workbook_gains_a_quote_prefix():
+    """N1 (review round 2): the formula escape must not touch the kernel's own "-"
+    placeholder, which `_dump` above cannot see (it ignores quotePrefix)."""
+    from app.services.reports import engine, registry as reg
+    from app.services.reports.xlsx_renderer import render_workbook
+
+    with blank_session() as db:
+        fixture.create_table(db)
+        definition = fixture.definition()
+        books = [render_workbook(definition, engine.run_workbook(
+            db, definition, {"date_basis": "booked_on", "period": {"kind": "year", "year": 2026}}
+        ))]
+        sponsorship = reg.get("sponsorship")
+        books.append(render_workbook(sponsorship, engine.run_workbook(
+            db, sponsorship, {"period": {"kind": "year", "year": 2025}}
+        )))
+    for content in books:
+        book = load_workbook(io.BytesIO(content))
+        prefixed = [
+            f"{sheet.title}!{cell.coordinate}"
+            for sheet in book.worksheets
+            for row in sheet.iter_rows()
+            for cell in row
+            if cell.quotePrefix
+        ]
+        assert prefixed == []

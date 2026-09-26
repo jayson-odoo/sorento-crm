@@ -4,8 +4,8 @@ chatbot wiring the migration ships.
 UAC: AC-R3-2 (one module: bootstrap, manifest entry, permission map), AC-R4-8 (`CREATE
 SCHEMA IF NOT EXISTS sales`, idempotent, env.py untouched), AC-R4-10 / AC-R5-11 (no table
 of this plan outside `sales`, and S1 adds none), AC-S1-19 (the tool on the order domain's
-live row, single head), plus the DoD grant sweep (PRINCIPLES DoD 3) and the module being
-enabled wherever `order` already is, so the menu item is not born hidden.
+live row, single head), plus the DoD grant sweep (PRINCIPLES DoD 3). The module stays dormant, as #1260 shipped it
+(review round 2 S2): the owner switches it on in App Store.
 
 A `test_migration_*` file: it runs real DDL, so CI runs it serially (LESSONS 97).
 """
@@ -134,7 +134,7 @@ def test_ac_r4_8_single_head_and_a_short_revision_id():
     assert module.revision in walked
 
 
-def test_ac_r4_8_upgrade_creates_the_schema_grants_the_slug_and_enables_the_module():
+def test_ac_r4_8_upgrade_creates_the_schema_grants_the_slug_and_leaves_the_module_dormant():
     module = _load()
     with blank_session() as db:
         _seed_roles_and_order_domain(db)
@@ -153,6 +153,24 @@ def test_ac_r4_8_upgrade_creates_the_schema_grants_the_slug_and_enables_the_modu
         catalog = db.execute(sa.text(
             "SELECT count(*) FROM app_modules_catalog WHERE module_key = 'sales'")).scalar()
         assert catalog == 1
+        # Review round 2 S2: #1260 shipped `sales` dormant on purpose, and S1 keeps it so.
+        # The owner switches it on in App Store; this migration writes no tenant row.
+        enabled = db.execute(sa.text(
+            "SELECT count(*) FROM tenant_modules WHERE module_key = 'sales'")).scalar()
+        assert enabled == 0
+
+
+def test_reviewer_r2_s2_downgrade_leaves_an_owner_enabled_sales_module_alone():
+    """The owner's App Store switch is not this revision's to undo."""
+    module = _load()
+    with blank_session() as db:
+        _seed_roles_and_order_domain(db)
+        _run(db, module)
+        db.execute(sa.text(
+            "INSERT INTO tenant_modules (id, tenant_id, module_key, enabled) "
+            "VALUES (gen_random_uuid(), '__default__', 'sales', true)"
+        ))
+        _run(db, module, "downgrade")
         enabled = db.execute(sa.text(
             "SELECT enabled FROM tenant_modules WHERE tenant_id = '__default__' "
             "AND module_key = 'sales'")).scalar()

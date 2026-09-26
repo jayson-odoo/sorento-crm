@@ -90,6 +90,13 @@ class TestToolPickAndArgs:
         assert args["rows"] == "channel" and args["cols"] == "year"
         assert args["channel"] == "project"
 
+    def test_reviewer_r2_s1_by_year_is_named_not_defaulted(self, session_factory):
+        """S1 (review round 2): "by year" is the years across, one line per channel, mapped
+        on purpose rather than falling through to the default."""
+        _name, args = _args(session_factory, group_by="year",
+                            date_filter_start="2024-01-01", date_filter_end="2026-09-26")
+        assert args["rows"] == "channel" and args["cols"] == "year"
+
     def test_ac_s1_22_no_period_said_is_this_calendar_year(self, session_factory):
         from app.services.reports.registry import today_malaysia
 
@@ -160,6 +167,40 @@ class TestTextAndFile:
         assert "Sorento or Mocha?" in ((result.reply or {}).get("text") or "")
         kinds = [a.get("kind") for a in (result.actions or [])]
         assert "send_attachments" not in kinds
+
+
+class TestUnsupportedAxis:
+    """S1 (review round 2): an axis the sales analysis cannot draw is said plainly, with no
+    figure and no fetch, never a silent by-channel table."""
+
+    @pytest.mark.parametrize(
+        "group_by", ["customer", "product", "date", "warehouse", "supplier", "transporter"]
+    )
+    def test_an_axis_it_cannot_draw_is_said_and_nothing_is_fetched(
+        self, session_factory, monkeypatch, group_by
+    ):
+        _seed_contact(session_factory, variables={})
+        result, captured = _run_turn(
+            session_factory, monkeypatch,
+            qf=_qf(order_status="sales_analysis", entities=[], group_by=group_by),
+            text_body=f"sales by {group_by} this year", msg_id=f"ZZT-sa-axis-{group_by}",
+            attributes=[GRANT], mcp_response=_rendered(),
+        )
+        assert captured == []
+        text = ((result.reply or {}).get("text") or "").strip()
+        assert text == (
+            f"I can't break sales down by {group_by} yet. "
+            "I can show them by month, by year or by channel."
+        )
+        kinds = [a.get("kind") for a in (result.actions or [])]
+        assert "send_attachments" not in kinds
+
+    def test_run_fetch_refuses_it_too(self, session_factory):
+        from app.services.chatbot.lanes.business import run_fetch
+
+        call, captured = _capturing_mcp(_rendered())
+        run_fetch(_payload(group_by="customer"), services=FetchServices(mcp_call=call))
+        assert captured == []
 
 
 class TestParserContract:
