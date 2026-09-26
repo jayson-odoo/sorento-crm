@@ -214,6 +214,11 @@ def test_ac_s1_10_removing_a_shipped_rule_writes_the_rest_of_the_shipped_list(cl
 
     assert body["last_outcome"]["status"] == "committed", body["last_outcome"]
     assert _row(db, "is_rimless").derivation_rules == []
+    # The effect, not only the stored list (review B-1): [] is "no rules", and the key
+    # stops reading with the shipped ones.
+    from app.services.product_spec_derivation import configured_rules
+
+    assert configured_rules(db)["is_rimless"] == []
 
 
 def test_ac_s1_10_removing_a_rule_is_refused_without_the_registry_edit_grant(client):

@@ -32,6 +32,7 @@ from app.services import product_spec_verification
 from app.services.error_handler import AppException, handle_internal_error, handle_not_found
 from app.services.product_class_signal import explain_code
 from app.services.product_spec_registry import value_for_registry
+from app.services.product_spec_rules import MAX_TRY_TEXT
 from app.services.product_spec_search import RELEVANCE_FLOOR, search_specs
 
 router = APIRouter()
@@ -326,7 +327,11 @@ async def rederive_one_product(
 class SpecExtractRequest(BaseModel):
     """The text a person pasted. Held in the request body and nowhere else."""
 
-    text: str = Field(description="A flyer card, a leaflet paragraph, a supplier blurb.")
+    # Bounded like Try it's paste (review B-3): the text is read on the request.
+    text: str = Field(
+        description="A flyer card, a leaflet paragraph, a supplier blurb.",
+        max_length=MAX_TRY_TEXT,
+    )
 
 
 class SpecBatchEntry(BaseModel):

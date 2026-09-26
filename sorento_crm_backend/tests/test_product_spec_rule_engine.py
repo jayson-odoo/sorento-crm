@@ -937,7 +937,18 @@ def _group_two_digit_counts(diff):
 
 
 def _group_power_stands_alone(diff):
-    return diff["key"] == "power_hp" and diff["after"] is None and diff["before"] is not None
+    """D5 group 2: the old reading took its digits out of a code ("SRTKS1008L 1HP" read
+    as 1008). Only a lost power reading whose number, in the description, is glued to a
+    letter or digit before it (directly or across a hyphen) and never stands on its own
+    before HP belongs here (review S-14: this used to accept any lost reading)."""
+    if not (diff["key"] == "power_hp" and diff["after"] is None and diff["before"] is not None):
+        return False
+    before = diff["before"]
+    number = re.escape(str(int(before)) if float(before).is_integer() else str(before))
+    hp = r"[\s\-]*HP(?![A-Z])"
+    glued = re.search(rf"(?:[A-Z0-9]|[A-Z0-9]-){number}{hp}", diff["description"])
+    alone = re.search(rf"(?<![A-Z0-9.])(?<![A-Z0-9]-){number}{hp}", diff["description"])
+    return bool(glued) and not alone
 
 
 def _group_phrase_gap(diff):

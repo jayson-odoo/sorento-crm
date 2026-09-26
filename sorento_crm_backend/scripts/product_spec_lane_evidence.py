@@ -26,13 +26,44 @@ from sqlalchemy import text  # noqa: E402
 
 from app.database import SessionLocal  # noqa: E402
 
+# The sources the S0 migration treats as set by a person (`spec_0001_drop_brand._AUTHORED`),
+# so section 2 lists exactly the Brand values the migration clears as hand-set.
+HAND_SET_SOURCES = ("human", "supplier", "flyer")
+
 _SECTIONS: list[tuple[str, str]] = [
     (
         "1. The brand registry row, verbatim",
         """
-        SELECT user_values, value_labels, suppressed_values, user_synonyms, excluded_values,
-               value_weights, derivation_rules
+        SELECT is_active, rank_weight, value_weights, user_values, value_labels,
+               suppressed_values, user_synonyms, excluded_values, derivation_rules
         FROM product_spec_registry WHERE spec_key = 'brand'
+        """,
+    ),
+    (
+        "1b. Other specifications' rules and scopes that name brand (they stop applying)",
+        """
+        SELECT spec_key, 'rule ' || ord AS what, r::text AS detail
+        FROM product_spec_registry,
+             jsonb_array_elements(COALESCE(derivation_rules, '[]'::jsonb))
+                 WITH ORDINALITY AS t(r, ord)
+        WHERE spec_key <> 'brand' AND (
+              r->'applies_when' ? 'brand' OR r->'unless' ? 'brand'
+              OR lower(r->'builder'->'only_when'->>'spec') = 'brand')
+        UNION ALL
+        SELECT spec_key, 'scope', applies_when::text
+        FROM product_spec_registry
+        WHERE spec_key <> 'brand' AND applies_when ? 'brand'
+        ORDER BY 1, 2
+        """,
+    ),
+    (
+        "1c. Customer and segment visibility policies naming brand (spec_0003 removes it)",
+        """
+        SELECT id, contact_id, segment_code, spec_keys, excluded_spec_keys
+        FROM spec_visibility_policies
+        WHERE 'brand' = ANY(COALESCE(spec_keys, '{}'))
+           OR 'brand' = ANY(COALESCE(excluded_spec_keys, '{}'))
+        ORDER BY segment_code, contact_id
         """,
     ),
     (
@@ -43,7 +74,7 @@ _SECTIONS: list[tuple[str, str]] = [
         FROM product_specifications s
         JOIN products p ON p.id = s.product_id
         LEFT JOIN brands b ON b.id = p.brand_id
-        WHERE s.provenance->'brand'->>'source' IN ('human', 'supplier', 'verified')
+        WHERE s.provenance->'brand'->>'source' IN ('human', 'supplier', 'flyer')
         ORDER BY p.product_code
         """,
     ),
@@ -89,7 +120,8 @@ _SECTIONS: list[tuple[str, str]] = [
                count(*) FILTER (
                    WHERE r->>'match' IN ('regex', 'present') AND NOT (r ? '_seed')
                ) AS typed_patterns
-        FROM product_spec_registry, jsonb_array_elements(derivation_rules) r
+        FROM product_spec_registry,
+             jsonb_array_elements(COALESCE(derivation_rules, '[]'::jsonb)) r
         GROUP BY spec_key ORDER BY spec_key
         """,
     ),

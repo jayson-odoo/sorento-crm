@@ -167,22 +167,51 @@ def catch_up_on_worker_start() -> bool:
     job stores the fingerprint it read with when it finishes, so the next start queues
     nothing.
     """
-    from app.database import SessionLocal
+    import app.database as database
 
     try:
-        with SessionLocal() as db:
+        with database.SessionLocal() as db:
             running = rules_fingerprint(db)
             stored = _stored_fingerprint(db)
         if stored == running:
             logger.info("spec catch-up: the catalogue was read with the running rules")
             return False
+        # One job per running fingerprint (review S-9): several workers starting on the
+        # same deploy each ask, and only the first one queues the re-read.
+        job_id = f"spec-catch-up-{running}"
+        if _already_queued(job_id):
+            logger.info("spec catch-up: %s is already queued", job_id)
+            return False
         from app.tasks.product_spec_tasks import reread_catalogue
 
-        enqueue_job(reread_catalogue, queue_name="imports", run_label="worker-start catch-up")
+        enqueue_job(
+            reread_catalogue,
+            queue_name="imports",
+            job_id=job_id,
+            run_label="worker-start catch-up",
+        )
         logger.info("spec catch-up: rules changed since the last read, catalogue re-read queued")
         return True
     except Exception:  # noqa: BLE001 - a worker must start whatever this finds
         logger.warning("spec catch-up could not run", exc_info=True)
+        return False
+
+
+def _already_queued(job_id: str) -> bool:
+    """Whether the job is waiting or running on the queue. False when Redis cannot say."""
+    try:
+        from rq.job import Job, JobStatus
+
+        from app.services.queue_service import get_queue
+
+        job = Job.fetch(job_id, connection=get_queue("imports").connection)
+        return job.get_status() in {
+            JobStatus.QUEUED,
+            JobStatus.STARTED,
+            JobStatus.DEFERRED,
+            JobStatus.SCHEDULED,
+        }
+    except Exception:  # noqa: BLE001 - no such job, or no Redis: queue it
         return False
 
 
@@ -192,13 +221,27 @@ def reread_catalogue_and_store(run_label: str | None = None) -> dict:
     The fingerprint is taken BEFORE the run so a rule edited while it runs is not
     credited to it.
     """
-    from app.database import SessionLocal
+    import app.database as database
     from app.tasks.product_spec_tasks import derive_product_specs
 
-    with SessionLocal() as db:
+    with database.SessionLocal() as db:
         fingerprint = rules_fingerprint(db)
     result = derive_product_specs(run_label=run_label or "catalogue re-read")
-    with SessionLocal() as db:
+    with database.SessionLocal() as db:
+        _store_fingerprint(db, fingerprint)
+    return result
+
+
+def reread_codes_and_store(codes: list[str], fingerprint: str) -> dict:
+    """Re-read the codes a save changed, then store the fingerprint of the rules they
+    were read with. What a save queues when it changed too many products to read on the
+    request: the fingerprint moves only once the codes are read (review S-9), so a job
+    that fails leaves the catch-up owed rather than marking the catalogue current."""
+    import app.database as database
+    from app.tasks.product_spec_tasks import derive_product_specs
+
+    result = derive_product_specs(sorted(codes), run_label="rule save")
+    with database.SessionLocal() as db:
         _store_fingerprint(db, fingerprint)
     return result
 
@@ -237,8 +280,35 @@ def reread_after_save(db: Session, spec_key: str, *, fingerprint_before: str) ->
         )
         if row["before"] != row["after"]
     }
+    fingerprint = rules_fingerprint(db)
+    if was_current and len(changed) > listener.INLINE_REDERIVE_LIMIT:
+        try:
+            enqueue_job(
+                reread_codes_and_store, sorted(changed), fingerprint, queue_name="imports"
+            )
+            return len(changed)
+        except Exception:  # noqa: BLE001 - no queue: read them here, as rederive_codes does
+            logger.warning("spec re-read after save could not be queued", exc_info=True)
     if changed:
         listener.rederive_codes(changed)
     if was_current:
-        _store_fingerprint(db, rules_fingerprint(db))
+        _store_fingerprint(db, fingerprint)
     return len(changed)
+
+
+def reread_after_save_logged(db: Session, spec_key: str, *, fingerprint_before: str) -> int:
+    """`reread_after_save` for a save that has ALREADY committed. Never raises.
+
+    A failure here must not answer 500 for a save that landed (review S-7): saving again
+    would see no change and re-read nothing. It is logged, 0 is reported, and the stored
+    fingerprint is left as it was, so the worker's catch-up still re-reads the catalogue.
+    """
+    try:
+        return reread_after_save(db, spec_key, fingerprint_before=fingerprint_before)
+    except Exception:  # noqa: BLE001 - see above
+        logger.exception("spec re-read after saving %s failed; the catch-up will run", spec_key)
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        return 0

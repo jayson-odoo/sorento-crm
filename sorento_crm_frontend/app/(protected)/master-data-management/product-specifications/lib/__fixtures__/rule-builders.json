@@ -4881,7 +4881,7 @@
     "compiled": {
       "kind": "words",
       "scope": "flyer",
-      "pattern": "(?:(?<![A-Z])PP(?![A-Z])[^.]*?(?<![A-Z])SEAT(?![A-Z]))",
+      "pattern": "(?:(?<![A-Z])PP(?![A-Z])[^.]{0,120}?(?<![A-Z])SEAT(?![A-Z]))",
       "capture": null,
       "skip": null,
       "scale": null,
@@ -4905,7 +4905,7 @@
     "compiled": {
       "kind": "words",
       "scope": "flyer",
-      "pattern": "(?:(?<![A-Z])UF(?![A-Z])[^.]*?(?<![A-Z])SEAT(?![A-Z]))",
+      "pattern": "(?:(?<![A-Z])UF(?![A-Z])[^.]{0,120}?(?<![A-Z])SEAT(?![A-Z]))",
       "capture": null,
       "skip": null,
       "scale": null,
@@ -4929,7 +4929,7 @@
     "compiled": {
       "kind": "words",
       "scope": "any",
-      "pattern": "(?:(?<![A-Z])UREA(?![A-Z])[^.]*?(?<![A-Z])SEAT(?![A-Z]))",
+      "pattern": "(?:(?<![A-Z])UREA(?![A-Z])[^.]{0,120}?(?<![A-Z])SEAT(?![A-Z]))",
       "capture": null,
       "skip": null,
       "scale": null,

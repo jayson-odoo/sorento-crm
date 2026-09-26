@@ -16,11 +16,13 @@ nobody.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import threading
 import uuid
 from collections import OrderedDict
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
@@ -227,6 +229,7 @@ def _run_job(job_id: str, spec_key: str, rules: list[dict], db: Session | None =
         logger.exception("spec preview %s (%s) failed", job_id, spec_key)
         _remember(job_id, {"status": "failed", "spec_key": spec_key, "error": str(exc)})
     finally:
+        _release_database_lock(job_id)
         with _RUNNING_LOCK:
             if _RUNNING_JOB_ID == job_id:
                 _RUNNING_JOB_ID = None
@@ -238,27 +241,94 @@ CATALOGUE_READ_BUSY = (
 )
 
 
-def begin_catalogue_read() -> str:
+# The slot above is per process, and production runs several API workers (review S-8).
+# The same slot is also a Postgres advisory lock, held on a connection of its own for as
+# long as the read runs, so a save in one worker and a preview in another still take
+# turns. Keyed on the schema the request reads, so each catalogue has one slot.
+_DATABASE_LOCKS: dict[str, tuple] = {}
+_DATABASE_LOCKS_GUARD = threading.Lock()
+
+
+def catalogue_read_lock_key(db: Session) -> int:
+    """The advisory lock key for the catalogue `db` reads (one per schema)."""
+    schema = db.execute(text("SELECT current_schema()")).scalar() or "public"
+    digest = hashlib.sha256(f"sorento-spec-catalogue-read:{schema}".encode()).digest()
+    return int.from_bytes(digest[:8], "big", signed=True)
+
+
+def _take_database_lock(token: str, db: Session) -> bool:
+    from app.database import engine
+
+    key = catalogue_read_lock_key(db)
+    connection = engine.connect()
+    try:
+        taken = connection.execute(text("SELECT pg_try_advisory_lock(:k)"), {"k": key}).scalar()
+        connection.commit()
+    except Exception:
+        connection.close()
+        raise
+    if not taken:
+        connection.close()
+        return False
+    with _DATABASE_LOCKS_GUARD:
+        _DATABASE_LOCKS[token] = (connection, key)
+    return True
+
+
+def _release_database_lock(token: str | None) -> None:
+    with _DATABASE_LOCKS_GUARD:
+        held = _DATABASE_LOCKS.pop(token, None) if token else None
+    if held is None:
+        return
+    connection, key = held
+    try:
+        connection.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": key})
+        connection.commit()
+    except Exception:  # noqa: BLE001 - closing the connection releases it anyway
+        logger.warning("spec catalogue-read lock release failed", exc_info=True)
+    finally:
+        connection.close()
+
+
+def _busy():
+    from app.services.error_handler import AppException
+
+    return AppException(
+        status_code=409, message=CATALOGUE_READ_BUSY, code="spec_catalogue_read_running"
+    )
+
+
+def _claim(token: str, db: Session | None, refusal) -> None:
+    """Take both halves of the slot for `token`, or raise and hold neither."""
+    global _RUNNING_JOB_ID
+    with _RUNNING_LOCK:
+        if _RUNNING_JOB_ID is not None:
+            raise refusal(_RUNNING_JOB_ID)
+        _RUNNING_JOB_ID = token
+    taken = False
+    try:
+        taken = db is None or _take_database_lock(token, db)
+    finally:
+        if not taken:
+            with _RUNNING_LOCK:
+                if _RUNNING_JOB_ID == token:
+                    _RUNNING_JOB_ID = None
+    if not taken:
+        raise _busy()
+
+
+def begin_catalogue_read(db: Session | None = None) -> str:
     """Take the ONE catalogue-read slot for a save's re-read, or refuse with a 409.
 
     A rule save, a rule remove and a preview each read the whole catalogue for one key,
     and all three share the slot a preview already guards itself with (security review
     S1, #1286): two at once would each hold a request thread for seconds and race to
     write the same products. The slot is taken BEFORE anything is saved, so a refused
-    save stores nothing. Give the token back with `end_catalogue_read`.
+    save stores nothing. Given `db`, it is also taken across processes (review S-8).
+    Give the token back with `end_catalogue_read`.
     """
-    from app.services.error_handler import AppException
-
-    global _RUNNING_JOB_ID
-    with _RUNNING_LOCK:
-        if _RUNNING_JOB_ID is not None:
-            raise AppException(
-                status_code=409,
-                message=CATALOGUE_READ_BUSY,
-                code="spec_catalogue_read_running",
-            )
-        token = f"save-{uuid.uuid4().hex[:12]}"
-        _RUNNING_JOB_ID = token
+    token = f"save-{uuid.uuid4().hex[:12]}"
+    _claim(token, db, lambda _holder: _busy())
     return token
 
 
@@ -266,12 +336,13 @@ def end_catalogue_read(token: str | None) -> None:
     global _RUNNING_JOB_ID
     if token is None:
         return
+    _release_database_lock(token)
     with _RUNNING_LOCK:
         if _RUNNING_JOB_ID == token:
             _RUNNING_JOB_ID = None
 
 
-def start(spec_key: str, rules: list[dict]) -> str:
+def start(spec_key: str, rules: list[dict], db: Session | None = None) -> str:
     """Kick off a preview run. Returns the job id to poll.
 
     Refuses a second run while one is already in flight - 409 `spec_preview_running`,
@@ -280,17 +351,19 @@ def start(spec_key: str, rules: list[dict]) -> str:
     """
     from app.services.error_handler import AppException
 
-    global _RUNNING_JOB_ID
-    with _RUNNING_LOCK:
-        if _RUNNING_JOB_ID is not None:
-            raise AppException(
-                status_code=409,
-                message="A preview is already running. Wait for it to finish.",
-                code="spec_preview_running",
-                detail=_RUNNING_JOB_ID,
-            )
-        job_id = uuid.uuid4().hex[:12]
-        _RUNNING_JOB_ID = job_id
+    def refusal(holder: str):
+        # A save holding the slot is not a preview (review N-4): say what is running.
+        if holder.startswith("save-"):
+            return _busy()
+        return AppException(
+            status_code=409,
+            message="A preview is already running. Wait for it to finish.",
+            code="spec_preview_running",
+            detail=holder,
+        )
+
+    job_id = uuid.uuid4().hex[:12]
+    _claim(job_id, db, refusal)
 
     _remember(job_id, {"status": "pending", "spec_key": spec_key})
     threading.Thread(target=_run_job, args=(job_id, spec_key, rules), daemon=True).start()

@@ -250,13 +250,31 @@ def _vocabulary(db: Session) -> tuple[list[dict], dict[str, Any], dict[str, list
 
 def _brand_vocabulary(db: Session) -> ProductSpecRegistry | None:
     """The Brands master as a transient `brand` vocabulary row, or None when empty."""
+    from sqlalchemy import func
+
+    from app.models.product import Product
+    from app.services.product_spec_search import UNBINDABLE_BRAND_NAMES
+
     searchable: list[str] = []
     placeholders: list[str] = []
-    for name, is_searchable in db.query(Brand.brand_name, Brand.is_searchable).all():
+    # Active brands only, the ones products carry most first (review N-6): the prompt
+    # takes the first `_OPEN_VOCABULARY_LIMIT`, and cutting alphabetically dropped real
+    # brands for ones nobody sells.
+    rows = (
+        db.query(Brand.brand_name, Brand.is_searchable, func.count(Product.id))
+        .outerjoin(Product, Product.brand_id == Brand.id)
+        .filter(Brand.is_active.is_(True))
+        .group_by(Brand.id, Brand.brand_name, Brand.is_searchable)
+        .order_by(func.count(Product.id).desc(), Brand.brand_name)
+        .all()
+    )
+    for name, is_searchable, _products in rows:
         name = str(name or "").strip()
         if not name:
             continue
-        bucket = searchable if is_searchable else placeholders
+        # The floor under the flag (review S-2): OTHERS is never offered.
+        offered_here = is_searchable and name.lower() not in UNBINDABLE_BRAND_NAMES
+        bucket = searchable if offered_here else placeholders
         if name not in bucket:
             bucket.append(name)
     if not searchable:
@@ -270,7 +288,7 @@ def _brand_vocabulary(db: Session) -> ProductSpecRegistry | None:
         spec_key=BRAND_KEY,
         label="Brand",
         data_type="enum",
-        allowed_values=sorted(searchable),
+        allowed_values=searchable,
         excluded_values=sorted(placeholders),
         synonyms={},
     )

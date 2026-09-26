@@ -392,6 +392,16 @@ def convert_rules(spec_key: str, rules: list) -> list[dict]:
                 f"{json.dumps(rule, default=str, sort_keys=True)}. Fix or remove it on the "
                 "specification's screen, then run the migration again."
             ) from None
+        if str((builder.get("only_when") or {}).get("spec") or "").strip().lower() == "brand":
+            # The brand is not a specification any more (spec_0001): an Only when on it
+            # can never be met again, so this rule will never read anything.
+            logger.warning(
+                "spec_0002: rule %s of %s has an Only when on brand, which is no longer a"
+                " specification; the rule will never read anything until it is edited: %s",
+                n,
+                spec_key,
+                json.dumps(rule, default=str, sort_keys=True),
+            )
         entry: dict = {"builder": builder}
         if rule.get(_SEED):
             entry[_SEED] = True

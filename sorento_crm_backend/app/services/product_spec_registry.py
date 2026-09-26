@@ -368,7 +368,7 @@ def seed_derivation_rules(db: Session, *, commit: bool = False) -> dict:
     shipped = _rules_from_shipped_tables()
     written = 0
     for row in db.query(ProductSpecRegistry).all():
-        if row.derivation_rules:
+        if row.derivation_rules is not None:
             continue
         rules = shipped.get(row.spec_key)
         if not rules:
@@ -1296,6 +1296,29 @@ def _gone(message: str):
     return AppException(status_code=404, message=message, code="spec_registry_item_gone")
 
 
+# How long a deferred remove waits for another catalogue read to finish before it gives
+# up (review S-8). Its window has lapsed and the tab may be closed, so refusing at once
+# would void it with nobody told; a save or a preview takes a few seconds.
+REMOVE_WAIT_SECONDS = 30
+
+
+def _wait_for_catalogue_read(db: Session) -> str:
+    """The catalogue-read slot for a remove, waited for rather than refused."""
+    import time
+
+    from app.services import product_spec_preview
+    from app.services.error_handler import AppException
+
+    deadline = time.monotonic() + REMOVE_WAIT_SECONDS
+    while True:
+        try:
+            return product_spec_preview.begin_catalogue_read(db)
+        except AppException as exc:
+            if exc.status_code != 409 or time.monotonic() >= deadline:
+                raise
+        time.sleep(0.25)
+
+
 def remove_rule(db: Session, spec_key: str, builder: dict) -> dict:
     """Remove the first rule that reads what `builder` says, then re-read what changed.
 
@@ -1307,9 +1330,10 @@ def remove_rule(db: Session, spec_key: str, builder: dict) -> dict:
     from app.services import product_spec_preview
 
     # The one catalogue-read slot a save and a preview share (security review S1): a
-    # remove parked while another read runs fails and reports so, rather than piling a
-    # second catalogue read onto a worker thread. Taken before anything changes.
-    token = product_spec_preview.begin_catalogue_read()
+    # remove never piles a second catalogue read onto a running one. It waits its turn
+    # (review S-8), and fails only when the other read outlasts REMOVE_WAIT_SECONDS.
+    # Taken before anything changes.
+    token = _wait_for_catalogue_read(db)
     try:
         return _remove_rule(db, spec_key, builder)
     finally:
@@ -1318,13 +1342,14 @@ def remove_rule(db: Session, spec_key: str, builder: dict) -> dict:
 
 def _remove_rule(db: Session, spec_key: str, builder: dict) -> dict:
     from app.services import product_spec_rederive
+    from app.services.product_spec_derivation import stored_or_shipped_rules
     from app.services.product_spec_rules import builder_identity
 
     row = _registry_row_for_update(db, spec_key)
     wanted = builder_identity(clean_builder(builder if isinstance(builder, dict) else {}))
     rules = [
         {"builder": builder_of(rule)}
-        for rule in (row.derivation_rules or _rules_from_shipped_tables().get(spec_key) or [])
+        for rule in stored_or_shipped_rules(row)
         if builder_of(rule)
     ]
     index = next(
@@ -1335,9 +1360,11 @@ def _remove_rule(db: Session, spec_key: str, builder: dict) -> dict:
         raise _gone("That rule is no longer on this specification.")
 
     fingerprint_before = product_spec_rederive.rules_fingerprint(db)
+    # Stored even when it empties the list: [] is "no rules", never "use the shipped
+    # rules" (review B-1).
     row.derivation_rules = rules[:index] + rules[index + 1 :]
     db.commit()
-    updated = product_spec_rederive.reread_after_save(
+    updated = product_spec_rederive.reread_after_save_logged(
         db, spec_key, fingerprint_before=fingerprint_before
     )
     return {"spec_key": spec_key, "products_updated": updated}
@@ -1346,7 +1373,23 @@ def _remove_rule(db: Session, spec_key: str, builder: dict) -> dict:
 def remove_value(db: Session, spec_key: str, value: str) -> dict:
     """Take one choice off a key: a staff-added one is dropped with its words and its
     label; a shipped one is suppressed (the same effect as the PATCH's `user_values` and
-    `suppressed_values`), because the shipped list is the parser's contract."""
+    `suppressed_values`), because the shipped list is the parser's contract.
+
+    A suppressed choice stops being produced (`configured_rules`), so the products that
+    hold it are read again straight away, the same as a rule save (review S-10).
+    """
+    from app.services import product_spec_preview
+
+    token = _wait_for_catalogue_read(db)
+    try:
+        return _remove_value(db, spec_key, value)
+    finally:
+        product_spec_preview.end_catalogue_read(token)
+
+
+def _remove_value(db: Session, spec_key: str, value: str) -> dict:
+    from app.services import product_spec_rederive
+
     row = _registry_row_for_update(db, spec_key)
     value = str(value or "").strip()
     added = [str(v) for v in (row.user_values or [])]
@@ -1359,12 +1402,18 @@ def remove_value(db: Session, spec_key: str, value: str) -> dict:
     elif value in shipped:
         suppressed = [str(v) for v in (row.suppressed_values or [])]
         if value not in suppressed:
+            fingerprint_before = product_spec_rederive.rules_fingerprint(db)
             row.suppressed_values = [*suppressed, value]
+            db.commit()
+            updated = product_spec_rederive.reread_after_save_logged(
+                db, spec_key, fingerprint_before=fingerprint_before
+            )
+            return {"spec_key": spec_key, "value": value, "products_updated": updated}
     else:
         raise _gone("That choice is no longer on this specification.")
 
     db.commit()
-    return {"spec_key": spec_key, "value": value}
+    return {"spec_key": spec_key, "value": value, "products_updated": 0}
 
 
 def remove_word(db: Session, spec_key: str, value: str, word: str) -> dict:
@@ -1595,17 +1644,6 @@ def numeric_product_columns() -> set[str]:
         column.name
         for column in Product.__table__.columns
         if isinstance(column.type, (Numeric, Integer, Float))
-    }
-
-
-def from_field_choices() -> set[str]:
-    """Every pattern a `from_field` rule may carry: `category` or a numeric
-    `column:<name>`. `_validate_rules` refuses anything else at save time (B3).
-
-    `brand` is not one of them (#1286, D1): the product's brand field is the only brand,
-    and it is not a specification a rule can fill."""
-    return {"category"} | {
-        f"column:{name}" for name in numeric_product_columns()
     }
 
 

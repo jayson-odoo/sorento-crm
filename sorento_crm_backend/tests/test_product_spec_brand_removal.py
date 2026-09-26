@@ -414,13 +414,6 @@ def test_ac_s0_5_derive_for_code_still_renders_the_brand_lead(search_db):
 # --------------------------------------------------------------------------- #
 # AC-S0.6 - brand is refused everywhere a rule or a spec write could still reach it
 # --------------------------------------------------------------------------- #
-def test_ac_s0_6_from_field_choices_no_longer_offers_brand():
-    from app.services.product_spec_registry import from_field_choices
-
-    assert "brand" not in from_field_choices()
-    assert "category" in from_field_choices()
-
-
 def test_ac_s0_6_get_spec_registry_has_no_brand_row(search_db, monkeypatch):
     from app.main import app
     from app.database import get_db
@@ -449,7 +442,9 @@ def test_ac_s0_6_get_spec_registry_has_no_brand_row(search_db, monkeypatch):
     try:
         client = TestClient(app)
         body = client.get("/api/v1/master-data/spec-registry").json()
-        keys = {row["spec_key"] for row in body.get("items", body if isinstance(body, list) else [])}
+        # The route answers `keys` (review S-14: this read `items` and could not fail).
+        keys = {row["spec_key"] for row in body["keys"]}
+        assert keys, "the seeded registry is listed"
         assert "brand" not in keys
     finally:
         app.dependency_overrides.clear()

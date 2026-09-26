@@ -186,11 +186,16 @@ def test_sec_s1_a_label_save_is_not_held_up_by_a_catalogue_read(api, busy):
     assert response.status_code == 200, response.text
 
 
-def test_sec_s1_a_rule_remove_while_a_catalogue_read_runs_fails_and_keeps_the_rule(api, busy):
+def test_sec_s1_a_rule_remove_while_a_catalogue_read_runs_fails_and_keeps_the_rule(
+    api, busy, monkeypatch
+):
+    from app.services import product_spec_registry
     from app.services.product_spec_registry import remove_rule
 
     _client, db = api
     row = _key(db)
+    # A remove waits for the other read (review S-8); this one outlasts the wait.
+    monkeypatch.setattr(product_spec_registry, "REMOVE_WAIT_SECONDS", 0.3)
 
     with pytest.raises(AppException) as excinfo:
         remove_rule(db, row.spec_key, {"kind": "words", "words": ["OLD"], "value": "a"})
@@ -287,14 +292,15 @@ def test_sec_n1_a_name_offered_in_one_company_is_never_also_held_back(two_compan
 
     db = two_companies
     with company_scope(db, None):
-        # The first company marks OTHERS a placeholder; the second calls a real brand
-        # OTHERS too. Across all companies it is offered, so it is not held back.
-        db.add(Brand(id=_uid(), brand_code="ZZT-OTH2", brand_name="OTHERS", company_id=db.info["refs"]["second"]))
+        # The second company marks NO LOGO a placeholder; the first calls a real brand
+        # NO LOGO. Across all companies it is offered, so it is not held back. (OTHERS
+        # is never offered at all, whatever a row says: review S-2.)
+        db.add(Brand(id=_uid(), brand_code="ZZT-NLG1", brand_name="NO LOGO"))
         db.flush()
         vocabulary = _brand_vocabulary(db)
         held_back = unsearchable_brand_names(db)
 
-    assert "OTHERS" in vocabulary.allowed_values
-    assert "OTHERS" not in vocabulary.excluded_values
-    assert "others" not in held_back
-    assert "no logo" in held_back
+    assert "NO LOGO" in vocabulary.allowed_values
+    assert "NO LOGO" not in vocabulary.excluded_values
+    assert "no logo" not in held_back
+    assert "others" in held_back

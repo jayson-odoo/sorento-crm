@@ -16,44 +16,44 @@ runs IS the current running fingerprint by construction, so calling
 `catch_up_on_worker_start()` again immediately afterwards must enqueue nothing. This
 is robust to whichever hash the coder picks.
 
-The `_derived_rules_fingerprint` row lives in the REAL default schema (whichever
-session `catch_up_on_worker_start` opens for itself, mirroring every other function in
-this module) rather than a `blank_session` scratch schema, so cleanup is explicit here
-- LESSONS: seed your own chain, never leave rows behind.
+Both run on a `blank_session` scratch schema (review S-9, fix round 2): every
+`SessionLocal()` the catch-up and its job open is pointed at the test's own session, so
+the job re-reads the scratch catalogue rather than the local prod copy, and the
+fingerprint row it stores is rolled back with everything else instead of deleting the
+real one. LESSONS: seed your own chain, never touch rows you did not make.
 """
 from __future__ import annotations
 
+import pytest
 from sqlalchemy import text
 
-from app.database import SessionLocal
+from tests._pg_fixture import blank_session
 
 _FINGERPRINT_KEY = "_derived_rules_fingerprint"
 
 
-def _clear_stored_fingerprint() -> None:
-    with SessionLocal() as db:
-        db.execute(
-            text("DELETE FROM product_spec_search_policy WHERE policy_key = :key"),
-            {"key": _FINGERPRINT_KEY},
-        )
-        db.commit()
+class _Borrowed:
+    """A context manager lending the test's session without closing it."""
+
+    def __init__(self, db):
+        self.db = db
+
+    def __enter__(self):
+        return self.db
+
+    def __exit__(self, *exc):
+        return False
 
 
-def _stored_fingerprint() -> str | None:
-    with SessionLocal() as db:
-        return db.execute(
-            text("SELECT help_text FROM product_spec_search_policy WHERE policy_key = :key"),
-            {"key": _FINGERPRINT_KEY},
-        ).scalar()
-
-
-def test_ac_s3_5_a_differing_fingerprint_enqueues_exactly_one_catchup_and_the_job_stores_the_new_one(
-    monkeypatch,
-):
+@pytest.fixture
+def scratch(monkeypatch):
+    import app.database as database
     from app.services import product_spec_rederive
 
-    _clear_stored_fingerprint()
-    try:
+    with blank_session() as db:
+        monkeypatch.setattr(database, "SessionLocal", lambda: _Borrowed(db))
+        monkeypatch.setattr("app.tasks.product_spec_tasks.SessionLocal", lambda: _Borrowed(db))
+        monkeypatch.setattr(product_spec_rederive, "_already_queued", lambda job_id: False)
         calls: list[tuple] = []
 
         def _fake_enqueue(func, *args, **kwargs):
@@ -61,53 +61,63 @@ def test_ac_s3_5_a_differing_fingerprint_enqueues_exactly_one_catchup_and_the_jo
             return "job-1"
 
         monkeypatch.setattr(product_spec_rederive, "enqueue_job", _fake_enqueue, raising=False)
-
-        result = product_spec_rederive.catch_up_on_worker_start()
-
-        assert len(calls) == 1, "no stored fingerprint at all must count as differing, and enqueue once"
-        func, args, kwargs = calls[0]
-        assert kwargs.get("queue_name") == "imports" or "imports" in args, (
-            "the catch-up re-read must be queued on the imports queue"
-        )
-
-        # Run the job the way the worker eventually would, so it stores the fingerprint
-        # it ran against.
-        func(*args, **{k: v for k, v in kwargs.items() if k != "queue_name"})
-
-        assert _stored_fingerprint() is not None, "the job must store a fingerprint once it finishes"
-
-        # Second call, same process state: the fingerprint just stored IS the current
-        # running one by construction, so nothing should be queued this time.
-        calls.clear()
-        again = product_spec_rederive.catch_up_on_worker_start()
-        assert calls == [], "a matching fingerprint must enqueue nothing"
-    finally:
-        _clear_stored_fingerprint()
+        yield db, calls
 
 
-def test_ac_s3_5_a_matching_fingerprint_enqueues_nothing(monkeypatch):
+def _stored_fingerprint(db) -> str | None:
+    return db.execute(
+        text("SELECT help_text FROM product_spec_search_policy WHERE policy_key = :key"),
+        {"key": _FINGERPRINT_KEY},
+    ).scalar()
+
+
+def _run_queued(call) -> None:
+    """Run the queued job the way the worker would: queue options are not its arguments."""
+    func, args, kwargs = call
+    func(*args, **{k: v for k, v in kwargs.items() if k not in {"queue_name", "job_id"}})
+
+
+def test_ac_s3_5_a_differing_fingerprint_enqueues_exactly_one_catchup_and_the_job_stores_the_new_one(
+    scratch,
+):
     from app.services import product_spec_rederive
 
-    _clear_stored_fingerprint()
-    try:
-        calls: list[tuple] = []
-        monkeypatch.setattr(
-            product_spec_rederive,
-            "enqueue_job",
-            lambda func, *args, **kwargs: (calls.append((func, args, kwargs)), "job")[1],
-            raising=False,
-        )
+    db, calls = scratch
+    assert _stored_fingerprint(db) is None
 
-        # First call always differs (nothing stored yet) - bootstrap the "matches" case
-        # from it, exactly as the sibling test does.
-        product_spec_rederive.catch_up_on_worker_start()
-        assert len(calls) == 1
-        func, args, kwargs = calls[0]
-        func(*args, **{k: v for k, v in kwargs.items() if k != "queue_name"})
+    product_spec_rederive.catch_up_on_worker_start()
 
-        calls.clear()
-        product_spec_rederive.catch_up_on_worker_start()
+    assert len(calls) == 1, "no stored fingerprint at all must count as differing, and enqueue once"
+    _func, args, kwargs = calls[0]
+    assert kwargs.get("queue_name") == "imports" or "imports" in args, (
+        "the catch-up re-read must be queued on the imports queue"
+    )
 
-        assert calls == [], "when the stored fingerprint already matches the running one, nothing is queued"
-    finally:
-        _clear_stored_fingerprint()
+    # Run the job the way the worker eventually would, so it stores the fingerprint
+    # it ran against.
+    _run_queued(calls[0])
+
+    assert _stored_fingerprint(db) is not None, "the job must store a fingerprint once it finishes"
+
+    # Second call, same process state: the fingerprint just stored IS the current
+    # running one by construction, so nothing should be queued this time.
+    calls.clear()
+    product_spec_rederive.catch_up_on_worker_start()
+    assert calls == [], "a matching fingerprint must enqueue nothing"
+
+
+def test_ac_s3_5_a_matching_fingerprint_enqueues_nothing(scratch):
+    from app.services import product_spec_rederive
+
+    db, calls = scratch
+
+    # First call always differs (nothing stored yet) - bootstrap the "matches" case
+    # from it, exactly as the sibling test does.
+    product_spec_rederive.catch_up_on_worker_start()
+    assert len(calls) == 1
+    _run_queued(calls[0])
+
+    calls.clear()
+    product_spec_rederive.catch_up_on_worker_start()
+
+    assert calls == [], "when the stored fingerprint already matches the running one, nothing is queued"

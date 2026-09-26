@@ -338,6 +338,12 @@ def brand_names(db: Session) -> list[str]:
     ]
 
 
+# A floor under `brands.is_searchable` (review S-2): a customer writing "others" means
+# the English word, never that catch-all bucket, whatever the flag on a brand row says.
+# A new company's OTHERS arrives from ingest searchable by default.
+UNBINDABLE_BRAND_NAMES: frozenset[str] = frozenset({"others"})
+
+
 def unsearchable_brand_names(db: Session) -> set[str]:
     """Brand names customers never ask for (`brands.is_searchable` false), lower case.
 
@@ -352,8 +358,9 @@ def unsearchable_brand_names(db: Session) -> set[str]:
         if lowered:
             (offered if is_searchable else held_back).add(lowered)
     # A name some company in scope offers as a real brand is not held back: the same
-    # answer the understanding vocabulary gives (security review N1).
-    return held_back - offered
+    # answer the understanding vocabulary gives (security review N1). The floor holds
+    # whatever any row says.
+    return (held_back - offered) | UNBINDABLE_BRAND_NAMES
 
 
 def _brand_match_in_haystack(
@@ -600,6 +607,9 @@ def _search_vocabulary(
 
     for name in (brand_names(db) if brands is None else brands):
         absorb(name)
+    # "sorento brand kitchen sink": the word itself was known only through the Brand
+    # specification's row, which is gone (#1286; review S-4).
+    absorb("brand brands")
 
     return frozenset(words)
 

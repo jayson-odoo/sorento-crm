@@ -33,7 +33,11 @@ from app.dependencies import (
 from app.models.product_spec import ProductSpecRegistry, ProductSpecSearchPolicy
 from app.services import product_spec_preview, product_spec_rederive
 from app.services.error_handler import AppException, handle_internal_error, handle_not_found
-from app.services.product_spec_rules import BRAND_IS_NOT_A_SPEC
+from app.services.product_spec_rules import (
+    BRAND_IS_NOT_A_SPEC,
+    MAX_RULES_PER_TRY,
+    MAX_TRY_TEXT,
+)
 from app.services.product_spec_registry import (
     SEARCH_POLICY_SEED,
     active_registry,
@@ -59,9 +63,9 @@ def _effective_rules(row) -> list[dict]:
     Each rule is `{"builder": {...}}` and nothing else (contract section 4): a person
     sees rules, not where they came from (D8), so the seed's own marker stays behind.
     """
-    from app.services.product_spec_derivation import shipped_rules
+    from app.services.product_spec_derivation import stored_or_shipped_rules
 
-    rules = row.derivation_rules or shipped_rules().get(row.spec_key) or []
+    rules = stored_or_shipped_rules(row)
     return [{"builder": rule["builder"]} for rule in rules if isinstance(rule.get("builder"), dict)]
 
 
@@ -643,14 +647,15 @@ class SpecTryRequest(BaseModel):
     """
 
     productId: Optional[str] = None
-    text: Optional[str] = None
-    rules: list[dict] = Field(default_factory=list)
+    # Bounded (review B-3): the rules run on the request, so one paste must not hold it.
+    text: Optional[str] = Field(default=None, max_length=MAX_TRY_TEXT)
+    rules: list[dict] = Field(default_factory=list, max_length=MAX_RULES_PER_TRY)
 
 
 class SpecPreviewRequest(BaseModel):
     """The draft list a catalogue-wide preview runs against (AC-B.2)."""
 
-    rules: list[dict] = Field(default_factory=list)
+    rules: list[dict] = Field(default_factory=list, max_length=MAX_RULES_PER_TRY)
 
 
 def _rule_allowed_values(row) -> list[str]:
@@ -661,7 +666,7 @@ def _rule_allowed_values(row) -> list[str]:
 
 
 @router.post("/{spec_key}/try")
-async def try_spec_key(
+def try_spec_key(
     spec_key: str,
     payload: SpecTryRequest = Body(...),
     current_user: dict = Depends(require_permission_with_api_key("master_data.spec_registry.view")),
@@ -783,7 +788,7 @@ async def preview_spec_key(
             data_type=row.data_type,
             spec_key=spec_key,
         )
-        job_id = product_spec_preview.start(spec_key, cleaned)
+        job_id = product_spec_preview.start(spec_key, cleaned, db)
         return {"jobId": job_id}
     except Exception as e:
         if type(e).__name__ in {"AppException", "HTTPException"}:
@@ -919,8 +924,15 @@ def update_spec_key(
         # answers, and only one catalogue read runs at a time (security review S1). The
         # slot is taken here, before anything is changed, so a refused save stores
         # nothing; it is given back in `finally`.
-        if {"derivation_rules", "applies_when", "max_value"} & set(fields):
-            read_token = product_spec_preview.begin_catalogue_read()
+        if _READING_FIELDS & set(fields):
+            read_token = product_spec_preview.begin_catalogue_read(db)
+        # A save that changes how this key is read re-reads the products it changes,
+        # straight away (D10, AC-S1.16). Judged against the row as it was, before any
+        # field below is applied (a suppressed value is applied early; review S-10).
+        reading_before = _reading(row)
+        fingerprint_before = (
+            product_spec_rederive.rules_fingerprint(db) if _READING_FIELDS & set(fields) else None
+        )
 
         # The stricter grant is required as soon as ANYTHING outside the vocabulary
         # fields is present - a mixed payload is held to the higher bar, or
@@ -1018,19 +1030,6 @@ def update_spec_key(
                 if v and v.strip() and v.strip() not in shipped
             ]
 
-        # A save that changes how this key is read re-reads the products it changes,
-        # straight away (D10, AC-S1.16). Judged against the row as it was.
-        reading_before = (
-            list(row.derivation_rules or []),
-            dict(row.applies_when or {}),
-            row.max_value,
-        )
-        fingerprint_before = (
-            product_spec_rederive.rules_fingerprint(db)
-            if {"derivation_rules", "applies_when", "max_value"} & set(fields)
-            else None
-        )
-
         if "derivation_rules" in fields:
             row.derivation_rules = _validate_rules(
                 fields["derivation_rules"] or [],
@@ -1093,7 +1092,7 @@ def update_spec_key(
             ]
 
         if "applies_when" in fields:
-            if "brand" in {str(k).strip() for k in (fields["applies_when"] or {})}:
+            if "brand" in {str(k).strip().lower() for k in (fields["applies_when"] or {})}:
                 raise _reject(BRAND_IS_NOT_A_SPEC, "spec_registry_brand")
             row.applies_when = {
                 str(key).strip(): [str(v).strip() for v in (values or []) if str(v).strip()]
@@ -1128,17 +1127,13 @@ def update_spec_key(
         if set(fields) & _VOCABULARY_FIELDS:
             _validate_reachable(row.data_type, merged_allowed_values(row), merged_synonyms(row))
 
-        reading_after = (
-            list(row.derivation_rules or []),
-            dict(row.applies_when or {}),
-            row.max_value,
-        )
+        reading_after = _reading(row)
         db.commit()
         db.refresh(row)
 
         products_updated = 0
         if fingerprint_before is not None and _reading_changed(reading_before, reading_after):
-            products_updated = product_spec_rederive.reread_after_save(
+            products_updated = product_spec_rederive.reread_after_save_logged(
                 db, row.spec_key, fingerprint_before=fingerprint_before
             )
             db.refresh(row)
@@ -1151,13 +1146,31 @@ def update_spec_key(
         product_spec_preview.end_catalogue_read(read_token)
 
 
+# The fields that change what a product reads: a rule, a scope, a cap, or a choice taken
+# away (a rule setting a suppressed value stops firing, `configured_rules`; review S-10).
+_READING_FIELDS = {"derivation_rules", "applies_when", "max_value", "suppressed_values"}
+
+
+def _reading(row) -> tuple:
+    from app.services.product_spec_derivation import stored_or_shipped_rules
+
+    return (
+        stored_or_shipped_rules(row),
+        dict(row.applies_when or {}),
+        row.max_value,
+        sorted(str(v) for v in (row.suppressed_values or [])),
+    )
+
+
 def _reading_changed(before: tuple, after: tuple) -> bool:
     """Whether the rules, the scope or the cap moved, compared as data (a Decimal cap
     and the float it was saved from are the same cap)."""
     def canonical(reading: tuple) -> str:
-        rules, scope, cap = reading
+        rules, scope, cap, dropped = reading
         return json.dumps(
-            [rules, scope, None if cap is None else float(cap)], sort_keys=True, default=str
+            [rules, scope, None if cap is None else float(cap), dropped],
+            sort_keys=True,
+            default=str,
         )
 
     return canonical(before) != canonical(after)

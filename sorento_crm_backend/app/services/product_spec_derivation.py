@@ -1220,11 +1220,21 @@ def _rules_fingerprint(rules_by_key: dict[str, list[dict]] | None) -> str:
     ).hexdigest()[:16]
 
 
+def stored_or_shipped_rules(row) -> list[dict]:
+    """The rules one registry row reads with: its own list, or the shipped rules when it
+    has none stored (NULL). An empty stored list is a real answer, "no rules", and never
+    falls back (review B-1, #1286)."""
+    if row.derivation_rules is None:
+        return list(shipped_rules().get(row.spec_key) or [])
+    return list(row.derivation_rules)
+
+
 def configured_rules(db: Session) -> dict[str, list[dict]]:
     """Every key's rules, as configured. Falls back to the shipped tables.
 
-    A key with no rules configured yet gets the shipped ones, so seeding is a
-    convenience rather than a prerequisite - an unseeded database still derives.
+    A key with no rules stored (NULL) gets the shipped ones, so seeding is a
+    convenience rather than a prerequisite - an unseeded database still derives. A key
+    whose stored list is empty has no rules: someone removed them.
 
     EVERY key, not only active ones. `is_active` governs whether the parser extracts
     the key and whether the ranker weights it; it is not a statement about the catalog.
@@ -1237,9 +1247,8 @@ def configured_rules(db: Session) -> dict[str, list[dict]]:
     shipped = shipped_rules()
     rules: dict[str, list[dict]] = dict(shipped)
     for row in db.query(ProductSpecRegistry).all():
-        configured = row.derivation_rules or []
-        if configured:
-            rules[row.spec_key] = configured
+        if row.derivation_rules is not None:
+            rules[row.spec_key] = list(row.derivation_rules)
         # A value this business has taken away must stop being PRODUCED, not merely
         # stop being offered - otherwise suppression is cosmetic and the catalog keeps
         # filling in a value the business says it does not use. The stored rule is left

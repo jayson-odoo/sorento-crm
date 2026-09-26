@@ -127,8 +127,8 @@ def _delete_registry_row(bind) -> None:
     row = (
         bind.execute(
             text(
-                "SELECT user_values, value_labels, suppressed_values, user_synonyms,"
-                " excluded_values, value_weights, derivation_rules"
+                "SELECT is_active, rank_weight, value_weights, user_values, value_labels,"
+                " suppressed_values, user_synonyms, excluded_values, derivation_rules"
                 " FROM product_spec_registry WHERE spec_key = :key"
             ),
             {"key": _BRAND},

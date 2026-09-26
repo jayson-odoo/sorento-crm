@@ -45,6 +45,16 @@ KINDS = ("words", "number", "size", "code", "product")
 MAX_GAPS_PER_PHRASE = 1
 MAX_WORDS_PER_LIST = 20
 MAX_WORD_LENGTH = 60
+# Try it reads a pasted text with a draft rule list, on the request (review B-3, #1286).
+# Both are bounded so one paste cannot hold a worker: a flyer card or a supplier blurb is
+# well under this, and a key ships at most a few dozen rules.
+MAX_TRY_TEXT = 4000
+MAX_RULES_PER_TRY = 60
+# How far a "..." gap reaches, and how far before a match Skip after looks. Bounded so
+# reading is linear in the text: an unbounded gap made 20 gapped phrases quadratic
+# (1.7 s over 4,900 characters) and a gapped Skip after cubic (review B-3).
+MAX_GAP = 120
+_SKIP_WINDOW = MAX_GAP + 2 * MAX_WORD_LENGTH + 8
 _WORD_LISTS = ("words", "skip_after", "before", "after", "texts")
 _PHRASE_LISTS = ("words", "skip_after", "before", "after")
 LOOK_INS = ("any", "description", "flyer", "name")
@@ -89,11 +99,13 @@ def _phrase(phrase: str) -> str:
     for segment in (part for part in segments if part):
         tokens = [_escape(token) for token in re.split(r"[\s-]+", segment) if token]
         compiled.append("(?<![A-Z])" + _GAP.join(tokens) + "(?![A-Z])")
-    return "[^.]*?".join(compiled)
+    return _GAP_BETWEEN_SEGMENTS.join(compiled)
 
 
 # A space, a hyphen or nothing, between the words of a phrase.
 _GAP = r"[\s\-]*"
+# What "..." compiles to: anything but a full stop, up to MAX_GAP characters.
+_GAP_BETWEEN_SEGMENTS = "[^.]{0,%d}?" % MAX_GAP
 
 
 def _alternation(phrases: list[str]) -> str:
@@ -233,7 +245,12 @@ def _texts_to_read(look_in: str, texts: dict[str, str]) -> list[str]:
 
 
 def _skipped(skip: str | None, haystack: str, start: int) -> bool:
-    return bool(skip) and _regex(skip).search(haystack[:start]) is not None
+    """Whether a Skip after phrase ends right before `start`. Searched over a short
+    window, not the whole text before the match: the phrase has to touch the match, so
+    nothing further back can decide it (`pos` keeps the lookbehind seeing real text)."""
+    if not skip:
+        return False
+    return _regex(skip).search(haystack, max(0, start - _SKIP_WINDOW), start) is not None
 
 
 def _size_read(compiled: dict, haystack: str):
@@ -276,6 +293,40 @@ def _too_many_gaps(builder: dict) -> bool:
     )
 
 
+_LETTER_OR_NUMBER = re.compile(r"[A-Za-z0-9]")
+
+
+def _has_letter(word) -> bool:
+    """Every part of a phrase ("..." splits it) says something: a word of only dots or
+    dashes compiles to a pattern that matches any text (review B-2)."""
+    parts = [part for part in str(word or "").split("...") if part.strip()]
+    return bool(parts) and all(_LETTER_OR_NUMBER.search(part) for part in parts)
+
+
+def _empty_word(builder: dict) -> bool:
+    return any(
+        not _has_letter(word)
+        for part in _WORD_LISTS
+        if isinstance(builder.get(part), list)
+        for word in builder.get(part) or []
+    )
+
+
+# A stored rule the reader skips is logged once per process, not once per product read
+# (a catalogue pass reads every rule for about 23,000 rows).
+_WARNED: set[str] = set()
+
+
+def _warn_once(reason: str, builder: dict) -> None:
+    identity = builder_identity(builder)
+    if identity in _WARNED:
+        return
+    if len(_WARNED) > 1000:
+        _WARNED.clear()
+    _WARNED.add(identity)
+    logger.warning("spec rule skipped: %s (%s)", reason, identity)
+
+
 def read_text(builder: dict, texts: dict[str, str], code: str, spec_key: str | None = None):
     """(value, evidence, which_text) for a words / number / size / code rule, or None.
 
@@ -284,6 +335,11 @@ def read_text(builder: dict, texts: dict[str, str], code: str, spec_key: str | N
     """
     kind = builder.get("kind")
     try:
+        if _empty_word(builder):
+            # Stored before save refused it: a word of dots or dashes would match
+            # every text and write this value onto the whole catalogue (review B-2).
+            _warn_once("a word has no letter or number", builder)
+            return None
         if kind == "code":
             texts_to_find = [str(t).upper() for t in builder.get("texts") or [] if str(t).strip()]
             code_match = builder.get("code_match")
@@ -303,12 +359,8 @@ def read_text(builder: dict, texts: dict[str, str], code: str, spec_key: str | N
             return None
         if _too_many_gaps(builder):
             # A row stored before save refused it must never hang derivation: it reads
-            # nothing, and says so once per read so the row can be found and fixed.
-            logger.warning(
-                "spec rule skipped: a phrase uses more than one ... and cannot be read "
-                "safely (%s)",
-                json.dumps(builder, default=str, sort_keys=True),
-            )
+            # nothing, and says so once so the row can be found and fixed.
+            _warn_once("a phrase uses more than one ... and cannot be read safely", builder)
             return None
         if kind == "words" and not builder.get("words"):
             return None
@@ -509,12 +561,23 @@ def _check_limits(builder: dict, n: int) -> None:
             raise _refuse(f"Rule {n}: use at most {MAX_WORDS_PER_LIST} words in a list.")
         for word in words:
             text_ = str(word or "")
+            if text_.strip() and not _has_letter(text_):
+                raise _refuse(f"Rule {n}: each word needs a letter or a number.")
             if len(text_.strip()) > MAX_WORD_LENGTH:
                 raise _refuse(
                     f"Rule {n}: keep each word to {MAX_WORD_LENGTH} characters or fewer."
                 )
             if part in _PHRASE_LISTS and text_.count("...") > MAX_GAPS_PER_PHRASE:
                 raise _refuse(f"Rule {n}: use at most one ... in a phrase.")
+    gapped = [
+        word
+        for part in _PHRASE_LISTS
+        if isinstance(builder.get(part), list)
+        for word in builder.get(part) or []
+        if "..." in str(word or "")
+    ]
+    if len(gapped) > 1:
+        raise _refuse(f"Rule {n}: use ... in one phrase only.")
 
 
 def validate_rules(
@@ -590,7 +653,9 @@ def validate_rules(
                 if isinstance(only_when, dict)
                 else []
             )
-            if not spec or not values or spec.lower() == BRAND_KEY:
+            if spec.lower() == BRAND_KEY:
+                raise _refuse(BRAND_IS_NOT_A_SPEC, code="spec_registry_brand")
+            if not spec or not values:
                 raise _refuse(
                     f"Rule {n}: pick the specification and at least one value for Only when."
                 )
