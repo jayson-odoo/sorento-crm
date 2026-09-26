@@ -691,6 +691,35 @@ def test_dealer_naming_another_customer_is_refused(client, db):
     assert "customer_not_permitted" in by_query.text
 
 
+def test_dealer_customer_query_is_no_name_oracle(client, db):
+    """S1: a dealer's `customer_query` that matches only other customers and one
+    that matches nobody get the SAME answer, so the route never tells a dealer
+    whether a name exists in the book. A query matching its own ledger answers."""
+    own = customer(db, company_id=DEFAULT_COMPANY_ID, name="ZZT ORACLE OWN")
+    rival = customer(db, company_id=DEFAULT_COMPANY_ID, name="ZZT ORACLE RIVAL")
+    po = _product(db, "ZZTORACLE-OWN")
+    pr = _product(db, "ZZTORACLE-RIVAL")
+    _line(db, product_id=po.id, ordered=1, delivered=1, customer_id=own.id)
+    _line(db, product_id=pr.id, ordered=9, delivered=9, customer_id=rival.id)
+    contact = _contact(db)
+    _link(db, contact, own)
+    db.commit()
+
+    other = _get(client, rank_by="quantity", customer_query="oracle rival", **_as_contact(contact))
+    nobody = _get(client, rank_by="quantity", customer_query="zzt no such name", **_as_contact(contact))
+    assert other.status_code == nobody.status_code == 403, (other.text, nobody.text)
+    assert other.json() == nobody.json()
+    assert "customer_not_permitted" in nobody.text
+    assert "RIVAL" not in other.text
+
+    mine = _get(client, rank_by="quantity", customer_query="oracle own", **_as_contact(contact))
+    assert mine.status_code == 200, mine.text
+    assert _codes(mine.json()) == ["ZZTORACLE-OWN"]
+    both = _get(client, rank_by="quantity", customer_query="zzt oracle", **_as_contact(contact))
+    assert both.status_code == 200, both.text
+    assert _codes(both.json()) == ["ZZTORACLE-OWN"]
+
+
 def test_dealer_access_type_without_a_linked_customer_is_refused(client, db):
     """Fail closed: a contact typed as a dealer but linked to no customer has no
     ledgers to be scoped to, so it never falls through to the whole book."""
