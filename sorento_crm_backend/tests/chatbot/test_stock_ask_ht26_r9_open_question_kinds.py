@@ -466,7 +466,7 @@ def _point_form(codes: list[str], values: dict[int, int] | None = None) -> str:
         [
             "How many units for each?",
             *[
-                f"{i}. {code} - {values[i]}" if i in values else f"{i}. {code} -"
+                f"{i}. {code} - {values[i]}" if i in values else f"{i}. {code} - "
                 for i, code in enumerate(codes, 1)
             ],
         ]
@@ -804,9 +804,8 @@ def test_h_choose_brand(message, picked):
     state = ht.state(Focus(domains=["promotion"]), pending=roster, turn_no=3)
     new, plan = apply(state, reply(domain_hint=None, intent_hint=None, open_question_answer=answer("pick", picked=picked)), build_policy())
     assert "open_question_answer_pick" in plan.trace.rules_fired
-    assert sorted(b.get("uuid") for b in new.focus.brands) == sorted(
-        {1: "b-srt", 2: "b-hfl"}[p] for p in picked
-    )
+    # A brand is a code-only axis on the focus (`apply._CODE_ONLY_FIELDS`).
+    assert sorted(new.focus.brands) == sorted({1: "SRT", 2: "HFL"}[p] for p in picked)
 
 
 # =============================================================================== #
@@ -869,8 +868,11 @@ def test_j_the_migration_publishes_the_contract_unlabelled_and_is_idempotent():
         bind = db.connection()
         module.publish(bind)
         rows = db.query(AIPromptVersion).filter(AIPromptVersion.name == "chatbot_semantic_parser").all()
-        carrying = [r for r in rows if '"pick_one"' in (r.template or "")]
+        # The seeded v1 is the fallback constant itself; the published one is the
+        # constant plus the policy blocks, stamped by this revision.
+        carrying = [r for r in rows if (r.config_json or {}).get("sa2_r9_open_question")]
         assert len(carrying) == 1
+        assert '"pick_one"' in carrying[0].template
         labelled = {
             row.version_id
             for row in db.query(AIPromptLabel).filter(AIPromptLabel.name == "chatbot_semantic_parser")

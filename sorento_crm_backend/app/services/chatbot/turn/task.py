@@ -57,6 +57,11 @@ ONLY_THESE_LINES = "slot_quantities_only"
 #: The header of the point-form question (round 6, ruling 2).
 EACH_QUESTION = "How many units for each?"
 
+#: The stock question's two kinds on the parser's `Open question:` object
+#: (`open_question`, `turn/question.py`): still asking, and just answered.
+QUANTITIES = "quantities"
+LAST_ANSWER = "last_answer"
+
 
 @dataclass(frozen=True)
 class Slot:
@@ -787,19 +792,30 @@ def numbered(labels: list[str]) -> list[str]:
     return [f"{i}. {label}" for i, label in enumerate(labels, 1)]
 
 
-def pick_question(typed: str, labels: list[str], quantity: Any = None, count: int | None = None) -> str:
+def pick_question(
+    typed: str,
+    labels: list[str],
+    quantity: Any = None,
+    count: int | None = None,
+    *,
+    recognised: bool = True,
+) -> str:
     """The family pick (owner hand test 26 Sep, slice 2, the scout's wording), one
     numbered code per line. A number is read as a position only while this question is
     open. The list is not sticky (owner ruling 26 Sep, round 5): once one product is
     picked it is closed and forgotten, and a later bare number is that product's
-    quantity (`apply._bare_position_is_the_quantity`)."""
+    quantity (`apply._bare_position_is_the_quantity`).
+
+    `recognised` False (a did-you-mean's typed code, round 9): the header never
+    repeats a code the resolver did not recognise, so it asks by the quantity alone."""
     total = count if isinstance(count, int) and count > len(labels) else len(labels)
     qty = _number(quantity)
-    head = (
-        f"{typed} x {qty}: which one?"
-        if qty is not None
-        else f"{typed} matches {total} products. Which one?"
-    )
+    if not recognised:
+        head = f"Which one do you need {qty} of?" if qty is not None else "Which one?"
+    elif qty is not None:
+        head = f"{typed} x {qty}: which one?"
+    else:
+        head = f"{typed} matches {total} products. Which one?"
     lines = labels[:MAX_NAMED]
     tail = (
         [f"and {total - len(lines)} others, reply with the full code."]
@@ -1013,7 +1029,7 @@ def tasks_after_tool_status(
 def open_question(tasks: Any) -> dict[str, Any] | None:
     """The stock question as the structured object the parser reads (PR #1247 round 8).
 
-    `kind` is "stock_quantities" while the quantities are still asked and "last_answer"
+    `kind` is "quantities" while the quantities are still asked and "last_answer"
     once the check is answered (a follow-up may revise it, "3 for all of them"); a parked
     check is not offered. `asked_qty` is present only after "Is N for all K products, or
     for one of them?". `items`
@@ -1033,7 +1049,7 @@ def open_question(tasks: Any) -> dict[str, Any] | None:
             for i, slot in enumerate(task.slots, 1)
         ]
         return {
-            "kind": "last_answer" if task.status == ANSWERED else "stock_quantities",
+            "kind": LAST_ANSWER if task.status == ANSWERED else QUANTITIES,
             "items": items,
             "owed": [item["position"] for item in items if item["qty"] is None],
             **({"asked_qty": task.asked_qty} if task.asked_qty is not None else {}),

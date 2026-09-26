@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 
 from app.services.ai_prompt_registry import agent_model, render
 from app.services.chatbot.contracts import ParserOutputError  # noqa: F401 - re-export
+from app.services.chatbot.turn import question as question_mod
 from app.services.chatbot.turn import task as task_mod
 
 logger = logging.getLogger(__name__)
@@ -327,6 +328,10 @@ def _build_json_schema() -> dict[str, Any]:
             # Fixed keys and a list of fixed-shape items: strict-schema safe. Always an
             # object; `mode` null is "this message does not answer it". Read first by
             # `turn/apply.py::_open_question_answer`, the shape rules only as fallback.
+            # Round 9 (issue #1293): the SAME object answers every kind of question the
+            # bot asks (`turn/question.py`), so a pick, a yes or a no is declared here
+            # too, with the positions picked and any quantity stated in the same breath
+            # ("the first one, I need 2").
             "open_question_answer": {
                 "type": "object",
                 "additionalProperties": False,
@@ -336,13 +341,17 @@ def _build_json_schema() -> dict[str, Any]:
                 "properties": {
                     "mode": {
                         "type": ["string", "null"],
-                        "enum": ["fill", "all", "done", "cancel", None],
+                        "enum": ["pick", "yes", "no", "fill", "all", "done", "cancel", None],
                         "description": (
-                            "fill: quantities for some lines; done: these lines (or none) "
-                            "then answer now, blanks skipped; all: qty_for_all for every "
-                            "line; cancel: drop the question; null: not an answer to it."
+                            "pick: the options in picked (and items by code), with any "
+                            "quantity in items or qty_for_all; yes / no: a confirm "
+                            "answered, no also for none of the options; fill: "
+                            "quantities for some lines; done: these lines (or none) then "
+                            "answer now, blanks skipped; all: qty_for_all for every line; "
+                            "cancel: drop the question; null: not an answer to it."
                         ),
                     },
+                    "picked": {"type": "array", "items": {"type": "integer"}},
                     "items": {
                         "type": "array",
                         "items": {
@@ -358,7 +367,7 @@ def _build_json_schema() -> dict[str, Any]:
                     },
                     "qty_for_all": {"type": ["number", "null"]},
                 },
-                "required": ["mode", "items", "qty_for_all"],
+                "required": ["mode", "picked", "items", "qty_for_all"],
             },
             "anaphora": {
                 "type": "object",
@@ -607,7 +616,10 @@ def build_user_block(
         # the focus is empty.
         lines.append(subject)
     for task_line in task_mod.hint_lines(
-        getattr(focus, "tasks", None), open_question_shown=bool(open_question)
+        getattr(focus, "tasks", None),
+        # Round 9: a pick or an offer is not the stock question, so the task's own
+        # line still prints under it.
+        open_question_shown=question_mod.is_the_stock_question(open_question),
     ):
         lines.append(task_line)
     if open_question:
