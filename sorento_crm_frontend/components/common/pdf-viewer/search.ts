@@ -67,7 +67,8 @@ export function buildPageIndex(items: TextItemLike[]): PageIndex {
 /** Folds a query the same way page text is folded. Leading and trailing space is dropped. */
 export function foldQuery(query: string): string {
   let folded = '';
-  for (const char of query.trim()) folded += /\s/.test(char) ? ' ' : lowerChar(char);
+  for (const char of query.trim())
+    folded += /\s/.test(char) ? ' ' : lowerChar(char);
   return folded.replace(/ {2,}/g, ' ');
 }
 
@@ -104,7 +105,11 @@ export function matchSegments(
 }
 
 /** The match after (`1`) or before (`-1`) `current`, wrapping at both ends. */
-export function stepMatch(current: number, total: number, direction: 1 | -1): number {
+export function stepMatch(
+  current: number,
+  total: number,
+  direction: 1 | -1,
+): number {
   if (total <= 0) return -1;
   return (((current + direction) % total) + total) % total;
 }
@@ -159,7 +164,9 @@ export function paintHighlights(
     for (const { from, to, selected } of list) {
       if (from > at) nodes.push(document.createTextNode(str.slice(at, from)));
       const mark = document.createElement('span');
-      mark.className = selected ? `${HIGHLIGHT_CLASS} ${SELECTED_CLASS}` : HIGHLIGHT_CLASS;
+      mark.className = selected
+        ? `${HIGHLIGHT_CLASS} ${SELECTED_CLASS}`
+        : HIGHLIGHT_CLASS;
       mark.textContent = str.slice(Math.max(from, at), to);
       nodes.push(mark);
       if (selected && !selectedMark) selectedMark = mark;

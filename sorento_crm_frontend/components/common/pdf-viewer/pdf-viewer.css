@@ -88,3 +88,20 @@
 [data-slot='pdf-viewer'] .textLayer.selecting .endOfContent {
   top: 0;
 }
+
+/*
+ * Search matches, painted by `search.ts` as spans inside the text layer's own spans. The
+ * glyphs stay transparent (the canvas draws the text), so only the background shows. The
+ * paper is white in both themes, so these read the same in light and dark.
+ */
+[data-slot='pdf-viewer'] .textLayer .highlight {
+  margin: -1px;
+  padding: 1px;
+  border-radius: 2px;
+  background-color: color-mix(in oklab, var(--color-yellow-400) 45%, transparent);
+}
+
+[data-slot='pdf-viewer'] .textLayer .highlight.selected {
+  background-color: color-mix(in oklab, var(--color-orange-500) 55%, transparent);
+  outline: 1px solid var(--color-orange-600);
+}

@@ -10,28 +10,54 @@ import type {
   TextLayer,
 } from 'pdfjs-dist';
 import {
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   Download,
   ExternalLink,
   FileWarning,
   MoveHorizontal,
+  Search,
+  X,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { toast } from '@/lib/toast';
 
 import { loadPdfJs, type PdfJs } from './pdfjs';
 import './pdf-viewer.css';
+import {
+  buildPageIndex,
+  findMatches,
+  firstMatchFrom,
+  hasSearchableText,
+  matchSegments,
+  type MatchSegment,
+  type PageIndex,
+  paintHighlights,
+  stepMatch,
+  type TextItemLike,
+} from './search';
 import type { PdfViewerProps } from './types';
+import {
+  anchoredScroll,
+  captureAnchor,
+  clampZoom,
+  type PageBox,
+  type Point,
+  wheelZoomFactor,
+  ZOOM_MAX,
+  ZOOM_MIN,
+  ZOOM_STEP,
+  type ZoomAnchor,
+} from './zoom';
 
-const ZOOM_MIN = 0.25;
-const ZOOM_MAX = 5;
-const ZOOM_STEP = 1.25;
 /** The scroller's own padding (`p-2`), kept out of the fit-width sum. */
 const SCROLLER_PADDING = 8;
 /** Pages either side of the visible ones that keep a live canvas. The rest are sized
@@ -48,8 +74,15 @@ interface LoadedDocument {
   baseWidth: number;
 }
 
-const clampZoom = (value: number) =>
-  Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(value * 100) / 100));
+type Highlight = MatchSegment & { selected: boolean };
+const NO_HIGHLIGHTS: Highlight[] = [];
+
+const boxOf = (node: HTMLElement): PageBox => ({
+  left: node.offsetLeft,
+  top: node.offsetTop,
+  width: node.offsetWidth,
+  height: node.offsetHeight,
+});
 
 /**
  * The themed PDF viewer: pages drawn by pdf.js onto canvases under our own single toolbar,
@@ -96,7 +129,14 @@ export default function PdfViewerImpl({
     1 + 2 * RENDER_AHEAD,
   ]);
 
+  const [searchOpen, setSearchOpen] = React.useState(false);
+  const [query, setQuery] = React.useState('');
+  const [selected, setSelected] = React.useState(-1);
+  const [textIndex, setTextIndex] = React.useState<PageIndex[] | null>(null);
+
+  const rootRef = React.useRef<HTMLDivElement>(null);
   const scrollerRef = React.useRef<HTMLDivElement>(null);
+  const searchInputRef = React.useRef<HTMLInputElement>(null);
   const pageRefs = React.useRef<(HTMLDivElement | null)[]>([]);
   // The last page this viewer and its caller agreed on. A `page` prop equal to it is the
   // echo of our own report, not a jump request.
@@ -112,6 +152,7 @@ export default function PdfViewerImpl({
     let task: PDFDocumentLoadingTask | null = null;
     setStatus('loading');
     setLoaded(null);
+    setTextIndex(null);
     (async () => {
       try {
         const lib = await loadPdfJs();
@@ -160,8 +201,19 @@ export default function PdfViewerImpl({
       ? clampZoom((containerWidth - 2 * SCROLLER_PADDING) / loaded.baseWidth)
       : 1;
   const scale = zoom === 'fit' ? fitScale : zoom;
+  // The scale last asked for. Ahead of `scale` between a zoom request and its render, so a
+  // burst of wheel events (a pinch) compounds instead of repeating the same step.
   const scaleRef = React.useRef(scale);
   scaleRef.current = scale;
+  const fitScaleRef = React.useRef(fitScale);
+  fitScaleRef.current = fitScale;
+  const statusRef = React.useRef(status);
+  statusRef.current = status;
+  // Set by a zoom, used once by the layout effect below after the pages take their new size.
+  const pendingAnchorRef = React.useRef<{
+    anchor: ZoomAnchor;
+    cursor: Point;
+  } | null>(null);
 
   React.useLayoutEffect(() => {
     const el = scrollerRef.current;
@@ -249,35 +301,224 @@ export default function PdfViewerImpl({
   }, [syncFromScroll]);
   React.useEffect(() => () => cancelAnimationFrame(frame.current), []);
 
-  // Land on the requested page once the pages exist, and keep the page being read in place
-  // across a zoom or a resize.
+  // Land on the requested page once the pages exist. After a zoom, put the point that was
+  // under the cursor (or the middle of the view) back where it was; after a resize, keep the
+  // page being read in place.
   React.useLayoutEffect(() => {
     if (status !== 'ready') return;
-    scrollToPage(agreedPageRef.current);
+    const el = scrollerRef.current;
+    const pending = pendingAnchorRef.current;
+    pendingAnchorRef.current = null;
+    const node = pending && pageRefs.current[pending.anchor.index];
+    if (el && pending && node) {
+      const { left, top } = anchoredScroll(
+        boxOf(node),
+        pending.anchor,
+        pending.cursor,
+      );
+      el.scrollLeft = left;
+      el.scrollTop = top;
+    } else {
+      scrollToPage(agreedPageRef.current);
+    }
     syncFromScroll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, scale]);
 
-  const zoomBy = React.useCallback((factor: number) => {
-    setZoom(clampZoom(scaleRef.current * factor));
+  /** Zooms to `next`, keeping the document point at `cursor` (default: the view's middle)
+   *  where it is. The pages re-render at the new scale, so the text stays crisp. */
+  const zoomTo = React.useCallback((next: Zoom, cursor?: Point) => {
+    const target = next === 'fit' ? fitScaleRef.current : next;
+    const el = scrollerRef.current;
+    if (target !== scaleRef.current && el) {
+      const at = cursor ?? { x: el.clientWidth / 2, y: el.clientHeight / 2 };
+      // A zoom still waiting for its render already holds the point; its page fractions
+      // are the same at any scale.
+      const anchor =
+        pendingAnchorRef.current?.anchor ??
+        captureAnchor(
+          pageRefs.current.flatMap((node) => (node ? [boxOf(node)] : [])),
+          { x: el.scrollLeft + at.x, y: el.scrollTop + at.y },
+        );
+      if (anchor) pendingAnchorRef.current = { anchor, cursor: at };
+      scaleRef.current = target;
+    }
+    setZoom(next);
   }, []);
 
+  const zoomBy = React.useCallback(
+    (factor: number, cursor?: Point) =>
+      zoomTo(clampZoom(scaleRef.current * factor), cursor),
+    [zoomTo],
+  );
+
+  // Ctrl/Cmd + wheel zooms around the cursor, like a desktop PDF viewer; a trackpad pinch
+  // arrives as the same ctrl+wheel. Bound natively: React's wheel listener is passive, and
+  // only a non-passive one may stop the browser zooming the whole page. A plain wheel is
+  // left alone and scrolls.
+  React.useEffect(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    const onWheel = (event: WheelEvent) => {
+      if (!(event.ctrlKey || event.metaKey)) return;
+      event.preventDefault();
+      if (statusRef.current !== 'ready') return;
+      const rect = el.getBoundingClientRect();
+      zoomBy(wheelZoomFactor(event.deltaY, event.deltaMode), {
+        x: event.clientX - rect.left - el.clientLeft,
+        y: event.clientY - rect.top - el.clientTop,
+      });
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [zoomBy]);
+
+  // ---- Search ------------------------------------------------------------------------
+
+  // Every page's text, read once per document the first time the search opens.
+  React.useEffect(() => {
+    if (!searchOpen || !loaded || textIndex) return;
+    let cancelled = false;
+    Promise.all(loaded.pages.map((p) => p.getTextContent()))
+      .then((contents) => {
+        if (cancelled) return;
+        setTextIndex(
+          contents.map((content) =>
+            // The same items, in the same order, the text layer draws a span for.
+            buildPageIndex(
+              content.items.filter((item) => 'str' in item) as TextItemLike[],
+            ),
+          ),
+        );
+      })
+      .catch((error) => {
+        console.warn('PdfViewer could not read the text to search', error);
+        if (!cancelled) setTextIndex([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [searchOpen, loaded, textIndex]);
+
+  const searchable = textIndex ? hasSearchableText(textIndex) : true;
+  const matches = React.useMemo(
+    () => (textIndex ? findMatches(textIndex, query) : []),
+    [textIndex, query],
+  );
+
+  // Set by a step to a new match: the page that draws it scrolls the mark into view once.
+  const revealRef = React.useRef(false);
+  const shownPageRef = React.useRef(shownPage);
+  shownPageRef.current = shownPage;
+
+  const selectMatch = React.useCallback(
+    (index: number) => {
+      setSelected(index);
+      const match = matches[index];
+      if (!match) return;
+      revealRef.current = true;
+      // Off to the match's page first; its page then brings the mark itself into view.
+      if (match.page !== shownPageRef.current) goTo(match.page);
+    },
+    [matches, goTo],
+  );
+
+  // A new query (or the text arriving) starts from the page being read.
+  React.useEffect(() => {
+    selectMatch(firstMatchFrom(matches, shownPageRef.current));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [matches]);
+
+  const step = (direction: 1 | -1) => {
+    if (matches.length)
+      selectMatch(stepMatch(selected, matches.length, direction));
+  };
+
+  const highlightsByPage = React.useMemo(() => {
+    const byPage = new Map<number, Highlight[]>();
+    if (!searchOpen || !textIndex) return byPage;
+    matches.forEach((match, i) => {
+      const list = byPage.get(match.page) ?? [];
+      for (const segment of matchSegments(textIndex[match.page - 1], match))
+        list.push({ ...segment, selected: i === selected });
+      byPage.set(match.page, list);
+    });
+    return byPage;
+  }, [searchOpen, textIndex, matches, selected]);
+
+  const revealMark = React.useCallback((mark: HTMLElement) => {
+    const el = scrollerRef.current;
+    if (!revealRef.current || !el) return;
+    revealRef.current = false;
+    const view = el.getBoundingClientRect();
+    const box = mark.getBoundingClientRect();
+    // Instant, like a page jump. The mark lands a third of the way down the view.
+    if (box.top < view.top || box.bottom > view.bottom)
+      el.scrollTop += box.top - view.top - el.clientHeight / 3;
+    if (box.left < view.left || box.right > view.right)
+      el.scrollLeft += box.left - view.left - (el.clientWidth - box.width) / 2;
+  }, []);
+
+  const openSearch = () => {
+    setSearchOpen(true);
+    // The box may not exist yet; its autoFocus covers that case.
+    searchInputRef.current?.focus();
+    searchInputRef.current?.select();
+  };
+
+  const closeSearch = React.useCallback(() => {
+    setSearchOpen(false);
+    scrollerRef.current?.focus({ preventScroll: true });
+  }, []);
+
+  // Esc closes the search. Caught on the window in the capture phase, before a dialog around
+  // the viewer (Radix listens on the document, also capturing) takes it as "close the
+  // dialog". Only while the search is open and the key was pressed inside this viewer.
+  React.useEffect(() => {
+    if (!searchOpen) return;
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      if (!rootRef.current?.contains(event.target as Node)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      closeSearch();
+    };
+    window.addEventListener('keydown', onEscape, true);
+    return () => window.removeEventListener('keydown', onEscape, true);
+  }, [searchOpen, closeSearch]);
+
   const onKeyDown = (event: React.KeyboardEvent) => {
-    if (event.altKey || event.ctrlKey || event.metaKey) return;
-    const target = event.target as HTMLElement;
-    if (target.closest('input, textarea, select, [contenteditable="true"]'))
-      return;
     let handled = true;
-    if (event.key === 'PageDown') goTo(shownPage + 1);
-    else if (event.key === 'PageUp') goTo(shownPage - 1);
-    else if (event.key === '+' || event.key === '=') zoomBy(ZOOM_STEP);
-    else if (event.key === '-') zoomBy(1 / ZOOM_STEP);
-    else handled = false;
+    if ((event.ctrlKey || event.metaKey) && !event.altKey) {
+      const key = event.key.toLowerCase();
+      if (key === 'f') openSearch();
+      else if (key === '+' || key === '=') zoomBy(ZOOM_STEP);
+      else if (key === '-' || key === '_') zoomBy(1 / ZOOM_STEP);
+      else if (key === '0') zoomTo('fit');
+      else handled = false;
+    } else {
+      if (event.altKey || event.ctrlKey || event.metaKey) return;
+      const target = event.target as HTMLElement;
+      if (target.closest('input, textarea, select, [contenteditable="true"]'))
+        return;
+      if (event.key === 'PageDown') goTo(shownPage + 1);
+      else if (event.key === 'PageUp') goTo(shownPage - 1);
+      else if (event.key === '+' || event.key === '=') zoomBy(ZOOM_STEP);
+      else if (event.key === '-') zoomBy(1 / ZOOM_STEP);
+      else handled = false;
+    }
     if (handled) {
-      // Kept here: a surrounding dialog binds + and - to its own image zoom.
+      // Kept here: a surrounding dialog binds + and - to its own image zoom, and the
+      // browser binds Ctrl+F to its find bar and Ctrl +/- to zooming the whole page.
       event.preventDefault();
       event.stopPropagation();
     }
+  };
+
+  const onSearchKeyDown = (event: React.KeyboardEvent) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    step(event.shiftKey ? -1 : 1);
   };
 
   const download = async () => {
@@ -324,6 +565,7 @@ export default function PdfViewerImpl({
 
   return (
     <div
+      ref={rootRef}
       className={cn(
         'flex min-h-0 min-w-0 flex-col overflow-hidden bg-background',
         className,
@@ -370,6 +612,18 @@ export default function PdfViewerImpl({
             mode="icon"
             variant="ghost"
             size="sm"
+            aria-label="Search"
+            aria-pressed={searchOpen}
+            disabled={status !== 'ready'}
+            onClick={() => (searchOpen ? closeSearch() : openSearch())}
+          >
+            <Search className="size-4" />
+          </Button>
+          <Button
+            type="button"
+            mode="icon"
+            variant="ghost"
+            size="sm"
             aria-label="Zoom out"
             disabled={status !== 'ready' || scale <= ZOOM_MIN}
             onClick={() => zoomBy(1 / ZOOM_STEP)}
@@ -379,6 +633,7 @@ export default function PdfViewerImpl({
           <span
             className="w-10 text-center text-xs tabular-nums text-muted-foreground"
             aria-live="polite"
+            data-testid="pdf-viewer-zoom"
           >
             {status === 'ready' ? `${Math.round(scale * 100)}%` : ''}
           </span>
@@ -401,7 +656,7 @@ export default function PdfViewerImpl({
             aria-label="Fit width"
             aria-pressed={zoom === 'fit'}
             disabled={status !== 'ready'}
-            onClick={() => setZoom('fit')}
+            onClick={() => zoomTo('fit')}
           >
             <MoveHorizontal className="size-4" />
           </Button>
@@ -456,6 +711,66 @@ export default function PdfViewerImpl({
         )}
       </div>
 
+      {searchOpen && (
+        <div className="flex items-center gap-1 border-b border-border px-2 py-1.5">
+          <Input
+            ref={searchInputRef}
+            type="search"
+            autoFocus
+            aria-label="Search in PDF"
+            placeholder="Search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={onSearchKeyDown}
+            className="min-w-0 flex-1"
+          />
+          <span
+            className="shrink-0 px-1 text-xs tabular-nums text-muted-foreground"
+            aria-live="polite"
+          >
+            {!textIndex
+              ? ''
+              : !searchable
+                ? 'No searchable text in this PDF'
+                : query.trim()
+                  ? `${matches.length ? selected + 1 : 0} of ${matches.length}`
+                  : ''}
+          </span>
+          <Button
+            type="button"
+            mode="icon"
+            variant="ghost"
+            size="sm"
+            aria-label="Previous match"
+            disabled={!matches.length}
+            onClick={() => step(-1)}
+          >
+            <ChevronUp className="size-4" />
+          </Button>
+          <Button
+            type="button"
+            mode="icon"
+            variant="ghost"
+            size="sm"
+            aria-label="Next match"
+            disabled={!matches.length}
+            onClick={() => step(1)}
+          >
+            <ChevronDown className="size-4" />
+          </Button>
+          <Button
+            type="button"
+            mode="icon"
+            variant="ghost"
+            size="sm"
+            aria-label="Close search"
+            onClick={closeSearch}
+          >
+            <X className="size-4" />
+          </Button>
+        </div>
+      )}
+
       <div
         ref={scrollerRef}
         onScroll={onScroll}
@@ -498,6 +813,8 @@ export default function PdfViewerImpl({
                 scale={scale}
                 label={`${title} page ${index + 1}`}
                 draw={index + 1 >= range[0] && index + 1 <= range[1]}
+                highlights={highlightsByPage.get(index + 1) ?? NO_HIGHLIGHTS}
+                onSelectedMark={revealMark}
                 nodeRef={(node) => {
                   pageRefs.current[index] = node;
                 }}
@@ -532,6 +849,8 @@ function PdfPage({
   scale,
   label,
   draw,
+  highlights,
+  onSelectedMark,
   nodeRef,
 }: {
   pdfjs: PdfJs;
@@ -539,25 +858,38 @@ function PdfPage({
   scale: number;
   label: string;
   draw: boolean;
+  highlights: Highlight[];
+  onSelectedMark: (mark: HTMLElement) => void;
   nodeRef: (node: HTMLDivElement | null) => void;
 }) {
   const viewport = React.useMemo(
     () => pdfPage.getViewport({ scale }),
     [pdfPage, scale],
   );
-  const canvasRef = React.useRef<HTMLCanvasElement>(null);
+  const canvasHostRef = React.useRef<HTMLDivElement>(null);
   const textRef = React.useRef<HTMLDivElement>(null);
+  // The drawn text layer, and a counter that ticks each time one finishes, so the search
+  // highlights are painted onto the layer that is actually there.
+  const textLayerRef = React.useRef<TextLayer | null>(null);
+  const [textReady, setTextReady] = React.useState(0);
 
   React.useEffect(() => {
-    const canvas = canvasRef.current;
+    const host = canvasHostRef.current;
     const text = textRef.current;
-    if (!draw || !canvas || !text) return;
+    if (!draw || !host || !text) return;
     let cancelled = false;
     let renderTask: RenderTask | null = null;
     let textLayer: TextLayer | null = null;
     const ratio = window.devicePixelRatio || 1;
+    // Drawn on a fresh canvas that replaces the old one only once it is done. Across a zoom
+    // the old bitmap stays up, stretched, for the moment the sharp one takes, instead of the
+    // page going blank on every step of a pinch.
+    const canvas = document.createElement('canvas');
+    canvas.setAttribute('aria-hidden', 'true');
+    canvas.className = 'absolute inset-0 block size-full';
     canvas.width = Math.floor(viewport.width * ratio);
     canvas.height = Math.floor(viewport.height * ratio);
+    if (!host.firstChild) host.append(canvas);
     try {
       renderTask = pdfPage.render({
         canvas,
@@ -570,13 +902,20 @@ function PdfPage({
     renderTask.promise
       .then(() => {
         if (cancelled) return;
+        if (host.firstChild !== canvas) host.replaceChildren(canvas);
         text.replaceChildren();
-        textLayer = new pdfjs.TextLayer({
+        textLayerRef.current = null;
+        const layer = new pdfjs.TextLayer({
           textContentSource: pdfPage.streamTextContent(),
           container: text,
           viewport,
         });
-        return textLayer.render();
+        textLayer = layer;
+        return layer.render().then(() => {
+          if (cancelled) return;
+          textLayerRef.current = layer;
+          setTextReady((n) => n + 1);
+        });
       })
       // A cancelled render rejects by design; a page that fails to draw stays a blank sheet.
       .catch(() => {});
@@ -586,6 +925,17 @@ function PdfPage({
       textLayer?.cancel();
     };
   }, [draw, pdfjs, pdfPage, viewport]);
+
+  React.useEffect(() => {
+    const layer = textLayerRef.current;
+    if (!draw || !layer) return;
+    const mark = paintHighlights(
+      layer.textDivs as HTMLElement[],
+      layer.textContentItemsStr,
+      highlights,
+    );
+    if (mark) onSelectedMark(mark);
+  }, [draw, highlights, textReady, onSelectedMark]);
 
   const style = {
     width: Math.floor(viewport.width),
@@ -608,11 +958,7 @@ function PdfPage({
     >
       {draw && (
         <>
-          <canvas
-            ref={canvasRef}
-            aria-hidden
-            className="absolute inset-0 block size-full"
-          />
+          <div ref={canvasHostRef} className="absolute inset-0" />
           <div ref={textRef} className="textLayer" />
         </>
       )}
