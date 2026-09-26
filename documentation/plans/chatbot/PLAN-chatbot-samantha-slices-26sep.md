@@ -1,6 +1,6 @@
 # PLAN: the Samantha case, slices 1 to 11 (issue #1262)
 
-Status: in progress (Phase 2). Track: full (migration for the prompt versions, MCP tool
+Status: reviewed (reviewer + security-reviewer ready), PR open. Track: full (migration for the prompt versions, MCP tool
 argument, more than 300 lines). UAC: `chatbot-samantha-slices-26sep-acceptance-criteria.md`.
 
 Owner ruling 26 Sep ~11:05Z: "samantha one all also need to fix bro" - every slice of the
