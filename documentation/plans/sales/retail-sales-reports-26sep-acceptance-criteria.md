@@ -1,12 +1,18 @@
 # UAC: retail sales reports, one query layer for the screens and the chatbot (#1267)
 
-Plan: `PLAN-retail-sales-reports-26sep.md`. Track: full (S1 to S4); S5 small fix track (round 2); S0 is a measurement.
+Plan: `PLAN-retail-sales-reports-26sep.md`. Track: full (S1 to S4, and S6 from round 3); S5 small fix track (round 2); S0 is a measurement.
 Status: draft, round 2 (26 Sep 2026). The owner's Lavish review of the mockup (26 Sep 06:27Z, 10
 notes) is applied: each note has an "Owner ruling 26 Sep 06:27 (Lavish) <n>" line in the section
 "Round 2" below, and every criterion it changes keeps its text and gains a "Round 2:" note. No
 criterion is deleted. G1 to G10 are still unanswered: their recommendations are written in as the
 expected behaviour and are marked `(G<n>)`; each changes if the owner rules otherwise. The round
 2 questions Q1 to Q5 (plan 9.1) are written in the same way and marked `(Q<n>)`.
+Round 3 (26 Sep 2026): the owner answered G1 to G10 (PR #1269 comment 5844136277, 26 Sep 07:06Z).
+Each answer has an "Owner ruling 26 Sep 07:06 G<n>" line in the section "Round 3" below, and each
+criterion it changes keeps its text and gains a "Round 3:" note. No criterion is deleted. A `(G<n>)`
+mark on an answered question is now a ruling, not a recommendation, except G7, which is asked again
+(recommendation (a) stays written in). Round 2's Q1 to Q4 stay recommendations; Q5 is re-answered
+(AC-R3-1). The round 3 questions Q6 to Q8 (plan R3.6) are written in and marked `(Q<n>)`.
 Mockups: `documentation/plans/sales/mockups/retail-sales-reports.html`.
 Tags: `[BE]` backend, `[FE]` frontend, `[E2E]` browser via agent-browser, `[T]` has a named test.
 
@@ -38,10 +44,16 @@ holding the Sales report grant.
 - **J9.** Asks "Mocha Q2 by agent without Dilooma" and gets every agent, the excluded customer
   named in the header, and the total.
   - Round 2: Owner ruling 26 Sep 06:27 (Lavish) 8: text.
+- **J10.** (Round 3, Owner ruling 26 Sep 07:06 G9) Every Monday at 09:00 a named sales manager
+  gets the Sales report's "By account" view as an Excel file, year to date as at that day, by
+  email or on WhatsApp; the same file is in their My Downloads. The owner set it up once from the
+  report's Views menu.
 
 Decisions asked of the user: the as-at date and basis (both pre-filled), the company on report A,
 and on WhatsApp only what the message leaves ambiguous (company, period per G6, basis, axis, which
 code).
+Round 3: for a scheduled send, the owner decides the view, the people, the channel, the weekday
+and the time; nothing else (the period is year to date as at the send date, Q8).
 
 ## Measured (S0, prod copy, to be pasted before the grill closes)
 
@@ -62,6 +74,7 @@ code).
   `rows=year, cols=month, basis=ordered`, then every cell is the SUM of the per-line `ordered_value`
   of `_per_line_exprs` and the grand total equals `sales_report`'s ordered value for the same
   lines and window to the cent. Same for `basis=delivered` against the confirmed value.
+  - Round 3: Owner ruling 26 Sep 07:06 G1: both bases are offered on screen (Basis filter), Delivered is the default.
 - **AC-S1-2 [BE][T]** Given a cancelled SO and a cancelled line, when the grid runs, then neither
   is in any cell or total.
 - **AC-S1-3 [BE][T]** Given a line with `required_date` in March on an SO dated February, when the
@@ -88,9 +101,11 @@ code).
   are blank (not 0).
 - **AC-S1-10 [BE][T]** The variance row is 2026 minus 2025 per month, and its total is 2026 year to
   date minus 2025 over the same months (G5); a negative prints in brackets.
+  - Round 3: Owner ruling 26 Sep 07:06 G5: agreed; this is the ruling.
 - **AC-S1-11 [BE][T]** The two blocks are titled `SORENTO SDN BHD - DEALER` and `SORENTO SDN BHD -
   PROJECT TEAM` from `companies.name` and the channel (G4), and each carries one chart series per
   year row.
+  - Round 3: Owner ruling 26 Sep 07:06 G4: DEALER and PROJECT TEAM are the sales order's `demand_class` (retail, project).
   - Round 2: the two blocks are the Channel filter on one kernel pivot; both blocks in one Excel file is Q1 (recommended: one block per ticked channel, one under the other).
 - **AC-S1-12 [FE][E2E]** From `/`, Sales > Reports > Yearly comparison opens the page (sidebar
   click, never a deep URL). A user without the slug does not see the menu item.
@@ -130,6 +145,7 @@ code).
 - **AC-S1-22 [BE][T]** No period in the message = the current calendar year, printed in the
   header (G6). An ambiguous period ("last quarter" in January) gets `Which period: last quarter of
   2025, or Q1 2026?`.
+  - Round 3: Owner ruling 26 Sep 07:06 G6: "date i think assume is ok"; this is the ruling.
 - **AC-S1-23 [BE][T]** A contact linked to a customer gets `Sorry, I can only share sales figures
   for your own account.` and nothing is fetched.
 
@@ -146,11 +162,13 @@ code).
   month (agent rows, HANLIM row, TOTAL SALES), a "Sales for year" section, and a DEALER - SALESMAN
   vs HANLIM vs TOTAL section for JAN to DEC. The monthly sections sum to the year section to the
   cent.
+  - Round 3: Owner ruling 26 Sep 07:06 G4: the per-agent sections count dealer and project orders together (AC-R3-4).
   - Round 2: Owner ruling 26 Sep 06:27 (Lavish) 4: there is no `sorento-by-account` key. The sections are shared views of the `sales` definition (AC-R2-10); the monthly tables are the workbook's month sheets.
 - **AC-S2-5 [FE][T]** Report B page: line tabs Monthly, Year to date, Dealer vs HANLIM; the HANLIM
   set is chosen with a `SearchableMultiSelect` of customers and saved as the report's shared view;
   agents are listed in the owner's order (G7), a gap row before HANLIM, TOTAL SALES bold.
   - Round 2: Owner ruling 26 Sep 06:27 (Lavish) 1 and 4: no line tabs; the sections are shared views in `ReportViewsMenu`. Agents are listed alphabetically by the kernel (the owner's own order is a named trigger, plan section 7), set-apart rows last.
+  - Round 3: G7 was not ruled (the owner asked what it is for); the HANLIM set stays a customer list saved in the shared view, recommendation (a), asked again (plan R3.5).
 - **AC-S2-6 [FE][E2E]** At 375 the tab strip scrolls and never wraps; every table scrolls sideways
   with the agent column sticky.
   - Round 2: no tab strip; the tables still scroll sideways inside their card with the first column pinned.
@@ -182,10 +200,12 @@ code).
 - **AC-S3-4 [BE][T]** Report B's columns are SORENTO, BRAVAT, CERAMIC, CABANA, PROJECT, SAMPLE, then
   any other value present, then `(blank)`, then TOTAL (G3); a column with no sales in a month still
   prints, blank.
+  - Round 3: Owner ruling 26 Sep 07:06 G3: agreed, (a) the raw debtor type on the customer; the product brand is a separate axis (AC-R3-5).
 - **AC-S3-5 [FE][T]** The customer detail header shows the debtor type read-only.
 - **AC-S3-6 [BE][T]** Chatbot "Sean's sales this month by brand" prints the golden
   `sales-analysis-agent-by-account.txt` (one line per account with sales, "Accounts with sales: 3",
   a total).
+  - Round 3: Owner ruling 26 Sep 07:06 G3: with the product brand now its own axis, "by brand" alone is ambiguous, so the bot first asks `Debtor type or product brand?` (AC-R3-6, the owner's "clarify, never assume" ruling from #1175); this golden is the reply after "debtor type", and "Sean's sales this month by account" prints it with no question.
 - **AC-S3-7 [T]** DoD: after the full masters re-push, `debtor_type` fill per company is pasted in
   the PR; the owner reads report B beside the PDF.
 
@@ -196,6 +216,7 @@ code).
 - **AC-S4-2 [T]** DoD: Mocha's SO count and first month pasted; `so_feed_live` is true for Mocha;
   the Mocha by account menu item appears.
   - Round 2: Owner ruling 26 Sep 06:27 (Lavish) 4: there is no Mocha menu item to appear; Mocha's figures appear in the Sales report and the Yearly comparison through the Company filter.
+  - Round 3: Owner ruling 26 Sep 07:06 G2: Mocha is the company (AutoCount db2); S4 stays the prerequisite of S5.
 
 ## S5. Report C
 
@@ -206,6 +227,7 @@ code).
   Grand Total row); agent by month per debtor type; agent by month; debtor type by month; the named
   project debtors by month; agent by quarter with a closing row "Total sales without Dilooma and
   Pintar (project)". Every section's grand total for the same window agrees.
+  - Round 3: G7 asked again; the DILOOMA and PINTAR exclusion stays saved in Mocha's "By quarter" view (recommendation (a)).
   - Round 2: Owner ruling 26 Sep 06:27 (Lavish) 4: there is no `mocha-by-account` key; these sections are the Sales report's shared views for Mocha (AC-R2-10).
 - **AC-S5-4 [FE][T]** Report C page with line tabs By account, By debtor type, By month, Project
   debtors, By quarter; the named debtors set in the report's shared view.
@@ -249,6 +271,7 @@ code).
   without the slug sees neither (Q5).
 - **AC-R2-6 [T]** (S1 to S5) No new table and no `sales` Postgres schema; the only schema change of
   the whole plan is `customers.debtor_type` (S3) (Q5).
+  - Round 3: superseded by AC-R3-1 (Q5 re-answered to align with #1260 round 5): the plan's one new table, `sales.report_subscriptions` (S6), is in the `sales` schema. It still holds for S1 to S5.
 
 ### One Sales report (note 4)
 
@@ -299,6 +322,89 @@ code).
   sends every row (n8n chunks); "best agents this year" with no N states the count and asks how
   many (the top X rule).
 
+## Round 3: the owner's grill answers (26 Sep 07:06Z)
+
+- Owner ruling 26 Sep 07:06 G1: (c), either basis chosen on the screen, Delivered by default, the basis printed on every header.
+- Owner ruling 26 Sep 07:06 G2: Mocha is the company (AutoCount db2); connecting its SO feed (S4) stays a prerequisite.
+- Owner ruling 26 Sep 07:06 G3: agree, (a) the debtor type raw on the customer, plus (d) the product brand as a separate axis.
+- Owner ruling 26 Sep 07:06 G4: (a) the sales order's dealer or project class; report B's per-agent table includes project orders.
+- Owner ruling 26 Sep 07:06 G5: agree, (a).
+- Owner ruling 26 Sep 07:06 G6: (b), the current calendar year, stated in the header.
+- Owner ruling 26 Sep 07:06 G7: not ruled ("what's this quesiton for"); recommendation (a) stays and is asked again.
+- Owner ruling 26 Sep 07:06 G8: (c) for now; footnotes are typed into the Excel after export.
+- Owner ruling 26 Sep 07:06 G9: build both: on-demand export (S1, S2) and a weekly scheduled Excel to named people by email or WhatsApp (S6).
+- Owner ruling 26 Sep 07:06 G10: (a) is fine.
+
+### Module and schema (Q5 re-answered, aligned with #1260 round 5)
+
+- **AC-R3-1 [BE][T]** (S6) The plan's one new table is `sales.report_subscriptions` in the `sales`
+  Postgres schema (`__table_args__` schema `sales`); the migration runs `CREATE SCHEMA IF NOT
+  EXISTS sales` and is safe whether or not #1260's migration ran first; `purge_tables.json` lists
+  it; a purge invariants test shows uninstall deletes its rows and never drops the schema. Saved
+  views stay `report_views` rows; `sales_orders`, `sales_order_lines`, `sales_agents` and
+  `customers` stay in `public`. Single alembic head.
+- **AC-R3-2 [BE][T]** (S1 or #1260 S6, whichever lands first) One `sales` module: one
+  `bootstrap.py`, one `MODULE_MANIFEST` entry, one `"sales": "sales"` permission map entry; the
+  second lane adds none of them again.
+
+### Rulings applied (G1, G3, G4)
+
+- **AC-R3-3 [FE][T]** (S1, S2) Both screens carry a required Basis filter with Ordered and
+  Delivered, defaulting to Delivered; changing it redraws the tables, the chart, the basis line
+  and the export's title block (G1).
+- **AC-R3-4 [BE][T]** (S2) The shared views By account, By month and By quarter carry no Channel
+  filter: an agent's project order is in that agent's row and in the total; the "Dealer vs set
+  apart" view carries Channel = Dealer (G4).
+- **AC-R3-5 [BE][FE][T]** (S3) The dataset has a `brand` dimension (the product category prefix:
+  SRT Sorento, BRT Bravat, CB Cabana, M Mocha, IB Iborn, IDC) and a Product brand filter; a shared
+  view "By product brand" (agent x product brand) is published; a line whose product has no
+  category is in `(blank)`, last, and in the total (G3 (d)).
+- **AC-R3-6 [BE][T]** (S3) "Sean's sales this month by brand" asks `Debtor type or product
+  brand?` and fetches nothing; "by debtor type" and "by product brand" each fetch their own axis
+  with no question.
+
+### The weekly scheduled Excel (G9 (b), S6)
+
+- **AC-R3-7 [FE][E2E]** (S6) From `/`, by sidebar clicks, Sales > Sales report, pick the shared
+  view "By account", Views menu > **Scheduled sends** opens "Scheduled sends: By account". The
+  item shows only for a shared view of a sales report and only to holders of
+  `sales.reports.schedule` (Q7).
+- **AC-R3-8 [FE][T]** (S6) The dialog lists one row per subscription (Person, Channel, When "Mon
+  09:00", Enabled, Next send, Last sent) and **Add** with Person, Channel, Day
+  (`SearchableSelect` each) and Time. Person lists only users holding `sales.reports.view` in the
+  view's company. A new row is saved disabled. No UUID shows.
+- **AC-R3-9 [FE][E2E]** (S6) Delete on a row is the deferred hard delete: the button counts down
+  with Cancel and the row is removed when the window lapses; no confirm dialog.
+- **AC-R3-10 [BE][T]** (S6) The runner sends each enabled row whose `next_run_at` is due once, and
+  advances `next_run_at` to the next weekday and time in the row's timezone (golden table across a
+  week boundary); a second tick in the same window sends nothing (idempotency).
+- **AC-R3-11 [BE][T]** (S6) The file is the view's saved filters and pivot with the period
+  replaced by 1 January of the send date's year to the send date (Q8); its title block reads "As
+  at <send date>" and the basis; a `report_xlsx` row owned by the recipient lands in their My
+  Downloads.
+- **AC-R3-12 [BE][T]** (S6) Access at every send: a recipient who lost `sales.reports.view`, lost
+  the company grant or is inactive gets nothing (no file built, no message), an `integration_log`
+  failure `no_access` is written, and `next_run_at` still advances (G10).
+- **AC-R3-13 [BE][T]** (S6) Email: one `email_outbox` row with event `sales_report_scheduled`, to
+  the user's email, subject "<view name>, as at dd/mm/yyyy", the text header as the body and the
+  download's file as the attachment. A user with no email is skipped and logged.
+- **AC-R3-14 [BE][T]** (S6) WhatsApp, window open: the text header, then the file through
+  `send_chat_attachment_for`. Window closed: the `sales_report_scheduled` template text with the
+  totals line and "The Excel is in your My Downloads." (Q6). No linked contact, or
+  `outbound_enabled` false: skipped and logged. Each send writes an `integration_log` row with
+  `business_table` `sales.report_subscriptions`.
+- **AC-R3-15 [BE][T]** (S6) **Send now** sends one message for that row in a worker job whatever
+  its Enabled state and does not change `next_run_at`.
+- **AC-R3-16 [BE][T]** (S6) Routes `GET|POST /api/v1/sales/report-subscriptions`, `PATCH|DELETE
+  .../{id}`, `POST .../{id}/send-now`: no token 401; without `sales.reports.schedule` 403; `sales`
+  module disabled 403; a view that is not shared or not `sales` / `sales_yearly` is 422; another
+  company's view is 403; a duplicate (view, person, channel) is 409.
+- **AC-R3-17 [FE][E2E]** (S6) The Scheduled sends dialog is usable and not clipped at 375 and
+  1280 (rows stack at 375; no sideways page scroll).
+- **AC-R3-18 [T]** (S6) DoD: the Meta-approved `sales_report_scheduled` template is mapped on prod
+  before any WhatsApp row is enabled; the owner receives one Send now by email and one by WhatsApp
+  and enables their own row.
+
 ## Every slice
 
 - **AC-X-1 [FE]** No UUID in any screen, export or reply; agents, customers and companies are
@@ -313,3 +419,8 @@ code).
 
 Invoice feed, quantity measure, scheduled weekly send (G9), footnote storage (G8), dated person
 labels, targets and commissions (#1260), text + file on every chatbot answer (Q2).
+
+Round 3: the scheduled weekly send is now in scope (Owner ruling 26 Sep 07:06 G9, S6, AC-R3-7 to
+AC-R3-18). Still out: invoice feed, quantity measure, footnote storage (G8 (c)), dated person
+labels, agents seeing only their own rows (G10 (b)), daily or monthly sends, targets and
+commissions (#1260), text + file on every chatbot answer (Q2).
