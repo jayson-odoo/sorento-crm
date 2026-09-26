@@ -475,6 +475,11 @@ def export_low_stock(db: Session, *, run_id: Optional[str],
     )
     if view["over_cap"]:
         raise AppException(422, "Narrow the plan first")
+    # Review N2: a split whose filters keep nothing is a view with no sheets. A workbook
+    # cannot have none (openpyxl would save a lone empty "Sheet" the view never showed), so
+    # there is no file that matches the view: refuse rather than write one that does not.
+    if not view["sheets"]:
+        raise AppException(422, "Nothing matches these filters")
 
     widths = list(_LOW_STOCK_WIDTHS)
     if not include_supplier:

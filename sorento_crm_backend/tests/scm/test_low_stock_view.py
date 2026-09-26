@@ -129,6 +129,39 @@ def test_view_and_workbook_agree(db, split, filtered):
         assert on_screen == in_file, sheet["title"]
 
 
+@pytest.mark.parametrize("split", ["supplier", "category", "supplier_category"])
+def test_split_that_keeps_nothing_writes_no_file(db, split):
+    """Review N2: filters that keep nothing under a split give a view with no sheets. The
+    write-only workbook used to save a lone empty "Sheet" the view never showed; the file
+    must match the view, and a workbook with no sheets cannot, so the export refuses."""
+    lsr = _lsr()
+    run = _run(db)
+    _seed_mixed(db, run)
+
+    view = lsr.build_low_stock_view(db, run_id=str(run.id), split=split, suppliers=["Nobody"])
+    assert view["sheets"] == []
+    assert view["counts"] == {"rows": 0, "low": 0, "sheets": 0}
+
+    with pytest.raises(AppException) as err:
+        lsr.export_low_stock(db, run_id=str(run.id), split=split, suppliers=["Nobody"])
+    assert err.value.status_code == 422
+
+
+def test_unsplit_view_that_keeps_nothing_still_writes_its_two_sheets(db):
+    """The unsplit workbook always has its "Low stock" / "All" pair, header only when the
+    filters keep nothing, and the view says the same."""
+    lsr = _lsr()
+    run = _run(db)
+    _seed_mixed(db, run)
+
+    view = lsr.build_low_stock_view(db, run_id=str(run.id), split="none", suppliers=["Nobody"])
+    blob, _ct, _fn, counts = lsr.export_low_stock(
+        db, run_id=str(run.id), split="none", suppliers=["Nobody"],
+    )
+    assert [s["title"] for s in view["sheets"]] == _sheets(blob).sheetnames == ["Low stock", "All"]
+    assert counts == {"low": 0, "all": 0, "sheets": 2}
+
+
 # =========================================================================== #
 # AC-3 / AC-4 / AC-5: default split, filters before the split, whole-run facets
 # =========================================================================== #
