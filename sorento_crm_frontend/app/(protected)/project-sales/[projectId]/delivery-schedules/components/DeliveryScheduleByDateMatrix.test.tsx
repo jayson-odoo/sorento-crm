@@ -60,10 +60,14 @@ function controller(overrides: Partial<ScheduleGridController> = {}): ScheduleGr
     valueFor: () => '',
     setDraft: vi.fn(),
     commit: vi.fn(),
-    resolveProduct: vi.fn(),
-    poOptions: [],
     canEdit: true,
-    learnedColumns: [],
+    flagActions: {
+      canEdit: overrides.canEdit ?? true,
+      poOptions: [],
+      resolveProduct: vi.fn(),
+      fixQuantities: vi.fn(),
+      dismissing: false,
+    },
     registerColumnRef: vi.fn(),
     focusRequest: null,
     metaFor: (phaseId, columnKey) =>
@@ -84,7 +88,8 @@ describe('DeliveryScheduleByDateMatrix', () => {
     expect(within(newColumn).getByText('Level 2 & 7')).toBeInTheDocument();
 
     const rows = grid.getAllByRole('row').filter((row) => row.querySelector('td'));
-    const movedCell = within(rows[0]).getAllByRole('cell')[0];
+    // Cell 0 is the Flag, pinned beside the product; the dates start after it.
+    const movedCell = within(rows[0]).getAllByRole('cell')[1];
     expect(within(movedCell).getByText('135')).toBeInTheDocument();
     expect(within(movedCell).getByText('07/01/2027')).toBeInTheDocument(); // struck "was"
     expect(within(movedCell).getByText('23/07/2026')).toBeInTheDocument(); // "now"
@@ -148,7 +153,7 @@ describe('DeliveryScheduleByDateMatrix', () => {
     // cell is empty.
     const p2Row = rows.find((row) => within(row).queryByText('OTHER'));
     expect(p2Row).toBeTruthy();
-    const firstCell = within(p2Row as HTMLElement).getAllByRole('cell')[0];
+    const firstCell = within(p2Row as HTMLElement).getAllByRole('cell')[1];
     expect(firstCell.textContent?.trim()).toBe('');
   });
 });

@@ -1,11 +1,11 @@
 /**
- * P6 - the reconciliation surface (AC-E1 to AC-E5, contract section 4).
+ * P6 + S5 - the schedule review screen (AC-E1 to AC-E5; UAC S3-7, S5-1 to S5-6).
  *
  * The measured spike is what these tests defend: roughly a fifth of columns came out wrong on
- * the real R1, so the screen is not an accept-or-reject. What has to hold is that all three
- * numbers are on screen per column, that a correction flips a column without a reload, that an
- * unidentified column is fixable in place, that a partial extraction never reads as success,
- * and that confirm is refused until somebody either fixes the columns or says why not.
+ * the real R1, so the screen is not an accept-or-reject. S5 recomposed it per
+ * mockups/delivery-schedule-review.html: one header with one primary button, two tabs
+ * (Schedule, Documents), the reconciliation folded into the matrix as a Flag column, the
+ * matrix opening on "Need attention" while unconfirmed, and History behind one button.
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -26,42 +26,6 @@ if (!window.matchMedia) {
   });
 }
 
-// The reconciliation section is the shared DataGrid, and under jsdom nothing answers the
-// column-preferences fetch, so the grid would render skeletons instead of rows (CLAUDE.md).
-vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
-  useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
-}));
-
-/**
- * The gear is rendered open, the way the dealer-kit gear tests do it: Radix opens its menu on
- * a pointer sequence into a portal, and what has to hold here is what the menu CONTAINS.
- */
-vi.mock('@/components/common/DetailActionsMenu', () => ({
-  DetailActionsMenu: ({
-    children,
-    ariaLabel,
-  }: {
-    children: React.ReactNode;
-    ariaLabel?: string;
-  }) => (
-    <div data-testid="gear-menu" aria-label={ariaLabel}>
-      {children}
-    </div>
-  ),
-}));
-vi.mock('@/components/ui/dropdown-menu', () => ({
-  DropdownMenuItem: (props: React.ComponentProps<'div'> & { asChild?: boolean }) => {
-    // `asChild` is a Radix concern and must not reach the DOM.
-    const { children, asChild, ...rest } = props;
-    void asChild;
-    return (
-      <div role="menuitem" {...rest}>
-        {children}
-      </div>
-    );
-  },
-}));
-
 const push = vi.fn();
 let originParam: string | null = null;
 vi.mock('next/navigation', () => ({
@@ -77,6 +41,7 @@ const confirmDeliveryScheduleVersion = vi.fn();
 const listDeliveryScheduleVersions = vi.fn();
 const acceptRevisionProposal = vi.fn();
 const rejectRevisionProposal = vi.fn();
+const dismissDeliveryScheduleColumn = vi.fn();
 vi.mock('../../../_shared/services/deliveryScheduleService', () => ({
   // The pager walks the project's SCHEDULES now, each at its latest version.
   listDeliverySchedules: vi.fn(async () => [
@@ -94,6 +59,7 @@ vi.mock('../../../_shared/services/deliveryScheduleService', () => ({
     confirmDeliveryScheduleVersion(...args),
   acceptRevisionProposal: (...args: unknown[]) => acceptRevisionProposal(...args),
   rejectRevisionProposal: (...args: unknown[]) => rejectRevisionProposal(...args),
+  dismissDeliveryScheduleColumn: (...args: unknown[]) => dismissDeliveryScheduleColumn(...args),
 }));
 
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
@@ -123,10 +89,6 @@ import { DeliveryScheduleReviewClient } from './DeliveryScheduleReviewClient';
 
 /**
  * The sentences `buildColumnStates` writes for this fixture, in full.
- *
- * Held here rather than inline because the same sentence has to be found in three places
- * (the list, the phone cards, the confirm dialog) and because what is being pinned is that
- * each one still ends in the thing to do next.
  */
 /**
  * The flush valve asks for 8 of the 16 ordered, and that is a partial schedule - normal on a
@@ -233,6 +195,44 @@ function renderReview() {
 }
 
 const matrix = () => within(screen.getByTestId('schedule-matrix'));
+const phone = () => within(screen.getByTestId('schedule-columns-mobile'));
+
+/** Every product the matrix is showing, top to bottom. */
+function matrixRows(): string[] {
+  return matrix()
+    .getAllByRole('rowheader')
+    .map((cell) => cell.textContent ?? '')
+    .filter((text) => text !== 'Our total for the date');
+}
+
+/** One column that agrees with the PO, so "Need attention" has nothing to show. */
+const ALL_AGREE: Partial<DeliveryScheduleVersion> = {
+  products: [
+    {
+      product_id: 'p1',
+      product_code: 'SRTWC8613-RL',
+      product_name: 'One-Piece WC',
+      customer_code_raw: 'BUI-HB-SRTWC8613-RL',
+      resolution_source: 'code',
+      column_total: '927',
+      reported_total: '927',
+      po_qty: '927',
+      reconciled: true,
+      product_index: 0,
+    },
+  ],
+  cells: [{ phase_id: 'ph1', product_id: 'p1', product_index: 0, qty: '927' }],
+  reconciliation: { reconciled_columns: 1, total_columns: 1 },
+};
+
+async function openAllRows() {
+  fireEvent.click(await screen.findByRole('radio', { name: /^All rows/ }));
+}
+
+async function openHistory() {
+  fireEvent.click(await screen.findByRole('button', { name: 'History' }));
+  return within(await screen.findByTestId('schedule-history'));
+}
 
 /** The PO version 'pv1' is checked against: three lines, all resolved to a product. */
 function poVersion() {
@@ -279,9 +279,11 @@ beforeEach(() => {
   confirmDeliveryScheduleVersion.mockImplementation(async () =>
     version({ confirmed_at: '2026-07-24T01:05:00' }),
   );
+  dismissDeliveryScheduleColumn.mockImplementation(async () => version());
+  (Element.prototype as unknown as { scrollIntoView: unknown }).scrollIntoView = vi.fn();
 });
 
-describe('DeliveryScheduleReviewClient', () => {
+describe('DeliveryScheduleReviewClient, reading states', () => {
   it('shows a skeleton shaped like the page it becomes', () => {
     getDeliveryScheduleVersion.mockReturnValue(new Promise(() => {}));
     const { container } = renderReview();
@@ -302,13 +304,7 @@ describe('DeliveryScheduleReviewClient', () => {
 
   it('says the document is queued without inventing a percentage', async () => {
     getDeliveryScheduleVersion.mockResolvedValue(
-      version({
-        extraction_state: 'queued',
-        pages_extracted: 0,
-        phases: [],
-        products: [],
-        cells: [],
-      }),
+      version({ extraction_state: 'queued', pages_extracted: 0, phases: [], products: [], cells: [] }),
     );
     renderReview();
 
@@ -319,13 +315,7 @@ describe('DeliveryScheduleReviewClient', () => {
 
   it('reports honest progress while it reads', async () => {
     getDeliveryScheduleVersion.mockResolvedValue(
-      version({
-        extraction_state: 'running',
-        pages_extracted: 3,
-        phases: [],
-        products: [],
-        cells: [],
-      }),
+      version({ extraction_state: 'running', pages_extracted: 3, phases: [], products: [], cells: [] }),
     );
     renderReview();
 
@@ -343,9 +333,7 @@ describe('DeliveryScheduleReviewClient', () => {
     );
     renderReview();
 
-    expect(
-      await screen.findByText('Only 5 of 7 pages were read'),
-    ).toBeInTheDocument();
+    expect(await screen.findByText('Only 5 of 7 pages were read')).toBeInTheDocument();
     expect(screen.getByText('Pages 6 and 7 could not be read.')).toBeInTheDocument();
     // The grid still renders: what WAS read is still worth reconciling.
     expect(screen.getByTestId('schedule-matrix')).toBeInTheDocument();
@@ -372,277 +360,439 @@ describe('DeliveryScheduleReviewClient', () => {
     );
     renderReview();
 
-    expect(await screen.findByText(/could not be read/i)).toBeInTheDocument();
-    expect(
-      screen.getByText('The file is not a readable PDF or image.'),
-    ).toBeInTheDocument();
+    expect(await screen.findByText('This document could not be read')).toBeInTheDocument();
+    expect(screen.getByText('The file is not a readable PDF or image.')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Upload it again/i })).toBeInTheDocument();
   });
+});
 
-  it('heads the screen with the PO, the revision and the PO version it is checked against', async () => {
+/** S5-1: number and version, status pill, the meta line, record navigation, one button. */
+describe('DeliveryScheduleReviewClient header (S5-1)', () => {
+  it('heads the screen with the schedule, its status and the mockup meta line', async () => {
     renderReview();
 
-    expect(
-      await screen.findByRole('heading', { name: 'Delivery schedule for HQ/26/01/121' }),
-    ).toBeInTheDocument();
-    expect(screen.getByText('REVISED 1 - 23/7/2026')).toBeInTheDocument();
-    expect(screen.getByText('Issued by SLG Construction Sdn Bhd')).toBeInTheDocument();
-    expect(screen.getByText('Checked against PO version 1')).toBeInTheDocument();
-  });
-
-  it('puts all three numbers on every column and marks the ones that disagree', async () => {
-    renderReview();
-    await screen.findByTestId('schedule-matrix');
-
-    const grid = matrix();
-    expect(grid.getByText('Our total')).toBeInTheDocument();
-    expect(grid.getByText('Schedule TOTAL QTY')).toBeInTheDocument();
-    expect(grid.getByText('PO quantity')).toBeInTheDocument();
-
-    // The reconciled column and the misread ones read differently at a glance. The flush
-    // valve has ONE thing to fix (its own TOTAL QTY row), the unmatched column two.
-    expect(grid.getAllByText('Reconciled')).toHaveLength(1);
-    expect(grid.getByText('1 to fix')).toBeInTheDocument();
-    expect(grid.getByText('2 to fix')).toBeInTheDocument();
-
-    // The column the PO never ordered says so where the number would be.
-    expect(grid.getByText('Not on the PO')).toBeInTheDocument();
-    expect(screen.getByText('1 of 3 columns reconciled')).toBeInTheDocument();
-  });
-
-  it('names the blocking columns in the grid AND in the summary', async () => {
-    renderReview();
-    await screen.findByTestId('schedule-matrix');
-
-    expect(screen.getByText(REPORTED_MISMATCH_MESSAGE)).toBeInTheDocument();
-    expect(screen.getByText(NEEDS_PRODUCT_MESSAGE)).toBeInTheDocument();
-    // In the grid too, not only in the message.
-    expect(matrix().getAllByText('BUI-HB-SRTWB7055').length).toBeGreaterThan(0);
-  });
-
-  it('says what the section is for before it lists a single problem', async () => {
-    renderReview();
-    await screen.findByTestId('schedule-matrix');
-
-    expect(
-      screen.getByText(
-        'Every column has to agree with the PO before this schedule can be confirmed.',
+    const heading = await screen.findByRole('heading', { name: /Schedule HQ\/26\/01\/121 v2/ });
+    expect(within(heading).getByText('To confirm')).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByTestId('schedule-meta')).toHaveTextContent(
+        'Tuju (PRJ-1) · Dated 23/07/2026 · Checked against PO v1',
       ),
-    ).toBeInTheDocument();
-  });
-
-  it('tables the reconciliation, one row per column, every finding in it', async () => {
-    renderReview();
-    await screen.findByTestId('schedule-matrix');
-
-    const list = within(screen.getByTestId('reconciliation-list'));
-    // Two blocked columns and the shortfall warning, one row each. The reconciled column
-    // with nothing to say is not listed.
-    const rows = list
-      .getAllByRole('row')
-      .filter((node) => node.querySelector('td') !== null);
-    expect(rows).toHaveLength(2);
-
-    // Every sentence the check wrote, in the Problem column, whichever row it belongs to.
-    expect(list.getByText(REPORTED_MISMATCH_MESSAGE)).toBeInTheDocument();
-    expect(list.getByText(NOT_ON_PO_MESSAGE)).toBeInTheDocument();
-    expect(list.getByText(NEEDS_PRODUCT_MESSAGE)).toBeInTheDocument();
-    // The shortfall is stated as a warning rather than as something to fix. This row is
-    // blocked all the same, by its own TOTAL QTY row, and the pill says the worst of the two.
-    expect(list.getByTestId('reconciliation-warning')).toHaveTextContent(SHORTFALL_WARNING);
-    expect(list.getAllByText('Blocked')).toHaveLength(2);
-
-    // Truncated with the whole sentence on `title`: the numbers it quotes are in their own
-    // columns beside it, so what is cut is the wording rather than the facts.
-    const details = list.getAllByTestId('reconciliation-detail');
-    expect(details).toHaveLength(3);
-    details.forEach((node) => {
-      expect(String(node.className)).toContain('truncate');
-      expect(node).toHaveAttribute('title', node.textContent);
-    });
-  });
-
-  /**
-   * "You just need a gear button at top right, with view PO as one of the dropdown."
-   *
-   * The header used to carry a button per destination and a PO link on every reconciliation
-   * row - three links to the same page, next to sentences they do not answer.
-   */
-  it('puts the ways out behind one gear, and opens the PO in a new tab', async () => {
-    renderReview();
-    await screen.findByTestId('schedule-matrix');
-
-    // Nothing standing in the header but Confirm: no button per destination.
-    expect(screen.queryByRole('button', { name: /View document/ })).toBeNull();
-
-    const gear = within(screen.getByTestId('gear-menu'));
-    expect(screen.getByTestId('gear-menu')).toHaveAttribute('aria-label', 'Schedule actions');
-
-    const po = gear.getByRole('link', { name: /View PO/ });
-    // The PO RECORD, not the document confirm screen: amending the PO is what the reviewer
-    // comes here to do. New tab, because leaving loses the cells they have typed.
+    );
+    // The PO opens in a new tab: leaving the page loses the cells being typed.
+    const po = screen.getByRole('link', { name: 'Checked against PO v1' });
     expect(po).toHaveAttribute('href', '/project-sales/p1/pos/po1');
     expect(po).toHaveAttribute('target', '_blank');
-    expect(po).toHaveAttribute('rel', expect.stringContaining('noopener'));
-
-    const document = gear.getByRole('link', { name: /View document/ });
-    expect(document).toHaveAttribute('href', 'https://example.test/schedule.pdf');
-    expect(document).toHaveAttribute('target', '_blank');
   });
 
-  it('offers no gear when there is nothing behind it', async () => {
+  it('renders `-` for a date it does not know (S5-6)', async () => {
+    getDeliveryScheduleVersion.mockResolvedValue(version({ schedule_date: null }));
+    renderReview();
+    await waitFor(() => expect(screen.getByTestId('schedule-meta')).toHaveTextContent('Dated -'));
+  });
+
+  it('carries one primary button and no sentence explaining the screen', async () => {
+    renderReview();
+    await screen.findByTestId('schedule-matrix');
+
+    expect(screen.getByRole('button', { name: 'Confirm schedule' })).toBeInTheDocument();
+    // No gear, no second way to the same document, no instruction text.
+    expect(screen.queryByRole('button', { name: /Schedule actions/ })).toBeNull();
+    expect(screen.queryByText(/Every column has to agree with the PO/)).toBeNull();
+    expect(screen.queryByText(/nothing here can be changed/i)).toBeNull();
+    expect(screen.queryByText(/still to fix/)).toBeNull();
+  });
+
+  it('S3-03: walks the project schedules this review was opened from', async () => {
+    renderReview();
+    await screen.findByTestId('schedule-matrix');
+
+    await waitFor(() => expect(screen.getByText('2 / 3')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Next schedule' }));
+    expect(push).toHaveBeenCalledWith('/project-sales/p1/delivery-schedules/v-c');
+  });
+
+  it('is read-only once confirmed, and says who confirmed it in the meta line', async () => {
     getDeliveryScheduleVersion.mockResolvedValue(
-      version({ purchase_order_id: null, po_version_id: null, document_url: null }),
+      version({ confirmed_at: '2026-07-24T01:05:00', confirmed_by_name: 'Eling Tan' }),
+    );
+    renderReview();
+
+    expect(await screen.findByTestId('schedule-meta')).toHaveTextContent(/Confirmed .* by Eling Tan/);
+    expect(screen.getByRole('heading', { name: /Confirmed/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Confirm schedule$/ })).toBeNull();
+    expect(matrix().getByLabelText('Area 3, SRTFV1001')).toBeDisabled();
+  });
+});
+
+/** S5-2: two tabs, Schedule (default) and Documents; History holds the other three. */
+describe('DeliveryScheduleReviewClient tabs (S5-2)', () => {
+  it('has exactly two tabs, Schedule first and selected', async () => {
+    renderReview();
+    await screen.findByTestId('schedule-matrix');
+
+    const tabs = screen.getAllByRole('tab');
+    expect(tabs.map((tab) => tab.textContent)).toEqual(['Schedule', 'Documents']);
+    expect(tabs[0]).toHaveAttribute('aria-selected', 'true');
+    for (const name of ['Findings', 'Changes', 'Re-dating', 'Notes', 'Reconciliation']) {
+      expect(screen.queryByRole('tab', { name })).toBeNull();
+    }
+  });
+
+  it('opens History as one panel with the three sections in it', async () => {
+    getDeliveryScheduleVersion.mockResolvedValue(
+      version({
+        version_no: 1,
+        notes: [{ page_no: 7, text: 'ONLY FOR FLOOR TRAP TO BE DELIVER IN 2026' }],
+      }),
     );
     renderReview();
     await screen.findByTestId('schedule-matrix');
+    // Nothing of the three is on the page itself.
+    expect(screen.queryByText('Notes on the document')).toBeNull();
+    expect(screen.queryByText('Re-dating proposals')).toBeNull();
 
-    expect(screen.queryByTestId('gear-menu')).toBeNull();
+    const history = await openHistory();
+    expect(history.getByText('Changes since the previous version')).toBeInTheDocument();
+    expect(history.getByText('-')).toBeInTheDocument();
+    expect(history.getByText('Re-dating proposals')).toBeInTheDocument();
+    expect(history.getByText('No re-dating proposed')).toBeInTheDocument();
+    expect(history.getByText('Notes on the document')).toBeInTheDocument();
+    expect(
+      history.getByText('Page 7: ONLY FOR FLOOR TRAP TO BE DELIVER IN 2026'),
+    ).toBeInTheDocument();
   });
 
-  it('takes a reconciliation row to its column in the grid', async () => {
-    const scrollIntoView = vi.fn();
-    // jsdom implements none, and the component calls it optionally for that reason.
-    (Element.prototype as unknown as { scrollIntoView: unknown }).scrollIntoView =
-      scrollIntoView;
+  it('finds this version its predecessor and renders the was -> now diff inside History', async () => {
+    listDeliveryScheduleVersions.mockResolvedValue([
+      {
+        id: 'v1',
+        delivery_schedule_id: 's1',
+        version_no: 1,
+        revision_label: 'R1',
+        issuer_party_label: null,
+        schedule_date: null,
+        extraction_state: 'done',
+        reconciled_columns: 1,
+        total_columns: 1,
+        confirmed_at: '2026-01-20T00:00:00',
+        created_at: null,
+      },
+    ]);
+    const current = version({
+      phases: [
+        {
+          id: 'ph1',
+          area_group: 'TOWER',
+          sequence: 1,
+          label: 'Level 2 & 7',
+          delivery_date: '2026-07-01',
+          promoted_delivery_date: '2026-01-01',
+        },
+        { id: 'ph2', area_group: 'COMMON AREA', sequence: 3, label: null, delivery_date: '2027-06-01' },
+      ],
+    });
+    const prior = version({
+      id: 'v1',
+      version_no: 1,
+      phases: [
+        { id: 'prior-ph1', area_group: 'TOWER', sequence: 1, label: 'Level 2 & 7', delivery_date: '2026-01-01' },
+        { id: 'prior-ph2', area_group: 'COMMON AREA', sequence: 3, label: null, delivery_date: '2027-06-01' },
+      ],
+      cells: [
+        { phase_id: 'prior-ph1', product_id: 'p1', product_index: 0, qty: '900' },
+        { phase_id: 'prior-ph2', product_id: 'p2', product_index: 1, qty: '8' },
+      ],
+    });
+    getDeliveryScheduleVersion.mockImplementation((id: string) =>
+      Promise.resolve(id === 'v1' ? prior : current),
+    );
 
     renderReview();
     await screen.findByTestId('schedule-matrix');
 
-    fireEvent.click(
-      within(screen.getByTestId('reconciliation-list')).getByRole('button', {
-        name: 'Go to SRTFV1001 in the schedule',
+    const history = await openHistory();
+    expect(await history.findByText(/1 area moved/)).toBeInTheDocument();
+    expect(history.getByText(/1 quantit(y|ies) changed/)).toBeInTheDocument();
+  });
+
+  it('accepts a re-dating proposal from History, through its confirm dialog', async () => {
+    const proposal = {
+      product_id: 'p2',
+      item_code: 'SRTFV1001',
+      note_text: 'note',
+      page_no: 7,
+      decided_by: null,
+      decided_at: null,
+      cells: [
+        { phase_id: 'ph2', phase_label: 'Phase 3', qty: '8', old_date: '2027-06-01', new_date: '2026-07-23' },
+      ],
+    };
+    getDeliveryScheduleVersion.mockResolvedValue(
+      version({ revision_proposals: [{ ...proposal, state: 'proposed' }] }),
+    );
+    acceptRevisionProposal.mockResolvedValue(
+      version({
+        revision_proposals: [
+          { ...proposal, state: 'accepted', decided_by: 'u1', decided_at: '2026-08-19T02:00:00' },
+        ],
       }),
     );
 
-    expect(scrollIntoView).toHaveBeenCalled();
-  });
+    renderReview();
+    await screen.findByTestId('schedule-matrix');
+    const history = await openHistory();
 
-  it('lands a quantity fix IN the cell to be typed into, not merely near it', async () => {
-    (Element.prototype as unknown as { scrollIntoView: unknown }).scrollIntoView = vi.fn();
+    fireEvent.click(history.getByRole('button', { name: 'Accept' }));
+    const dialogs = await screen.findAllByRole('dialog');
+    fireEvent.click(
+      within(dialogs[dialogs.length - 1]).getByRole('button', { name: 'Accept' }),
+    );
+
+    await waitFor(() => expect(acceptRevisionProposal).toHaveBeenCalledWith('v2', 0));
+    expect(await screen.findByText(/^Accepted /)).toBeInTheDocument();
+  });
+});
+
+/** S5-5: the Documents tab is the file, or a plain not-available state; nothing under it. */
+describe('DeliveryScheduleReviewClient Documents (S5-5)', () => {
+  it('renders the schedule file and nothing else', async () => {
     renderReview();
     await screen.findByTestId('schedule-matrix');
 
-    fireEvent.click(
-      within(screen.getByTestId('reconciliation-list')).getAllByRole('button', {
-        name: 'Fix the quantities',
-      })[0],
-    );
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Documents' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Documents' }));
+    const panel = await screen.findByRole('tabpanel');
+    expect(panel.querySelector('iframe, img, object, embed')).not.toBeNull();
+    expect(within(panel).queryByRole('table')).toBeNull();
+    expect(within(panel).queryByRole('grid')).toBeNull();
+  });
 
-    // The flush valve takes nothing at Level 2 & 7 and 8 at Area 3, and BOTH are typeable,
-    // so the first cell of the column is where the cursor belongs.
+  it('shows a plain not-available state with an upload action, never an error code', async () => {
+    getDeliveryScheduleVersion.mockResolvedValue(version({ document_url: null }));
+    renderReview();
+    await screen.findByTestId('schedule-matrix');
+
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Documents' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Documents' }));
+    const panel = await screen.findByRole('tabpanel');
+    expect(within(panel).getByText('This PDF is not available yet')).toBeInTheDocument();
+    expect(
+      within(panel).getByRole('button', { name: 'Upload the schedule again' }),
+    ).toBeInTheDocument();
+    expect(panel.textContent).not.toMatch(/404|NoSuchKey|not found/i);
+  });
+});
+
+/** S5-3, S3-7: the reconciliation is a Flag column on the matrix, not a table of its own. */
+describe('DeliveryScheduleReviewClient Flag column (S5-3, S3-7)', () => {
+  it('has no separate reconciliation table: the Flag is on the matrix row', async () => {
+    renderReview();
+    await screen.findByTestId('schedule-matrix');
+
+    expect(screen.queryByTestId('reconciliation-list')).toBeNull();
+    expect(screen.queryByText('Reconciliation')).toBeNull();
+    expect(matrix().getByRole('columnheader', { name: 'Flag' })).toBeInTheDocument();
+    expect(
+      matrix().getByRole('button', { name: 'Blocks publish, 2 on SRTFV1001' }),
+    ).toBeInTheDocument();
+  });
+
+  it('shows the full customer code on a flagged row, and its sentences behind the pill', async () => {
+    renderReview();
+    await screen.findByTestId('schedule-matrix');
+
+    const row = matrix().getByRole('rowheader', { name: /BUI-HB-SRTWB7055/ });
+    expect(within(row).getByText('BUI-HB-SRTWB7055').className).not.toContain('truncate');
+    expect(screen.queryByText(NEEDS_PRODUCT_MESSAGE)).toBeNull();
+
+    fireEvent.click(matrix().getByRole('button', { name: 'Blocks publish, 2 on BUI-HB-SRTWB7055' }));
+    expect(await screen.findByText(NEEDS_PRODUCT_MESSAGE)).toBeInTheDocument();
+    expect(screen.getByText(NOT_ON_PO_MESSAGE)).toBeInTheDocument();
+  });
+
+  it('dismisses a flagged row with a reason, from its own Flag', async () => {
+    renderReview();
+    await screen.findByTestId('schedule-matrix');
+
+    fireEvent.click(matrix().getByRole('button', { name: 'Blocks publish, 2 on SRTFV1001' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Dismiss with a reason' }));
+    fireEvent.change(screen.getByLabelText(/Reason/), {
+      target: { value: 'The printed total is a typo' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss 1' }));
+
+    await waitFor(() =>
+      expect(dismissDeliveryScheduleColumn).toHaveBeenCalledWith(
+        'v2',
+        1,
+        true,
+        'The printed total is a typo',
+      ),
+    );
+  });
+
+  it('uses the product picker as the fix for an unidentified row', async () => {
+    renderReview();
+    await screen.findByTestId('schedule-matrix');
+
+    expect(matrix().getByLabelText('Level 2 & 7, BUI-HB-SRTWB7055')).toBeDisabled();
+    fireEvent.click(matrix().getByRole('button', { name: 'Blocks publish, 2 on BUI-HB-SRTWB7055' }));
+    fireEvent.click(await screen.findByLabelText('Pick the product for BUI-HB-SRTWB7055'));
+    fireEvent.click(await screen.findByText('SRTWB7055'));
+
+    await waitFor(() =>
+      expect(resolveDeliveryScheduleProduct).toHaveBeenCalledWith('v2', 2, 'p6'),
+    );
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith(
+        "BUI-HB-SRTWB7055 will resolve to this product on this customer's next schedule.",
+      ),
+    );
+  });
+
+  it('lands a quantity fix IN the cell to be typed into, from the Flag', async () => {
+    renderReview();
+    await screen.findByTestId('schedule-matrix');
+
+    fireEvent.click(matrix().getByRole('button', { name: 'Blocks publish, 2 on SRTFV1001' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Fix the quantities' }));
+
     await waitFor(() =>
       expect(matrix().getByLabelText('Level 2 & 7, SRTFV1001')).toHaveFocus(),
     );
   });
 
-  it('counts what is left to fix, and counts down as a column is corrected', async () => {
+  it('offers no fix and no dismiss to a reviewer who cannot edit', async () => {
+    getProject.mockResolvedValue({ id: 'p1', project_code: 'PRJ-1', title: 'Tuju', can_edit: false });
     renderReview();
     await screen.findByTestId('schedule-matrix');
 
-    expect(screen.getByTestId('reconciliation-remaining')).toHaveTextContent(
-      '2 columns still to fix.',
-    );
+    fireEvent.click(matrix().getByRole('button', { name: 'Blocks publish, 2 on SRTFV1001' }));
+    await screen.findByText(REPORTED_MISMATCH_MESSAGE);
+    expect(screen.queryByRole('button', { name: 'Dismiss with a reason' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Fix the quantities' })).toBeNull();
+    expect(screen.queryByLabelText(/the product for/)).toBeNull();
+  });
 
-    fireEvent.change(matrix().getByLabelText('Area 3, SRTFV1001'), {
-      target: { value: '16' },
-    });
+  it('never says "Dismiss as false signal" (S3-2)', async () => {
+    renderReview();
+    await screen.findByTestId('schedule-matrix');
+    fireEvent.click(matrix().getByRole('button', { name: 'Blocks publish, 2 on SRTFV1001' }));
+    await screen.findByRole('button', { name: 'Dismiss with a reason' });
+    expect(screen.queryByText(/false signal/)).toBeNull();
+  });
+});
+
+/** S5-4 and owner lesson (c): "Need attention" / "All rows", and the one blocking rule. */
+describe('DeliveryScheduleReviewClient Need attention (S5-4)', () => {
+  it('opens on Need attention while unconfirmed, with both counts', async () => {
+    renderReview();
+    await screen.findByTestId('schedule-matrix');
+
+    expect(screen.getByRole('radio', { name: 'Need attention (2)' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+    expect(screen.getByRole('radio', { name: 'All rows (3)' })).toBeInTheDocument();
+    expect(screen.queryByText(/Only rows with a flag/)).toBeNull();
+    // The agreeing WC is not shown; the two that block Confirm are.
+    expect(matrixRows()).toEqual([
+      expect.stringContaining('SRTFV1001'),
+      expect.stringContaining('BUI-HB-SRTWB7055'),
+    ]);
+
+    await openAllRows();
+    expect(matrixRows()).toHaveLength(3);
+  });
+
+  it('opens on All rows once confirmed', async () => {
+    getDeliveryScheduleVersion.mockResolvedValue(version({ confirmed_at: '2026-07-24T01:05:00' }));
+    renderReview();
+    await screen.findByTestId('schedule-matrix');
+
+    expect(screen.getByRole('radio', { name: 'All rows (3)' })).toHaveAttribute('aria-checked', 'true');
+    expect(matrixRows()).toHaveLength(3);
+  });
+
+  it('puts every row the confirm dialog names in Need attention, and nothing else', async () => {
+    renderReview();
+    await screen.findByTestId('schedule-matrix');
+    const shown = matrixRows();
+
+    fireEvent.click(screen.getByRole('button', { name: /^Confirm schedule$/ }));
+    const dialog = within(await screen.findByRole('dialog'));
+    expect(dialog.getByText('2 columns do not add up yet.')).toBeInTheDocument();
+    expect(dialog.getByText('SRTFV1001')).toBeInTheDocument();
+    expect(dialog.getByText('BUI-HB-SRTWB7055')).toBeInTheDocument();
+    expect(shown).toHaveLength(2);
+  });
+
+  it('drops a row from Need attention the moment its correction is typed', async () => {
+    renderReview();
+    await screen.findByTestId('schedule-matrix');
+    await openAllRows();
+
+    fireEvent.change(matrix().getByLabelText('Area 3, SRTFV1001'), { target: { value: '16' } });
 
     await waitFor(() =>
-      expect(screen.getByTestId('reconciliation-remaining')).toHaveTextContent(
-        '1 column still to fix.',
-      ),
+      expect(screen.getByRole('radio', { name: 'Need attention (1)' })).toBeInTheDocument(),
     );
-  });
-
-  it('offers no fix in the list to a reviewer who cannot edit, only the jump', async () => {
-    getProject.mockResolvedValue({
-      id: 'p1',
-      project_code: 'PRJ-1',
-      title: 'Tuju',
-      can_edit: false,
-    });
-    renderReview();
-    await screen.findByTestId('schedule-matrix');
-
-    const list = within(screen.getByTestId('reconciliation-list'));
-    expect(list.queryByLabelText(/Pick the product/)).toBeNull();
-    expect(list.queryByLabelText(/Pick a different product/)).toBeNull();
-    expect(list.queryByRole('button', { name: 'Fix the quantities' })).toBeNull();
-    expect(list.queryByRole('link', { name: /Open the PO/ })).toBeNull();
-    expect(
-      list.getByRole('button', { name: 'Go to SRTFV1001 in the schedule' }),
-    ).toBeInTheDocument();
-  });
-
-  it('reports rather than instructs when the schedule can no longer be changed', async () => {
-    // A confirmed schedule still lists what disagreed, and that is worth keeping. But
-    // "2 columns still to fix" on a screen that accepts no fix is asking for work it
-    // will refuse, which is the same confusion in a new place.
-    getProject.mockResolvedValue({
-      id: 'p1',
-      project_code: 'PRJ-1',
-      title: 'Tuju',
-      can_edit: false,
-    });
-    renderReview();
-    await screen.findByTestId('schedule-matrix');
-
-    expect(screen.getByTestId('reconciliation-remaining')).toHaveTextContent(
-      '2 columns did not agree.',
-    );
-    expect(screen.getByTestId('reconciliation-remaining')).not.toHaveTextContent(
-      'to fix',
-    );
-    expect(screen.getByText(/confirmed, so nothing here can be changed/i)).toBeInTheDocument();
-  });
-
-  it('lets a column that resolved to the WRONG product be changed, in both views', async () => {
-    renderReview();
-    await screen.findByTestId('schedule-matrix');
-
-    // SRTFV1001 is matched already and still does not reconcile, which used to mean the
-    // picker was withheld and the only way out was deleting something.
-    expect(
-      matrix().getByLabelText('Change the product for BUI-HB-SRTFV1001'),
-    ).toBeInTheDocument();
-
-    const phone = within(screen.getByTestId('schedule-columns-mobile'));
-    fireEvent.click(phone.getAllByRole('button', { expanded: false })[1]);
-    expect(
-      phone.getByLabelText('Change the product for BUI-HB-SRTFV1001'),
-    ).toBeInTheDocument();
-  });
-
-  it('renders a blank cell blank, because a blank is not a zero', async () => {
-    renderReview();
-    await screen.findByTestId('schedule-matrix');
-
-    // Level 2 & 7 does not take the flush valve at all.
-    const untouched = matrix().getByLabelText('Level 2 & 7, SRTFV1001');
-    expect(untouched).toHaveValue('');
-  });
-
-  it('flips a column to reconciled as the correction is typed, and saves it', async () => {
-    renderReview();
-    await screen.findByTestId('schedule-matrix');
-
-    const cell = matrix().getByLabelText('Area 3, SRTFV1001');
-    expect(cell).toHaveValue('8');
-
-    fireEvent.change(cell, { target: { value: '16' } });
-
-    // No reload, no round trip: the column agrees the moment the number does.
-    await waitFor(() =>
-      expect(screen.getByText('2 of 3 columns reconciled')).toBeInTheDocument(),
-    );
-
-    fireEvent.blur(cell);
+    fireEvent.blur(matrix().getByLabelText('Area 3, SRTFV1001'));
     await waitFor(() =>
       expect(saveDeliveryScheduleCells).toHaveBeenCalledWith('v2', [
         { phase_id: 'ph2', product_id: 'p2', qty: '16' },
       ]),
     );
+  });
+
+  it('counts a dismissed row as not blocking, same as the server', async () => {
+    getDeliveryScheduleVersion.mockResolvedValue(
+      version({
+        products: version().products.map((product) =>
+          product.product_index === 1
+            ? { ...product, dismissed: true, dismissed_reason: 'Typo', dismissed_by_name: 'Aina' }
+            : product,
+        ),
+      }),
+    );
+    renderReview();
+    await screen.findByTestId('schedule-matrix');
+
+    expect(screen.getByRole('radio', { name: 'Need attention (1)' })).toBeInTheDocument();
+    await openAllRows();
+    expect(matrix().getByRole('button', { name: /^Dismissed, 2 on SRTFV1001/ })).toBeInTheDocument();
+  });
+
+  it('says plainly when nothing needs attention (S5-6)', async () => {
+    getDeliveryScheduleVersion.mockResolvedValue(version(ALL_AGREE));
+    renderReview();
+
+    expect(await screen.findByTestId('schedule-all-clear')).toHaveTextContent(
+      'Nothing needs attention',
+    );
+    await openAllRows();
+    expect(await screen.findByTestId('schedule-matrix')).toBeInTheDocument();
+  });
+
+  it('keeps By area / By date working as before', async () => {
+    renderReview();
+    await screen.findByTestId('schedule-matrix');
+    expect(screen.queryByTestId('schedule-by-date-matrix')).toBeNull();
+
+    fireEvent.click(screen.getByRole('radio', { name: 'By date' }));
+    expect(await screen.findByTestId('schedule-by-date-matrix')).toBeInTheDocument();
+    expect(screen.queryByTestId('schedule-matrix')).toBeNull();
+
+    fireEvent.click(screen.getByRole('radio', { name: 'By area' }));
+    expect(await screen.findByTestId('schedule-matrix')).toBeInTheDocument();
+  });
+});
+
+describe('DeliveryScheduleReviewClient cells', () => {
+  it('renders a blank cell blank, because a blank is not a zero', async () => {
+    renderReview();
+    await screen.findByTestId('schedule-matrix');
+    expect(matrix().getByLabelText('Level 2 & 7, SRTFV1001')).toHaveValue('');
   });
 
   it('writes a cleared cell back as the delete the API expects', async () => {
@@ -672,55 +822,29 @@ describe('DeliveryScheduleReviewClient', () => {
     expect(saveDeliveryScheduleCells).not.toHaveBeenCalled();
   });
 
-  it('locks the cells of a column with no product, and offers the picker instead', async () => {
+  it('renders the phone cards of the same rows, one Flag each', async () => {
     renderReview();
     await screen.findByTestId('schedule-matrix');
 
-    const grid = matrix();
-    expect(grid.getByLabelText('Level 2 & 7, BUI-HB-SRTWB7055')).toBeDisabled();
-    expect(
-      grid.getByLabelText('Pick the product for BUI-HB-SRTWB7055'),
-    ).toBeInTheDocument();
+    expect(phone().getAllByText('Schedule')).toHaveLength(2);
+    expect(phone().getByRole('button', { name: 'Blocks publish, 2 on SRTFV1001' })).toBeInTheDocument();
+    expect(phone().queryByLabelText('Area 3, SRTFV1001')).toBeNull();
   });
+});
 
-  it('resolves an unidentified column and says the code is remembered, once', async () => {
-    renderReview();
-    await screen.findByTestId('schedule-matrix');
-
-    fireEvent.click(matrix().getByLabelText('Pick the product for BUI-HB-SRTWB7055'));
-    const option = await screen.findByText('SRTWB7055');
-    fireEvent.click(option);
-
-    await waitFor(() =>
-      expect(resolveDeliveryScheduleProduct).toHaveBeenCalledWith('v2', 2, 'p6'),
-    );
-    expect(
-      await screen.findByText(
-        /BUI-HB-SRTWB7055 will resolve to .* on this customer's next schedule\./,
-      ),
-    ).toBeInTheDocument();
-  });
-
+describe('DeliveryScheduleReviewClient Confirm schedule', () => {
   it('refuses to confirm while a column is unreconciled, then allows it with a reason', async () => {
     renderReview();
     await screen.findByTestId('schedule-matrix');
 
     fireEvent.click(screen.getByRole('button', { name: /^Confirm schedule$/ }));
-
     const dialog = within(await screen.findByRole('dialog'));
-    expect(dialog.getByText('2 columns do not add up yet.')).toBeInTheDocument();
-    // Named in the dialog, with the numbers, so the decision is informed.
-    expect(dialog.getByText('SRTFV1001')).toBeInTheDocument();
     expect(dialog.getByRole('button', { name: /^Confirm schedule$/ })).toBeDisabled();
 
     fireEvent.click(dialog.getByRole('checkbox'));
-    expect(dialog.getByRole('button', { name: /^Confirm schedule$/ })).toBeDisabled();
-
     fireEvent.change(dialog.getByLabelText(/Reason/i), {
       target: { value: 'Customer confirmed the valve quantity by email.' },
     });
-    expect(dialog.getByRole('button', { name: /^Confirm schedule$/ })).toBeEnabled();
-
     fireEvent.click(dialog.getByRole('button', { name: /^Confirm schedule$/ }));
     await waitFor(() =>
       expect(confirmDeliveryScheduleVersion).toHaveBeenCalledWith('v2', {
@@ -731,28 +855,9 @@ describe('DeliveryScheduleReviewClient', () => {
   });
 
   it('confirms with no acknowledgement once every column agrees', async () => {
-    getDeliveryScheduleVersion.mockResolvedValue(
-      version({
-        products: [
-          {
-            product_id: 'p1',
-            product_code: 'SRTWC8613-RL',
-            product_name: 'One-Piece WC',
-            customer_code_raw: 'BUI-HB-SRTWC8613-RL',
-            resolution_source: 'code',
-            column_total: '927',
-            reported_total: '927',
-            po_qty: '927',
-            reconciled: true,
-            product_index: 0,
-          },
-        ],
-        cells: [{ phase_id: 'ph1', product_id: 'p1', product_index: 0, qty: '927' }],
-        reconciliation: { reconciled_columns: 1, total_columns: 1 },
-      }),
-    );
+    getDeliveryScheduleVersion.mockResolvedValue(version(ALL_AGREE));
     renderReview();
-    await screen.findByTestId('schedule-matrix');
+    await screen.findByTestId('schedule-all-clear');
 
     fireEvent.click(screen.getByRole('button', { name: /^Confirm schedule$/ }));
     const dialog = within(await screen.findByRole('dialog'));
@@ -760,69 +865,50 @@ describe('DeliveryScheduleReviewClient', () => {
     expect(dialog.queryByRole('checkbox')).toBeNull();
 
     fireEvent.click(dialog.getByRole('button', { name: /^Confirm schedule$/ }));
+    await waitFor(() => expect(confirmDeliveryScheduleVersion).toHaveBeenCalledWith('v2', {}));
+  });
+
+  it('asks for the acknowledgement the server wants on a partial read, even with every column agreeing', async () => {
+    getDeliveryScheduleVersion.mockResolvedValue(
+      version({ ...ALL_AGREE, extraction_state: 'partial', pages_extracted: 5 }),
+    );
+    renderReview();
+    await screen.findByTestId('schedule-all-clear');
+
+    fireEvent.click(screen.getByRole('button', { name: /^Confirm schedule$/ }));
+    const dialog = within(await screen.findByRole('dialog'));
+    expect(dialog.getByText('Part of this schedule could not be read.')).toBeInTheDocument();
+    expect(dialog.getByRole('button', { name: /^Confirm schedule$/ })).toBeDisabled();
+
+    fireEvent.click(dialog.getByRole('checkbox'));
+    fireEvent.change(dialog.getByLabelText(/Reason/i), { target: { value: 'Pages 6-7 are blank' } });
+    fireEvent.click(dialog.getByRole('button', { name: /^Confirm schedule$/ }));
     await waitFor(() =>
-      expect(confirmDeliveryScheduleVersion).toHaveBeenCalledWith('v2', {}),
+      expect(confirmDeliveryScheduleVersion).toHaveBeenCalledWith('v2', {
+        acknowledge_unreconciled: true,
+        reason: 'Pages 6-7 are blank',
+      }),
     );
   });
 
   it('returns to the origin after a successful Confirm schedule, when it carries one (S4-2)', async () => {
     originParam = '/project-sales/p1?tab=schedules';
-    getDeliveryScheduleVersion.mockResolvedValue(
-      version({
-        products: [
-          {
-            product_id: 'p1',
-            product_code: 'SRTWC8613-RL',
-            product_name: 'One-Piece WC',
-            customer_code_raw: 'BUI-HB-SRTWC8613-RL',
-            resolution_source: 'code',
-            column_total: '927',
-            reported_total: '927',
-            po_qty: '927',
-            reconciled: true,
-            product_index: 0,
-          },
-        ],
-        cells: [{ phase_id: 'ph1', product_id: 'p1', product_index: 0, qty: '927' }],
-        reconciliation: { reconciled_columns: 1, total_columns: 1 },
-      }),
-    );
+    getDeliveryScheduleVersion.mockResolvedValue(version(ALL_AGREE));
     renderReview();
-    await screen.findByTestId('schedule-matrix');
+    await screen.findByTestId('schedule-all-clear');
 
     fireEvent.click(screen.getByRole('button', { name: /^Confirm schedule$/ }));
     const dialog = within(await screen.findByRole('dialog'));
     fireEvent.click(dialog.getByRole('button', { name: /^Confirm schedule$/ }));
 
-    await waitFor(() =>
-      expect(push).toHaveBeenCalledWith('/project-sales/p1?tab=schedules'),
-    );
+    await waitFor(() => expect(push).toHaveBeenCalledWith('/project-sales/p1?tab=schedules'));
   });
 
   it('stays on the page after Confirm schedule with no origin (S4-3)', async () => {
     originParam = null;
-    getDeliveryScheduleVersion.mockResolvedValue(
-      version({
-        products: [
-          {
-            product_id: 'p1',
-            product_code: 'SRTWC8613-RL',
-            product_name: 'One-Piece WC',
-            customer_code_raw: 'BUI-HB-SRTWC8613-RL',
-            resolution_source: 'code',
-            column_total: '927',
-            reported_total: '927',
-            po_qty: '927',
-            reconciled: true,
-            product_index: 0,
-          },
-        ],
-        cells: [{ phase_id: 'ph1', product_id: 'p1', product_index: 0, qty: '927' }],
-        reconciliation: { reconciled_columns: 1, total_columns: 1 },
-      }),
-    );
+    getDeliveryScheduleVersion.mockResolvedValue(version(ALL_AGREE));
     renderReview();
-    await screen.findByTestId('schedule-matrix');
+    await screen.findByTestId('schedule-all-clear');
 
     fireEvent.click(screen.getByRole('button', { name: /^Confirm schedule$/ }));
     const dialog = within(await screen.findByRole('dialog'));
@@ -832,166 +918,8 @@ describe('DeliveryScheduleReviewClient', () => {
     expect(push).not.toHaveBeenCalled();
   });
 
-  it('is read-only once confirmed', async () => {
-    getDeliveryScheduleVersion.mockResolvedValue(
-      version({ confirmed_at: '2026-07-24T01:05:00', confirmed_by_name: 'Eling Tan' }),
-    );
-    renderReview();
-
-    expect(await screen.findByText(/Confirmed .* by Eling Tan/)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^Confirm schedule$/ })).toBeNull();
-    expect(matrix().getByLabelText('Area 3, SRTFV1001')).toBeDisabled();
-  });
-
-  it('renders a phone view of the same columns alongside the matrix', async () => {
-    renderReview();
-    await screen.findByTestId('schedule-matrix');
-
-    const phone = within(screen.getByTestId('schedule-columns-mobile'));
-    // One card per column, each carrying its three numbers as labels rather than a wide row.
-    expect(phone.getAllByRole('button', { expanded: false })).toHaveLength(3);
-    expect(phone.getAllByText('Our total')).toHaveLength(3);
-    expect(phone.getAllByText('Schedule')).toHaveLength(3);
-    expect(phone.getAllByText('PO')).toHaveLength(3);
-  });
-
-  it('opens one phone card at a time, and only then mounts its quantity fields', async () => {
-    renderReview();
-    await screen.findByTestId('schedule-matrix');
-
-    const phone = within(screen.getByTestId('schedule-columns-mobile'));
-    expect(phone.queryByLabelText('Area 3, SRTFV1001')).toBeNull();
-
-    fireEvent.click(phone.getAllByRole('button', { expanded: false })[1]);
-    expect(phone.getByLabelText('Area 3, SRTFV1001')).toHaveValue('8');
-    expect(phone.getByText(REPORTED_MISMATCH_MESSAGE)).toBeInTheDocument();
-  });
-});
-
-/**
- * The header standard, shared with the sales order and the customer PO: ONE call to action
- * (Confirm, which is what this screen is for), everything else behind the gear, and a pager
- * so a reviewer can walk the revisions without going back to the project tab.
- */
-describe('DeliveryScheduleReviewClient header', () => {
-  it('S3-03: walks the project schedules this review was opened from', async () => {
-    renderReview();
-    await screen.findByTestId('schedule-matrix');
-
-    // The walk is the list the reviewer came from - the project's schedules, each
-    // at its latest version - not every version that ever existed in the project.
-    await waitFor(() => expect(screen.getByText('2 / 3')).toBeInTheDocument());
-
-    fireEvent.click(screen.getByRole('button', { name: 'Next schedule' }));
-
-    expect(push).toHaveBeenCalledWith('/project-sales/p1/delivery-schedules/v-c');
-  });
-
-  it('keeps Confirm as the one call to action beside the pager', async () => {
-    renderReview();
-    await screen.findByTestId('schedule-matrix');
-
-    expect(screen.getByRole('button', { name: 'Confirm schedule' })).toBeInTheDocument();
-    // The pager is chevrons, not a third and fourth thing to read.
-    expect(screen.getByRole('button', { name: 'Previous schedule' })).toBeInTheDocument();
-  });
-});
-
-/** Section 9.1/9.2 of PLAN-so-book-diff-replanning: was -> now, and confirm's amendment notice. */
-describe('DeliveryScheduleReviewClient revision diff and amendment banner', () => {
-  it('finds this version its predecessor and renders the was -> now diff', async () => {
-    listDeliveryScheduleVersions.mockResolvedValue([
-      {
-        id: 'v1',
-        delivery_schedule_id: 's1',
-        version_no: 1,
-        revision_label: 'R1',
-        issuer_party_label: null,
-        schedule_date: null,
-        extraction_state: 'done',
-        reconciled_columns: 1,
-        total_columns: 1,
-        confirmed_at: '2026-01-20T00:00:00',
-        created_at: null,
-      },
-    ]);
-
-    const current = version({
-      phases: [
-        {
-          id: 'ph1',
-          area_group: 'TOWER',
-          sequence: 1,
-          label: 'Level 2 & 7',
-          delivery_date: '2026-07-01',
-          promoted_delivery_date: '2026-01-01',
-        },
-        {
-          id: 'ph2',
-          area_group: 'COMMON AREA',
-          sequence: 3,
-          label: null,
-          delivery_date: '2027-06-01',
-        },
-      ],
-    });
-    const prior = version({
-      id: 'v1',
-      version_no: 1,
-      phases: [
-        {
-          id: 'prior-ph1',
-          area_group: 'TOWER',
-          sequence: 1,
-          label: 'Level 2 & 7',
-          delivery_date: '2026-01-01',
-        },
-        {
-          id: 'prior-ph2',
-          area_group: 'COMMON AREA',
-          sequence: 3,
-          label: null,
-          delivery_date: '2027-06-01',
-        },
-      ],
-      cells: [
-        { phase_id: 'prior-ph1', product_id: 'p1', product_index: 0, qty: '900' },
-        { phase_id: 'prior-ph2', product_id: 'p2', product_index: 1, qty: '8' },
-      ],
-    });
-
-    getDeliveryScheduleVersion.mockImplementation((id: string) =>
-      Promise.resolve(id === 'v1' ? prior : current),
-    );
-
-    renderReview();
-    await screen.findByTestId('schedule-matrix');
-
-    expect(await screen.findByText('Changes since the previous version')).toBeInTheDocument();
-    // The area moved (01/01/2026 -> 01/07/2026) and the WC's quantity grew (900 -> 927).
-    expect(await screen.findByText(/1 area moved/)).toBeInTheDocument();
-    expect(screen.getByText(/1 quantit(y|ies) changed/)).toBeInTheDocument();
-  });
-
-  it('shows the amendment-needed banner and a toast whose action goes to it, once confirm answers a preview url', async () => {
-    const reconciled = version({
-      products: [
-        {
-          product_id: 'p1',
-          product_code: 'SRTWC8613-RL',
-          product_name: 'One-Piece WC',
-          customer_code_raw: 'BUI-HB-SRTWC8613-RL',
-          resolution_source: 'code',
-          column_total: '927',
-          reported_total: '927',
-          po_qty: '927',
-          reconciled: true,
-          product_index: 0,
-        },
-      ],
-      cells: [{ phase_id: 'ph1', product_id: 'p1', product_index: 0, qty: '927' }],
-      reconciliation: { reconciled_columns: 1, total_columns: 1 },
-    });
+  it('makes the amendment the one primary button once confirm answers a preview url', async () => {
+    const reconciled = version(ALL_AGREE);
     getDeliveryScheduleVersion.mockResolvedValue(reconciled);
     confirmDeliveryScheduleVersion.mockResolvedValue({
       ...reconciled,
@@ -1000,203 +928,25 @@ describe('DeliveryScheduleReviewClient revision diff and amendment banner', () =
     });
 
     renderReview();
-    await screen.findByTestId('schedule-matrix');
+    await screen.findByTestId('schedule-all-clear');
 
     fireEvent.click(screen.getByRole('button', { name: /^Confirm schedule$/ }));
     const dialog = within(await screen.findByRole('dialog'));
     fireEvent.click(dialog.getByRole('button', { name: /^Confirm schedule$/ }));
 
     await waitFor(() => expect(confirmDeliveryScheduleVersion).toHaveBeenCalled());
-    // The confirm dialog's exit animation keeps it (and its aria-hidden on
-    // the rest of the page) mounted a tick after the confirm resolves.
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
 
-    expect(await screen.findByTestId('amendment-needed-banner')).toHaveTextContent(
-      'the linked sales order has not been amended yet',
-    );
-    expect(screen.getByRole('link', { name: 'Review the amendment' })).toHaveAttribute(
+    expect(await screen.findByRole('link', { name: 'Review the amendment' })).toHaveAttribute(
       'href',
       '/project-sales/p1/sales-orders/so-1/revisions',
     );
-
+    expect(screen.queryByRole('button', { name: /^Confirm schedule$/ })).toBeNull();
     expect(toast.success).toHaveBeenCalledWith(
       'Schedule confirmed - the linked sales order needs an amendment.',
       expect.objectContaining({
         action: expect.objectContaining({ label: 'Review the amendment' }),
       }),
     );
-    const [, options] = (toast.success as ReturnType<typeof vi.fn>).mock.calls.find(
-      ([message]) => message === 'Schedule confirmed - the linked sales order needs an amendment.',
-    ) as [string, { action: { onClick: () => void } }];
-    options.action.onClick();
-    expect(push).toHaveBeenCalledWith('/project-sales/p1/sales-orders/so-1/revisions');
-  });
-});
-
-/** Section 9.7 - the notes callout and the re-dating proposals, above the grid. */
-describe('DeliveryScheduleReviewClient notes and revision proposals', () => {
-  it('renders the notes callout and a proposal card straight off the version', async () => {
-    getDeliveryScheduleVersion.mockResolvedValue(
-      version({
-        notes: [
-          {
-            page_no: 7,
-            text: 'ONLY FOR FLOOR TRAP TO BE DELIVER IN 2026, START FROM 23/7/2026',
-          },
-        ],
-        revision_proposals: [
-          {
-            product_id: 'p2',
-            item_code: 'SRTFV1001',
-            note_text: 'ONLY FOR FLOOR TRAP...',
-            page_no: 7,
-            state: 'proposed',
-            decided_by: null,
-            decided_at: null,
-            cells: [
-              {
-                phase_id: 'ph2',
-                phase_label: 'Phase 3',
-                qty: '8',
-                old_date: '2027-06-01',
-                new_date: '2026-07-23',
-              },
-            ],
-          },
-        ],
-      }),
-    );
-    renderReview();
-    await screen.findByTestId('schedule-matrix');
-
-    expect(screen.getByText('Notes on the document')).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        'Page 7: ONLY FOR FLOOR TRAP TO BE DELIVER IN 2026, START FROM 23/7/2026',
-      ),
-    ).toBeInTheDocument();
-
-    expect(screen.getByText('Re-dating proposals')).toBeInTheDocument();
-    expect(
-      screen.getByText(/SRTFV1001 - re-date 1 area from 23\/07\/2026/),
-    ).toBeInTheDocument();
-  });
-
-  it('says nothing was proposed, and no notes, without hiding either section', async () => {
-    renderReview();
-    await screen.findByTestId('schedule-matrix');
-
-    expect(screen.getByText('No notes on the document')).toBeInTheDocument();
-    expect(screen.getByText('No re-dating proposed')).toBeInTheDocument();
-  });
-
-  it('accepts a proposal through the confirm dialog, and writes it to the version query', async () => {
-    getDeliveryScheduleVersion.mockResolvedValue(
-      version({
-        revision_proposals: [
-          {
-            product_id: 'p2',
-            item_code: 'SRTFV1001',
-            note_text: 'note',
-            page_no: 7,
-            state: 'proposed',
-            decided_by: null,
-            decided_at: null,
-            cells: [
-              {
-                phase_id: 'ph2',
-                phase_label: 'Phase 3',
-                qty: '8',
-                old_date: '2027-06-01',
-                new_date: '2026-07-23',
-              },
-            ],
-          },
-        ],
-      }),
-    );
-    acceptRevisionProposal.mockResolvedValue(
-      version({
-        revision_proposals: [
-          {
-            product_id: 'p2',
-            item_code: 'SRTFV1001',
-            note_text: 'note',
-            page_no: 7,
-            state: 'accepted',
-            decided_by: 'u1',
-            decided_at: '2026-08-19T02:00:00',
-            cells: [
-              {
-                phase_id: 'ph2',
-                phase_label: 'Phase 3',
-                qty: '8',
-                old_date: '2027-06-01',
-                new_date: '2026-07-23',
-              },
-            ],
-          },
-        ],
-      }),
-    );
-
-    renderReview();
-    await screen.findByTestId('schedule-matrix');
-
-    fireEvent.click(screen.getByRole('button', { name: 'Accept' }));
-    fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Accept' }));
-
-    await waitFor(() => expect(acceptRevisionProposal).toHaveBeenCalledWith('v2', 0));
-    expect(await screen.findByText(/^Accepted /)).toBeInTheDocument();
-  });
-});
-
-/** Section 9.8 - By area / By date, and the hint chip that offers the switch. */
-describe('DeliveryScheduleReviewClient, By area / By date', () => {
-  it('defaults to By area, and switches renderer when the toggle is pressed', async () => {
-    renderReview();
-    await screen.findByTestId('schedule-matrix');
-    expect(screen.queryByTestId('schedule-by-date-matrix')).toBeNull();
-
-    fireEvent.click(screen.getByRole('radio', { name: 'By date' }));
-
-    expect(await screen.findByTestId('schedule-by-date-matrix')).toBeInTheDocument();
-    expect(screen.queryByTestId('schedule-matrix')).toBeNull();
-
-    fireEvent.click(screen.getByRole('radio', { name: 'By area' }));
-    expect(await screen.findByTestId('schedule-matrix')).toBeInTheDocument();
-  });
-
-  it('shows no hint chip while nothing has been re-dated', async () => {
-    renderReview();
-    await screen.findByTestId('schedule-matrix');
-    expect(screen.queryByText(/re-dated - view by date/)).toBeNull();
-  });
-
-  it('offers the hint chip once a cell carries an accepted override, and switches on click', async () => {
-    getDeliveryScheduleVersion.mockResolvedValue(
-      version({
-        cells: [
-          {
-            phase_id: 'ph1',
-            product_id: 'p1',
-            product_index: 0,
-            qty: '927',
-            delivery_date_override: '2026-07-23',
-          },
-          { phase_id: 'ph2', product_id: 'p2', product_index: 1, qty: '8' },
-          { phase_id: 'ph1', product_id: null, product_index: 2, qty: '927' },
-        ],
-      }),
-    );
-    renderReview();
-    await screen.findByTestId('schedule-matrix');
-
-    const chip = screen.getByText('1 cell re-dated - view by date');
-    fireEvent.click(chip);
-
-    expect(await screen.findByTestId('schedule-by-date-matrix')).toBeInTheDocument();
-    // Once switched to By date, the hint (a By area affordance) is gone.
-    expect(screen.queryByText(/re-dated - view by date/)).toBeNull();
   });
 });
