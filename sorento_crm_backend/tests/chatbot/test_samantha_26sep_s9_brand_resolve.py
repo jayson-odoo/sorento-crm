@@ -365,28 +365,38 @@ class TestT2BrandTokenNotResolvedAsCustomerInOrderDomain:
 
 class TestPromotionBrandGateFailsClosed:
     def test_promotion_brand_gate_still_fails_closed_for_an_unheld_live_brand(
-        self, session_factory
+        self, session_factory, monkeypatch
     ) -> None:
-        """Security B1: a contact entitled ONLY to "Sorento Dealer" asks for Cabana
-        promotions, and Cabana IS an active `Brand` in the contact's own company.
-        `tier_gate.tier_gate` must still report `brand_gate_empty` (and, upstream,
-        a "you don't have access to cabana promotions" refusal) - never fall back
-        to the full Sorento entitlement because the brand word never reached it.
+        """Security B1, rewritten (26 Sep, coordinator round 2): the previous version
+        called `tier_gate()` directly with `parser={"entities": []}` - i.e. it tested
+        the ALREADY-STRIPPED state by construction, which no code path can ever make
+        fail closed (an empty `entities` list can never carry a brand for the gate
+        to see, whatever the gate does with it). The coder's own fix
+        (`turn_runtime.resolve_kinds`) makes the strip ORDER-DOMAIN ONLY, so the real
+        guarantee is: for a PROMOTION-domain turn, the live-brand entity survives
+        into what `resolve_gate.run` (and therefore `tier_gate`) actually sees.
 
-        Red: `turn_runtime._brand_hinted_entities_matching_live` matches "Cabana"
-        against the live table and strips it from the entities `tier_gate` reads
-        `query_brands` off (`tier_gate.py` ~207-223) BEFORE the gate ever runs -
-        `recompose()`'s own `if qb: ... else: allow_brands = ent_map["brands"]`
-        (its own comment: "Falling back to the full entitlement would answer a
-        Cabana ask with Sorento files") fires exactly because `qb` (query_brands)
-        is empty, not because the contact is actually entitled to Cabana.
+        Exercises the real `resolve_kinds` -> `resolve_gate.run` seam (`ResolveOutcome
+        .payload["gate"]`, the SAME raw dict `gate.py::run_gate` returns, which is
+        what an unheld-brand miss reply is composed from): a contact entitled ONLY to
+        "Sorento Dealer" asks about Cabana promotions, Cabana IS an active `Brand` in
+        the contact's own company. `gate["brand_gate_empty"]` must be `True`, the
+        gate's own `access_notice` must name "cabana", and `compatible_entities` must
+        be empty (no Sorento file/row leaked through as a fallback).
+
+        This was CONFIRMED red for the right reason before the coder's fix landed,
+        by temporarily reverting `resolve_kinds`'s own `is_order_domain` gate back to
+        an unconditional strip (`_brand_hinted_entities_matching_live(db, entities) if
+        True else []`) and restoring it exactly afterward: `brand_gate_empty` flipped
+        to `False` and `access_notice` went empty.
         """
         import uuid as _uuid
 
         from app.models.base import set_company_scope as _set_company_scope
 
         from app.services.chatbot import turn_runtime
-        from app.services.chatbot.lanes.business import tier_gate as tier_gate_mod
+        from app.services.chatbot.lanes.business import services as business_services
+        from app.services.chatbot.lanes.business.services import ResolveGateServices
 
         db = session_factory()
         _set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
@@ -398,24 +408,47 @@ class TestPromotionBrandGateFailsClosed:
         )
         db.commit()
 
-        entities = [
-            {"raw": "Cabana", "hint": "brand", "canonical_code": None, "current_message": True, "confident": True},
-        ]
-        matched = turn_runtime._brand_hinted_entities_matching_live(db, entities)
-        assert matched, "Cabana must match the live brand table (the precondition for the strip)"
+        def _resolve_entity(body: dict[str, Any]) -> dict[str, Any]:
+            asked = list(body.get("tokens") or [])
+            return {"tokens": asked, "resolutions": [], "unresolved_tokens": asked}
 
-        # The SAME strip `resolve_kinds` performs before calling `resolve_gate.run`.
-        stripped_entities = [e for e in entities if id(e) not in {id(m) for m in matched}]
-        assert stripped_entities == [], "Cabana was the only entity - the strip empties it"
-
-        result = tier_gate_mod.tier_gate(
-            {"name": ["Sorento Dealer"]},
-            parser={"entities": stripped_entities},
-            item={},
+        resolve_services = ResolveGateServices(
+            access_types=lambda **_: [{"name": "Sorento Dealer"}],
+            resolve_entity=validating_resolve_entity(_resolve_entity),
+            probe=lambda **_: None,
         )
-        assert result.get("brand_gate_empty") is True, (
-            f"a contact asking for an UNHELD live brand must still fail closed, even "
-            f"though the brand word was stripped upstream: {result!r}"
+        monkeypatch.setattr(
+            business_services, "production_services", lambda db, **kw: resolve_services
+        )
+
+        ctx = {
+            "contact": {"id": "zzt-s9-promo-gate"},
+            "parse": {
+                "output": {
+                    "domain_hint": "promotion",
+                    "entities": [
+                        {
+                            "raw": "Cabana", "hint": "brand", "canonical_code": None,
+                            "current_message": True, "confident": True,
+                        },
+                    ],
+                }
+            },
+            "session": {},
+        }
+        outcome = turn_runtime.resolve_kinds(
+            db, ctx=ctx, branch_kind="check_promotion", space_id=None, dry_run=True
+        )
+        gate = (outcome.payload or {}).get("gate") or {}
+
+        assert gate.get("brand_gate_empty") is True, (
+            f"a contact asking for an UNHELD live brand must still fail closed: {gate!r}"
+        )
+        assert "cabana" in (gate.get("access_notice") or "").lower(), (
+            f"the refusal must name the unheld brand: {gate.get('access_notice')!r}"
+        )
+        assert gate.get("compatible_entities") == [], (
+            f"no Sorento (or any other) row may leak through as a fallback: {gate!r}"
         )
 
     def test_brand_strip_is_order_domain_only(self, session_factory, monkeypatch) -> None:
@@ -480,17 +513,23 @@ class TestPromotionBrandGateFailsClosed:
 
 
 class TestUnlistedBrandNeverSelectsASubjectlessReport:
-    def test_unlisted_brand_word_does_not_select_a_subjectless_report(
+    def test_unlisted_brand_word_does_not_call_outstanding_report_unfiltered(
         self, session_factory
     ) -> None:
-        """`lanes/business/__init__.py` ~1337: `has_brand` counts ANY brand-hinted
-        entity from the parser, whether or not it ever matched a live brand - "brand
-        XYZ" (not a real brand, no other subject named) sets `has_brand = True` and
-        the outstanding-report override picks `crm_outstanding_report` anyway, with
-        no product, no customer and no resolvable brand id - the report then runs
-        completely unfiltered ("Customer: all", the exact shape AC-S2-3 exists to
-        stop for an unusable customer, now reachable through an unlisted brand word
-        instead).
+        """`lanes/business/__init__.py`'s `has_brand` counts ANY brand-hinted entity
+        from the parser, whether or not it ever matched a live brand - "brand XYZ"
+        (not a real brand, no other subject named) used to set `has_brand = True` and
+        pick `crm_outstanding_report` anyway, with no resolvable filter at all
+        (`recompose`/AC-S2-3's own "Customer: all" shape, reachable through an
+        unlisted brand word instead of an unusable customer). `has_brand` is now
+        `bool(semantic_input.get("outstanding_brand_ids"))` - resolved ids only - so
+        an unresolved brand word is correctly "no subject", and with no OTHER
+        subject either, the turn keeps today's plain order-list path
+        (`crm_order_management_orders_list`), the SAME carve-out
+        `test_outstanding_lane.py::TestToolPick::
+        test_outstanding_without_a_subject_keeps_order_list` already pins for a
+        subject-less outstanding ask in general - `crm_outstanding_report` must
+        never be the tool picked here.
         """
         from app.services.chatbot.lanes.business import run_fetch
         from app.services.chatbot.lanes.business.services import FetchServices
@@ -523,7 +562,37 @@ class TestUnlistedBrandNeverSelectsASubjectlessReport:
         }
         run_fetch(payload, services=FetchServices(mcp_call=_call))
 
-        assert captured == [], (
+        called_names = [name for name, _args in captured]
+        assert "crm_outstanding_report" not in called_names, (
             f"an unlisted brand word with no other subject must never reach "
             f"crm_outstanding_report unfiltered: {captured!r}"
+        )
+
+    def test_unlisted_brand_word_is_not_dropped_in_silence(
+        self, session_factory, monkeypatch
+    ) -> None:
+        """The other half: an unresolved brand word must still be NAMED in the
+        reply ("I could not find XYZ"), the same `unplaced`/`unresolved` line every
+        other unresolvable token already gets (turn/compose.py's own "a token
+        nobody could place is named, never dropped in silence" rule) - through a
+        real `engine.run_turn`, since that line is composed above `run_fetch`'s own
+        return shape.
+        """
+        from tests.chatbot.test_outstanding_lane import _run_turn
+
+        _seed_contact_scoped_to_sorento(session_factory)
+        qf = _parser_output(
+            domain_hint="order", intent_hint="check_order", order_status="outstanding",
+            entities=[
+                {"raw": "XYZ", "hint": "brand", "canonical_code": None, "current_message": True, "confident": True},
+            ],
+        )
+        result, _captured = _run_turn(
+            session_factory, monkeypatch,
+            qf=qf, text_body="outstanding brand XYZ", msg_id="ZZT-s9-unlisted-brand-silent-1",
+            attributes=["sales_orders.outstanding"], matches={},  # XYZ never resolves to anything
+        )
+        reply = (result.reply or {}).get("text") or ""
+        assert "XYZ" in reply, (
+            f"an unresolved brand word must be named, not silently dropped: {reply!r}"
         )
