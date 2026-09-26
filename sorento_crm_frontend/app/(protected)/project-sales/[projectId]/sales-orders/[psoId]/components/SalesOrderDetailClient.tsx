@@ -21,6 +21,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
 import {
   AlertDialog,
@@ -40,27 +41,27 @@ import {
   useAcknowledgeScheduleFinding,
   useProjectSalesOrder,
   useScheduleFindings,
+  useScheduleVersions,
   useSalesOrderDelete,
   useSalesOrderImportFile,
   useSalesOrderMutations,
   projectSalesOrdersPagerQuery,
 } from '../../../../_shared/hooks/useProjectSalesOrders';
-import { SalesOrderStockLocationBulkApply } from './SalesOrderStockLocationBulkApply';
 import { useProject } from '../../../../_shared/hooks/useProjects';
 import { useReviewOriginHref } from '../../../../_shared/hooks/useReviewOrigin';
 import { useOpenDivergenceForOrder } from '../../../../_shared/hooks/useSoDivergence';
-import type { ProjectSalesOrderFinding } from '../../../../_shared/types/projectSalesOrder.types';
+import {
+  buildFlagItems,
+  needsAttention,
+  publishBlockers,
+  type FlagItem,
+} from '../../../../_shared/lib/findings';
 import { DismissReasonDialog } from '../../../components/DismissReasonDialog';
-import { SalesOrderFindingsSection } from '../../../components/SalesOrderFindingsSection';
 import { SalesOrderLinesTable } from '../../../components/SalesOrderLinesTable';
-import { ScheduleFindingsSection } from '../../../components/ScheduleFindingsSection';
 import { formatMoney, sumMoney } from '../../../components/SalesOrderMoney';
 import { SalesOrderPublishDialog } from '../../../components/SalesOrderPublishDialog';
 import { SalesOrderRegroupDialog } from '../../../components/SalesOrderRegroupDialog';
-import {
-  GROUPING_ORIGIN_LABEL,
-  SalesOrderStatusPill,
-} from '../../../components/SalesOrderStatusPill';
+import { SalesOrderStatusPill } from '../../../components/SalesOrderStatusPill';
 import { ReviewStatePill } from '../../../../_shared/components/ReviewStatePill';
 import { AllocationPanel } from './AllocationPanel';
 import { useSalesOrderEditSession } from './useSalesOrderEditSession';
@@ -68,9 +69,11 @@ import { useSalesOrderEditSession } from './useSalesOrderEditSession';
 /**
  * One draft, reviewed rather than authored - and, once Edit is pressed, corrected.
  *
- * Order on the page follows what a reviewer has to decide: what this order is, what stops it
- * publishing, what merely needs a reason, then the 99 lines. Every section renders even when
- * it has nothing in it, because "no warnings" is information and a missing card is not.
+ * S7 (`mockups/sales-order-review.html`): the header says where the order came from and, under
+ * Publish, how many findings block it; then two tabs, Lines and AutoCount differences. Lines
+ * is ONE table: a finding is a Flag on the row it concerns, from this order or from the
+ * schedule it was split from, cleared with one Dismiss (R16, R20). No findings cards, no
+ * refusal banner, no Findings tab.
  *
  * READ AND EDIT ARE THE SAME SCREEN. Pressing Edit changes no section, moves no field and
  * hides nothing: the header keeps its identity block, "This sales order" keeps all nine
@@ -119,11 +122,14 @@ export function SalesOrderDetailClient({
     salesOrder.data?.purchase_order_id,
     salesOrder.data?.schedule_version_id,
   );
+  // Only for the PO version the header names: the schedule version this order was split from
+  // records which PO version it was reconciled against.
+  const scheduleVersions = useScheduleVersions(salesOrder.data?.purchase_order_id ?? undefined);
 
-  const [acknowledging, setAcknowledging] = React.useState<ProjectSalesOrderFinding | null>(null);
+  const [dismissing, setDismissing] = React.useState<FlagItem | null>(null);
+  const [tab, setTab] = React.useState<'lines' | 'autocount' | null>(null);
   const [regrouping, setRegrouping] = React.useState(false);
   const [publishing, setPublishing] = React.useState(false);
-  const [focusLineId, setFocusLineId] = React.useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = React.useState(false);
   const [confirmUnpublish, setConfirmUnpublish] = React.useState(false);
   const [confirmRemovals, setConfirmRemovals] = React.useState(false);
@@ -215,16 +221,44 @@ export function SalesOrderDetailClient({
   const findings = so.findings ?? [];
   const lines = so.lines ?? [];
 
-  // Acknowledged is `acknowledged_at`, which is what the backend's own gate reads. The
-  // name beside it is a display field and is absent whenever the acknowledger no longer
-  // resolves, which would silently turn a cleared finding back into a blocking one.
-  const blocking = findings.filter(
-    (finding) => finding.severity === 'hard' && !finding.acknowledged_at,
-  );
+  // The one rule the server's own gate applies (owner lesson (e)): the count under Publish,
+  // the dialog's refusal and the Need attention rows are all read off this.
+  const blocking = publishBlockers(findings);
   const unacknowledgedWarnings = findings.filter(
     (finding) => finding.severity === 'warn' && !finding.acknowledged_at,
   );
   const isPublished = so.status === 'published' || so.status === 'amended';
+  const flagItems = buildFlagItems(findings, scheduleFindings.data ?? []);
+  const anythingOpen = flagItems.some(needsAttention);
+  // S7-2: Lines while anything is open or the order is not in AutoCount yet; otherwise the
+  // AutoCount comparison is the work left, until the reader picks a tab themselves.
+  const activeTab = tab ?? (anythingOpen || !isPublished ? 'lines' : 'autocount');
+  const poVersionNo = scheduleVersions.data?.find(
+    (version) => version.id === so.schedule_version_id,
+  )?.po_version_no;
+  const canDismiss =
+    canEdit && !edit.isEditing
+      ? (item: FlagItem) =>
+          // A published order's own findings are the server's to refuse; a schedule's are not
+          // any one order's, so they stay dismissable from here.
+          !isPublished || item.members.every((member) => member.source === 'schedule')
+      : null;
+
+  /**
+   * One reason, every open finding the item stands for, each through its own endpoint. Calls run
+   * one after another, so a failed second call leaves the first acknowledged: the refetch then
+   * shows the rest as an open item of its own, dismissable again, and nothing is lost.
+   */
+  async function dismissItem(item: FlagItem, reason: string) {
+    for (const member of item.members) {
+      if (member.finding.acknowledged_at) continue;
+      if (member.source === 'schedule') {
+        await acknowledgeScheduleFinding.mutateAsync({ findingId: member.finding.id, reason });
+      } else {
+        await acknowledge.mutateAsync({ findingId: member.finding.id, reason });
+      }
+    }
+  }
   // The route's own gate: draft, blocked (on a finding) or ready to publish. Narrower than
   // `!isPublished` alone, because `awaiting_costing` (sponsorship) is neither published nor
   // reorderable - the server 409s it, so the handle is not offered for it either.
@@ -306,12 +340,43 @@ export function SalesOrderDetailClient({
               </Badge>
             )}
           </div>
+          {/* S7-1: where the order came from, and Activity as a plain link rather than a tab. */}
           <p className="mt-1 text-sm text-muted-foreground break-words">
             {[
-              shown.area_group || 'No area group',
-              GROUPING_ORIGIN_LABEL[so.grouping_origin] ?? so.grouping_origin,
-              so.po_number ? `Customer PO ${so.po_number}` : 'No customer PO recorded',
-            ].join(' · ')}
+              project.data?.title
+                ? project.data.project_code
+                  ? `${project.data.title} (${project.data.project_code})`
+                  : project.data.title
+                : null,
+              `Area group ${shown.area_group || '-'}`,
+              `Customer PO ${so.po_number || '-'}${poVersionNo ? ` v${poVersionNo}` : ''}`,
+              so.stock_location ? `Stock location ${so.stock_location}` : null,
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+            {/* PR #1264 note 3: derived from the sales agent's location group, never picked.
+                When a link in that chain is missing it is a flag naming the link, not a
+                picker. */}
+            {!so.stock_location && so.stock_location_gap && (
+              <>
+                {' · '}
+                <Badge
+                  variant="warning"
+                  appearance="light"
+                  size="sm"
+                  title={so.stock_location_gap}
+                >
+                  No stock location
+                </Badge>
+              </>
+            )}
+            {' · '}
+            <Link
+              href={`/project-sales/${projectId}?tab=activity`}
+              className="text-primary hover:underline"
+            >
+              View activity
+            </Link>
           </p>
           {edit.isEditing && (
             <p className="mt-1 text-xs text-muted-foreground">
@@ -484,10 +549,18 @@ export function SalesOrderDetailClient({
                   answer AutoCount on a published order, and - for a reader who can do neither -
                   read the order as AutoCount will. */}
               {canEdit && !isPublished ? (
-                <Button type="button" size="sm" onClick={() => setPublishing(true)}>
-                  <Send className="size-4" aria-hidden />
-                  Publish
-                </Button>
+                <span className="inline-flex flex-col items-end gap-1">
+                  <Button type="button" size="sm" onClick={() => setPublishing(true)}>
+                    <Send className="size-4" aria-hidden />
+                    Publish
+                  </Button>
+                  {/* S7-1: the gate, stated once, where the refusal banner used to stand. */}
+                  {blocking.length > 0 && (
+                    <span className="text-xs text-destructive">
+                      {`${blocking.length} block${blocking.length === 1 ? 's' : ''} publish`}
+                    </span>
+                  )}
+                </span>
               ) : isPublished ? (
                 <Button asChild size="sm">
                   <Link href={`/project-sales/${projectId}/sales-orders/${psoId}/divergence`}>
@@ -509,35 +582,6 @@ export function SalesOrderDetailClient({
         )}
       </div>
 
-      {/* Above the summary, because it changes what the reviewer is allowed to do with
-          everything below it. */}
-      {divergence && (
-        <div
-          className="rounded-lg border border-amber-500/50 bg-amber-500/5 px-4 py-3 text-sm"
-          role="status"
-        >
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div className="min-w-0">
-              <span className="font-semibold text-amber-700 dark:text-amber-400">
-                {`AutoCount disagrees on ${divergence.differing_count} row${divergence.differing_count === 1 ? '' : 's'}.`}
-              </span>{' '}
-              <span className="text-muted-foreground break-words">
-                Our values are unchanged, and amendments are blocked until each row is
-                answered.
-                {divergence.age_days > 0
-                  ? ` Waiting ${divergence.age_days} day${divergence.age_days === 1 ? '' : 's'}.`
-                  : ''}
-              </span>
-            </div>
-            <Button asChild size="sm" className="shrink-0">
-              <Link href={`/project-sales/${projectId}/sales-orders/${psoId}/divergence`}>
-                Reconcile
-              </Link>
-            </Button>
-          </div>
-        </div>
-      )}
-
       <Card>
         <CardHeader>
           <CardTitle className="text-sm">This sales order</CardTitle>
@@ -549,7 +593,7 @@ export function SalesOrderDetailClient({
               counterpart and is why it belongs in this strip rather than in a form. */}
           <Field
             label="Area group"
-            value={shown.area_group || 'No area group'}
+            value={shown.area_group || '-'}
             editing={edit.isEditing}
             editValue={shown.area_group ?? ''}
             placeholder="e.g. TOWER"
@@ -561,110 +605,93 @@ export function SalesOrderDetailClient({
           <Field label="Value" value={formatMoney(so.total_amount)} />
           <Field
             label="Sum of the lines"
-            value={lines.length > 0 ? formatMoney(lineSum) : 'No lines loaded'}
+            value={lines.length > 0 ? formatMoney(lineSum) : '-'}
           />
           <Field
             label="Drafted"
-            value={so.created_at ? formatDateInMalaysia(so.created_at) : 'Unknown'}
+            value={so.created_at ? formatDateInMalaysia(so.created_at) : '-'}
           />
           <Field
             label="Published"
-            value={so.published_at ? formatDateInMalaysia(so.published_at) : 'Not published yet'}
+            value={so.published_at ? formatDateInMalaysia(so.published_at) : '-'}
           />
           <Field
             label="AutoCount document"
-            value={so.autocount_doc_no || 'Not adopted yet'}
+            value={so.autocount_doc_no || '-'}
           />
-          <Field label="Reference we raised" value={so.provisional_ref} />
+          <Field label="Reference we raised" value={so.provisional_ref || '-'} />
         </CardContent>
       </Card>
 
-      {blocking.length > 0 && !isPublished && (
-        <div
-          className="rounded-lg border border-destructive/50 bg-destructive/5 px-4 py-3 text-sm"
-          role="status"
-        >
-          <span className="font-semibold text-destructive">
-            {`Publishing is refused: ${blocking.length} finding${
-              blocking.length === 1 ? '' : 's'
-            } must be fixed or overridden.`}
-          </span>
-        </div>
-      )}
+      <Tabs value={activeTab} onValueChange={(value) => setTab(value as 'lines' | 'autocount')}>
+        <TabsList aria-label="Sales order sections">
+          <TabsTrigger value="lines">Lines</TabsTrigger>
+          <TabsTrigger value="autocount">
+            {divergence
+              ? `AutoCount differences (${divergence.differing_count})`
+              : 'AutoCount differences'}
+          </TabsTrigger>
+        </TabsList>
 
-      <SalesOrderFindingsSection
-        findings={findings}
-        canEdit={canEdit && !isPublished}
-        onAcknowledge={setAcknowledging}
-        onFocusLine={setFocusLineId}
-      />
+        <TabsContent value="lines" className="min-w-0 space-y-3">
+          <SalesOrderLinesTable
+            lines={lines}
+            findings={findings}
+            flagItems={flagItems}
+            canDismiss={canDismiss}
+            onDismiss={setDismissing}
+            defaultNeedsAttention={!isPublished}
+            reference={reference}
+            // The same section either way. With a session open the card keeps its heading and
+            // its counts and the table inside becomes a spreadsheet; the columns are the same
+            // in the same order.
+            editing={
+              edit.isEditing
+                ? {
+                    staged: edit.staged,
+                    seed: edit.seed,
+                    stage: edit.stage,
+                    toggleRemoved: edit.toggleRemoved,
+                  }
+                : null
+            }
+            // A drop writes immediately on the stored order (PR #1264 note 2: no toggle), so the
+            // handles are only drawn while there is no edit session for it to race (a staged,
+            // unsaved new row has no id the reorder route could place).
+            reorder={
+              canEdit && isReorderableStatus && !edit.isEditing
+                ? { enabled: true, onReorder: (lineIds) => reorderLines.mutate(lineIds) }
+                : undefined
+            }
+          />
 
-      <ScheduleFindingsSection
-        findings={scheduleFindings.data ?? []}
-        canEdit={canEdit}
-        onAcknowledge={(findingId, reason) =>
-          acknowledgeScheduleFinding.mutateAsync({ findingId, reason })
-        }
-      />
+          {/* Where each line's stock comes from: a question only once the order is published,
+              so a draft's Lines tab stays one table (R16). */}
+          {isPublished && <AllocationPanel psoId={psoId} />}
+        </TabsContent>
 
-      {/* Standalone, like "Move lines" beside it: writes immediately on the stored order, so
-          it is offered whether or not an edit session happens to be open. Only while the
-          order may still be corrected - the same rule the lines' own Stock location cell
-          follows. */}
-      {canEdit && !isPublished && !edit.isEditing && (
-        <SalesOrderStockLocationBulkApply
-          projectId={projectId}
-          psoId={psoId}
-          lines={lines}
-          reference={reference}
-        />
-      )}
+        <TabsContent value="autocount" className="min-w-0">
+          <AutoCountDifferencesSummary
+            isPublished={isPublished}
+            differingCount={divergence?.differing_count ?? 0}
+            ageDays={divergence?.age_days ?? 0}
+            reconcileHref={
+              divergence ? `/project-sales/${projectId}/sales-orders/${psoId}/divergence` : null
+            }
+          />
+        </TabsContent>
+      </Tabs>
 
-      <SalesOrderLinesTable
-        lines={lines}
-        findings={findings}
-        focusLineId={focusLineId}
-        onClearFocus={() => setFocusLineId(null)}
-        reference={reference}
-        // The same section either way. With a session open the card keeps its heading and its
-        // counts and the table inside becomes a spreadsheet; the columns are the same eleven
-        // in the same order.
-        editing={
-          edit.isEditing
-            ? {
-                staged: edit.staged,
-                seed: edit.seed,
-                stage: edit.stage,
-                toggleRemoved: edit.toggleRemoved,
-              }
-            : null
-        }
-        // Standalone, like Move lines and the stock-location bulk apply beside it: writes
-        // immediately on the stored order, so it is only offered while there is no
-        // in-progress edit session for it to race (a staged, unsaved new row has no id the
-        // reorder route could place).
-        reorder={
-          canEdit && isReorderableStatus && !edit.isEditing
-            ? { enabled: true, onReorder: (lineIds) => reorderLines.mutate(lineIds) }
-            : undefined
-        }
-      />
-
-      {/* Re-mounted 19 Aug 2026 evening (PLAN-demo-followups-19aug-ladder-v2 D1): the captain
-          now wants to review plans, and this is the per-order half of that - the Plans page
-          is the cross-order list. */}
-      <AllocationPanel psoId={psoId} />
-
-      {acknowledging && (
+      {dismissing && (
         <DismissReasonDialog
-          severity={acknowledging.severity}
-          detail={acknowledging.detail}
-          ids={[acknowledging.id]}
-          submitting={acknowledge.isPending}
-          onDone={() => setAcknowledging(null)}
-          onDismiss={(_ids, reason) =>
-            acknowledge.mutateAsync({ findingId: acknowledging.id, reason })
-          }
+          severity={dismissing.severity}
+          detail={Array.from(new Set(dismissing.members.map((m) => m.finding.detail))).join(' ')}
+          ids={dismissing.members
+            .filter((member) => !member.finding.acknowledged_at)
+            .map((member) => member.finding.id)}
+          submitting={acknowledge.isPending || acknowledgeScheduleFinding.isPending}
+          onDone={() => setDismissing(null)}
+          onDismiss={(_ids, reason) => dismissItem(dismissing, reason)}
         />
       )}
 
@@ -773,6 +800,48 @@ export function SalesOrderDetailClient({
         onSuccess={() => router.push(`/project-sales/${projectId}?tab=sales-orders`)}
         successMessage="Sales order deleted"
       />
+    </div>
+  );
+}
+
+/**
+ * The AutoCount differences tab (S7-2): how many rows AutoCount disagrees on and the way to
+ * answer them. The row-by-row comparison stays its own page; this tab is where it is reached.
+ */
+function AutoCountDifferencesSummary({
+  isPublished,
+  differingCount,
+  ageDays,
+  reconcileHref,
+}: {
+  isPublished: boolean;
+  differingCount: number;
+  ageDays: number;
+  reconcileHref: string | null;
+}) {
+  if (!reconcileHref) {
+    return (
+      <div className="rounded-lg border border-dashed border-border px-6 py-10 text-center">
+        <h3 className="text-sm font-semibold">
+          {isPublished ? 'No AutoCount differences' : 'Not in AutoCount yet'}
+        </h3>
+      </div>
+    );
+  }
+  return (
+    <div
+      className="flex flex-col gap-2 rounded-lg border border-amber-500/50 bg-amber-500/5 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between"
+      role="status"
+    >
+      <span className="min-w-0 break-words">
+        <span className="font-semibold text-amber-700 dark:text-amber-400">
+          {`AutoCount disagrees on ${differingCount} row${differingCount === 1 ? '' : 's'}.`}
+        </span>
+        {ageDays > 0 ? ` Waiting ${ageDays} day${ageDays === 1 ? '' : 's'}.` : ''}
+      </span>
+      <Button asChild size="sm" className="shrink-0">
+        <Link href={reconcileHref}>Reconcile</Link>
+      </Button>
     </div>
   );
 }

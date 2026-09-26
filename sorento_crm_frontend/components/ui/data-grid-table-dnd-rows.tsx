@@ -44,7 +44,14 @@ function DataGridTableDndRowHandle({ rowId }: { rowId: string }) {
   });
 
   return (
-    <Button variant="dim" size="sm" className="size-7" {...attributes} {...listeners}>
+    <Button
+      variant="dim"
+      size="sm"
+      className="size-7"
+      aria-label="Drag to reorder"
+      {...attributes}
+      {...listeners}
+    >
       <GripHorizontal />
     </Button>
   );

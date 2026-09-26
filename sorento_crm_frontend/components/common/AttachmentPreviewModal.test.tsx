@@ -5,6 +5,11 @@ import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
 } from './AttachmentPreviewModal';
 import { toast } from '@/lib/toast';
+import { fakePdfJs } from '@/test-utils/fakePdfJs';
+
+vi.mock('@/components/common/pdf-viewer/pdfjs', async () =>
+  (await import('@/test-utils/fakePdfJs')).fakePdfJsModule,
+);
 
 // apiFetch is only used by the Excel branch (same-origin byte fetch).
 const apiFetchMock = vi.fn();
@@ -48,6 +53,7 @@ const other: AttachmentPreviewItem = {
 
 // embla-carousel touches matchMedia + ResizeObserver, absent in jsdom.
 beforeEach(() => {
+  fakePdfJs.reset();
   apiFetchMock.mockReset();
   if (!window.matchMedia) {
     window.matchMedia = vi.fn().mockImplementation((query: string) => ({
@@ -114,10 +120,54 @@ describe('AttachmentPreviewModal', () => {
     expect(v?.getAttribute('src')).toBe('https://cdn.example.com/clip.mp4');
   });
 
-  it('mounts an <iframe> for the active pdf slide', () => {
+  it('draws the active pdf slide in the themed viewer, not an iframe', async () => {
     render(<AttachmentPreviewModal open onOpenChange={() => {}} items={[pdf]} />);
-    const frame = document.body.querySelector('iframe');
-    expect(frame?.getAttribute('src')).toBe('https://cdn.example.com/doc.pdf');
+    expect(await screen.findByRole('group', { name: 'doc.pdf page 1' })).toBeInTheDocument();
+    expect(document.body.querySelector('iframe')).toBeNull();
+    // No byte route: the url is read directly.
+    expect(fakePdfJs.getDocument).toHaveBeenCalledWith(
+      expect.objectContaining({ url: 'https://cdn.example.com/doc.pdf' }),
+    );
+    // The header carries Open and Download; the viewer does not repeat them.
+    expect(screen.queryByRole('button', { name: 'Download' })).toBeNull();
+  });
+
+  it('does not scroll the pdf slide wrapper itself - the viewer already scrolls its own pages (PR #1256 review, nit 8)', async () => {
+    render(<AttachmentPreviewModal open onOpenChange={() => {}} items={[pdf]} />);
+    const group = await screen.findByRole('group', { name: 'doc.pdf page 1' });
+    const slideWrapper = group.closest('.max-h-\\[80vh\\]');
+    expect(slideWrapper).not.toBeNull();
+    expect(slideWrapper).toHaveClass('overflow-hidden');
+    expect(slideWrapper).not.toHaveClass('overflow-auto');
+  });
+
+  it('still scrolls an image slide, to pan it when zoomed', () => {
+    render(<AttachmentPreviewModal open onOpenChange={() => {}} items={[img]} />);
+    const el = screen.getByAltText('photo.jpg');
+    const slideWrapper = el.closest('.max-h-\\[80vh\\]');
+    expect(slideWrapper).toHaveClass('overflow-auto');
+  });
+
+  it('reads a pdf with a byte route through fetchBytes, since the CDN url sends no CORS headers', async () => {
+    const fetchBytes = vi.fn(async () => ({
+      ok: true,
+      arrayBuffer: async () => new ArrayBuffer(4),
+    }) as unknown as Response);
+    const withRoute = { ...pdf, downloadUrl: '/api/v1/resource-management/attachments/c/download' };
+    render(
+      <AttachmentPreviewModal open onOpenChange={() => {}} items={[withRoute]} fetchBytes={fetchBytes} />,
+    );
+    expect(await screen.findByRole('group', { name: 'doc.pdf page 1' })).toBeInTheDocument();
+    expect(fetchBytes).toHaveBeenCalledWith(withRoute);
+    expect(fakePdfJs.getDocument.mock.calls[0][0]).not.toHaveProperty('url');
+  });
+
+  it('draws a pdf with only a byte route, where it used to offer a download instead', async () => {
+    apiFetchMock.mockResolvedValue({ ok: true, arrayBuffer: async () => new ArrayBuffer(4) });
+    const routeOnly = { ...pdf, url: '', downloadUrl: '/api/v1/resource-management/attachments/c/download' };
+    render(<AttachmentPreviewModal open onOpenChange={() => {}} items={[routeOnly]} />);
+    expect(await screen.findByRole('group', { name: 'doc.pdf page 1' })).toBeInTheDocument();
+    expect(apiFetchMock).toHaveBeenCalledWith('/api/v1/resource-management/attachments/c/download');
   });
 
   it('shows a download fallback for unpreviewable types', () => {
