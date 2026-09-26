@@ -6,6 +6,11 @@ filters through `ListQueryFilterDialog`, driven entirely by the DB-seeded
 `list_query_fields` catalog. `discontinued_at` is not a new column - it reads
 `products.discontinued_notified_at` via `compile_key`.
 
+Export only (`filterable = false`): the advanced-filter compiler compares the raw
+naive-UTC stamp to a bare date with no Malaysia-day conversion, so offering the field
+there would contradict the Filters popover range (`discontinued_from` /
+`discontinued_to`), which is the one filter for this date.
+
 Revision ID: prod_discontinued_at_flt
 Revises: sales_0002_team_leader
 """
@@ -48,6 +53,16 @@ def seed(conn) -> bool:
         {"rid": rid, "fk": _FIELD_KEY},
     ).fetchone()
     if exists:
+        # A database that ran this migration's first cut carries the row with
+        # `filterable = true`; flip it so a re-run (bootstrap replay, downgrade/upgrade)
+        # converges on the same export-only row a fresh insert writes.
+        conn.execute(
+            sa.text(
+                "UPDATE list_query_fields SET filterable = false "
+                "WHERE resource_id = CAST(:rid AS uuid) AND field_key = :fk AND filterable"
+            ),
+            {"rid": rid, "fk": _FIELD_KEY},
+        )
         return False
     conn.execute(
         sa.text(
@@ -59,7 +74,7 @@ def seed(conn) -> bool:
             )
             VALUES (
                 CAST(:id AS uuid), CAST(:rid AS uuid), :fk, :label, 'date',
-                'product.discontinued_notified_at', CAST(:ops AS jsonb), true, true, :exp,
+                'product.discontinued_notified_at', CAST(:ops AS jsonb), false, true, :exp,
                 false, :so
             )
             """

@@ -125,7 +125,7 @@ def _ensure_products_discontinued_at_field(conn) -> None:
             )
             SELECT gen_random_uuid(), r.id, 'discontinued_at', 'Discontinued at', 'date',
                    'product.discontinued_notified_at', CAST('["eq","gt","gte","lt","lte","is_null"]' AS jsonb),
-                   true, true, 'Discontinued at', false, 98
+                   false, true, 'Discontinued at', false, 98
             FROM list_query_resources r
             WHERE r.resource_key = 'products'
               AND NOT EXISTS (
@@ -374,6 +374,45 @@ def test_export_catalog_has_discontinued_at_field(scm_app):
     assert field.label == "Discontinued at"
     assert field.data_type == "date"
     assert field.export_column_name == "Discontinued at"
+    # Export only: the Filters popover range is the one filter for this date. A
+    # filterable row would offer a second "Discontinued at" in Actions > Advanced
+    # filters, whose compiler has no Malaysia-day conversion (reviewer S1).
+    assert field.filterable is False, (
+        "discontinued_at must not be offered in advanced filters"
+    )
+
+
+def test_seed_flips_an_already_seeded_filterable_row(db):
+    """A database that ran the first cut of `prod_discontinued_at_flt` carries the row
+    with `filterable = true`; replaying `seed()` (bootstrap, downgrade/upgrade) must leave
+    it export-only, without inserting a duplicate."""
+    import importlib.util
+    from pathlib import Path
+
+    _ensure_products_discontinued_at_field(db)
+    db.execute(
+        text(
+            "UPDATE list_query_fields SET filterable = true "
+            "WHERE field_key = 'discontinued_at' AND resource_id = "
+            "(SELECT id FROM list_query_resources WHERE resource_key = 'products')"
+        )
+    )
+    db.flush()
+
+    path = Path(__file__).resolve().parent.parent / "alembic" / "versions" / "prod_discontinued_at_flt.py"
+    spec = importlib.util.spec_from_file_location("_seed_prod_discontinued_at_flt", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    assert module.seed(db.connection()) is False
+    rows = db.execute(
+        text(
+            "SELECT f.filterable, f.exportable FROM list_query_fields f "
+            "JOIN list_query_resources r ON r.id = f.resource_id "
+            "WHERE r.resource_key = 'products' AND f.field_key = 'discontinued_at'"
+        )
+    ).fetchall()
+    assert [(r.filterable, r.exportable) for r in rows] == [(False, True)]
 
 
 # --------------------------------------------------------------------------------------- #
