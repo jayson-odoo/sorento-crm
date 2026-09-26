@@ -53,10 +53,14 @@ def _contact(db, ws, phone: str) -> RespondContact:
     return c
 
 
-def _user(db, *, phone=None, contact_id=None, status="ACTIVE", is_trashed=False, email=None) -> User:
+def _user(
+    db, *, phone=None, contact_id=None, status="ACTIVE", is_trashed=False,
+    is_integration=False, email=None,
+) -> User:
     u = User(
         id=str(uuid.uuid4()), email=email, name="ZZT User", status=status,
-        is_trashed=is_trashed, contact_number=phone, respond_contact_id=contact_id,
+        is_trashed=is_trashed, is_integration=is_integration,
+        contact_number=phone, respond_contact_id=contact_id,
     )
     db.add(u)
     db.commit()
@@ -563,3 +567,171 @@ def test_note_password_over_72_bytes_is_422_not_500(rate_limit_cleanup):
             )
 
     assert resp.status_code == 422, resp.text
+
+
+# --------------------------------------------------------------------------- #
+# Kill-test round 2 (captain, d8bf43f9): survivors 8, 10, 15.                  #
+#                                                                              #
+# Each of these passes on CURRENT code with no implementation change; kill    #
+# evidence (the mutation described in the docstring, applied to a /tmp        #
+# cp-backup of the file and restored from that backup - never `git           #
+# checkout`) is reported alongside the test run, not encoded here.            #
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    "bad_state",
+    [
+        {"status": "INACTIVE"},
+        {"status": "BLOCKED"},
+        {"is_trashed": True},
+        {"is_integration": True},
+    ],
+    ids=["inactive", "blocked", "trashed", "integration"],
+)
+def test_survivor10_dispatch_creates_no_code_for_an_ineligible_users_number(bad_state):
+    """Kill target: `dispatch_phone_signin_code` resolving the number with a
+    plain `RespondContact` lookup by phone instead of `find_eligible` would
+    send a code regardless of the linked user's own eligibility. Real DB
+    (mirrors the AC-22/S1 task-level tests): `dispatch_phone_signin_code`
+    opens its own `SessionLocal`, invisible to a `blank_session` fixture."""
+    from app.database import SessionLocal
+    from app.tasks.respond_io_tasks import dispatch_phone_signin_code
+
+    db = SessionLocal()
+    ws = contact = user = None
+    try:
+        ws = _workspace(db)
+        digits = _digits()
+        contact = _contact(db, ws, digits)
+        user = _user(
+            db, phone=digits, contact_id=contact.id,
+            email=f"{unique_code('surv10')}@x.com".lower(), **bad_state,
+        )
+
+        with patch("app.tasks.respond_io_tasks.send_login_otp_respond_message") as mock_send:
+            dispatch_phone_signin_code(digits)
+
+        assert mock_send.call_count == 0
+        assert db.query(PortalOtpCode).filter(PortalOtpCode.contact_id == contact.id).count() == 0
+    finally:
+        if contact is not None:
+            db.query(PortalOtpCode).filter(PortalOtpCode.contact_id == contact.id).delete(
+                synchronize_session=False
+            )
+        if user is not None:
+            db.query(User).filter(User.id == user.id).delete(synchronize_session=False)
+        if contact is not None:
+            db.query(RespondContact).filter(RespondContact.id == contact.id).delete(
+                synchronize_session=False
+            )
+        if ws is not None:
+            db.query(RespondWorkspace).filter(RespondWorkspace.id == ws.id).delete(
+                synchronize_session=False
+            )
+        db.commit()
+        db.close()
+
+
+def test_survivor10_dispatch_creates_no_code_for_a_contact_with_no_linked_user():
+    """Same kill target as above, for the "no `find_eligible` at all" shape
+    of the mutation: a contact that no user links to at all must get no code
+    from a plain phone lookup either."""
+    from app.database import SessionLocal
+    from app.tasks.respond_io_tasks import dispatch_phone_signin_code
+
+    db = SessionLocal()
+    ws = contact = None
+    try:
+        ws = _workspace(db)
+        digits = _digits()
+        contact = _contact(db, ws, digits)  # no user links to this contact at all
+        # dispatch_phone_signin_code opens its OWN SessionLocal (a different
+        # connection) - a flush alone is invisible there; must commit.
+        db.commit()
+
+        with patch("app.tasks.respond_io_tasks.send_login_otp_respond_message") as mock_send:
+            dispatch_phone_signin_code(digits)
+
+        assert mock_send.call_count == 0
+        assert db.query(PortalOtpCode).filter(PortalOtpCode.contact_id == contact.id).count() == 0
+    finally:
+        if contact is not None:
+            db.query(PortalOtpCode).filter(PortalOtpCode.contact_id == contact.id).delete(
+                synchronize_session=False
+            )
+            db.query(RespondContact).filter(RespondContact.id == contact.id).delete(
+                synchronize_session=False
+            )
+        if ws is not None:
+            db.query(RespondWorkspace).filter(RespondWorkspace.id == ws.id).delete(
+                synchronize_session=False
+            )
+        db.commit()
+        db.close()
+
+
+def test_survivor15_attempt_verify_refuses_when_consume_reserved_loses_the_race(rate_limit_cleanup):
+    """Kill target: `attempt_verify` ignoring `consume_reserved`'s return
+    value would mint a session even when a parallel verify already consumed
+    the row first. Forces that race deterministically by monkeypatching
+    `PortalService.consume_reserved` to report a lost race (`False`) right
+    after a genuinely correct code has been reserved and compared."""
+    from app.models.user_session import UserSession
+    from app.services.phone_signin_service import attempt_verify
+
+    with blank_session() as db:
+        ws, contact, user, digits = _eligible_chain(db)
+        rate_limit_cleanup.append(digits)
+        code = _seed_signin_code(db, contact)
+
+        sessions_before = db.query(UserSession).filter(UserSession.user_id == user.id).count()
+
+        with patch.object(PortalService, "consume_reserved", return_value=False):
+            result = attempt_verify(db, digits, code, user_agent=None, ip_address=None)
+
+        assert result is None
+        sessions_after = db.query(UserSession).filter(UserSession.user_id == user.id).count()
+        assert sessions_after == sessions_before
+
+
+def test_survivor8_password_change_revokes_current_users_sessions_not_get_actor_user_ids(
+    rate_limit_cleanup,
+):
+    """Kill target: revoking `get_actor_user_id(request, current_user)`'s
+    sessions instead of `current_user["id"]`'s would revoke the WRONG
+    person's other devices whenever the two differ. Patches
+    `get_actor_user_id` AS IMPORTED IN `app.api.v1.auth` (not its definition
+    module) to a different user id, so a route that still consulted it would
+    revoke that OTHER user's sessions instead of the acting user's own."""
+    from app.models.user_session import UserSession
+    from app.services.user_session_service import mint_session
+
+    with blank_session() as db:
+        acting_user = _user(db, email=f"{unique_code('actor')}@x.com".lower())
+        acting_user.password = _hash_password("original-password-123")
+        other_user = _user(db, email=f"{unique_code('other')}@x.com".lower())
+        db.commit()
+
+        current_session = mint_session(db, acting_user.id, remember=True, auth_method="password")
+        acting_other_session = mint_session(db, acting_user.id, remember=True, auth_method="password")
+        other_user_session = mint_session(db, other_user.id, remember=True, auth_method="password")
+
+        with _client_ctx(db) as client, patch(
+            "app.api.v1.auth.get_actor_user_id", return_value=other_user.id
+        ):
+            resp = client.post(
+                "/api/v1/auth/password",
+                json={
+                    "current_password": "original-password-123",
+                    "new_password": "new-password-123",
+                },
+                headers={"Authorization": f"Bearer {current_session.token}"},
+            )
+
+        assert resp.status_code == 200, resp.text
+        current_row = db.query(UserSession).filter(UserSession.id == current_session.id).one()
+        acting_other_row = db.query(UserSession).filter(UserSession.id == acting_other_session.id).one()
+        other_user_row = db.query(UserSession).filter(UserSession.id == other_user_session.id).one()
+
+        assert current_row.revoked_at is None
+        assert acting_other_row.revoked_at is not None
+        assert other_user_row.revoked_at is None
