@@ -1,0 +1,524 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Samantha Chat Diagnosis</title>
+<style>
+:root {
+  --bg: #f7f7f5; --surface: #ffffff; --ink: #1d1d1f; --muted: #5f6368; --line: #e3e3e0;
+  --red: #b3261e; --red-bg: #fdecea; --amber: #8a5a00; --amber-bg: #fff4dc;
+  --green: #1e6b3a; --green-bg: #e7f5ec; --blue: #1f4e99; --blue-bg: #e8effb;
+  --code-bg: #f1f1ee; --grey-bg: #f0f0ee;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #141416; --surface: #1d1d20; --ink: #ececec; --muted: #a3a3a8; --line: #33333a;
+    --red: #ff8a80; --red-bg: #3a1e1c; --amber: #ffcc66; --amber-bg: #382c12;
+    --green: #7fd69b; --green-bg: #17301f; --blue: #9dbcf5; --blue-bg: #1b2740;
+    --code-bg: #26262b; --grey-bg: #25252a;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #141416; --surface: #1d1d20; --ink: #ececec; --muted: #a3a3a8; --line: #33333a;
+  --red: #ff8a80; --red-bg: #3a1e1c; --amber: #ffcc66; --amber-bg: #382c12;
+  --green: #7fd69b; --green-bg: #17301f; --blue: #9dbcf5; --blue-bg: #1b2740;
+  --code-bg: #26262b; --grey-bg: #25252a;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--ink);
+  font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+main { max-width: 980px; margin: 0 auto; padding: 24px 16px 64px; }
+h1 { font-size: 26px; line-height: 1.25; margin: 0 0 6px; }
+h2 { font-size: 20px; margin: 44px 0 12px; padding-top: 8px; border-top: 1px solid var(--line); }
+h3 { font-size: 16px; margin: 20px 0 8px; }
+p { margin: 8px 0; }
+.sub { color: var(--muted); margin: 0 0 16px; }
+code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px;
+  background: var(--code-bg); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+small.ref { display: block; color: var(--muted); font-size: 12px; margin-top: 4px; overflow-wrap: anywhere; }
+small.ref code { font-size: 11.5px; }
+nav.toc { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; }
+nav.toc ol { margin: 4px 0; padding-left: 20px; }
+nav.toc a { color: var(--blue); text-decoration: none; }
+.box { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin: 12px 0; }
+.box.rule { border-left: 4px solid var(--blue); }
+.box.warn { border-left: 4px solid var(--amber); background: var(--amber-bg); }
+.legend { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.pill { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 999px; white-space: nowrap; }
+.pill.red { background: var(--red-bg); color: var(--red); }
+.pill.amber { background: var(--amber-bg); color: var(--amber); }
+.pill.green { background: var(--green-bg); color: var(--green); }
+.pill.grey { background: var(--grey-bg); color: var(--muted); }
+.pill.blue { background: var(--blue-bg); color: var(--blue); }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; margin: 16px 0; overflow: hidden; }
+.card.bad { border-left: 5px solid var(--red); }
+.card.unk { border-left: 5px solid var(--muted); }
+.card header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 12px; padding: 12px 16px;
+  border-bottom: 1px solid var(--line); }
+.card header .t { font-weight: 700; font-size: 17px; }
+.card header .when { color: var(--muted); font-size: 13px; }
+.row { display: grid; grid-template-columns: 170px 1fr; border-bottom: 1px solid var(--line); }
+.row:last-child { border-bottom: 0; }
+.row > .k { padding: 10px 16px; color: var(--muted); font-size: 13px; font-weight: 600; }
+.row > .v { padding: 10px 16px; min-width: 0; }
+.row.wrong > .v { background: var(--red-bg); }
+.row.wrong > .k { color: var(--red); }
+.row.should > .v { background: var(--green-bg); }
+.row.should > .k { color: var(--green); }
+.bubble { display: block; border-radius: 10px; padding: 8px 12px; margin: 2px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.bubble.in { background: var(--grey-bg); }
+.bubble.out { background: var(--blue-bg); }
+.gap { color: var(--muted); font-style: italic; }
+ol.steps { padding-left: 22px; }
+ol.steps > li { margin: 10px 0; }
+ol.steps li.bad::marker { color: var(--red); font-weight: 700; }
+table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+th { color: var(--muted); font-weight: 600; font-size: 12.5px; }
+.tablewrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+.tablewrap table { min-width: 720px; }
+svg { width: 100%; height: auto; display: block; }
+svg text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+.fig { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+.figcap { color: var(--muted); font-size: 13px; margin-top: 8px; }
+.timeline { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; white-space: pre;
+  overflow-x: auto; background: var(--code-bg); border-radius: 8px; padding: 12px; line-height: 1.5; }
+@media (max-width: 640px) {
+  .row { grid-template-columns: 1fr; }
+  .row > .k { padding-bottom: 0; }
+  h1 { font-size: 22px; }
+}
+</style>
+</head>
+<body>
+<main>
+
+<h1>Samantha's chat, turn by turn</h1>
+<p class="sub">Diagnosis for issue #1262, scout round 2. Read only: no product code changed. Draft docs PR, never merged.</p>
+
+<div class="box">
+  <p><b>Conversation.</b> Mocha CS sales rep Samantha, respond.io contact 477071892, 25 Sep 16:09 to 26 Sep 09:48 (UTC+8). Eleven turns, T1 to T11.</p>
+  <p><b>Code baseline.</b> The scout investigated on <code>46711c618</code> (production runs its parent <code>3684a4b35</code>). Line numbers marked <span class="pill blue">checked</span> were re-read on today's <code>origin/main</code> <code>9a021f75</code>; every other file:line is the scout's and may have drifted by a few lines.</p>
+  <p><b>Where the words come from.</b> The owner pasted the trace into the scout's session. It is not in the repo or in the issue, so this page quotes only what the scout report quotes. Anything not quoted there is marked <span class="gap">not in the scout report</span>, and section 8 gives the one query that fills every gap.</p>
+  <div class="legend">
+    <span class="pill red">wrong step</span>
+    <span class="pill green">what it should have done</span>
+    <span class="pill amber">uncertain / inferred</span>
+    <span class="pill grey">no fault found</span>
+  </div>
+</div>
+
+<nav class="toc">
+  <b>Contents</b>
+  <ol>
+    <li><a href="#turns">The eleven turns</a></li>
+    <li><a href="#flow">Why the outstanding question stayed open from T5 to T9</a></li>
+    <li><a href="#dump">The product dump in T10, step by step</a></li>
+    <li><a href="#zero">"0 products have incoming stock" in T6</a></li>
+    <li><a href="#f7">F7 redone: out-of-order photos with Ordering ON</a></li>
+    <li><a href="#rulings">Owner rulings applied</a></li>
+    <li><a href="#fixes">Fix options per failure</a></li>
+    <li><a href="#missing">Missing traces and how to settle each one</a></li>
+  </ol>
+</nav>
+
+<div class="box rule">
+  <b>Owner rulings in force (issue comment, 26 Sep ~06:40Z)</b>
+  <ol>
+    <li>Quantity must come from the <b>parser</b>. No hard-coded regex strip of "xN" / "N pcs" in code.</li>
+    <li>Attachments <b>were delivered</b>. F6b (file did not arrive) is dropped.</li>
+    <li>Build a real <b>brand filter</b>: the parser is fed the live brand list from the system and matches against it; outstanding and other order reports accept a brand.</li>
+    <li>Settings &gt; Chatbot &gt; Switches &gt; <b>Ordering has been ON all along</b>. The scout's "Ordering was off" reading is wrong; F7 is redone in section 5.</li>
+    <li>F3: the offer should not have hijacked after "got eta" (a turn naming another domain closes the open outstanding offer; explicit confirmation still pending).</li>
+  </ol>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="turns">1. The eleven turns</h2>
+<p>Each card reads top to bottom: what Samantha sent, what the bot sent back, what the bot understood, what it decided and why, and what it should have done. A red row is a wrong step.</p>
+
+<!-- T1 -->
+<section class="card unk">
+  <header><span class="t">T1</span><span class="when">25 Sep, 16:09</span><span class="pill grey">no fault found</span></header>
+  <div class="row"><div class="k">Samantha sent</div><div class="v"><span class="gap">Not in the scout report.</span></div></div>
+  <div class="row"><div class="k">Bot replied</div><div class="v"><span class="gap">Not in the scout report.</span></div></div>
+  <div class="row"><div class="k">Bot understood</div><div class="v">Not traced. The scout found no failure starting at this turn.</div></div>
+  <div class="row"><div class="k">Should have done</div><div class="v">Unknown until the row is read (section 8, query A).</div></div>
+</section>
+
+<!-- T2 -->
+<section class="card bad">
+  <header><span class="t">T2</span><span class="when">25 Sep</span><span class="pill red">brand read as a customer</span><span class="pill blue">F1a</span></header>
+  <div class="row"><div class="k">Samantha sent</div><div class="v"><span class="bubble in">An outstanding question naming "brand Sorento".</span><span class="gap">Exact wording not in the scout report; the report quotes only the token "brand Sorento".</span></div></div>
+  <div class="row wrong"><div class="k">Bot replied</div><div class="v"><span class="bubble out">Which customer do you mean?
+(followed by 10 customer names containing SORENTO)</span></div></div>
+  <div class="row"><div class="k">Bot understood</div><div class="v">The parser got it right: "Sorento" is a <b>brand</b>, in the <b>order</b> (outstanding) domain.</div></div>
+  <div class="row wrong"><div class="k">Decision and why</div><div class="v">
+    The outstanding report has no brand filter, so nothing could use a brand. Instead of saying so, the resolver was told "under the order domain, a brand may also be a customer or a transporter", so "Sorento" matched every customer whose name contains SORENTO. Seeing only customer hits, the reconciler quietly changed the word's type from brand to customer and asked which customer.
+    <small class="ref"><code>lanes/business/resolve_gate.py:684-692</code> (every token sent with <code>fallback_to_all_types</code>), <code>services/entity_resolver.py:126-136</code> (<code>_DOMAIN_HINT_EXPANSIONS["order"]["brand"] = {customer, customer_order, transporter}</code>, from <code>2aa63ce8a</code>, 2 Jun), <code>turn/reconcile.py:67-76</code> (hint rewritten)</small>
+  </div></div>
+  <div class="row should"><div class="k">Should have done</div><div class="v">Run the outstanding report filtered to <b>brand Sorento</b> (owner ruling 3: a real brand filter matched against the live brand list). Until that filter exists: say plainly that outstanding cannot be filtered by brand yet and ask which dealer. Never silently re-type the word.</div></div>
+</section>
+
+<!-- T3 -->
+<section class="card bad">
+  <header><span class="t">T3</span><span class="when">25 Sep</span><span class="pill red">dealer dropped</span><span class="pill red">escalation offered</span><span class="pill blue">F1b</span><span class="pill blue">F8</span></header>
+  <div class="row"><div class="k">Samantha sent</div><div class="v"><span class="bubble in">A message naming Sorento again and the dealer Cheng Huat Sentul.</span><span class="gap">Exact wording not in the scout report.</span></div></div>
+  <div class="row wrong"><div class="k">Bot replied</div><div class="v"><span class="bubble out">1. Sorento (transporter)
+2. Sorento (customer)</span><span class="bubble out">Product: all Customer: all ... (rest not quoted)
+Would you like me to escalate to customer service team?</span><span class="gap">The second message is quoted only in part, and where it came from was not traced.</span></div></div>
+  <div class="row"><div class="k">Bot understood</div><div class="v">Two names: "Sorento" (now matching both a customer and a transporter) and "Cheng Huat Sentul" (matched one customer cleanly).</div></div>
+  <div class="row wrong"><div class="k">Decision and why</div><div class="v">
+    "Sorento" hit two kinds, so the bot asked "transporter or customer?". The design rule here is "two kinds arm a kind pick and <b>nothing else runs</b>": the whole turn is thrown away, including Cheng Huat Sentul, which had resolved perfectly. The pick slot also holds only one question, so a second ambiguous word would overwrite the first.
+    <br>Because every lookup "missed", the reply offered escalation to customer service, to a staff sales rep, while the pick was still open.
+    <small class="ref"><code>turn/reconcile.py:77-90</code> (kind pick options), <code>turn/apply.py:957-959</code> and <code>:1535-1536</code> (returns the input state unchanged), <code>apply.py:9</code> (the rule); escalation: <code>turn/compose.py:376-398</code>, audience-blind</small>
+  </div></div>
+  <div class="row should"><div class="k">Should have done</div><div class="v">Keep Cheng Huat Sentul and run: outstanding for <b>Cheng Huat Sentul, brand Sorento</b>. With a brand filter there is no pick at all. If a pick is ever needed, keep every resolved name and ask only about the ambiguous one. No escalation offer while a clarifying question is open.</div></div>
+</section>
+
+<!-- T4 -->
+<section class="card bad">
+  <header><span class="t">T4</span><span class="when">25 Sep</span><span class="pill red">label stored as customer</span><span class="pill blue">F1c</span><span class="pill amber">which turn picked: inferred</span></header>
+  <div class="row"><div class="k">Samantha sent</div><div class="v"><span class="bubble in">A message containing "Dealer :" (most likely "Dealer : Cheng Huat Sentul").</span><span class="gap">Exact wording not in the scout report.</span></div></div>
+  <div class="row wrong"><div class="k">Bot replied</div><div class="v"><span class="bubble out">(an outstanding answer headed) Customer: Sorento</span><span class="gap">Only the header is quoted.</span></div></div>
+  <div class="row"><div class="k">Bot understood</div><div class="v">Most likely the parser read the word "Dealer" as picking option 2, "Sorento (customer)". <span class="pill amber">inferred</span></div></div>
+  <div class="row wrong"><div class="k">Decision and why</div><div class="v">
+    The pick options carried no id, no code and no original word, only a printed label. When an option has no id, the pick handler falls back to storing the <b>label text</b> as the customer. So the bot now believed the customer was literally "Sorento (customer)". Cheng Huat Sentul was still gone.
+    <small class="ref"><code>turn/reconcile.py:77-89</code> (option = <code>label f"{raw} ({k})"</code>, no uuids), <code>turn/apply.py:600-624</code> (<code>code = option.code or payload.value or label</code>), <code>apply.py:129</code> (<code>_set_kind_field</code>)</small>
+  </div></div>
+  <div class="row should"><div class="k">Should have done</div><div class="v">Outstanding for customer Cheng Huat Sentul (and brand Sorento). A pick answer re-types the word; it never stores a display label as data.</div></div>
+</section>
+
+<!-- T5 -->
+<section class="card bad">
+  <header><span class="t">T5</span><span class="when">25 Sep</span><span class="pill red">customer filter silently dropped</span><span class="pill red">quantities lost</span><span class="pill blue">F1c</span><span class="pill blue">F4</span></header>
+  <div class="row"><div class="k">Samantha sent</div><div class="v"><span class="bubble in">[photo] a product list: SRTBF 11502, SRTBF 11503, ... with quantities x3, x4, x3</span><span class="gap">Caption not in the scout report.</span></div></div>
+  <div class="row wrong"><div class="k">Bot replied</div><div class="v"><span class="bubble out">(an outstanding report headed) Customer: all
+(and the outstanding question left open)</span><span class="gap">Body not quoted.</span></div></div>
+  <div class="row"><div class="k">Bot understood</div><div class="v">The photo reader saw the codes <b>and</b> the quantities. Only the codes were passed on: the parser got "SRTBF 11502, SRTBF 11503". It read the turn as narrowing the open outstanding report.</div></div>
+  <div class="row wrong"><div class="k">Decision and why</div><div class="v">
+    Three things went wrong at once.
+    <ol>
+      <li>The label "Sorento (customer)" was copied into the <b>uuid</b> field ("if there is no uuid, use the code"). <small class="ref"><code>turn_runtime.py:2533</code> <code>_spec_row</code>, same pattern at <code>:1368</code></small></li>
+      <li>The fetch step correctly refused a uuid that is not a uuid, so the report ran with <b>no customer at all</b> and printed "Customer: all". Nobody was told the dealer was dropped. <small class="ref"><code>lanes/business/fetch.py:521-526</code></small></li>
+      <li>But the offer's stored filters copied the label unchecked, so the open question now carried <code>customer_ids: ["Sorento (customer)"]</code>. <small class="ref"><code>lanes/business/__init__.py:107-114</code>, <code>fetch.py:1805-1812</code></small></li>
+    </ol>
+    The quantities were dropped on purpose by an older rule: "only entity raws" go into the text the parser reads. <small class="ref"><code>media_extract/service.py:293-295</code> (from <code>9ea96e5ac</code>, #158); quantities live in <code>attributes[kind=quantity]</code>, read by nothing in <code>app/services/chatbot/</code> but the trace summary</small>
+  </div></div>
+  <div class="row should"><div class="k">Should have done</div><div class="v">Outstanding for Cheng Huat Sentul, brand Sorento, for these products, with the quantities shown next to each code. If the stored customer is unusable, say so or ask; never print "Customer: all".</div></div>
+</section>
+
+<!-- T6 -->
+<section class="card bad">
+  <header><span class="t">T6</span><span class="when">25 Sep</span><span class="pill red">header contradicts rows</span><span class="pill red">offer left open</span><span class="pill blue">F3</span><span class="pill blue">F6a</span></header>
+  <div class="row"><div class="k">Samantha sent</div><div class="v"><span class="bubble in">got eta</span></div></div>
+  <div class="row wrong"><div class="k">Bot replied</div><div class="v"><span class="bubble out">0 products have incoming stock.
+(followed by the real incoming rows for the carried products)
+I have attached the file(s) below.</span>The packing list files did arrive (owner ruling 2).</div></div>
+  <div class="row"><div class="k">Bot understood</div><div class="v">A new domain word ("eta" = incoming), and <b>no product, customer or document named</b>. The products came from memory.</div></div>
+  <div class="row wrong"><div class="k">Decision and why</div><div class="v">
+    <b>Offer left open.</b> The outstanding question has no expiry by design, and the only ways out of it are naming an entity, naming a document, picking an option or declining. "got eta" does none of those, so it was filed as "not an answer" and the question stayed armed exactly as it was, carrying the "Sorento (customer)" label. See section 2.
+    <small class="ref"><code>turn/decide.py:459</code> and <code>:497</code> <span class="pill blue">checked</span> (a domain word only counts with an entity; otherwise <code>CARRY nothing_answered</code>), <code>turn/apply.py:720</code> <span class="pill blue">checked</span> (<code>answer_pending_not_an_answer</code>), <code>turn/pending.py:167-172</code> <span class="pill blue">checked</span> (outstanding kinds sticky, no TTL)</small>
+    <br><b>Header.</b> The word "eta" was sent to the product search as a filter word. The carried products were not in that search, so the count was 0. The guard that hides this header for carried codes only removed one copy; another copy was already baked into the reply text. See section 4.
+  </div></div>
+  <div class="row should"><div class="k">Should have done</div><div class="v">List the ETA for the carried products with no count header, attach the packing lists (it did), and close the outstanding question because the conversation moved to another domain (owner reading of F3).</div></div>
+</section>
+
+<!-- T7 -->
+<section class="card bad">
+  <header><span class="t">T7</span><span class="when">26 Sep, first photo</span><span class="pill red">hijacked by the old offer</span><span class="pill red">raw tool error sent</span><span class="pill blue">F2</span><span class="pill blue">F3</span><span class="pill blue">F4</span></header>
+  <div class="row"><div class="k">Samantha sent</div><div class="v"><span class="bubble in">[photo] caption "X5" or "X4"</span><span class="gap">Which caption and which code are not in the scout report.</span></div></div>
+  <div class="row wrong"><div class="k">Bot replied</div><div class="v"><span class="bubble out">Error executing tool crm_outstanding_report: ... (INVALID_UUID)</span><span class="gap">The report quotes the prefix; the full string is in the row.</span></div></div>
+  <div class="row"><div class="k">Bot understood</div><div class="v">The parser read "X5: &lt;code&gt;" (caption glued in front of the code) as an <b>incoming</b> question about one product. The message had no domain word of its own. <span class="pill amber">domain_in_message = false is inferred</span></div></div>
+  <div class="row wrong"><div class="k">Decision and why</div><div class="v">
+    With the outstanding question still open from T5, a message that names an entity but no domain word is read as "narrowing the open report". Nothing compares the parser's domain (incoming) with the offer's domain (order). So:
+    <ol>
+      <li>The domain was forced back to <b>order</b>, status "outstanding". <small class="ref"><code>turn/decide.py:477-485</code> <span class="pill blue">checked</span>, <code>turn/apply.py:469-490</code> <span class="pill blue">checked</span> (<code>outstanding_refined</code>)</small></li>
+      <li>The open question's subject was settled back into memory: <code>customers = [{"uuid": "Sorento (customer)"}]</code>. <small class="ref"><code>apply.py:384-389</code> <code>_settle_question_subject</code></small></li>
+      <li>The carried customer ids went straight into the tool call, skipping the uuid check the T5 path had. <small class="ref"><code>turn_runtime.py:1499-1501</code>, <code>fetch.py:627-629</code></small></li>
+      <li>The MCP server rejected the id. Its error text came back marked <code>isError</code>, nobody read that flag, and the text was printed as the answer. <small class="ref"><code>sorento_crm_mcp/server.py:354</code>, <code>ai_assistant_service.py:402-411</code> (never reads <code>isError</code>), <code>fetch.py:1857-1862</code> (the leak point)</small></li>
+    </ol>
+  </div></div>
+  <div class="row should"><div class="k">Should have done</div><div class="v">Answer the photo as its own question: incoming / ETA for that product, quantity 5 read by the parser from the caption. Never send tool error text to WhatsApp.</div></div>
+</section>
+
+<!-- T8 -->
+<section class="card bad">
+  <header><span class="t">T8</span><span class="when">26 Sep, photo</span><span class="pill red">raw tool error sent</span><span class="pill blue">F2</span><span class="pill blue">F3</span></header>
+  <div class="row"><div class="k">Samantha sent</div><div class="v"><span class="bubble in">[photo] caption "X5" or "X4"</span><span class="gap">Caption and code not in the scout report.</span></div></div>
+  <div class="row wrong"><div class="k">Bot replied</div><div class="v"><span class="bubble out">Error executing tool crm_outstanding_report: ... (INVALID_UUID)</span></div></div>
+  <div class="row"><div class="k">Bot understood</div><div class="v">One product code with the caption glued on, read as narrowing the still-open outstanding report.</div></div>
+  <div class="row wrong"><div class="k">Decision and why</div><div class="v">Identical chain to T7. The open question survived T7 too, because a "narrowing" answer re-arms the same question over the new filters.</div></div>
+  <div class="row should"><div class="k">Should have done</div><div class="v">Same as T7: its own answer for its own product and quantity, no error text.</div></div>
+</section>
+
+<!-- T9 -->
+<section class="card bad">
+  <header><span class="t">T9</span><span class="when">26 Sep, photo</span><span class="pill red">code not found because of "X4:"</span><span class="pill red">raw tool error sent</span><span class="pill blue">F2</span><span class="pill blue">F4</span></header>
+  <div class="row"><div class="k">Samantha sent</div><div class="v"><span class="bubble in">[photo] caption "X4", product M488-75-PVD-GM</span></div></div>
+  <div class="row wrong"><div class="k">Bot replied</div><div class="v"><span class="bubble out">Error executing tool crm_outstanding_report: ... (INVALID_UUID)</span>The report also quotes <span class="mono">I could not find X4: M488-75-PVD-GM.</span> for this code. <span class="gap">Whether that line was in this same reply is not in the scout report.</span></div></div>
+  <div class="row"><div class="k">Bot understood</div><div class="v">The message the parser read was "X4: M488-75-PVD-GM". It kept the whole thing, prefix included, as the product code.</div></div>
+  <div class="row wrong"><div class="k">Decision and why</div><div class="v">
+    The code folds to <code>X4:M48875PVDGM</code>, which matches no product. The resolver did find M488-75-PVD-GM at similarity 0.80, but a close match is only ever a "did you mean" and is never used directly; and the outstanding hijack (as in T7) raised INVALID_UUID first, so even the did-you-mean never showed.
+    <small class="ref"><code>media_extract/service.py:322-329</code> <span class="pill blue">checked</span> (<code>f"{caption_text}: {', '.join(raws)}"</code>), <code>resolve_gate.py:615-629</code> and <code>:53</code> (fold strips only hyphens and spaces), <code>entity_resolver.py:2811</code> (suggest floor 0.30)</small>
+  </div></div>
+  <div class="row should"><div class="k">Should have done</div><div class="v">The parser emits quantity 4 and code M488-75-PVD-GM (owner ruling 1), the code resolves exactly, and the bot answers about that product.</div></div>
+</section>
+
+<!-- T10 -->
+<section class="card bad">
+  <header><span class="t">T10</span><span class="when">26 Sep, photo, ~58 s</span><span class="pill red">catalogue sweep</span><span class="pill red">"Showing 0"</span><span class="pill red">hundreds of codes</span><span class="pill blue">F5</span><span class="pill blue">F8</span></header>
+  <div class="row"><div class="k">Samantha sent</div><div class="v"><span class="bubble in">[photo] caption "X5", product M210-GM</span></div></div>
+  <div class="row wrong"><div class="k">Bot replied</div><div class="v"><span class="bubble out">5,857 products have stock. Showing 0.</span><span class="bubble out">*Mocha and Sorento:* no stock records found for product ... (hundreds of codes, spread over three WhatsApp messages)</span><span class="bubble out">Would you like me to escalate to warehouse team?</span></div></div>
+  <div class="row"><div class="k">Bot understood</div><div class="v">A <b>stock</b> question about "X5: M210-GM". This photo was not pulled into the outstanding offer. <span class="gap">Why it escaped the hijack is not in the scout report; the T10 verdict and decision settle it.</span></div></div>
+  <div class="row wrong"><div class="k">Decision and why</div><div class="v">A one-letter code plus a glued quantity fell through a guard built for two-letter codes, so "has stock" was asked of the whole catalogue. Full walk-through in section 3.</div></div>
+  <div class="row should"><div class="k">Should have done</div><div class="v"><span class="bubble out">M210-GM (x5): &lt;stock by location&gt;</span>One line about one product. No count header, no paging words, no list of codes it did not find, no warehouse escalation to a staff rep.</div></div>
+</section>
+
+<!-- T11 -->
+<section class="card bad">
+  <header><span class="t">T11</span><span class="when">26 Sep, 09:48</span><span class="pill red">escalation to a staff rep</span><span class="pill blue">F8</span></header>
+  <div class="row"><div class="k">Samantha sent</div><div class="v"><span class="gap">Not in the scout report.</span></div></div>
+  <div class="row wrong"><div class="k">Bot replied</div><div class="v"><span class="bubble out">... Would you like me to escalate to warehouse team?</span><span class="gap">Only the offer is quoted.</span></div></div>
+  <div class="row"><div class="k">Bot understood</div><div class="v">A stock lookup that missed.</div></div>
+  <div class="row wrong"><div class="k">Decision and why</div><div class="v">Every lookup missed, so the composer offered the domain's escalation team. That offer reads nothing about who is asking; about 20 further offer sites in the answer lane are the same.
+    <small class="ref"><code>turn/compose.py:376-397</code>, <code>lanes/business/answer.py</code> 1691, 2164, 3098, 3313, 3521, ...; closest audience signal is <code>chatbot_profile.tier</code> (<code>models/access.py:259-265</code>)</small></div></div>
+  <div class="row should"><div class="k">Should have done</div><div class="v">For a staff rep: clarify ("which code?") or say the product has no stock record, without a warehouse handover. Needs the owner's F8 ruling (staff signal, and how "dealer never to warehouse" fits R6).</div></div>
+</section>
+
+<!-- ============================================================ -->
+<h2 id="flow">2. Why the outstanding question stayed open from T5 to T9</h2>
+
+<p>The bot keeps <b>one</b> open question per contact in <code>session_vars.open_question</code>. Each turn, <code>decide()</code> reads the new message against it and picks one of four readings (answer, refine, new ask, carry). The picture shows which reading each turn got.</p>
+
+<div class="fig">
+<svg viewBox="0 0 940 420" role="img" aria-label="Flow of the open outstanding question from T5 to T9">
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="var(--muted)"/>
+    </marker>
+  </defs>
+  <!-- the open question bar -->
+  <rect x="120" y="30" width="800" height="44" rx="8" fill="var(--amber-bg)" stroke="var(--amber)"/>
+  <text x="135" y="50" font-size="13" font-weight="700" fill="var(--amber)">Open outstanding question (sticky, no expiry)</text>
+  <text x="135" y="66" font-size="12" fill="var(--ink)">carries customer_ids ["Sorento (customer)"], domain "order", status "outstanding"</text>
+
+  <!-- turn columns -->
+  <g font-size="12" fill="var(--ink)">
+    <!-- T5 -->
+    <rect x="20" y="110" width="170" height="120" rx="8" fill="var(--surface)" stroke="var(--line)"/>
+    <text x="32" y="130" font-weight="700">T5 photo</text>
+    <text x="32" y="150">report runs,</text>
+    <text x="32" y="166">question is ARMED</text>
+    <text x="32" y="186" fill="var(--red)">label stored as</text>
+    <text x="32" y="202" fill="var(--red)">customer_ids</text>
+    <line x1="105" y1="110" x2="160" y2="76" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ah)"/>
+
+    <!-- T6 -->
+    <rect x="205" y="110" width="170" height="120" rx="8" fill="var(--surface)" stroke="var(--red)"/>
+    <text x="217" y="130" font-weight="700">T6 "got eta"</text>
+    <text x="217" y="150">domain word: yes</text>
+    <text x="217" y="166">entity named: none</text>
+    <text x="217" y="186" fill="var(--red)">CARRY nothing_answered</text>
+    <text x="217" y="202" fill="var(--red)">question KEPT</text>
+    <line x1="290" y1="110" x2="290" y2="76" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ah)"/>
+
+    <!-- T7 -->
+    <rect x="390" y="110" width="170" height="120" rx="8" fill="var(--surface)" stroke="var(--red)"/>
+    <text x="402" y="130" font-weight="700">T7 photo "X5: ..."</text>
+    <text x="402" y="150">parser: incoming</text>
+    <text x="402" y="166">domain word: none</text>
+    <text x="402" y="186" fill="var(--red)">REFINE, domain</text>
+    <text x="402" y="202" fill="var(--red)">forced to order</text>
+    <line x1="475" y1="76" x2="475" y2="108" stroke="var(--red)" stroke-width="2" marker-end="url(#ah)"/>
+
+    <!-- T8 -->
+    <rect x="575" y="110" width="170" height="120" rx="8" fill="var(--surface)" stroke="var(--red)"/>
+    <text x="587" y="130" font-weight="700">T8 photo</text>
+    <text x="587" y="150">same reading</text>
+    <text x="587" y="186" fill="var(--red)">REFINE again,</text>
+    <text x="587" y="202" fill="var(--red)">question re-armed</text>
+    <line x1="660" y1="76" x2="660" y2="108" stroke="var(--red)" stroke-width="2" marker-end="url(#ah)"/>
+
+    <!-- T9 -->
+    <rect x="760" y="110" width="170" height="120" rx="8" fill="var(--surface)" stroke="var(--red)"/>
+    <text x="772" y="130" font-weight="700">T9 photo "X4: ..."</text>
+    <text x="772" y="150">same reading</text>
+    <text x="772" y="186" fill="var(--red)">REFINE again</text>
+    <line x1="845" y1="76" x2="845" y2="108" stroke="var(--red)" stroke-width="2" marker-end="url(#ah)"/>
+  </g>
+
+  <!-- consequence row -->
+  <rect x="205" y="250" width="725" height="46" rx="8" fill="var(--red-bg)" stroke="var(--red)"/>
+  <text x="220" y="270" font-size="12.5" font-weight="700" fill="var(--red)">T7 to T9: each REFINE settles the carried customer back into memory and calls</text>
+  <text x="220" y="287" font-size="12.5" fill="var(--red)">crm_outstanding_report(customer_ids=["Sorento (customer)"]) : INVALID_UUID text sent to WhatsApp</text>
+
+  <!-- exits box -->
+  <rect x="20" y="320" width="910" height="88" rx="8" fill="var(--green-bg)" stroke="var(--green)"/>
+  <text x="35" y="342" font-size="13" font-weight="700" fill="var(--green)">The only exits from an outstanding question today (decide.py / apply.py)</text>
+  <text x="35" y="362" font-size="12" fill="var(--ink)">1. name an entity WITH a domain word (NEW_ASK, domain_in_message)   2. name an entity that does not keep the subject (NEW_ASK names_its_own_entity)</text>
+  <text x="35" y="380" font-size="12" fill="var(--ink)">3. name a document (NEW_ASK named_document)   4. pick an option   5. say no / decline   6. a reset phrase ("never mind")</text>
+  <text x="35" y="398" font-size="12" fill="var(--red)">"got eta" is a domain word with no entity, so it matches none of them. There is no timer either: R22 ruled these questions sticky.</text>
+</svg>
+<div class="figcap">T5 arms the question. T6 cannot close it. T7 to T9 each "narrow" it, which re-arms it and replays its poisoned customer id.</div>
+</div>
+
+<h3>Why "got eta" did not close it, in three plain facts</h3>
+<ol class="steps">
+  <li class="bad"><b>A domain word only counts when an entity rides with it.</b> The rule at <code>turn/decide.py:459</code> <span class="pill blue">checked</span> is "domain in message <i>and</i> entities" gives NEW_ASK. "got eta" named incoming but no product, so it fell to the last line, <code>CARRY nothing_answered</code> (<code>decide.py:497</code>).</li>
+  <li class="bad"><b>"Not an answer" means "leave the question exactly as it was".</b> Owner hand pass 3 ruled that an aside must not re-ask the open question, so apply files it as <code>answer_pending_not_an_answer</code> and keeps the pending, its status, its document axis and the carried customer (<code>turn/apply.py:712-721</code> <span class="pill blue">checked</span>). The ruling was aimed at asides like "ok thanks", and it also swallows a real change of topic.</li>
+  <li class="bad"><b>Outstanding questions never expire.</b> Only the three escalation offers have a three-turn timer. <code>outstanding_scope</code> / <code>outstanding_detail</code> are sticky on purpose (R22: "a TTL would close it behind a customer who is still reading it"), so the question from 25 Sep afternoon was still open the next morning (<code>turn/pending.py:155-183</code> <span class="pill blue">checked</span>).</li>
+</ol>
+<p>And once it survived T6, the T7 to T9 photos each <b>looked like</b> a refinement: an entity, no domain word of their own. <code>decide.py:477-485</code> returns <code>REFINE refines_standing_subject</code> without comparing the parser's own domain (incoming) with the question's domain (order), and <code>apply.py:486-487</code> then overwrites the domain with the question's. A refine re-arms the same question, so the chain repeats every photo.</p>
+<div class="box warn"><b>What would prove it.</b> The T6 trace shows <code>decision: carry / nothing_answered</code> and rule <code>answer_pending_not_an_answer</code>; the T7 trace shows <code>decision: refine / refines_standing_subject</code>, verdict <code>domain_in_message: false</code>, rules <code>outstanding_refined</code> and <code>domain_locked_by_pick</code>. Anything else disproves this chain (section 8, query B).</div>
+
+<!-- ============================================================ -->
+<h2 id="dump">3. The product dump in T10, step by step</h2>
+<p>Input: a photo of one product, M210-GM, captioned "X5". Output: a false count, "Showing 0", and hundreds of codes across three messages.</p>
+<ol class="steps">
+  <li class="bad"><b>The caption is glued onto the code.</b> The photo reader returns the code M210-GM and, separately, the caption "X5". The text handed to the parser is built as <code>"{caption}: {codes}"</code>, giving <span class="mono">X5: M210-GM</span>. The quantity is now part of the product's name.
+    <small class="ref"><code>app/services/media_extract/service.py:322-329</code> <span class="pill blue">checked</span>; format from <code>25d4d6aa3</code> (#1139, 23 Sep). Uncertain only whether the vision model itself read "X5:" into the raw; the stored media job's <code>caption</code> field settles it.</small></li>
+  <li class="bad"><b>The parser keeps it whole.</b> The parser has one message-level <code>demand_qty</code> and no per-product quantity slot, and no prompt line saying a leading "xN" is a quantity. So the product raw is "X5: M210-GM".
+    <small class="ref"><code>head/parser.py:127</code> <span class="pill blue">checked</span></small></li>
+  <li class="bad"><b>The code matches nothing.</b> Folding strips hyphens and spaces only, giving <code>X5:M210GM</code>. No product has that code.
+    <small class="ref"><code>resolve_gate.py:53</code>, <code>:615-629</code>; <code>turn/state.py:27</code></small></li>
+  <li class="bad"><b>The "one-letter Mocha code" gap.</b> A stock question asks the resolver for products that "have stock". That filter is withheld when the customer typed a real code, and "is it a code?" is decided by <code>_CODE_SHAPED</code>, which requires <b>two leading letters</b> and no colon. "X5: M210-GM" fails it, and so does every bare Mocha code like "M210-GM" (one letter, then digits). Both are treated as <i>descriptive words</i>, so the "has stock" filter goes out with no product words to narrow it. The resolver counts the whole in-stock catalogue: <b>5,857</b>.
+    <small class="ref"><code>lanes/business/gate.py:174-176</code> <span class="pill blue">checked</span> (since <code>dbba826bf</code>, #659), <code>resolve_gate.py:594-612</code> <span class="pill blue">checked</span> and <code>:769</code> <span class="pill blue">checked</span></small></li>
+  <li class="bad"><b>The sweep is treated as a real answer.</b> A positive <code>qualifying_total</code> counts as "the set was answered", so the catalogue rows are kept. The 16 Sep guard for exactly this symptom ("5,783 products have stock. Showing 5.") does not fire because the entities now carry real uuids. This is a recurrence through the one-letter gap.
+    <small class="ref"><code>turn_runtime.py:1022-1025</code> (<code>_without_guesses</code>), <code>:2510</code> (<code>_answered_unfiltered</code>)</small></li>
+  <li class="bad"><b>"Showing 0".</b> The header builder appends "Showing N." whenever the total is larger than what was shown, and 0 is smaller than 5,857. The owner's ban on paging text is not written anywhere in the repo, so nothing stops it.
+    <small class="ref"><code>lanes/business/answer.py:2573-2587</code> <span class="pill blue">checked</span>. Why the stock tool drew 0 rows is uncertain; the T10 tool args settle it.</small></li>
+  <li class="bad"><b>The uncapped miss line.</b> For each company that returned nothing, one sentence names what was searched. That subject is built by joining <b>every</b> entity's code with no cap, so "*Mocha and Sorento:* no stock records found for product ..." listed hundreds of codes and WhatsApp split it into three messages.
+    <small class="ref"><code>lanes/business/fetch.py:2519</code> <span class="pill blue">checked</span> calls <code>_axis_labelled_subject</code> (<code>:1229</code> <span class="pill blue">checked</span>); from #659 and #700</small></li>
+  <li class="bad"><b>Escalation on a false miss.</b> The whole answer "missed", so the warehouse offer was added, to a staff rep. See T11 and F8.</li>
+</ol>
+<div class="box"><b>What should have happened.</b> Parser: product M210-GM, quantity 5. Code shape: M210-GM is a typed code, so no "has stock" filter. Resolve: exact match. Answer: one stock line for M210-GM. No header, no miss list.</div>
+
+<!-- ============================================================ -->
+<h2 id="zero">4. "0 products have incoming stock" in T6</h2>
+<ol class="steps">
+  <li><b>"got eta" becomes a filter.</b> An incoming question maps to <code>require = {"incoming": true}</code>. The guard that drops this filter only fires when a code was typed; none was (the products were carried from memory).
+    <small class="ref"><code>resolve_gate.py:733</code>, <code>:769</code> <span class="pill blue">checked</span></small></li>
+  <li class="bad"><b>"eta" is used as a search word.</b> In the resolver, whatever words are left over become scope terms, so the product search looked for products matching "eta" that have incoming stock.
+    <small class="ref"><code>api/v1/system/references.py:2738</code> (<code>_content_words("got eta") == ['eta']</code>)</small></li>
+  <li class="bad"><b>The carried products are not in that search.</b> The products Samantha meant came from memory, not from the resolve request, so the count is over the wrong set: <b>0</b>.
+    <small class="ref"><code>product_predicate_service.py:622</code>. <span class="pill amber">uncertain</span> which zero branch fired; <code>predicate.unrecognized_terms = ["eta"]</code> in the T6 trace confirms this one.</small></li>
+  <li><b>The rows below are real.</b> The incoming tool, called with the carried product ids, found the shipments and packing lists.</li>
+  <li class="bad"><b>The guard removes only one copy of the header.</b> <code>envelope_of</code> correctly withholds <code>header_override</code> because this was not a counted set. But the fetch step had already baked the same header into the reply text, and the composer prints that text verbatim.
+    <small class="ref"><code>turn_runtime.py:2717</code> <span class="pill blue">checked</span>; <code>lanes/business/fetch.py:2622-2635</code> <span class="pill blue">checked</span> (header built and also placed in the response); <code>turn/compose.py:291</code> (rule R-d)</small></li>
+</ol>
+<div class="box"><b>What should have happened.</b> No count line at all for carried products: the ETA rows and the files, nothing claiming "0".</div>
+
+<!-- ============================================================ -->
+<h2 id="f7">5. F7 redone: how the photos were still slow and out of order with Ordering ON</h2>
+
+<div class="box warn"><b>Correction to the scout report.</b> The scout inferred Ordering was off from the turn numbers. With the owner's fact that Ordering is on, that inference is wrong, and so is its consequence "3 of 4 photo turns' state writes were lost". Below is what Ordering actually guarantees, and why the symptoms still fit.</div>
+
+<h3>What Ordering does, in code</h3>
+<ol class="steps">
+  <li><b>Arrival.</b> Each message that reaches <code>/chat/turn</code> takes a <b>ticket</b> for this contact (a Redis counter), before its row is inserted. Ticket order is <b>arrival order at the CRM</b>, not the order Samantha pressed send.
+    <small class="ref"><code>engine.py:831</code>, <code>:847-871</code> <span class="pill blue">checked</span>; <code>dispatch.py:201-226</code> <span class="pill blue">checked</span></small></li>
+  <li><b>Wait.</b> The turn polls every 200 ms until every earlier ticket is done, for at most <b>45 s</b> (<code>chatbot_queue_wait_seconds</code>). Past that it fails at stage <code>queued</code> and sends the generic error reply.
+    <small class="ref"><code>engine.py:911-933</code> <span class="pill blue">checked</span>; <code>dispatch.py:253-301</code> <span class="pill blue">checked</span>; <code>config.py:145</code> <span class="pill blue">checked</span></small></li>
+  <li><b>Everything slow happens inside the slot.</b> Media extraction, the state read, the turn number, the parser, resolve, fetch and compose all run in <code>_run_stages</code>, <b>after</b> the wait. So one photo holds the contact's slot for its whole extraction (up to <b>30 s</b> of polling, <code>sync_wait_seconds</code>) plus the rest of the turn.
+    <small class="ref"><code>engine.py:935</code>, <code>:1224</code>, <code>:1249</code>, <code>:1306</code> <span class="pill blue">checked</span>; <code>media_access_service.py:77</code> <span class="pill blue">checked</span></small></li>
+  <li><b>Release.</b> In a <code>finally</code>, the counter moves up to this ticket and the next waiter goes.
+    <small class="ref"><code>engine.py:987-1009</code> <span class="pill blue">checked</span></small></li>
+</ol>
+
+<h3>How the symptoms still happen with Ordering on</h3>
+<div class="timeline">photo arrives   ticket  waits for            own run (extract &le;30 s + parse/resolve/fetch)   reply at
+P1  t=0 s        1       nothing              ~20 s                                               ~20 s
+P2  t~0 s        2       P1 (~20 s)           ~15 s                                               ~35 s
+P3  t~1 s        3       P1+P2 (~35 s)        ~12 s                                               ~47 s
+P4  t~1 s        4       P1+P2+P3 (~46 s)     ~12 s                                               ~58 s  &lt;- 45 s budget is 1 s away
+                                                                                     n8n HTTP node times out at 60 s</div>
+<p class="figcap">Illustrative numbers, shaped to the reported 20 to 58 s spread. Real times come from query C.</p>
+<ol class="steps">
+  <li class="bad"><b>Latency is a staircase, by design.</b> Serialised turns add up: the fourth photo waits for the first three. The reported 20 to 58 s spread is exactly the shape serial processing gives. T10 at ~58 s was within ~2 s of n8n's 60 s HTTP timeout, and its queue wait was within a few seconds of the 45 s budget.
+    <small class="ref">n8n <code>chat-turn</code> node timeout 60 s: <code>documentation/plans/chatbot/n8n-changes.md:35</code> <span class="pill blue">checked</span></small></li>
+  <li class="bad"><b>"Out of order" is arrival order, not send order.</b> Ordering answers in the order messages <b>reached the CRM</b>. respond.io sends one webhook per photo once that photo is uploaded, and n8n forwards each on its own; four photos sent together can reach the CRM in a different order than WhatsApp shows them. The replies then come back in CRM order, which looks scrambled to Samantha. <span class="pill amber">inferred</span></li>
+  <li><b>Turn numbers do not tell Ordering on from off.</b> The turn number is <code>count(*)</code> of this contact's rows, read at the start of <code>_run_stages</code>, <b>after</b> the wait (<code>turn_runtime.py:106-126</code>, <code>engine.py:1249</code> <span class="pill blue">checked</span>). With Ordering on, each photo counts every row inserted by the time its predecessor finished. Distinct numbers 99 to 103 therefore mean the photos arrived spread out enough that each row existed when the next turn counted; photos arriving within one second would instead <b>share</b> the highest number. Either way, numbers alone prove nothing about Ordering.</li>
+  <li><b>No lost state updates.</b> With Ordering on, each turn reads <code>session_vars</code> after its predecessor wrote them, so the scout's "3 of 4 state writes lost" did not happen. It also does not matter to the wrong answers: the poisoned open question (section 2) was stored before 26 Sep, and serial turns replay it identically.</li>
+</ol>
+
+<h3>Three ways turns can still overlap with Ordering on</h3>
+<div class="tablewrap"><table>
+<tr><th>Escape</th><th>Mechanism</th><th>Would leave in the logs</th></tr>
+<tr><td>Redis unavailable</td><td>Ticket take or wait raises a Redis error; the turn runs <b>unordered</b> rather than failing (<code>engine.py:860-871</code>, <code>:922-932</code>).</td><td>API log: <code>chatbot ordering: redis is unavailable</code></td></tr>
+<tr><td>Stall repair</td><td>A waiter sees no <code>running</code> key for 12 s and assumes the predecessor died (<code>dispatch.py:280-295</code>).</td><td>API log: <code>chatbot ordering: repairing stalled counter</code></td></tr>
+<tr><td>Queue timeout jumps the counter</td><td>A waiter that times out still calls <code>mark_done</code> with its <b>own</b> ticket, moving <code>done</code> past a predecessor that is still running, so a later waiter can start beside it (<code>dispatch.py:261-267</code>, <code>engine.py:997-999</code>). That timed-out turn itself sends the generic error reply.</td><td>A <code>chatbot.turns</code> row with <code>status = failed</code>, <code>stage = queued</code></td></tr>
+</table></div>
+
+<h3>The n8n dispatcher</h3>
+<p>Before S7, n8n's <code>sorento-dispatcher</code> popped one contact per second and serialised in front of the CRM. S7 step 3 deletes it (<code>n8n-changes.md:1100-1114</code>). If it is still in front, the CRM's ticket is always free and the serialisation happens in n8n instead; the symptoms above are the same. The live n8n workflow list settles whether it is still there.</p>
+
+<div class="box warn"><b>What would prove or disprove "serialised, arrival order differs from send order"</b>
+<ul>
+  <li><b>Proves:</b> in query C, each photo turn's first stage starts after the previous turn's <code>finished_at</code> (no overlap), ordered by <code>created_at</code>; and the respond.io message timestamps inside <code>envelope</code> are in a different order from <code>created_at</code>.</li>
+  <li><b>Disproves:</b> overlapping windows with none of the three escapes in the logs, or <code>created_at</code> order equal to send order while replies still went out of order (then the reordering is downstream, in n8n or respond.io sending).</li>
+</ul></div>
+
+<!-- ============================================================ -->
+<h2 id="rulings">6. Owner rulings applied</h2>
+
+<h3>Ruling 1: quantity comes from the parser, no regex</h3>
+<p>The scout's slice 5 proposed stripping <code>^[xX]\s*\d+</code> in code. That is withdrawn. What the parser has today, and what has to change:</p>
+<ul>
+  <li><b>Today:</b> one message-level <code>demand_qty</code> (<code>head/parser.py:127</code> <span class="pill blue">checked</span>); no quantity per product; no prompt rule about "xN".</li>
+  <li><b>Photo quantities never reach the parser:</b> the vision step already returns them as <code>attributes[kind=quantity]</code>, but only entity raws are put into the text the parser reads (<code>media_extract/service.py:293-295</code>). The caption is glued on as a prefix (<code>:322-329</code>).</li>
+  <li><b>Shape of the fix:</b> the parser schema gets a quantity per entity, and the prompt tells it that a leading or trailing "xN" / "N pcs" is that product's quantity and not part of its code. The photo text is handed over so the parser can see caption and codes as separate things (for example on separate lines) instead of <code>"X5: M210-GM"</code>, and per-line photo quantities go in as text the parser reads. Code only reads the parser's output.</li>
+  <li><b>Proof:</b> replay the T5 and T7 to T10 captions through the parser and assert quantity and raw separately for each.</li>
+  <li><b>Not a quantity regex:</b> the one-letter <code>_CODE_SHAPED</code> fix (section 3, step 4) is about code shape, not quantity, and still stands. Flagged here in case the owner reads it as the same kind of hard-coding.</li>
+</ul>
+
+<h3>Ruling 3: a real brand filter fed by the live brand list</h3>
+<ul>
+  <li><b>Today:</b> under the order domain a brand is fanned out to customer / customer_order / transporter (<code>entity_resolver.py:126-136</code>); the outstanding report takes no brand; the parser is fed no brand list (a search of <code>app/services/chatbot/head/</code> finds none).</li>
+  <li><b>Shape of the fix:</b> at turn time, read the live brands (the <code>brands</code> table; note two models map that table name, <code>models/product.py:98</code> and <code>models/projects.py:373</code>, so the reader must pick one on purpose) and put them in the parser prompt; the parser emits a brand entity matched to that list; the resolver stops re-typing a brand as a customer; <code>crm_outstanding_report</code> and the other order reports accept a brand filter in the backend and in the MCP tool arguments.</li>
+  <li><b>Effect on this chat:</b> T2 to T4 need no pick at all; the T4 label bug has no way to start.</li>
+</ul>
+
+<h3>Ruling 2: attachments were delivered</h3>
+<p>F6b and slice 10 are dropped. The T6 files arrived. The T10 missing file is still expected: the incoming rows on a stock answer come from the cross-domain ladder rung, whose attachments are deliberately not sent (D2, 12 Sep); packing lists on stock answers are #1247.</p>
+
+<!-- ============================================================ -->
+<h2 id="fixes">7. Fix options per failure</h2>
+<div class="tablewrap"><table>
+<tr><th>Failure (turns)</th><th>What changes</th><th>Risk</th><th>Hotfix?</th></tr>
+<tr><td><b>F2</b> raw tool error on WhatsApp (T7 to T9)</td><td><code>MCPRuntimeClient.call_tool</code> raises on <code>isError</code>; <code>_outstanding_report_output</code> never passes a non-envelope string as a result; compose refuses text starting "Error executing tool".</td><td>Low. The error arm already exists and prints "I could not fetch ...".</td><td>Yes</td></tr>
+<tr><td><b>F1c</b> label stored as customer, then uuid (T4, T5, T7)</td><td>One <code>is_uuid</code> check at every write and carry of customer ids (<code>_spec_row</code>, <code>candidates_by_kind</code>, both <code>_outstanding_filters_from*</code>, <code>_settle_question_subject</code>, <code>outstanding_carry</code>, fetch copies). Say so when a stored customer is unusable instead of "Customer: all".</td><td>Low. Also cleans sessions already holding the label, including this contact's.</td><td>Yes</td></tr>
+<tr><td><b>F5</b> catalogue sweep, "Showing 0", code dump (T10)</td><td>Cap the miss-line subject (above 5: "the N products searched"); drop "Showing N" from <code>build_set_header</code>; let <code>_CODE_SHAPED</code> accept one leading letter; write the paging ban into <code>documentation/reference</code>.</td><td>Low to medium. The code-shape change touches every stock ask; re-run the replay corpus.</td><td>Yes (paging-mode removal is a separate, larger slice)</td></tr>
+<tr><td><b>F3</b> old offer hijacks new domain (T6 to T9)</td><td>An outstanding REFINE requires the verdict's domain to be absent or equal to the offer's, else NEW_ASK. Plus the T6 half: a turn that names another domain closes the outstanding question.</td><td>Medium. Touches the sticky-offer rule (hand pass 3, R22); re-run the replay corpus.</td><td>First half yes; T6 half after the owner's explicit yes</td></tr>
+<tr><td><b>F6a</b> "0 have incoming" over real rows (T6)</td><td>The counted-set header travels only on <code>header_override</code>; it is not baked into <code>response</code>, or is stripped when not a counted set.</td><td>Low.</td><td>Yes</td></tr>
+<tr><td><b>F4</b> caption glued to code; quantities lost (T5, T7 to T10)</td><td>Per ruling 1: a parser quantity per entity and a prompt rule; the photo text keeps caption and codes apart and carries per-line quantities; no regex.</td><td>Medium. A prompt and schema change; needs a parser replay on the corpus plus these captions.</td><td>No (prompt change plus replay)</td></tr>
+<tr><td><b>F1b</b> kind pick drops the resolved dealer (T3)</td><td>Keep unambiguous entities when asking; one pick per ambiguous token.</td><td>Medium. Changes the <code>apply()</code> flow.</td><td>No</td></tr>
+<tr><td><b>F1a</b> brand read as customer (T2 to T4)</td><td>Per ruling 3: live brand list into the parser, no brand to customer fan-out under order, brand filter on outstanding and other order reports (backend and MCP).</td><td>Medium to high. The resolver is shared with MCP and n8n; new tool argument.</td><td>No (feature lane)</td></tr>
+<tr><td><b>F1b pick label</b> (T4)</td><td>Pick options carry the raw token and per-kind uuids; a pick re-types the token; no label fallback for an entity kind.</td><td>Low if scoped to kind picks.</td><td>Yes</td></tr>
+<tr><td><b>F7</b> slow, out-of-order photo replies (T7 to T10)</td><td>Keep Ordering on. Keep queue wait plus turn under n8n's 60 s (lower <code>CHATBOT_QUEUE_WAIT_SECONDS</code> or raise the n8n timeout to 90 s). Optionally stop a timed-out waiter from advancing <code>done</code> past a live predecessor. Reordering by respond.io timestamp is possible but not recommended without evidence.</td><td>Low for config; medium for the dispatch change.</td><td>Config yes; code after query C</td></tr>
+<tr><td><b>F8</b> escalation offered to a staff rep (T3, T10, T11)</td><td>Audience-aware offer; clarify before offering while a pick is open.</td><td>Medium. About 20 offer sites.</td><td>No: needs owner rulings (staff signal; "dealer never to warehouse" vs R6)</td></tr>
+<tr><td><s>F6b</s> attachments not delivered</td><td colspan="3">Dropped per ruling 2.</td></tr>
+</table></div>
+
+<!-- ============================================================ -->
+<h2 id="missing">8. Missing traces and how to settle each one</h2>
+<div class="tablewrap"><table>
+<tr><th>Gap</th><th>Settled by</th></tr>
+<tr><td>Verbatim messages and replies for T1 to T11 (every grey "not in the scout report" above)</td><td><b>Query A</b>:<br><code>SELECT created_at, message_id, status, stage, envelope, response-&gt;'reply'-&gt;&gt;'text' AS reply FROM chatbot.turns WHERE contact_respond_id = '477071892' AND is_test = false AND created_at BETWEEN '2026-09-25 08:00Z' AND '2026-09-26 02:00Z' ORDER BY created_at;</code></td></tr>
+<tr><td>T6 decision (CARRY / not an answer) and T7 decision (REFINE, <code>domain_in_message</code>)</td><td><b>Query B</b>: the <code>trace</code> column of the T6 and T7 rows from query A: the decision record, <code>rules_fired</code>, and the parser verdict.</td></tr>
+<tr><td>F7: serialised or overlapping; arrival order vs send order</td><td><b>Query C</b>:<br><code>SELECT created_at, started_at, finished_at, status, stage, trace-&gt;0-&gt;&gt;'started_at' AS first_stage_at, envelope-&gt;'message' AS respond_body FROM chatbot.turns WHERE contact_respond_id = '477071892' AND created_at &gt;= '2026-09-26 01:30Z' ORDER BY created_at;</code><br>plus the API log for 26 Sep 09:40 to 09:50 (UTC+8) grepped for <code>chatbot ordering:</code>, and the n8n executions of the <code>chat-turn</code> node for the four photos (timeouts at 60 s).</td></tr>
+<tr><td>Which turn made the kind pick (T3 or T4) and where T3's second message came from</td><td>T3 and T4 <code>trace</code>: <code>reference_positions</code> on the verdict and the pick record.</td></tr>
+<tr><td>T10: why "Showing 0" (0 rows drawn); why this photo escaped the outstanding hijack</td><td>T10 <code>trace</code>: the resolve body (<code>require</code>, <code>predicate.qualifying_total</code>), the stock tool args, and the decision.</td></tr>
+<tr><td>T6: which zero branch fired</td><td>T6 <code>trace</code>: <code>predicate.unrecognized_terms</code>; <code>["eta"]</code> confirms section 4.</td></tr>
+<tr><td>Caption glued by the join, or read into the raw by the vision model</td><td>The media job rows for the four photos: <code>caption</code> and <code>result.entities[].raw</code>.</td></tr>
+<tr><td>Is the n8n <code>sorento-dispatcher</code> still in front</td><td>The live n8n workflow list (S7 step 3).</td></tr>
+<tr><td>F8 audience: is Samantha's profile <code>tier = office</code></td><td>Her <code>chatbot_profile</code> row.</td></tr>
+</table></div>
+
+<p class="sub" style="margin-top:32px">Sources: issue #1262 (scout report F1 to F8 and the owner's rulings comment), <code>CLAUDE.md</code>, <code>LESSONS-LEARNT.md</code>, <code>documentation/plans/chatbot/PLAN-chatbot-turn-rearch.md</code>, <code>n8n-changes.md</code>, and the code at <code>origin/main</code> <code>9a021f75</code>.</p>
+
+</main>
+</body>
+</html>
