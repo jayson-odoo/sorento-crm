@@ -219,6 +219,15 @@ def _link(db, contact, cust) -> None:
     db.flush()
 
 
+def _access(db, contact, name: str, *, active: bool = True) -> None:
+    """Give `contact` one access type named `name` (a fresh catalog row)."""
+    code = unique_code("zzt_at").lower().replace("-", "_")[:50]
+    db.add(ContactAccessType(code=code, name=name, is_active=active))
+    db.flush()
+    db.execute(respond_contact_access_types.insert().values(contact_id=contact.id, access_type_code=code))
+    db.flush()
+
+
 def _as_contact(contact) -> dict:
     return {"contact_id": contact.id, "space_id": "zzt-space"}
 
@@ -626,7 +635,8 @@ def test_contact_identity_is_both_or_neither(client, db, params):
 
 
 def test_staff_contact_sees_every_customer(client, db):
-    """A granted contact with no customer link and no dealer access type is staff."""
+    """Staff is positive: a granted contact holding an office access type (the
+    tier `tier_gate.parse_level` reads, e.g. "Sorento Office") and no link."""
     a = customer(db, company_id=DEFAULT_COMPANY_ID)
     b = customer(db, company_id=DEFAULT_COMPANY_ID)
     pa = _product(db, "ZZTSTAFF-A")
@@ -634,6 +644,7 @@ def test_staff_contact_sees_every_customer(client, db):
     _line(db, product_id=pa.id, ordered=1, delivered=1, customer_id=a.id)
     _line(db, product_id=pb.id, ordered=2, delivered=2, customer_id=b.id)
     contact = _contact(db)
+    _access(db, contact, "Sorento Office")
     db.commit()
 
     body = _get(client, rank_by="quantity", **_as_contact(contact)).json()
@@ -736,6 +747,76 @@ def test_dealer_access_type_without_a_linked_customer_is_refused(client, db):
     assert "customer_not_permitted" in resp.text
 
 
+@pytest.mark.parametrize(
+    "types",
+    [
+        pytest.param([], id="no-access-type"),
+        pytest.param([("End User", True)], id="end-user"),
+        pytest.param([("ZZT Sorento Warehouse", True)], id="unknown-type"),
+        pytest.param([("Sorento Dealer", True)], id="dealer-type-no-link"),
+        pytest.param([("Sorento Office", True), ("End User", True)], id="office-plus-end-user"),
+        pytest.param([("Sorento Office", True), ("Sorento Dealer", True)], id="office-plus-dealer"),
+        pytest.param([("Sorento Office", False)], id="inactive-office"),
+        pytest.param([("Office", True)], id="brandless-office-name"),
+    ],
+)
+def test_granted_contact_that_is_neither_staff_nor_linked_is_refused(client, db, types):
+    """S2, fail closed: holding the reveal key is not enough to see the whole book.
+    A contact with no customer link that is not positively staff is refused with
+    the same 403 a dealer gets, and no figures."""
+    a = customer(db, company_id=DEFAULT_COMPANY_ID, name="ZZT MATRIX A")
+    p = _product(db, "ZZTMATRIX-A")
+    _line(db, product_id=p.id, ordered=5, delivered=5, customer_id=a.id)
+    contact = _contact(db)
+    for name, active in types:
+        _access(db, contact, name, active=active)
+    db.commit()
+
+    resp = _get(client, rank_by="quantity", **_as_contact(contact))
+    assert resp.status_code == 403, (types, resp.text)
+    assert "customer_not_permitted" in resp.text
+    assert "ZZTMATRIX" not in resp.text and "MATRIX A" not in resp.text
+
+
+@pytest.mark.parametrize("office", ["Sorento Office", "Mocha Office", "cabana  office"])
+def test_office_contact_is_staff(client, db, office):
+    """S2: every brand's office tier is staff and sees every customer."""
+    a = customer(db, company_id=DEFAULT_COMPANY_ID)
+    b = customer(db, company_id=DEFAULT_COMPANY_ID)
+    pa = _product(db, "ZZTOFFICE-A")
+    pb = _product(db, "ZZTOFFICE-B")
+    _line(db, product_id=pa.id, ordered=1, delivered=1, customer_id=a.id)
+    _line(db, product_id=pb.id, ordered=2, delivered=2, customer_id=b.id)
+    contact = _contact(db)
+    _access(db, contact, office)
+    db.commit()
+
+    resp = _get(client, rank_by="quantity", **_as_contact(contact))
+    assert resp.status_code == 200, resp.text
+    assert _codes(resp.json()) == ["ZZTOFFICE-B", "ZZTOFFICE-A"]
+    assert resp.json()["filters"]["dealer_scoped"] is False
+
+
+def test_linked_contact_is_a_dealer_even_with_an_office_type(client, db):
+    """S2: a customer link wins over an office type (most restrictive wins)."""
+    own = customer(db, company_id=DEFAULT_COMPANY_ID, name="ZZT LINKED OWN")
+    rival = customer(db, company_id=DEFAULT_COMPANY_ID, name="ZZT LINKED RIVAL")
+    po = _product(db, "ZZTLINKED-OWN")
+    pr = _product(db, "ZZTLINKED-RIVAL")
+    _line(db, product_id=po.id, ordered=1, delivered=1, customer_id=own.id)
+    _line(db, product_id=pr.id, ordered=9, delivered=9, customer_id=rival.id)
+    contact = _contact(db)
+    _access(db, contact, "Sorento Office")
+    _link(db, contact, own)
+    db.commit()
+
+    body = _get(client, rank_by="quantity", **_as_contact(contact)).json()
+    assert _codes(body) == ["ZZTLINKED-OWN"]
+    assert body["filters"]["dealer_scoped"] is True
+    refused = _get(client, rank_by="quantity", customer_ids=rival.id, **_as_contact(contact))
+    assert refused.status_code == 403, refused.text
+
+
 # --------------------------------------------------------------------- auth
 
 
@@ -817,6 +898,7 @@ def test_auth_401_403_apikey_and_company_scope(db, monkeypatch):
         )
     )
     contact = _contact(db)
+    _access(db, contact, "Sorento Office")
     superadmin = _seed_superadmin(db)
     scope_integration = Integration(
         id=str(uuid.uuid4()), name="zzt-top-selling-scope-key", type="automation",
