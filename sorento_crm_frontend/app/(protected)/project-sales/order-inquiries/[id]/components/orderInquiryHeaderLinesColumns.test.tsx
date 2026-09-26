@@ -73,6 +73,7 @@ describe('AC-B3-1: the Lines tab reads Product, Qty, Taken, Remaining, Delivery 
       // replace Qty.
       'No.',
       'Product',
+      'Confirmed',
       'SO Qty',
       'Requested',
       'Taken',

@@ -1,13 +1,22 @@
 'use client';
 
 import * as React from 'react';
-import { Check, ChevronDown, ChevronRight, History as HistoryIcon, Pencil } from 'lucide-react';
+import {
+  Check,
+  ChevronDown,
+  CircleCheck,
+  CircleDashed,
+  ChevronRight,
+  History as HistoryIcon,
+  Pencil,
+} from 'lucide-react';
 import { ColumnDef } from '@tanstack/react-table';
 import { Button } from '@/components/ui/button';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
+import { formatDateInMalaysia } from '@/lib/helpers';
 import {
   OrderInquiryLineStatePill,
   OrderInquiryVerbPill,
@@ -16,6 +25,7 @@ import {
 import { OrderInquiryStockGrid } from '../../../_shared/components/OrderInquiryStockGrid';
 import { formatInquiryQty, raisedKindLabel } from '../../../_shared/lib/orderInquiryWorklist';
 import {
+  lineConfirmationOf,
   lineFooterTotals,
   lineOf,
   type OrderInquiryLine,
@@ -278,6 +288,43 @@ function ReserveActionsCell({
   return null;
 }
 
+/**
+ * W1: the worklist PO cell's own confirmed / proposed marks (`DraftMark` in
+ * `orderInquiryWorklistColumns.tsx`): `CircleCheck` emerald once purchasing confirmed,
+ * `CircleDashed` muted while part of the line still waits.
+ */
+function LineConfirmationMark({ line }: { line: OrderInquiryLine }) {
+  const confirmation = lineConfirmationOf(line);
+  if (confirmation.kind === 'none') return null;
+  if (confirmation.kind === 'confirmed') {
+    const when = confirmation.at ? ` on ${formatDateInMalaysia(confirmation.at)}` : '';
+    const label = `Confirmed by ${confirmation.by ?? 'Purchasing'}${when}`;
+    return (
+      <span
+        data-testid="line-confirmed-mark"
+        role="img"
+        title={label}
+        aria-label={label}
+        className="inline-flex"
+      >
+        <CircleCheck className="size-3.5 shrink-0 text-emerald-600" aria-hidden />
+      </span>
+    );
+  }
+  const label = `${confirmation.confirmed} of ${confirmation.total} rows confirmed`;
+  return (
+    <span
+      data-testid="line-partly-confirmed-mark"
+      role="img"
+      title={label}
+      aria-label={label}
+      className="inline-flex"
+    >
+      <CircleDashed className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+    </span>
+  );
+}
+
 /** AC-ND-17: a footer total over every loaded line (the tab loads the whole set at once,
  * so there is no server page this could disagree with). */
 function LineFooter({
@@ -410,6 +457,19 @@ export function useOrderInquiryHeaderLinesColumns({
         // AC-DP-03, owner ruling 21 Sep: code only, one line - never the second
         // `product_name` line the worklist's own cell prints for a real row.
         cell: ({ row }) => <ItemCodeCell row={row.original} codeOnly />,
+      },
+      // W1 (PR #1266, owner hand test 26 Sep): the line's own confirmed mark, in the gap
+      // the owner boxed between Product and SO Qty. Not sortable: no other icon column on
+      // this grid sorts.
+      {
+        id: 'confirmation',
+        header: () => <span className="sr-only">Confirmed</span>,
+        size: 44,
+        minSize: 44,
+        enableSorting: false,
+        enableResizing: false,
+        meta: { headerTitle: 'Confirmed' },
+        cell: ({ row }) => <LineConfirmationMark line={lineOf(row.original)} />,
       },
       // AC-ND-3..5b (owner ruling 26 Sep, G4): SO Qty, Requested, Taken, Remaining - the
       // line's own sums (`orderInquiryLineFold.ts`), no Was / now annotation (G1).

@@ -255,6 +255,37 @@ export function lineHistoryEntries(line: OrderInquiryLine): LineHistoryEntry[] {
   return [...now.map(toEntry), ...retired.map(toEntry)];
 }
 
+/** W1 (owner hand test, 26 Sep 2026): how far purchasing has confirmed the line. */
+export type LineConfirmation =
+  | { kind: 'none' }
+  | { kind: 'confirmed'; by: string | null; at: string | null }
+  | { kind: 'partly'; confirmed: number; total: number };
+
+/**
+ * W1 (PR #1266, owner, 26 Sep: "after we click confirm, at the line level can't really see
+ * it is confirmed"): the same fold rule as the rest of the line - its live rows only, so a
+ * cancelled or used row never holds the mark back. A rejected row has nothing left to
+ * confirm and is left out of n of m; a cancelled line and a line nobody has confirmed any
+ * of read none (its State already says what waits).
+ */
+export function lineConfirmationOf(line: OrderInquiryLine): LineConfirmation {
+  if (line.lineCancelled) return { kind: 'none' };
+  const counted = line.liveRows.filter((row) => row.ack_state !== 'rejected');
+  const confirmed = counted.filter((row) => row.ack_state === 'acknowledged');
+  if (confirmed.length === 0) return { kind: 'none' };
+  if (confirmed.length < counted.length) {
+    return { kind: 'partly', confirmed: confirmed.length, total: counted.length };
+  }
+  const latest = [...confirmed].sort((a, b) =>
+    (b.acknowledged_at ?? '').localeCompare(a.acknowledged_at ?? ''),
+  )[0];
+  return {
+    kind: 'confirmed',
+    by: latest.acknowledged_by_name ?? null,
+    at: latest.acknowledged_at ?? null,
+  };
+}
+
 /**
  * Review S4 (AC-ND-14): the live row that carries the line's reserve history, whichever
  * row is the primary - `pickPrimary` puts a `requested` row ahead of a `reserved` one, so
