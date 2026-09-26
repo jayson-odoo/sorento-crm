@@ -304,6 +304,36 @@ def test_both_bases_default_delivered(client, db):
     assert _money(rows["ZZTBASIS-A"]["amount"]) == Decimal("1000.00")
 
 
+def test_ordered_basis_counts_a_closed_short_delivered_line_in_full(client, db):
+    """AC-1931 as grilled: basis=ordered is `qty_ordered` / `line_total`. A closed
+    line that delivered 2 of 7 still counts 7 / RM 700.00 ordered (the sales
+    report's own ordered pair would count only the 2 delivered), and a null
+    line_total counts RM 0.00. The delivered basis is unchanged."""
+    a = _product(db, "ZZTCLOSED-A")
+    b = _product(db, "ZZTCLOSED-B")
+    _line(
+        db, product_id=a.id, ordered=7, delivered=2, line_total=Decimal("700.00"),
+        line_status="closed", header_status="closed",
+    )
+    _line(db, product_id=b.id, ordered=4, delivered=4, line_total=None)
+    db.commit()
+
+    ordered = _get(client, rank_by="quantity", basis="ordered").json()
+    rows = {r["code"]: r for r in ordered["rows"]}
+    assert rows["ZZTCLOSED-A"]["quantity"] == 7
+    assert _money(rows["ZZTCLOSED-A"]["amount"]) == Decimal("700.00")
+    assert rows["ZZTCLOSED-B"]["quantity"] == 4
+    assert _money(rows["ZZTCLOSED-B"]["amount"]) == Decimal("0.00")
+    assert _codes(ordered) == ["ZZTCLOSED-A", "ZZTCLOSED-B"]
+    assert ordered["totals"]["quantity"] == 11
+    assert _money(ordered["totals"]["amount"]) == Decimal("700.00")
+
+    delivered = _get(client, rank_by="quantity").json()
+    rows = {r["code"]: r for r in delivered["rows"]}
+    assert rows["ZZTCLOSED-A"]["quantity"] == 2
+    assert _money(rows["ZZTCLOSED-A"]["amount"]) == Decimal("200.00")
+
+
 def test_delivered_basis_leaves_out_undelivered_items(client, db):
     """An item nothing was delivered of has no delivered sale to rank."""
     a = _product(db, "ZZTUNDEL-A")
