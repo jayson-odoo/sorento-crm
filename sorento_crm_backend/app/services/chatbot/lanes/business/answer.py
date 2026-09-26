@@ -3884,6 +3884,7 @@ def build_suggest_offer(
     sibling_transform: Any = None,
     get_results: Any = None,
     execution_id: Any = None,
+    profile: Any = None,
 ) -> dict[str, Any]:
     """`build-suggest-offer` (D1 / D2 / D3): the miss lane's offer composer.
 
@@ -3897,6 +3898,15 @@ def build_suggest_offer(
     identity - in the CRM that identity is the TURN id, which is the one permanent, already
     registered difference between this port and a captured n8n run
     (`tests/chatbot/worlds.py::WORLD_DROP_PATHS`).
+
+    `profile` (#1262 slice 11 review round, 26 Sep 2026): a did-you-mean/sibling roster is
+    a clarifying QUESTION, not an escalation offer (`pending.is_roster`, `answer_bridge.
+    answer_for`'s own audience gate keeps the roster itself for staff) - but every
+    `suggest_response` this function builds bakes its own "or would you like me to escalate
+    to X team?" tail straight into the SENTENCE, before that gate ever runs. `_esc_clause`
+    is the SAME closure pattern `not_found_error_message::_esc_offer` already uses (one
+    place every such clause in a function is built, so a later branch inherits the gate for
+    free) - `""` for staff, the full clause otherwise.
     """
     out = dict(item) if isinstance(item, dict) else {}
     for key in _DYM_CTRL_KEYS:
@@ -3914,6 +3924,15 @@ def build_suggest_offer(
         routing = jsc.get(q, "routing")
         company_team = jsc.get(routing, "suggested_team") if jsc.truthy(routing) else None
     team = _pretty_team(company_team if jsc.truthy(company_team) else "customer_service")
+    from app.services.chatbot.turn.state import is_staff_profile
+
+    is_staff = is_staff_profile(profile)
+
+    def _cont(lead_in: str, escalate_suffix: str) -> str:
+        """`lead_in + escalate_suffix` (the ", or ...escalate..." tail, several wordings
+        across this function's own branches) - staff get `f"{lead_in}."` alone, no
+        escalate offer (#1262 slice 11 review round, 26 Sep 2026)."""
+        return f"{lead_in}." if is_staff else f"{lead_in}{escalate_suffix}"
 
     def mk_offer(cands: Any) -> Any:
         """id = this turn's identity (stamped onto the picked entity as its dym slot, giving
@@ -4003,8 +4022,10 @@ def build_suggest_offer(
                 out["suggest_response"] = (
                     f"No incoming stock (ETA) found for {exact_list}. Related products:\n"
                     f"{numbered}\n"
-                    f"Reply with a number to check its incoming, or reply 'yes' to escalate "
-                    f"to {team} team."
+                    + _cont(
+                        "Reply with a number to check its incoming",
+                        f", or reply 'yes' to escalate to {team} team.",
+                    )
                 )
                 # Uncapped list means NO per-sibling buttons (respond.io's button cap);
                 # numbers are typed, so Yes / No are the only buttons.
@@ -4370,7 +4391,8 @@ def build_suggest_offer(
         out["suggest_response"] = (
             "Couldn't find some items:\n\n"
             + "\n".join(blocks)
-            + f"\n\nReply a number to pick, or 'yes' to escalate to {team}."
+            + "\n\n"
+            + _cont("Reply a number to pick", f", or 'yes' to escalate to {team}.")
         )
         out["suggest_quick_reply"] = _quick_reply([_YES, _NO])
         out["dym_offer"] = mk_offer(out["dym_candidates"])
@@ -4399,8 +4421,10 @@ def build_suggest_offer(
                 out["suggest_response"] = (
                     f'Couldn\'t pin down "{jsc.js_string(raw_of_tok(d1["token"]))}"{d1_type_sfx}. '
                     f"Here are the closest matches:\n{numbered}\n"
-                    f"Reply with a number to continue, or would you like me to escalate to "
-                    f"{team} team?"
+                    + _cont(
+                        "Reply with a number to continue",
+                        f", or would you like me to escalate to {team} team?",
+                    )
                 )
                 out["suggest_quick_reply"] = _quick_reply(
                     [str(i + 1) for i in range(len(picks))] + [_YES, _NO]
@@ -4467,15 +4491,19 @@ def build_suggest_offer(
                     out["suggest_response"] = (
                         f'Couldn\'t find "{jsc.js_string(raw_of_tok(d1["token"]))}"{d1_type_sfx}. '
                         f"Did you mean:\n" + "\n".join(dym_lines) + "\n"
-                        f"Reply with a code to continue, or would you like me to escalate to "
-                        f"{team} team?"
+                        + _cont(
+                            "Reply with a code to continue",
+                            f", or would you like me to escalate to {team} team?",
+                        )
                     )
                 else:
                     out["suggest_response"] = (
                         f'Couldn\'t find "{jsc.js_string(raw_of_tok(d1["token"]))}"{d1_type_sfx}. '
                         f"Did you mean {_bso_human_list(codes)}? "
-                        f"Reply with a code to continue, or would you like me to escalate to "
-                        f"{team} team?"
+                        + _cont(
+                            "Reply with a code to continue",
+                            f", or would you like me to escalate to {team} team?",
+                        )
                     )
                 out["suggest_quick_reply"] = _quick_reply([*codes, _YES, _NO])
                 out["suggest_last_result_set"] = [
@@ -4603,13 +4631,19 @@ def build_suggest_offer(
             summary = f"Here's what you want:\n{summary_text}\n\n" if summary_text else ""
             text = (
                 f"{summary}No delivery on {asked}. {jsc.js_string(cust)} has delivery on {near}. "
-                f"Reply with a date to continue, or would you like me to escalate to {team} team?"
+                + _cont(
+                    "Reply with a date to continue",
+                    f", or would you like me to escalate to {team} team?",
+                )
             )
         else:
             text = (
                 f"No {jsc.js_string(noun)} for {asked_label}. "
                 f"Try: {', '.join(jsc.js_string(v) for v in values)}. "
-                f"Reply with a code to continue, or would you like me to escalate to {team} team?"
+                + _cont(
+                    "Reply with a code to continue",
+                    f", or would you like me to escalate to {team} team?",
+                )
             )
 
         out["suggest_offer"] = True
@@ -4659,7 +4693,10 @@ def build_suggest_offer(
     out["suggest_selection_context"] = "suggest_offer"
     out["suggest_response"] = (
         f"No {jsc.js_string(noun)} for {asked_label}. Here are the closest matches:\n{numbered}\n"
-        f"Reply with a number to continue, or would you like me to escalate to {team} team?"
+        + _cont(
+            "Reply with a number to continue",
+            f", or would you like me to escalate to {team} team?",
+        )
     )
     out["suggest_quick_reply"] = _quick_reply(
         [str(i + 1) for i in range(len(alt_picks))] + [_YES, _NO]

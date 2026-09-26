@@ -1601,6 +1601,7 @@ def answer_for(
         # lane has none - but it is a real flag the engine holds.
         dry_run=dry_run,
         roster_caps=roster_caps,
+        profile=profile,
     )
     lane_item = {**offer, "branch_kind": "not_found"}
     values = {
@@ -1655,21 +1656,32 @@ def answer_for(
         text=text,
         combined_member_rows=combined_member_rows,
     )
-    # Phase 3 fix round (26 Sep 2026), review B1/SF2: the SAME audience gate the
-    # crossdomain ladder rung above already applies to its own offer TEXT
+    # Phase 3 fix round (26 Sep 2026), review B1/SF2 + B1 follow-up: the SAME audience
+    # gate the crossdomain ladder rung above already applies to its own offer TEXT
     # (`include_offer=not is_staff_profile(profile)`) - `_miss_question`'s
     # escalate-catalog branch mints a bare "Yes" `team_pick` with no staff check at
     # all, so a staff contact's order miss armed a hidden escalation nobody was ever
-    # shown a sentence for. A genuine ambiguity roster (`pending.is_roster`, e.g. a
-    # did-you-mean or member pick) is not an escalation offer and stays for staff;
-    # only an OFFER_KIND question (or one already carrying the escalate stamp) is
-    # withheld.
-    if (
-        is_staff_profile(profile)
-        and question is not None
-        and (question.kind in pending.OFFER_KINDS or question.payload.get("escalate_offered") is True)
-    ):
-        question = None
+    # shown a sentence for.
+    #
+    # A genuine ambiguity roster (`pending.is_roster`, e.g. a did-you-mean or member
+    # pick) is NOT an escalation offer and must still be ASKED for staff - it is a
+    # clarifying question, not a bot-initiated offer (dropping it entirely, the first
+    # attempt, left `answer.question is None` while the composed TEXT still numbered
+    # the candidates and ended "...or would you like me to escalate to X team?" -
+    # `build_suggest_offer`'s own `profile`-gated `_cont` closure, threaded through
+    # `run_miss_lane` above, is what strips THAT sentence). The roster survives with
+    # its `escalate_offered` stamp and `team` stripped instead - the same shape
+    # `turn/compose.py`'s identical audience gate leaves a withheld roster in.
+    if is_staff_profile(profile) and question is not None:
+        if pending.is_roster(question.kind):
+            if question.payload.get("escalate_offered") is True or question.team is not None:
+                from dataclasses import replace as _replace_q
+
+                stripped_payload = dict(question.payload)
+                stripped_payload.pop("escalate_offered", None)
+                question = _replace_q(question, team=None, payload=stripped_payload)
+        else:
+            question = None
     if combined_member_rows and question is not None:
         member_options = [o for o in question.options if o.get("entity_type") == "member"]
         if member_options and any(o.get("entity_type") != "member" for o in question.options):

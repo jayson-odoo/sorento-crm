@@ -1328,6 +1328,7 @@ def run_miss_lane(
     execution_id: Any = None,
     dry_run: bool = False,
     roster_caps: Mapping[str, int] | None = None,
+    profile: Any = None,
 ) -> dict[str, Any]:
     """`sub-miss-suggest` end to end, from `not-found-error-message`'s payload to the exit.
 
@@ -1351,6 +1352,11 @@ def run_miss_lane(
     D14: `dry_run` suppresses WRITES, and there are none on this lane - every seam here is a
     READ, so a dry run makes exactly the same calls a live turn makes. The parameter is
     accepted so the caller does not have to know that.
+
+    `profile` (#1262 slice 11 review round, 26 Sep 2026) forwards straight to
+    `build_suggest_offer`'s own audience gate - a did-you-mean/sibling roster's own
+    "or would you like me to escalate to X team?" clause must not print for staff, the
+    same reason `not_found_error_message` already takes `profile`.
     """
     from app.services.chatbot.lanes.business.answer import build_suggest_offer
 
@@ -1365,6 +1371,7 @@ def run_miss_lane(
             sibling_probe=fragment.get("sibling-probe"),
             sibling_transform=fragment.get("sibling-transform"),
             execution_id=execution_id,
+            profile=profile,
         )
 
     payload = not_found_item if isinstance(not_found_item, dict) else {}
