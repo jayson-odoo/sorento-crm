@@ -24,6 +24,9 @@ const regroupSalesOrder = vi.fn();
 const downloadSalesOrderImportFile = vi.fn();
 const saveBlobAs = vi.fn();
 const toastError = vi.fn();
+const listScheduleFindings = vi.fn();
+const acknowledgeScheduleFinding = vi.fn();
+const listScheduleVersions = vi.fn();
 
 vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: (...args: unknown[]) => toastError(...args) },
@@ -63,7 +66,9 @@ vi.mock('../../../../_shared/services/projectSalesOrderService', () => ({
   createAmendment: vi.fn(),
   getAmendment: vi.fn(),
   publishAmendment: vi.fn(),
-  listScheduleVersions: vi.fn(async () => []),
+  listScheduleVersions: (...args: unknown[]) => listScheduleVersions(...args),
+  listScheduleFindings: (...args: unknown[]) => listScheduleFindings(...args),
+  acknowledgeScheduleFinding: (...args: unknown[]) => acknowledgeScheduleFinding(...args),
   listPoVersions: vi.fn(async () => []),
 }));
 
@@ -84,7 +89,7 @@ vi.mock('../../../../_shared/services/soDivergenceService', () => ({
 let canEditProject = true;
 vi.mock('../../../../_shared/hooks/useProjects', () => ({
   useProject: () => ({
-    data: { id: 'p1', can_edit: canEditProject },
+    data: { id: 'p1', title: 'Setia Alam', project_code: 'PRJ-000001', can_edit: canEditProject },
     isLoading: false,
     isError: false,
   }),
@@ -250,7 +255,15 @@ beforeEach(() => {
   canEditProject = true;
   // Default: AutoCount agrees, so the amend path is open.
   listDivergences.mockResolvedValue({ data: [], total: 0, page: 1, limit: 100 });
+  listScheduleFindings.mockResolvedValue([]);
+  listScheduleVersions.mockResolvedValue([]);
 });
+
+/** A row's Flag pill opens its popover; the finding and its Dismiss live there (lesson (b)). */
+async function openFlag(name: RegExp) {
+  fireEvent.click(await screen.findByRole('button', { name }));
+  return within(await screen.findByRole('dialog'));
+}
 
 describe('SalesOrderDetailClient', () => {
   it('renders a skeleton while loading, not an empty draft', () => {
@@ -272,14 +285,15 @@ describe('SalesOrderDetailClient', () => {
     expect(screen.getByRole('link', { name: 'Back to sales orders' })).toBeInTheDocument();
   });
 
-  it('states that nothing is blocking and no warnings stand, rather than hiding the sections', async () => {
+  it('shows every line and no gate count when nothing is open', async () => {
     getProjectSalesOrder.mockResolvedValue(detail());
 
     renderDetail();
 
-    expect(await screen.findByText('Nothing is blocking this sales order.')).toBeInTheDocument();
-    expect(screen.getByText('No warnings on this sales order.')).toBeInTheDocument();
-    expect(screen.getByText('Nothing else to note.')).toBeInTheDocument();
+    expect(await screen.findByText('SRT382-6')).toBeInTheDocument();
+    expect(screen.getByText('CB6633')).toBeInTheDocument();
+    expect(screen.queryByRole('radio', { name: /Need attention/ })).not.toBeInTheDocument();
+    expect(screen.queryByText(/block(s)? publish$/)).not.toBeInTheDocument();
     // The lines are summed as decimals and shown beside the header total.
     expect(screen.getAllByText('RM 8,554.95').length).toBeGreaterThan(0);
   });
@@ -291,14 +305,14 @@ describe('SalesOrderDetailClient', () => {
 
     renderDetail();
 
-    expect(
-      await screen.findByText(
-        'Publishing is refused: 1 finding must be fixed or overridden.',
-      ),
-    ).toBeInTheDocument();
+    // S7-1: the count under Publish replaces the refusal banner.
+    expect(await screen.findByText('1 blocks publish')).toBeInTheDocument();
+    expect(screen.queryByText(/Publishing is refused:/)).not.toBeInTheDocument();
     // The sentence the backend wrote, not the code.
-    expect(screen.getAllByText(HARD.detail).length).toBeGreaterThan(0);
+    const flag = await openFlag(/Blocks publish on line 1/);
+    expect(flag.getByText(HARD.detail)).toBeInTheDocument();
     expect(screen.queryByText('line_arithmetic')).not.toBeInTheDocument();
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
 
     fireEvent.click(screen.getByRole('button', { name: 'Publish' }));
 
@@ -308,18 +322,21 @@ describe('SalesOrderDetailClient', () => {
     expect(publishSalesOrder).not.toHaveBeenCalled();
   });
 
-  it('anchors a blocking finding to its line', async () => {
+  it('anchors a blocking finding to its line, and opens on Need attention (lesson (c))', async () => {
     getProjectSalesOrder.mockResolvedValue(
       detail({ status: 'blocked', hard_findings: 1, findings: [HARD] }),
     );
 
     renderDetail();
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Show line 1' }));
-
-    // The table narrows to that line; the other line is out of the way.
-    expect(screen.getByRole('button', { name: 'Show all lines' })).toBeInTheDocument();
+    const attention = await screen.findByRole('radio', { name: 'Need attention (1)' });
+    expect(attention).toHaveAttribute('data-state', 'on');
+    const row = screen.getByText('CB6633').closest('tr') as HTMLElement;
+    expect(within(row).getByText('Blocks publish')).toBeInTheDocument();
     expect(screen.queryByText('SRT382-6')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('radio', { name: 'All lines (2)' }));
+    expect(screen.getByText('SRT382-6')).toBeInTheDocument();
   });
 
   it('refuses an empty acknowledgement and sends the typed reason', async () => {
@@ -328,9 +345,10 @@ describe('SalesOrderDetailClient', () => {
 
     renderDetail();
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Dismiss with a reason' }));
+    const flag = await openFlag(/Needs acknowledgement on line 2/);
+    fireEvent.click(flag.getByRole('button', { name: 'Dismiss with a reason' }));
 
-    const dialog = await screen.findByRole('dialog');
+    const dialog = await screen.findByRole('dialog', { name: /Dismiss with a reason/ });
     const record = within(dialog).getByRole('button', { name: 'Dismiss 1' });
     expect(record).toBeDisabled();
 
@@ -377,13 +395,14 @@ describe('SalesOrderDetailClient', () => {
 
     renderDetail();
 
-    // The reason stays on the sales order with the name against it.
-    expect(await screen.findByText('Cleared by Eling')).toBeInTheDocument();
+    // The reason stays on the sales order with the name against it, one click into the Flag.
+    const flag = await openFlag(/Dismissed on line 2/);
     expect(
-      screen.getByText('Customer agreed the revised price on 01/04.'),
+      flag.getByText('Eling: Customer agreed the revised price on 01/04.'),
     ).toBeInTheDocument();
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Publish' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Publish' }));
 
     const dialog = await screen.findByRole('alertdialog');
     expect(within(dialog).getByText('Publish PSO-000123?')).toBeInTheDocument();
@@ -491,9 +510,10 @@ describe('SalesOrderDetailClient', () => {
 
     renderDetail();
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Dismiss with a reason' }));
+    const flag = await openFlag(/Blocks publish on line 1/);
+    fireEvent.click(flag.getByRole('button', { name: 'Dismiss with a reason' }));
 
-    const dialog = await screen.findByRole('dialog');
+    const dialog = await screen.findByRole('dialog', { name: /Dismiss with a reason/ });
     expect(within(dialog).getByText('Blocks publish')).toBeInTheDocument();
     fireEvent.change(within(dialog).getByLabelText(/Reason/), {
       target: { value: 'PO amount is a typo, confirmed by email 02/04.' },
@@ -725,9 +745,13 @@ describe('SalesOrderDetailClient', () => {
 
     renderDetail();
 
+    // Published with nothing open: the AutoCount differences tab is the one that opens.
     expect(await screen.findByText(/autocount disagrees on 4 rows/i)).toBeInTheDocument();
     expect(screen.getByText(/waiting 3 days/i)).toBeInTheDocument();
-    expect(screen.getByText(/our values are unchanged/i)).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'AutoCount differences (4)' })).toHaveAttribute(
+      'data-state',
+      'active',
+    );
   });
 
   it('offers a way to the reconciliation screen', async () => {
@@ -911,5 +935,189 @@ describe('SalesOrderDetailClient header', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
     expect(await screen.findByRole('button', { name: 'Next sales order' })).toBeInTheDocument();
+  });
+});
+
+/**
+ * S7: the sales order review screen (`mockups/sales-order-review.html`). One lines table with
+ * the order's and the schedule's findings on its rows, two tabs, the gate stated once under
+ * Publish by the same rule the server refuses with.
+ */
+describe('SalesOrderDetailClient, the S7 review screen', () => {
+  const PAIR = { purchase_order_id: 'po-1', schedule_version_id: 'sv-2' };
+  const SHORT: ProjectSalesOrderFinding = {
+    id: 'f-short',
+    severity: 'hard',
+    code: 'schedule_short',
+    detail: 'CB6633: the PO orders 600 but the schedule only places 0.',
+    line_id: 'l1',
+    line_no: 1,
+    detail_json: { product_code: 'CB6633' },
+  };
+  const COLUMN: ProjectSalesOrderFinding = {
+    id: 's-column',
+    severity: 'hard',
+    code: 'unresolved_product',
+    detail: "The schedule column 'BUI-HB-CB6633SS' is not mapped to a product.",
+    detail_json: { customer_code_raw: 'BUI-HB-CB6633SS' },
+  };
+  const OVER: ProjectSalesOrderFinding = {
+    id: 's-over',
+    severity: 'hard',
+    code: 'schedule_over',
+    detail: 'The schedule asks for 40 of ZZ900, which is not on this purchase order at all.',
+    detail_json: { product_code: 'ZZ900' },
+  };
+
+  it('S7-1: the meta line names the project, the area group, the customer PO version and Activity', async () => {
+    listScheduleVersions.mockResolvedValue([{ id: 'sv-2', version_no: 2, po_version_no: 1 }]);
+    getProjectSalesOrder.mockResolvedValue(detail(PAIR));
+
+    renderDetail();
+
+    expect(
+      await screen.findByText(
+        /Setia Alam \(PRJ-000001\) · Area group TOWER · Customer PO HQ\/26\/01\/121 v1/,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'View activity' })).toHaveAttribute(
+      'href',
+      '/project-sales/p1?tab=activity',
+    );
+    expect(screen.queryByRole('tab', { name: /Activity/ })).not.toBeInTheDocument();
+  });
+
+  it('S7-2: two tabs, Lines and AutoCount differences, and no Findings tab', async () => {
+    getProjectSalesOrder.mockResolvedValue(detail({ findings: [HARD] }));
+
+    renderDetail();
+
+    await screen.findByText('CB6633');
+    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
+      'Lines',
+      'AutoCount differences',
+    ]);
+    expect(screen.getByRole('tab', { name: 'Lines' })).toHaveAttribute('data-state', 'active');
+    expect(screen.queryByRole('tab', { name: /Findings/ })).not.toBeInTheDocument();
+  });
+
+  it('S7-3: a schedule finding naming no line is a row of the same table, naming its source', async () => {
+    listScheduleFindings.mockResolvedValue([OVER]);
+    getProjectSalesOrder.mockResolvedValue(detail(PAIR));
+
+    renderDetail();
+
+    const row = (await screen.findByText('ZZ900')).closest('tr') as HTMLElement;
+    expect(within(row).getByText('Blocks publish')).toBeInTheDocument();
+    const flag = await openFlag(/Blocks publish on ZZ900/);
+    expect(flag.getByText('Schedule')).toBeInTheDocument();
+    expect(flag.getByText(OVER.detail)).toBeInTheDocument();
+    // No separate schedule findings card any more (S3-6).
+    expect(screen.queryByText('Schedule / PO findings')).not.toBeInTheDocument();
+  });
+
+  it('R23: the unmapped column and the short it causes are one row, cleared with one Dismiss', async () => {
+    listScheduleFindings.mockResolvedValue([COLUMN]);
+    acknowledgeFinding.mockResolvedValue(detail(PAIR));
+    acknowledgeScheduleFinding.mockResolvedValue({});
+    getProjectSalesOrder.mockResolvedValue(
+      detail({ ...PAIR, status: 'blocked', findings: [SHORT] }),
+    );
+
+    renderDetail();
+
+    await waitFor(() => expect(listScheduleFindings).toHaveBeenCalledWith('po-1', 'sv-2'));
+    const flag = await openFlag(/Blocks publish on line 1/);
+    expect(await flag.findByText('Sales order and Schedule')).toBeInTheDocument();
+    expect(flag.getByText(SHORT.detail)).toBeInTheDocument();
+    expect(flag.getByText(COLUMN.detail)).toBeInTheDocument();
+    expect(flag.getAllByRole('button', { name: 'Dismiss with a reason' })).toHaveLength(1);
+    // No second row for the column.
+    expect(screen.queryByText('BUI-HB-CB6633SS')).not.toBeInTheDocument();
+
+    fireEvent.click(flag.getByRole('button', { name: 'Dismiss with a reason' }));
+    const dialog = await screen.findByRole('dialog', { name: /Dismiss with a reason/ });
+    fireEvent.change(within(dialog).getByLabelText(/Reason/), {
+      target: { value: 'Column remapped on the schedule, v3 due.' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Dismiss 2' }));
+
+    await waitFor(() =>
+      expect(acknowledgeScheduleFinding).toHaveBeenCalledWith(
+        'po-1',
+        's-column',
+        'Column remapped on the schedule, v3 due.',
+      ),
+    );
+    expect(acknowledgeFinding).toHaveBeenCalledWith(
+      'so-1',
+      'f-short',
+      'Column remapped on the schedule, v3 due.',
+    );
+  });
+
+  it('lesson (e): the gate count is the server rule, and every blocker is in Need attention', async () => {
+    const acknowledgedHard: ProjectSalesOrderFinding = {
+      ...HARD,
+      id: 'f-hard-done',
+      line_id: 'l2',
+      line_no: 2,
+      acknowledged_at: '2026-09-01T00:00:00',
+      acknowledged_by_name: null,
+    };
+    const orderLevelHard: ProjectSalesOrderFinding = {
+      id: 'f-total',
+      severity: 'hard',
+      code: 'total_mismatch',
+      detail: 'The lines add up to 8,554.95 but the PO says 8,550.00.',
+    };
+    // A schedule finding never blocks an order's publish on the server, so it is not counted.
+    listScheduleFindings.mockResolvedValue([OVER]);
+    getProjectSalesOrder.mockResolvedValue(
+      detail({ ...PAIR, status: 'blocked', findings: [HARD, acknowledgedHard, orderLevelHard] }),
+    );
+
+    renderDetail();
+
+    expect(await screen.findByText('2 block publish')).toBeInTheDocument();
+    // HARD on line 1, the order-level total, and the schedule row: all need attention.
+    expect(await screen.findByRole('radio', { name: 'Need attention (3)' })).toHaveAttribute(
+      'data-state',
+      'on',
+    );
+    expect(screen.getByText('CB6633')).toBeInTheDocument();
+    expect(screen.getByText(orderLevelHard.detail)).toBeInTheDocument();
+    // The line whose finding is dismissed does not need attention.
+    expect(screen.queryByText('SRT382-6')).not.toBeInTheDocument();
+  });
+
+  it('S7-4: the summary card renders a dash for every unknown value', async () => {
+    getProjectSalesOrder.mockResolvedValue(
+      detail({ area_group: null, created_at: null, customer_name: null, lines: [], line_count: 0 }),
+    );
+
+    renderDetail();
+
+    await screen.findByText('Reference we raised');
+    for (const label of [
+      'Area group',
+      'Billed to',
+      'Sum of the lines',
+      'Drafted',
+      'Published',
+      'AutoCount document',
+    ]) {
+      const field = screen.getByText(label, { selector: 'p' }).parentElement as HTMLElement;
+      expect(within(field).getByText('-')).toBeInTheDocument();
+    }
+  });
+
+  it('the AutoCount differences tab says so plainly before the order is published', async () => {
+    getProjectSalesOrder.mockResolvedValue(detail());
+
+    renderDetail();
+
+    fireEvent.mouseDown(await screen.findByRole('tab', { name: 'AutoCount differences' }));
+    expect(await screen.findByText('Not in AutoCount yet')).toBeInTheDocument();
   });
 });

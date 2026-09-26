@@ -323,6 +323,24 @@ describe('the Flag column and the Need attention filter (S7-3)', () => {
     expect(onDismiss.mock.calls[0][0].members[0].finding.id).toBe('f-seat');
   });
 
+  it('keeps an open popover open when the page re-renders with a new canDismiss', () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    const ui = () => (
+      <QueryClientProvider client={client}>
+        <SalesOrderLinesTable
+          lines={SET_LINES}
+          flagItems={flagged()}
+          canDismiss={() => true}
+          onDismiss={vi.fn()}
+        />
+      </QueryClientProvider>
+    );
+    const view = render(ui());
+    fireEvent.click(screen.getByRole('button', { name: /Blocks publish on line 7/ }));
+    view.rerender(ui());
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
   it('offers no Dismiss where the caller allows none', () => {
     renderTable({ flagItems: flagged(), canDismiss: null });
     const row = screen.getByText('SRTWC8608-SC').closest('tr') as HTMLElement;

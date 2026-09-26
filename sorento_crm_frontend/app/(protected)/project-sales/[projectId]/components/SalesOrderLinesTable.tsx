@@ -345,6 +345,12 @@ export function SalesOrderLinesTable({
     visibleGroups,
   ]);
 
+  // Read through a ref so the columns keep their identity: TanStack renders a cell function
+  // as a component, so a new `canDismiss` each parent render would remount every Flag cell
+  // and close an open popover under the reader.
+  const dismissRef = React.useRef({ canDismiss, onDismiss });
+  dismissRef.current = { canDismiss, onDismiss };
+
   const columns = React.useMemo<ColumnDef<DisplayRow>[]>(
     () => [
       {
@@ -396,8 +402,8 @@ export function SalesOrderLinesTable({
           <SalesOrderFlagCell
             items={row.original.items}
             label={row.original.line ? `line ${row.original.line.line_no}` : rowSubject(row.original)}
-            canDismiss={canDismiss}
-            onDismiss={(item) => onDismiss?.(item)}
+            canDismiss={dismissRef.current.canDismiss}
+            onDismiss={(item) => dismissRef.current.onDismiss?.(item)}
           />
         ),
         size: 190,
@@ -548,7 +554,7 @@ export function SalesOrderLinesTable({
         meta: { headerTitle: 'Stock location', skeleton: <Skeleton className="h-4 w-24" /> },
       },
     ],
-    [canDismiss, onDismiss],
+    [],
   );
 
   const table = useReactTable({
