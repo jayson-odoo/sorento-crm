@@ -88,12 +88,12 @@ class FastRead:
 def _said_nothing(schema: dict[str, Any]) -> Any:
     kinds = schema.get("type")
     kinds = kinds if isinstance(kinds, list) else [kinds]
-    if "null" in kinds:
-        return None
     if "array" in kinds:
         return []
     if "object" in kinds:
         return {key: _said_nothing(sub) for key, sub in (schema.get("properties") or {}).items()}
+    if "null" in kinds:
+        return None
     if "boolean" in kinds:
         return False
     return None
