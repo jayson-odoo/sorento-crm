@@ -586,6 +586,7 @@ def top_selling(
     date_from: date,
     date_to: date,
     dealer_scoped: bool = False,
+    detail_code: Optional[str] = None,
 ) -> dict:
     """Rank items (or categories) by summed quantity or amount on `basis`.
 
@@ -595,7 +596,11 @@ def top_selling(
     `total_count` / `totals` say. A group whose quantity AND amount are both 0
     on the chosen basis has no sale to rank and is left out (an item nothing
     was delivered of, on the delivered basis); a zero-value line with a real
-    quantity still ranks (owner ruling Q9)."""
+    quantity still ranks (owner ruling Q9).
+
+    `detail_code` (AC-1935, the detail offer) narrows everything to the one
+    product code (item grain) or category code (category grain), matched
+    case-insensitively, and adds that code's customers and months."""
     qty_expr, amount_expr = _basis_figures(basis)
     qty_sum = func.coalesce(func.sum(qty_expr), 0)
     amount_sum = func.coalesce(func.sum(amount_expr), 0)
@@ -615,16 +620,29 @@ def top_selling(
     else:
         key_cols = (Product.id, Product.product_code, Product.product_name)
     code_col, name_col = key_cols[1], key_cols[2]
+    if detail_code:
+        filters.append(func.upper(code_col) == detail_code.upper())
 
     metric, other = (qty_sum, amount_sum) if rank_by == "quantity" else (amount_sum, qty_sum)
 
-    def _base(query):
+    def _base(query, *, with_customer=False):
         query = query.select_from(SalesOrderLine).join(
             SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id
         ).join(Product, Product.id == SalesOrderLine.product_id)
-        if customer_query:
+        if group == "category":
+            query = query.outerjoin(ProductCategory, ProductCategory.id == Product.category_id)
+        if customer_query or with_customer:
             query = query.outerjoin(Customer, Customer.id == SalesOrder.customer_id)
         return query.filter(*filters)
+
+    def _ranked_by(query, *key, tiebreak):
+        if agent_filter is not None:
+            query = query.filter(agent_filter)
+        return (
+            query.group_by(*key)
+            .having(or_(qty_sum != 0, amount_sum != 0))
+            .order_by(metric.desc(), other.desc(), tiebreak.asc().nullslast())
+        )
 
     ranked = _base(
         db.query(
@@ -637,15 +655,7 @@ def top_selling(
             func.sum(amount_sum).over().label("total_amount"),
         )
     )
-    if group == "category":
-        ranked = ranked.outerjoin(ProductCategory, ProductCategory.id == Product.category_id)
-    if agent_filter is not None:
-        ranked = ranked.filter(agent_filter)
-    ranked = (
-        ranked.group_by(*key_cols)
-        .having(or_(qty_sum != 0, amount_sum != 0))
-        .order_by(metric.desc(), other.desc(), code_col.asc().nullslast())
-    )
+    ranked = _ranked_by(ranked, *key_cols, tiebreak=code_col)
     if n is not None:
         ranked = ranked.limit(n)
     result = ranked.all()
@@ -661,6 +671,33 @@ def top_selling(
         for i, r in enumerate(result, start=1)
     ]
     first = result[0] if result else None
+
+    def _figures(r) -> dict:
+        return {"quantity": _qty(r.quantity), "amount": _money_edge(r.amount)}
+
+    def _top_selling_detail(row) -> dict:
+        by_customer = _ranked_by(
+            _base(
+                db.query(
+                    Customer.customer_name.label("customer_name"),
+                    qty_sum.label("quantity"),
+                    amount_sum.label("amount"),
+                ),
+                with_customer=True,
+            ),
+            Customer.id, Customer.customer_name, tiebreak=Customer.customer_name,
+        ).all()
+        month_col = func.to_char(bucket_expr, "YYYY-MM")
+        by_month = _ranked_by(
+            _base(db.query(month_col.label("month"), qty_sum.label("quantity"), amount_sum.label("amount"))),
+            month_col, tiebreak=month_col,
+        ).all()
+        return {
+            "code": row.code,
+            "name": row.name,
+            "by_customer": [{"customer_name": r.customer_name, **_figures(r)} for r in by_customer],
+            "by_month": [{"month": r.month, **_figures(r)} for r in by_month],
+        }
 
     fill_rate = None
     if sales_agent_ids is not None:
@@ -696,4 +733,5 @@ def top_selling(
             "amount": _money_edge(first.total_amount) if first else 0.0,
         },
         "sales_agent_fill_rate": fill_rate,
+        "detail": _top_selling_detail(first) if detail_code and first else None,
     }

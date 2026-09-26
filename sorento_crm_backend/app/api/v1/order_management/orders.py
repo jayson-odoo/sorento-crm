@@ -1900,6 +1900,14 @@ async def get_top_selling(
         ),
     ),
     date_to: Optional[str] = Query(None, description="Same formats as date_from."),
+    detail_code: Optional[str] = Query(
+        None,
+        description=(
+            "The detail offer: one product code (group=item) or category code (group=category), "
+            "case-insensitive. Rows and totals narrow to that code and `detail` carries its "
+            "by_customer and by_month, same filters and basis, sorted by the rank_by metric desc."
+        ),
+    ),
     contact_id: Optional[str] = Query(
         None,
         description=(
@@ -1948,6 +1956,13 @@ async def get_top_selling(
         raise AppException(
             422, "customer_query must be at least 3 characters",
             detail=customer_query_stripped, code="customer_query_too_short",
+        )
+
+    detail_code_stripped = (detail_code or "").strip() or None
+    if detail_code_stripped and len(detail_code_stripped) > 100:
+        raise AppException(
+            422, "detail_code must be at most 100 characters",
+            detail=str(len(detail_code_stripped)), code="detail_code_too_long",
         )
 
     if bool(contact_id) != bool(space_id):
@@ -2032,5 +2047,6 @@ async def get_top_selling(
         date_from=window_from,
         date_to=window_to,
         dealer_scoped=dealer_scoped,
+        detail_code=detail_code_stripped,
     )
     return TopSellingResponse(**data)

@@ -781,6 +781,9 @@ CATALOG: tuple[ToolSpec, ...] = (
             "`sales_agent_ids` (sales_orders.sales_agent_id), `channel` dealer | project, "
             "`date_from`/`date_to` on the bucket date (required_date, else order_date); both "
             "omitted = the current calendar year.\n\n"
+            "DETAIL: `detail_code` = one row's code (a product code, or a category code under "
+            "group=category) answers the detail offer: `rows`/`totals` narrow to that code and "
+            "`detail` carries its `by_customer` and `by_month`, same filters and basis.\n\n"
             "ACCESS: pass `contact_id` + `space_id` (both or neither). The contact needs the "
             "Sales report reveal (403 `sales_report_not_enabled`); a dealer contact is forced "
             "to its own customers and naming another is 403 `customer_not_permitted`, the "
@@ -791,7 +794,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         (
             "rank_by", "basis", "group", "n", "customer_ids", "customer_query",
             "category_ids", "sales_agent_ids", "channel", "date_from", "date_to",
-            "contact_id", "space_id",
+            "contact_id", "space_id", "detail_code",
         ),
         domain="orders",
         related_tools=("crm_sales_report",),
