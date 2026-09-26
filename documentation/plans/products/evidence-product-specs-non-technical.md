@@ -14,8 +14,8 @@ here. Each section carries the exact read-only query, and one script prints all 
 
 ```bash
 cd sorento_crm_backend
-venv/bin/python -m scripts.product_spec_lane_evidence            # sections 1 to 5, read only
-venv/bin/python -m scripts.product_spec_lane_evidence --parity   # section 6, read only
+venv/bin/python -m scripts.product_spec_lane_evidence   # sections 1 to 5, before the migrations
+venv/bin/python -m scripts.product_spec_rule_parity     # section 6, after the migrations
 ```
 
 The owner (or the orchestrator on the Mini) runs it once against the dev copy before merge and
@@ -110,10 +110,11 @@ prints any such rule before the migration runs. Output: _to paste_.
 
 ## 6. Golden parity (AC-S1.4)
 
-`--parity` reads every active product, derives it with the rules as they were on the branch
-base (kept in `scripts/product_spec_lane_evidence.py` as a frozen copy of the old matcher) and
-with the new engine, and prints every product whose value changes, with the key, before,
-after and the rule that read it. The expected groups (plan D5):
+The stored values on the dev copy are the old engine's output, so parity is read-only:
+`venv/bin/python -m scripts.product_spec_rule_parity`, run after `alembic upgrade head` and
+before any catalogue re-read, derives every active product with the new engine and prints
+every derived value that differs from the stored one, with the key, before, after and the
+words the new engine read. The expected groups (plan D5):
 
 1. Ways and Spray functions read two-digit numbers (one digit before).
 2. Power needs the number to stand on its own.
