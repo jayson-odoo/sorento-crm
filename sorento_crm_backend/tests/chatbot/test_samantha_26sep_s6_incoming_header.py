@@ -75,20 +75,25 @@ def test_t6_code_tier_incoming_answer_never_prints_the_counted_set_header():
     header, because the count was never over the products Samantha meant - it was
     over the leftover word "eta" searched against the whole catalogue (explainer
     section 4).
+
+    Re-routed (26 Sep, coordinator round 4) through `turn_runtime.envelope_of` - the
+    ONLY producer of `lane_text` in production - instead of a hand-built envelope
+    dict that merely ASSERTED a `lane_text` value into existence. Same fragment
+    shape `test_header_count_never_contradicts_the_rows_below_it` above already
+    uses, carried one step further into `compose()` so this test grades the actual
+    customer-facing text, not just the envelope.
     """
-    envelope = {
-        "domain": "incoming",
-        "denied": False,
-        "entities": ["M210-GM"],
-        "figures": [{"fields": [{"label": "Product Code", "value": "M210-GM"}]}],
-        "files": [],
-        "miss": [],
-        "has_result": True,
-        # `header_override` correctly withheld (counted_set was False) - the baked
-        # `lane_text` is the leak this test targets.
-        "header_override": None,
-        "lane_text": f"0 products have incoming stock.\n{_INCOMING_ROW_TEXT}",
+    fragment = {
+        "fetch": {
+            "has_result": True,
+            "answers": [{"fields": [{"label": "Product Code", "value": "M210-GM"}]}],
+            "response": f"0 products have incoming stock.\n{_INCOMING_ROW_TEXT}",
+            "set_header": "0 products have incoming stock.",
+        }
     }
+    spec = FetchSpec(domain="incoming", entities=[], filters={}, date_window=None)
+
+    envelope = envelope_of(fragment, spec, entities=[], counted_set=False)
     state = State(focus=Focus(), pending=None, profile=Profile(), turn_no=6)
 
     answer = compose([envelope], state, _policy(), ctx=None)

@@ -647,3 +647,99 @@ def test_dealer_kind_pick_asked_this_turn_gets_no_offer():
     assert answer.question is not None and answer.question.payload.get("escalate_offered") is not True, (
         f"a kind pick asked THIS TURN must not be stamped escalate_offered either: {answer.question!r}"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Phase 3 fix-round follow-up (26 Sep, coordinator round 4): a FIFTH site -
+# `answer_bridge.answer_for` ~1667's own audience gate drops the WHOLE did-you-mean
+# roster question for staff, not just the offer sentence riding on it, because a
+# genuinely-ambiguous `product_pick` roster still gets `escalate_offered: True`
+# stamped onto it (`test_rearch_r4_bridge_miss.py::TestDidYouMeanRosterMintsAProduct
+# Pick::test_pending_kind_product_pick_domain_and_escalate_offered_carried` pins that
+# stamp as correct/expected) - and the gate's OWN condition
+# (`question.kind in pending.OFFER_KINDS or question.payload.get("escalate_offered")
+# is True`) treats "carries the stamp" as reason enough to drop it, even though a
+# roster kind (`pending.is_roster`) is a genuine clarifying question, not an
+# escalation offer. Uses the reviewer's own fixture
+# (`test_rearch_r4_bridge_miss.py::_dym_incoming_scenario`) rather than a second copy.
+# --------------------------------------------------------------------------- #
+
+
+def test_staff_did_you_mean_roster_stays_open_without_an_offer():
+    """A staff contact's did-you-mean roster (an unplaced hyphenated incoming code,
+    two fuzzy candidates) must still be ASKED - `answer.question` must not be
+    `None` - with no `escalate_offered` stamp and no team riding on it, and the
+    reply text must carry no "escalate" phrase at all.
+
+    Red today: the whole question is dropped (`answer.question is None`) AND the
+    text still ends "...or would you like me to escalate to purchasing team?" - the
+    stamped-roster branch of the audience gate removes the QUESTION but nothing
+    strips the SENTENCE the miss lane already built into `text` before the gate
+    ever runs.
+    """
+    from app.services.chatbot import answer_bridge
+    from app.services.chatbot.turn.state import Profile
+    from tests.chatbot.test_rearch_r4_bridge_miss import _canned, _ctx_for, _dym_incoming_scenario
+
+    parser, resolved, extra = _dym_incoming_scenario()
+    gate = extra["gate"]
+    services = extra["services"]
+    payload = {"resolved": resolved, "gate": gate, "_exit_kind": "not_found"}
+
+    answer = answer_bridge.answer_for(
+        payload,
+        envelope=None,
+        parser=parser,
+        ctx=_ctx_for(parser),
+        canned=_canned(),
+        services=services,
+        db=None,
+        asked_at_turn=3,
+        profile=Profile(tier="office"),
+    )
+
+    assert answer is not None
+    assert answer.question is not None, (
+        "a did-you-mean roster is a clarifying question, not an escalation offer - "
+        "it must still be asked for a staff contact"
+    )
+    assert answer.question.payload.get("escalate_offered") is not True, (
+        f"no hidden escalate stamp on a staff contact's roster either: {answer.question!r}"
+    )
+    assert answer.question.team is None, (
+        f"no team should ride on a roster nobody was offered escalation for: {answer.question!r}"
+    )
+    assert "escalate" not in answer.text.lower(), answer.text
+
+
+def test_dealer_did_you_mean_roster_keeps_its_offer():
+    """Guard (R6): the SAME scenario for a dealer profile is UNCHANGED - the roster
+    stays armed, carrying its offer stamp and team, and the offer sentence still
+    prints, exactly as on main. Must be GREEN today and stay green.
+    """
+    from app.services.chatbot import answer_bridge
+    from app.services.chatbot.turn.state import Profile
+    from tests.chatbot.test_rearch_r4_bridge_miss import _canned, _ctx_for, _dym_incoming_scenario
+
+    parser, resolved, extra = _dym_incoming_scenario()
+    gate = extra["gate"]
+    services = extra["services"]
+    payload = {"resolved": resolved, "gate": gate, "_exit_kind": "not_found"}
+
+    answer = answer_bridge.answer_for(
+        payload,
+        envelope=None,
+        parser=parser,
+        ctx=_ctx_for(parser),
+        canned=_canned(),
+        services=services,
+        db=None,
+        asked_at_turn=3,
+        profile=Profile(tier="dealer"),
+    )
+
+    assert answer is not None
+    assert answer.question is not None
+    assert answer.question.payload.get("escalate_offered") is True
+    assert answer.question.team == "purchasing"
+    assert "would you like me to escalate to purchasing team?" in answer.text.lower(), answer.text

@@ -368,3 +368,58 @@ def test_miss_suggest_probe_tool_error_does_not_fail_the_turn():
         dry_run=True,
     )
     assert isinstance(offer, dict)
+
+
+def test_promo_dym_probe_tool_error_does_not_fail_the_turn(monkeypatch):
+    """The PROMO did-you-mean probe (`miss_suggest.run_miss_lane` ~1416, `if-promo-
+    dym` TRUE, `mode: each` - one `services.mcp_probe` call per candidate,
+    `promo_dym_plan`'s own row) already has a `try/except` in the checked-out code
+    (review round, SF2), but the reviewer found REMOVING that try/except still left
+    every existing test green - nothing exercises this branch with a probe that
+    actually raises, so a regression here would go unnoticed. `dym_transform` is
+    stubbed directly (a 561-line planner - `_dym_plan` - is not this test's
+    subject) to force the `probe_predicate == "row_present"` / `probe_needed: True`
+    branch with two promo candidates, `promo_dym_plan`'s own required shape
+    (`dym_candidate_codes` + `dym_probe_entities`, paired by code).
+    """
+    from app.services.ai_assistant_service import MCPToolCallError
+    from app.services.chatbot.lanes.business import miss_suggest as miss_mod
+    from app.services.chatbot.lanes.business.services import AnswerServices
+
+    plan = {
+        "probe_needed": True,
+        "probe_predicate": "row_present",
+        "probe_tool": "crm_marketing_promotions_list",
+        "dym_candidate_codes": ["PROMO-A", "PROMO-B"],
+        "dym_probe_entities": [
+            {"canonical_code": "PROMO-A", "entity_type": "promotion"},
+            {"canonical_code": "PROMO-B", "entity_type": "promotion"},
+        ],
+    }
+    monkeypatch.setattr(miss_mod, "dym_transform", lambda *a, **k: plan)
+
+    def _raising_probe(name, args):
+        raise MCPToolCallError("Error executing tool crm_marketing_promotions_list: probe failed")
+
+    services = AnswerServices(mcp_probe=_raising_probe, family_fetch=lambda query: {"data": []})
+    parser = {
+        "domain_hint": "promotion", "intent_hint": "check_promotion", "message_type": "business_query",
+        "entities": [], "routing": {"suggested_team": None, "suggested_agent": None}, "access_levels": [],
+    }
+    resolved = {"resolutions": [], "unresolved_tokens": [], "tokens": []}
+    gate = {"gate_debug": {"domain": "promotion"}}
+    not_found = {"result_type": "promotion", "items": [], "has_result": False}
+
+    # No pytest.raises here on purpose: the assertion IS that this does not raise.
+    offer = miss_mod.run_miss_lane(
+        not_found,
+        parser=parser,
+        resolved=resolved,
+        gate=gate,
+        services=services,
+        contact_id="zzt-s1-promo-probe-fail",
+        space_id=None,
+        execution_id="zzt-s1-promo-turn",
+        dry_run=True,
+    )
+    assert isinstance(offer, dict)
