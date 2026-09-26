@@ -1,6 +1,12 @@
 # PLAN: sales targets, opportunities and the WhatsApp achievement broadcast (#1170)
 
-Status: grilled, round 4 (owner's second Lavish review folded in, PR #1260 comment 06:01Z;
+Status: grilled, round 5 (the owner's answers to R1 to R5 and T1 to T5, PR #1260 comment
+5843775673 of 26 Sep 06:09Z, folded in as "Owner ruling 26 Sep 06:09" lines; section 13 says how
+each was applied; round 5 questions posted on the PR as the "Round 5" comment). **Every slice is
+in scope now; nothing is deferred or backlogged** (Owner ruling 26 Sep 06:09, T5: "the point is
+we need to do it now and not backlog or defer"). **Build order after round 5: S6, then S1 and S2
+in parallel, then S7, S4, S3 and S5** (section 6, "Lanes after round 5").
+Round 4 (owner's second Lavish review folded in, PR #1260 comment 06:01Z;
 round 4 questions Q1 to Q5 posted on the PR as comment 5843826713). Earlier rounds: round 1 answered by the owner
 26 Sep 2026, PR #1260 comment 05:25Z; round 2 questions posted on the PR; round 3 folded in the
 owner's first Lavish review, comment 05:35Z, and its questions T1 to T5 are comment 5843719967.
@@ -11,6 +17,13 @@ S4, S5** (section 6).
 Domain: sales. Classification: **MODULE** `sales` (installable; another tenant with a sales team
 would turn it on), tables in `public` with normal FKs (targets and opportunities are durable
 business records, so by the uninstall test they stay in `public`).
+**Round 5 (owner question 26 Sep 06:09, "are we doing this in a new schema and module called
+sales?"): yes to both, recommended.** A new module keyed `sales`, and its tables in a new
+Postgres schema `sales` named after the module key, without the `sales_` prefix
+(`sales.targets`, `sales.teams`, ...), on the ADR-0011 precedent the owner set for Project Sales
+(ownership visible in `\dn`; purge is a row-level delete, `DROP SCHEMA` is never issued). Full
+reasoning and the table name map: 3.7, "Module and schema (round 5)". Where this plan still
+writes `sales_targets` and the like, read the mapped name.
 UAC: `sales-targets-opportunities-26sep-acceptance-criteria.md` alongside (the contract; the
 journey J1 to J14 lives there and is not repeated here).
 Mockup: `mockups/sales-targets.html`. Round 4 redraws it to the owner's second Lavish review:
@@ -297,7 +310,8 @@ edits are exactly what people dispute):
 | `split_every` | smallint null | optional breakdown (N7, round 4 Q1): null = one period for the whole range; else 1 to 99 |
 | `split_unit` | varchar(8) null | `day`, `week` or `month`; set exactly when `split_every` is set (check) |
 | ~~`start_month`, `months`, `periodicity`~~ | | round 3 columns, replaced by the four above before anything was built (N6, N7: "why suddetnly got quarter so hard set one? what if i want month, week, year, 2 months, 2.5 months??") |
-| `commission_method` | varchar(16) not null default `none` | check `none`, `marginal`, `retroactive` (G6, S4) |
+| `commission_method` | varchar(16) not null default `none` | check `none`, `marginal`, `retroactive` (G6, S4). Owner ruling 26 Sep 06:09 (R5): `marginal` is the default the modal offers once tiers are added; `retroactive` ("Highest rate on everything") stays selectable on any target and is built in S4, not deferred (T5) |
+| `parent_target_id` | uuid FK `sales_targets` ON DELETE CASCADE, null | round 5 (Owner ruling 26 Sep 06:09, T3): an agent target that is one line of a team target; the team figure is the sum of these (3.8) |
 | `created_by_user_id`, `created_at`, `updated_at` | | |
 
 Nothing about the range is derived or stored beyond these columns; a week, a month, 2.5 months
@@ -377,6 +391,13 @@ later AutoCount edits (then snapshot at period close only). S1 adds `ix_sales_or
   `sales_team_members`), each member widened by R2 exactly as an agent target is; an order has one
   agent and an agent has one team (T2), so a team figure never counts an order twice and always
   equals the sum of the same target evaluated per member.
+  Round 5 (Owner ruling 26 Sep 06:09, T2): the team CTE matches membership **on the order's
+  date** (`valid_from` / `valid_to`, 3.8), not current membership; an order still counts for at
+  most one team. With no move inside the period, the team figure still equals the per-member sum.
+  Owner ruling 26 Sep 06:09 (R2): accepted as recommended. An agent target, and each member of a
+  team, counts every `sales_agents` row with the same non-empty `person_label` in the company
+  (plus shared rows), else the one code. For a team, the widening applies inside the member's
+  membership window, so SEAN III's orders count for Sean's team only while Sean is in it.
 - Scope: `all` passes; `categories` requires the product's category in the expanded set;
   `products` requires the product in the scope rows.
 - Value by metric and basis:
@@ -389,6 +410,57 @@ later AutoCount edits (then snapshot at period close only). S1 adds `ix_sales_or
   Delivered is bucketed by `order_date` too, because no delivery date exists (section 2); it
   reads "of what was ordered in this period, how much has gone out so far". Round 2 R3 asks the
   owner to confirm.
+  Round 5 (Owner ruling 26 Sep 06:09, R3: "we will have DO integreation as soon as next Monday
+  so by that time we will be able to know"): delivered counts **by DO date** once DO data
+  exists. Design below ("Delivered, by DO date"); the table above still gives the value per
+  unit, and only the date that buckets it changes.
+
+**Delivered, by DO date (round 5, R3).** Measured 26 Sep: delivery orders already exist in core
+as `orders` (the DO header, `app/models/order.py:286-358`; `order_date` is the DO date, indexed
+:350; `is_cancelled`) and `order_lines` ("Delivery order detail line", :360-405; `order_id` :368,
+`product_id`, `quantity` :381), permission `order_management.orders.*` labelled Delivery Orders
+(`permission_registry.py:92-97`), menu Sales > Delivery Orders (`menu.config.tsx:141-161`). They
+are filled by Excel upload only (`import_tasks.py:2698`), and **no column links a DO line to a
+sales order line** (no `sales_order_line_id`, no SO number). The archived AutoCount plan already
+mapped AutoCount DOs onto these two tables
+(`documentation/plans/_archive/autocount/PLAN-autocount-integration.md:184-191`, phase E).
+
+- **What S1 needs from the DO integration (the seam).** One nullable column,
+  `order_lines.sales_order_line_id` uuid FK `sales_order_lines` ON DELETE SET NULL, indexed,
+  filled from AutoCount's DO line "transferred from" reference (the SO line the DO delivers).
+  Nothing else: the DO date is `orders.order_date`, the quantity `order_lines.quantity`, and a
+  cancelled DO is `orders.is_cancelled`. The Monday DO lane owns that column and its ingest;
+  this plan does not build DO ingest. If that lane lands DOs in a new table instead, only one
+  CTE changes (below). Round 5 question V2 asks the owner to confirm the column.
+- **The seam in code.** `achievement_service` reads delivered quantities only through one CTE,
+  `delivered_by_date(period_start, period_end)`, returning `(sales_order_line_id, qty)` rows.
+  Every delivered figure (agent, team, dealer, amount, quantity) goes through it.
+- **The rule, one expression, no switch.** For each sales order line in scope:
+  - **by DO:** the sum of linked, non-cancelled DO line quantities whose DO date is inside the
+    period;
+  - **plus the residual:** `greatest(least(qty_delivered, qty_ordered) - all_linked_do_qty, 0)`,
+    the part AutoCount says has gone out but no linked DO line explains, counted by the sales
+    order's `order_date` exactly as round 2 R3 did;
+  - capped so the line's total across all periods never exceeds `qty_ordered` (the round 2
+    over-delivery rule, S1-8).
+  - Amount = `round(line_total x counted_qty / qty_ordered, 2)`, 0 when `qty_ordered = 0`
+    (unchanged).
+- **Interim, until DO data arrives.** With no linked DO lines, every line's DO sum is 0 and the
+  residual is its whole confirmed quantity, so delivered is exactly round 2's figure (the sales
+  report's "confirmed", bucketed by order date). When the DO integration starts linking, each
+  line moves to DO dates by itself; deliveries AutoCount made before the integration (no DO
+  row) stay on the order date, and nothing is counted twice because the residual subtracts
+  every linked DO quantity, whichever period it fell in. No setting, no cutover date. The
+  Targets page shows nothing different; the target page's Counts field reads "Delivered (by DO
+  date)" from the day any linked DO line exists in the company.
+- **Where the line's product and agent come from.** Always the sales order line and its sales
+  order (G2, scope 3.1), never the DO's free-text `agent` / `salesman` strings (`order.py`), so a
+  DO typed with a different salesman does not move credit.
+- **Whichever lands first adds the column.** Expected case: the DO lane merges on Monday 28 Sep,
+  while S6 is still being built, and S1 reads `order_lines.sales_order_line_id` as it is. If the
+  DO lane has not merged when S1 enters Phase 2, S1's migration adds the same nullable column
+  (no ingest, nothing fills it) and the DO lane rebases onto it and only fills it. No runtime
+  check for the column, no flag. S1's golden tests (S1-26) seed DO lines both linked and absent.
 - Output: `{period_id: achieved_value}` plus `unassigned_amount` for the chosen month (orders with
   a null agent, so they are visible, not dropped).
 - `pipeline_by_agent(db, *, month)` (S3) returns `{agent_id: (weighted_value, count)}`. Round 4:
@@ -671,6 +743,95 @@ uninstallable module. This is the second-case rule in `PRINCIPLES.md`, not specu
   a `SearchableSelect` (N8) preset to the open tab's kind (Team on the landing), and the team
   page's own **Set target** presets that team.
 
+#### Module and schema (round 5, the owner's question of 26 Sep 06:09)
+
+The owner asked: "are we doing this in a new schema and module called sales?". **Recommend yes
+to both.** Measured on origin/main 46711c61:
+
+- **How modules are organised today.** A module is enablement, not schema (`PRINCIPLES.md:187`):
+  a catalog row in `MODULE_MANIFEST` (`app/modules/runtime/module_manifest.py:27`, for example
+  `projects` :127, `scm` :103, `dealer_kit` :98, inserted by `installer._ensure_catalog_rows`,
+  `installer.py:24-47`), a placeholder `app/modules/<key>/bootstrap.py` with `MODULE_KEY`
+  (`app/modules/projects/bootstrap.py:3`), a router mounted behind
+  `require_module_enabled_with_api_key("<key>")` (`app/api/v1/__init__.py:98-103` for
+  `projects`), and slug prefixes mapped to the key (`permission_module_map.py:17-35`). There is no
+  other feature-flag system. Models are one flat file per domain (`app/models/projects.py`,
+  `project_so.py`, `scm.py`, `dealer_kit.py`); routes one package per domain under
+  `app/api/v1/`; FE pages one folder per module under `app/(protected)/` (`project-sales/`,
+  `scm/`, `dealer-kit/`), with the path to module key map in `lib/route-module-map.ts:11-31`
+  (`/project-sales` to `projects` :29) and module assets in `modules/registry.ts`.
+- **Schemas in use.** Four modules own a schema named after their key: `scm`
+  (`app/models/scm.py`, created by migration `273_scm_module_schema.py:42`), `dealer_kit`
+  (`app/models/dealer_kit.py:3-7`, migration `309_dealer_kit_module.py:93`), `projects`
+  (`app/models/projects.py`, `project_so.py`, moved by `354_projects_schema_move.py:362-366`)
+  and `chatbot` (`app/models/chatbot_turn.py:69`, `472_chatbot_turns.py:46`). Alembic already
+  handles several schemas (`alembic/env.py`: `include_schemas=True`, and `KNOWN_SCHEMAS` built
+  from the models, so a new schema needs no env change).
+- **The rule and the owner's own precedent.** `PRINCIPLES.md:192-203` makes the schema an
+  independent choice: default `public`, or a schema named after the module for "namespace
+  clarity and clean uninstall", split by the uninstall test. ADR-0009 kept Project Sales in
+  `public` by that test (its tables are records that must outlive an uninstall); **ADR-0011
+  (15 Aug 2026) reversed it at the owner's request**: "they want the boundary between core CRM
+  and an installable module to be visible in the database itself ... answered by `\dn`", the
+  schema name is the module key, the `project_` prefix is dropped inside it, cross-schema FKs to
+  core are normal, and **uninstall purges rows through the ORM and never drops the schema**.
+  With that last rule the uninstall test no longer argues against a schema for records.
+- **What exists under "sales" today.** No `sales` module key, catalog row, permission prefix,
+  schema, API package or FE route (`app/api/v1/sales`, `app/services/sales`, `app/modules/sales`
+  are all absent). The sidebar has a **SALES heading** (`menu.config.tsx:78`) holding Project
+  Sales (`moduleKey: 'projects'`, :79-139) and Delivery Orders (`moduleKey: 'order'`, :141-161).
+  Core tables with "sales" in the name stay where they are and are not part of this module:
+  `sales_agents` (module `product`, `app/models/sales_agent.py:43`), `sales_orders` and
+  `sales_order_lines` (core orders, `app/models/order.py:413`, :505), `sales_report_service.py`
+  (order module), and the project module's `projects.*` sales order mirror
+  (`project_so.py:542`).
+- **Why yes to a module:** targets, teams, opportunities and the broadcast are a capability
+  another tenant with a sales force would switch on, which is the module test in
+  `PRINCIPLES.md:182-190`; the key `sales` is free.
+- **Why yes to a schema:** it is what the owner asked for on Project Sales for the same reason
+  (ADR-0011); every table here is new, so today it costs one `CREATE SCHEMA IF NOT EXISTS sales`
+  in S6's migration and a `{"schema": "sales"}` in `__table_args__`, with no data move (ADR-0011
+  had to move 47 tables); and it keeps `sales.teams` visibly apart from the core `teams` table of
+  Users & Access, the "two things called Teams" risk in section 7. The cost: FK strings from a
+  `sales` table to another `sales` table are schema-qualified (`ForeignKey("sales.teams.id")`,
+  as `project_so.py:231` does), and raw SQL must name the schema (CLAUDE.md "Lessons learned": backend
+  table names are not model class names, grep `__tablename__` first).
+- **Not recommended: a `sales` schema holding `sales_agents` or `sales_orders`.** Those are core
+  records owned by modules `product` and `order`; moving them would put core behind an
+  installable module. They stay in `public`, and `sales.*` tables point at them with normal
+  cross-schema FKs.
+
+**What is built, per lane.** S6 (first) creates the module: `app/modules/sales/bootstrap.py`
+(`MODULE_KEY = "sales"`), the `sales` entry in `MODULE_MANIFEST` with dependencies `base`,
+`product` and `order` (it reads agents, customers, products and sales orders), `"sales":
+"sales"` in `permission_module_map.py`, the router package `app/api/v1/sales/` mounted at
+`/sales` behind the guard, `CREATE SCHEMA IF NOT EXISTS sales`, `sorento_crm_frontend/modules/sales/`
+(`purge_tables.json` listing the `sales.*` tables, as `modules/projects/` does) and `/sales` to
+`sales` in `lib/route-module-map.ts`; a purge invariants test like
+`tests/test_projects_module_purge_invariants.py`. Models stay one flat file per domain:
+`app/models/sales.py` (all module tables; replaces the plan's `app/models/sales_target.py`),
+services under `app/services/sales/`, schemas `app/schemas/sales.py`, FE pages under
+`app/(protected)/sales/`.
+
+**Table name map** (plan name, then the real name; every later lane uses the right column):
+
+| Plan text says | Built as | Lane |
+| --- | --- | --- |
+| `sales_teams` | `sales.teams` | S6 |
+| `sales_team_members` | `sales.team_members` | S6 |
+| `sales_targets` | `sales.targets` | S1 (S7 adds `customer_id`) |
+| `sales_target_periods` | `sales.target_periods` | S1 |
+| `sales_target_scope` | `sales.target_scope` | S1 |
+| `sales_target_commission_tiers` | `sales.target_commission_tiers` | S4 |
+| `sales_opportunities` | `sales.opportunities` | S2 |
+| `sales_opportunity_lines` | `sales.opportunity_lines` | S2 |
+| `sales_target_recipients` | `sales.update_subscriptions` (the screen calls them Sales updates, N12) | S5 |
+| `sales_agents`, `sales_orders`, `sales_order_lines`, `customers`, `products`, `statuses`, `respond_contacts`, `orders`, `order_lines` | unchanged, in `public` | none |
+
+The permission slugs stay `sales.targets.*`, `sales.teams.*`, `sales.opportunities.*`; the status
+entity type stays `sales_opportunity`; the `integration_log.business_table` value becomes
+`sales.update_subscriptions`.
+
 ### 3.8 Sales teams and team targets (Owner ruling 26 Sep (Lavish), L2 and L4, slice S6)
 
 Two new tables in the `sales` module, both `CompanyScopedMixin`, in `public` (by the uninstall
@@ -699,6 +860,42 @@ Unique `(company_id, sales_agent_id)`: one team per agent per company (round 3 T
 term is there because `sales_agents` rows may be shared across companies (`company_id` NULL,
 `sales_agent.py:73`); a shared agent can sit in one team per company.
 
+**Round 5: membership is dated (Owner ruling 26 Sep 06:09, T2:** "when we move agent to new team,
+only new order received in the new team is considred the ales of the new team right?"**).** Yes.
+`sales_team_members` gains two columns and changes its uniqueness rule, in the S6 migration
+(nothing is built yet, so there is no backfill):
+
+| column | type | note |
+| --- | --- | --- |
+| `valid_from` | date null | first order date that counts for this team; **null = from the beginning** (the agent's first team, see below) |
+| `valid_to` | date null | last order date that counts, inclusive; null = still in the team; check `valid_to >= valid_from` when both set |
+
+- One **open** membership per agent per company: partial unique index
+  `uq_sales_team_members_open` on `(company_id, sales_agent_id) WHERE valid_to IS NULL`. It
+  replaces round 3's plain unique `(company_id, sales_agent_id)`, which cannot hold history.
+- No two memberships of one agent in one company overlap: checked in `team_service` inside the
+  same transaction (a Postgres exclusion constraint would need the `btree_gist` extension for one
+  rule the service already owns; **trigger for the constraint:** a second writer of memberships
+  appears outside `team_service`).
+- **A move on date D** (the agent is in team N, the owner adds them to team S): N's row gets
+  `valid_to = D - 1`, a new S row gets `valid_from = D`, one transaction, audited. D is
+  **Moves on**, a date field that appears in the team modal only when a picked agent is in
+  another team, default today, never later than today (a future move is a calendar note, not a
+  membership). Orders dated D or later count for S; orders before D stay with N.
+- **An agent's first team** (no membership row in this company yet): `valid_from` is null, so
+  their earlier orders count for that team too. Without this, the owner's first setup after S6
+  ships would leave every team target that starts before the setup day short of the orders
+  already taken (round 5 question V1 asks the owner to confirm).
+- **Removing an agent from a team** (not moving them): the open row gets `valid_to = today`. The
+  history row stays, so past periods keep that agent's orders.
+- **Deleting a team** still cascades its membership rows (S6-3): a deleted team has no figures to
+  keep.
+
+Team achievement (3.2) joins membership on the order's own date: an order of agent A dated X
+counts for team T when A has a `sales_team_members` row for T with `coalesce(valid_from,
+'-infinity') <= X` and `X <= coalesce(valid_to, 'infinity')`. Because one agent's memberships in
+a company never overlap, an order still counts for at most one team.
+
 **Why a member table and not a `sales_team_id` column on `sales_agents`.** One team per agent
 would normally be a column ("one preference does not need a table"). But `sales_agents` is the
 master data of module `product`, and `sales` is an installable module (header): a core table with
@@ -711,12 +908,65 @@ No hierarchy (no parent team), no team leader, no dated membership. **Triggers:*
 when the owner asks for a region above teams; a leader column when a message or screen needs to
 name one; dated membership (`valid_from`, `valid_to`) when the owner moves agents between teams
 mid-year and wants past periods to stay with the old team (T2).
+Round 5 (Owner ruling 26 Sep 06:09, T2): that trigger has arrived; dated membership is built in
+S6 as above. No parent team and no leader stay as they were (not asked).
 
 **Team targets** reuse `sales_targets` with `subject_kind = 'team'` and `sales_team_id` (3.1), so
 periods, scope, basis, metric, duplicate, tiers (S4) and recipients (S5) all work unchanged.
 Achievement: 3.2. A team target is typed on its own, never derived from or split into agent
 targets (T3). **Trigger for a "sum of agents' targets" check column:** the owner finds team and
 agent targets drifting apart and asks to see both side by side.
+
+**Round 5: a team target is the sum of its agents' targets (Owner ruling 26 Sep 06:09, T3:** "I
+can set individual on each agent and add up to team ah"**).** The owner sets a figure on each
+agent, and the team's figure is what they add up to. Built on the same `sales_targets` table
+with one new column, in the S1 migration:
+
+| column | type | note |
+| --- | --- | --- |
+| `parent_target_id` | uuid FK `sales_targets` ON DELETE CASCADE, null | set only on an **agent** target that belongs to a **team** target (check: `parent_target_id` set implies `subject_kind = 'agent'`; the service checks the parent is a team target) |
+
+- **One form, one save.** Set target with "Target for: Team" shows the team's metric, counts,
+  products, dates and split once, then an **Agents** table: one line per agent who is a member of
+  the team on the start date or joins before the end date, each with a figure (per period when
+  split). The **Team target** figure under the table is the sum, read-only, and updates as the
+  owner types. Save creates the team header plus one child agent target per line, each with
+  `parent_target_id` set and the team's metric, counts, products, dates and split copied.
+- **Children follow the parent.** A child's metric, counts, products, dates and split are
+  read-only on the child's page ("set on North FY26 H2", a link); editing them on the team target
+  rewrites every child in the same transaction (period regeneration keeps each child's figures
+  under the 3.1 keep rule). A child's **figures** are its own and are edited on the child's page
+  or on the team target's Agents section, in place.
+- **The team figure is always the sum.** Each team period's `target_value` is written by
+  `target_service` as the sum of its children's periods with the same bounds, in the same
+  transaction as any child edit, add or delete. A direct `PATCH` of a team target's period is 422
+  `TEAM_TARGET_IS_SUM`. Stored rather than summed at read time so the achievement query, the
+  list, commission (S4) and the message (S5) read one column for every subject kind; a test pins
+  the sum after every write path.
+- **No team-level override. Recommended, and built that way.** An override would let the team
+  figure and the agents' figures disagree, which is the one thing the ruling rules out; a
+  stretch goal above the agents' sum is set as a second team target (overlapping targets are
+  allowed, 3.1). **Trigger for an override column:** the owner asks for a team figure that
+  differs from its agents' sum on the same target.
+- **Agents joining and leaving.** A member who joins the team after the team target is created
+  is offered on the team target's Agents section as "No figure yet" with **Add figure** (creates
+  their child, figure 0 until typed); nothing is created behind the owner's back. A member who
+  moves to another team keeps their child target and its figures: the team figure is the sum of
+  what was set, and the achieved figure counts that agent's orders only while they were in the
+  team (T2).
+- **Achieved is not the sum of the children's achieved.** A child is the agent's own target, so
+  it counts all of that agent's orders in the range (G2); the team counts each agent's orders
+  only while they were a member (T2). With no move in the range, the two agree exactly (S6-5's
+  equality test); with a move, the team page shows the member's "Left 14 Oct" pill so the gap
+  is explained on screen.
+- **An agent may still hold targets of their own** (no parent), for example a basins push. Those
+  never add to any team figure.
+- **Commission (T4).** Tiers on the team target give the Team pool (3.3). Each child holds its
+  own tiers; the team form's Commission section has one **Agent tiers** table that is copied to
+  every child on save, and each child's tiers can then be changed on its own page.
+- **Deleting.** Deleting the team target deletes its children (cascade), as one deferred action
+  whose countdown names the count ("Deleting North FY26 H2 and 2 agent targets in 8s"). Deleting
+  one child re-sums the team figure.
 
 **Service and routes (S6).** `app/services/sales/team_service.py`: create, rename, activate,
 set members (moving an agent out of their old team in the same transaction, returning who moved
@@ -911,6 +1161,43 @@ round 2 order; S6 is written after S5 so no id moves.
 **Build order after round 4: S6, S1, S7, S2, S3, S4, S5** (section 4, round 4 Q5). S7 is
 written after S6. Where an AC now builds in a different lane than its id says, the slice below
 names it.
+
+### Lanes after round 5 (Owner ruling 26 Sep 06:09, T5)
+
+The owner's words: "the point is we need to do it now and not backlog or defer". Every slice
+below is in scope now and is built in this round of work: targets (S1), teams (S6), dealer
+targets (S7), opportunities (S2), pipeline (S3), commission tiers including "Highest rate on
+everything" (S4), and the per-contact broadcast (S5). Nothing from this plan goes to
+`documentation/backlogs/backlog.md`. The slices stay thin (one lane, one branch, one PR each, per
+CLAUDE.md "Lane merge discipline"), and they are ordered so the owner can use something at the
+end of each wave. A wave's lanes run at the same time in separate worktrees.
+
+| Wave | Lane | Needs merged first | Why here | Can run beside |
+| --- | --- | --- | --- | --- |
+| 1 | **S6** sales teams, dated membership, the `sales` module, the Sales menu | nothing | every other lane needs the module key, the permission map entry and the Sales menu group; the owner fills the teams while wave 2 is built | none (it is the base) |
+| 2 | **S1** team and agent targets, live achievement, delivered by DO date | S6 | the first screen with numbers, the core value | S2 |
+| 2 | **S2** opportunities in the portal and the CRM | S6 | salespeople start logging while S1 is built; its tables, status entity and portal router touch nothing S1 touches | S1 |
+| 3 | **S7** dealer targets | S1 | a subject kind on S1's table and query | S4, S3, S5 |
+| 3 | **S4** commission tiers, both "higher rate above each threshold only" and "highest rate on everything" | S1 | tiers hang off S1's targets | S7, S3, S5 |
+| 3 | **S3** pipeline beside each target | S1 and S2 | joins S2's opportunities into S1's rows | S7, S4, S5 |
+| 3 | **S5** per-contact WhatsApp updates | S1 (built); S3 and S4 (merged before S5 merges) | the message reads S1's figures, S4's commission and S3's pipeline | S7, S4, S3 |
+
+Merge order inside wave 3: S7, S4 and S3 as each is ready, **S5 last**. S5 is built beside
+them against the field names this plan fixes (`commission_earned`, `bonus_earned`,
+`pipeline_value`, `pipeline_count` on each period row, S3-1 and S4-7), and rebases onto them
+before its PR is marked ready, so its golden message tests (S5-5) run against the real
+commission and pipeline figures, not a stub. The Meta template approval (S5 DoD) is started when
+wave 1 merges, so the ops lead time runs in parallel with the code.
+
+Why the parallel pairs do not collide: S1 and S2 share only the module bootstrap and the
+permission registry line added by S6; S7, S4 and S3 each add their own branch or column to
+`achievement_service` and the targets list response, so their merges are small textual conflicts
+at most, resolved by the lane merging second (CLAUDE.md "Pre-PR gate"). Each lane's first new
+migration is re-parented with `./scripts/alembic-reparent.sh` onto whatever main holds when it
+merges, so parallel migrations never leave two heads.
+
+The **DO integration** (delivery orders from AutoCount, the owner's Monday 28 Sep lane) is not a
+slice of this plan; S1 reads it through one seam (3.2, "Delivered, by DO date").
 
 ### S1. Flexible targets with live achievement in the CRM (UAC S1-1 to S1-18)
 
