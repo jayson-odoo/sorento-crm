@@ -263,3 +263,15 @@ Each has a recommendation; the UAC is written to the recommendation. Answer "yes
 12. **One lane or four?**
     Recommendation: one lane, full track, slices S0 to S3 as commits, S0 first so the brand
     picker works as soon as possible; the owner tests once on the lane's stack.
+
+## 9. Mockups (for the owner's Lavish review before build)
+
+Each file has a 1280 frame, a 375 frame and numbered notes citing the UAC ids.
+
+| File | Screen | Slices |
+| --- | --- | --- |
+| `mockups/01-spec-list.html` | Product Specifications list | S3 |
+| `mockups/02-spec-details.html` | A spec's Details tab (Capacity (oz)), Back placement | S1, S3 |
+| `mockups/03-spec-choices-brand.html` | Brand, Choices and words from the Brands master | S0, S1 |
+| `mockups/04-spec-how-it-is-read.html` | How it is read (rules as sentences, Advanced) | S1 |
+| `mockups/05-product-specifications-tab.html` | A product's Specifications tab, brand dropdown, Reading and search | S0, S2 |
