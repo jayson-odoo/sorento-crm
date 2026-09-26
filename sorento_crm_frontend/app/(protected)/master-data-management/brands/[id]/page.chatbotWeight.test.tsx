@@ -167,4 +167,18 @@ describe('Brand detail - Chatbot brand weight (R1)', () => {
     const [{ data: payload }] = h.updateMutate.mock.calls[0];
     expect(payload.chatbot_weight).toBe(0.1);
   });
+
+  // PR #833 round 5 N3: the server takes 0 to 9999, so the record page does too.
+  it('edit mode: the input is bounded to 0 to 9999 and 10000 cannot be saved', async () => {
+    h.brand = brand({ chatbot_weight: 0 });
+    await renderDetail();
+    await startEdit();
+
+    const input = screen.getByLabelText('Chatbot brand weight') as HTMLInputElement;
+    expect(input.min).toBe('0');
+    expect(input.max).toBe('9999');
+
+    fireEvent.change(input, { target: { value: '10000' } });
+    expect(screen.getByRole('button', { name: /save brand/i })).toBeDisabled();
+  });
 });

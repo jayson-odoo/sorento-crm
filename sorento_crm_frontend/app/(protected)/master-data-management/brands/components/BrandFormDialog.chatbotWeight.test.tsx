@@ -102,4 +102,26 @@ describe('BrandFormDialog - Chatbot brand weight (R1)', () => {
     await screen.findByText(/0 or more/i);
     expect(createMutateAsync).not.toHaveBeenCalled();
   });
+
+  // PR #833 round 5 N3: the server takes 0 to 9999, so the dialog does too.
+  it('bounds the input to 0 to 9999', () => {
+    render(<BrandFormDialog open onOpenChange={() => {}} />);
+
+    const input = screen.getByLabelText('Chatbot brand weight') as HTMLInputElement;
+    expect(input.min).toBe('0');
+    expect(input.max).toBe('9999');
+  });
+
+  it('refuses a weight above 9999 instead of sending it', async () => {
+    render(<BrandFormDialog open onOpenChange={() => {}} />);
+    fillRequiredFields();
+
+    fireEvent.change(screen.getByLabelText('Chatbot brand weight'), {
+      target: { value: '10000' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^Create$/i }));
+
+    await screen.findByText(/9999 or less/i);
+    expect(createMutateAsync).not.toHaveBeenCalled();
+  });
 });
