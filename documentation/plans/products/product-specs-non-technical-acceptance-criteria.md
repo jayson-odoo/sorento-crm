@@ -3,7 +3,10 @@
 **Companion to:** `PLAN-product-specs-non-technical-26sep.md` (design),
 `rule-engine-built-in-rules.md` (every built-in rule in the new form) and
 `UX-REVIEW-product-specifications-26sep.md` (diagnosis).
-**Status:** DRAFT, round 3, 27 Sep 2026. Rewritten to the owner rulings of 26 Sep 2026 (Brand
+**Status:** DRAFT, round 4, 27 Sep 2026. Round 4 adds the Lavish notes of 27 Sep 2026, 00:45
+MYT (structured rules grid, never sentences; no snake_case; the system's own dropdown and
+multi-select in every rule selector; Reading and search reduced to the read values and one search
+box) below the round 3 text. Rewritten to the owner rulings of 26 Sep 2026 (Brand
 specification removed; a simple rule engine, no Advanced; price tag wording where it is; one
 lane) and the Lavish mockup rulings of 27 Sep 2026 (no re-read pill or button, which answers
 Q8; rules on their own tab, basic and non technical; no Advanced anywhere; every list of words
@@ -23,6 +26,14 @@ amends the ACs that cite it.
   advanced, i need it to be as basic as possible". (AC-S1.6, AC-S1.10)
 - Mockup 05, the brand picker on the Specifications tab: "we don't really need this spec at
   all". (AC-S0.7, AC-S2.7)
+**Owner rulings, 27 Sep 2026, 00:45 MYT (Lavish notes on the plan and mockups, verbatim in PR #1290):**
+- Plan page: "ok this is fine". Mockups 02 and 03: "ok this is ok" (both accepted as they are).
+- Mockup 04, the sentence rules: "hmm can this be more structured?". (AC-S1.6, AC-S1.7, AC-S1.14)
+- Mockup 04, the flexible rule row: "ok this is flexible, good, make sure no snake case".
+  (AC-S1.17)
+- Mockup 04, the "Look in / Find" controls: "use dropdown component in the system"; the chip
+  inputs: "use multi select dropdown components in the system where applicable". (AC-S1.18)
+- Mockup 05, "Reading and search": "simplify this, too messy". (AC-S2.1, AC-S2.5, AC-S2.10)
 **Legend:** `[BE]` pytest (Postgres only) · `[FE]` vitest · `[E2E]` agent-browser evidence run
 (sidebar clicks from `/`, 375 and 1280) · `[MIG]` migration · `[T]` CI guard.
 
@@ -35,8 +46,8 @@ amends the ACs that cite it.
 2. Corrects a wrong value by picking from its list.
 3. Adds a missing specification from the Add specification dialog.
 4. Marks the product as checked; can Undo within 5 s.
-5. Reads the plain **Search** section below the price tag wording when needed; never presses a
-   re-read.
+5. Reads the plain **Reading and search** section below the price tag wording when needed (the
+   read values and one search box); never presses a re-read.
 
 **B. Spec owner** (`master_data.spec_registry.*`), Master data > Product Specifications.
 
@@ -44,9 +55,11 @@ amends the ACs that cite it.
    Re-read.
 2. Opens a spec; Back sits with the title; tabs Details, Choices and words, How it is read (the
    rules tab), Products.
-3. Reads the rules as a data grid, one row per rule; no pattern exists to show.
-4. Adds a rule by picking Look in, Find and Answer (and optionally Only when), tries it on a
-   product, sees what would change, saves; the changed products update by themselves.
+3. Reads the rules as a structured grid, one row per rule and one column per part; no rule is
+   a sentence and no pattern exists to show.
+4. Adds a rule by picking Where to look, Kind, What to find and Value it sets (and optionally
+   Only when) in the system's dropdowns and multi-selects, tries it on a product, sees what would
+   change, saves; the changed products update by themselves.
 
 ## S0 - Remove the Brand specification (owner ruling, 26 Sep 2026, Q1, Q2, Q4)
 
@@ -107,15 +120,17 @@ four named in plan D5. (D5)
 answer on a Words or Code rule) is refused with a 400 naming the missing part in plain words.
 (D5)
 
-**AC-S1.6 [FE]** How it is read shows the rules as a data grid (AC-S1.14), in view and edit mode,
-and no screen renders a character of a regular expression, a code name, an "Advanced" control,
-or a "shipped", "default", "built in", "Changed here", "Seed" or "User" badge. (D5, D8, D14;
-owner rulings 27 Sep 2026)
+**AC-S1.6 [FE]** How it is read shows the rules as a structured grid (AC-S1.14), in view and
+edit mode, and no screen renders a rule as a sentence, a character of a regular expression, a
+code name, an "Advanced" control, or a "shipped", "default", "built in", "Changed here", "Seed"
+or "User" badge. (D5, D8, D14; owner rulings 27 Sep 2026)
 
-**AC-S1.7 [FE]** Add a rule and Edit open a modal with, in order: Look in, Find (the five kinds),
-Answer (List specs: the spec's choices; Yes or no specs: Yes; hidden for Number, Size and
-Product), Only when (optional). Every blank is a pick or a typed word. The sentence at the top of
-the modal updates as the form changes. (D5)
+**AC-S1.7 [FE]** Add a rule and Edit open a modal with, in order, the grid's parts: Where to
+look (hidden for Code and Product), Kind (the five kinds), What to find (the kind's blanks),
+Value it sets (List specs: the spec's choices; Yes or no specs: Yes; hidden for Number, Size and
+Product), Only when (optional). Every blank is a pick (AC-S1.18) or a number. The modal renders
+no sentence; below the fields it shows the rule as the one grid row it will become, updating as
+the form changes. (D5, D14; owner ruling 27 Sep 2026, "hmm can this be more structured?")
 
 **AC-S1.8 [FE]** Inside the rule modal, Try it on a product shows what the rule reads from it, or
 "Reads nothing"; See what would change lists the products whose value would change before Save.
@@ -140,18 +155,22 @@ no Advanced. Choices and words never renders `_self`, a "user" badge or a code n
 spec shows an empty state pointing at Details. (D6, D7, D8, D13)
 
 **AC-S1.13 [E2E]** Browser run at 375 and 1280 on Finish or colour (add a Words rule, try it,
-see what would change, cancel; edit an Answer cell in place and cancel), Capacity (oz) and
+see what would change, cancel; edit a Value it sets cell in place and cancel), Capacity (oz) and
 Length: the rules show as grid rows, the rule modal is usable without horizontal page scroll at
-375, and no screen shows Advanced, Re-read or a pattern.
+375, and no screen shows Advanced, Re-read, a rule sentence, a pattern or an underscore.
 
-**AC-S1.14 [FE]** The rules grid has the columns Order, Looks in, Finds, Answer, Only when, a
-sortable header on each, and a row action menu (Edit, Move up, Move down, Remove). Finds renders
-the rule's blanks in plain words ("MATT BLACK", "the number before OZ", "code ends with -GM");
-Answer renders the choice or "the number it finds"; Only when renders "Shape is not Round or
-Square" or blank. Clicking a Finds or Answer cell edits it in place with the same validation as
-the modal; the pencil opens the full rule modal. The grid uses the DataGrid fixed, resizable
-layout with explicit column sizes and truncate plus title for long text. (D14; owner ruling 27
-Sep 2026, mockup 02)
+**AC-S1.14 [FE]** The rules grid has one column per part: Order, Where to look, Kind, What to
+find, Value it sets, Only when, a sortable header on each, and a row action menu (Edit, Move up,
+Move down, Remove). What to find renders the kind's blanks as labelled values, never a sentence
+("MATT BLACK, MAT BLACK"; "Before: OZ"; "After: S TRAP, P TRAP · Before: MM"; "3rd number";
+"Ends with: -GM"; "The product's length"), with the optional parts as a second line ("Skip
+after: W/O, WITHOUT", "Written in: metres", "Ignore below: 10"). Value it sets renders the
+choice or "The number it finds"; Only when renders "Shape is not: Round, Square" or blank.
+Clicking a What to find or Value it sets cell edits it in place with the same controls
+(AC-S1.18) and validation as the modal; the pencil opens the full rule modal. The grid uses the
+DataGrid fixed, resizable layout with explicit column sizes and truncate plus title for long
+text. At 375 it keeps Order, What to find and Value it sets and scrolls inside its frame. (D14;
+owner rulings 27 Sep 2026, mockup 02 and mockup 04)
 
 **AC-S1.15 [FE]** Choices and words is a data grid, one row per choice: Choice, Words customers
 say, Products, each header sortable. Clicking a Choice or Words cell edits it in place (words as a
@@ -166,10 +185,28 @@ queue above the inline limit), and the save response carries that count for the 
 products updated." A test saves a Words rule over seeded products and asserts their stored value
 changed with no other call. (D10; owner ruling 27 Sep 2026, answers Q8)
 
+**AC-S1.17 [FE] [T]** No spec screen (list, record page tabs, rule modal, product
+Specifications tab, Add specification, toasts, errors, empty states) renders a value with an
+underscore between word characters. A vitest guard renders each screen over fixtures whose spec
+keys, choice keys and source codes all carry underscores (`capacity_oz`, `rose_gold`,
+`from_category`) and fails on any rendered text matching `\w_\w`; the 400 of AC-S1.5 names the
+missing part in plain words. (D15; owner ruling 27 Sep 2026, "make sure no snake case")
+
+**AC-S1.18 [FE]** Every single-pick selector in the rule modal and in the grid's in-place edit
+(Where to look, Kind, before / after / between, which number, written in, contains / starts
+with / ends with, which product fact, Value it sets, the Only when spec, is / is not) is
+`SearchableSelect`, and every several-pick selector (the words to find, the skip-after words,
+the code text, the Only when values) is `SearchableMultiSelect`, both from `components/common/`.
+No segmented control, radio strip or hand-made chip box renders. In the words multi-select a
+typed word not yet offered appears as the first option "Add {WORD}" and picking it adds it. A
+test asserts the component used for each field. (D16; owner rulings 27 Sep 2026, "use dropdown
+component in the system" and "use multi select dropdown components in the system where
+applicable")
+
 ## S2 - Product Specifications tab
 
-**AC-S2.1 [FE]** Top to bottom: checked line, values table, price tag wording, **Search** (always
-shown, not collapsed, no disclosure control). (Q7, pending confirmation; owner ruling 26 Sep 2026
+**AC-S2.1 [FE]** Top to bottom: checked line, values table, price tag wording, **Reading and
+search** (always shown, not collapsed, no disclosure control). (Q7, pending confirmation; owner ruling 26 Sep 2026
 for the price tag wording; owner ruling 27 Sep 2026, no Advanced anywhere)
 
 **AC-S2.2 [FE]** No "Derived" pill, no "Findable by description" pill, no footer sentence, no
@@ -183,11 +220,13 @@ changed after checking. (Review T5)
 **AC-S2.4 [FE]** Undo is a deferred 5 s action with Cancel; no confirm dialog opens (PRINCIPLES
 D7). (Review T5)
 
-**AC-S2.5 [FE]** Search holds, in order: the product description (not monospace), "Search finds
-this product" or "Search cannot find this product yet", what search matches (empty: "Nothing
-yet."), Read specs from a text. There is no "Read this product again" button: the product is
-re-read by itself when its code, description, category, sizes or flyer reading changes. (Q7; D9; owner ruling 27 Sep
-2026, no re-read concept)
+**AC-S2.5 [FE]** Reading and search holds exactly two things, in order: **Read values**, one
+plain line of what search reads for this product (empty: "Nothing read yet."), and **one search
+box**, "Type what a customer would ask". Nothing else renders in the section: no product
+description, no "Search finds this product" pill, no separate "What search matches" label, no
+Read specs from a text panel. There is no "Read this product again" button: the product is
+re-read by itself when its code, description, category, sizes or flyer reading changes. (Q7; D9;
+owner rulings 27 Sep 2026, no re-read concept, and "simplify this, too messy")
 
 **AC-S2.6 [FE]** Price tag wording renders below the values, where it is today; empty reads "Not
 set, the price tag uses the product description" with Edit. (Owner ruling 26 Sep 2026; Q10,
@@ -204,6 +243,12 @@ below the tab strip; at 375 nothing is clipped and no horizontal page scroll app
 new flyer reading for it, re-reads its specifications with no button pressed; the existing
 listener tests stay green, and one test per trigger asserts the stored values changed after that
 edit alone. (D9, D10)
+
+**AC-S2.10 [FE]** Typing a phrase in the search box and pressing Enter runs the existing preview
+search for that phrase and answers in one line: "This product comes up, 1st of 6" (its place among the results) when
+the product is among the candidates, or "This product does not come up for this" when it is
+not. No score, no matched keys, no understanding panel renders. (D9; owner ruling 27 Sep 2026,
+"simplify this, too messy")
 
 ## S3 - List and navigation
 
