@@ -1,14 +1,34 @@
-"""Publish the chatbot parser prompt with the new `Known brands:` line as a NEW
-version, label unmoved (issue #1262, Samantha case, round 3 section 6, slice 9,
-finding F1a).
+"""Publish the chatbot parser prompt with BOTH the per-entity `quantity` key
+(slice 5, F4) and the `Known brands:` line (slice 9, F1a) as ONE new version,
+label unmoved (issue #1262, Samantha case).
 
-Same reason `chatbot_quantity_vocab` publishes: `ai_prompt_registry.render()` reads
-the PUBLISHED row, not the Python constant (the fallback is used only when no DB
-row exists at all), so a session must have a published version carrying
-`KNOWN_BRANDS_ADDENDUM` - and the in-body edit that drops the hard-coded brand
-list - before either can reach a live turn.
+Merged from two migrations (review round, 26 Sep 2026): `chatbot_quantity_vocab`
+and `chatbot_known_brands` each published the SAME live `SEMANTIC_PARSER_PROMPT`
+constant - by the time the second one ran, the Python module already carried
+BOTH addenda (they are stacked string concatenation, not two separate texts), so
+`_publish_one`'s own idempotent-on-template-equality check made the second
+migration's own `publish()` call a no-op every time: two revisions publishing one
+version, and downgrading the second alone would have deleted the FIRST
+migration's own row (the one both slices actually depend on) since `downgrade()`
+matches by template content, not by which migration wrote it. Neither slice was
+pushed to prod, so folding them into one revision - this one - is safe; nothing
+downstream references the retired `chatbot_quantity_vocab` id (grepped).
 
-This migration's body carries TWO changes, not one addendum stacked on an
+Same reason `521_sales_report_month_fix` publishes: `ai_prompt_registry.render()`
+reads the PUBLISHED row, not the Python constant (the fallback is used only when
+no DB row exists at all), so a session must have a published version carrying
+both addenda before either can reach a live turn.
+
+Slice 5 (owner ruling 1, issue comment 26 Sep ~06:40Z, binding): "i don't want
+hard code, the parser supposed to be able to identify the quantity right?" - the
+schema gains a per-entity `quantity` (`app/services/chatbot/head/parser.py`, code
+change, not this migration's business) and `QUANTITY_ADDENDUM` teaches the model
+the shape a quantity actually takes beside a product code ("xN", "N pcs", "N
+units") and that a caption-only quantity line applies to the photo's own
+products - never a rule for the CODE to strip a quantity back out of text it
+already read correctly.
+
+Slice 9 (F1a) carries TWO changes of its own, not one addendum stacked on an
 unchanged body:
 
 1. An IN-PLACE edit to the ENTITY OPERATIONS list's own `brand -> Sorento, Mocha,
@@ -18,20 +38,18 @@ unchanged body:
    body cannot make true (the phrase would still be present, merely superseded in
    meaning). The bullet now points at the `Known brands:` line instead.
 2. `KNOWN_BRANDS_ADDENDUM` (the same named-addendum pattern `QUANTITY_ADDENDUM`
-   ships), stacked on top of `chatbot_quantity_vocab`'s own published body -
-   teaches the model to read that line.
-
-The engine now builds the `Known brands:` line itself, fresh every turn, from the
-live `Brand` table for the contact's own companies (`turn_runtime`, code change) -
-a brand entity's `canonical_code` is the brand NAME as that line lists it, never
-the code in parentheses and never a name the model remembers from training.
+   ships), stacked on top of the quantity addendum - teaches the model to read
+   that line, fresh every turn, from the live `Brand` table for the contact's own
+   companies (`turn_runtime`, code change) - a brand entity's `canonical_code` is
+   the brand NAME as that line lists it, never the code in parentheses and never
+   a name the model remembers from training.
 
 Both bodies are published for the measured reason 487 / 490 / 514 / 517 / 519 /
-520 / 521 / chatbot_quantity_vocab give: prod's `production` label sits on the
-FULL `SEMANTIC_PARSER_PROMPT`, while the local / dev label sits on the SLIM one,
-so publishing one text reaches one deployment only.
+520 / 521 give: prod's `production` label sits on the FULL `SEMANTIC_PARSER_PROMPT`,
+while the local / dev label sits on the SLIM one, so publishing one text reaches one
+deployment only.
 
-Same immutable-versions-plus-movable-labels split as migration 475: each text
+Same immutable-versions-plus-movable-labels split as migration 475: the text
 lands as the next `chatbot_semantic_parser` version with NO label, so promoting
 is one label move in the admin UI and rolling back is the reverse move. Nothing a
 customer sees changes until the owner promotes.
@@ -47,7 +65,7 @@ outside alembic (e.g. to publish against the shared dev database without an
 ``--prompt-version``).
 
 Revision ID: chatbot_known_brands
-Revises: chatbot_quantity_vocab
+Revises: sb3_company_stock_push_at
 """
 import logging
 
@@ -58,7 +76,7 @@ from app.models.ai_prompt import AIPromptLabel, AIPromptVersion
 from app.services.ai_prompt_registry import PROMPT_KEYS
 
 revision = "chatbot_known_brands"
-down_revision = "chatbot_quantity_vocab"
+down_revision = "sb3_company_stock_push_at"
 branch_labels = None
 depends_on = None
 
@@ -103,7 +121,7 @@ def _publish_one(session: Session, template: str, tag: str) -> int | None:
     )
     if existing is not None:
         logger.info(
-            "chatbot parser known-brands %s prompt already published as v%s; "
+            "chatbot parser quantity+known-brands %s prompt already published as v%s; "
             "nothing to do",
             tag,
             existing.version,
@@ -126,7 +144,7 @@ def _publish_one(session: Session, template: str, tag: str) -> int | None:
     )
     session.commit()
     logger.info(
-        "published chatbot parser known-brands %s prompt as v%s (%s chars); "
+        "published chatbot parser quantity+known-brands %s prompt as v%s (%s chars); "
         "production label left on the previous version, promote by moving it",
         tag,
         next_version,
