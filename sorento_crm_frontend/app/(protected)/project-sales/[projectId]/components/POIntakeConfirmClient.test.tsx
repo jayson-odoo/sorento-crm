@@ -11,7 +11,12 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { fakePdfJs } from '@/test-utils/fakePdfJs';
 import type { POVersion, POVersionLine } from '../../_shared/types/poIntake.types';
+
+vi.mock('@/components/common/pdf-viewer/pdfjs', async () =>
+  (await import('@/test-utils/fakePdfJs')).fakePdfJsModule,
+);
 
 const push = vi.fn();
 let originParam: string | null = null;
@@ -158,6 +163,8 @@ function renderConfirm() {
 }
 
 beforeEach(() => {
+  fakePdfJs.reset();
+  fakePdfJs.setNumPages(10);
   vi.clearAllMocks();
   originParam = null;
   getProject.mockResolvedValue({
@@ -307,13 +314,15 @@ describe('POIntakeConfirmClient', () => {
     expect(
       screen.getByText('cancel item (7), refer to new P/O HQ/26/05/087'),
     ).toBeInTheDocument();
-    expect(screen.queryByTitle('Purchase order page 1')).toBeNull();
+    expect(screen.queryByRole('group', { name: 'Purchase order page 1' })).toBeNull();
 
     const documentsTab = screen.getByRole('tab', { name: 'Documents' });
     documentsTab.focus();
     fireEvent.click(documentsTab);
 
-    expect(await screen.findByTitle('Purchase order page 1')).toBeInTheDocument();
+    expect(
+      await screen.findByRole('group', { name: 'Purchase order page 1' }),
+    ).toBeInTheDocument();
     expect(screen.queryByText('No document-level notes')).toBeNull();
     expect(screen.queryByRole('columnheader', { name: 'State' })).toBeNull();
     expect(screen.queryByLabelText('Quantity on line 1')).toBeNull();
@@ -328,11 +337,13 @@ describe('POIntakeConfirmClient', () => {
     await user.click(
       await screen.findByRole('button', { name: '1 note to review on line 1' }),
     );
-    expect(screen.queryByTitle(/Purchase order page/)).toBeNull();
+    expect(screen.queryByRole('group', { name: /Purchase order page/ })).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Page 4' }));
 
-    expect(await screen.findByTitle('Purchase order page 4')).toBeInTheDocument();
+    expect(
+      await screen.findByRole('group', { name: 'Purchase order page 4' }),
+    ).toBeInTheDocument();
     expect(screen.getByText('Page 4 of 10')).toBeInTheDocument();
   });
 
@@ -428,7 +439,7 @@ describe('POIntakeConfirmClient', () => {
     documentsTab.focus();
     fireEvent.click(documentsTab);
 
-    await screen.findByTitle('Purchase order page 1');
+    await screen.findByRole('group', { name: 'Purchase order page 1' });
 
     fireEvent.click(
       screen.getByRole('button', { name: /below the total printed on the document/i }),
@@ -722,11 +733,11 @@ describe('POIntakeConfirmClient', () => {
     documentsTab.focus();
     fireEvent.click(documentsTab);
 
-    const iframe = await screen.findByTitle('Purchase order page 1');
+    const viewer = await screen.findByRole('group', { name: 'Purchase order viewer' });
     // No short fixed-vh strip left on the viewer - it fills whatever height its tab gives it.
-    expect(iframe.className).not.toMatch(/h-\[45vh\]/);
-    expect(iframe.className).toMatch(/\bh-full\b/);
-    const tabPanel = iframe.closest('[role="tabpanel"]');
+    expect(viewer.className).not.toMatch(/h-\[45vh\]/);
+    expect(viewer.className).toMatch(/\bflex-1\b/);
+    const tabPanel = viewer.closest('[role="tabpanel"]');
     expect(tabPanel).not.toBeNull();
     expect(tabPanel!.className).toMatch(/h-\[calc\(100dvh-14rem\)\]/);
   });

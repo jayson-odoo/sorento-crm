@@ -331,6 +331,7 @@ export function POIntakeConfirmClient({
                 <POIntakeDocumentViewer
                   documentUrl={version.document_url}
                   documentKey={version.id}
+                  attachmentId={version.attachment_id}
                   pageCount={version.page_count}
                   page={page}
                   onPageChange={setPage}
