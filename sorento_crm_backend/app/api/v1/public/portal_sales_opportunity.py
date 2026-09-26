@@ -141,7 +141,7 @@ def portal_list_sales_opportunities(
     # request's own writes - reads never write, so there is nothing here to roll back).
     agent = _require_agent(db, token)
     rows, _total = svc.list_opportunities(db, sales_agent_id=agent.id, limit=1000)
-    return {"items": [svc.serialize(db, row) for row in rows]}
+    return {"items": svc.serialize_list(db, rows)}
 
 
 # Declared before `/sales-opportunities/{opportunity_id}`, which would otherwise capture them.

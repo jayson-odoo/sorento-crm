@@ -105,7 +105,7 @@ def list_opportunities(
             dir=dir,
         )
         return {
-            "data": [svc.serialize(db, row) for row in rows],
+            "data": svc.serialize_list(db, rows),
             "pagination": {"total": total, "page": page, "limit": limit},
             "empty": total == 0,
         }

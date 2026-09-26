@@ -686,3 +686,113 @@ def serialize(db: Session, opportunity: SalesOpportunity) -> dict:
         "lines": _serialize_lines(db, opportunity),
         "available_transitions": transitions,
     }
+
+
+def serialize_list(db: Session, opportunities: List[SalesOpportunity]) -> List[dict]:
+    """The list endpoint's own serializer (reviewer should-fix 5): `serialize()` above is
+    right for ONE row (a detail read, a create/update response) but is an N+1 - a lookup
+    per row for customer/agent/status/order/lost-reason, another query per row for the
+    status graph's transitions, another for its lines with a Product join - the moment it
+    is called once per row on a page. This batch-loads every one of those in a handful of
+    queries regardless of page size, and never touches `available_transitions` or `lines`
+    at all: a list row has no use for either (the detail page fetches its own).
+    """
+    if not opportunities:
+        return []
+
+    customer_ids = {o.customer_id for o in opportunities if o.customer_id}
+    agent_ids = {o.sales_agent_id for o in opportunities if o.sales_agent_id}
+    status_ids = {o.status_id for o in opportunities if o.status_id}
+    order_ids = {o.sales_order_id for o in opportunities if o.sales_order_id}
+    lost_reasons = {o.lost_reason for o in opportunities if o.lost_reason}
+
+    customers = (
+        {c.id: c for c in db.query(Customer).filter(Customer.id.in_(customer_ids)).all()}
+        if customer_ids
+        else {}
+    )
+    agents = (
+        {a.id: a for a in db.query(SalesAgent).filter(SalesAgent.id.in_(agent_ids)).all()}
+        if agent_ids
+        else {}
+    )
+    statuses = (
+        {s.id: s for s in db.query(Status).filter(Status.id.in_(status_ids)).all()}
+        if status_ids
+        else {}
+    )
+    orders = (
+        {o.id: o for o in db.query(SalesOrder).filter(SalesOrder.id.in_(order_ids)).all()}
+        if order_ids
+        else {}
+    )
+    lost_reason_labels: Dict[str, str] = {}
+    if lost_reasons:
+        options = (
+            db.query(LookupOption)
+            .join(LookupSet, LookupSet.id == LookupOption.set_id)
+            .filter(LookupSet.set_key == LOST_REASON_SET_KEY, LookupOption.value.in_(lost_reasons))
+            .all()
+        )
+        lost_reason_labels = {o.value: o.label for o in options}
+
+    contact_ids = {o.created_by_contact_id for o in opportunities if o.created_by_contact_id}
+    user_ids = {o.created_by_user_id for o in opportunities if o.created_by_user_id}
+    contacts = (
+        {c.id: c for c in db.query(RespondContact).filter(RespondContact.id.in_(contact_ids)).all()}
+        if contact_ids
+        else {}
+    )
+    users = (
+        {u.id: u for u in db.query(User).filter(User.id.in_(user_ids)).all()} if user_ids else {}
+    )
+
+    def _created_by_label_batched(opportunity: SalesOpportunity) -> Optional[str]:
+        if opportunity.created_by_contact_id:
+            contact = contacts.get(opportunity.created_by_contact_id)
+            return contact.name if contact else None
+        if opportunity.created_by_user_id:
+            user = users.get(opportunity.created_by_user_id)
+            return user.name if user and user.name else "Sorento"
+        return None
+
+    out = []
+    for opportunity in opportunities:
+        customer = customers.get(opportunity.customer_id) if opportunity.customer_id else None
+        agent = agents.get(opportunity.sales_agent_id) if opportunity.sales_agent_id else None
+        status = statuses.get(opportunity.status_id) if opportunity.status_id else None
+        sales_order = orders.get(opportunity.sales_order_id) if opportunity.sales_order_id else None
+        out.append(
+            {
+                "id": opportunity.id,
+                "opportunity_no": opportunity.opportunity_no,
+                "title": opportunity.title,
+                "customer_id": opportunity.customer_id,
+                "customer_code": customer.customer_code if customer else None,
+                "customer_name": customer.customer_name if customer else None,
+                "prospect_name": opportunity.prospect_name,
+                "sales_agent_id": opportunity.sales_agent_id,
+                "sales_agent_label": team_service.agent_label(agent) if agent else None,
+                "status_id": opportunity.status_id,
+                "stage_key": status.key if status else None,
+                "stage_label": status.label if status else None,
+                "win_probability": status.win_probability if status else None,
+                "outcome": opportunity.outcome,
+                "expected_amount": opportunity.expected_amount,
+                "expected_close_date": opportunity.expected_close_date,
+                "lost_reason": opportunity.lost_reason,
+                "lost_reason_label": lost_reason_labels.get(opportunity.lost_reason)
+                or opportunity.lost_reason,
+                "sales_order_id": opportunity.sales_order_id,
+                "sales_order_no": sales_order.so_number if sales_order else None,
+                "source": opportunity.source,
+                "created_by_label": _created_by_label_batched(opportunity),
+                "created_by_contact_id": opportunity.created_by_contact_id,
+                "created_at": opportunity.created_at,
+                "updated_at": opportunity.updated_at,
+                "stage_changed_at": opportunity.stage_changed_at,
+                "lines": [],
+                "available_transitions": [],
+            }
+        )
+    return out
