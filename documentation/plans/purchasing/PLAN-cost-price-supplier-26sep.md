@@ -1,8 +1,8 @@
 # PLAN: Cost price from the supplier's price list, verified before it applies (#1288)
 
 Status: draft plan + UAC, round 2 (26 Sep 2026). Owner rulings of 26 Sep 23:45 MYT applied for Q1,
-Q2, Q5, Q6, Q7, Q9, Q10 (section 12); Q3, Q4 and Q8 answered in plain language on PR #1291 and
-re-asked with a restated recommendation; Q11 to Q15 not yet answered. Track: full (two new
+Q2, Q5, Q6, Q7, Q9, Q10 (section 12); Q3, Q4 and Q8 answered in plain language on PR #1291
+(issuecomment-5847666942, "Answers to the owner's questions (round 2)") and re-asked with a restated recommendation; Q11 to Q15 not yet answered. Track: full (two new
 tables and a migration, new permissions, a new public ingest surface with uploads). Nothing
 built; this lane is docs only (draft PR #1291).
 UAC: `cost-price-supplier-acceptance-criteria.md` (same folder; the Journey is there and every AC
