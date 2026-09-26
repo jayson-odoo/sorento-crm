@@ -21,6 +21,19 @@ export interface AuditLog {
    * staff name (authenticated user) → "System" (X-API-Key automation).
    */
   user_display_name?: string | null;
+  /** user | contact | integration | worker | scheduler | public_link | system | legacy */
+  actor_type?: string | null;
+  /** password | phone_otp | portal_link | portal_token | api_key | impersonation */
+  auth_method?: string | null;
+  /** Who was at the keyboard; differs from user_id only when impersonating. Never rendered raw. */
+  real_user_id?: string | null;
+  integration_id?: string | null;
+  job_id?: string | null;
+  /**
+   * Actor resolved to words server-side, e.g. "Aisyah (phone)", "Background job for Aisyah".
+   * Preferred over user_display_name; see lib/audit-actor.ts actorDisplay.
+   */
+  actor_label?: string | null;
   changed_at: string; // ISO datetime
   old_values?: Record<string, unknown> | null;
   new_values?: Record<string, unknown> | null;

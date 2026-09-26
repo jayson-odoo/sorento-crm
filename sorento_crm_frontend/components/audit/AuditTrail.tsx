@@ -3,6 +3,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAuditLogs } from '@/hooks/useAuditLogs';
+import { actorDisplay } from '@/lib/audit-actor';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import type { AuditLogEntry } from '@/types/audit.types';
 
@@ -88,14 +89,7 @@ export default function AuditTrail({ entityType, entityId, title = 'Audit Trail'
                   <span className="text-muted-foreground">
                     {formatDateTimeInMalaysia(entry.changed_at)}
                   </span>
-                  {(entry.user_id && entry.user_id !== 'system') && (
-                    <span className="text-muted-foreground">
-                      by {entry.user_display_name ?? entry.user_id}
-                    </span>
-                  )}
-                  {entry.user_id === 'system' && (
-                    <span className="text-muted-foreground">by System</span>
-                  )}
+                  <span className="text-muted-foreground">by {actorDisplay(entry)}</span>
                 </div>
                 <ul className="mt-1.5 list-none space-y-1.5 text-sm text-muted-foreground">
                   {collectChangeLines(entry).map((line, idx) => (
