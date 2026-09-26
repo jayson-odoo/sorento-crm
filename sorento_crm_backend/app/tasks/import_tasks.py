@@ -3431,13 +3431,8 @@ def process_customer_import(db_job_id: str, file_data: bytes, filename: str, use
     job_id_str = str(job.job_id)
     outcome = ImportOutcome(getattr(job, "id", None), session_factory=SessionLocal)
     # Customer is __audit_track__; suppress the per-row ORM audit for this bulk job.
-    # In production this is defence-in-depth rather than the thing doing the work:
-    # worker.py registers the company-scope listeners only, never
-    # register_audit_listeners, so no per-row audit fires in an RQ process at all
-    # today. It bites for every OTHER caller of this task - the in-process test suite,
-    # and the worker itself the day it starts registering the audit listeners - where
-    # a 4,000-line debtor listing would otherwise become 4,000 audit rows, every one
-    # of them reading "System" because a worker has no request actor. One coarse,
+    # worker.py registers the audit listeners (identity S0), so without this a
+    # 4,000-line debtor listing would become 4,000 per-row audit rows. One coarse,
     # correctly-attributed job row is written at completion instead, and every row's
     # own outcome is already in import_job_rows.
     # setdefault-union, not assignment: a second suppression in the same session

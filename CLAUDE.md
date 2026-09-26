@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Monorepo. Four siblings:
 
-- `sorento_crm_frontend/` - Next.js 15, React 19, Tailwind 4, Prisma (NextAuth + user/session DB only), Metronic 9 + ReUI shell. Calls FastAPI for all business logic.
+- `sorento_crm_frontend/` - Next.js 15, React 19, Tailwind 4, NextAuth, Metronic 9 + ReUI shell. No database of its own (Prisma is gone); calls FastAPI for all business logic, users and sessions included.
 - `sorento_crm_backend/` - FastAPI + SQLAlchemy + Alembic. All `/api/v1/*` business logic, RBAC, RQ workers, embedding pipeline.
 - `sorento_crm_mcp/` - Read-only Streamable HTTP MCP server. Wraps backend GETs as MCP tools for n8n.
 - `sorento_crm/` - Top-level `docker-compose.yml` + `deploy.sh` for the full stack.
@@ -62,10 +62,6 @@ npm run test:watch
 npm run test:e2e             # playwright (e2e/, chromium, baseURL :3000)
 npm run format               # prettier --write .
 npm run format:check         # prettier --check . (currently red: 1743 files predate the config, see BL-008)
-
-npx prisma db push           # apply schema
-npx prisma generate          # regenerate client
-node prisma/seed.js          # seed (also: npm run prisma:seed via "prisma":{"seed"})
 ```
 
 Vitest: jsdom env, `@/` aliases repo root. Single test: `npx vitest run path/to/file.test.ts`.
@@ -110,9 +106,9 @@ For a lane that goes to a Claude Code cloud environment instead of a local workt
 
 ### Auth boundary between FE and BE
 
-NextAuth (frontend) issues the JWT. FastAPI validates it with the **same** `JWT_SECRET` / `JWT_ALGORITHM`. Tokens travel as `Authorization: Bearer <token>`.
+Staff tokens are opaque sessions, not JWTs. NextAuth's Credentials provider posts to FastAPI `/api/v1/auth/login`, which mints a `user_sessions` row (`app/services/user_session_service.py`, 30-day rolling or 8-hour, `auth_method` recorded) and returns its opaque token as `apiToken`; NextAuth keeps it inside its own httpOnly cookie and hands it to the browser through `/api/auth/token`. Every `/api/v1/*` call sends `Authorization: Bearer <token>`, and `get_current_user` (`app/dependencies.py`) resolves the row on each request, so revocation and role or status changes apply at once. `JWT_SECRET` still signs the few short-lived link tokens (dealer-kit render, SLA summary, ticket draft), not staff sessions.
 
-Alternative principal: `X-API-Key` matching `EXTERNAL_API_KEY`. The legacy `system` principal has **no RBAC grants**, so for any non-trivial route also set `EXTERNAL_API_KEY_ACT_AS_USER_ID` to a real `users.id` whose role has the needed view permissions. The MCP server depends on this.
+Alternative principal: `X-API-Key`, resolved through `integration_api_keys` to an `integrations` row and that integration's `act_as_user_id` (a real user; `app/services/integration_auth.py`). There is no `system` principal any more: RBAC and audit apply to the act-as user, and audit rows name the integration (`actor_type = integration`, plan `documentation/plans/identity/PLAN-unified-identity-26sep.md` section 8). The legacy shared `EXTERNAL_API_KEY` keeps working because its hash was seeded as an integration; `EXTERNAL_API_KEY_ACT_AS_USER_ID` is still read by a few in-process callers (chatbot business lane, order inquiry import) that act without a request. The MCP server sends the key.
 
 NextAuth routes (`/api/auth/*`) stay in Next.js. Everything else is FastAPI under `/api/v1/*`.
 
@@ -189,7 +185,7 @@ Backend (`sorento_crm_backend/.env`): `DATABASE_URL`, `DIRECT_URL`, `JWT_SECRET`
 
 Storage routing: each `attachments` row carries a `storage_provider` (`s3` or `r2`). New uploads use `STORAGE_DEFAULT_PROVIDER` (defaults to `s3`); reads (preview, download, presigned URL, webhooks) dispatch through `app/services/storage_router.py` so traffic for already-migrated rows is served via Cloudflare R2 + CDN while remaining rows continue to hit S3 + CloudFront. Use `scripts/migrate_attachments_to_r2.py` to copy bytes and flip provider per row.
 
-Frontend (`sorento_crm_frontend/.env` or `.env.local`): `DATABASE_URL` (Prisma - NextAuth/user data only), `NEXTAUTH_SECRET` (must align with backend `JWT_SECRET` if sharing tokens), `NEXTAUTH_URL`, `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_BASE_PATH`, `GOOGLE_CLIENT_*`, `EXTERNAL_API_KEY`, `SMTP_*`, `STORAGE_*`, `RECAPTCHA_*`, `FRONTEND_BASE_URL`.
+Frontend (`sorento_crm_frontend/.env` or `.env.local`): `NEXTAUTH_SECRET` (must align with backend `JWT_SECRET` if sharing tokens), `NEXTAUTH_URL`, `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_BASE_PATH`, `GOOGLE_CLIENT_*`, `EXTERNAL_API_KEY`, `SMTP_*`, `STORAGE_*`, `RECAPTCHA_*`, `FRONTEND_BASE_URL`.
 
 MCP (`sorento_crm_mcp/`): `CRM_BASE_URL`, `EXTERNAL_API_KEY`, optional `CRM_MCP_HOST/PORT/TIMEOUT/MAX_RESPONSE_BYTES/LOG_LEVEL`.
 

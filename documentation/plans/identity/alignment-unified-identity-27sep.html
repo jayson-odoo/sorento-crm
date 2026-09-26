@@ -1,0 +1,725 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Unified Sign-in Alignment</title>
+<style>
+:root{--bg:#f6f5f2;--paper:#fff;--ink:#1d1d1f;--muted:#5f6368;--line:#e2e0da;--accent:#0b6e4f;--accent-soft:#e5f2ec;--warn:#8a5a00;--warn-soft:#fbf1dc;--quote:#f1efe9;--hand:#7a2e8c;--hand-soft:#f3e8f6;--new:#b4235a;--new-soft:#fde8ef}
+*{box-sizing:border-box}html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+.wrap{max-width:960px;margin:0 auto;padding:32px 16px 64px}
+.eyebrow{font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:0 0 6px}
+h1{font-size:30px;line-height:1.2;margin:0 0 10px}.lede{color:var(--muted);margin:0;max-width:700px}
+.meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+.chip{display:inline-block;font-size:13px;padding:3px 10px;border-radius:999px;background:var(--paper);border:1px solid var(--line);color:var(--muted)}
+nav.toc{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:14px 18px;margin:24px 0 28px}
+nav.toc ol{margin:0;padding-left:20px}nav.toc a{color:var(--accent);text-decoration:none}
+section.s{background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:22px 22px 24px;margin-bottom:22px}
+h2{font-size:22px;margin:0 0 4px}h2 .n{color:var(--accent);margin-right:6px}
+.sub{color:var(--muted);margin:0 0 16px;font-size:15px}h3{font-size:17px;margin:20px 0 6px}
+blockquote{margin:12px 0;padding:12px 16px;background:var(--quote);border-left:4px solid var(--accent);border-radius:0 8px 8px 0;font-style:italic}
+blockquote cite{display:block;font-style:normal;font-size:13px;color:var(--muted);margin-top:6px}
+p{margin:8px 0}ul{padding-left:20px;margin:8px 0}li{margin:4px 0}
+.ruling{border-top:1px solid var(--line);padding:14px 0 4px;display:grid;grid-template-columns:64px 1fr;gap:4px 14px}
+.ruling:first-of-type{border-top:0;padding-top:4px}
+.ruling .q{font-weight:700;color:var(--accent);font-size:15px}.ruling .date{font-size:13px;color:var(--muted)}
+.ruling .asked{font-weight:600}.ruling .said{font-style:italic;background:var(--quote);padding:2px 8px;border-radius:6px;display:inline-block;margin:4px 0}
+.ruling .so{margin:4px 0 0}.ruling .so b{color:var(--accent)}
+.newtag{font-size:11px;font-weight:700;background:var(--new-soft);color:var(--new);padding:2px 8px;border-radius:999px;margin-left:6px;vertical-align:middle;font-style:normal}
+.order{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:4px 0 18px;font-size:14px}
+.order .s{background:var(--accent-soft);color:var(--accent);font-weight:700;padding:4px 10px;border-radius:8px}
+.order .par{display:inline-flex;gap:4px;padding:3px;border:1px dashed var(--accent);border-radius:10px}
+.order .arrow{color:var(--muted)}.order .gone{background:#eee;color:#888;text-decoration:line-through;font-weight:700;padding:4px 10px;border-radius:8px}
+.slice{border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:14px}
+.slice.withdrawn{background:#fafafa;color:var(--muted)}
+.slice-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 12px;margin-bottom:6px}
+.slice-head .tag{font-weight:800;color:var(--accent)}.slice-head .title{font-weight:700;font-size:17px}
+.hand{font-size:12px;font-weight:700;padding:3px 9px;border-radius:999px}
+.hand.yes{background:var(--hand-soft);color:var(--hand)}.hand.no{background:#eee;color:var(--muted)}
+.ba{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+.ba>div{border-radius:10px;padding:10px 12px;font-size:15px;min-width:0}.ba .before{background:#f3f3f3}.ba .after{background:var(--accent-soft)}
+.ba .lbl{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);display:block;margin-bottom:2px}.ba .after .lbl{color:var(--accent)}
+.note{font-size:13px;color:var(--muted)}
+.oq{border-top:1px solid var(--line);padding:14px 0 6px}.oq:first-of-type{border-top:0;padding-top:4px}.oq h3{margin:0 0 6px}
+.oq .rec{background:var(--accent-soft);border-radius:8px;padding:8px 12px;margin:6px 0}
+.oq .other{background:var(--warn-soft);border-radius:8px;padding:8px 12px;margin:6px 0}.oq .other b{color:var(--warn)}
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:18px}.two-col>*{min-width:0}
+.legend{display:flex;flex-wrap:wrap;gap:10px;font-size:13px;color:var(--muted);margin:6px 0 4px}
+.legend .k{display:inline-block;width:12px;height:12px;border-radius:3px;background:var(--new-soft);border:2px solid var(--new);vertical-align:-2px;margin-right:4px}
+
+/* Mockup frames */
+.mock{margin:26px 0 8px;border-top:1px solid var(--line);padding-top:18px}
+.mock:first-of-type{border-top:0;padding-top:0}
+.mock h3{margin:0 0 2px}.mock .what{font-size:14px;color:var(--muted);margin:0 0 12px}
+.frames{display:flex;flex-wrap:wrap;gap:18px;align-items:flex-start}
+.fr{min-width:0}.fr .cap{font-size:12px;font-weight:700;color:var(--muted);letter-spacing:.04em;text-transform:uppercase;margin-bottom:6px}
+.scroller{max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;border-radius:10px}
+.fr.wide{flex:1 1 100%}
+.dev{border:1px solid #c9c7c1;border-radius:10px;overflow:hidden;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.06);container-type:inline-size;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;color:#071437}
+.dev.w1280{width:1280px;zoom:.68}
+.dev.w375{width:375px}
+@media (max-width:1000px){.dev.w1280{zoom:.55}}
+@media (max-width:640px){.dev.w1280{zoom:.42}.dev.w375{zoom:.82}.ba,.two-col{grid-template-columns:1fr}.ruling{grid-template-columns:1fr}h1{font-size:24px}section.s{padding:18px 16px 20px}}
+
+/* App look inside frames (Metronic-style shell) */
+.app{display:flex;min-height:560px;position:relative;background:#fcfcfc;font-size:13px}
+.side{width:250px;flex:0 0 250px;background:#fff;border-right:1px solid #f1f1f4;padding:14px 0}
+.side .logo{font-weight:800;font-size:17px;padding:4px 20px 16px;letter-spacing:.02em}
+.side .grp{font-size:11px;color:#99a1b7;font-weight:600;padding:12px 20px 6px;text-transform:uppercase}
+.side .it{padding:7px 20px 7px 34px;color:#4b5675;font-size:13px}
+.side .it.parent{padding-left:20px;font-weight:600;color:#252f4a}
+.side .it.on{color:#1b84ff;background:#f1f6ff;font-weight:600;border-radius:0 6px 6px 0}
+.main{flex:1;min-width:0;display:flex;flex-direction:column}
+.hdr{height:56px;border-bottom:1px solid #f1f1f4;background:#fff;display:flex;align-items:center;gap:12px;padding:0 20px}
+.hdr .burger{display:none;width:18px;height:12px;border-top:2px solid #4b5675;border-bottom:2px solid #4b5675;position:relative}
+.hdr .burger:after{content:"";position:absolute;left:0;right:0;top:3px;border-top:2px solid #4b5675}
+.hdr .mlogo{display:none;font-weight:800}
+.hdr .search{flex:0 1 260px;height:32px;border:1px solid #f1f1f4;border-radius:6px;background:#f9f9f9;color:#99a1b7;display:flex;align-items:center;padding:0 10px;font-size:12px}
+.hdr .sp{flex:1}.hdr .av{width:30px;height:30px;border-radius:50%;background:#dbe7ff;color:#1b84ff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px}
+.content{padding:18px 24px 24px;position:relative;flex:1}
+.crumb{font-size:12px;color:#99a1b7;margin-bottom:4px}
+.ph{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px;flex-wrap:wrap}
+.ph h1{font-size:19px;margin:0;color:#071437;font-weight:600}
+.b{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:6px;font-size:12.5px;font-weight:600;border:1px solid transparent;white-space:nowrap}
+.b.pri{background:#1b84ff;color:#fff}.b.out{background:#fff;border-color:#dbdfe9;color:#252f4a}
+.b.ghost{color:#1b84ff;padding:0 6px}.b.full{display:flex;justify-content:center;width:100%;height:40px;font-size:14px}
+.b.dng{background:#fff;border-color:#f8285a;color:#f8285a}
+.card{background:#fff;border:1px solid #f1f1f4;border-radius:10px;box-shadow:0 3px 4px rgba(0,0,0,.03)}
+.card .ch{padding:12px 16px;border-bottom:1px solid #f1f1f4;font-weight:600;font-size:14px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+.card .cb{padding:14px 16px}
+.tb{display:flex;gap:8px;align-items:center;padding:10px 12px;border-bottom:1px solid #f1f1f4;flex-wrap:wrap}
+.inp{height:32px;border:1px solid #dbdfe9;border-radius:6px;background:#fff;padding:0 10px;display:flex;align-items:center;color:#252f4a;font-size:12.5px;min-width:0}
+.inp.ph0{color:#99a1b7}.inp.ro{background:#f9f9f9;color:#4b5675}.inp.lg{height:44px;font-size:18px;justify-content:center;letter-spacing:.4em;font-weight:500}
+.inp.big{height:38px;font-size:14px}
+.sel:after{content:"";margin-left:auto;border:4px solid transparent;border-top-color:#99a1b7;transform:translateY(2px)}
+table.dg{width:100%;border-collapse:collapse;table-layout:fixed;font-size:12.5px}
+table.dg th{text-align:left;font-weight:500;color:#78829d;background:#fcfcfc;padding:9px 10px;border-bottom:1px solid #f1f1f4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+table.dg td{padding:9px 10px;border-bottom:1px solid #f1f1f4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#252f4a}
+.cbx{display:inline-block;width:14px;height:14px;border:1px solid #c4cada;border-radius:3px;vertical-align:-2px;background:#fff}
+.cbx.on{background:#1b84ff;border-color:#1b84ff}
+.bd{display:inline-block;font-size:11px;padding:2px 7px;border-radius:5px;font-weight:600}
+.bd.g{background:#eafff1;color:#17c653}.bd.gr{background:#f1f1f4;color:#4b5675}.bd.bl{background:#eff6ff;color:#1b84ff}.bd.y{background:#fff8dd;color:#c59a00}
+.dots{color:#99a1b7;font-weight:800;letter-spacing:1px}
+.pg{display:flex;justify-content:space-between;padding:10px 12px;color:#78829d;font-size:12px}
+.lnk{color:#1b84ff}
+.new{outline:2px solid #b4235a;outline-offset:2px;border-radius:6px;position:relative}
+.newlbl{position:absolute;top:-10px;right:-6px;background:#b4235a;color:#fff;font-size:10px;font-weight:700;padding:1px 6px;border-radius:999px;letter-spacing:.03em;z-index:2}
+.gonebox{border:2px dashed #b4235a;border-radius:6px;padding:6px 8px;color:#b4235a;font-size:12px;text-decoration:line-through}
+.menu{position:absolute;background:#fff;border:1px solid #f1f1f4;border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.1);padding:6px;min-width:180px;z-index:3;font-size:12.5px}
+.menu div{padding:7px 10px;border-radius:5px;color:#252f4a}.menu div.hi{background:#f1f6ff;color:#1b84ff;font-weight:600}
+.overlay{position:absolute;inset:0;background:rgba(7,20,55,.35);display:flex;align-items:flex-start;justify-content:center;padding-top:34px;z-index:4}
+.dlg{background:#fff;border-radius:10px;width:520px;max-width:calc(100% - 24px);box-shadow:0 10px 30px rgba(0,0,0,.2)}
+.dlg.sm{width:420px}
+.dlg .dh{padding:14px 18px;border-bottom:1px solid #f1f1f4;font-weight:600;font-size:15px;display:flex;justify-content:space-between}
+.dlg .db{padding:14px 18px}.dlg .df{padding:12px 18px;border-top:1px solid #f1f1f4;display:flex;justify-content:flex-end;gap:8px}
+.fl{font-size:12.5px;font-weight:500;color:#252f4a;margin:10px 0 5px;display:block}
+.fl:first-child{margin-top:0}
+.pill{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;background:#f1f1f4;border-radius:5px;padding:1px 7px;margin-right:4px;color:#252f4a}
+.inl{background:#fff8dd;color:#8a6a00;border-radius:6px;padding:8px 10px;font-size:12px;margin-top:10px}
+.tabs{display:flex;gap:18px;border-bottom:1px solid #f1f1f4;margin-bottom:14px;font-size:13px}
+.tabs span{padding:8px 0;color:#78829d}.tabs span.on{color:#1b84ff;border-bottom:2px solid #1b84ff;font-weight:600}
+.kv{display:grid;grid-template-columns:170px 1fr;gap:8px 12px;font-size:12.5px}.kv .k{color:#78829d}
+.cd{display:inline-flex;align-items:center;gap:8px;height:32px;padding:0 12px;border-radius:6px;border:1px solid #f8285a;color:#f8285a;font-weight:600;font-size:12.5px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.muted{color:#78829d}
+/* Sign-in look */
+.auth{min-height:640px;display:flex;align-items:center;justify-content:center;padding:24px 16px;background:linear-gradient(135deg,#0f2a4a 0%,#1f4f7a 45%,#6b8fb3 100%)}
+.acard{background:#fff;border-radius:12px;width:100%;max-width:448px;padding:24px;box-shadow:0 10px 30px rgba(0,0,0,.25);color:#071437}
+.acard .wm{font-weight:800;font-size:20px;letter-spacing:.04em;margin-bottom:18px}
+.acard h2{font-size:24px;font-weight:600;text-align:center;margin:0 0 18px;letter-spacing:-.01em}
+.acard .fl{font-size:14px;margin:14px 0 6px}
+.acard .inp{height:40px;font-size:14px}
+.row2{display:flex;justify-content:space-between;align-items:center}
+.seg{display:flex;background:#f1f1f4;border-radius:8px;padding:3px;gap:3px;margin-bottom:6px}
+.seg span{flex:1;text-align:center;padding:7px 0;border-radius:6px;font-size:13.5px;font-weight:500;color:#4b5675}
+.seg span.on{background:#fff;color:#071437;box-shadow:0 1px 2px rgba(0,0,0,.08);font-weight:600}
+.alert{background:#fff0f3;color:#d81a48;border:1px solid #ffd6df;border-radius:8px;padding:9px 12px;font-size:13px;margin-top:12px}
+.alert.info{background:#f1f6ff;color:#1b84ff;border-color:#d6e6ff}
+.remember{display:flex;align-items:center;gap:8px;font-size:13px;color:#78829d;margin-top:16px}
+/* Portal look */
+.portal{min-height:560px;background:#fff;padding:24px 16px}
+.pcard{max-width:448px;margin:0 auto;border:1px solid #f1f1f4;border-radius:12px;box-shadow:0 3px 4px rgba(0,0,0,.03)}
+.pcard .ph2{padding:16px 18px 4px;font-size:17px;font-weight:600}
+.pcard .pb{padding:12px 18px 18px;font-size:13.5px}
+.pcard .pb>*+*{margin-top:14px}
+/* Narrow (375) adaptations, via container queries */
+@container (max-width:600px){
+ .side{display:none}.hdr .burger,.hdr .mlogo{display:block}.hdr .search{display:none}.hdr{padding:0 14px}
+ .content{padding:14px 12px 18px}.ph h1{font-size:17px}
+ .hide-n{display:none}
+ .kv{grid-template-columns:1fr;gap:2px}.kv .k{margin-top:8px}
+ .grid2{grid-template-columns:1fr}
+ .dlg{width:auto}.overlay{padding:12px 8px;align-items:flex-start}
+ .auth{min-height:0;padding:20px 12px;align-items:flex-start}
+ .acard{padding:20px}
+ .ph .b.pri{padding:0 10px}
+ .tb .inp{flex:1 1 100%}
+ table.dg{table-layout:auto} table.dg col{width:auto!important} table.dg col.hide-n{visibility:collapse}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <p class="eyebrow">For owner review &middot; 27 Sep 2026 &middot; round 4</p>
+  <h1>One sign-in for the portal and the CRM</h1>
+  <p class="lede">What you asked for, what you have decided, what each step gives you, and the few questions still open, with final screen mockups of every screen the plan touches. Everything here matches the written plan and acceptance list; nothing is built yet.</p>
+  <div class="meta">
+    <span class="chip">Issue #1280</span>
+    <span class="chip">Plan PR #1285, round 4</span>
+    <span class="chip">No new pages</span>
+    <span class="chip">No email on create</span>
+    <span class="chip">4 steps (slices)</span>
+  </div>
+</header>
+
+<nav class="toc" aria-label="Contents"><ol>
+  <li><a href="#ask">The ask, in your words</a></li>
+  <li><a href="#decisions">Decisions made so far</a></li>
+  <li><a href="#slices">What each step ships</a></li>
+  <li><a href="#open">Open questions</a></li>
+  <li><a href="#screens">Final mockups</a></li>
+  <li><a href="#scope">Out of scope and risks</a></li>
+</ol></nav>
+
+<section class="s" id="ask">
+  <h2><span class="n">1</span>The ask, in your words</h2>
+  <p class="sub">Quoted exactly as written. This is what the whole plan answers to.</p>
+  <blockquote>"I think eventually all our portal and user sign in needs to be unified. Because the one who use the portal for basic portal submission function will grow to use our project sales modules, use our sales opportunities module. So I think we need to find a way to unify. I'm thinking that we should support like user login, user email and password login, or also a phone number login. We should unify this. So for all the contacts that are like for product salesperson, retail salesperson, we also need to create like a counterpart user for them so in the future all of them can use our system and be audit trailed by our system."<cite>Issue #1280, 26 Sep 2026</cite></blockquote>
+  <p>How users come into being:</p>
+  <blockquote>"hmm i should be able to consciously create and setup at the backend first, it should be controlled by me"<cite>Question 3, 26 Sep 2026 23:45 MYT</cite></blockquote>
+  <p>Where it happens, and how people sign in:</p>
+  <blockquote>"i don't need another page called salesperson account, just need existing Administrative Users and Internal contacts"<cite>Your note on the worklist sketch, 27 Sep 2026 00:45 MYT</cite></blockquote>
+  <blockquote>"i just need 1 sign in page which is https://fe-sorento.foundryx.my/signin with option to sign in by phone number, this is for normal user, then for salesperson, they will still access via portal which will prompt them to enter verification code when needed"<cite>Your note on the sign-in sketch, 27 Sep 2026 00:45 MYT</cite></blockquote>
+  <p>And what must never happen by accident:</p>
+  <blockquote>"cause i think now if we create the user with email, it will send email verification right? can this be a manual step ah cause i worry will accidentally send the email to the salespersons when we create for them, this one you also need to update in the lavish"<cite>Your ruling on invite emails, 27 Sep 2026 00:50 MYT</cite></blockquote>
+  <h3>Read as five things</h3>
+  <ul>
+    <li><b>One sign-in page</b>, the one you have, with a choice of phone code or email and password.</li>
+    <li><b>Salespeople keep the portal</b>, which asks for the WhatsApp code when needed.</li>
+    <li><b>A user for every product and retail salesperson</b>, created and linked by you, on the pages you already use.</li>
+    <li><b>No email goes out because you created or linked someone</b>; the invite is its own button.</li>
+    <li><b>Everything they do is recorded as them</b> in the history.</li>
+  </ul>
+</section>
+
+<section class="s" id="decisions">
+  <h2><span class="n">2</span>Decisions made so far</h2>
+  <p class="sub">Every ruling you have given, word for word, and what it does to the design. The newest are marked.</p>
+
+  <div class="ruling"><div class="q">Q1</div><div><div class="date">26 Sep 2026 23:45 MYT</div><div class="asked">Who counts as a product or retail salesperson?</div><div class="said">"yeah"</div>
+  <p class="so"><b>So:</b> any contact in a market segment that shows in the "Requested by / Salesperson" picker (today Retail and Project, reading "product" as "project"), plus any contact tied to a sales agent. It now only decides which role the Add user form suggests.</p></div></div>
+
+  <div class="ruling"><div class="q">Q2</div><div><div class="date">26 Sep 2026 23:45 MYT</div><div class="asked">Does this replace the 14 Aug ruling that salespeople get no user account?</div><div class="said">"yeah correct"</div>
+  <p class="so"><b>So:</b> salespeople can now have a user. The old note is marked as replaced when the user-setup step ships.</p></div></div>
+
+  <div class="ruling"><div class="q">Q3</div><div><div class="date">26 Sep 2026 23:45 MYT</div><div class="asked">Dealer contacts: users up front, or at their first portal sign-in?</div><div class="said">"hmm i should be able to consciously create and setup at the backend first, it should be controlled by me"</div>
+  <p class="so"><b>So:</b> neither. You create each user yourself.</p></div></div>
+
+  <div class="ruling"><div class="q">Q4</div><div><div class="date">26 Sep 2026 23:45 MYT</div><div class="asked">Does every portal contact quietly become a user when it next signs in?</div><div class="said">"no it shouldn't, it should be consciously by me"</div>
+  <p class="so"><b>So:</b> nothing ever creates a user by itself. A contact you have not set up keeps using the portal exactly as today.</p></div></div>
+
+  <div class="ruling"><div class="q">Q5</div><div><div class="date">27 Sep 2026 00:20 MYT</div><div class="asked">May a user have no email (phone only)?</div><div class="said">"identity plan q5 - yeah can"</div>
+  <p class="so"><b>So:</b> a user needs at least one of email or phone. No made-up placeholder emails.</p></div></div>
+
+  <div class="ruling"><div class="q">Q6</div><div><div class="date">26 Sep 2026 23:45 MYT</div><div class="asked">Sign-in codes by WhatsApp only, or SMS too?</div><div class="said">"yeap whatsapp codes"</div>
+  <p class="so"><b>So:</b> WhatsApp only, sent the same way the portal sends its codes today.</p></div></div>
+
+  <div class="ruling"><div class="q">Q7</div><div><div class="date">26 Sep 2026 23:45 MYT, then 27 Sep 2026 00:45 MYT<span class="newtag">NEW</span></div><div class="asked">Sign-in screen: one "Email or phone number" field, or two tabs?</div>
+  <div class="said">"hmm we can just link the user to respond contact right?"</div>
+  <div class="said">"i just need 1 sign in page which is https://fe-sorento.foundryx.my/signin with option to sign in by phone number"</div>
+  <div class="said">"make sure i can toggle between phone auth and email pw auth in the sign in page while obeying the design element of the current sign in page"</div>
+  <p class="so"><b>So:</b> yes, each user links to one WhatsApp contact (that is where the code goes). The sign-in page stays your existing page and gets an Email | Phone toggle in its current look. Our one-field design and six code boxes are dropped (mockups 1 to 3).</p></div></div>
+
+  <div class="ruling"><div class="q">Q8</div><div><div class="date">26 Sep 2026 23:45 MYT</div><div class="asked">What can a salesperson do in the CRM on day one?</div><div class="said">"yeah now salesperson gets nothing other than portal submission"</div>
+  <p class="so"><b>So:</b> the Salesperson role starts empty and stays empty; later, a CRM role for one person is a setting, not a code change.</p></div></div>
+
+  <div class="ruling"><div class="q">Q9</div><div><div class="date">26 Sep 2026 23:45 MYT</div><div class="asked">Where does someone land after signing in?</div><div class="said">"hmm for now salesperson still land at portal first"</div>
+  <p class="so"><b>So:</b> a salesperson always lands on their portal home, with "Open CRM" if you later give them a CRM role. Staff land on the CRM.</p></div></div>
+
+  <div class="ruling"><div class="q">Q10</div><div><div class="date">26 Sep 2026 23:45 MYT</div><div class="asked">Phone sign-in for staff and admins too?</div><div class="said">"yeah correct"</div>
+  <p class="so"><b>So:</b> any active user whose phone matches their linked WhatsApp contact can use the Phone toggle, admins included.</p></div></div>
+
+  <div class="ruling"><div class="q">Q16</div><div><div class="date">27 Sep 2026 00:45 MYT<span class="newtag">NEW</span></div><div class="asked">Your notes on the round 3 page: new pages?</div>
+  <div class="said">"just use our existing user management page, don't need new page"</div>
+  <div class="said">"there is no need for this, I will just create the user account and link to the contact, i don't even want to send email verification to these ppl at this stage, you can maybe help me to quick create from respond contact la, but i don't need another page called salesperson account, just need existing Administrative Users and Internal contacts"</div>
+  <div class="said">"i don't need a brand new page for user management"</div>
+  <div class="said">"then for salesperson, they will still access via portal which will prompt them to enter verification code when needed"</div>
+  <div class="said">"we already got this send otp mechanism so just reuse it"</div>
+  <p class="so"><b>So:</b> the Salesperson accounts page and the separate admin screens step (S4) are dropped. You create and link on Administrative Users (Add user gets a WhatsApp contact field) and Internal Users (a Create user row action, a User column, and a User account part on each contact). Salespeople keep the portal and its code prompt. Phone sign-in reuses the portal's code sender.</p></div></div>
+
+  <div class="ruling"><div class="q">Q17</div><div><div class="date">27 Sep 2026 00:50 MYT<span class="newtag">NEW</span></div><div class="asked">Does creating a user send an email?</div>
+  <div class="said">"cause i think now if we create the user with email, it will send email verification right? can this be a manual step ah cause i worry will accidentally send the email to the salespersons when we create for them, this one you also need to update in the lavish"</div>
+  <p class="so"><b>So:</b> you were right: today the Add user form has "Send invitation email" ticked by default, and saving with it ticked creates the user and emails them in one go. After this plan, creating or linking never sends any email. The tick box is removed. The invite is a separate "Send invitation email" button on the user, which asks you to confirm first (mockups 5, 11, 12).</p></div></div>
+</section>
+
+<section class="s" id="slices">
+  <h2><span class="n">3</span>What each step ships</h2>
+  <p class="sub">Four steps, shipped one at a time. The two in the dashed box can run side by side. S4 is dropped.</p>
+  <div class="order" aria-label="Order of steps"><span class="s">S0</span><span class="arrow">&rarr;</span><span class="par"><span class="s">S1</span><span class="s">S3</span></span><span class="arrow">&rarr;</span><span class="s">S2</span><span class="gone">S4</span></div>
+
+  <div class="slice"><div class="slice-head"><span class="tag">S0</span><span class="title">Groundwork and a clearer history</span><span class="hand no">No hand test needed</span></div>
+  <p>Behind the scenes: a user may be phone-only, emails match regardless of capitals, each WhatsApp contact belongs to at most one user, and every history entry says who did it and how. Staff whose phone exactly matches one WhatsApp contact are linked to it; you get that list by name before it goes live.</p>
+  <div class="ba"><div class="before"><span class="lbl">Today</span>A nightly job or an n8n update shows as "System" in a record's history, and an admin using "view as contact" is recorded as the contact.</div>
+  <div class="after"><span class="lbl">After</span>The history reads "Background job for Aisyah", "Integration: n8n as Ops Bot", "Nurain on behalf of Aisyah", "Aisyah (phone)".</div></div>
+  <p class="note">Your part: read the list of automatic phone-match links before it merges.</p></div>
+
+  <div class="slice"><div class="slice-head"><span class="tag">S1</span><span class="title">Phone option on the existing sign-in page</span><span class="hand yes">Needs your hand test</span></div>
+  <p>Your sign-in page gets an Email | Phone toggle. Email is today's page, untouched. Phone asks for the number, sends a WhatsApp code the same way the portal does, and signs in on the sixth digit.</p>
+  <div class="ba"><div class="before"><span class="lbl">Today</span>Only email and password. Typing an unknown email says "User not found. Please register first.", which tells a stranger who has an account.</div>
+  <div class="after"><span class="lbl">After</span>Nurain taps Phone, types 012-345 6789, gets a WhatsApp code, types it, and is in. An unknown email and a wrong password get the same answer.</div></div>
+  <p class="note">Your hand test: on your phone, sign in once with Phone and once with Email; check the Email side looks exactly as today.</p></div>
+
+  <div class="slice"><div class="slice-head"><span class="tag">S3</span><span class="title">You create and link users, on your existing pages, with no email sent</span><span class="hand yes">Needs your hand test</span></div>
+  <p>Internal Users gets a User column and a "Create user" row action. Administrative Users' Add user form gets a WhatsApp contact field and loses the invitation tick box. Each contact gets a User account part; each user gets a Sign-in part with a "Send invitation email" button that asks before sending.</p>
+  <div class="ba"><div class="before"><span class="lbl">Today</span>Creating Aisyah needs an email, and with the tick box on by default she would get an invitation email the moment you save.</div>
+  <div class="after"><span class="lbl">After</span>On Internal Users, Aisyah's row, Create user: the form is filled from her contact, Salesperson suggested. You click Add user. Her row shows her name; she gets nothing until she uses her portal link.</div></div>
+  <p class="note">Your hand test: create one salesperson from Internal Users, link one staff member who is also a salesperson, and check no email arrived. Then send one invitation on purpose and see the confirmation.</p></div>
+
+  <div class="slice"><div class="slice-head"><span class="tag">S2</span><span class="title">The portal uses the same sign-in</span><span class="hand yes">Needs your hand test</span></div>
+  <p>For a person you have set up, the portal link they already have now signs them in as their user. Same card, same code, same forms. For a contact you have not set up, nothing changes.</p>
+  <div class="ba"><div class="before"><span class="lbl">Today</span>Aisyah taps her WhatsApp link, enters the code, and uses the portal on a portal-only session with no user behind it.</div>
+  <div class="after"><span class="lbl">After</span>She taps the same link, enters the same code, lands on the same portal home, now as her user. If you later give her a CRM role, "Open CRM" takes her there with no second sign-in.</div></div>
+  <p class="note">Your hand test: open an old link for a set-up salesperson and for a dealer you have not set up; both look exactly as before.</p></div>
+
+  <div class="slice withdrawn"><div class="slice-head"><span class="tag" style="color:#888">S4</span><span class="title">Admin identity screens: dropped</span></div>
+  <p>Dropped by your 00:45 note. The Users list Kind filter and Sign-in column are gone; the one useful part, a user's Sign-in section, moved into S3 on the existing user page.</p></div>
+</section>
+
+<section class="s" id="open">
+  <h2><span class="n">4</span>Open questions</h2>
+  <p class="sub">Not ruled yet. The plan is written to the recommendation; a different answer changes only what is listed under it.</p>
+
+  <div class="oq"><h3>1. When you change an existing user's email, keep the security notice? <span class="note">(Q18, new)</span></h3>
+  <div class="rec"><b>Recommend: keep it. It goes only to someone who already has an account, telling them their sign-in email changed. It never fires when you create or link a user, or when you add a first email to a phone-only user.</b></div>
+  <div class="other"><b>If no:</b> that notice is removed as well, and no email about a user's account ever goes out unless you press Send invitation email.</div></div>
+
+  <div class="oq"><h3>2. Old portal sessions of people you set up <span class="note">(Q11)</span></h3>
+  <div class="rec"><b>Recommend: contacts you have not set up keep their portal session as today. Once you set someone up, their old portal session stops renewing and ends within 30 days. Old WhatsApp links keep working for everyone.</b></div>
+  <div class="other"><b>If old sessions keep renewing:</b> that person carries two separate sessions for good, and signing out of one does not end the other.</div></div>
+
+  <div class="oq"><h3>3. Admin "view as contact" <span class="note">(Q12)</span></h3>
+  <div class="rec"><b>Recommend: keep it, and record what the admin does there as "the admin on behalf of the contact".</b></div>
+  <div class="other"><b>If removed:</b> admins can no longer see the portal as a contact sees it, which is how portal problems are checked today.</div></div>
+
+  <div class="oq"><h3>4. Someone loses their phone <span class="note">(Q13)</span></h3>
+  <div class="rec"><b>Recommend: an admin changes the number on the user. That signs them out everywhere, and their next code confirms the new number.</b></div>
+  <div class="other"><b>If people change it themselves:</b> they need a second way to prove who they are, which a phone-only person does not have, and a new screen gets built.</div></div>
+
+  <div class="oq"><h3>5. A salesperson's phone already belongs to a staff user <span class="note">(Q14)</span></h3>
+  <div class="rec"><b>Recommend: the Add user form stops and offers "Link this contact to &lt;name&gt; instead" (mockup 6). You decide; nothing links by itself.</b></div>
+  <div class="other"><b>If linked automatically:</b> quicker, but a link is made without you seeing it, against your Q3 and Q4 rulings.</div></div>
+
+  <div class="oq"><h3>6. How long a phone or portal sign-in lasts <span class="note">(Q15)</span></h3>
+  <div class="rec"><b>Recommend: 30 days, renewed while in use, the same as the portal today.</b></div>
+  <div class="other"><b>If shorter (for example 8 hours):</b> people ask for a WhatsApp code far more often, and each code is a WhatsApp message sent.</div></div>
+</section>
+
+<section class="s" id="screens">
+  <h2><span class="n">5</span>Final mockups</h2>
+  <p class="sub">Every screen the plan touches, on a laptop (1280 wide, shown smaller) and a phone (375 wide). All of them are existing screens; there is no new page. Names and numbers are made up. On a phone, swipe a laptop view sideways to see all of it.</p>
+  <div class="legend"><span><span class="k"></span>Marked NEW: what this plan adds to an existing screen</span><span>Struck through in red: what it removes</span></div>
+  <div class="mock"><h3>1. Sign in, Email (today's page plus the toggle)</h3><p class="what">The existing sign-in page. Only the Email | Phone toggle is added; everything under it is exactly what staff see today.</p><div class="frames"><div class="fr wide"><div class="cap">Laptop, 1280 wide</div><div class="scroller"><div class="dev w1280"><div class="auth"><div class="acard"><div class="wm">SORENTO</div><h2>Sign in to Sorento</h2><div class="new" style="margin-bottom:4px"><span class="newlbl">NEW</span><div class="seg"><span class="on">Email</span><span class="">Phone</span></div></div><span class="fl">Email</span><div class="inp ph0">Your email</div>
+<div class="row2" style="margin-top:14px"><span class="fl" style="margin:0">Password</span><span style="font-size:13px;font-weight:600">Forgot Password?</span></div>
+<div class="inp ph0" style="margin-top:6px">Your password<span style="margin-left:auto;color:#99a1b7">&#128065;</span></div>
+<div class="remember"><span class="cbx"></span>Remember me</div>
+<div style="margin-top:20px"><span class="b pri full">Continue</span></div></div></div></div></div></div><div class="fr"><div class="cap">Phone, 375 wide</div><div class="scroller"><div class="dev w375"><div class="auth"><div class="acard"><div class="wm">SORENTO</div><h2>Sign in to Sorento</h2><div class="new" style="margin-bottom:4px"><span class="newlbl">NEW</span><div class="seg"><span class="on">Email</span><span class="">Phone</span></div></div><span class="fl">Email</span><div class="inp ph0">Your email</div>
+<div class="row2" style="margin-top:14px"><span class="fl" style="margin:0">Password</span><span style="font-size:13px;font-weight:600">Forgot Password?</span></div>
+<div class="inp ph0" style="margin-top:6px">Your password<span style="margin-left:auto;color:#99a1b7">&#128065;</span></div>
+<div class="remember"><span class="cbx"></span>Remember me</div>
+<div style="margin-top:20px"><span class="b pri full">Continue</span></div></div></div></div></div></div></div></div><div class="mock"><h3>2. Sign in, Phone, step 1</h3><p class="what">Tap Phone, type the number in any common form, Continue. No Remember me: a phone sign-in always lasts 30 days while in use.</p><div class="frames"><div class="fr wide"><div class="cap">Laptop, 1280 wide</div><div class="scroller"><div class="dev w1280"><div class="auth"><div class="acard"><div class="wm">SORENTO</div><h2>Sign in to Sorento</h2><div class="new" style="margin-bottom:4px"><span class="newlbl">NEW</span><div class="seg"><span class="">Email</span><span class="on">Phone</span></div></div><div class="new" style="margin-top:4px"><span class="newlbl">NEW</span><span class="fl">Phone number</span><div class="inp">012-345 6789</div>
+<div style="margin-top:20px"><span class="b pri full">Continue</span></div></div></div></div></div></div></div><div class="fr"><div class="cap">Phone, 375 wide</div><div class="scroller"><div class="dev w375"><div class="auth"><div class="acard"><div class="wm">SORENTO</div><h2>Sign in to Sorento</h2><div class="new" style="margin-bottom:4px"><span class="newlbl">NEW</span><div class="seg"><span class="">Email</span><span class="on">Phone</span></div></div><div class="new" style="margin-top:4px"><span class="newlbl">NEW</span><span class="fl">Phone number</span><div class="inp">012-345 6789</div>
+<div style="margin-top:20px"><span class="b pri full">Continue</span></div></div></div></div></div></div></div></div></div><div class="mock"><h3>3. Sign in, Phone, step 2: the code</h3><p class="what">Same card, same one-box code entry the portal already uses. It signs in on the sixth digit; wrong codes show in the usual red message.</p><div class="frames"><div class="fr wide"><div class="cap">Laptop, 1280 wide</div><div class="scroller"><div class="dev w1280"><div class="auth"><div class="acard"><div class="wm">SORENTO</div><h2>Sign in to Sorento</h2><div class="new" style="margin-bottom:4px"><span class="newlbl">NEW</span><div class="seg"><span class="">Email</span><span class="on">Phone</span></div></div><div class="new" style="margin-top:4px"><span class="newlbl">NEW</span><p style="font-size:14px;margin:14px 0 0">We'll send a code to your WhatsApp <b style="white-space:nowrap">+60 12-*** 6789</b> <span class="lnk" style="font-size:13px;margin-left:6px">Change number</span></p>
+<span class="fl">Verification code</span><div class="inp lg">4810<span style="color:#c4cada">__</span></div>
+<div style="margin-top:12px"><span class="b out full">Resend in 42s</span></div>
+<div class="alert">That code is not right. 4 tries left.</div></div></div></div></div></div></div><div class="fr"><div class="cap">Phone, 375 wide</div><div class="scroller"><div class="dev w375"><div class="auth"><div class="acard"><div class="wm">SORENTO</div><h2>Sign in to Sorento</h2><div class="new" style="margin-bottom:4px"><span class="newlbl">NEW</span><div class="seg"><span class="">Email</span><span class="on">Phone</span></div></div><div class="new" style="margin-top:4px"><span class="newlbl">NEW</span><p style="font-size:14px;margin:14px 0 0">We'll send a code to your WhatsApp <b style="white-space:nowrap">+60 12-*** 6789</b> <span class="lnk" style="font-size:13px;margin-left:6px">Change number</span></p>
+<span class="fl">Verification code</span><div class="inp lg">4810<span style="color:#c4cada">__</span></div>
+<div style="margin-top:12px"><span class="b out full">Resend in 42s</span></div>
+<div class="alert">That code is not right. 4 tries left.</div></div></div></div></div></div></div></div></div><div class="mock"><h3>4. Portal code prompt for salespeople (unchanged)</h3><p class="what">Salespeople keep using their portal link. When their phone holds no live sign-in, the portal asks for the WhatsApp code exactly as it does today. Nothing on this card changes; for a person you have set up, the code now also signs them in as their user.</p><div class="frames"><div class="fr wide"><div class="cap">Laptop, 1280 wide</div><div class="scroller"><div class="dev w1280"><div class="portal"><div class="pcard"><div class="ph2">Verify your identity</div><div class="pb">
+<p>We'll send a code to your WhatsApp <b>+60 12-*** 6789</b></p>
+<p style="font-size:12px;color:#78829d;text-decoration:underline">Not your number?</p>
+<div><span class="fl" style="margin-top:0">Verification code</span><div class="inp lg" style="color:#c4cada;letter-spacing:.1em;font-size:16px">6-digit code</div></div>
+<span class="b out full">Resend in 38s</span>
+</div></div>
+<p style="text-align:center;font-size:12px;color:#99a1b7;margin-top:18px">Same card as today. Shown only when this phone holds no live sign-in.</p></div></div></div></div><div class="fr"><div class="cap">Phone, 375 wide</div><div class="scroller"><div class="dev w375"><div class="portal"><div class="pcard"><div class="ph2">Verify your identity</div><div class="pb">
+<p>We'll send a code to your WhatsApp <b>+60 12-*** 6789</b></p>
+<p style="font-size:12px;color:#78829d;text-decoration:underline">Not your number?</p>
+<div><span class="fl" style="margin-top:0">Verification code</span><div class="inp lg" style="color:#c4cada;letter-spacing:.1em;font-size:16px">6-digit code</div></div>
+<span class="b out full">Resend in 38s</span>
+</div></div>
+<p style="text-align:center;font-size:12px;color:#99a1b7;margin-top:18px">Same card as today. Shown only when this phone holds no live sign-in.</p></div></div></div></div></div></div><div class="mock"><h3>5. Administrative Users, Add user, picking the WhatsApp contact</h3><p class="what">The existing Add user form. New: a WhatsApp contact field; picking a contact fills name, phone and companies and suggests the role. Removed: the pre-ticked invitation checkbox. Saving sends nothing.</p><div class="frames"><div class="fr wide"><div class="cap">Laptop, 1280 wide</div><div class="scroller"><div class="dev w1280"><div class="app" style="min-height:1120px"><div class="side"><div class="logo">SORENTO</div>
+<div class="grp">Administration</div>
+<div class="it parent">Users &amp; Access</div>
+<div class="it muted" style="padding-left:28px;font-size:11px;color:#99a1b7">PEOPLE</div>
+<div class="it on">Administrative Users</div>
+<div class="it">Internal Users</div>
+<div class="it">Teams</div><div class="it">Sales Agents</div><div class="it">Onboarding Requests</div>
+<div class="it muted" style="padding-left:28px;font-size:11px;color:#99a1b7">ACCESS</div>
+<div class="it">Roles</div><div class="it">Permissions</div></div><div class="main"><div class="hdr"><span class="burger"></span><span class="mlogo">SORENTO</span><span class="search">Search</span><span class="sp"></span><span class="av">JT</span></div>
+<div class="content"><div class="crumb">Users &amp; Access &rsaquo; People</div><div class="ph"><h1>Administrative Users</h1><span class="b pri">+ Add user</span></div><div class="card"><div class="tb"><div class="inp ph0" style="flex:0 1 240px">Search users</div><span class="b out">All roles</span><span class="b out hide-n">All users</span><span class="b out hide-n">Active only</span></div>
+<table class="dg"><colgroup><col style="width:40px"><col style="width:260px"><col class="hide-n" style="width:170px"><col class="hide-n" style="width:90px"><col class="hide-n" style="width:120px"><col class="hide-n" style="width:140px"><col style="width:50px"></colgroup>
+<thead><tr><th><span class="cbx"></span></th><th>User</th><th class="hide-n">Roles</th><th class="hide-n">Status</th><th class="hide-n">Joined</th><th class="hide-n">Last Sign In</th><th></th></tr></thead><tbody>
+<tr><td><span class="cbx"></span></td><td>Nurain Hashim<br><span class="muted">nurain@sorento.my</span></td><td class="hide-n">Admin</td><td class="hide-n"><span class="bd g">Active</span></td><td class="hide-n">12 Mar 2025</td><td class="hide-n">Today 08:51</td><td><span class="dots">&middot;&middot;&middot;</span></td></tr>
+<tr><td><span class="cbx"></span></td><td>Daniel Lim<br><span class="muted">daniel@sorento.my</span></td><td class="hide-n">Project Sales</td><td class="hide-n"><span class="bd gr">Inactive</span></td><td class="hide-n">26 Sep 2026</td><td class="hide-n">Never</td><td><span class="dots">&middot;&middot;&middot;</span></td></tr>
+<tr><td><span class="cbx"></span></td><td>Farah Aziz<br><span class="muted">farah@sorento.my</span></td><td class="hide-n">Customer Service</td><td class="hide-n"><span class="bd g">Active</span></td><td class="hide-n">02 Jun 2025</td><td class="hide-n">Yesterday</td><td><span class="dots">&middot;&middot;&middot;</span></td></tr>
+</tbody></table><div class="pg"><span>1-3 of 48</span><span>&lsaquo; 1 2 3 &rsaquo;</span></div></div></div></div><div class="overlay"><div class="dlg"><div class="dh">Add User<span class="muted">&times;</span></div><div class="db">
+<span class="fl">Name</span><div class="inp">Aisyah Rahman</div>
+<span class="fl">Email</span><div class="inp ph0">Optional when there is a phone</div>
+<span class="fl">Contact Number</span><div class="inp ro">+60 12-345 6789</div>
+<div class="new" style="margin-top:12px;padding:0 2px 2px"><span class="newlbl">NEW</span><span class="fl">WhatsApp contact</span><div class="inp sel">Aisyah Rahman &middot; +60 12-345 6789</div></div>
+<span class="fl">Copy roles from another user (optional)</span><div class="inp sel ph0">Pick a user</div>
+<span class="fl">Roles</span><div class="inp sel"><span class="pill">Salesperson &times;</span><span class="muted" style="font-size:11px">suggested</span></div>
+<span class="fl">Companies</span><div class="inp sel"><span class="pill">Sorento KL &times;</span><span class="pill">Sorento Penang &times;</span></div>
+<span class="fl">Superior</span><div class="inp sel ph0">None</div>
+<div class="gonebox" style="margin-top:12px">Send invitation email (they will set their password via the link)</div>
+<div style="font-size:11px;color:#b4235a;margin-top:3px;font-weight:600">REMOVED: creating a user never sends an email</div>
+</div><div class="df"><span class="b out">Cancel</span><span class="b pri">Add user</span></div></div></div></div></div></div></div><div class="fr"><div class="cap">Phone, 375 wide</div><div class="scroller"><div class="dev w375"><div class="app" style="min-height:1120px"><div class="side"><div class="logo">SORENTO</div>
+<div class="grp">Administration</div>
+<div class="it parent">Users &amp; Access</div>
+<div class="it muted" style="padding-left:28px;font-size:11px;color:#99a1b7">PEOPLE</div>
+<div class="it on">Administrative Users</div>
+<div class="it">Internal Users</div>
+<div class="it">Teams</div><div class="it">Sales Agents</div><div class="it">Onboarding Requests</div>
+<div class="it muted" style="padding-left:28px;font-size:11px;color:#99a1b7">ACCESS</div>
+<div class="it">Roles</div><div class="it">Permissions</div></div><div class="main"><div class="hdr"><span class="burger"></span><span class="mlogo">SORENTO</span><span class="search">Search</span><span class="sp"></span><span class="av">JT</span></div>
+<div class="content"><div class="crumb">Users &amp; Access &rsaquo; People</div><div class="ph"><h1>Administrative Users</h1><span class="b pri">+ Add user</span></div><div class="card"><div class="tb"><div class="inp ph0" style="flex:0 1 240px">Search users</div><span class="b out">All roles</span><span class="b out hide-n">All users</span><span class="b out hide-n">Active only</span></div>
+<table class="dg"><colgroup><col style="width:40px"><col style="width:260px"><col class="hide-n" style="width:170px"><col class="hide-n" style="width:90px"><col class="hide-n" style="width:120px"><col class="hide-n" style="width:140px"><col style="width:50px"></colgroup>
+<thead><tr><th><span class="cbx"></span></th><th>User</th><th class="hide-n">Roles</th><th class="hide-n">Status</th><th class="hide-n">Joined</th><th class="hide-n">Last Sign In</th><th></th></tr></thead><tbody>
+<tr><td><span class="cbx"></span></td><td>Nurain Hashim<br><span class="muted">nurain@sorento.my</span></td><td class="hide-n">Admin</td><td class="hide-n"><span class="bd g">Active</span></td><td class="hide-n">12 Mar 2025</td><td class="hide-n">Today 08:51</td><td><span class="dots">&middot;&middot;&middot;</span></td></tr>
+<tr><td><span class="cbx"></span></td><td>Daniel Lim<br><span class="muted">daniel@sorento.my</span></td><td class="hide-n">Project Sales</td><td class="hide-n"><span class="bd gr">Inactive</span></td><td class="hide-n">26 Sep 2026</td><td class="hide-n">Never</td><td><span class="dots">&middot;&middot;&middot;</span></td></tr>
+<tr><td><span class="cbx"></span></td><td>Farah Aziz<br><span class="muted">farah@sorento.my</span></td><td class="hide-n">Customer Service</td><td class="hide-n"><span class="bd g">Active</span></td><td class="hide-n">02 Jun 2025</td><td class="hide-n">Yesterday</td><td><span class="dots">&middot;&middot;&middot;</span></td></tr>
+</tbody></table><div class="pg"><span>1-3 of 48</span><span>&lsaquo; 1 2 3 &rsaquo;</span></div></div></div></div><div class="overlay"><div class="dlg"><div class="dh">Add User<span class="muted">&times;</span></div><div class="db">
+<span class="fl">Name</span><div class="inp">Aisyah Rahman</div>
+<span class="fl">Email</span><div class="inp ph0">Optional when there is a phone</div>
+<span class="fl">Contact Number</span><div class="inp ro">+60 12-345 6789</div>
+<div class="new" style="margin-top:12px;padding:0 2px 2px"><span class="newlbl">NEW</span><span class="fl">WhatsApp contact</span><div class="inp sel">Aisyah Rahman &middot; +60 12-345 6789</div></div>
+<span class="fl">Copy roles from another user (optional)</span><div class="inp sel ph0">Pick a user</div>
+<span class="fl">Roles</span><div class="inp sel"><span class="pill">Salesperson &times;</span><span class="muted" style="font-size:11px">suggested</span></div>
+<span class="fl">Companies</span><div class="inp sel"><span class="pill">Sorento KL &times;</span><span class="pill">Sorento Penang &times;</span></div>
+<span class="fl">Superior</span><div class="inp sel ph0">None</div>
+<div class="gonebox" style="margin-top:12px">Send invitation email (they will set their password via the link)</div>
+<div style="font-size:11px;color:#b4235a;margin-top:3px;font-weight:600">REMOVED: creating a user never sends an email</div>
+</div><div class="df"><span class="b out">Cancel</span><span class="b pri">Add user</span></div></div></div></div></div></div></div></div></div><div class="mock"><h3>6. Add user, when the phone already belongs to someone</h3><p class="what">The form stops and offers to link instead. You decide; nothing is merged by itself.</p><div class="frames"><div class="fr wide"><div class="cap">Laptop, 1280 wide</div><div class="scroller"><div class="dev w1280"><div class="app" style="min-height:1120px"><div class="side"><div class="logo">SORENTO</div>
+<div class="grp">Administration</div>
+<div class="it parent">Users &amp; Access</div>
+<div class="it muted" style="padding-left:28px;font-size:11px;color:#99a1b7">PEOPLE</div>
+<div class="it on">Administrative Users</div>
+<div class="it">Internal Users</div>
+<div class="it">Teams</div><div class="it">Sales Agents</div><div class="it">Onboarding Requests</div>
+<div class="it muted" style="padding-left:28px;font-size:11px;color:#99a1b7">ACCESS</div>
+<div class="it">Roles</div><div class="it">Permissions</div></div><div class="main"><div class="hdr"><span class="burger"></span><span class="mlogo">SORENTO</span><span class="search">Search</span><span class="sp"></span><span class="av">JT</span></div>
+<div class="content"><div class="crumb">Users &amp; Access &rsaquo; People</div><div class="ph"><h1>Administrative Users</h1><span class="b pri">+ Add user</span></div><div class="card"><div class="tb"><div class="inp ph0" style="flex:0 1 240px">Search users</div><span class="b out">All roles</span><span class="b out hide-n">All users</span><span class="b out hide-n">Active only</span></div>
+<table class="dg"><colgroup><col style="width:40px"><col style="width:260px"><col class="hide-n" style="width:170px"><col class="hide-n" style="width:90px"><col class="hide-n" style="width:120px"><col class="hide-n" style="width:140px"><col style="width:50px"></colgroup>
+<thead><tr><th><span class="cbx"></span></th><th>User</th><th class="hide-n">Roles</th><th class="hide-n">Status</th><th class="hide-n">Joined</th><th class="hide-n">Last Sign In</th><th></th></tr></thead><tbody>
+<tr><td><span class="cbx"></span></td><td>Nurain Hashim<br><span class="muted">nurain@sorento.my</span></td><td class="hide-n">Admin</td><td class="hide-n"><span class="bd g">Active</span></td><td class="hide-n">12 Mar 2025</td><td class="hide-n">Today 08:51</td><td><span class="dots">&middot;&middot;&middot;</span></td></tr>
+<tr><td><span class="cbx"></span></td><td>Daniel Lim<br><span class="muted">daniel@sorento.my</span></td><td class="hide-n">Project Sales</td><td class="hide-n"><span class="bd gr">Inactive</span></td><td class="hide-n">26 Sep 2026</td><td class="hide-n">Never</td><td><span class="dots">&middot;&middot;&middot;</span></td></tr>
+<tr><td><span class="cbx"></span></td><td>Farah Aziz<br><span class="muted">farah@sorento.my</span></td><td class="hide-n">Customer Service</td><td class="hide-n"><span class="bd g">Active</span></td><td class="hide-n">02 Jun 2025</td><td class="hide-n">Yesterday</td><td><span class="dots">&middot;&middot;&middot;</span></td></tr>
+</tbody></table><div class="pg"><span>1-3 of 48</span><span>&lsaquo; 1 2 3 &rsaquo;</span></div></div></div></div><div class="overlay"><div class="dlg"><div class="dh">Add User<span class="muted">&times;</span></div><div class="db">
+<span class="fl">Name</span><div class="inp">Aisyah Rahman</div>
+<span class="fl">Email</span><div class="inp ph0">Optional when there is a phone</div>
+<span class="fl">Contact Number</span><div class="inp ro">+60 12-345 6789</div>
+<div class="new" style="margin-top:12px;padding:0 2px 2px"><span class="newlbl">NEW</span><span class="fl">WhatsApp contact</span><div class="inp sel">Aisyah Rahman &middot; +60 12-345 6789</div></div>
+<span class="fl">Copy roles from another user (optional)</span><div class="inp sel ph0">Pick a user</div>
+<span class="fl">Roles</span><div class="inp sel"><span class="pill">Salesperson &times;</span><span class="muted" style="font-size:11px">suggested</span></div>
+<span class="fl">Companies</span><div class="inp sel"><span class="pill">Sorento KL &times;</span><span class="pill">Sorento Penang &times;</span></div>
+<span class="fl">Superior</span><div class="inp sel ph0">None</div>
+<div class="gonebox" style="margin-top:12px">Send invitation email (they will set their password via the link)</div>
+<div style="font-size:11px;color:#b4235a;margin-top:3px;font-weight:600">REMOVED: creating a user never sends an email</div>
+<div class="inl">This phone already belongs to Farah Aziz. <b class="lnk">Link this contact to Farah Aziz instead</b></div></div><div class="df"><span class="b out">Cancel</span><span class="b pri">Add user</span></div></div></div></div></div></div></div><div class="fr"><div class="cap">Phone, 375 wide</div><div class="scroller"><div class="dev w375"><div class="app" style="min-height:1120px"><div class="side"><div class="logo">SORENTO</div>
+<div class="grp">Administration</div>
+<div class="it parent">Users &amp; Access</div>
+<div class="it muted" style="padding-left:28px;font-size:11px;color:#99a1b7">PEOPLE</div>
+<div class="it on">Administrative Users</div>
+<div class="it">Internal Users</div>
+<div class="it">Teams</div><div class="it">Sales Agents</div><div class="it">Onboarding Requests</div>
+<div class="it muted" style="padding-left:28px;font-size:11px;color:#99a1b7">ACCESS</div>
+<div class="it">Roles</div><div class="it">Permissions</div></div><div class="main"><div class="hdr"><span class="burger"></span><span class="mlogo">SORENTO</span><span class="search">Search</span><span class="sp"></span><span class="av">JT</span></div>
+<div class="content"><div class="crumb">Users &amp; Access &rsaquo; People</div><div class="ph"><h1>Administrative Users</h1><span class="b pri">+ Add user</span></div><div class="card"><div class="tb"><div class="inp ph0" style="flex:0 1 240px">Search users</div><span class="b out">All roles</span><span class="b out hide-n">All users</span><span class="b out hide-n">Active only</span></div>
+<table class="dg"><colgroup><col style="width:40px"><col style="width:260px"><col class="hide-n" style="width:170px"><col class="hide-n" style="width:90px"><col class="hide-n" style="width:120px"><col class="hide-n" style="width:140px"><col style="width:50px"></colgroup>
+<thead><tr><th><span class="cbx"></span></th><th>User</th><th class="hide-n">Roles</th><th class="hide-n">Status</th><th class="hide-n">Joined</th><th class="hide-n">Last Sign In</th><th></th></tr></thead><tbody>
+<tr><td><span class="cbx"></span></td><td>Nurain Hashim<br><span class="muted">nurain@sorento.my</span></td><td class="hide-n">Admin</td><td class="hide-n"><span class="bd g">Active</span></td><td class="hide-n">12 Mar 2025</td><td class="hide-n">Today 08:51</td><td><span class="dots">&middot;&middot;&middot;</span></td></tr>
+<tr><td><span class="cbx"></span></td><td>Daniel Lim<br><span class="muted">daniel@sorento.my</span></td><td class="hide-n">Project Sales</td><td class="hide-n"><span class="bd gr">Inactive</span></td><td class="hide-n">26 Sep 2026</td><td class="hide-n">Never</td><td><span class="dots">&middot;&middot;&middot;</span></td></tr>
+<tr><td><span class="cbx"></span></td><td>Farah Aziz<br><span class="muted">farah@sorento.my</span></td><td class="hide-n">Customer Service</td><td class="hide-n"><span class="bd g">Active</span></td><td class="hide-n">02 Jun 2025</td><td class="hide-n">Yesterday</td><td><span class="dots">&middot;&middot;&middot;</span></td></tr>
+</tbody></table><div class="pg"><span>1-3 of 48</span><span>&lsaquo; 1 2 3 &rsaquo;</span></div></div></div></div><div class="overlay"><div class="dlg"><div class="dh">Add User<span class="muted">&times;</span></div><div class="db">
+<span class="fl">Name</span><div class="inp">Aisyah Rahman</div>
+<span class="fl">Email</span><div class="inp ph0">Optional when there is a phone</div>
+<span class="fl">Contact Number</span><div class="inp ro">+60 12-345 6789</div>
+<div class="new" style="margin-top:12px;padding:0 2px 2px"><span class="newlbl">NEW</span><span class="fl">WhatsApp contact</span><div class="inp sel">Aisyah Rahman &middot; +60 12-345 6789</div></div>
+<span class="fl">Copy roles from another user (optional)</span><div class="inp sel ph0">Pick a user</div>
+<span class="fl">Roles</span><div class="inp sel"><span class="pill">Salesperson &times;</span><span class="muted" style="font-size:11px">suggested</span></div>
+<span class="fl">Companies</span><div class="inp sel"><span class="pill">Sorento KL &times;</span><span class="pill">Sorento Penang &times;</span></div>
+<span class="fl">Superior</span><div class="inp sel ph0">None</div>
+<div class="gonebox" style="margin-top:12px">Send invitation email (they will set their password via the link)</div>
+<div style="font-size:11px;color:#b4235a;margin-top:3px;font-weight:600">REMOVED: creating a user never sends an email</div>
+<div class="inl">This phone already belongs to Farah Aziz. <b class="lnk">Link this contact to Farah Aziz instead</b></div></div><div class="df"><span class="b out">Cancel</span><span class="b pri">Add user</span></div></div></div></div></div></div></div></div></div><div class="mock"><h3>7. Internal Users, quick create from a WhatsApp contact</h3><p class="what">Your existing contact list. New: a User column (blank means no user yet) and a Create user row action on contacts without one. It opens the same Add user form with the contact locked and everything filled in.</p><div class="frames"><div class="fr wide"><div class="cap">Laptop, 1280 wide</div><div class="scroller"><div class="dev w1280"><div class="app"><div class="side"><div class="logo">SORENTO</div>
+<div class="grp">Administration</div>
+<div class="it parent">Users &amp; Access</div>
+<div class="it muted" style="padding-left:28px;font-size:11px;color:#99a1b7">PEOPLE</div>
+<div class="it">Administrative Users</div>
+<div class="it on">Internal Users</div>
+<div class="it">Teams</div><div class="it">Sales Agents</div><div class="it">Onboarding Requests</div>
+<div class="it muted" style="padding-left:28px;font-size:11px;color:#99a1b7">ACCESS</div>
+<div class="it">Roles</div><div class="it">Permissions</div></div><div class="main"><div class="hdr"><span class="burger"></span><span class="mlogo">SORENTO</span><span class="search">Search</span><span class="sp"></span><span class="av">JT</span></div>
+<div class="content"><div class="crumb">Users &amp; Access &rsaquo; People</div><div class="ph"><h1>Internal Users</h1><span class="b pri">+ Create Contact</span></div><div class="card"><div class="tb"><div class="inp ph0" style="flex:0 1 240px">Search contacts</div><span class="b out hide-n">Access types</span></div>
+<table class="dg"><colgroup><col style="width:40px"><col style="width:150px"><col style="width:110px"><col class="hide-n" style="width:110px"><col class="hide-n" style="width:130px"><col style="width:150px"><col class="hide-n" style="width:110px"><col style="width:46px"></colgroup>
+<thead><tr><th><span class="cbx"></span></th><th>Phone Number</th><th>First name</th><th class="hide-n">Last name</th><th class="hide-n">Access types</th><th><span class="new" style="padding:0 4px">User</span></th><th class="hide-n">Updated At</th><th></th></tr></thead><tbody>
+<tr><td><span class="cbx"></span></td><td>60123456789</td><td>Aisyah</td><td class="hide-n">Rahman</td><td class="hide-n"><span class="bd bl">Dealer</span></td><td class="muted"></td><td class="hide-n">Today</td><td><span class="dots">&middot;&middot;&middot;</span></td></tr>
+<tr><td><span class="cbx"></span></td><td>60162210221</td><td>Daniel</td><td class="hide-n">Lim</td><td class="hide-n"><span class="bd bl">End user</span></td><td><span class="lnk">Daniel Lim</span></td><td class="hide-n">26 Sep</td><td><span class="dots">&middot;&middot;&middot;</span></td></tr>
+<tr><td><span class="cbx"></span></td><td>60114432110</td><td>Farah</td><td class="hide-n">Aziz</td><td class="hide-n"><span class="bd bl">End user</span></td><td><span class="lnk">Farah Aziz</span></td><td class="hide-n">24 Sep</td><td><span class="dots">&middot;&middot;&middot;</span></td></tr>
+<tr><td><span class="cbx"></span></td><td>60197788123</td><td>Kumar</td><td class="hide-n">Raj</td><td class="hide-n"><span class="bd bl">Dealer</span></td><td class="muted"></td><td class="hide-n">20 Sep</td><td><span class="dots">&middot;&middot;&middot;</span></td></tr>
+</tbody></table><div class="pg"><span>1-4 of 312</span><span>&lsaquo; 1 2 3 &rsaquo;</span></div></div><div class="menu" style="right:30px;top:178px"><div class="hi new" style="outline-offset:0"><span class="newlbl">NEW</span>Create user</div><div>Send portal link</div><div>Impersonate in portal</div><div style="color:#f8285a">Delete contact</div></div></div></div></div></div></div></div><div class="fr"><div class="cap">Phone, 375 wide</div><div class="scroller"><div class="dev w375"><div class="app"><div class="side"><div class="logo">SORENTO</div>
+<div class="grp">Administration</div>
+<div class="it parent">Users &amp; Access</div>
+<div class="it muted" style="padding-left:28px;font-size:11px;color:#99a1b7">PEOPLE</div>
+<div class="it">Administrative Users</div>
+<div class="it on">Internal Users</div>
+<div class="it">Teams</div><div class="it">Sales Agents</div><div class="it">Onboarding Requests</div>
+<div class="it muted" style="padding-left:28px;font-size:11px;color:#99a1b7">ACCESS</div>
+<div class="it">Roles</div><div class="it">Permissions</div></div><div class="main"><div class="hdr"><span class="burger"></span><span class="mlogo">SORENTO</span><span class="search">Search</span><span class="sp"></span><span class="av">JT</span></div>
+<div class="content"><div class="crumb">Users &amp; Access &rsaquo; People</div><div class="ph"><h1>Internal Users</h1><span class="b pri">+ Create Contact</span></div><div class="card"><div class="tb"><div class="inp ph0" style="flex:0 1 240px">Search contacts</div><span class="b out hide-n">Access types</span></div>
+<table class="dg"><colgroup><col style="width:40px"><col style="width:150px"><col style="width:110px"><col class="hide-n" style="width:110px"><col class="hide-n" style="width:130px"><col style="width:150px"><col class="hide-n" style="width:110px"><col style="width:46px"></colgroup>
+<thead><tr><th><span class="cbx"></span></th><th>Phone Number</th><th>First name</th><th class="hide-n">Last name</th><th class="hide-n">Access types</th><th><span class="new" style="padding:0 4px">User</span></th><th class="hide-n">Updated At</th><th></th></tr></thead><tbody>
+<tr><td><span class="cbx"></span></td><td>60123456789</td><td>Aisyah</td><td class="hide-n">Rahman</td><td class="hide-n"><span class="bd bl">Dealer</span></td><td class="muted"></td><td class="hide-n">Today</td><td><span class="dots">&middot;&middot;&middot;</span></td></tr>
+<tr><td><span class="cbx"></span></td><td>60162210221</td><td>Daniel</td><td class="hide-n">Lim</td><td class="hide-n"><span class="bd bl">End user</span></td><td><span class="lnk">Daniel Lim</span></td><td class="hide-n">26 Sep</td><td><span class="dots">&middot;&middot;&middot;</span></td></tr>
+<tr><td><span class="cbx"></span></td><td>60114432110</td><td>Farah</td><td class="hide-n">Aziz</td><td class="hide-n"><span class="bd bl">End user</span></td><td><span class="lnk">Farah Aziz</span></td><td class="hide-n">24 Sep</td><td><span class="dots">&middot;&middot;&middot;</span></td></tr>
+<tr><td><span class="cbx"></span></td><td>60197788123</td><td>Kumar</td><td class="hide-n">Raj</td><td class="hide-n"><span class="bd bl">Dealer</span></td><td class="muted"></td><td class="hide-n">20 Sep</td><td><span class="dots">&middot;&middot;&middot;</span></td></tr>
+</tbody></table><div class="pg"><span>1-4 of 312</span><span>&lsaquo; 1 2 3 &rsaquo;</span></div></div><div class="menu" style="right:30px;top:178px"><div class="hi new" style="outline-offset:0"><span class="newlbl">NEW</span>Create user</div><div>Send portal link</div><div>Impersonate in portal</div><div style="color:#f8285a">Delete contact</div></div></div></div></div></div></div></div></div></div><div class="mock"><h3>8. Internal Users, quick create opened</h3><p class="what">Create user from the row: the Add user form with the contact locked. Check it and click Add user; one screen.</p><div class="frames"><div class="fr wide"><div class="cap">Laptop, 1280 wide</div><div class="scroller"><div class="dev w1280"><div class="app" style="min-height:1120px"><div class="side"><div class="logo">SORENTO</div>
+<div class="grp">Administration</div>
+<div class="it parent">Users &amp; Access</div>
+<div class="it muted" style="padding-left:28px;font-size:11px;color:#99a1b7">PEOPLE</div>
+<div class="it">Administrative Users</div>
+<div class="it on">Internal Users</div>
+<div class="it">Teams</div><div class="it">Sales Agents</div><div class="it">Onboarding Requests</div>
+<div class="it muted" style="padding-left:28px;font-size:11px;color:#99a1b7">ACCESS</div>
+<div class="it">Roles</div><div class="it">Permissions</div></div><div class="main"><div class="hdr"><span class="burger"></span><span class="mlogo">SORENTO</span><span class="search">Search</span><span class="sp"></span><span class="av">JT</span></div>
+<div class="content"><div class="crumb">Users &amp; Access &rsaquo; People</div><div class="ph"><h1>Internal Users</h1><span class="b pri">+ Create Contact</span></div><div class="card"><div class="tb"><div class="inp ph0" style="flex:0 1 240px">Search contacts</div><span class="b out hide-n">Access types</span></div>
+<table class="dg"><colgroup><col style="width:40px"><col style="width:150px"><col style="width:110px"><col class="hide-n" style="width:110px"><col class="hide-n" style="width:130px"><col style="width:150px"><col class="hide-n" style="width:110px"><col style="width:46px"></colgroup>
+<thead><tr><th><span class="cbx"></span></th><th>Phone Number</th><th>First name</th><th class="hide-n">Last name</th><th class="hide-n">Access types</th><th><span class="new" style="padding:0 4px">User</span></th><th class="hide-n">Updated At</th><th></th></tr></thead><tbody>
+<tr><td><span class="cbx"></span></td><td>60123456789</td><td>Aisyah</td><td class="hide-n">Rahman</td><td class="hide-n"><span class="bd bl">Dealer</span></td><td class="muted"></td><td class="hide-n">Today</td><td><span class="dots">&middot;&middot;&middot;</span></td></tr>
+<tr><td><span class="cbx"></span></td><td>60162210221</td><td>Daniel</td><td class="hide-n">Lim</td><td class="hide-n"><span class="bd bl">End user</span></td><td><span class="lnk">Daniel Lim</span></td><td class="hide-n">26 Sep</td><td><span class="dots">&middot;&middot;&middot;</span></td></tr>
+<tr><td><span class="cbx"></span></td><td>60114432110</td><td>Farah</td><td class="hide-n">Aziz</td><td class="hide-n"><span class="bd bl">End user</span></td><td><span class="lnk">Farah Aziz</span></td><td class="hide-n">24 Sep</td><td><span class="dots">&middot;&middot;&middot;</span></td></tr>
+<tr><td><span class="cbx"></span></td><td>60197788123</td><td>Kumar</td><td class="hide-n">Raj</td><td class="hide-n"><span class="bd bl">Dealer</span></td><td class="muted"></td><td class="hide-n">20 Sep</td><td><span class="dots">&middot;&middot;&middot;</span></td></tr>
+</tbody></table><div class="pg"><span>1-4 of 312</span><span>&lsaquo; 1 2 3 &rsaquo;</span></div></div></div></div><div class="overlay"><div class="dlg"><div class="dh">Add User<span class="muted">&times;</span></div><div class="db">
+<span class="fl">Name</span><div class="inp">Aisyah Rahman</div>
+<span class="fl">Email</span><div class="inp ph0">Optional when there is a phone</div>
+<span class="fl">Contact Number</span><div class="inp ro">+60 12-345 6789</div>
+<div class="new" style="margin-top:12px;padding:0 2px 2px"><span class="newlbl">NEW</span><span class="fl">WhatsApp contact</span><div class="inp ro">Aisyah Rahman &middot; +60 12-345 6789 (locked)</div></div>
+<span class="fl">Copy roles from another user (optional)</span><div class="inp sel ph0">Pick a user</div>
+<span class="fl">Roles</span><div class="inp sel"><span class="pill">Salesperson &times;</span><span class="muted" style="font-size:11px">suggested</span></div>
+<span class="fl">Companies</span><div class="inp sel"><span class="pill">Sorento KL &times;</span><span class="pill">Sorento Penang &times;</span></div>
+<span class="fl">Superior</span><div class="inp sel ph0">None</div>
+<div class="gonebox" style="margin-top:12px">Send invitation email (they will set their password via the link)</div>
+<div style="font-size:11px;color:#b4235a;margin-top:3px;font-weight:600">REMOVED: creating a user never sends an email</div>
+</div><div class="df"><span class="b out">Cancel</span><span class="b pri">Add user</span></div></div></div></div></div></div></div><div class="fr"><div class="cap">Phone, 375 wide</div><div class="scroller"><div class="dev w375"><div class="app" style="min-height:1120px"><div class="side"><div class="logo">SORENTO</div>
+<div class="grp">Administration</div>
+<div class="it parent">Users &amp; Access</div>
+<div class="it muted" style="padding-left:28px;font-size:11px;color:#99a1b7">PEOPLE</div>
+<div class="it">Administrative Users</div>
+<div class="it on">Internal Users</div>
+<div class="it">Teams</div><div class="it">Sales Agents</div><div class="it">Onboarding Requests</div>
+<div class="it muted" style="padding-left:28px;font-size:11px;color:#99a1b7">ACCESS</div>
+<div class="it">Roles</div><div class="it">Permissions</div></div><div class="main"><div class="hdr"><span class="burger"></span><span class="mlogo">SORENTO</span><span class="search">Search</span><span class="sp"></span><span class="av">JT</span></div>
+<div class="content"><div class="crumb">Users &amp; Access &rsaquo; People</div><div class="ph"><h1>Internal Users</h1><span class="b pri">+ Create Contact</span></div><div class="card"><div class="tb"><div class="inp ph0" style="flex:0 1 240px">Search contacts</div><span class="b out hide-n">Access types</span></div>
+<table class="dg"><colgroup><col style="width:40px"><col style="width:150px"><col style="width:110px"><col class="hide-n" style="width:110px"><col class="hide-n" style="width:130px"><col style="width:150px"><col class="hide-n" style="width:110px"><col style="width:46px"></colgroup>
+<thead><tr><th><span class="cbx"></span></th><th>Phone Number</th><th>First name</th><th class="hide-n">Last name</th><th class="hide-n">Access types</th><th><span class="new" style="padding:0 4px">User</span></th><th class="hide-n">Updated At</th><th></th></tr></thead><tbody>
+<tr><td><span class="cbx"></span></td><td>60123456789</td><td>Aisyah</td><td class="hide-n">Rahman</td><td class="hide-n"><span class="bd bl">Dealer</span></td><td class="muted"></td><td class="hide-n">Today</td><td><span class="dots">&middot;&middot;&middot;</span></td></tr>
+<tr><td><span class="cbx"></span></td><td>60162210221</td><td>Daniel</td><td class="hide-n">Lim</td><td class="hide-n"><span class="bd bl">End user</span></td><td><span class="lnk">Daniel Lim</span></td><td class="hide-n">26 Sep</td><td><span class="dots">&middot;&middot;&middot;</span></td></tr>
+<tr><td><span class="cbx"></span></td><td>60114432110</td><td>Farah</td><td class="hide-n">Aziz</td><td class="hide-n"><span class="bd bl">End user</span></td><td><span class="lnk">Farah Aziz</span></td><td class="hide-n">24 Sep</td><td><span class="dots">&middot;&middot;&middot;</span></td></tr>
+<tr><td><span class="cbx"></span></td><td>60197788123</td><td>Kumar</td><td class="hide-n">Raj</td><td class="hide-n"><span class="bd bl">Dealer</span></td><td class="muted"></td><td class="hide-n">20 Sep</td><td><span class="dots">&middot;&middot;&middot;</span></td></tr>
+</tbody></table><div class="pg"><span>1-4 of 312</span><span>&lsaquo; 1 2 3 &rsaquo;</span></div></div></div></div><div class="overlay"><div class="dlg"><div class="dh">Add User<span class="muted">&times;</span></div><div class="db">
+<span class="fl">Name</span><div class="inp">Aisyah Rahman</div>
+<span class="fl">Email</span><div class="inp ph0">Optional when there is a phone</div>
+<span class="fl">Contact Number</span><div class="inp ro">+60 12-345 6789</div>
+<div class="new" style="margin-top:12px;padding:0 2px 2px"><span class="newlbl">NEW</span><span class="fl">WhatsApp contact</span><div class="inp ro">Aisyah Rahman &middot; +60 12-345 6789 (locked)</div></div>
+<span class="fl">Copy roles from another user (optional)</span><div class="inp sel ph0">Pick a user</div>
+<span class="fl">Roles</span><div class="inp sel"><span class="pill">Salesperson &times;</span><span class="muted" style="font-size:11px">suggested</span></div>
+<span class="fl">Companies</span><div class="inp sel"><span class="pill">Sorento KL &times;</span><span class="pill">Sorento Penang &times;</span></div>
+<span class="fl">Superior</span><div class="inp sel ph0">None</div>
+<div class="gonebox" style="margin-top:12px">Send invitation email (they will set their password via the link)</div>
+<div style="font-size:11px;color:#b4235a;margin-top:3px;font-weight:600">REMOVED: creating a user never sends an email</div>
+</div><div class="df"><span class="b out">Cancel</span><span class="b pri">Add user</span></div></div></div></div></div></div></div></div></div><div class="mock"><h3>9. A contact's Profile tab, User account part (no user yet)</h3><p class="what">On the existing contact page. Create user, or Link existing user for a staff member who is also a salesperson.</p><div class="frames"><div class="fr wide"><div class="cap">Laptop, 1280 wide</div><div class="scroller"><div class="dev w1280"><div class="app"><div class="side"><div class="logo">SORENTO</div>
+<div class="grp">Administration</div>
+<div class="it parent">Users &amp; Access</div>
+<div class="it muted" style="padding-left:28px;font-size:11px;color:#99a1b7">PEOPLE</div>
+<div class="it">Administrative Users</div>
+<div class="it on">Internal Users</div>
+<div class="it">Teams</div><div class="it">Sales Agents</div><div class="it">Onboarding Requests</div>
+<div class="it muted" style="padding-left:28px;font-size:11px;color:#99a1b7">ACCESS</div>
+<div class="it">Roles</div><div class="it">Permissions</div></div><div class="main"><div class="hdr"><span class="burger"></span><span class="mlogo">SORENTO</span><span class="search">Search</span><span class="sp"></span><span class="av">JT</span></div>
+<div class="content"><div class="crumb">Internal Users &rsaquo; Contact Details</div><div class="ph"><h1>Aisyah Rahman</h1><span class="b out">Send portal link</span></div>
+<div class="tabs"><span class="on">Profile</span><span>Access</span><span>Routing</span><span>Chat</span></div>
+<div class="card"><div class="ch">Contact Information<span class="b out" style="height:28px">Edit</span></div><div class="cb"><div class="kv"><span class="k">Phone</span><span>60123456789</span><span class="k">Workspace</span><span>Sorento Main</span><span class="k">Companies</span><span>Sorento KL, Sorento Penang</span></div></div></div>
+<div class="card new" style="margin-top:14px"><span class="newlbl">NEW</span><div class="ch">User account</div><div class="cb"><p class="muted" style="margin:0 0 10px">No user yet</p>
+<span class="b pri">Create user</span> <span class="b out">Link existing user</span></div></div>
+<div class="card" style="margin-top:14px"><div class="ch">Market segments</div><div class="cb"><span class="pill">Retail</span></div></div></div></div></div></div></div></div><div class="fr"><div class="cap">Phone, 375 wide</div><div class="scroller"><div class="dev w375"><div class="app"><div class="side"><div class="logo">SORENTO</div>
+<div class="grp">Administration</div>
+<div class="it parent">Users &amp; Access</div>
+<div class="it muted" style="padding-left:28px;font-size:11px;color:#99a1b7">PEOPLE</div>
+<div class="it">Administrative Users</div>
+<div class="it on">Internal Users</div>
+<div class="it">Teams</div><div class="it">Sales Agents</div><div class="it">Onboarding Requests</div>
+<div class="it muted" style="padding-left:28px;font-size:11px;color:#99a1b7">ACCESS</div>
+<div class="it">Roles</div><div class="it">Permissions</div></div><div class="main"><div class="hdr"><span class="burger"></span><span class="mlogo">SORENTO</span><span class="search">Search</span><span class="sp"></span><span class="av">JT</span></div>
+<div class="content"><div class="crumb">Internal Users &rsaquo; Contact Details</div><div class="ph"><h1>Aisyah Rahman</h1><span class="b out">Send portal link</span></div>
+<div class="tabs"><span class="on">Profile</span><span>Access</span><span>Routing</span><span>Chat</span></div>
+<div class="card"><div class="ch">Contact Information<span class="b out" style="height:28px">Edit</span></div><div class="cb"><div class="kv"><span class="k">Phone</span><span>60123456789</span><span class="k">Workspace</span><span>Sorento Main</span><span class="k">Companies</span><span>Sorento KL, Sorento Penang</span></div></div></div>
+<div class="card new" style="margin-top:14px"><span class="newlbl">NEW</span><div class="ch">User account</div><div class="cb"><p class="muted" style="margin:0 0 10px">No user yet</p>
+<span class="b pri">Create user</span> <span class="b out">Link existing user</span></div></div>
+<div class="card" style="margin-top:14px"><div class="ch">Market segments</div><div class="cb"><span class="pill">Retail</span></div></div></div></div></div></div></div></div></div></div><div class="mock"><h3>10. A contact's Profile tab, User account part (linked, unlinking)</h3><p class="what">Once linked it names the user. Unlink counts down with a Cancel, never a pop-up question.</p><div class="frames"><div class="fr wide"><div class="cap">Laptop, 1280 wide</div><div class="scroller"><div class="dev w1280"><div class="app"><div class="side"><div class="logo">SORENTO</div>
+<div class="grp">Administration</div>
+<div class="it parent">Users &amp; Access</div>
+<div class="it muted" style="padding-left:28px;font-size:11px;color:#99a1b7">PEOPLE</div>
+<div class="it">Administrative Users</div>
+<div class="it on">Internal Users</div>
+<div class="it">Teams</div><div class="it">Sales Agents</div><div class="it">Onboarding Requests</div>
+<div class="it muted" style="padding-left:28px;font-size:11px;color:#99a1b7">ACCESS</div>
+<div class="it">Roles</div><div class="it">Permissions</div></div><div class="main"><div class="hdr"><span class="burger"></span><span class="mlogo">SORENTO</span><span class="search">Search</span><span class="sp"></span><span class="av">JT</span></div>
+<div class="content"><div class="crumb">Internal Users &rsaquo; Contact Details</div><div class="ph"><h1>Daniel Lim</h1><span class="b out">Send portal link</span></div>
+<div class="tabs"><span class="on">Profile</span><span>Access</span><span>Routing</span><span>Chat</span></div>
+<div class="card"><div class="ch">Contact Information<span class="b out" style="height:28px">Edit</span></div><div class="cb"><div class="kv"><span class="k">Phone</span><span>60162210221</span><span class="k">Workspace</span><span>Sorento Main</span><span class="k">Companies</span><span>Sorento KL, Sorento Penang</span></div></div></div>
+<div class="card new" style="margin-top:14px"><span class="newlbl">NEW</span><div class="ch">User account</div><div class="cb"><div class="kv"><span class="k">User</span><span class="lnk">Daniel Lim</span><span class="k">Roles</span><span>Salesperson</span><span class="k">Signs in by</span><span>Portal link, WhatsApp code</span></div>
+<div style="margin-top:12px"><span class="cd">Unlinking in 4s &middot; Cancel</span></div></div></div>
+<div class="card" style="margin-top:14px"><div class="ch">Market segments</div><div class="cb"><span class="pill">Retail</span></div></div></div></div></div></div></div></div><div class="fr"><div class="cap">Phone, 375 wide</div><div class="scroller"><div class="dev w375"><div class="app"><div class="side"><div class="logo">SORENTO</div>
+<div class="grp">Administration</div>
+<div class="it parent">Users &amp; Access</div>
+<div class="it muted" style="padding-left:28px;font-size:11px;color:#99a1b7">PEOPLE</div>
+<div class="it">Administrative Users</div>
+<div class="it on">Internal Users</div>
+<div class="it">Teams</div><div class="it">Sales Agents</div><div class="it">Onboarding Requests</div>
+<div class="it muted" style="padding-left:28px;font-size:11px;color:#99a1b7">ACCESS</div>
+<div class="it">Roles</div><div class="it">Permissions</div></div><div class="main"><div class="hdr"><span class="burger"></span><span class="mlogo">SORENTO</span><span class="search">Search</span><span class="sp"></span><span class="av">JT</span></div>
+<div class="content"><div class="crumb">Internal Users &rsaquo; Contact Details</div><div class="ph"><h1>Daniel Lim</h1><span class="b out">Send portal link</span></div>
+<div class="tabs"><span class="on">Profile</span><span>Access</span><span>Routing</span><span>Chat</span></div>
+<div class="card"><div class="ch">Contact Information<span class="b out" style="height:28px">Edit</span></div><div class="cb"><div class="kv"><span class="k">Phone</span><span>60162210221</span><span class="k">Workspace</span><span>Sorento Main</span><span class="k">Companies</span><span>Sorento KL, Sorento Penang</span></div></div></div>
+<div class="card new" style="margin-top:14px"><span class="newlbl">NEW</span><div class="ch">User account</div><div class="cb"><div class="kv"><span class="k">User</span><span class="lnk">Daniel Lim</span><span class="k">Roles</span><span>Salesperson</span><span class="k">Signs in by</span><span>Portal link, WhatsApp code</span></div>
+<div style="margin-top:12px"><span class="cd">Unlinking in 4s &middot; Cancel</span></div></div></div>
+<div class="card" style="margin-top:14px"><div class="ch">Market segments</div><div class="cb"><span class="pill">Retail</span></div></div></div></div></div></div></div></div></div></div><div class="mock"><h3>11. A user's Profile tab, Sign-in part, with the invite button</h3><p class="what">On the existing user page. An email-only user shows Invitation not sent; the invite goes only when you press Send invitation email.</p><div class="frames"><div class="fr wide"><div class="cap">Laptop, 1280 wide</div><div class="scroller"><div class="dev w1280"><div class="app"><div class="side"><div class="logo">SORENTO</div>
+<div class="grp">Administration</div>
+<div class="it parent">Users &amp; Access</div>
+<div class="it muted" style="padding-left:28px;font-size:11px;color:#99a1b7">PEOPLE</div>
+<div class="it on">Administrative Users</div>
+<div class="it">Internal Users</div>
+<div class="it">Teams</div><div class="it">Sales Agents</div><div class="it">Onboarding Requests</div>
+<div class="it muted" style="padding-left:28px;font-size:11px;color:#99a1b7">ACCESS</div>
+<div class="it">Roles</div><div class="it">Permissions</div></div><div class="main"><div class="hdr"><span class="burger"></span><span class="mlogo">SORENTO</span><span class="search">Search</span><span class="sp"></span><span class="av">JT</span></div>
+<div class="content"><div class="crumb">Administrative Users &rsaquo; User</div><div class="ph"><h1>Daniel Lim</h1><span><span class="b out hide-n">Edit profile</span> <span class="b out">&middot;&middot;&middot;</span></span></div>
+<div class="tabs"><span class="on">Profile</span><span>Activity Logs</span></div>
+<div class="grid2"><div class="card"><div class="ch">Profile</div><div class="cb"><div class="kv"><span class="k">Name</span><span>Daniel Lim</span><span class="k">Roles</span><span>Project Sales</span><span class="k">Companies</span><span>Sorento KL</span><span class="k">Status</span><span><span class="bd gr">Inactive</span></span></div></div></div>
+<div class="card new"><span class="newlbl">NEW</span><div class="ch">Sign-in<span class="b pri" style="height:28px">Send invitation email</span></div><div class="cb"><div class="kv">
+<span class="k">Email</span><span>daniel@sorento.my <span class="bd y">Invitation not sent</span></span>
+<span class="k">Phone</span><span class="muted">No phone yet. Add one to allow phone sign-in.</span>
+<span class="k">WhatsApp contact</span><span class="muted">Not linked</span>
+<span class="k">Last sign-in</span><span class="muted">Never</span></div></div></div></div></div></div></div></div></div></div><div class="fr"><div class="cap">Phone, 375 wide</div><div class="scroller"><div class="dev w375"><div class="app"><div class="side"><div class="logo">SORENTO</div>
+<div class="grp">Administration</div>
+<div class="it parent">Users &amp; Access</div>
+<div class="it muted" style="padding-left:28px;font-size:11px;color:#99a1b7">PEOPLE</div>
+<div class="it on">Administrative Users</div>
+<div class="it">Internal Users</div>
+<div class="it">Teams</div><div class="it">Sales Agents</div><div class="it">Onboarding Requests</div>
+<div class="it muted" style="padding-left:28px;font-size:11px;color:#99a1b7">ACCESS</div>
+<div class="it">Roles</div><div class="it">Permissions</div></div><div class="main"><div class="hdr"><span class="burger"></span><span class="mlogo">SORENTO</span><span class="search">Search</span><span class="sp"></span><span class="av">JT</span></div>
+<div class="content"><div class="crumb">Administrative Users &rsaquo; User</div><div class="ph"><h1>Daniel Lim</h1><span><span class="b out hide-n">Edit profile</span> <span class="b out">&middot;&middot;&middot;</span></span></div>
+<div class="tabs"><span class="on">Profile</span><span>Activity Logs</span></div>
+<div class="grid2"><div class="card"><div class="ch">Profile</div><div class="cb"><div class="kv"><span class="k">Name</span><span>Daniel Lim</span><span class="k">Roles</span><span>Project Sales</span><span class="k">Companies</span><span>Sorento KL</span><span class="k">Status</span><span><span class="bd gr">Inactive</span></span></div></div></div>
+<div class="card new"><span class="newlbl">NEW</span><div class="ch">Sign-in<span class="b pri" style="height:28px">Send invitation email</span></div><div class="cb"><div class="kv">
+<span class="k">Email</span><span>daniel@sorento.my <span class="bd y">Invitation not sent</span></span>
+<span class="k">Phone</span><span class="muted">No phone yet. Add one to allow phone sign-in.</span>
+<span class="k">WhatsApp contact</span><span class="muted">Not linked</span>
+<span class="k">Last sign-in</span><span class="muted">Never</span></div></div></div></div></div></div></div></div></div></div></div></div><div class="mock"><h3>12. The invite confirmation</h3><p class="what">Pressing Send invitation email asks first. Cancel is the default; nothing is sent unless you press Send email.</p><div class="frames"><div class="fr wide"><div class="cap">Laptop, 1280 wide</div><div class="scroller"><div class="dev w1280"><div class="app"><div class="side"><div class="logo">SORENTO</div>
+<div class="grp">Administration</div>
+<div class="it parent">Users &amp; Access</div>
+<div class="it muted" style="padding-left:28px;font-size:11px;color:#99a1b7">PEOPLE</div>
+<div class="it on">Administrative Users</div>
+<div class="it">Internal Users</div>
+<div class="it">Teams</div><div class="it">Sales Agents</div><div class="it">Onboarding Requests</div>
+<div class="it muted" style="padding-left:28px;font-size:11px;color:#99a1b7">ACCESS</div>
+<div class="it">Roles</div><div class="it">Permissions</div></div><div class="main"><div class="hdr"><span class="burger"></span><span class="mlogo">SORENTO</span><span class="search">Search</span><span class="sp"></span><span class="av">JT</span></div>
+<div class="content"><div class="crumb">Administrative Users &rsaquo; User</div><div class="ph"><h1>Daniel Lim</h1><span><span class="b out hide-n">Edit profile</span> <span class="b out">&middot;&middot;&middot;</span></span></div>
+<div class="tabs"><span class="on">Profile</span><span>Activity Logs</span></div>
+<div class="grid2"><div class="card"><div class="ch">Profile</div><div class="cb"><div class="kv"><span class="k">Name</span><span>Daniel Lim</span><span class="k">Roles</span><span>Project Sales</span><span class="k">Companies</span><span>Sorento KL</span><span class="k">Status</span><span><span class="bd gr">Inactive</span></span></div></div></div>
+<div class="card new"><span class="newlbl">NEW</span><div class="ch">Sign-in<span class="b pri" style="height:28px">Send invitation email</span></div><div class="cb"><div class="kv">
+<span class="k">Email</span><span>daniel@sorento.my <span class="bd y">Invitation not sent</span></span>
+<span class="k">Phone</span><span class="muted">No phone yet. Add one to allow phone sign-in.</span>
+<span class="k">WhatsApp contact</span><span class="muted">Not linked</span>
+<span class="k">Last sign-in</span><span class="muted">Never</span></div></div></div></div></div></div><div class="overlay"><div class="dlg sm"><div class="dh">Send invitation email?<span class="muted">&times;</span></div>
+<div class="db">An email with a link to set a password goes to <b>daniel@sorento.my</b>.</div>
+<div class="df"><span class="b out" style="box-shadow:0 0 0 3px #cfe3ff">Cancel</span><span class="b pri">Send email</span></div></div></div></div></div></div></div><div class="fr"><div class="cap">Phone, 375 wide</div><div class="scroller"><div class="dev w375"><div class="app"><div class="side"><div class="logo">SORENTO</div>
+<div class="grp">Administration</div>
+<div class="it parent">Users &amp; Access</div>
+<div class="it muted" style="padding-left:28px;font-size:11px;color:#99a1b7">PEOPLE</div>
+<div class="it on">Administrative Users</div>
+<div class="it">Internal Users</div>
+<div class="it">Teams</div><div class="it">Sales Agents</div><div class="it">Onboarding Requests</div>
+<div class="it muted" style="padding-left:28px;font-size:11px;color:#99a1b7">ACCESS</div>
+<div class="it">Roles</div><div class="it">Permissions</div></div><div class="main"><div class="hdr"><span class="burger"></span><span class="mlogo">SORENTO</span><span class="search">Search</span><span class="sp"></span><span class="av">JT</span></div>
+<div class="content"><div class="crumb">Administrative Users &rsaquo; User</div><div class="ph"><h1>Daniel Lim</h1><span><span class="b out hide-n">Edit profile</span> <span class="b out">&middot;&middot;&middot;</span></span></div>
+<div class="tabs"><span class="on">Profile</span><span>Activity Logs</span></div>
+<div class="grid2"><div class="card"><div class="ch">Profile</div><div class="cb"><div class="kv"><span class="k">Name</span><span>Daniel Lim</span><span class="k">Roles</span><span>Project Sales</span><span class="k">Companies</span><span>Sorento KL</span><span class="k">Status</span><span><span class="bd gr">Inactive</span></span></div></div></div>
+<div class="card new"><span class="newlbl">NEW</span><div class="ch">Sign-in<span class="b pri" style="height:28px">Send invitation email</span></div><div class="cb"><div class="kv">
+<span class="k">Email</span><span>daniel@sorento.my <span class="bd y">Invitation not sent</span></span>
+<span class="k">Phone</span><span class="muted">No phone yet. Add one to allow phone sign-in.</span>
+<span class="k">WhatsApp contact</span><span class="muted">Not linked</span>
+<span class="k">Last sign-in</span><span class="muted">Never</span></div></div></div></div></div></div><div class="overlay"><div class="dlg sm"><div class="dh">Send invitation email?<span class="muted">&times;</span></div>
+<div class="db">An email with a link to set a password goes to <b>daniel@sorento.my</b>.</div>
+<div class="df"><span class="b out" style="box-shadow:0 0 0 3px #cfe3ff">Cancel</span><span class="b pri">Send email</span></div></div></div></div></div></div></div></div></div><div class="mock"><h3>13. A salesperson's Sign-in part, when their WhatsApp number changed</h3><p class="what">Only shown when the contact's phone no longer matches. Use new number updates the user and signs them out everywhere.</p><div class="frames"><div class="fr wide"><div class="cap">Laptop, 1280 wide</div><div class="scroller"><div class="dev w1280"><div class="app"><div class="side"><div class="logo">SORENTO</div>
+<div class="grp">Administration</div>
+<div class="it parent">Users &amp; Access</div>
+<div class="it muted" style="padding-left:28px;font-size:11px;color:#99a1b7">PEOPLE</div>
+<div class="it on">Administrative Users</div>
+<div class="it">Internal Users</div>
+<div class="it">Teams</div><div class="it">Sales Agents</div><div class="it">Onboarding Requests</div>
+<div class="it muted" style="padding-left:28px;font-size:11px;color:#99a1b7">ACCESS</div>
+<div class="it">Roles</div><div class="it">Permissions</div></div><div class="main"><div class="hdr"><span class="burger"></span><span class="mlogo">SORENTO</span><span class="search">Search</span><span class="sp"></span><span class="av">JT</span></div>
+<div class="content"><div class="crumb">Administrative Users &rsaquo; User</div><div class="ph"><h1>Aisyah Rahman</h1><span class="b out">&middot;&middot;&middot;</span></div>
+<div class="tabs"><span class="on">Profile</span><span>Activity Logs</span></div>
+<div class="card new"><span class="newlbl">NEW</span><div class="ch">Sign-in</div><div class="cb"><div class="kv">
+<span class="k">Email</span><span class="muted">No email</span>
+<span class="k">Phone</span><span>+60 12-*** 6789 <span class="bd g">verified</span></span>
+<span class="k">WhatsApp contact</span><span class="lnk">Aisyah Rahman &middot; +60 12-*** 6789</span>
+<span class="k">Last sign-in</span><span>Today 09:14, portal link</span></div>
+<div class="inl">Needs attention: phone differs from WhatsApp contact. <b class="lnk">Use new number</b></div>
+<div style="margin-top:12px"><span class="b dng">Unlink WhatsApp contact</span></div></div></div></div></div></div></div></div></div><div class="fr"><div class="cap">Phone, 375 wide</div><div class="scroller"><div class="dev w375"><div class="app"><div class="side"><div class="logo">SORENTO</div>
+<div class="grp">Administration</div>
+<div class="it parent">Users &amp; Access</div>
+<div class="it muted" style="padding-left:28px;font-size:11px;color:#99a1b7">PEOPLE</div>
+<div class="it on">Administrative Users</div>
+<div class="it">Internal Users</div>
+<div class="it">Teams</div><div class="it">Sales Agents</div><div class="it">Onboarding Requests</div>
+<div class="it muted" style="padding-left:28px;font-size:11px;color:#99a1b7">ACCESS</div>
+<div class="it">Roles</div><div class="it">Permissions</div></div><div class="main"><div class="hdr"><span class="burger"></span><span class="mlogo">SORENTO</span><span class="search">Search</span><span class="sp"></span><span class="av">JT</span></div>
+<div class="content"><div class="crumb">Administrative Users &rsaquo; User</div><div class="ph"><h1>Aisyah Rahman</h1><span class="b out">&middot;&middot;&middot;</span></div>
+<div class="tabs"><span class="on">Profile</span><span>Activity Logs</span></div>
+<div class="card new"><span class="newlbl">NEW</span><div class="ch">Sign-in</div><div class="cb"><div class="kv">
+<span class="k">Email</span><span class="muted">No email</span>
+<span class="k">Phone</span><span>+60 12-*** 6789 <span class="bd g">verified</span></span>
+<span class="k">WhatsApp contact</span><span class="lnk">Aisyah Rahman &middot; +60 12-*** 6789</span>
+<span class="k">Last sign-in</span><span>Today 09:14, portal link</span></div>
+<div class="inl">Needs attention: phone differs from WhatsApp contact. <b class="lnk">Use new number</b></div>
+<div style="margin-top:12px"><span class="b dng">Unlink WhatsApp contact</span></div></div></div></div></div></div></div></div></div></div></div>
+</section>
+
+<section class="s" id="scope">
+  <h2><span class="n">6</span>Out of scope and risks</h2>
+  <div class="two-col"><div><h3>Not in this plan</h3><ul>
+    <li>Any new page: no Salesperson accounts page, no separate quick-create form, no new user management screen (your 00:45 note).</li>
+    <li>Sending any email automatically when a user is created or linked (your 00:50 ruling). Comes back only if you ask, and then as a box that starts unticked.</li>
+    <li>Creating users automatically, in bulk or at sign-in (Q3, Q4).</li>
+    <li>Switching off the old portal session for contacts you have not set up.</li>
+    <li>SMS codes. Only if a salesperson cannot receive WhatsApp.</li>
+    <li>CRM permissions for salespeople (Q8). Later a role change, no code.</li>
+    <li>Rewriting the older "who did this" fields across every module; #1281 decides that.</li>
+  </ul></div><div><h3>Risks</h3><ul>
+    <li><b>An email-only user cannot sign in until you press Send invitation email.</b> That is your ruling working; their Sign-in part says "Invitation not sent" so it is not forgotten.</li>
+    <li><b>Only people you set up get the one sign-in.</b> The rest stay portal-only and are recorded against their WhatsApp contact until you set them up; the User column on Internal Users shows who is left.</li>
+    <li><b>WhatsApp code message.</b> If the approved code message is paused, phone codes stop; email and password still work. If its wording names the portal, you will be asked before S1 whether it can be used for the sign-in page too.</li>
+    <li><b>No background worker, no codes</b>, as already true for the portal.</li>
+    <li><b>Admins signing in by code</b> is weaker than a password if a SIM is stolen; you accepted it.</li>
+    <li><b>A changed WhatsApp number</b> blocks that person's phone sign-in until you confirm the new number (mockup 13).</li>
+  </ul></div></div>
+</section>
+
+</div>
+</body>
+</html>

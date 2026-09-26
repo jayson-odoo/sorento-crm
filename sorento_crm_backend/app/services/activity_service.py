@@ -331,7 +331,9 @@ def _apply_filters(
         if stored_actions:
             query = query.filter(AuditLog.action.in_(stored_actions))
     if include_user and user_id:
-        query = query.filter(AuditLog.user_id == user_id)
+        # Either column (plan 8.1): an admin's impersonated writes carry them as
+        # real_user_id, with the target as user_id.
+        query = query.filter(or_(AuditLog.user_id == user_id, AuditLog.real_user_id == user_id))
     if date_from:
         query = query.filter(AuditLog.changed_at >= datetime.combine(date_from, datetime.min.time()))
     if date_to:
@@ -349,15 +351,29 @@ def _apply_filters(
 
 
 def _user_display_names(db: Session, user_ids: list[str]) -> dict[str, str]:
-    """Map user_id -> name (email fallback). Mirrors audit_logs helper."""
+    """Map user_id -> name (email fallback, never the id). Mirrors audit_logs helper."""
     ids = [uid for uid in user_ids if uid]
     if not ids:
         return {}
     users = db.query(User.id, User.name, User.email).filter(User.id.in_(ids)).all()
     return {
-        str(u.id): (u.name.strip() if u.name and u.name.strip() else (u.email or str(u.id)))
+        str(u.id): (u.name.strip() if u.name and u.name.strip() else (u.email or "Unknown user"))
         for u in users
     }
+
+
+def _actor_name(row: Any, names: dict[str, str]) -> str:
+    """The row's actor in words; an impersonated write reads "<admin> on behalf of <target>"."""
+    from app.services.audit_actor_label import on_behalf_of_label
+
+    user_id = str(row.user_id) if row.user_id else None
+    real_user_id = str(row.real_user_id) if getattr(row, "real_user_id", None) else None
+    if real_user_id and real_user_id != user_id:
+        effective = names.get(user_id) if user_id else None
+        return on_behalf_of_label(names.get(real_user_id) or "Unknown user", effective or "Unknown user")
+    if user_id:
+        return names.get(user_id) or "Unknown user"
+    return "System"
 
 
 # --------------------------------------------------------------------------- #
@@ -402,7 +418,10 @@ def get_activity_feed(
     )
 
     labels = _resolve_labels(db, rows)
-    actor_ids = list({str(r.user_id) for r in rows if r.user_id})
+    actor_ids = list(
+        {str(r.user_id) for r in rows if r.user_id}
+        | {str(r.real_user_id) for r in rows if getattr(r, "real_user_id", None)}
+    )
     actor_names = _user_display_names(db, actor_ids)
 
     items: list[dict[str, Any]] = []
@@ -427,7 +446,7 @@ def get_activity_feed(
             "entity_href": href,
             "action": _fe_action(r.action),
             "actor_id": str(r.user_id) if r.user_id else None,
-            "actor_name": actor_names.get(str(r.user_id)) if r.user_id else "System",
+            "actor_name": _actor_name(r, actor_names),
             "actor_avatar_url": None,
             # changed_at is stored naive UTC - emit with a 'Z' so the browser
             # parses it as UTC (else it's read as local time and shows ~8h off in
@@ -456,10 +475,25 @@ def get_activity_feed(
         trace_id=trace_id,
         include_user=False,
     ).distinct()
-    scope_ids = [str(row[0]) for row in actor_scope.all() if row[0]]
+    # Admins who only acted while impersonating appear as real_user_id (plan 8.1).
+    real_scope = _apply_filters(
+        db.query(AuditLog.real_user_id).filter(AuditLog.real_user_id.isnot(None)),
+        stored_types=stored_types,
+        action=action,
+        user_id=None,
+        date_from=df,
+        date_to=dt,
+        q=q,
+        trace_id=trace_id,
+        include_user=False,
+    ).distinct()
+    scope_ids = sorted(
+        {str(row[0]) for row in actor_scope.all() if row[0]}
+        | {str(row[0]) for row in real_scope.all() if row[0]}
+    )
     scope_names = _user_display_names(db, scope_ids)
     actors = sorted(
-        ({"id": i, "name": scope_names.get(i, i)} for i in scope_ids),
+        ({"id": i, "name": scope_names.get(i) or "Unknown user"} for i in scope_ids),
         key=lambda a: a["name"].lower(),
     )
 

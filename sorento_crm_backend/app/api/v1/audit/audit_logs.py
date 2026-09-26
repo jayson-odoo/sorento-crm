@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
 from app.dependencies import get_current_user_or_api_key
+from app.services.audit_actor_label import actor_label as _actor_label
 from app.services.audit_service import list_audit_logs
 from app.schemas.audit import AuditLogResponse
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
@@ -20,8 +21,9 @@ def _user_display_names(db: Session, user_ids: list[str]) -> dict[str, str]:
     if not ids:
         return {}
     users = db.query(User.id, User.name, User.email).filter(User.id.in_(ids)).all()
+    # Name, else email, else nothing: never the id (a phone-only user has no email).
     return {
-        str(u.id): (u.name.strip() if u.name and u.name.strip() else u.email or str(u.id))
+        str(u.id): (u.name.strip() if u.name and u.name.strip() else (u.email or ""))
         for u in users
     }
 
@@ -43,6 +45,16 @@ def _contact_display_names(db: Session, contact_ids: list[str]) -> dict[str, str
             name = " ".join(p for p in ((r.first_name or "").strip(), (r.last_name or "").strip()) if p).strip()
         out[str(r.id)] = name or (r.phone_number or str(r.id))
     return out
+
+
+def _integration_names(db: Session, integration_ids: list[str]) -> dict[str, str]:
+    ids = [i for i in integration_ids if i]
+    if not ids:
+        return {}
+    from app.models.integration import Integration
+
+    rows = db.query(Integration.id, Integration.name).filter(Integration.id.in_(ids)).all()
+    return {str(r.id): r.name for r in rows}
 
 
 # Human-readable one-liner for a status transition, e.g. "status: pending → approved".
@@ -100,10 +112,17 @@ async def get_audit_logs(
         page=page,
         limit=limit,
     )
-    user_ids = list({str(it.user_id) for it in items if it.user_id is not None})
+    user_ids = list(
+        {str(it.user_id) for it in items if it.user_id is not None}
+        | {str(it.real_user_id) for it in items if getattr(it, "real_user_id", None) is not None}
+    )
     contact_ids = list({str(it.contact_id) for it in items if getattr(it, "contact_id", None) is not None})
+    integration_ids = list(
+        {str(it.integration_id) for it in items if getattr(it, "integration_id", None) is not None}
+    )
     user_names = _user_display_names(db, user_ids)
     contact_names = _contact_display_names(db, contact_ids)
+    integration_names = _integration_names(db, integration_ids)
     data = []
     for it in items:
         payload = AuditLogResponse.model_validate(it).model_dump()
@@ -114,6 +133,9 @@ async def get_audit_logs(
             payload["user_display_name"] = user_names.get(str(it.user_id)) or "System"
         else:
             payload["user_display_name"] = "System"
+        payload["actor_label"] = _actor_label(
+            it, user_names, contact_names, integration_names, payload["user_display_name"]
+        )
         payload["description"] = _derive_description(it)
         data.append(AuditLogResponse(**payload))
     return {

@@ -71,6 +71,17 @@ Before merging, verify compliance with [ADR-PRODUCT-STANDARDS.md](./ADR-PRODUCT-
 - [ ] 375px and 1280px screenshots attached
 - [ ] Any new motion honours `prefers-reduced-motion` (`useReducedMotion` from `lib/motion.ts`)
 
+## Who did this (audit actor, `PLAN-unified-identity-26sep.md` section 8.3)
+- [ ] A new "who did this" column is `<verb>_by_user_id`, String FK to `users.id` ON DELETE SET
+      NULL; never a Respond.io agent id, a name or an email
+- [ ] A column written from a portal route also gets `<verb>_by_contact_id` beside it, filled
+      whenever the actor is a contact with no user (such contacts keep using the portal)
+- [ ] An action a contact takes without a user (chatbot turn, WhatsApp ingest) is recorded against
+      the contact and, when the contact has a user, that user too
+- [ ] New request, job or tick entry points stamp the actor through `app.audit_context.stamp_actor`
+      (never a bare contextvar set inside a sync dependency: it is lost at flush); audit screens show
+      `actor_label`, never an id
+
 ## Test cost
 - [ ] New backend tests do not add whole-suite-running slow tests without cause; check the `--durations=30` block in the backend CI logs for the PR ("Backend test suite (Postgres)" and "Backend test suite - SCM (Postgres)") and justify any new entry over ~2s
 - [ ] A test that only asserts against production-copy data goes in `tests/ci_excluded.txt` with a reason, not into the gated set

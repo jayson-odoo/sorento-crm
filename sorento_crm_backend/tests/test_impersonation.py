@@ -13,7 +13,6 @@ from app.models.user import (
     UserRole,
     UserRoleAssignment,
 )
-from app.services.audit_service import _swap_actor_fields_during_impersonation
 from tests._pg_fixture import blank_session
 
 
@@ -227,62 +226,14 @@ def test_starting_again_auto_ends_prior(api):
     assert len(active) == 1
 
 
-def test_actor_swap_during_impersonation():
-    """Unit test the listener: created_by_user_id == effective gets rewritten to real."""
+def test_no_actor_swap_during_impersonation():
+    """Plan 8.2 (identity S0): created_by / updated_by keep the EFFECTIVE user while an
+    admin impersonates; the audit row's real_user_id records the admin instead. The
+    old flush-time swap back to the admin is gone (see tests/test_audit_actor_contract.py
+    for the audited write end to end)."""
+    import app.services.audit_service as audit_service
+    from app.audit_context import get_real_and_effective_user_ids
 
-    class _Stub:
-        def __init__(self):
-            self.created_by_user_id = "EFFECTIVE_USER"
-            self.updated_by_user_id = "EFFECTIVE_USER"
-
+    assert not hasattr(audit_service, "_swap_actor_fields_during_impersonation")
     set_audit_context("REAL_ADMIN", None, effective_user_id="EFFECTIVE_USER")
-
-    class _Session:
-        def __init__(self, new, dirty):
-            self.new = new
-            self.dirty = dirty
-
-    new_obj = _Stub()
-    dirty_obj = _Stub()
-    _swap_actor_fields_during_impersonation(_Session([new_obj], [dirty_obj]))
-    assert new_obj.created_by_user_id == "REAL_ADMIN"
-    assert new_obj.updated_by_user_id == "REAL_ADMIN"
-    assert dirty_obj.updated_by_user_id == "REAL_ADMIN"
-    # created_by_user_id only swapped on inserts
-    assert dirty_obj.created_by_user_id == "EFFECTIVE_USER"
-
-
-def test_actor_swap_noop_outside_impersonation():
-    class _Stub:
-        def __init__(self):
-            self.created_by_user_id = "SOMEONE"
-
-    set_audit_context("USER_A", None)  # effective defaults to user_id, no impersonation
-
-    class _Session:
-        def __init__(self, new, dirty):
-            self.new = new
-            self.dirty = dirty
-
-    obj = _Stub()
-    _swap_actor_fields_during_impersonation(_Session([obj], []))
-    assert obj.created_by_user_id == "SOMEONE"
-
-
-def test_actor_swap_skips_unrelated_value():
-    """If service explicitly set a non-effective user, leave alone."""
-
-    class _Stub:
-        def __init__(self):
-            self.created_by_user_id = "DIFFERENT_USER"
-
-    set_audit_context("REAL_ADMIN", None, effective_user_id="EFFECTIVE_USER")
-
-    class _Session:
-        def __init__(self, new, dirty):
-            self.new = new
-            self.dirty = dirty
-
-    obj = _Stub()
-    _swap_actor_fields_during_impersonation(_Session([obj], []))
-    assert obj.created_by_user_id == "DIFFERENT_USER"
+    assert get_real_and_effective_user_ids() == ("REAL_ADMIN", "EFFECTIVE_USER")

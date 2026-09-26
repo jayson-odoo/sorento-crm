@@ -3,6 +3,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { actorDisplay } from '@/lib/audit-actor';
 import type { AuditLog } from '@/app/(protected)/system-management/audit-logs/types/auditLog.types';
 import ClearanceDeliveryCard from './ClearanceDeliveryCard';
 import { usePackingListRecord } from '../[id]/components/packing-list-context';
@@ -68,7 +69,7 @@ export function PackingListTimelineTab() {
                   <span className="text-sm break-words">{entryText(entry)}</span>
                   <span className="text-xs text-muted-foreground">
                     {formatDateTimeInMalaysia(entry.changed_at)}
-                    {entry.user_display_name ? ` · ${entry.user_display_name}` : ''}
+                    {` · ${actorDisplay(entry)}`}
                   </span>
                 </li>
               ))}

@@ -563,11 +563,16 @@ def run_due_tasks(db: Session) -> None:
                     )
                 continue
             run = create_run(db, _task_id(task), status="started")
+            from app.audit_context import AuditActor, actor_scope
+
             try:
                 # Per-task company scope. Restored to None afterwards so a narrowed
                 # task cannot leak its scope into the next task in the same sweep.
                 set_company_scope(db, task_company_scope(task))
-                summary = handler(db, task)
+                # Per-task audit actor (identity S0, AC-10): `scheduler`, job_id = the
+                # task key, restored after so the next task names itself.
+                with actor_scope(AuditActor(actor_type="scheduler", job_id=_task_key(task)), db=db):
+                    summary = handler(db, task)
             finally:
                 set_company_scope(db, None)
             duration_ms = int((datetime.utcnow() - start).total_seconds() * 1000)

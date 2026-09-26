@@ -132,20 +132,42 @@ def log_audit(
             filter; never auto-stamped (audit_logs is not an owned mixin).
         skip_flush: If True, don't flush (useful when already inside a flush operation).
     """
-    from app.audit_context import get_trace_id, get_actor_contact_id
+    from app.audit_context import get_actor, get_trace_id
 
+    # The stamped actor (identity S0, plan 8): who, how they signed in, and through
+    # what. Nothing stamped (a script, a test, a bare service call) is `system`.
+    actor = get_actor(db)
+    if actor is None and (user_id is not None or contact_id is not None):
+        # An explicit caller with nothing stamped (a service method, a script): the
+        # row belongs to whoever it names, so the screen keeps showing their name.
+        # Only no user and no contact at all is `system`.
+        from app.audit_context import AuditActor
+
+        if user_id is not None:
+            actor = AuditActor(actor_type="user", user_id=str(user_id), real_user_id=str(user_id))
+        else:
+            actor = AuditActor(actor_type="contact", contact_id=str(contact_id))
+    if description is None and actor is not None and actor.tool_name:
+        description = f"Tool: {actor.tool_name}"
     entry = AuditLog(
         entity_type=entity_type,
         entity_id=entity_id,
         action=action.upper(),
         user_id=user_id,  # None for system/public actions (e.g. approval via public link)
-        contact_id=contact_id if contact_id is not None else get_actor_contact_id(),
+        contact_id=contact_id if contact_id is not None else (actor.contact_id if actor else None),
         old_values=old_values,
         new_values=new_values,
         description=description,
-        ip_address=ip_address,
+        ip_address=ip_address if ip_address is not None else (actor.ip_address if actor else None),
         company_id=company_id,
         trace_id=get_trace_id(),
+        actor_type=actor.actor_type if actor is not None else "system",
+        real_user_id=_uuid_or_none(actor.real_user_id) if actor is not None else None,
+        auth_method=actor.auth_method if actor is not None else None,
+        session_id=_uuid_or_none(actor.session_id) if actor is not None else None,
+        integration_id=_uuid_or_none(actor.integration_id) if actor is not None else None,
+        job_id=(actor.job_id[:128] if actor is not None and actor.job_id else None),
+        user_agent=actor.user_agent if actor is not None else None,
     )
     db.add(entry)
     if not skip_flush:
@@ -226,7 +248,11 @@ def list_audit_logs(
     if user_id:
         if not _is_uuid(user_id):
             return [], 0
-        q = q.filter(AuditLog.user_id == user_id)
+        # Plan 8.1: an impersonated write carries the target as user_id and the admin
+        # as real_user_id, so filtering by a person finds both kinds of row.
+        from sqlalchemy import or_
+
+        q = q.filter(or_(AuditLog.user_id == user_id, AuditLog.real_user_id == user_id))
     if action:
         q = q.filter(AuditLog.action == action.upper())
     if trace_id:
@@ -249,28 +275,13 @@ def list_audit_logs(
     return items, total
 
 
-_ACTOR_FIELDS_INSERT = ("created_by_user_id", "created_by", "updated_by_user_id", "updated_by")
-_ACTOR_FIELDS_UPDATE = ("updated_by_user_id", "updated_by")
-
-
-def _swap_actor_fields_during_impersonation(session: Session) -> None:
-    """When the current request is impersonating, rewrite any ``created_by`` /
-    ``updated_by`` fields on new/dirty rows from the effective (target) user id
-    back to the real admin id. No-op outside impersonation.
-    """
-    from app.audit_context import get_real_and_effective_user_ids
-
-    real_id, effective_id = get_real_and_effective_user_ids()
-    if not real_id or not effective_id or real_id == effective_id:
-        return
-    for obj in session.new:
-        for field in _ACTOR_FIELDS_INSERT:
-            if hasattr(obj, field) and getattr(obj, field, None) == effective_id:
-                setattr(obj, field, real_id)
-    for obj in session.dirty:
-        for field in _ACTOR_FIELDS_UPDATE:
-            if hasattr(obj, field) and getattr(obj, field, None) == effective_id:
-                setattr(obj, field, real_id)
+def _uuid_or_none(value: Any) -> Optional[str]:
+    """A UUID column value, or None. A non-UUID actor id (a test's "REAL_ADMIN",
+    the legacy `system` principal) must not fail the audited write."""
+    if value is None:
+        return None
+    text_value = str(value)
+    return text_value if _is_uuid(text_value) else None
 
 
 _audit_table_cache: "weakref.WeakKeyDictionary[Any, bool]" = weakref.WeakKeyDictionary()
@@ -326,10 +337,8 @@ def _session_before_flush(session: Session, _flush_context: Any, _instances: Any
     # Skip if we're already inside an audit flush (avoid recursion)
     if session.info.get("audit_flushing"):
         return
-    # Rewrite created_by/updated_by from effective→real user during impersonation
-    # *before* we snapshot model state for audit, so the audit log captures the
-    # corrected actor too.
-    _swap_actor_fields_during_impersonation(session)
+    # created_by / updated_by keep the EFFECTIVE user during impersonation; the
+    # audit row's real_user_id says who was at the keyboard (identity S0, plan 8.2).
     skip_set = set(session.info.get("skip_audit_for") or [])
     # Entity-type-level suppression: bulk jobs that persist a tracked model per-row
     # (e.g. attachment bulk import via ORM create_attachment in a worker with no
@@ -400,14 +409,14 @@ def _session_before_flush(session: Session, _flush_context: Any, _instances: Any
     if not _audit_table_exists(session.get_bind()):
         session.info.pop("audit_pending", None)
         return
-    from app.audit_context import get_audit_context, get_actor_contact_id
-    user_id, ip_address = get_audit_context()
-    # Acting contact for portal/public writes. Prefer session.info (set by the portal
-    # token dependency) over the contextvar: FastAPI runs sync dependencies in a
-    # SEPARATE threadpool thread from the path op, so a contextvar mutated in the
-    # dependency is NOT visible here - but session.info lives on the shared Session
-    # object and survives across threads. Fall back to the contextvar for in-thread callers.
-    contact_id = session.info.get("actor_contact_id") or get_actor_contact_id()
+    from app.audit_context import get_actor
+    # session.info wins over the contextvar (get_actor): FastAPI runs a sync
+    # dependency in a SEPARATE threadpool thread from the path op, so a contextvar
+    # it mutated is not visible here, while session.info lives on the shared Session.
+    actor = get_actor(session)
+    user_id = _uuid_or_none(actor.user_id) if actor is not None else None
+    ip_address = actor.ip_address if actor is not None else None
+    contact_id = session.info.get("actor_contact_id") or (actor.contact_id if actor is not None else None)
     session.info["audit_flushing"] = True
     try:
         for entity_type, entity_id, action, old_values, new_values, entity_company_id in pending:

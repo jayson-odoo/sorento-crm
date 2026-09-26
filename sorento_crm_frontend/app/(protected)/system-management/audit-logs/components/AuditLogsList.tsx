@@ -33,6 +33,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { actorDisplay, actorKindLabel, authMethodLabel } from '@/lib/audit-actor';
 import { getUsersSelect } from '@/services/userSelectService';
 import { useAuditLogs } from '../hooks/useAuditLogs';
 import type { AuditLog } from '../types/auditLog.types';
@@ -217,17 +218,17 @@ export default function AuditLogsList() {
       },
       {
         accessorKey: 'user_display_name',
-        header: ({ column }) => <DataGridColumnHeader title="User" column={column} />,
+        header: ({ column }) => <DataGridColumnHeader title="Actor" column={column} />,
         cell: ({ row }) => {
-          const name = row.original.user_display_name;
+          const actor = actorDisplay(row.original);
           return (
-            <span className="block truncate text-sm" title={name || 'System'}>
-              {name || (row.original.user_id ? '-' : 'System')}
+            <span className="block truncate text-sm" title={actor}>
+              {actor}
             </span>
           );
         },
         size: 170,
-        meta: { headerTitle: 'User' },
+        meta: { headerTitle: 'Actor' },
       },
       {
         accessorKey: 'description',
@@ -469,8 +470,18 @@ export default function AuditLogsList() {
                   <dd className="break-all">{selectedLog.entity_id}</dd>
                 </div>
                 <div>
-                  <dt className="text-xs font-medium text-muted-foreground">User</dt>
-                  <dd>{selectedLog.user_display_name || (selectedLog.user_id ? '-' : 'System')}</dd>
+                  <dt className="text-xs font-medium text-muted-foreground">Actor</dt>
+                  <dd className="break-words">{actorDisplay(selectedLog)}</dd>
+                </div>
+                {actorKindLabel(selectedLog.actor_type) && (
+                  <div>
+                    <dt className="text-xs font-medium text-muted-foreground">Actor kind</dt>
+                    <dd>{actorKindLabel(selectedLog.actor_type)}</dd>
+                  </div>
+                )}
+                <div>
+                  <dt className="text-xs font-medium text-muted-foreground">Sign-in method</dt>
+                  <dd>{authMethodLabel(selectedLog.auth_method)}</dd>
                 </div>
                 <div>
                   <dt className="text-xs font-medium text-muted-foreground">IP address</dt>
