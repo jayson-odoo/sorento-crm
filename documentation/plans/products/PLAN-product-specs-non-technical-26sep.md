@@ -8,8 +8,8 @@ this plan and the UAC disagree, the UAC wins). **Review:** `UX-REVIEW-product-sp
 **Mockups:** `mockups/`.
 **Classification:** CORE, schema `public`. No new table, no new permission.
 **Status:** DRAFT, round 2, 26 Sep 2026. Planned, not built. Round 1 owner rulings applied
-(section 8). Waiting on the owner for Q3, Q8, Q9, Q10 (confirm) and Q11, and on the Lavish review
-of the regenerated mockups. **Track: full** (one lane, expected diff well over 300 lines, two data
+(section 8). Round 2 questions posted on PR #1290 (comment 5847720339): waiting on the owner for
+Q3, Q8, Q9, Q10 (confirm) and Q11, and on the Lavish review of the regenerated mockups. **Track: full** (one lane, expected diff well over 300 lines, two data
 migrations: the Brand specification removal and the rule conversion).
 **Lane:** one lane, one branch, one PR; slices land as commits on it (lane merge discipline,
 CLAUDE.md). Branch it from `origin/main` when the owner has answered.
