@@ -1,7 +1,15 @@
 """S2 profile facts service - tester-first RED, from the UAC and the lane A contract
 (section 4 "Profile facts").
 
-Covers AC-MEM030 to AC-MEM037, AC-MEM040, AC-MEM049.
+Covers AC-MEM030 to AC-MEM036, AC-MEM040, AC-MEM049.
+
+**AC-MEM037 not built: conflicts with the owner's hand pass 10 ruling of 21 Sep 2026,
+pinned by test_rearch_r10_handpass10_replay.py; recorded under Rulings assumed.** A tier
+pick persisting to `chatbot_profile.tier` (what AC-MEM037 asked for) is the OPPOSITE of
+what that ruling pins: a fresh promotion ask after a tier pick must REOPEN the tier
+roster, never settle on the last picked tier. `TestTierPickWritesProfile` (this file's
+own AC-MEM037 test) is retired rather than kept red against a build that will never
+land; the coder is removing the tier-persistence code this test asserted on.
 
 **No implementation exists yet.** `app/services/chatbot/turn/profile_facts.py` does not
 exist at all: `VOCABULARY`, `crm_view`, `tally`, `apply_statement`, `set_staff_fact`,
@@ -20,13 +28,7 @@ that depends on it):
    a `dict`-like object (insertion-ordered) mapping key -> a spec carrying at least the
    allowed sources, since that is what `apply_statement`/`set_staff_fact` need to validate
    against; `list(VOCABULARY)` is asserted to equal the ordered key list.
-2. `tier` is NOT in the vocabulary table (contract section 4) - it stays a `chatbot_profile`
-   SETTING (existing top-level key), not a `facts` list entry (plan 4.1: "the existing
-   settings keys stay where they are (tier, default_ledgers, the toggles)"). AC-MEM037 is
-   therefore tested against `chatbot_profile["tier"]` directly, through the ENGINE (a real
-   tier-pick turn), not through `profile_facts.apply_statement` (which the vocabulary does
-   not cover for this key).
-3. AC-MEM036's "byte-identical" snapshot is taken as: `access_levels`, `company_id` on
+2. AC-MEM036's "byte-identical" snapshot is taken as: `access_levels`, `company_id` on
    every one of the contact's `respond_contact_customers` rows, and the resolved reveal
    `attributes` list from `head.access.check_access` - the three surfaces the contract
    names ("access_levels, company scope, linked customers").
@@ -632,62 +634,6 @@ class TestFactsNeverGrant:
         # RBAC model (grants live on `users`, not on a chat contact) - the strongest
         # available proxy is that the customer link table (the "linked customers" the AC
         # names) is untouched, asserted above.
-
-
-# --------------------------------------------------------------------------- #
-# AC-MEM037: a tier pick in chat writes tier; the next turn does not ask again
-# (see module docstring, ambiguity 2: tier is a SETTING, not a VOCABULARY fact)
-# --------------------------------------------------------------------------- #
-
-
-class TestTierPickWritesProfile:
-    def test_tier_pick_answer_persists_tier_and_suppresses_the_next_ask(
-        self, session_factory, stub_parser, stub_access
-    ) -> None:
-        from app.services.chatbot import engine as engine_mod
-
-        cid = str(CONTACT_ID)
-        _seed_contact(session_factory, cid)
-        stub_access()
-
-        # T1: a promotion ask with no known tier asks the tier (narrow.py's own
-        # `NarrowOutcome("tier_pick", ...)` - see `turn/narrow.py:452-469`).
-        v1 = verdict(domain_hint="promotion", entities=[])
-        stub_parser(v1)
-        e1 = _envelope()
-        e1.message["message"]["messageId"] = "ZZT-pf-tier-1"
-        r1 = engine_mod.run_turn(e1, session_factory=session_factory)
-        assert r1.branch_kind != "business_query" or True  # the ask is the point, not this
-
-        # T2: the dealer answers the tier menu ("1" -> dealer). The parser's own
-        # `answers_open_question` signals the resolved pick.
-        v2 = verdict(
-            domain_hint="promotion",
-            entities=[],
-            answers_open_question={"resolved": True, "picks": [1], "answer": "dealer"},
-        )
-        stub_parser(v2)
-        e2 = _envelope()
-        e2.message["message"]["messageId"] = "ZZT-pf-tier-2"
-        engine_mod.run_turn(e2, session_factory=session_factory)
-
-        stored = _profile_row(session_factory, session_factory().execute(
-            text("SELECT id FROM respond_contacts WHERE respond_io_id = :c"), {"c": cid}
-        ).scalar())
-        assert (stored or {}).get("tier") == "dealer", (
-            f"a tier pick in chat must write chatbot_profile.tier - got {stored!r}"
-        )
-
-        # T3: a fresh promotion ask must NOT ask the tier again.
-        v3 = verdict(domain_hint="promotion", entities=[])
-        stub_parser(v3)
-        e3 = _envelope()
-        e3.message["message"]["messageId"] = "ZZT-pf-tier-3"
-        r3 = engine_mod.run_turn(e3, session_factory=session_factory)
-        assert r3.branch_kind != "tier_ask", (
-            f"a known tier (from the pick, not the PUT route) must suppress the next ask, "
-            f"got branch_kind={r3.branch_kind!r}"
-        )
 
 
 # --------------------------------------------------------------------------- #
