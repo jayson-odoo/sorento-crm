@@ -28,7 +28,12 @@ vi.mock('../../components/AsyncCombobox', () => ({
         <input
           aria-label={props.placeholder ?? props.id ?? 'search'}
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            // Real AsyncCombobox: a keystroke fires onChange with no item - only a
+            // click on an option below carries one (see the other overload).
+            props.onChange(e.target.value);
+          }}
         />
         <ul>
           {options.map((o, i) => (
@@ -126,5 +131,36 @@ describe('SalesOpportunityPortalForm', () => {
     expect(screen.getAllByRole('button', { name: /remove/i }).length).toBe(2);
     fireEvent.click(screen.getAllByRole('button', { name: /remove/i })[0]);
     expect(screen.getAllByRole('button', { name: /remove/i }).length).toBe(1);
+  });
+
+  it('fix reviewer-6: clears the chosen customer once the typed text no longer matches it', async () => {
+    service.getPortalCustomerOptions.mockResolvedValue({
+      items: [{ customer_id: 'cust-1', customer_code: 'C1', customer_name: 'Kedai Mine' }],
+      prospect: null,
+      blocked: null,
+    });
+    render(<SalesOpportunityPortalForm />);
+
+    fireEvent.change(screen.getByLabelText(/customer or prospect/i), {
+      target: { value: 'Kedai' },
+    });
+    const customerOption = await screen.findByText('C1 - Kedai Mine');
+    fireEvent.click(customerOption);
+
+    // Now edit the text away from the picked customer, with no fresh selection.
+    fireEvent.change(screen.getByLabelText(/customer or prospect/i), {
+      target: { value: 'Kedai Something Else' },
+    });
+
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'ZZT Opp' } });
+    fireEvent.change(screen.getByLabelText('Expected amount'), { target: { value: '500' } });
+    fireEvent.change(screen.getByLabelText('Expected close date'), {
+      target: { value: '2026-11-01' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /save|submit/i }));
+
+    await waitFor(() => expect(service.createPortalSalesOpportunity).toHaveBeenCalledTimes(1));
+    const payload = service.createPortalSalesOpportunity.mock.calls[0][0];
+    expect(payload.customer_id).toBeFalsy();
   });
 });

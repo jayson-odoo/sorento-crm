@@ -84,14 +84,21 @@ export default function SalesOpportunityPortalForm({
 
   const handleCustomerChange = (value: string, item?: CustomerComboOption) => {
     setCustomerValue(value);
-    if (!item) return;
-    if (item.customerId) {
-      setCustomerId(item.customerId);
-      setProspectName(undefined);
-    } else if (item.prospectName) {
-      setProspectName(item.prospectName);
-      setCustomerId(undefined);
+    if (item) {
+      if (item.customerId) {
+        setCustomerId(item.customerId);
+        setProspectName(undefined);
+      } else if (item.prospectName) {
+        setProspectName(item.prospectName);
+        setCustomerId(undefined);
+      }
+      return;
     }
+    // Reviewer should-fix 6: a keystroke with no item means the typed text no longer
+    // matches whatever was picked before - clear the stale selection, or a customer
+    // chosen earlier and since edited away from would still be the one submitted.
+    setCustomerId(undefined);
+    setProspectName(undefined);
   };
 
   const addLine = () =>
