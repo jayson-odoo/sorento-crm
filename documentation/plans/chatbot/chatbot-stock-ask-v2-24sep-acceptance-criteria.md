@@ -8,6 +8,7 @@ Numbering: AC-SA<slice><nn>, slices S0 to S6. Tags: [BE] pytest (Postgres), [FE]
 Actor: a dealer contact on WhatsApp whose stock visibility policy mode is "Availability only" (R1). The system knows the contact's policy locations (R3), the customer they act for, that customer's sales agent (#1177), each product's X and Y (S1), and the contact's two toggles (S2).
 
 1. **Ask.** The dealer names one or more products. #1118's stock task collects a quantity per product (unchanged, R1).
+   Owner ruling 26 Sep 2026 (R1 re-ruled after the owner's hand test on PR #1247, verbatim "for R1 - okay can"): R1's "keep #1118's quantity collection unchanged" is lifted; the collection is changed in PR #1247 by AC-SA319 to AC-SA326 below.
 2. **Decide.** Per product with quantity Q: X and Y resolved (product, else own category, else 0); available = on hand in the policy locations minus open SO (R4); the earliest non-draft still-incoming shipment with a packing list, any location (R5).
 3. **Answer.** One R6 sentence per product in the order named. No number of ours except Q and the ETA date.
 4. **Attach.** B3 only, and only when "Packing list allowed" is on: the shipment's packing list is sent.
@@ -76,6 +77,21 @@ Truth table for `branch()` (x and y already resolved; unset = 0):
 - **AC-SA316 [BE]** `stock_verdict.py` and `tests/test_stock_verdict.py` are gone; nothing imports `stock_verdict`.
 - **AC-SA317 [BE]** Owner ruling 25 Sep 2026: the threshold column is dropped, #1118 never merges - it superseded lavish review R11 (24 Sep 2026), which had kept the column and card unchanged from #1118. The migration, model column, settings dict entries, schema field and the test that only pinned it are removed from this PR; there is no reader and no card. **[FE]** N/A - no card is added.
 - **AC-SA318 [E2E]** Console check per `documentation/agents/chatbot-verification.md` against an "Availability only" dealer contact: one turn per branch (B1 via Q > X, B1 via unset X, B2, B3 with toggle on and off, B4); replies quoted in `documentation/plans/chatbot/evidence/`.
+
+### Owner hand test 26 Sep 2026 (PR #1247 fix round 3)
+
+Owner ruling 26 Sep: R1 re-ruled ("for R1 - okay can"): slices 2 to 6 of the scout's hand-test comment are built in PR #1247.
+Owner ruling 26 Sep: F1 (verbatim) "we should offer the ELP3756 and yes, yes should still go to warehouse, oh wait, btw dealer ask cannot have escalation, cannot have direct escalation to warehouse, their contact point is sales person". Reading implemented: a one-candidate did-you-mean is offered as a pick carrying the typed quantity; "yes" or the code answers that product with it; "no" refers the dealer to their salesman; a dealer (availability-only contact) is never offered or given an escalation anywhere in the stock ask. Staff contacts keep today's behaviour. This is an owner exception to AC-1691's two-option minimum, for the dealer's stock did-you-mean only.
+Owner ruling 26 Sep: F2 "okay": one bare number after a question about several products (a real multi-product ask, not a family) applies to each of them.
+
+- **AC-SA319 [BE]** Every availability reply, the quantity question included, carries no `_Data last updated_` line; compact and detailed replies keep it (R10). (T1, T3, T8, T13, T16)
+- **AC-SA320 [BE]** One typed token that places a product family with no exact code opens no task: the reply is "<TOKEN> matches N products. Which one?" (or "<TOKEN> x Q: which one?") then one code per line, at most 10 then "and N others, reply with the full code."; a `product_pick` carrying Q is the open question; a bare number under it re-asks it carrying the number; the code or position answered is fetched with Q and the pick is spent. A typed token that is an exact code keeps only that product. A one-product question reads "How many units of <code>?". (T1 to T6)
+- **AC-SA321 [BE]** A resume naming some of an open task's products narrows the task to them. (T5)
+- **AC-SA322 [BE]** An open task never claims a turn naming a product it does not hold; the ordinary fetch runs for every product named, each with its own quantity. (T14)
+- **AC-SA323 [BE]** An answered stock check is kept as status `answered` until the next new ask; the parser block states "Last answered: <code> x <Q>."; a bare number over a one-product answered check re-fetches it at the new quantity; `STOCK_TASK_ADDENDUM` teaches "how about N" as entities [], demand_qty N, correction true; `_normalise_demand_qty` drops a not-confident entity whose raw is only the digits of demand_qty. (T7, T8, T12, T13)
+- **AC-SA324 [BE]** A retry naming exactly one product with no quantity, over a focus still holding a missed product row with a quantity, carries that quantity. (T15, T16)
+- **AC-SA325 [BE]** F1: a dealer's did-you-mean is "Couldn't find <TYPED>. Did you mean <CODE>?" (or a list) with a `product_pick` carrying the typed quantity; "yes" or the code answers it with that quantity; "no" replies "Please refer to your salesman." with nothing open; any other escalation offer in a dealer's stock reply becomes "Please refer to your salesman." with no escalation pending. A detailed or compact contact is unaffected.
+- **AC-SA326 [BE]** F2: a bare number over an open task with several products still owed, not a family, fills each and fetches them all at that quantity.
 
 ## S4 - Agent notification + integration_log
 

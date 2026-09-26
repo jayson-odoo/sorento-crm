@@ -1,6 +1,6 @@
 # PLAN - Chatbot stock ask v2: four-branch answer on #1118's verdict step, X cap, Y ETA offset, salesman notification, asks record
 
-Status: approved by the owner 24 Sep 2026 (lavish review, "ok cool, good to go"); tickets S0 #1193, S1 #1194, S2 #1195, S3 #1196, S4 #1197, S5+S6 #1192. S1 and S2 Phase 2 backend built (24 Sep 2026, PR #1221) - migrations, permission slugs, resolver, contact toggles, both Phase 1 FE overlays deleted. S0, S3 to S6 not built.
+Status: approved by the owner 24 Sep 2026 (lavish review, "ok cool, good to go"); tickets S0 #1193, S1 #1194, S2 #1195, S3 #1196, S4 #1197, S5+S6 #1192. S1 and S2 Phase 2 backend built (24 Sep 2026, PR #1221) - migrations, permission slugs, resolver, contact toggles, both Phase 1 FE overlays deleted. S0, S3 to S6 not built. S3 in PR #1247: built 25 Sep, hand-test fix round 3 (slices 1 to 6, F1, F2) built 26 Sep 2026.
 Issue: #1168. Grill: owner rulings R1 to R11 of 24 Sep 2026 (quoted below, binding; they override the pre-grill draft).
 UAC: `chatbot-stock-ask-v2-24sep-acceptance-criteria.md`
 Depends on: PR #1118 (`feat/chatbot-dealer-stock-verdict`, open) rebased onto main and merged (slice S0); PR #1177 (`feat/customer-sales-agent-assignment`, open, #1170 slice 1) merged before S4.
@@ -43,6 +43,12 @@ Classification: the X / Y columns, the contact toggles and the `stock_asks` tabl
 > R11 "can we keep the column?" (stock-low-threshold). Yes: keep system_settings.chatbot_stock_low_threshold_pct and its Settings card exactly as #1118 lands them. Delete migration sa2_0003_drop_stock_low_threshold from S3, delete the "Settings > Chatbot loses the threshold card" frontend seam line, delete the Risks item that offers dropping dsv_0001 in S0, and adjust any UAC line that asserted the column or card is gone (state instead: unchanged, still unread by v2).
 >
 > Owner ruling 25 Sep 2026: the threshold column is dropped, #1118 never merges.
+
+Owner ruling 26 Sep: R1 re-ruled after the owner's hand test on PR #1247, verbatim "for R1 - okay can": R1's "keep #1118's per-product quantity collection (Focus.tasks, StockQtyTask) ... unchanged" is lifted, and the scout's slices 2 to 6 (family pick, resume narrows, a task never swallows new products, revise the last answer, did-you-mean keeps the quantity) are built in PR #1247. UAC AC-SA319 to AC-SA324.
+
+Owner ruling 26 Sep: F1, verbatim "we should offer the ELP3756 and yes, yes should still go to warehouse, oh wait, btw dealer ask cannot have escalation, cannot have direct escalation to warehouse, their contact point is sales person". Implemented reading: a one-candidate did-you-mean is a pick carrying the typed quantity ("Couldn't find ELP3753. Did you mean ELP3754?"); "yes" or the code answers that product with the carried quantity; "no" refers the dealer to their salesman. A dealer (an availability-only contact, `Profile.stock_availability_only`, read off `stock_visibility.resolve_policy`) is never offered or given an escalation anywhere in the stock ask: every such offer or stored team pick becomes "Please refer to your salesman." with no pending question. Staff (detailed / compact) keep today's behaviour. UAC AC-SA325.
+
+Owner ruling 26 Sep: F2, "okay": one bare number after a question about several products (a real multi-product ask, not a family) applies to each of them, and the reply names each product with that quantity. UAC AC-SA326.
 >
 > R12 "the product inherit from category, overridable, we don't need parent category -> category relationship for now". This already matches the resolution rule (product value, else its own category value, else 0); add the quote under Rulings and leave the rule as is.
 >
