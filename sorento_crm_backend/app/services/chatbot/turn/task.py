@@ -288,10 +288,13 @@ class StockQtyTask:
         missing = [slot.label for slot in self.missing(task)]
         if not missing:
             return None
-        question = f"How many units do you need for {_named(missing)}?"
         noted = [
             f"{slot.label} x {slot.value}" for slot in task.slots if slot.value is not None
         ]
+        if len(missing) == 1 and not noted:
+            # Owner hand test 26 Sep, slice 2: one product, one question, named.
+            return f"How many units of {missing[0]}?"
+        question = f"How many units do you need for {_named(missing)}?"
         if not noted:
             return question
         return f"Noted: {_listed(noted)}. {question}"
@@ -560,9 +563,188 @@ def unpark(
 # --------------------------------------------------------------------------- #
 
 
+@dataclass(frozen=True)
+class StockReply:
+    """What the stock tool's reply leaves behind: the tasks, and - when the reply is a
+    question the engine can ask better than the presenter's bare "How many units do
+    you need?" - the text to say instead, plus the which-one pick to store (a
+    `product_pick` the engine mints as the turn's open question)."""
+
+    tasks: tuple[Task, ...]
+    text: str | None = None
+    pick: dict[str, Any] | None = None
+
+
+def _availability_block(envelopes: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
+    block: list[dict[str, Any]] | None = None
+    for envelope in envelopes or []:
+        rows = envelope.get("stock_availability") if isinstance(envelope, dict) else None
+        if isinstance(rows, list) and rows:
+            block = [row for row in rows if isinstance(row, dict)]
+    return block
+
+
+def _row_label(row: dict[str, Any]) -> str | None:
+    label = row.get("product_code") or row.get("product_name")
+    return str(label) if label else None
+
+
+def _asked_tokens(asked: list[dict[str, Any]]) -> list[tuple[str, str, dict[str, Any]]]:
+    """(shown, casefolded, entity) per product this message named, in the order named.
+    Shown upper-cased: product codes are, whatever case the dealer typed them in."""
+    out: list[tuple[str, str, dict[str, Any]]] = []
+    for entity in asked or []:
+        if not isinstance(entity, dict) or entity.get("hint") not in (None, "product"):
+            continue
+        for name in ("canonical_code", "raw"):
+            value = entity.get(name)
+            if isinstance(value, str) and value.strip():
+                out.append((value.strip().upper(), value.strip().casefold(), entity))
+                break
+    return out
+
+
+def _group(rows: list[dict[str, Any]], token: str) -> list[dict[str, Any]]:
+    """The rows one typed token placed: its own code, or the family it is a prefix of
+    (the same link `apply._in_family_of` reads, D29)."""
+    return [
+        row
+        for row in rows
+        if (_row_label(row) or "").casefold().startswith(token)
+    ]
+
+
+def pick_question(typed: str, labels: list[str], quantity: Any = None, count: int | None = None) -> str:
+    """The family pick (owner hand test 26 Sep, slice 2, the scout's wording). The code
+    is the answer, so the lines carry no numbers."""
+    total = count if isinstance(count, int) and count > len(labels) else len(labels)
+    qty = _number(quantity)
+    head = (
+        f"{typed} x {qty}: which one?"
+        if qty is not None
+        else f"{typed} matches {total} products. Which one?"
+    )
+    lines = labels[:MAX_NAMED]
+    tail = (
+        [f"and {total - len(lines)} others, reply with the full code."]
+        if total > len(lines)
+        else []
+    )
+    return "\n".join([head, *lines, *tail])
+
+
+def after_reply(
+    tasks: tuple[Task, ...],
+    envelopes: list[dict[str, Any]],
+    *,
+    turn_no: int = 0,
+    named_products: bool = True,
+    asked: list[dict[str, Any]] | None = None,
+    demand_qty: Any = None,
+) -> StockReply:
+    """`tasks_after_reply`, plus what the reply should SAY when it is a question.
+
+    Owner hand test 26 Sep, slice 2 (T1, T3, T4). `asked` is this message's own product
+    entities, read for the typed token only - the `stock_availability` block exists
+    only for an availability-only contact, so none of this reaches a staff reply (R10):
+
+    * An exact code wins. A typed token that IS a product's code keeps that product and
+      drops the siblings the resolver's family grouping added ("SRTWC286-SH" also placed
+      its nine SRTWC286-SH-* variants).
+    * A family is a pick, not a task. When the whole reply is one typed token's family
+      with no exact code among it ("srtwc286" placed ten SRTWC286-SH* products) and every
+      entry still needs a quantity, no task opens: the reply asks which one, the typed
+      quantity rides on the pick, and a bare number cannot be read against ten slots.
+    * Otherwise the task's own question replaces the presenter's bare one, so the
+      dealer reads which products still need a quantity.
+    """
+    block = _availability_block(envelopes)
+    if block is None:
+        return StockReply(tasks=tasks)
+    others = tuple(task for task in tasks if task.kind != "stock_qty")
+    if not any(row.get("needs_quantity") is True for row in block):
+        return StockReply(tasks=_rebuilt(tasks, block, turn_no=turn_no, named_products=named_products))
+
+    rows = list(block)
+    tokens = _asked_tokens(asked or []) if named_products else []
+    for _shown, token, _entity in tokens:
+        group = _group(rows, token)
+        exact = [row for row in group if (_row_label(row) or "").casefold() == token]
+        if exact and len(group) > len(exact):
+            dropped = {id(row) for row in group if row not in exact}
+            rows = [row for row in rows if id(row) not in dropped]
+
+    families = [
+        (shown, token, entity)
+        for shown, token, entity in tokens
+        if len(_group(rows, token)) > 1
+        and not any((_row_label(row) or "").casefold() == token for row in rows)
+    ]
+    if (
+        len(families) == 1
+        and all(row.get("needs_quantity") is True for row in rows)
+        and len(_group(rows, families[0][1])) == len(rows)
+    ):
+        shown, _token, entity = families[0]
+        options = []
+        for row in rows:
+            key, label = row.get("product_id"), _row_label(row)
+            if not key or not label:
+                continue
+            options.append(
+                {
+                    "position": len(options) + 1,
+                    "label": label,
+                    "code": label,
+                    "uuid": str(key),
+                    "entity_type": "product",
+                }
+            )
+        options = options[:MAX_SLOTS]
+        if len(options) > 1:
+            quantity = _number(entity.get("quantity"))
+            if quantity is None:
+                quantity = _number(demand_qty)
+            return StockReply(
+                tasks=others,
+                text=pick_question(shown, [o["label"] for o in options], quantity, len(rows)),
+                pick={
+                    "options": options,
+                    "payload": {
+                        "domain": "inventory",
+                        "domains": ["inventory"],
+                        "stock_pick": True,
+                        "typed": shown,
+                        "count": len(rows),
+                        "stock_qty": quantity,
+                    },
+                },
+            )
+
+    rebuilt = _rebuilt(tasks, rows, turn_no=turn_no, named_products=named_products)
+    stock = next((task for task in rebuilt if task.kind == "stock_qty"), None)
+    text = None
+    if stock is not None and StockQtyTask().missing(stock):
+        text = StockQtyTask().question(stock)
+    return StockReply(tasks=rebuilt, text=text)
+
+
 def tasks_after_reply(
     tasks: tuple[Task, ...],
     envelopes: list[dict[str, Any]],
+    *,
+    turn_no: int = 0,
+    named_products: bool = True,
+) -> tuple[Task, ...]:
+    """`after_reply`'s tasks alone, for a caller with no typed tokens to narrow by."""
+    return after_reply(
+        tasks, envelopes, turn_no=turn_no, named_products=named_products
+    ).tasks
+
+
+def _rebuilt(
+    tasks: tuple[Task, ...],
+    block: list[dict[str, Any]],
     *,
     turn_no: int = 0,
     named_products: bool = True,
@@ -584,15 +766,6 @@ def tasks_after_reply(
     single question. An ALREADY OPEN task is still updated (it named its products
     when it opened).
     """
-    block: list[dict[str, Any]] | None = None
-    for envelope in envelopes or []:
-        rows = envelope.get("stock_availability") if isinstance(envelope, dict) else None
-        if isinstance(rows, list) and rows:
-            block = [row for row in rows if isinstance(row, dict)]
-
-    if block is None:
-        return tasks
-
     others = tuple(task for task in tasks if task.kind != "stock_qty")
     if not any(row.get("needs_quantity") is True for row in block):
         return others

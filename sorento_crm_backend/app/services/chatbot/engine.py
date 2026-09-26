@@ -2506,24 +2506,16 @@ def _run_stages(  # noqa: PLR0915
                 # whatever the REPLY says is still owed - opened, updated and closed
                 # by one rule, read off the backend's own `needs_quantity` per
                 # product. The engine never decides who must state a quantity; it
-                # reads what the reply stated about it.
-                state_out.focus.tasks = turn_task.tasks_after_reply(
-                    tuple(state_out.focus.tasks or ()),
+                # reads what the reply stated about it. Owner hand test 26 Sep, slice
+                # 2: the same read narrows to an exact code and turns a family into a
+                # which-one pick (`_stock_ask_reply`).
+                answer = _stock_ask_reply(
+                    answer,
+                    state_out,
                     envelopes,
+                    fetch_plan,
+                    verdict,
                     turn_no=turn_no,
-                    # SEC-S2: did this ask name a product at all? A bare "what stock
-                    # do you have?" fetches a page of the catalogue, and a task must
-                    # not be opened to collect a quantity for every row of it. Scoped
-                    # to the INVENTORY spec only (review round 2): a multi-domain ask
-                    # like "promo for X, and what stock do we have?" names X on the
-                    # promotion spec, not on the inventory one, and `any(...)` across
-                    # every domain's spec read that as "a product was named" and
-                    # opened a stock task for the whole catalogue page anyway.
-                    named_products=any(
-                        spec.entities
-                        for spec in fetch_plan.fetch
-                        if spec.domain == "inventory"
-                    ),
                 )
                 # Chatbot stock ask v2 S3, AC-SA314: an `incoming` entry answered
                 # with its own packing list attaches it to THIS reply. `answer.files`
@@ -2832,6 +2824,59 @@ def _contact_block(envelope: Envelope, known_phone: str | None) -> dict[str, Any
     if not jsc.truthy(contact.get("phone")) and known_phone:
         contact["phone"] = known_phone
     return contact
+
+
+def _stock_ask_reply(
+    answer: Any,
+    state_out: Any,
+    envelopes: list[dict[str, Any]],
+    fetch_plan: Any,
+    verdict: dict[str, Any],
+    *,
+    turn_no: int,
+) -> Any:
+    """The stock task after the tool's reply, and the reply itself when it is a
+    question (owner hand test 26 Sep, slice 2).
+
+    `turn/task.py::after_reply` owns the rule; this writes its tasks onto the focus and,
+    for a single-domain stock turn whose reply still needs a quantity, says the task's
+    own named question (or the family pick) instead of the presenter's bare "How many
+    units do you need?". The pick is minted as the turn's open question, so the tail
+    persists it and the next turn's `decide()` reads a typed code against its options.
+    """
+    reply = turn_task.after_reply(
+        tuple(state_out.focus.tasks or ()),
+        envelopes,
+        turn_no=turn_no,
+        # SEC-S2: did this ask name a product at all? A bare "what stock do you have?"
+        # fetches a page of the catalogue, and a task must not be opened to collect a
+        # quantity for every row of it. Scoped to the INVENTORY spec only (review
+        # round 2): a multi-domain ask like "promo for X, and what stock do we have?"
+        # names X on the promotion spec, not on the inventory one.
+        named_products=any(
+            spec.entities for spec in fetch_plan.fetch if spec.domain == "inventory"
+        ),
+        asked=[
+            e
+            for e in (verdict.get("entities") or [])
+            if isinstance(e, dict) and e.get("current_message") is True
+        ],
+        demand_qty=verdict.get("demand_qty"),
+    )
+    state_out.focus.tasks = reply.tasks
+    if not reply.text or [spec.domain for spec in fetch_plan.fetch] != ["inventory"]:
+        return answer
+    question = (
+        turn_pending.ask(
+            "product_pick",
+            reply.pick["options"],
+            asked_at_turn=turn_no,
+            payload=reply.pick["payload"],
+        )
+        if reply.pick
+        else None
+    )
+    return turn_compose.Answer(text=reply.text, question=question)
 
 
 def _run_answer(

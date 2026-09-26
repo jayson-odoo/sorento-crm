@@ -1607,6 +1607,98 @@ def _normalise_demand_qty(verdict: dict[str, Any]) -> None:
         e["quantity"] = bare
 
 
+def _stock_pick(pending: Any) -> bool:
+    """Is the open question a stock pick (owner hand test 26 Sep, slice 2 and F1): the
+    which-one question `turn/task.py::after_reply` asks over a product family, or the
+    dealer's did-you-mean? Both carry the typed quantity on their own payload."""
+    return pending is not None and bool((pending.payload or {}).get("stock_pick"))
+
+
+def _message_states_a_quantity(verdict: dict[str, Any]) -> bool:
+    if _stated_quantity(verdict.get("demand_qty")) is not None:
+        return True
+    return any(
+        isinstance(e, dict) and _stated_quantity(e.get("quantity")) is not None
+        for e in verdict.get("entities") or []
+    )
+
+
+def _names_a_product(verdict: dict[str, Any]) -> bool:
+    return any(
+        isinstance(e, dict)
+        and e.get("current_message") is True
+        and e.get("hint") in (None, "product")
+        for e in verdict.get("entities") or []
+    )
+
+
+def _stock_pick_requantified(state: State, verdict: dict[str, Any], trace: Trace):
+    """A bare number under an open family pick ("88" under "SRTWC286 matches 10 products.
+    Which one?") is the quantity, not a pick: the pick is asked again carrying it, and
+    nothing is fetched. A number is never read as a position here - the options are
+    codes, and the code is the answer."""
+    pending = state.pending
+    if not _stock_pick(pending) or len(pending.options) < 2:
+        return None
+    quantity = _stated_quantity(verdict.get("demand_qty"))
+    if quantity is None or _names_a_product(verdict):
+        return None
+    payload = {**pending.payload, "stock_qty": quantity}
+    kept = replace(pending, payload=payload)
+    trace.rules_fired.append("stock_pick_takes_quantity")
+    trace.task_question = task_mod.pick_question(
+        str(payload.get("typed") or ""),
+        [str(o.get("label")) for o in pending.options if o.get("label")],
+        quantity,
+        payload.get("count"),
+    )
+    focus = copy.deepcopy(state.focus)
+    focus.domains = ["inventory"]
+    asked = State(
+        focus=focus,
+        pending=kept,
+        profile=state.profile,
+        turn_no=state.turn_no,
+        ideation=state.ideation,
+    )
+    return asked, Plan(domains=["inventory"], fetch=[], ask=None, denied=[], trace=trace)
+
+
+def _spend_stock_pick(
+    asked: Any, verdict: dict[str, Any], plan: Plan, new_state: State, trace: Trace
+) -> None:
+    """A stock pick is spent the moment this turn fetches stock, whichever way the dealer
+    answered it (a code off the list, a position, a "yes", or a fresh "check stock X"):
+    left open, the next bare "10" would be read against its options. The quantity the
+    pick carried is stamped onto the product it settled, unless this message stated
+    its own."""
+    if not _stock_pick(asked):
+        return
+    specs = [
+        spec
+        for spec in plan.fetch
+        if spec.domain == "inventory" and not spec.filters.get("task")
+    ]
+    if not specs:
+        return
+    if _stock_pick(new_state.pending):
+        new_state.pending = None
+    trace.rules_fired.append("stock_pick_spent")
+    quantity = _stated_quantity(asked.payload.get("stock_qty"))
+    if quantity is None or _message_states_a_quantity(verdict):
+        return
+    labels = {str(o.get("label")).strip().casefold() for o in asked.options if o.get("label")}
+    for spec in specs:
+        stamped = {
+            str(e["uuid"]): quantity
+            for e in spec.entities
+            if isinstance(e, dict) and e.get("uuid") and _row_codes(e) & labels
+        }
+        if stamped:
+            spec.filters["requested_quantities"] = stamped
+            trace.rules_fired.append("stock_pick_carries_quantity")
+
+
 def apply(
     state: State,
     verdict: dict[str, Any],
@@ -1681,6 +1773,10 @@ def apply(
     # found a path one of them missed.
     decision = decide(verdict, state.focus, state.pending)
     trace.decision = decision.as_trace()
+
+    requantified = _stock_pick_requantified(state, verdict, trace)
+    if requantified is not None:
+        return requantified
 
     # Ported from PR #1118 (not merged), the OPEN TASKS, before decide's four outcomes
     # are acted on: a task is filled by any turn whose verdict carries a value its
@@ -2020,6 +2116,8 @@ def apply(
         # 2, and the "1" under its list still escalated until this clause was added.
         new_state.pending = None
         trace.rules_fired.append("new_ask_closes_stale_roster")
+
+    _spend_stock_pick(state.pending, verdict, plan, new_state, trace)
 
     return new_state, plan
 
