@@ -128,3 +128,34 @@ database from its cloud container, so the numbers are left to S0's first step.
 | Why one rule "From the product's brand field" | Derivation reads `product.brand.brand_name`, correct; the sentence is a hard-coded FE string using a database word. |
 | What `_self` is | The words for the spec itself, stored under a pseudo-value; the Values tab renders it as if it were a value. |
 | What the picker does when used | Creates a shadow brand in the spec registry and a hand-set value that conflicts with the product's real brand on the next read. |
+
+---
+
+## 2. Who uses these screens, and for what
+
+| Person | Permission (measured) | Where they are | What they actually need |
+| --- | --- | --- | --- |
+| **Merchandiser / master-data staff** (the non-technical majority) | `master_data.products.edit` (`app/api/v1/master_data/product_specifications.py`, 9 routes) | a product's Specifications tab | See the product's specs in words, fix a wrong one by picking from a list, add a missing one, say "this is right" (Verify). |
+| **Spec owner** (one or two people, the owner included) | `master_data.spec_registry.view/edit/add/delete` | Master data > Product Specifications list and a spec's page | Rename a spec, add a value and the words customers use for it, see and correct how a spec is read from a description, see which products carry it. |
+| **Maintainer** (developer) | same as spec owner | the same pages | The raw pattern, the stored slug, the shipped/stored split, the catalogue re-read. Rare, and never needed by the other two. |
+
+Design rule that follows: the first two rows are the audience of every default view. Anything
+only the maintainer reads goes behind one **Advanced** disclosure per screen, closed by default
+and remembered per viewer, never deleted outright while the engine still depends on it.
+
+Vocabulary rule that follows (applies to every screen below):
+
+| Today (technical) | Plain replacement |
+| --- | --- |
+| Choice / Enum | "Pick from a list" (type chip: **List**) |
+| Numeric | "Number" (with its unit: "Number, in mm") |
+| Boolean | "Yes or no" |
+| Seed / User (source badge) | removed from default view; Advanced shows "Built in" / "Added here" |
+| `brand` (the code under the label) | removed from default view; Advanced shows it |
+| `_self` | "Other names for Capacity (oz)" field on the Header tab, not a value card |
+| shipped (rule badge) | removed; a rule someone changed says "Changed by Jayson, 26 Sep" instead |
+| Pattern `(?<![A-Z0-9])(\d+...)OZ\b`, capture the 1 number | "The number just before OZ" |
+| From the product's brand field | "The product's brand" |
+| Description and flyer | "the description or flyer" in the sentence, not a separate column |
+| Never read / Rules changed since | one status pill: "Up to date" / "Needs a re-read" / "Reading..." |
+| Derived / Findable By Description | removed from the product tab header; the values table already says where each value came from |
