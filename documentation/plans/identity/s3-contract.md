@@ -48,9 +48,11 @@ Rules, in this order:
    `password` stays NULL. A `status` in the body is ignored on create.
 8. Roles exactly as submitted; the `is_default` role only when `role_ids` is empty (as today).
 9. Nothing is sent: no invitation, no notification, no email outbox row, no WhatsApp message.
-10. When a contact is given, one extra `log_audit` row: entity `user`, action `link_contact`,
+10. When a contact is given, one extra `log_audit` row: entity `user`, action `UPDATE`,
     `description` `Created from WhatsApp contact <contact name or phone>`. The actor
-    (`real_user_id` = the acting admin) comes from the S0 audit context.
+    (`real_user_id` = the acting admin) comes from the S0 audit context. (Corrected during the
+    build: the audit `action` column only takes CREATE / READ / UPDATE / DELETE / IMPORT, so
+    the description, not a new verb, names what happened; no migration.)
 
 Response: `UserResponse` (201).
 
@@ -65,12 +67,13 @@ Additions to today's behaviour:
     `<user name> is already linked to WhatsApp contact <contact name>`; nothing changes (the
     owner unlinks first);
   - first link (was NULL): saved, no role added, nothing sent, sessions NOT revoked, audit row
-    action `link_contact`, description `Linked WhatsApp contact <contact name>`.
+    action `UPDATE`, description `Linked WhatsApp contact <contact name>`.
 - `respond_contact_id` set to null or `""` while one is linked (unlink): saved, every session of
   the user revoked (`user_session_service.revoke_all_for_user`), audit row action
-  `unlink_contact`, description `Unlinked WhatsApp contact <contact name>`.
-- `contact_number` changed (normalised value differs): 409 `PHONE_BELONGS_TO_USER` when another
-  user holds it; else saved, `phone_verified_at` set NULL, every session revoked. This is also
+  `UPDATE`, description `Unlinked WhatsApp contact <contact name>`.
+- `contact_number` changed (normalised value differs, including cleared to null): 409
+  `PHONE_BELONGS_TO_USER` when another user holds the new value; else saved,
+  `phone_verified_at` set NULL, every session revoked. This is also
   "Use new number" (the FE sends the linked contact's phone).
 - Unchanged values (same contact id, same normalised phone) do nothing extra.
 - None of these send anything. The `account_email_changed` notice when an existing email is
@@ -88,15 +91,19 @@ FormAction(key="user.unlink_contact", entity_types=("user",), execute=_unlink_us
 ```
 
 `_unlink_user_contact` calls `UserService(db).unlink_contact(user_id)`, which does exactly the
-unlink branch of 1.3 (one implementation; the PUT path calls it too). Unlinking a user with no
-contact is a no-op.
+unlink branch of 1.3 (one implementation; the PUT path calls it too), inside an audit actor
+scope of the admin who started it (`payload["requested_by_id"]`), whichever request or sweep
+commits it. Unlinking a user with no contact is a no-op.
 
 ### 1.5 `POST /users/invite` is removed (AC-58)
 
-The route, `UserService.invite_user` and the Next proxy
-`app/api/user-management/users/invite/route.ts` are deleted. Grep of the FE, the n8n exports
-(`documentation/n8n/`) and the MCP catalogue found no other caller, so no 410 stub is kept. A
-POST to the old path answers 405 (the path matches `PUT /{user_id}` only) and creates nothing.
+The route and the Next proxy `app/api/user-management/users/invite/route.ts` are deleted.
+Grep of the FE, the n8n exports (`documentation/n8n/`) and the MCP catalogue found no other
+caller of the route, so no 410 stub is kept. A POST to the old path answers 405 (the path
+matches `PUT /{user_id}` only) and creates nothing. `UserService.invite_user` stays: the
+onboarding provisioning task (`app/tasks/onboarding_tasks.py`) calls it for its own,
+separately approved, invitation flow (found by the security review; the first grep missed
+`app/tasks`).
 
 ### 1.6 Invitations (AC-57)
 
@@ -118,7 +125,8 @@ POST to the old path answers 405 (the path matches `PUT /{user_id}` only) and cr
 | `needs_invitation` | true when the user has an email, no password, and no `verification_tokens` row with `identifier = user.id` ever issued |
 
 `GET /users/select` gains three optional filters (all `users.view`, response unchanged):
-`phone` (normalised with `normalize_msisdn`, exact match on `contact_number`),
+`phone` (normalised with `normalize_msisdn`, exact match on `contact_number`; a value that does
+not normalise returns nothing),
 `respond_contact_id` (exact), `unlinked=true` (users with no contact).
 
 `GET /contacts/` rows gain `linked_user_id` and `linked_user_name` (one batched query per

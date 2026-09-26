@@ -11,8 +11,8 @@ Administrative Users and Internal Users pages), one sign-in page (the existing `
 Email / Phone toggle, and no email is ever sent by creating or linking a user (section 6.4).
 Track: full (migration, auth, RBAC, portal ingest). S0 built on PR #1303 (27 Sep 2026, owner ruling
 of 27 Sep 01:04 MYT to build without further alignment), ready for the orchestrator's review; the
-plan rides in that PR. S3 in progress on its own lane, stacked on S0 (27 Sep 2026). S1 and S2
-per their own lanes.
+plan rides in that PR. S3 built on PR #1306 (stacked on S0; no migration), ready for the
+orchestrator's review (27 Sep 2026). S1 and S2 per their own lanes.
 UAC: `identity-unified-login-acceptance-criteria.md` (same folder; the Journey is there, and every
 AC traces to a step in it).
 Classification: CORE (auth and users are base-platform), tables stay in `public`.
@@ -940,7 +940,12 @@ phone-differs state moved to S3 (6.3). AC-50 and AC-51 are withdrawn.
   already watches the worker; no new mechanism.
 - **Phone sign-in for admins** (Q10, ruled yes). A WhatsApp code is weaker than a password for
   `superadmin` accounts (SIM swap). The owner accepted it; excluding admins later is one check in
-  request-code.
+  request-code. **For S1 (from the S3 security review, 27 Sep 2026):** once phone sign-in exists,
+  a `user_management.users.edit` holder can set an admin's phone and link their own WhatsApp
+  contact, then sign in as that admin by code. Not new privilege (`users.edit` can already assign
+  any role), but it needs no email link. Recommended with S1: refuse `contact_number` /
+  `respond_contact_id` edits on a protected, `superadmin` or `admin` user unless the caller is a
+  superadmin.
 - **A Respond.io phone change blocks a set-up person's phone sign-in** until the owner confirms the
   new number (5.3). Chosen over following the sync silently, because the code would otherwise go
   to a number nobody approved. Email + password, where the user has one, still works meanwhile.
