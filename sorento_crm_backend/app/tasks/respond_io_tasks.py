@@ -303,6 +303,35 @@ def send_login_otp_respond_message(
     )
 
 
+def dispatch_phone_signin_code(num: str) -> None:
+    """Worker-side: decide eligibility and send, for EVERY request-code call
+    (security round S1, #1280).
+
+    `POST /auth/phone/request-code` enqueues this for every normalised
+    number, known or not, with no eligibility check of its own - so the
+    route's timing carries no tell. This job is what used to run inline in
+    that route: resolve the number, and only when it belongs to exactly one
+    eligible user, create the code and send it - INLINE (`dispatch_inline=
+    True`), since this job already IS the `respond_io` queue's own worker, so
+    a second `enqueue_job` would just add a hop. Every failure (ineligible
+    number, a contact-level cooldown/cap hit, a send failure) is logged and
+    swallowed - nothing here is visible to the HTTP caller, which already
+    answered 200.
+    """
+    from app.database import SessionLocal
+    from app.services import phone_signin_service as svc
+
+    db = SessionLocal()
+    try:
+        eligible = svc.find_eligible(db, num)
+        if eligible is None:
+            return
+        _user, contact = eligible
+        svc.send_signin_code(db, contact, dispatch_inline=True)
+    finally:
+        db.close()
+
+
 def send_complaint_respond_message(
     complaint_id: str,
     identifier: str,
