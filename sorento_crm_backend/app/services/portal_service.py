@@ -24,7 +24,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, Optional
 from uuid import UUID
 
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session, joinedload
 
 from app.config import settings
@@ -63,6 +63,10 @@ PORTAL_SLIDE_THRESHOLD = timedelta(days=29)
 OTP_TTL = timedelta(minutes=10)
 OTP_REQUEST_COOLDOWN = timedelta(seconds=60)
 OTP_MAX_ATTEMPTS = 5
+# A code row that can never exist, used to pay for the same DB round trips an
+# unknown/ineligible number's verify would for a real one (B2 timing parity,
+# identity S1 security round, #1280).
+NIL_OTP_ID = "00000000-0000-0000-0000-000000000000"
 # Hard daily cap per contact - the slug URL is bookmarkable/shareable, so an
 # attacker with a leaked slug could otherwise spam the contact with OTP sends.
 OTP_DAILY_CAP = 10
@@ -570,17 +574,30 @@ class PortalService:
         self.db.commit()
         self.db.refresh(otp)
 
-        # Dispatch asynchronously via the RQ ``respond_io`` queue - the SAME path
-        # as complaint / stock-inquiry status replies. The worker does the
-        # window-aware send (free-form text inside the 24h window, else the
-        # approved WhatsApp template) AND writes an ``integration_logs``
-        # outbox row, including a ``status='failed'`` row carrying the message
-        # text when the send can't go out. That lets the code be read back from
-        # the Respond outbox in local dev (no Respond.io connectivity) for
-        # testing. Decoupling also means a Respond outage no longer 500s the
-        # request - the caller just retries.
+        # Dispatch via the RQ ``respond_io`` queue - the SAME path as complaint /
+        # stock-inquiry status replies. The worker does the window-aware send
+        # (free-form text inside the 24h window, else the approved WhatsApp
+        # template) AND writes an ``integration_logs`` outbox row, including a
+        # ``status='failed'`` row when the send can't go out (e.g. local dev
+        # with no Respond.io connectivity) - but the code itself is REDACTED
+        # from that row (security round B1, #1280: a signed-in user with no
+        # special permission could otherwise read it back out of
+        # `GET /api/v1/integrations/logs`, which has no permission gate, and
+        # use it to verify as the target). For local dev, read the code from
+        # the worker's own DEBUG log line instead. Decoupling also means a
+        # Respond outage no longer 500s the request - the caller just retries.
         identifier = (contact.respond_io_id or "").strip() or contact.id
         otp_text = text_template.format(code=code)
+
+        if dispatch_inline:
+            # Already running inside the respond_io queue's own job - call the
+            # send directly rather than enqueuing a second one. A send failure
+            # here is NOT refunded (the attempt was made, same as the async
+            # path where a failed send still keeps its integration_logs row);
+            # the caller (send_signin_code) decides whether to swallow it.
+            task(otp.id, identifier, otp_text, code, space_id)
+            return otp
+
         try:
             from app.services.queue_service import enqueue_job
 
@@ -628,6 +645,52 @@ class PortalService:
         masked_phone = self._mask_phone(contact.phone_number)
         return {"sent_to": masked_phone, "expires_at": otp.expires_at.isoformat()}
 
+    def reserve_attempt(self, otp_id: str) -> Optional[tuple[int, str]]:
+        """Atomically bump ``attempts`` by 1 IF the row is still guessable
+        (below the cap, not consumed, not expired). Returns
+        ``(attempts_after, code_hash)`` or ``None`` when it can't be reserved
+        (locked out / consumed / expired / missing, including
+        :data:`NIL_OTP_ID`, which never matches a row).
+
+        Security round B2 (#1280): the increment happens IN THE UPDATE
+        STATEMENT ITSELF (``attempts = attempts + 1``), guarded by
+        ``attempts < :max`` in the SAME statement, so two parallel verify
+        calls for the same code cannot each read a stale ``attempts`` value
+        and both "reserve" the last guess - Postgres serialises the two
+        UPDATEs on the row and the second one's WHERE clause re-evaluates
+        against the first's committed result. Compare the returned
+        ``code_hash`` AFTER this call, never before it.
+        """
+        row = self.db.execute(
+            text(
+                "UPDATE portal_otp_codes SET attempts = attempts + 1 "
+                "WHERE id = :id AND attempts < :max_attempts AND consumed_at IS NULL "
+                "AND expires_at > :now "
+                "RETURNING attempts, code_hash"
+            ),
+            {"id": otp_id, "max_attempts": OTP_MAX_ATTEMPTS, "now": _utcnow()},
+        ).first()
+        self.db.commit()
+        if row is None:
+            return None
+        return int(row[0]), str(row[1])
+
+    def consume_reserved(self, otp_id: str, now: datetime) -> bool:
+        """Atomically mark a row consumed; ``True`` only if THIS call did it.
+
+        Guards the mint-a-session step: if two parallel verifies both pass
+        the code compare (only possible before this call runs), only the
+        first ``UPDATE ... WHERE consumed_at IS NULL`` affects a row: the
+        second sees 0 rows and must refuse instead of minting a second
+        session for the same one-time code.
+        """
+        result = self.db.execute(
+            text("UPDATE portal_otp_codes SET consumed_at = :now WHERE id = :id AND consumed_at IS NULL"),
+            {"id": otp_id, "now": now},
+        )
+        self.db.commit()
+        return result.rowcount == 1
+
     def verify_otp(self, contact_id: str, space_id: str, code: str) -> PortalToken:
         contact_id = (contact_id or "").strip()
         space_id = (space_id or "").strip()
@@ -649,15 +712,20 @@ class PortalService:
             raise handle_validation_error("No verification code outstanding. Request a new one.")
         if otp.expires_at <= _utcnow():
             raise handle_validation_error("Verification code expired. Request a new one.")
-        if otp.attempts >= OTP_MAX_ATTEMPTS:
-            raise handle_validation_error("Too many attempts. Request a new verification code.")
 
-        if not hmac.compare_digest(otp.code_hash, _hash_otp(code)):
-            otp.attempts += 1
-            self.db.commit()
+        reserved = self.reserve_attempt(otp.id)
+        if reserved is None:
+            # Reached the cap (or lost a race to consumption/expiry between the
+            # SELECT above and the reservation) - either way, no free guess.
+            raise handle_validation_error("Too many attempts. Request a new verification code.")
+        _attempts_after, code_hash = reserved
+
+        if not hmac.compare_digest(code_hash, _hash_otp(code)):
             raise handle_validation_error("Incorrect verification code.")
 
-        otp.consumed_at = _utcnow()
+        if not self.consume_reserved(otp.id, _utcnow()):
+            # Someone else's parallel verify consumed this exact code first.
+            raise handle_validation_error("Incorrect verification code.")
         # Mark every unrevoked token for this contact as verified so the original
         # admin-issued QR / link / "Send via Respond.io" token grants access
         # immediately after OTP success - no need to re-issue through the new
