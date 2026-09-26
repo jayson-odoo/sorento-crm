@@ -60,6 +60,13 @@ class ReconcileResult:
         self.entities: list[dict[str, Any]] = []
         self.reconciled: list[tuple[str, str, str]] = []
         self.kind_pick_options: list[dict[str, Any]] | None = None
+        # #1262 slice 8 (F1b siblings), owner ruling 6: "several ambiguous tokens
+        # are asked one pick at a time, first token first" - the FIRST ambiguous
+        # token's options are `kind_pick_options` (unchanged shape, so a caller with
+        # only one ambiguous token never sees a new field); every SUBSEQUENT one's
+        # options queue here instead of overwriting the first, so a later token is
+        # asked in turn rather than silently lost.
+        self.queued_kind_picks: list[list[dict[str, Any]]] = []
 
 
 def apply_reconciliation(
@@ -116,7 +123,10 @@ def apply_reconciliation(
                 }
                 for i, k in enumerate(matched)
             ]
-            result.kind_pick_options = options
+            if result.kind_pick_options is None:
+                result.kind_pick_options = options
+            else:
+                result.queued_kind_picks.append(options)
             result.entities.append(e)
 
     return result
