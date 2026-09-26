@@ -2486,8 +2486,8 @@ def _write_retail_claims(
 
     Written FULLY RESOLVED via `claim_placed_on_po` (both `so_line_id` and
     `spo_allocation_id` known here, unlike a book claim that waits on `resolve()`) - the
-    first allocation this shipment line landed, mirroring `_link_ticked_demand`'s own
-    "first if several" reasoning for the project half. Best-effort per row, same as that
+    first of this shipment line's allocations in `_deal_order`, the same order
+    `_link_ticked_demand` deals the project half in. Best-effort per row, same as that
     function: one row's problem (a claim identity collision, say) never fails a confirm
     that has already written the SPO, its lines and its allocations.
     """
