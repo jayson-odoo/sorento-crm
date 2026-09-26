@@ -121,8 +121,23 @@ def client(db):
     def _override_db():
         yield db
 
+    # The audit read API is superadmin/admin only (#1281): call as a real superadmin.
+    from app.models.user import UserRole, UserRoleAssignment
+
+    reader_id = str(uuid.uuid4())
+    role = UserRole(id=str(uuid.uuid4()), slug="superadmin", name="Super Admin",
+                    description="", is_protected=False, is_default=False)
+    db.add_all([role, User(id=reader_id, email=f"zz-reader-{reader_id[:8]}@example.com",
+                           status=UserStatus.ACTIVE.value)])
+    db.flush()
+    db.add(UserRoleAssignment(user_id=reader_id, role_id=role.id))
+    db.commit()
+    # The reader's own CREATE row would join the listing; the tests count their own rows.
+    db.query(AuditLog).delete()
+    db.commit()
+
     app.dependency_overrides[app_database.get_db] = _override_db
-    app.dependency_overrides[get_current_user_or_api_key] = lambda: {"id": "admin"}
+    app.dependency_overrides[get_current_user_or_api_key] = lambda: {"id": reader_id}
     yield TestClient(app)
     app.dependency_overrides.clear()
 

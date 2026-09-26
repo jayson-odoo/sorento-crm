@@ -24,7 +24,7 @@ Downgrade drops the triggers and the function first, then deletes the EVENT rows
 CHECK would reject them), restores the old CHECK and drops the columns.
 
 Revision ID: aud_0001_audit_standard_s0
-Revises: sales_0002_team_leader
+Revises: 527_audit_logs_scrub_secrets
 Create Date: 2026-09-26
 """
 import sqlalchemy as sa
@@ -34,7 +34,7 @@ from sqlalchemy.dialects import postgresql
 from app.models.audit import APPEND_ONLY_FUNCTION_SQL, APPEND_ONLY_TRIGGERS_SQL
 
 revision = "aud_0001_audit_standard_s0"
-down_revision = "sales_0002_team_leader"
+down_revision = "527_audit_logs_scrub_secrets"
 branch_labels = None
 depends_on = None
 

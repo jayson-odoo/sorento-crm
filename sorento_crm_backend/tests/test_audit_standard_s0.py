@@ -34,7 +34,6 @@ from app.models.user import SystemSetting, User
 from app.services import audit_service
 from app.services.audit_service import (
     BULK_AUDIT_CAP,
-    REDACTED,
     audit_event,
     log_audit,
     record,
@@ -152,7 +151,9 @@ class TestDefaultOn:
 
 
 class TestRedaction:
-    def test_ac_s0_05_password_is_redacted_on_create_and_update(self, db):
+    # Secret keys are DROPPED, never masked: the semantics S-1 (#1298) shipped with its scrub
+    # migration, so rows written before and after it read the same. S0 widens the key set.
+    def test_ac_s0_05_password_never_enters_the_trail(self, db):
         user = User(
             email=f"{uuid.uuid4().hex}@t.local", name="Pw", status="ACTIVE", password="$2b$hash-one"
         )
@@ -160,44 +161,53 @@ class TestRedaction:
         db.flush()
         user.password = "$2b$hash-two"
         db.flush()
-        for row in _rows(db, user.id):
+        rows = _rows(db, user.id)
+        assert rows
+        for row in rows:
             blob = f"{row.old_values} {row.new_values}"
             assert "hash-one" not in blob and "hash-two" not in blob
-        (upd,) = _rows(db, user.id, "UPDATE")
-        assert upd.old_values == {"password": REDACTED}
-        assert upd.new_values == {"password": REDACTED}
+            assert "password" not in (row.old_values or {}) and "password" not in (row.new_values or {})
 
-    def test_ac_s0_05_smtp_password_is_redacted(self, db):
+    def _settings(self, db):
         s = db.query(SystemSetting).first()
         if s is None:
             s = SystemSetting()
             db.add(s)
             db.flush()
+        return s
+
+    def test_ac_s0_05_smtp_password_is_redacted(self, db):
+        s = self._settings(db)
         s.smtp_password = "hunter2-smtp"
+        s.smtp_host = f"smtp-{uuid.uuid4().hex[:6]}.local"
         db.flush()
-        rows = db.query(AuditLog).filter(AuditLog.entity_type == audit_service._audit_entity_type(SystemSetting)).all()
+        rows = _rows(db, s.id, "UPDATE")
         assert rows
         assert all("hunter2-smtp" not in f"{r.old_values} {r.new_values}" for r in rows)
+        assert all("smtp_password" not in (r.new_values or {}) for r in rows)
+        assert rows[-1].new_values["smtp_host"] == s.smtp_host
 
     def test_ac_s0_05_explicit_log_audit_is_redacted(self, db):
         eid = str(uuid.uuid4())
         log_audit(
             db, "probe", eid, "UPDATE",
             old_values={"api_key_ciphertext": "c1", "note": "a"},
-            new_values={"api_key_ciphertext": "c2", "sign_token": "t", "note": "b"},
+            new_values={"api_key_ciphertext": "c2", "sign_token": "t", "code_hash": "h", "note": "b"},
         )
         (row,) = _rows(db, eid)
-        assert row.new_values == {"api_key_ciphertext": REDACTED, "sign_token": REDACTED, "note": "b"}
-        assert row.old_values["api_key_ciphertext"] == REDACTED
+        assert row.new_values == {"note": "b"}
+        assert row.old_values == {"note": "a"}
 
     def test_ac_s0_05_bulk_update_is_redacted(self, db):
-        user = User(email=f"{uuid.uuid4().hex}@t.local", name="Bulk", status="ACTIVE", password="old-pw")
-        db.add(user)
-        db.flush()
-        db.query(User).filter(User.id == user.id).update({"password": "new-pw"}, synchronize_session=False)
-        (row,) = _rows(db, user.id, "UPDATE")
-        assert row.old_values == {"password": REDACTED}
-        assert row.new_values == {"password": REDACTED}
+        s = self._settings(db)
+        host = f"bulk-{uuid.uuid4().hex[:6]}.local"
+        db.query(SystemSetting).filter(SystemSetting.id == s.id).update(
+            {"smtp_password": "bulk-secret", "smtp_host": host}, synchronize_session=False
+        )
+        row = _rows(db, s.id, "UPDATE")[-1]
+        assert row.new_values == {"smtp_host": host}
+        assert "smtp_password" not in (row.old_values or {})
+        assert "bulk-secret" not in f"{row.old_values} {row.new_values}"
 
 
 # --- Bulk DML --------------------------------------------------------------------

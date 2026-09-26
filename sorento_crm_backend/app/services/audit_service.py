@@ -23,19 +23,9 @@ from app.models.audit import AuditLog
 
 logger = logging.getLogger(__name__)
 
-REDACTED = "[redacted]"
 EXPRESSION = "[expression]"
 # Per bulk statement: this many itemised rows, then one summary row with the remainder's count.
 BULK_AUDIT_CAP = 500
-
-# Column names whose VALUE never enters the trail. The key stays, reading REDACTED, so the fact
-# of the change survives. Measured against every mapped column on 26 Sep 2026: users.password,
-# system_settings.smtp_password, *_ciphertext (respond_workspaces, ai_assistant_configs),
-# integration_api_keys.key_hash, portal_otp_codes.code_hash, integrations.credentials_json,
-# token / public_token / sign_token on the share-link tables.
-_REDACT_EXACT = frozenset({"password", "token", "key_hash", "code_hash", "credentials_json"})
-_REDACT_SUFFIXES = ("_password", "_secret", "_token", "_ciphertext")
-_REDACT_PREFIXES = ("api_key",)
 
 # Columns stamped on every touch. An UPDATE that changes only these writes no row, and they
 # never appear in a diff: integrations.last_used_at moves on every API-key call and
@@ -43,17 +33,6 @@ _REDACT_PREFIXES = ("api_key",)
 _TOUCH_COLUMNS = frozenset(
     {"updated_at", "last_used_at", "last_sign_in_at", "last_seen_at", "last_activity_at"}
 )
-
-
-def _is_secret_key(key: str) -> bool:
-    k = str(key).lower()
-    return k in _REDACT_EXACT or k.endswith(_REDACT_SUFFIXES) or k.startswith(_REDACT_PREFIXES)
-
-
-def _redact(values: Optional[dict]) -> Optional[dict]:
-    if not values:
-        return values
-    return {k: (REDACTED if _is_secret_key(k) else v) for k, v in values.items()}
 
 
 def _is_uuid(value: str) -> bool:
@@ -75,6 +54,7 @@ def _is_audited_cls(cls: type) -> bool:
     if cls is AuditLog:
         return False
     return not getattr(cls, "__audit_skip__", None)
+# Secret keys are dropped either way (see _redact_secrets).
 
 
 def _is_audited(obj: Any) -> bool:
@@ -166,6 +146,52 @@ def _model_to_audit_dict(obj: Any) -> dict[str, Any]:
         return {}
 
 
+# Keys that never enter audit_logs, whichever model or caller produced the payload
+# (issue #1281). `__audit_columns__` is opt-in per model and a model without it
+# snapshots every column, so the deny list is the backstop: `users.password` (a
+# bcrypt hash) and `project_quotation_issues.sign_token` (a bearer link token) were
+# both written verbatim before it. A new secret column on an audited model belongs here.
+AUDIT_SECRET_KEYS = frozenset({
+    "password",
+    "password_hash",
+    "hashed_password",
+    "sign_token",
+    "token",
+    "access_token",
+    "refresh_token",
+    "api_key",
+    "key_hash",
+    "secret",
+    "client_secret",
+})
+
+
+# S0 (#1281) widens the exact list with name patterns, because default-on auditing reaches
+# tables no one listed: system_settings.smtp_password, the *_ciphertext columns
+# (respond_workspaces, ai_assistant_configs), integration_api_keys.key_hash,
+# portal_otp_codes.code_hash, integrations.credentials_json, public_token on share links.
+_SECRET_EXTRA = frozenset({"code_hash", "credentials_json"})
+_SECRET_SUFFIXES = ("_password", "_secret", "_token", "_ciphertext")
+_SECRET_PREFIXES = ("api_key",)
+
+
+def _is_secret_key(key: Any) -> bool:
+    k = str(key).lower()
+    return (
+        k in AUDIT_SECRET_KEYS
+        or k in _SECRET_EXTRA
+        or k.endswith(_SECRET_SUFFIXES)
+        or k.startswith(_SECRET_PREFIXES)
+    )
+
+
+def _redact_secrets(values: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    """Drop secret keys. Used by log_audit and the bulk path, so every writer goes through it."""
+    if not values:
+        return values
+    return {k: v for k, v in values.items() if not _is_secret_key(k)}
+
+
 def log_audit(
     db: Session,
     entity_type: str,
@@ -210,8 +236,8 @@ def log_audit(
         action=action.upper(),
         user_id=user_id,  # None for system/public actions (e.g. approval via public link)
         contact_id=contact_id if contact_id is not None else (ctx.contact_id if ctx else None),
-        old_values=_redact(old_values),
-        new_values=_redact(new_values),
+        old_values=_redact_secrets(old_values),
+        new_values=_redact_secrets(new_values),
         description=description,
         ip_address=ip_address,
         company_id=company_id,
@@ -718,7 +744,7 @@ def _session_after_flush(session: Session, _flush_context: Any) -> None:
             "contact_id": contact_id,
             "ip_address": ip_address,
             "old_values": None,
-            "new_values": _redact(new_values),
+            "new_values": _redact_secrets(new_values),
             "description": None,
             "company_id": snapshot.get("company_id"),
             "root_entity_type": root[0],
@@ -847,8 +873,8 @@ def _write_bulk_rows(session: Session, conn: Any, cls: type, entity_type: str, s
         out.append({
             **common,
             "entity_id": entity_id,
-            "old_values": _redact(old_values),
-            "new_values": _redact(new_values),
+            "old_values": _redact_secrets(old_values),
+            "new_values": _redact_secrets(new_values),
             "company_id": snapshot.get("company_id"),
             "root_entity_type": root[0],
             "root_entity_id": root[1],
