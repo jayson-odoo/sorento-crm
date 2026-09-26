@@ -106,12 +106,13 @@ def test_the_body_runs_again_on_a_database_that_already_has_the_column(db):
     db.execute(text(f"ALTER TABLE brands ADD COLUMN IF NOT EXISTS {_COLUMN} BOOLEAN NOT NULL DEFAULT false"))
     company = _company(db)
     sorento = _brand(db, "Sorento", company_id=company)
-    _brand(db, "SORENTO ", company_id=company)  # a second spelling of the same name
+    second = _brand(db, "SORENTO ", company_id=company)  # a second spelling of the same name
 
     _run(db)
     _run(db)
 
-    assert _flag(db, sorento) is True
+    # One of the two is the default, never both (they tie on created_at here).
+    assert {_flag(db, sorento), _flag(db, second)} == {True, False}
     assert db.execute(
         text(f"SELECT count(*) FROM brands WHERE {_COLUMN} AND company_id = :c"), {"c": company}
     ).scalar() == 1
