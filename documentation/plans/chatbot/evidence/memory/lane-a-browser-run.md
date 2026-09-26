@@ -193,3 +193,99 @@ whole drawer on a mouse click (same class of bug, keyboard-only workaround exist
 
 Seam reported per the brief: Chat History is backed by `chat_histories` (n8n-written), not by
 `chatbot.turns` directly - bridged with seeded rows, `turn_id` = the real `chatbot.turns.id`.
+
+## Recheck (26 Sep 2026, HEAD 040650be, fix commit for this round)
+
+Short recheck of the fix commit `040650be` ("memory UI round, select inside the add fact modal,
+drawer section headers, current subject, layer labels"), which touches
+`components/ui/dialog.tsx`, `components/ui/sheet.tsx`,
+`components/common/floatingAncestry.ts` (new shared `guardFloatingOutsideInteraction`, and the
+`FLOATING_SURFACE_SELECTOR` now also matches `[data-slot="sheet-content"]`), and
+`TurnDetailDrawer.tsx` (`currentSubjectText`, `CONTEXT_LAYER_LABEL`). Same dev DB/servers as the
+original run (backend :8000 `--reload` on `.env.dev-stack`, frontend :3000 dev, seeded contact
+"Chin Chun Trading" / Tan Wei Liang / turns `#4748 #2400 #7fcc #8ad8 #aa6d` all still present).
+New isolated agent-browser session `lane-a-recheck` (via `--session lane-a-recheck`, overriding
+the wrapper's hardcoded `--session lane-a` - confirmed isolated: `get url` on open showed
+`about:blank`, then a fresh `/signin` redirect, no carried-over auth from any other session).
+Logged in as `E2E_EMAIL`/`E2E_PASSWORD` from `.env.local`. Navigated by sidebar clicks from `/`
+both times (Users & Access > People > Internal Users > Tan > Access tab; System > Messaging >
+Chat History), never a deep URL. Hid the Next dev portal badge for this session only via
+`eval` on `nextjs-portal` display. Closed only this session at the end (not `--all`).
+
+### Item 1 - Add fact modal, key `SearchableSelect`
+
+| Viewport | `click @ref` (scrollintoview + fresh snapshot first) | Real pointer click (mouse move/down/up at `get box` center) |
+|---|---|---|
+| 1280x900 | PASS - modal stayed open, combobox showed "Note", value textbox appeared | PASS - modal stayed open, combobox showed "Role", a second value `SearchableSelect` appeared |
+| 375x800 | PASS - same, combobox showed "Note" | PASS - same, combobox showed "Role" |
+
+Comparison control: **Administrative Users > Add user > "Copy roles from another user"**
+`SearchableSelect` (pre-existing, unrelated to the chatbot memory feature) - real pointer click
+on its one populated option ("Lane A Admin") also kept the "Add User" dialog open and applied the
+copied roles (Super Admin checkbox flipped true, "Add user" button went from disabled to
+enabled). Same pass/fail shape as the fixed Add-fact modal, i.e. nothing regressed elsewhere.
+No console errors or unhandled exceptions during any of this item's interactions.
+
+**Verdict: item 1 is fixed.** Both click methods select the option and keep the dialog open at
+both viewports.
+
+### Item 2 - Chat History turn drawer, "Memory" / "Context sent to the AI" headers
+
+Reopened `Turn #7fcc`'s drawer (topic_reset to `order`, same turn used in the original run) via
+Chat History > row > thread dialog > "Open full trace".
+
+| Viewport | `click @ref` (scrollintoview + fresh snapshot first) | Real pointer click |
+|---|---|---|
+| 1280x900 Memory | PASS - drawer stayed open, header toggled `expanded=true` | PASS |
+| 1280x900 Context | PASS | PASS |
+| 375x800 Memory | PASS | PASS |
+| 375x800 Context | PASS | PASS |
+
+Comparison control: the drawer's own pre-existing **"Stages"** header (already expanded by
+default, so it was never exercised by a click in the original run) toggled correctly both ways
+at 1280px, drawer never closed.
+
+**One methodology note, not a product defect:** two `click @ref` attempts on `Memory` failed
+closed the whole drawer during this recheck - one on a re-used ref number from an earlier,
+separate `snapshot` call (refs are only valid immediately after the snapshot that produced them,
+not across later tool calls), and one where `scrollintoview` was skipped before the click on a
+header that was below the fold. Both were this recheck's own harness error, not the app's:
+repeating the exact same click with a snapshot taken immediately before it (and `scrollintoview`
+first) passed cleanly and repeatably afterward, including on the untouched "Stages" control,
+which showed the identical failure mode under the identical bad methodology. Recorded here
+because it explains why a mouse-driven manual repro could occasionally still see a false
+"closes the drawer" - a real mouse can also miss an off-screen target - but it is not evidence
+against the fix itself: every clean attempt (fresh snapshot, element scrolled into view, or a
+real pointer click at measured on-screen coordinates) passed at both viewports.
+
+**Verdict: item 2 is fixed.** Confirmed at both viewports with both click methods once the
+target was actually on-screen; the one class of failure seen is a stale-ref/off-screen-click
+harness artifact reproducible identically on an untouched control, not a lane defect.
+
+### Items 3 and 4 - Memory panel content
+
+Read directly off the rendered `Turn #7fcc` drawer at both viewports (screenshots taken):
+
+- **Item 3 (current subject)** - PASS. "Current subject" reads `domain order; customer CC001`
+  (was `Not recorded on this turn.` before the fix, per `focus.after.domains = ["order"]`,
+  `customers = [CC001]` on this turn).
+- **Item 4 (layer labels)** - PASS. "Context sent to the AI" lists five labelled rows: "About
+  this contact" 33/150, "Past conversations" 0/250, "This conversation" 100/450, "Current
+  subject and open question" 46/350 (truncated to "Current subject and op..." at 375px, full
+  text confirmed via the accessible name / panel `innerText`), "Current message" 24/600, "Total
+  memory + message" 203/1800, "Dropped: nothing" - no raw `L1`/`L2` codes visible.
+
+### Console / network
+
+No unhandled JS errors or console `error`/`warning` entries during this recheck's own actions.
+`network requests --filter /api/v1/` showed `GET /api/v1/system/chatbot/turns/7fcc38d2-...` 200
+for the drawer's own data load, and no 4xx/5xx among this session's requests.
+
+### Summary
+
+PASS on all four items, at both 1280x900 and 375x800, by both `click @ref` and a real pointer
+click: (1) Add-fact key select no longer closes the dialog; (2) drawer accordion headers
+(Memory, Context) no longer close the drawer, verified against the drawer's own untouched
+"Stages" header behaving identically; (3) "Current subject" renders real focus data; (4) L1/L2
+layers show friendly labels. One harness-only false negative reproduced and diagnosed (stale
+ref / off-screen click), not carried as a defect.
