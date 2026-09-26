@@ -8,7 +8,9 @@ resolved principal (a login, or an API key's act-as user).
 
 One narrow exception keeps the detail pages' Audit Trail panels working: a read
 filtered to ONE record (`entity_type` + `entity_id`) of a type with a detail-page
-panel is allowed with that record's view permission. Every other shape 403s.
+panel is allowed with that record's view permission (the packing list Timeline tab
+included). Every other shape 403s. Both routes also keep to the request's company:
+a row stamped for another company is not returned, on either path.
 
 Real roles, permissions and assignments are seeded on a blank schema, so the check
 runs through the real `UserPermissionService`, not a stub.

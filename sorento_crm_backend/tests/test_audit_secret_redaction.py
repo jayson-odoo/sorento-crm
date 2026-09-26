@@ -5,12 +5,13 @@ write (every login included, because `last_sign_in_at` changes) snapshotted the
 bcrypt `password` into `old_values` and `new_values`, and `GET /audit/logs/`
 handed it back. Two layers now keep it out:
 
-* `User.__audit_columns__` names the columns worth auditing, and `password` is
-  not one of them.
+* `User.__audit_columns__` is derived from the model minus the deny list, so
+  `password` is not in it and a column added later is audited without being listed.
 * `log_audit` drops every key on a deny list (`AUDIT_SECRET_KEYS`) from both
-  payloads, whichever model or caller produced them, so a secret column on a
-  model with no `__audit_columns__` (`project_quotation_issues.sign_token`, a
-  bearer link token) or on the next model to opt in cannot leak either.
+  payloads at any depth, whichever model or caller produced them, so a secret
+  column on a model with no `__audit_columns__` (`project_quotation_issues.sign_token`,
+  a bearer link token) or on the next model to opt in cannot leak either. A scan of
+  every `__audit_track__` model fails on a secret-named column the list misses.
 
 Every test seeds its own rows on a blank schema.
 """
