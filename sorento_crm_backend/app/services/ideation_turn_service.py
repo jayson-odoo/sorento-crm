@@ -106,6 +106,18 @@ _RECAP_FIELD_ORDER: tuple[tuple[str, str], ...] = (
 
 _QUESTION_MARKS = "?？"  # ASCII ? and full-width ？ (AC-1302)
 
+# #1277: a field line, read regardless of WhatsApp bold/italic markers around the
+# label ("Problem: x", "*Problem:* x", "*Problem*: x") - group 1 the label, group
+# 2 the value.
+_RECAP_LABELS = tuple(label for _key, label in _RECAP_FIELD_ORDER)
+_FIELD_LINE_RE = re.compile(
+    r"^\s*\*?\s*(" + "|".join(_RECAP_LABELS) + r")\s*\*?\s*:\s*\*?\s*(.*?)\s*$"
+)
+# #1277: a bare title line may carry quotes, WhatsApp markers and an optional
+# "Title:" label around the title itself.
+_TITLE_LABEL_RE = re.compile(r"^title\s*:", re.I)
+_TITLE_STRIP_CHARS = "\"'“”‘’*_ \t"
+
 # Blocking 1 (reviewer, round 1, PR #1222 at 720bb8f5): any IDEA-<digits> token
 # in a composed reply must be EXACTLY a fact's idea number - word-boundary
 # matched, never a substring (IDEA-0042 is not IDEA-00421).
@@ -137,6 +149,43 @@ def _ideate_reply_facts(result: dict[str, Any]) -> dict[str, Any]:
         "idea_number": result.get("idea_number"),
         "link": result.get("link"),
     }
+
+
+def _field_line(line: str) -> tuple[str, str] | None:
+    """``(label, value)`` when ``line`` is a recap field line, bold or not."""
+    match = _FIELD_LINE_RE.match(line)
+    return (match.group(1), match.group(2)) if match else None
+
+
+def _is_title_line(line: str, title: str) -> bool:
+    """#1277: a line that says nothing but the draft title (quoted, bold, or
+    labelled "Title:"), compared case- and spacing-insensitively."""
+    bare = line.strip(_TITLE_STRIP_CHARS)
+    bare = _TITLE_LABEL_RE.sub("", bare, count=1).strip(_TITLE_STRIP_CHARS)
+    return " ".join(bare.lower().split()) == " ".join(title.lower().split())
+
+
+def _format_ideate_reply(text_out: str, facts: dict[str, Any]) -> str:
+    """#1277, applied to every reply (the LLM's or the shared-service template):
+
+    - W1: each field line reads ``*Label:* value`` (WhatsApp bold), idempotent;
+    - W3: the draft title is shown only in the final ``complete`` message - any
+      other status drops a line that is only the title. The duplicate
+      candidate's "Similar idea exists: <title>" line is not the draft title and
+      stays.
+    """
+    title = str(facts.get("title") or "").strip()
+    drop_title = bool(title) and facts.get("status") != "complete"
+    lines_out: list[str] = []
+    for line in (text_out or "").splitlines():
+        if drop_title and line.strip() and _is_title_line(line, title):
+            continue
+        field = _field_line(line)
+        if field:
+            label, value = field
+            line = f"*{label}:* {value}".rstrip()
+        lines_out.append(line)
+    return "\n".join(lines_out).strip()
 
 
 def _ends_in_one_question(text_out: str) -> bool:
@@ -270,7 +319,12 @@ def _passes_reply_checks(text_out: str, facts: dict[str, Any]) -> bool:
             value = captured.get(key)
             if not value:
                 continue
-            if not any(line.startswith(f"{label}:") and value in line for line in lines):
+            # #1277: read through the label parser so a bold "*Problem:*" line
+            # counts the same as a plain one.
+            if not any(
+                (field := _field_line(line)) and field[0] == label and value in field[1]
+                for line in lines
+            ):
                 return False
     return _ends_in_one_question(text_out)
 
@@ -351,12 +405,14 @@ def compose_ideate_reply(db: Session, *, result: dict[str, Any], user_message: s
     """S3: compose the WhatsApp reply for a ``create_idea`` response from its
     FACTS (R5), falling back to the shared-service ``reply_text`` template on any
     LLM failure or a reply that fails the deterministic checks (AC-1301 to
-    AC-1305, AC-1310, AC-1311)."""
+    AC-1305, AC-1310, AC-1311). Either way the text goes through
+    ``_format_ideate_reply`` (#1277: bold labels, title only on ``complete``)."""
     fallback_text = str(result.get("reply_text") or "")
     facts = _ideate_reply_facts(result)
-    return _compose_ideate_reply_from_facts(
+    composed = _compose_ideate_reply_from_facts(
         db, facts=facts, user_message=user_message, fallback_text=fallback_text
     )
+    return _format_ideate_reply(composed, facts)
 
 
 def compose_ideate_denial_reply(db: Session, *, user_message: str, fallback_text: str) -> str:
@@ -736,6 +792,9 @@ def handle_turn(
     clients = media_clients or default_clients()
     attachments: list[dict[str, Any]] = []
     menu_text: str | None = None
+    # #1277 W4: the menu's own entries, numbered as the menu numbers them, so the
+    # caller (the chatbot's ideate lane) can send the images alongside the text.
+    offered_media: list[dict[str, Any]] = []
 
     if media_selection is not None and pending_media:
         # (2a) Selection answer (DC-7): resolve positions → snapshot picked media.
@@ -764,6 +823,10 @@ def handle_turn(
         if candidates:
             pending_media = _candidates_to_state(candidates)
             menu_text = build_menu_text(candidates)
+            offered_media = [
+                {"position": i, "kind": c.kind, "url": c.url, "filename": c.filename}
+                for i, c in enumerate(candidates, start=1)
+            ]
 
     # (3) brain extraction (D-CONFIRM): structured update, never free text.
     #     next_field / the duplicate candidate's title ride along as CONTEXT ONLY
@@ -899,6 +962,7 @@ def handle_turn(
         "status": status_val,
         "reply_text": reply_text,
         "session_vars": new_session_vars,
+        "offered_media": offered_media,
     }
     if link:
         response["link"] = link

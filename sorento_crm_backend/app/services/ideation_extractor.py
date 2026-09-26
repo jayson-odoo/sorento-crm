@@ -243,11 +243,13 @@ def extract_ideate_turn(
     # existing one, and no way to know a title already exists to keep stable
     # (AC-1219's "extended, not overwritten"; title stability).
     if captured:
-        captured_lines = "; ".join(f"{k}: {v}" for k, v in captured.items())
+        # #1277: one field per line. A "; "-joined list here was the same glue the
+        # owner then saw inside a merged Problem value.
+        captured_lines = "\n".join(f"- {k}: {v}" for k, v in captured.items())
         context_lines.append(
-            f"Already captured so far (EXTEND these when the message adds more "
-            f"detail to one of them - output the FULL merged value, never just "
-            f"the new sentence alone): {captured_lines}"
+            "Already captured so far (EXTEND these when the message adds more "
+            "detail to one of them - output the FULL merged value, rewritten as one "
+            "clean statement, never just the new sentence alone):\n" + captured_lines
         )
     if prior_title:
         context_lines.append(

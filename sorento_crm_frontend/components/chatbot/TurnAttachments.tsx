@@ -13,13 +13,16 @@ import { Badge } from '@/components/ui/badge';
 
 /** One file `actions[].kind === 'send_attachments'` carries (backend
  * `app/services/chatbot/engine.py::_clean_attachments`): `{url, filename, mimeType,
- * attachmentType[, uploadedAt]}` and nothing else. */
+ * attachmentType[, uploadedAt]}`, plus `caption` on the images the ideate lane offers
+ * (#1277, `lanes/ideate.py::offered_images`: the menu number the customer replies
+ * with). */
 export interface TurnAttachment {
   url: string;
   filename: string;
   mimeType: string;
   attachmentType: string;
   uploadedAt?: string | null;
+  caption?: string | null;
 }
 
 function isAttachment(value: unknown): value is TurnAttachment {
@@ -59,6 +62,19 @@ export function extractTurnAttachments(actions: unknown): TurnAttachment[] {
   return Array.isArray(list) ? list.filter(isAttachment) : [];
 }
 
+/** An image the turn sends, as the customer sees it: the picture, then its caption
+ * (#1277). A remote CDN url, so a plain img, same as the console's own MediaPreview. */
+function ImageAttachment({ file }: { file: TurnAttachment }) {
+  return (
+    <figure className="w-fit">
+      <a href={file.url} target="_blank" rel="noopener noreferrer" title={file.filename}>
+        <img src={file.url} alt={file.filename} className="max-h-40 rounded-lg object-cover" />
+      </a>
+      {file.caption ? <figcaption className="mt-0.5 text-xs text-muted-foreground">{file.caption}</figcaption> : null}
+    </figure>
+  );
+}
+
 /**
  * The files a turn's `send_attachments` action would send, under the reply it belongs
  * to. Console-verification surface (`documentation/agents/chatbot-verification.md`):
@@ -73,7 +89,10 @@ export function TurnAttachments({ attachments }: { attachments: TurnAttachment[]
 
   return (
     <div className="mt-1.5 space-y-1" data-testid="turn-attachments">
-      {attachments.map((file, i) => (
+      {attachments.map((file, i) =>
+        file.attachmentType === 'image' ? (
+          <ImageAttachment key={`${file.url}-${i}`} file={file} />
+        ) : (
         <div key={`${file.url}-${i}`} className="flex items-center gap-1.5 text-xs">
           <Paperclip className="size-3.5 shrink-0 text-muted-foreground" />
           <a
