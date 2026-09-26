@@ -1,6 +1,6 @@
 # PLAN - Chatbot memory: contact profile, episodes and turn context under a token budget
 
-Status: DRAFT round 2, 26 Sep 2026. Owner rulings of 26 Sep 23:45 MYT applied (grill
+Status: lane A (S0 to S3) BUILT on PR #1304, 27 Sep 2026, awaiting review and the owner's S3T test; S4 is lane B, not started. Round 3 rulings and mockups applied as recorded in `chatbot-memory-lane-a-contract.md`. Earlier: DRAFT round 2, 26 Sep 2026, owner rulings of 26 Sep 23:45 MYT applied (grill
 questions 1, 2, 7, 10); questions 3, 4, 5, 6, 8, 9 answered in plain language and re-asked
 on PR #1284 (comment 5847656721, "Answers to the owner's questions (round 2)"); 11 to 18 still open.
 Track: full (migration, parser prompt change, staff screen, expected diff well over 300 lines).
