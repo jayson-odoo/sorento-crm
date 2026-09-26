@@ -516,6 +516,11 @@ export default function PdfViewerImpl({
   };
 
   const onSearchKeyDown = (event: React.KeyboardEvent) => {
+    // Ctrl/Cmd shortcuts go on to the viewer (Ctrl+F, zoom). Every other key is typing:
+    // kept from a dialog around the viewer, which binds the arrows to its slides and
+    // + and - to its image zoom.
+    if (event.ctrlKey || event.metaKey) return;
+    event.stopPropagation();
     if (event.key !== 'Enter') return;
     event.preventDefault();
     step(event.shiftKey ? -1 : 1);

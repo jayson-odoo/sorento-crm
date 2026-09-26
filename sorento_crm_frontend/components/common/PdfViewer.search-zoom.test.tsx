@@ -260,6 +260,18 @@ describe('PdfViewer search', () => {
     expect(zoomLabel()).toBe(before);
   });
 
+  it('keeps keys typed in the box from the page around it', async () => {
+    // A dialog around the viewer binds the arrows to its slides and + / - to its image zoom.
+    const { region, outer } = await renderViewer();
+    fireEvent.keyDown(region, { key: 'f', ctrlKey: true });
+    const box = screen.getByRole('searchbox');
+
+    for (const key of ['ArrowLeft', 'ArrowRight', '+', '-', 'a'])
+      fireEvent.keyDown(box, { key });
+
+    expect(outer).not.toHaveBeenCalled();
+  });
+
   it('says a scan has no searchable text', async () => {
     fakePdfJs.setPageTexts([]);
     const { region } = await renderViewer();
