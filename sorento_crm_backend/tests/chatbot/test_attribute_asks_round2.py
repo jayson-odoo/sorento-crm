@@ -502,3 +502,75 @@ def test_w4_a_bare_number_after_a_listed_page_is_not_read_as_another_page(chat, 
     pick = chat.say("2", _bare(**parser_reads))
     assert "Here are 3 to 4" not in pick and "Here are the first 2" not in pick, pick
     assert not [c for c in chat.calls[before:] if len(c["args"].get("product_ids") or []) == 2], chat.calls[before:]
+
+
+# --------------------------------------------------------------------------- #
+# W5: the brand preference knob                                                 #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture()
+def sorento_default(world):
+    from app.models.product import Brand
+
+    db = world["db"]
+    db.query(Brand).update({Brand.is_chatbot_default: False})
+    world["sorento"].is_chatbot_default = True
+    db.commit()
+    return world
+
+
+def test_w5_no_brand_named_answers_the_default_brand_first_and_names_the_others(chat, sorento_default):
+    world = sorento_default
+    text = chat.say(
+        "which wash basin has stock",
+        _stock_verdict([{"raw": "wash basin", "hint": "product_type"}], "which wash basin has stock"),
+    )
+    first = text.splitlines()[0]
+    brand, other = _display(world["sorento"].brand_name), _display(world["mocha"].brand_name)
+    assert first.startswith(f"Brand: {brand} (default), Product type: Wash basin. 5 wash basins have stock."), text
+    assert f"Other brands: {other} 3, name one to see them." in first, text
+    assert _codes_in(text, world) == _codes(world["srt_basins"][:3] + world["srt_wall"]), text
+
+
+def test_w5_naming_a_brand_answers_that_brand_only(chat, sorento_default):
+    world = sorento_default
+    mocha = world["mocha"].brand_name
+    text = chat.say(
+        f"which {mocha.lower()} wash basin has stock",
+        _stock_verdict(_brand_entity_shapes(mocha.lower(), "wash basin")[0], "which wash basin has stock"),
+    )
+    first = text.splitlines()[0]
+    assert first.startswith(f"Brand: {_display(mocha)}, Product type: Wash basin. 3 wash basins have stock."), text
+    assert "(default)" not in first and "Other brands" not in first, text
+    assert _codes_in(text, world) == _codes(world["mch_basins"] + world["mch_wall"]), text
+
+
+def test_w5_a_default_brand_with_nothing_in_the_set_leaves_the_set_whole(chat, sorento_default):
+    """Sorento has no water closet with stock except its one wall hung WC; Mocha has none.
+    A set the default brand does not reach at all is answered across brands."""
+    world = sorento_default
+    db = world["db"]
+    world["sorento"].is_chatbot_default = False
+    world["mocha"].is_chatbot_default = True
+    db.commit()
+    text = chat.say(
+        "which water closet has stock",
+        _stock_verdict([{"raw": "water closet", "hint": "product_type"}], "which water closet has stock"),
+    )
+    assert "(default)" not in text, text
+    assert _codes_in(text, world) == _codes(world["srt_wc"]), text
+
+
+def test_w5_a_page_of_the_default_brand_set_keeps_the_default(chat, sorento_default, small_list):
+    world = sorento_default
+    chat.say(
+        "which wash basin has stock",
+        _stock_verdict([{"raw": "wash basin", "hint": "product_type"}], "which wash basin has stock"),
+    )
+    page = chat.say("2", _bare())
+    first = page.splitlines()[0]
+    assert first.startswith(
+        f"Brand: {_display(world['sorento'].brand_name)} (default), Product type: Wash basin. 5 wash basins have stock."
+    ), page
+    assert set(_listed(page, world)) <= _codes(world["srt_basins"][:3] + world["srt_wall"]), page
