@@ -64,6 +64,14 @@ reading the `stock` table.
   them on pushed companies. No `stock_pushed_at`, no mode read. Pull keeps its 409 `PUSH_ACTIVE`
   handling unchanged.
 
+- D13. Follow-up fix (small fix track, 26 Sep 2026): the chatbot stock "Data last updated"
+  footer read only the system-wide last BULK_IMPORT, and a push writes no ledger row (D11) and
+  skips `updated_at` on an unchanged value, so it never moved. Every non-dry batch with at least
+  one accepted record (ingest `created`/`updated`, deletions `deleted`) now stamps
+  `companies.stock_push_confirmed_at` (migration sb3), and `StockService.list_stock` stamps each
+  row with its own company's latest of (last BULK_IMPORT, last push batch).
+  Tests: `tests/test_stock_last_updated_push.py`.
+
 ## Slices
 
 - SR5a BE: D1-D11, one migration (grants), pytest against the corrected A7 fixtures.

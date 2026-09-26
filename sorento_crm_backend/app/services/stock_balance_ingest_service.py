@@ -322,7 +322,27 @@ class StockBalanceIngestService:
                 # a partially-applied preview sitting in the session for
                 # whatever commits next.
                 self.db.rollback()
+        if not dry_run and any(
+            r.outcome in (IngestOutcome.CREATED, IngestOutcome.UPDATED) for r in result.records
+        ):
+            self._stamp_push_confirmed()
         return result
+
+    def _stamp_push_confirmed(self) -> None:
+        """Record that AutoCount just confirmed this company's stock.
+
+        The chatbot's "Data last updated" reads it (`StockService.
+        stock_last_updated_by_company`). An unchanged value is still a
+        confirmation, and it writes no ledger row and skips `updated_at`, so
+        without this a push every 5 minutes never moved that time. Stamped
+        when at least one record was accepted: a batch that is all
+        `failed`/`retryable` confirmed nothing. Same transaction as the
+        records, so the route's one commit (or a rollback) covers both.
+        """
+        self.db.execute(
+            text("UPDATE companies SET stock_push_confirmed_at = :now WHERE id = :cid"),
+            {"now": datetime.utcnow(), "cid": self.company_id},
+        )
 
     def _ingest_one(self, raw: dict) -> RecordResult:
         source_ref = raw.get("source_ref") if isinstance(raw, dict) else None
@@ -571,6 +591,9 @@ class StockBalanceIngestService:
         finally:
             if dry_run:
                 self.db.rollback()
+        # A zeroing is AutoCount confirming the pair too (see `_stamp_push_confirmed`).
+        if not dry_run and any(r.outcome == DeletionOutcome.DELETED for r in result.records):
+            self._stamp_push_confirmed()
         return result
 
     def _delete_one(self, ref: str, pair: Any) -> DeletionRecordResult:
