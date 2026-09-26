@@ -577,3 +577,136 @@ class TestOrderingOnTheWaitingRequest:
         assert waiting.duplicate is True
         assert engine_mod.GENERIC_ERROR_REPLY not in _texts(waiting.actions)
         assert _turn_for(session_factory, contact_id, PHOTO_MESSAGE_ID).status == "done"
+
+
+def _queued_row(session_factory, contact_id: int, *, message_id: str, sent_ms: int, text_: str) -> str:
+    envelope = _base_envelope(
+        contact_id, message_id=message_id, sent_ms=sent_ms, inner={"type": "text", "text": text_}
+    )
+    db = session_factory()
+    return str(engine_mod._insert_turn(db, envelope=envelope, contact_respond_id=str(contact_id), queued=True).id)
+
+
+class TestReviewRound1:
+    """Reviewer round 1: stuck rows, best effort, and dry-run isolation (D14)."""
+
+    def test_a_queued_row_stuck_before_an_answered_turn_is_never_replayed(
+        self, session_factory, stub_access, monkeypatch
+    ):
+        contact_id = _fresh_contact_id()
+        _seed_contact(session_factory, contact_id, focus_codes=[])
+        stub_access()
+        calls: list[str] = []
+        _install_parser(monkeypatch, calls)
+        stuck = _queued_row(
+            session_factory, contact_id, message_id="ZZT-stuck", sent_ms=PHOTO_SENT_MS - 3 * 86_400_000,
+            text_="killed by a deploy",
+        )
+        db = session_factory()
+        db.execute(
+            text("UPDATE turns SET started_at = now() - interval '3 days' WHERE id = :id"), {"id": stuck}
+        )
+        db.commit()
+        _seed_previous_turn(session_factory, contact_id, days_ago=2)
+
+        engine_mod.run_turn(_stock_envelope(contact_id), session_factory=session_factory)
+
+        assert [_message_line(c) for c in calls] == ["Stock"]
+        assert engine_mod._claim_own_row(session_factory, stuck) is True, "left untouched"
+
+    def test_a_failure_taking_a_second_earlier_message_keeps_the_first_answer_and_this_turn(
+        self, session_factory, stub_access, monkeypatch
+    ):
+        from app.services.chatbot import send_order
+
+        contact_id = _fresh_contact_id()
+        _seed_contact(session_factory, contact_id, focus_codes=[])
+        stub_access()
+        calls: list[str] = []
+        _install_parser(monkeypatch, calls)
+        first = _queued_row(
+            session_factory, contact_id, message_id="ZZT-a", sent_ms=PHOTO_SENT_MS, text_="M210-GM"
+        )
+        second = _queued_row(
+            session_factory, contact_id, message_id="ZZT-b", sent_ms=PHOTO_SENT_MS + 1000, text_="hello"
+        )
+        real_claim = send_order.claim
+
+        def _claim(db, turn_id):
+            if turn_id == second:
+                raise RuntimeError("database went away")
+            return real_claim(db, turn_id)
+
+        monkeypatch.setattr(send_order, "claim", _claim)
+
+        result = engine_mod.run_turn(_stock_envelope(contact_id), session_factory=session_factory)
+
+        assert [_message_line(c) for c in calls] == ["M210-GM", "Stock"]
+        first_row = session_factory().query(ChatbotTurn).filter(ChatbotTurn.id == first).first()
+        assert _texts(result.actions)[0] == _texts(first_row.response["actions"])[0]
+        assert engine_mod.GENERIC_ERROR_REPLY not in _texts(result.actions)
+        assert _turn_for(session_factory, contact_id, STOCK_MESSAGE_ID).status == "done"
+
+    def test_a_failing_lookup_answers_this_turn_alone(self, session_factory, stub_access, monkeypatch):
+        from app.services.chatbot import send_order
+
+        contact_id = _fresh_contact_id()
+        _seed_contact(session_factory, contact_id, focus_codes=[])
+        stub_access()
+        calls: list[str] = []
+        _install_parser(monkeypatch, calls)
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("ledger query broke")
+
+        monkeypatch.setattr(send_order, "earlier_unanswered", _boom)
+
+        result = engine_mod.run_turn(_stock_envelope(contact_id), session_factory=session_factory)
+
+        assert [_message_line(c) for c in calls] == ["Stock"]
+        assert engine_mod.GENERIC_ERROR_REPLY not in _texts(result.actions)
+
+    def test_a_dry_run_never_claims_or_answers_live_messages(
+        self, session_factory, stub_access, media_pipeline, monkeypatch
+    ):
+        """D14: a test "Stock" from the Prompts screen against a real contact must not
+        answer the customer's waiting photo or queued message."""
+        contact_id = _fresh_contact_id()
+        _seed_contact(session_factory, contact_id, focus_codes=YESTERDAY_CODES)
+        _seed_media_limit(session_factory, contact_id=contact_id, modality="image")
+        _seed_settings(session_factory, media_sync_wait_seconds=5)
+        media_pipeline.set_result(PHOTO_RESULT)
+        stub_access()
+        calls: list[str] = []
+        _install_parser(monkeypatch, calls)
+        _n8n_media_intake(session_factory, contact_id, monkeypatch)
+        queued = _queued_row(
+            session_factory, contact_id, message_id="ZZT-live", sent_ms=PHOTO_SENT_MS, text_="M210-GM"
+        )
+
+        test_turn = _stock_envelope(contact_id)
+        test_turn.is_test = True
+        engine_mod.run_turn(test_turn, session_factory=session_factory)
+
+        assert [_message_line(c) for c in calls] == ["Stock"]
+        assert _turn_for(session_factory, contact_id, PHOTO_MESSAGE_ID) is None
+        assert engine_mod._claim_own_row(session_factory, queued) is True
+
+    def test_a_dry_run_judges_focus_age_by_the_live_turns_that_left_it(
+        self, session_factory, stub_access, monkeypatch
+    ):
+        """Turn 378 must be reproducible from the Prompts screen: the dry run reads the
+        live focus, so the live turns decide its age."""
+        contact_id = _fresh_contact_id()
+        _seed_contact(session_factory, contact_id, focus_codes=YESTERDAY_CODES)
+        _seed_previous_turn(session_factory, contact_id, days_ago=1)
+        stub_access()
+        calls: list[str] = []
+        _install_parser(monkeypatch, calls)
+
+        test_turn = _stock_envelope(contact_id)
+        test_turn.is_test = True
+        result = engine_mod.run_turn(test_turn, session_factory=session_factory)
+
+        row = session_factory().query(ChatbotTurn).filter(ChatbotTurn.id == result.turn_id).first()
+        assert any(entry.get("kind") == "stale_focus" for entry in (row.trace or []))

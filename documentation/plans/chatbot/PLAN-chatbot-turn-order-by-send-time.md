@@ -47,9 +47,25 @@ Each earlier message runs as its own turn on its own row with its own trace; its
 put ahead of this turn's in the one response n8n executes in order. "Stock" then reads the
 focus the photo left.
 
-Not covered, by construction: a message the CRM has not seen at all when a later one is
-answered. After S6 that window is the time between two respond.io webhooks. W4 below is the
-guard for what is left of it.
+Bounds, all states and none of them clocks: a queued row counts only if it arrived after the
+contact's latest answered turn (a row whose request died in a deploy is history); a ledger row
+only if its job is still queued or running and it was written after the contact's previous turn.
+The whole pre-step is best effort: a failure in it costs the ordering, never this turn and never
+an answer already given. A test turn (dry run) never claims or answers a live message (D14).
+
+Not covered, and accepted:
+
+- A message the CRM has not seen at all when a later one is answered. After S6 that window is
+  the time between two respond.io webhooks. The stale-focus guard below covers what is left.
+- One response now carries the earlier message's turn (including its bounded media poll, up to
+  `media_sync_wait_seconds`) plus this one. That runs against n8n's 90 s `chat-turn` timeout,
+  the 60 s worker deadline when turns are offloaded, and successors' 45 s queue wait. If the
+  request carrying both answers dies, the earlier message's answer dies with it, and that
+  message's own delivery is a duplicate that sends nothing.
+- A photo whose extraction FAILS or outlives the sync wait while answered this way gets the CRM's
+  "could not read" / "still reading" reply. If n8n still takes its own `media-route` `reply` arm
+  for that job, the customer gets two such messages; on the `continue` arm the late delivery is
+  a duplicate and sends nothing. Owner to check the arm mapping; S6 removes the question.
 
 ## Stale focus (R3-6)
 
@@ -57,7 +73,10 @@ A bare business ask (no entity, `entity_op: reuse`, not answering an open questi
 left by a turn that started on an EARLIER local day (Asia/Kuala_Lumpur) drops the carried
 products before APPLY. The turn then gets the existing bare-stock contract reply ("That would
 search every stock we have - I need at least one filter to narrow it down. Give me a product
-code, ..."), as a contact with no focus does. No previous turn: age unknown, focus untouched.
+code, ..."), as a contact with no focus does. The age is the contact's last FINISHED live turn
+(a photo answered first inside the same turn finishes before it and counts as today; a dry run
+reads the live focus, so it reads the live turns too). Any finished turn counts, a casual
+"good morning" included. No finished turn: age unknown, focus untouched.
 
 ## n8n steps for the owner (plan S6, not touched by this lane)
 

@@ -792,12 +792,25 @@ def _answer_earlier_messages(
 
     Each is answered as its own turn, on its own row with its own trace, exactly as its
     own delivery would have been, so the focus it leaves is what this turn then reads.
+
+    Best effort, all of it: a failure here costs the ordering, never this turn, and never
+    the answers already given (their rows are closed, so their own deliveries will be
+    duplicates and these actions are the only copy that gets sent).
     """
-    with _session(session_factory) as db:
-        me = db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).first()
-        if me is None:  # pragma: no cover - inserted by the caller
-            return []
-        earlier = send_order.earlier_unanswered(db, contact_respond_id=contact_respond_id, me=me)
+    try:
+        with _session(session_factory) as db:
+            me = db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).first()
+            if me is None:  # pragma: no cover - inserted by the caller
+                return []
+            earlier = send_order.earlier_unanswered(db, contact_respond_id=contact_respond_id, me=me)
+    except Exception:  # noqa: BLE001 - ordering is an improvement, not a precondition
+        logger.warning(
+            "chatbot send order: could not look up earlier messages for %s; answering "
+            "this turn alone",
+            contact_respond_id,
+            exc_info=True,
+        )
+        return []
     if not earlier:
         return []
 
@@ -817,20 +830,29 @@ def _answer_earlier_messages(
                 exc_info=True,
             )
             continue
-        with _session(session_factory) as db:
-            if item.row_id is not None:
-                if not send_order.claim(db, item.row_id):
-                    continue
-                earlier_id = item.row_id
-            else:
-                try:
-                    earlier_id = str(
-                        _insert_turn(db, envelope=earlier_envelope, contact_respond_id=contact_respond_id).id
-                    )
-                except IntegrityError:
-                    # Its own delivery reached the CRM in the meantime and owns it now.
-                    db.rollback()
-                    continue
+        try:
+            with _session(session_factory) as db:
+                if item.row_id is not None:
+                    if not send_order.claim(db, item.row_id):
+                        continue
+                    earlier_id = item.row_id
+                else:
+                    try:
+                        earlier_id = str(
+                            _insert_turn(db, envelope=earlier_envelope, contact_respond_id=contact_respond_id).id
+                        )
+                    except IntegrityError:
+                        # Its own delivery reached the CRM in the meantime and owns it now.
+                        db.rollback()
+                        continue
+        except Exception:  # noqa: BLE001 - see the docstring: best effort
+            logger.warning(
+                "chatbot send order: could not take an earlier message of %s; it is left "
+                "to its own delivery",
+                contact_respond_id,
+                exc_info=True,
+            )
+            continue
         result = _answer_claimed(
             earlier_envelope,
             session_factory=session_factory,

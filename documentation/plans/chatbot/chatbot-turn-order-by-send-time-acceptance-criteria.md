@@ -26,3 +26,11 @@ Plan: `PLAN-chatbot-turn-order-by-send-time.md`. Tests:
   `T::TestStaleFocusOnABareDomainWord::test_turn_378_bare_stock_on_yesterdays_focus_asks_which_product`
 - AC-8 The same "Stock" on a focus from a turn earlier today still answers it.
   `T::TestStaleFocusOnABareDomainWord::test_bare_stock_on_a_focus_named_today_still_answers_it`
+- AC-9 A queued row stuck before an answered turn is never replayed.
+  `T::TestReviewRound1::test_a_queued_row_stuck_before_an_answered_turn_is_never_replayed`
+- AC-10 The pre-step is best effort: a failure keeps earlier answers and this turn.
+  `T::TestReviewRound1::test_a_failure_taking_a_second_earlier_message_keeps_the_first_answer_and_this_turn`,
+  `T::TestReviewRound1::test_a_failing_lookup_answers_this_turn_alone`
+- AC-11 D14: a dry run never claims or answers a live message, and judges focus age by the
+  live turns. `T::TestReviewRound1::test_a_dry_run_never_claims_or_answers_live_messages`,
+  `T::TestReviewRound1::test_a_dry_run_judges_focus_age_by_the_live_turns_that_left_it`

@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -100,7 +100,13 @@ class Earlier:
 
 
 def _epoch_ms(value: datetime | None) -> float:
-    return value.timestamp() * 1000 if isinstance(value, datetime) else 0.0
+    """`contact_media_usage.created_at` is a naive UTC timestamp (the app's sessions run
+    in UTC), so it is marked UTC before conversion, never read as the process's zone."""
+    if not isinstance(value, datetime):
+        return 0.0
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.timestamp() * 1000
 
 
 def earlier_unanswered(db: Session, *, contact_respond_id: str, me: ChatbotTurn) -> list[Earlier]:
@@ -112,17 +118,20 @@ def earlier_unanswered(db: Session, *, contact_respond_id: str, me: ChatbotTurn)
     found: list[Earlier] = []
 
     if my_sent is not None:
-        queued = (
-            db.query(ChatbotTurn)
-            .filter(
-                ChatbotTurn.contact_respond_id == contact_respond_id,
-                ChatbotTurn.is_test.is_(False),
-                ChatbotTurn.status == "processing",
-                ChatbotTurn.stage == QUEUED_STAGE,
-                ChatbotTurn.id != me.id,
-            )
-            .all()
+        query = db.query(ChatbotTurn).filter(
+            ChatbotTurn.contact_respond_id == contact_respond_id,
+            ChatbotTurn.is_test.is_(False),
+            ChatbotTurn.status == "processing",
+            ChatbotTurn.stage == QUEUED_STAGE,
+            ChatbotTurn.id != me.id,
         )
+        # A row whose request died while it waited (a deploy killed the process) stays
+        # `processing / queued` for good. It arrived before a turn that has since been
+        # answered, so it is history, never a message on its way. State, not a clock.
+        last_answered = _latest_finished_arrival(db, contact_respond_id=contact_respond_id, me=me)
+        if last_answered is not None:
+            query = query.filter(ChatbotTurn.started_at > last_answered)
+        queued = query.all()
         for row in queued:
             if row.message_id is not None and row.message_id == me.message_id:
                 continue
@@ -133,6 +142,22 @@ def earlier_unanswered(db: Session, *, contact_respond_id: str, me: ChatbotTurn)
 
     found.extend(_ledger_only_media(db, contact_respond_id=contact_respond_id, me=me))
     return sorted(found, key=lambda e: e.order_key)
+
+
+def _latest_finished_arrival(db: Session, *, contact_respond_id: str, me: ChatbotTurn) -> datetime | None:
+    """When the latest ANSWERED turn of this contact arrived (its `started_at`)."""
+    row = (
+        db.query(ChatbotTurn.started_at)
+        .filter(
+            ChatbotTurn.contact_respond_id == contact_respond_id,
+            ChatbotTurn.is_test.is_(False),
+            ChatbotTurn.id != me.id,
+            ChatbotTurn.finished_at.isnot(None),
+        )
+        .order_by(ChatbotTurn.started_at.desc())
+        .first()
+    )
+    return row[0] if row is not None else None
 
 
 def _ledger_only_media(db: Session, *, contact_respond_id: str, me: ChatbotTurn) -> list[Earlier]:
@@ -222,6 +247,9 @@ def ledger_envelope(my_envelope: dict[str, Any], earlier: Earlier) -> dict[str, 
     body = envelope.setdefault("message", {})
     inner = copy.deepcopy(body.get("message")) if isinstance(body.get("message"), dict) else {}
     inner.pop("timestamp", None)
+    # The text's quote (if it quoted something) is not the photo's.
+    inner.pop("replyTo", None)
+    inner.pop("reply_to", None)
     inner["messageId"] = earlier.message_id
     attachment: dict[str, Any] = {
         "type": "image" if earlier.modality == "image" else "audio",
@@ -246,6 +274,11 @@ def previous_turn_on_earlier_day(
 ) -> bool:
     """Was the focus left by a turn that finished on an earlier local day than today?
 
+    Read on LIVE turns even for a dry run: a test turn reads the live contact's
+    `session_vars`, so it is the live turns that left that focus (reading writes nothing,
+    D14 holds). Any finished turn counts, a casual one included: "good morning" today
+    means the conversation is today's, and the owner can tighten that if needed.
+
     The focus is written when a turn finishes, so the last FINISHED turn is the one that
     left it. Read by finish, not by arrival: an earlier-sent photo answered inside this
     very turn (above) arrived after it but finished just now, and the focus it left is
@@ -255,7 +288,7 @@ def previous_turn_on_earlier_day(
         db.query(ChatbotTurn.finished_at)
         .filter(
             ChatbotTurn.contact_respond_id == contact_respond_id,
-            ChatbotTurn.is_test.is_(bool(is_test)),
+            ChatbotTurn.is_test.is_(False),
             ChatbotTurn.id != turn_id,
             ChatbotTurn.finished_at.isnot(None),
         )
