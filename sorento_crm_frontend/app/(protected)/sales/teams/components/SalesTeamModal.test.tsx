@@ -1,0 +1,139 @@
+/**
+ * The team modal (UAC S6-12, S6-15; owner rulings 26 Sep 06:01 (Lavish) N2, N8 and
+ * 26 Sep 06:09 T2).
+ *
+ * One modal for Add and Edit: Name, Agents (our standard multi-select of active agents, each
+ * option labelled with the team they are in now), Active. **Moves on** (a date, default today,
+ * not clearable) appears only when a picked agent is in another team.
+ */
+import React from 'react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { todayMalaysiaYyyyMmDd } from '@/lib/helpers';
+
+vi.mock('@/components/common/SearchableMultiSelect', () => ({
+  SearchableMultiSelect: (props: {
+    value: string[];
+    onChange: (v: string[]) => void;
+    options?: { value: string; label: string }[];
+  }) => (
+    <fieldset aria-label="Agents">
+      {(props.options ?? []).map((o) => (
+        <label key={o.value}>
+          <input
+            type="checkbox"
+            checked={props.value.includes(o.value)}
+            onChange={(e) =>
+              props.onChange(
+                e.target.checked
+                  ? [...props.value, o.value]
+                  : props.value.filter((v) => v !== o.value),
+              )
+            }
+          />
+          {o.label}
+        </label>
+      ))}
+    </fieldset>
+  ),
+}));
+
+const save = vi.hoisted(() => ({ mutateAsync: vi.fn(), isPending: false }));
+vi.mock('../hooks/useSalesTeams', () => ({
+  useSalesTeamAgentOptions: () => ({
+    data: [
+      { id: 'ali', code: 'ALI', label: 'ALI - Ali Hassan', team_id: 'north', team_name: 'North' },
+      { id: 'sean', code: 'SEAN I', label: 'SEAN I - Sean Lee', team_id: 'central', team_name: 'Central' },
+      { id: 'raj', code: 'RAJ', label: 'RAJ - Raj Kumar', team_id: null, team_name: null },
+    ],
+    isLoading: false,
+  }),
+  useSaveSalesTeam: () => save,
+}));
+
+import SalesTeamModal from './SalesTeamModal';
+
+beforeEach(() => {
+  save.mutateAsync.mockReset();
+  save.mutateAsync.mockResolvedValue({ id: 'new' });
+});
+
+describe('SalesTeamModal', () => {
+  it('labels each agent option with the team they are in now', () => {
+    render(<SalesTeamModal open onOpenChange={() => {}} team={null} />);
+    expect(screen.getByText('SEAN I - Sean Lee (now in Central)')).toBeTruthy();
+    expect(screen.getByText('RAJ - Raj Kumar (no team)')).toBeTruthy();
+  });
+
+  it('shows Moves on, defaulting to today, only once a picked agent is in another team', () => {
+    render(<SalesTeamModal open onOpenChange={() => {}} team={null} />);
+    fireEvent.click(screen.getByLabelText('RAJ - Raj Kumar (no team)'));
+    expect(screen.queryByLabelText('Moves on')).toBeNull();
+
+    fireEvent.click(screen.getByLabelText('SEAN I - Sean Lee (now in Central)'));
+    const movesOn = screen.getByLabelText('Moves on') as HTMLInputElement;
+    expect(movesOn.value).toBe(todayMalaysiaYyyyMmDd());
+    expect(movesOn.max).toBe(todayMalaysiaYyyyMmDd());
+    expect(movesOn.required).toBe(true);
+  });
+
+  it('creates the team with its agents and the move date', async () => {
+    const onOpenChange = vi.fn();
+    render(<SalesTeamModal open onOpenChange={onOpenChange} team={null} />);
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: '  North  ' } });
+    fireEvent.click(screen.getByLabelText('SEAN I - Sean Lee (now in Central)'));
+    fireEvent.change(screen.getByLabelText('Moves on'), { target: { value: '2026-09-20' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(save.mutateAsync).toHaveBeenCalledTimes(1));
+    expect(save.mutateAsync).toHaveBeenCalledWith({
+      teamId: null,
+      name: 'North',
+      is_active: true,
+      sales_agent_ids: ['sean'],
+      moves_on: '2026-09-20',
+    });
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+  });
+
+  it('sends no move date when nobody is moving', async () => {
+    render(<SalesTeamModal open onOpenChange={() => {}} team={null} />);
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'West' } });
+    fireEvent.click(screen.getByLabelText('RAJ - Raj Kumar (no team)'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(save.mutateAsync).toHaveBeenCalledTimes(1));
+    expect(save.mutateAsync.mock.calls[0][0].moves_on).toBeUndefined();
+  });
+
+  it('will not save a blank name', () => {
+    render(<SalesTeamModal open onOpenChange={() => {}} team={null} />);
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: '   ' } });
+    const saveButton = screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement;
+    expect(saveButton.disabled).toBe(true);
+  });
+
+  it('edits an existing team: its own agents are not "moving", Active can be switched off', async () => {
+    render(
+      <SalesTeamModal
+        open
+        onOpenChange={() => {}}
+        team={{ id: 'north', name: 'North', is_active: true, sales_agent_ids: ['ali'] }}
+      />,
+    );
+    expect(screen.getByText('Edit team')).toBeTruthy();
+    expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('North');
+    // Ali is in North already: listed without a "now in" note, and no Moves on.
+    expect(screen.getByText('ALI - Ali Hassan')).toBeTruthy();
+    expect(screen.queryByLabelText('Moves on')).toBeNull();
+
+    fireEvent.click(screen.getByRole('switch', { name: 'Active' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(save.mutateAsync).toHaveBeenCalledTimes(1));
+    expect(save.mutateAsync).toHaveBeenCalledWith({
+      teamId: 'north',
+      name: 'North',
+      is_active: false,
+      sales_agent_ids: ['ali'],
+    });
+  });
+});
