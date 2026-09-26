@@ -10,7 +10,9 @@ One narrow exception keeps the detail pages' Audit Trail panels working: a read
 filtered to ONE record (`entity_type` + `entity_id`) of a type with a detail-page
 panel is allowed with that record's view permission (the packing list Timeline tab
 included). Every other shape 403s. Both routes also keep to the request's company:
-a row stamped for another company is not returned, on either path.
+a row stamped for another company is not returned, on either path. A non-admin on
+the per-record path with no active company (UNSET, or an empty set) is refused,
+since the admin listing filter treats that state as "every company".
 
 Real roles, permissions and assignments are seeded on a blank schema, so the check
 runs through the real `UserPermissionService`, not a stub.
@@ -26,7 +28,7 @@ from app.main import app
 import app.database as app_database
 from app.dependencies import get_current_user_or_api_key
 from app.models.audit import AuditLog
-from app.models.base import set_company_scope
+from app.models.base import UNSET, set_company_scope
 from app.services.company_scope_resolver import apply_company_scope
 from app.models.user import (
     User,
@@ -108,6 +110,7 @@ def env():
             return TestClient(app)
 
         as_.db = db
+        as_.ids = ids
 
         try:
             yield as_, complaint_id
@@ -208,12 +211,12 @@ def test_the_packing_list_permission_does_not_open_a_complaints_history(env):
 
 # --- company scope ---------------------------------------------------------------
 
-def _row_in(db, company_id, entity_type="complaint"):
+def _row_in(db, company_id, entity_type="complaint", user_id=None):
     entity_id = str(uuid.uuid4())
     db.add(AuditLog(
         id=str(uuid.uuid4()), entity_type=entity_type, entity_id=entity_id,
         action="UPDATE", old_values={"status": "pending"}, new_values={"status": "resolved"},
-        company_id=company_id,
+        company_id=company_id, user_id=user_id,
     ))
     db.commit()
     return entity_id
@@ -236,6 +239,38 @@ def test_one_record_history_does_not_cross_companies(env):
     assert [row["entity_id"] for row in r.json()["data"]] == [in_b]
 
 
+@pytest.mark.parametrize("scope", [UNSET, frozenset()], ids=["unset", "empty"])
+def test_one_record_history_is_closed_to_a_caller_with_no_company(env, scope):
+    # A JWT user with no company grant resolves to UNSET (offboarding clears the
+    # grants, a deleted company cascades them away). The admin listing filter reads
+    # that as "every company", so on 468b2cc6 this staff user got company B's row.
+    as_, _ = env
+    in_b = _row_in(as_.db, COMPANY_B)
+    r = as_("staff", scope).get(f"/api/v1/audit/logs/?entity_type=complaint&entity_id={in_b}")
+    assert r.status_code == 403, r.text
+    assert r.json()["code"] == "audit_company_required"
+
+
+def test_an_unscoped_principal_keeps_the_per_record_read(env):
+    # None is the deliberate all-companies principal (an X-API-Key with no contact
+    # identity, AC-F1); only UNSET and empty fail closed.
+    as_, _ = env
+    in_b = _row_in(as_.db, COMPANY_B)
+    r = as_("staff", None).get(f"/api/v1/audit/logs/?entity_type=complaint&entity_id={in_b}")
+    assert r.status_code == 200, r.text
+    assert [row["entity_id"] for row in r.json()["data"]] == [in_b]
+
+
+@pytest.mark.parametrize("scope", [UNSET, frozenset()], ids=["unset", "empty"])
+def test_an_admin_with_no_company_keeps_reading(env, scope):
+    # Admins keep the admin listing filter's four-state behaviour.
+    as_, _ = env
+    in_b = _row_in(as_.db, COMPANY_B)
+    r = as_("admin", scope).get(f"/api/v1/audit/logs/?entity_type=complaint&entity_id={in_b}")
+    assert r.status_code == 200, r.text
+    assert [row["entity_id"] for row in r.json()["data"]] == [in_b]
+
+
 def test_the_logs_listing_does_not_cross_companies(env):
     as_, _ = env
     in_a = _row_in(as_.db, COMPANY_A)
@@ -250,8 +285,9 @@ def test_the_logs_listing_does_not_cross_companies(env):
 def test_the_activity_feed_does_not_cross_companies(env):
     # a17f4b36: /audit/logs/ hid the company-B row and /audit/activity showed it.
     as_, _ = env
-    in_a = _row_in(as_.db, COMPANY_A)
-    in_b = _row_in(as_.db, COMPANY_B)
+    actor_a, actor_b = as_.ids["plain"], as_.ids["packing"]
+    in_a = _row_in(as_.db, COMPANY_A, user_id=actor_a)
+    in_b = _row_in(as_.db, COMPANY_B, user_id=actor_b)
     r = as_("admin", frozenset({COMPANY_A})).get("/api/v1/audit/activity")
     assert r.status_code == 200, r.text
     body = r.json()
@@ -259,3 +295,7 @@ def test_the_activity_feed_does_not_cross_companies(env):
     assert in_a in ids
     assert in_b not in ids
     assert body["pagination"]["total"] == len(body["items"])
+    # The actors dropdown keeps to the same company as the feed.
+    actor_ids = {a["id"] for a in body["actors"]}
+    assert actor_a in actor_ids
+    assert actor_b not in actor_ids

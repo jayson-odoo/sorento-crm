@@ -124,6 +124,9 @@ def test_a_new_column_is_audited_unless_it_is_a_secret():
         Column("id", String, primary_key=True),
         Column("brand_new_flag", String),
         Column("password", String),
+        # A second deny-listed name, so a derivation that drops only `password`
+        # instead of the whole deny list goes red.
+        Column("sign_token", String),
     )
     assert audit_columns_excluding_secrets(table) == ["id", "brand_new_flag"]
 
