@@ -809,6 +809,17 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
             else:
                 update_data[column] = default
 
+    # #1288 security review (Nits): the column is NOT NULL - an explicit JSON `null`
+    # here (as opposed to the key being absent) would otherwise reach `setattr` below
+    # and 500 at commit instead of being refused as the bad request it is.
+    if (
+        "cost_price_verification_enabled" in update_data
+        and update_data["cost_price_verification_enabled"] is None
+    ):
+        raise HTTPException(
+            status_code=422, detail="cost_price_verification_enabled cannot be null.",
+        )
+
     # #1288 AC-S2-20: the verification switch is the control that lets staff skip a
     # second person, so a change is a named, audited event of its own - not just another
     # row in the generic settings dict.

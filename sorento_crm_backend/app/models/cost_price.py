@@ -39,6 +39,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.orm import deferred
 from sqlalchemy.sql import func
 
 from app.database import Base
@@ -118,7 +119,11 @@ class CostPriceChangeSet(Base, CompanyScopedMixin):
     # not need to pay for (`app/services/import_source_store.py`'s own tests mock the
     # backend for exactly that reason).
     file_name = Column(String(255), nullable=True)
-    source_file_bytes = Column(LargeBinary, nullable=True)
+    # `deferred`: a raw spreadsheet's bytes have no business loading on every list/detail
+    # read of the set - only `get_source_file`'s own download route ever needs them
+    # (S4, security review). `has_source_file`/list serialisation read `source_file_size`
+    # instead, which never forces this column to load.
+    source_file_bytes = deferred(Column(LargeBinary, nullable=True))
     source_file_size = Column(Integer, nullable=True)
     # File name, sheet names, header row per sheet, merged-cell fills, letterhead text.
     source_meta = Column(JSONB, nullable=True)
