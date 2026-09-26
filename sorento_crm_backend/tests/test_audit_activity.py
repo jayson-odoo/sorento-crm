@@ -233,6 +233,7 @@ def _client():
     from app.main import app
     from app.dependencies import get_db, get_current_user, get_current_user_or_api_key
     import app.api.v1.audit.activity as mod
+    from app.api.v1.audit.audit_logs import require_audit_admin
 
     def _fake_db():
         yield MagicMock()
@@ -241,6 +242,8 @@ def _client():
     app.dependency_overrides[get_db] = _fake_db
     app.dependency_overrides[get_current_user] = lambda: _user
     app.dependency_overrides[get_current_user_or_api_key] = lambda: _user
+    # The superadmin gate itself is pinned in tests/test_audit_read_gate.py.
+    app.dependency_overrides[require_audit_admin] = lambda: _user
     return TestClient(app), app, mod
 
 

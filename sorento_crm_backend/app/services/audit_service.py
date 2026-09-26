@@ -24,6 +24,7 @@ def _is_uuid(value: str) -> bool:
 #   __audit_track__ = True
 #   __audit_entity_type__ = "entity_type"  # optional, default __tablename__
 #   __audit_columns__ = ["col1", "col2"]   # optional, default all columns
+# Keys in AUDIT_SECRET_KEYS are dropped either way (see log_audit).
 def _is_audited(obj: Any) -> bool:
     if obj is None:
         return False
@@ -106,6 +107,32 @@ def _model_to_audit_dict(obj: Any) -> dict[str, Any]:
         return {}
 
 
+# Keys that never enter audit_logs, whichever model or caller produced the payload
+# (issue #1281). `__audit_columns__` is opt-in per model and a model without it
+# snapshots every column, so the deny list is the backstop: `users.password` (a
+# bcrypt hash) and `project_quotation_issues.sign_token` (a bearer link token) were
+# both written verbatim before it. A new secret column on an audited model belongs here.
+AUDIT_SECRET_KEYS = frozenset({
+    "password",
+    "password_hash",
+    "hashed_password",
+    "sign_token",
+    "token",
+    "access_token",
+    "refresh_token",
+    "api_key",
+    "key_hash",
+    "secret",
+    "client_secret",
+})
+
+
+def _redact_secrets(values: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    if not values:
+        return values
+    return {k: v for k, v in values.items() if k not in AUDIT_SECRET_KEYS}
+
+
 def log_audit(
     db: Session,
     entity_type: str,
@@ -140,8 +167,8 @@ def log_audit(
         action=action.upper(),
         user_id=user_id,  # None for system/public actions (e.g. approval via public link)
         contact_id=contact_id if contact_id is not None else get_actor_contact_id(),
-        old_values=old_values,
-        new_values=new_values,
+        old_values=_redact_secrets(old_values),
+        new_values=_redact_secrets(new_values),
         description=description,
         ip_address=ip_address,
         company_id=company_id,

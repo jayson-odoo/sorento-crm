@@ -1,8 +1,8 @@
 """Cross-Entity Activity Timeline API.
 
 ``GET /api/v1/audit/activity`` - a human-readable, label-resolved view over the
-raw ``audit_logs`` table (see ``app.services.activity_service``). Auth-only, same
-as the Audit Logs listing; no bespoke permission slug.
+raw ``audit_logs`` table (see ``app.services.activity_service``). Superadmin/admin
+only, the same gate as the Audit Logs listing (#1281).
 """
 from typing import Optional
 
@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.dependencies import get_current_user_or_api_key
+from app.api.v1.audit.audit_logs import require_audit_admin
 from app.schemas.common import MAX_PAGE_LIMIT
 from app.services.activity_service import get_activity_feed
 
@@ -35,7 +35,7 @@ async def get_activity(
     trace_id: Optional[str] = Query(None, description="Group one multi-row action"),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
-    current_user: dict = Depends(get_current_user_or_api_key),
+    current_user: dict = Depends(require_audit_admin),
     db: Session = Depends(get_db),
 ):
     """Return ``{items, actors, pagination}`` for the activity timeline."""
