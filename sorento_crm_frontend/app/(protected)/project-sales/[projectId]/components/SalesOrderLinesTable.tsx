@@ -707,7 +707,7 @@ export function SalesOrderLinesTable({
         {`Need attention (${attentionRows.length})`}
       </ToggleGroupItem>
       <ToggleGroupItem value="all" className="px-3">
-        {`All lines (${lines.length})`}
+        {`All lines (${lines.length + standaloneRows.length})`}
       </ToggleGroupItem>
     </ToggleGroup>
   );
@@ -802,7 +802,7 @@ export function SalesOrderLinesTable({
           />
 
           <CardTable className="min-w-0">
-            {lines.length === 0 ? (
+            {rows.length === 0 ? (
               <div className="px-6 py-10 text-center">
                 <h3 className="text-sm font-semibold">This draft has no lines</h3>
                 <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">

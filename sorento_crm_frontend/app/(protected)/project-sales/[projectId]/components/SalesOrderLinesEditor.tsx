@@ -15,6 +15,7 @@ import {
 import { multiplyMoney, sumMoney } from '../../_shared/lib/money';
 import {
   buildFlagItems,
+  leadFlagItem,
   FINDING_SEVERITY_BADGE_VARIANT,
   FINDING_SEVERITY_LABEL,
   type FlagItem,
@@ -138,10 +139,14 @@ export function SalesOrderLinesEditor({
 
   /** The most severe open item per line: the read table's Flag pill, without its popover. */
   const flagByLine = React.useMemo(() => {
-    const map = new Map<string, FlagItem>();
+    const byLine = new Map<string, FlagItem[]>();
     (flagItems ?? buildFlagItems(findings, [])).forEach((item) => {
-      if (!item.open || !item.lineId || map.has(item.lineId)) return;
-      map.set(item.lineId, item);
+      if (item.lineId) byLine.set(item.lineId, [...(byLine.get(item.lineId) ?? []), item]);
+    });
+    const map = new Map<string, FlagItem>();
+    byLine.forEach((items, lineId) => {
+      const lead = leadFlagItem(items);
+      if (lead) map.set(lineId, lead);
     });
     return map;
   }, [findings, flagItems]);

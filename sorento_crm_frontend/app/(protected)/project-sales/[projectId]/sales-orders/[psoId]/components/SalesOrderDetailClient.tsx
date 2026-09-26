@@ -245,7 +245,11 @@ export function SalesOrderDetailClient({
           !isPublished || item.members.every((member) => member.source === 'schedule')
       : null;
 
-  /** One reason, every open finding the item stands for, each through its own endpoint. */
+  /**
+   * One reason, every open finding the item stands for, each through its own endpoint. Calls run
+   * one after another, so a failed second call leaves the first acknowledged: the refetch then
+   * shows the rest as an open item of its own, dismissable again, and nothing is lost.
+   */
   async function dismissItem(item: FlagItem, reason: string) {
     for (const member of item.members) {
       if (member.finding.acknowledged_at) continue;
@@ -676,7 +680,7 @@ export function SalesOrderDetailClient({
       {dismissing && (
         <DismissReasonDialog
           severity={dismissing.severity}
-          detail={dismissing.members[0].finding.detail}
+          detail={Array.from(new Set(dismissing.members.map((m) => m.finding.detail))).join(' ')}
           ids={dismissing.members
             .filter((member) => !member.finding.acknowledged_at)
             .map((member) => member.finding.id)}

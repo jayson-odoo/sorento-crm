@@ -264,6 +264,20 @@ Rewritten after the lavish review: one lines list, not a Lines tab plus a Findin
   `buildFlagItems`. Assumption flagged for the owner: the per-order allocation grid now shows only
   on a published order, so a draft's Lines tab is one table (R16).
 
+  Open for the owner, R22 (PR #1264 review SF3): the mockup's lines table has 6 columns (#,
+  Product, Qty, Value, Flag, Action); the shipped grid has 12 (#, Product, Flag, Description,
+  Qty, UOM, Unit price, Amount, Delivery, Area, Source line, Stock location), and the Lines tab
+  keeps the stock-location bulk-apply control. All of these predate S7 (they come from main),
+  and the edit view mirrors the same 12 headers by rule, so the S7 lane kept them rather than
+  cut working fields under R22 on its own call. Until the owner rules, R22 reads as unmet on
+  these extras; a trim is its own slice (read and edit columns together).
+
+  Review fixes, 26 Sep 2026 (PR #1264): a Flag pill, read and edit, leads with the most severe
+  open item (`leadFlagItem`), never the first raised; "All lines (N)" counts finding-only rows
+  too, so it equals the rows the view shows (lesson (c)); R23 pairs a product code with a
+  schedule column only where the code starts one of the column's segments and is at least 3
+  characters, the same floor the server's `_code_candidates` uses.
+
 ## Out of scope (rulings)
 
 - **OOS-1** Any active-company indicator on lists (R8).

@@ -71,13 +71,29 @@ function normalisedCode(value: unknown): string {
 }
 
 /**
+ * Where a product code may start inside a schedule column: the start of each separator-split
+ * segment, the rest of the column normalised. Mirrors the server's `_code_candidates`
+ * (`BUI-HB-SRTWC8613-RL` is `SRTWC8613-RL` with a prefix bolted on), so `CB1178A` names
+ * `BUI-HB-CB1178ASS` while `HB` or `H12` never names `BUI-HB-FH12SS`.
+ */
+function columnTails(value: unknown): string[] {
+  if (typeof value !== 'string') return [];
+  const parts = value.toUpperCase().split(/[^A-Z0-9]+/).filter(Boolean);
+  return parts.map((_, start) => parts.slice(start).join(''));
+}
+
+/** The server's own floor on a code candidate: shorter than this names half the catalogue. */
+const MIN_PAIRING_CODE_LENGTH = 3;
+
+/**
  * Every finding on the sales order page as the Flag items its rows carry (S7-3).
  *
  * Open findings collapse per `collapseFindings` within their own source. R23 then folds a
  * schedule's unmapped column (`unresolved_product`, keyed by `customer_code_raw`) into the
  * order's `schedule_short` finding for the product that column names, since the column is why
- * the schedule places nothing: one item, both sentences, one Dismiss. Where two products fit
- * one column the longer code wins (CB1178A over CB1178). Dismissed findings stay one item each.
+ * the schedule places nothing: one item, both sentences, one Dismiss. A code names a column only
+ * where it starts one of the column's segments (`columnTails`); where two fit, the longer wins
+ * (CB1178A over CB1178). Dismissed findings stay one item each.
  */
 export function buildFlagItems(
   orderFindings: ProjectSalesOrderFinding[],
@@ -103,14 +119,14 @@ export function buildFlagItems(
   const shortByCode = orderItems
     .filter((item) => item.members[0].finding.code === 'schedule_short')
     .map((item) => ({ item, code: normalisedCode(item.members[0].finding.detail_json?.product_code) }))
-    .filter((entry) => entry.code.length > 0)
+    .filter((entry) => entry.code.length >= MIN_PAIRING_CODE_LENGTH)
     .sort((a, b) => b.code.length - a.code.length);
 
   const unpaired = scheduleItems.filter((item) => {
     const first = item.members[0].finding;
     if (first.code !== 'unresolved_product') return true;
-    const column = normalisedCode(first.detail_json?.customer_code_raw);
-    const cause = column ? shortByCode.find((entry) => column.includes(entry.code)) : undefined;
+    const tails = columnTails(first.detail_json?.customer_code_raw);
+    const cause = shortByCode.find((entry) => tails.some((tail) => tail.startsWith(entry.code)));
     if (!cause) return true;
     cause.item.members.push(...item.members);
     cause.item.severity = mostSevere(cause.item.members);
@@ -131,6 +147,19 @@ export function buildFlagItems(
     }));
 
   return [...orderItems, ...unpaired, ...dismissed];
+}
+
+/**
+ * The item a row's pill speaks for: the most severe open one, the earliest on a tie. A row that
+ * holds Publish must read "Blocks publish" whatever order the server raised its findings in.
+ */
+export function leadFlagItem(items: FlagItem[]): FlagItem | undefined {
+  return items
+    .filter((item) => item.open)
+    .reduce<FlagItem | undefined>(
+      (lead, item) => (!lead || SEVERITY_RANK[item.severity] > SEVERITY_RANK[lead.severity] ? item : lead),
+      undefined,
+    );
 }
 
 /** An item a person has to act on: open, and not merely for information. */

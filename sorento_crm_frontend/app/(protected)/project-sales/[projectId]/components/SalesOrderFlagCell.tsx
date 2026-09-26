@@ -13,6 +13,7 @@ import {
   FINDING_SEVERITY_BADGE_VARIANT,
   FINDING_SEVERITY_LABEL,
   FINDING_SOURCE_LABEL,
+  leadFlagItem,
   type FlagItem,
 } from '../../_shared/lib/findings';
 
@@ -40,7 +41,7 @@ export function SalesOrderFlagCell({
   if (items.length === 0) return <span className="text-muted-foreground">-</span>;
 
   const openItems = items.filter((item) => item.open);
-  const lead = openItems[0];
+  const lead = leadFlagItem(items);
   const pill = lead ? FINDING_SEVERITY_LABEL[lead.severity] : 'Dismissed';
   const count = openItems.length > 1 ? openItems.length : null;
 

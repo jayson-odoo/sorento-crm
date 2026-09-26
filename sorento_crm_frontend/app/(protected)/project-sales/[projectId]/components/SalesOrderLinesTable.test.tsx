@@ -307,7 +307,10 @@ describe('the Flag column and the Need attention filter (S7-3)', () => {
     renderTable({ flagItems: flagged(), defaultNeedsAttention: true });
 
     fireEvent.click(screen.getByRole('radio', { name: 'All lines (5)' }));
-    expect(document.querySelectorAll('tbody tr')).toHaveLength(5);
+    // The set's own header row is a heading, not a row of the list.
+    expect(
+      document.querySelectorAll('tbody tr:not([data-testid="data-grid-group-header"])'),
+    ).toHaveLength(5);
   });
 
   it('still draws a finding-only row on an order with no lines (review N3)', () => {
