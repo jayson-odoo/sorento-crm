@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { type ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
+import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import { Badge } from '@/components/ui/badge';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridTable } from '@/components/ui/data-grid-table';
@@ -143,6 +144,8 @@ function LineRowsGrid({ entries }: { entries: LineHistoryEntry[] }) {
         tableLayout={{
           width: 'fixed',
           columnsResizable: true,
+          // A fixed five-column read of one line's rows, always in time order: there is
+          // no saved column preference here for a drag to persist into.
           columnsDraggable: false,
           // The DialogBody owns the vertical scroll viewport.
           scrollerMaxHeight: false,
@@ -184,10 +187,17 @@ export function OrderInquiryLineHistoryDialog({
     () => lineHistoryEntries(line, cancelled.data ?? []),
     [line, cancelled.data],
   );
+  // Review S2: until the cancelled rows arrive (or when they fail), "No earlier rows"
+  // would be untrue, so the tab shows the load or the error instead.
+  let rowsBody: React.ReactNode;
+  if (cancelled.isLoading) rowsBody = <SectionSkeleton />;
+  else if (cancelled.isError) {
+    rowsBody = <p className="text-sm text-destructive">{cancelled.error.message}</p>;
+  } else rowsBody = <LineRowsGrid entries={entries} />;
 
   return (
     <Dialog open onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[85dvh] flex-col sm:max-w-3xl">
+      <DialogContent className="flex max-h-[85dvh] flex-col sm:max-w-4xl">
         <DialogHeader>
           <DialogTitle>{titleOf(line)}</DialogTitle>
           <DialogDescription className="sr-only">
@@ -196,13 +206,13 @@ export function OrderInquiryLineHistoryDialog({
         </DialogHeader>
         <DialogBody className="min-w-0 flex-1 overflow-y-auto">
           <Tabs defaultValue="rows" className="w-full min-w-0">
-            <TabsList variant="line" className="mb-3 w-full justify-start overflow-x-auto">
+            <TabsList variant="line" className="mb-3 w-full justify-start">
               <TabsTrigger value="rows">Rows</TabsTrigger>
               <TabsTrigger value="decisions">Decisions</TabsTrigger>
               {reserveEntries ? <TabsTrigger value="reserve">Reserve</TabsTrigger> : null}
             </TabsList>
             <TabsContent value="rows" className="mt-0 min-w-0">
-              <LineRowsGrid entries={entries} />
+              {rowsBody}
             </TabsContent>
             <TabsContent value="decisions" className="mt-0">
               {coreLineId ? (

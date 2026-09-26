@@ -29,7 +29,7 @@ export interface OrderInquiryLine {
   /** The row whose verb is the line's Instruction (CANCEL_BALANCE > CHANGE_SO > DELAY >
    * ADVANCE > the primary row's own verb). */
   instructionRow: OrderInquiryWorklistRow;
-  /** Most urgent live state, or `line_cancelled` / `nothing_to_buy`. */
+  /** Most urgent live state, or `line_cancelled` / `nothing_to_buy` / `to_confirm`. */
   state: string;
   lineCancelled: boolean;
   /** Greyed on the grid: a cancelled line (G7) or one with nothing left to buy (O2). */
@@ -115,6 +115,11 @@ function buildLine(key: string, rows: OrderInquiryWorklistRow[]): OrderInquiryLi
   let state: string;
   if (lineCancelled) state = 'line_cancelled';
   else if (liveRows.length === 0) state = 'nothing_to_buy';
+  // AC-ND-7 (review B1): a live buy row CS amended after purchasing took it on waits on
+  // purchasing again, and the approved mockup reads that line "To confirm". Only an
+  // explicit `changed`: every fresh row is born `awaiting`, and AC-ND-8's fresh 4 still
+  // reads To buy.
+  else if (liveBuy.some((row) => row.ack_state === 'changed')) state = 'to_confirm';
   else state = pickPrimary(
     // The most urgent STATE, whatever row the reserve pill reads.
     liveBuy.map((row) => ({ ...row, reserve_state: null })),
@@ -182,15 +187,16 @@ export function lineOf(row: OrderInquiryLineRow): OrderInquiryLine {
   return row.line ?? buildLine(foldKeyOf(row), [row]);
 }
 
-/** Footer totals (AC-ND-17): cancelled lines excluded; Remaining is the footer's own
- * subtraction, the same rule `inquiryFooterTotals` states for rows. */
+/** Footer totals (AC-ND-17): cancelled lines excluded. Remaining is the sum of the line
+ * Remaining cells (review S3): an over-covered line's surplus nets nothing off another
+ * line, so the footer always tallies with the column above it. */
 export function lineFooterTotals(lines: OrderInquiryLine[]) {
   const counted = lines.filter((line) => !line.lineCancelled);
   const soQty = counted.reduce((total, line) => total + line.soQty, 0);
   const requested = counted.reduce((total, line) => total + line.requested, 0);
   const taken = counted.reduce((total, line) => total + line.taken, 0);
-  const bundled = counted.reduce((total, line) => total + line.bundled, 0);
-  return { soQty, requested, taken, remaining: Math.max(requested - taken - bundled, 0) };
+  const remaining = counted.reduce((total, line) => total + line.remaining, 0);
+  return { soQty, requested, taken, remaining };
 }
 
 /**
@@ -231,15 +237,24 @@ export interface LineHistoryEntry {
   why: string;
 }
 
-function whatOf(row: OrderInquiryWorklistRow): LineHistoryWhat {
+/**
+ * Review S1: the backend stamps a carried row (the same need moved under a new revision,
+ * plan L9) and a plain supersede alike, "Superseded by revision N". What tells the carry
+ * apart is that a later row of the same line asks for the same qty again.
+ */
+function whatOf(row: OrderInquiryWorklistRow, lineRows: OrderInquiryWorklistRow[]): LineHistoryWhat {
   if (row.line_cancelled) return 'Line cancelled';
   if (row.redirected_to_pool) return 'Used';
   if (row.state === 'cancelled') {
     if (row.verb === 'CANCEL_BALANCE') return 'Cancel balance';
-    const note = row.note ?? '';
-    if (/re-?raised/i.test(note)) return 'Re-raised';
-    if (/superseded/i.test(note)) return 'Superseded';
-    return 'Cancelled';
+    if (!/superseded/i.test(row.note ?? '')) return 'Cancelled';
+    const raisedAgain = lineRows.some(
+      (other) =>
+        other.id !== row.id &&
+        num(other.qty) === num(row.qty) &&
+        (other.raised_at ?? '') > (row.raised_at ?? ''),
+    );
+    return raisedAgain ? 'Re-raised' : 'Superseded';
   }
   return 'Now';
 }
@@ -262,8 +277,9 @@ export function lineHistoryEntries(
   const own = cancelledRows.filter(
     (row) => foldKeyOf(row) === line.key && !line.rows.some((r) => r.id === row.id),
   );
+  const lineRows = [...line.rows, ...own];
   const toEntry = (row: OrderInquiryWorklistRow): LineHistoryEntry => {
-    const what = whatOf(row);
+    const what = whatOf(row, lineRows);
     const note = row.note ?? '';
     const was = what === 'Now' && row.previous_qty != null ? `Was ${num(row.previous_qty)}.` : '';
     return { row, what, why: [was, note].filter(Boolean).join(' ') };
@@ -271,4 +287,17 @@ export function lineHistoryEntries(
   const now = line.liveRows.filter((row) => !row.line_cancelled);
   const retired = [...line.rows.filter((row) => !now.includes(row)), ...own].sort(newestFirst);
   return [...now.map(toEntry), ...retired.map(toEntry)];
+}
+
+/**
+ * Review S4 (AC-ND-14): the live row that carries the line's reserve history, whichever
+ * row is the primary - `pickPrimary` puts a `requested` row ahead of a `reserved` one, so
+ * gating the Reserve tab on the primary alone would hide it.
+ */
+export function reserveHistoryRowOf(line: OrderInquiryLine): OrderInquiryWorklistRow | null {
+  return (
+    line.liveRows.find(
+      (row) => row.reserve_state === 'reserved' || row.reserve_state === 'declined',
+    ) ?? null
+  );
 }

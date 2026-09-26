@@ -10,6 +10,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   OrderInquiryLineStatePill,
+  OrderInquiryVerbPill,
   ReservePill,
 } from '../../../_shared/components/OrderInquiryVerbPill';
 import { OrderInquiryStockGrid } from '../../../_shared/components/OrderInquiryStockGrid';
@@ -23,7 +24,6 @@ import {
 import {
   DeliveryDateCell,
   documentsOf,
-  InstructionCell,
   ItemCodeCell,
   LocationCell,
   orderInquirySuggestedColumn,
@@ -114,7 +114,7 @@ function LineDocumentsCell({ line, kind }: { line: OrderInquiryLine; kind: 'po' 
               variant="outline"
               size="sm"
               className="h-5 shrink-0 rounded-full px-1.5 text-xs text-muted-foreground"
-              aria-label={`+${rest.length}`}
+              aria-label={`${rest.length} more ${kind.toUpperCase()}`}
             >
               +{rest.length}
             </Button>
@@ -480,8 +480,14 @@ export function useOrderInquiryHeaderLinesColumns({
         size: 200,
         meta: { headerTitle: 'Instruction', skeleton: <Skeleton className="h-4 w-24" /> },
         // G5: the line's most urgent instruction (CANCEL_BALANCE > CHANGE_SO > DELAY >
-        // ADVANCE > the primary row's own verb).
-        cell: ({ row }) => <InstructionCell row={lineOf(row.original).instructionRow} />,
+        // ADVANCE > the primary row's own verb). The pill only, never the shared cell's
+        // note (i): G1 moves the note ("Replaces 2 used ...") to History's Why (review
+        // B2). A cancelled line has nothing to instruct, so it reads "-" (review N1).
+        cell: ({ row }) => {
+          const line = lineOf(row.original);
+          if (line.lineCancelled) return <span className="text-muted-foreground">-</span>;
+          return <OrderInquiryVerbPill verb={line.instructionRow.verb} />;
+        },
       },
       {
         // AC-DT-6 (`PLAN-oi-decision-trail-ui.md`): the same Raised column the worklist

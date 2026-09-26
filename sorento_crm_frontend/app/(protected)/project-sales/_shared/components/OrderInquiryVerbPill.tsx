@@ -122,13 +122,16 @@ export function OrderInquiryStatePill({ state }: { state: string }) {
 
 /**
  * `PLAN-oi-no-double-count-25sep.md` S0: the OI detail's line row (one per sales order
- * line) reads two states no single row carries - a cancelled sales order line (owner
- * ruling 26 Sep, G7) and a line whose rows are all history (O2). Every other value is a
+ * line) reads three states no single row carries - a cancelled sales order line (owner
+ * ruling 26 Sep, G7), a line whose rows are all history (O2) and a line waiting on
+ * purchasing to confirm a changed row (AC-ND-7). Every other value is a
  * row state and reads exactly as `OrderInquiryStatePill`.
  */
 const LINE_STATE: Record<string, { label: string; palette: string }> = {
   line_cancelled: { label: 'Line cancelled', palette: 'voided' },
   nothing_to_buy: { label: 'Nothing to buy', palette: 'draft' },
+  // AC-ND-7 (review B1): a live row CS amended after purchasing took it on.
+  to_confirm: { label: 'To confirm', palette: 'pending' },
 };
 
 export function OrderInquiryLineStatePill({ state }: { state: string }) {

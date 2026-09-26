@@ -120,6 +120,8 @@ describe('AC-ND-15 (G1, G6): the Rows tab', () => {
   it('lists Now first with its Was, then the used row with its document', async () => {
     renderDialog([USED, FRESH]);
     const dialog = await screen.findByRole('dialog');
+    // S2: the grid renders once the cancelled rows have loaded.
+    await within(dialog).findByText('Now');
     const bodyRows = within(dialog).getAllByRole('row').filter((r) => r.closest('tbody'));
     expect(bodyRows).toHaveLength(2);
     expect(within(bodyRows[0]).getByText('Now')).toBeInTheDocument();
