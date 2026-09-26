@@ -54,7 +54,7 @@ Journey: see the UAC. Every AC below traces to one of its steps.
 ### Migration (data only)
 
 - `alembic/versions/<file>_prod_discontinued_at_flt.py`, revision `prod_discontinued_at_flt`,
-  `down_revision = "sb3_company_stock_push_at"`, same `seed()/upgrade()/downgrade()` shape as
+  `down_revision = "sales_0002_team_leader"` (re-parented onto main by `alembic-reparent.sh`), same `seed()/upgrade()/downgrade()` shape as
   `503_product_exclude_planning_flt.py`. Inserts `field_key "discontinued_at"`, label
   "Discontinued at", `data_type date`, `compile_key product.discontinued_notified_at`,
   `export_column_name "Discontinued at"`. Downgrade deletes that row.
