@@ -456,11 +456,16 @@ def run(
             tasks=tuple(kept), closed_kinds=tuple(closed), rules=tuple(rules)
         )
 
+    # Owner hand test 26 Sep, slice 4 (T14): a message that names a product the task
+    # does NOT hold is a stock question of its own, never a fill. Claimed, the task's
+    # own fetch replaced the whole turn's (`apply.py`, `task_drives_the_fetch`) and
+    # "ELP3754 10 and SRTKT1631SS 20" over a one-slot ELP3754 task dropped SRTKT1631SS.
     claimed = [
         task
         for task in tasks
         if TASK_KINDS.get(task.kind) is not None
         and TASK_KINDS[task.kind].claims(verdict)
+        and _only_task_slots(task, verdict, allow_quantities=True)
     ]
 
     out = []
