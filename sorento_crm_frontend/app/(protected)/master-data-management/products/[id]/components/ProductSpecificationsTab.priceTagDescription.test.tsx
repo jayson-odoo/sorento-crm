@@ -175,6 +175,19 @@ function baseProduct(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/** `useDeferredAction` inside `CheckedLine` is real (only the service is mocked),
+ * so it needs a live `QueryClient` under it. */
+function renderTab() {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <ProductSpecificationsTab productId="p-1" />
+    </QueryClientProvider>,
+  );
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   usePermissions.mockReturnValue({ permissionSet: new Set(['master_data.products.edit']) });
