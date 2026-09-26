@@ -58,7 +58,7 @@ whole-book `GROUP BY product_id` over 2026 and over all dates.
 | H1 | Money and quantity come from `sales_orders` + `sales_order_lines` only, the sales report's own predicate: cancelled SOs and cancelled lines never count, a line with neither `required_date` nor its SO's `order_date` is excluded. |
 | H2 | `[Q3]` Quantity = `qty_ordered`, amount = `line_total`, per line, summed per product over the window. Owner ruling 26 Sep: both bases are supported. Delivered (transferred to DO) = `LEAST(qty_delivered, qty_ordered)` and its amount (the sales report's confirmed pair) is the default and the header says `Basis: Delivered (transferred to DO)`; ordered = `qty_ordered` / `line_total` when the message or a follow-up says "ordered". A message ambiguous between them is asked. |
 | H3 | Ranking: `rank_by` desc, the other metric desc, `product_code` asc. Sorted in the route, in SQL; the presenter never re-sorts. |
-| H4 | `[Q1]` `top_n` defaults to 5 when the message names none; the route clamps above 10 to 10 and 422s below 1. Owner ruling 26 Sep (superseding): no default N. A named N ranks that many, 1 to 100 (above 100 clamps to 100, below 1 is 422). No N = every ranked row, no paging, no "more" / "next" / "lagi" anywhere (amended 01:50Z). When there is no N and the list would not fit one WhatsApp message (setting `chatbot_top_selling_one_message_rows`, default 50), no partial list is sent: the header states the count and the bot asks how many to show (01:55Z). |
+| H4 | `[Q1]` `top_n` defaults to 5 when the message names none; the route clamps above 10 to 10 and 422s below 1. Owner ruling 26 Sep (superseding): no default N. A named N ranks that many, 1 to 100 (above 100 clamps to 100, below 1 is 422). No N = every ranked row, no paging, no "more" / "next" / "lagi" anywhere (amended 01:50Z). When there is no N and the list would not fit one WhatsApp message (setting `chatbot_top_selling_one_message_rows`, default 50), no partial list is sent: the header states the count and the bot asks how many to show (01:55Z). Amended by the owner on PR #1258 (05:32Z): n8n already chunks long messages, so there is no size threshold and no setting: with no N the bot always states the count and asks how many (a single row is sent), and a named N goes out whole. |
 | H5 | `[Q2]` `rank_by` defaults to `qty` when the message names neither metric. Owner ruling 26 Sep (superseding): no default metric. Neither named = the bot asks `By quantity or by amount?` and fetches nothing; the route 422s a missing `rank_by`. |
 | H6 | `[Q4]` No date in the message = the current calendar year (Malaysia time), built in the lane, never the route; "all dates" said in words turns it off. Owner ruling 26 Sep: confirmed. Months and ranges supported; "by month" that could be a month filter or a per-month breakdown is asked. |
 | H7 | Every filter is optional; none is required. Filters AND. |
@@ -114,11 +114,16 @@ mirror `sorento_crm_mcp/tests/fixtures/top_selling/`.
   clarify, the dealer refused, a miss. Evidence: golden fixtures.
 - **AC-1910 [FE][T]** (Owner ruling 26 Sep 01:50Z) No golden and no rendered reply contains
   "more", "next", "lagi" or "Showing". Evidence: pytest over every golden.
-- **AC-1911 [FE][T]** (Owner ruling 26 Sep 01:55Z) A body with `total > 0` and no rows (the
-  route withheld a list too long for one message) prints the header, a blank line and `That
-  list is too long for one message. How many items do you want to see?` (`categories` at
-  category grain), no rows, no offer; `has_result` is true. Evidence: golden
-  `top-selling-how-many`.
+- **AC-1911 [FE][T]** (Owner ruling 26 Sep 01:55Z, amended PR #1258 05:32Z) A body with
+  `total > 0` and no rows (the message named no N) prints the header, a blank line and `How
+  many items do you want to see? Reply with a number from 1 to 100.` (`categories` at
+  category grain; the bound is the smaller of the count and 100), no rows, no offer, an
+  empty `result_set`; `has_result` is true. Nothing in it speaks of message length. Evidence:
+  golden `top-selling-how-many`.
+- **AC-1916 [FE][T]** (Owner, PR #1258 05:32Z) Every ranking hit's envelope carries
+  `result_set`, one `{idx, label, code, name, entity_type}` row per printed line, `idx` the
+  printed rank, label the product code (items) or the printed category name (categories).
+  Evidence: pytest `test_envelope_carries_one_pick_row_per_printed_item` and siblings.
 - **AC-1912 [FE][T]** (Owner ruling 26 Sep) Every ranking hit ends with a blank line and the
   detail offer: `Reply with a rank number to see that item's customers and months.` at item
   grain, `Reply with a rank number to see that category's top items.` at category grain.
@@ -226,7 +231,8 @@ mirror `sorento_crm_mcp/tests/fixtures/top_selling/`.
 - **AC-1957 [BE][T]** A miss (`has_result: false`) takes the not-found path so the escalate
   offer follows unchanged; a hit arms no pending and offers nothing. Owner ruling 26 Sep
   (superseding "offers nothing"): a hit arms the detail offer (AC-1964); the how-many reply
-  arms nothing. Evidence: pytest.
+  arms nothing. Owner, PR #1258 05:32Z: the offer is armed as a sticky `top_selling_pick`
+  roster (AC-1966). Evidence: pytest.
 - **AC-1958 [BE][T]** The generic search-scope header is skipped for
   `crm_top_selling_report`. Evidence: pytest.
 - **AC-1959 [BE][T]** `rank_by` is in the strict schema's `properties` and `required` and in
@@ -252,6 +258,12 @@ mirror `sorento_crm_mcp/tests/fixtures/top_selling/`.
   category. A number past the last row is a polite miss, not an error. Evidence: pytest.
 - **AC-1965 [BE][T]** After the how-many reply, "20" or "top 20" runs the carried ask with
   `top_n=20`. Evidence: pytest.
+- **AC-1966 [BE][T]** (Owner, PR #1258 05:32Z) The ranked list behaves like the customer and
+  product pickers: `top_selling_pick` is in `ROSTER_KINDS`; a bare "2" (`reference_positions`)
+  or a typed code / category name (exact label match) picks that row; the list stays open
+  for a later pick against the same list; it has no turn clock; it closes when every row
+  was picked or a new ask about something else was answered. Evidence: pytest
+  `tests/chatbot/test_top_selling_sticky_pick.py`.
 
 ## Phase 2 - sales agent slot (S5; the gate on #1168 / #1170 is lifted, owner ruling 26 Sep)
 

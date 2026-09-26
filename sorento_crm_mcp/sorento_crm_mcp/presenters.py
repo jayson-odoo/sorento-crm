@@ -2510,17 +2510,20 @@ def _top_selling_total(report: dict) -> int:
 def _top_selling(report: dict) -> str:
     """The whole WhatsApp reply for one route body. Three shapes off the same header:
     rows present = the ranking plus the detail offer (owner: required); no rows but a
-    count = the route withheld a list too long for one message, so ask how many (owner
-    01:55Z, no partial list, no "more"); no rows and no count = the miss line."""
+    count = the message named no N, so state the count (the header) and ask how many
+    (owner rulings 26 Sep: no default N, no partial list, no "more"); no rows and no
+    count = the miss line. Length is never a reason here: n8n already chunks a long
+    WhatsApp message (owner, PR #1258 05:32Z), so a named N up to 100 goes out whole."""
     header = _top_selling_header(report)
     category = _top_selling_is_category(report)
     rows = _top_selling_rows(report)
     if not rows:
-        if _top_selling_total(report) > 0:
+        total = _top_selling_total(report)
+        if total > 0:
             noun = "categories" if category else "items"
             return (
-                header + "\n\nThat list is too long for one message. "
-                f"How many {noun} do you want to see?"
+                header + f"\n\nHow many {noun} do you want to see? "
+                f"Reply with a number from 1 to {min(total, _TOP_SELLING_MAX_ROWS)}."
             )
         return header + "\n\n" + SALES_REPORT_MISS_MESSAGE
     offer = (
@@ -2532,14 +2535,35 @@ def _top_selling(report: dict) -> str:
     return header + "\n\n" + body + "\n\n" + offer
 
 
+def _top_selling_pick_row(row: dict, *, category: bool) -> dict:
+    """One printed line as a pick row (owner, PR #1258 05:32Z: the list behaves like the
+    customer and product pickers). The `{idx, label, code, name, entity_type}` shape every
+    roster row already uses; `idx` is the printed rank so a later "2" means line 2. The
+    label is what a typed answer matches exactly (`turn/decide._positions_by_label`): the
+    product code at item grain, as the product picker labels its lines, and the printed
+    category name at category grain, as the customer picker labels its lines by name."""
+    code, name = row.get("code"), row.get("name")
+    return {
+        "idx": row.get("rank"),
+        "label": _outstanding_label(name if _filled(name) else code) if category else code,
+        "code": code,
+        "name": name,
+        "entity_type": "category" if category else "product",
+    }
+
+
 def _top_selling_envelope(report: dict) -> dict:
     """What `present_response` will return for `crm_top_selling_report` (S3 wires the
     dispatch). The how-many reply is not a miss (nothing to escalate), so it carries
-    `has_result: true` under its own `result_type`, which the lane reads to arm nothing."""
+    `has_result: true` under its own `result_type`, which the lane reads to arm nothing.
+    `result_set` is the pick list the lane arms as a sticky `top_selling_pick` roster
+    (backend `turn/pending.top_selling_pick`); empty whenever no list was printed."""
     rows = _top_selling_rows(report)
     how_many = not rows and _top_selling_total(report) > 0
+    category = _top_selling_is_category(report)
     return {
         "result_type": "top_selling_how_many" if how_many else "top_selling",
         "response": _top_selling(report),
         "has_result": bool(rows) or how_many,
+        "result_set": [_top_selling_pick_row(r, category=category) for r in rows],
     }

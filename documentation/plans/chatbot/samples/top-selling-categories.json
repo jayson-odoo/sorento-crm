@@ -2,7 +2,7 @@
   "group": "category",
   "rank_by": "amount",
   "basis": "delivered",
-  "top_n": null,
+  "top_n": 6,
   "total": 6,
   "customer_name": null,
   "category_name": null,

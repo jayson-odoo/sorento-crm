@@ -116,7 +116,7 @@ def test_rank_number_is_the_bodys_own():
 
 def test_category_rows():
     rendered = _top_selling(_mock("categories"))
-    assert rendered.startswith("*Top selling categories*\n")
+    assert rendered.startswith("*Top 6 selling categories*\n")
     assert "Categories with sales: 6\n" in rendered
     assert "\n1. KITCHEN SINK: Qty 4,210, RM 612,300.00\n" in rendered
     # name null prints the category code; both null prints Unassigned
@@ -213,19 +213,26 @@ def test_miss_prints_no_offer():
 
 
 def test_how_many_reply():
+    """No N named: the header states the full count and the bot asks how many (owner
+    rulings 26 Sep). Not a message-size rule: n8n already chunks a long WhatsApp
+    message (owner, PR #1258 05:32Z), so the reply says nothing about length and the
+    range it offers is 1 to the smaller of the count and the 100 cap."""
     body = _mock("how-many")
     rendered = _top_selling(body)
     assert rendered.endswith(
-        "\n\nThat list is too long for one message. How many items do you want to see?"
+        "\n\nHow many items do you want to see? Reply with a number from 1 to 100."
     )
     assert "Items with sales: 1,284" in rendered
-    assert "Reply" not in rendered
+    assert "too long" not in rendered and "one message" not in rendered
     envelope = _top_selling_envelope(body)
     assert envelope["result_type"] == "top_selling_how_many"
     assert envelope["has_result"] is True
 
     body["group"] = "category"
-    assert _top_selling(body).endswith("How many categories do you want to see?")
+    body["total"] = 6
+    assert _top_selling(body).endswith(
+        "How many categories do you want to see? Reply with a number from 1 to 6."
+    )
 
 
 @pytest.mark.parametrize(
