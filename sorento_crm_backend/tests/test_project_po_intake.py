@@ -1318,9 +1318,14 @@ def test_the_version_names_its_scan_so_the_viewer_can_read_the_bytes(seeded, mon
     from app.schemas.project_po_intake import POVersionDetailResponse
     from app.services import storage_router
 
+    class _FakeBackend:
+        def file_exists(self, key):
+            return True
+
     monkeypatch.setattr(
         storage_router, "resolve_signed_url", lambda path, provider=None: f"{path}?sig=1"
     )
+    monkeypatch.setattr(storage_router, "get_backend", lambda provider: _FakeBackend())
     db, project, owner = seeded
     service = ProjectPOExtractionService(db)
     version = _version(db, _po(db, project, owner, "PO-SCAN-ID"))
