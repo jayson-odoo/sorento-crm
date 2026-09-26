@@ -2619,7 +2619,7 @@ def build_set_header(
     not_understood: Any = None,
     offset: int = 0,
     previous_total: int | None = None,
-    other_brands: Any = None,
+    exhausted: bool = False,
 ) -> str:
     """AC-1316: "<qualifying_total> <set noun> have <predicate noun>." - the counted set's
     own line, ahead of the rows. No paging (owner ruling, 26 Sep 2026: no "Showing 5", no
@@ -2648,16 +2648,10 @@ def build_set_header(
     if previous_total and previous_total != qualifying_total:
         # W4: the page re-counted and the set moved since the question; say so.
         header += f" It was {previous_total:,} when you asked."
-    # W5: the default brand answered first; the other brands' counts, so the customer
-    # can name one.
-    others = [
-        f"{jsc.js_string(jsc.get(o, 'brand')).strip()} {int(jsc.get(o, 'count') or 0):,}"
-        for o in jsc.array(other_brands)
-        if jsc.js_string(jsc.get(o, "brand")).strip() and jsc.get(o, "count")
-    ]
-    if others:
-        header += f" Other brands: {', '.join(others)}, name one to see them."
-    if offset and shown > 0:
+    if exhausted:
+        # Round 3 W2: a count after the last page; every product was already listed.
+        header += f" That is all {qualifying_total:,}."
+    elif offset and shown > 0:
         # W4: "another N" continues the list; the numbers say where.
         header += f" Here are {offset + 1} to {offset + shown}."
     elif qualifying_total > shown:
@@ -2669,6 +2663,41 @@ def build_set_header(
                 f"(up to {SET_LIST_MAX})? Or ask again naming a brand or size."
             )
     return header
+
+
+#: The other-brands line's own phrase per leg ("Other brands with stock"), owner hand
+#: test round 3 on PR #833: "with certificates" / "with incoming" / "with stock".
+_OTHER_BRANDS_NOUN: dict[str, str] = {
+    "certificate": "certificates",
+    "stock": "stock",
+    "incoming": "incoming",
+    "promotion": "a promotion",
+}
+
+
+def other_brands_line(other_brands: Any, require: dict[str, Any]) -> str:
+    """"Other brands with stock: Bravat 79, Cabana 57. Name one to see them." - the
+    last line of a reply answered for the company's default brand because the customer
+    named none (owner hand test round 3 on PR #833, W4). Every other brand with its full
+    count, largest first; "" when there is none."""
+    others = [
+        f"{jsc.js_string(jsc.get(o, 'brand')).strip()} {int(jsc.get(o, 'count') or 0):,}"
+        for o in jsc.array(other_brands)
+        if jsc.js_string(jsc.get(o, "brand")).strip() and jsc.get(o, "count")
+    ]
+    if not others:
+        return ""
+    parts: list[str] = []
+    for key, value in (require or {}).items():
+        if key == "attachment_type":
+            label = jsc.js_string(value).strip().lower()
+            parts.append(label if label else "an attachment")
+        elif key == "certificate" and isinstance(value, dict) and jsc.js_string(jsc.get(value, "scheme")).strip():
+            parts.append(f"{jsc.js_string(jsc.get(value, 'scheme')).strip()} certificates")
+        elif key in _OTHER_BRANDS_NOUN:
+            parts.append(_OTHER_BRANDS_NOUN[key])
+    phrase = f" with {_and_list(parts)}" if parts else ""
+    return f"Other brands{phrase}: {', '.join(others)}. Name one to see them."
 
 
 # REV-N2/AC-1337 (third console pass): the irregular endings a bare "+s" gets

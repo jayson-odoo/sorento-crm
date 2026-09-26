@@ -610,7 +610,7 @@ def _sentence_case(text: str) -> str:
 
 
 def describe_set(
-    db: Session, *, brand: str | None, membership: dict[str, list[str]], brand_is_default: bool = False
+    db: Session, *, brand: str | None, membership: dict[str, list[str]]
 ) -> list[dict[str, str]]:
     """The described set in plain words, one `{key, label, value}` per binding, in the
     order the header says them: Brand, Product type, then every other spec key.
@@ -622,8 +622,8 @@ def describe_set(
 
     out: list[dict[str, str]] = []
     if brand:
-        value = _display_name(brand) + (" (default)" if brand_is_default else "")
-        out.append({"key": "brand", "label": "Brand", "value": value})
+        # Round 3 W4: no "(default)" - the reply's last line names the other brands.
+        out.append({"key": "brand", "label": "Brand", "value": _display_name(brand)})
     classes = [c for c in membership.get("class") or [] if c]
     if classes:
         out.append({"key": "class", "label": "Product type", "value": " or ".join(_sentence_case(c) for c in classes)})
@@ -1093,7 +1093,7 @@ def resolve_product_set(
         outcome["other_brands"] = other_brands
     # W2: what was identified, for the header. Present only when something was.
     description = describe_set(
-        db, brand=brand, membership=verdict.get("membership") or {}, brand_is_default=bool(brand and brand_is_default)
+        db, brand=brand, membership=verdict.get("membership") or {}
     )
     if description:
         outcome["description"] = description

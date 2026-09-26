@@ -2450,6 +2450,11 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
         )
 
     msg = jsc.js_string(e.get("intro") or "Here are the results.").strip() + "\n\n"
+    if isinstance(ctx.get("predicate"), dict):
+        # Round 3 W1 (owner hand test on PR #833, "the message too long already"): a
+        # counted set's header says what the list is; the tool's own intro under it
+        # ("Stock summary for the requested products.") says it again.
+        msg = ""
 
     # The summary follows the ANSWER, not the rows: `has_result is True`, never truthiness,
     # because a boolean arriving as the STRING "false" is truthy and would print a summary
@@ -2704,10 +2709,13 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
             not_understood=jsc.get(predicate, "unrecognized_terms"),
             offset=offset,
             previous_total=jsc.get(predicate, "previous_total"),
-            other_brands=jsc.get(predicate, "other_brands"),
         )
         set_header = header
-        msg = header if set_withheld else f"{header}\n{msg}"
+        msg = header if set_withheld else f"{header}\n\n{msg}"
+        # Round 3 W4: the default brand answered, so the reply CLOSES with the others.
+        other_brands = answer_mod.other_brands_line(jsc.get(predicate, "other_brands"), require)
+        if other_brands:
+            msg = f"{msg.strip()}\n\n{other_brands}"
 
     final_response = msg.strip()
     if so_bucket_refusal:
