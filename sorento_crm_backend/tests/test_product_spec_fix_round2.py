@@ -28,7 +28,7 @@ from tests._pg_fixture import blank_session, pg_session, unique_code
 
 BASE = "/api/v1/master-data/spec-registry"
 BUSY = "Products are still being updated from another change. Try again in a moment."
-NO_LETTER = "Rule 1: each word needs a letter or a number."
+NO_LETTER = "Rule 1: each word needs more than dots and dashes."
 _VERSIONS = Path(__file__).resolve().parents[1] / "alembic" / "versions"
 
 
@@ -250,6 +250,7 @@ def _run(db, module, direction: str = "upgrade") -> None:
         {"kind": "words", "words": ["GOLD"], "skip_after": ["..."], "value": "black"},
         {"kind": "number", "before": ["-"]},
         {"kind": "code", "code_match": "contains", "texts": ["-"], "value": "black"},
+        {"kind": "code", "code_match": "contains", "texts": [" . "], "value": "black"},
     ],
 )
 def test_b2_a_word_with_no_letter_or_number_is_refused(builder):
@@ -272,6 +273,17 @@ def test_b2_a_stored_empty_word_reads_nothing_on_any_text(words):
     texts = {"description": "PLAIN CHROME BASIN MIXER, 2 HOLE", "flyer": "", "class_tail": ""}
 
     assert read_text(builder, texts, "SRT123") is None
+
+
+def test_b2_a_bracket_still_says_something():
+    """ "The number between ( and MM" is a real rule: only dots and dashes say nothing."""
+    from app.services.product_spec_rules import read_text, validate_rules
+
+    rules = validate_rules(
+        [{"builder": {"kind": "number", "after": ["("], "before": ["MM"]}}], data_type="numeric"
+    )
+    texts = {"description": "MARBLE TOP BASIN (800MM)", "flyer": "", "class_tail": ""}
+    assert read_text(rules[0]["builder"], texts, "")[0] == 800
 
 
 def test_b2_a_stored_dash_code_text_reads_nothing():
@@ -368,10 +380,11 @@ def test_b3_read_specs_from_a_text_refuses_a_long_paste():
     from pydantic import ValidationError
 
     from app.api.v1.master_data.product_specifications import SpecExtractRequest
-    from app.services.product_spec_rules import MAX_TRY_TEXT
+    from app.services.product_spec_extract import MAX_TEXT_LENGTH
 
     with pytest.raises(ValidationError):
-        SpecExtractRequest(text="A" * (MAX_TRY_TEXT + 1))
+        SpecExtractRequest(text="A" * (MAX_TEXT_LENGTH + 1))
+    assert SpecExtractRequest(text="A" * MAX_TEXT_LENGTH).text
 
 
 # --------------------------------------------------------------------------- #

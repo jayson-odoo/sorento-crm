@@ -503,6 +503,8 @@ def test_bowl_count_is_never_guessed_from_a_length(db):
     assert _value(db, "ZZT-NOBOWL", "bowl_count") is None
 
 
+
+
 @pytest.mark.parametrize(
     "description,key,expected",
     [
@@ -579,6 +581,10 @@ def test_seat_material_from_the_description_beats_the_code(db):
 
 # Real catalog data caught this: 22 kitchen sinks were flagged accessories on the word
 # DRAINER alone. A sink with a drainer board is a sink.
+
+
+
+
 
 
 # --------------------------------------------------------------------------- #
@@ -828,6 +834,8 @@ def test_overflow_is_read_whether_the_word_is_split_or_joined(db):
     _product(db, "ZZT-OF2", "SORENTO WASH BASIN C/W OVERFLOW")
     derive_for_code(db, "ZZT-OF2")
     assert _value(db, "ZZT-OF2", "has_overflow") is True
+
+
 
 
 @pytest.mark.parametrize(
@@ -1265,6 +1273,35 @@ def test_a_product_rule_on_an_unknown_fact_reads_nothing_and_does_not_raise(db):
     assert _value(db, "ZZT-B3-1", "zzt_bad_field") is None
 
 
+def test_numeric_product_columns_are_the_measurable_ones(db):
+    """The product-record columns a rule can read. (`from_field_choices` went with the
+    `from_field` rules it listed: dead code, review N-5.)"""
+    from app.services.product_spec_registry import numeric_product_columns
+
+    assert "currency" not in numeric_product_columns()
+    assert "dimensions_length" in numeric_product_columns()
+
+
+# --------------------------------------------------------------------------- #
+# AC-S1.1 - each kind reads what its builder says (#1286, D5)
+#
+# The builder is the whole rule; `read_text` compiles it and reads the text. Pinned
+# against real catalogue phrases, one per kind and option.
+# --------------------------------------------------------------------------- #
+_BUILDERS = [
+    ({"kind": "number", "after": ["L"]}, "SORENTO SINK L 300 X 200", 300),
+    ({"kind": "number", "before": ["MM"]}, "MARBLE TOP BASIN (800MM)", 800),
+    ({"kind": "number", "after": ["S-TRAP"], "before": ["MM"]}, "ONE PIECE WC (S-TRAP 300MM)", 300),
+    ({"kind": "words", "words": ["RIMLESS"], "value": True}, "SORENTO RIMLESS WC", True),
+    ({"kind": "words", "words": ["THERMOSTATIC"], "value": True}, "SHOWER SET THERMOSTATIC", True),
+    ({"kind": "size", "pick": 2}, "SORENTO SINK 800X400X200MM", 400),
+    ({"kind": "code", "code_match": "contains", "texts": ["SRTSC"], "value": "Seat Cover"}, None, "Seat Cover"),
+    ({"kind": "code", "code_match": "starts_with", "texts": ["SRT"], "value": "Sorento"}, None, "Sorento"),
+    ({"kind": "code", "code_match": "ends_with", "texts": ["-UF"], "value": "uf"}, None, "uf"),
+]
+
+
+@pytest.mark.parametrize("builder,text,reads", _BUILDERS)
 def test_a_builder_reads_what_it_says(builder, text, reads):
     from app.services.product_spec_rules import read_text
 

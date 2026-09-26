@@ -1,4 +1,4 @@
-import { readableValue } from '@/lib/spec-readable';
+import { readable, readableValue } from '@/lib/spec-readable';
 import type {
   SpecCompiledRule,
   SpecRuleBuilder,
@@ -40,7 +40,8 @@ function compilePhrase(phrase: string): string {
     const tokens = segment.split(/[\s-]+/).filter(Boolean).map(escapeToken);
     return `(?<![A-Z])${tokens.join('[\\s\\-]*')}(?![A-Z])`;
   });
-  return compiledSegments.join('[^.]*?');
+  // Up to 120 characters between segments: the server's MAX_GAP, which keeps reading linear.
+  return compiledSegments.join('[^.]{0,120}?');
 }
 
 /** `(?:P1|P2|...)`, in the order given. */
@@ -255,7 +256,8 @@ export function onlyWhenCell(
   const onlyWhen = builder.only_when;
   if (!onlyWhen) return '';
   const other = lookupSpec?.(onlyWhen.spec);
-  const label = other?.label ?? onlyWhen.spec;
+  // A spec the registry no longer carries still reads as words, never its key (N-9).
+  const label = other?.label || readable(onlyWhen.spec);
   const values = onlyWhen.values
     .map((value) => readableValue(value, undefined, other?.value_labels))
     .join(', ');

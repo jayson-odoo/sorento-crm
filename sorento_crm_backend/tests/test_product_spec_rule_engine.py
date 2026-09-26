@@ -621,7 +621,10 @@ def test_ac_s1_5_only_when_naming_brand_is_refused():
             }
         ]
     )
-    assert "only when" in message.lower()
+    # The brand sentence, not "pick the specification" (review N-1).
+    from app.services.product_spec_rules import BRAND_IS_NOT_A_SPEC
+
+    assert message == BRAND_IS_NOT_A_SPEC
 
 
 def test_ac_s1_5_no_message_carries_a_snake_case_word():
@@ -1049,6 +1052,18 @@ def _parity_differences():
                     }
                 )
     return differences
+
+
+def test_s14_the_power_group_takes_only_a_number_glued_to_a_code():
+    """Review S-14: the group used to accept ANY lost power reading."""
+    def diff(description, before=1):
+        return {"key": "power_hp", "before": before, "after": None, "description": description}
+
+    assert _group_power_stands_alone(diff("SRTKS1-HP KITCHEN SINK"))
+    assert _group_power_stands_alone(diff("WASTE DISPOSER SRT-1HP"))
+    assert not _group_power_stands_alone(diff("WASTE DISPOSER 1 HP"))
+    assert not _group_power_stands_alone(diff("WASTE DISPOSER 1HP, SRTKS1HP"))
+    assert not _group_power_stands_alone({**diff("SRTKS1HP"), "after": 1})
 
 
 def test_ac_s1_4_golden_parity_differences_fall_only_in_the_named_groups():

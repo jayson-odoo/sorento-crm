@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { MoreHorizontal } from 'lucide-react';
 import { arrayMove } from '@dnd-kit/sortable';
 import type { DragEndEvent } from '@dnd-kit/core';
@@ -31,7 +31,10 @@ import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect
 import { readableValue } from '@/lib/spec-readable';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { SPEC_REGISTRY_QUERY_KEY } from '../hooks/useSpecRegistryQuery';
+import { specKeyProductsKey } from '../hooks/useSpecKeyProductsQuery';
 import { compileBuilder, ruleCells } from '../lib/ruleSentence';
+import { isSavedRule, ruleUid } from '../lib/ruleUid';
+import { builderProblem, ruleMessage } from '../lib/ruleValidation';
 import type {
   SpecDerivationRule,
   SpecRegistryKey,
@@ -88,6 +91,24 @@ export interface SpecRulesGridProps {
 
 const editableFindKinds = new Set(['words', 'code', 'size', 'product']);
 
+/** Tailwind's `sm` is 640px: below it the grid keeps Order, What to find and Value
+ *  it sets (AC-S1.14) and scrolls inside its own frame. */
+const BELOW_SM_QUERY = '(max-width: 639px)';
+
+function useBelowSm(): boolean {
+  const [below, setBelow] = useState(false);
+  useEffect(() => {
+    const mql = window.matchMedia(BELOW_SM_QUERY);
+    const update = () => setBelow(mql.matches);
+    update();
+    mql.addEventListener?.('change', update);
+    return () => mql.removeEventListener?.('change', update);
+  }, []);
+  return below;
+}
+
+const EMPTY_SAVED_RULES: SpecDerivationRule[] = [];
+
 /**
  * How a spec is read: a structured grid, one row per rule, one column per part
  * (AC-S1.14), on the shared `DataGrid` (fixed, resizable columns - fix round 1).
@@ -115,6 +136,11 @@ export function SpecRulesGrid({
     null,
   );
   const [removingUid, setRemovingUid] = useState<string | null>(null);
+  // S-11: an in-place edit the server would refuse is not applied; its reason
+  // shows under the cell instead, in the server's own words.
+  const [cellError, setCellError] = useState<{ uid: string; message: string } | null>(null);
+  const belowSm = useBelowSm();
+  const savedRules = spec.effective_rules ?? EMPTY_SAVED_RULES;
 
   const removal = useDeferredAction({
     actionKey: 'spec_rule.remove',
@@ -125,10 +151,12 @@ export function SpecRulesGrid({
     surface: 'inline',
     watchFromMount: mode === 'edit',
     successMessage: 'Rule removed',
-    invalidateKeys: [SPEC_REGISTRY_QUERY_KEY],
+    // S-12: a removed rule re-reads the products it filled in, so the Products
+    // tab and the Choices counts are stale until they are fetched again.
+    invalidateKeys: [SPEC_REGISTRY_QUERY_KEY, specKeyProductsKey(spec.spec_key)],
     onCommitted: () => {
       const uid = removingUid;
-      if (uid) onChange(rules.filter((r, i) => (r._uid ?? `r${i}`) !== uid));
+      if (uid) onChange(rules.filter((r, i) => ruleUid(r, i) !== uid));
       setRemovingUid(null);
     },
   });
@@ -160,13 +188,25 @@ export function SpecRulesGrid({
   );
 
   const data = useMemo<GridRow[]>(
-    () => rules.map((rule, index) => ({ rule, index, uid: rule._uid ?? `r${index}` })),
+    () => rules.map((rule, index) => ({ rule, index, uid: ruleUid(rule, index) })),
     [rules],
   );
 
-  const startRemoval = (uid: string, builder: SpecRuleBuilder) => {
-    setRemovingUid(uid);
-    removal.start({ builder });
+  // B-5: one removal at a time. `start()` refuses a second one while the first is
+  // parked, but `removingUid` would already have moved to the second row - the
+  // server then removes the first rule while the draft drops the second.
+  const removalBusy = removal.isPending || removal.isBlocked;
+
+  const startRemoval = (row: GridRow) => {
+    // A rule that exists only in this draft has nothing on the server to remove:
+    // it is dropped here, and the next Save carries that.
+    if (!isSavedRule(row.rule, savedRules)) {
+      onChange(rules.filter((r, i) => ruleUid(r, i) !== row.uid));
+      return;
+    }
+    if (removalBusy) return;
+    setRemovingUid(row.uid);
+    removal.start({ builder: row.rule.builder });
   };
 
   const moveBy = (index: number, delta: number) => {
@@ -182,46 +222,65 @@ export function SpecRulesGrid({
     // Every patch recompiles `pattern` from the NEW builder (contract section 3):
     // a stale pattern left over from before the inline edit is what a save's own
     // builder/pattern comparison would refuse.
-    const patchBuilder = (next: SpecRuleBuilder) =>
+    const patchBuilder = (next: SpecRuleBuilder) => {
+      const problem = builderProblem(next);
+      if (problem) {
+        setCellError({ uid, message: ruleMessage(problem, row.index + 1) });
+        return;
+      }
+      setCellError(null);
       onChange(
-        rules.map((r) => (r._uid === uid ? { ...r, builder: next, pattern: withPattern(next) } : r)),
+        rules.map((r, i) => (ruleUid(r, i) === uid ? { ...r, builder: next, pattern: withPattern(next) } : r)),
       );
+    };
+    const errorForCell =
+      cellError?.uid === uid ? (
+        <p role="alert" className="text-xs text-destructive">
+          {cellError.message}
+        </p>
+      ) : null;
 
     if (mode === 'edit' && editing && editableFindKinds.has(builder.kind)) {
       if (builder.kind === 'words') {
         return (
-          <SearchableMultiSelect
-            value={builder.words}
-            onChange={(words) => patchBuilder({ ...builder, words })}
-            options={wordChoices.map((w) => ({ value: w, label: w }))}
-            createOption={{
-              label: (query) => <span>Add &ldquo;{query.toUpperCase()}&rdquo;</span>,
-              onCreate: (query) => {
-                const upper = query.toUpperCase();
-                if (!builder.words.includes(upper)) {
-                  patchBuilder({ ...builder, words: [...builder.words, upper] });
-                }
-              },
-            }}
-          />
+          <div className="flex flex-col gap-1">
+            <SearchableMultiSelect
+              value={builder.words}
+              onChange={(words) => patchBuilder({ ...builder, words })}
+              options={wordChoices.map((w) => ({ value: w, label: w }))}
+              createOption={{
+                label: (query) => <span>Add &ldquo;{query.toUpperCase()}&rdquo;</span>,
+                onCreate: (query) => {
+                  const upper = query.toUpperCase();
+                  if (!builder.words.includes(upper)) {
+                    patchBuilder({ ...builder, words: [...builder.words, upper] });
+                  }
+                },
+              }}
+            />
+            {errorForCell}
+          </div>
         );
       }
       if (builder.kind === 'code') {
         return (
-          <SearchableMultiSelect
-            value={builder.texts}
-            onChange={(texts) => patchBuilder({ ...builder, texts })}
-            options={wordChoices.map((w) => ({ value: w, label: w }))}
-            createOption={{
-              label: (query) => <span>Add &ldquo;{query.toUpperCase()}&rdquo;</span>,
-              onCreate: (query) => {
-                const upper = query.toUpperCase();
-                if (!builder.texts.includes(upper)) {
-                  patchBuilder({ ...builder, texts: [...builder.texts, upper] });
-                }
-              },
-            }}
-          />
+          <div className="flex flex-col gap-1">
+            <SearchableMultiSelect
+              value={builder.texts}
+              onChange={(texts) => patchBuilder({ ...builder, texts })}
+              options={wordChoices.map((w) => ({ value: w, label: w }))}
+              createOption={{
+                label: (query) => <span>Add &ldquo;{query.toUpperCase()}&rdquo;</span>,
+                onCreate: (query) => {
+                  const upper = query.toUpperCase();
+                  if (!builder.texts.includes(upper)) {
+                    patchBuilder({ ...builder, texts: [...builder.texts, upper] });
+                  }
+                },
+              }}
+            />
+            {errorForCell}
+          </div>
         );
       }
       if (builder.kind === 'size') {
@@ -250,13 +309,23 @@ export function SpecRulesGrid({
         );
       }
     }
-    const canEditFind = mode === 'edit' && editableFindKinds.has(builder.kind);
+    // Ruling 13: a Number rule's blanks (before / after / written in / ignore
+    // below) do not fit a cell, so its What to find opens the rule modal instead.
+    const opensModal = builder.kind === 'number';
+    const canEditFind = mode === 'edit' && (opensModal || editableFindKinds.has(builder.kind));
     const readForRow = reads?.[row.index];
     return (
       <button
         type="button"
         disabled={!canEditFind}
-        onClick={() => canEditFind && setEditingCell({ uid, column: 'find' })}
+        onClick={() => {
+          if (!canEditFind) return;
+          if (opensModal) onEdit(row.index);
+          else {
+            setCellError(null);
+            setEditingCell({ uid, column: 'find' });
+          }
+        }}
         className={`block w-full text-left ${canEditFind ? 'cursor-pointer hover:underline' : ''}`}
       >
         <span className="block truncate font-medium" title={cells.whatToFind.primary}>
@@ -272,7 +341,7 @@ export function SpecRulesGrid({
             Reads:{' '}
             {readForRow?.value === null || readForRow?.value === undefined
               ? readForRow?.evidence || 'nothing'
-              : String(readForRow.value)}
+              : readableValue(readForRow.value, spec.unit ?? undefined, spec.value_labels)}
           </span>
         )}
       </button>
@@ -287,8 +356,8 @@ export function SpecRulesGrid({
     const editing = editingCell?.uid === uid && editingCell.column === 'value';
     const patchBuilderValue = (value: string | number | boolean) =>
       onChange(
-        rules.map((r) =>
-          r._uid === uid && (r.builder.kind === 'words' || r.builder.kind === 'code')
+        rules.map((r, i) =>
+          ruleUid(r, i) === uid && (r.builder.kind === 'words' || r.builder.kind === 'code')
             ? { ...r, builder: { ...r.builder, value }, pattern: withPattern({ ...r.builder, value }) }
             : r,
         ),
@@ -341,8 +410,8 @@ export function SpecRulesGrid({
         accessorFn: (row) => row.index,
         header: ({ column }) => <DataGridColumnHeader title="Order" column={column} />,
         cell: ({ row }) => <span className="tabular-nums">{row.original.index + 1}</span>,
-        size: 70,
-        minSize: 60,
+        size: 64,
+        minSize: 56,
       },
       {
         id: 'where',
@@ -356,32 +425,32 @@ export function SpecRulesGrid({
             </span>
           );
         },
-        size: 160,
-        minSize: 100,
+        size: 130,
+        minSize: 90,
       },
       {
         id: 'kind',
         accessorFn: (row) => ruleCells(row.rule.builder, spec, lookupSpec).kind,
         header: ({ column }) => <DataGridColumnHeader title="Kind" column={column} />,
         cell: ({ row }) => ruleCells(row.original.rule.builder, spec, lookupSpec).kind,
-        size: 90,
-        minSize: 70,
+        size: 80,
+        minSize: 64,
       },
       {
         id: 'find',
         accessorFn: (row) => ruleCells(row.rule.builder, spec, lookupSpec).whatToFind.primary,
         header: ({ column }) => <DataGridColumnHeader title="What to find" column={column} />,
         cell: ({ row }) => renderFindCell(row.original, ruleCells(row.original.rule.builder, spec, lookupSpec)),
-        size: 300,
-        minSize: 180,
+        size: 220,
+        minSize: 150,
       },
       {
         id: 'value',
         accessorFn: (row) => ruleCells(row.rule.builder, spec, lookupSpec).valueItSets,
         header: ({ column }) => <DataGridColumnHeader title="Value it sets" column={column} />,
         cell: ({ row }) => renderValueCell(row.original, ruleCells(row.original.rule.builder, spec, lookupSpec)),
-        size: 140,
-        minSize: 100,
+        size: 130,
+        minSize: 90,
       },
       {
         id: 'only_when',
@@ -395,8 +464,8 @@ export function SpecRulesGrid({
             </span>
           );
         },
-        size: 160,
-        minSize: 100,
+        size: 140,
+        minSize: 90,
       },
     ];
 
@@ -409,7 +478,8 @@ export function SpecRulesGrid({
       enableResizing: false,
       cell: ({ row }) => {
         const gridRow = row.original;
-        if (removingUid === gridRow.uid) return removal.countdown;
+        if (removingUid === gridRow.uid && removal.pending) return removal.countdown;
+        const saved = isSavedRule(gridRow.rule, savedRules);
         return (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -434,7 +504,8 @@ export function SpecRulesGrid({
               </DropdownMenuItem>
               <DropdownMenuItem
                 variant="destructive"
-                onClick={() => startRemoval(gridRow.uid, gridRow.rule.builder)}
+                disabled={saved && removalBusy}
+                onClick={() => startRemoval(gridRow)}
               >
                 Remove
               </DropdownMenuItem>
@@ -442,8 +513,8 @@ export function SpecRulesGrid({
           </DropdownMenu>
         );
       },
-      size: 56,
-      minSize: 56,
+      size: 52,
+      minSize: 52,
     };
 
     return [...base, actionsColumn];
@@ -458,7 +529,11 @@ export function SpecRulesGrid({
     reads,
     removingUid,
     removal.countdown,
+    removal.pending,
     removal.isBlocked,
+    removalBusy,
+    savedRules,
+    cellError,
     isSortedByOrder,
     rules,
     onChange,
@@ -476,8 +551,8 @@ export function SpecRulesGrid({
               id: 'drag_handle',
               header: () => <span className="sr-only">Reorder</span>,
               cell: ({ row }) => <DataGridTableDndRowHandle rowId={row.original.uid} />,
-              size: 44,
-              minSize: 44,
+              size: 40,
+              minSize: 40,
               enableResizing: false,
               enableSorting: false,
             },
@@ -490,7 +565,10 @@ export function SpecRulesGrid({
   const table = useReactTable({
     data,
     columns: tableColumns,
-    state: { sorting },
+    state: {
+      sorting,
+      columnVisibility: { where: !belowSm, kind: !belowSm, only_when: !belowSm },
+    },
     onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
@@ -503,8 +581,8 @@ export function SpecRulesGrid({
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
-    const from = rules.findIndex((r, i) => (r._uid ?? `r${i}`) === active.id);
-    const to = rules.findIndex((r, i) => (r._uid ?? `r${i}`) === over.id);
+    const from = rules.findIndex((r, i) => ruleUid(r, i) === active.id);
+    const to = rules.findIndex((r, i) => ruleUid(r, i) === over.id);
     if (from < 0 || to < 0) return;
     onChange(arrayMove(rules, from, to));
   };

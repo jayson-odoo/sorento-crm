@@ -52,11 +52,13 @@ function renderCard(row: SpecRegistryKey, mode: 'view' | 'edit') {
 }
 
 describe('SpecKeyRecordCard - one type chip, nothing else (AC-S3.7)', () => {
-  it('shows the type chip, and no label (the page title carries it)', () => {
+  // Review round 2, N-7: the page header already shows the label and its type
+  // chip (AC-S3.7, "one type chip"), so the card repeats neither.
+  it('shows no type chip and no label (the page header carries both)', () => {
     const row = seedRow({ label: 'Finish or colour', data_type: 'enum' });
     renderCard(row, 'view');
 
-    expect(screen.getByText('List')).toBeInTheDocument();
+    expect(screen.queryByText('List')).not.toBeInTheDocument();
     expect(screen.queryByText('Finish or colour')).not.toBeInTheDocument();
   });
 

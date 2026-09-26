@@ -97,6 +97,9 @@ export type SearchableMultiSelectProps = {
   };
 };
 
+/** cmdk needs a unique value per item; this one names no real option. */
+const CREATE_ITEM_VALUE = '__searchable-multi-select-create__';
+
 export function SearchableMultiSelect({
   value,
   onChange,
@@ -268,9 +271,17 @@ export function SearchableMultiSelect({
   };
 
   // Resolved once per render so the empty-state branch and the row itself cannot
-  // disagree, same reasoning as `SearchableSelect`.
+  // disagree, same reasoning as `SearchableSelect`. Never offered for a word the
+  // list already holds, in any case - as an option or as a chip already chosen.
   const createQuery = query.trim();
-  const createLabel = createOption && createQuery ? createOption.label(createQuery) : null;
+  const folded = createQuery.toLowerCase();
+  const alreadyThere =
+    !!folded &&
+    (value.some((v) => v.toLowerCase() === folded) ||
+      baseOptions.some((o) => o.value.toLowerCase() === folded || o.label.toLowerCase() === folded) ||
+      (selectedOptions ?? []).some((o) => o.value.toLowerCase() === folded || o.label.toLowerCase() === folded));
+  const createLabel =
+    createOption && createQuery && !alreadyThere ? createOption.label(createQuery) : null;
   const createValue = createOption
     ? () => {
         createOption.onCreate(createQuery);
@@ -367,18 +378,6 @@ export function SearchableMultiSelect({
           )} align="start">
         <Command shouldFilter={false} className="max-h-full min-h-0 flex flex-col">
           <CommandInput placeholder="Search..." value={query} onValueChange={handleQueryChange} />
-          {!loading && createLabel ? (
-            <div className="border-b p-1">
-              <button
-                type="button"
-                data-slot="searchable-multi-select-create"
-                onClick={createValue}
-                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-start text-sm hover:bg-accent"
-              >
-                {createLabel}
-              </button>
-            </div>
-          ) : null}
           {!loading && selectable.length > 0 ? (
             <div className="border-b p-1">
               <button
@@ -398,6 +397,21 @@ export function SearchableMultiSelect({
               once. Saying so is what tells a reader that a tick on one row does
               not cancel the tick on another. */}
           <CommandList aria-multiselectable className="min-h-0 flex-1 overflow-y-auto">
+            {/* A real list item, first, so it is the one cmdk highlights and Enter
+                in the search box adds the typed word (N-10) - a plain button above
+                the list was reachable only by mouse. */}
+            {!loading && createLabel ? (
+              <CommandGroup className="border-b">
+                <CommandItem
+                  value={CREATE_ITEM_VALUE}
+                  data-slot="searchable-multi-select-create"
+                  onSelect={() => createValue?.()}
+                  className="flex w-full items-center gap-2 text-start"
+                >
+                  {createLabel}
+                </CommandItem>
+              </CommandGroup>
+            ) : null}
             {loading ? (
               <div className="flex items-center gap-2 px-3 py-3 text-sm text-muted-foreground">
                 <Loader2 className="size-4 animate-spin" /> Searching...

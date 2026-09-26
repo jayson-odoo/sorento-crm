@@ -304,7 +304,10 @@ export function SpecRegistryGrid() {
       isLoading={isLoading}
       rowHref={rowHref}
       rowPending={rowPending}
-      listingKey="master_data.spec_registry.view"
+      // `::v2` (S-6, review round 2): preferences saved under the old key predate
+      // Code, Rules and Built in starting hidden (AC-S3.1) and would keep showing
+      // them; a new key starts every viewer on the new defaults.
+      listingKey="master_data.spec_registry.view::v2"
       tableLayout={{ width: 'fixed', columnsResizable: true }}
       emptyMessage="No specifications match that search."
       emptyAction={listPrimaryAction}

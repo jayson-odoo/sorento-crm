@@ -18,7 +18,7 @@ import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { readableValue } from '@/lib/spec-readable';
 import { useSpecKeyProductsQuery } from '../../hooks/useSpecKeyProductsQuery';
 import { SPEC_REGISTRY_QUERY_KEY } from '../../hooks/useSpecRegistryQuery';
-import { dedupe, type SpecKeyDraft } from '../../hooks/useSpecKeyRecord';
+import { dedupe, seedValuesFor, seedWordsFor, type SpecKeyDraft } from '../../hooks/useSpecKeyRecord';
 import type { SpecRegistryKey } from '../../types/productSpec.types';
 
 /** `_self` names the specification itself, never a choice (D7); this tab never
@@ -97,6 +97,30 @@ export function ValuesAndWordsTab({
     return map;
   }, [productCounts]);
 
+  /** Take a choice out of the open draft. A built-in one is taken away (B-6): it
+   *  goes into `droppedValues`, so the next Save still sends it as suppressed
+   *  rather than bringing it back; a staff-added one simply goes. */
+  const dropChoice = (value: string) =>
+    setDraft((d) => {
+      const nextWords = { ...d.words };
+      delete nextWords[value];
+      const nextDroppedWords = { ...d.droppedWords };
+      delete nextDroppedWords[value];
+      const nextValueLabels = { ...d.valueLabels };
+      delete nextValueLabels[value];
+      const builtIn = seedValuesFor(row).includes(value);
+      return {
+        ...d,
+        liveValues: d.liveValues.filter((v) => v !== value),
+        droppedValues: builtIn
+          ? dedupe([...d.droppedValues, value])
+          : d.droppedValues.filter((v) => v !== value),
+        words: nextWords,
+        droppedWords: nextDroppedWords,
+        valueLabels: nextValueLabels,
+      };
+    });
+
   const removal = useDeferredAction({
     actionKey: 'spec_value.remove',
     entityType: 'spec_value',
@@ -110,30 +134,22 @@ export function ValuesAndWordsTab({
     // The server already dropped it - this only keeps the OPEN draft in step, the
     // same reason `WordsDataGrid` strips a removed word from its own draft.
     onCommitted: () => {
-      const value = removingValue;
-      if (value) {
-        setDraft((d) => {
-          const nextWords = { ...d.words };
-          delete nextWords[value];
-          const nextDroppedWords = { ...d.droppedWords };
-          delete nextDroppedWords[value];
-          const nextValueLabels = { ...d.valueLabels };
-          delete nextValueLabels[value];
-          return {
-            ...d,
-            liveValues: d.liveValues.filter((v) => v !== value),
-            droppedValues: d.droppedValues.filter((v) => v !== value),
-            words: nextWords,
-            droppedWords: nextDroppedWords,
-            valueLabels: nextValueLabels,
-          };
-        });
-      }
+      if (removingValue) dropChoice(removingValue);
       setRemovingValue(null);
     },
   });
 
+  // B-5: one removal at a time - see `SpecRulesGrid`'s own note.
+  const removalBusy = removal.isPending || removal.isBlocked;
+  /** Only a choice the server holds has anything for `spec_value.remove` to do. */
+  const isSavedChoice = (value: string) => row.allowed_values.includes(value);
+
   const startRemoval = (value: string) => {
+    if (!isSavedChoice(value)) {
+      dropChoice(value);
+      return;
+    }
+    if (removalBusy) return;
     setRemovingValue(value);
     removal.start({ value });
   };
@@ -158,10 +174,12 @@ export function ValuesAndWordsTab({
     [draft, isBoolean, row.allowed_values, row.synonyms],
   );
 
+  // A choice the business has taken away is not a choice (B-6): it is neither
+  // listed nor counted, whether the removal came from this grid or an earlier Save.
   const choices = useMemo(
     () =>
-      dedupe([...(isBoolean ? ['true'] : liveValues), ...droppedValues, ...Object.keys(words)]).filter(
-        (value) => value !== SELF_KEY,
+      dedupe([...(isBoolean ? ['true'] : liveValues), ...Object.keys(words)]).filter(
+        (value) => value !== SELF_KEY && !droppedValues.includes(value),
       ),
     [isBoolean, liveValues, droppedValues, words],
   );
@@ -255,7 +273,20 @@ export function ValuesAndWordsTab({
                     .map((w) => w.trim())
                     .filter(Boolean),
                 );
-                setDraft((d) => ({ ...d, words: { ...d.words, [value]: next } }));
+                // S-5: a built-in word taken out of the list (deleted, or renamed to
+                // something else) is taken away, or the next Save brings it back.
+                const seed = seedWordsFor(row, value);
+                setDraft((d) => {
+                  const removed = (d.words[value] ?? []).filter((w) => !next.includes(w) && seed.includes(w));
+                  const dropped = dedupe([...(d.droppedWords[value] ?? []), ...removed]).filter(
+                    (w) => !next.includes(w),
+                  );
+                  return {
+                    ...d,
+                    words: { ...d.words, [value]: next },
+                    droppedWords: { ...d.droppedWords, [value]: dropped },
+                  };
+                });
                 setEditing(null);
               }}
               onKeyDown={(e) => {
@@ -302,7 +333,8 @@ export function ValuesAndWordsTab({
       cell: ({ row: r }) => {
         const value = r.original.value;
         const name = displayName(value);
-        if (removingValue === value) return removal.countdown;
+        if (removingValue === value && removal.pending) return removal.countdown;
+        const saved = isSavedChoice(value);
         return (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -319,7 +351,11 @@ export function ValuesAndWordsTab({
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuItem onClick={() => setEditing({ value, column: 'choice' })}>Edit</DropdownMenuItem>
-              <DropdownMenuItem variant="destructive" onClick={() => startRemoval(value)}>
+              <DropdownMenuItem
+                variant="destructive"
+                disabled={saved && removalBusy}
+                onClick={() => startRemoval(value)}
+              >
                 Remove
               </DropdownMenuItem>
             </DropdownMenuContent>
@@ -332,7 +368,20 @@ export function ValuesAndWordsTab({
 
     return [choiceColumn, wordsColumn, productsColumn, actionsColumn];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canEdit, mode, editing, removingValue, removal.countdown, removal.isBlocked, words, valueLabels, countByValue]);
+  }, [
+    canEdit,
+    mode,
+    editing,
+    removingValue,
+    removal.countdown,
+    removal.pending,
+    removal.isBlocked,
+    removalBusy,
+    words,
+    valueLabels,
+    countByValue,
+    row.allowed_values,
+  ]);
 
   const table = useReactTable({
     columns,

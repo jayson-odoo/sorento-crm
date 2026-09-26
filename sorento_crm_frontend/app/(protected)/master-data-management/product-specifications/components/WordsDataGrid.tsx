@@ -27,8 +27,15 @@ export interface WordsDataGridProps {
   value: string;
   onAdd: (word: string) => void;
   onRename: (oldWord: string, newWord: string) => void;
-  /** The server committed a removal - strip it from whatever draft is open too. */
+  /** The server committed a removal - strip it from whatever draft is open too.
+   *  Also called straight away for a word that exists only in the draft. */
   onRemoved?: (word: string) => void;
+  /**
+   * The words the server holds for this value. Only one of these has anything for
+   * `spec_word.remove` to remove; a word added in this sitting is dropped locally,
+   * with no countdown. Absent means every word listed is a saved one.
+   */
+  savedWords?: readonly string[];
   emptyMessage?: string;
   addPlaceholder?: string;
 }
@@ -56,6 +63,7 @@ export function WordsDataGrid({
   onAdd,
   onRename,
   onRemoved,
+  savedWords,
   emptyMessage = 'No words yet.',
   addPlaceholder = 'a word',
 }: WordsDataGridProps) {
@@ -80,7 +88,18 @@ export function WordsDataGrid({
     },
   });
 
+  // B-5: one removal at a time - see `SpecRulesGrid`'s own note.
+  const removalBusy = removal.isPending || removal.isBlocked;
+  const fold = (word: string) => word.trim().toLowerCase().replace(/\s+/g, ' ');
+  const isSavedWord = (word: string) =>
+    savedWords === undefined || savedWords.some((saved) => fold(saved) === fold(word));
+
   const startRemoval = (word: string) => {
+    if (!isSavedWord(word)) {
+      onRemoved?.(word);
+      return;
+    }
+    if (removalBusy) return;
     setRemovingWord(word);
     removal.start({ value, word });
   };
@@ -138,7 +157,8 @@ export function WordsDataGrid({
       enableResizing: false,
       cell: ({ row }) => {
         const word = row.original.word;
-        if (removingWord === word) return removal.countdown;
+        if (removingWord === word && removal.pending) return removal.countdown;
+        const saved = isSavedWord(word);
         return (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -155,7 +175,11 @@ export function WordsDataGrid({
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuItem onClick={() => setEditing(word)}>Edit</DropdownMenuItem>
-              <DropdownMenuItem variant="destructive" onClick={() => startRemoval(word)}>
+              <DropdownMenuItem
+                variant="destructive"
+                disabled={saved && removalBusy}
+                onClick={() => startRemoval(word)}
+              >
                 Remove
               </DropdownMenuItem>
             </DropdownMenuContent>
@@ -168,7 +192,17 @@ export function WordsDataGrid({
 
     return [wordColumn, actionsColumn];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, editing, removingWord, removal.countdown, removal.isBlocked, onRename]);
+  }, [
+    mode,
+    editing,
+    removingWord,
+    removal.countdown,
+    removal.pending,
+    removal.isBlocked,
+    removalBusy,
+    savedWords,
+    onRename,
+  ]);
 
   const table = useReactTable({
     columns,

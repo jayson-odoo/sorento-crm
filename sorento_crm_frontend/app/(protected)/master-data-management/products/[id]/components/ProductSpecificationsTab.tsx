@@ -19,7 +19,7 @@ import {
 import { usePermissions } from '@/hooks/usePermissions';
 import { DETAIL_KEY, useProductSpecTable } from '../../hooks/useProductSpecTable';
 import { useProduct, useUpdateProduct } from '../../hooks/useProducts';
-import { previewSpecSearch } from '../../../product-specifications/services/productSpecService';
+import { useSpecSearchPreviewQuery } from '../../../product-specifications/hooks/useSpecSearchPreviewQuery';
 import { WORKLIST_KEY } from '../../../spec-verification/hooks/useSpecVerification';
 import { InsertFieldDialog } from '@/app/(protected)/dealer-kit/tag-templates/components/InsertFieldDialog';
 import {
@@ -348,36 +348,26 @@ function PriceTagDescriptionBlock({
  */
 function ReadingAndSearch({ productId, renderedText }: { productId: string; renderedText: string | null }) {
   const [phrase, setPhrase] = useState('');
-  const [answer, setAnswer] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  // The phrase last submitted with Enter. The answer is read off ITS query only
+  // (S-15), so an earlier phrase answering late cannot overwrite it.
+  const [submitted, setSubmitted] = useState('');
+  const search = useSpecSearchPreviewQuery(submitted);
 
-  const run = async () => {
-    const trimmed = phrase.trim();
-    if (!trimmed) {
-      setAnswer(null);
-      return;
-    }
-    setLoading(true);
-    try {
-      const terms = trimmed.split(/\s+/);
-      const result = await previewSpecSearch({
-        specs: [],
-        free_terms: [trimmed, ...terms],
-        phrase: trimmed,
-        understand: true,
-      });
-      const place = result.candidates.findIndex((c) => c.product_id === productId);
-      setAnswer(
-        place >= 0
-          ? `This product comes up, ${ordinal(place + 1)} of ${result.candidates.length}`
-          : 'This product does not come up for this',
-      );
-    } catch {
-      setAnswer('Could not run that search');
-    } finally {
-      setLoading(false);
-    }
-  };
+  const run = () => setSubmitted(phrase.trim());
+
+  const loading = search.isFetching;
+  const answer = !submitted
+    ? null
+    : search.isError
+      ? 'Could not run that search'
+      : search.data
+        ? (() => {
+            const place = search.data.candidates.findIndex((c) => c.product_id === productId);
+            return place >= 0
+              ? `This product comes up, ${ordinal(place + 1)} of ${search.data.candidates.length}`
+              : 'This product does not come up for this';
+          })()
+        : null;
 
   return (
     <div className="flex flex-col gap-4 rounded-md border p-4">
@@ -399,7 +389,7 @@ function ReadingAndSearch({ productId, renderedText }: { productId: string; rend
               placeholder="Type what a customer would ask"
               onChange={(e) => setPhrase(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') void run();
+                if (e.key === 'Enter') run();
               }}
             />
           </div>

@@ -64,6 +64,8 @@ export default function SpecTryItPanel({
           variant="sm"
           className="min-h-[2.25rem] min-w-[16rem] flex-1"
           placeholder="Paste a product description to try instead"
+          // The server reads at most 4000 characters of pasted text.
+          maxLength={4000}
           value={pastedText}
           onChange={(e) => {
             const text = e.target.value;
@@ -90,13 +92,6 @@ export default function SpecTryItPanel({
           <span className="text-muted-foreground">Description: </span>
           <span className="font-mono">{description}</span>
         </div>
-      )}
-
-      {!source && (
-        <p className="text-xs text-muted-foreground">
-          Pick a product or paste text to see what each rule below reads from
-          it.
-        </p>
       )}
     </div>
   );

@@ -149,7 +149,23 @@ describe('the paste box', () => {
 });
 
 describe('states', () => {
-  it('shows nothing picked yet', () => {
+  // Review round 2, N-8: nothing picked yet shows the two inputs and no sentence
+  // explaining them (cursor rule: no feature explanations inside the UI).
+  it('shows nothing picked yet with no explanatory sentence', () => {
+    render(
+      <SpecTryItPanel
+        source={null}
+        onSourceChange={vi.fn()}
+        description={null}
+        loading={false}
+        error={null}
+      />,
+    );
+    expect(screen.getByPlaceholderText('Paste a product description to try instead')).toBeInTheDocument();
+    expect(screen.queryByText(/Pick a product or paste text/)).not.toBeInTheDocument();
+  });
+
+  it('caps pasted text at the 4000 characters the server reads', () => {
     render(
       <SpecTryItPanel
         source={null}
@@ -160,10 +176,8 @@ describe('states', () => {
       />,
     );
     expect(
-      screen.getByText(
-        'Pick a product or paste text to see what each rule below reads from it.',
-      ),
-    ).toBeInTheDocument();
+      screen.getByPlaceholderText('Paste a product description to try instead'),
+    ).toHaveAttribute('maxLength', '4000');
   });
 
   it('shows a loading state while try-it is in flight', () => {

@@ -133,7 +133,9 @@ describe('SpecRulesGrid - drag handles only while sorted by Order (AC-S1.9)', ()
 
 describe('SpecRulesGrid - Remove is spec_rule.remove, server-deferred (D7, D8, fix round 1)', () => {
   it('Remove parks spec_rule.remove keyed by the spec key, payload the builder', async () => {
-    renderGrid();
+    // Review round 2: only a rule the server holds is removed on the server; one
+    // that exists only in the draft is dropped locally. These two are saved.
+    renderGrid({ spec: { ...SHAPE, effective_rules: [ROUND_RULE, SQUARE_RULE] } });
 
     const row = screen.getByLabelText('Rule 1 actions').closest('tr')!;
     fireEvent.click(within(row).getByText('Remove'));

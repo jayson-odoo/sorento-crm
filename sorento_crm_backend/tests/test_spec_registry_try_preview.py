@@ -433,7 +433,8 @@ def test_preview_enqueues_a_job_without_running_it_inline(api, monkeypatch):
 
     started: dict = {}
 
-    def _fake_start(spec_key, rules):
+    # `db` is the request's session: the slot is also taken across processes (review S-8).
+    def _fake_start(spec_key, rules, db=None):
         started["spec_key"] = spec_key
         started["rules"] = rules
         return "zzt-fake-job"

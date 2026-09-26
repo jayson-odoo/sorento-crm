@@ -14,9 +14,17 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
-import { readableValue } from '@/lib/spec-readable';
+import { readable, readableValue } from '@/lib/spec-readable';
 import { toast } from '@/lib/toast';
 import { compileBuilder, ruleCells } from '../lib/ruleSentence';
+import { newRuleUid, ruleUid } from '../lib/ruleUid';
+import {
+  builderProblem,
+  emptyListProblem,
+  gapPhrasesProblem,
+  ruleMessage,
+  wordsListProblem,
+} from '../lib/ruleValidation';
 import SpecTryItPanel from './SpecTryItPanel';
 import SpecPreviewPanel from './SpecPreviewPanel';
 import { useSpecTryIt, type TryItSource } from '../hooks/useSpecTryIt';
@@ -86,29 +94,6 @@ const WRITTEN_IN_OPTIONS: { value: string; label: string }[] = [
 const toUpperList = (list: string[]) =>
   Array.from(new Set(list.map((w) => w.trim().toUpperCase()).filter(Boolean)));
 
-// Security review fix round (#1286, finding B1): the same three limits
-// `validate_rules` (`product_spec_rules.py`) refuses a rule for - a Words
-// phrase with more than one "..." backtracks catastrophically, so it is
-// capped client-side too, same wording as the server's refusal, minus its
-// "Rule {n}:" prefix (this modal edits one rule, so there is no n to name).
-const MAX_WORDS_PER_LIST = 20;
-const MAX_WORD_LENGTH = 60;
-
-/** Null while a list of words is within every limit; the message to show
- *  under it otherwise. Applies to every list of words a rule can hold -
- *  words, skip after, before, after, texts - the same as the server does. */
-function wordsListError(words: string[]): string | null {
-  if (words.length > MAX_WORDS_PER_LIST) {
-    return `Use at most ${MAX_WORDS_PER_LIST} words in a list.`;
-  }
-  for (const word of words) {
-    if (word.split('...').length - 1 > 1) return 'Use at most one ... in a phrase.';
-    if (word.length > MAX_WORD_LENGTH) {
-      return `Keep each word to ${MAX_WORD_LENGTH} characters or fewer.`;
-    }
-  }
-  return null;
-}
 
 /** The mutable form shape, one field per part across every kind (plan D5). */
 interface RuleDraft {
@@ -208,6 +193,8 @@ function draftFromBuilder(builder: SpecRuleBuilder | null): RuleDraft {
 function coerceValue(spec: SpecRegistryKey, raw: string): string | number | boolean {
   if (spec.data_type === 'boolean') return true;
   if (spec.data_type === 'numeric') {
+    // Blank stays blank, so the shared check names it, rather than Number('') = 0.
+    if (raw.trim() === '') return raw;
     const n = Number(raw);
     return Number.isFinite(n) ? n : raw;
   }
@@ -284,13 +271,7 @@ function RulePreviewRow({
   spec: SpecRegistryKey;
   lookupSpec: (specKey: string) => SpecRegistryKey | undefined;
 }) {
-  if (!builder) {
-    return (
-      <p className="text-sm text-muted-foreground">
-        Fill in the fields above to see the rule it becomes.
-      </p>
-    );
-  }
+  if (!builder) return <p className="text-sm text-muted-foreground">-</p>;
   const cells = ruleCells(builder, spec, lookupSpec);
   return (
     <div className="overflow-hidden rounded-md border">
@@ -355,7 +336,8 @@ export function SpecRuleModal({
   editingIndex,
   onSave,
 }: SpecRuleModalProps) {
-  const existing = editingIndex !== null ? (rules[editingIndex]?.builder ?? null) : null;
+  const existingRule = editingIndex !== null ? rules[editingIndex] : undefined;
+  const existing = existingRule?.builder ?? null;
   const [draft, setDraft] = useState<RuleDraft>(() => draftFromBuilder(existing));
   const [trySource, setTrySource] = useState<TryItSource | null>(null);
 
@@ -377,10 +359,10 @@ export function SpecRuleModal({
   const draftRules = useMemo<SpecDerivationRule[]>(() => {
     if (!builder) return rules;
     const compiled = compileBuilder(builder);
-    const asRule: SpecDerivationRule = { builder, pattern: compiled.pattern };
+    const asRule: SpecDerivationRule = { builder, pattern: compiled.pattern, _uid: existingRule?._uid };
     if (editingIndex === null) return [...rules, asRule];
     return rules.map((r, i) => (i === editingIndex ? asRule : r));
-  }, [builder, rules, editingIndex]);
+  }, [builder, rules, editingIndex, existingRule?._uid]);
 
   const { result: tryResult, loading: tryLoading, error: tryError } = useSpecTryIt(
     spec.spec_key,
@@ -406,28 +388,38 @@ export function SpecRuleModal({
     [spec.allowed_values, spec.value_labels],
   );
 
-  const onlyWhenSpecOptions = useMemo(
-    () =>
-      registry
-        .filter((k) => k.spec_key !== spec.spec_key && k.spec_key !== 'brand')
-        .map((k) => ({ value: k.spec_key, label: k.label })),
-    [registry, spec.spec_key],
-  );
+  // A rule may name a spec, or values, the registry no longer offers: they are
+  // still listed, read as words, so neither the picker nor its chips ever print a
+  // key (B-7 guard, N-9).
+  const onlyWhenSpecOptions = useMemo(() => {
+    const options = registry
+      .filter((k) => k.spec_key !== spec.spec_key && k.spec_key !== 'brand')
+      .map((k) => ({ value: k.spec_key, label: k.label }));
+    if (draft.only_when_spec && !options.some((o) => o.value === draft.only_when_spec)) {
+      options.push({ value: draft.only_when_spec, label: readable(draft.only_when_spec) });
+    }
+    return options;
+  }, [registry, spec.spec_key, draft.only_when_spec]);
   const onlyWhenValueOptions = useMemo(() => {
     const other = lookupSpec(draft.only_when_spec);
-    if (!other) return [];
-    return other.allowed_values.map((value) => ({
+    const values = Array.from(new Set([...(other?.allowed_values ?? []), ...draft.only_when_values]));
+    return values.map((value) => ({
       value,
-      label: readableValue(value, undefined, other.value_labels),
+      label: readableValue(value, undefined, other?.value_labels),
     }));
-  }, [draft.only_when_spec, lookupSpec]);
+  }, [draft.only_when_spec, draft.only_when_values, lookupSpec]);
+
+  // The rule's own number once it has one (Edit); a rule being added has none yet.
+  // Every refusal reads the server's words through the ONE shared check (S-11).
+  const ruleNumber = editingIndex !== null ? editingIndex + 1 : null;
 
   const wordsMultiSelect = (
     value: string[],
     onChange: (next: string[]) => void,
     placeholder: string,
   ) => {
-    const error = wordsListError(value);
+    const problem = wordsListProblem(value);
+    const error = problem ? ruleMessage(problem, ruleNumber) : null;
     return (
       <div className="flex flex-col gap-1">
         <SearchableMultiSelect
@@ -452,36 +444,38 @@ export function SpecRuleModal({
 
   // Every list of words the current draft holds, whichever kind is active -
   // Save is refused if any one of them is over a limit, same as the server.
-  const hasWordsListError = [draft.words, draft.skip_after, draft.before, draft.after, draft.texts].some(
-    (list) => wordsListError(list) !== null,
-  );
+  const draftLists = [draft.words, draft.skip_after, draft.before, draft.after, draft.texts];
+  const hasWordsListError = draftLists.some((list) => wordsListProblem(list) !== null);
+  // "..." in one phrase only, across every list (not one list's own limit, so it
+  // shows once, under the form, rather than under whichever list came second).
+  const gapProblem = hasWordsListError ? null : gapPhrasesProblem(draftLists);
 
   const hideWhereToLook = draft.kind === 'code' || draft.kind === 'product';
   const hideValueItSets = draft.kind === 'number' || draft.kind === 'size' || draft.kind === 'product';
 
   const save = () => {
-    if (!builder) {
-      toast.error(
-        draft.kind === 'words'
-          ? 'Add at least one word to find.'
-          : draft.kind === 'number'
-            ? 'Add at least one word next to the number.'
-            : draft.kind === 'code'
-              ? 'Add at least one piece of code to find.'
-              : 'Fill in what this rule reads.',
-      );
+    // The button is already disabled for these - a defensive stop, not the primary guard.
+    if (hasWordsListError || gapProblem) return;
+    const problem = builder ? builderProblem(builder) : emptyListProblem(draft.kind);
+    if (!builder || problem) {
+      toast.error(ruleMessage(problem ?? 'fill in what this rule reads.', ruleNumber));
       return;
     }
-    // The button is already disabled for this - a defensive stop, not the primary guard.
-    if (hasWordsListError) return;
     const compiled = compileBuilder(builder);
-    onSave({ builder, pattern: compiled.pattern }, editingIndex);
+    // B-4: the rule keeps the id it already had (edit) or gets a fresh one (add),
+    // so the grid's inline edit, drag and Remove find THIS rule afterwards.
+    onSave(
+      { builder, pattern: compiled.pattern, _uid: existingRule && editingIndex !== null ? ruleUid(existingRule, editingIndex) : newRuleUid() },
+      editingIndex,
+    );
     onOpenChange(false);
   };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-2xl">
+      {/* No description on purpose (no explanations in the UI); saying so stops
+          Radix warning about a missing one on every open. */}
+      <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-2xl" aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle>
             {editingIndex !== null ? `Edit a rule for ${spec.label}` : `Add a rule to ${spec.label}`}
@@ -683,6 +677,12 @@ export function SpecRuleModal({
             </div>
           </div>
 
+          {gapProblem && (
+            <p role="alert" className="text-xs text-destructive">
+              {ruleMessage(gapProblem, ruleNumber)}
+            </p>
+          )}
+
           <div className="flex flex-col gap-1.5">
             <Label>This rule in the grid</Label>
             <RulePreviewRow builder={builder} spec={spec} lookupSpec={lookupSpec} />
@@ -703,14 +703,19 @@ export function SpecRuleModal({
             </p>
           )}
 
-          <SpecPreviewPanel specKey={spec.spec_key} rules={draftRules} />
+          <SpecPreviewPanel
+            specKey={spec.spec_key}
+            rules={draftRules}
+            unit={spec.unit}
+            valueLabels={spec.value_labels}
+          />
         </div>
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={save} disabled={hasWordsListError}>
+          <Button onClick={save} disabled={hasWordsListError || !!gapProblem}>
             Save rule
           </Button>
         </DialogFooter>

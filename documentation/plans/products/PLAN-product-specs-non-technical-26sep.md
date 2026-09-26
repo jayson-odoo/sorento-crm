@@ -9,7 +9,11 @@ this plan and the UAC disagree, the UAC wins). **Review:** `UX-REVIEW-product-sp
 **Classification:** CORE, schema `public`. No new table, no new permission.
 **Status:** IN REVIEW on PR #1302 (27 Sep 2026), not merged. **Track: full.** Slices S0
 to S3 landed on one lane branch; open questions Q3, Q7, Q9, Q10, Q11 and Q13 were built to the
-plan's recommendation and are listed under "Rulings assumed" in the PR body. Planning history:
+plan's recommendation and are listed under "Rulings assumed" in the PR body. Fix round 2
+(reviewer pass at ea0b804b) added migration `spec_0003_rules_null_brand_pol`: a stored empty rule
+list now means "no rules" (NULL alone means "the shipped rules"), and `brand` is taken out of
+every stored visibility policy (ruling assumed: the brand stays out of the registry and is always
+shown). Planning history:
 DRAFT round 4, 27 Sep 2026; round 1 owner rulings, the round 3 Lavish mockup rulings and the
 round 4 Lavish notes applied (the three rulings sections below, and section 8).
 **Alignment page:** `alignment-product-specs-27sep.html` (owner review surface in Lavish; it

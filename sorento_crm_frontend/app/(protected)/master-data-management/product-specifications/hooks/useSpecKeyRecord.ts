@@ -11,6 +11,7 @@ import {
 } from '../lib/vocabularyEdit';
 import { useSpecRegistryMutations } from './useSpecRegistryMutations';
 import { SPEC_REGISTRY_QUERY_KEY } from './useSpecRegistryQuery';
+import { specKeyProductsKey } from './useSpecKeyProductsQuery';
 import type { SpecDerivationRule, SpecRegistryKey } from '../types/productSpec.types';
 
 export const dedupe = (list: string[]) => Array.from(new Set(list));
@@ -123,7 +124,7 @@ function trimmedValueLabels(labels: Record<string, string>): Record<string, stri
   return next;
 }
 
-function buildPatchBody(row: SpecRegistryKey, draft: SpecKeyDraft) {
+export function buildPatchBody(row: SpecRegistryKey, draft: SpecKeyDraft) {
   const { user_synonyms, suppressed_synonyms } = wordPayload(row, {
     words: draft.words,
     dropped: draft.droppedWords,
@@ -203,6 +204,11 @@ export function useSpecKeyRecord(row: SpecRegistryKey | undefined): UseSpecKeyRe
               }
             : old,
       );
+      // S-12: the products it re-read now hold other values, so the Products tab
+      // and the Choices counts (one query key) are fetched again.
+      if (updated.products_updated > 0) {
+        queryClient.invalidateQueries({ queryKey: specKeyProductsKey(row.spec_key) });
+      }
       // AC-S1.16, D10 (fix round 3, D2): the save already re-read exactly the
       // products it changed; there is nothing left to press, so the toast reports
       // the count and stops - every time, "Saved. 0 products updated." included,

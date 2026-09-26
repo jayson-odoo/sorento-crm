@@ -3,7 +3,7 @@
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { WordsDataGrid } from '../WordsDataGrid';
-import { dedupe, type SpecKeyDraft } from '../../hooks/useSpecKeyRecord';
+import { dedupe, seedWordsFor, type SpecKeyDraft } from '../../hooks/useSpecKeyRecord';
 import type { SpecRegistryKey } from '../../types/productSpec.types';
 
 /** The pseudo-value holding the words that name the SPECIFICATION itself ("oz",
@@ -120,6 +120,7 @@ export function HeaderTab({ row, mode, draft, setDraft }: HeaderTabProps) {
           mode={mode}
           specKey={row.spec_key}
           value={SELF_KEY}
+          savedWords={row.synonyms?.[SELF_KEY] ?? EMPTY_WORDS}
           emptyMessage="No other names yet."
           addPlaceholder="e.g. oz"
           onAdd={(word) =>
@@ -128,16 +129,27 @@ export function HeaderTab({ row, mode, draft, setDraft }: HeaderTabProps) {
               words: { ...d.words, [SELF_KEY]: dedupe([...(d.words[SELF_KEY] ?? []), word]) },
             }))
           }
+          // S-5: a built-in word renamed away is taken away too, or the next Save
+          // sends a suppression list without it and it comes back.
           onRename={(oldWord, newWord) =>
-            setDraft((d) => ({
-              ...d,
-              words: {
-                ...d.words,
-                [SELF_KEY]: dedupe(
-                  (d.words[SELF_KEY] ?? []).map((w) => (w === oldWord ? newWord : w)),
-                ),
-              },
-            }))
+            setDraft((d) => {
+              const builtIn = seedWordsFor(row, SELF_KEY).includes(oldWord);
+              return {
+                ...d,
+                words: {
+                  ...d.words,
+                  [SELF_KEY]: dedupe(
+                    (d.words[SELF_KEY] ?? []).map((w) => (w === oldWord ? newWord : w)),
+                  ),
+                },
+                droppedWords: builtIn
+                  ? {
+                      ...d.droppedWords,
+                      [SELF_KEY]: dedupe([...(d.droppedWords[SELF_KEY] ?? []), oldWord]),
+                    }
+                  : d.droppedWords,
+              };
+            })
           }
           // The server already dropped it (`spec_word.remove`, fix round 1) - this
           // only keeps the OPEN draft in step, so a Save right after does not
@@ -145,7 +157,7 @@ export function HeaderTab({ row, mode, draft, setDraft }: HeaderTabProps) {
           onRemoved={(word) =>
             setDraft((d) => {
               const current = d.words[SELF_KEY] ?? [];
-              const seedWords = row.synonyms?.[SELF_KEY] ?? [];
+              const seedWords = seedWordsFor(row, SELF_KEY);
               const droppedForSelf = seedWords.includes(word)
                 ? dedupe([...(d.droppedWords[SELF_KEY] ?? []), word])
                 : (d.droppedWords[SELF_KEY] ?? []);

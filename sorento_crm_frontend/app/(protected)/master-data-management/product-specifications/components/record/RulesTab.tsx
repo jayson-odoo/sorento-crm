@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { SpecRuleModal } from '../SpecRuleModal';
 import { SpecRulesGrid } from '../SpecRulesGrid';
+import { ruleUid } from '../../lib/ruleUid';
 import { useSpecTryIt, type TryItSource } from '../../hooks/useSpecTryIt';
 import SpecTryItPanel from '../SpecTryItPanel';
 import type { SpecKeyDraft } from '../../hooks/useSpecKeyRecord';
@@ -88,7 +89,8 @@ export function RulesTab({ row, registry, mode, draft, setDraft }: RulesTabProps
           editingIndex={editingIndex}
           onSave={(rule, index) => {
             if (index === null) setRules([...rules, rule]);
-            else setRules(rules.map((r, i) => (i === index ? rule : r)));
+            // Matched on the rule's own id (B-4), the same id the grid keys by.
+            else setRules(rules.map((r, i) => (ruleUid(r, i) === rule._uid ? rule : r)));
           }}
         />
       )}

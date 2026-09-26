@@ -293,19 +293,23 @@ def _too_many_gaps(builder: dict) -> bool:
     )
 
 
-_LETTER_OR_NUMBER = re.compile(r"[A-Za-z0-9]")
+# What a word is made of when it says nothing: "..." splits a phrase, and a space or a
+# hyphen joins its words, so a part made only of these compiles to an empty pattern that
+# matches every text (review B-2). "(" or "/" still says something and stays allowed:
+# "the number between ( and MM" is a real rule.
+_NOTHING_BUT_GAPS = re.compile(r"[\s.\-]*")
 
 
-def _has_letter(word) -> bool:
-    """Every part of a phrase ("..." splits it) says something: a word of only dots or
-    dashes compiles to a pattern that matches any text (review B-2)."""
-    parts = [part for part in str(word or "").split("...") if part.strip()]
-    return bool(parts) and all(_LETTER_OR_NUMBER.search(part) for part in parts)
+def _says_something(word) -> bool:
+    parts = str(word or "").split("...")
+    return any(part.strip() for part in parts) and not any(
+        part.strip() and _NOTHING_BUT_GAPS.fullmatch(part) for part in parts
+    )
 
 
 def _empty_word(builder: dict) -> bool:
     return any(
-        not _has_letter(word)
+        not _says_something(word)
         for part in _WORD_LISTS
         if isinstance(builder.get(part), list)
         for word in builder.get(part) or []
@@ -338,7 +342,7 @@ def read_text(builder: dict, texts: dict[str, str], code: str, spec_key: str | N
         if _empty_word(builder):
             # Stored before save refused it: a word of dots or dashes would match
             # every text and write this value onto the whole catalogue (review B-2).
-            _warn_once("a word has no letter or number", builder)
+            _warn_once("a word is only dots or dashes", builder)
             return None
         if kind == "code":
             texts_to_find = [str(t).upper() for t in builder.get("texts") or [] if str(t).strip()]
@@ -561,8 +565,8 @@ def _check_limits(builder: dict, n: int) -> None:
             raise _refuse(f"Rule {n}: use at most {MAX_WORDS_PER_LIST} words in a list.")
         for word in words:
             text_ = str(word or "")
-            if text_.strip() and not _has_letter(text_):
-                raise _refuse(f"Rule {n}: each word needs a letter or a number.")
+            if text_.strip() and not _says_something(text_):
+                raise _refuse(f"Rule {n}: each word needs more than dots and dashes.")
             if len(text_.strip()) > MAX_WORD_LENGTH:
                 raise _refuse(
                     f"Rule {n}: keep each word to {MAX_WORD_LENGTH} characters or fewer."

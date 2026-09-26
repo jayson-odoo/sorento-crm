@@ -11,16 +11,13 @@ import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridTable } from '@/components/ui/data-grid-table';
+import { readableValue } from '@/lib/spec-readable';
 import { useSpecPreview } from '../hooks/useSpecPreview';
 import type {
   SpecDerivationRule,
   SpecPreviewSampleRow,
 } from '../types/productSpec.types';
 
-const readable = (v: string | number | boolean | null) => {
-  if (v === null || v === undefined) return '-';
-  return typeof v === 'boolean' ? (v ? 'yes' : 'no') : String(v);
-};
 
 /**
  * "Preview on catalogue" (AC-B.4): before saving, how many products would change and a
@@ -30,11 +27,23 @@ const readable = (v: string | number | boolean | null) => {
 export default function SpecPreviewPanel({
   specKey,
   rules,
+  unit,
+  valueLabels,
 }: {
   specKey: string;
   rules: SpecDerivationRule[];
+  /** The spec's unit and value labels, so a before/after reads the way the
+   *  rest of the screen does - "Rose gold", "Yes", "750 mm" - never a slug (B-7). */
+  unit?: string | null;
+  valueLabels?: Record<string, string>;
 }) {
   const { status, result, error, run } = useSpecPreview(specKey);
+
+  const readable = useMemo(
+    () => (v: string | number | boolean | null) =>
+      v === null || v === undefined ? '-' : readableValue(v, unit ?? undefined, valueLabels) || '-',
+    [unit, valueLabels],
+  );
 
   const columns = useMemo<ColumnDef<SpecPreviewSampleRow>[]>(
     () => [
@@ -75,7 +84,7 @@ export default function SpecPreviewPanel({
         size: 140,
       },
     ],
-    [],
+    [readable],
   );
 
   const table = useReactTable({
@@ -145,12 +154,6 @@ export default function SpecPreviewPanel({
             </DataGrid>
           )}
         </div>
-      )}
-
-      {status === 'idle' && (
-        <p className="text-xs text-muted-foreground">
-          See how many products this rule would change before saving it.
-        </p>
       )}
     </div>
   );
