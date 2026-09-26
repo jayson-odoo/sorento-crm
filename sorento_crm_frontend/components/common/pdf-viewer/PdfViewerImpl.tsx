@@ -727,7 +727,8 @@ export default function PdfViewerImpl({
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={onSearchKeyDown}
-            className="min-w-0 flex-1"
+            // The browser's own clear button would sit beside Close as a second X.
+            className="min-w-0 flex-1 [&::-webkit-search-cancel-button]:appearance-none"
           />
           <span
             className="shrink-0 px-1 text-xs tabular-nums text-muted-foreground"
