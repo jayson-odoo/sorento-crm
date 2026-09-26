@@ -209,3 +209,37 @@ cases:
           branch_kind: business_query
           reply_contains: ["Sales orders:"]
           reply_not_contains: ["Ranked by:"]
+
+  # Reviewer B2 on PR #1273: a fresh ask never inherits the last ask's category, customer
+  # or metric. Whether the first reply is a single row or the how-many question depends
+  # on the prod copy; both asked nothing a fresh ask answers, so both must end on
+  # `Category: all`.
+  - name: B2 (a) - a fresh ask after a kitchen sink ranking drops the category
+    cold: true
+    turns:
+      - text: "top selling kitchen sinks by quantity"
+        expect:
+          branch_kind: business_query
+          parser: {order_status: top_selling, rank_by: quantity}
+          reply_contains: ["Category: KITCHEN SINK"]
+      - text: "top 5 selling items by amount"
+        expect:
+          branch_kind: business_query
+          parser: {order_status: top_selling, rank_by: amount, top_n: 5}
+          reply_contains: ["Ranked by: Amount", "\nCategory: all\n"]
+          reply_not_contains: ["KITCHEN SINK"]
+
+  - name: B2 (b) - an unanswered how-many, then a fresh ask with no metric is asked the metric
+    cold: true
+    turns:
+      - text: "top selling items by quantity"
+        expect:
+          branch_kind: business_query
+          parser: {order_status: top_selling, rank_by: quantity}
+          reply_contains: ["How many items do you want to see?"]
+      - text: "top 10 selling items"
+        expect:
+          branch_kind: business_query
+          parser: {order_status: top_selling, rank_by: null, top_n: 10}
+          reply_contains: ["By quantity or by amount?"]
+          reply_not_contains: ["Ranked by:"]
