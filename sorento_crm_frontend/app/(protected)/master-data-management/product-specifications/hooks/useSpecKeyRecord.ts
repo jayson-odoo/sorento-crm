@@ -203,12 +203,13 @@ export function useSpecKeyRecord(row: SpecRegistryKey | undefined): UseSpecKeyRe
               }
             : old,
       );
-      toast.success(`${updated.label} saved`, {
-        description:
-          draft.rules.length > 0
-            ? 'Read the catalogue again to apply it to products.'
-            : undefined,
-      });
+      // AC-S1.16, D10: the save already re-read exactly the products it changed;
+      // there is nothing left to press, so the toast reports the count and stops.
+      toast.success(
+        updated.products_updated > 0
+          ? `Saved. ${updated.products_updated} product${updated.products_updated === 1 ? '' : 's'} updated.`
+          : 'Saved.',
+      );
       setDraftState(null);
       setMode('view');
       return true;

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Pencil } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -16,6 +17,7 @@ import { useSpecKeyActions } from '../actions';
 import { useSpecKeyRecord } from '../hooks/useSpecKeyRecord';
 import { selectSpecKey, useSpecRegistryQuery } from '../hooks/useSpecRegistryQuery';
 import { filterSpecKeys } from '../lib/specRegistryFilter';
+import { specTypeLabel } from '../lib/specTypeLabel';
 import { HeaderTab } from './record/HeaderTab';
 import { RulesTab } from './record/RulesTab';
 import { SeenInProductsTab } from './record/SeenInProductsTab';
@@ -153,7 +155,18 @@ export function SpecKeyRecordDetail({ specKey }: { specKey: string }) {
   return (
     <>
       <Container>
-        <PageHeader title={row.label} crumbTitle={row.label} actions={backLink} />
+        <PageHeader
+          title={
+            <span className="inline-flex flex-wrap items-center gap-2">
+              {row.label}
+              <Badge variant="secondary" appearance="light" size="sm" shape="circle">
+                {specTypeLabel(row.data_type, row.unit)}
+              </Badge>
+            </span>
+          }
+          crumbTitle={row.label}
+          actions={backLink}
+        />
       </Container>
 
       <Container className="flex flex-col gap-4">

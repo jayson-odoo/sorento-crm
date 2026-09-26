@@ -211,12 +211,16 @@ export function ValuesAndWordsTab({
 
   return (
     <div className="overflow-hidden rounded-md border">
+      <div className="overflow-x-auto">
       <table className="w-full table-fixed text-sm">
+        {/* At 375 (AC-S1.15), Choice and Words fit without scrolling; Products
+            and the row menu sit past them, reachable by scrolling the GRID's
+            own frame (`overflow-x-auto` above), never the page. */}
         <colgroup>
-          <col className="w-[24%]" />
-          <col className="w-[46%]" />
-          <col className="w-[20%]" />
-          <col className="w-[10%]" />
+          <col style={{ width: 150 }} />
+          <col style={{ width: 190 }} />
+          <col style={{ width: 100 }} />
+          <col style={{ width: 44 }} />
         </colgroup>
         <thead>
           <tr className="border-b bg-muted/40">
@@ -239,7 +243,7 @@ export function ValuesAndWordsTab({
                 Products <ArrowUpDown className="size-3" aria-hidden />
               </button>
             </th>
-            <th className="p-2" />
+            <th className="p-2" aria-label="Actions" />
           </tr>
         </thead>
         <tbody>
@@ -403,6 +407,7 @@ export function ValuesAndWordsTab({
           )}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }

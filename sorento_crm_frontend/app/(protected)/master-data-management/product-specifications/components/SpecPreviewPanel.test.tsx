@@ -1,7 +1,8 @@
 /**
- * "Preview on catalogue" (AC-B.4): a pending spinner with no countdown, the four
- * counts once done, the sample table, and Save staying enabled throughout - preview
- * is advice, not a gate, so this component never disables anything outside itself.
+ * "See what would change" (AC-S1.8, plan D5, D10): a pending spinner with no
+ * countdown, the four counts once done, the sample table, and Save staying
+ * enabled throughout - preview is advice, not a gate, so this component never
+ * disables anything outside itself.
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
@@ -35,7 +36,7 @@ describe('idle', () => {
     render(<SpecPreviewPanel specKey="dim_length" rules={[]} />);
 
     expect(
-      screen.getByRole('button', { name: 'Preview on catalogue' }),
+      screen.getByRole('button', { name: 'See what would change' }),
     ).toBeEnabled();
     expect(screen.queryByText('changed')).not.toBeInTheDocument();
   });
@@ -51,8 +52,8 @@ describe('pending', () => {
     });
     render(<SpecPreviewPanel specKey="dim_length" rules={[]} />);
 
-    expect(screen.getByText('Running...')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Running/ })).toBeDisabled();
+    expect(screen.getByText('Checking...')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Checking/ })).toBeDisabled();
     // No countdown anywhere on the pending state - the job's duration is not knowable.
     expect(screen.queryByText(/\d+s/)).not.toBeInTheDocument();
   });
@@ -108,7 +109,7 @@ describe('done', () => {
     render(<SpecPreviewPanel specKey="dim_length" rules={[]} />);
 
     expect(
-      screen.getByRole('button', { name: 'Preview on catalogue' }),
+      screen.getByRole('button', { name: 'See what would change' }),
     ).toBeEnabled();
   });
 });

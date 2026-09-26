@@ -95,6 +95,7 @@ export function WordsDataGrid({
 
   return (
     <div className="overflow-hidden rounded-md border">
+      <div className="overflow-x-auto">
       <table className="w-full table-fixed text-sm">
         <colgroup>
           <col style={{ width: '80%' }} />
@@ -105,13 +106,14 @@ export function WordsDataGrid({
             <th className="p-2 text-left font-medium">
               <button
                 type="button"
+                aria-label="Sort by word"
                 className="inline-flex items-center gap-1 hover:underline"
                 onClick={() => setSortDesc((v) => !v)}
               >
                 Word <ArrowUpDown className="size-3" aria-hidden />
               </button>
             </th>
-            <th className="p-2" />
+            <th className="p-2" aria-label="Actions" />
           </tr>
         </thead>
         <tbody>
@@ -233,6 +235,7 @@ export function WordsDataGrid({
           )}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }

@@ -233,6 +233,15 @@ if __name__ == '__main__':
     _warn_if_vapid_missing()
     queues = resolve_queue_names()
     role_label = resolve_role_label()
+
+    # A deploy that changed the shipped spec rules re-reads the catalogue once, on the
+    # queue, with nobody pressing anything (#1286, D10). Only a worker that drains
+    # `imports` asks, so the job it queues is one this worker will run, and two workers
+    # of different roles do not both queue it.
+    if 'imports' in queues:
+        from app.services.product_spec_rederive import catch_up_on_worker_start
+        catch_up_on_worker_start()
+
     worker = ForkSafeWorker(queues, connection=redis_conn)
     logger.info("Starting RQ worker role=%s queues=%s", role_label, ', '.join(queues))
     worker.work()

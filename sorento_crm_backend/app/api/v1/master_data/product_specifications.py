@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import require_permission_with_api_key
-from app.models.product import Product, ProductCategory
+from app.models.product import Brand, Product, ProductCategory
 from app.models.product_spec import (
     ProductSpecRegistry,
     ProductSpecException,
@@ -104,9 +104,11 @@ async def list_product_specifications(
     """Derived specs, one row per product, newest derivation first."""
     try:
         q = (
-            db.query(ProductSpecifications, Product, ProductCategory)
+            db.query(ProductSpecifications, Product, ProductCategory, Brand.brand_name)
             .join(Product, Product.id == ProductSpecifications.product_id)
             .outerjoin(ProductCategory, ProductCategory.id == Product.category_id)
+            # The product's own brand field (R8, #1286): brand is not a specification.
+            .outerjoin(Brand, Brand.id == Product.brand_id)
         )
         if query:
             wild = f"%{query.strip()}%"
@@ -129,7 +131,7 @@ async def list_product_specifications(
 
         # One grouped count rather than a query per row: this list is the first thing
         # a reviewer opens, and an N+1 here is felt immediately.
-        codes = [product.product_code for _, product, _ in rows]
+        codes = [product.product_code for _, product, _, _ in rows]
         exception_counts = dict(
             db.query(ProductSpecException.product_code, func.count(ProductSpecException.id))
             .filter(
@@ -141,7 +143,7 @@ async def list_product_specifications(
         )
 
         data = []
-        for spec, product, category in rows:
+        for spec, product, category, brand_name in rows:
             values = spec.values or {}
             data.append(
                 {
@@ -149,10 +151,8 @@ async def list_product_specifications(
                     "product_code": product.product_code,
                     "class_label": (values.get("class") or {}).get("value")
                     or (category.class_label if category else None),
-                    "brand_hint": (values.get("brand") or {}).get("value"),
-                    "spec_count": len(
-                        [k for k in values if k not in ("class", "brand")]
-                    ),
+                    "brand_hint": brand_name,
+                    "spec_count": len([k for k in values if k != "class"]),
                     "rendered_text": spec.rendered_text,
                     "status": spec.status,
                     "is_discontinued": bool(product.is_discontinued),

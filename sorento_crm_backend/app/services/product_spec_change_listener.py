@@ -70,6 +70,10 @@ DERIVATION_INPUTS = (
     "dimensions_length",
     "dimensions_width",
     "dimensions_height",
+    # Not a derivation input any more (the Brand specification is gone, #1286), but the
+    # rendered sentence search matches still leads with the brand field, so a re-brand
+    # has to re-render it.
+    "brand_id",
 )
 
 

@@ -41,14 +41,23 @@ import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { readableValue } from '@/lib/spec-readable';
 import { DeferredCountdown } from '@/components/common/DeferredActionButton';
-import { ruleCells } from '../lib/ruleSentence';
+import { compileBuilder, ruleCells } from '../lib/ruleSentence';
 import type {
   SpecDerivationRule,
   SpecRegistryKey,
+  SpecRuleBuilder,
   SpecRuleProductFact,
   SpecRuleSizePick,
   SpecTryRuleRead,
 } from '../types/productSpec.types';
+
+/** A patched builder replaces the rule's `pattern` too (contract section 3: the
+ *  stored rule is `{builder, pattern}`, and `pattern` must be whatever
+ *  `compileBuilder` says THIS builder compiles to, never a stale one from
+ *  before the inline edit). */
+function withPattern(builder: SpecRuleBuilder): SpecDerivationRule['pattern'] {
+  return compileBuilder(builder).pattern;
+}
 
 const SIZE_PICK_OPTIONS: { value: string; label: string }[] = [
   { value: '1', label: '1st number' },
@@ -292,25 +301,27 @@ export function SpecRulesGrid({
     const uid = row.uid;
     const builder = row.rule.builder;
     const editing = editingCell?.uid === uid && editingCell.column === 'find';
+    // Every patch recompiles `pattern` from the NEW builder (contract section 3):
+    // a stale pattern left over from before the inline edit is what a save's own
+    // builder/pattern comparison would refuse.
+    const patchBuilder = (next: SpecRuleBuilder) =>
+      onChange(
+        rules.map((r) => (r._uid === uid ? { ...r, builder: next, pattern: withPattern(next) } : r)),
+      );
+
     if (mode === 'edit' && editing && editableFindKinds.has(builder.kind)) {
       if (builder.kind === 'words') {
         return (
           <SearchableMultiSelect
             value={builder.words}
-            onChange={(words) =>
-              onChange(rules.map((r) => (r._uid === uid ? { ...r, builder: { ...builder, words } } : r)))
-            }
+            onChange={(words) => patchBuilder({ ...builder, words })}
             options={wordChoices.map((w) => ({ value: w, label: w }))}
             createOption={{
               label: (query) => <span>Add &ldquo;{query.toUpperCase()}&rdquo;</span>,
               onCreate: (query) => {
                 const upper = query.toUpperCase();
                 if (!builder.words.includes(upper)) {
-                  onChange(
-                    rules.map((r) =>
-                      r._uid === uid ? { ...r, builder: { ...builder, words: [...builder.words, upper] } } : r,
-                    ),
-                  );
+                  patchBuilder({ ...builder, words: [...builder.words, upper] });
                 }
               },
             }}
@@ -321,20 +332,14 @@ export function SpecRulesGrid({
         return (
           <SearchableMultiSelect
             value={builder.texts}
-            onChange={(texts) =>
-              onChange(rules.map((r) => (r._uid === uid ? { ...r, builder: { ...builder, texts } } : r)))
-            }
+            onChange={(texts) => patchBuilder({ ...builder, texts })}
             options={wordChoices.map((w) => ({ value: w, label: w }))}
             createOption={{
               label: (query) => <span>Add &ldquo;{query.toUpperCase()}&rdquo;</span>,
               onCreate: (query) => {
                 const upper = query.toUpperCase();
                 if (!builder.texts.includes(upper)) {
-                  onChange(
-                    rules.map((r) =>
-                      r._uid === uid ? { ...r, builder: { ...builder, texts: [...builder.texts, upper] } } : r,
-                    ),
-                  );
+                  patchBuilder({ ...builder, texts: [...builder.texts, upper] });
                 }
               },
             }}
@@ -347,7 +352,7 @@ export function SpecRulesGrid({
             value={String(builder.pick)}
             onChange={(value) => {
               const pick = (['L', 'W', 'H'].includes(value) ? value : Number(value)) as SpecRuleSizePick;
-              onChange(rules.map((r) => (r._uid === uid ? { ...r, builder: { ...builder, pick } } : r)));
+              patchBuilder({ ...builder, pick });
               setEditingCell(null);
             }}
             options={SIZE_PICK_OPTIONS}
@@ -359,13 +364,7 @@ export function SpecRulesGrid({
           <SearchableSelect
             value={builder.fact}
             onChange={(value) => {
-              onChange(
-                rules.map((r) =>
-                  r._uid === uid
-                    ? { ...r, builder: { ...builder, fact: value as SpecRuleProductFact } }
-                    : r,
-                ),
-              );
+              patchBuilder({ ...builder, fact: value as SpecRuleProductFact });
               setEditingCell(null);
             }}
             options={PRODUCT_FACT_OPTIONS}
@@ -399,6 +398,14 @@ export function SpecRulesGrid({
     const canEdit =
       mode === 'edit' && (builder.kind === 'words' || builder.kind === 'code') && spec.data_type !== 'boolean';
     const editing = editingCell?.uid === uid && editingCell.column === 'value';
+    const patchBuilderValue = (value: string | number | boolean) =>
+      onChange(
+        rules.map((r) =>
+          r._uid === uid && (r.builder.kind === 'words' || r.builder.kind === 'code')
+            ? { ...r, builder: { ...r.builder, value }, pattern: withPattern({ ...r.builder, value }) }
+            : r,
+        ),
+      );
     if (editing && canEdit) {
       if (spec.data_type === 'numeric') {
         return (
@@ -408,11 +415,7 @@ export function SpecRulesGrid({
             defaultValue={String(builder.value ?? '')}
             onBlur={(e) => {
               const value = Number(e.target.value);
-              onChange(
-                rules.map((r) =>
-                  r._uid === uid ? { ...r, builder: { ...builder, value: Number.isFinite(value) ? value : builder.value } } : r,
-                ),
-              );
+              patchBuilderValue(Number.isFinite(value) ? value : builder.value);
               setEditingCell(null);
             }}
           />
@@ -422,7 +425,7 @@ export function SpecRulesGrid({
         <SearchableSelect
           value={String(builder.value)}
           onChange={(value) => {
-            onChange(rules.map((r) => (r._uid === uid ? { ...r, builder: { ...builder, value } } : r)));
+            patchBuilderValue(value);
             setEditingCell(null);
           }}
           options={valueOptions}

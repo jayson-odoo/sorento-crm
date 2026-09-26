@@ -438,7 +438,7 @@ def test_kind_omitted_and_counted_in_unchanged_when_equal_after_coercion(api, db
     db.commit()
     derive_for_code(db, "ZZT-EX-KIND-SAME", commit=True)
 
-    response = _extract(client, product.id, "Washdown. H800mm")
+    response = _extract(client, product.id, "Washdown. L700 x W400 x H800mm")
 
     assert response.status_code == 200, response.text
     body = response.json()

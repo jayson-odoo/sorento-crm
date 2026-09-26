@@ -1,7 +1,8 @@
 /**
- * B.2, D15b - the Header tab: Label, Unit, Active, and (numeric keys only) the
- * cap moved here from Values and words. Same field labels in both modes; edit
- * swaps each for its input in place.
+ * AC-S1.12 - Details: Name, Unit (not on List specs), In use, Highest believable
+ * value, and Other names for this specification as a data grid. Same field labels
+ * in both modes; edit swaps each for its input in place. No code name, no "Built
+ * in / Added here", no rule count, no Advanced anywhere on this tab.
  */
 import { useState } from 'react';
 import { describe, expect, it } from 'vitest';
@@ -13,7 +14,7 @@ import type { SpecRegistryKey } from '../../types/productSpec.types';
 function baseRow(overrides: Partial<SpecRegistryKey> = {}): SpecRegistryKey {
   return {
     spec_key: 'finish',
-    label: 'Finish',
+    label: 'Finish or colour',
     data_type: 'enum',
     unit: null,
     allowed_values: ['chrome'],
@@ -62,77 +63,108 @@ function EditHarness({
   );
 }
 
-describe('HeaderTab - same field labels in both modes', () => {
-  it('renders Label, Unit and Active in view mode', () => {
-    const row = baseRow({ is_active: false, unit: 'mm' });
+describe('HeaderTab - same field labels in both modes (AC-S1.12)', () => {
+  it('renders Name, Unit and In use in view mode', () => {
+    const row = baseRow({ is_active: false, unit: 'mm', data_type: 'numeric' });
     render(<HeaderTab row={row} mode="view" draft={null} setDraft={() => {}} />);
 
-    expect(screen.getByText('Label')).toBeInTheDocument();
+    expect(screen.getByText('Name')).toBeInTheDocument();
     expect(screen.getByText('Unit')).toBeInTheDocument();
-    expect(screen.getByText('Active')).toBeInTheDocument();
-    expect(screen.getByText('Finish')).toBeInTheDocument();
+    expect(screen.getByText('In use')).toBeInTheDocument();
+    expect(screen.getByText('Finish or colour')).toBeInTheDocument();
     expect(screen.getByText('mm')).toBeInTheDocument();
   });
 
-  it('renders the same three labels in edit mode, as inputs', () => {
-    render(<EditHarness row={baseRow({ unit: 'mm' })} />);
+  it('a List specification carries no Unit field (it has no unit of its own)', () => {
+    const row = baseRow({ data_type: 'enum' });
+    render(<HeaderTab row={row} mode="view" draft={null} setDraft={() => {}} />);
+    expect(screen.queryByText('Unit')).not.toBeInTheDocument();
+  });
 
-    expect(screen.getByText('Label')).toBeInTheDocument();
-    expect(screen.getByText('Unit')).toBeInTheDocument();
-    expect(screen.getByText('Active')).toBeInTheDocument();
-    expect(screen.getByLabelText('Label')).toBeInTheDocument();
+  it('renders the same labels in edit mode, as inputs', () => {
+    render(<EditHarness row={baseRow({ unit: 'mm', data_type: 'numeric' })} />);
+
+    expect(screen.getByLabelText('Name')).toBeInTheDocument();
     expect(screen.getByLabelText('Unit')).toBeInTheDocument();
-    expect(screen.getByRole('switch', { name: 'Active' })).toBeInTheDocument();
+    expect(screen.getByRole('switch', { name: 'In use' })).toBeInTheDocument();
   });
 });
 
-describe('HeaderTab - "Ignore values above" (numeric keys only)', () => {
-  it('shows the stored cap on a numeric key, in view mode', () => {
+describe('HeaderTab - Highest believable value (numeric specs only, AC-S1.12)', () => {
+  it('shows the stored limit on a numeric spec, in view mode', () => {
     const row = baseRow({ spec_key: 'dim_height', data_type: 'numeric', unit: 'mm', max_value: 5000 });
     render(<HeaderTab row={row} mode="view" draft={null} setDraft={() => {}} />);
 
-    expect(screen.getByText('Ignore values above (mm)')).toBeInTheDocument();
+    expect(screen.getByText('Highest believable value')).toBeInTheDocument();
     expect(screen.getByText('5000 mm')).toBeInTheDocument();
   });
 
-  it('shows No cap when unset', () => {
+  it('shows No limit when unset', () => {
     const row = baseRow({ spec_key: 'dim_height', data_type: 'numeric', unit: 'mm', max_value: null });
     render(<HeaderTab row={row} mode="view" draft={null} setDraft={() => {}} />);
 
-    expect(screen.getByText('No cap')).toBeInTheDocument();
+    expect(screen.getByText('No limit')).toBeInTheDocument();
   });
 
-  it('is absent on a non-numeric key in either mode', () => {
+  it('is absent on a List specification in either mode', () => {
     const row = baseRow();
     render(<HeaderTab row={row} mode="view" draft={null} setDraft={() => {}} />);
-    expect(screen.queryByText(/Ignore values above/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Highest believable value')).not.toBeInTheDocument();
   });
 });
 
-describe('HeaderTab - editing the draft', () => {
+describe('HeaderTab - Other names for this specification (D7, D13)', () => {
+  it('lists the _self synonyms as a data grid, never a value row', () => {
+    const row = baseRow({
+      spec_key: 'capacity_oz',
+      label: 'Capacity (oz)',
+      data_type: 'numeric',
+      unit: 'oz',
+      synonyms: { _self: ['oz', 'ounce', 'ounces'] },
+    });
+    render(<HeaderTab row={row} mode="view" draft={null} setDraft={() => {}} />);
+
+    expect(screen.getByText('Other names for this specification')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'oz' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'ounce' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'ounces' })).toBeInTheDocument();
+    // `_self` is a bookkeeping key, never rendered as its own word or value.
+    expect(screen.queryByText('_self')).not.toBeInTheDocument();
+  });
+
+  it('typing a new word adds it to the draft under _self', () => {
+    let latest: SpecKeyDraft | undefined;
+    const row = baseRow({
+      spec_key: 'capacity_oz',
+      data_type: 'numeric',
+      synonyms: { _self: ['oz'] },
+    });
+    render(<EditHarness row={row} onDraftChange={(draft) => (latest = draft)} />);
+
+    fireEvent.click(screen.getByText('+ Add a word'));
+    fireEvent.change(screen.getByPlaceholderText('e.g. oz'), { target: { value: 'ounce' } });
+    fireEvent.keyDown(screen.getByPlaceholderText('e.g. oz'), { key: 'Enter' });
+
+    expect(latest?.words._self).toEqual(['oz', 'ounce']);
+  });
+});
+
+describe('HeaderTab - no Advanced, nothing technical (D8, AC-S1.12)', () => {
+  it('renders no code name, no Built in, no rule count', () => {
+    const row = baseRow({ spec_key: 'capacity_oz' });
+    render(<HeaderTab row={row} mode="view" draft={null} setDraft={() => {}} />);
+
+    expect(screen.queryByText('capacity_oz')).not.toBeInTheDocument();
+    expect(screen.queryByText(/built in/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/advanced/i)).not.toBeInTheDocument();
+  });
+
   it('typing a label feeds the draft', () => {
     let latest: SpecKeyDraft | undefined;
     render(<EditHarness row={baseRow()} onDraftChange={(draft) => (latest = draft)} />);
 
-    fireEvent.change(screen.getByLabelText('Label'), { target: { value: 'Finish colour' } });
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Finish colour' } });
 
     expect(latest?.label).toBe('Finish colour');
-  });
-
-  it('toggling Active in edit mode changes the draft', () => {
-    let latest: SpecKeyDraft | undefined;
-    render(
-      <EditHarness
-        row={baseRow({ is_active: true })}
-        onDraftChange={(draft) => (latest = draft)}
-      />,
-    );
-
-    const toggle = screen.getByRole('switch', { name: 'Active' });
-    expect(toggle).toHaveAttribute('aria-checked', 'true');
-
-    fireEvent.click(toggle);
-
-    expect(latest?.isActive).toBe(false);
   });
 });

@@ -325,6 +325,17 @@ export interface SpecSearchPolicyRow {
   default_value: number;
 }
 
+/**
+ * `PATCH /spec-registry/{key}` (contract section 4): the serialised key, plus how
+ * many products the save re-read straight away through `rederive_codes` (D10) -
+ * 0 when the save changed neither `derivation_rules`, `applies_when` nor
+ * `max_value`. The toast reads this, never a re-read prompt (owner ruling, 27 Sep
+ * 2026): "Saved. N products updated."
+ */
+export interface SpecRegistryKeyUpdateResult extends SpecRegistryKey {
+  products_updated: number;
+}
+
 /** What the phrase was understood to mean, and whether a model was involved. */
 export interface SpecUnderstanding {
   source: 'semantic' | 'deterministic';

@@ -29,7 +29,6 @@ def test_renders_a_readable_sentence():
         _values(
             **{
                 "class": "Kitchen Sink",
-                "brand": "Sorento",
                 "material": "stainless_steel",
                 "mounting": "wall_hung",
                 "finish": "black",
@@ -38,7 +37,10 @@ def test_renders_a_readable_sentence():
                 "dim_height": 140,
                 "control_type": "single_lever",
             }
-        )
+        ),
+        # The product's own brand field, handed in beside the values: brand is not a
+        # specification any more (#1286, D1).
+        brand="SORENTO",
     )
 
     assert sentence.startswith("Sorento kitchen sink.")

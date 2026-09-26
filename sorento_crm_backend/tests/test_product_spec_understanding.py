@@ -207,37 +207,12 @@ def test_an_open_vocabulary_key_is_given_the_catalogs_own_values(db):
 
     That is exactly what happened: the model answered "the term 'sorento' is unclear and
     does not map to any specification", which was the correct answer to a badly-posed
-    question. The values have to come from the catalog, because that is the only place
-    they exist.
+    question. The values have to come from the catalog - the Brands master, since the
+    brand is the product's own field (#1286, D2).
     """
-    import uuid as _uuid
-    from decimal import Decimal
-
-    from app.models.product import Product
-    from app.models.product_spec import ProductSpecifications
     from app.services.product_spec_understanding import _vocabulary
 
-    category = db.query(ProductCategory).filter_by(category_code="SRT-KS").one()
-    uom = db.query(UnitOfMeasure).filter_by(uom_code="ZZT-PCS").one()
-    product = Product(
-        id=str(_uuid.uuid4()),
-        product_code="ZZT-BRANDED",
-        product_name="ZZT-BRANDED",
-        description="SORENTO KITCHEN SINK",
-        category_id=category.id,
-        base_uom_id=uom.id,
-        list_price=Decimal("1.00"),
-    )
-    db.add(product)
-    db.flush()
-    db.add(
-        ProductSpecifications(
-            product_id=product.id,
-            values={"brand": {"value": "Sorento"}, "class": {"value": "Kitchen Sink"}},
-            provenance={},
-        )
-    )
-    db.flush()
+    _branded(db, "ZZT-BRANDED", "Sorento")
 
     described, _index, open_values = _vocabulary(db)
     brand = next(e for e in described if e["spec_key"] == "brand")
@@ -248,33 +223,7 @@ def test_an_open_vocabulary_key_is_given_the_catalogs_own_values(db):
 
 def test_a_brand_is_returned_in_the_catalogs_own_spelling(db, monkeypatch):
     """The model echoes the customer's casing; the ranker compares against the catalog."""
-    import uuid as _uuid
-    from decimal import Decimal
-
-    from app.models.product import Product
-    from app.models.product_spec import ProductSpecifications
-
-    category = db.query(ProductCategory).filter_by(category_code="SRT-KS").one()
-    uom = db.query(UnitOfMeasure).filter_by(uom_code="ZZT-PCS").one()
-    product = Product(
-        id=str(_uuid.uuid4()),
-        product_code="ZZT-BRANDED2",
-        product_name="ZZT-BRANDED2",
-        description="SORENTO KITCHEN SINK",
-        category_id=category.id,
-        base_uom_id=uom.id,
-        list_price=Decimal("1.00"),
-    )
-    db.add(product)
-    db.flush()
-    db.add(
-        ProductSpecifications(
-            product_id=product.id,
-            values={"brand": {"value": "Sorento"}},
-            provenance={},
-        )
-    )
-    db.flush()
+    _branded(db, "ZZT-BRANDED2", "Sorento")
 
     _model_returning({"specs": [{"key": "brand", "value": "sorento"}]}, monkeypatch)
 
@@ -285,15 +234,23 @@ def test_a_brand_is_returned_in_the_catalogs_own_spelling(db, monkeypatch):
 # excluded values: a catalog value that is not a thing anyone searches for
 # --------------------------------------------------------------------------- #
 def _branded(db, code: str, brand: str):
-    """One product carrying a brand, so the open vocabulary has it to offer."""
+    """One product carrying a brand in the Brands master, so the vocabulary has it to
+    offer. OTHERS and NO LOGO are seeded not searchable, as migration spec_0001 does."""
     import uuid as _uuid
     from decimal import Decimal
 
-    from app.models.product import Product
-    from app.models.product_spec import ProductSpecifications
+    from app.models.product import Brand, Product
 
     category = db.query(ProductCategory).filter_by(category_code="SRT-KS").one()
     uom = db.query(UnitOfMeasure).filter_by(uom_code="ZZT-PCS").one()
+    row = Brand(
+        id=str(_uuid.uuid4()),
+        brand_code=f"ZZT-{code}",
+        brand_name=brand,
+        is_searchable=brand.upper() not in {"OTHERS", "NO LOGO"},
+    )
+    db.add(row)
+    db.flush()
     product = Product(
         id=str(_uuid.uuid4()),
         product_code=code,
@@ -301,15 +258,10 @@ def _branded(db, code: str, brand: str):
         description="KITCHEN SINK",
         category_id=category.id,
         base_uom_id=uom.id,
+        brand_id=row.id,
         list_price=Decimal("1.00"),
     )
     db.add(product)
-    db.flush()
-    db.add(
-        ProductSpecifications(
-            product_id=product.id, values={"brand": {"value": brand}}, provenance={}
-        )
-    )
     db.flush()
     return product
 
@@ -331,7 +283,7 @@ def test_an_excluded_value_is_never_offered_to_the_model(db):
 
     assert "SORENTO" in brand["allowed_values"]
     assert "OTHERS" not in brand["allowed_values"]
-    assert "OTHERS" not in open_values["brand"]
+    assert "OTHERS" not in open_values.get("brand", [])
 
 
 def test_an_excluded_value_is_rejected_even_if_the_model_returns_it(db, monkeypatch):

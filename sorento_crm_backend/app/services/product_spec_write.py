@@ -30,7 +30,7 @@ from sqlalchemy import event, inspect
 from sqlalchemy.orm import Session
 
 from app.models.base import company_scope
-from app.models.product import Product
+from app.models.product import Brand, Product
 from app.models.product_spec import ProductSpecException, ProductSpecifications
 from app.services.error_handler import AppException
 from app.services.product_spec_rendering import render_spec_sentence
@@ -227,11 +227,16 @@ def write_spec_row(
     provenance: Mapping,
     has_exceptions: bool = False,
     derived_hash: str | None = _UNCHANGED,
+    brand: str | None = None,
 ) -> None:
     """Assign the row's values, provenance, sentence and status. The only such site.
 
     `derived_hash` takes a sentinel rather than defaulting to None so a caller can leave
     it alone (derivation stamps its fingerprint; an authored write clears it on purpose).
+
+    `brand` is the product's own brand name, which the sentence leads with. It is not a
+    specification any more (#1286, D1), so the caller hands it in: derivation already
+    holds the product, and the authored write reads it once per code.
     """
     values = dict(values or {})
     provenance = dict(provenance or {})
@@ -240,7 +245,7 @@ def write_spec_row(
     spec.provenance = provenance
     # Rendered here so the only text spec search may match can never drift from the
     # values it describes.
-    spec.rendered_text = render_spec_sentence(values)
+    spec.rendered_text = render_spec_sentence(values, brand=brand)
     spec.status = _status_for(provenance, has_exceptions)
     if derived_hash is not _UNCHANGED:
         spec.derived_hash = derived_hash
@@ -254,6 +259,12 @@ def write_spec_row(
 _OPS = ("set", "absent", "revert")
 
 
+# Not a specification (#1286, D1): the product's brand field is the only brand.
+BRAND_IS_NOT_A_SPEC = (
+    "Brand is not a specification. The product's brand is on its Details tab."
+)
+
+
 def _prepare(entry: Mapping, actor: Mapping | None) -> dict:
     spec_key = str(entry.get("spec_key") or "").strip()
     if not spec_key:
@@ -261,6 +272,10 @@ def _prepare(entry: Mapping, actor: Mapping | None) -> dict:
             status_code=400,
             message="A specification key is required.",
             code="product_spec_bad_value",
+        )
+    if spec_key.lower() == "brand":
+        raise AppException(
+            status_code=400, message=BRAND_IS_NOT_A_SPEC, code="product_spec_brand"
         )
 
     op = str(entry.get("op") or "set").strip().lower()
@@ -475,6 +490,14 @@ def apply_spec_values(
             > 0
         )
 
+        # The sentence leads with each copy's own brand field, read once per code.
+        brand_by_product = dict(
+            db.query(Product.id, Brand.brand_name)
+            .outerjoin(Brand, Brand.id == Product.brand_id)
+            .filter(Product.id.in_(product_ids))
+            .all()
+        )
+
         rows_written = 0
         # One before/after pair speaks for the whole code, and it must come from the
         # copy the verify hash is defined on - `current_values_hash` reads the lowest
@@ -513,6 +536,7 @@ def apply_spec_values(
                 provenance=provenance,
                 has_exceptions=has_exceptions,
                 derived_hash=None,
+                brand=brand_by_product.get(product_id),
             )
             rows_written += 1
 

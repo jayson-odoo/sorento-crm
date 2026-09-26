@@ -1,8 +1,8 @@
 /**
- * "Try it on" (AC-B.3): a product search over the whole master, in `fetchOptions`
+ * "Try it on" (AC-S1.8): a product search over the whole master, in `fetchOptions`
  * mode - never a capped static dropdown - or a paste box as the alternative. This
  * component only owns the source and the description it reads from; the per-row
- * reads render INTO `SpecRuleEditor`'s rows, not here.
+ * reads render INTO `SpecRulesGrid`'s rows, not here.
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';

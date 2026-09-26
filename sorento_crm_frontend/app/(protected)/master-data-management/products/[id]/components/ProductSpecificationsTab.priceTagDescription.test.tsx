@@ -179,27 +179,34 @@ function descriptionTextarea() {
   return screen.getByLabelText('Price tag description') as HTMLTextAreaElement;
 }
 
-describe('Price tag description block on the Specifications tab (AC-S4-10)', () => {
-  it('renders the stored template read-only, directly under Product description', () => {
+describe('Price tag description block on the Specifications tab (AC-S4-10, AC-S2.1, AC-S2.6)', () => {
+  it('renders the stored template read-only, below the values table', () => {
     mockSpecHook(baseDetail());
     render(<ProductSpecificationsTab productId="p-1" />);
 
-    const productDescriptionLabel = screen.getByText('Product description');
+    // "Product description" is no longer on this tab (AC-S2.5) - it moved to
+    // Details; Price tag description sits below the values table (SpecTable,
+    // stubbed here) and above Reading and search.
+    const specTable = screen.getByTestId('spec-table-stub');
     const priceTagLabel = screen.getByText('Price tag description');
+    const readingAndSearch = screen.getByText('Reading and search');
     expect(screen.getByText('Stored template text')).toBeInTheDocument();
-    // eslint-disable-next-line no-bitwise
     expect(
-      productDescriptionLabel.compareDocumentPosition(priceTagLabel) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
+      specTable.compareDocumentPosition(priceTagLabel) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      priceTagLabel.compareDocumentPosition(readingAndSearch) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
   });
 
-  it('shows "(none)" when the product has no stored template yet', () => {
+  it('shows the empty-state sentence when the product has no stored template yet (AC-S2.6)', () => {
     useProduct.mockReturnValue({ data: baseProduct({ price_tag_description: null }), isLoading: false });
     mockSpecHook(baseDetail());
     render(<ProductSpecificationsTab productId="p-1" />);
 
-    expect(screen.getByText('(none)')).toBeInTheDocument();
+    expect(
+      screen.getByText('Not set, the price tag uses the product description'),
+    ).toBeInTheDocument();
   });
 
   it('Edit turns the box into a prefilled textarea', () => {

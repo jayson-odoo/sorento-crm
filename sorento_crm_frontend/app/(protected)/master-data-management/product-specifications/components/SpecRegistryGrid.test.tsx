@@ -185,27 +185,27 @@ describe('SpecRegistryGrid', () => {
   });
 });
 
-describe('SpecRegistryGrid - row menu (D14, D15, D15b)', () => {
+describe('SpecRegistryGrid - row menu (D14, D15, D15b, AC-S3.8)', () => {
   /** Radix opens on pointerdown, not click. */
   function openMenu(trigger: HTMLElement) {
     fireEvent.pointerDown(trigger, new MouseEvent('pointerdown', { bubbles: true, button: 0 }));
   }
 
-  it('both a seed and a user row carry the "..." menu, Delete disabled on the seed row', async () => {
+  it('a built-in row carries no "..." menu at all - Delete was the only item it could ever hold (AC-S3.8)', async () => {
     renderGrid();
     await screen.findByText('Finish');
 
-    // The gear is always present (D15b) - Finish is source: 'seed', Bowl count is 'user'.
-    // The grid is sorted by label, so Bowl count comes first, Finish second.
+    // Finish is source: 'seed' / built-in and Bowl count is 'user': with Delete
+    // the only action either row could ever carry, an all-permission-filtered
+    // row (`DetailActionsMenu`'s own rule) leaves no menu behind at all, not an
+    // empty one - so only Bowl count's "..." renders.
     const menuButtons = screen.getAllByRole('button', { name: 'specification actions' });
-    expect(menuButtons).toHaveLength(2);
-
-    openMenu(menuButtons[1]); // Finish's row (seed)
-    const item = await screen.findByRole('menuitem', { name: 'Delete specification' });
-    expect(item).toHaveAttribute('aria-disabled', 'true');
+    expect(menuButtons).toHaveLength(1);
+    openMenu(menuButtons[0]);
+    expect(await screen.findByRole('menuitem', { name: 'Delete specification' })).toBeInTheDocument();
   });
 
-  it('a user-made row with the delete permission has Delete enabled', async () => {
+  it('an added specification keeps a deferred Delete (AC-S3.8)', async () => {
     renderGrid();
     await screen.findByText('Finish');
 
@@ -213,6 +213,35 @@ describe('SpecRegistryGrid - row menu (D14, D15, D15b)', () => {
     openMenu(menuButtons[0]); // Bowl count's row - source: 'user'
     const item = await screen.findByRole('menuitem', { name: 'Delete specification' });
     expect(item).not.toHaveAttribute('aria-disabled', 'true');
+  });
+});
+
+describe('SpecRegistryGrid - default columns and no re-read (AC-S3.1, AC-S3.2, AC-S3.4)', () => {
+  it('shows Specification, Type, Choices, Products by default; Code, Rules, Built in are not visible', async () => {
+    renderGrid();
+    await screen.findByText('Finish');
+
+    expect(screen.getByText('Specification')).toBeInTheDocument();
+    expect(screen.getAllByText('Type').length).toBeGreaterThan(0);
+    expect(screen.getByText('Choices')).toBeInTheDocument();
+    expect(screen.getByText('Products')).toBeInTheDocument();
+    expect(screen.queryByText('Code')).not.toBeInTheDocument();
+    expect(screen.queryByText('Rules')).not.toBeInTheDocument();
+    expect(screen.queryByText('Built in')).not.toBeInTheDocument();
+    // The Choice/Number/Yes-or-no/Text wording (AC-S3.2), never "Choice".
+    expect(screen.getByText('List')).toBeInTheDocument();
+    expect(screen.queryByText('Choice')).not.toBeInTheDocument();
+  });
+
+  it('renders no status pill, no Re-read button, and none of the retired re-read wording', async () => {
+    renderGrid();
+    await screen.findByText('Finish');
+
+    expect(screen.queryByRole('button', { name: /re-?read/i })).not.toBeInTheDocument();
+    expect(screen.queryByText('Never read')).not.toBeInTheDocument();
+    expect(screen.queryByText('Rules changed since')).not.toBeInTheDocument();
+    expect(screen.queryByText('Needs a re-read')).not.toBeInTheDocument();
+    expect(screen.queryByText('Up to date')).not.toBeInTheDocument();
   });
 });
 

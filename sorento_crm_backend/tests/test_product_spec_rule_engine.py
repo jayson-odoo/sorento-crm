@@ -746,3 +746,321 @@ def test_ac_s1_16_saving_a_words_rule_reports_and_applies_products_updated(regis
             .first()
         )
         assert (spec.values or {}).get(key, {}).get("value") == "a"
+
+
+# --------------------------------------------------------------------------- #
+# AC-S1.4 - golden parity: the old matcher and the new engine over real phrases
+#
+# Added by the coder (#1286, S1). Every product in the existing golden sample
+# (`tests/fixtures/spec_derivation_golden_sample.json`, 2,000 real catalogue codes) is
+# read twice: with the frozen pre-lane shipped rules (`tests/fixtures/legacy_shipped_rules.json`)
+# through a frozen copy of the OLD matcher kept below, and with the new shipped builder
+# rules through the new engine. Every difference must fall in one of the four groups plan
+# D5 names; anything else is printed and fails the test.
+# --------------------------------------------------------------------------- #
+_GOLDEN_SAMPLE = Path(__file__).resolve().parent / "fixtures" / "spec_derivation_golden_sample.json"
+_LEGACY_RULES = Path(__file__).resolve().parent / "fixtures" / "legacy_shipped_rules.json"
+
+# Frozen from `product_spec_derivation` as it stood before this lane (origin/main 232182ae5).
+_OLD_TRAP_LENGTH_RE = re.compile(r"[SP]\s*-?\s*TRAP\s*[:,]?\s*(\d+(?:\.\d+)?)\s*MM")
+_OLD_RECORD_KINDS = {"from_field", "name_head"}
+_OLD_DEFAULT_SCOPE_BY_KEY = {"class": "class_tail"}
+
+
+def _old_number(raw):
+    value = float(raw)
+    return int(value) if value.is_integer() else value
+
+
+def _old_rule_matches(rule, texts, code, default_scope="any"):
+    kind = str(rule.get("match") or "contains").lower()
+    pattern = str(rule.get("pattern") or "")
+    if not pattern:
+        return None
+    scope = str(rule.get("source") or default_scope).lower()
+    if kind == "code_suffix":
+        if "-" not in code:
+            return None
+        if code.rsplit("-", 1)[1] != pattern.upper():
+            return None
+        return rule.get("value"), f"-{pattern.upper()}", "code"
+    if kind in {"code_contains", "code_starts_with"}:
+        needle = pattern.upper()
+        hit = code.startswith(needle) if kind == "code_starts_with" else needle in code
+        return (rule.get("value"), needle, "code") if hit else None
+    names = [scope] if scope in texts else ["description", "flyer"]
+    for name in names:
+        haystack = texts.get(name, "")
+        if not haystack:
+            continue
+        if kind == "contains":
+            if re.search(rf"(?<![A-Z]){re.escape(pattern.upper())}(?![A-Z])", haystack):
+                return rule.get("value"), pattern.upper(), name
+        elif kind == "ends_with":
+            token = pattern.upper()
+            if haystack == token or haystack.endswith(" " + token):
+                return rule.get("value"), token, name
+        elif kind == "present":
+            match = re.search(rf"(?<![A-Z]){pattern}(?![A-Z])", haystack)
+            if match:
+                return rule.get("value", True), match.group(0), name
+        elif kind == "regex":
+            match = re.search(pattern, haystack)
+            if match:
+                group = int(rule.get("capture") or 0)
+                raw = match.group(group) if group else match.group(0)
+                if group and raw is None:
+                    continue
+                value = _old_number(raw) if group else rule.get("value", True)
+                scale = rule.get("scale")
+                if scale and isinstance(value, (int, float)):
+                    value = value * float(scale)
+                    if float(value).is_integer():
+                        value = int(value)
+                return value, match.group(0), name
+    return None
+
+
+def _old_record_read(rule, product, category, spec_key):
+    from app.services.product_spec_derivation import _class_from_description
+
+    if product is None:
+        return None
+    kind = str(rule.get("match") or "").lower()
+    pattern = str(rule.get("pattern") or "")
+    if kind == "name_head":
+        named = _class_from_description(product.description or "", (product.product_code or "").upper())
+        return (named[0], named[1], "field") if named else None
+    if pattern == "category":
+        label = getattr(category, "class_label", None) if category is not None else None
+        return (label, getattr(category, "category_code", "") or "", "category") if label else None
+    if pattern.startswith("column:"):
+        raw = getattr(product, pattern.split(":", 1)[1], None)
+        return None if raw is None else (_old_number(str(raw)), f"{spec_key}={raw}", "field")
+    return None
+
+
+def _old_gate_passes(rule, held):
+    for field, wanted in (("applies_when", True), ("unless", False)):
+        for gate_key, permitted in (rule.get(field) or {}).items():
+            value = held.get(gate_key)
+            allowed = {str(v).strip().lower() for v in (permitted or [])}
+            hit = value is not None and str(value).strip().lower() in allowed
+            if hit is not wanted:
+                return False
+    return True
+
+
+def _old_apply_rules(rules_by_key, texts, code, *, product, category, max_values):
+    """The old first-match loop, values and cap flags only (the parity compares values)."""
+    from app.services.product_spec_derivation import MULTI_VALUE_KEYS
+
+    gates = set()
+    for rules in rules_by_key.values():
+        for rule in rules:
+            gates |= set(rule.get("applies_when") or {}) | set(rule.get("unless") or {})
+    ordered = [k for k in rules_by_key if k in gates] + [k for k in rules_by_key if k not in gates]
+    values: dict = {}
+    origins: dict = {}
+    for key in ordered:
+        collected, origin, value = [], None, None
+        for rule in rules_by_key[key]:
+            if not _old_gate_passes(rule, values):
+                continue
+            kind = str(rule.get("match") or "contains").lower()
+            is_column = kind == "from_field" and str(rule.get("pattern") or "").startswith("column:")
+            if kind in _OLD_RECORD_KINDS:
+                hit = _old_record_read(rule, product, category, key)
+            else:
+                hit = _old_rule_matches(rule, texts, code, _OLD_DEFAULT_SCOPE_BY_KEY.get(key, "any"))
+            if hit is None or hit[0] is None:
+                continue
+            cap = max_values.get(key)
+            if cap is not None and not is_column and isinstance(hit[0], (int, float)) \
+                    and not isinstance(hit[0], bool) and hit[0] > cap:
+                break
+            if key in MULTI_VALUE_KEYS:
+                if collected and hit[2] != origin:
+                    break
+                if hit[0] not in collected:
+                    origin = origin or hit[2]
+                    collected.append(hit[0])
+                continue
+            value, origin = hit[0], hit[2]
+            break
+        if collected:
+            value = collected[0] if len(collected) == 1 else collected
+        if value is not None:
+            values[key] = value
+            origins[key] = origin
+    return values, origins
+
+
+class _ParityRow:
+    def __init__(self, **fields):
+        self.__dict__.update(fields)
+
+
+def _parity_inputs(entry):
+    from decimal import Decimal
+
+    def dec(raw):
+        return None if raw is None else Decimal(raw)
+
+    product = _ParityRow(
+        product_code=entry["code"],
+        description=entry["description"],
+        dimensions_length=dec(entry["dimensions_length"]),
+        dimensions_width=dec(entry["dimensions_width"]),
+        dimensions_height=dec(entry["dimensions_height"]),
+    )
+    category = (
+        _ParityRow(category_code=entry["category_code"], class_label=entry["class_label"])
+        if entry["category_code"]
+        else None
+    )
+    return product, category
+
+
+# The four groups plan D5 names, then the two differences the parity run found that the
+# plan does not name (reported to the captain for a ruling, #1286 S1). Each takes one
+# difference and says whether it is that group's.
+def _group_two_digit_counts(diff):
+    return diff["key"] in {"way_count", "spray_functions"} and isinstance(diff["after"], int) \
+        and diff["after"] >= 10
+
+
+def _group_power_stands_alone(diff):
+    return diff["key"] == "power_hp" and diff["after"] is None and diff["before"] is not None
+
+
+def _group_phrase_gap(diff):
+    """D5 group 3, "OVER FLOW" also matches "OVER-FLOW", and every other phrase with it:
+    the new reading's words differ from the rule's own only by a hyphen, a doubled space
+    or no space between them (D5: "a space, a hyphen or nothing all count")."""
+    if diff["before"] is not None or not diff["evidence"]:
+        return False
+    evidence = diff["evidence"]
+    squashed = re.sub(r"[\s\-]+", "", evidence)
+    return evidence not in diff["words"] and squashed in {re.sub(r"[\s\-]+", "", w) for w in diff["words"]}
+
+
+def _group_flyer_labelled_size(diff):
+    # The flyer is not a derivation input, so this group only shows in proposals.
+    return False
+
+
+def _outside_plan_hose_two_decimals(diff):
+    """NOT in plan D5: "1.75M" now reads as 1750 mm of hose. The old reader took one
+    decimal place only, so a bathtub's "1.70M" length was never a hose."""
+    return diff["key"] == "hose_length" and diff["before"] is None
+
+
+def _outside_plan_number_after_hyphen(diff):
+    """NOT in plan D5: "(LENGTH-200MM)" is no longer a length. A number touched by a
+    letter across a hyphen is never read (contract section 2, the F-809L case), and the
+    old lone-size reader allowed the hyphen."""
+    return diff["key"] == "dim_length" and diff["after"] is None \
+        and re.search(r"[A-Z]-" + str(diff["before"]) + r"\s*MM", diff["description"]) is not None
+
+
+def _outside_plan_bowl_count_digits(diff):
+    """NOT in plan D5: the bowl count, like Ways and Spray functions, now reads a number
+    of more than one digit, so "6086 BOWL ONLY" (a model number) reads 6086 bowls."""
+    return diff["key"] == "bowl_count" and isinstance(diff["after"], int) and diff["after"] >= 10
+
+
+_D5_GROUPS = (
+    ("D5 1: two-digit ways and spray functions", _group_two_digit_counts),
+    ("D5 2: power needs a number standing on its own", _group_power_stands_alone),
+    ("D5 3: a hyphen, a double space or nothing between a phrase's words", _group_phrase_gap),
+    ("D5 4: the flyer's labelled L, W, H", _group_flyer_labelled_size),
+    ("NOT IN D5: hose length reads two decimal places", _outside_plan_hose_two_decimals),
+    ("NOT IN D5: a number after a letter and a hyphen", _outside_plan_number_after_hyphen),
+    ("NOT IN D5: bowl count reads more than one digit", _outside_plan_bowl_count_digits),
+)
+
+
+def _parity_differences():
+    from app.services.product_spec_derivation import (
+        _Derivation,
+        _apply_scope,
+        apply_rules,
+        class_text,
+        shipped_rules,
+    )
+    from app.services.product_spec_registry import shipped_max_values, shipped_scopes
+
+    sample = json.loads(_GOLDEN_SAMPLE.read_text())["products"]
+    legacy = {k: v for k, v in json.loads(_LEGACY_RULES.read_text()).items() if k != "brand"}
+    new_rules = shipped_rules()
+    scopes, caps = shipped_scopes(), shipped_max_values()
+
+    def scoped(values: dict, origins: dict) -> dict:
+        # The same scope `derive()` applies, class-from-category included (it never gates).
+        out = _Derivation()
+        for key, value in values.items():
+            out.set(key, value, "", source="category" if origins.get(key) == "category" else "derived")
+        _apply_scope(out, scopes)
+        return {key: entry["value"] for key, entry in out.values.items()}
+
+    differences = []
+    for entry in sample:
+        product, category = _parity_inputs(entry)
+        code = (product.product_code or "").upper()
+        description = (product.description or "").upper()
+        class_tail = class_text(product.description or "", code)
+        old_texts = {
+            "description": description,
+            "flyer": "",
+            "class_tail": class_tail,
+            "size_text": _OLD_TRAP_LENGTH_RE.sub(" ", description),
+        }
+        new_texts = {"description": description, "flyer": "", "class_tail": class_tail}
+        before = scoped(
+            *_old_apply_rules(legacy, old_texts, code, product=product, category=category, max_values=caps)
+        )
+        fired = apply_rules(new_rules, new_texts, code, product=product, category=category, max_values=caps)
+        after = scoped(
+            {k: r["value"] for k, r in fired.items() if r["value"] is not None},
+            {k: r["origin"] for k, r in fired.items()},
+        )
+        for key in sorted(set(before) | set(after)):
+            if before.get(key) != after.get(key):
+                differences.append(
+                    {
+                        "code": entry["code"],
+                        "key": key,
+                        "before": before.get(key),
+                        "after": after.get(key),
+                        "evidence": (fired.get(key) or {}).get("evidence") or "",
+                        "words": [
+                            word
+                            for rule in new_rules.get(key) or []
+                            for word in rule["builder"].get("words") or []
+                        ],
+                        "description": description,
+                    }
+                )
+    return differences
+
+
+def test_ac_s1_4_golden_parity_differences_fall_only_in_the_named_groups():
+    grouped: dict[str, list] = {name: [] for name, _ in _D5_GROUPS}
+    unexplained = []
+    for diff in _parity_differences():
+        row = (diff["code"], diff["key"], diff["before"], diff["after"], diff["evidence"])
+        for name, belongs in _D5_GROUPS:
+            if belongs(diff):
+                grouped[name].append(row)
+                break
+        else:
+            unexplained.append(row + (diff["description"],))
+
+    for name, rows in grouped.items():
+        print(f"{name}: {len(rows)}")
+        for row in rows:
+            print("   ", row)
+    for row in unexplained:
+        print("UNEXPLAINED", row)
+    assert not unexplained, f"{len(unexplained)} differences in no named group (printed above)"

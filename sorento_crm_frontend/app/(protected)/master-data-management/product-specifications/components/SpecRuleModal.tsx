@@ -270,7 +270,8 @@ function RulePreviewRow({
   const cells = ruleCells(builder, spec, lookupSpec);
   return (
     <div className="overflow-hidden rounded-md border">
-      <table className="w-full text-sm">
+      <div className="overflow-x-auto">
+      <table className="w-full min-w-[560px] text-sm">
         <thead className="bg-muted/40 text-xs text-muted-foreground">
           <tr>
             <th className="p-2 text-left font-medium">Where to look</th>
@@ -297,6 +298,7 @@ function RulePreviewRow({
           </tr>
         </tbody>
       </table>
+      </div>
     </div>
   );
 }
@@ -460,7 +462,7 @@ export function SpecRuleModal({
             <Label>Kind</Label>
             <SearchableSelect
               value={draft.kind}
-              onChange={(value) => setDraft((d) => ({ ...draftFromBuilder(null), kind: value as SpecRuleKind }))}
+              onChange={(value) => setDraft(() => ({ ...draftFromBuilder(null), kind: value as SpecRuleKind }))}
               options={KIND_OPTIONS}
             />
           </div>

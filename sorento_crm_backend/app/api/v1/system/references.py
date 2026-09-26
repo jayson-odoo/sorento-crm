@@ -2970,14 +2970,21 @@ def resolve_reference_post(
                         # `render_spec_sentence` reads `{key: {"value": ...}}`;
                         # `filtered_values` is already values-only, so each is
                         # re-wrapped one level to match.
-                        nested = {k: {"value": v} for k, v in filtered_values.items()}
+                        # The brand rides on `specifications` from the product's own
+                        # field (it is not a specification, #1286), so it is handed
+                        # to the renderer beside the values rather than inside them.
+                        nested = {
+                            k: {"value": v}
+                            for k, v in filtered_values.items()
+                            if k != "brand"
+                        }
                         # A None render (nothing left to say) falls back to the
                         # product's own code, never the ORIGINAL summary - an
                         # identifying code is not a leak of what filtering
                         # removed, where the unfiltered sentence would be.
-                        candidate["summary"] = render_spec_sentence(nested) or candidate.get(
-                            "product_code", ""
-                        )
+                        candidate["summary"] = render_spec_sentence(
+                            nested, brand=filtered_values.get("brand")
+                        ) or candidate.get("product_code", "")
                 if isinstance(matched_specs, list):
                     candidate["matched_specs"] = [
                         k for k in matched_specs if k not in hidden_spec_keys

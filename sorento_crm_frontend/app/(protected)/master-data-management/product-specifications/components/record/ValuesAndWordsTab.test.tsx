@@ -1,30 +1,57 @@
 /**
- * AC-B.3, AC-E.1/E.2, AC-G.8 - the Values and words tab.
- *
- * Ported from `SpecKeyEditor.suppressedWords.test.tsx` (rendering half; the save-diff
- * half now lives in `useSpecKeyRecord.test.ts`, where the diff actually runs).
- * Suppression is reversible, so a suppressed row must keep its staff words visible
- * and editable rather than hiding them.
+ * AC-S1.15 - Choices and words: a data grid, one row per choice (Choice, Words
+ * customers say, Products), sortable headers, inline edit, deferred remove. No
+ * chips, no cards, no `_self` row, no "user"/"Seed" badge, no code name (D13;
+ * owner ruling 27 Sep 2026, "this should be tabulated with data grid").
  */
-import { useState } from 'react';
-import { describe, expect, it } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import React, { useState } from 'react';
+import { describe, expect, it, vi } from 'vitest';
+import { render, screen, fireEvent, within } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+
+/** The dropdown-menu stub renders children flat - Radix's own portal timing is not
+ *  what this suite is testing (established pattern, see PackingListsList.test.tsx). */
+type MenuSlotProps = { children?: React.ReactNode };
+type MenuItemProps = MenuSlotProps & { onClick?: () => void; variant?: string };
+
+vi.mock('@/components/ui/dropdown-menu', () => ({
+  DropdownMenu: ({ children }: MenuSlotProps) => <div>{children}</div>,
+  DropdownMenuTrigger: ({ children }: MenuSlotProps) => <>{children}</>,
+  DropdownMenuContent: ({ children }: MenuSlotProps) => <div>{children}</div>,
+  DropdownMenuItem: ({ children, onClick }: MenuItemProps) => (
+    <button type="button" onClick={onClick}>
+      {children}
+    </button>
+  ),
+}));
+
+vi.mock('../../services/productSpecService', () => ({
+  getSpecKeyProducts: vi.fn().mockResolvedValue({
+    spec_key: 'finish',
+    label: 'Finish or colour',
+    total: 0,
+    by_value: [],
+    by_class: [],
+    by_source: [],
+    products: [],
+  }),
+}));
+
 import { ValuesAndWordsTab } from './ValuesAndWordsTab';
 import { projectSpecKeyDraft, type SpecKeyDraft } from '../../hooks/useSpecKeyRecord';
 import type { SpecRegistryKey } from '../../types/productSpec.types';
 
-/** `finish` after an admin suppressed the shipped value staff had added a word to. */
-function finishWithASuppressedValue(): SpecRegistryKey {
+function finishOrColour(overrides: Partial<SpecRegistryKey> = {}): SpecRegistryKey {
   return {
     spec_key: 'finish',
-    label: 'Finish',
+    label: 'Finish or colour',
     data_type: 'enum',
     unit: null,
-    allowed_values: ['chrome'],
-    synonyms: { chrome: ['chrome'] },
+    allowed_values: ['chrome', 'rose_gold'],
+    synonyms: { chrome: ['chrome', 'silver'], rose_gold: ['rose gold'], _self: ['finish'] },
     excluded_values: [],
     user_values: [],
-    suppressed_values: ['brushed_brass'],
+    suppressed_values: [],
     value_weights: {},
     derivation_rules: [],
     effective_rules: [],
@@ -33,12 +60,18 @@ function finishWithASuppressedValue(): SpecRegistryKey {
     rank_weight: 1,
     measured_coverage: null,
     source: 'seed',
-    user_synonyms: { brushed_brass: ['old brass'] },
+    user_synonyms: {},
     suppressed_synonyms: {},
     match_tolerance: 0,
     match_decay: 0,
     is_active: true,
-  };
+    ...overrides,
+  } as SpecRegistryKey;
+}
+
+function withClient(children: React.ReactNode) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
 }
 
 function EditHarness({
@@ -66,93 +99,81 @@ function EditHarness({
   );
 }
 
-describe('ValuesAndWordsTab - suppressed values (edit mode)', () => {
-  it('shows the suppressed value its own row, so the words are visible to edit', () => {
-    render(<EditHarness row={finishWithASuppressedValue()} />);
+describe('ValuesAndWordsTab - a data grid, never chips or cards (AC-S1.15)', () => {
+  it('renders Choice, Words customers say and Products as column headers', () => {
+    render(withClient(<ValuesAndWordsTab row={finishOrColour()} mode="view" draft={null} setDraft={() => {}} onEnterEdit={() => {}} />));
 
-    expect(screen.getByText('old brass')).toBeInTheDocument();
-    expect(
-      screen.getByRole('button', { name: 'Put Brushed brass back' }),
-    ).toBeInTheDocument();
+    expect(screen.getByText('Choice')).toBeInTheDocument();
+    expect(screen.getByText('Words customers say')).toBeInTheDocument();
+    expect(screen.getByText('Products')).toBeInTheDocument();
+    expect(screen.getByText('Chrome')).toBeInTheDocument();
+    expect(screen.getByText('Rose gold')).toBeInTheDocument();
   });
 
-  it('strikes that row through, the way a restored row is not struck through', () => {
-    render(<EditHarness row={finishWithASuppressedValue()} />);
+  it('never renders _self as a choice row', () => {
+    render(withClient(<ValuesAndWordsTab row={finishOrColour()} mode="view" draft={null} setDraft={() => {}} onEnterEdit={() => {}} />));
 
-    expect(screen.getByText('Brushed brass')).toHaveClass('line-through');
-    expect(screen.getByText('Chrome')).not.toHaveClass('line-through');
+    expect(screen.queryByText('_self')).not.toBeInTheDocument();
+  });
+
+  it('renders no chip, no card, no user/Seed badge', () => {
+    render(withClient(<ValuesAndWordsTab row={finishOrColour({ source: 'user' })} mode="view" draft={null} setDraft={() => {}} onEnterEdit={() => {}} />));
+
+    expect(screen.queryByText('User')).not.toBeInTheDocument();
+    expect(screen.queryByText('Seed')).not.toBeInTheDocument();
   });
 });
 
-describe('ValuesAndWordsTab - display label (E.1, E.2)', () => {
-  it('the label input carries the automatic wording as its placeholder', () => {
-    render(<EditHarness row={finishWithASuppressedValue()} />);
-
-    expect(
-      screen.getByPlaceholderText('Chrome') as HTMLInputElement,
-    ).toBeInTheDocument();
-  });
-
-  it('typing a label feeds the draft', () => {
+describe('ValuesAndWordsTab - inline edit (edit mode, AC-S1.15)', () => {
+  it('clicking the Words cell edits it as a comma list', () => {
     let latest: SpecKeyDraft | undefined;
-    render(
-      <EditHarness
-        row={finishWithASuppressedValue()}
-        onDraftChange={(draft) => (latest = draft)}
-      />,
-    );
+    render(withClient(<EditHarness row={finishOrColour()} onDraftChange={(d) => (latest = d)} />));
 
-    fireEvent.change(screen.getByLabelText('Display label for Chrome'), {
-      target: { value: 'Chrome finish' },
-    });
+    fireEvent.click(screen.getByText('chrome, silver'));
+    const input = screen.getByDisplayValue('chrome, silver');
+    fireEvent.change(input, { target: { value: 'chrome, silver, gm' } });
+    fireEvent.blur(input);
 
-    expect(latest?.valueLabels.chrome).toBe('Chrome finish');
+    expect(latest?.words.chrome).toEqual(['chrome', 'silver', 'gm']);
   });
 
-  it('view mode shows a stored label instead of the automatic wording', () => {
-    const row = { ...finishWithASuppressedValue(), value_labels: { chrome: 'Chrome finish' } };
-    render(<ValuesAndWordsTab row={row} mode="view" draft={null} setDraft={() => {}} onEnterEdit={() => {}} />);
+  it('Add a choice adds a row with the typed label, never a raw slug (D15)', () => {
+    let latest: SpecKeyDraft | undefined;
+    render(withClient(<EditHarness row={finishOrColour()} onDraftChange={(d) => (latest = d)} />));
 
-    expect(screen.getByText('Chrome finish')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('+ Add a choice'));
+    const input = screen.getByPlaceholderText('a choice, e.g. Rose gold');
+    fireEvent.change(input, { target: { value: 'Satin chrome' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    expect(latest?.liveValues).toContain('satin_chrome');
+    expect(latest?.valueLabels.satin_chrome).toBe('Satin chrome');
   });
-});
 
-describe('ValuesAndWordsTab - view and edit share field labels (G.8)', () => {
-  // "Display label" is the one named exception (item 3): the row heading already
-  // IS the label (`readableValue(value, undefined, valueLabels)`), so a second,
-  // read-only "Display label" span in view mode would just repeat it - it renders
-  // only in edit mode, where it is an input. Every other field label matches.
-  it('renders the same shared-field labels in both modes, Display label edit-only', () => {
-    const row = finishWithASuppressedValue();
-    const { unmount } = render(
-      <ValuesAndWordsTab row={row} mode="view" draft={null} setDraft={() => {}} onEnterEdit={() => {}} />,
-    );
-    expect(screen.queryByText('Display label')).not.toBeInTheDocument();
-    const viewLabels = screen.getAllByText(/Words customers say/).map((el) => el.textContent);
-    unmount();
+  it('Remove is a deferred action, not an instant delete', () => {
+    render(withClient(<EditHarness row={finishOrColour()} />));
 
-    render(<EditHarness row={row} />);
-    expect(screen.getAllByText('Display label')).toHaveLength(2);
-    const editLabels = screen.getAllByText(/Words customers say/).map((el) => el.textContent);
+    const chromeRow = screen.getByLabelText('Chrome actions').closest('tr')!;
+    fireEvent.click(within(chromeRow).getByText('Remove'));
 
-    expect(editLabels).toEqual(viewLabels);
+    expect(screen.getByText(/Removing in \ds/)).toBeInTheDocument();
+    // Still in the DOM, dimmed by the countdown - not gone yet.
+    expect(screen.getByText('Cancel')).toBeInTheDocument();
   });
 });
 
-describe('ValuesAndWordsTab - empty state', () => {
-  it('offers Add value when the key has none', () => {
-    const row: SpecRegistryKey = {
-      ...finishWithASuppressedValue(),
-      spec_key: 'fresh_key',
+describe('ValuesAndWordsTab - a Number specification has no choices (review V8)', () => {
+  it('points at Details instead of an add-choice CTA', () => {
+    const row = finishOrColour({
+      spec_key: 'capacity_oz',
+      data_type: 'numeric',
       allowed_values: [],
-      suppressed_values: [],
-      synonyms: {},
-      user_synonyms: {},
-      suppressed_synonyms: {},
-    };
-    render(<EditHarness row={row} />);
+      synonyms: { _self: ['oz'] },
+    });
+    render(withClient(<ValuesAndWordsTab row={row} mode="view" draft={null} setDraft={() => {}} onEnterEdit={() => {}} />));
 
-    expect(screen.getByText('No values yet')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Add value' })).toBeInTheDocument();
+    expect(
+      screen.getByText('Numbers have no choices. Other names for this specification are on Details.'),
+    ).toBeInTheDocument();
   });
 });

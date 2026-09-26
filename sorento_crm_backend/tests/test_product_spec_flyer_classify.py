@@ -195,7 +195,7 @@ def test_extract_spec_proposals_still_drops_an_unchanged_key_from_its_output(db)
     )
     assert stored.values["dim_height"]["value"] == 800
 
-    result = extract_spec_proposals(db, product, "Washdown. H800mm")
+    result = extract_spec_proposals(db, product, "Washdown. L700 x W400 x H800mm")
 
     by_key = {p["spec_key"]: p for p in result["proposals"]}
     assert "dim_height" not in by_key

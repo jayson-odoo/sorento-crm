@@ -720,18 +720,21 @@ def _scores(db, specs) -> dict:
     return {r["product_code"]: r["score"] for r in search_specs(db, specs=specs)["candidates"]}
 
 
-def test_a_house_brand_preference_floats_that_brand(db):
+# A house preference is a registry row's `value_weights`. It was exercised on the Brand
+# specification's row, which is gone (#1286, D1: brand is the product's own field), so
+# these pin the same mechanism on another key: the finish.
+def test_a_house_preference_floats_that_value(db):
     # Asserted on the SCORE, not on list order: with the two products otherwise equal
     # the order is a tie either way, so an order assertion passes whether or not the
     # preference is applied - a test that cannot fail.
-    _product(db, "ZZT-RIVAL", "BRAVAT S/STEEL KITCHEN SINK", brand="rival")
-    _product(db, "ZZT-HOUSE", "SORENTO S/STEEL KITCHEN SINK", brand="house")
+    _product(db, "ZZT-RIVAL", "SORENTO S/STEEL KITCHEN SINK CHROME")
+    _product(db, "ZZT-HOUSE", "SORENTO S/STEEL KITCHEN SINK BLACK")
     class_only = [{"key": "class", "value": "Kitchen Sink"}]
 
     before = _scores(db, class_only)
     assert before["ZZT-HOUSE"] == before["ZZT-RIVAL"], "equal until a preference is set"
 
-    _prefer(db, "brand", {"SORENTO": 1.5})
+    _prefer(db, "finish", {"black": 1.5})
     after = _scores(db, class_only)
 
     assert after["ZZT-HOUSE"] == before["ZZT-HOUSE"] + 1.5
@@ -739,25 +742,25 @@ def test_a_house_brand_preference_floats_that_brand(db):
     assert _codes(search_specs(db, specs=class_only))[0] == "ZZT-HOUSE"
 
 
-def test_a_house_preference_never_overrides_the_brand_the_customer_asked_for(db):
-    """Someone who asks for Bravat is asking for Bravat.
+def test_a_house_preference_never_overrides_the_value_the_customer_asked_for(db):
+    """Someone who asks for chrome is asking for chrome.
 
     A preference that outranked the customer's own words would be a bug wearing a
     boost's clothes, so it is only applied to keys they did not state.
     """
-    _product(db, "ZZT-HOUSE", "SORENTO S/STEEL KITCHEN SINK", brand="house")
-    _product(db, "ZZT-RIVAL", "BRAVAT S/STEEL KITCHEN SINK", brand="rival")
-    asked_for_bravat = [
+    _product(db, "ZZT-HOUSE", "SORENTO S/STEEL KITCHEN SINK BLACK")
+    _product(db, "ZZT-RIVAL", "SORENTO S/STEEL KITCHEN SINK CHROME")
+    asked_for_chrome = [
         {"key": "class", "value": "Kitchen Sink"},
-        {"key": "brand", "value": "BRAVAT"},
+        {"key": "finish", "value": "chrome"},
     ]
 
-    before = _scores(db, asked_for_bravat)
-    _prefer(db, "brand", {"SORENTO": 1.5})
-    after = _scores(db, asked_for_bravat)
+    before = _scores(db, asked_for_chrome)
+    _prefer(db, "finish", {"black": 1.5})
+    after = _scores(db, asked_for_chrome)
 
-    assert after == before, "the customer named the brand, so no house preference applies"
-    assert _codes(search_specs(db, specs=asked_for_bravat))[0] == "ZZT-RIVAL"
+    assert after == before, "the customer named the finish, so no house preference applies"
+    assert _codes(search_specs(db, specs=asked_for_chrome))[0] == "ZZT-RIVAL"
 
 
 def test_no_preference_configured_changes_nothing(db):
@@ -777,15 +780,15 @@ def test_no_preference_configured_changes_nothing(db):
 # a preference can reorder answers; it cannot BE one
 # --------------------------------------------------------------------------- #
 def test_a_phrase_that_matches_nothing_misses_the_floor_despite_a_house_preference(db):
-    """"hi" must return nothing, not five Sorento products.
+    """"hi" must return nothing, not five preferred products.
 
     The house preference is added to every product carrying the preferred value,
     whatever the customer said. Counted as evidence it sat permanently above the
     relevance floor, so the floor could never be missed and a greeting came back as a
     shortlist of arbitrary products presented as answers.
     """
-    _prefer(db, "brand", {"sorento": 8.0})
-    _product(db, "ZZT-HOUSE", "SORENTO S/STEEL KITCHEN SINK", brand="house")
+    _prefer(db, "finish", {"black": 8.0})
+    _product(db, "ZZT-HOUSE", "SORENTO S/STEEL KITCHEN SINK BLACK")
 
     result = search_specs(db, specs=[], free_terms=["flux", "capacitor"])
 
@@ -796,16 +799,15 @@ def test_a_phrase_that_matches_nothing_misses_the_floor_despite_a_house_preferen
 def test_the_preference_still_reorders_answers_the_customer_did_find(db):
     # The other half of the same rule: excluded from the floor, still applied to the
     # score. Without this the fix above would read as "the preference was removed".
-    _prefer(db, "brand", {"sorento": 8.0})
-    _product(db, "ZZT-HOUSE", "SORENTO S/STEEL KITCHEN SINK", brand="house")
-    _product(db, "ZZT-RIVAL", "BRAVAT S/STEEL KITCHEN SINK", brand="rival")
+    _prefer(db, "finish", {"black": 8.0})
+    _product(db, "ZZT-HOUSE", "SORENTO S/STEEL KITCHEN SINK BLACK")
+    _product(db, "ZZT-RIVAL", "SORENTO S/STEEL KITCHEN SINK CHROME")
 
     result = search_specs(db, specs=[{"key": "class", "value": "Kitchen Sink"}])
     scores = {r["product_code"]: r["score"] for r in result["candidates"]}
 
     assert result["floor_missed"] is False
     assert scores["ZZT-HOUSE"] == scores["ZZT-RIVAL"] + 8.0
-
 
 
 # --------------------------------------------------------------------------- #
@@ -857,7 +859,7 @@ def _seat_cover(db, code: str):
 
     row = db.query(ProductSpecRegistry).filter_by(spec_key="class").one()
     row.derivation_rules = [
-        {"match": "contains", "pattern": "SEAT COVER", "value": "Seat Cover"}
+        {"builder": {"kind": "words", "words": ["SEAT COVER"], "value": "Seat Cover"}}
     ]
     db.flush()
     product = _product(db, code, "SORENTO WC 8065 SEAT COVER", category="wc")

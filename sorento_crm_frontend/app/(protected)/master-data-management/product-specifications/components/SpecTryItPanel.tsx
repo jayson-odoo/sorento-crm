@@ -8,10 +8,11 @@ import { fetchProductPickerOptions } from '../services/productSpecService';
 import type { TryItSource } from '../hooks/useSpecTryIt';
 
 /**
- * "Try it on" (AC-B.3): pick a real product, or paste text, and see what the DRAFT
- * rules read from it. Sits above the rule list; the per-row reads it drives are
- * rendered INTO those rows (a `readResult` prop on `SpecRuleEditor`), not here - this
- * panel only owns the source and the description it reads from.
+ * "Try it on" (AC-S1.8): pick a real product, or paste text, and see what the
+ * rule(s) read from it. Mounted inside `SpecRuleModal` for a single rule (its
+ * own read shows below the box) and inside `RulesTab` in view mode for the
+ * whole list, whose per-row reads render INTO `SpecRulesGrid`'s rows, not
+ * here - this panel only owns the source and the description it reads from.
  */
 export default function SpecTryItPanel({
   source,
