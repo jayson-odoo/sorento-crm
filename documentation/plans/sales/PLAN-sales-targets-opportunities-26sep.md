@@ -600,7 +600,7 @@ flagged in the count, never guessed at 50 (the engine's own rule, `status.py:105
   `NOT_A_SALES_AGENT`. The agent is taken from the token, never from the request body.
 - Router `app/api/v1/public/portal_sales_opportunity.py`, mounted before `portal.router` like
   `portal_price_tag` (`public/__init__.py:32`): list mine, create, get mine, update mine
-  (title, amount, close month, note, stage move along allowed edges, lost reason). An agent sees
+  (title, amount, close month, note, stage move along allowed edges, lost reason; round 4: close date, no note, product lines, section 16). An agent sees
   only opportunities whose `sales_agent_id` is theirs; anything else is 404, not 403, so ids
   cannot be probed. The customer picker offers only the agent's own customers
   (`customers.sales_agent_id`), plus a prospect name when the buyer is not a customer yet (round
@@ -1855,8 +1855,10 @@ before the owner grants the portal kind:
   every move. Lost needs an active option value of the lost reason set (422
   `LOST_REASON_REQUIRED`); leaving Lost is impossible (terminal). Won takes an optional
   `sales_order_id` whose `customer_id` equals the opportunity's (422
-  `SALES_ORDER_OTHER_CUSTOMER`, also 422 when the opportunity has no customer); only the CRM
-  sends it. Moves go through `status_service.assert_transition_allowed` (422
+  `SALES_ORDER_OTHER_CUSTOMER`); only the CRM sends it. On a prospect (no customer) any
+  non-cancelled sales order is accepted and the opportunity takes that order's customer
+  (`customer_id` set, `prospect_name` kept as history): the "linked when Won" of 3.5 and round 4
+  Q2. The order select then searches all sales orders by number or customer name (`q`). Moves go through `status_service.assert_transition_allowed` (422
   `status_transition_not_allowed` / `status_inactive`).
 - **Customer or prospect (S2-15).** Names compare lower-cased with runs of whitespace collapsed
   and ends trimmed. `customer_options(q)` returns
@@ -1894,8 +1896,8 @@ before the owner grants the portal kind:
   `GET ""` (list: `page, limit, sort, dir, query, status_id, sales_agent_id, customer_id,
   close_from, close_to, outcome`; `ListResponse`), `POST ""` (201), `GET /meta`,
   `GET /customer-options?q=`, `GET /agent-options`, `GET /{id}`, `PATCH /{id}`,
-  `DELETE /{id}` (hard), `GET /{id}/sales-order-options` (that customer's non-cancelled sales
-  orders, newest first). Slugs view / add / edit / delete. List-query adapter
+  `DELETE /{id}` (hard), `GET /{id}/sales-order-options?q=` (that customer's non-cancelled sales
+  orders, newest first; for a prospect, all non-cancelled orders matching `q`). Slugs view / add / edit / delete. List-query adapter
   `sales_opportunities`.
 - **Detail shape** (both sides): `id, opportunity_no, title, customer_id, customer_code,
   customer_name, prospect_name, sales_agent_id, sales_agent_label, status_id, stage_key,
@@ -1905,6 +1907,8 @@ before the owner grants the portal kind:
   available_transitions: [{to_status_id, key, label}]`.
 - **Audit (S2-9)** through `__audit_track__`: a portal write carries `actor_contact_id` (set by
   `get_portal_token`), a CRM write the user id.
+- **Migration heads.** S1 adds its own migration beside this one; whichever lane merges second
+  runs `./scripts/alembic-reparent.sh` so main keeps one head.
 - **Purge**: both tables join `PURGE_ORDER` (lines first) and `purge_tables.json`.
 
 ### Frontend
@@ -1916,7 +1920,9 @@ before the owner grants the portal kind:
   Products (product search and qty per row, Add product, remove, "No products yet"); detail has
   the same form plus stage buttons from `available_transitions`, Lost revealing a required reason
   select. A **Sales Opportunities** card on the landing only when `visible_form_types` has the
-  kind; the kind joins the Market Segments grantable list and the kind labels.
+  kind; the kind joins the Market Segments grantable list and the kind labels. No horizontal
+  scroll at 375 (S2-10). S2-14 is a recorded agent-browser run (portal at 375, CRM at 1280), no
+  new Playwright spec.
 - **CRM** Sales > **Opportunities** (`/sales/opportunities`, `sales.opportunities.view`,
   `moduleKey: 'sales'`, both sidebars, above Sales Teams): `PageHeader` with **Log opportunity**;
   DataGrid (fixed layout, resizable, `size` on every column, `truncate` + `title`, scrolls in its
