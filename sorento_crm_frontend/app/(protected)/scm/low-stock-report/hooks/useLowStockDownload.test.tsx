@@ -46,9 +46,10 @@ const REQUEST = {
 
 function wrapper() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return ({ children }: { children: React.ReactNode }) => (
-    <QueryClientProvider client={client}>{children}</QueryClientProvider>
-  );
+  function Wrapper({ children }: { children: React.ReactNode }) {
+    return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+  }
+  return Wrapper;
 }
 
 beforeEach(() => {
@@ -74,7 +75,11 @@ describe('useLowStockDownload', () => {
         ],
       });
     const blob = new Blob(['xlsx']);
-    fetchDownloadFile.mockResolvedValue(blob);
+    // Held open so "preparing" can be seen before the file lands.
+    let deliver: (b: Blob) => void = () => {};
+    fetchDownloadFile.mockImplementation(
+      () => new Promise<Blob>((resolve) => { deliver = resolve; }),
+    );
 
     const { result } = renderHook(() => useLowStockDownload({ pollMs: 10 }), {
       wrapper: wrapper(),
@@ -82,11 +87,13 @@ describe('useLowStockDownload', () => {
     expect(result.current.preparing).toBe(false);
 
     act(() => result.current.start(REQUEST));
-    await waitFor(() => expect(result.current.preparing).toBe(true));
-    expect(exportLowStockReport).toHaveBeenCalledWith(REQUEST);
+    await waitFor(() => expect(exportLowStockReport).toHaveBeenCalledWith(REQUEST));
+    await waitFor(() => expect(fetchDownloadFile).toHaveBeenCalledWith('dl-1'));
+    expect(result.current.preparing).toBe(true);
+    expect(saveBlobAs).not.toHaveBeenCalled();
 
+    act(() => deliver(blob));
     await waitFor(() => expect(saveBlobAs).toHaveBeenCalledWith(blob, 'low-stock-26092026.xlsx'));
-    expect(fetchDownloadFile).toHaveBeenCalledWith('dl-1');
     expect(fetchDownloadsForEntity).toHaveBeenCalledWith('reorder_run', 'run-1');
     expect(toastSuccess).toHaveBeenCalledWith(expect.stringMatching(/My Downloads/));
     await waitFor(() => expect(result.current.preparing).toBe(false));

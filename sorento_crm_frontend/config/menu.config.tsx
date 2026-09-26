@@ -301,6 +301,14 @@ export const MENU_SIDEBAR: MenuConfig = [
             moduleKey: 'scm',
           },
           {
+            // PLAN-excel-preview-26sep S1 (owner ruling 26 Sep, Q2): the newest plan's
+            // low stock report, previewed before download, on the plan's own gate.
+            title: 'Low stock report',
+            path: '/scm/low-stock-report',
+            permission: 'scm.reorder.run',
+            moduleKey: 'scm',
+          },
+          {
             // Moved from Supply Chain > Project Demand (R6, 24 Sep 2026): beside the
             // rest of purchasing's own worklists, not under the board that decides.
             title: 'Stock Debt',

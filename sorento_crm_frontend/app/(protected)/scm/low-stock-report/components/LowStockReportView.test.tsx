@@ -70,11 +70,12 @@ function view(overrides: Partial<LowStockView> = {}): LowStockView {
   };
 }
 
-function renderPage(runId: string | undefined = RUN_ID) {
+/** `null` is the sidebar's page: no run named, the newest one opens. */
+function renderPage(runId: string | null = RUN_ID) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <LowStockReportView runId={runId} />
+      <LowStockReportView runId={runId ?? undefined} />
     </QueryClientProvider>,
   );
 }
@@ -127,7 +128,7 @@ describe('LowStockReportView', () => {
     renderPage();
     await screen.findByText('2 rows, 2 sheets');
 
-    fireEvent.click(screen.getByRole('combobox', { name: /All suppliers/ }));
+    fireEvent.click(screen.getByRole('combobox', { name: 'Suppliers' }));
     const option = await screen.findByRole('option', { name: /Kohler/ });
     expect(option.textContent).toMatch(/0 low of 5/);
     fireEvent.click(option);
@@ -152,7 +153,7 @@ describe('LowStockReportView', () => {
 
   it('the newest-run page downloads the run the view answered with', async () => {
     getLowStockView.mockResolvedValue(view());
-    renderPage(undefined);
+    renderPage(null);
     await screen.findByText('2 rows, 2 sheets');
     expect(lastViewCall().runId).toBeUndefined();
 
