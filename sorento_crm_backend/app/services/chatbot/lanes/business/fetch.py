@@ -345,6 +345,13 @@ def is_uuid(value: Any) -> bool:
     return bool(jsc.truthy(value) and _UUID_RE.match(jsc.js_string(value)))
 
 
+def _resolved_brand_ids(semantic_input: Any) -> list[str]:
+    """The brand ids `lanes/business/__init__._resolve_outstanding_brand_ids` resolved
+    for this turn off the live brand list (the key keeps its first caller's name), real
+    uuids only - the same `is_uuid` guard every other `<entity>_ids` argument uses."""
+    return [b for b in jsc.array(jsc.get(semantic_input, "outstanding_brand_ids")) if is_uuid(b)]
+
+
 def entity_has_resolved_uuid(entity: dict[str, Any]) -> bool:
     """The single-entity half of `entity_ids_transformer`'s own `missing_or_bad_uuid`
     read, lifted out so a second caller can ask the SAME question rather than a second
@@ -511,13 +518,6 @@ def space_id_or_default(space_id: Any) -> str:
 # at all", so it is the promotions read, asked once per entitled tier - promotion rows carry
 # no access level, so there is no key a single batched answer could be matched back on.
 TIER_PROBE_TOOL = "crm_marketing_promotions_list"
-
-
-def _resolved_brand_ids(semantic_input: Any) -> list[str]:
-    """The brand ids `lanes/business/__init__._resolve_outstanding_brand_ids` resolved
-    for this turn off the live brand list (the key keeps its first caller's name), real
-    uuids only - the same `is_uuid` guard every other `<entity>_ids` argument uses."""
-    return [b for b in jsc.array(jsc.get(semantic_input, "outstanding_brand_ids")) if is_uuid(b)]
 
 
 def entity_ids_transformer(
