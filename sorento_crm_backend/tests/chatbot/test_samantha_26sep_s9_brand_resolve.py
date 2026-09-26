@@ -351,3 +351,179 @@ class TestT2BrandTokenNotResolvedAsCustomerInOrderDomain:
             f"the carried BRAND must survive the scope answer too - the scope-ask's "
             f"own stored filters do not carry `outstanding_brand_ids` yet: {args}"
         )
+
+
+# --------------------------------------------------------------------------- #
+# Phase 3 fix-round findings (26 Sep, security review pass on the coder's own S9
+# strip - `turn_runtime.py`'s `resolve_kinds` strips a brand-hinted entity matching
+# a LIVE brand from the ctx handed to `resolve_gate.run`, with no domain check at
+# all - `_brand_hinted_entities_matching_live` runs, and its matches are removed
+# from `ctx["parse"]["output"]["entities"]`, for EVERY `branch_kind`/domain, not
+# only the order-domain fan-out this slice was written to avoid.
+# --------------------------------------------------------------------------- #
+
+
+class TestPromotionBrandGateFailsClosed:
+    def test_promotion_brand_gate_still_fails_closed_for_an_unheld_live_brand(
+        self, session_factory
+    ) -> None:
+        """Security B1: a contact entitled ONLY to "Sorento Dealer" asks for Cabana
+        promotions, and Cabana IS an active `Brand` in the contact's own company.
+        `tier_gate.tier_gate` must still report `brand_gate_empty` (and, upstream,
+        a "you don't have access to cabana promotions" refusal) - never fall back
+        to the full Sorento entitlement because the brand word never reached it.
+
+        Red: `turn_runtime._brand_hinted_entities_matching_live` matches "Cabana"
+        against the live table and strips it from the entities `tier_gate` reads
+        `query_brands` off (`tier_gate.py` ~207-223) BEFORE the gate ever runs -
+        `recompose()`'s own `if qb: ... else: allow_brands = ent_map["brands"]`
+        (its own comment: "Falling back to the full entitlement would answer a
+        Cabana ask with Sorento files") fires exactly because `qb` (query_brands)
+        is empty, not because the contact is actually entitled to Cabana.
+        """
+        import uuid as _uuid
+
+        from app.models.base import set_company_scope as _set_company_scope
+
+        from app.services.chatbot import turn_runtime
+        from app.services.chatbot.lanes.business import tier_gate as tier_gate_mod
+
+        db = session_factory()
+        _set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+        db.add(
+            Brand(
+                id=str(_uuid.uuid4()), brand_code="CAB", brand_name="Cabana",
+                is_active=True, company_id=DEFAULT_COMPANY_ID,
+            )
+        )
+        db.commit()
+
+        entities = [
+            {"raw": "Cabana", "hint": "brand", "canonical_code": None, "current_message": True, "confident": True},
+        ]
+        matched = turn_runtime._brand_hinted_entities_matching_live(db, entities)
+        assert matched, "Cabana must match the live brand table (the precondition for the strip)"
+
+        # The SAME strip `resolve_kinds` performs before calling `resolve_gate.run`.
+        stripped_entities = [e for e in entities if id(e) not in {id(m) for m in matched}]
+        assert stripped_entities == [], "Cabana was the only entity - the strip empties it"
+
+        result = tier_gate_mod.tier_gate(
+            {"name": ["Sorento Dealer"]},
+            parser={"entities": stripped_entities},
+            item={},
+        )
+        assert result.get("brand_gate_empty") is True, (
+            f"a contact asking for an UNHELD live brand must still fail closed, even "
+            f"though the brand word was stripped upstream: {result!r}"
+        )
+
+    def test_brand_strip_is_order_domain_only(self, session_factory, monkeypatch) -> None:
+        """The strip exists to keep a brand OUT of the shared resolver's order-domain
+        fan-out (F1a) - it must not also blind the resolver for inventory/promotion
+        domains, where `gate.py` (~1546-1556) reads `parser.get("entities")` for a
+        `hint: "brand"` entity ON PURPOSE (brand-grouping a promotion roster).
+
+        Red: `turn_runtime.resolve_kinds` strips the brand-hinted entity
+        UNCONDITIONALLY (no domain/branch_kind check at all) - for an "inventory"
+        domain turn naming ONLY a brand token, the entities list is emptied before
+        `resolve_gate.run` is even reached, and the early-return guard
+        (`if not entities and entry != "access_check": return ...`) then skips the
+        resolver ENTIRELY, so `resolve_gate.run` (and gate.py's own brand-grouping
+        code behind it) never sees the token at all.
+        """
+        import uuid as _uuid
+
+        from app.models.base import set_company_scope as _set_company_scope
+
+        from app.services.chatbot import turn_runtime
+        from app.services.chatbot.lanes.business import resolve_gate as resolve_gate_mod
+        from app.services.chatbot.lanes.business import services as business_services
+
+        db = session_factory()
+        _set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+        db.add(
+            Brand(
+                id=str(_uuid.uuid4()), brand_code="CAB", brand_name="Cabana",
+                is_active=True, company_id=DEFAULT_COMPANY_ID,
+            )
+        )
+        db.commit()
+
+        captured: dict[str, Any] = {}
+
+        def _fake_run(ctx, entry, extra, **kw):
+            captured["ctx"] = ctx
+            captured["entry"] = entry
+            return {"resolved": {"resolutions": []}, "gate": {"compatible_entities": []}}
+
+        monkeypatch.setattr(resolve_gate_mod, "run", _fake_run)
+        monkeypatch.setattr(business_services, "production_services", lambda db, **kw: object())
+
+        entities = [
+            {"raw": "Cabana", "hint": "brand", "canonical_code": None, "current_message": True, "confident": True},
+        ]
+        ctx = {"parse": {"output": {"domain_hint": "inventory", "entities": list(entities)}}}
+        turn_runtime.resolve_kinds(db, ctx=ctx, branch_kind="business_query", space_id=None, dry_run=True)
+
+        assert captured.get("entry") is not None, (
+            "an inventory-domain turn naming only a brand must still reach the "
+            "resolver (gate.py's own brand-grouping code needs to see the token) - "
+            f"it never got called at all: {captured!r}"
+        )
+        surviving = (
+            ((captured.get("ctx") or {}).get("parse") or {}).get("output", {}).get("entities")
+        )
+        assert surviving, (
+            f"the brand entity must not be stripped for a non-order domain: {surviving!r}"
+        )
+
+
+class TestUnlistedBrandNeverSelectsASubjectlessReport:
+    def test_unlisted_brand_word_does_not_select_a_subjectless_report(
+        self, session_factory
+    ) -> None:
+        """`lanes/business/__init__.py` ~1337: `has_brand` counts ANY brand-hinted
+        entity from the parser, whether or not it ever matched a live brand - "brand
+        XYZ" (not a real brand, no other subject named) sets `has_brand = True` and
+        the outstanding-report override picks `crm_outstanding_report` anyway, with
+        no product, no customer and no resolvable brand id - the report then runs
+        completely unfiltered ("Customer: all", the exact shape AC-S2-3 exists to
+        stop for an unusable customer, now reachable through an unlisted brand word
+        instead).
+        """
+        from app.services.chatbot.lanes.business import run_fetch
+        from app.services.chatbot.lanes.business.services import FetchServices
+
+        captured: list[tuple[str, dict[str, Any]]] = []
+
+        def _call(name: str, args: dict[str, Any]) -> str:
+            captured.append((name, dict(args)))
+            return json.dumps({"has_result": False, "items": []})
+
+        payload = {
+            "gate": {"compatible_entities": []},
+            "tier_gate": None,
+            "ctx": {
+                "parse": {
+                    "output": {
+                        "domain_hint": "order", "intent_hint": "check_order",
+                        "order_status": "outstanding",
+                        "entities": [
+                            {
+                                "raw": "XYZ", "hint": "brand", "canonical_code": None,
+                                "current_message": True, "confident": True,
+                            },
+                        ],
+                    }
+                },
+                "contact": {"id": "zzt-s9-unlisted-brand"},
+                "access": {"attributes": ["sales_orders.outstanding"]},
+            },
+        }
+        run_fetch(payload, services=FetchServices(mcp_call=_call))
+
+        assert captured == [], (
+            f"an unlisted brand word with no other subject must never reach "
+            f"crm_outstanding_report unfiltered: {captured!r}"
+        )

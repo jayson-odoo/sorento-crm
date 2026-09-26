@@ -259,3 +259,112 @@ def test_ai_assistant_tool_loop_still_sees_the_error_text_after_a_raise(db_sessi
         "expected the caught exception's own text to reach the model, got: "
         f"{[m['content'] for m in tool_messages]!r}"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Phase 3 fix-round findings (26 Sep, reviewer pass on the coder's S1 change)
+# --------------------------------------------------------------------------- #
+
+
+def test_bare_string_outstanding_result_never_rides_on_response():
+    """AC-S1-2's own fix (landed) cleared `has_result` for a bare, non-envelope
+    string, but `_outstanding_report_output` (fetch.py) still puts the SAME bare
+    string onto `response` unconditionally (`text = result if isinstance(result,
+    str) else ...`, then `"response": text` with no gate at all). `turn/compose.py`
+    only strips a lane_text containing the literal substring "Error executing tool"
+    (AC-S1-3's own narrow fix) - any OTHER bare/unrendered string still rides through
+    to `lane_text` and prints verbatim, because compose has no way to know it was
+    never a real rendered report.
+
+    Red: `out.get("response")` is still the garbage string, not empty/None; and the
+    composed miss-branch reply still contains it.
+    """
+    from app.services.chatbot.lanes.business.fetch import _outstanding_report_output
+    from app.services.chatbot.turn.compose import compose
+    from app.services.chatbot.turn.policy import Policy
+    from app.services.chatbot.turn.state import Focus, Profile, State
+
+    from tests.chatbot._turn_helpers import TIER_ORDER_FIXTURE, _domain_row
+
+    garbage = "some unrendered probe payload, not a phrase any downstream guard names by string"
+    out = _outstanding_report_output(garbage, {"entities": [], "semantic_input": {}})
+
+    assert out["has_result"] is False
+    assert not out.get("response"), (
+        f"a bare, non-envelope string must never ride on `response`: {out!r}"
+    )
+
+    # The miss-branch reply must not contain it either, whatever carried it.
+    policy = Policy.from_rows(
+        domains=[_domain_row("order", narrowing={"customer": "must_narrow_one"})],
+        kinds=[], tier_order=TIER_ORDER_FIXTURE,
+    )
+    envelope = {
+        "domain": "order", "denied": False, "entities": [], "figures": [], "files": [],
+        "miss": [], "has_result": out["has_result"], "lane_text": out.get("response"),
+    }
+    state = State(focus=Focus(), pending=None, profile=Profile())
+    answer = compose([envelope], state, policy, ctx=None)
+
+    assert garbage not in answer.text, answer.text
+
+
+def test_miss_suggest_probe_tool_error_does_not_fail_the_turn():
+    """The DYM probe (miss_suggest.py ~1425) already degrades a tool-call failure to
+    a bare did-you-mean offer (`except Exception: probe = {"error": "probe failed"}`)
+    - now that `call_tool` genuinely raises `MCPToolCallError` (S1), the SIBLING
+    probe (~1385, the incoming-domain "no product with this exact code, here is its
+    family" path) has no such guard at all: `services.mcp_probe(...)` is called
+    UNWRAPPED, by design per the module's own docstring ("sibling-probe ... carries
+    no onError, which is why their calls above are deliberately unwrapped") - a
+    faithful n8n port, but a probe failure now genuinely raises and must not take
+    the whole turn down with it.
+
+    Red: `run_miss_lane` raises `MCPToolCallError` straight out, instead of
+    degrading the way the dym probe already does.
+    """
+    from app.services.ai_assistant_service import MCPToolCallError
+    from app.services.chatbot.lanes.business import miss_suggest as miss_mod
+    from app.services.chatbot.lanes.business.services import AnswerServices
+
+    product_code = "SRTWC6022"
+
+    parser = {
+        "domain_hint": "incoming",
+        "intent_hint": "check_incoming",
+        "message_type": "business_query",
+        "entities": [{"raw": product_code, "hint": "product", "current_message": True, "confident": True}],
+        "routing": {"suggested_team": None, "suggested_agent": None},
+        "access_levels": [],
+    }
+    resolved = {
+        "resolutions": [], "unresolved_tokens": [product_code], "tokens": [product_code], "intersection": [],
+    }
+    gate = {
+        "gate_debug": {"domain": "incoming"},
+        "require_specific": False,
+        "compatible_entities": [{"entity_type": "product", "code": product_code}],
+    }
+    build_result = {"has_result": False}
+
+    def _raising_probe(name, args):
+        raise MCPToolCallError("Error executing tool crm_incoming_stock_list: probe failed")
+
+    services = AnswerServices(mcp_probe=_raising_probe, family_fetch=lambda query: {"data": []})
+
+    not_found = {"result_type": "incoming", "items": [], "has_result": False}
+
+    # No pytest.raises here on purpose: the assertion IS that this does not raise.
+    offer = miss_mod.run_miss_lane(
+        not_found,
+        parser=parser,
+        resolved=resolved,
+        gate=gate,
+        services=services,
+        build_result=build_result,
+        contact_id="zzt-s1-probe-fail",
+        space_id=None,
+        execution_id="zzt-s1-turn",
+        dry_run=True,
+    )
+    assert isinstance(offer, dict)

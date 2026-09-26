@@ -472,3 +472,178 @@ def test_staff_catalog_could_not_find_miss_gets_no_offer():
     text = out.get("escalate_message") or ""
     assert "escalate" not in text.lower(), text
     assert "couldn't find" in text.lower(), text
+
+
+# --------------------------------------------------------------------------- #
+# Phase 3 fix-round findings (26 Sep, reviewer pass on the coder's S11 change):
+# `turn/compose.py` ~430-470 gates the VISIBLE offer sentence (`if not is_staff and
+# not clarifying_open`) but the roster-carry stamp right below it
+# (`carried is not None and is_roster(carried.kind)`) runs UNCONDITIONALLY - so a
+# staff contact gets no offer TEXT but the pending is stamped `escalate_offered:
+# True` anyway, and a later bare "yes" over that pending routes to escalation
+# through `turn/apply.py::_answer_pending`'s affirmative arm regardless of the
+# hidden text. `clarifying_open = state.pending is not None` is also over-broad in
+# the OTHER direction: it hides a DEALER's legitimate offer sentence over an OLD,
+# already-fully-answered roster (hand pass 2 item 8's own rule), which is not "a
+# clarifying question open right now".
+# --------------------------------------------------------------------------- #
+
+
+def test_withheld_offer_arms_no_hidden_escalation():
+    """AC-S11-1/S11-2, office tier, three shapes that all hide the offer SENTENCE
+    today (correctly) but must ALSO leave no hidden escalation behind: (1) a carried
+    `product_pick` roster, already fully answered, over a fresh miss; (2) no pending
+    at all, an order-domain miss composed through `answer_bridge.answer_for` (a
+    SEPARATE code path from `turn/compose.py`); (3) a carried `outstanding_detail`
+    pending (not a roster) over a miss.
+    """
+    from app.services.chatbot.turn.apply import apply
+
+    from tests.chatbot._turn_helpers import verdict
+
+    # ---- Shape 1: carried product_pick (an OLD, fully-answered roster) + miss ----
+    product_pick = Pending(
+        kind="product_pick", expects=None,
+        options=[{"position": 1, "label": "A"}, {"position": 2, "label": "B"}],
+        team=None, payload={"answered_positions": [1, 2]}, asked_at_turn=1,
+    )
+    state = State(focus=Focus(), pending=product_pick, profile=Profile(tier="office"), turn_no=5)
+    answer = compose([_total_miss_envelope()], state, _policy(), ctx=None)
+
+    assert "escalate" not in answer.text.lower(), answer.text
+    pending_after = answer.question
+    assert pending_after is not None and pending_after.payload.get("escalate_offered") is not True, (
+        f"a hidden offer must not stamp escalate_offered on the pending: {pending_after!r}"
+    )
+
+    # A following bare "yes" must NOT route to the escalation lane.
+    state2 = State(focus=Focus(), pending=pending_after, profile=Profile(tier="office"))
+    _state_out, plan2 = apply(state2, verdict(is_affirmative=True), _build_policy_for_apply())
+    assert plan2.trace.lane != "escalation", (
+        f"a 'yes' over a withheld offer's pending must not accept an escalation nobody was shown: "
+        f"{plan2.trace.lane!r}"
+    )
+
+    # ---- Shape 2: no pending, order-domain miss through answer_bridge.answer_for ---
+    from app.services.chatbot import answer_bridge
+    from app.services.chatbot import copy as copy_mod
+    from app.services.chatbot.lanes.business.services import AnswerServices
+
+    product_code = "SRTWC6022"
+    parser = {
+        "domain_hint": "order", "intent_hint": "check_order", "message_type": "business_query",
+        "entities": [{"raw": product_code, "hint": "product", "current_message": True, "confident": True}],
+        "routing": {"suggested_team": "customer_service", "suggested_agent": "order_enquiries"},
+        "access_levels": [],
+    }
+    resolved = {
+        "resolutions": [{
+            "token": product_code,
+            "matches": [{
+                "entity_type": "product", "canonical_code": product_code,
+                "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310", "match_tier": "exact",
+            }],
+        }],
+        "unresolved_tokens": [], "tokens": [product_code],
+        "intersection": [{
+            "entity_type": "product", "canonical_code": product_code,
+            "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+        }],
+    }
+    gate = {
+        "gate_passed": True,
+        "compatible_entities": [
+            {"uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310", "entity_type": "product", "code": product_code}
+        ],
+        "gate_debug": {"domain": "order"},
+    }
+    services = AnswerServices(
+        mcp_probe=lambda name, args: {"has_result": False, "answers": []},
+        family_fetch=lambda query: {"data": []},
+    )
+    payload = {"_exit_kind": "not_found", "result_type": "order", "items": [], "has_result": False}
+    bridge_answer = answer_bridge.answer_for(
+        payload,
+        envelope={"raw_fragment": {"outcome": "not_found", "fetch": {"has_result": False}}},
+        parser=parser,
+        ctx={"contact": {"id": "zzt-s11-answerfor"}},
+        canned=copy_mod.fallback_copy(),
+        services=services,
+        db=None,
+        asked_at_turn=5,
+        dry_run=True,
+        carried_pending=None,
+        profile=Profile(tier="office"),
+    )
+    assert bridge_answer is not None
+    assert "escalate" not in bridge_answer.text.lower(), bridge_answer.text
+    assert bridge_answer.question is None, (
+        f"a staff contact's order miss must arm NO hidden team_pick at all: {bridge_answer.question!r}"
+    )
+
+    # ---- Shape 3: carried outstanding_detail pending (not a roster) + miss --------
+    outstanding_detail = Pending(
+        kind="outstanding_detail", expects=None, options=[], team=None,
+        payload={"filters": {}}, asked_at_turn=1,
+    )
+    state3 = State(focus=Focus(), pending=outstanding_detail, profile=Profile(tier="office"), turn_no=6)
+    answer3 = compose([_total_miss_envelope()], state3, _policy(), ctx=None)
+
+    assert "escalate" not in answer3.text.lower(), answer3.text
+    assert answer3.question is None or answer3.question.payload.get("escalate_offered") is not True, (
+        f"no hidden escalate stamp for a non-roster carried pending either: {answer3.question!r}"
+    )
+
+
+def _build_policy_for_apply():
+    from tests.chatbot._turn_helpers import build_policy
+
+    return build_policy()
+
+
+def test_dealer_carried_roster_miss_keeps_its_offer_text():
+    """Hand pass 2 item 8's own rule: a DEALER contact with an OLD, already-answered
+    roster (`product_pick`, not a question asked this turn) carried in, over a fresh
+    miss, must still get the offer SENTENCE and the roster stays armed with
+    `escalate_offered: True` - `clarifying_open = state.pending is not None` is
+    over-broad in this direction too: it cannot tell "a roster still being asked"
+    from "an old, fully-answered one just sitting on state", so it hides a dealer's
+    legitimate offer the same way it (correctly) hides a staff one.
+    """
+    product_pick = Pending(
+        kind="product_pick", expects=None,
+        options=[{"position": 1, "label": "A"}, {"position": 2, "label": "B"}],
+        team=None, payload={"answered_positions": [1, 2]}, asked_at_turn=1,
+    )
+    state = State(focus=Focus(), pending=product_pick, profile=Profile(tier="dealer"), turn_no=5)
+
+    answer = compose([_total_miss_envelope()], state, _policy(), ctx=None)
+
+    assert "Would you like me to escalate to warehouse team?" in answer.text, answer.text
+    assert answer.question is not None and answer.question.payload.get("escalate_offered") is True, (
+        f"the roster must stay armed with escalate_offered once the dealer offer is shown: {answer.question!r}"
+    )
+
+
+def test_dealer_kind_pick_asked_this_turn_gets_no_offer():
+    """AC-S11-2 with a DEALER profile (not just office): a clarifying question
+    ASKED THIS TURN (a fresh `kind_pick`) must get no offer - text AND the pending
+    payload, which currently still gets `escalate_offered: True` stamped even though
+    no sentence was shown for it.
+    """
+    kind_pick = Pending(
+        kind="kind_pick", expects=None,
+        options=[
+            {"position": 1, "label": "Sorento (transporter)"},
+            {"position": 2, "label": "Sorento (customer)"},
+        ],
+        team=None, payload={}, asked_at_turn=3,
+    )
+    state = State(focus=Focus(), pending=kind_pick, profile=Profile(tier="dealer"), turn_no=3)
+
+    answer = compose([_total_miss_envelope()], state, _policy(), ctx=None)
+
+    assert "escalate" not in answer.text.lower(), answer.text
+    assert answer.question is not None and answer.question.payload.get("escalate_offered") is not True, (
+        f"a kind pick asked THIS TURN must not be stamped escalate_offered either: {answer.question!r}"
+    )

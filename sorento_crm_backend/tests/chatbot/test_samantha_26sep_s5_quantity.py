@@ -45,6 +45,20 @@ def test_parser_schema_carries_a_per_entity_quantity() -> None:
     )
 
 
+def test_quantity_is_required_in_the_strict_entity_schema() -> None:
+    """Phase 3 fix-round ask (coordinator, 26 Sep): the entity item's own `required`
+    list must carry "quantity" alongside its siblings - strict-mode structured output
+    (AC-105's own note, `llm_provider.py`'s `strict: True`) rejects a `properties` key
+    absent from `required`, so a `quantity` key with no matching `required` entry
+    would 422 every parser call, not merely fail to populate.
+    """
+    schema = _build_json_schema()
+    entity_item = schema["properties"]["entities"]["items"]
+    assert "quantity" in entity_item["required"], (
+        f"'quantity' must be in the entity item's own required list: {entity_item['required']!r}"
+    )
+
+
 def test_prompt_says_xn_is_a_quantity_not_part_of_the_raw() -> None:
     """Read the raw prompt SOURCE TEXT (`app/services/chatbot_parser_prompt.py`) rather
     than any one named constant - the new rule ships as a new unlabelled version
