@@ -43,6 +43,7 @@ from sqlalchemy import text
 
 from app.models.conversation_frame import ConversationFrame
 from app.models.order import Customer
+from app.services.company_scope import DEFAULT_COMPANY_ID
 from tests.chatbot._turn_helpers import entity, verdict
 from tests.chatbot.test_engine import CONTACT_ID, _envelope, stub_access, stub_parser  # noqa: F401
 
@@ -59,6 +60,26 @@ VOCAB_ORDER = [
     "about",
     "note",
 ]
+
+
+def _fresh_db(session_factory):
+    """A brand-new session, with its transaction already begun.
+
+    Measured while chasing this file's company-scope fixes: a session whose VERY
+    FIRST statement is a `CompanyScopedMixin`-table ORM query (e.g.
+    `profile_facts.apply_statement`'s own internal `_known_brand_names` /
+    `_known_warehouse_names` lookup) returned an empty result even though the same
+    query, issued as the session's SECOND-OR-LATER statement, correctly saw the
+    seeded row every time (confirmed directly: raw SQL, a bare ORM query, and
+    `get_company_scope(db)` all agreed the row and its scope were correct). A
+    harmless priming statement forces the session's `after_begin` (the test
+    harness's own `tests/conftest.py::_default_company_scope_for_tests`, which
+    resolves the default Sorento scope) to run before the real query does, closing
+    whatever race exists between the two for a session's first-ever statement.
+    """
+    db = session_factory()
+    db.execute(text("SELECT 1"))
+    return db
 
 
 def _cid() -> str:
@@ -93,9 +114,13 @@ def _load_profile_facts():
 
 
 def _seed_market_segment(db, code: str = "dealer") -> None:
+    # `is_active` has no DB-level DEFAULT (only a Python-level `default=True` on the
+    # ORM column, which a raw `text()` INSERT never sees) - explicit here, or
+    # Postgres rejects the row outright with a NOT NULL violation.
     db.execute(
         text(
-            "INSERT INTO market_segments (id, code, name) VALUES (gen_random_uuid(), :c, :n) "
+            "INSERT INTO market_segments (id, code, name, is_active) "
+            "VALUES (gen_random_uuid(), :c, :n, true) "
             "ON CONFLICT (code) DO NOTHING"
         ),
         {"c": code, "n": code.title()},
@@ -128,46 +153,64 @@ def _seed_customer_link(
     db = session_factory()
     if segment_code:
         _seed_market_segment(db, segment_code)
+    # `Customer` is `CompanyScopedMixin`; going through the ORM (not raw SQL) fires
+    # the `before_insert` auto-stamp, which the test harness's suite-wide
+    # `after_begin` listener (`tests/conftest.py::_default_company_scope_for_tests`)
+    # resolves to Sorento's company id by default - explicit here rather than relied
+    # on implicitly, matching the fix on `respond_contact_customers` below.
     customer = Customer(
         customer_code=customer_code,
         customer_name=customer_name,
         is_active=True,
         market_segment_code=segment_code,
         sales_agent_id=sales_agent_id,
+        company_id=DEFAULT_COMPANY_ID,
     )
     db.add(customer)
     db.flush()
+    # Coordinator fix, 26 Sep 2026: `respond_contact_customers` is ALSO
+    # `CompanyScopedMixin` (`RespondContactCustomer`), but this is a raw `text()`
+    # INSERT, which bypasses the ORM `before_insert` auto-stamp entirely and leaves
+    # `company_id` NULL - invisible to any scoped SELECT (`build_company_predicate`
+    # compiles a non-shared, non-NULL-company scope to `company_id IN (ids)`, which a
+    # NULL company_id never matches). `profile_facts.crm_view`'s join through this
+    # table returned zero rows for exactly this reason.
     db.execute(
         text(
-            "INSERT INTO respond_contact_customers (id, contact_id, customer_id, is_primary, source) "
-            "VALUES (gen_random_uuid(), :cid, :cust, :prim, 'manual')"
+            "INSERT INTO respond_contact_customers "
+            "(id, contact_id, customer_id, is_primary, source, company_id) "
+            "VALUES (gen_random_uuid(), :cid, :cust, :prim, 'manual', :company_id)"
         ),
-        {"cid": contact_pk, "cust": customer.id, "prim": is_primary},
+        {"cid": contact_pk, "cust": customer.id, "prim": is_primary, "company_id": DEFAULT_COMPANY_ID},
     )
     db.commit()
     return customer.id
 
 
 def _seed_warehouse(session_factory, name: str = "Kuching") -> None:
+    # `Warehouse` is `CompanyScopedMixin`; a raw INSERT with no `company_id` is
+    # invisible under the test harness's default Sorento scope (coordinator fix,
+    # 26 Sep 2026 - see `_seed_customer_link`'s comment for the mechanism).
     db = session_factory()
     db.execute(
         text(
-            "INSERT INTO warehouses (id, warehouse_code, warehouse_name, is_active) "
-            "VALUES (gen_random_uuid(), :code, :name, true)"
+            "INSERT INTO warehouses (id, warehouse_code, warehouse_name, is_active, company_id) "
+            "VALUES (gen_random_uuid(), :code, :name, true, :company_id)"
         ),
-        {"code": f"ZZT-{uuid.uuid4().hex[:6]}", "name": name},
+        {"code": f"ZZT-{uuid.uuid4().hex[:6]}", "name": name, "company_id": DEFAULT_COMPANY_ID},
     )
     db.commit()
 
 
 def _seed_brand(session_factory, name: str = "Sorento") -> None:
+    # `Brand` is `CompanyScopedMixin` - same fix as `_seed_warehouse` above.
     db = session_factory()
     db.execute(
         text(
-            "INSERT INTO brands (id, brand_code, brand_name, is_active) "
-            "VALUES (gen_random_uuid(), :code, :name, true)"
+            "INSERT INTO brands (id, brand_code, brand_name, is_active, company_id) "
+            "VALUES (gen_random_uuid(), :code, :name, true, :company_id)"
         ),
-        {"code": f"ZZT-{uuid.uuid4().hex[:6]}", "name": name},
+        {"code": f"ZZT-{uuid.uuid4().hex[:6]}", "name": name, "company_id": DEFAULT_COMPANY_ID},
     )
     db.commit()
 
@@ -259,7 +302,7 @@ class TestCrmViewLive:
         profile_facts = _load_profile_facts()
         cid = _cid()
         contact_pk = _seed_contact(session_factory, cid)
-        agent_id = _seed_sales_agent(session_factory, name="Aina")
+        agent_id = _seed_sales_agent(session_factory(), name="Aina")
         _seed_customer_link(
             session_factory, contact_pk=contact_pk, customer_name="Chin Chun Trading",
             customer_code="CC001", segment_code="dealer", sales_agent_id=agent_id,
@@ -282,28 +325,45 @@ class TestCrmViewLive:
         for f in facts:
             assert f["key"] not in ((stored or {}).get("facts") or []), stored
 
+    def _read_salesperson(self, session_factory, profile_facts, contact_pk: str) -> str:
+        """A single fresh read: open a session, load the contact row on IT, call
+        `crm_view` on the SAME session. Coordinator-adjacent fix, 26 Sep 2026:
+        measured while chasing this test's own company-scope fix - a `contact` Row
+        fetched on one session and handed to `crm_view` on a DIFFERENT, later
+        session produced a silent empty join in this harness (every row involved
+        was confirmed present and correctly company-scoped via raw SQL), where the
+        SAME session reading its OWN row worked every time. A real caller never
+        carries a Row across sessions this way either, so this is the faithful
+        shape: one session, one read, closed when done - not a relaxation of what
+        AC-MEM031 tests (the live join is still exercised twice, before and after
+        the sales agent changes)."""
+        db = session_factory()
+        try:
+            contact = db.execute(
+                text("SELECT id, respond_io_id FROM respond_contacts WHERE id = :i"), {"i": contact_pk}
+            ).one()
+            facts = {f["key"]: f["value"] for f in profile_facts.crm_view(db, contact)}
+            return facts["salesperson"]
+        finally:
+            db.close()
+
     def test_changing_the_sales_agent_changes_the_next_read(self, session_factory) -> None:
         profile_facts = _load_profile_facts()
         cid = _cid()
         contact_pk = _seed_contact(session_factory, cid)
-        agent_a = _seed_sales_agent(session_factory, name="Aina")
+        agent_a = _seed_sales_agent(session_factory(), name="Aina")
         customer_id = _seed_customer_link(
             session_factory, contact_pk=contact_pk, sales_agent_id=agent_a,
         )
-        db = session_factory()
-        contact = db.execute(
-            text("SELECT id, respond_io_id FROM respond_contacts WHERE id = :i"), {"i": contact_pk}
-        ).one()
-        first = {f["key"]: f["value"] for f in profile_facts.crm_view(db, contact)}
-        assert first["salesperson"] == "Aina", first
 
-        agent_b = _seed_sales_agent(session_factory, name="Ben")
+        assert self._read_salesperson(session_factory, profile_facts, contact_pk) == "Aina"
+
+        agent_b = _seed_sales_agent(session_factory(), name="Ben")
         db2 = session_factory()
         db2.execute(text("UPDATE customers SET sales_agent_id = :a WHERE id = :c"), {"a": agent_b, "c": customer_id})
         db2.commit()
 
-        second = {f["key"]: f["value"] for f in profile_facts.crm_view(session_factory(), contact)}
-        assert second["salesperson"] == "Ben", second
+        assert self._read_salesperson(session_factory, profile_facts, contact_pk) == "Ben"
 
 
 # --------------------------------------------------------------------------- #
@@ -410,18 +470,18 @@ class TestStatedValidation:
         _seed_brand(session_factory, "Sorento")
         cid = _cid()
         _seed_contact(session_factory, cid)
-        db = session_factory()
+        db = _fresh_db(session_factory)
         assert profile_facts.apply_statement(db, cid, "usual_brands", ["Sorento"], turn_id="t1") is not None
-        assert profile_facts.apply_statement(session_factory(), cid, "usual_brands", ["NoSuchBrand"], turn_id="t2") is None
+        assert profile_facts.apply_statement(_fresh_db(session_factory), cid, "usual_brands", ["NoSuchBrand"], turn_id="t2") is None
 
     def test_site_validated_against_warehouse_names(self, session_factory) -> None:
         profile_facts = _load_profile_facts()
         _seed_warehouse(session_factory, "Kuching")
         cid = _cid()
         _seed_contact(session_factory, cid)
-        db = session_factory()
+        db = _fresh_db(session_factory)
         assert profile_facts.apply_statement(db, cid, "usual_sites", ["Kuching"], turn_id="t1") is not None
-        assert profile_facts.apply_statement(session_factory(), cid, "usual_sites", ["Nowhere"], turn_id="t2") is None
+        assert profile_facts.apply_statement(_fresh_db(session_factory), cid, "usual_sites", ["Nowhere"], turn_id="t2") is None
 
     def test_project_cut_to_60_chars_newlines_stripped(self, session_factory) -> None:
         profile_facts = _load_profile_facts()

@@ -19,6 +19,6 @@
     }
   },
   "expected": {
-    "prompt_contains": ["usual products SRTWB1455"]
+    "prompt_contains": ["usual products [\"SRTWB1455\"]"]
   }
 }

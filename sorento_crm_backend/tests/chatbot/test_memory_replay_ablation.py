@@ -39,7 +39,13 @@ from app.models.conversation_frame import ConversationFrame
 from tests.chatbot._turn_helpers import verdict as verdict_defaults
 from tests.chatbot.test_engine import CONTACT_ID, _envelope, stub_access  # noqa: F401
 
-CASES_DIR = Path(__file__).parent / "replay_turns" / "memory"
+#: Coordinator fix, 26 Sep 2026: NOT under `replay_turns/` - `test_turn_replay.py`'s
+#: own `REPLAY_ROOT.rglob("*.json")` picks up every json file under that tree
+#: unconditionally and holds each one to ITS shape (a recorded `turns` list with a
+#: real envelope/verdict/expected per step), which these cases are not. A sibling
+#: directory keeps this runner's own case shape out of that glob without touching
+#: the shared harness file.
+CASES_DIR = Path(__file__).parent / "replay_memory"
 CASE_FILES = sorted(CASES_DIR.glob("*.json"))
 
 

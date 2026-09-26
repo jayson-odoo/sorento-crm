@@ -42,7 +42,11 @@ def _load_context():
 def _base_layers(context, **overrides):
     kwargs = dict(
         level="full",
-        profile_slice="customer Chin Chun Trading; segment dealer; language en",
+        profile_facts=[
+            {"key": "customer", "value": "Chin Chun Trading"},
+            {"key": "segment", "value": "dealer"},
+            {"key": "language", "value": "en"},
+        ],
         summaries=["Thu 25 Sep: stock SRTWB1455 (answered)."],
         earlier_messages=[{"created_at": "Thu 10:02", "text": "stock SRTWB1455"}],
         previous_response="Here is the stock for SRTWB1455.",
@@ -112,7 +116,7 @@ class TestWorstCaseBudget:
     def _oversized_layers(self, context):
         return context.ContextLayers(
             level="full",
-            profile_slice="x" * (context.CAPS["L5"] * 3 * 3),
+            profile_facts=[{"key": "note", "value": "x" * (context.CAPS["L5"] * 3 * 3)}],
             summaries=[f"summary {i} " + "y" * 300 for i in range(9)],
             earlier_messages=[{"created_at": f"day{i}", "text": "z" * 300} for i in range(9)],
             previous_response="p" * (context.CAPS["L3"] * 3 * 3),
@@ -163,7 +167,7 @@ class TestDropOrder:
         context = _load_context()
         layers = context.ContextLayers(
             level="full",
-            profile_slice=None,
+            profile_facts=None,
             summaries=[],
             earlier_messages=[
                 {"created_at": "Mon 09:00", "text": "oldest message"},
@@ -187,10 +191,16 @@ class TestDropOrder:
 
     def test_l4_drops_oldest_summary_first(self) -> None:
         context = _load_context()
+        # Coordinator fix, 26 Sep 2026: `summaries` is documented (and exercised by
+        # `TestAC_MEM065::test_three_summaries_printed_oldest_first_however_old`,
+        # right below) as NEWEST FIRST on input - this fixture had the labels
+        # backwards (oldest first), which is the one input shape `assemble` is
+        # never fed, so the "oldest drops first" behaviour was tested against data
+        # in the wrong order.
         layers = context.ContextLayers(
             level="full",
-            profile_slice=None,
-            summaries=["oldest summary " + "a" * 400, "middle summary " + "b" * 400, "newest summary " + "c" * 400],
+            profile_facts=None,
+            summaries=["newest summary " + "c" * 400, "middle summary " + "b" * 400, "oldest summary " + "a" * 400],
             earlier_messages=[],
             previous_response=None,
             current_subject=None,
@@ -209,10 +219,14 @@ class TestDropOrder:
         context = _load_context()
         layers = context.ContextLayers(
             level="full",
-            profile_slice=(
-                "customer Chin Chun Trading; segment dealer; language en; "
-                "usual_sites " + "Kuching " * 60 + "; project " + "P" * 200 + "; note " + "N" * 200
-            ),
+            profile_facts=[
+                {"key": "customer", "value": "Chin Chun Trading"},
+                {"key": "segment", "value": "dealer"},
+                {"key": "language", "value": "en"},
+                {"key": "usual_sites", "value": ["Kuching"] * 60},
+                {"key": "project", "value": "P" * 200},
+                {"key": "note", "value": "N" * 200},
+            ],
             summaries=[],
             earlier_messages=[],
             previous_response=None,
@@ -250,7 +264,7 @@ class TestLevels:
 
         layers = context.ContextLayers(
             level="off",
-            profile_slice="should never appear at level off",
+            profile_facts=[{"key": "note", "value": "should never appear at level off"}],
             summaries=["should never appear either"],
             earlier_messages=[{"created_at": "Mon", "text": "should never appear"}],
             previous_response=common["previous_response"],
@@ -270,7 +284,7 @@ class TestLevels:
         layers = _base_layers(
             context, level="conversation",
             summaries=["a closed episode summary"],
-            profile_slice="customer Chin Chun Trading",
+            profile_facts=[{"key": "customer", "value": "Chin Chun Trading"}],
         )
         text, _report = context.assemble(layers)
         assert "Earlier in this conversation" in text
@@ -279,7 +293,7 @@ class TestLevels:
 
     def test_past_level_adds_l4_not_l5(self) -> None:
         context = _load_context()
-        layers = _base_layers(context, level="past", profile_slice="customer Chin Chun Trading")
+        layers = _base_layers(context, level="past", profile_facts=[{"key": "customer", "value": "Chin Chun Trading"}])
         text, _report = context.assemble(layers)
         assert "Recent conversations" in text
         assert "About this contact" not in text
@@ -350,7 +364,7 @@ class TestAC_MEM065:
 class TestAC_MEM042:
     def test_empty_settings_profile_line_renders_no_profile_line_at_off_level(self) -> None:
         context = _load_context()
-        layers = _base_layers(context, level="off", settings_profile_line=None, profile_slice=None)
+        layers = _base_layers(context, level="off", settings_profile_line=None, profile_facts=None)
         text, _report = context.assemble(layers)
         assert "Profile:" not in text, text
 

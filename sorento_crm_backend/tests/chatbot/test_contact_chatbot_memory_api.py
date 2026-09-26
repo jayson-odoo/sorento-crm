@@ -43,6 +43,7 @@ from sqlalchemy import text
 import app.main  # noqa: F401 - registers every model before any query
 from app.main import app
 from app.dependencies import get_current_user, get_current_user_or_api_key, get_db
+from app.services.company_scope_resolver import apply_company_scope
 from app.services.user_service import UserPermissionService
 
 from tests.chatbot.test_turns_admin_api import db  # noqa: F401 - shared blank-schema fixture
@@ -51,6 +52,15 @@ BASE = "/api/v1/user-management/contacts"
 
 VIEW_PERM = "user_management.contacts.view"
 EDIT_PERM = "user_management.contacts.edit"
+# Security review, 26 Sep 2026 (S3): `GET .../chatbot/memory` nulls out `episodes`
+# for a caller who holds only `user_management.contacts.view` - it also needs this
+# slug (`app/api/v1/user_management/contacts.py::_CHATBOT_EPISODES_VIEW`), the same
+# "chat trace" gate the Prompts screen's own test route requires. Granted by
+# default here so the happy-path shape test (which asserts the full `episodes`
+# object) reflects an operator who can see both, not a permission-boundary test -
+# `test_403_without_view_permission` still removes `VIEW_PERM` alone and expects a
+# straight 403 before this one is ever consulted.
+EPISODES_VIEW_PERM = "system.chat_history.view"
 
 _GRANTS: set[str] = set()
 _ACTOR: dict = {"id": None}
@@ -61,6 +71,7 @@ def _permissions(monkeypatch):
     _GRANTS.clear()
     _GRANTS.add(VIEW_PERM)
     _GRANTS.add(EDIT_PERM)
+    _GRANTS.add(EPISODES_VIEW_PERM)
     monkeypatch.setattr(
         UserPermissionService,
         "check_user_has_permission",
@@ -79,6 +90,19 @@ def client(db):  # noqa: F811
     app.dependency_overrides[get_db] = _override_db
     app.dependency_overrides[get_current_user] = lambda: dict(_ACTOR)
     app.dependency_overrides[get_current_user_or_api_key] = lambda: dict(_ACTOR)
+    # Coordinator-adjacent fix, 26 Sep 2026: `apply_company_scope` is a ROUTER-LEVEL
+    # dependency (`app/main.py`) that runs for every `/api/v1/*` request and
+    # STAMPS the resolved scope onto `db` via `set_company_scope` - overriding
+    # `get_current_user` does not touch it, since it resolves the caller's scope
+    # from the request itself (JWT / X-API-Key), finds neither on this bare
+    # `TestClient` call, and correctly (fail-closed) stamps `UNSET` - wiping out
+    # the test harness's own Sorento default and hiding every seeded
+    # `CompanyScopedMixin` row (`Customer`, `Brand`, `Warehouse`,
+    # `RespondContactCustomer`) for the rest of the request. Overridden here to a
+    # no-op so the harness's own scope (set by `tests/conftest.py`'s
+    # `after_begin` listener) stands, the same way `get_current_user` is
+    # overridden instead of exercising real auth.
+    app.dependency_overrides[apply_company_scope] = lambda: None
     _ACTOR["id"] = str(uuid.uuid4())
     try:
         yield TestClient(app, raise_server_exceptions=False)
@@ -107,16 +131,23 @@ def _seed_contact(db, *, profile: dict | None = None) -> str:
 
 def _seed_customer_link(db, contact_pk: str, *, name: str = "Chin Chun Trading", code: str = "CC001") -> str:
     from app.models.order import Customer
+    from app.services.company_scope import DEFAULT_COMPANY_ID
 
-    customer = Customer(customer_code=code, customer_name=name, is_active=True)
+    # Coordinator fix, 26 Sep 2026: both `Customer` and `respond_contact_customers`
+    # are `CompanyScopedMixin`. The test harness's suite-wide `after_begin` listener
+    # (`tests/conftest.py::_default_company_scope_for_tests`) scopes every session
+    # to Sorento's company id by default, and a NULL `company_id` row never matches
+    # that scope's `company_id IN (ids)` predicate - a raw `text()` INSERT bypasses
+    # the ORM `before_insert` auto-stamp entirely, so it needs the id explicit.
+    customer = Customer(customer_code=code, customer_name=name, is_active=True, company_id=DEFAULT_COMPANY_ID)
     db.add(customer)
     db.flush()
     db.execute(
         text(
-            "INSERT INTO respond_contact_customers (id, contact_id, customer_id, is_primary, source) "
-            "VALUES (gen_random_uuid(), :cid, :cust, true, 'manual')"
+            "INSERT INTO respond_contact_customers (id, contact_id, customer_id, is_primary, source, company_id) "
+            "VALUES (gen_random_uuid(), :cid, :cust, true, 'manual', :company_id)"
         ),
-        {"cid": contact_pk, "cust": customer.id},
+        {"cid": contact_pk, "cust": customer.id, "company_id": DEFAULT_COMPANY_ID},
     )
     db.commit()
     return customer.id
