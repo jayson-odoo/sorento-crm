@@ -8,7 +8,11 @@ agent-browser evidence NOT captured in this cloud lane, per `documentation/agent
 "What stays local": this VM's Postgres is bootstrap-seeded reference data only, no business rows
 and no NextAuth login (no `.env.local`, no seeded user), and that doc names "a browser pass on
 prod-copy data" as staying local by rule, not something to seed here. Owner (or a local session)
-still owes the S6-6/S4-6 browser pass before this reads "implemented". S5 and S7 not started.
+still owes the S6-6/S4-6 browser pass before this reads "implemented". S3, S4 and S6 merged
+(#1237, main 46711c618). S5 implemented on `claude/po-schedule-redesign-s5-xbp75f`, full track,
+FE only; vitest/type-check green; browser evidence is component-level (the real client off its
+`?demo=` fixture in Chromium, no live stack in the cloud lane); the S5-7 pass on HQ/26/01/121 v2
+stays owed on a local stack. S7 not started.
 Track per slice: S1 small fix; S4 small fix; S2, S3, S5, S6, S7 full track.
 
 UAC: `documentation/plans/projects/po-schedule-redesign-24sep-acceptance-criteria.md`.
