@@ -7,8 +7,9 @@ Plan: `PLAN-ideation-chat-reply-format.md`. Owner's words and transcript: #1277.
 A dealer tells the WhatsApp bot an idea in their own words, typos and all. The bot echoes it back
 as a short point-form recap with bold labels and a clean, readable problem statement, shows them
 the recent photos it thinks might belong to the idea (each one numbered) and asks which relate.
-When they confirm, the final message names the idea by its title with the idea number and the
-tracking link.
+Once the fields are in, it shows the recap and asks "Submit this idea? Reply yes to submit, or
+tell me what to change."; only a yes creates it, and the final message names the idea by its
+title with the idea number and the tracking link.
 
 ## Criteria
 
@@ -36,3 +37,23 @@ tracking link.
 - **AC-8 Window.** The images ride the chatbot's existing `send_attachments` action, the same path
   and the same 24h rule as every other chatbot outbound media (a reply to an inbound message, so
   the window is open); a console turn flags the action `dry_run` and sends nothing.
+
+## Round 2: owner console test 26 Sep 2026 14:09Z
+
+Owner rulings of 26 Sep 2026 (PR #1279): no typo or preamble in any field on any turn; typed
+punctuation never stored in a value; confirm before create, only a yes creates.
+
+- **AC-9 Clean from turn one.** No field line on any turn shows the user's raw message, a
+  conversational preamble or a typo. A captured value the extractor did not produce (the
+  intake's seed of `problem`) shows as `still being worked out`; once the extractor produces
+  the field, its value shows.
+- **AC-10 No typed punctuation.** A `?` or `!` the user typed is never part of a stored value;
+  the department is a short Title Case name without "the"/"our" ("the manufactuirng?" becomes
+  "Manufacturing", the spelling fixed by the extractor prompt).
+- **AC-11 Confirm before create.** A `review` reply is the recap (bold labels, no title line)
+  followed by `Submit this idea? Reply yes to submit, or tell me what to change.` as its last
+  line; it never asks for another field.
+- **AC-12 Only a yes.** In `review`, only a yes (yes, ok, ya, boleh, 好, 可以, also submit /
+  confirm) sets `confirm`; a question, a hesitation, an edit or a cancel does not, and the next
+  reply shows the recap and the confirm question again. A bare yes submits even when the
+  extractor failed. Outside `review` nothing confirms.

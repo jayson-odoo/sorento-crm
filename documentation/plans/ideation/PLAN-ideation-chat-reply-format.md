@@ -2,10 +2,12 @@
 
 **Status:** built, PR open (branch `fix/ideation-chat-reply-format`); reviewer round 1 folded
 (label parser keeps a value's own leading `*`, accepts `**Label:**` / `_Label:_`; full-width
-quoted titles; user's language kept in the extractor). Pre-merge: confirm prod's `production`
-label for `ideate_extractor` / `ideate_reply` is not an admin edit the migration would replace.
-Track: small fix, with one
-data-only migration (publishes two prompt versions, no schema change); no auth/RBAC change, no
+quoted titles; user's language kept in the extractor); fix lane round 2 folded (owner console
+test 26 Sep 14:09Z: W1 clean values from turn one, W2 no typed punctuation or typo in a value,
+W3 confirm before create; migration `ideation_confirm_prompts`). Pre-merge: confirm prod's
+`production` label for `ideate_extractor` / `ideate_reply` is not an admin edit the migrations
+would replace. Track: small fix, with two
+data-only migrations (each publishes two prompt versions, no schema change); no auth/RBAC change, no
 new external ingest surface.
 **UAC:** `ideation-chat-reply-format-acceptance-criteria.md` (alongside).
 **Evidence:** the owner's console test of 26 Sep 2026 quoted in #1277 (prompt v27).
@@ -82,3 +84,73 @@ Tester first (red), then the fix (green), each kill-tested:
 - W4: `tests/test_ideation_turn.py` (`offered_media`), `tests/chatbot/test_ideation_offered_media.py`
   (engine `run_turn` with the tool stubbed: actions, captions, dry run), vitest for
   `TurnAttachments` and `WhatsAppText`.
+
+## Round 2: owner console test 26 Sep 2026 14:09Z (PR #1279 comment)
+
+**Owner rulings, 26 Sep 2026 (PR #1279, "Owner console test of #1279"):**
+
+> "I expect when the AI answers, there's no typo. Why you factor in my typo into the answer? And
+> then why the last message when asked for department, there's a question mark behind the
+> department. What does that mean? I thought you want to confirm whether to submit this or not."
+
+- **R-W1 (26 Sep 2026):** the bot never echoes a typo or a preamble in any field, on any turn.
+  The extractor output is what the recap shows from turn one; when there is none for a field,
+  the recap says it is still being worked out rather than echoing the message.
+- **R-W2 (26 Sep 2026):** a question mark or other punctuation typed by the owner is never
+  stored as part of a value ("the manufactuirng?" becomes "Manufacturing").
+- **R-W3 (26 Sep 2026):** before creating the idea the bot shows the four fields and asks
+  "Submit this idea? Reply yes to submit, or tell me what to change." Only a yes (yes, ok, ya,
+  boleh, 好, 可以) creates it; anything else is an edit or a question and re-enters the recap.
+
+### Root causes (from the code; the 14:09Z trace lives on the owner's stack DB)
+
+- **W1, raw Problem on turns 1 to 3.** Not the template fallback alone and not a stale prompt
+  label: the extractor ran every turn, but on turn 1 it emitted `proposed_solution` ("Implement
+  a production line.", cleaned, as the owner saw) and **no `problem`**, because "i think we
+  should implement X" reads as a solution and the prompt said "only include a field the user
+  actually stated". `problem` is the intake's one required field, so the shared service seeded
+  it from `message_text`, the raw message. Sorento then echoed `result.captured.problem`
+  unchecked on turns 1, 2 and 3 (the reply facts and the template both read it). At the
+  Department turn the extractor, reading the raw value in "Already captured", rewrote it, and
+  only then did the Problem line change. The same shape is in the #1277 transcript
+  ("Problem: i ahve an idea, i want sale sorder report to track KKPI" next to a cleaned
+  Solution). Trace check for the owner's DB: `select created_at, trace from chatbot_turns
+  where contact_respond_id = '437264483' and created_at between '2026-09-26 14:09Z' and
+  '2026-09-26 14:11Z' order by created_at` - the ideate lane's pointer (`ideation.captured`)
+  shows `problem` equal to the raw message while `proposed_solution` is already clean.
+- **W2.** The extractor copied the department answer verbatim; nothing normalised it.
+- **W3.** The confirm step exists (R3, `review` status, `confirm` only in review) but the reply
+  never asked it: in `review` the composer had no `next_field`, so on reply 3 it made up a
+  department question (R15 says department is never asked), and on reply 4 the only `?` was
+  the one typed inside the department value, which satisfied the "exactly one trailing `?`"
+  gate, so no question was asked at all. The owner's next message then submitted.
+
+### Design (round 2)
+
+- **W1:** the pointer carries `clean_fields`, the values the extractor produced for this draft.
+  `_display_captured` shows a captured value only when it is one of those; anything else (the
+  intake's seed) reads "still being worked out", on the LLM path and the template path alike
+  (`_format_ideate_reply` writes each field line's value from the facts). A draft opened before
+  this change (no `clean_fields`) trusts its captured values. Prompt: problem is ALWAYS emitted
+  on the first message (the need behind a stated solution), and a raw captured value is
+  re-emitted cleaned on the next turn.
+- **W2:** `normalise_field_value` / `normalise_title` in `ideation_extractor.py`, applied in
+  `handle_turn` to every extracted value before the payload: no quotes or typed `?`/`!` at
+  either end, first letter capitalised, department in Title Case without "the"/"our". Spelling
+  is the prompt's job (CLEAN VALUES gains the department and punctuation rules). There is no
+  known department list in sorento (R14: department is free text), so no list lookup.
+- **W3:** a `review` reply is rebuilt deterministically: any short prose line the composer
+  wrote, then the recap in fixed order, then the confirm line, always last. `derive_confirm`
+  decides `confirm` in one place: review only, no field edit or removal, not change/cancel,
+  and either a bare yes or a model `submit` that carries a yes word. A bare yes also submits
+  when the extraction came back empty. The confirm line is fixed English (the owner's wording).
+- **Prompts:** migration `ideation_confirm_prompts` (revises `ideation_reply_fmt_prompts`)
+  publishes both keys' fallbacks as the next version and moves `production`.
+
+### Tests (round 2, red first)
+
+`tests/test_ideation_turn.py` (turn harness with the intake's seeding in the fake, the
+14:09Z replay), `tests/test_ideation_reply.py` (review shape, fact values),
+`tests/test_ideation_extractor.py` (normaliser, confirm gate, prompt rules, migration),
+`scripts/replay_ideate_extractor.py 1409z` (live), console case
+`tests/chatbot/console_cases/2026-09-26-ideation-confirm-before-create.yaml` (live stack).
