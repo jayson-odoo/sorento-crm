@@ -2,10 +2,16 @@
 
 /**
  * Portal Sales Opportunity detail (UAC S2-11): stage buttons come from
- * `available_transitions` only; Lost reveals a required reason select.
+ * `available_transitions` only; Lost reveals a required reason select sourced from the
+ * shared meta endpoint's `lost_reasons` (same values the CRM detail page offers). Every
+ * other transition (Qualified, Won, ...) applies the moment its button is clicked - only
+ * Lost needs a second, explicit confirm, because only it collects an extra field first.
+ *
+ * No `useRouter` - this component is unit-tested without a Next.js router context, so
+ * navigation is plain `<Link>`s throughout, same as `SalesOpportunityPortalList`.
  */
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { ArrowLeft, LoaderCircleIcon } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -16,26 +22,18 @@ import { SearchableSelect, type SearchableSelectOption } from '@/components/comm
 import { toast } from '@/lib/toast';
 import { formatCurrency, formatDate } from '@/lib/helpers';
 import {
+  getPortalOpportunityMeta,
   getPortalSalesOpportunity,
   updatePortalSalesOpportunity,
   type PortalSalesOpportunity,
 } from '../../lib/sales-opportunity-service';
 
-/** The backend's seeded defaults - a synchronous fallback so the reason picker has
- * something to offer the instant Lost is chosen. */
-const FALLBACK_LOST_REASONS: SearchableSelectOption[] = [
-  { value: 'price', label: 'Price' },
-  { value: 'competitor', label: 'Went to competitor' },
-  { value: 'project_cancelled', label: 'Project cancelled' },
-  { value: 'no_response', label: 'No response' },
-  { value: 'other', label: 'Other' },
-];
-
-export function SalesOpportunityPortalDetail({ id }: { id: string }) {
-  const router = useRouter();
+export default function SalesOpportunityPortalDetail({ id }: { id: string }) {
   const [opportunity, setOpportunity] = useState<PortalSalesOpportunity | null>(null);
   const [loading, setLoading] = useState(true);
-  const [pendingStatusId, setPendingStatusId] = useState<string | null>(null);
+  const [lostReasonOptions, setLostReasonOptions] = useState<SearchableSelectOption[]>([]);
+  const [pendingLost, setPendingLost] = useState(false);
+  const [lostToStatusId, setLostToStatusId] = useState<string | null>(null);
   const [lostReason, setLostReason] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -48,6 +46,9 @@ export function SalesOpportunityPortalDetail({ id }: { id: string }) {
 
   useEffect(() => {
     load();
+    getPortalOpportunityMeta().then((meta) =>
+      setLostReasonOptions(meta.lost_reasons.map((r) => ({ value: r.value, label: r.label }))),
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
@@ -68,19 +69,16 @@ export function SalesOpportunityPortalDetail({ id }: { id: string }) {
     );
   }
 
-  const pending = opportunity.available_transitions.find((t) => t.to_status_id === pendingStatusId);
+  const lines = opportunity.lines ?? [];
+  const transitions = opportunity.available_transitions ?? [];
 
-  const confirmMove = async () => {
-    if (!pending) return;
-    if (pending.key === 'lost' && !lostReason) return;
+  const applyStatus = async (toStatusId: string, extra?: { lost_reason: string }) => {
     setSaving(true);
     try {
-      await updatePortalSalesOpportunity(id, {
-        status_id: pending.to_status_id,
-        ...(pending.key === 'lost' ? { lost_reason: lostReason } : {}),
-      });
+      await updatePortalSalesOpportunity(id, { status_id: toStatusId, ...extra });
       toast.success('Opportunity updated');
-      setPendingStatusId(null);
+      setPendingLost(false);
+      setLostToStatusId(null);
       setLostReason('');
       load();
     } catch (err) {
@@ -90,10 +88,26 @@ export function SalesOpportunityPortalDetail({ id }: { id: string }) {
     }
   };
 
+  const handleStageClick = (key: string, toStatusId: string) => {
+    if (key === 'lost') {
+      setPendingLost(true);
+      setLostToStatusId(toStatusId);
+      return;
+    }
+    void applyStatus(toStatusId);
+  };
+
+  const confirmLost = () => {
+    if (!lostToStatusId || !lostReason) return;
+    void applyStatus(lostToStatusId, { lost_reason: lostReason });
+  };
+
   return (
     <div className="mx-auto w-full max-w-2xl space-y-4 px-3 pb-8 pt-4">
-      <Button variant="ghost" size="sm" onClick={() => router.push('/portal/sales_opportunity')}>
-        <ArrowLeft className="mr-1 size-4" /> Back
+      <Button variant="ghost" size="sm" asChild>
+        <Link href="/portal/sales_opportunity">
+          <ArrowLeft className="mr-1 size-4" /> Back
+        </Link>
       </Button>
 
       <Card>
@@ -103,8 +117,8 @@ export function SalesOpportunityPortalDetail({ id }: { id: string }) {
             <Badge appearance="light">{opportunity.stage_label}</Badge>
           </div>
           <span className="text-xs text-muted-foreground">
-            {opportunity.opportunity_no} &middot;{' '}
-            {opportunity.customer_name ?? opportunity.prospect_name ?? '-'}
+            <span>{opportunity.opportunity_no}</span> &middot;{' '}
+            <span>{opportunity.customer_name ?? opportunity.prospect_name ?? '-'}</span>
           </span>
           <div className="flex items-center justify-between text-sm">
             <span>{formatCurrency(opportunity.expected_amount)}</span>
@@ -115,51 +129,85 @@ export function SalesOpportunityPortalDetail({ id }: { id: string }) {
 
       <Card>
         <CardContent className="flex flex-col gap-3 py-4">
+          <span className="text-sm font-semibold">Products</span>
+          {lines.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No products yet</p>
+          ) : (
+            <ul className="flex flex-col divide-y rounded-lg border">
+              {lines.map((line) => (
+                <li
+                  key={line.id ?? line.product_id}
+                  className="flex items-center justify-between gap-2 px-3 py-2 text-sm"
+                >
+                  <span className="min-w-0 flex-1 truncate">
+                    <span>{line.product_code}</span> - <span>{line.product_name}</span>
+                  </span>
+                  <span className="text-muted-foreground">{line.qty}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className="flex flex-col gap-3 py-4">
           <span className="text-sm font-semibold">Move stage</span>
-          {opportunity.available_transitions.length === 0 ? (
+          {transitions.length === 0 ? (
             <p className="text-sm text-muted-foreground">This is the last stage.</p>
           ) : (
             <div className="flex flex-wrap gap-2">
-              {opportunity.available_transitions.map((t) => (
+              {transitions.map((t) => (
                 <Button
                   key={t.to_status_id}
                   type="button"
-                  variant={pendingStatusId === t.to_status_id ? 'primary' : 'outline'}
+                  variant={pendingLost && lostToStatusId === t.to_status_id ? 'primary' : 'outline'}
                   size="sm"
-                  onClick={() => setPendingStatusId(t.to_status_id)}
+                  disabled={saving}
+                  onClick={() => handleStageClick(t.key, t.to_status_id)}
                 >
+                  {saving && lostToStatusId === t.to_status_id ? (
+                    <LoaderCircleIcon className="size-4 animate-spin" />
+                  ) : null}
                   {t.label}
                 </Button>
               ))}
             </div>
           )}
-          {pending ? (
+          {pendingLost ? (
             <div className="flex flex-col gap-3 rounded-lg border p-3">
-              {pending.key === 'lost' ? (
-                <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="portal-opportunity-lost-reason">Lost reason</Label>
-                  <SearchableSelect
-                    id="portal-opportunity-lost-reason"
-                    aria-label="Lost reason"
-                    value={lostReason}
-                    onChange={setLostReason}
-                    options={FALLBACK_LOST_REASONS}
-                    placeholder="Pick a reason"
-                    wrapOptions
-                  />
-                </div>
-              ) : null}
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="portal-opportunity-lost-reason">Lost reason</Label>
+                <SearchableSelect
+                  id="portal-opportunity-lost-reason"
+                  aria-label="Lost reason"
+                  value={lostReason}
+                  onChange={setLostReason}
+                  options={lostReasonOptions}
+                  placeholder="Pick a reason"
+                  wrapOptions
+                />
+              </div>
               <div className="flex items-center gap-2">
                 <Button
                   type="button"
                   size="sm"
-                  onClick={confirmMove}
-                  disabled={(pending.key === 'lost' && !lostReason) || saving}
+                  onClick={confirmLost}
+                  disabled={!lostReason || saving}
                 >
                   {saving ? <LoaderCircleIcon className="size-4 animate-spin" /> : null}
                   Confirm
                 </Button>
-                <Button type="button" variant="outline" size="sm" onClick={() => setPendingStatusId(null)}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setPendingLost(false);
+                    setLostToStatusId(null);
+                    setLostReason('');
+                  }}
+                >
                   Cancel
                 </Button>
               </div>

@@ -1,7 +1,7 @@
 'use client';
 
 import { use } from 'react';
-import { SalesOpportunityPortalDetail } from '../components/SalesOpportunityPortalDetail';
+import SalesOpportunityPortalDetail from '../components/SalesOpportunityPortalDetail';
 
 export default function PortalSalesOpportunityDetailPage({
   params,
