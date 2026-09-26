@@ -21,10 +21,11 @@ export function useSalesTeams(query: string) {
   });
 }
 
-export function useSalesTeam(id: string | null) {
+/** `on`: the date the members are read for (the Targets page's Active on); default today. */
+export function useSalesTeam(id: string | null, on?: string) {
   return useQuery({
-    queryKey: [...SALES_TEAM_KEY, id],
-    queryFn: () => getSalesTeam(id as string),
+    queryKey: [...SALES_TEAM_KEY, id, on ?? null],
+    queryFn: () => getSalesTeam(id as string, on),
     enabled: !!id,
     retry: 1,
   });
