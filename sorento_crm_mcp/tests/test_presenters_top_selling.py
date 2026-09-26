@@ -204,7 +204,12 @@ def test_miss_prints_no_offer():
     assert rendered.endswith("\n\nNo sales found.")
     assert "Reply" not in rendered
     envelope = _top_selling_envelope(_mock("miss"))
-    assert envelope == {"result_type": "top_selling", "response": rendered, "has_result": False}
+    assert envelope == {
+        "result_type": "top_selling",
+        "response": rendered,
+        "has_result": False,
+        "result_set": [],
+    }
 
 
 def test_how_many_reply():
@@ -236,6 +241,50 @@ def test_detail_offer_on_every_item_hit(name: str):
 
 def test_detail_offer_on_category_hit():
     assert _top_selling(_mock("categories")).endswith("\n\n" + _CATEGORY_OFFER)
+
+
+# --------------------------------------------------------------------------
+# Owner, PR #1258 (26 Sep 2026 05:32Z): the ranked list is a list of choices that
+# behaves like the customer and product pickers. The envelope carries one
+# `result_set` row per PRINTED line, in the `{idx, label, code, name, entity_type}`
+# shape every other roster row uses, so the lane arms a sticky `top_selling_pick`
+# (backend `turn/pending.py`) and a later "2" or a name resolves against it.
+# --------------------------------------------------------------------------
+
+
+def test_envelope_carries_one_pick_row_per_printed_item():
+    envelope = _top_selling_envelope(_mock("items-qty"))
+    assert envelope["result_set"] == [
+        {"idx": 1, "label": "SRTWT7445", "code": "SRTWT7445", "name": "Kitchen Sink 2 Bowl", "entity_type": "product"},
+        {"idx": 2, "label": "SRTKT39SS", "code": "SRTKT39SS", "name": "Kitchen Tap", "entity_type": "product"},
+        {"idx": 3, "label": "SRTBS1020", "code": "SRTBS1020", "name": "Basin Mixer", "entity_type": "product"},
+        {"idx": 4, "label": "SRTSH2201", "code": "SRTSH2201", "name": "Shower Set", "entity_type": "product"},
+        {"idx": 5, "label": "SRTWC5501", "code": "SRTWC5501", "name": None, "entity_type": "product"},
+    ]
+
+
+def test_envelope_pick_rows_at_category_grain_use_the_printed_label():
+    rows = _top_selling_envelope(_mock("categories"))["result_set"]
+    assert [(r["idx"], r["label"], r["entity_type"]) for r in rows] == [
+        (1, "KITCHEN SINK", "category"),
+        (2, "WATER CLOSET", "category"),
+        (3, "BASIN MIXER", "category"),
+        (4, "KITCHEN TAP", "category"),
+        (5, "ACC", "category"),
+        (6, "Unassigned", "category"),
+    ]
+
+
+def test_pick_row_number_is_the_printed_rank():
+    body = _mock("items-qty")
+    body["rows"] = body["rows"][:1]
+    body["rows"][0]["rank"] = 7
+    assert [r["idx"] for r in _top_selling_envelope(body)["result_set"]] == [7]
+
+
+@pytest.mark.parametrize("name", ["how-many", "miss"])
+def test_no_pick_rows_when_no_list_was_printed(name: str):
+    assert _top_selling_envelope(_mock(name))["result_set"] == []
 
 
 # --------------------------------------------------------------------------
