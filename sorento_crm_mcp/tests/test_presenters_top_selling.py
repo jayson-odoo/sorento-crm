@@ -242,7 +242,7 @@ def test_detail_offer_on_category_hit():
 # AC-1908 / AC-1910: formats, dash guard, no paging words
 # --------------------------------------------------------------------------
 
-_BANNED = ("—", "–", "→", "->", "=>")
+_BANNED = ("\u2014", "\u2013", "\u2192", "->", "=>")
 _PAGING = re.compile(r"\b(more|next|lagi|showing)\b", re.IGNORECASE)
 
 
