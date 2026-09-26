@@ -634,18 +634,26 @@ def _root(cls: type, entity_type: str, entity_id: str, values: Optional[dict]) -
     return entity_type, entity_id
 
 
-def _company_fk(cls: type) -> Optional[tuple[str, Any, Any]]:
-    """For a class with no ``company_id`` column: (fk attribute key, parent table, parent
-    column) of the foreign key that says which company its rows belong to.
+_COMPANY_CHAIN_DEPTH = 4
 
-    ``__audit_parent__`` wins, then the first foreign key to a table carrying ``company_id``
-    (or to ``companies`` itself) on a NOT NULL column. None for a class with its own column or no such key, whose
-    audit rows stay company-less, which the admin listing shows to every company. Without this,
-    default-on auditing published a scoped parent's children (price tag request lines, project
-    sales profiles, page versions) to every company's audit viewers.
+
+def _company_chain(cls: type, _seen: Optional[frozenset] = None) -> Optional[list]:
+    """For a class with no ``company_id`` column: the foreign-key hops to the table that
+    says which company its rows belong to, as ``[(fk attribute key, target table, target
+    column), ...]``; the last target carries ``company_id`` (or is ``companies``).
+
+    ``__audit_parent__`` wins, then the NOT NULL foreign keys: a direct hop to a company
+    table first, else a hop to a table that itself resolves (a grandchild such as
+    ``form_fields`` -> ``form_sections`` -> ``forms``, review B1 at 7a56073f). None for a
+    class with its own column or no such chain, whose audit rows stay company-less, which
+    the admin listing shows to every company. Without this, default-on auditing published a
+    scoped owner's descendants (price tag request lines and their parts and tags, project
+    sales profiles, page versions, form fields) to every company's audit viewers.
     """
-    if cls in _company_fk_cache:
-        return _company_fk_cache[cls]
+    top = _seen is None
+    if top and cls in _company_chain_cache:
+        return _company_chain_cache[cls]
+    seen = (_seen or frozenset()) | {inspect(cls).local_table.name}
     mapper = inspect(cls)
     found = None
     if "company_id" not in mapper.local_table.c:
@@ -654,52 +662,81 @@ def _company_fk(cls: type) -> Optional[tuple[str, Any, Any]]:
         # .default_product_supplier_id must not pin global settings to one company).
         columns = [mapper.local_table.c[parent_col]] if parent_col else []
         columns += [c for c in mapper.local_table.columns if c.foreign_keys and not c.nullable]
-        for column in columns:
-            for fk in column.foreign_keys:
-                target = fk.column.table
-                if target.name == "companies" or "company_id" in target.c:
-                    found = (mapper.get_property_by_column(column).key, target, fk.column)
-                    break
-            if found:
+        hops = [
+            (mapper.get_property_by_column(column).key, fk.column.table, fk.column)
+            for column in columns
+            for fk in column.foreign_keys
+        ]
+        for hop in hops:
+            if hop[1].name == "companies" or "company_id" in hop[1].c:
+                found = [hop]
                 break
-    _company_fk_cache[cls] = found
+        if found is None and len(seen) < _COMPANY_CHAIN_DEPTH:
+            for hop in hops:
+                target_cls = _class_for_table(hop[1])
+                if target_cls is None or hop[1].name in seen:
+                    continue
+                rest = _company_chain(target_cls, seen)
+                if rest:
+                    found = [hop] + rest
+                    break
+    if top:
+        _company_chain_cache[cls] = found
     return found
 
 
-_company_fk_cache: dict = {}
+def _company_fk(cls: type) -> Optional[tuple[str, Any, Any]]:
+    """The first hop of ``_company_chain``: the key on ``cls`` that leads to its company."""
+    chain = _company_chain(cls)
+    return chain[0] if chain else None
+
+
+_company_chain_cache: dict = {}
+
+
+def _lookup(session: Session, conn: Any, target: Any, target_col: Any, value: Any, column: Any) -> Any:
+    """``column`` of the ``target`` row whose ``target_col`` is ``value``: from an object
+    already loaded or created in this session, else from the database."""
+    target_cls = _class_for_table(target)
+    if target_cls is not None and target_col.primary_key and len(inspect(target_cls).primary_key) == 1:
+        loaded = session.identity_map.get(inspect(target_cls).identity_key_from_primary_key((value,)))
+        if loaded is not None:
+            got = inspect(loaded).dict.get(inspect(target_cls).get_property_by_column(column).key)
+            if got is not None:
+                return got
+    # A row created in this same flush is not in the database yet.
+    for obj in list(session.new):
+        if getattr(obj, "__table__", None) is target and str(getattr(obj, target_col.key, None)) == str(value):
+            if column.name == "company_id":
+                return _company_id_for_new(obj)
+            return getattr(obj, inspect(type(obj)).get_property_by_column(column).key, None)
+    return conn.execute(select(column).where(target_col == value)).scalar()
 
 
 def _company_from_parent(session: Session, conn: Any, cls: type, values: Optional[dict], cache: dict) -> Any:
-    """The parent's company for a row of a class with no ``company_id`` of its own."""
-    link = _company_fk(cls)
-    if link is None or not values:
+    """The owning company for a row of a class with no ``company_id`` of its own, walked
+    hop by hop along ``_company_chain``."""
+    chain = _company_chain(cls)
+    if chain is None or not values:
         return None
-    key, target, target_col = link
-    fk_value = values.get(key)
-    if fk_value is None:
-        return None
-    if target.name == "companies":
-        return str(fk_value)
-    cache_key = (target.fullname, str(fk_value))
-    if cache_key not in cache:
-        company = None
-        parent_cls = _class_for_table(target)
-        # A parent already loaded in this session answers without a query.
-        if parent_cls is not None and target_col.primary_key and len(inspect(parent_cls).primary_key) == 1:
-            key = inspect(parent_cls).identity_key_from_primary_key((fk_value,))
-            loaded = session.identity_map.get(key)
-            if loaded is not None:
-                company = inspect(loaded).dict.get("company_id")
-        # A parent created in this same flush is not in the database yet.
-        if company is None:
-            for obj in list(session.new):
-                if getattr(obj, "__table__", None) is target and str(getattr(obj, target_col.key, None)) == str(fk_value):
-                    company = _company_id_for_new(obj)
-                    break
-        if company is None:
-            company = conn.execute(select(target.c.company_id).where(target_col == fk_value)).scalar()
-        cache[cache_key] = str(company) if company is not None else None
-    return cache[cache_key]
+    value = values.get(chain[0][0])
+    for index, (_key, target, target_col) in enumerate(chain):
+        if value is None:
+            return None
+        if target.name == "companies":
+            return str(value)
+        cache_key = (target.fullname, str(value))
+        if cache_key not in cache:
+            if index == len(chain) - 1:
+                column = target.c.company_id
+            else:
+                next_key = chain[index + 1][0]
+                next_cls = _class_for_table(target)
+                column = inspect(next_cls).get_property(next_key).columns[0]
+            got = _lookup(session, conn, target, target_col, value, column)
+            cache[cache_key] = str(got) if got is not None else None
+        value = cache[cache_key]
+    return value
 
 
 def _session_before_flush(session: Session, _flush_context: Any, _instances: Any) -> None:
