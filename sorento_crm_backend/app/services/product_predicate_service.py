@@ -25,6 +25,7 @@ Plan: documentation/plans/PLAN-spec-backward-search.md.
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Callable
 
 from sqlalchemy import String as _String
@@ -527,6 +528,76 @@ REQUIRE_LEGS: dict[str, Callable[..., ColumnElement]] = {
 }
 
 
+def _brand_rows(db: Session) -> list[Brand]:
+    """Every active brand, longest name first so "no logo" beats "no"."""
+    rows = db.query(Brand).filter(Brand.is_active.is_(True)).all()
+    rows = [r for r in rows if (r.brand_name or "").strip() and r.brand_name.strip().lower() != "others"]
+    return sorted(rows, key=lambda r: -len(r.brand_name.strip()))
+
+
+def _brand_word_re(name: str) -> re.Pattern[str]:
+    return re.compile(rf"(?<![\w-]){re.escape(name.strip())}(?![\w-])", re.IGNORECASE)
+
+
+def _bind_brand_words(
+    db: Session, brand: str | None, scope_terms: list[str] | None
+) -> tuple[str | None, list[str] | None]:
+    """`(brand, scope_terms)` with every brand name in a scope term taken out of it.
+
+    The brands table is the source (owner brief W1): the word leaves the term, and the
+    first brand named becomes the set's brand when the caller named none. A term that
+    was only the brand is dropped."""
+    if not scope_terms:
+        return brand, scope_terms
+    rows = _brand_rows(db)
+    if not rows:
+        return brand, scope_terms
+    out: list[str] = []
+    for term in scope_terms:
+        text = str(term or "")
+        for row in rows:
+            pattern = _brand_word_re(row.brand_name)
+            if pattern.search(text):
+                if not brand:
+                    brand = row.brand_name.strip()
+                text = pattern.sub(" ", text)
+        text = " ".join(text.split())
+        if text:
+            out.append(text)
+    return brand, out
+
+
+def _split_class_tail(db: Session, scope_terms: list[str] | None) -> list[str] | None:
+    """A scope term that names no class as a whole, split at the longest tail that does:
+    "wall hung basin" -> ["wall hung", "basin"], so the class ("basin" -> Wash Basin) and
+    the rest ("wall hung" -> mounting) both define the set. Owner turn 7 read "wall hung
+    basin" as mounting alone and answered every wall hung product.
+
+    Only when the leading words bind a spec of their own: "water tap" with no "water tap"
+    synonym on file stays whole, so it is still reported as a phrase nobody knows and
+    clarified with the nearest class (AC-1301/AC-1320), never answered as every tap."""
+    from app.services.product_class_signal import resolve_classes_for_term
+    from app.services.product_spec_search import resolve_terms_to_specs
+
+    if not scope_terms:
+        return scope_terms
+    out: list[str] = []
+    for term in scope_terms:
+        words = str(term or "").split()
+        if len(words) < 2 or resolve_classes_for_term(db, term):
+            out.append(term)
+            continue
+        for i in range(1, len(words)):
+            tail = " ".join(words[i:])
+            head = " ".join(words[:i])
+            if resolve_classes_for_term(db, tail) and resolve_terms_to_specs(db, [head]):
+                out.extend([head, tail])
+                break
+        else:
+            out.append(term)
+    return out
+
+
 def resolve_product_set(
     db: Session,
     *,
@@ -585,6 +656,13 @@ def resolve_product_set(
             message=f"Unknown require key(s): {', '.join(unknown)}",
             code="UNKNOWN_REQUIRE_KEY",
         )
+
+    # W1 (owner hand test round 2, turns 5/7/9): a brand word inside the parser's class
+    # word ("sorento wash basin") is a BRAND, never a spec value that defines membership
+    # on its own; and a class noun at the tail of a longer word ("wall hung basin") is
+    # still the class. Both read here, so the recount of a carried set gets them too.
+    brand, scope_terms = _bind_brand_words(db, brand, scope_terms)
+    scope_terms = _split_class_tail(db, scope_terms)
 
     scoping_terms = [*(free_terms or []), *(scope_terms or [])]
     # The two kinds stay APART here (hand pass 12 R8): a scope term's own registry
@@ -860,6 +938,9 @@ def resolve_product_set(
         "require": require_echo,
         "class_labels": sorted(class_labels),
     }
+    # W1: the brand the set is scoped to, as the brands table spells it.
+    if brand:
+        outcome["brand"] = brand
     if certificate_ids is not None:
         outcome["certificate_ids"] = certificate_ids
     return outcome

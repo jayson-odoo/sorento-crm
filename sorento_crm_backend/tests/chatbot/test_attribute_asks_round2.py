@@ -266,3 +266,26 @@ def test_w1_wall_hung_basin_keeps_the_basin_class(chat, world):
     )
     assert "3 wash basins have stock." in text, text
     assert _codes_in(text, world) == _codes(world["srt_wall"] + world["mch_wall"]), text
+
+
+def test_w1_a_brand_word_in_the_class_term_is_a_brand_binding_off_the_brands_table(world):
+    """The brand is read off `Product.brand_id` through the brands table, never off the
+    derived spec value: a product re-branded since its spec row was derived still
+    answers under its real brand."""
+    from app.models.product_spec import ProductSpecifications
+    from app.services.product_predicate_service import resolve_product_set
+
+    db = world["db"]
+    stale = world["srt_wall"][0]
+    row = db.query(ProductSpecifications).filter(ProductSpecifications.product_id == stale.id).one()
+    values = dict(row.values)
+    values["brand"] = {**(values.get("brand") or {}), "value": world["mocha"].brand_name}
+    row.values = values
+    db.flush()
+
+    brand = world["sorento"].brand_name
+    outcome = resolve_product_set(db, require={"stock": True}, scope_terms=[f"{brand.lower()} wall hung basin"])
+
+    assert outcome["brand"] == brand
+    assert outcome["qualifying_total"] == 2, outcome
+    assert {c["product_code"] for c in outcome["candidates"]} == _codes(world["srt_wall"])
