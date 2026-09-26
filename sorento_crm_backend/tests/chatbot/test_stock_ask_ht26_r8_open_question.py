@@ -518,6 +518,24 @@ def test_exact_code_kept_when_its_own_quantity_is_named_as_a_sibling_prefix():
     assert {row["canonical_code"] for row in spec.entities} == set(ROW9_CODES)
 
 
+def test_after_reply_keeps_a_named_code_that_shares_a_prefix_with_another_named_code():
+    """The stock reply's own sibling drop (`task.after_reply`): "SRTWC286-SH" and
+    "SRTWC286-SH-150" both named, the resolver's family placed SRTWC286-SH-200 as well,
+    and every row still needs a quantity. SRTWC286-SH-200 is the only sibling nobody
+    named; SRTWC286-SH-150 is asked for, never dropped."""
+    reply = task_mod.after_reply(
+        (),
+        ht.envelopes(
+            ht.row("SRTWC286-SH"), ht.row("SRTWC286-SH-150"), ht.row("SRTWC286-SH-200")
+        ),
+        turn_no=1,
+        asked=[ht.asked("SRTWC286-SH"), ht.asked("SRTWC286-SH-150")],
+    )
+    (stock,) = [t for t in reply.tasks if t.kind == "stock_qty"]
+    assert [slot.label for slot in stock.slots] == ["SRTWC286-SH", "SRTWC286-SH-150"]
+    assert reply.text == "How many units for each?\n1. SRTWC286-SH - \n2. SRTWC286-SH-150 - "
+
+
 def test_row9_three_named_products_with_their_own_quantities_all_answered():
     """Console end-to-end: row 9's three lines, each an entity with its own code and
     quantity, answer all three products - SRTWC286-SH-150 is not dropped as a prefix
