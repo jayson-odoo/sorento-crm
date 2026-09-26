@@ -4,7 +4,7 @@ Status: draft, round 3 (26 Sep 2026). The owner's grill answers (PR #1269 commen
 26 Sep 07:06Z) are folded in: section R3 carries an "Owner ruling 26 Sep 07:06 G<n>" line per
 answer, the module and schema alignment with #1260 round 5, the new slice S6 (the weekly scheduled
 Excel by email or WhatsApp, G9), the round 3 slice waves, G7 asked again in plain words, and the
-round 3 questions Q6 to Q8. Round 2 (section 0, the Lavish review of 26 Sep 06:27Z) and round 1
+round 3 questions Q6 to Q8, posted on PR #1269 as comment 5844192500 ("Round 3"). Round 2 (section 0, the Lavish review of 26 Sep 06:27Z) and round 1
 text is kept; a "Round 3:" note marks each place a ruling changes. Round 2's Q1 to Q4 are still
 unanswered and their recommendations stand; Q5 is re-answered by R3.2. Track: full for S1, S2,
 S3, S4 and S6 (S6 adds a table in the `sales` schema, a slug and an outbound send); S5 small fix
