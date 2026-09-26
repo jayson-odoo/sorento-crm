@@ -1,6 +1,6 @@
 # PLAN - Ingest stock_balances push (contract 2.5, Foundryx SR5)
 
-Status: SR5a in progress (Phase 2, tester-first). SR5b dropped by owner ruling 25 Sep 2026.
+Status: SR5a built, review READY (reviewer + security-reviewer), PR open; joint run with Foundryx pending. SR5b dropped by owner ruling 25 Sep 2026. Added in review: migration sb2 creates the stock (product_id, warehouse_id) unique index prod lacks.
 
 Source brief: Foundryx plan 13, Appendix A (`foundryx-shared-service` worktree s51,
 `documentation/plans/sprint-5/13-autocount-stock-push.md`). Seven corrections were agreed with the
