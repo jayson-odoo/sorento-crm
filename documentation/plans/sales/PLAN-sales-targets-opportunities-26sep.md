@@ -1,6 +1,10 @@
 # PLAN: sales targets, opportunities and the WhatsApp achievement broadcast (#1170)
 
-Status: grilled, round 5 (the owner's answers to R1 to R5 and T1 to T5, PR #1260 comment
+Status: **building.** Wave 1, S6, is on PR #1260 (wave 1: the `sales` module and schema, Sales Teams with dated
+membership, the Sales menu with Sales Agents moved in; section 15). Track: full. Next: wave 2,
+S1 beside S2. Ready to build since the owner accepted V1 to V3 as recommended (Owner ruling
+26 Sep ~09:05, section 14).
+Earlier status: grilled, round 5 (the owner's answers to R1 to R5 and T1 to T5, PR #1260 comment
 5843775673 of 26 Sep 06:09Z, folded in as "Owner ruling 26 Sep 06:09" lines; section 13 says how
 each was applied; round 5 questions V1 to V3 posted on the PR as the "Round 5" comment,
 5844053739). **Every slice is
@@ -1738,3 +1742,41 @@ No criterion was deleted. New UAC criteria: S1-26 to S1-29, S3-7, S4-12, S6-14, 
   tables in a `sales` schema (`sales.targets`, `sales.teams`, ...), as Project Sales moved to
   `projects` in ADR-0011; nothing is built yet, so it costs one line per model. Alternative:
   module `sales` with its tables in `public` under a `sales_` prefix (the round 1 to 4 text).
+
+**Owner ruling 26 Sep ~09:05 (chat, verbatim):** "yeah I am okay with sales target". V1, V2 and V3
+are accepted as recommended; the plan is ready to build, S6 (teams) first, on PR #1260.
+
+## 15. S6 build record (26 Sep, PR #1260)
+
+Built exactly to 3.7, 3.8 and the S6 slice: UAC S6-1, S6-2, S6-3, S6-8, S6-9, S6-12, S6-13,
+S6-14, S6-15 and S1-17. Team targets (S6-4 to S6-7, S6-10) are S1's and are not here. Decisions
+taken while building, each the direct reading of the plan unless it says otherwise:
+
+- **Migration `sales_0001_teams`** on `sb2_stock_pair_unique`: `CREATE SCHEMA IF NOT EXISTS
+  sales`, `sales.teams`, `sales.team_members` (with `company_id` NOT NULL, security review), the
+  four `sales.teams.*` slugs granted to admin and superadmin, and the `sales` catalog row with no
+  `tenant_modules` row: **the module ships dormant**, as `scm` and `dealer_kit` did, and is
+  switched on in System > App Store. Downgrade drops both tables and the catalog row, and leaves
+  the schema (ADR-0011) and the permission rows.
+- **One extra read route**, `GET /sales/teams/agent-options` (gated `sales.teams.view`): the team
+  picker lists active agents with the team each is in now, without needing
+  `master_data.sales_agents.view`.
+- **`PATCH /sales/teams/{id}` also takes `sales_agent_ids` and `moves_on`**, so the team page saves
+  the name, Active and the agents in one transaction (review round 1). `PUT .../members` stays.
+- **Same-day corrections (review round 1).** No membership ever starts after today. An agent
+  removed today and placed in another team today is a move today (the old team keeps everything
+  up to yesterday). A move made by mistake today is undone the same day: the same-day stay is
+  dropped and the team left yesterday is reopened as one continuous row. A back-dated Moves on
+  that would reach across a later stay is 422.
+- **"Left" on the team page** means the membership ended on or before the date shown; such a
+  line is shown, muted with "Left <date>", only when it ended in the month of that date. S6 shows
+  today; S1 wires the Targets page's Active on date through `GET /sales/teams/{id}?on=`.
+- **The team page edits in place (S6-13)**; the list's modal is Add team. The modal can also edit
+  (S6-12's wording), but no screen opens it in edit mode today, because the team page is the edit
+  path and D15 keeps Edit out of the row menu.
+- **Both sidebars** (`MENU_SIDEBAR` and `MENU_SIDEBAR_COMPACT`) carry the Sales group, so Sales
+  Agents is listed once in each and is not lost from the compact layout.
+- **Plan DoD not run here:** "every active agent can be placed in a team on the dev DB (prod
+  copy)" needs the prod copy, which this cloud session does not have; the browser pass ran on a
+  database built from zero with seven seeded agents.
+

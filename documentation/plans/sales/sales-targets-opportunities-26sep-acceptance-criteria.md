@@ -4,7 +4,8 @@ Plan: `documentation/plans/sales/PLAN-sales-targets-opportunities-26sep.md`. Moc
 `documentation/plans/sales/mockups/sales-targets.html`. Slice 1 of #1170 (a sales agent on a
 customer) shipped in PR #1177 and is not repeated here.
 
-Status: grilled. Round 1 answered by the owner 26 Sep 2026 (PR #1260 comment, 05:25Z); every AC
+Status: building. Wave 1, S6, is on PR #1260 (S6-1 to S6-3, S6-8, S6-9, S6-12 to S6-15, S1-17; plan section 15).
+Earlier status: grilled. Round 1 answered by the owner 26 Sep 2026 (PR #1260 comment, 05:25Z); every AC
 is now written to the ruling, marked "(Owner ruling 26 Sep, G#)". Round 2 questions R1 to R5
 (plan section 9) may still adjust the ACs marked "(R#)"; each is written to its recommendation.
 Round 3 (26 Sep): the owner's Lavish review of the mockup (PR #1260 comment, 05:35Z) is folded in
@@ -89,6 +90,7 @@ From the owner's answers to rounds 2 and 3 (PR #1260 comment, 26 Sep 06:09Z, ver
 - **T4, Owner ruling 26 Sep 06:09:** "yeap ok": team pool per period, never split (S4-10, S4-12).
 - **T5, Owner ruling 26 Sep 06:09:** "the point is we need to do it now and not backlog or defer": every slice now, thin lanes in parallel waves, nothing to the backlog.
 - **Owner question 26 Sep 06:09:** "are we doing this in a new schema and module called sales?": recommended yes to both, module `sales` and schema `sales` (plan 3.7, V3).
+- **Owner ruling 26 Sep ~09:05 (chat):** "yeah I am okay with sales target": V1, V2 and V3 accepted as recommended; build S6 first.
 
 ## Journey
 
