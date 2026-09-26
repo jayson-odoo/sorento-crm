@@ -1752,7 +1752,7 @@ Built exactly to 3.7, 3.8 and the S6 slice: UAC S6-1, S6-2, S6-3, S6-8, S6-9, S6
 S6-14, S6-15 and S1-17. Team targets (S6-4 to S6-7, S6-10) are S1's and are not here. Decisions
 taken while building, each the direct reading of the plan unless it says otherwise:
 
-- **Migration `sales_0001_teams`** on `sb2_stock_pair_unique`: `CREATE SCHEMA IF NOT EXISTS
+- **Migration `sales_0001_teams`** on `sb3_company_stock_push_at` (re-parented after main moved): `CREATE SCHEMA IF NOT EXISTS
   sales`, `sales.teams`, `sales.team_members` (with `company_id` NOT NULL, security review), the
   four `sales.teams.*` slugs granted to admin and superadmin, and the `sales` catalog row with no
   `tenant_modules` row: **the module ships dormant**, as `scm` and `dealer_kit` did, and is

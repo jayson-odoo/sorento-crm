@@ -17,7 +17,7 @@ dropped, ADR-0011) and the permission rows (`sync_permissions` recreates them fr
 registry on boot anyway, and a grant an admin made by hand must not vanish with a rollback).
 
 Revision ID: sales_0001_teams
-Revises: sb2_stock_pair_unique
+Revises: sb3_company_stock_push_at
 Create Date: 2026-09-26
 """
 import uuid
@@ -27,7 +27,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision = "sales_0001_teams"
-down_revision = "sb2_stock_pair_unique"
+down_revision = "sb3_company_stock_push_at"
 branch_labels = None
 depends_on = None
 
