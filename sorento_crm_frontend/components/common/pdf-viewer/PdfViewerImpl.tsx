@@ -132,8 +132,14 @@ export default function PdfViewerImpl({
         setPdfjs(() => lib);
         setLoaded({ doc, pages, baseWidth });
         setStatus('ready');
-      } catch {
-        if (!cancelled) setStatus('error');
+      } catch (error) {
+        if (!cancelled) {
+          // A trace for whoever hits the error state next - see the dev-only pdfjs
+          // failure mode noted in LESSONS-LEARNT.md (webpack `next dev` without
+          // --turbopack) that this would otherwise hide completely.
+          console.warn('PdfViewer failed to load the document', error);
+          setStatus('error');
+        }
       }
     })();
     return () => {

@@ -225,6 +225,7 @@ describe('PdfViewer', () => {
   });
 
   it('says the PDF could not be shown, and still offers the file, when it will not open', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     fakePdfJs.failNext();
     render(<PdfViewer url="https://cdn.example.test/po.pdf" title="PO" />);
 
@@ -233,6 +234,9 @@ describe('PdfViewer', () => {
       'href',
       'https://cdn.example.test/po.pdf',
     );
+    // PR #1256 review, should-fix finding 4: a swallowed error left no trace.
+    expect(warn).toHaveBeenCalledWith('PdfViewer failed to load the document', expect.any(Error));
+    warn.mockRestore();
   });
 
   it('shows the not-available state when there is nothing to load', async () => {
