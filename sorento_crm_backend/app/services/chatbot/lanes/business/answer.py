@@ -2596,7 +2596,9 @@ def build_set_header(qualifying_total: int, shown: int, set_noun: str, require: 
     - some listed because the customer named how many (`0 < shown < qualifying_total`):
       "Here are the first <shown>.";
     - none listed (`shown == 0`, a set longer than `SET_LIST_MAX`): the count, then the
-      question - how many to show, or a narrower filter.
+      question - how many to show, or ask again naming a brand or size (reviewer S2 on
+      PR #833: a bare "grohe" reply is not carried against the set, so the question offers
+      the full re-ask, which is).
 
     A pure string function: `qualifying_total` and `shown` are counts the caller already
     has, never re-derived here.
@@ -2609,7 +2611,7 @@ def build_set_header(qualifying_total: int, shown: int, set_noun: str, require: 
         else:
             header += (
                 " That is too many to list in one message. How many should I show "
-                f"(up to {SET_LIST_MAX}), or which brand or size should I narrow it to?"
+                f"(up to {SET_LIST_MAX})? Or ask again naming a brand or size."
             )
     return header
 
@@ -2645,7 +2647,7 @@ def set_noun_for(class_labels: list[str] | None) -> str:
 
 #: The qualifying ids one described set is counted and fetched from - the resolver's own
 #: cap, so a 2,704-long set is counted in full but never carried as a list of that size.
-SET_PAGE_ID_CAP = 200
+SET_ID_CAP = 200
 
 
 def not_found_error_message(

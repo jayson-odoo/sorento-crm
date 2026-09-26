@@ -262,8 +262,9 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
 
         label = row.label if row else domain
         codes = ", ".join(_header_subjects(entities))
-        # A counted-set answer (AC-1316, "10 taps have certificates.") carries its OWN header, computed off the qualifying total and the
-        # class word rather than the domain label - it wins over the generic
+        # A counted-set answer (AC-1316, "10 taps have certificates.") carries its OWN
+        # header, computed off the qualifying total and the class word rather than the
+        # domain label - it wins over the generic
         # `*{label}* for {codes}:` line whenever the fetch supplied one, rows or not.
         header_override = env.get("header_override")
         if isinstance(header_override, str) and header_override.strip():

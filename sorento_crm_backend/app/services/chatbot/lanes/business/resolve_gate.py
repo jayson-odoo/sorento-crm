@@ -465,6 +465,10 @@ def _query_text(ctx: dict[str, Any]) -> str:
         return ""
 
 
+#: The entity hints whose value IS a code the customer typed, as opposed to a word that
+#: describes a class of them. `inbound_shipment` is here because the parser hands the SAME
+#: typed product code either hint ("srtwt7202-new" came back `product` on one live run and
+#: `inbound_shipment` on the next).
 _CODE_BEARING_HINTS = ("product", "inbound_shipment")
 
 

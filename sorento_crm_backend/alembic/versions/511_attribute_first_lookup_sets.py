@@ -19,7 +19,9 @@ got stock"): appends "water tap" to every Tap category's `search_synonyms` and
 "water basin" to every Wash Basin one, the same words
 `product_class_signal.CLASS_SYNONYMS` now carries so a later backfill keeps them.
 Append-only: a word already there (staff's or the backfill's) is never touched,
-and the word is never added twice. Downgrade removes only these two words.
+and the word is never added twice. Downgrade removes only these two words, including
+where staff had entered one of them before this migration (upgrade records no row list;
+accepted and documented, reviewer N1 on PR #833).
 """
 from alembic import op
 import sqlalchemy as sa

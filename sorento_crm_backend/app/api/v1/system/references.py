@@ -1595,12 +1595,12 @@ def _collect_lookup_product_ids(result: dict[str, Any]) -> list[str]:
 # it. Keep the two in lockstep by hand if the word list ever changes.
 _CERT_WORD_RE = re.compile(r"cert|ikram|span|sirim|bomba|ms\s?[0-9]|halal", re.IGNORECASE)
 
-# A COPY of `app.services.chatbot.lanes.business.answer.SET_PAGE_ID_CAP`, for the same
+# A COPY of `app.services.chatbot.lanes.business.answer.SET_ID_CAP`, for the same
 # module-boundary reason `_CERT_WORD_RE` above is a copy: a counted set lists (up to
 # `answer.SET_LIST_MAX`) off however many qualifying ids `resolve_product_set` is asked
 # for, so this file has to ask for at least this many rather than the ordinary LOOKUP
 # page size.
-_SET_PAGE_ID_CAP = 200
+_SET_ID_CAP = 200
 
 
 def _stock_policy_for(db: Session, payload: "ResolveReferenceRequest"):
@@ -2753,7 +2753,7 @@ def resolve_reference_post(
         )
 
         # The counted set lists off the QUALIFYING ids themselves, capped at
-        # `_SET_PAGE_ID_CAP` (200) - never the ordinary LOOKUP page size
+        # `_SET_ID_CAP` (200) - never the ordinary LOOKUP page size
         # (`payload.limit`, 15), which would cut a 40-product set that fits one
         # message down to 15.
         outcome = resolve_product_set(
@@ -2766,7 +2766,7 @@ def resolve_reference_post(
             specs=specs,
             free_terms=payload.free_terms,
             scope_terms=scope_terms,
-            limit=max(payload.limit or 0, _SET_PAGE_ID_CAP),
+            limit=max(payload.limit or 0, _SET_ID_CAP),
             product_ids=_collect_lookup_product_ids(result) or None,
             brand=brand,
             # SEC-S1/AC-1334: the promotion leg must see the caller's OWN tier,
@@ -2821,16 +2821,6 @@ def resolve_reference_post(
         if outcome.get("certificate_ids"):
             result["predicate"]["certificate_ids"] = outcome["certificate_ids"]
         _emit_spec_matches(result, outcome["candidates"], payload.query or "")
-        # R30/AC-1355: what this HAS turn's own bindings asked for (`specs`,
-        # class included) - the spec_fallback branch below already stamps
-        # this off `search_specs`' own `asked_for`; a HAS/require turn never
-        # runs that ranker call at all (`filter_specs` reads `specs` and
-        # `scope_terms` directly), so without this the Match line's own
-        # `spec_asked` intersection had nothing to read and stayed silent for
-        # every set answer, whatever its candidates matched.
-        result["spec_asked"] = [{"key": e.get("key"), "value": e.get("value")} for e in specs] + [
-            {"key": "class", "value": label} for label in (outcome.get("class_labels") or [])
-        ]
         # R2 only fires on a genuine HAS answer (qualifying_total > 0): the
         # existing zero-qualifying miss flow names its own candidate codes off
         # these SAME forward matches (F1's pre-existing "Couldn't find a bidet

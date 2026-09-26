@@ -2200,17 +2200,16 @@ def page_the_set(
 
     **Security B2: the entitlement is part of that description.** The recount runs under
     the levels the CARRY recorded (`set_key.access_levels`, written by `set_page_carry`
-    from the levels page 1's own fetch used), never under anything this turn's parser
-    happened to state - a "more" states nothing, and an empty name list reaches
+    from the levels the first answer's own fetch used), never under anything this turn's parser
+    happened to state - a bare count states none, and an empty name list reaches
     `product_predicate_service._access_level_codes` as "no tier filter at all", which is
-    how page 2 of a promotion set widened past page 1. A carry that records NO levels is
-    refused (`qualifying_total: 0`, no ids, `entitlement_missing`), so the runner answers
-    the miss instead of reading the set unfiltered.
+    how a recount of a promotion set once widened past the first answer. A carry that
+    records NO levels is refused (`qualifying_total: 0`, no ids, `entitlement_missing`),
+    so the runner answers the miss instead of reading the set unfiltered.
 
     `access_levels` is for a caller that already knows the entitlement and holds a carry
-    written before it was recorded: the first page under it STAMPS the carry, so every
-    later page of that same carry recounts under the same authority. Production's own
-    "more" (`make_tool_runner.runner`) passes nothing at all.
+    written before it was recorded: the first recount under it STAMPS the carry.
+    Production's own recount (`make_tool_runner.runner`) passes nothing at all.
     """
     from app.services.chatbot.lanes.business import answer as answer_mod
     from app.services.product_predicate_service import resolve_product_set
@@ -2242,7 +2241,7 @@ def page_the_set(
         specs=[],
         free_terms=None,
         scope_terms=list(key.get("scope_terms") or []),
-        limit=answer_mod.SET_PAGE_ID_CAP,
+        limit=answer_mod.SET_ID_CAP,
         product_ids=None,
         brand=None,
         access_levels=entitled,
@@ -2316,8 +2315,8 @@ def _tier_gate(
     `resolver_tier_gate` is not a dict, which three production shapes reach - the
     resolver raising (`turn_runtime.py:776-778` logs it and returns `payload=None`), a
     plan naming both `ideate` and `promotion` (the `ideate` entry builds no tier gate,
-    `lanes/business/__init__.py:45-49`), and `resolve_gate.run`'s own `set_page` early
-    return (`resolve_gate.py:990`, ahead of the `access_check` block). All three now
+    `lanes/business/__init__.py:45-49`), and a recount of a carried set (the answer to
+    "how many should I show?", `page_the_set`), which runs no resolver. All three now
     recompose to `[]`, and the runner's fail-closed guard above answers the miss.
     """
     tier = spec.filters.get("tier")
@@ -2825,7 +2824,7 @@ def envelope_of(
         # 1455`): the RECOMPOSED access levels this fetch actually went out with
         # (`_fetch_semantic_input`'s own, off `tier_gate.access_levels_recomposed` when
         # a tier gate ran). `engine.py` records it on the set-page carry so a later
-        # "more" recounts the set under the SAME entitlement rather than under the
+        # count answer recounts the set under the SAME entitlement rather than under the
         # parser's own, empty, list. `None` on every arm that never called the tool.
         "access_levels_used": fetched.get("access_levels"),
     }

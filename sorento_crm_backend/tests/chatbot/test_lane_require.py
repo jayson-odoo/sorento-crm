@@ -3114,7 +3114,7 @@ def test_clarify_with_no_candidate_offers_common_product_types():
 
 
 def test_id_cap_and_cert_regex_are_pinned():
-    """AC-1337/REV-S3: `answer.SET_PAGE_ID_CAP` and `references._SET_PAGE_ID_CAP`
+    """AC-1337/REV-S3: `answer.SET_ID_CAP` and `references._SET_ID_CAP`
     must stay equal, and `references._CERT_WORD_RE` must stay the same pattern
     as `predicate._CERT_RE` (its home since main retired `head/output_exchange`) -
     both are hand-synced copies across the module boundary (`references.py`'s own
@@ -3130,7 +3130,7 @@ def test_id_cap_and_cert_regex_are_pinned():
     from app.services.chatbot.lanes.business import answer
     from app.services.chatbot.lanes.business.predicate import _CERT_RE
 
-    assert answer.SET_PAGE_ID_CAP == references._SET_PAGE_ID_CAP
+    assert answer.SET_ID_CAP == references._SET_ID_CAP
     assert references._CERT_WORD_RE.pattern == _CERT_RE.pattern
 
 

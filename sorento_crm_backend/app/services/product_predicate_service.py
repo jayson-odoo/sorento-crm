@@ -511,7 +511,7 @@ def _leg_incoming(db: Session, value: Any, access_levels: list[str] | None = Non
 
 
 # R29/AC-1354: the `certificate_ids` cap - the same shape as `references.
-# _SET_PAGE_ID_CAP` / `answer.SET_PAGE_ID_CAP` (200), reused here rather than
+# _SET_ID_CAP` / `answer.SET_ID_CAP` (200), reused here rather than
 # imported to keep this module's only import of `references.py` at zero (the
 # dependency runs the other way).
 _CERTIFICATE_ID_CAP = 200
