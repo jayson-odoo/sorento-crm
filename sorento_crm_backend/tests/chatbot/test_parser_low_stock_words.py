@@ -85,20 +85,26 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         newest outermost, so it is stripped first before `LOW_STOCK_ADDENDUM` is asserted
         as the tail - the same treatment `LAST_COST_ADDENDUM` got here when
         `LOW_STOCK_ADDENDUM` landed. `QUANTITY_ADDENDUM` (issue #1262 slice 5, 26 Sep
-        2026) stacked after THAT, so it comes off first of all."""
-        from app.services.chatbot_parser_prompt import QUANTITY_ADDENDUM, SALES_REPORT_ADDENDUM
+        2026) stacked after THAT, then `KNOWN_BRANDS_ADDENDUM` (issue #1262 slice 9,
+        26 Sep 2026) after that, so it comes off first of all."""
+        from app.services.chatbot_parser_prompt import (
+            KNOWN_BRANDS_ADDENDUM,
+            QUANTITY_ADDENDUM,
+            SALES_REPORT_ADDENDUM,
+        )
 
 
         _mod, addendum = _prompt()
         for name, body in _bodies().items():
             assert (
-                body.removesuffix(QUANTITY_ADDENDUM)
+                body.removesuffix(KNOWN_BRANDS_ADDENDUM)
+                .removesuffix(QUANTITY_ADDENDUM)
                 .removesuffix(SALES_REPORT_ADDENDUM)
                 .endswith(addendum)
             ), (
                 f"{name} body does not end with LOW_STOCK_ADDENDUM once the newer "
-                "QUANTITY_ADDENDUM/SALES_REPORT_ADDENDUM are stripped - LOW_STOCK_ADDENDUM "
-                "must stay the tail beneath them"
+                "KNOWN_BRANDS_ADDENDUM/QUANTITY_ADDENDUM/SALES_REPORT_ADDENDUM are "
+                "stripped - LOW_STOCK_ADDENDUM must stay the tail beneath them"
             )
 
     def test_the_addendum_stacks_after_last_cost(self) -> None:
@@ -108,6 +114,7 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         makes both of them wrong in a way whose failure message points at the wrong
         constant."""
         from app.services.chatbot_parser_prompt import (
+            KNOWN_BRANDS_ADDENDUM,
             LAST_COST_ADDENDUM,
             QUANTITY_ADDENDUM,
             SALES_REPORT_ADDENDUM,
@@ -116,7 +123,8 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         _mod, addendum = _prompt()
         for name, body in _bodies().items():
             assert (
-                body.removesuffix(QUANTITY_ADDENDUM)
+                body.removesuffix(KNOWN_BRANDS_ADDENDUM)
+                .removesuffix(QUANTITY_ADDENDUM)
                 .removesuffix(SALES_REPORT_ADDENDUM)
                 .removesuffix(addendum)
                 .endswith(LAST_COST_ADDENDUM)

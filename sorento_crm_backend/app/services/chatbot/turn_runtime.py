@@ -315,6 +315,77 @@ def load_profile(
     )
 
 
+def active_brands(db: Session) -> list[dict[str, Any]]:
+    """#1262 slice 9 (F1a), round 3 section 6 step 1: the live `Brand` rows the
+    parser's `Known brands:` line is built from - `{brand_name, brand_code, id,
+    company_id, is_active}` for every ACTIVE brand, read fresh on every call (no
+    cache: an operator edit in the table must reach the next turn with no
+    restart).
+
+    `app.models.product.Brand`, not the `projects` model's own brand-shaped
+    table - `Brand` is the catalogue's own brand row (`brands`, `CompanyScopedMixin`),
+    the one `crm_outstanding_report`'s own `Product.brand_id` points at; the
+    projects model names something else entirely.
+
+    Company scope is read off `db` itself, not recomputed here: `run_turn`
+    (engine.py, `_contact_company_scope` / `_scoped_factory`) already stamps
+    every session it opens with the contact's own companies before this ever
+    runs, and `Brand`'s `CompanyScopedMixin` auto-filters any ORM query on that
+    session to them (`app.models.base.do_orm_execute`) - a second, explicit
+    `company_id IN (...)` filter here would be a second copy of the same rule,
+    liable to disagree with it the day one changes and the other does not.
+    """
+    from app.models.product import Brand
+
+    rows = (
+        db.query(Brand)
+        .filter(Brand.is_active.is_(True))
+        .order_by(Brand.brand_name)
+        .all()
+    )
+    return [
+        {
+            "id": row.id,
+            "brand_name": row.brand_name,
+            "brand_code": row.brand_code,
+            "company_id": row.company_id,
+            "is_active": row.is_active,
+        }
+        for row in rows
+    ]
+
+
+def _brand_hinted_entities_matching_live(
+    db: Session, entities: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """#1262 slice 9 (F1a): the `hint: "brand"` entities among `entities` whose own
+    `raw` or `canonical_code` matches a LIVE brand's name or code, case-insensitive
+    exact - the gate `resolve_kinds` uses to keep a real brand word away from the
+    shared resolver entirely. A brand-hinted token NOT on the live list is
+    untouched (today's path - AC-S9-3's own guard), because it is not this
+    contact's brand to answer for.
+    """
+    candidates = [
+        e
+        for e in entities
+        if isinstance(e, dict) and jsc.nullish_str(e.get("hint")).strip().lower() == "brand"
+    ]
+    if not candidates:
+        return []
+    live = active_brands(db)
+    live_names = {jsc.nullish_str(b.get("brand_name")).strip().casefold() for b in live}
+    live_codes = {jsc.nullish_str(b.get("brand_code")).strip().casefold() for b in live}
+    live_names.discard("")
+    live_codes.discard("")
+    matched = []
+    for e in candidates:
+        raw = jsc.nullish_str(e.get("raw")).strip().casefold()
+        code = jsc.nullish_str(e.get("canonical_code")).strip().casefold()
+        if raw in live_names or raw in live_codes or code in live_names or code in live_codes:
+            matched.append(e)
+    return matched
+
+
 def load_state(session_block: Any, *, profile: Profile, turn_no: int) -> State:
     """Stage A's `State`: focus and pending off the five session keys, profile beside.
 
@@ -1130,6 +1201,34 @@ def resolve_kinds(
 
     entry = ENTRY_BY_BRANCH_KIND.get(branch_kind, "resolve")
     entities = (jsc.get(jsc.get(ctx, "parse"), "output") or {}).get("entities") or []
+    # #1262 slice 9 (F1a), owner ruling 7: a brand-hinted token matching a LIVE
+    # brand (name or code, case-insensitive exact) resolves inside the chatbot,
+    # never through the shared resolver - no order-domain fan-out to
+    # customer/transporter (`entity_resolver._DOMAIN_HINT_EXPANSIONS["order"]
+    # ["brand"]`, untouched - it still serves n8n/MCP callers), no reconcile
+    # re-type, no roster, no kind pick. Stripped from the CTX handed to
+    # `resolve_gate.run` only - `apply()` reads `verdict.get("entities")`
+    # directly (never this function's own ctx copy), so the entity still
+    # settles onto `focus.brands` exactly as any other confident entity would
+    # (`turn/apply.py::_focus_rules`'s generic per-hint grouping).
+    try:
+        matched_brands = _brand_hinted_entities_matching_live(db, entities)
+    except Exception:  # noqa: BLE001 - a caller handing over a test double with no
+        # real session (every `resolve_kinds` test that stubs `resolve_gate.run`
+        # entirely and never seeds a live `Brand` table) has no opinion on brand
+        # matches either; the token falls through to the shared resolver
+        # unchanged, exactly as it did before this slice.
+        matched_brands = []
+    if matched_brands:
+        matched_ids = {id(e) for e in matched_brands}
+        remaining = [e for e in entities if id(e) not in matched_ids]
+        if len(remaining) != len(entities):
+            parse_block = dict(jsc.get(ctx, "parse") or {})
+            output_block = dict(parse_block.get("output") or {})
+            output_block["entities"] = remaining
+            parse_block["output"] = output_block
+            ctx = {**ctx, "parse": parse_block}
+            entities = remaining
     # Security B1/S1 (review round, 20 Sep 2026): the `access_check` entry is about the
     # CONTACT, not about anything the message named - `resolve_gate.run` reads the
     # entitlement and runs the tier gate BEFORE resolve-entity is even called, and main's

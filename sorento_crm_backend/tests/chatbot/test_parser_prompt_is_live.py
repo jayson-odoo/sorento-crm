@@ -26,6 +26,7 @@ import pytest
 
 from app.services.chatbot_parser_prompt import (
     GROWTH_R1_ADDENDUM,
+    KNOWN_BRANDS_ADDENDUM,
     LAST_COST_ADDENDUM,
     LIVE_SYSTEM_MESSAGE_SHA256,
     LOW_STOCK_ADDENDUM,
@@ -148,7 +149,21 @@ LIVE_CHARS = 46942  # the fetched file, leading `=` included
 # `SALES_REPORT_ADDENDUM`, the newest outermost suffix - stripped first in
 # `_without_growth_r1_addendum`, below. It does not move CONSTANT_CHARS (which
 # measures the body BEFORE every later addendum, growth r1's own included).
-CONSTANT_CHARS = 63657
+# 63657 -> 63711 (#1262 slice 9, F1a, 26 Sep 2026): an IN-BODY edit, not an
+# addendum - the ENTITY OPERATIONS list's `brand -> Sorento, Mocha, or Cabana`
+# bullet is replaced (not appended around) with `brand -> a name from the Known
+# brands: line ...`, because AC-S9-2's own test asserts the hard-coded phrase is
+# GONE from the published template, which an addendum stacked outside the body
+# cannot make true (the phrase would still be present, just superseded in
+# meaning). `KNOWN_BRANDS_ADDENDUM` (stacked after `QUANTITY_ADDENDUM`) is the
+# separate, ADDITIVE piece - it teaches the new `Known brands:` line itself, the
+# same shape every other addendum teaches a new key. Net +54, this one bullet
+# only; nothing else in the body moved. NOT reproducible from a live re-fetch by
+# `test_the_constant_is_reproducible_from_the_live_file` (that test's own
+# `_requested_attributes_block` exemption covers a different span) - that test
+# stays skipped without `CHATBOT_LIVE_SYSTEM_MESSAGE` set, which is every CI run;
+# flagged for whoever next re-derives the constant from a live fetch.
+CONSTANT_CHARS = 63711
 
 
 def _without_growth_r1_addendum(text: str) -> str:
@@ -158,7 +173,8 @@ def _without_growth_r1_addendum(text: str) -> str:
     (PLAN-low-stock-report.md S7, 14 Sep 2026), then `SALES_REPORT_ADDENDUM`
     (PLAN-chatbot-sales-report.md S4 wiring point 1, migration
     `519_chatbot_sales_report_vocab`), then `QUANTITY_ADDENDUM` (issue #1262 slice 5,
-    26 Sep 2026) now stack AFTER `GROWTH_R1_ADDENDUM` on both bodies, the same way
+    26 Sep 2026), then `KNOWN_BRANDS_ADDENDUM` (issue #1262 slice 9, 26 Sep 2026) now
+    stack AFTER `GROWTH_R1_ADDENDUM` on both bodies, the same way
     this one stacked after the live text - so they come off FIRST, newest
     outermost, before the `removesuffix` this function has always done. Each addendum is an APPENDED block, so both come off by suffix rather than by
     the index slice the warehouse-arrival edit needs (that one sits INSIDE the
@@ -166,6 +182,8 @@ def _without_growth_r1_addendum(text: str) -> str:
     tail once `LAST_COST_ADDENDUM` is off lives in
     `test_parser_growth_r1_reachability.py::test_the_addendum_is_appended_to_both_bodies`.
     """
+    if text.endswith(KNOWN_BRANDS_ADDENDUM):
+        text = text[: -len(KNOWN_BRANDS_ADDENDUM)]
     if text.endswith(QUANTITY_ADDENDUM):
         text = text[: -len(QUANTITY_ADDENDUM)]
     if text.endswith(SALES_REPORT_ADDENDUM):

@@ -324,6 +324,10 @@ TYPE_TO_PARAM: dict[str, str] = {
     # `crm_inventory_warehouses_list`, `crm_procurement_spo_allocations_last_receipt_list`
     # and `crm_procurement_po_last_cost_list`.
     "warehouse": "warehouse_ids",
+    # #1262 slice 9 (F1a), AC-S9-4/AC-S9-6: `crm_outstanding_report` and the order
+    # tools that already take `product_ids` (orders list, orders by product) all
+    # take `brand_ids` the same way.
+    "brand": "brand_ids",
 }
 
 _UUID_RE = re.compile(
@@ -617,6 +621,13 @@ def entity_ids_transformer(
         warehouse_codes = jsc.get(semantic_input, "outstanding_warehouse_codes")
         if isinstance(warehouse_codes, list) and warehouse_codes:
             out["warehouse_codes"] = warehouse_codes
+        # #1262 slice 9 (F1a): the brand word(s) this turn named, already resolved to
+        # ids by `_resolve_report_product_and_location`'s own brand step (the token
+        # never reached the shared resolver, so this is the only place it becomes an
+        # id) - a brand alone is a valid subject for this report (AC-S9-4).
+        brand_ids = jsc.get(semantic_input, "outstanding_brand_ids")
+        if isinstance(brand_ids, list) and brand_ids:
+            out["brand_ids"] = brand_ids
         # AC-1105 (review round, 13 Sep 2026): the WORD the customer typed, echoed by
         # the route onto its own body so the presenter can render "IB (BRW-IB, MWH-IB)".
         # The lane never re-renders that header itself: one writer, one wording.

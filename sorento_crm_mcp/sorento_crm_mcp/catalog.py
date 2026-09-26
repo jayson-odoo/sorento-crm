@@ -569,6 +569,8 @@ CATALOG: tuple[ToolSpec, ...] = (
             "  • `order_ids` - specific orders\n"
             "  • `customer_ids` - customers (Order.customer_id, falls back to debtor_name for legacy rows)\n"
             "  • `product_ids` - orders containing any of these products\n"
+            "  • `brand_ids` - orders containing a product of this brand (Product.brand_id via order "
+            "lines); intersects with `product_ids` when both are given\n"
             "  • `transporter_ids` - transporters (Order.transporter_id, text fallback for legacy rows)\n"
             "Date window: actual_delivery_date_from / actual_delivery_date_to.\n"
             "DELIVERY BUCKET: `order_status` = 'outstanding' | 'delivered' | 'so_outstanding' (omit for "
@@ -604,7 +606,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         "/api/v1/order-management/orders",
         (),
         (
-            "page", "limit", "order_ids", "customer_ids", "product_ids", "transporter_ids",
+            "page", "limit", "order_ids", "customer_ids", "product_ids", "brand_ids", "transporter_ids",
             "actual_delivery_date_from", "actual_delivery_date_to", "order_status", "include_summary",
             "include_pipeline", "group_by", "sort", "dir",
             "customer_query", "warehouse_codes",
@@ -629,7 +631,9 @@ CATALOG: tuple[ToolSpec, ...] = (
             "/ repeated) or the tool returns an empty page.\n\n"
             "External/AI callers are HARD-CAPPED at limit=20 server-side - narrow via UUID + date filters "
             "and paginate via `page` when more results are needed.\n\n"
-            "OPTIONAL UUID FILTERS: `customer_ids`, `transporter_ids` (canonical UUIDs). "
+            "OPTIONAL UUID FILTERS: `customer_ids`, `transporter_ids` (canonical UUIDs). `brand_ids` - "
+            "narrows to that brand's own products (Product.brand_id); counts as the product narrower "
+            "this endpoint requires, alone or intersected with `product_ids`. "
             "Date window: actual_delivery_date_from / actual_delivery_date_to (YYYY-MM-DD). "
             "For 'any incoming for product X' use crm_incoming_stock_by_product instead.\n\n"
             "QUANTITY ASK: pass `include_summary=true` when the user asks HOW MANY / how much a customer "
@@ -649,7 +653,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         "/api/v1/order-management/orders/by-product",
         (),
         (
-            "page", "limit", "product_ids", "customer_ids", "transporter_ids",
+            "page", "limit", "product_ids", "brand_ids", "customer_ids", "transporter_ids",
             "actual_delivery_date_from", "actual_delivery_date_to", "order_status", "include_summary",
             "include_pipeline", "sort", "dir",
             "customer_query", "warehouse_codes",
@@ -680,8 +684,9 @@ CATALOG: tuple[ToolSpec, ...] = (
             "`so_by_location`/`so_by_customer`/`do_by_location`/`do_by_customer` (code/customer_name + "
             "that block's own quantities - the DO side carries `pending_qty` only), and as "
             "`so_rows`/`do_rows` (one row per SO / per PENDING DO, lines rolled up).\n\n"
-            "SUBJECT: a product, a customer, or both - at least one of `product_code` / "
-            "`customer_ids` / `customer_query` is REQUIRED (422 otherwise). The breakdown "
+            "SUBJECT: a product, a customer, a brand, or any combination - at least one of "
+            "`product_code` / `customer_ids` / `customer_query` / `brand_ids` is REQUIRED (422 "
+            "otherwise). The breakdown "
             "groups follow the subject: a product subject returns `so_by_location` + "
             "`so_by_customer` (and the DO pair), a CUSTOMER subject returns `so_by_location` + "
             "`so_by_product` (what that customer is waiting for, per product), and naming both "
@@ -693,6 +698,9 @@ CATALOG: tuple[ToolSpec, ...] = (
             "`customer_query` - partial match on customer NAME only (never debtor/customer code). "
             "`customer_ids` - canonical customer UUIDs (csv/JSON/repeated); intersects with "
             "`customer_query` when both are given. "
+            "`brand_ids` - canonical brand UUIDs (csv/JSON/repeated), a FILTER never a breakdown axis "
+            "(Product.brand_id); the response echoes `brand_name` so the header can say "
+            "'Brand: Sorento'. "
             "`warehouse_codes` - exact warehouse codes (csv/JSON/repeated); resolve a location TOKEN "
             "(e.g. an 'IB' suffix matching several codes) to exact codes yourself before calling - this "
             "tool does not do suffix matching. `order_date_from`/`order_date_to` filter SO rows on "
@@ -713,7 +721,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         (),
         (
             "product_code", "product_codes", "scope", "customer_query", "customer_ids",
-            "warehouse_codes",
+            "warehouse_codes", "brand_ids",
             "order_date_from", "order_date_to", "detail", "location_token", "so_refused",
             "contact_id", "space_id",
         ),

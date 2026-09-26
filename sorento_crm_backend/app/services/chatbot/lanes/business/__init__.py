@@ -951,6 +951,37 @@ def _resolve_report_product_and_location(
             semantic_input["outstanding_warehouse_codes"] = carried_wh_codes
             semantic_input["outstanding_location_token"] = carried_token or None
 
+    # #1262 slice 9 (F1a), round 3 section 6 step 4: the brand word(s) this turn (or
+    # a refinement) named, resolved to the live brand's OWN ids - the SAME live read
+    # `turn_runtime.active_brands` uses (case-insensitive exact on name or code, the
+    # one place "which brand does this word mean" is answered). `db` is None outside
+    # a real turn (this module's own direct `run_fetch` tests), same no-op every
+    # other db-gated read here already has. The token never reached the shared
+    # resolver at all (`turn_runtime.resolve_kinds`'s own pre-resolver intercept), so
+    # this is the FIRST and only place it becomes an id.
+    brand_tokens = {
+        jsc.js_string(e.get("raw") or e.get("canonical_code") or "").strip()
+        for e in [
+            *jsc.array(parse_output.get("entities")),
+            *jsc.array(parse_output.get("outstanding_refinement_entities")),
+        ]
+        if isinstance(e, dict) and jsc.js_string(e.get("hint") or "") == "brand"
+    }
+    brand_tokens.discard("")
+    if brand_tokens and db is not None:
+        from app.services.chatbot.turn_runtime import active_brands
+
+        folded_tokens = {t.casefold() for t in brand_tokens}
+        brand_ids: list[str] = []
+        for row in active_brands(db):
+            name = jsc.js_string(row.get("brand_name") or "").strip().casefold()
+            code = jsc.js_string(row.get("brand_code") or "").strip().casefold()
+            if (name and name in folded_tokens) or (code and code in folded_tokens):
+                if row["id"] not in brand_ids:
+                    brand_ids.append(row["id"])
+        if brand_ids:
+            semantic_input["outstanding_brand_ids"] = brand_ids
+
 
 def run_fetch(
     payload: dict[str, Any],
@@ -1258,6 +1289,16 @@ def run_fetch(
         if isinstance(entities, list)
         else False
     )
+    # #1262 slice 9 (F1a), AC-S9-4: a brand alone is a valid subject for the
+    # outstanding report. Read off the RAW `parse_output` entities, never the
+    # gate-resolved `entities` above - a brand token never reaches the shared
+    # resolver at all (`turn_runtime.resolve_kinds`'s own pre-resolver intercept),
+    # so it never appears there, the same reason the location word just above
+    # reads `parse_output` directly instead.
+    has_brand = any(
+        isinstance(e, dict) and jsc.js_string(e.get("hint") or "") == "brand"
+        for e in jsc.array(parse_output.get("entities"))
+    )
     # #1262 slice 2 (F1c): a carried customer id is a subject only when it is a real
     # uuid - a kind-pick's printed label ("Sorento (customer)") riding on this same
     # key is not a resolved customer, and must never count as one here either.
@@ -1273,7 +1314,7 @@ def run_fetch(
     )
     if (
         domain == "order"
-        and not (has_product or has_customer or carried_subject)
+        and not (has_product or has_customer or has_brand or carried_subject)
         and carried_customer_unusable
         and (order_status_raw == "outstanding" or order_status_raw in fetch_mod.ORDER_STATUS_TO_SCOPE)
     ):
@@ -1283,7 +1324,7 @@ def run_fetch(
         return _which_customer_ask()
     if (
         domain == "order"
-        and (has_product or has_customer or carried_subject)
+        and (has_product or has_customer or has_brand or carried_subject)
         and (order_status_raw == "outstanding" or order_status_raw in fetch_mod.ORDER_STATUS_TO_SCOPE)
     ):
         tool_name = "crm_outstanding_report"

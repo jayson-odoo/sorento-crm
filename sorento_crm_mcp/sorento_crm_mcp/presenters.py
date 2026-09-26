@@ -1911,8 +1911,13 @@ def _outstanding_header_lines(report: dict) -> list[str]:
     date header", so the reader of a list could not tell what it was a list OF), and the
     chatbot lane's own copy of the rule for the scope question it asks before either
     exists.
+
+    #1262 slice 9 (F1a): a FIFTH line, `Brand:`, ADDITIVE only - printed when
+    `brand_name` is filled, absent otherwise (unlike the four above, it never falls
+    back to "all": a report with no brand filter simply never named one, the same
+    reason `location_token`/`so_refused` are tacked-on-only elsewhere on this body).
     """
-    return [
+    lines = [
         # R13: `all` when no product was named, the same word the other header lines use
         # for "every one of them" - a customer-subject report is about all their products.
         f"Product: {report.get('product_code') if _filled(report.get('product_code')) else 'all'}",
@@ -1920,6 +1925,9 @@ def _outstanding_header_lines(report: dict) -> list[str]:
         f"Location: {_outstanding_location_header(report.get('location_token'), report.get('warehouse_codes'))}",
         f"Order date: {_outstanding_date_range(report.get('order_date_from'), report.get('order_date_to'))}",
     ]
+    if _filled(report.get("brand_name")):
+        lines.append(f"Brand: {report['brand_name']}")
+    return lines
 
 
 def _outstanding_report(report: dict) -> str:

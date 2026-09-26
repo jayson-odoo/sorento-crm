@@ -1173,20 +1173,24 @@ class TestParserPromptAndContractsTeachSalesReport:
         is deliberately dropped, so the original "both texts ship" premise (dev vs
         prod split) no longer applies. `SALES_REPORT_ADDENDUM` was the newest
         addendum when this test was written; `QUANTITY_ADDENDUM` (issue #1262 slice
-        5, 26 Sep 2026) now stacks after it, so it is checked by
+        5, 26 Sep 2026) then `KNOWN_BRANDS_ADDENDUM` (issue #1262 slice 9, 26 Sep
+        2026) now stack after it, so it is checked by
         `.removesuffix` rather than a bare `.endswith`."""
         from app.services.chatbot_parser_prompt import (
+            KNOWN_BRANDS_ADDENDUM,
             QUANTITY_ADDENDUM,
             SALES_REPORT_ADDENDUM,
             SEMANTIC_PARSER_PROMPT,
         )
 
-        assert SEMANTIC_PARSER_PROMPT.removesuffix(QUANTITY_ADDENDUM).endswith(
-            SALES_REPORT_ADDENDUM
+        assert (
+            SEMANTIC_PARSER_PROMPT.removesuffix(KNOWN_BRANDS_ADDENDUM)
+            .removesuffix(QUANTITY_ADDENDUM)
+            .endswith(SALES_REPORT_ADDENDUM)
         ), (
             "SEMANTIC_PARSER_PROMPT does not end with SALES_REPORT_ADDENDUM once the "
-            "newer QUANTITY_ADDENDUM is stripped - SALES_REPORT_ADDENDUM must stay the "
-            "tail beneath it"
+            "newer KNOWN_BRANDS_ADDENDUM/QUANTITY_ADDENDUM are stripped - "
+            "SALES_REPORT_ADDENDUM must stay the tail beneath them"
         )
 
     def test_the_addendum_stacks_after_low_stock(self) -> None:
@@ -1197,6 +1201,7 @@ class TestParserPromptAndContractsTeachSalesReport:
         `SEMANTIC_PARSER_PROMPT_SLIM` stays retired on this lane (see
         `test_the_addendum_is_appended_to_the_single_body` above) - one body, not two."""
         from app.services.chatbot_parser_prompt import (
+            KNOWN_BRANDS_ADDENDUM,
             LOW_STOCK_ADDENDUM,
             QUANTITY_ADDENDUM,
             SALES_REPORT_ADDENDUM,
@@ -1204,7 +1209,8 @@ class TestParserPromptAndContractsTeachSalesReport:
         )
 
         assert (
-            SEMANTIC_PARSER_PROMPT.removesuffix(QUANTITY_ADDENDUM)
+            SEMANTIC_PARSER_PROMPT.removesuffix(KNOWN_BRANDS_ADDENDUM)
+            .removesuffix(QUANTITY_ADDENDUM)
             .removesuffix(SALES_REPORT_ADDENDUM)
             .endswith(LOW_STOCK_ADDENDUM)
         ), "SALES_REPORT_ADDENDUM must stack AFTER LOW_STOCK_ADDENDUM"

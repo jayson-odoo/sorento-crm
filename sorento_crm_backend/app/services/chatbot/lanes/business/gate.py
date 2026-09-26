@@ -82,7 +82,11 @@ ALLOWED: dict[str, list[str]] = {
     "inventory": ["product", "warehouse", "category", "brand"],
     # S4 point 7 (PLAN-chatbot-outstanding-report.md, D5): a location word narrows
     # crm_outstanding_report the same way it already narrows inventory/spo_allocation.
-    "order": ["order", "customer_order", "transporter", "customer", "product", "warehouse"],
+    # #1262 slice 9 (F1a): "brand" joins the matrix - resolved inside the chatbot
+    # against the live `brands` table (`turn_runtime.active_brands`,
+    # `resolve_gate.py`'s own pre-resolver intercept), never sent through the
+    # shared resolver's order-domain fan-out to customer/transporter.
+    "order": ["order", "customer_order", "transporter", "customer", "product", "warehouse", "brand"],
     "incoming": ["product", "inbound_shipment", "category", "brand"],
     "forms": ["form"],
     "portal_link": [],

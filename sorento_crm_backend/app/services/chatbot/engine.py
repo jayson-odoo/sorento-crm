@@ -1410,6 +1410,11 @@ def _run_stages(  # noqa: PLR0915
             current_date=_current_date_directive(),
             override_version_id=_prompt_override(envelope, parser.PROMPT_KEY, dry_run=dry_run),
         )
+        # #1262 slice 9 (F1a): the live brand list for the `Known brands:` line,
+        # read in the SAME session as the config above (already scoped to this
+        # contact's companies, `_scoped_factory` at the top of this function) -
+        # no cache, so an operator's table edit reaches the very next turn.
+        brands = turn_runtime.active_brands(db)
 
     # -- B PARSER (NO DB SESSION IS OPEN HERE) ------------------------------ #
     # One call, one schema. What comes back IS the verdict - a plain dict, validated once
@@ -1427,6 +1432,7 @@ def _run_stages(  # noqa: PLR0915
         pending_options=pending_options,
         profile_block=profile_words,
         focus=state_in.focus,
+        brands=brands,
     )
     # G6: a dry run may supply the emission instead of paying for it.
     parser_bypassed = dry_run and "mock_reformulator_output" in harness_present
@@ -1501,6 +1507,7 @@ def _run_stages(  # noqa: PLR0915
                 profile_block=profile_words,
                 episodes_block=memory_mod.episodes_block(recalled),
                 focus=state_in.focus,
+                brands=brands,
             )
             try:
                 parser_raw = parser.parse(parser_config, user_block)
