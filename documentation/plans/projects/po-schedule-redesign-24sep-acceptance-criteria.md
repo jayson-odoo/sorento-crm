@@ -252,6 +252,18 @@ Rewritten after the lavish review: one lines list, not a Lines tab plus a Findin
 - **S7-4 [FE] (J4)** Summary card renders `-` for unknown values (ADR 1e).
 - **S7-5 [E2E] (J4)** PSO-000003 at 1280 and 375 matches the approved mockup.
 
+  Implementation notes, 26 Sep 2026 (S7 lane), applying the S6 owner lessons: a row's Flag is
+  one compact pill (most severe open item, plus a count when there are several) that opens a
+  popover with one entry per item, its source and its "Dismiss with a reason"; row height stays
+  one line. Lines opens on "Need attention (N)" beside "All lines (N)"; every row holding a
+  publish blocker is in Need attention. The count under Publish and the server's refusal share
+  one rule, `publishBlockers` in `_shared/lib/findings.ts` (this order's hard findings with no
+  `acknowledged_at`, the filter `blocking_findings` applies); a schedule-level finding is shown
+  but never counted, because the server never lets it block. R23's pairing (an unmapped schedule
+  column folded into the `schedule_short` finding for the product it names) is in
+  `buildFlagItems`. Assumption flagged for the owner: the per-order allocation grid now shows only
+  on a published order, so a draft's Lines tab is one table (R16).
+
 ## Out of scope (rulings)
 
 - **OOS-1** Any active-company indicator on lists (R8).
