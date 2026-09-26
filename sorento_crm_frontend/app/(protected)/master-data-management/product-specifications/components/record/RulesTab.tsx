@@ -8,6 +8,12 @@ import SpecTryItPanel from '../SpecTryItPanel';
 import type { SpecKeyDraft } from '../../hooks/useSpecKeyRecord';
 import type { SpecDerivationRule, SpecRegistryKey } from '../../types/productSpec.types';
 
+// Fix round 3 (D1): reused rather than a `?? []` literal, so a spec whose
+// `effective_rules` happens to be absent does not hand `SpecRulesGrid` a fresh
+// array identity on every render - see `ValuesAndWordsTab.tsx`'s own note on
+// why that loops the renderer forever.
+const EMPTY_RULES: SpecDerivationRule[] = [];
+
 export interface RulesTabProps {
   row: SpecRegistryKey;
   registry: SpecRegistryKey[];
@@ -24,7 +30,8 @@ export interface RulesTabProps {
  * the winner shown per row is the one the engine would actually keep.
  */
 export function RulesTab({ row, registry, mode, draft, setDraft }: RulesTabProps) {
-  const rules: SpecDerivationRule[] = mode === 'edit' && draft ? draft.rules : row.effective_rules ?? [];
+  const rules: SpecDerivationRule[] =
+    mode === 'edit' && draft ? draft.rules : row.effective_rules ?? EMPTY_RULES;
 
   const [trySource, setTrySource] = useState<TryItSource | null>(null);
   const {

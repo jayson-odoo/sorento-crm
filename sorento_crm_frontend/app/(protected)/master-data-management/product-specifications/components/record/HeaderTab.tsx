@@ -10,6 +10,11 @@ import type { SpecRegistryKey } from '../../types/productSpec.types';
  *  "ounce", "ounces" for Capacity (oz)) rather than one of its values (D7). */
 const SELF_KEY = '_self';
 
+// Fix round 3 (D1): reused rather than a `?? []` literal, so a spec with no `_self`
+// words yet does not hand `WordsDataGrid` a fresh array identity on every render -
+// see `ValuesAndWordsTab.tsx`'s own note on why that loops the renderer forever.
+const EMPTY_WORDS: string[] = [];
+
 /** One labelled control. The label is the only chrome a field needs, present in
  *  both view and edit so a field's identity never moves between the two (B.2). */
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
@@ -40,7 +45,7 @@ export function HeaderTab({ row, mode, draft, setDraft }: HeaderTabProps) {
   const isNumeric = row.data_type === 'numeric';
   const isList = row.data_type === 'enum';
 
-  const otherNames = draft ? draft.words[SELF_KEY] ?? [] : row.synonyms?.[SELF_KEY] ?? [];
+  const otherNames = draft ? draft.words[SELF_KEY] ?? EMPTY_WORDS : row.synonyms?.[SELF_KEY] ?? EMPTY_WORDS;
 
   return (
     <div className="flex max-w-xl flex-col gap-4">

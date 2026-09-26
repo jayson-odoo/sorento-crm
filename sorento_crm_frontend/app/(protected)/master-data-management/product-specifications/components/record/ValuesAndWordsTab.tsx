@@ -27,6 +27,19 @@ const SELF_KEY = '_self';
 
 const normaliseValue = (raw: string) => raw.trim().toLowerCase().replace(/\s+/g, '_');
 
+// Fix round 3 (D1, CRITICAL): a `?? []`/`?? {}` FALLBACK is a fresh literal on every
+// render it fires on - reused here instead, so a row whose `suppressed_values`/
+// `value_labels` happens to be absent does not hand `choices` (and the `useMemo`
+// below it) a new array identity every render. `useReactTable`'s own row models
+// (`getSortedRowModel` here) call `table._autoResetPageIndex()` on every recompute
+// their memo notices, which THIS grid never turns off - an unstable `data` array
+// recomputes it every render, which resets the (unused) pagination state via a
+// fresh object every time, which React never bails out of re-rendering for, which
+// rebuilds the unstable array again: a render loop with nothing thrown and nothing
+// logged (`data-grid.stable-data.inventory.test.ts`'s own finding, M5 run 2).
+const EMPTY_STRING_ARRAY: string[] = [];
+const EMPTY_LABELS: Record<string, string> = {};
+
 export interface ValuesAndWordsTabProps {
   row: SpecRegistryKey;
   mode: 'view' | 'edit';
@@ -125,21 +138,30 @@ export function ValuesAndWordsTab({
   // View mode reads the row's own merged columns; edit mode reads the draft. Both
   // walk the SAME shape, so the field list cannot drift between them (G.8).
   const liveValues = draft ? draft.liveValues : row.allowed_values;
-  const droppedValues = draft ? draft.droppedValues : row.suppressed_values ?? [];
-  const words = draft
-    ? draft.words
-    : Object.fromEntries(
-        dedupe([...(isBoolean ? ['true'] : row.allowed_values), ...Object.keys(row.synonyms ?? {})]).map(
-          (value) => [value, row.synonyms?.[value] ?? []],
-        ),
-      );
-  const valueLabels = draft ? draft.valueLabels : row.value_labels ?? {};
+  const droppedValues = draft ? draft.droppedValues : row.suppressed_values ?? EMPTY_STRING_ARRAY;
+  const valueLabels = draft ? draft.valueLabels : row.value_labels ?? EMPTY_LABELS;
 
-  const choices = dedupe([
-    ...(isBoolean ? ['true'] : liveValues),
-    ...droppedValues,
-    ...Object.keys(words),
-  ]).filter((value) => value !== SELF_KEY);
+  // Genuinely COMPUTED (not just a property read), so it needs its own memo - the
+  // fallback constants above only fix the property-read branches.
+  const words = useMemo(
+    () =>
+      draft
+        ? draft.words
+        : Object.fromEntries(
+            dedupe([...(isBoolean ? ['true'] : row.allowed_values), ...Object.keys(row.synonyms ?? {})]).map(
+              (value) => [value, row.synonyms?.[value] ?? EMPTY_STRING_ARRAY],
+            ),
+          ),
+    [draft, isBoolean, row.allowed_values, row.synonyms],
+  );
+
+  const choices = useMemo(
+    () =>
+      dedupe([...(isBoolean ? ['true'] : liveValues), ...droppedValues, ...Object.keys(words)]).filter(
+        (value) => value !== SELF_KEY,
+      ),
+    [isBoolean, liveValues, droppedValues, words],
+  );
 
   const displayName = (value: string) =>
     value === 'true' && isBoolean ? 'Yes' : readableValue(value, undefined, valueLabels);
