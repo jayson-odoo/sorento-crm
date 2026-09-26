@@ -366,8 +366,8 @@ export default function AttachmentPreviewModal({
           <CarouselContent className="ml-0">
             {items.map((item, i) => {
               // The PDF viewer scrolls its own pages internally, already capped to this
-              // same 78vh/80vh box below - a second `overflow-auto` here doubled up as a
-              // visible scrollbar right next to the viewer's own one (PR #1256 review,
+              // same fixed-height box below - a second `overflow-auto` here doubled up as
+              // a visible scrollbar right next to the viewer's own one (PR #1256 review,
               // nit 8). Every other kind still needs it, to pan a zoomed image or a wide
               // Excel sheet.
               const scrolls = kindOf(item.name) !== 'pdf';
