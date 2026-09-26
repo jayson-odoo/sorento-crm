@@ -70,12 +70,11 @@ function view(overrides: Partial<LowStockView> = {}): LowStockView {
   };
 }
 
-/** `null` is the sidebar's page: no run named, the newest one opens. */
-function renderPage(runId: string | null = RUN_ID) {
+function renderPage(runId: string = RUN_ID) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <LowStockReportView runId={runId ?? undefined} />
+      <LowStockReportView runId={runId} />
     </QueryClientProvider>,
   );
 }
@@ -133,17 +132,52 @@ describe('LowStockReportView', () => {
     await waitFor(() => expect(lastViewCall().split).toBe('supplier'));
   });
 
-  it('refetches with the picked suppliers, each option showing its counts', async () => {
+  it('W1: refetches with the picked suppliers; supplier and category options are plain names', async () => {
     getLowStockView.mockResolvedValue(view());
     renderPage();
     await screen.findByText('2 rows, 2 sheets');
 
+    fireEvent.click(screen.getByRole('combobox', { name: 'Categories' }));
+    const category = await screen.findByRole('option', { name: /BASIN/ });
+    expect(category.textContent).toBe('BASIN');
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+
     fireEvent.click(screen.getByRole('combobox', { name: 'Suppliers' }));
     const option = await screen.findByRole('option', { name: /Kohler/ });
-    expect(option.textContent).toMatch(/0 low of 5/);
+    expect(option.textContent).toBe('Kohler');
+    expect(document.body.textContent).not.toMatch(/low of/);
     fireEvent.click(option);
 
     await waitFor(() => expect(lastViewCall().suppliers).toEqual(['Kohler']));
+  });
+
+  it('W4: searches the open sheet by product code or description', async () => {
+    getLowStockView.mockResolvedValue(view());
+    renderPage();
+    await userEvent.click(await screen.findByRole('tab', { name: 'Acme - BASIN' }));
+    const box = screen.getByRole('searchbox', { name: 'Search product code' });
+    const grid = screen.getByRole('grid');
+
+    await userEvent.type(box, 'B-2');
+    expect(within(grid).getByText('Tap')).toBeInTheDocument();
+    expect(within(grid).queryByText('Basin')).not.toBeInTheDocument();
+    expect(screen.getByText('1 row')).toBeInTheDocument();
+
+    await userEvent.clear(box);
+    await userEvent.type(box, 'basin');
+    expect(within(grid).getByText('Basin')).toBeInTheDocument();
+    expect(screen.getByText('1 row')).toBeInTheDocument();
+  });
+
+  it('W6: top right "Back to Reorder planning" returns to the plan the report reads', async () => {
+    getLowStockView.mockResolvedValue(view());
+    renderPage();
+    await screen.findByText('2 rows, 2 sheets');
+
+    const back = screen.getByRole('link', { name: /Back to Reorder planning/ });
+    expect(back).toHaveAttribute('href', `/scm/reorder/${RUN_ID}`);
+    // The page header's actions, as "Back to purchase orders" on the purchase order page.
+    expect(back.closest('header')).not.toBeNull();
   });
 
   it('Download sends exactly what the page shows', async () => {
@@ -214,17 +248,6 @@ describe('LowStockReportView', () => {
       suppliers: ['Kohler'],
       categories: [],
     });
-  });
-
-  it('the newest-run page downloads the run the view answered with', async () => {
-    getLowStockView.mockResolvedValue(view());
-    renderPage(null);
-    await screen.findByText('2 rows, 2 sheets');
-    expect(lastViewCall().runId).toBeUndefined();
-
-    await userEvent.click(screen.getByRole('button', { name: /Download/ }));
-
-    expect(start.mock.calls[0][0].runId).toBe(RUN_ID);
   });
 
   it('reads Preparing... while the file is being built', async () => {
