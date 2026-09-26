@@ -156,12 +156,107 @@ def test_session_already_holding_the_label_is_cleaned_at_read():
     )
 
 
-# AC-S2-3 could not be fully expressed here: "the reply says the customer could not
-# be used (or asks which customer) and never prints 'Customer: all'" is rendered by
-# `sorento_crm_mcp`'s presenter (`present_response`), a separate package this backend
-# explicitly cannot import (see `lanes/business/fetch.py::_outstanding_report_output`'s
-# own docstring). The precondition this file CAN pin - that an unusable stored
-# customer never reaches the tool call as a live filter - is covered by both tests
-# above (`customer_ids` ends up empty, not the label). The "say so" wording itself
-# needs either an MCP-side test or a signal threaded back through this backend that
-# does not exist yet; flagged to the captain rather than guessed at.
+def test_t5_customer_filter_is_never_silently_dropped():
+    """AC-S2-3, at the CHATBOT seam (coordinator design, not the presenter): the
+    decision to run "Customer: all" or ask which customer belongs to `run_fetch`, the
+    real call site `run_until_exit` uses - same harness `test_outstanding_lane.py`
+    uses (`_capturing_mcp`, direct `run_fetch` calls).
+
+    T5's own shape: the ONLY customer subject riding on the turn is the kind-pick
+    label "Sorento (customer)" (not a uuid), carried the way a session's open
+    question carries it (`outstanding_carried_customer_ids`, `_settle_question_
+    subject`'s own output). Case A - nothing else names a subject: the turn must NOT
+    call `crm_outstanding_report` with no usable customer; it must ask which customer
+    instead (no tool call at all). Case B - a real subject remains (a product code):
+    the report still runs for it, and the unusable label never rides along as a
+    `customer_ids` filter.
+
+    Red today: `lanes/business/__init__.py`'s outstanding-report override picks the
+    tool off `carried_subject` (truthy for ANY non-empty `outstanding_carried_
+    customer_ids`, label included - `carried_subject = ... or bool(jsc.array(parse_
+    output.get("outstanding_carried_customer_ids")))`) and never checks whether that
+    carried id is actually a uuid before calling the tool.
+    """
+    import json
+
+    from app.services.chatbot.lanes.business import run_fetch
+    from app.services.chatbot.lanes.business.services import FetchServices
+    from tests.chatbot.test_engine import CONTACT_ID, _parser_output
+
+    PRODUCT_UUID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    PRODUCT_CODE = "SRTWT7445"
+
+    def _capturing_mcp():
+        captured: list[tuple[str, dict]] = []
+
+        def _call(name: str, args: dict) -> str:
+            captured.append((name, dict(args)))
+            return json.dumps({"has_result": False, "items": []})
+
+        return _call, captured
+
+    # ---- Case A: unusable-only, nothing else names a subject --------------------
+    call_a, captured_a = _capturing_mcp()
+    payload_a = {
+        "gate": {"compatible_entities": []},
+        "tier_gate": None,
+        "ctx": {
+            "parse": {
+                "output": _parser_output(
+                    domain_hint="order",
+                    intent_hint="check_order",
+                    order_status="do_outstanding",
+                    entities=[],
+                    outstanding_carried_customer_ids=[LABEL],
+                )
+            },
+            "contact": {"id": CONTACT_ID},
+            "access": {"attributes": ["sales_orders.outstanding"]},
+        },
+    }
+    fragment_a = run_fetch(payload_a, services=FetchServices(mcp_call=call_a))
+
+    assert captured_a == [], (
+        f"an unusable-only customer subject must never reach the tool call: {captured_a!r}"
+    )
+    reply_text = ((fragment_a.get("fetch") or {}).get("response")) or ""
+    assert "which customer" in reply_text.lower(), (
+        f"expected a which-customer ask, got: {reply_text!r}"
+    )
+
+    # ---- Case B: a real subject remains (a product) alongside the unusable label --
+    call_b, captured_b = _capturing_mcp()
+    payload_b = {
+        "gate": {
+            "compatible_entities": [
+                {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE},
+            ]
+        },
+        "tier_gate": None,
+        "ctx": {
+            "parse": {
+                "output": _parser_output(
+                    domain_hint="order",
+                    intent_hint="check_order",
+                    order_status="do_outstanding",
+                    entities=[
+                        {
+                            "raw": PRODUCT_CODE, "hint": "product", "canonical_code": None,
+                            "current_message": True, "confident": True,
+                        },
+                    ],
+                    outstanding_carried_customer_ids=[LABEL],
+                )
+            },
+            "contact": {"id": CONTACT_ID},
+            "access": {"attributes": ["sales_orders.outstanding"]},
+        },
+    }
+    run_fetch(payload_b, services=FetchServices(mcp_call=call_b))
+
+    assert captured_b, "a real subject (a product) must still reach the report"
+    name_b, args_b = captured_b[0]
+    assert name_b == "crm_outstanding_report", (name_b, args_b)
+    assert LABEL not in (args_b.get("customer_ids") or []), (
+        f"the unusable label must never ride along as a customer_ids filter: {args_b!r}"
+    )
