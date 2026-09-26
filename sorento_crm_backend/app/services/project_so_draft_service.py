@@ -45,6 +45,8 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
+from app.config import settings
+from app.models.inventory import Warehouse
 from app.models.order import Customer
 from app.models.product import Product
 from app.models.project_so import (
@@ -90,6 +92,7 @@ from app.models.projects import (
 )
 from app.models.user import User
 from app.services.error_handler import AppException
+from app.services.scm.sales_agent_service import normalize_location_group
 from app.services.project_so_reconciliation_service import (
     ProjectSOReconciliationService,
 )
@@ -3232,6 +3235,43 @@ class ProjectSODraftService:
             return None
         return self.db.query(Customer).filter(Customer.id == party.customer_id).first()
 
+    def derived_stock_location(
+        self, order: ProjectSalesOrder
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """Where this order's stock comes from, and, when that cannot be said, why not.
+
+        Owner hand test, PR #1264 note 3: "each sales agent is assigned to a location group
+        like BB then the stock location is automatically BRW-BB". The chain is the data's own:
+        the PO's customer, that customer's sales agent (`customers.sales_agent_id`), the
+        agent's location group (`sales_agents.location_group`), then that group's bin at the
+        master site. The site is read off `project_allocation_brw_warehouse_code` (`BRW-BB`
+        -> `BRW`) rather than typed here: every site runs a `-BB` bin and only Bukit Raja's is
+        the master (`project_allocation_service` module docstring).
+
+        Returns `(code, None)` or `(None, the missing link)`. Read-time only, never written:
+        the screen states it, and nothing downstream reads a draft line's location.
+        """
+        customer = self._customer_for(order)
+        if customer is None:
+            return None, "The purchase order names no customer."
+        agent = customer.sales_agent
+        if agent is None:
+            return None, f"{customer.customer_name} has no sales agent."
+        group = normalize_location_group(agent.location_group)
+        if not group:
+            return None, f"Sales agent {agent.sales_agent} has no location group."
+        master = (settings.project_allocation_brw_warehouse_code or "").strip()
+        site = master.partition("-")[0].strip().upper() or "BRW"
+        code = f"{site}-{group}"
+        warehouse = (
+            self.db.query(Warehouse.id)
+            .filter(Warehouse.warehouse_code == code, Warehouse.is_active.is_(True))
+            .first()
+        )
+        if warehouse is None:
+            return None, f"No active stock location {code}."
+        return code, None
+
     def _credit_limit(self, customer_id: str) -> Optional[Decimal]:
         """`customers.credit_limit` exists in the database but not on the ORM model.
 
@@ -3491,6 +3531,7 @@ class ProjectSODraftService:
             .all()
         } if any(line.source_po_line_id for line in lines) else {}
         parents = self._parent_line_ids(lines)
+        stock_location, stock_location_gap = self.derived_stock_location(order)
 
         body.update(
             {
@@ -3503,6 +3544,8 @@ class ProjectSODraftService:
                 "quotation_ref": self._quotation_ref(po),
                 "term_days": po.term_days if po else None,
                 "published_at": order.published_at,
+                "stock_location": stock_location,
+                "stock_location_gap": stock_location_gap,
                 "lines": [
                     {
                         "id": line.id,
