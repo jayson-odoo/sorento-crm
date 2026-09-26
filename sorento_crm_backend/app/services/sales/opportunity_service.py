@@ -547,19 +547,17 @@ def meta(db: Session) -> dict:
 
 
 def sales_order_options(db: Session, opportunity: SalesOpportunity, *, q: Optional[str] = None) -> List[dict]:
-    """That customer's non-cancelled sales orders, newest first; for a prospect, every
-    non-cancelled order matching `q` by number or customer name (section 16)."""
+    """That customer's non-cancelled sales orders, newest first, `q` narrowing by order
+    number the same as the prospect branch below narrows by number or customer name
+    (Phase 3 fix2 nit: the customer-backed branch used to ignore `q` outright)."""
     if opportunity.customer_id:
-        orders = (
-            db.query(SalesOrder)
-            .filter(
-                SalesOrder.customer_id == opportunity.customer_id,
-                SalesOrder.status != "cancelled",
-            )
-            .order_by(SalesOrder.order_date.desc().nullslast())
-            .limit(50)
-            .all()
+        order_query = db.query(SalesOrder).filter(
+            SalesOrder.customer_id == opportunity.customer_id,
+            SalesOrder.status != "cancelled",
         )
+        if q:
+            order_query = order_query.filter(SalesOrder.so_number.ilike(f"%{q}%"))
+        orders = order_query.order_by(SalesOrder.order_date.desc().nullslast()).limit(50).all()
     else:
         order_query = (
             db.query(SalesOrder)
