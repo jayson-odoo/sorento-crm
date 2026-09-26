@@ -2694,8 +2694,17 @@ def not_found_error_message(
     resolved: dict[str, Any] | None,
     gate: dict[str, Any] | None,
     entitlement_levels: Any = None,
+    profile: Any = None,
 ) -> dict[str, Any]:
     """`not-found-error-message`: the miss reply, its search-scope header and its bullets.
+
+    `profile` (#1262 slice 11, F8 follow-up): the SAME staff-audience gate `turn/
+    compose.py` and `answer_bridge.py`'s cross-domain ladder already apply -
+    `is_staff_profile(profile)` suppresses the bot-initiated "Would you like me to
+    escalate to X team?" clause this function's own `build_breakdown_msg` closure
+    appends, never the rest of the miss sentence (a staff rep still reads "But no
+    order matched these", just with no offer tacked on). `None` (every caller that
+    predates this slice) reads as not-staff, byte-identical to before.
 
     H16 is structural here: `resolvedTypes` is `Object.keys(by_entity_type)` and every OTHER
     read of that object goes through `Object.values(...)`, so a metadata key on it can only
@@ -2710,6 +2719,9 @@ def not_found_error_message(
     q = parser if isinstance(parser, dict) else {}
     r = resolved if isinstance(resolved, dict) else {}
     g = gate if isinstance(gate, dict) else {}
+    from app.services.chatbot.turn.state import is_staff_profile
+
+    is_staff = is_staff_profile(profile)
 
     by_entity_type = jsc.get(r, "by_entity_type")
     resolved_types = list(by_entity_type.keys()) if isinstance(by_entity_type, dict) else []
@@ -3312,20 +3324,29 @@ def not_found_error_message(
                 if (is_order_scope and jsc.truthy(date_start) and jsc.truthy(date_end))
                 else date_range
             )
-            esc_ask = (
-                f"Reply 'all dates' to search without the date filter, or would you like me "
-                f"to escalate to {team} team?"
-                if (is_order_scope and (jsc.truthy(date_start) or jsc.truthy(date_end)))
-                else f"Would you like me to escalate to {team} team?"
-            )
-            parts.append(
-                entitlement_miss
-                if jsc.truthy(entitlement_miss)
-                else (
-                    f"But no{active_inactive} {domain_word}{miss_window}{access} "
-                    f"matched these{co_suffix}. {esc_ask}"
+            # #1262 slice 11 (F8) follow-up: the SAME staff-audience gate `turn/
+            # compose.py` and the cross-domain ladder already apply - a staff rep gets
+            # the widen invite (a genuinely useful next step, not a bot-initiated
+            # offer) but never the "or would you like me to escalate" clause.
+            if is_staff:
+                esc_ask = (
+                    "Reply 'all dates' to search without the date filter."
+                    if (is_order_scope and (jsc.truthy(date_start) or jsc.truthy(date_end)))
+                    else ""
                 )
+            else:
+                esc_ask = (
+                    f"Reply 'all dates' to search without the date filter, or would you like me "
+                    f"to escalate to {team} team?"
+                    if (is_order_scope and (jsc.truthy(date_start) or jsc.truthy(date_end)))
+                    else f"Would you like me to escalate to {team} team?"
+                )
+            miss_sentence = (
+                f"But no{active_inactive} {domain_word}{miss_window}{access} matched these{co_suffix}."
             )
+            if esc_ask:
+                miss_sentence = f"{miss_sentence} {esc_ask}"
+            parts.append(entitlement_miss if jsc.truthy(entitlement_miss) else miss_sentence)
             return "\n\n".join(parts)
 
         # vague-token clarify: among UNRESOLVED tokens only, map each back to a parser entity

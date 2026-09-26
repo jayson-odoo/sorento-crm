@@ -213,3 +213,178 @@ def test_dealer_ladder_rung_keeps_the_warehouse_offer(
     assert result.status == "done", result.error
     assert probes
     assert WAREHOUSE_OFFER in said, said
+
+
+# --------------------------------------------------------------------------- #
+# AC-S11-1's THIRD offer path (coordinator round, 26 Sep 2026, found via the T4
+# engine replay after slice 8's kind_pick fix): `answer_bridge.answer_for`'s own
+# MISS composer (`lanes/business/answer.py::not_found_error_message`'s
+# `build_breakdown_msg` closure) prints "But no order matched these ... Would you
+# like me to escalate to customer service team?" unconditionally - a THIRD
+# mechanism, beside `turn/compose.py`'s offer arm and the cross-domain ladder,
+# that never read `state.profile.tier` either. Written by the coder (not the
+# tester) - a gap in the same AC the tester's own T3/T10/T11 reds did not reach,
+# because none of them drove a genuine order-domain miss through
+# `answer_bridge.answer_for` with an office-tier profile.
+# --------------------------------------------------------------------------- #
+from app.services.chatbot import answer_bridge as _answer_bridge_mod
+from app.services.chatbot import copy as _copy_mod
+from app.services.chatbot.lanes.business.services import AnswerServices as _AnswerServices
+
+
+def _order_miss_parser() -> dict:
+    return {
+        "domain_hint": "order",
+        "intent_hint": "check_order",
+        "message_type": "business_query",
+        "entities": [{"raw": "STWC26", "hint": "product", "current_message": True, "confident": True}],
+        "routing": {"suggested_team": "customer_service", "suggested_agent": "general_enquiries"},
+        "access_levels": [],
+    }
+
+
+def _order_miss_ctx(parser: dict) -> dict:
+    return {"parse": {"output": parser}, "contact": {"id": "zzt-s11-contact"}, "session": {}}
+
+
+def _order_miss_services() -> _AnswerServices:
+    return _AnswerServices(
+        mcp_probe=lambda name, args: {"has_result": False, "answers": []},
+        family_fetch=lambda query: {"data": []},
+    )
+
+
+def _run_order_miss(profile) -> str:
+    """T4's own shape (`build_breakdown_msg`'s `use_breakdown` arm, `answer.py:3192`):
+    a customer resolves cleanly (`found_lines` non-empty) but no ORDER matched for
+    them - "But no order matched these", never the "Couldn't find: X" shape a
+    wholly-unresolved token takes (`answer.py:3675`, a DIFFERENT branch this helper
+    must not accidentally hit)."""
+    parser = _order_miss_parser()
+    resolved = {
+        "resolutions": [
+            {
+                "token": "Cheng Huat Sentul",
+                "matches": [
+                    {
+                        "uuid": "zzt-cheng-huat",
+                        "entity_type": "customer",
+                        "canonical_code": "Cheng Huat Sentul",
+                        "match_tier": "exact",
+                    }
+                ],
+            }
+        ],
+        "unresolved_tokens": [],
+        "tokens": ["Cheng Huat Sentul"],
+    }
+    gate = {
+        "gate_passed": True,
+        "compatible_entities": [
+            {"uuid": "zzt-cheng-huat", "entity_type": "customer", "code": "Cheng Huat Sentul"}
+        ],
+        "gate_debug": {"domain": "order"},
+    }
+    payload = {"resolved": resolved, "gate": gate, "_exit_kind": "not_found"}
+    answer = _answer_bridge_mod.answer_for(
+        payload,
+        envelope=None,
+        parser=parser,
+        ctx=_order_miss_ctx(parser),
+        canned=_copy_mod.fallback_copy(),
+        services=_order_miss_services(),
+        db=None,
+        asked_at_turn=4,
+        profile=profile,
+    )
+    assert answer is not None, "answer_for returned None for a resolver not_found exit"
+    return answer.text
+
+
+def test_staff_order_miss_gets_no_customer_service_offer():
+    """AC-S11-1, the answer_bridge miss composer (coder-written, T4 replay finding):
+    an office-tier profile driving a genuine order-domain miss through
+    `answer_bridge.answer_for` must get no "Would you like me to escalate" clause -
+    the same audience rule `turn/compose.py` and the cross-domain ladder already
+    apply, extended to this THIRD site (`not_found_error_message`'s own
+    `build_breakdown_msg` closure).
+    """
+    text = _run_order_miss(Profile(tier="office"))
+
+    assert "escalate" not in text.lower(), text
+    assert "matched these" in text.lower(), (
+        f"the miss sentence itself must still print - only the offer is gated: {text!r}"
+    )
+
+
+def test_dealer_order_miss_keeps_the_customer_service_offer():
+    """Guard (R6): a dealer/non-staff profile's miss offer through this SAME seam is
+    UNCHANGED - must be GREEN today and stay green through the fix above.
+    """
+    text = _run_order_miss(Profile(tier="dealer"))
+
+    assert "would you like me to escalate to customer service team?" in text.lower(), text
+
+
+def test_clarifying_question_open_at_the_answer_bridge_seam_still_gets_no_fresh_offer_text():
+    """AC-S11-2, covered at this THIRD seam too (coordinator's own follow-up ask):
+    a clarifying question (a still-open roster, contract 36) carried in from a
+    PRIOR turn must not gain a SECOND, bot-initiated escalate sentence when this
+    turn's own fetch also misses - checked here for a STAFF profile specifically,
+    since that is the audience the miss-composer fix above narrows to; a dealer's
+    roster+escalate combine (contract 36's own established behaviour) is
+    unchanged and not asserted here.
+    """
+    from app.services.chatbot.turn.pending import Pending as _Pending
+
+    carried = _Pending(
+        kind="customer_pick",
+        expects=None,
+        options=[
+            {"position": 1, "label": "Cheng Huat Sentul", "raw": "Cheng Huat", "entity_type": "customer"},
+            {"position": 2, "label": "Cheng Huat Trading", "raw": "Cheng Huat", "entity_type": "customer"},
+        ],
+        team=None,
+        payload={},
+        asked_at_turn=3,
+    )
+    parser = _order_miss_parser()
+    resolved = {
+        "resolutions": [
+            {
+                "token": "Cheng Huat Sentul",
+                "matches": [
+                    {
+                        "uuid": "zzt-cheng-huat",
+                        "entity_type": "customer",
+                        "canonical_code": "Cheng Huat Sentul",
+                        "match_tier": "exact",
+                    }
+                ],
+            }
+        ],
+        "unresolved_tokens": [],
+        "tokens": ["Cheng Huat Sentul"],
+    }
+    gate = {
+        "gate_passed": True,
+        "compatible_entities": [
+            {"uuid": "zzt-cheng-huat", "entity_type": "customer", "code": "Cheng Huat Sentul"}
+        ],
+        "gate_debug": {"domain": "order"},
+    }
+    payload = {"resolved": resolved, "gate": gate, "_exit_kind": "not_found"}
+    answer = _answer_bridge_mod.answer_for(
+        payload,
+        envelope=None,
+        parser=parser,
+        ctx=_order_miss_ctx(parser),
+        canned=_copy_mod.fallback_copy(),
+        services=_order_miss_services(),
+        db=None,
+        asked_at_turn=4,
+        profile=Profile(tier="office"),
+        carried_pending=carried,
+    )
+    assert answer is not None
+    assert "escalate" not in answer.text.lower(), answer.text
