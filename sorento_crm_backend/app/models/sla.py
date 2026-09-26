@@ -82,6 +82,7 @@ class SLAPolicyTier(Base):
 
 class ConversationSLATracking(Base):
     __tablename__ = "conversation_sla_tracking"
+    __audit_skip__ = "SLA timer state updated every tick; the SLA event log records transitions"
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     policy_id = Column(UUID(as_uuid=False), ForeignKey("sla_policies.id"), nullable=False)
@@ -290,6 +291,7 @@ class FormSLAConfig(Base):
 
 class ConversationSLAEventLog(Base):
     __tablename__ = "conversation_sla_event_log"
+    __audit_skip__ = "SLA event log, itself a trail; its manual POST and DELETE get @audit_event in S1"
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     sla_tracking_id = Column(UUID(as_uuid=False), ForeignKey("conversation_sla_tracking.id", ondelete="CASCADE"), nullable=False)
@@ -427,6 +429,7 @@ class SlaFormAction(Base):
     """
 
     __tablename__ = "sla_form_actions"
+    __audit_skip__ = "pending-action queue; park, cancel and apply write explicit audit rows"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     action_key = Column(String(64), nullable=False)

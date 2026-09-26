@@ -12,6 +12,7 @@ import uuid
 
 class HealthAlertState(Base):
     __tablename__ = "health_alert_state"
+    __audit_skip__ = "health monitor state"
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     # Stable per-condition key, e.g. "n8n_liveness", "task_overdue:import_job_processor",

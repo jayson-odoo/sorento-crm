@@ -94,9 +94,9 @@ export async function disableModule(moduleKey: string): Promise<void> {
 }
 
 /** Modules with automated DB purge on uninstall (others: uninstall removes tenant binding only). */
+// `audit` is absent on purpose: audit_logs is append-only and survives an uninstall (#1281 S0).
 const LEGACY_MODULES_WITH_DATA_PURGE: string[] = [
   'notifications',
-  'audit',
   'sla',
   'forms',
   'workflow_forms',
@@ -123,10 +123,6 @@ const LEGACY_MODULE_PURGE_TABLES: Record<
   notifications: {
     tables: ['notification_deliveries', 'notifications', 'push_subscriptions'],
     description: 'In-app notifications, delivery rows, and web push subscriptions.',
-  },
-  audit: {
-    tables: ['audit_logs'],
-    description: 'Audit log entries.',
   },
   sla: {
     tables: [

@@ -107,6 +107,7 @@ class Complaint(Base):
 class ComplaintProductLine(Base):
     """One affected product per complaint: code + quantity (+ derived type)."""
     __tablename__ = "complaint_product_lines"
+    __audit_parent__ = "complaint_id"  # history rolls up to the header
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     complaint_id = Column(UUID(as_uuid=False), ForeignKey("complaints.id", ondelete="CASCADE"), nullable=False)

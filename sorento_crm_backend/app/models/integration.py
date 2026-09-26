@@ -112,6 +112,7 @@ class IntegrationApiKey(Base):
 
 class IntegrationLog(Base):
     __tablename__ = "integration_log"
+    __audit_skip__ = "integration call log, itself a trail"
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     integration_channel = Column(String(100), nullable=False)

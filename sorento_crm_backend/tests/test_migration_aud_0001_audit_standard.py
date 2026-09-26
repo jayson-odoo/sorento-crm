@@ -76,6 +76,16 @@ def _check(raw, schema):
     ).scalar()
 
 
+def _default(raw, schema):
+    return raw.execute(
+        sa.text(
+            "SELECT column_default FROM information_schema.columns "
+            "WHERE table_schema = :s AND table_name = 'audit_logs' AND column_name = 'changed_at'"
+        ),
+        {"s": schema},
+    ).scalar()
+
+
 def test_upgrade_then_downgrade():
     module = _load(REVISION)
     scratch = f"zzs_mig_aud1_{os.getpid()}_{uuid.uuid4().hex[:6]}"
@@ -101,6 +111,7 @@ def test_upgrade_then_downgrade():
             cols = {c["name"] for c in sa.inspect(raw).get_columns("audit_logs", schema=scratch)}
             assert NEW_COLUMNS <= cols
             assert "'EVENT'" in _check(raw, scratch)
+            assert "clock_timestamp" in _default(raw, scratch)
             assert _triggers(raw, scratch) == {
                 "audit_logs_append_only_row", "audit_logs_append_only_truncate",
             }
@@ -119,6 +130,7 @@ def test_upgrade_then_downgrade():
             cols = {c["name"] for c in sa.inspect(raw).get_columns("audit_logs", schema=scratch)}
             assert not (NEW_COLUMNS & cols)
             assert "'EVENT'" not in _check(raw, scratch)
+            assert "now()" in _default(raw, scratch)
             assert _triggers(raw, scratch) == set()
         finally:
             outer.rollback()

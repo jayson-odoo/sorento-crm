@@ -20,6 +20,7 @@ CHAT_HISTORY_DEDUPE_PREDICATE = (
 
 class ChatHistory(Base):
     __tablename__ = "chat_histories"
+    __audit_skip__ = "message log, itself a trail"
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     channel = Column(String(32), nullable=False)

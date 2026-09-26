@@ -425,7 +425,7 @@ class TestWorker:
             "job = MagicMock(); job.id = 'jid-7'; job.meta = {'audit_context': {'user_id': 'u-7'}}\n"
             "queue = MagicMock(); queue.name = 'imports'\n"
             "with patch.object(Worker, 'perform_job', fake):\n"
-            "    worker.ForkSafeWorker.perform_job(MagicMock(), job, queue)\n"
+            "    worker.ForkSafeWorker.perform_job(object.__new__(worker.ForkSafeWorker), job, queue)\n"
         )
         out = _fresh(code)
         assert out.returncode == 0, out.stderr

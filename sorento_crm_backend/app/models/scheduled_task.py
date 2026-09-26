@@ -36,6 +36,7 @@ class ScheduledTask(Base):
 class ScheduledTaskRun(Base):
     """Execution log for a scheduled task run."""
     __tablename__ = "scheduled_task_runs"
+    __audit_skip__ = "scheduler run log, itself a trail"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     task_id = Column(UUID(as_uuid=False), ForeignKey("scheduled_tasks.id", ondelete="CASCADE"), nullable=False, index=True)

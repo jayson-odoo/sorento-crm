@@ -10,6 +10,7 @@ import uuid
 from datetime import datetime, timedelta
 
 import pytest
+from sqlalchemy import text
 
 from app.models.audit import AuditLog
 from app.models.user import User
@@ -40,6 +41,8 @@ def _seeded(session):
     session.commit()
     # Drop any audit rows the listener auto-wrote for the seed inserts so counts
     # are deterministic; the rows under test are inserted explicitly below.
+    # audit_logs is append-only (#1281 S0), so this uses the maintenance flag.
+    session.execute(text("SET LOCAL sorento.audit_maintenance = 'on'"))
     session.query(AuditLog).delete()
     session.commit()
 
@@ -199,7 +202,8 @@ def test_a_customer_row_reads_as_its_name_and_links_to_the_customer():
         )
         session.commit()
         # The insert is itself audited now; drop those rows so the one under test is
-        # the only row in the feed.
+        # the only row in the feed (append-only since #1281 S0: maintenance flag).
+        session.execute(text("SET LOCAL sorento.audit_maintenance = 'on'"))
         session.query(AuditLog).delete()
         session.add(
             AuditLog(

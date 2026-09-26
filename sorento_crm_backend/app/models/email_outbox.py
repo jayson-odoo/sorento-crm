@@ -16,6 +16,7 @@ import uuid
 class EmailOutbox(Base):
     """One row = one outgoing email. The drainer is the only producer of SMTP traffic."""
     __tablename__ = "email_outbox"
+    __audit_skip__ = "delivery queue; sends get @audit_event in S1"
 
     id = Column(PG_UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     event_key = Column(String(120), nullable=False, index=True)

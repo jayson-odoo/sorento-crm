@@ -8,6 +8,7 @@ from app.database import Base
 
 class ImportLog(Base):
     __tablename__ = "import_logs"
+    __audit_skip__ = "legacy import log, itself a trail (retired in S3)"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     import_session_id = Column(String(100), nullable=False)

@@ -20,6 +20,7 @@ from app.database import Base
 
 class ReportView(Base):
     __tablename__ = "report_views"
+    __audit_skip__ = "per-user UI preference"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     # The registry key of the report this view belongs to (e.g. 'sponsorship').

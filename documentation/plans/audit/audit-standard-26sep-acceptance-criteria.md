@@ -29,6 +29,10 @@ why" about any record, days or months after the fact.
 - **AC-S0-01 [BE]** Given a mapped class with no `__audit_track__` and no `__audit_skip__`, when
   a row is created, updated and deleted through the ORM, then three `audit_logs` rows are written
   (CREATE, UPDATE, DELETE). (Journey 2)
+- **AC-S0-01b [BE]** Given a new row whose code never set its primary key (a Python-side
+  `default=uuid4` only runs at INSERT), then its CREATE row is still written; a DB-generated key
+  (serial / identity) gets its CREATE row after the INSERT. Found in the build: main silently
+  dropped these CREATE rows. (2)
 - **AC-S0-02 [BE]** Given a class declaring `__audit_skip__ = "<reason>"`, when a row is written,
   then no audit row is written; and every `__audit_skip__` value is a non-empty string. (2)
 - **AC-S0-03 [BE]** Given an UPDATE that changes one column, then `old_values` / `new_values`
@@ -107,6 +111,9 @@ why" about any record, days or months after the fact.
 - **AC-S0-21 [BE]** Given any `audit_logs` row, an `UPDATE`, `DELETE` or `TRUNCATE` raises from
   Postgres; after `SET LOCAL sorento.audit_maintenance = 'on'` in the same transaction it
   succeeds. Holds on a `create_all`-built table (CI, blank schema) and after the migration. (5)
+- **AC-S0-21b [BE]** Rows written in one transaction keep their write order: `changed_at`
+  defaults to `clock_timestamp()`, not `now()` (the transaction start, which gave every row of
+  one request the same timestamp and a random history order). Found in the build. (1)
 - **AC-S0-22 [BE]** Given the `audit` module is purged, then `purge_audit` deletes no audit rows
   and reports 0. (5)
 
