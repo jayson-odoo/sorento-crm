@@ -16,9 +16,11 @@ import {
 import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
 } from '@/components/common/AttachmentPreviewModal';
+import { fetchViewAttachmentBytes, toViewPreviewItem } from '../lib/attachmentDownload';
 
 interface StockInquiryViewAttachment {
   id?: string;
+  attachment_id?: string | null;
   file_name?: string | null;
   original_filename?: string | null;
   file_url?: string | null;
@@ -91,23 +93,16 @@ function ViewStockInquiryContent() {
 
   const attachments = useMemo(() => summary?.attachments ?? [], [summary?.attachments]);
   const previewItems = useMemo<AttachmentPreviewItem[]>(
-    () =>
-      attachments.map((att, idx) => ({
-        id: att.id ?? String(idx),
-        name: att.original_filename ?? att.file_name ?? 'Attachment',
-        url: att.file_url ?? '',
-      })),
-    [attachments],
+    () => attachments.map((att, idx) => toViewPreviewItem(att, 'stock-inquiry', token, String(idx))),
+    [attachments, token],
   );
 
   // Purchasing's own response attachments - surfaced in the reply banner,
   // scoped away from the contact's own uploads shown in the list below.
   const staffAttachments = attachments.filter((a) => a.uploader_kind === 'user');
-  const staffPreviewItems: AttachmentPreviewItem[] = staffAttachments.map((att, idx) => ({
-    id: att.id ?? `staff-${idx}`,
-    name: att.original_filename ?? att.file_name ?? 'Attachment',
-    url: att.file_url ?? '',
-  }));
+  const staffPreviewItems: AttachmentPreviewItem[] = staffAttachments.map((att, idx) =>
+    toViewPreviewItem(att, 'stock-inquiry', token, `staff-${idx}`),
+  );
 
   const fetchSummary = useCallback(async () => {
     if (!token) {
@@ -429,11 +424,13 @@ function ViewStockInquiryContent() {
         onOpenChange={setPreviewOpen}
         items={previewItems}
         startIndex={previewIndex}
+        fetchBytes={fetchViewAttachmentBytes}
       />
       <AttachmentPreviewModal
         open={staffPreviewOpen}
         onOpenChange={setStaffPreviewOpen}
         items={staffPreviewItems}
+        fetchBytes={fetchViewAttachmentBytes}
       />
     </div>
   );
