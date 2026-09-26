@@ -832,6 +832,8 @@ def test_w1_the_database_refuses_a_leader_who_is_not_an_open_member(world):
 
     from app.services.sales import team_service
 
+    from app.models.sales import translated_schema
+
     db, company_id = world
     ali = _agent(db, "ALI", "Ali Hassan")
     mei = _agent(db, "MEI", "Tan Mei Ling")
@@ -839,19 +841,21 @@ def test_w1_the_database_refuses_a_leader_who_is_not_an_open_member(world):
         db, company_id=company_id, name="ZZT Lead Rule", sales_agent_ids=[ali.id]
     )
     db.flush()
+    # Raw SQL is not translated: name the test's scratch copy of the `sales` schema.
+    sales = f'"{translated_schema(db.connection())}"'
 
     # A leader who was never a member.
     with pytest.raises(IntegrityError, match="leader"):
         with db.begin_nested():
             db.execute(
-                text("UPDATE sales.teams SET leader_sales_agent_id = :a WHERE id = :t"),
+                text(f"UPDATE {sales}.teams SET leader_sales_agent_id = :a WHERE id = :t"),
                 {"a": mei.id, "t": team.id},
             )
             _leader_rule_fires(db)
 
     # A leader whose membership is then closed behind the service's back.
     db.execute(
-        text("UPDATE sales.teams SET leader_sales_agent_id = :a WHERE id = :t"),
+        text(f"UPDATE {sales}.teams SET leader_sales_agent_id = :a WHERE id = :t"),
         {"a": ali.id, "t": team.id},
     )
     _leader_rule_fires(db)
@@ -859,7 +863,7 @@ def test_w1_the_database_refuses_a_leader_who_is_not_an_open_member(world):
         with db.begin_nested():
             db.execute(
                 text(
-                    "UPDATE sales.team_members SET valid_to = current_date "
+                    f"UPDATE {sales}.team_members SET valid_to = current_date "
                     "WHERE sales_team_id = :t AND sales_agent_id = :a"
                 ),
                 {"a": ali.id, "t": team.id},

@@ -23,6 +23,8 @@ class SalesTeamCreate(BaseModel):
     is_active: bool = True
     #: The day a picked agent who is in another team starts counting here (T2). Default today.
     moves_on: Optional[DateType] = None
+    #: One of the team's agents (W1); one not in `sales_agent_ids` is added to them.
+    leader_sales_agent_id: Optional[str] = None
 
     @field_validator("name")
     @classmethod
@@ -37,6 +39,8 @@ class SalesTeamUpdate(BaseModel):
     #: refused rename cannot leave the agents half-saved (review round 1, N1).
     sales_agent_ids: Optional[List[str]] = None
     moves_on: Optional[DateType] = None
+    #: Sent: set the leader (null clears it). Not sent: the leader stays, unless left out (W1).
+    leader_sales_agent_id: Optional[str] = None
 
     @field_validator("name")
     @classmethod
@@ -76,6 +80,7 @@ class SalesTeamListItem(BaseModel):
     id: str
     name: str
     is_active: bool
+    leader_sales_agent_id: Optional[str] = None
     member_count: int
     members: List[SalesTeamAgentRef]
     created_at: Optional[datetime] = None
@@ -86,6 +91,9 @@ class SalesTeamDetail(BaseModel):
     id: str
     name: str
     is_active: bool
+    #: The team's leader now, one of its agents (W1); None when none is picked.
+    leader_sales_agent_id: Optional[str] = None
+    leader_label: Optional[str] = None
     #: Members on the date shown, not counting those who have left.
     member_count: int
     #: The date the members are read for (`on`, default today).

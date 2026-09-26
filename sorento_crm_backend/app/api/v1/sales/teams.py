@@ -86,6 +86,7 @@ def create_team(
             sales_agent_ids=payload.sales_agent_ids,
             is_active=payload.is_active,
             moves_on=payload.moves_on,
+            leader_sales_agent_id=payload.leader_sales_agent_id,
         )
         db.commit()
         db.refresh(team)
@@ -120,11 +121,14 @@ def update_team(
         validate_uuid_path(team_id, resource="Sales Team")
         team = team_service.get_team_or_404(db, team_id)
         team_service.update_team(db, team, name=payload.name, is_active=payload.is_active)
-        moved = []
-        if payload.sales_agent_ids is not None:
-            moved = team_service.set_members(
-                db, team, payload.sales_agent_ids, moves_on=payload.moves_on
-            )
+        moved = team_service.save_members_and_leader(
+            db,
+            team,
+            payload.sales_agent_ids,
+            moves_on=payload.moves_on,
+            leader_sales_agent_id=payload.leader_sales_agent_id,
+            set_leader="leader_sales_agent_id" in payload.model_fields_set,
+        )
         db.commit()
         db.refresh(team)
         return team_service.team_detail(db, team, moved=moved)

@@ -98,6 +98,9 @@ def test_upgrade_then_downgrade():
                 {"id": agent, "code": f"ZZT{agent[:8]}"},
             )
             team = str(uuid.uuid4())
+            # Inside the savepoint, so its queued trigger event goes with the rollback and
+            # the downgrade's ALTER TABLE meets no pending events.
+            nested = raw.begin_nested()
             raw.execute(
                 sa.text(
                     f'INSERT INTO "{scratch}".teams (id, company_id, name, leader_sales_agent_id) '
@@ -105,7 +108,6 @@ def test_upgrade_then_downgrade():
                 ),
                 {"id": team, "c": company, "a": agent},
             )
-            nested = raw.begin_nested()
             with pytest.raises(sa.exc.IntegrityError, match="leader"):
                 raw.exec_driver_sql("SET CONSTRAINTS ALL IMMEDIATE")
             nested.rollback()

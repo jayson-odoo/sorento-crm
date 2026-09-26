@@ -10,6 +10,11 @@ T with `coalesce(valid_from, -infinity) <= X <= coalesce(valid_to, infinity)`.
 - A move on D (the agent is open in another team): the old row closes at D - 1, a new row
   opens at D. D is never later than today (a future move is a calendar note, not a membership).
 - Removing an agent: the open row closes at today and stays, so past periods keep its orders.
+
+The leader (owner ruling 26 Sep ~13:25Z, W1) is one of the team's current agents, a current
+attribute rather than dated history. Picking a leader who is not yet a member places them the
+same way Add agents does (a Moves on when they come from another team); when the leader leaves
+or moves, the leader clears. `trg_sales_teams_leader_is_member` holds the same rule at commit.
 """
 from __future__ import annotations
 
@@ -107,12 +112,20 @@ def create_team_with_members(
     sales_agent_ids: Iterable[str],
     is_active: bool = True,
     moves_on: Optional[date] = None,
+    leader_sales_agent_id: Optional[str] = None,
 ) -> Tuple[SalesTeam, List[Move]]:
     name = name.strip()
     team = SalesTeam(company_id=company_id, name=name, is_active=is_active)
     db.add(team)
     _flush_name(db, name)
-    moved = set_members(db, team, sales_agent_ids, moves_on=moves_on)
+    moved = save_members_and_leader(
+        db,
+        team,
+        sales_agent_ids,
+        moves_on=moves_on,
+        leader_sales_agent_id=leader_sales_agent_id,
+        set_leader=True,
+    )
     return team, moved
 
 
@@ -149,6 +162,47 @@ def delete_team_by_id(db: Session, team_id: str) -> None:
         delete_team(db, team)
 
 
+def save_members_and_leader(
+    db: Session,
+    team: SalesTeam,
+    sales_agent_ids: Optional[Iterable[str]],
+    *,
+    moves_on: Optional[date] = None,
+    leader_sales_agent_id: Optional[str] = None,
+    set_leader: bool = False,
+) -> List[Move]:
+    """One save of the agents and the leader (W1).
+
+    `sales_agent_ids` None keeps the current agents. `set_leader` False keeps the leader
+    (unless they are left out); True sets it to `leader_sales_agent_id`, None clearing it. A
+    leader who is not among the agents is added to them, so they join like any picked agent.
+    """
+    leader = str(leader_sales_agent_id) if set_leader and leader_sales_agent_id else None
+    if sales_agent_ids is None and leader is None:
+        if set_leader:
+            team.leader_sales_agent_id = None
+            db.flush()
+        return []
+
+    if sales_agent_ids is None:
+        wanted = [
+            m.sales_agent_id
+            for m in db.query(SalesTeamMember).filter(
+                SalesTeamMember.sales_team_id == team.id, SalesTeamMember.valid_to.is_(None)
+            )
+        ]
+    else:
+        wanted = [str(i) for i in sales_agent_ids]
+    if leader is not None and leader not in wanted:
+        wanted.append(leader)
+
+    moved = set_members(db, team, wanted, moves_on=moves_on)
+    if set_leader:
+        team.leader_sales_agent_id = leader
+        db.flush()
+    return moved
+
+
 def set_members(
     db: Session,
     team: SalesTeam,
@@ -177,10 +231,12 @@ def set_members(
         )
     }
 
-    # Left out: close today, keep the row (S6-14).
+    # Left out: close today, keep the row (S6-14). A leader left out stops leading (W1).
     for agent_id, member in open_here.items():
         if agent_id not in agents:
             member.valid_to = today
+            if team.leader_sales_agent_id == agent_id:
+                team.leader_sales_agent_id = None
 
     moved: List[Move] = []
     new_rows: List[SalesTeamMember] = []
@@ -218,6 +274,8 @@ def set_members(
         valid_from: Optional[date] = moves_on
         if covering is not None:
             from_team = db.query(SalesTeam).filter(SalesTeam.id == covering.sales_team_id).one()
+            if from_team.leader_sales_agent_id == agent_id:
+                from_team.leader_sales_agent_id = None  # the leader moved on (W1)
             moved.append(
                 Move(
                     sales_agent_id=agent_id,
@@ -303,6 +361,7 @@ def list_teams(db: Session, *, query: Optional[str] = None) -> List[dict]:
                 "id": team.id,
                 "name": team.name,
                 "is_active": team.is_active,
+                "leader_sales_agent_id": team.leader_sales_agent_id,
                 "member_count": len(agents),
                 "members": [{"sales_agent_id": a.id, "label": agent_label(a)} for a in agents],
                 "created_at": team.created_at,
@@ -315,7 +374,11 @@ def list_teams(db: Session, *, query: Optional[str] = None) -> List[dict]:
 def team_detail(
     db: Session, team: SalesTeam, *, on: Optional[date] = None, moved: Optional[List[Move]] = None
 ) -> dict:
-    """The team page: members on `on`, plus anyone who left earlier in that month (S6-15)."""
+    """The team page: members on `on`, plus anyone who left earlier in that month (S6-15).
+
+    One line per agent (owner ruling 26 Sep ~13:05Z on N1): an agent who left and came back
+    shows once, from the stay in force on `on`; the earlier stay stays in the data only.
+    """
     on = on or _today()
     month_start = on.replace(day=1)
     rows = (
@@ -326,12 +389,15 @@ def team_detail(
             or_(SalesTeamMember.valid_from.is_(None), SalesTeamMember.valid_from <= on),
             or_(SalesTeamMember.valid_to.is_(None), SalesTeamMember.valid_to >= month_start),
         )
+        # One agent's stays never overlap, so the latest to start is the one in force on
+        # `on`, or, when every one has ended, the last one; it overwrites the earlier ones.
+        .order_by(SalesTeamMember.valid_from.asc().nullsfirst())
         .all()
     )
-    members = []
+    members_by_agent: Dict[str, dict] = {}
     for member, agent in rows:
         left = member.valid_to is not None and member.valid_to <= on
-        members.append(
+        members_by_agent[agent.id] = (
             {
                 "sales_agent_id": agent.id,
                 "code": agent.sales_agent,
@@ -342,11 +408,15 @@ def team_detail(
                 "left": left,
             }
         )
-    members.sort(key=lambda m: (m["left"], m["label"]))
+    members = sorted(members_by_agent.values(), key=lambda m: (m["left"], m["label"]))
+    # The leader is who leads NOW, whatever date the page is read on.
+    leader = db.get(SalesAgent, team.leader_sales_agent_id) if team.leader_sales_agent_id else None
     return {
         "id": team.id,
         "name": team.name,
         "is_active": team.is_active,
+        "leader_sales_agent_id": team.leader_sales_agent_id,
+        "leader_label": agent_label(leader) if leader else None,
         "member_count": sum(1 for m in members if not m["left"]),
         "on": on,
         "members": members,

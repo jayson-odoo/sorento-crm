@@ -23,6 +23,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     String,
+    event,
     text,
 )
 from sqlalchemy.dialects.postgresql import UUID
@@ -39,7 +40,12 @@ def _uuid_str() -> str:
 
 
 class SalesTeam(CompanyScopedMixin, Base):
-    """A sales team (J13). No parent and no leader: neither was asked for (plan 3.8)."""
+    """A sales team (J13). No parent (not asked for, plan 3.8).
+
+    The leader is one of the team's current agents (owner ruling 26 Sep ~13:25Z, W1): a current
+    attribute, not dated history. `trg_sales_teams_leader_is_member` (below) holds it to an open
+    membership row of this team, and `team_service` clears it when the leader leaves.
+    """
 
     __tablename__ = "teams"
     __audit_track__ = True
@@ -50,6 +56,13 @@ class SalesTeam(CompanyScopedMixin, Base):
     name = Column(String(120), nullable=False)
     # Inactive: not offered for new targets (S1); existing targets still show.
     is_active = Column(Boolean, nullable=False, default=True, server_default=text("true"))
+    leader_sales_agent_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey(
+            "sales_agents.id", ondelete="SET NULL", name="fk_sales_teams_leader_sales_agent_id"
+        ),
+        nullable=True,
+    )
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(
         DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
@@ -115,3 +128,78 @@ class SalesTeamMember(CompanyScopedMixin, Base):
         ),
         {"schema": SCHEMA},
     )
+
+
+def leader_rule_ddl(schema: str) -> list[str]:
+    """The leader rule, `trg_sales_teams_leader_is_member`: a team's leader has an OPEN
+    membership row (`valid_to IS NULL`) in that team (W1).
+
+    A check constraint cannot look at another table, and a foreign key cannot point at a
+    partial unique index, so it is a pair of constraint triggers. They are DEFERRED to the
+    commit: one save closes the leader's row and clears the leader, in either order.
+    One copy, used by migration `sales_0002_team_leader` and by `create_all` below, so the test
+    schema and bootstrap_env carry the same rule production does.
+    """
+    q = f'"{schema}"'
+    return [
+        f"""
+        CREATE OR REPLACE FUNCTION {q}.sales_team_leader_is_member() RETURNS trigger
+        LANGUAGE plpgsql AS $fn$
+        DECLARE
+            v_team_id uuid;
+            v_leader uuid;
+            v_member boolean;
+        BEGIN
+            IF TG_TABLE_NAME = 'teams' THEN
+                v_team_id := NEW.id;
+            ELSE
+                v_team_id := OLD.sales_team_id;
+            END IF;
+            EXECUTE format('SELECT leader_sales_agent_id FROM %I.teams WHERE id = $1',
+                           TG_TABLE_SCHEMA)
+                INTO v_leader USING v_team_id;
+            IF v_leader IS NULL THEN
+                RETURN NULL;
+            END IF;
+            -- EXECUTE never sets FOUND, so the answer comes back through INTO.
+            EXECUTE format(
+                'SELECT EXISTS (SELECT 1 FROM %I.team_members WHERE sales_team_id = $1 '
+                'AND sales_agent_id = $2 AND valid_to IS NULL)', TG_TABLE_SCHEMA)
+                INTO v_member USING v_team_id, v_leader;
+            IF NOT v_member THEN
+                RAISE EXCEPTION 'sales team % leader % is not a current member of the team',
+                    v_team_id, v_leader
+                    USING ERRCODE = 'check_violation',
+                          CONSTRAINT = 'trg_sales_teams_leader_is_member';
+            END IF;
+            RETURN NULL;
+        END
+        $fn$
+        """,
+        f"""
+        CREATE CONSTRAINT TRIGGER trg_sales_teams_leader_is_member
+        AFTER INSERT OR UPDATE OF leader_sales_agent_id ON {q}.teams
+        DEFERRABLE INITIALLY DEFERRED
+        FOR EACH ROW WHEN (NEW.leader_sales_agent_id IS NOT NULL)
+        EXECUTE FUNCTION {q}.sales_team_leader_is_member()
+        """,
+        f"""
+        CREATE CONSTRAINT TRIGGER trg_sales_team_members_leader_is_member
+        AFTER UPDATE OR DELETE ON {q}.team_members
+        DEFERRABLE INITIALLY DEFERRED
+        FOR EACH ROW WHEN (OLD.valid_to IS NULL)
+        EXECUTE FUNCTION {q}.sales_team_leader_is_member()
+        """,
+    ]
+
+
+def translated_schema(connection, schema: str = SCHEMA) -> str:
+    """`schema` as this connection writes it: a scratch schema under `schema_translate_map`."""
+    return connection.get_execution_options().get("schema_translate_map", {}).get(schema, schema)
+
+
+@event.listens_for(SalesTeamMember.__table__, "after_create")
+def _create_leader_rule(target, connection, **kw):  # noqa: ANN001
+    # `team_members` is created after `teams` (its foreign key), so both tables exist here.
+    for statement in leader_rule_ddl(translated_schema(connection)):
+        connection.execute(text(statement))
