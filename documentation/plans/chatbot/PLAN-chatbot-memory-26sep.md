@@ -15,7 +15,7 @@ rulings on the chatbot memory plan grill questions"):
 
 - **Owner ruling 26 Sep 2026 (Q1):** memory stays OFF by default. "off first i need to test
   how it looks like to make sure no regression and carry forward of unnecessary memory". The
-  per-contact toggle stays default false; no migration flips it. A new slice S3T (section 9)
+  per-contact toggle stays default false; no migration flips it (round 3: the toggle becomes the context level of 6.0, still Off by default). A new slice S3T (section 9)
   is the owner's test on a local stack, and any default-on decision is a separate later ruling
   made on S3T's evidence.
 - **Owner ruling 26 Sep 2026 (Q2):** a conversation ends on a topic switch only. "i don't like
@@ -1253,8 +1253,11 @@ verdict in the PR; every carry-over turn the owner flags has a replay case.
 - Handover names the salesperson for commercial asks, the domain team otherwise; the routed
   message carries the live episode's summary line.
 
-With memory off for a contact (the default), the reply shape still holds with no
-`memory_line`: ack plus offer.
+At Off (the default), the graceful fallback still holds with no `memory_line`: ack plus
+offer. Above Off, the `memory_line` and the clarifier's memory slice use only the layers the
+contact's context level grants (6.0): "This conversation" can name what was just asked,
+"Past conversations" can list earlier conversations, only "Full memory" can use profile facts
+such as `usual_sites`.
 
 DoD: the ten examples as replay cases (8.1) green, and red under ablation where 7.3 says so;
 console YAML green after deploy; the S3T cases re-run green; the owner's hand pass (8.6) recorded; the #1275 no-reply
@@ -1335,9 +1338,10 @@ to 9 (episode boundary by turn time, replay and console are dry runs, the one-sh
 flag, no per-language copy today, firm prompt cuts short of the addendum, the recall default
 flip must land with the recall deletion).
 
-Round 2 status: 1, 2, 7 and 10 are ruled (below); 3, 4, 5, 6, 8 and 9 were asked back as
-questions and are answered in plain language on PR #1284 ("Answers to the owner's questions
-(round 2)"), then re-asked; 11 to 18 are not yet answered.
+Round 3 status (27 Sep 2026): 1, 2, 3, 6, 7, 8 and 10 are ruled; 9's term is named and its
+recommendation awaits the ruling; 4 was answered in round 2 and awaits the ruling; 5 was asked
+back ("why we delete?") and is answered on PR #1284 ("Answers to the owner's questions (round
+3)"), then re-asked; 11 is settled by the Q8 ruling; 12 to 19 are not yet answered.
 
 1. **RULED. Owner ruling 26 Sep 2026: memory OFF by default** until the owner has tested it on
    a local stack for regressions and unwanted carry-over (slice S3T). The round 1
@@ -1345,47 +1349,54 @@ questions and are answered in plain language on PR #1284 ("Answers to the owner'
    evidence.
 2. **RULED. Owner ruling 26 Sep 2026: a conversation ends on a topic switch only.** No time
    gap, no gap setting (5.1).
-3. **Who writes the episode summary?** **Recommendation: code, from what the turns recorded,
-   no LLM call, and never a figure** (no stock count, price or ETA from the past; a follow-up
-   always re-fetches). Zero tokens on the shared limit, replayable, backfillable, cannot invent
-   a fact. It loses the colour of small talk; an LLM sentence is added only if a hand pass shows
-   a question the code summary cannot answer.
+3. **RULED. Owner ruling 27 Sep 2026: accepted ("okay").** The summary is written by code,
+   from what the turns recorded, no AI call, and never a figure (5.2). An AI sentence is added
+   only if a hand pass shows a question the code summary cannot answer.
 4. **How much history rides on every parse?** **Recommendation: the last 3 conversation
    summaries (no day window, per the Q7 ruling), plus the current conversation's last 3
    messages from the dealer** (the parser has never seen a single earlier dealer message until now). Older
    history is answered on request ("what did I ask last week").
-5. **Delete the vector recall (the second parser call)?** **Recommendation: yes, and stop
-   writing frame embeddings.** It doubles the tokens of the turns it fires on to hand the model
-   "Closed the stock topic."; the summaries on every parse replace it. The n8n search route
-   stays but loses new embeddings; say so if n8n still uses it.
-6. **Save what the dealer says about themselves?** ("I'm the purchaser", "reply in Malay",
-   "always show Kuching first".) **Recommendation: yes, at once, from a closed list of five
-   keys, validated against the masters, shown to staff as "Said" and deletable; never a
-   grant.** "I'm the owner of Iborn" changes nothing about what he can see.
+5. **Delete the vector recall (the second parser call)?** The owner asked "why we delete?"
+   (27 Sep 2026); answered on PR #1284 ("Answers to the owner's questions (round 3)").
+   **Recommendation: yes, and stop writing frame embeddings.** It runs the whole understanding
+   step a second time (about 22.8k more tokens and about 2.6 s) to hand the model one line that
+   today always reads "Closed the stock topic."; the last 3 summaries on every parse (about 250
+   tokens) replace it, and older history is answered on request. Kept, it would fire on every
+   referring-back message of every contact at "Past conversations" or above. The n8n search
+   route stays but loses new embeddings; say so if n8n still uses it.
+6. **RULED. Owner ruling 27 Sep 2026: accepted with the owner's reading** ("hmm ok but i
+   doubt they will introduce themselves, i mean if they say, this can be part of the memory
+   also"). Anything the dealer says about themselves, in any message and alongside any ask, is
+   saved at once as a `Said` fact (the closed keys plus `about` for the rest), validated,
+   visible and deletable by staff, never a grant. Nothing asks the dealer to introduce
+   themselves.
 7. **RULED. Owner ruling 26 Sep 2026: retention is not time based.** Adopted rule (5.5): the
    newest 20 conversations per contact are kept (the 21st deletes the oldest); learned facts
    follow the last 10 conversations; stated facts stay until replaced or deleted by staff;
    staff facts until staff remove them; contact delete removes all of it. No expiry dates, no
    nightly sweep. Chat turns keep their own retention (BL-054), so this is not by itself a
    privacy guarantee.
-8. **What may memory cost in tokens?** **Recommendation: the static parser prompt may not grow
-   at all (a CI test fails above 22,100 tokens, so the memory instructions are paid for by
-   cutting dead text), and the per-turn memory block is capped at +600 tokens worst case;
-   production p95 may rise by at most 600 tokens (about -2.4% calls per minute worst case).**
-   The alternative, strict net zero per turn, needs about 600 more tokens of cuts that are not
-   yet identified.
-9. **Who writes the out-of-boundary reply?** **Recommendation: the LLM writes only the one
-   human sentence (the acknowledgement); every fact, name of a product, order or date comes
-   from data, and a guard replaces an acknowledgement that invents a number or a code.**
+8. **RULED. Owner ruling 27 Sep 2026** ("yeah okay we can make this configurable per contact
+   with a system default with contact override to grant different level of context to each
+   contact"). The static prompt may not grow (CI ceiling 22,100; the addendum is paid by cuts,
+   owner note 27 Sep 2026 "yes agree"); the per-message memory blocks are capped per memory
+   context level (Off +0, This conversation +200, Past conversations +450, Full memory +600);
+   the level is a system default with a per-contact override (6.0).
+9. **Who writes the graceful fallback?** The term is named (owner ruling 27 Sep 2026, section
+   7): an out-of-scope message gets a **graceful fallback**. **Recommendation: the AI writes
+   only the one human opening sentence (the acknowledgement); every fact, name of a product,
+   order or date comes from data, and a guard replaces an acknowledgement that invents a number
+   or a code.**
 10. **RULED. Owner ruling 26 Sep 2026: accepted.** The bot never stays silent: every turn
     that reaches the reply stage sends exactly one visible line, and an error never shows
     exception text.
-11. **The Memory settings card.** Four of its settings are saved and never read.
-    **Recommendation (revised by rulings 2 and 7): remove all four and the card**; the two
-    round 1 kept (retention days, conversation gap minutes) were both time rules.
-12. **Where do staff see the memory?** **Recommendation: inside the existing Chatbot card on
-    the contact page**: "What the bot knows" (facts with source badges), "Recent
-    conversations", and the live "Open orders". No new tab.
+11. **SETTLED by the Q8 ruling (27 Sep 2026).** The four dead settings go; the card stays with
+    the memory switch (default Off), the system default context level and the read-only
+    retention rule (5.6, final mockup `chatbot-memory-27sep-mockup-settings.html`).
+12. **Where do staff see the memory?** **Recommendation: the contact page's Chatbot tab**,
+    as drawn in the final mockup `chatbot-memory-27sep-mockup-contact.html`: the settings card
+    with the context level, "What the bot knows" (facts with source badges), "Conversations",
+    and the live "Open orders". No new page.
 13. **Who gets a handover?** **Recommendation: a commercial ask (discount, credit, price
     exception) goes to the dealer's own salesperson by name; everything else, or no reachable
     salesperson, to the domain's team.**
@@ -1409,3 +1420,27 @@ questions and are answered in plain language on PR #1284 ("Answers to the owner'
     because the bot cannot handle them. **Recommendation: build them (they are in your ask),
     and record today's counts from the 25 Sep dump in S2 as the baseline S4 is measured
     against.**
+19. **Which level do contacts get when you switch memory on for everyone?** The system default
+    context level is used only once "Memory for all contacts" is On (a later ruling after
+    S3T). **Recommendation: Full memory**, because the S3T test is run at Full memory and it is
+    the level the owner will have seen work. Under "Past conversations" instead, nobody's
+    profile reaches the bot unless staff give them Full memory, and "the usual" (example 8)
+    and the Malay preference (example 9) stop working for them.
+
+## 14. Final mockups and pictures
+
+Owner rulings 27 Sep 2026: "need UI mockup for settings and view the profile, memory, episode
+for each contact", "need UI" (ordering ticket), and "need final mockup to align". These are the
+FINAL screens: the build matches them, and a change to a screen changes its mockup first. Each
+is a self-contained HTML file in this folder, readable at 1280 and 375 px; every dropdown on
+them is the system `SearchableSelect` (single) or `SearchableMultiSelect` (multi), labelled
+as such. All four are embedded inline on the alignment page
+(`alignment-chatbot-memory-27sep.html`) at both widths.
+
+| file | screen or picture | slice |
+|---|---|---|
+| `chatbot-memory-27sep-mockup-settings.html` | Settings > Chatbot > Memory card: memory switch (default Off), system default context level, contacts with their own level, retention rule (read-only) | S3 |
+| `chatbot-memory-27sep-mockup-contact.html` | Contact page, Chatbot tab: context level override, "What the bot knows" (profile), "Conversations" (episodes), "Open orders", the Add fact modal, the level dropdown open | S2, S3 |
+| `chatbot-memory-27sep-mockup-ticket.html` | Chat History turn drawer: the ordering ticket (Order block), the repaired Memory panel, the context sent to the AI per layer | S0, S3 |
+| `chatbot-memory-27sep-illustrations.html` | Pictures: how the three layers feed one turn (flowchart), the profile statement, the context-level ladder, the token budget | 4.0, 6.0, 6.4, 6.5 |
+
