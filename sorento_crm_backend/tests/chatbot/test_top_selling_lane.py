@@ -759,6 +759,9 @@ class TestClarify:
         assert TOP_SELLING_ASK_METRIC == presenters.TOP_SELLING_ASK_METRIC
         assert TOP_SELLING_ASK_GROUP == presenters.TOP_SELLING_ASK_GROUP
         assert TOP_SELLING_ASK_BASIS == presenters.TOP_SELLING_ASK_BASIS
+        from app.services.chatbot.lanes.business import TOP_SELLING_REFUSED_OTHER_CUSTOMER
+
+        assert TOP_SELLING_REFUSED_OTHER_CUSTOMER == presenters.TOP_SELLING_REFUSED_OTHER_CUSTOMER
 
 
 # --------------------------------------------------------------------------- #

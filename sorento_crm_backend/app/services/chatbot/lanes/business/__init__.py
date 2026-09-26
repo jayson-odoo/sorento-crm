@@ -82,6 +82,7 @@ TOP_SELLING_ASK_GROUP = (
     "Do you want the top items inside one category, or the categories ranked against each other?"
 )
 TOP_SELLING_ASK_BASIS = "Delivered (transferred to DO) or ordered?"
+TOP_SELLING_REFUSED_OTHER_CUSTOMER = "Sorry, I can only share sales figures for your own account."
 
 #: PLAN-low-stock-report S6 (AC-62/AC-64). The intent that overrides the inventory domain's
 #: default tool pick, the tool it picks, and the per-contact key that gates it - all three
@@ -1411,6 +1412,12 @@ def run_fetch(
         tool_item = {"name": tool_name, "_tool_pick": {"source": "top_selling_override"}}
         slot = semantic_input.get("top_selling")
         slot = slot if isinstance(slot, dict) else {}
+        if slot.get("dealer_refused"):
+            # Reviewer S2 (PR #1273): a linked dealer named a customer outside its own
+            # ledgers (`engine._top_selling_dealer_scope`). No picker, no fetch.
+            if trace is not None:
+                trace.add("top_selling", {"refused": "customer_not_permitted"})
+            return _fixed_reply(TOP_SELLING_REFUSED_OTHER_CUSTOMER)
         question = _top_selling_question(slot)
         if question is not None:
             axis, line = question

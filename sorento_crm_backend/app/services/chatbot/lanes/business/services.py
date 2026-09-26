@@ -508,6 +508,59 @@ def production_services(db: Session, *, space_id: str | None = None) -> ResolveG
     )
 
 
+def top_selling_dealer_ledgers(
+    db: Session, contact_respond_id: Any, space_id: str | None
+) -> list[tuple[str, str]] | None:
+    """A linked dealer contact's own customers as `(id, customer_name)`, or None when
+    the contact is linked to none (staff, or someone the route refuses on its own).
+
+    Reviewer S2 on PR #1273 (owner: a dealer sees only its own customers; ruling
+    pending owner confirmation): the lane never shows a linked dealer the customer
+    picker, which lists other customers' names before the route could refuse. The link
+    is the route's own test (`orders._top_selling_dealer_scope`: any
+    `respond_contact_customers` row makes the contact that customer's dealer), read on
+    the engine's per-contact scoped session."""
+    from app.models.order import Customer
+    from app.services.contact_customer_service import list_links
+    from app.services.field_access import resolve_contact_with_null_workspace_fallback
+
+    if not contact_respond_id:
+        return None
+    contact_id = resolve_contact_with_null_workspace_fallback(
+        db, contact_id=str(contact_respond_id), space_id=space_id
+    )
+    if not contact_id:
+        return None
+    ids: list[str] = []
+    for link in list_links(db, contact_id):
+        if str(link.customer_id) not in ids:
+            ids.append(str(link.customer_id))
+    if not ids:
+        return None
+    names = {
+        str(row[0]): row[1] or ""
+        for row in db.query(Customer.id, Customer.customer_name).filter(Customer.id.in_(ids)).all()
+    }
+    return [(i, names.get(i, "")) for i in ids]
+
+
+def top_selling_dealer_customer_ids(
+    own: list[tuple[str, str]], words: list[str]
+) -> list[str] | None:
+    """The dealer's own ledgers the customer words name, or None when any word names
+    none of them (the lane then refuses). Matched the way the route matches a
+    `customer_query` (a case-insensitive substring of the name), over the dealer's own
+    ledgers only, so nothing outside them is ever looked at."""
+    matched: list[str] = []
+    for word in words:
+        needle = " ".join((word or "").split()).lower()
+        hits = [cid for cid, name in own if needle and needle in (name or "").lower()]
+        if not hits:
+            return None
+        matched.extend(h for h in hits if h not in matched)
+    return matched
+
+
 def _category_words(text: str) -> list[str]:
     """Lower-cased words, each plural folded to its singular by one trailing `s`
     ("sinks" -> "sink"), applied to both sides so a match is word for word."""

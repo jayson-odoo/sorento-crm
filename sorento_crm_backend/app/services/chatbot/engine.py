@@ -769,6 +769,46 @@ def _asks_outstanding(verdict: dict[str, Any]) -> bool:
     return jsc.nullish_str(verdict.get("order_status")).strip() in OUTSTANDING_ORDER_STATUS
 
 
+def _top_selling_dealer_scope(
+    db: Session,
+    parse_output: dict[str, Any],
+    focus: Any,
+    contact_respond_id: Any,
+    space_id: str | None,
+) -> dict[str, Any]:
+    """Reviewer S2 on PR #1273 (owner: a dealer sees only its own customers; ruling
+    pending owner confirmation). A linked dealer contact's top selling ask never
+    reaches the generic customer resolver, whose picker lists every matching
+    customer's name before the route could refuse. Its customer words are matched
+    against its OWN ledgers only (`business_services.top_selling_dealer_ledgers`):
+    all matched, the ranking runs on those ledgers (`dealer_customer_ids` on the slot);
+    any word matching none of them, the lane refuses with the plain line and fetches
+    nothing (`dealer_refused`). Staff and unlinked contacts are untouched here."""
+    slot = focus.top_selling if isinstance(focus.top_selling, dict) else None
+    if slot is not None:
+        slot.pop("dealer_refused", None)
+    own = business_services.top_selling_dealer_ledgers(db, contact_respond_id, space_id)
+    if own is None:
+        return parse_output
+    entities = [e for e in (parse_output.get("entities") or []) if isinstance(e, dict)]
+
+    def _is_customer(e: dict[str, Any]) -> bool:
+        return e.get("hint") == "customer" or e.get("entity_type") == "customer"
+
+    words = [jsc.js_string(e.get("raw")) for e in entities if _is_customer(e) and jsc.truthy(e.get("raw"))]
+    focus.customers = []
+    if slot is None:
+        slot = focus.top_selling = {}
+    if words:
+        ids = business_services.top_selling_dealer_customer_ids(own, words)
+        if ids is None:
+            slot["dealer_refused"] = True
+            slot.pop("dealer_customer_ids", None)
+        else:
+            slot["dealer_customer_ids"] = ids
+    return {**parse_output, "entities": [e for e in entities if not _is_customer(e)]}
+
+
 def run_turn(
     envelope: Envelope, *, session_factory: SessionFactory, offload: bool | None = None
 ) -> TurnResult:
@@ -1802,6 +1842,9 @@ def _run_stages(  # noqa: PLR0915
                         if not (isinstance(e, dict) and e.get("hint") == "category")
                     ],
                 }
+                resolver_parse_output = _top_selling_dealer_scope(
+                    db, resolver_parse_output, state_out.focus, contact_respond_id, space_id_for_turn
+                )
             if (
                 len(plan.domains) > 1
                 and resolver_parse_output.get("entities")

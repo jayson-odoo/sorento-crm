@@ -721,6 +721,10 @@ def entity_ids_transformer(
         category_ids = jsc.get(semantic_input, "top_selling_category_ids")
         if isinstance(category_ids, list) and category_ids and not category_grain:
             out["category_ids"] = category_ids
+        dealer_ids = slot.get("dealer_customer_ids")
+        if isinstance(dealer_ids, list) and dealer_ids:
+            # A linked dealer's own ledgers its words named (`engine._top_selling_dealer_scope`).
+            out["customer_ids"] = [jsc.js_string(i) for i in dealer_ids]
         agent_ids = [
             jsc.get(e, "uuid")
             for e in jsc.array(entities)
