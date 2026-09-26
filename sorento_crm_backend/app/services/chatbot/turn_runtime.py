@@ -1200,7 +1200,8 @@ def resolve_kinds(
     from app.services.chatbot.lanes.business import services as business_services
 
     entry = ENTRY_BY_BRANCH_KIND.get(branch_kind, "resolve")
-    entities = (jsc.get(jsc.get(ctx, "parse"), "output") or {}).get("entities") or []
+    output_block_for_domain = jsc.get(jsc.get(ctx, "parse"), "output") or {}
+    entities = output_block_for_domain.get("entities") or []
     # #1262 slice 9 (F1a), owner ruling 7: a brand-hinted token matching a LIVE
     # brand (name or code, case-insensitive exact) resolves inside the chatbot,
     # never through the shared resolver - no order-domain fan-out to
@@ -1211,8 +1212,22 @@ def resolve_kinds(
     # directly (never this function's own ctx copy), so the entity still
     # settles onto `focus.brands` exactly as any other confident entity would
     # (`turn/apply.py::_focus_rules`'s generic per-hint grouping).
+    #
+    # Security B1 / SF3 (review round, 26 Sep 2026): ORDER domain only. The strip
+    # ran unconditionally for every domain, which also blinded promotion/inventory
+    # turns naming only a brand - `gate.py`'s own brand-grouping code (~1546-1556)
+    # reads `parser.get("entities")` for a `hint: "brand"` entity ON PURPOSE for
+    # those domains, and `tier_gate.py` (~207-223) reads the SAME entities for
+    # `query_brands` - stripping it there made an unheld brand's promo ask fail
+    # OPEN (`query_brands` empty -> `recompose()` falls back to the full
+    # entitlement) instead of failing closed.
+    is_order_domain = (
+        jsc.nullish_str(output_block_for_domain.get("domain_hint")).strip().lower() == "order"
+    )
     try:
-        matched_brands = _brand_hinted_entities_matching_live(db, entities)
+        matched_brands = (
+            _brand_hinted_entities_matching_live(db, entities) if is_order_domain else []
+        )
     except Exception:  # noqa: BLE001 - a caller handing over a test double with no
         # real session (every `resolve_kinds` test that stubs `resolve_gate.run`
         # entirely and never seeds a live `Brand` table) has no opinion on brand
