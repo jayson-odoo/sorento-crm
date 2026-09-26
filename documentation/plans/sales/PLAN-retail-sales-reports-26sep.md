@@ -8,6 +8,7 @@ Q7: the scheduled send is an **automation** on the existing Automation screen, r
 existing `automation_runner` scheduled task, so `sales.report_subscriptions`, the Scheduled sends
 dialog, its routes and the `sales.reports.schedule` slug are withdrawn and **this plan adds no
 table** (R5.3). Q8: (a) ruled. Q9 is unanswered and recommendation (a) stands; Q10 is new (R5.6).
+Posted on PR #1269 as comment 5844369383 ("Round 5").
 Round 1 to 4 text is kept; a "Round 5:" note marks each place a ruling changes. Track per slice
 unchanged (R5.5): S6 stays full (a migration and an outbound send of business figures). Nothing
 built.
@@ -241,6 +242,8 @@ Each slice is its own lane and PR (one lane = one branch = one PR).
   dialog, no WhatsApp). No other slice moves.
 
 ### R5.6 Open questions (at most 2)
+
+Posted on PR #1269 as comment 5844369383 ("Round 5"), with the final slice list of R5.5.
 
 - **Q9 (from round 4, unanswered). How wide the text part of an answer may be.** (a) every column
   on every line under a column name line; (b) past 4 columns, the row total only. **Recommend
