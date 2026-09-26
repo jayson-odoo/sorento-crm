@@ -25,12 +25,15 @@
 import type { ReactNode } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import ProductSpecificationsTab from './ProductSpecificationsTab';
 import type { ProductSpecDetail } from '../../../product-specifications/types/productSpec.types';
 import type { VerificationBlock } from '../../../spec-verification/types/specVerification.types';
 
-vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock('@/lib/toast', () => ({
+  toast: { success: vi.fn(), error: vi.fn(), custom: vi.fn(), message: vi.fn(), dismiss: vi.fn() },
+}));
 
 vi.mock('next/link', () => ({
   default: ({ href, children }: { href: string; children: ReactNode }) => (
@@ -52,8 +55,18 @@ vi.mock('@/hooks/usePermissions', () => ({
   usePermissions: () => usePermissions(),
 }));
 
+// `CheckedLine` parks the real `spec_verification.unverify` deferred action
+// (fix round 1) - nothing here exercises it, so the service only needs to
+// resolve to "nothing pending" without ever being asked to create one.
+vi.mock('@/services/pendingActionService', () => ({
+  createPendingAction: vi.fn(),
+  cancelPendingAction: vi.fn(),
+  getCurrentPendingAction: vi.fn().mockResolvedValue({ pending: null, last_outcome: null }),
+}));
+
 const useProductSpecTable = vi.fn();
 vi.mock('../../hooks/useProductSpecTable', () => ({
+  DETAIL_KEY: (productId: string) => ['product-spec-detail', productId],
   useProductSpecTable: (...a: unknown[]) => useProductSpecTable(...a),
 }));
 
@@ -140,7 +153,6 @@ function mockSpecHook(
     error: null,
     refetch: vi.fn(),
     verify: vi.fn(),
-    unverify: vi.fn(),
     verificationBusy: false,
     setValue: vi.fn(),
     tombstone: vi.fn(),

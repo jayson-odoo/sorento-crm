@@ -7,18 +7,33 @@
  * and already covered by their own suite.
  *
  * Rewritten for the plain wording (AC-S2.3: "Not checked yet" / "Checked by {name}
- * on {date}" / "Needs checking again") and the deferred 5s Undo (AC-S2.4) - the
- * confirm `AlertDialog` this file used to assert is retired (D7).
+ * on {date}" / "Needs checking again") and, since fix round 1, the SERVER-deferred
+ * Undo (AC-S2.4, D7): `spec_verification.unverify` through `useDeferredAction` -
+ * `pendingActionService` is mocked rather than the hook itself, the same way
+ * `SpecVisibilitySection.test.tsx` drives its own deferred action. The confirm
+ * `AlertDialog` this file used to assert is retired (D7).
  */
 import type { ReactNode } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import ProductSpecificationsTab from './ProductSpecificationsTab';
 import type { ProductSpecDetail } from '../../../product-specifications/types/productSpec.types';
 import type { VerificationBlock } from '../../../spec-verification/types/specVerification.types';
 
-vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock('@/lib/toast', () => ({
+  toast: {
+    success: vi.fn(),
+    error: vi.fn(),
+    custom: vi.fn(),
+    message: vi.fn(),
+    // The pending-entity store takes its own countdown toast down once the parked
+    // action settles - without this the store's follow-through timer throws an
+    // unhandled rejection if it fires after the test ends.
+    dismiss: vi.fn(),
+  },
+}));
 
 vi.mock('next/link', () => ({
   default: ({ href, children }: { href: string; children: ReactNode }) => (
@@ -36,10 +51,28 @@ vi.mock('@/hooks/usePermissions', () => ({
   usePermissions: () => usePermissions(),
 }));
 
+const createPendingAction = vi.fn().mockResolvedValue({
+  id: 'pa-1',
+  action_key: 'spec_verification.unverify',
+  entity_type: 'spec_verification',
+  entity_id: 'WC100',
+  // Five seconds out from "now" - a fixed past timestamp reads as already
+  // lapsed and disables the countdown's own Cancel button.
+  commit_at: new Date(Date.now() + 5000).toISOString(),
+  window_seconds: 5,
+});
+const cancelPendingAction = vi.fn().mockResolvedValue({});
+const getCurrentPendingAction = vi.fn().mockResolvedValue({ pending: null, last_outcome: null });
+vi.mock('@/services/pendingActionService', () => ({
+  createPendingAction: (...args: unknown[]) => createPendingAction(...args),
+  cancelPendingAction: (...args: unknown[]) => cancelPendingAction(...args),
+  getCurrentPendingAction: (...args: unknown[]) => getCurrentPendingAction(...args),
+}));
+
 const verify = vi.fn();
-const unverify = vi.fn();
 const useProductSpecTable = vi.fn();
 vi.mock('../../hooks/useProductSpecTable', () => ({
+  DETAIL_KEY: (productId: string) => ['product-spec-detail', productId],
   useProductSpecTable: (...a: unknown[]) => useProductSpecTable(...a),
 }));
 
@@ -77,6 +110,22 @@ function baseDetail(verification: VerificationBlock): ProductSpecDetail {
     verification,
     values_hash: 'hash-1',
   } as ProductSpecDetail;
+}
+
+/** `useDeferredAction` inside `CheckedLine` is real (only the service is mocked), so
+ * it needs a live `QueryClient` under it - same as `SpecVisibilitySection.test.tsx`. */
+function renderTab(productId = 'p-1') {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  return {
+    queryClient,
+    ...render(
+      <QueryClientProvider client={queryClient}>
+        <ProductSpecificationsTab productId={productId} />
+      </QueryClientProvider>,
+    ),
+  };
 }
 
 function mockHook(
@@ -119,7 +168,6 @@ function mockHook(
     error: null,
     refetch: vi.fn(),
     verify,
-    unverify,
     verificationBusy: false,
     setValue: vi.fn(),
     tombstone: vi.fn(),
@@ -193,7 +241,7 @@ afterEach(() => cleanup());
 describe('CheckedLine - renders in every state (AC-S2.3)', () => {
   it('unverified: "Not checked yet", Mark as checked offered', () => {
     mockHook(baseDetail(UNVERIFIED));
-    render(<ProductSpecificationsTab productId="p-1" />);
+    renderTab();
 
     expect(screen.getByText('Not checked yet')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Mark as checked' })).toBeInTheDocument();
@@ -202,7 +250,7 @@ describe('CheckedLine - renders in every state (AC-S2.3)', () => {
 
   it('verified: "Checked by {name} on {date}", Undo offered', () => {
     mockHook(baseDetail(VERIFIED));
-    render(<ProductSpecificationsTab productId="p-1" />);
+    renderTab();
 
     expect(screen.getByText(/^Checked by Jay Odoo on /)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Undo' })).toBeInTheDocument();
@@ -211,7 +259,7 @@ describe('CheckedLine - renders in every state (AC-S2.3)', () => {
 
   it('needs_reverify: "Needs checking again", the diff renders, Mark as checked offered', () => {
     mockHook(baseDetail(NEEDS_REVERIFY));
-    render(<ProductSpecificationsTab productId="p-1" />);
+    renderTab();
 
     expect(screen.getByText('Needs checking again')).toBeInTheDocument();
     expect(screen.getByText('What moved since it was checked')).toBeInTheDocument();
@@ -223,7 +271,7 @@ describe('CheckedLine - renders in every state (AC-S2.3)', () => {
 
   it('a diff entry renders its readable value, with the unit, never [object Object]', () => {
     mockHook(baseDetail(NEEDS_REVERIFY));
-    const { container } = render(<ProductSpecificationsTab productId="p-1" />);
+    const { container } = renderTab();
 
     expect(screen.getByText('Height')).toBeInTheDocument();
     expect(screen.getByText('770 mm')).toBeInTheDocument();
@@ -238,7 +286,7 @@ describe('CheckedLine - renders in every state (AC-S2.3)', () => {
 
   it('manual_unverify: "Withdrawn by" line names the withdrawer and keeps the original stamp', () => {
     mockHook(baseDetail(MANUAL_UNVERIFY));
-    render(<ProductSpecificationsTab productId="p-1" />);
+    renderTab();
 
     expect(screen.getByText('Not checked yet')).toBeInTheDocument();
     expect(screen.getByText(/^Withdrawn by Alice Tan, /)).toBeInTheDocument();
@@ -251,7 +299,7 @@ describe('Mark as checked / Undo visibility gated on master_data.products.edit',
       permissionSet: new Set(['master_data.products.view']),
     });
     mockHook(baseDetail(VERIFIED));
-    render(<ProductSpecificationsTab productId="p-1" />);
+    renderTab();
 
     expect(screen.getByText(/^Checked by Jay Odoo on /)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Mark as checked' })).not.toBeInTheDocument();
@@ -259,37 +307,45 @@ describe('Mark as checked / Undo visibility gated on master_data.products.edit',
   });
 });
 
-describe('Undo is a deferred 5s action, never a confirm dialog (AC-S2.4, D7)', () => {
-  it('pressing Undo starts a countdown with Cancel, no dialog, and does not call unverify() yet', () => {
+describe('Undo is a server-deferred action, never a confirm dialog (AC-S2.4, D7)', () => {
+  it('pressing Undo parks spec_verification.unverify on the server, keyed by the product code', async () => {
     mockHook(baseDetail(VERIFIED));
-    render(<ProductSpecificationsTab productId="p-1" />);
+    renderTab();
 
     fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+
+    await waitFor(() => expect(createPendingAction).toHaveBeenCalledWith({
+      actionKey: 'spec_verification.unverify',
+      entityType: 'spec_verification',
+      entityId: 'WC100',
+      payload: undefined,
+    }));
 
     expect(screen.queryByText('Confirm unverify')).not.toBeInTheDocument();
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
-    expect(screen.getByRole('timer')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('timer')).toBeInTheDocument());
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
-    expect(unverify).not.toHaveBeenCalled();
+    // The window is 5s, server-side (WINDOW_REVERSIBLE) - this tab never runs its own timer.
+    expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument();
   });
 
-  it('Cancel drops the countdown without calling unverify()', () => {
+  it('Cancel withdraws the parked action without applying it', async () => {
     mockHook(baseDetail(VERIFIED));
-    render(<ProductSpecificationsTab productId="p-1" />);
+    renderTab();
 
     fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    await waitFor(() => expect(screen.getByRole('timer')).toBeInTheDocument());
+
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
-    expect(screen.queryByRole('timer')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Undo' })).toBeInTheDocument();
-    expect(unverify).not.toHaveBeenCalled();
+    await waitFor(() => expect(cancelPendingAction).toHaveBeenCalledWith('pa-1'));
   });
 });
 
 describe('Mark as checked action', () => {
   it('a single press calls verify() with no confirmation gate', () => {
     mockHook(baseDetail(NEEDS_REVERIFY));
-    render(<ProductSpecificationsTab productId="p-1" />);
+    renderTab();
 
     fireEvent.click(screen.getByRole('button', { name: 'Mark as checked' }));
 
@@ -311,7 +367,7 @@ describe('Exceptions are not a thing the user is shown (captain ruling 2026-08-1
       },
     ];
     mockHook(detail);
-    render(<ProductSpecificationsTab productId="p-1" />);
+    renderTab();
 
     expect(screen.queryByText(/Needs a human/)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument();

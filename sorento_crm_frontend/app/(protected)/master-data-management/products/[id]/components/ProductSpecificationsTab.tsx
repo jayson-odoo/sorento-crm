@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { DeferredCountdown } from '@/components/common/DeferredActionButton';
+import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { readableEntry, readableValue } from '@/lib/spec-readable';
 import {
@@ -17,9 +17,10 @@ import {
   type SpecTableRow,
 } from '@/components/spec-table';
 import { usePermissions } from '@/hooks/usePermissions';
-import { useProductSpecTable } from '../../hooks/useProductSpecTable';
+import { DETAIL_KEY, useProductSpecTable } from '../../hooks/useProductSpecTable';
 import { useProduct, useUpdateProduct } from '../../hooks/useProducts';
 import { previewSpecSearch } from '../../../product-specifications/services/productSpecService';
+import { WORKLIST_KEY } from '../../../spec-verification/hooks/useSpecVerification';
 import { InsertFieldDialog } from '@/app/(protected)/dealer-kit/tag-templates/components/InsertFieldDialog';
 import {
   hasMergeField,
@@ -34,8 +35,6 @@ import type { VerificationBlock } from '../../../spec-verification/types/specVer
 // AC-S4-11: this product's own description cannot address a line, a set or a
 // combo part - only its own fields and its own specs.
 const PRICE_TAG_INSERT_GROUPS: MergeFieldGroup[] = ['Product', 'Specs'];
-
-const UNDO_WINDOW_SECONDS = 5;
 
 /**
  * What this product's specifications are, and where each one came from.
@@ -63,28 +62,40 @@ function ordinal(n: number): string {
 
 /**
  * "Not checked yet" / "Checked by {name} on {date}" / "Needs checking again"
- * (AC-S2.3). Undo is a deferred 5s action, never a confirm dialog (AC-S2.4) - a
- * purely client-side countdown that calls the real `unverify()` only once it
- * lapses, so the record stays Checked until the window actually closes.
+ * (AC-S2.3). Undo is a server-deferred action, never a confirm dialog (AC-S2.4,
+ * D7): the record action key is `spec_verification.unverify`, keyed by the
+ * PRODUCT CODE (not a uuid), the same one the verification worklist's own row
+ * Unverify parks - so the server, not a local timer, carries the window through
+ * even if this tab is closed before it lapses.
  */
 function CheckedLine({
   block,
   registry,
   canEdit,
+  productId,
+  productCode,
   busy,
   onVerify,
-  onUnverify,
 }: {
   block: VerificationBlock;
   registry: SpecKeyDefinition[];
   canEdit: boolean;
+  productId: string;
+  productCode: string;
   busy: boolean;
   onVerify: () => void;
-  onUnverify: () => void;
 }) {
-  const [undo, setUndo] = useState<{ commitAt: number; timer: ReturnType<typeof setTimeout> } | null>(
-    null,
-  );
+  const unverify = useDeferredAction({
+    actionKey: 'spec_verification.unverify',
+    entityType: 'spec_verification',
+    entityId: productCode || null,
+    verb: 'Undoing',
+    subject: '',
+    surface: 'inline',
+    watchFromMount: true,
+    successMessage: 'Verification withdrawn',
+    invalidateKeys: [DETAIL_KEY(productId), [WORKLIST_KEY]],
+  });
 
   const stamp =
     block.verified_by_name && block.verified_at
@@ -101,19 +112,6 @@ function CheckedLine({
   const valueLabelsFor = (specKey: string) =>
     registry.find((key) => key.spec_key === specKey)?.value_labels;
 
-  const startUndo = () => {
-    const commitAt = Date.now() + UNDO_WINDOW_SECONDS * 1000;
-    const timer = setTimeout(() => {
-      onUnverify();
-      setUndo(null);
-    }, UNDO_WINDOW_SECONDS * 1000);
-    setUndo({ commitAt, timer });
-  };
-  const cancelUndo = () => {
-    if (undo) clearTimeout(undo.timer);
-    setUndo(null);
-  };
-
   const line =
     block.state === 'verified'
       ? stamp
@@ -129,10 +127,10 @@ function CheckedLine({
             {line}
           </span>
         </div>
-        {canEdit && !undo && (
+        {canEdit && !unverify.pending && (
           <div className="flex flex-wrap items-center gap-2">
             {block.state === 'verified' ? (
-              <Button size="sm" variant="outline" disabled={busy} onClick={startUndo}>
+              <Button size="sm" variant="outline" disabled={busy || unverify.isPending} onClick={() => unverify.start()}>
                 Undo
               </Button>
             ) : (
@@ -142,20 +140,7 @@ function CheckedLine({
             )}
           </div>
         )}
-        {undo && (
-          <DeferredCountdown
-            pending={{
-              id: 'spec-verification-undo',
-              action_key: 'spec_verification.undo',
-              entity_type: 'spec_verification',
-              entity_id: 'this-product',
-              commit_at: new Date(undo.commitAt).toISOString(),
-              window_seconds: UNDO_WINDOW_SECONDS,
-            }}
-            verb="Undoing"
-            onCancel={cancelUndo}
-          />
-        )}
+        {unverify.countdown}
       </div>
 
       {withdrawnBy && <p className="text-sm text-muted-foreground">{withdrawnBy}</p>}
@@ -476,9 +461,10 @@ export default function ProductSpecificationsTab({ productId }: { productId: str
             block={detail.verification}
             registry={registry}
             canEdit={canEdit}
+            productId={productId}
+            productCode={detail.product_code}
             busy={spec.verificationBusy}
             onVerify={spec.verify}
-            onUnverify={spec.unverify}
           />
 
           {/* Rendered unconditionally, empty or not: hiding this on a product with

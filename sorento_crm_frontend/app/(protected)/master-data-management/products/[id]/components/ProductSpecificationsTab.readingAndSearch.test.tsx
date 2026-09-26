@@ -8,12 +8,15 @@
 import type { ReactNode } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import ProductSpecificationsTab from './ProductSpecificationsTab';
 import type { ProductSpecDetail } from '../../../product-specifications/types/productSpec.types';
 import type { VerificationBlock } from '../../../spec-verification/types/specVerification.types';
 
-vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock('@/lib/toast', () => ({
+  toast: { success: vi.fn(), error: vi.fn(), custom: vi.fn(), message: vi.fn(), dismiss: vi.fn() },
+}));
 
 vi.mock('next/link', () => ({
   default: ({ href, children }: { href: string; children: ReactNode }) => (
@@ -31,8 +34,18 @@ vi.mock('@/hooks/usePermissions', () => ({
   usePermissions: () => usePermissions(),
 }));
 
+// `CheckedLine` parks the real `spec_verification.unverify` deferred action
+// (fix round 1) - nothing here exercises it, so the service only needs to
+// resolve to "nothing pending" without ever being asked to create one.
+vi.mock('@/services/pendingActionService', () => ({
+  createPendingAction: vi.fn(),
+  cancelPendingAction: vi.fn(),
+  getCurrentPendingAction: vi.fn().mockResolvedValue({ pending: null, last_outcome: null }),
+}));
+
 const useProductSpecTable = vi.fn();
 vi.mock('../../hooks/useProductSpecTable', () => ({
+  DETAIL_KEY: (productId: string) => ['product-spec-detail', productId],
   useProductSpecTable: (...a: unknown[]) => useProductSpecTable(...a),
 }));
 
@@ -92,7 +105,6 @@ function mockHook(detail: ProductSpecDetail) {
     error: null,
     refetch: vi.fn(),
     verify: vi.fn(),
-    unverify: vi.fn(),
     verificationBusy: false,
     setValue: vi.fn(),
     tombstone: vi.fn(),
@@ -101,6 +113,19 @@ function mockHook(detail: ProductSpecDetail) {
     createKey: vi.fn(),
     checkSimilarKey: vi.fn(),
   });
+}
+
+/** `useDeferredAction` inside `CheckedLine` is real (only the service is mocked),
+ * so it needs a live `QueryClient` under it. */
+function renderTab() {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <ProductSpecificationsTab productId="p-1" />
+    </QueryClientProvider>,
+  );
 }
 
 beforeEach(() => {
@@ -113,7 +138,7 @@ afterEach(() => cleanup());
 describe('Reading and search - two things only (AC-S2.1, AC-S2.5)', () => {
   it('renders the read values line', () => {
     mockHook(baseDetail('Water closet, One piece, Twister flush'));
-    render(<ProductSpecificationsTab productId="p-1" />);
+    renderTab();
 
     expect(screen.getByText('Reading and search')).toBeInTheDocument();
     expect(screen.getByText('Read values')).toBeInTheDocument();
@@ -122,14 +147,14 @@ describe('Reading and search - two things only (AC-S2.1, AC-S2.5)', () => {
 
   it('reads "Nothing read yet." when nothing was read', () => {
     mockHook(baseDetail(null));
-    render(<ProductSpecificationsTab productId="p-1" />);
+    renderTab();
 
     expect(screen.getByText('Nothing read yet.')).toBeInTheDocument();
   });
 
   it('renders no score, no matched-keys badge, no understanding panel, no re-read button', () => {
     mockHook(baseDetail('Water closet'));
-    render(<ProductSpecificationsTab productId="p-1" />);
+    renderTab();
 
     expect(screen.queryByText(/Understood as/i)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /read this product again/i })).not.toBeInTheDocument();
@@ -150,7 +175,7 @@ describe('Reading and search - the search box (AC-S2.10)', () => {
       unmet: [],
     });
     mockHook(baseDetail('Water closet'));
-    render(<ProductSpecificationsTab productId="p-1" />);
+    renderTab();
 
     const box = screen.getByPlaceholderText('Type what a customer would ask');
     fireEvent.change(box, { target: { value: 'one piece toilet twister' } });
@@ -171,7 +196,7 @@ describe('Reading and search - the search box (AC-S2.10)', () => {
       unmet: [],
     });
     mockHook(baseDetail('Water closet'));
-    render(<ProductSpecificationsTab productId="p-1" />);
+    renderTab();
 
     const box = screen.getByPlaceholderText('Type what a customer would ask');
     fireEvent.change(box, { target: { value: 'stainless steel basin' } });
