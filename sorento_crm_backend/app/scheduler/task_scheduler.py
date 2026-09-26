@@ -450,12 +450,16 @@ def _handler_scm_reorder_run(db, task):
 
     # The daily low stock email is an automation (PLAN-excel-preview-26sep S1; owner ruling
     # 26 Sep, Q1): fire its trigger with this run's link. Best effort - a failure here is
-    # logged and never fails a run that has already been planned and funded.
+    # logged and never fails a run that has already been planned and funded. The run and its
+    # funding are committed by now, so the rollback only drops dispatch's own work; without it
+    # a database error leaves this session aborted and the scheduler's `finish_run` on it
+    # fails (review S1). `dispatch_ready` skips a run that did not complete (review B1).
     try:
         from app.services.scm import low_stock_report_service
 
         low_stock_report_service.dispatch_ready(db, run_id)
     except Exception:
+        db.rollback()
         logger.exception("low_stock_report_ready dispatch failed for run %s", run_id)
     return {"run_id": run_id, "include_market": include_market, **funding}
 

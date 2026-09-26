@@ -187,6 +187,33 @@ def test_dispatch_failure_does_not_fail_run(db, monkeypatch):
     assert result["funded"] == 2
 
 
+def test_dispatch_sql_error_leaves_the_scheduler_session_usable(db, monkeypatch):
+    """Review S1: a DATABASE error inside dispatch (a statement timeout in the report read,
+    say) aborts the transaction. Swallowing it without a rollback left the session unusable,
+    so the scheduler's own `finish_run` bookkeeping failed with InFailedSqlTransaction right
+    after - failing a run AC-22 says dispatch never fails."""
+    from sqlalchemy import text
+
+    from app.scheduler import task_scheduler
+    from app.services.scm import low_stock_report_service as lsr
+
+    run_id = _seed_run_with_rows(db)
+    _stub_the_run(monkeypatch, run_id)
+    _record_dispatches(monkeypatch)
+
+    def _bad_sql(db, rid):
+        db.execute(text("SELECT no_such_column FROM scm.reorder_run"))
+
+    monkeypatch.setattr(lsr, "ready_context", _bad_sql)
+
+    result = task_scheduler._handler_scm_reorder_run(db, _Task())
+
+    assert result["run_id"] == run_id
+    assert result["funded"] == 2
+    # What the scheduler does next on this same session.
+    assert db.execute(text("SELECT 1")).scalar() == 1
+
+
 def test_automation_on_the_trigger_emails_its_own_recipients_the_link(db, monkeypatch):
     """End to end through the engine: an enabled rule on the trigger renders its template
     with the run's link and queues it to the rule's own recipient (Q5: recipients live on
