@@ -11,6 +11,12 @@ from app.models.access import RespondContact
 from app.models.respond_workspace import RespondWorkspace
 from app.services.contact_service import ContactService
 from app.services.portal_service import PortalService
+from app.services.user_service import UserPermissionService
+from app.services.user_contact_link import (
+    is_salesperson_contact,
+    linked_user_summary,
+    suggested_role_slug,
+)
 from app.schemas.user import RespondContactResponse, RespondContactCreate, RespondContactUpdate, ContactAgentAccessResponse
 from app.schemas.common import ListResponse
 from app.schemas.market_segment import MarketSegmentCodesUpdate
@@ -85,12 +91,16 @@ async def get_contacts(
     """Get all respond contacts with pagination and filtering."""
     try:
         service = ContactService(db)
+        can_view_users = UserPermissionService(db).check_user_has_permission(
+            current_user["id"], "user_management.users.view"
+        )
         result = service.list_contacts(
             page=page,
             limit=limit,
             query=query,
             sort_field=sort or "created_at",
-            sort_dir=dir or "asc"
+            sort_dir=dir or "asc",
+            include_linked_users=can_view_users,
         )
         return result
     except HTTPException:
@@ -174,7 +184,17 @@ async def get_contact(
     try:
         service = ContactService(db)
         contact = service.get_contact(contact_id)
-        return RespondContactResponse.model_validate(ContactService.contact_to_response_dict(contact))
+        data = ContactService.contact_to_response_dict(contact)
+        data["is_salesperson"] = is_salesperson_contact(db, contact_id)
+        data["suggested_role_slug"] = suggested_role_slug(db, contact_id)
+        can_view_users = UserPermissionService(db).check_user_has_permission(
+            current_user["id"], "user_management.users.view"
+        )
+        linked = linked_user_summary(db, contact_id) if can_view_users else None
+        data["linked_user"] = linked
+        data["linked_user_id"] = linked["id"] if linked else None
+        data["linked_user_name"] = linked["name"] if linked else None
+        return RespondContactResponse.model_validate(data)
     except HTTPException:
         raise
     except Exception as e:

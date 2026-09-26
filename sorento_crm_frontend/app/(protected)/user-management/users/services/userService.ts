@@ -20,14 +20,6 @@ import {
 } from '@/lib/api-client';
 import type { User } from '@/app/models/user';
 
-// PHASE 1 MOCK: swap in Phase 2 once `GET /users/select` carries the `phone`
-// and `respond_contact_id` filters (S3 contract 1.7). Today's `/users/select`
-// carries no phone or contact id at all, so there is no honest way to resolve
-// the OTHER user a 409 names from here - the message already names them, this
-// mock only stands in for the id the "Open user" / "Link this contact to
-// <name> instead" buttons need to navigate or link.
-const S3_USE_MOCKS = true;
-
 export interface UserListResponse {
   data: User[];
   pagination: { total: number; page: number };
@@ -181,7 +173,6 @@ export async function useNewNumber(userId: string, phoneNumber: string): Promise
  * the caller falls back to the plain error message, which already names them.
  */
 export async function findUserByPhone(phone: string): Promise<UserSelectOption | null> {
-  if (S3_USE_MOCKS) return null;
   const params = new URLSearchParams({ phone });
   const response = await apiFetch(`/api/user-management/users/select?${params.toString()}`);
   if (!response.ok) return null;
@@ -193,7 +184,6 @@ export async function findUserByPhone(phone: string): Promise<UserSelectOption |
 export async function findUserByContact(
   respondContactId: string,
 ): Promise<UserSelectOption | null> {
-  if (S3_USE_MOCKS) return null;
   const params = new URLSearchParams({ respond_contact_id: respondContactId });
   const response = await apiFetch(`/api/user-management/users/select?${params.toString()}`);
   if (!response.ok) return null;
@@ -203,9 +193,7 @@ export async function findUserByContact(
 
 /**
  * Users with no linked contact, for "Link existing user" on a contact's User
- * account section. `unlinked=true` is inert until Phase 2 (S3 1.7) - until
- * then this is every active user, which still works for a genuinely unlinked
- * pick and safely answers `USER_ALREADY_LINKED` on any other.
+ * account section (S3 1.7's `unlinked=true` filter).
  */
 export async function listUnlinkedUsers(query?: string): Promise<UserSelectOption[]> {
   const params = new URLSearchParams({ status: 'ACTIVE', unlinked: 'true' });

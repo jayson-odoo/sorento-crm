@@ -11,24 +11,8 @@ import { PageHeader } from '@/components/common/PageHeader';
 import BackToList from '@/components/common/BackToList';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useDeletedRecordGuard } from '@/hooks/useDeletedRecordGuard';
-import { getContact } from '../../contacts/[id]/services/contactService';
 import { UserProvider } from './components/user-context';
 import UserHero from './components/user-hero';
-
-// PHASE 1 MOCK: swap in Phase 2 once `GET /users/{id}` answers the S3 contract's
-// 1.7 fields itself. `linkedContact` and `phoneDiffersFromContact` are computed
-// below from fields the backend already sends (`respond_contact_id`,
-// `contact_number`) - only `phoneVerifiedAt`, `lastSignInMethod` and
-// `needsInvitation` are guesses this constant marks, since nothing on the user
-// today carries verification, session-method or invite history.
-const S3_USE_MOCKS = true;
-
-/** Digits only, so a `+60`, a leading `0` or spacing never reads as "differs"
- *  on their own. An approximation for Phase 1 - Phase 2's flag is the server's
- *  own `normalize_msisdn` compare (S3 contract 1.7). */
-function digitsOnly(phone: string | null | undefined): string {
-  return (phone ?? '').replace(/\D/g, '');
-}
 
 type NavRoutes = Record<
   string,
@@ -107,41 +91,18 @@ export default function UserLayout({
 
       const data = await response.json();
       const roles = Array.isArray(data.roles) ? data.roles : [];
-      const respondContactId = data.respond_contact_id ?? data.respondContactId ?? null;
-
-      // Real, not mocked: the contact is already fetchable, and comparing its
-      // phone to the user's own needs nothing the backend hasn't sent already.
-      let linkedContact: { id: string; name: string | null; phone_number: string | null } | null =
-        null;
-      let phoneDiffersFromContact = false;
-      if (respondContactId) {
-        try {
-          const contact = await getContact(respondContactId);
-          linkedContact = {
-            id: contact.id,
-            name: contact.name ?? null,
-            phone_number: contact.phone_number ?? null,
-          };
-          phoneDiffersFromContact =
-            digitsOnly(data.contact_number) !== digitsOnly(contact.phone_number);
-        } catch {
-          // The contact fetch is a nicety for the Sign-in section, never a
-          // reason to fail loading the user itself.
-        }
-      }
 
       // Transform snake_case from backend to camelCase for frontend
       return {
         ...data,
+        // S3 1.7 - the server is the one source of the phone comparison
+        // (its own `normalize_msisdn` compare), not this layout.
         phoneVerifiedAt: data.phone_verified_at ?? data.phoneVerifiedAt ?? null,
-        linkedContact: data.linked_contact ?? data.linkedContact ?? linkedContact,
+        linkedContact: data.linked_contact ?? data.linkedContact ?? null,
         phoneDiffersFromContact:
-          data.phone_differs_from_contact ?? data.phoneDiffersFromContact ?? phoneDiffersFromContact,
+          data.phone_differs_from_contact ?? data.phoneDiffersFromContact ?? false,
         lastSignInMethod: data.last_sign_in_method ?? data.lastSignInMethod ?? null,
-        needsInvitation:
-          data.needs_invitation ??
-          data.needsInvitation ??
-          (S3_USE_MOCKS ? Boolean(data.email) && !data.password : false),
+        needsInvitation: data.needs_invitation ?? data.needsInvitation ?? false,
         roles,
         roleId: roles[0]?.id ?? data.role_id ?? data.roleId,
         respondUserId: data.respond_user_id || data.respondUserId,

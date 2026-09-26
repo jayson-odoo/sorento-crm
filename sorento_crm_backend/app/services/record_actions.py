@@ -140,6 +140,14 @@ def _delete_user(db: Session, payload: dict):
     return UserService(db).delete_user(_entity_id(payload))
 
 
+def _unlink_user_contact(db: Session, payload: dict):
+    from app.services.user_service import UserService
+
+    # The exact unlink branch of `PUT /users/{id}` (S3 1.3/1.4) - one
+    # implementation, called from both places.
+    return UserService(db).unlink_contact(_entity_id(payload))
+
+
 # --------------------------------------------------------------------------------------
 # Registrations. `<entity>.<verb>`, the same keys the frontend's action sets name.
 # --------------------------------------------------------------------------------------
@@ -264,6 +272,17 @@ register(
         window=WINDOW_DESTRUCTIVE,
         permission="user_management.users.delete",
         label="Trash user",
+    )
+)
+
+register(
+    FormAction(
+        key="user.unlink_contact",
+        entity_types=("user",),
+        execute=_unlink_user_contact,
+        window=WINDOW_REVERSIBLE,
+        permission="user_management.users.edit",
+        label="Unlink WhatsApp contact",
     )
 )
 

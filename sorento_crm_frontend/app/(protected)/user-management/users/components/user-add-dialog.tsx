@@ -47,7 +47,7 @@ import {
 import type { RespondContact } from '../../contacts/types/contact.types';
 
 const contactLabel = (c?: { name?: string | null; phone_number?: string | null } | null) =>
-  c ? [c.name, c.phone_number].filter(Boolean).join(' · ') || 'Linked contact' : 'No linked contact';
+  c ? [c.name, c.phone_number].filter(Boolean).join(' - ') || 'Linked contact' : 'No linked contact';
 
 /** The 409s the Add user form has to branch on, inline, above the footer (S3
  *  contract 2.1) - never a toast, since each one carries its own next step. */
@@ -287,8 +287,7 @@ const UserAddDialog = ({
   };
 
   // Resolve the OTHER user a 409 named, so "Open user" / "Link this contact to
-  // <name> instead" have somewhere to go (AC-42, AC-43). Mocked to null until
-  // Phase 2 (`userService` S3_USE_MOCKS) - until then the message alone stands.
+  // <name> instead" have somewhere to go (AC-42, AC-43).
   useEffect(() => {
     if (!linkError) {
       setResolvedHolder(null);

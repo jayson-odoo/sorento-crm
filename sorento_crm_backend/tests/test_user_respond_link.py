@@ -96,7 +96,10 @@ def test_duplicate_phone_rejected(db):
     svc = UserService(db)
     with pytest.raises(Exception) as exc:
         svc.update_user(second, UserUpdate(contact_number="0123456789"))  # normalises to 60123456789
-    assert "already used" in str(exc.value).lower() or "conflict" in str(type(exc.value)).lower()
+    # S3 1.2/1.3: the conflict message now names the holder instead of the
+    # phone (`PHONE_BELONGS_TO_USER`), replacing the old
+    # "Phone number <n> is already used by another user." text everywhere.
+    assert "belongs to" in str(exc.value).lower() or "phone_belongs_to_user" in str(exc.value).lower()
 
 
 def test_backfill_idempotent(db):

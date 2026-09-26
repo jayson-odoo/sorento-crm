@@ -28,12 +28,13 @@ import { useUserActions } from '../../actions';
 // not a React hook - eslint's hook-name check goes by the imported binding.
 import { useNewNumber as applyContactPhoneToUser } from '../../services/userService';
 
-/** Last 4 digits only, same idea as the masking used elsewhere in this module -
- *  enough to recognise, not enough to dial (S3 2.2). */
+/** The contract's literal mask, `+60 12-*** 6789`: country code, the next two
+ *  digits, then stars, then the last four - enough to recognise, not enough
+ *  to dial (S3 2.2). */
 function maskPhone(phone: string): string {
   const digits = phone.replace(/\D/g, '');
-  if (digits.length <= 4) return phone;
-  return `+${digits.slice(0, 2)} *** ${digits.slice(-4)}`;
+  if (digits.length <= 6) return phone;
+  return `+${digits.slice(0, 2)} ${digits.slice(2, 4)}-*** ${digits.slice(-4)}`;
 }
 
 function formatSignInMethod(method: string | null | undefined): string | null {
@@ -128,7 +129,7 @@ const UserSignInSection = ({ user }: { user: User }) => {
               >
                 {user.linkedContact.name || 'Unnamed contact'}
                 {user.linkedContact.phone_number
-                  ? ` · ${maskPhone(user.linkedContact.phone_number)}`
+                  ? ` - ${maskPhone(user.linkedContact.phone_number)}`
                   : ''}
               </Link>
             ) : (
