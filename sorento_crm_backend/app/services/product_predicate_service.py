@@ -448,7 +448,9 @@ def _leg_promotion(db: Session, value: Any, access_levels: list[str] | None = No
     return exists().where(*conditions)
 
 
-def _leg_stock(db: Session, value: Any, access_levels: list[str] | None = None) -> ColumnElement:
+def _leg_stock(
+    db: Session, value: Any, access_levels: list[str] | None = None, stock_policy: Any = None
+) -> ColumnElement:
     """Plain on-hand > 0. Deliberately NOT the MCP's
     ``exclude_zero_system_adjustment`` semantics - that filter answers a
     different question ("hide rows an adjustment zeroed"), this one answers
@@ -465,13 +467,24 @@ def _leg_stock(db: Session, value: Any, access_levels: list[str] | None = None) 
     ``Stock.warehouse.has(Warehouse.is_active.is_(True))``), so the header
     never counts a product whose only on-hand row sits in an inactive
     warehouse the answer itself would never show.
+
+    `stock_policy` is the ASKING contact's stock visibility policy
+    (`stock_visibility.resolve_policy`), when there is one: only the locations
+    it allows count, through the same `warehouse_criterion` the stock tool
+    answers from (stock ask v2 R3). A dealer on "Availability only" limited to
+    one site pool is never told a product "has stock" off a location the
+    policy hides. `None` (staff, API key, no contact) keeps every active
+    warehouse, which is the tool's own answer for them too.
     """
+    from app.services.stock_visibility import warehouse_criterion
+
     return exists().where(
         Stock.product_id == Product.id,
         Stock.company_id == Product.company_id,
         Warehouse.id == Stock.warehouse_id,
         Warehouse.company_id == Product.company_id,
         Warehouse.is_active.is_(True),
+        warehouse_criterion(stock_policy, Stock.warehouse_id),
         Stock.quantity_on_hand > 0,
     )
 
@@ -525,6 +538,7 @@ def resolve_product_set(
     product_ids: list[str] | None = None,
     brand: str | None = None,
     access_levels: list[str] | None = None,
+    stock_policy: Any = None,
 ) -> dict:
     """(described set) ∩ (require legs), with an honest count.
 
@@ -591,7 +605,10 @@ def resolve_product_set(
         if value in (None, False):
             continue
         try:
-            clause = REQUIRE_LEGS[key](db, value, access_levels=access_levels)
+            # `stock_policy` is the stock leg's alone: the asking contact's own
+            # locations (see `_leg_stock`).
+            extra = {"stock_policy": stock_policy} if key == "stock" else {}
+            clause = REQUIRE_LEGS[key](db, value, access_levels=access_levels, **extra)
         except _UnrecognizedLabel as miss:
             unrecognized.append(miss.label)
             require_echo[key] = miss.label

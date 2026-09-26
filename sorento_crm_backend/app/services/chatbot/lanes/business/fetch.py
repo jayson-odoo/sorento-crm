@@ -2444,7 +2444,11 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
             f"{_fmt_value(jsc.get(f, 'value'))}"
             for f in (jsc.get(it, "fields") or [])
         )
-        line = f"{position}. {field_lines}"
+        # An item with no fields at all (the stock tool's availability mode renders the
+        # product and nothing else, so a dealer is never shown a quantity) is named by its
+        # own title, the product code; without this it printed as a bare "1. ".
+        title = jsc.nullish_str(jsc.get(it, "title")).strip()
+        line = f"{position}. {field_lines if field_lines else title}"
         flags = jsc.get(it, "flags")
         if jsc.truthy(flags) and jsc.truthy(jsc.get(flags, "discontinued")):
             line += "\n⚠️  *(PRODUCT DISCONTINUED)*"

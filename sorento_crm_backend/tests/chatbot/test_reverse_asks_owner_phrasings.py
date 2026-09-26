@@ -287,3 +287,102 @@ def test_which_basin_got_incoming(session_factory, stub_parser, stub_access, mon
     for p in basins[:2]:
         assert p.product_code in text, text
     assert taps[0].product_code not in text, text
+
+
+# --------------------------------------------------------------------------- #
+# A dealer on an "Availability only" stock visibility policy (stock ask v2's   #
+# scope, PLAN-chatbot-stock-ask-v2-24sep.md R1/R3): the counted set is judged  #
+# over the locations the dealer's policy allows - the same `warehouse_         #
+# criterion` the stock tool itself answers from - and no quantity reaches the  #
+# reply. Before the fix the stock leg counted every active warehouse, so a     #
+# product held only in a location the policy hides still counted ("2 taps     #
+# have stock.") beside rows the tool itself would not confirm.                 #
+# --------------------------------------------------------------------------- #
+
+
+def _availability_fake_call_tool(db, calls: list[dict[str, Any]]):
+    """The stock tool's availability-mode render (`presenters._stock_availability`):
+    one item per named product, NO fields, and the quantity question as the intro."""
+    from app.models.product import Product
+
+    def fake_call_tool(name: str, args: dict[str, Any]) -> str:
+        calls.append({"name": name, "args": dict(args)})
+        ids = list(args.get("product_ids") or [])
+        rows = db.query(Product).filter(Product.id.in_(ids)).order_by(Product.product_code).all() if ids else []
+        items = [
+            {"title": p.product_code, "fields": [], "flags": {"needs_quantity": True, "available": None}}
+            for p in rows
+        ]
+        return json.dumps(
+            {
+                "result_type": "stock_availability",
+                "intro": "How many units do you need?",
+                "items": items,
+                "has_result": bool(items),
+            }
+        )
+
+    return fake_call_tool
+
+
+def test_dealer_on_availability_only_counts_only_allowed_locations_and_sees_no_quantity(
+    session_factory, stub_parser, stub_access, monkeypatch
+):
+    from sqlalchemy import text as sa_text
+
+    from app.models.access import StockVisibilityPolicy
+
+    db = session_factory()
+    taps, _basins = _seed_taps_and_basins(db, taps=3, basins=0)
+    allowed = _warehouse(db)
+    hidden = _warehouse(db)
+    _stock_for(db, product_id=taps[0].id, warehouse_id=allowed.id, on_hand=37)
+    _stock_for(db, product_id=taps[1].id, warehouse_id=hidden.id, on_hand=41)
+    db.commit()
+
+    contact_id = _s4_contact_id("dealeravail")
+    _s4_seed_contact(session_factory, contact_id=contact_id, session_vars={"variables": {}})
+    internal_id = db.execute(
+        sa_text("SELECT id FROM respond_contacts WHERE respond_io_id = :c"), {"c": contact_id}
+    ).scalar()
+    db.add(
+        StockVisibilityPolicy(
+            id=str(uuid.uuid4()), contact_id=internal_id, mode="availability", warehouse_ids=[allowed.id]
+        )
+    )
+    db.commit()
+
+    calls: list[dict[str, Any]] = []
+    engine_mod = _s4_wire_engine(
+        session_factory,
+        monkeypatch,
+        resolve_entity=_s4_real_resolve_entity(db),
+        fetch_mcp_call=_availability_fake_call_tool(db, calls),
+    )
+    stub_parser(
+        _verdict(
+            domain="inventory",
+            intent="check_stock",
+            attribute="stock",
+            class_word="tap",
+            goal="which tap got stock",
+        )
+    )
+    stub_access()
+    turn = engine_mod.run_turn(
+        _s4_envelope(contact_id=contact_id, message_id="ZZT-dealeravail-1", text="which tap got stock"),
+        session_factory=session_factory,
+    )
+    assert turn.status == "done", turn.error
+    text = (turn.reply or {}).get("text") or ""
+
+    assert "1 tap has stock." in text, text
+    assert taps[0].product_code in text, text
+    assert taps[1].product_code not in text, text
+    assert taps[2].product_code not in text, text
+    # No quantity of ours: neither on-hand figure, and no quantity field label.
+    assert "37" not in text and "41" not in text, text
+    assert "Quantity" not in text, text
+    # The tool was asked only about the product the policy lets the dealer see.
+    asked = {pid for c in calls for pid in (c["args"].get("product_ids") or [])}
+    assert asked == {taps[0].id}, asked

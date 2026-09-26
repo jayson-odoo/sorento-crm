@@ -1602,6 +1602,23 @@ _CERT_WORD_RE = re.compile(r"cert|ikram|span|sirim|bomba|ms\s?[0-9]|halal", re.I
 _SET_PAGE_ID_CAP = 200
 
 
+def _stock_policy_for(db: Session, payload: "ResolveReferenceRequest"):
+    """The asking contact's stock visibility policy, or None when no contact is named.
+
+    Resolved through the same NULL-workspace fallback the spec policy uses below (SF-1),
+    so a contact with `workspace_id IS NULL` gets their real policy rather than none.
+    """
+    if not payload.contact_id:
+        return None
+    from app.services.field_access import resolve_contact_with_null_workspace_fallback
+    from app.services.stock_visibility import resolve_policy
+
+    resolved = resolve_contact_with_null_workspace_fallback(
+        db, contact_id=payload.contact_id, space_id=payload.space_id
+    )
+    return resolve_policy(db, resolved or payload.contact_id, payload.space_id)
+
+
 def _strip_predicate_words(text: str, words: list[str] | None) -> str:
     """`query` with every `predicate_words` entry removed, whole-word, case-insensitive.
 
@@ -2757,6 +2774,9 @@ def resolve_reference_post(
             # turn's qualifying_total must never count a tier-restricted
             # promotion the contact cannot see.
             access_levels=payload.access_levels,
+            # The stock leg counts only the locations the asking contact's own
+            # stock visibility policy allows, as the stock tool answers them.
+            stock_policy=_stock_policy_for(db, payload) if require.get("stock") else None,
         )
         # One nested block, not top-level scalars: n8n item-mutation chains
         # persist top-level keys across nodes. And never inside `by_entity_type`,
