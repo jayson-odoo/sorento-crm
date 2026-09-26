@@ -132,6 +132,22 @@ describe('AttachmentPreviewModal', () => {
     expect(screen.queryByRole('button', { name: 'Download' })).toBeNull();
   });
 
+  it('does not scroll the pdf slide wrapper itself - the viewer already scrolls its own pages (PR #1256 review, nit 8)', async () => {
+    render(<AttachmentPreviewModal open onOpenChange={() => {}} items={[pdf]} />);
+    const group = await screen.findByRole('group', { name: 'doc.pdf page 1' });
+    const slideWrapper = group.closest('.max-h-\\[80vh\\]');
+    expect(slideWrapper).not.toBeNull();
+    expect(slideWrapper).toHaveClass('overflow-hidden');
+    expect(slideWrapper).not.toHaveClass('overflow-auto');
+  });
+
+  it('still scrolls an image slide, to pan it when zoomed', () => {
+    render(<AttachmentPreviewModal open onOpenChange={() => {}} items={[img]} />);
+    const el = screen.getByAltText('photo.jpg');
+    const slideWrapper = el.closest('.max-h-\\[80vh\\]');
+    expect(slideWrapper).toHaveClass('overflow-auto');
+  });
+
   it('reads a pdf with a byte route through fetchBytes, since the CDN url sends no CORS headers', async () => {
     const fetchBytes = vi.fn(async () => ({
       ok: true,

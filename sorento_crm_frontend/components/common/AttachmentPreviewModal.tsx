@@ -364,19 +364,29 @@ export default function AttachmentPreviewModal({
           className="w-full"
         >
           <CarouselContent className="ml-0">
-            {items.map((item, i) => (
-              <CarouselItem key={item.id} className="basis-full pl-0">
-                <div className="flex max-h-[80vh] min-h-[60vh] items-start justify-center overflow-auto bg-muted/20 p-3">
-                  <PreviewSlide
-                    item={item}
-                    isActive={i === current}
-                    zoom={i === current ? zoom : 1}
-                    onWheelZoom={zoomBy}
-                    fetchBytes={resolvedFetchBytes}
-                  />
-                </div>
-              </CarouselItem>
-            ))}
+            {items.map((item, i) => {
+              // The PDF viewer scrolls its own pages internally, already capped to this
+              // same 78vh/80vh box below - a second `overflow-auto` here doubled up as a
+              // visible scrollbar right next to the viewer's own one (PR #1256 review,
+              // nit 8). Every other kind still needs it, to pan a zoomed image or a wide
+              // Excel sheet.
+              const scrolls = kindOf(item.name) !== 'pdf';
+              return (
+                <CarouselItem key={item.id} className="basis-full pl-0">
+                  <div
+                    className={`flex max-h-[80vh] min-h-[60vh] items-start justify-center bg-muted/20 p-3 ${scrolls ? 'overflow-auto' : 'overflow-hidden'}`}
+                  >
+                    <PreviewSlide
+                      item={item}
+                      isActive={i === current}
+                      zoom={i === current ? zoom : 1}
+                      onWheelZoom={zoomBy}
+                      fetchBytes={resolvedFetchBytes}
+                    />
+                  </div>
+                </CarouselItem>
+              );
+            })}
           </CarouselContent>
           {items.length > 1 && (
             <>

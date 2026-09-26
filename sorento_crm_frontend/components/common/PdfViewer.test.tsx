@@ -203,6 +203,30 @@ describe('PdfViewer', () => {
     const anchor = click.mock.contexts[0] as HTMLAnchorElement;
     expect(anchor.download).toBe('PO-123.pdf');
     expect(createObjectURL).toHaveBeenCalled();
+    // PR #1256 review, nit 5: Safari/Firefox can drop a download whose object
+    // URL was already revoked, so this stays live past the click.
+    expect(revokeObjectURL).not.toHaveBeenCalled();
+  });
+
+  it('closes the blank tab and reports the failure when Open cannot read the bytes', async () => {
+    // PR #1256 review, nit 6: openLoaded left a blank tab open and the
+    // rejection unhandled when getData() failed.
+    const fakeTab = { opener: null, location: { href: '' }, close: vi.fn() };
+    const windowOpen = vi.spyOn(window, 'open').mockReturnValue(fakeTab as unknown as Window);
+    render(<PdfViewer url="/files/po.pdf" title="PO" />);
+    await ready();
+
+    const doc = fakePdfJs.getDocument.mock.results.at(-1)?.value as {
+      promise: Promise<{ getData: () => Promise<Uint8Array> }>;
+    };
+    const resolvedDoc = await doc.promise;
+    vi.spyOn(resolvedDoc, 'getData').mockRejectedValueOnce(new Error('boom'));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open in new tab' }));
+
+    await waitFor(() => expect(fakeTab.close).toHaveBeenCalled());
+    expect(toastError).toHaveBeenCalledWith('Could not open PO');
+    windowOpen.mockRestore();
   });
 
   it('opens an http url in a new tab as a plain link', async () => {

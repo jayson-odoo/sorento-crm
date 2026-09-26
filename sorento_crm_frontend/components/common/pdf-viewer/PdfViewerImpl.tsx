@@ -293,7 +293,9 @@ export default function PdfViewerImpl({
       document.body.appendChild(a);
       a.click();
       a.remove();
-      URL.revokeObjectURL(href);
+      // Deferred, not right after click(): Safari and Firefox can drop a download
+      // whose object URL was already revoked (matches openLoaded below).
+      setTimeout(() => URL.revokeObjectURL(href), 60_000);
     } catch {
       toast.error(`Could not download ${fileName || title}`);
     }
@@ -305,12 +307,17 @@ export default function PdfViewerImpl({
     const tab = window.open('', '_blank');
     if (!tab || !loaded) return;
     tab.opener = null;
-    const bytes = await loaded.doc.getData();
-    const href = URL.createObjectURL(
-      new Blob([bytes as BlobPart], { type: 'application/pdf' }),
-    );
-    tab.location.href = href;
-    setTimeout(() => URL.revokeObjectURL(href), 60_000);
+    try {
+      const bytes = await loaded.doc.getData();
+      const href = URL.createObjectURL(
+        new Blob([bytes as BlobPart], { type: 'application/pdf' }),
+      );
+      tab.location.href = href;
+      setTimeout(() => URL.revokeObjectURL(href), 60_000);
+    } catch {
+      tab.close();
+      toast.error(`Could not open ${fileName || title}`);
+    }
   };
 
   const pageLabel = numPages ? `Page ${shownPage} of ${numPages}` : null;
