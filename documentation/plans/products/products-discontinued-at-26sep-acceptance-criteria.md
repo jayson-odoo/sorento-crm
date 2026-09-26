@@ -1,6 +1,6 @@
 # UAC - Products list: "Discontinued at" column, sort and date-range filter
 
-**Status:** in progress (Track: full - carries a data-only list-query catalog seed migration, so
+**Status:** in review, PR #1292 (Track: full - carries a data-only list-query catalog seed migration, so
 not small-fix). Plan created 2026-09-26.
 Companion plan: `PLAN-products-discontinued-at-26sep.md`. Issue: #1287.
 

@@ -1,6 +1,6 @@
 # PLAN - Products list: "Discontinued at" column, sort and date-range filter
 
-Status: in progress (Track: full - carries a data-only list-query catalog seed migration, so not small-fix). Plan created 2026-09-26.
+Status: in review, PR #1292; all ACs green, browser pass at 1280 + 375 (Track: full - carries a data-only list-query catalog seed migration, so not small-fix). Plan created 2026-09-26.
 
 **UAC:** `products-discontinued-at-26sep-acceptance-criteria.md` (the contract). **Issue:** #1287.
 **Branch:** `feat/products-discontinued-at-filter`.
