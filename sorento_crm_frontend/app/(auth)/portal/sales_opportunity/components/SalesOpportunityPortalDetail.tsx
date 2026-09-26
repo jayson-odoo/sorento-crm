@@ -3,9 +3,10 @@
 /**
  * Portal Sales Opportunity detail (UAC S2-11): stage buttons come from
  * `available_transitions` only; Lost reveals a required reason select sourced from the
- * shared meta endpoint's `lost_reasons` (same values the CRM detail page offers). Every
- * other transition (Qualified, Won, ...) applies the moment its button is clicked - only
- * Lost needs a second, explicit confirm, because only it collects an extra field first.
+ * shared meta endpoint's `lost_reasons` (same values the CRM detail page offers). Won and
+ * Lost both need an explicit confirm step (reviewer should-fix 8) - closing an opportunity
+ * either way is a one-way door (Phase 3 fix N7: neither can be edited again after) - every
+ * other transition (Qualified, ...) applies the moment its button is clicked.
  *
  * No `useRouter` - this component is unit-tested without a Next.js router context, so
  * navigation is plain `<Link>`s throughout, same as `SalesOpportunityPortalList`.
@@ -33,8 +34,8 @@ export default function SalesOpportunityPortalDetail({ id }: { id: string }) {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [lostReasonOptions, setLostReasonOptions] = useState<SearchableSelectOption[]>([]);
-  const [pendingLost, setPendingLost] = useState(false);
-  const [lostToStatusId, setLostToStatusId] = useState<string | null>(null);
+  const [pendingKey, setPendingKey] = useState<string | null>(null);
+  const [pendingToStatusId, setPendingToStatusId] = useState<string | null>(null);
   const [lostReason, setLostReason] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -95,8 +96,8 @@ export default function SalesOpportunityPortalDetail({ id }: { id: string }) {
     try {
       await updatePortalSalesOpportunity(id, { status_id: toStatusId, ...extra });
       toast.success('Opportunity updated');
-      setPendingLost(false);
-      setLostToStatusId(null);
+      setPendingKey(null);
+      setPendingToStatusId(null);
       setLostReason('');
       load();
     } catch (err) {
@@ -106,18 +107,31 @@ export default function SalesOpportunityPortalDetail({ id }: { id: string }) {
     }
   };
 
+  const cancelPending = () => {
+    setPendingKey(null);
+    setPendingToStatusId(null);
+    setLostReason('');
+  };
+
   const handleStageClick = (key: string, toStatusId: string) => {
-    if (key === 'lost') {
-      setPendingLost(true);
-      setLostToStatusId(toStatusId);
+    // Won and Lost both close the opportunity for good (Phase 3 fix N7) - a confirm
+    // step for both, not just the one that happens to collect an extra field.
+    if (key === 'lost' || key === 'won') {
+      setPendingKey(key);
+      setPendingToStatusId(toStatusId);
       return;
     }
     void applyStatus(toStatusId);
   };
 
-  const confirmLost = () => {
-    if (!lostToStatusId || !lostReason) return;
-    void applyStatus(lostToStatusId, { lost_reason: lostReason });
+  const confirmPending = () => {
+    if (!pendingToStatusId) return;
+    if (pendingKey === 'lost') {
+      if (!lostReason) return;
+      void applyStatus(pendingToStatusId, { lost_reason: lostReason });
+      return;
+    }
+    void applyStatus(pendingToStatusId);
   };
 
   return (
@@ -198,12 +212,12 @@ export default function SalesOpportunityPortalDetail({ id }: { id: string }) {
                 <Button
                   key={t.to_status_id}
                   type="button"
-                  variant={pendingLost && lostToStatusId === t.to_status_id ? 'primary' : 'outline'}
+                  variant={pendingKey && pendingToStatusId === t.to_status_id ? 'primary' : 'outline'}
                   size="sm"
                   disabled={saving}
                   onClick={() => handleStageClick(t.key, t.to_status_id)}
                 >
-                  {saving && lostToStatusId === t.to_status_id ? (
+                  {saving && pendingToStatusId === t.to_status_id ? (
                     <LoaderCircleIcon className="size-4 animate-spin" />
                   ) : null}
                   {t.label}
@@ -211,40 +225,33 @@ export default function SalesOpportunityPortalDetail({ id }: { id: string }) {
               ))}
             </div>
           )}
-          {pendingLost ? (
+          {pendingKey ? (
             <div className="flex flex-col gap-3 rounded-lg border p-3">
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="portal-opportunity-lost-reason">Lost reason</Label>
-                <SearchableSelect
-                  id="portal-opportunity-lost-reason"
-                  aria-label="Lost reason"
-                  value={lostReason}
-                  onChange={setLostReason}
-                  options={lostReasonOptions}
-                  placeholder="Pick a reason"
-                  wrapOptions
-                />
-              </div>
+              {pendingKey === 'lost' ? (
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="portal-opportunity-lost-reason">Lost reason</Label>
+                  <SearchableSelect
+                    id="portal-opportunity-lost-reason"
+                    aria-label="Lost reason"
+                    value={lostReason}
+                    onChange={setLostReason}
+                    options={lostReasonOptions}
+                    placeholder="Pick a reason"
+                    wrapOptions
+                  />
+                </div>
+              ) : null}
               <div className="flex items-center gap-2">
                 <Button
                   type="button"
                   size="sm"
-                  onClick={confirmLost}
-                  disabled={!lostReason || saving}
+                  onClick={confirmPending}
+                  disabled={(pendingKey === 'lost' && !lostReason) || saving}
                 >
                   {saving ? <LoaderCircleIcon className="size-4 animate-spin" /> : null}
                   Confirm
                 </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    setPendingLost(false);
-                    setLostToStatusId(null);
-                    setLostReason('');
-                  }}
-                >
+                <Button type="button" variant="outline" size="sm" onClick={cancelPending}>
                   Cancel
                 </Button>
               </div>

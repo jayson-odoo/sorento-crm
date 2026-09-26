@@ -158,6 +158,27 @@ describe('SalesOpportunityPortalDetail', () => {
     );
   });
 
+  it('fix reviewer-8: clicking Won reveals a confirm step, same as Lost', async () => {
+    render(<SalesOpportunityPortalDetail id="opp-1" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Won' }));
+    expect(service.updatePortalSalesOpportunity).not.toHaveBeenCalled();
+    const confirm = screen.getByRole('button', { name: /confirm|save/i });
+    fireEvent.click(confirm);
+    await waitFor(() =>
+      expect(service.updatePortalSalesOpportunity).toHaveBeenCalledWith('opp-1', {
+        status_id: 'st-won',
+      }),
+    );
+  });
+
+  it('fix reviewer-8: Cancel on a pending Won leaves the opportunity untouched', async () => {
+    render(<SalesOpportunityPortalDetail id="opp-1" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Won' }));
+    fireEvent.click(screen.getByRole('button', { name: /cancel/i }));
+    expect(service.updatePortalSalesOpportunity).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: /confirm|save/i })).toBeNull();
+  });
+
   it('has no sales order field anywhere in the portal', async () => {
     render(<SalesOpportunityPortalDetail id="opp-1" />);
     await screen.findByText('OPP-000001');
