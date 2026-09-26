@@ -506,3 +506,101 @@ def production_services(db: Session, *, space_id: str | None = None) -> ResolveG
         resolve_entity=_resolve_entity(db),
         probe=_probe(db),
     )
+
+
+def top_selling_dealer_ledgers(
+    db: Session, contact_respond_id: Any, space_id: str | None
+) -> list[tuple[str, str]] | None:
+    """A linked dealer contact's own customers as `(id, customer_name)`, or None when
+    the contact is linked to none (staff, or someone the route refuses on its own).
+
+    Reviewer S2 on PR #1273 (owner: a dealer sees only its own customers; ruling
+    pending owner confirmation): the lane never shows a linked dealer the customer
+    picker, which lists other customers' names before the route could refuse. The link
+    is the route's own test (`orders._top_selling_dealer_scope`: any
+    `respond_contact_customers` row makes the contact that customer's dealer), read on
+    the engine's per-contact scoped session."""
+    from app.models.order import Customer
+    from app.services.contact_customer_service import list_links
+    from app.services.field_access import resolve_contact_with_null_workspace_fallback
+
+    if not contact_respond_id:
+        return None
+    contact_id = resolve_contact_with_null_workspace_fallback(
+        db, contact_id=str(contact_respond_id), space_id=space_id
+    )
+    if not contact_id:
+        return None
+    ids: list[str] = []
+    for link in list_links(db, contact_id):
+        if str(link.customer_id) not in ids:
+            ids.append(str(link.customer_id))
+    if not ids:
+        return None
+    names = {
+        str(row[0]): row[1] or ""
+        for row in db.query(Customer.id, Customer.customer_name).filter(Customer.id.in_(ids)).all()
+    }
+    return [(i, names.get(i, "")) for i in ids]
+
+
+def top_selling_dealer_customer_ids(
+    own: list[tuple[str, str]], words: list[str]
+) -> list[str] | None:
+    """The dealer's own ledgers the customer words name, or None when any word names
+    none of them (the lane then refuses). Matched the way the route matches a
+    `customer_query` (a case-insensitive substring of the name), over the dealer's own
+    ledgers only, so nothing outside them is ever looked at."""
+    matched: list[str] = []
+    for word in words:
+        needle = " ".join((word or "").split()).lower()
+        hits = [cid for cid, name in own if needle and needle in (name or "").lower()]
+        if not hits:
+            return None
+        matched.extend(h for h in hits if h not in matched)
+    return matched
+
+
+def _category_words(text: str) -> list[str]:
+    """Lower-cased words, each plural folded to its singular by one trailing `s`
+    ("sinks" -> "sink"), applied to both sides so a match is word for word."""
+    return [w[:-1] if len(w) > 3 and w.endswith("s") else w for w in (text or "").lower().split()]
+
+
+def resolve_category_token(db: Session, token: str) -> list[tuple[str, str, str]]:
+    """A top selling ask's category word, as `(id, category_code, category_name)` rows
+    (PLAN-chatbot-top-x-hot-selling-24sep.md S4 point 4, AC-1954).
+
+    Not the generic resolver: under `order` it re-types a category token as a customer
+    (`entity_resolver._DOMAIN_HINT_EXPANSIONS`). An exact `category_code` or
+    `category_name` (case-insensitive, a plural folded) wins alone; otherwise a category
+    matches when the word is a whole-word run of its name ("sinks" is in "KITCHEN
+    SINK"). Never the reverse (reviewer S1, PR #1273: "kitchen sinks" took the category
+    KIT and "basin mixers" took BASIN beside BASIN MIXER, a silent widening). Several
+    matches are returned for the lane to ASK about, never all kept. Read under the
+    engine's per-contact company scope, like `resolve_warehouse_token` above."""
+    from app.models.product import ProductCategory
+
+    word = " ".join((token or "").split()).lower()
+    if not word:
+        return []
+    words = _category_words(word)
+    rows = [
+        (str(r[0]), r[1] or "", r[2] or "")
+        for r in db.query(ProductCategory.id, ProductCategory.category_code, ProductCategory.category_name)
+        .order_by(ProductCategory.category_name)
+        .all()
+    ]
+    exact = [
+        r for r in rows
+        if r[1].lower() == word or r[2].lower() == word or _category_words(r[2]) == words
+    ]
+    if exact:
+        return exact
+
+    def _has_run(name: str) -> bool:
+        have = _category_words(name)
+        return any(have[i : i + len(words)] == words for i in range(len(have) - len(words) + 1))
+
+    return [r for r in rows if _has_run(r[2])]
+

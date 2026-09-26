@@ -1,0 +1,54 @@
+{
+  "rank_by": "amount",
+  "basis": "ordered",
+  "group": "item",
+  "n": 5,
+  "date_from": "2026-08-01",
+  "date_to": "2026-08-31",
+  "filters": {
+    "customer_name": null,
+    "category_name": null,
+    "sales_agent": null,
+    "channel": "project",
+    "dealer_scoped": false
+  },
+  "total_count": 57,
+  "rows": [
+    {
+      "rank": 1,
+      "code": "SRTWC5501",
+      "quantity": 210,
+      "amount": 58800.0
+    },
+    {
+      "rank": 2,
+      "code": "SRTWT8120",
+      "quantity": 96,
+      "amount": 8640.0
+    },
+    {
+      "rank": 3,
+      "code": "SRTBS1020",
+      "quantity": 120,
+      "amount": 7200.0
+    },
+    {
+      "rank": 4,
+      "code": "SRTKT39SS",
+      "quantity": 150,
+      "amount": 4800.0
+    },
+    {
+      "rank": 5,
+      "code": "SRTSH2201",
+      "quantity": 88,
+      "amount": 2728.0
+    }
+  ],
+  "totals": {
+    "quantity": 664,
+    "amount": 82168.0
+  },
+  "sales_agent_fill_rate": null,
+  "detail": null
+}

@@ -21,6 +21,7 @@ PENDING_KINDS: tuple[str, ...] = (
     "outstanding_detail",
     "sales_report_detail",
     "kind_pick",
+    "top_selling_pick",
 )
 
 # Stay alive, tracked by `answered_positions`, after their own pick.
@@ -38,7 +39,15 @@ PENDING_KINDS: tuple[str, ...] = (
 # here does not need a parallel "replace, don't merge" rule - the existing pick-handling
 # code already replaces the tier filter every time, the same way a product roster's
 # second pick answers with only that pick's own product.
-ROSTER_KINDS: frozenset[str] = frozenset({"product_pick", "customer_pick", "kind_pick", "tier_pick"})
+#
+# `top_selling_pick` (owner, PR #1258, 26 Sep 2026 05:32Z): the top X ranking is a
+# numbered list of choices and must behave like the customer and product pickers, so it
+# is one of them rather than a detail offer that clears on its first answer. A "2" or a
+# typed code / category name resolves through the same `decide.picked_positions`, and it
+# closes under the same two rules (every row picked, or a new ask about something else).
+ROSTER_KINDS: frozenset[str] = frozenset(
+    {"product_pick", "customer_pick", "kind_pick", "tier_pick", "top_selling_pick"}
+)
 
 
 def is_roster(kind: str) -> bool:
@@ -93,6 +102,44 @@ def ask(
         team=team,
         payload=dict(payload or {}),
         asked_at_turn=asked_at_turn,
+    )
+
+
+def top_selling_pick(
+    result_set: list[dict[str, Any]] | None,
+    *,
+    asked_at_turn: int | None,
+    filters: dict[str, Any],
+) -> Pending | None:
+    """The top X ranking's printed lines as a sticky pick list (`top_selling_pick`).
+
+    `result_set` is `presenters._top_selling_envelope`'s own, one `{idx, label, code,
+    entity_type}` row per printed line (no name: owner ruling 26 Sep ~07:40Z, so the
+    option's `name` stays None), `idx` the printed rank. The option shape is
+    the roster one `turn/narrow.py::_options` builds, so every reader of a customer or
+    product roster reads this one unchanged. `status` / `domain` send a pick back to the
+    ranking that printed the list (AC-1704's carry), `filters` is what re-runs it. The
+    how-many reply and a miss print no list and arm nothing.
+    """
+    options = [
+        {
+            "position": int(row["idx"]),
+            "label": row.get("label"),
+            "code": row.get("code"),
+            "name": row.get("name"),
+            "entity_type": row.get("entity_type") or "product",
+            "payload": {},
+        }
+        for row in (result_set or [])
+        if isinstance(row, dict) and isinstance(row.get("idx"), int) and row.get("label")
+    ]
+    if not options:
+        return None
+    return ask(
+        "top_selling_pick",
+        options,
+        asked_at_turn=asked_at_turn,
+        payload={"domain": "order", "status": "top_selling", "filters": dict(filters)},
     )
 
 

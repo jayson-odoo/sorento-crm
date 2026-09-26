@@ -1,0 +1,54 @@
+{
+  "rank_by": "quantity",
+  "basis": "delivered",
+  "group": "item",
+  "n": 5,
+  "date_from": "2026-01-01",
+  "date_to": "2026-12-31",
+  "filters": {
+    "customer_name": null,
+    "category_name": null,
+    "sales_agent": "SEAN I",
+    "channel": null,
+    "dealer_scoped": false
+  },
+  "total_count": 96,
+  "rows": [
+    {
+      "rank": 1,
+      "code": "SRTKT39SS",
+      "quantity": 310,
+      "amount": 9920.0
+    },
+    {
+      "rank": 2,
+      "code": "SRTWT7445",
+      "quantity": 204,
+      "amount": 14280.0
+    },
+    {
+      "rank": 3,
+      "code": "SRTBS1020",
+      "quantity": 150,
+      "amount": 9000.0
+    },
+    {
+      "rank": 4,
+      "code": "SRTSH2201",
+      "quantity": 98,
+      "amount": 3038.0
+    },
+    {
+      "rank": 5,
+      "code": "SRTWT7446",
+      "quantity": 61,
+      "amount": 3355.0
+    }
+  ],
+  "totals": {
+    "quantity": 823,
+    "amount": 39593.0
+  },
+  "sales_agent_fill_rate": 0.87,
+  "detail": null
+}

@@ -164,6 +164,9 @@ DEFAULT_DOMAIN_ROWS: list[dict[str, Any]] = [
             # `tools[0]` - the pick is an override in
             # `lanes/business/__init__.py::run_fetch`, beside the outstanding one.
             "crm_sales_report",
+            # PLAN-chatbot-top-x-hot-selling-24sep.md S3 (AC-1941): same rule, an
+            # allow-list member only; migration `chatbot_top_selling_tool`.
+            "crm_top_selling_report",
         ],
         escalation_team_code="customer_service",
         switch_words=[
@@ -335,6 +338,7 @@ DATE_PARAM_TOOLS: set[str] = {
     "crm_outstanding_report",
     "crm_sales_report",
     "crm_low_stock_report",
+    "crm_top_selling_report",
 }
 
 # --------------------------------------------------------------------------- #

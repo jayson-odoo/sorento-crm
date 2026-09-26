@@ -65,6 +65,7 @@ from app.services.chatbot.turn import memory as memory_mod
 from app.services.chatbot.turn import tail as turn_tail
 from app.services.chatbot.turn.apply import apply as turn_apply
 from app.services.chatbot.turn.apply import is_product_shaped_entity
+from app.services.chatbot.turn.apply import record_top_selling_asked
 from app.services.chatbot.turn.policy import load_policy
 from app.services.chatbot.turn.route import route as turn_route
 # Module level and by name, the same shape `app/api/v1/external/media.py` uses for its own
@@ -766,6 +767,46 @@ def _asks_outstanding(verdict: dict[str, Any]) -> bool:
     if jsc.nullish_str(verdict.get("status")).strip() == "outstanding":
         return True
     return jsc.nullish_str(verdict.get("order_status")).strip() in OUTSTANDING_ORDER_STATUS
+
+
+def _top_selling_dealer_scope(
+    db: Session,
+    parse_output: dict[str, Any],
+    focus: Any,
+    contact_respond_id: Any,
+    space_id: str | None,
+) -> dict[str, Any]:
+    """Reviewer S2 on PR #1273 (owner: a dealer sees only its own customers; ruling
+    pending owner confirmation). A linked dealer contact's top selling ask never
+    reaches the generic customer resolver, whose picker lists every matching
+    customer's name before the route could refuse. Its customer words are matched
+    against its OWN ledgers only (`business_services.top_selling_dealer_ledgers`):
+    all matched, the ranking runs on those ledgers (`dealer_customer_ids` on the slot);
+    any word matching none of them, the lane refuses with the plain line and fetches
+    nothing (`dealer_refused`). Staff and unlinked contacts are untouched here."""
+    slot = focus.top_selling if isinstance(focus.top_selling, dict) else None
+    if slot is not None:
+        slot.pop("dealer_refused", None)
+    own = business_services.top_selling_dealer_ledgers(db, contact_respond_id, space_id)
+    if own is None:
+        return parse_output
+    entities = [e for e in (parse_output.get("entities") or []) if isinstance(e, dict)]
+
+    def _is_customer(e: dict[str, Any]) -> bool:
+        return e.get("hint") == "customer" or e.get("entity_type") == "customer"
+
+    words = [jsc.js_string(e.get("raw")) for e in entities if _is_customer(e) and jsc.truthy(e.get("raw"))]
+    focus.customers = []
+    if slot is None:
+        slot = focus.top_selling = {}
+    if words:
+        ids = business_services.top_selling_dealer_customer_ids(own, words)
+        if ids is None:
+            slot["dealer_refused"] = True
+            slot.pop("dealer_customer_ids", None)
+        else:
+            slot["dealer_customer_ids"] = ids
+    return {**parse_output, "entities": [e for e in entities if not _is_customer(e)]}
 
 
 def run_turn(
@@ -1705,8 +1746,12 @@ def _run_stages(  # noqa: PLR0915
         # defence, for a re-entry path that calls it directly.
         from app.services.chatbot.lanes.business import _SALES_REPORT_GRANT
 
+        from app.services.chatbot.contracts import SALES_FIGURE_STATUSES
+
+        # PLAN-chatbot-top-x-hot-selling-24sep.md S4 point 5: the top selling ranking is
+        # the same money under the same key, refused at the same seam.
         sales_report_grant_refused = (
-            jsc.js_string(parsed_output.get("order_status") or "").strip() == "sales_report"
+            jsc.js_string(parsed_output.get("order_status") or "").strip() in SALES_FIGURE_STATUSES
             and _SALES_REPORT_GRANT not in set(access.get("attributes") or [])
         )
         if sales_report_grant_refused:
@@ -1781,6 +1826,25 @@ def _run_stages(  # noqa: PLR0915
                 state_out.focus,
                 unsettled_only=plan.ask is None,
             )
+            # PLAN-chatbot-top-x-hot-selling-24sep.md S4 point 4 (AC-1954): under `order`
+            # the generic resolver re-types a category token as a customer
+            # (`entity_resolver._DOMAIN_HINT_EXPANSIONS["order"]["category"]`), which
+            # would filter the ranking by a customer nobody named or open a customer
+            # picker. A top selling ask resolves its category words itself, against
+            # `product_categories` (`lanes/business._top_selling_category_ids`), so the
+            # resolver is never asked about them.
+            if jsc.js_string(resolver_parse_output.get("order_status") or "").strip() == "top_selling":
+                resolver_parse_output = {
+                    **resolver_parse_output,
+                    "entities": [
+                        e
+                        for e in (resolver_parse_output.get("entities") or [])
+                        if not (isinstance(e, dict) and e.get("hint") == "category")
+                    ],
+                }
+                resolver_parse_output = _top_selling_dealer_scope(
+                    db, resolver_parse_output, state_out.focus, contact_respond_id, space_id_for_turn
+                )
             if (
                 len(plan.domains) > 1
                 and resolver_parse_output.get("entities")
@@ -2487,6 +2551,7 @@ def _run_stages(  # noqa: PLR0915
                     # An answer that is not a counted set closes the page: the customer
                     # has moved on, and "more" must not resume a set they left.
                     state_out.focus.set_page = None
+                record_top_selling_asked(state_out.focus, envelopes)
                 turn_trace.record(
                     "looked_up",
                     summary="Looked the answer up.",

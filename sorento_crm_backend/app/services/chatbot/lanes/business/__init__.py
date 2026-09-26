@@ -24,6 +24,7 @@ from typing import Any
 import logging
 import time
 
+from app.services.chatbot import contracts
 from app.services.chatbot import copy as reply_copy
 from app.services.chatbot import jsc
 from app.services.chatbot.lanes.business import fetch as fetch_mod
@@ -68,6 +69,20 @@ _SALES_REPORT_GRANT = "sales_orders.sales_report"
 #: of `fetch.SO_NOT_ENABLED_MESSAGE` / `LOW_STOCK_NOT_ENABLED_MESSAGE` above, a
 #: literal for the same reason: one wording, in one place.
 SALES_REPORT_NOT_ENABLED_MESSAGE = "Sales report is not enabled for your account."
+
+#: PLAN-chatbot-top-x-hot-selling-24sep.md "Lane wiring (S4)". The ranking's tool, and
+#: the fixed lines the lane sends BEFORE any fetch when the ask is not settled yet
+#: (owner rulings 26 Sep 2026: no default metric, never assume the grain or the basis).
+#: The MCP presenter declares the same three literals for its goldens; the backend keeps
+#: its own copy because its container does not ship `sorento_crm_mcp`, and
+#: `tests/chatbot/test_top_selling_lane.py` pins the two equal.
+TOP_SELLING_TOOL = "crm_top_selling_report"
+TOP_SELLING_ASK_METRIC = "By quantity or by amount?"
+TOP_SELLING_ASK_GROUP = (
+    "Do you want the top items inside one category, or the categories ranked against each other?"
+)
+TOP_SELLING_ASK_BASIS = "Delivered (transferred to DO) or ordered?"
+TOP_SELLING_REFUSED_OTHER_CUSTOMER = "Sorry, I can only share sales figures for your own account."
 
 #: PLAN-low-stock-report S6 (AC-62/AC-64). The intent that overrides the inventory domain's
 #: default tool pick, the tool it picks, and the per-contact key that gates it - all three
@@ -426,6 +441,87 @@ def _outstanding_offer_closed(parse_output: dict[str, Any], db: Any) -> dict[str
     }
 
 
+def _top_selling_question(slot: dict[str, Any]) -> tuple[str, str] | None:
+    """S4 point 8a: the one question an unsettled top selling ask gets, in this order:
+    the grain when the parser could not tell a category filter from a category ranking,
+    the metric when none was named, the basis when a word could mean either. None once
+    the ask is settled. A picked row (`detail_code`) is never asked about: the ranking
+    it came from already ran. Returns `(axis, line)`: the axis is what the reply records
+    as asked (`top_selling_asked`), so the next message is read as its answer only if it
+    answers that axis (`turn/apply._top_selling_waiting`, reviewer B2 on PR #1273)."""
+    if slot.get("detail_code"):
+        return None
+    if slot.get("rank_group") == "unclear":
+        return "group", TOP_SELLING_ASK_GROUP
+    if slot.get("rank_by") not in ("quantity", "amount"):
+        return "metric", TOP_SELLING_ASK_METRIC
+    if slot.get("basis") == "unclear":
+        return "basis", TOP_SELLING_ASK_BASIS
+    return None
+
+
+def _top_selling_category_ids(slot: dict[str, Any], *, db: Any) -> tuple[list[str], bool, list[str]]:
+    """The category filter a top selling ask carries, as ids: a picked category row's
+    exact code (`category_code`), else the category words the messages named
+    (`category_words`). Returns `(ids, named, ambiguous)`; `named` with no ids means a
+    category word matched nothing, which is a miss, never a silent widening to every
+    category. `ambiguous` is the codes of every category ONE word matched when it matched
+    several: the lane asks which (reviewer S1, PR #1273), it never takes them all.
+    `db is None` (a direct `run_fetch` test) resolves nothing."""
+    code = jsc.js_string(slot.get("category_code") or "").strip()
+    words = [jsc.js_string(w).strip() for w in (slot.get("category_words") or []) if jsc.truthy(w)]
+    tokens = [code] if code else words
+    if not tokens or db is None:
+        return [], bool(tokens), []
+    ids: list[str] = []
+    for token in tokens:
+        matched = business_services.resolve_category_token(db, token)
+        if len(matched) > 1:
+            return [], True, [row[1] for row in matched]
+        for category_id, _code, _name in matched:
+            if category_id not in ids:
+                ids.append(category_id)
+    return ids, True, []
+
+
+def _top_selling_ask_category(codes: list[str]) -> str:
+    """The category question: the codes only (owner, 26 Sep ~07:40Z, code only)."""
+    return f"Which category do you mean? Reply with one code: {', '.join(codes)}"
+
+
+def _fixed_reply(text: str, *, top_selling_asked: str | None = None) -> dict[str, Any]:
+    """One fixed line and nothing else, before any fetch: the refusal and the top
+    selling questions. `has_result: True` and no `outstanding_ask` keep it OFF the miss
+    lane (no escalate offer) and arm nothing; the carried `focus.status` is what makes
+    the next message land on the same ask. `outstanding_report` skips the generic
+    search-scope header."""
+    structured: dict[str, Any] = {
+        "response": text,
+        "answers": [],
+        "attachments": [],
+        "action_links": [],
+        "last_updated_at": None,
+        "has_result": True,
+        "alternatives": [],
+        "relaxed_axis": None,
+        "field_access": None,
+        "requested_attributes": [],
+        "keys_served": False,
+        "outstanding_report": True,
+        # The top selling question this line asks, if any (`_top_selling_question`'s
+        # axis); `engine.py` records it on the slot for the next turn to read.
+        "top_selling_asked": top_selling_asked,
+    }
+    item = fetch_mod.fetch_result(structured, tool=None, tier_probe=None)
+    return {
+        "kind": "result",
+        "_fetch_arm": item["_fetch_arm"],
+        "delegate": DELEGATE,
+        "delegate_payload": {"fetch": item},
+        "fetch": item,
+    }
+
+
 def _sales_report_not_enabled() -> dict[str, Any]:
     """S4 wiring point 4 (AC-1651): refuse a sales-report ask BEFORE any fetch, with
     ONE line and nothing else.
@@ -695,6 +791,9 @@ def _fetch_semantic_input(
         # 'all dates'" - `broaden_axis` lives on the full parser output, not this
         # object's other twelve fields, so it has to be named explicitly here too.
         "broaden_axis": parse_output.get("broaden_axis"),
+        # PLAN-chatbot-top-x-hot-selling-24sep.md S4 point 8: the top selling ask's own
+        # axes (`turn_runtime.lane_parse_output` projects them off the focus).
+        "top_selling": parse_output.get("top_selling"),
     }
 
 
@@ -1206,7 +1305,7 @@ def run_fetch(
     # is what still answers the refusal on that path, and is the SECOND line of
     # defence (mirrors `DOMAIN_GRANT_REQUIRED`'s own trace shape above) for a
     # re-entry path that calls `run_fetch` directly (this module's own tests).
-    if order_status_raw == "sales_report":
+    if order_status_raw in contracts.SALES_FIGURE_STATUSES:
         access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
         granted_raw = access_ctx.get("attributes")
         granted = set(granted_raw) if isinstance(granted_raw, (list, tuple, set, frozenset)) else set()
@@ -1304,6 +1403,38 @@ def run_fetch(
         # resolution the outstanding override above uses, fixed once at this one
         # seam for both tools. --------------------------------------------------- #
         _resolve_report_product_and_location(parse_output, entities, semantic_input, db=db)
+    elif domain == "order" and order_status_raw == "top_selling":
+        # PLAN-chatbot-top-x-hot-selling-24sep.md S4 point 5 (AC-1950): the ranking needs
+        # no subject, so no subject rule; never `tools[0]`. Gated on the sales report's
+        # own key (owner ruling 26 Sep: no new key), checked above for every sales
+        # figure status, before anything below can fetch.
+        tool_name = TOP_SELLING_TOOL
+        tool_item = {"name": tool_name, "_tool_pick": {"source": "top_selling_override"}}
+        slot = semantic_input.get("top_selling")
+        slot = slot if isinstance(slot, dict) else {}
+        if slot.get("dealer_refused"):
+            # Reviewer S2 (PR #1273): a linked dealer named a customer outside its own
+            # ledgers (`engine._top_selling_dealer_scope`). No picker, no fetch.
+            if trace is not None:
+                trace.add("top_selling", {"refused": "customer_not_permitted"})
+            return _fixed_reply(TOP_SELLING_REFUSED_OTHER_CUSTOMER)
+        question = _top_selling_question(slot)
+        if question is not None:
+            axis, line = question
+            if trace is not None:
+                trace.add("top_selling", {"asked": line})
+            return _fixed_reply(line, top_selling_asked=axis)
+        category_ids, category_named, ambiguous = _top_selling_category_ids(slot, db=db)
+        if ambiguous:
+            if trace is not None:
+                trace.add("top_selling", {"asked": "category", "codes": ambiguous})
+            return _fixed_reply(_top_selling_ask_category(ambiguous), top_selling_asked="category")
+        if category_named and not category_ids:
+            return _error_fragment(
+                "top selling: the category named matches no product category",
+                outcome="not_found",
+            )
+        semantic_input["top_selling_category_ids"] = category_ids
     elif tool_name in fetch_mod.ORDER_TOOLS and order_status_raw == "so_outstanding":
         # S2 (security review, 13 Sep 2026), narrowed by R13: the LEGACY bucket now only
         # catches an `so_outstanding` ask with NO subject at all (no product and no

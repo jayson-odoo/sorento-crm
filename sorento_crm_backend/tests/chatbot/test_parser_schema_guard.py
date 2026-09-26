@@ -92,10 +92,16 @@ MEASURED_VERDICT_READS: dict[str, str] = {
     # sales_channel` when a filter answer names a channel and to settle a fresh channel
     # word onto the focus directly. 35 declared keys -> 36.
     "sales_channel": "app/services/chatbot/turn/apply.py",
+    # 26 Sep 2026 (PLAN-chatbot-top-x-hot-selling-24sep.md S4): the top selling ask's
+    # three axes, read by `turn/apply.py::_top_selling_rules` onto `Focus.top_selling`.
+    # 36 declared keys -> 39.
+    "rank_by": "app/services/chatbot/turn/apply.py",
+    "basis": "app/services/chatbot/turn/apply.py",
+    "rank_group": "app/services/chatbot/turn/apply.py",
 }
 
 
-def test_measured_read_set_matches_the_36_declared_keys():
+def test_measured_read_set_matches_the_39_declared_keys():
     """The table above is complete and has no typo - every declared key is measured read
     exactly once, and the table names nothing DECLARED_KEYS does not also carry. Catches a
     stale table before it can hide a real drift in the two tests below."""

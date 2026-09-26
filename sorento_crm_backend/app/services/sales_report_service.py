@@ -58,14 +58,16 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
-from sqlalchemy import and_, case, func, literal_column
+from sqlalchemy import and_, case, func, literal_column, or_
 from sqlalchemy.dialects.postgresql import aggregate_order_by
 from sqlalchemy.orm import Session
 
 from app.models.inventory import Warehouse
 from app.models.order import Customer, SalesOrder, SalesOrderLine
-from app.models.product import Product
+from app.models.product import Product, ProductCategory
+from app.models.sales_agent import SalesAgent
 from app.services.error_handler import handle_not_found
 from app.services.order_service import resolve_warehouse_ids
 from app.services.outstanding_report_service import _customer_echo
@@ -521,4 +523,214 @@ def sales_report(
         "date_to": _as_date(date_to),
         "months": months,
         "so_rows": so_rows,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Top selling: a whole-window ranking over the SAME source, predicate and
+# per-line figures as the report above (`documentation/plans/chatbot/
+# PLAN-chatbot-top-x-hot-selling-24sep.md`, slice S2, as amended by the owner's
+# 26 Sep 2026 rulings on PR #1175). No subject, no months, no paging: `n` cuts
+# the list when given, otherwise every ranked row comes back with
+# `total_count` so the caller can ask how many to show.
+# ---------------------------------------------------------------------------
+
+_MY_TZ = ZoneInfo("Asia/Kuala_Lumpur")
+
+def _basis_figures(basis: str) -> tuple:
+    """The (quantity, amount) per-line expressions for `basis` (AC-1931).
+    "delivered" is the report's confirmed pair (transferred to DO, capped at
+    ordered). "ordered" is the whole line, `qty_ordered` / `line_total`, NOT the
+    report's ordered pair: that one counts a closed, short-delivered line only
+    up to what was delivered."""
+    if basis == "ordered":
+        return SalesOrderLine.qty_ordered, func.coalesce(SalesOrderLine.line_total, 0)
+    exprs = _per_line_exprs()
+    return exprs["confirmed_qty"], exprs["confirmed_value"]
+
+
+def current_year_window(today: Optional[date] = None) -> tuple[date, date]:
+    """The owner's date default: the current calendar year, in Malaysia."""
+    year = (today or datetime.now(_MY_TZ).date()).year
+    return date(year, 1, 1), date(year, 12, 31)
+
+
+def _names_in_order(db: Session, column_id, column_name, ids: Optional[list[str]]) -> Optional[str]:
+    """Distinct names for `ids`, comma joined, in the order the ids arrived
+    (the same first-seen rule `_customer_echo` keeps for customers)."""
+    if not ids:
+        return None
+    name_by_id = {
+        row[0]: row[1] for row in db.query(column_id, column_name).filter(column_id.in_(ids)).all() if row[1]
+    }
+    names: list[str] = []
+    for i in ids:
+        name = name_by_id.get(i)
+        if name and name not in names:
+            names.append(name)
+    return ", ".join(names) or None
+
+
+def top_selling(
+    db: Session,
+    *,
+    rank_by: str,
+    basis: str = "delivered",
+    group: str = "item",
+    n: Optional[int] = None,
+    customer_query: Optional[str] = None,
+    customer_ids: Optional[list[str]] = None,
+    category_ids: Optional[list[str]] = None,
+    sales_agent_ids: Optional[list[str]] = None,
+    channel: Optional[str] = None,
+    date_from: date,
+    date_to: date,
+    dealer_scoped: bool = False,
+    detail_code: Optional[str] = None,
+) -> dict:
+    """Rank items (or categories) by summed quantity or amount on `basis`.
+
+    Every value arrives validated and normalised by the route. ONE grouped
+    query: window functions carry the full count and the whole-set totals
+    beside the (optionally `LIMIT n`) ranked rows, so `n` never changes what
+    `total_count` / `totals` say. A group whose quantity AND amount are both 0
+    on the chosen basis has no sale to rank and is left out (an item nothing
+    was delivered of, on the delivered basis); a zero-value line with a real
+    quantity still ranks (owner ruling Q9).
+
+    `detail_code` (AC-1935, the detail offer) narrows everything to the one
+    product code (item grain) or category code (category grain), matched
+    case-insensitively, and adds that code's customers and months."""
+    qty_expr, amount_expr = _basis_figures(basis)
+    qty_sum = func.coalesce(func.sum(qty_expr), 0)
+    amount_sum = func.coalesce(func.sum(amount_expr), 0)
+
+    bucket_expr = _bucket_expr()
+    filters = _common_filters(
+        product_ids=None, customer_query=customer_query, customer_ids=customer_ids,
+        channel=channel, warehouse_ids=None, date_from=date_from, date_to=date_to,
+        bucket_expr=bucket_expr,
+    )
+    if category_ids is not None:
+        filters.append(Product.category_id.in_(category_ids))
+    agent_filter = SalesOrder.sales_agent_id.in_(sales_agent_ids) if sales_agent_ids is not None else None
+
+    if group == "category":
+        key_cols = (ProductCategory.id, ProductCategory.category_code, ProductCategory.category_name)
+    else:
+        key_cols = (Product.id, Product.product_code, Product.product_name)
+    code_col, name_col = key_cols[1], key_cols[2]
+    if detail_code:
+        filters.append(func.upper(code_col) == detail_code.upper())
+
+    metric, other = (qty_sum, amount_sum) if rank_by == "quantity" else (amount_sum, qty_sum)
+
+    def _base(query, *, with_customer=False):
+        query = query.select_from(SalesOrderLine).join(
+            SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id
+        ).join(Product, Product.id == SalesOrderLine.product_id)
+        if group == "category":
+            query = query.outerjoin(ProductCategory, ProductCategory.id == Product.category_id)
+        if customer_query or with_customer:
+            query = query.outerjoin(Customer, Customer.id == SalesOrder.customer_id)
+        return query.filter(*filters)
+
+    def _ranked_by(query, *key, tiebreak):
+        if agent_filter is not None:
+            query = query.filter(agent_filter)
+        return (
+            query.group_by(*key)
+            .having(or_(qty_sum != 0, amount_sum != 0))
+            .order_by(metric.desc(), other.desc(), tiebreak.asc().nullslast())
+        )
+
+    ranked = _base(
+        db.query(
+            code_col.label("code"),
+            name_col.label("name"),
+            qty_sum.label("quantity"),
+            amount_sum.label("amount"),
+            func.count().over().label("total_count"),
+            func.sum(qty_sum).over().label("total_quantity"),
+            func.sum(amount_sum).over().label("total_amount"),
+        )
+    )
+    ranked = _ranked_by(ranked, *key_cols, tiebreak=code_col)
+    if n is not None:
+        ranked = ranked.limit(n)
+    result = ranked.all()
+
+    rows = [
+        {
+            "rank": i,
+            "code": r.code,
+            "quantity": _qty(r.quantity),
+            "amount": _money_edge(r.amount),
+        }
+        for i, r in enumerate(result, start=1)
+    ]
+    first = result[0] if result else None
+
+    def _figures(r) -> dict:
+        return {"quantity": _qty(r.quantity), "amount": _money_edge(r.amount)}
+
+    def _top_selling_detail(row) -> dict:
+        by_customer = _ranked_by(
+            _base(
+                db.query(
+                    Customer.customer_name.label("customer_name"),
+                    qty_sum.label("quantity"),
+                    amount_sum.label("amount"),
+                ),
+                with_customer=True,
+            ),
+            Customer.id, Customer.customer_name, tiebreak=Customer.customer_name,
+        ).all()
+        month_col = func.to_char(bucket_expr, "YYYY-MM")
+        by_month = _ranked_by(
+            _base(db.query(month_col.label("month"), qty_sum.label("quantity"), amount_sum.label("amount"))),
+            month_col, tiebreak=month_col,
+        ).all()
+        return {
+            "code": row.code,
+            "name": row.name,
+            "by_customer": [{"customer_name": r.customer_name, **_figures(r)} for r in by_customer],
+            "by_month": [{"month": r.month, **_figures(r)} for r in by_month],
+        }
+
+    fill_rate = None
+    if sales_agent_ids is not None:
+        # Share of the window's SOs (every other filter applied, the agent
+        # filter NOT) that carry any agent at all: the owner's caveat that
+        # agent attribution is only as good as its fill.
+        so_total, so_with_agent = _base(
+            db.query(
+                func.count(func.distinct(SalesOrder.id)),
+                func.count(func.distinct(case((SalesOrder.sales_agent_id.isnot(None), SalesOrder.id)))),
+            )
+        ).one()
+        fill_rate = round(so_with_agent / so_total, 4) if so_total else None
+
+    return {
+        "rank_by": rank_by,
+        "basis": basis,
+        "group": group,
+        "n": n,
+        "date_from": _as_date(date_from),
+        "date_to": _as_date(date_to),
+        "filters": {
+            "customer_name": _customer_echo(db, customer_query, customer_ids),
+            "category_name": _names_in_order(db, ProductCategory.id, ProductCategory.category_name, category_ids),
+            "sales_agent": _names_in_order(db, SalesAgent.id, SalesAgent.sales_agent, sales_agent_ids),
+            "channel": channel,
+            "dealer_scoped": dealer_scoped,
+        },
+        "total_count": int(first.total_count) if first else 0,
+        "rows": rows,
+        "totals": {
+            "quantity": _qty(first.total_quantity) if first else 0,
+            "amount": _money_edge(first.total_amount) if first else 0.0,
+        },
+        "sales_agent_fill_rate": fill_rate,
+        "detail": _top_selling_detail(first) if detail_code and first else None,
     }

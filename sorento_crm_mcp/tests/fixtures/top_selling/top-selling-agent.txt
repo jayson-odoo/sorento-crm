@@ -1,0 +1,18 @@
+*Top 5 selling items*
+Ranked by: Quantity
+Basis: Delivered (transferred to DO)
+Items with sales: 96
+Customer: all
+Category: all
+Sales agent: SEAN I
+Note: only 87% of sales orders in this period carry a sales agent.
+Channel: all
+Delivery date: 01/01/2026 to 31/12/2026
+
+1. SRTKT39SS: Qty 310, RM 9,920.00
+2. SRTWT7445: Qty 204, RM 14,280.00
+3. SRTBS1020: Qty 150, RM 9,000.00
+4. SRTSH2201: Qty 98, RM 3,038.00
+5. SRTWT7446: Qty 61, RM 3,355.00
+
+Reply with a rank number to see that item's customers and months.

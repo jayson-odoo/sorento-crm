@@ -270,3 +270,78 @@ class SalesReportResponse(BaseModel):
     date_to: Optional[date] = None
     months: List[SalesReportMonth] = []
     so_rows: Optional[List[SalesReportSORow]] = None
+
+
+class TopSellingRow(BaseModel):
+    """One ranked item (`group=item`: product code) or category (`group=category`:
+    category code). Rows arrive ranked; the presenter prints them in order.
+    Owner ruling 26 Sep ~07:40Z: no `name` field, code alone is enough."""
+
+    rank: int
+    code: Optional[str] = None
+    quantity: int
+    amount: float
+
+
+class TopSellingTotals(BaseModel):
+    """Sums over EVERY ranked row, not just the ones `n` kept."""
+
+    quantity: int
+    amount: float
+
+
+class TopSellingFilters(BaseModel):
+    """The applied filters, echoed for the reply header. `dealer_scoped` is True
+    when the caller is a dealer contact forced to its own customers."""
+
+    customer_name: Optional[str] = None
+    category_name: Optional[str] = None
+    sales_agent: Optional[str] = None
+    channel: Optional[str] = None
+    dealer_scoped: bool = False
+
+
+class TopSellingDetailCustomer(BaseModel):
+    customer_name: Optional[str] = None
+    quantity: int
+    amount: float
+
+
+class TopSellingDetailMonth(BaseModel):
+    month: str
+    quantity: int
+    amount: float
+
+
+class TopSellingDetail(BaseModel):
+    """The detail offer's answer (AC-1935): one code's customers and months under
+    the same filters and basis, each sorted by the ranking metric desc."""
+
+    code: Optional[str] = None
+    name: Optional[str] = None
+    by_customer: List[TopSellingDetailCustomer] = []
+    by_month: List[TopSellingDetailMonth] = []
+
+
+class TopSellingResponse(BaseModel):
+    """`GET /api/v1/order-management/top-selling` (PLAN-chatbot-top-x-hot-selling-24sep,
+    S2, owner rulings of 26 Sep 2026). No paging: `n` absent returns every ranked
+    row and `total_count` always states the full count. `date_from` / `date_to`
+    are the RESOLVED window (the current calendar year when none was given).
+    `sales_agent_fill_rate` (0 to 1) is set only when a sales agent filter was
+    used. `detail` is set only when `detail_code` named a code with sales; `rows`
+    and `totals` then cover that one code. Every field is declared -
+    `response_model` drops undeclared ones."""
+
+    rank_by: str
+    basis: str
+    group: str
+    n: Optional[int] = None
+    date_from: date
+    date_to: date
+    filters: TopSellingFilters
+    total_count: int
+    rows: List[TopSellingRow] = []
+    totals: TopSellingTotals
+    sales_agent_fill_rate: Optional[float] = None
+    detail: Optional[TopSellingDetail] = None

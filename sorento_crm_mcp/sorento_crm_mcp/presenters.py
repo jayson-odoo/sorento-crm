@@ -57,6 +57,7 @@ PRESENTER_TOOLS: frozenset[str] = frozenset(
         "crm_outstanding_report",
         "crm_low_stock_report",
         "crm_sales_report",
+        "crm_top_selling_report",
     }
 )
 
@@ -1578,6 +1579,12 @@ def present_response(tool_name: str, raw: str) -> str:
     if tool_name == "crm_sales_report":
         return json.dumps(_sales_report_envelope(data))
 
+    # PLAN-chatbot-top-x-hot-selling-24sep.md S4: the SAME bypass, for the same
+    # reason - a ranking plus a header, a count-only how-many question, or one
+    # code's detail, none of which the generic item/field envelope could build.
+    if tool_name == "crm_top_selling_report":
+        return json.dumps(_top_selling_envelope(data))
+
     # The same bypass, for the same reason: the low stock report's payload is a STATUS
     # (ready / pending / busy) plus an attachment list, not a row collection the generic
     # item/field envelope could build items from. `attachments` rides through untouched -
@@ -2426,4 +2433,264 @@ def _sales_report_envelope(report: dict) -> dict:
         "result_type": "sales_report",
         "response": _sales_report(report),
         "has_result": isinstance(months, list) and len(months) > 0,
+    }
+
+
+# --------------------------------------------------------------------------
+# top X hot selling (PLAN-chatbot-top-x-hot-selling-24sep.md; S1 presenter, S4
+# wired to the route's own body as built on PR #1263). The same minimal envelope
+# as the sales report for the same reason: the header renders on a miss too, so
+# only `has_result` can tell the lane a miss (escalate) from a hit. Reuses the
+# sales report's and the outstanding report's formatters directly (money,
+# quantity, dates, channel, months) so the three replies cannot drift apart.
+#
+# Body (`TopSellingResponse`): `rank_by` quantity|amount, `basis`, `group`, `n`,
+# `date_from`/`date_to` (the resolved window), `filters {customer_name,
+# category_name, sales_agent, channel, dealer_scoped}`, `total_count`, `rows
+# [{rank, code, name, quantity, amount}]`, `totals`, `sales_agent_fill_rate`
+# (0 to 1, only under an agent filter) and `detail` (the detail offer's answer).
+# --------------------------------------------------------------------------
+
+# Fixed lines the lane sends BEFORE any fetch (owner: no default metric, clarify
+# when unsure whether a category is a filter or the ranking grain, or which basis
+# an ambiguous word means). Declared here so the goldens and the lane read one
+# literal each.
+TOP_SELLING_ASK_METRIC = "By quantity or by amount?"
+TOP_SELLING_ASK_GROUP = (
+    "Do you want the top items inside one category, or the categories ranked against each other?"
+)
+TOP_SELLING_ASK_BASIS = "Delivered (transferred to DO) or ordered?"
+TOP_SELLING_REFUSED_OTHER_CUSTOMER = "Sorry, I can only share sales figures for your own account."
+
+# The owner's "top 100": the route caps a named N here, the presenter never prints past it.
+_TOP_SELLING_MAX_ROWS = 100
+# The agent fill-rate note prints below this share (plan "The reply": the route
+# sends the rate whenever an agent filter is used, the presenter decides).
+_TOP_SELLING_AGENT_NOTE_BELOW = 0.95
+
+
+def _top_selling_is_category(report: dict) -> bool:
+    return report.get("group") == "category"
+
+
+def _top_selling_filters(report: dict) -> dict:
+    filters = report.get("filters")
+    return filters if isinstance(filters, dict) else {}
+
+
+def _top_selling_count(report: dict) -> int:
+    try:
+        return int(report.get("total_count") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _top_selling_agent_note(report: dict) -> str | None:
+    rate = report.get("sales_agent_fill_rate")
+    try:
+        rate = float(rate)
+    except (TypeError, ValueError):
+        return None
+    if rate >= _TOP_SELLING_AGENT_NOTE_BELOW:
+        return None
+    return f"Note: only {int(round(rate * 100))}% of sales orders in this period carry a sales agent."
+
+
+def _top_selling_axes(report: dict) -> list[str]:
+    """Every filter axis, ``all`` where none was named, the agent note under its
+    line, then the window. Shared by the ranking and the detail reply."""
+    filters = _top_selling_filters(report)
+
+    def _or_all(key: str) -> str:
+        value = filters.get(key)
+        return str(value) if _filled(value) else "all"
+
+    lines = [
+        f"Customer: {_or_all('customer_name')}",
+        f"Category: {_or_all('category_name')}",
+        f"Sales agent: {_or_all('sales_agent')}",
+    ]
+    note = _top_selling_agent_note(report)
+    if note:
+        lines.append(note)
+    lines.append(f"Channel: {_sales_channel_header(filters.get('channel'))}")
+    lines.append(f"Delivery date: {_outstanding_date_range(report.get('date_from'), report.get('date_to'))}")
+    return lines
+
+
+def _top_selling_metric_lines(report: dict) -> list[str]:
+    return [
+        f"Ranked by: {'Amount' if report.get('rank_by') == 'amount' else 'Quantity'}",
+        f"Basis: {'Ordered' if report.get('basis') == 'ordered' else 'Delivered (transferred to DO)'}",
+    ]
+
+
+def _top_selling_header(report: dict) -> str:
+    """Title, metric, basis, the FULL count (owner: the header states it), then
+    every filter axis."""
+    noun = "categories" if _top_selling_is_category(report) else "items"
+    n = report.get("n")
+    if _filled(n):
+        one = str(n) == "1"
+        title = f"*Top {n} selling {('category' if noun == 'categories' else 'item') if one else noun}*"
+    else:
+        title = f"*Top selling {noun}*"
+    return "\n".join(
+        [
+            title,
+            *_top_selling_metric_lines(report),
+            f"{noun.capitalize()} with sales: {_outstanding_fmt_int(_top_selling_count(report))}",
+            *_top_selling_axes(report),
+        ]
+    )
+
+
+def _top_selling_code(row: dict) -> str:
+    """The row's CODE only, never its name (owner, 26 Sep 2026: "don't need to show
+    name, just show code will do"). A product with no category ranks under a null
+    code and prints ``Unassigned``."""
+    code = row.get("code")
+    return str(code) if _filled(code) else "Unassigned"
+
+
+def _top_selling_row(row: dict) -> str:
+    """``n. CODE: Qty q, RM v``; ``n`` is the body's own rank: the route sorts,
+    never this."""
+    return (
+        f"{row.get('rank')}. {_top_selling_code(row)}: Qty {_outstanding_fmt_int(row.get('quantity'))}, "
+        f"{_rm_money(row.get('amount') or 0)}"
+    )
+
+
+def _top_selling_rows(report: dict) -> list[dict]:
+    rows = report.get("rows") if isinstance(report.get("rows"), list) else []
+    return [r for r in rows if isinstance(r, dict)][:_TOP_SELLING_MAX_ROWS]
+
+
+def _top_selling_detail(report: dict) -> str:
+    """The detail offer's answer: one code's customers and months under the SAME
+    filters and basis the ranking ran with, each list in the route's own order
+    (the ranking metric desc). A code with no sales has no `detail` and takes the
+    miss line instead (`_top_selling`)."""
+    detail = report.get("detail") if isinstance(report.get("detail"), dict) else {}
+    code = detail.get("code") if _filled(detail.get("code")) else "Unassigned"
+    lines = [f"*{code}: customers and months*", *_top_selling_metric_lines(report), *_top_selling_axes(report)]
+    totals = report.get("totals") if isinstance(report.get("totals"), dict) else {}
+    lines.append(
+        f"Total: Qty {_outstanding_fmt_int(totals.get('quantity'))}, {_rm_money(totals.get('amount') or 0)}"
+    )
+    customers = [r for r in (detail.get("by_customer") or []) if isinstance(r, dict)]
+    months = [r for r in (detail.get("by_month") or []) if isinstance(r, dict)]
+    blocks = ["\n".join(lines)]
+    if customers:
+        blocks.append(
+            "*_By customer_*\n"
+            + "\n".join(
+                f"{i}. {_outstanding_label(r.get('customer_name'))}: Qty "
+                f"{_outstanding_fmt_int(r.get('quantity'))}, {_rm_money(r.get('amount') or 0)}"
+                for i, r in enumerate(customers, start=1)
+            )
+        )
+    if months:
+        blocks.append(
+            "*_By month_*\n"
+            + "\n".join(
+                f"{_sales_month_label(r.get('month'))}: Qty "
+                f"{_outstanding_fmt_int(r.get('quantity'))}, {_rm_money(r.get('amount') or 0)}"
+                for r in months
+            )
+        )
+    return "\n\n".join(blocks)
+
+
+def _top_selling(report: dict) -> str:
+    """The whole WhatsApp reply for one route body. Four shapes:
+
+    * `detail` present: the detail offer's answer (customers and months);
+    * rows present: the ranking plus the detail offer (owner: required);
+    * no rows but a count: the message named no N (the lane asked the route for the
+      count only), so state the count (the header) and ask how many (owner rulings
+      26 Sep: no default N, no partial list, no "more");
+    * no rows and no count: the miss line.
+
+    Length is never a reason here: n8n already chunks a long WhatsApp message
+    (owner, PR #1258 05:32Z), so a named N up to 100 goes out whole."""
+    if isinstance(report.get("detail"), dict):
+        return _top_selling_detail(report)
+    header = _top_selling_header(report)
+    category = _top_selling_is_category(report)
+    rows = _top_selling_rows(report)
+    if not rows:
+        total = _top_selling_count(report)
+        if total > 0:
+            noun = "categories" if category else "items"
+            return (
+                header + f"\n\nHow many {noun} do you want to see? "
+                f"Reply with a number from 1 to {min(total, _TOP_SELLING_MAX_ROWS)}."
+            )
+        return header + "\n\n" + SALES_REPORT_MISS_MESSAGE
+    offer = (
+        "Reply with a rank number to see that category's top items."
+        if category
+        else "Reply with a rank number to see that item's customers and months."
+    )
+    body = "\n".join(_top_selling_row(r) for r in rows)
+    return header + "\n\n" + body + "\n\n" + offer
+
+
+def _top_selling_pick_row(row: dict, *, category: bool) -> dict:
+    """One printed line as a pick row (owner, PR #1258 05:32Z: the list behaves like
+    the customer and product pickers). The `{idx, label, code, entity_type}` roster
+    shape with no `name` (owner ruling 26 Sep ~07:40Z: code only, and the route sends
+    none); `idx` is the printed rank so a later "2" means line 2, and the label is the
+    code the line printed, which is what a typed answer matches exactly
+    (`turn/decide._positions_by_label`)."""
+    return {
+        "idx": row.get("rank"),
+        "label": _top_selling_code(row),
+        "code": row.get("code"),
+        "entity_type": "category" if category else "product",
+    }
+
+
+def _top_selling_envelope(report: dict) -> dict:
+    """What `present_response` returns for `crm_top_selling_report`. The how-many
+    reply is not a miss (nothing to escalate), so it carries `has_result: true`
+    under its own `result_type`, which the lane reads to arm nothing. `result_set`
+    is the pick list the lane arms as a sticky `top_selling_pick` roster (backend
+    `turn/pending.top_selling_pick`); empty whenever no ranked list was printed,
+    the detail reply included (the list it answers stays open on its own).
+
+    A route refusal arrives here as the AppException body (`{message, detail,
+    code}`, no `rank_by`): the two the customer is meant to read become their fixed
+    lines, and anything else is an `error` envelope the lane treats as a failure."""
+    if "rank_by" not in report and _filled(report.get("code")):
+        code = str(report.get("code"))
+        refusal = {
+            "customer_not_permitted": TOP_SELLING_REFUSED_OTHER_CUSTOMER,
+            "sales_report_not_enabled": "Sales report is not enabled for your account.",
+        }.get(code)
+        if refusal is None:
+            return {"error": f"{code}: {report.get('message') or ''}".strip()}
+        return {
+            "result_type": "top_selling_refused",
+            "response": refusal,
+            "has_result": True,
+            "result_set": [],
+        }
+    if isinstance(report.get("detail"), dict):
+        return {
+            "result_type": "top_selling_detail",
+            "response": _top_selling(report),
+            "has_result": True,
+            "result_set": [],
+        }
+    rows = _top_selling_rows(report)
+    how_many = not rows and _top_selling_count(report) > 0
+    category = _top_selling_is_category(report)
+    return {
+        "result_type": "top_selling_how_many" if how_many else "top_selling",
+        "response": _top_selling(report),
+        "has_result": bool(rows) or how_many,
+        "result_set": [_top_selling_pick_row(r, category=category) for r in rows],
     }

@@ -763,6 +763,48 @@ CATALOG: tuple[ToolSpec, ...] = (
         restricted_fields=(("sales_orders.sales_report", "Sales report"),),
     ),
     ToolSpec(
+        "crm_top_selling_report",
+        (
+            "Top selling ITEMS (or CATEGORIES) over a date window, ranked by quantity or by "
+            "amount - the same sales_order_lines source, exclusions and bucket date as "
+            "crm_sales_report. Returns `rows[]` (rank, code, quantity, amount - code alone, "
+            "no name, owner ruling 26 Sep), "
+            "`total_count` (every ranked row, always the full count), `totals` over the whole "
+            "set, the resolved `date_from`/`date_to`, `basis`, the applied `filters`, and "
+            "`sales_agent_fill_rate` when a sales agent filter was used.\n\n"
+            "`rank_by` - quantity | amount, REQUIRED (422 `rank_by_required`): never guess, ask "
+            "the customer which one. `basis` - delivered (default: transferred to DO, capped at "
+            "ordered) | ordered. `group` - item (default) | category (rank categories). `n` - how "
+            "many rows, 1 to 100, exactly the number the customer named (no paging, no 'more'). "
+            "When the customer named no number, send `count_only=true`: it returns the full "
+            "`total_count` and NO rows (a single ranked row is still returned), so you can say "
+            "the count and ask how many; never omit `n` to pull every row.\n\n"
+            "FILTERS (all optional, ANDed): `customer_ids` (csv/JSON/repeated UUIDs), "
+            "`customer_query` (partial customer NAME, min 3 chars), `category_ids`, "
+            "`sales_agent_ids` (sales_orders.sales_agent_id), `channel` dealer | project, "
+            "`date_from`/`date_to` on the bucket date (required_date, else order_date); both "
+            "omitted = the current calendar year.\n\n"
+            "DETAIL: `detail_code` = one row's code (a product code, or a category code under "
+            "group=category) answers the detail offer: `rows`/`totals` narrow to that code and "
+            "`detail` carries its `by_customer` and `by_month`, same filters and basis.\n\n"
+            "ACCESS: pass `contact_id` + `space_id` (both or neither). The contact needs the "
+            "Sales report reveal (403 `sales_report_not_enabled`); a dealer contact is forced "
+            "to its own customers and naming another is 403 `customer_not_permitted`, the "
+            "same 403 any contact that is not office staff gets."
+        ),
+        "/api/v1/order-management/top-selling",
+        (),
+        (
+            "rank_by", "basis", "group", "n", "customer_ids", "customer_query",
+            "category_ids", "sales_agent_ids", "channel", "date_from", "date_to",
+            "contact_id", "space_id", "detail_code", "count_only",
+        ),
+        domain="orders",
+        related_tools=("crm_sales_report",),
+        escalation_team="sales",
+        restricted_fields=(("sales_orders.sales_report", "Sales report"),),
+    ),
+    ToolSpec(
         "crm_order_analytics",
         (
             "AGGREGATE / ANALYTICAL tool for customer sales orders - computes a single "

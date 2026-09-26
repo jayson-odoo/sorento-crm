@@ -1,0 +1,43 @@
+{
+  "rank_by": "quantity",
+  "basis": "delivered",
+  "group": "item",
+  "n": null,
+  "date_from": "2026-01-01",
+  "date_to": "2026-12-31",
+  "filters": {
+    "customer_name": null,
+    "category_name": null,
+    "sales_agent": null,
+    "channel": null,
+    "dealer_scoped": false
+  },
+  "total_count": 1,
+  "rows": [
+    {
+      "rank": 1,
+      "code": "SRTWT7445",
+      "quantity": 1240,
+      "amount": 86400.0
+    }
+  ],
+  "totals": {
+    "quantity": 1240,
+    "amount": 86400.0
+  },
+  "sales_agent_fill_rate": null,
+  "detail": {
+    "code": "SRTWT7445",
+    "name": "Kitchen Sink 2 Bowl",
+    "by_customer": [
+      {"customer_name": "HANLIM TRADING SDN BHD", "quantity": 610, "amount": 42700.0},
+      {"customer_name": "KIM HUAT HARDWARE", "quantity": 400, "amount": 27800.0},
+      {"customer_name": null, "quantity": 230, "amount": 15900.0}
+    ],
+    "by_month": [
+      {"month": "2026-03", "quantity": 520, "amount": 36300.0},
+      {"month": "2026-01", "quantity": 410, "amount": 28400.0},
+      {"month": "2026-02", "quantity": 310, "amount": 21700.0}
+    ]
+  }
+}

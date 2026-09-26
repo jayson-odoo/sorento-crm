@@ -366,6 +366,12 @@ PendingKind = Literal[PENDING_KINDS]  # type: ignore[valid-type]
 # caller inspecting the stored session state, not for this re-run decision.
 DETAIL_OFFER_KINDS: tuple[str, ...] = ("outstanding_detail", "sales_report_detail")
 
+# PLAN-chatbot-top-x-hot-selling-24sep.md "Lane wiring (S4)" point 5: the `order_status`
+# values that read sales figures under the `sales_orders.sales_report` reveal key (the
+# owner's access ruling, 26 Sep 2026: no new key). The engine's grant-before-roster
+# check reads this one tuple, so the two asks cannot be gated differently.
+SALES_FIGURE_STATUSES: tuple[str, ...] = ("sales_report", "top_selling")
+
 # --------------------------------------------------------------------------- #
 # Session state (R2: every key compile-current-state writes, nothing dropped)
 # --------------------------------------------------------------------------- #
@@ -549,6 +555,9 @@ class Focus(BaseModel):
     date_window: dict[str, Any] | None = None
     # AC-1317: where a counted-set answer got to, `{set_key, offset}`.
     set_page: dict[str, Any] | None = None
+    # PLAN-chatbot-top-x-hot-selling-24sep.md "Lane wiring (S4)" point 8: the top selling
+    # ask's own axes while `status == "top_selling"` (`turn/state.py::Focus.top_selling`).
+    top_selling: dict[str, Any] | None = None
     # Any entity kind without a named axis above, keyed by kind. A kind this turn's
     # policy narrows on but the Focus never declared still has somewhere safe to sit
     # rather than being dropped on the way to the session.

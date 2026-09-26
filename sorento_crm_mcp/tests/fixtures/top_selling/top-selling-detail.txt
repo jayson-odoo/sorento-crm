@@ -1,0 +1,19 @@
+*SRTWT7445: customers and months*
+Ranked by: Quantity
+Basis: Delivered (transferred to DO)
+Customer: all
+Category: all
+Sales agent: all
+Channel: all
+Delivery date: 01/01/2026 to 31/12/2026
+Total: Qty 1,240, RM 86,400.00
+
+*_By customer_*
+1. HANLIM TRADING SDN BHD: Qty 610, RM 42,700.00
+2. KIM HUAT HARDWARE: Qty 400, RM 27,800.00
+3. Unassigned: Qty 230, RM 15,900.00
+
+*_By month_*
+Mar 2026: Qty 520, RM 36,300.00
+Jan 2026: Qty 410, RM 28,400.00
+Feb 2026: Qty 310, RM 21,700.00
