@@ -3,275 +3,365 @@
 **Slug:** `product-specs-non-technical-26sep` | **Domain:** products (master data)
 **Issue:** #1286. **UAC:** `product-specs-non-technical-acceptance-criteria.md` (the contract; where
 this plan and the UAC disagree, the UAC wins). **Review:** `UX-REVIEW-product-specifications-26sep.md`
-(diagnosis with file:line and the element verdicts this plan builds). **Mockups:** `mockups/`.
+(diagnosis with file:line; its brand verdicts are superseded by the round 1 rulings below).
+**Rule appendix:** `rule-engine-built-in-rules.md` (every built-in rule in the new form).
+**Mockups:** `mockups/`.
 **Classification:** CORE, schema `public`. No new table, no new permission.
-**Status:** DRAFT, 26 Sep 2026. Planned, not built. Waiting on the owner's Lavish review of the
-mockups and answers to the grill questions (section 8). **Track: full** (four slices, one lane,
-expected diff well over 300 lines, and S0 may carry a data migration; see Q12).
+**Status:** DRAFT, round 2, 26 Sep 2026. Planned, not built. Round 1 owner rulings applied
+(section 8). Waiting on the owner for Q3, Q8, Q9, Q10 (confirm) and Q11, and on the Lavish review
+of the regenerated mockups. **Track: full** (one lane, expected diff well over 300 lines, two data
+migrations: the Brand specification removal and the rule conversion).
 **Lane:** one lane, one branch, one PR; slices land as commits on it (lane merge discipline,
 CLAUDE.md). Branch it from `origin/main` when the owner has answered.
 **Measured on:** `origin/main` `51d30ccc5`.
 
+## Owner rulings, round 1 (26 Sep 2026, 23:45 MYT, verbatim in PR #1290)
+
+- **Owner ruling, 26 Sep 2026 (Q1, Q2, Q4):** the Brand specification is redundant; the product
+  already has a brand field, and that field is the only brand. Applied as D1 to D3.
+- **Owner ruling, 26 Sep 2026 (Q5, Q6):** no sentences-plus-Advanced split. Rules must be
+  configurable easily and fool-proof, backed by a rule engine; "if the rule engine is not simple
+  enough to cover, then the engine is the problem". Applied as D5 and D8 (no Advanced anywhere).
+- **Owner ruling, 26 Sep 2026 (Q7):** price tag wording is okay where it is. Applied as D9. The
+  owner's line numbered 7 answers the price tag question, which the plan numbered Q10; the
+  product tab order (the plan's Q7) is taken as the recommendation and confirmed in round 2.
+- **Owner ruling, 26 Sep 2026 (Q12):** one lane.
+
 ## 1. Journey (PRINCIPLES step 0)
 
-Two actors; the default view of every screen is built for them. The maintainer gets one closed
-**Advanced** disclosure per screen and nothing else.
+Two actors; every screen is built for them. There is no Advanced disclosure for a maintainer: if a
+case needs one, the rule engine is wrong (owner ruling, Q6).
 
 **A. Merchandiser checks a product** (`master_data.products.edit`), Products > a product >
 Specifications.
 
-1. The tab opens on the product's specs as a list of plain rows: Brand SORENTO, Product class
-   Water closet, Type One piece, Capacity 8 oz. Above them, one line: "Not checked yet" and a
-   **Mark as checked** button. Nothing else is open.
-2. Brand is wrong. They press the pencil on Brand; a dropdown lists the brands in the Brands
-   master (Bravat, Cabana, Infinity, Mocha, Sorento, and the rest the master holds). They pick
-   Mocha. The product's own Brand changes (the same field as the Details tab), the Brand row now
-   reads Mocha with source "Product's brand", and a toast says so.
+1. The tab opens on the product's specs as plain rows: Product class Water closet, Type One
+   piece, Flush type Twister, Trap S-trap. Above them, one line: "Not checked yet" and a
+   **Mark as checked** button. No Brand row: the brand is on the product's Details tab and
+   nowhere else.
+2. A value is wrong. They press the pencil on Flush type and pick Siphonic from the list.
 3. A value is missing. **Add specification**, pick "Capacity (oz)", type 8, save.
-4. They press **Mark as checked**. The line reads "Checked by {their name}, today" with an Undo that
-   counts down 5 s.
+4. They press **Mark as checked**. The line reads "Checked by {their name}, today" with an Undo
+   that counts down 5 s.
 5. Only when they want it: **Reading and search** (collapsed, at the bottom) opens to the
-   product's description, "Search finds this product", "Read specs from a text", and "Read this
-   product again".
+   product's description, "Search finds this product", what search matches, "Read specs from a
+   text" and "Read this product again".
 
-What they hold at the end: correct specs, a checked stamp, and they never saw a pattern, a slug
-or the word "Derived".
+What they hold at the end: correct specs, a checked stamp, and they never saw a pattern, a code
+name or the word "Derived".
 
-**B. Spec owner fixes how a spec is read** (`master_data.spec_registry.edit`), Master data >
+**B. Spec owner changes how a spec is read** (`master_data.spec_registry.edit`), Master data >
 Product Specifications.
 
 1. The list shows Specification, Type ("List", "Number (mm)", "Yes or no"), Choices, Products,
-   and one status pill at the top: **Up to date** or **Needs a re-read** with a Re-read button.
-2. They open Capacity (oz). The Back link sits with the title. Four tabs: **Details**,
-   **Choices and words**, **How it is read**, **Products**. Details has Name, Unit oz, In use,
-   Highest believable value, and **Other names for this specification**: oz, ounce, ounces.
-3. **How it is read** lists one rule: "1. The number just before OZ, in the description or
-   flyer." No badge, no pattern. **Advanced** on the row shows the pattern for the maintainer.
-4. They open Brand. How it is read: "1. The product's brand." Choices and words lists the
-   Brands master read-only, each with its "Words customers say", and **Add a brand** goes to
-   the Brands master.
-5. They add a rule to Capacity with the sentence menu ("The number before a word: OUNCE"), try
-   it on a real product, see what would change, save. The list's status turns **Needs a
-   re-read**; they press Re-read; it turns **Reading...** then **Up to date**, and stays so after
-   a deploy.
+   and one status pill at the top: **Up to date**, or **Needs a re-read** with a Re-read button.
+   Brand is not in the list.
+2. They open Finish or colour. Four tabs: **Details**, **Choices and words**, **How it is read**,
+   **Products**.
+3. **How it is read** lists numbered rules, each one sentence built from the choices it was made
+   with: "1. When the description or flyer says MATT BLACK, Finish is Matt black." Nothing else
+   is on the row; no pattern exists anywhere to show.
+4. They press **Add a rule**. The rule form asks three things, each a pick or a typed word: **Look
+   in** (Description or flyer), **Find** (Words: GUNMETAL, GUN METAL), **Answer** (Gunmetal).
+   Optional fourth: **Only when** another spec has a value. The sentence at the top of the form
+   updates as they fill it. **Try it on** a real product shows what the rule reads; **See what
+   would change** shows the products whose value would change before they save.
+5. They save. The list's status turns **Needs a re-read**; they press Re-read; it turns
+   **Reading** then **Up to date**, and stays so after a deploy.
 
-Decisions per journey: A, one per wrong value plus one Mark as checked; B, which sentence and its
-blanks. Nothing asks them for a slug, a pattern or a source code.
+Decisions per journey: A, one per wrong value plus one Mark as checked; B, the three picks of a
+rule. Nothing asks them for a code name, a pattern or a source code.
 
 ## 2. What exists (measured; the review has the file:line)
 
-- The FE already turns builder rules into sentences (`lib/ruleSentence.ts` `builderSentence`,
-  `:215-249`) and **no screen calls it**. View mode uses `ruleSentence`, which falls back to the
-  raw pattern for every number rule (`plainPattern` gives up on parentheses).
-- 25 built-in rules are raw patterns with no builder (`product_spec_registry.py:268-376`).
-- Brand has three sources (Brands master for search, stored values for the model prompt, empty
-  registry list for the picker). Derivation reads the product's own brand row
-  (`product_spec_derivation.py:833-835`) and stamps it `derived` (`:1254-1260`), which the FE
-  labels "Description" (`SpecSourceBadge.tsx:40`).
-- **Changing a product's brand does not re-read its specs:** `brand_id` is missing from
-  `DERIVATION_INPUTS` (`app/services/product_spec_change_listener.py:66-73`), so the Brand spec
-  stays stale until something else re-derives the product.
-- `useBrandSelectQuery` (`master-data-management/shared/hooks/use-brand-select-query`) is what
-  `ProductForm.tsx:39` already uses for the Brand field. Reuse it.
+- **Brand is stored twice.** `products.brand_id` is the product's brand (the Details tab). The
+  `brand` specification copies it: its one rule reads `product.brand.brand_name`
+  (`product_spec_derivation.py:833-835`), stamps it `derived`, and the picker on the product tab
+  lists the registry's empty `allowed_values` (`product_spec_registry.py:585-599`), which is why
+  it says "No results found" and why typing a brand there creates a shadow value.
+- **Who reads the Brand specification value today:** search binds a brand from the Brands master
+  and filters on the stored spec value (`product_spec_search.py:320-332, 342-370, 460-489`); the
+  customer sentence leads with it (`product_spec_rendering.py:150`); the understanding prompt
+  offers stored values minus the registry row's `excluded_values` OTHERS and NO LOGO
+  (`product_spec_understanding.py:151-170, 189, 206`); derivation flags company copies that
+  disagree on brand (`product_spec_derivation.py:1680-1692`, 6 rows catalogue wide at the time
+  that comment was written).
+- `brand_id` is not in `DERIVATION_INPUTS` (`product_spec_change_listener.py:66-73`). With the
+  Brand specification gone this stops mattering: nothing derived depends on the brand.
+- **The rule engine today** (`_rule_matches`, `product_spec_derivation.py:708-800`) runs nine
+  match kinds: `contains`, `ends_with`, `present`, `regex`, `code_suffix`, `code_contains`,
+  `code_starts_with`, `from_field`, `name_head`. `regex` and `present` take a raw regular
+  expression. The shipped list is 269 rules over 50 specifications; 49 of them carry a regular
+  expression (`_rules_from_shipped_tables`, `product_spec_registry.py:283-520`).
+- **A sentence layer already exists:** each rule may carry a `builder` (the sentence it was made
+  from), compiled server side by `compile_builder` (`product_spec_registry.py:190-250`) and
+  client side by `lib/ruleSentence.ts` `compileBuilder`; a save where the two disagree is refused.
+  The builder menu has 12 kinds and 41 shipped rules have no builder, which is why those show raw.
 - Catalogue freshness `finished_at` lives in process memory (`product_spec_rederive.py:32-33`);
-  the rules fingerprint is persisted in a `product_spec_search_policy` row
-  (`_derived_rules_fingerprint`, `:37,72-74`).
+  the rules fingerprint is persisted in a `product_spec_search_policy` row.
 - The record page renders `PageHeader` outside `Container` (`SpecKeyRecordDetail.tsx:100,114,150`).
-- `components/ui/collapsible.tsx` is the house disclosure (precedent
-  `products/components/ProductAttachmentsTab.tsx:335-358`); there is no shared Advanced component.
 
-## 3. Design decisions (each traces to a grill question in section 8)
+## 3. Design decisions
 
-- **D1 Brand has one source: the Brands master** (Q1-Q4). The Brand spec on a product is always
-  the product's own brand. The product tab's Brand picker lists the Brands master
-  (`useBrandSelectQuery`) and saving it updates `products.brand_id` through the existing product
-  update route, which (after D2) re-reads the product. The picker never creates a value; "Add a
-  brand" links to the Brands master. The registry's `brand` row keeps `allowed_values: []`; the
-  API serialises its choices from the Brands master (`brand_names`) so every consumer of
-  `GET /spec-registry` sees one list.
-- **D2 `brand_id` joins `DERIVATION_INPUTS`.** One word in a tuple, plus its test.
-- **D3 Shadow brand values are cleared** (Q2). Any `user_values` / `value_labels` /
-  `suppressed_values` on the `brand` row, and any product whose Brand spec is `source: human`,
-  are listed in the lane evidence, then the registry lists are emptied and the human stamps on
-  `brand` are dropped so the next read writes the product's brand. Words customers say per brand
-  (`user_synonyms`) are kept.
-- **D4 Product class gets the same picker shape but stays editable** (Q3): its choices are the
-  distinct `product_categories.class_label` values, still overridable by hand because the class
-  rule list legitimately beats the category.
-- **D5 Every rule reads as a sentence** (Q5). View and edit render `builderSentence` for builder
-  rows. Each of the 25 built-in pattern rows gains a `says` sentence in the shipped table
-  ("The number just before OZ", "The word THERMOSTATIC", "A number of ways, like 2 WAYS"),
-  written by hand and pinned by a test that every built-in pattern row has one. The engine does
-  not read `says`: derivation output is unchanged (golden parity 0 diffs). A pattern typed by
-  hand under Advanced must be saved with a plain description (the server refuses a custom
-  pattern row without one).
+### Brand (owner ruling, Q1, Q2, Q4)
+
+- **D1 The Brand specification is removed.** The product's brand field (`products.brand_id`) is
+  the only brand. The `brand` registry row is deleted, and `brand` is removed from every product's
+  stored specifications, provenance, verification stamps and exceptions. It is not in the list,
+  not on the product tab, not in Add specification, not in Spec Verification.
+- **D2 Every reader of the Brand specification reads the product's brand instead.**
+  - Search: a brand the customer names binds to `products.brand_id` (joined through `brands`)
+    instead of the stored spec value. Same Brands master names, same longest-name-wins binder.
+  - Customer sentence: `product_spec_rendering` reads `product.brand.brand_name`.
+  - Understanding prompt: brand names come from the Brands master (`brand_names`, already there).
+  - Company copies that disagree on brand: the derivation flag goes (there is nothing derived to
+    disagree). The 6 rows are listed in the lane evidence so the owner sees them once.
+  - `from_field` loses the `brand` choice (`from_field_choices`, `FROM_FIELD_OPTIONS`).
+  S0 starts with a grep for every other reader (`values["brand"]`, `read("brand")`,
+  `spec_key == "brand"`, the MCP catalogue) and lists them in the evidence before changing any.
+- **D3 What replaces the cases the Brand specification served:**
+  - *"Customers never ask for OTHERS or NO LOGO"* (the row's `excluded_values`): a column
+    `brands.is_searchable` (default true, false for OTHERS and NO LOGO), the same name and meaning
+    `product_categories.is_searchable` already has. The Brand form shows it as "Customers can ask
+    for this brand". Search and the prompt skip a brand where it is false; the existing rule that
+    "NO LOGO" binds only on the full phrase stays.
+  - *"Words customers say for a brand"* (the row's `user_synonyms`): if S0's measurement finds any,
+    they move to a `brands.search_synonyms` column, the shape `product_categories.search_synonyms`
+    already has. If it finds none, no column is added (trigger named: the first brand word a
+    person needs).
+  - *"Pick a brand on the product tab"*: the product's Details tab, which already has the Brand
+    dropdown over the Brands master (`ProductForm.tsx:39`, `useBrandSelectQuery`).
+- **D4 Evidence to clear before the removal migration** (owner ruling, Q2): the lane evidence file
+  lists, from the dev database, (1) every value typed into the old empty picker: `user_values`,
+  `value_labels`, `suppressed_values` and `user_synonyms` on the `brand` row; (2) every product
+  whose Brand spec is `source: human`, with the typed value beside the product's own brand;
+  (3) every product whose stored Brand spec differs from its brand field. Where a typed value
+  names a real brand and the product's brand field is empty, the evidence says so and the owner
+  decides; nothing is copied into `brand_id` silently.
+
+### Rule engine (owner ruling, Q5, Q6)
+
+- **D5 One rule model, five kinds, no patterns.** A rule is three picks and an optional fourth,
+  stored as the `builder` the screen already saves. The engine compiles it; nobody types or sees a
+  regular expression, and the server refuses a rule without a builder.
+
+  | Part | What the person does | Choices |
+  | --- | --- | --- |
+  | **Look in** | picks where to read | Description or flyer (default), Description only, Flyer only, The product name (without sizes and extras, the default for Product class). Code and Product rules read their own place, so Look in is not asked. |
+  | **Find** | picks a kind, fills its blanks | **Words**: one or more words ("SOFT CLOSE", "SOFT CLOSING"); optionally "only at the end of the name"; optionally "skip it when it comes right after" some words. **Number**: the number before / after / between words, optionally "written in" a unit (metres to mm), optionally "ignore numbers below". **Size**: from a size like 1500 x 750 x 630, the 1st / 2nd / 3rd / 4th number, or the one labelled L / W / H. **Code**: the product code contains / starts with / ends with some text. **Product**: a fact already on the product: its category's class, its length / width / height, or what its name says it is. |
+  | **Answer** | picks the value | A choice from the spec's list; Yes for yes or no specs. Number, Size and Product rules answer with what they find, so Answer is not asked. |
+  | **Only when** (optional) | adds a condition | Another spec is, or is not, one of some values ("Except when Shape is Round or Square"). |
+
+  **How matching works, the same for every rule, never a setting:**
+  - Case never matters.
+  - Words match whole words only: "LED" never matches inside "SEALED".
+  - Between the words of a phrase, a space, a hyphen or nothing all count: "PULL OUT SHOWER"
+    matches "PULL-OUT SHOWER" and "PULLOUT SHOWER"; "SOFT CLOSE" matches "SOFT-CLOSE".
+  - "..." inside a phrase means "anything in between, in the same sentence": "PP ... SEAT"
+    matches "PP SOFT CLOSE SEAT COVER".
+  - A number is a whole number or a decimal, and must stand on its own: the 1008 in SRTKS1008L is
+    never read, because a letter or digit touches it in front. Between the number and its word a
+    space, a hyphen or nothing all count ("3-WAY", "3 WAYS", "8OZ").
+  - Rules run top to bottom; the first rule that reads something wins. Order is set by dragging.
+
+  **Examples, one per kind, all built-in rules today** (all 268 are in the appendix):
+  - Words: "When the description or flyer says SOFT CLOSE or SOFT CLOSING, Soft close is Yes."
+  - Words with skip: "When the description or flyer says SCREW, Comes with a fixing screw is Yes.
+    Skip it when it comes right after W/O or WITHOUT."
+  - Words at the end: "When the product name ends with MIRROR CABINET or VANITY CABINET, Product
+    class is Bathroom Furniture."
+  - Words with "...": "When the flyer says PP ... SEAT, Seat cover material is PP."
+  - Number: "The number before OZ, in the description or flyer." (Capacity (oz))
+  - Number, written in: "The number before M, written in metres (stored in mm), in the description
+    or flyer." (Hose length)
+  - Number, between: "The number between S TRAP or P TRAP and MM, in the description or flyer."
+    (Trap outlet length)
+  - Number, with a floor and a skip: "The number before MM, in the description. Ignore numbers
+    below 10. Skip it when it comes right after S TRAP or P TRAP. Except when Shape is Round or
+    Square." (Length, the single stated size)
+  - Size: "From a size like 1500 x 750 x 630, the 3rd number, in the description. Only when Shape
+    is Round or Square." (Thickness)
+  - Size, labelled: "From a size, the number labelled W (like W165), in the flyer." (Width)
+  - Code: "When the product code ends with -GM, Finish or colour is Gunmetal."
+  - Product: "The product category's class." and "What the product's name says it is." (Product
+    class); "The product's length. Except when Shape is Round or Square." (Length)
+
+  **Why this covers every case:** the appendix restates all 268 remaining built-in rules in these
+  five kinds with none left over (231 Words, 10 Number, 10 Size, 12 Code, 5 Product). Rules next to
+  each other with the same answer fold into one rule with several words, so 268 rows become 202.
+  If a future case does not fit, that is a defect in the engine to fix in the engine (owner
+  ruling, Q6), not a reason to reopen patterns.
+
+  **Parity gate:** the built-in rules are converted to builders and run through the new compiler;
+  derivation over the dev catalogue is compared with today's (golden parity). The new matching
+  rules above were chosen to reproduce each built-in, but a few are deliberately not identical,
+  and every product whose value changes is listed in the lane evidence for the owner before
+  merge: Ways and Spray functions now read two-digit numbers (today one digit only); Power now
+  needs the number to stand on its own; "OVER FLOW" now also matches "OVER-FLOW"; the flyer's L,
+  W and H rows now read the number labelled inside a size.
 - **D6 Plain words everywhere** (review section 2 vocabulary table): type chip List / Number (mm)
-  / Yes or no / Text; tabs Details / Choices and words / How it is read / Products; source
-  "Product's brand" for brand; "The product's brand", "The product's category", "The product's
-  length" for from-field rows; no "Seed", "User", "shipped", "default", `_self`, slug, "Derived",
-  "Findable by description" in any default view.
+  / Yes or no / Text; tabs Details / Choices and words / How it is read / Products; "The product's
+  category's class", "The product's length"; no "Seed", "User", "shipped", "default", `_self`,
+  code name, "Derived" or "Findable by description" on any screen.
 - **D7 `_self` moves to Details** as "Other names for this specification" (same stored map,
-  `synonyms._self` / `user_synonyms._self`, no backend change). The Choices and words tab never
-  lists it.
-- **D8 One Advanced disclosure per screen** (Q6): a small `AdvancedSection` on `Collapsible`,
-  closed by default, open state remembered per viewer in `localStorage` (try/catch, renders
-  closed without it). No new permission. It holds: code (slug), Built in / Added here, rule
-  count, the pattern per rule, the product tab's search diagnosis.
-- **D9 Product tab order** (Q7): checked line, values table, price tag wording, then one
-  collapsed **Reading and search** section (description, search finds it or not, what search
-  matches, read specs from a text, read this product again, Advanced diagnosis). The Unverify
-  confirm dialog becomes a 5 s deferred Undo (D7 of PRINCIPLES).
-- **D10 List status is one pill, persisted** (Q8): Up to date / Needs a re-read / Reading.
-  The finish time is stored in a second `product_spec_search_policy` row
-  (`_derived_rules_read_at`) beside the fingerprint, so a deploy does not reset it. No migration
-  (a row, seeded on first write).
+  `synonyms._self` / `user_synonyms._self`, no backend change). Choices and words never lists it.
+- **D8 No Advanced anywhere** (owner ruling, Q6). The code name, "Built in / Added here", the
+  rule count and the pattern are not shown on any screen. The product tab's raw search diagnosis
+  goes; its plain facts ("Search finds this product", what search matches) stay in Reading and
+  search. A rule that was changed shows "Changed here" and **Put back the built-in rules**.
+- **D9 Product tab order**: checked line, values table, price tag wording (where it is today, owner
+  ruling), then one collapsed **Reading and search** section (description, search finds it or
+  not, what search matches, read specs from a text, read this product again). The Unverify
+  confirm dialog becomes a 5 s deferred Undo (PRINCIPLES D7).
+- **D10 List status is one pill, persisted** (Q8, still open): Up to date / Needs a re-read /
+  Reading. The finish time is stored in a second `product_spec_search_policy` row beside the
+  fingerprint, so a deploy does not reset it (a row, seeded on first write, no migration).
 - **D11 Back sits with the title**: wrap `PageHeader` in `Container` on the record page (all three
   states) and copy "Back to specifications".
+- **D12 Product class keeps its list shape** (Q3, still open): its choices are the category class
+  labels, editable per product because a product's name can rightly say a different class from
+  its category. See the round 2 answer in PR #1290 for class versus category.
 
-Not in this lane (triggers named, per "Simplest thing"): per-brand rule sets, a translated
-vocabulary, a rule builder for alternation patterns (trigger: a staff member needs a custom
-pattern the sentence menu cannot express, twice).
+Not in this lane (triggers named, per "Simplest thing"): per-brand rule sets; a translated
+vocabulary; plural matching ("BOWL" also matching "BOWLS") as an engine rule (trigger: the second
+spec where a person had to type both forms and forgot one).
 
 ## 4. Slices
 
 Each slice is a commit set on the lane branch. Phase 1 (FE against mocks) runs across S1 to S3
-first; S0 is mostly backend and goes test-first straight away because it is a defect.
+first; S0 is mostly backend and goes test-first straight away.
 
-### S0 - Brand picker fix and brand source of truth
+### S0 - Remove the Brand specification
 
-Scope: D1, D2, D3, D4, plus the brand source label.
-- BE: `brand_id` in `DERIVATION_INPUTS`; `GET /spec-registry` serialises brand choices from the
-  Brands master (active brands, company scoped) and class choices from category class labels;
-  `value_for_registry` refuses a brand value not in the Brands master; a data migration (only if
-  the S0 measurement finds rows) clearing the shadow lists and the human brand stamps, evidence
-  CSV first.
-- FE: Brand row editor = `SearchableSelect` over `useBrandSelectQuery`, no `createOption`, saving
-  calls the product update with `brand_id`; source pill "Product's brand"; Product class picker
-  lists class labels.
-- Rule sentence "The product's brand" (`ruleSentence.ts:208`).
-**Definition of done:** UAC AC-S0.1 to AC-S0.9 green (pytest + vitest); agent-browser run at 375
-and 1280: open a product by sidebar clicks, change Brand to Mocha, see Details show Mocha and the
-spec row read Mocha, change it back; the evidence file lists the pre-migration counts.
+Scope: D1 to D4.
+- Evidence first (section 7), written to the lane evidence file before any code.
+- BE: readers switched to the product's brand (D2); `brands.is_searchable` column (and
+  `brands.search_synonyms` only if measured); Brand form switch; `from_field` loses `brand`.
+- Migration: delete the `brand` registry row; strip `brand` from `product_specifications.values`,
+  provenance, verification and exceptions. Idempotent.
+- FE: nothing brand-specific is left on the spec screens; the product tab has no Brand row.
+**Definition of done:** UAC AC-S0.1 to AC-S0.8 green; search evals that name a brand ("sorento
+kitchen sink", "no logo kitchen sink") return the same products before and after; agent-browser
+run at 375 and 1280 showing no Brand in the list, the product tab or Add specification.
 
-### S1 - Plain-language rules and values
+### S1 - The rule engine and its screen
 
-Scope: D5, D6 (record page and its tabs), D7, D8 (record page call sites), the tab renames.
-- View mode renders `builderSentence`; 25 `says` sentences on built-in pattern rows; server
-  refuses a custom pattern row without a description; badges "shipped"/"default" removed; one
-  "Changed here" line with **Put back the built-in rules** (clears `derivation_rules`).
-- Details tab: Name, Unit (hidden on lists), In use, Highest believable value, Other names.
-- Choices and words: no `_self` card, no "user" badge, slug under Advanced; Brand and Product
-  class list their master read-only.
-- Try it on moves below the rules; in-UI help sentences removed.
-**Definition of done:** AC-S1.1 to AC-S1.12 green; golden parity 0 diffs over the dev catalogue
-(`says` changes nothing); browser run on Brand, Capacity (oz), Length at both widths with no
-pattern, slug or `_self` visible until Advanced is opened.
+Scope: D5 to D8 on the spec record page.
+- BE: `compile_builder` gains the five kinds and their options; `_rule_matches` runs builders; save
+  refuses a rule without a builder or with an empty blank; migration converts the shipped rules
+  (from the rewritten `_rules_from_shipped_tables`) and every stored rule to builders, folding
+  neighbours with the same answer; a stored rule that cannot convert is listed in the evidence
+  (expected none; the owner sees any before merge).
+- FE: How it is read lists sentences; Add / Edit a rule is a modal with Look in, Find, Answer,
+  Only when, a live sentence, Try it on and See what would change; drag to reorder; Changed here
+  and Put back the built-in rules (deferred 5 s).
+- Details: Name, Unit (not on List specs), In use, Highest believable value, Other names.
+- Choices and words: no `_self` card, no "user" badge, no code name.
+**Definition of done:** AC-S1.1 to AC-S1.13 green; golden parity over the dev catalogue with every
+changed product listed; browser run on Finish or colour, Capacity (oz) and Length at both widths.
 
 ### S2 - Product Specifications tab declutter
 
 Scope: D9.
-- Order: checked line, values, price tag wording, Reading and search (collapsed).
-- Remove the Derived pill, the Findable pill (its fact moves into the section), the footer text,
-  the eyebrow over the table; "What search matches" always renders with an empty state.
-- Unverify confirm dialog becomes a deferred 5 s Undo.
-**Definition of done:** AC-S2.1 to AC-S2.9 green; browser run on SRTWC7604-SC-SH (the owner's
-screenshot product) at both widths: first screen shows the values without scrolling at 1280.
+**Definition of done:** AC-S2.1 to AC-S2.8 green; browser run on SRTWC7604-SC-SH (the owner's
+screenshot product) at both widths: first values row visible without scrolling at 1280.
 
 ### S3 - List and navigation
 
 Scope: D6 (list), D10, D11.
-- Columns: Specification, Type (unit folded in), Choices (brand = Brands master count), Products;
-  Code, Rules, Built in hidden by default through the existing column chooser.
-- One status pill, persisted finish time; Re-read button beside Needs a re-read.
+- Columns: Specification, Type (unit folded in), Choices, Products. Code, Rules and Built in are
+  hidden by default in the column chooser (Q11, still open; recommendation restated in PR #1290).
+- One status pill, persisted finish time; Re-read beside Needs a re-read.
 - Record page header inside `Container`; "Back to specifications".
-- Row menu hides Delete on built-in rows.
 **Definition of done:** AC-S3.1 to AC-S3.8 green; restart the API and the pill still reads Up to
 date; browser run at both widths with the Back link aligned to the title's gutter.
 
 ### Phase 3 (once per lane)
 
-`reviewer` + browser verification in parallel. `security-reviewer`: not run unless S0's brand
-write turns out to need a new route (it should not: it reuses the product update, same
-permission).
+`reviewer` + browser verification in parallel. `security-reviewer` runs: S0 changes what the
+external search surface binds (the chatbot's product search), which is an external ingest path.
 
 ## 5. Files expected to change
 
-BE: `app/services/product_spec_change_listener.py`, `app/api/v1/master_data/spec_registry.py`
-(`_serialise`), `app/services/product_spec_registry.py` (`says` on shipped rows,
-`value_for_registry`), `app/services/product_spec_rederive.py` (persisted finish time),
-optionally one data migration. FE: `components/spec-table/*` (picker, source label),
-`PS/lib/ruleSentence.ts`, `PS/components/record/*`, `PS/components/SpecRuleEditor.tsx`,
-`PS/components/SpecKeyRecordDetail.tsx`, `PS/components/SpecRegistryGrid.tsx`,
-`PS/components/CatalogueFreshnessLine.tsx`, `products/[id]/components/ProductSpecificationsTab.tsx`,
-a new `components/common/AdvancedSection.tsx`.
+BE: `app/services/product_spec_search.py`, `product_spec_rendering.py`,
+`product_spec_understanding.py`, `product_spec_derivation.py` (`_rule_matches`, `_record_read`,
+the brand flag), `product_spec_registry.py` (seed row, shipped rules as builders,
+`compile_builder`, `from_field_choices`, save validation), `product_spec_rederive.py` (persisted
+finish time), `app/models/product.py` (`Brand.is_searchable`), two migrations. FE:
+`PS/lib/ruleSentence.ts` (the five kinds, mirrored), `PS/components/SpecRuleEditor.tsx` (the rule
+modal), `PS/components/record/*`, `PS/components/SpecKeyRecordDetail.tsx`,
+`PS/components/SpecRegistryGrid.tsx`, `PS/components/CatalogueFreshnessLine.tsx`,
+`products/[id]/components/ProductSpecificationsTab.tsx`, `components/spec-table/*`, the Brand form.
 
 ## 6. Risks
 
-- **The model prompt reads stored brand values** (`product_spec_understanding.py:151-170`). After
-  D3 they equal the Brands master, so the prompt improves; no change to the understanding code.
-- **Excluded brands** (OTHERS, NO LOGO) stay excluded from search and the prompt; they are still
-  real brands and appear in the picker (Q4).
-- **Company scoping:** `Brand` is company scoped; the picker and the registry serialiser must read
+- **Search by brand is a customer-facing path.** Mitigation: the brand evals in S0's definition
+  of done, and security-reviewer on the lane.
+- **Parity changes are real changes.** Every changed product is listed for the owner; none ships
+  unseen.
+- **Two compilers (server and browser) must agree.** Today's refuse-on-mismatch save stays, and a
+  shared fixture (every appendix rule, compiled both sides) pins them.
+- **Company scoping:** `Brand` is company scoped; the search join and the Brand form switch read
   through the same scope as the product (LESSONS: scoped reference tables).
-- **Anything reading `allowed_values` for brand** (n8n parser via the MCP) now receives the
-  Brands master names instead of `[]`. Check the MCP catalogue consumer in S0.
+- **The MCP catalogue** may list `brand` as a spec key for n8n. S0's grep covers
+  `sorento_crm_mcp/`; if it does, the catalogue drops it and says the brand is a product field.
 
 ## 7. Evidence to gather at S0 start (read-only, dev DB)
 
-1. `user_values`, `suppressed_values`, `value_labels`, `user_synonyms` on `brand` and `class`.
-2. Products whose Brand spec differs from `brands.brand_name` (case-insensitive), by source.
-3. Products whose `brand_id` changed after their spec row was last written.
+1. On the `brand` registry row: `user_values`, `value_labels`, `suppressed_values`,
+   `user_synonyms`, `excluded_values`, verbatim. These are the brands typed into the old empty
+   picker, to be cleared by the S0 migration.
+2. Products whose Brand spec is `source: human`: code, typed value, product's brand.
+3. Products whose stored Brand spec differs from `brands.brand_name` (case-insensitive), by
+   source; and products with no `brand_id` but a Brand spec value.
+4. The company-copy brand disagreements (the derivation flag's rows).
+5. Stored `derivation_rules` rows with no `builder`, per spec (the rules S1 converts), and any
+   custom regular expression a person typed.
 
-## 8. Grill questions for the owner
+## 8. Grill questions
 
-Each has a recommendation; the UAC is written to the recommendation. Answer "yes" to take it.
+### Answered in round 1
 
-1. **When a person picks a brand on the Specifications tab, what changes?**
-   Recommendation: the product's own Brand (the same field as Details), and the spec follows it.
-   One place holds the brand; the spec can never disagree with it. Alternative: the Brand spec
-   becomes read-only on this tab with a "Change on Details" link (fewer moving parts, but you
-   asked for the dropdown here).
-2. **What happens to brands someone already typed into the old empty picker?**
-   Recommendation: list them in the lane evidence, then clear them; each product's Brand spec
-   goes back to the product's brand. Words customers use for a brand are kept.
-3. **Does Product class get the same treatment?**
-   Recommendation: the same dropdown shape (lists the category classes), but it stays editable
-   per product, because a product's name can rightly say a different class from its category.
-4. **Should OTHERS and NO LOGO appear in the brand dropdown?**
-   Recommendation: yes, they are real brands on 2,600 products; they stay out of search.
-5. **How does a built-in rule become a sentence?**
-   Recommendation: each of the 25 built-in pattern rules gets a hand-written sentence ("The
-   number just before OZ"); the pattern stays under Advanced; how products are read does not
-   change at all. A pattern typed by hand must be saved with a plain description.
-6. **Who sees Advanced?**
-   Recommendation: anyone who can edit specifications, closed by default, remembered per person.
-   No new permission.
-7. **What does the product's Specifications tab show first?**
-   Recommendation: the checked line, then the values, then price tag wording, then one collapsed
-   "Reading and search" section holding description, read from a text, what search matches and
-   read again.
-8. **What replaces "Never read" and "Rules changed since"?**
-   Recommendation: one pill, Up to date / Needs a re-read (with Re-read beside it) / Reading,
-   and it survives a deploy.
-9. **Tab names on a spec's page?**
-   Recommendation: Details, Choices and words, How it is read, Products.
-10. **Where does the price tag wording live?**
-    Recommendation: stays on the Specifications tab, below the values, labelled "Price tag
-    wording", with "Not set, the price tag uses the product description" when empty.
-11. **The Code, Rules and Built in columns on the list?**
-    Recommendation: hidden by default in the list's existing column chooser, not deleted.
-12. **One lane or four?**
-    Recommendation: one lane, full track, slices S0 to S3 as commits, S0 first so the brand
-    picker works as soon as possible; the owner tests once on the lane's stack.
+1. When a person picks a brand on the Specifications tab, what changes? **Owner ruling, 26 Sep
+   2026:** the Brand specification is redundant; the product's brand field is the only brand. (D1)
+2. Brands already typed into the old empty picker? **Owner ruling, 26 Sep 2026:** refer to 1.
+   Listed in the evidence, then cleared with the Brand specification. (D4)
+4. OTHERS and NO LOGO in the brand dropdown? **Owner ruling, 26 Sep 2026:** refer to 1. The
+   dropdown is the Details tab's, which already lists every brand; search skips them through
+   `brands.is_searchable`. (D3)
+5. How does a built-in rule become a sentence? **Owner ruling, 26 Sep 2026:** a rule engine that
+   is easily and fool-proofly configured, not just sentences. (D5)
+6. Who sees Advanced? **Owner ruling, 26 Sep 2026:** no Advanced; if the engine cannot cover a
+   case simply, the engine is the problem. (D5, D8)
+7. Price tag wording (the owner's line 7). **Owner ruling, 26 Sep 2026:** okay where it is. (D9)
+12. One lane or four? **Owner ruling, 26 Sep 2026:** one lane.
+
+### Open for round 2 (asked in PR #1290, "Answers to the owner's questions (round 2)")
+
+3. Is product class the same as product category? Answered there with an example.
+   Recommendation: keep Product class as a specification with its list of class labels (D12).
+7. What does the product's Specifications tab show first? Recommendation: checked line, values,
+   price tag wording, then collapsed Reading and search. Confirm the owner's line 7 was the price
+   tag question (Q10), and whether this order stands.
+8. What replaces "Never read" and "Rules changed since"? Recommendation: one pill, Up to date /
+   Needs a re-read (with Re-read beside it) / Reading, and it survives a deploy.
+9. Tab names on a spec's page? Recommendation: Details, Choices and words, How it is read,
+   Products.
+10. Where does the price tag wording live? Taken as answered by the owner's line 7 ("okay where
+    it is"): stays on the Specifications tab, below the values, with "Not set, the price tag uses
+    the product description" when empty. Confirm.
+11. Why hide the Code, Rules and Built in columns? Answered there. Recommendation: hidden by
+    default in the column chooser, not deleted.
 
 ## 9. Mockups (for the owner's Lavish review before build)
 
-Each file has a 1280 frame, a 375 frame and numbered notes citing the UAC ids.
+Each file has a 1280 frame, a 375 frame and numbered notes citing the UAC ids. Regenerated in
+round 2: no Brand specification anywhere, and the rule engine screen.
 
 | File | Screen | Slices |
 | --- | --- | --- |
-| `mockups/01-spec-list.html` | Product Specifications list | S3 |
+| `mockups/01-spec-list.html` | Product Specifications list (no Brand row) | S0, S3 |
 | `mockups/02-spec-details.html` | A spec's Details tab (Capacity (oz)), Back placement | S1, S3 |
-| `mockups/03-spec-choices-brand.html` | Brand, Choices and words from the Brands master | S0, S1 |
-| `mockups/04-spec-how-it-is-read.html` | How it is read (rules as sentences, Advanced) | S1 |
-| `mockups/05-product-specifications-tab.html` | A product's Specifications tab, brand dropdown, Reading and search | S0, S2 |
+| `mockups/03-spec-choices-words.html` | Finish or colour, Choices and words | S1 |
+| `mockups/04-spec-how-it-is-read.html` | How it is read: the rule list and the rule form (all five kinds) | S1 |
+| `mockups/05-product-specifications-tab.html` | A product's Specifications tab, no Brand row | S0, S2 |

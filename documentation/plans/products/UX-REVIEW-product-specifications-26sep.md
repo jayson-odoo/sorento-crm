@@ -4,7 +4,9 @@
 `PLAN-product-specs-non-technical-26sep.md`, `product-specs-non-technical-acceptance-criteria.md`,
 mockups under `mockups/`.
 **Measured against:** `origin/main` at `51d30ccc5`. Every file:line below is on that commit.
-**Status:** Review written 26 Sep 2026. No code changes in this lane.
+**Status:** Review written 26 Sep 2026. No code changes in this lane. Owner rulings of 26 Sep 2026
+supersede its brand verdicts (the Brand specification is removed) and its Advanced verdicts (no
+Advanced; a rule engine instead); the plan's section 3 carries the current design.
 
 ## Contents
 
