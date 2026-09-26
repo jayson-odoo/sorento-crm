@@ -12,7 +12,7 @@ import logging
 import weakref
 
 from sqlalchemy.orm import Session
-from sqlalchemy import inspect, select, func
+from sqlalchemy import inspect, select, func, tuple_
 from sqlalchemy.orm.attributes import get_history
 from sqlalchemy.sql.elements import BindParameter
 from typing import Optional, Any, Iterable
@@ -34,11 +34,18 @@ BULK_AUDIT_CAP = 500
 # system_settings.smtp_password, *_ciphertext (respond_workspaces, ai_assistant_configs),
 # integration_api_keys.key_hash, portal_otp_codes.code_hash, integrations.credentials_json,
 # token / public_token / sign_token on the share-link tables.
-# A superset of S-1's AUDIT_SECRET_KEYS (PR #1298): the two lists merge into this one when it lands.
-_REDACT_EXACT = frozenset(
-    {"password", "password_hash", "token", "secret", "key_hash", "code_hash", "credentials_json"}
+# A superset of S-1's AUDIT_SECRET_KEYS (PR #1298): the two lists merge into this one when it
+# lands. Also: push_subscriptions.auth / p256dh (the Web Push subscription secret) and the n8n
+# webhook URLs on system_settings (unauthenticated capability URLs). Applied at every depth of
+# a JSON value, not only to top-level columns.
+_REDACT_EXACT = frozenset({
+    "password", "password_hash", "token", "secret", "key_hash", "code_hash", "credentials_json",
+    "auth", "p256dh", "secret_key", "private_key", "otp",
+})
+_REDACT_SUFFIXES = (
+    "_password", "_secret", "_token", "_ciphertext", "_private_key", "_webhook_url", "_webhook",
+    "_otp",
 )
-_REDACT_SUFFIXES = ("_password", "_secret", "_token", "_ciphertext")
 _REDACT_PREFIXES = ("api_key",)
 
 # Columns stamped on every touch. An UPDATE that changes only these writes no row, and they
@@ -58,10 +65,13 @@ def _is_secret_key(key: str) -> bool:
     return k in _REDACT_EXACT or k.endswith(_REDACT_SUFFIXES) or k.startswith(_REDACT_PREFIXES)
 
 
-def _redact(values: Optional[dict]) -> Optional[dict]:
-    if not values:
-        return values
-    return {k: (REDACTED if _is_secret_key(k) else v) for k, v in values.items()}
+def _redact(values: Any) -> Any:
+    """Mask secret keys at every depth (a JSONB column can hold a nested ``token``)."""
+    if isinstance(values, dict):
+        return {k: (REDACTED if _is_secret_key(k) else _redact(v)) for k, v in values.items()}
+    if isinstance(values, list):
+        return [_redact(v) for v in values]
+    return values
 
 
 def _is_uuid(value: str) -> bool:
@@ -120,29 +130,52 @@ def _entity_id_str(obj: Any) -> str:
     return "_".join(parts) if all(p for p in parts) else ""
 
 
-def _old_new_from_dirty(obj: Any, columns: Optional[list[str]] = None) -> tuple[dict, dict]:
+def _old_new_from_dirty(
+    obj: Any, columns: Optional[list[str]] = None, conn: Any = None
+) -> tuple[dict, dict]:
     """old_values / new_values for a dirty object: ONLY the keys whose value changed.
 
     Touch columns are left out, so an UPDATE that only stamped ``updated_at`` comes back empty
-    and the caller writes nothing.
+    and the caller writes nothing. A key set on an EXPIRED attribute (the default after every
+    commit) has a new value but no old one in the history; the old value is read from the
+    database, which still holds it, rather than recorded as a false null.
     """
     insp = inspect(obj)
     mapper = insp.mapper
     keys = columns if columns is not None else [c.key for c in mapper.column_attrs]
     old_values: dict[str, Any] = {}
     new_values: dict[str, Any] = {}
+    unknown_old: list[str] = []
     for key in keys:
         if key in _TOUCH_COLUMNS:
             continue
         hist = get_history(obj, key)
         if not hist.has_changes():
             continue
-        old_val = _json_serial(hist.deleted[0]) if hist.deleted else None
         new_val = _json_serial(hist.added[0]) if hist.added else None
-        if old_val == new_val and hist.deleted:
-            continue
+        if hist.deleted:
+            old_val = _json_serial(hist.deleted[0])
+            if old_val == new_val:
+                continue
+        else:
+            old_val = None
+            if insp.persistent:
+                unknown_old.append(key)
         old_values[key] = old_val
         new_values[key] = new_val
+    if unknown_old and conn is not None and insp.identity is not None:
+        table = mapper.local_table
+        cols = [mapper.get_property(k).columns[0] for k in unknown_old]
+        where = [c == v for c, v in zip(mapper.primary_key, insp.identity)]
+        row = conn.execute(select(*cols).where(*where)).first()
+        if row is not None:
+            for key, value in zip(unknown_old, row):
+                old = _json_serial(value)
+                if old == new_values[key]:
+                    old_values.pop(key)
+                    new_values.pop(key)
+                else:
+                    old_values[key] = old
     return old_values, new_values
 
 
@@ -549,7 +582,8 @@ _table_class_cache: dict = {}
 
 def _class_for_table(table: Any) -> Optional[type]:
     """The mapped class whose local table is ``table`` (Core DML carries no mapper)."""
-    if not _table_class_cache:
+    if table not in _table_class_cache:
+        # Rebuilt on a miss, so a model imported after the first call is still found.
         from app.database import Base
 
         for mapper in Base.registry.mappers:
@@ -562,6 +596,66 @@ def _root(cls: type, entity_type: str, entity_id: str, values: Optional[dict]) -
     if parent is not None and values and values.get(parent[1]) is not None:
         return parent[0], str(values[parent[1]])
     return entity_type, entity_id
+
+
+def _company_fk(cls: type) -> Optional[tuple[str, Any, Any]]:
+    """For a class with no ``company_id`` column: (fk attribute key, parent table, parent
+    column) of the foreign key that says which company its rows belong to.
+
+    ``__audit_parent__`` wins, then the first foreign key to a table carrying ``company_id``
+    (or to ``companies`` itself) on a NOT NULL column. None for a class with its own column or no such key, whose
+    audit rows stay company-less, which the admin listing shows to every company. Without this,
+    default-on auditing published a scoped parent's children (price tag request lines, project
+    sales profiles, page versions) to every company's audit viewers.
+    """
+    if cls in _company_fk_cache:
+        return _company_fk_cache[cls]
+    mapper = inspect(cls)
+    found = None
+    if "company_id" not in mapper.local_table.c:
+        parent_col = getattr(cls, "__audit_parent__", None)
+        # A NOT NULL key is ownership; a nullable one is usually a reference (system_settings
+        # .default_product_supplier_id must not pin global settings to one company).
+        columns = [mapper.local_table.c[parent_col]] if parent_col else []
+        columns += [c for c in mapper.local_table.columns if c.foreign_keys and not c.nullable]
+        for column in columns:
+            for fk in column.foreign_keys:
+                target = fk.column.table
+                if target.name == "companies" or "company_id" in target.c:
+                    found = (mapper.get_property_by_column(column).key, target, fk.column)
+                    break
+            if found:
+                break
+    _company_fk_cache[cls] = found
+    return found
+
+
+_company_fk_cache: dict = {}
+
+
+def _company_from_parent(session: Session, conn: Any, cls: type, values: Optional[dict], cache: dict) -> Any:
+    """The parent's company for a row of a class with no ``company_id`` of its own."""
+    link = _company_fk(cls)
+    if link is None or not values:
+        return None
+    key, target, target_col = link
+    fk_value = values.get(key)
+    if fk_value is None:
+        return None
+    if target.name == "companies":
+        return str(fk_value)
+    cache_key = (target.fullname, str(fk_value))
+    if cache_key not in cache:
+        company = None
+        # A parent created in this same flush is not in the database yet.
+        for obj in list(session.new):
+            if getattr(obj, "__table__", None) is target and str(getattr(obj, target_col.key, None)) == str(fk_value):
+                company = _company_id_for_new(obj)
+                break
+        if company is None:
+            company = conn.execute(select(target.c.company_id).where(target_col == fk_value)).scalar()
+        cache[cache_key] = str(company) if company is not None else None
+    return cache[cache_key]
 
 
 def _session_before_flush(session: Session, _flush_context: Any, _instances: Any) -> None:
@@ -584,6 +678,7 @@ def _session_before_flush(session: Session, _flush_context: Any, _instances: Any
     def _should_skip(etype: str, eid: str) -> bool:
         return etype in skip_types or (etype, eid) in skip_set
 
+    company_cache: dict = {}
     for obj in session.new:
         if not _is_audited(obj):
             continue
@@ -609,7 +704,8 @@ def _session_before_flush(session: Session, _flush_context: Any, _instances: Any
         snapshot = _model_to_audit_dict(obj)
         new_values = {k: v for k, v in snapshot.items() if k in cols} if cols is not None else snapshot
         root = _root(cls, entity_type, entity_id, snapshot)
-        pending.append((entity_type, entity_id, "CREATE", None, new_values, _company_id_for_new(obj), root))
+        company = _company_id_for_new(obj) or _company_from_parent(session, session.connection(), cls, snapshot, company_cache)
+        pending.append((entity_type, entity_id, "CREATE", None, new_values, company, root))
     for obj in session.dirty:
         if not _is_audited(obj):
             continue
@@ -619,11 +715,15 @@ def _session_before_flush(session: Session, _flush_context: Any, _instances: Any
         if _should_skip(entity_type, entity_id):
             continue
         cols = getattr(cls, "__audit_columns__", None)
-        old_values, new_values = _old_new_from_dirty(obj, columns=cols)
+        old_values, new_values = _old_new_from_dirty(obj, columns=cols, conn=session.connection())
         if not old_values and not new_values:
             continue
-        root = _root(cls, entity_type, entity_id, _model_to_audit_dict(obj))
-        pending.append((entity_type, entity_id, "UPDATE", old_values, new_values, getattr(obj, "company_id", None), root))
+        # Only the keys the root and company need, not a second serialization of the row.
+        links = [link[1] for link in (_parent_of(cls),) if link] + [link[0] for link in (_company_fk(cls),) if link]
+        current = {key: getattr(obj, key, None) for key in links}
+        root = _root(cls, entity_type, entity_id, current)
+        company = getattr(obj, "company_id", None) or _company_from_parent(session, session.connection(), cls, current, company_cache)
+        pending.append((entity_type, entity_id, "UPDATE", old_values, new_values, company, root))
     for obj in session.deleted:
         if not _is_audited(obj):
             continue
@@ -636,7 +736,8 @@ def _session_before_flush(session: Session, _flush_context: Any, _instances: Any
         snapshot = _model_to_audit_dict(obj)
         old_values = {k: v for k, v in snapshot.items() if k in cols} if cols is not None else snapshot
         root = _root(cls, entity_type, entity_id, snapshot)
-        pending.append((entity_type, entity_id, "DELETE", old_values, None, getattr(obj, "company_id", None), root))
+        company = getattr(obj, "company_id", None) or _company_from_parent(session, session.connection(), cls, snapshot, company_cache)
+        pending.append((entity_type, entity_id, "DELETE", old_values, None, company, root))
 
     # Add audit log rows in the same flush (so we never call flush from inside an event)
     if not pending:
@@ -716,15 +817,19 @@ def _session_after_flush(session: Session, _flush_context: Any) -> None:
     user_id, ip_address = get_audit_context()
     contact_id = session.info.get("actor_contact_id") or get_actor_contact_id()
     skip_set = set(session.info.get("skip_audit_for") or [])
+    company_cache: dict = {}
     rows = []
     for obj in pending_new:
         insp = inspect(obj)
-        if insp.identity is None:
-            continue
         cls = obj.__class__
         entity_type = _audit_entity_type(cls)
-        entity_id = _entity_id_str(obj)
-        if not entity_id or (entity_type, entity_id) in skip_set:
+        # The identity key is only set after after_flush (finalize_flush_changes); the INSERT
+        # has already filled the generated key into the object's state, so read it there.
+        parts = [insp.dict.get(insp.mapper.get_property_by_column(c).key) for c in insp.mapper.primary_key]
+        if any(p is None for p in parts):
+            continue
+        entity_id = "_".join(str(p) for p in parts)
+        if (entity_type, entity_id) in skip_set:
             continue
         # Loaded state only: an attribute read here must not issue a SELECT mid-flush.
         snapshot = {c.key: _json_serial(insp.dict.get(c.key)) for c in insp.mapper.column_attrs}
@@ -741,7 +846,7 @@ def _session_after_flush(session: Session, _flush_context: Any) -> None:
             "old_values": None,
             "new_values": _redact(new_values),
             "description": None,
-            "company_id": snapshot.get("company_id"),
+            "company_id": snapshot.get("company_id") or _company_from_parent(session, session.connection(), cls, snapshot, company_cache),
             "root_entity_type": root[0],
             "root_entity_id": root[1],
             **_context_columns(ctx),
@@ -771,6 +876,7 @@ def _session_do_orm_execute(state: Any) -> None:
     if not (state.is_update or state.is_delete):
         return
     session = state.session
+    params = state.parameters if isinstance(state.parameters, dict) else {}
     if session.info.get("audit_flushing"):
         return
     statement = state.statement
@@ -793,10 +899,12 @@ def _session_do_orm_execute(state: Any) -> None:
         return
     # Same contract as the flush path: the audit rows share the write's transaction, so a
     # failed capture fails the write rather than leaving a change with no trail.
-    _write_bulk_rows(session, conn, cls, entity_type, statement, state.is_delete)
+    _write_bulk_rows(session, conn, cls, entity_type, statement, state.is_delete, params)
 
 
-def _write_bulk_rows(session: Session, conn: Any, cls: type, entity_type: str, statement: Any, is_delete: bool) -> None:
+def _write_bulk_rows(
+    session: Session, conn: Any, cls: type, entity_type: str, statement: Any, is_delete: bool, params: dict
+) -> None:
     from app.audit_context import current_audit_context, get_audit_context, get_actor_contact_id
 
     mapper = inspect(cls)
@@ -811,8 +919,10 @@ def _write_bulk_rows(session: Session, conn: Any, cls: type, entity_type: str, s
         raw = dict(getattr(statement, "_values", None) or {})
         raw.update(dict(getattr(statement, "_ordered_values", None) or []))
         set_values = {}
+        attr_cols = {prop.key: prop.columns[0] for prop in mapper.column_attrs}
         for col, value in raw.items():
-            col = table.c.get(col) if isinstance(col, str) else col
+            if isinstance(col, str):
+                col = attr_cols.get(col) if col in attr_cols else table.c.get(col)
             if col is None or col not in key_of or key_of[col] in _TOUCH_COLUMNS:
                 continue
             if allowed is not None and key_of[col] not in allowed:
@@ -822,16 +932,30 @@ def _write_bulk_rows(session: Session, conn: Any, cls: type, entity_type: str, s
             return
         value_cols = list(set_values)
     parent = _parent_of(cls)
-    extra = [c for c in table.columns if c.key == "company_id" or (parent and key_of.get(c) == parent[1])]
+    company_link = _company_fk(cls)
+    extra = [
+        c for c in table.columns
+        if c.key == "company_id"
+        or (parent and key_of.get(c) == parent[1])
+        or (company_link and key_of.get(c) == company_link[0])
+    ]
     wanted = list(dict.fromkeys(pk_cols + value_cols + extra))
-    query = select(*wanted)
+    # The matching keys first, then the rows by key: WHERE criteria naming other tables (the
+    # UPDATE ... FROM shape) would otherwise cross join and itemise one row several times.
+    matching = select(*pk_cols)
     for criterion in getattr(statement, "_where_criteria", ()):
-        query = query.where(criterion)
+        matching = matching.where(criterion)
+    key = pk_cols[0] if len(pk_cols) == 1 else tuple_(*pk_cols)
+    # FOR UPDATE: a compare-and-swap UPDATE that loses a race must not leave a phantom row;
+    # Postgres re-checks the locked row and drops it once another writer has changed it.
+    query = select(*wanted).where(key.in_(matching))
+    query = query.with_for_update(of=table)
     cap = BULK_AUDIT_CAP
-    rows = conn.execute(query.limit(cap + 1)).mappings().all()
+    rows = conn.execute(query.limit(cap + 1), params).mappings().all()
     remaining = 0
     if len(rows) > cap:
-        remaining = conn.execute(select(func.count()).select_from(query.subquery())).scalar() - cap
+        count = select(func.count()).select_from(matching.subquery())
+        remaining = conn.execute(count, params).scalar() - cap
         rows = rows[:cap]
     if not rows:
         return
@@ -848,6 +972,7 @@ def _write_bulk_rows(session: Session, conn: Any, cls: type, entity_type: str, s
         "ip_address": ip_address,
         **_context_columns(ctx),
     }
+    company_cache: dict = {}
     out = []
     for row in rows:
         entity_id = "_".join(str(row[c]) for c in pk_cols)
@@ -866,7 +991,7 @@ def _write_bulk_rows(session: Session, conn: Any, cls: type, entity_type: str, s
             "entity_id": entity_id,
             "old_values": _redact(old_values),
             "new_values": _redact(new_values),
-            "company_id": snapshot.get("company_id"),
+            "company_id": snapshot.get("company_id") or _company_from_parent(session, conn, cls, snapshot, company_cache),
             "root_entity_type": root[0],
             "root_entity_id": root[1],
         })

@@ -69,7 +69,8 @@ class AuditLog(Base):
 
 # Append-only, enforced by Postgres. Any UPDATE, DELETE or TRUNCATE raises unless the
 # transaction ran ``SET LOCAL sorento.audit_maintenance = 'on'`` (the retention job, a scrub
-# migration). Migration aud_0001_audit_standard_s0 installs it on existing databases; this hook
+# migration). SET LOCAL only, inside an explicit transaction: a plain session-level SET would
+# leave a pooled connection in bypass mode for every later request. Migration aud_0001_audit_standard_s0 installs it on existing databases; this hook
 # installs it wherever ``create_all`` builds the table (CI's bootstrap_env, the blank test
 # schema), so the two cannot drift.
 APPEND_ONLY_FUNCTION_SQL = """

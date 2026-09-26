@@ -18,8 +18,8 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         # One fresh, MUTABLE audit context per request (#1281 S0). Auth dependencies fill in
         # the principal by mutating this object, which a sync dependency running on a copied
         # context can still reach. Request id: an inbound X-Trace-Id if present, else minted;
-        # correlation id: an inbound X-Correlation-Id (the header api_call_log reads), else the
-        # request id. Both clamped to the 64-character columns.
+        # correlation id: the request id, or an inbound X-Correlation-Id (the header
+        # api_call_log reads) once an integration key authenticates. Both clamped to 64.
         ip = request.client.host if request.client else None
         ctx = start_request_context(
             ip,

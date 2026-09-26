@@ -27,7 +27,7 @@ _ID_MAX = 64
 
 # API-key integration type -> audit source. Anything unlisted is a generic external caller.
 _SOURCE_BY_INTEGRATION_TYPE = {"automation": "n8n", "mcp": "mcp"}
-_CHATBOT_PATH_PREFIX = "/api/v1/external/chat"
+_CHATBOT_PATH_PREFIX = "/api/v1/external/chat/"  # not /chat-history
 
 
 def _clamp(value: Optional[str]) -> Optional[str]:
@@ -50,6 +50,10 @@ class AuditContext:
     correlation_id: Optional[str] = None
     reason: Optional[str] = None
     event: Optional[str] = None
+    # An inbound X-Correlation-Id, held aside: it becomes correlation_id only once an
+    # integration key authenticates (MCP and n8n are the real producers), so an ordinary
+    # caller cannot stitch its writes into someone else's business action.
+    inbound_correlation_id: Optional[str] = field(default=None, repr=False)
     # (entity_type, entity_id) pairs the flush listener wrote while ``event`` was set, so the
     # ``@audit_event`` decorator can tell which ids got no row. Not carried into jobs.
     event_hits: set = field(default_factory=set, repr=False)
@@ -97,12 +101,17 @@ def audit_context_scope(**fields) -> Iterator[AuditContext]:
 def start_request_context(
     ip_address: Optional[str], request_id: str, correlation_id: Optional[str] = None
 ) -> AuditContext:
-    """Called once per request by ``LoggingMiddleware``: a fresh object, never a shared one."""
+    """Called once per request by ``LoggingMiddleware``: a fresh object, never a shared one.
+
+    ``correlation_id`` is the caller's X-Correlation-Id; it is trusted only after an API key
+    authenticates (``set_api_key_principal``). Until then the correlation id is the request id.
+    """
     request_id = _clamp(request_id)
     ctx = AuditContext(
         ip_address=ip_address,
         request_id=request_id,
-        correlation_id=_clamp(correlation_id) or request_id,
+        correlation_id=request_id,
+        inbound_correlation_id=_clamp(correlation_id),
     )
     _ctx.set(ctx)
     return ctx
@@ -139,6 +148,8 @@ def set_api_key_principal(
     ctx = _ensure()
     ctx.principal_type = "api_key"
     ctx.principal_id = str(integration_id) if integration_id else None
+    if ctx.inbound_correlation_id:
+        ctx.correlation_id = ctx.inbound_correlation_id
     if path and path.startswith(_CHATBOT_PATH_PREFIX):
         ctx.source = "chatbot"
     else:

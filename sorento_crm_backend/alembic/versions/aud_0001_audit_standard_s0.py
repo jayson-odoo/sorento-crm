@@ -14,8 +14,8 @@ now, we must do the right thing now" - evolve `audit_logs` in place, no second t
 3. `changed_at` defaults to `clock_timestamp()` instead of `now()`: now() is the transaction's
    start, so every row one request wrote shared a timestamp and history order was random.
 4. Append-only: UPDATE, DELETE and TRUNCATE raise unless the transaction ran
-   `SET LOCAL sorento.audit_maintenance = 'on'`. The DDL is `app.models.audit`'s, the same copy
-   `create_all` installs through the table's after_create hook.
+   `SET LOCAL sorento.audit_maintenance = 'on'`. The DDL is frozen here (a migration keeps
+   meaning what it meant when it ran); `app.models.audit` carries the same text for create_all.
 
 Any later migration that rewrites audit rows (the S-1 password scrub) must run
 `SET LOCAL sorento.audit_maintenance = 'on'` first.
@@ -31,7 +31,26 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-from app.models.audit import APPEND_ONLY_FUNCTION_SQL, APPEND_ONLY_TRIGGERS_SQL
+APPEND_ONLY_FUNCTION_SQL = """
+CREATE OR REPLACE FUNCTION audit_logs_append_only() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF coalesce(current_setting('sorento.audit_maintenance', true), '') = 'on' THEN
+        IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+        IF TG_OP = 'UPDATE' THEN RETURN NEW; END IF;
+        RETURN NULL;
+    END IF;
+    RAISE EXCEPTION 'audit_logs is append-only (% refused)', TG_OP
+        USING ERRCODE = 'insufficient_privilege';
+END
+$$
+"""
+APPEND_ONLY_TRIGGERS_SQL = (
+    "CREATE TRIGGER audit_logs_append_only_row BEFORE UPDATE OR DELETE ON audit_logs "
+    "FOR EACH ROW EXECUTE FUNCTION audit_logs_append_only()",
+    "CREATE TRIGGER audit_logs_append_only_truncate BEFORE TRUNCATE ON audit_logs "
+    "FOR EACH STATEMENT EXECUTE FUNCTION audit_logs_append_only()",
+)
 
 revision = "aud_0001_audit_standard_s0"
 down_revision = "sales_0002_team_leader"
@@ -65,9 +84,9 @@ def upgrade() -> None:
     op.execute(f"ALTER TABLE audit_logs ADD CONSTRAINT audit_logs_action_check CHECK (action IN {_NEW_ALLOWED})")
     op.execute("ALTER TABLE audit_logs ALTER COLUMN changed_at SET DEFAULT clock_timestamp()")
 
-    op.execute(APPEND_ONLY_FUNCTION_SQL.format(schema=""))
+    op.execute(APPEND_ONLY_FUNCTION_SQL)
     for statement in APPEND_ONLY_TRIGGERS_SQL:
-        op.execute(statement.format(schema=""))
+        op.execute(statement)
 
 
 def downgrade() -> None:

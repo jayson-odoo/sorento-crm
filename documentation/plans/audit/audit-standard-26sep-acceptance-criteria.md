@@ -74,9 +74,10 @@ why" about any record, days or months after the fact.
 - **AC-S0-13 [BE]** Given a portal write (actor contact set), then `principal_type = contact`,
   `principal_id` = the contact, `source = portal`. (3)
 - **AC-S0-14 [BE]** Given an inbound `X-Trace-Id` longer than 64 characters, then the stored
-  `trace_id` is at most 64 characters and the write succeeds; given an inbound
-  `X-Correlation-Id`, then `correlation_id` is that value (clamped to 64), else it equals the
-  request id. (4)
+  `trace_id` is at most 64 characters and the write succeeds. An inbound `X-Correlation-Id`
+  becomes `correlation_id` only once an integration key authenticates; otherwise
+  `correlation_id` equals the request id, so an ordinary caller cannot stitch its writes into
+  another action (security review S2). (4)
 - **AC-S0-15 [BE]** Given a write with no context at all (a script), then `principal_type =
   system` and the write succeeds. Given a scheduler tick (`scheduler_session`), then
   `principal_type = scheduler`, `source = scheduler` and a request id is set. (2)
@@ -89,6 +90,22 @@ why" about any record, days or months after the fact.
   correlation id, `principal_type = worker`, `source = import` on the `imports` queue (else
   `worker`), and `trace_id` = the job id. (4)
 - **AC-S0-17 [T]** `worker.py`'s startup registers the audit listeners. (2)
+
+### Review round 1 (security-reviewer and reviewer on PR #1299)
+
+- **AC-S0-26 [BE]** Given a row of a table with no `company_id` whose `__audit_parent__` or NOT
+  NULL foreign key points at a company-scoped parent, then every audit row for it (flush, bulk,
+  after-flush) carries the parent's company; a nullable reference never pins a global row. (5)
+- **AC-S0-27 [BE]** `api_call_log` is skipped; secret keys are redacted at every depth of a JSON
+  value; `push_subscriptions.auth` / `p256dh` and `*_webhook_url` / `*_webhook` are redacted; a
+  guard test fails when a secret-looking column on an audited table is neither redacted nor named
+  harmless. (3)
+- **AC-S0-28 [BE]** A DB-generated key (market_segments) gets its CREATE row; an attribute set
+  after the object expired keeps its real old value; a bulk statement with named bind parameters
+  still runs; `UPDATE ... FROM` criteria itemise each row once; the pre-select locks the matched
+  rows. (2, 3)
+- **AC-S0-29 [BE]** A scheduled task's Run now names the user who pressed it;
+  `/api/v1/external/chat-history` is not tagged `chatbot`. (3)
 
 ### Business verbs and reason
 

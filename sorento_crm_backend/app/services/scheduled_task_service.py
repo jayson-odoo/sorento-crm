@@ -431,8 +431,22 @@ def run_task_now(db: Session, task_id: str, requested_by_user_id: Optional[str] 
     task_key = _task_key(task)
     task_id_str = _task_id(task)
 
+    def _run_as_requester(*args):
+        # A new thread starts with an empty context: name the user who pressed Run now.
+        from app.audit_context import audit_context_scope
+
+        with audit_context_scope(
+            user_id=requested_by_user_id,
+            effective_user_id=requested_by_user_id,
+            principal_type="scheduler",
+            principal_id=task_key,
+            source="scheduler",
+            request_id=run_id,
+        ):
+            _execute_task_run(*args)
+
     thread = threading.Thread(
-        target=_execute_task_run,
+        target=_run_as_requester,
         args=(task_id_str, run_id, task_key, requested_by_user_id),
         name=f"scheduled-task-run-{task_key}-{run_id[:8]}",
         daemon=True,

@@ -355,7 +355,9 @@ class TestContext:
         client.post("/w", headers={"X-Trace-Id": "t" * 200, "X-Correlation-Id": "corr-1"})
         (row,) = _rows(db, made["id"])
         assert row.trace_id == "t" * 64
-        assert row.correlation_id == "corr-1"
+        # No integration key authenticated, so the caller's correlation id is not trusted
+        # (security review S2): it cannot stitch this write into another action.
+        assert row.correlation_id == "t" * 64
         client.post("/w")
         (row2,) = _rows(db, made["id"])
         assert row2.trace_id and row2.correlation_id == row2.trace_id
@@ -670,3 +672,170 @@ def test_ac_s0_01c_every_column_type_serializes():
     json.dumps(value)
     assert value["t"] == "09:30:00" and value["d"] == 120.0 and value["e"] == "red"
     assert value["b"] == "[3 bytes]" and value["nested"][0] == "1.5"
+
+
+# --- Security review round 1 (PR #1299) ----------------------------------------------
+
+
+class TestReviewRound1:
+    def test_b1_a_child_without_company_id_takes_its_parents_company(self, db):
+        """Default-on audits children of scoped parents; a NULL company_id on their audit rows
+        would show company A's data to every company's audit viewers."""
+        from app.models.access import Team, TeamMember
+
+        user = User(email=f"{uuid.uuid4().hex}@t.local", name="Member", status="ACTIVE")
+        team = Team(name=unique_code("T"))
+        db.add_all([user, team])
+        db.flush()
+        assert team.company_id
+        member = TeamMember(team_id=team.id, user_id=user.id)
+        db.add(member)
+        db.flush()
+        member.sort_order = 2
+        db.flush()
+        db.query(TeamMember).filter(TeamMember.id == member.id).update(
+            {"sort_order": 3}, synchronize_session=False
+        )
+        db.query(TeamMember).filter(TeamMember.id == member.id).delete(synchronize_session=False)
+        rows = _rows(db, member.id)
+        assert [r.action for r in rows] == ["CREATE", "UPDATE", "UPDATE", "DELETE"]
+        assert {str(r.company_id) for r in rows} == {str(team.company_id)}
+
+    def test_b1_a_nullable_reference_does_not_pin_a_global_row(self):
+        from app.services.audit_service import _company_fk
+
+        assert _company_fk(SystemSetting) is None
+
+    def test_s1_api_call_log_is_not_audited(self):
+        from app.models.api_call_log import ApiCallLog
+
+        assert getattr(ApiCallLog, "__audit_skip__", None)
+
+    def test_s2_an_inbound_correlation_id_is_trusted_only_for_an_api_key(self, db):
+        from app.audit_context import set_api_key_principal, start_request_context
+
+        with audit_context_scope():
+            ctx = start_request_context("1.1.1.1", "req-x", "someone-elses-action")
+            set_audit_context(str(uuid.uuid4()), "1.1.1.1")
+            assert ctx.correlation_id == "req-x"
+            set_api_key_principal("int-1", "mcp", "/api/v1/master-data/x")
+            assert ctx.correlation_id == "someone-elses-action"
+
+    def test_s3_nested_json_and_the_missed_columns_are_redacted(self, db):
+        eid = str(uuid.uuid4())
+        log_audit(
+            db, "probe", eid, "UPDATE",
+            new_values={
+                "config_json": {"token": "t1", "inner": [{"client_secret": "s1", "ok": 1}]},
+                "auth": "push-secret", "p256dh": "pk", "n8n_escalation_webhook_url": "https://x",
+            },
+        )
+        (row,) = _rows(db, eid)
+        blob = str(row.new_values)
+        for secret in ("t1", "s1", "push-secret", "'pk'", "https://x"):
+            assert secret not in blob, secret
+        assert row.new_values["config_json"]["inner"][0]["ok"] == 1
+
+    def test_s3_every_secret_looking_column_on_an_audited_table_is_redacted(self):
+        """The guard: a new secret-bearing column on an audited table fails here until it is
+        redacted or named harmless below."""
+        import re
+
+        from app.services.audit_service import _is_secret_key
+
+        looks_secret = re.compile(r"password|passwd|secret|token|cipher|credential|private|webhook|otp|p256|^auth$")
+        harmless = re.compile(
+            r"(prompt|completion|total)_tokens$|tokens_(in|out)$|^total_tokens_(in|out)$|"
+            r"_token_id$|_expires_at$|^extraction_tokens_(in|out)$"
+        )
+        missed = []
+        for mapper in Base.registry.mappers:
+            if getattr(mapper.class_, "__audit_skip__", None) or mapper.class_ is AuditLog:
+                continue
+            for col in mapper.column_attrs:
+                key = col.key
+                if looks_secret.search(key) and not harmless.search(key) and not _is_secret_key(key):
+                    missed.append(f"{mapper.local_table.fullname}.{key}")
+        assert missed == []
+
+    def test_n4_chat_history_is_not_the_chatbot(self):
+        from app.audit_context import set_api_key_principal
+
+        with audit_context_scope():
+            set_api_key_principal("int-1", "automation", "/api/v1/external/chat-history/x")
+            assert current_audit_context().source == "n8n"
+            set_api_key_principal("int-1", "automation", "/api/v1/external/chat/turn")
+            assert current_audit_context().source == "chatbot"
+
+    def test_n3_run_now_names_the_user_who_pressed_it(self):
+        from app.services import scheduled_task_service as sts
+
+        seen = {}
+
+        def fake_execute(*args):
+            seen["ctx"] = current_audit_context()
+
+        class _Thread:
+            def __init__(self, target, args, **kw):
+                self.target, self.args = target, args
+
+            def start(self):
+                self.target(*self.args)
+
+        task = MagicMock()
+        with patch.object(sts, "get_task", return_value=task), \
+                patch.object(sts, "create_run", return_value=MagicMock()), \
+                patch.object(sts, "_run_id", return_value="run-1"), \
+                patch.object(sts, "_task_key", return_value="k"), \
+                patch.object(sts, "_task_id", return_value="t-1"), \
+                patch.object(sts, "_execute_task_run", fake_execute), \
+                patch.object(sts.threading, "Thread", _Thread):
+            sts.run_task_now(MagicMock(), "t-1", requested_by_user_id="u-run")
+        ctx = seen["ctx"]
+        assert (ctx.user_id, ctx.principal_type, ctx.source, ctx.request_id) == ("u-run", "scheduler", "scheduler", "run-1")
+
+
+class TestReviewerRound1:
+    def test_r1_a_db_generated_key_still_gets_its_create_row(self, db):
+        """market_segments' key comes from gen_random_uuid(); the identity key is only set after
+        after_flush, so the CREATE path must read the key from the object's state."""
+        from app.models.access import MarketSegment
+
+        cols = {c.name: c for c in MarketSegment.__table__.columns}
+        required = {
+            n: unique_code("MS")[:20] for n, c in cols.items()
+            if not c.nullable and c.default is None and c.server_default is None and not c.primary_key
+        }
+        ms = MarketSegment(**required)
+        db.add(ms)
+        db.flush()
+        pk = "_".join(str(getattr(ms, c.key)) for c in MarketSegment.__mapper__.primary_key)
+        assert [r.action for r in _rows(db, pk)] == ["CREATE"]
+
+    def test_r2_an_expired_attribute_keeps_its_real_old_value(self, db):
+        b = _brand(db)
+        db.commit()  # expires every attribute, as SessionLocal does after each commit
+        b.brand_name = "Beta"
+        db.flush()
+        (row,) = _rows(db, b.id, "UPDATE")
+        assert row.old_values == {"brand_name": "Alpha"}
+
+    def test_r3_a_bulk_write_with_named_bind_parameters_still_runs(self, db):
+        from sqlalchemy import bindparam
+
+        a = _brand(db)
+        db.execute(update(Brand).where(Brand.id == bindparam("bid")).values(brand_name="Bound"), {"bid": a.id})
+        (row,) = _rows(db, a.id, "UPDATE")
+        assert row.new_values == {"brand_name": "Bound"}
+
+    def test_r4_update_from_criteria_itemise_each_row_once(self, db):
+        marker = unique_code("UF")
+        a = _brand(db, brand_name=marker)
+        for _ in range(3):
+            db.add(Customer(customer_code=unique_code("C")[:50], customer_name=marker))
+        db.flush()
+        db.execute(
+            update(Brand).where(Brand.brand_name == Customer.customer_name, Brand.id == a.id)
+            .values(manufacturer="From")
+        )
+        assert len(_rows(db, a.id, "UPDATE")) == 1
