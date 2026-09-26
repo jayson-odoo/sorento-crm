@@ -36,7 +36,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models.base import set_company_scope
 from app.models.chatbot_turn import ChatbotTurn
-from app.services.chatbot import dispatch, jsc, media_intake, trace as trace_mod
+from app.services.chatbot import dispatch, jsc, media_intake, send_order, trace as trace_mod
 from app.services.chatbot.contracts import (
     BUSINESS_BRANCH_KINDS,
     CRM_COMPLETED_BRANCH_KINDS,
@@ -561,8 +561,14 @@ def _insert_turn(
     envelope: Envelope,
     contact_respond_id: str,
     retrying: ChatbotTurn | None = None,
+    queued: bool = False,
 ) -> ChatbotTurn:
     """The turn row. `retrying` is the failed row an operator asked to re-run (S2b).
+
+    `queued` (issue #1262): the row waits for its ticket at stage `queued`, which is what
+    lets an earlier-arrived turn find it and answer it first when it was SENT first
+    (`send_order`). The request claims it back with `_claim_own_row` once its ticket
+    comes up.
 
     A retry is a NEW turn, not an edit of the old one: same message, next attempt, ingress
     `retry`. The old row keeps its trace and its failure - that is the record the operator
@@ -575,7 +581,7 @@ def _insert_turn(
         envelope=trace_mod.cap_document(envelope.model_dump(mode="json")),
         is_test=envelope.dry_run,
         status="processing",
-        stage="received",
+        stage=send_order.QUEUED_STAGE if queued else "received",
         attempt=(retrying.attempt + 1) if retrying is not None else 1,
         trace=[],
         shadow_of=getattr(envelope, "shadow_of", None),
@@ -749,6 +755,242 @@ def _duplicate_result(row: ChatbotTurn) -> TurnResult:
 
 
 # --------------------------------------------------------------------------- #
+# Send order (issue #1262): earlier-SENT messages are answered first
+# --------------------------------------------------------------------------- #
+
+
+def _claim_own_row(session_factory: SessionFactory, turn_id: str) -> bool:
+    """The waiting request takes its own `queued` row back once its ticket comes up.
+
+    False means a predecessor that held the slot claimed it first, because this message
+    was sent before that one (`send_order`), and has already answered it.
+    """
+    with _session(session_factory) as db:
+        return send_order.claim(db, turn_id)
+
+
+def _answered_by_predecessor(session_factory: SessionFactory, turn_id: str) -> TurnResult:
+    """This message was answered by the turn ahead of it. Replay that answer as a
+    duplicate: its actions already went out on that turn's response, so the caller's
+    Switch on `duplicate` sends nothing a second time."""
+    with _session(session_factory) as db:
+        row = db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).first()
+        return _duplicate_result(row)
+
+
+def _answer_earlier_messages(
+    envelope: Envelope,
+    *,
+    session_factory: SessionFactory,
+    turn_id: str,
+    contact_respond_id: str,
+    contact_scope: frozenset,
+    switches: "_TurnSwitches",
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Answer, oldest first, every earlier-sent message of this contact the CRM already
+    knows about and has not answered, within `send_order.within_bounds`. Returns their
+    actions, in send order, and the facts this turn's own trace records about them.
+
+    Each is answered as its own turn, on its own row with its own trace, exactly as its
+    own delivery would have been, so the focus it leaves is what this turn then reads.
+
+    Best effort, all of it: a failure here costs the ordering, never this turn, and never
+    the answers already given (their rows are closed, so their own deliveries will be
+    duplicates and these actions are the only copy that gets sent).
+    """
+    try:
+        with _session(session_factory) as db:
+            me = db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).first()
+            if me is None:  # pragma: no cover - inserted by the caller
+                return [], {}
+            earlier = send_order.earlier_unanswered(db, contact_respond_id=contact_respond_id, me=me)
+            if not earlier:
+                return [], {}
+            from app.services.media_access_service import resolve_media_settings
+
+            media_wait = float(resolve_media_settings(db).sync_wait_seconds)
+    except Exception:  # noqa: BLE001 - ordering is an improvement, not a precondition
+        logger.warning(
+            "chatbot send order: could not look up earlier messages for %s; answering "
+            "this turn alone",
+            contact_respond_id,
+            exc_info=True,
+        )
+        return [], {}
+
+    budget = send_order.N8N_CHAT_TURN_TIMEOUT_SECONDS
+    if getattr(settings, "chatbot_turn_on_worker", False):
+        # Offloaded, the API stops waiting on the worker sooner than n8n stops waiting
+        # on the API.
+        budget = min(budget, float(getattr(settings, "chatbot_turn_wait_seconds", 60)))
+    taken, left, reasons = send_order.within_bounds(
+        earlier,
+        media_wait_seconds=media_wait,
+        own_carries_media=media_intake.detect(_inner_message(envelope)) is not None,
+        budget_seconds=budget,
+    )
+    left_count = len(left)
+    answered = 0
+
+    mine = envelope.model_dump(mode="json")
+    my_message_id = _message_id(envelope)
+    out: list[dict[str, Any]] = []
+    for item in taken:
+        if item.row_id is None and item.job_id is not None:
+            # Today's path (pre-S6): n8n's `media-route` replies on its own when its
+            # extraction fails or outlives its wait. Answering such a photo here too
+            # would send the customer a second message, so only a photo that has been
+            # READ is answered ahead; any other is left to its own delivery, with no row.
+            try:
+                status = media_intake.await_existing_job(
+                    item.job_id, timeout_seconds=media_wait, session_factory=session_factory
+                )
+            except Exception:  # noqa: BLE001 - see the docstring: best effort
+                logger.warning(
+                    "chatbot send order: could not wait on an earlier photo of %s; it is "
+                    "left to its own delivery",
+                    contact_respond_id,
+                    exc_info=True,
+                )
+                status = None
+            if status != "completed":
+                # Failed, still being read, or the wait raised: left to its own delivery,
+                # and the take goes on. A ledger-only photo reaches `/chat/turn` after
+                # every queued row, or never (n8n answers it on its reply arm), so
+                # stopping here would put a known, earlier-sent text behind this turn
+                # and gain the photo nothing (review round 3, S1).
+                if "photo_not_read" not in reasons:
+                    reasons.append("photo_not_read")
+                left_count += 1
+                continue
+        try:
+            if item.row_id is not None:
+                earlier_envelope = Envelope.model_validate(item.envelope)
+            else:
+                earlier_envelope = Envelope.model_validate(send_order.ledger_envelope(mine, item))
+        except ValueError:
+            logger.warning(
+                "chatbot send order: could not rebuild the envelope of an earlier message "
+                "for %s; it is left to its own delivery",
+                contact_respond_id,
+                exc_info=True,
+            )
+            continue
+        try:
+            with _session(session_factory) as db:
+                if item.row_id is not None:
+                    if not send_order.claim(db, item.row_id):
+                        continue
+                    earlier_id = item.row_id
+                else:
+                    try:
+                        earlier_id = str(
+                            _insert_turn(db, envelope=earlier_envelope, contact_respond_id=contact_respond_id).id
+                        )
+                    except IntegrityError:
+                        # Its own delivery reached the CRM in the meantime and owns it now.
+                        db.rollback()
+                        continue
+        except Exception:  # noqa: BLE001 - see the docstring: best effort
+            logger.warning(
+                "chatbot send order: could not take an earlier message of %s; it is left "
+                "to its own delivery",
+                contact_respond_id,
+                exc_info=True,
+            )
+            continue
+        answered += 1
+        try:
+            result = _answer_claimed(
+                earlier_envelope,
+                session_factory=session_factory,
+                turn_id=earlier_id,
+                contact_respond_id=contact_respond_id,
+                contact_scope=contact_scope,
+                switches=switches,
+                answered_ahead_by={"turn_id": turn_id, "message_id": my_message_id},
+            )
+        except Exception:  # noqa: BLE001 - its stages raised, and so did closing its row
+            logger.warning(
+                "chatbot send order: an earlier message of %s failed and its row could not "
+                "be closed; answering this turn anyway",
+                contact_respond_id,
+                exc_info=True,
+            )
+            continue
+        out.extend(result.actions or [])
+    return out, {
+        "earlier_answered_ahead": answered,
+        "earlier_left_for_own_turns": left_count,
+        "earlier_left_because": ", ".join(reasons) if reasons else None,
+    }
+
+
+def _answer_claimed(
+    envelope: Envelope,
+    *,
+    session_factory: SessionFactory,
+    turn_id: str,
+    contact_respond_id: str,
+    contact_scope: frozenset,
+    switches: "_TurnSwitches",
+    answered_ahead_by: dict[str, Any],
+) -> TurnResult:
+    """One earlier message's turn, on its own row: `run_turn`'s stages without the ticket
+    (the caller already holds the contact's slot). A failure is recorded on that row and
+    still hands back the error reply, as it would have on its own delivery.
+
+    `answered_ahead_by` names the turn carrying this answer, for the row's first trace
+    record: an operator can then tell why this reply went out on that turn's response."""
+    turn_trace = trace_mod.TurnTrace()
+    turn_trace.start()
+    stage: list[str] = ["received"]
+    actions: list[dict[str, Any]] = []
+    try:
+        media_box: dict[str, Any] = {"answered_ahead_by": answered_ahead_by}
+        result = _run_stages(
+            envelope,
+            session_factory=session_factory,
+            turn_trace=turn_trace,
+            turn_id=turn_id,
+            contact_respond_id=contact_respond_id,
+            contact_scope=contact_scope,
+            dry_run=False,
+            actions=actions,
+            stage=stage,
+            switches=switches,
+            media_box=media_box,
+        )
+        _apply_media_reply_prefix(result, media_box.get("outcome"))
+        if media_box.get("outcome") is not None:
+            _repersist_media_prefixed_reply(session_factory, turn_id, result, False)
+        return result
+    except Exception as exc:  # noqa: BLE001 - a failed turn is recorded, never dropped
+        message = f"{type(exc).__name__}: {exc}"
+        logger.exception("chatbot turn %s failed at stage %s", turn_id, stage[0])
+        turn_trace.record(
+            stage[0],  # type: ignore[arg-type]
+            status="failed",
+            summary="The turn stopped before it could be answered.",
+            why="Something the turn depends on did not respond as expected.",
+            facts={"stage": stage[0]},
+            error=message,
+            raw=None,
+        )
+        with _session(session_factory) as db:
+            _close_turn(
+                db,
+                turn_id,
+                status="failed",
+                stage=stage[0],
+                branch_kind=None,
+                error=message,
+                records=turn_trace.persisted(),
+            )
+        return _failed_result(turn_id, stage[0], message, actions, False)
+
+
+# --------------------------------------------------------------------------- #
 # The turn
 # --------------------------------------------------------------------------- #
 
@@ -876,6 +1118,7 @@ def run_turn(
                     envelope=envelope,
                     contact_respond_id=contact_respond_id,
                     retrying=retrying,
+                    queued=ticket is not None,
                 )
             except IntegrityError:
                 # The SELECT above is a TOCTOU window, not a lock: a webhook delivery
@@ -901,6 +1144,8 @@ def run_turn(
         # the inner stages update it and the handler reads it.
         stage: list[str] = ["received"]
         actions: list[dict[str, Any]] = []
+        earlier_actions: list[dict[str, Any]] = []
+        send_order_facts: dict[str, Any] = {}
         if ticket is not None:
             # `stage[0]` carries `queued` through the wait, so the handler below files a
             # `QueueWait` under the stage it actually happened in without a special case
@@ -910,14 +1155,22 @@ def run_turn(
         try:
             if ticket is not None:
                 try:
-                    dispatch.wait_for_turn(
-                        redis,
-                        contact_respond_id,
-                        ticket,
-                        timeout_s=float(
-                            getattr(settings, "chatbot_queue_wait_seconds", 45.0)
-                        ),
-                    )
+                    try:
+                        dispatch.wait_for_turn(
+                            redis,
+                            contact_respond_id,
+                            ticket,
+                            timeout_s=float(
+                                getattr(settings, "chatbot_queue_wait_seconds", 45.0)
+                            ),
+                        )
+                    except dispatch.QueueWait:
+                        # A predecessor may be answering THIS message right now, because
+                        # it was sent earlier (`send_order`). Then the wait was for our
+                        # own answer, and failing would send the error reply beside it.
+                        if not _claim_own_row(session_factory, turn_id):
+                            return _answered_by_predecessor(session_factory, turn_id)
+                        raise
                     dispatch.mark_running(redis, contact_respond_id, ticket)
                 except dispatch.ORDERING_ERRORS:
                     # Redis went away mid-wait. Same call as above: answer unordered
@@ -931,7 +1184,23 @@ def run_turn(
                         exc_info=True,
                     )
                 stage[0] = "received"
-            media_box: dict[str, Any] = {}
+                if not _claim_own_row(session_factory, turn_id):
+                    # Sent before the turn that held the slot, so that turn answered it
+                    # first (issue #1262). Its answer went out on that turn's response.
+                    return _answered_by_predecessor(session_factory, turn_id)
+            # Issue #1262: every earlier-SENT message of this contact the CRM already
+            # knows about is answered before this one, on its own row, and its actions go
+            # out ahead of this turn's. No timer: only messages the CRM has seen count.
+            if not dry_run:
+                earlier_actions, send_order_facts = _answer_earlier_messages(
+                    envelope,
+                    session_factory=session_factory,
+                    turn_id=turn_id,
+                    contact_respond_id=contact_respond_id,
+                    contact_scope=contact_scope,
+                    switches=switches,
+                )
+            media_box: dict[str, Any] = {"send_order": send_order_facts} if send_order_facts else {}
             result = _run_stages(
                 envelope,
                 session_factory=session_factory,
@@ -960,6 +1229,8 @@ def run_turn(
             # offload above rebuilds its result from a job that came through here, so it is
             # stamped too, and a duplicate reads `is_test` off the row it replays.
             result.is_test = dry_run
+            if earlier_actions:
+                result.actions = [*earlier_actions, *(result.actions or [])]
             return result
         except Exception as exc:  # noqa: BLE001 - a failed turn is recorded, never dropped
             message = f"{type(exc).__name__}: {exc}"
@@ -983,7 +1254,12 @@ def run_turn(
                     error=message,
                     records=turn_trace.persisted(),
                 )
-            return _failed_result(turn_id, stage[0], message, actions, dry_run)
+            failed = _failed_result(turn_id, stage[0], message, actions, dry_run)
+            if earlier_actions:
+                # The earlier-sent messages were answered on their own rows; their
+                # replies still go out, ahead of this turn's error reply.
+                failed.actions = [*earlier_actions, *failed.actions]
+            return failed
     finally:
         # AC-704. In a `finally`, and one that covers the ROW INSERT and the WAIT as well
         # as the stages, because the ONE thing worse than a failed turn is a failed turn
@@ -1276,8 +1552,26 @@ def _run_stages(  # noqa: PLR0915
             # ALWAYS present, empty list included: a reader must never have to tell
             # "no harness keys" from "this build does not report them".
             "harness_keys_ignored": harness_ignored,
+            # Issue #1262: what this turn answered ahead of itself and what it left to
+            # their own deliveries (and which bound left them).
+            **media_box.get("send_order", {}),
+            # ... or, on a row answered ahead, the message whose response carried it.
+            **(
+                {"answered_ahead_by_message": media_box["answered_ahead_by"].get("message_id")}
+                if media_box.get("answered_ahead_by")
+                else {}
+            ),
         },
-        raw={"session_vars": session_block},
+        # The carrying turn's id goes in `raw`, never `facts`: facts print verbatim on
+        # the trace screen, and a UUID never reaches the UI.
+        raw={
+            "session_vars": session_block,
+            **(
+                {"answered_ahead_by": media_box["answered_ahead_by"].get("turn_id")}
+                if media_box.get("answered_ahead_by")
+                else {}
+            ),
+        },
     )
 
     # -- MEDIA INTAKE (NO DB SESSION IS OPEN HERE, same window as the parser) --- #
