@@ -8,7 +8,8 @@ ingest surface.
 UAC: `excel-preview-26sep-acceptance-criteria.md` (same folder)
 Mockup: `excel-preview-26sep-mockup.html` (same folder; open in a browser)
 Classification: the low stock report page is part of the SCM module (`scm` router, its module
-guard, `scm.dashboard.view`); `SpreadsheetViewer` is core UI (`components/common`), like
+guard; the page and its view route on `scm.reorder.run`, Download's export on
+`scm.dashboard.view`); `SpreadsheetViewer` is core UI (`components/common`), like
 `PdfViewer`.
 Parents: `scm/PLAN-low-stock-report.md` (the run-bounded workbook), `scm/PLAN-low-stock-export-
 split-25sep.md` (#1236, the split). Sibling: #1256 (themed `PdfViewer`, open), whose toolbar and
@@ -264,7 +265,8 @@ def build_low_stock_view(db, *, run_id, include_supplier=True, split="supplier_c
 Routes (`BE/api/v1/scm/order_summary.py`, beside the export):
 
 - `GET /scm/order-summary/low-stock-view?run_id=&split=&supplier=&category=` -> `LowStockViewOut`
-  (AC-1). `scm.dashboard.view`, JWT only like the export (the report carries supplier names).
+  (AC-1). `scm.reorder.run`, the page's own gate (review N1 of #1270), JWT only like the
+  export (the report carries supplier names).
   `split` defaults to `supplier_category` here (owner: "default both").
 - `OrderSummaryExportIn` gains `suppliers: list[str] | None`, `categories: list[str] | None`;
   refused with 422 on any format but `low_stock_xlsx` (the R6 pattern of #1236); forwarded to

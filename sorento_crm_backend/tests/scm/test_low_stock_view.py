@@ -340,6 +340,24 @@ def test_view_route_404_invisible_run_fields_declared(scm_app):
         assert c.get(VIEW_URL, params={"run_id": run_id, "split": "bogus"}).status_code == 422
 
 
+def test_view_route_is_on_the_page_permission_scm_reorder_run(scm_app):
+    """Review N1: the page and the sidebar item are on `scm.reorder.run` (owner ruling Q2,
+    the plan's own gate), so the route that fills the page is too. A role holding only
+    `scm.dashboard.view` used to get the route but not the page; one holding only
+    `scm.reorder.run` got the page shell and then an error box."""
+    from tests.scm.test_m5_market import _client_with_perms
+
+    app, db = _client_with_perms(scm_app, ["scm.dashboard.view"])
+    run_id = _seed_run(db)
+    db.flush()
+    with TestClient(app) as c:
+        assert c.get(VIEW_URL, params={"run_id": run_id}).status_code == 403
+
+    app, db = _client_with_perms(scm_app, ["scm.reorder.run"])
+    with TestClient(app) as c:
+        assert c.get(VIEW_URL, params={"run_id": run_id}).status_code == 200
+
+
 def test_view_route_run_id_omitted_uses_newest_completed_run(scm_app):
     app, db = _client(scm_app, "purchasing")
     older_id = _seed_run(db)

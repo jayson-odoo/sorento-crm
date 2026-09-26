@@ -62,7 +62,8 @@ Tags: `[BE]` backend, `[FE]` frontend, `[E2E]` browser pass via sidebar, `[T]` a
   answers `{run: {as_of, label}, columns: [..], rows: [[..]], sheets: [{title, row_indexes}],
   facets: {suppliers: [{key, rows, low}], categories: [{key, rows, low}]}, counts: {rows, low,
   sheets}, filename}`. `supplier` and `category` repeat (multi); omitted = all. Behind
-  `scm.dashboard.view` (JWT only, the export's own gate); 404 on a malformed or invisible run;
+  `scm.reorder.run` (JWT only; the page's own gate, review N1 of #1270); 404 on a malformed or
+  invisible run;
   `run_id` omitted = newest completed run. Every field declared on `LowStockViewOut` and asserted
   by name through the route. (J-A 4)
 - AC-2 [BE] The view and the export are ONE builder. `export_low_stock` renders the sheet model

@@ -77,6 +77,10 @@ _RUN = require_permission_with_api_key("scm.reorder.run")
 # report already answers), but the real-signed-in-user dependency: `app/dependencies.py`'s
 # own rule for anything that writes.
 _EXPORT = require_permission("scm.dashboard.view")
+# The low stock report page's read (PLAN-excel-preview-26sep AC-1; review N1): the page and
+# its sidebar item are on `scm.reorder.run` (owner ruling Q2, the plan's own gate), so the
+# route that fills the page is on the same, stricter permission, JWT only like `_EXPORT`.
+_LOW_STOCK_VIEW = require_permission("scm.reorder.run")
 
 
 def _actor(user: Optional[dict]) -> Optional[str]:
@@ -349,16 +353,16 @@ def get_low_stock_view(
                           "is the blank bucket.",
     ),
     db: Session = Depends(get_db),
-    _user: dict = Depends(_EXPORT),
+    _user: dict = Depends(_LOW_STOCK_VIEW),
 ):
     """The low stock report as the in-app page shows it (PLAN-excel-preview-26sep AC-1): the
     workbook for one run, split and filtered, built by the SAME function that writes the
     file (AC-2), so what the user sees is what Download gives them.
 
-    Same gate as the export itself (`scm.dashboard.view`, a real signed-in user, never an
-    API key): the report carries supplier names, PO and SPO numbers. A named `run_id` is
-    validated as a UUID and checked with the run visibility gate before anything is read,
-    so a malformed, absent or another company's run is the same 404.
+    Gated on `scm.reorder.run`, the page's own permission (review N1), for a real signed-in
+    user, never an API key: the report carries supplier names, PO and SPO numbers. A named
+    `run_id` is validated as a UUID and checked with the run visibility gate before anything
+    is read, so a malformed, absent or another company's run is the same 404.
     """
     if run_id:
         run_id = validate_uuid_path(run_id, resource="Reorder run")
