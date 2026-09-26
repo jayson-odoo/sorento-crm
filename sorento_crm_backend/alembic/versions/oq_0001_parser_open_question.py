@@ -27,7 +27,7 @@ Idempotent: s4's publish skips when the full rendered template is already publis
 inert (s12's own rule). A version the owner has since promoted must never be deleted.
 
 Revision ID: oq_0001_parser_open_question
-Revises: oisl_0001_suggested_links
+Revises: sales_0002_team_leader
 """
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ from pathlib import Path
 from alembic import op
 
 revision = "oq_0001_parser_open_question"
-down_revision = "oisl_0001_suggested_links"
+down_revision = "sales_0002_team_leader"
 branch_labels = None
 depends_on = None
 

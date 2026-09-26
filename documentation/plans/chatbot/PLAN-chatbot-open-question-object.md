@@ -1,9 +1,12 @@
 # PLAN - Chatbot: one open-question object for every question the bot asks, answered by the parser
 
-Status: in progress, 26 Sep 2026 (issue #1293). Track: small fix track by intent (no auth, RBAC
-or permission change, no new external ingest surface), with one data migration that publishes a
-parser prompt version (no schema change). Branch `claude/chatbot-open-question-object-1t9q4k`,
-stacked on PR #1247's head `b896380f` while #1247 is open.
+Status: built 26 Sep 2026 (issue #1293, PR #1294), W1 to W4 done, W5 (live console pass) owed
+to the orchestrator: this VM has no parser key. The prompt goes live once the version
+`oq_0001_parser_open_question` publishes is promoted. Track: small fix track by intent (no auth,
+RBAC or permission change, no new external ingest surface), with one data migration that
+publishes a parser prompt version (no schema change). Branch
+`claude/chatbot-open-question-object-1t9q4k`, stacked on PR #1247's head `b896380f` with
+`origin/main` merged in; rebased once #1247 lands.
 Issue: #1293. Continues PR #1247 round 8 (`PLAN-chatbot-stock-ask-v2-24sep.md`).
 UAC: `chatbot-open-question-object-acceptance-criteria.md`
 
