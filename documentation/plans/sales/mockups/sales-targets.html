@@ -1,0 +1,547 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sales targets mockup</title>
+<!-- Issue #1170. Annotated mockup, not shipped code. Plain inline CSS so it opens from a file.
+     Plan: documentation/plans/sales/PLAN-sales-targets-opportunities-26sep.md
+     UAC:  documentation/plans/sales/sales-targets-opportunities-26sep-acceptance-criteria.md
+     Round 2 (26 Sep 2026): redrawn to the owner's rulings G1 to G10.
+     Round 3 (26 Sep 2026): the owner's Lavish review L1 to L4 (Sales Agents under Sales, sales
+     teams and team targets, a Set target CTA at the top right, the teams table question).
+     Round 4 (26 Sep 2026): the owner's second Lavish review N1 to N13 (teams first, one line per
+     row with +N pills, target and team form views, a plain date range, standard dropdowns, one
+     customer-or-prospect search, product lines, per-contact settings on the contact record, no
+     Add suggested).
+     Round 5 (26 Sep 2026): the owner's answers R1 to R5 and T1 to T5 (06:09Z): delivered by DO
+     date, dated team moves, a team target that is the sum of its agents' figures, "Highest rate
+     on everything" built now, and the sales module and schema.
+     Figures are illustrative. Numbered pins map to the notes beside each frame. -->
+<style>
+:root{
+  --bg:#f6f7f9; --card:#ffffff; --fg:#111827; --muted:#6b7280; --line:#e5e7eb; --line-soft:#f1f2f4;
+  --primary:#1b84ff; --primary-soft:#e9f3ff;
+  --red:#dc2626; --red-soft:#fef2f2;
+  --amber:#b45309; --amber-soft:#fffbeb;
+  --green:#15803d; --green-soft:#f0fdf4;
+  --grey-soft:#f3f4f6; --callout:#e11d74; --radius:8px;
+  --wa-bg:#efeae2; --wa-in:#ffffff;
+  --font:Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 var(--font)}
+.doc{max-width:1760px;margin:0 auto;padding:24px 16px 64px}
+.doc>h1{font-size:22px;margin:0 0 4px}
+.doc>.sub{color:var(--muted);margin:0 0 20px;max-width:900px}
+h2.frame-title{font-size:15px;margin:28px 0 10px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.layout{display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap}
+.scroll{overflow-x:auto;max-width:100%;border-radius:12px}
+.frame{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.06);position:relative;overflow:hidden}
+.w1280{width:1280px}.w375{width:375px;flex:none;max-width:100%}.w640{width:640px;flex:none;max-width:100%}
+.notes{flex:1 1 320px;min-width:280px;max-width:520px}
+.notes ol{margin:0;padding:0;list-style:none}
+.notes li{display:flex;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px;margin-bottom:8px}
+.notes li b{display:block;margin-bottom:2px}
+.notes .ref{display:block;color:var(--muted);font-size:12px;margin-top:4px}
+.co{display:inline-flex;align-items:center;justify-content:center;flex:none;width:22px;height:22px;border-radius:50%;background:var(--callout);color:#fff;font-size:12px;font-weight:700;box-shadow:0 0 0 2px #fff}
+.pin{position:absolute;z-index:5}
+.shell{display:flex;min-height:520px}
+.side{width:170px;border-right:1px solid var(--line);padding:16px 10px;background:#fbfbfc}
+.side .grp{font-size:11px;text-transform:uppercase;color:var(--muted);margin:14px 8px 6px;letter-spacing:.05em}
+.side a{display:block;padding:6px 10px;border-radius:6px;color:var(--fg);text-decoration:none}
+.side a.on{background:var(--primary-soft);color:var(--primary);font-weight:600}
+.main{flex:1;padding:20px 24px;min-width:0}
+.ph{display:flex;flex-direction:column;gap:12px;margin-bottom:14px}
+@media (min-width:640px){.ph{flex-direction:row;justify-content:space-between;align-items:center}}
+.ph h3{margin:0;font-size:20px}
+.ph .meta{color:var(--muted);font-size:13px}
+.btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:#fff;border-radius:6px;padding:6px 12px;font:inherit;font-size:13px;cursor:default}
+.btn.pri{background:var(--primary);border-color:var(--primary);color:#fff}
+.btn.sm{padding:3px 8px;font-size:12px}
+.toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+.ruling{display:block;color:var(--callout);font-size:12px;font-weight:600;margin-top:4px}
+.tabs{display:flex;gap:18px;border-bottom:1px solid var(--line);margin-bottom:12px}
+.tabs span{padding:8px 0;color:var(--muted)}
+.tabs span.on{color:var(--fg);border-bottom:2px solid var(--primary);font-weight:600}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
+.kpi{border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px}
+.kpi .l{color:var(--muted);font-size:12px}.kpi .v{font-size:18px;font-weight:600;font-variant-numeric:tabular-nums}
+table{width:100%;border-collapse:collapse;table-layout:fixed}
+th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+th{font-size:12px;color:var(--muted);font-weight:600;background:#fafafa}
+td.wrap{white-space:normal}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+.bar{height:6px;background:var(--grey-soft);border-radius:3px;overflow:hidden;margin-top:4px}
+.bar i{display:block;height:100%;background:var(--primary)}
+.bar.ok i{background:var(--green)}
+.badge{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;background:var(--grey-soft);color:var(--muted)}
+.badge.ok{background:var(--green-soft);color:var(--green)}
+.badge.warn{background:var(--amber-soft);color:var(--amber)}
+.badge.pri{background:var(--primary-soft);color:var(--primary)}
+.chip{display:inline-block;padding:0 6px;border:1px solid var(--line);border-radius:4px;font-size:11px;color:var(--muted);margin-right:4px}
+.muted{color:var(--muted)}
+.sub2{display:block;font-size:12px;color:var(--muted)}
+tr.grp td{background:#fafafa;font-weight:600}
+tr.unassigned td{background:#fcfcfd;color:var(--muted);font-style:italic}
+.m-head{padding:14px 16px;border-bottom:1px solid var(--line)}
+.m-card{padding:12px 16px;border-bottom:1px solid var(--line-soft)}
+.m-row{display:flex;justify-content:space-between;gap:8px}
+.modal{padding:18px 20px}
+.modal h4{margin:0 0 14px;font-size:16px}
+.modal h5{margin:16px 0 8px;font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.f{margin-bottom:12px}
+.f label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
+.inp{border:1px solid var(--line);border-radius:6px;padding:7px 10px;background:#fff;min-height:34px}
+.inp.ro{background:var(--grey-soft)}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden;flex-wrap:wrap}
+.seg span{padding:6px 12px}.seg span.on{background:var(--primary-soft);color:var(--primary);font-weight:600}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.three{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+.foot{display:flex;justify-content:flex-end;gap:8px;margin-top:6px}
+.hint{font-size:12px;color:var(--muted);margin-top:4px}
+.pill{display:inline-block;background:var(--primary-soft);color:var(--primary);border-radius:999px;padding:1px 8px;font-size:12px;margin:2px 4px 2px 0}
+.sw{display:inline-block;width:30px;height:17px;border-radius:999px;background:var(--line);position:relative;vertical-align:middle;margin-right:6px}
+.sw::after{content:"";position:absolute;top:2px;left:2px;width:13px;height:13px;border-radius:50%;background:#fff}
+.sw.on{background:var(--primary)}.sw.on::after{left:15px}
+.portal-top{background:#0f172a;color:#fff;padding:12px 16px;font-weight:600}
+.wa{background:var(--wa-bg);padding:16px;min-height:300px}
+.wa .top{background:#075e54;color:#fff;padding:10px 14px;font-weight:600}
+.bubble{background:var(--wa-in);border-radius:8px;padding:8px 10px;max-width:92%;box-shadow:0 1px 1px rgba(0,0,0,.1);white-space:pre-line;font-size:13.5px}
+.bubble .t{display:block;text-align:right;font-size:11px;color:var(--muted);margin-top:4px}
+.co.n{width:auto;min-width:22px;padding:0 6px;border-radius:11px}
+.dd{display:flex;justify-content:space-between;align-items:center;border:1px solid var(--line);border-radius:6px;padding:7px 10px;background:#fff;min-height:34px;gap:8px}
+.dd::after{content:"\25BE";color:var(--muted);font-size:12px}
+.dd.clear::after{content:"\00D7  \25BE"}
+.menu{border:1px solid var(--line);border-radius:6px;background:#fff;box-shadow:0 4px 12px rgba(0,0,0,.08);margin-top:4px}
+.menu div{padding:7px 10px;border-bottom:1px solid var(--line-soft)}
+.menu div.on{background:var(--primary-soft)}
+.menu div.dis{color:var(--muted);font-style:italic}
+.menu div.add{color:var(--primary);font-weight:600}
+.pill.more{background:var(--grey-soft);color:var(--fg);font-weight:600}
+.pill.n{background:#fff;border:1px solid var(--line);color:var(--fg)}
+.side a.sub{padding-left:22px}
+.side .h{font-size:10px;letter-spacing:.08em;color:var(--muted);margin:12px 8px 4px;font-weight:700}
+.meta-strip{display:flex;flex-wrap:wrap;gap:4px 14px;color:var(--muted);font-size:12px;margin-top:4px}
+.sec{border:1px solid var(--line);border-radius:10px;margin-bottom:14px;overflow:hidden}
+.sec>.sh{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line);font-weight:600}
+.sec>.sb{padding:12px 14px}
+.kv{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.kv .l{font-size:12px;color:var(--muted)}
+.empty{padding:18px;text-align:center;color:var(--muted)}
+.m-line{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px 16px;border-bottom:1px solid var(--line-soft);white-space:nowrap}
+.m-line .nm{overflow:hidden;text-overflow:ellipsis;min-width:0}
+.now td{background:var(--primary-soft)}
+.tabs span.co{padding:0 6px;color:#fff;border:0}
+.gone{text-decoration:line-through;color:var(--muted)}
+.co.r5{background:#0f766e}
+.ruling.r5{color:#0f766e}
+</style>
+</head>
+<body>
+<div class="doc">
+<h1>Sales targets (issue #1170), round 5</h1>
+<p class="sub">Round 4 folds in the owner's second Lavish review (26 Sep 2026 06:01Z, notes N1 to N13, written against the round 2 page). Pink pins marked N1 to N13 show where each note landed. The Targets screen now opens on a list of teams, every row is one line with extra items folded into a "+N" pill, and the details live on each team's and each target's own page (both drawn here). A target runs over a plain date range, every picker is our standard dropdown, the portal form infers customer or prospect from the search, "What they want" is product lines, and each contact's WhatsApp update settings sit on that contact's record. Earlier pins (1 to 28) keep their round 2 and round 3 meaning. <b>Round 5</b> (the owner's answers of 26 Sep 06:09Z) adds green-labelled pins R3, R5, T2 and T3: a team target is the agents' figures added up (frame 3 and the new frame 7b), a move between teams has a date (frame 5), delivered counts by DO date (frame 7), and every lane is built now. Figures are made up; "today" is 15 Oct 2026.</p>
+
+<h2 class="frame-title">1. Targets landing: a list of teams, 1280 (S1, built after S6)</h2>
+<div class="layout">
+<div class="scroll"><div class="frame w1280">
+  <div class="shell">
+    <nav class="side">
+      <div class="h">OVERVIEW</div><a>Dashboard</a>
+      <div class="h">SALES</div><a>Project Sales</a><a>Delivery Orders</a>
+      <a><b>Sales</b></a><a class="sub on">Targets</a><a class="sub">Opportunities</a><a class="sub">Sales Teams</a><a class="sub">Sales Agents <span class="co n">N1</span></a>
+      <div class="h">ADMINISTRATION</div><a><b>Users &amp; Access</b></a><a class="sub">Internal Users</a><a class="sub">Teams</a><a class="sub">Roles</a>
+    </nav>
+    <div class="main">
+      <div class="ph">
+        <div><h3>Sales targets</h3><div class="meta">Targets active on 15 Oct 2026</div></div>
+        <span class="btn pri">+ Set target</span>
+      </div>
+      <div class="tabs"><span class="on">Teams <span class="co n">N5</span></span><span>Agents</span><span>Dealers</span></div>
+      <div class="toolbar"><span class="btn">Active on: 15 Oct 2026 &#9662;</span><span class="inp" style="min-width:240px">Search teams</span></div>
+      <table>
+        <colgroup><col style="width:140px"><col style="width:190px"><col style="width:190px"><col style="width:110px"><col style="width:110px"><col style="width:70px"><col style="width:110px"><col style="width:100px"><col style="width:64px"></colgroup>
+        <thead><tr><th>Team</th><th>Agents</th><th>Targets <span class="co n">N3</span> <span class="co n">N4</span></th><th class="n">Target</th><th class="n">Achieved</th><th>%</th><th class="n">Pipeline</th><th class="n">Team pool</th><th></th></tr></thead>
+        <tbody>
+          <tr><td><b>North</b></td><td><span class="pill n">ALI - Ali Hassan</span><span class="pill more">+1</span></td><td><span class="pill">North FY26 H2</span><span class="pill more">+1</span></td><td class="n">RM 300,000 <span class="co n r5">T3</span></td><td class="n">RM 255,020</td><td><span class="badge">85%</span></td><td class="n">RM 53,500</td><td class="n">RM 2,550</td><td><span class="btn sm">&hellip;</span></td></tr>
+          <tr><td><b>South</b></td><td><span class="pill n">WON - Wong Kah Wai</span></td><td class="muted">No target</td><td class="n muted">-</td><td class="n">RM 22,600</td><td class="muted">-</td><td class="n">RM 0</td><td class="n muted">-</td><td><span class="btn sm pri">Set</span></td></tr>
+          <tr><td class="muted">No team</td><td><span class="pill n">RAJ - Raj Kumar</span></td><td class="muted">Open in Agents</td><td class="n muted">-</td><td class="n">RM 12,300</td><td class="muted">-</td><td class="n muted">-</td><td class="n muted">-</td><td></td></tr>
+          <tr class="unassigned"><td>Unassigned</td><td class="muted">No agent on order</td><td></td><td class="n">-</td><td class="n">RM 6,540</td><td>-</td><td class="n">-</td><td class="n">-</td><td></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div></div>
+<div class="notes"><ol>
+  <li><span class="co n">N1</span><div><b>Sales Agents is under Sales, and only there.</b> It is gone from Users &amp; Access, and there is no "Master Data" group in the menu. Same page and permission. It ships with the Sales Teams lane, the first one.<span class="ruling">Owner ruling 26 Sep 06:01 (Lavish), N1 (round 3 L1)</span><span class="ref">S1-17 &middot; plan 3.7</span></div></li>
+  <li><span class="co n">N5</span><div><b>Teams first.</b> The page opens on a list of teams with their targets. Click a team to see its agents and their targets (frame 3). There is no grouped, cascading list any more. Agents with no team are one "No team" line that opens the Agents tab filtered to them.<span class="ruling">Owner ruling 26 Sep 06:01 (Lavish), N5</span><span class="ref">J1 &middot; S1-22</span></div></li>
+  <li><span class="co n">N3</span><div><b>Less on each row.</b> A target is named by its name only. Its number, dates and split are on the target's own page (frame 6).<span class="ruling">Owner ruling 26 Sep 06:01 (Lavish), N3</span><span class="ref">S1-21</span></div></li>
+  <li><span class="co n">N4</span><div><b>Every row is one line.</b> More agents or more targets fold into a "+N" pill, and clicking any pill lists them all. When a team has two targets, the figures are the first target's (amount first, then the one ending soonest), and the "+1" pill shows the other target with its %.<span class="ruling">Owner ruling 26 Sep 06:01 (Lavish), N4</span><span class="ref">S1-21 &middot; PillOverflow</span></div></li>
+  <li><span class="co n r5">T3</span><div><b>A team's target is its agents' figures added up.</b> North's RM 300,000 is Ali's 150,000 + Mei's 120,000 + Kim's 30,000, typed per agent in one form (frame 7b). There is no separate team figure to type or override.<span class="ruling r5">Owner ruling 26 Sep 06:09, T3</span><span class="ref">S1-27, S1-28 &middot; plan 3.8</span></div></li>
+  <li><span class="co">21</span><div><b>Set target sits alone at the top right</b> on every tab. On this tab it opens the modal with "Target for: Team". "Active on" replaces the month picker, because a target can now be any range.<span class="ruling">Owner ruling 26 Sep (Lavish), L3</span><span class="ref">S1-18</span></div></li>
+</ol></div>
+</div>
+
+<h2 class="frame-title">2. Same landing, 375</h2>
+<div class="layout">
+<div class="frame w375">
+  <div class="m-head"><div class="m-row" style="align-items:center"><b style="font-size:17px">Sales targets</b><span class="btn sm pri">+ Set target</span></div>
+    <div style="margin-top:8px"><span class="btn sm">Active on: 15 Oct 2026 &#9662;</span></div>
+    <div class="tabs" style="margin:10px 0 0;gap:14px"><span class="on">Teams</span><span>Agents</span><span>Dealers</span></div></div>
+  <div class="m-line"><span class="nm"><b>North</b> <span class="pill">North FY26 H2</span><span class="pill more">+1</span></span><span class="badge">85%</span></div>
+  <div class="m-line"><span class="nm"><b>South</b> <span class="muted">No target</span></span><span class="btn sm pri">Set target</span></div>
+  <div class="m-line"><span class="nm muted">No team &middot; 1 agent</span><span class="muted">&rsaquo;</span></div>
+  <div class="m-line"><span class="nm muted"><i>Unassigned</i></span><span class="muted">RM 6,540</span></div>
+</div>
+<div class="notes"><ol>
+  <li><span class="co n">N4</span><div><b>One line at phone width too.</b> Name, first target and % fit on one line; the other figures are on the team's page. The coder uses whatever the shared DataGrid already does at 375 (for example sideways scroll with the first column pinned); this is the minimum that must stay readable.<span class="ruling">Owner ruling 26 Sep 06:01 (Lavish), N4</span><span class="ref">S1-21 &middot; PRINCIPLES "Responsive"</span></div></li>
+</ol></div>
+</div>
+
+<h2 class="frame-title">3. Team form view: North, 1280 and 375 (S6 page, S1 adds its targets)</h2>
+<div class="layout">
+<div class="scroll"><div class="frame w1280"><div class="main">
+  <div class="ph">
+    <div><h3>North <span class="badge ok">Active</span> <span class="co n">N5</span></h3><div class="meta-strip"><span>2 agents</span><span>1 left this period</span><span>Created 26 Sep 2026</span><span>Updated 30 Sep 2026</span></div></div>
+    <div class="toolbar" style="margin:0"><span class="btn">&lsaquo; Prev</span><span class="btn">Next &rsaquo;</span><span class="btn">Edit</span><span class="btn">&hellip;</span><span class="btn pri">+ Set target</span></div>
+  </div>
+  <div class="sec"><div class="sh">Team targets <span class="muted" style="font-weight:400">active on 15 Oct 2026</span></div>
+    <table>
+      <colgroup><col style="width:200px"><col style="width:170px"><col style="width:130px"><col style="width:120px"><col style="width:120px"><col style="width:80px"><col style="width:110px"><col style="width:50px"></colgroup>
+      <thead><tr><th>Target</th><th>Measures</th><th>Ends</th><th class="n">Target</th><th class="n">Achieved</th><th>%</th><th class="n">Team pool</th><th></th></tr></thead>
+      <tbody>
+        <tr><td>North FY26 H2</td><td><span class="pill">Amount</span><span class="pill more">+2</span></td><td>31 Mar 2027</td><td class="n">RM 300,000 <span class="co n r5">T3</span></td><td class="n">RM 255,020</td><td><span class="badge">85%</span></td><td class="n">RM 2,550</td><td><span class="btn sm">&hellip;</span></td></tr>
+        <tr><td>North taps October</td><td><span class="pill">Quantity</span><span class="pill more">+2</span></td><td>31 Oct 2026</td><td class="n">400 units</td><td class="n">310 units</td><td><span class="badge">78%</span></td><td class="n muted">-</td><td><span class="btn sm">&hellip;</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="sec"><div class="sh">Agents <span class="btn sm">+ Add agents</span></div>
+    <table>
+      <colgroup><col style="width:200px"><col style="width:200px"><col style="width:120px"><col style="width:120px"><col style="width:80px"><col style="width:120px"><col style="width:120px"><col style="width:50px"></colgroup>
+      <thead><tr><th>Agent</th><th>Targets</th><th class="n">Target</th><th class="n">Achieved</th><th>%</th><th class="n">Pipeline</th><th class="n">Commission</th><th></th></tr></thead>
+      <tbody>
+        <tr><td>ALI - Ali Hassan</td><td><span class="pill">FY26 H2</span><span class="pill more">+1</span></td><td class="n">RM 150,000</td><td class="n">RM 158,420</td><td><span class="badge ok">106%</span></td><td class="n">RM 12,500</td><td class="n">RM 3,837</td><td><span class="btn sm">&hellip;</span></td></tr>
+        <tr><td>MEI - Tan Mei Ling</td><td><span class="pill">FY26 H2</span></td><td class="n">RM 120,000</td><td class="n">RM 88,300</td><td><span class="badge">74%</span></td><td class="n">RM 41,000</td><td class="n">RM 1,766</td><td><span class="btn sm">&hellip;</span></td></tr>
+        <tr class="muted"><td class="muted">KIM - Kim Tan <span class="badge warn">Left 14 Oct</span> <span class="co n r5">T2</span></td><td><span class="pill n">FY26 H2</span></td><td class="n muted">RM 30,000</td><td class="n muted">RM 19,100</td><td><span class="badge">64%</span></td><td class="n muted">-</td><td class="n muted">RM 382</td><td><span class="btn sm">&hellip;</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</div></div></div>
+<div class="frame w375">
+  <div class="m-head"><div class="m-row" style="align-items:center"><b style="font-size:17px">North</b><span class="btn sm pri">+ Set target</span></div><div class="meta-strip"><span class="badge ok">Active</span><span>2 agents</span></div>
+    <div style="display:flex;gap:6px;margin-top:8px"><span class="btn sm">&lsaquo;</span><span class="btn sm">&rsaquo;</span><span class="btn sm">Edit</span><span class="btn sm">&hellip;</span></div></div>
+  <div class="m-line" style="background:#fafafa"><b>Team targets</b></div>
+  <div class="m-line"><span class="nm">North FY26 H2</span><span class="badge">85%</span></div>
+  <div class="m-line"><span class="nm">North taps October</span><span class="badge">78%</span></div>
+  <div class="m-line" style="background:#fafafa"><b>Agents</b><span class="btn sm">+ Add agents</span></div>
+  <div class="m-line"><span class="nm">ALI - Ali Hassan <span class="pill">FY26 H2</span><span class="pill more">+1</span></span><span class="badge ok">106%</span></div>
+  <div class="m-line"><span class="nm">MEI - Tan Mei Ling <span class="pill">FY26 H2</span></span><span class="badge">74%</span></div>
+  <div class="m-line"><span class="nm muted">KIM - Kim Tan <span class="badge warn">Left 14 Oct</span></span><span class="badge">64%</span></div>
+</div>
+<div class="notes"><ol>
+  <li><span class="co n">N5</span><div><b>The team's own page.</b> Its targets first, then its agents and each agent's targets, one line each. Click an agent or a target pill to open that target's page (frame 6). Set target here presets North. Edit changes the name in place and adds a remove control on each agent row; nothing moves. Prev and next go to the next team.<span class="ruling">Owner ruling 26 Sep 06:01 (Lavish), N5</span><span class="ref">J13 &middot; S6-13, S1-22</span></div></li>
+  <li><span class="co n">N4</span><div><b>Measures fold into one pill.</b> "Amount +2" hides Ordered and All products; clicking the pill shows all three. Ali's "+1" is his Basins push target.<span class="ruling">Owner ruling 26 Sep 06:01 (Lavish), N4</span><span class="ref">S1-21</span></div></li>
+  <li><span class="co">23</span><div><b>A team achieves exactly what its agents' orders add up to.</b> <span class="gone">RM 246,720 = Ali's RM 158,420 + Mei's RM 88,300</span>. Round 5: RM 255,020 = Ali's RM 158,420 + Mei's RM 88,300 + Kim's RM 8,300 from 1 to 14 Oct, counted under the team target's own metric, basis and products.<span class="ruling">Owner ruling 26 Sep (Lavish), L2</span><span class="ref">S6-5</span></div></li>
+  <li><span class="co n r5">T2</span><div><b>A move has a date.</b> Kim moved to South on 15 Oct. North keeps Kim's orders up to 14 Oct (RM 8,300 of Kim's RM 19,100); South counts Kim's orders from 15 Oct. Kim's line stays here, muted with "Left 14 Oct", so North's figure is explained. Kim's own target (RM 30,000, set as part of North's) keeps its figure, so North's target is still RM 300,000.<span class="ruling r5">Owner ruling 26 Sep 06:09, T2, T3</span><span class="ref">S6-14, S6-15, S1-28</span></div></li>
+  <li><span class="co">24</span><div><b>Empty states.</b> A team with no target shows "No team target" and Set target; a team with no agents shows "No agents in this team" and Add agents. Both sections always render.<span class="ref">S6-13 &middot; ADR product standards</span></div></li>
+</ol></div>
+</div>
+
+<h2 class="frame-title">4. Agents tab, 1280 (S1): flat, one line per agent</h2>
+<div class="layout">
+<div class="scroll"><div class="frame w1280"><div class="main">
+  <div class="ph"><div><h3>Sales targets</h3><div class="meta">Targets active on 15 Oct 2026</div></div><span class="btn pri">+ Set target</span></div>
+  <div class="tabs"><span>Teams</span><span class="on">Agents</span><span>Dealers</span></div>
+  <div class="toolbar"><span class="btn">Active on: 15 Oct 2026 &#9662;</span><span class="dd clear" style="min-width:200px">Team: No team</span></div>
+  <table>
+    <colgroup><col style="width:190px"><col style="width:110px"><col style="width:190px"><col style="width:120px"><col style="width:120px"><col style="width:80px"><col style="width:110px"><col style="width:110px"><col style="width:50px"></colgroup>
+    <thead><tr><th>Agent</th><th>Team</th><th>Targets</th><th class="n">Target</th><th class="n">Achieved</th><th>%</th><th class="n">Pipeline</th><th class="n">Commission</th><th></th></tr></thead>
+    <tbody>
+      <tr><td>RAJ - Raj Kumar</td><td class="muted">No team</td><td class="muted">No target</td><td class="n muted">-</td><td class="n">RM 12,300</td><td class="muted">-</td><td class="n">RM 4,000</td><td class="n muted">-</td><td><span class="btn sm pri">Set</span></td></tr>
+    </tbody>
+  </table>
+</div></div></div>
+<div class="notes"><ol>
+  <li><span class="co n">N5</span><div><b>The Agents tab stays, flat.</b> One line per agent, with a Team filter (a clearable standard dropdown that also offers "No team"). It is how you reach an agent who is in no team, and the quickest way to find one agent. The "No team" line on the landing opens this tab filtered like this.<span class="ruling">Owner ruling 26 Sep 06:01 (Lavish), N5, N8</span><span class="ref">S1-22, S6-10</span></div></li>
+  <li><span class="co">10</span><div><b>Dealers tab</b> (third lane, S7): one line per dealer with a target, the same cells.<span class="ref">J5 &middot; S7-2</span></div></li>
+</ol></div>
+</div>
+
+<h2 class="frame-title">5. Sales Teams page, 1280, and the team modal, 375 (S6, ships first)</h2>
+<div class="layout">
+<div class="scroll"><div class="frame w1280">
+  <div class="shell">
+    <nav class="side">
+      <div class="h">SALES</div><a><b>Sales</b></a><a class="sub">Targets</a><a class="sub">Opportunities</a><a class="sub on">Sales Teams</a><a class="sub">Sales Agents</a>
+    </nav>
+    <div class="main">
+      <div class="ph"><div><h3>Sales teams <span class="co n">N2</span></h3></div><span class="btn pri">+ Add team</span></div>
+      <div class="toolbar"><span class="inp" style="min-width:260px">Search teams</span></div>
+      <table>
+        <colgroup><col style="width:220px"><col style="width:360px"><col style="width:110px"><col style="width:180px"><col style="width:50px"></colgroup>
+        <thead><tr><th>Team</th><th>Agents</th><th>Active</th><th>Targets now</th><th></th></tr></thead>
+        <tbody>
+          <tr><td>North</td><td><span class="pill n">ALI - Ali Hassan</span><span class="pill n">MEI - Tan Mei Ling</span></td><td><span class="badge ok">Active</span></td><td>2</td><td><span class="btn sm">&hellip;</span></td></tr>
+          <tr><td>South</td><td><span class="pill n">WON - Wong Kah Wai</span></td><td><span class="badge ok">Active</span></td><td class="muted">None</td><td><span class="btn sm">&hellip;</span></td></tr>
+          <tr><td>Central</td><td><span class="pill n">SEAN I - Sean Lee</span><span class="pill n">KIM - Kim Tan</span><span class="pill more">+3</span></td><td><span class="badge">Inactive</span></td><td class="muted">None</td><td><span class="btn sm">&hellip;</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div></div>
+<div class="frame w375"><div class="modal">
+  <h4>Edit team</h4>
+  <div class="f"><label>Name</label><div class="inp">North</div></div>
+  <div class="f"><label>Agents</label><div class="dd"><span><span class="pill">ALI - Ali Hassan &times;</span><span class="pill">MEI - Tan Mei Ling &times;</span><span class="pill more">+1</span></span></div>
+    <div class="menu"><div class="on">SEAN I - Sean Lee <span class="muted">(now in Central)</span></div><div>RAJ - Raj Kumar <span class="muted">(no team)</span></div></div>
+    <div class="hint">Sean moves from Central to North when you save. An agent is in one team at a time.</div></div>
+  <div class="f"><label>Moves on <span class="co n r5">T2</span></label><div class="inp">15/10/2026</div><div class="hint">Sean's orders from this day count for North; earlier ones stay with Central.</div></div>
+  <div class="f"><label>Active</label><div><span class="sw on"></span>Active</div></div>
+  <div class="foot"><span class="btn">Cancel</span><span class="btn pri">Save</span></div>
+</div></div>
+<div class="notes"><ol>
+  <li><span class="co n">N2</span><div><b>Built like our Users &amp; Access &gt; Teams page.</b> Same concept: a list with search and one button to add, one modal to create or edit, and a page per team (frame 3) listing its members with Add agents. It holds sales agents instead of CRM users, has no parent teams (no drag to nest), and uses the new sales teams table (round 3 T1).<span class="ruling">Owner ruling 26 Sep 06:01 (Lavish), N2</span><span class="ref">J13 &middot; S6-12 &middot; plan 3.8</span></div></li>
+  <li><span class="co n">N4</span><div><b>One line per team.</b> Five agents show as two pills and "+3".<span class="ruling">Owner ruling 26 Sep 06:01 (Lavish), N4</span><span class="ref">S1-21</span></div></li>
+  <li><span class="co n">N8</span><div><b>Agents is our standard multi-select dropdown,</b> each option labelled with the team the agent is in now.<span class="ruling">Owner ruling 26 Sep 06:01 (Lavish), N8</span><span class="ref">S6-12</span></div></li>
+  <li><span class="co">28</span><div><b><span class="gone">Moving an agent moves their history.</span></b> <span class="gone">A team's figures follow who is in it now (round 3 T2).</span><span class="ref">S6-2, S6-6</span></div></li>
+  <li><span class="co n r5">T2</span><div><b>Only orders after the move go to the new team.</b> "Moves on" appears when a picked agent is in another team, default today. Orders dated from that day count for North; earlier ones stay with Central. An agent's first team counts from the beginning (round 5 question V1).<span class="ruling r5">Owner ruling 26 Sep 06:09, T2</span><span class="ref">S6-14, S6-15</span></div></li>
+</ol></div>
+</div>
+
+<h2 class="frame-title">6. Target form view: TGT-000014, 1280 and 375 (S1)</h2>
+<div class="layout">
+<div class="scroll"><div class="frame w1280"><div class="main">
+  <div class="ph">
+    <div><h3>TGT-000014 FY26 H2 <span class="co n">N5</span></h3><div class="meta-strip"><span>For <a>ALI - Ali Hassan</a> (North)</span><span>Part of <a>North FY26 H2</a> <span class="co n r5">T3</span></span><span>Created 26 Sep 2026</span><span>Updated 1 Oct 2026</span></div></div>
+    <div class="toolbar" style="margin:0"><span class="btn">&lsaquo; Prev</span><span class="btn">Next &rsaquo;</span><span class="btn">Duplicate</span><span class="btn">&hellip;</span><span class="btn pri">Edit</span></div>
+  </div>
+  <div class="sec"><div class="sh">Target</div><div class="sb kv"><div><div class="l">Target for</div>Agent</div><div><div class="l">Who</div>ALI - Ali Hassan</div><div><div class="l">Name</div>FY26 H2</div></div></div>
+  <div class="sec"><div class="sh">What counts</div><div class="sb kv"><div><div class="l">Metric</div>Amount (RM)</div><div><div class="l">Counts</div>Ordered</div><div><div class="l">Applies to</div>All products</div></div></div>
+  <div class="sec"><div class="sh">Dates <span class="co n">N6</span></div><div class="sb kv"><div><div class="l">Start date</div>1 Oct 2026</div><div><div class="l">End date</div>31 Mar 2027</div><div><div class="l">Split</div>Every 1 month</div></div></div>
+  <div class="sec"><div class="sh">Periods</div>
+    <table>
+      <colgroup><col style="width:260px"><col style="width:160px"><col style="width:160px"><col style="width:90px"><col style="width:150px"></colgroup>
+      <thead><tr><th>Period</th><th class="n">Target</th><th class="n">Achieved</th><th>%</th><th class="n">Commission</th></tr></thead>
+      <tbody>
+        <tr class="now"><td>1 Oct to 31 Oct 2026 (now)</td><td class="n">RM 150,000</td><td class="n">RM 158,420</td><td><span class="badge ok">106%</span></td><td class="n">RM 3,837</td></tr>
+        <tr><td>1 Nov to 30 Nov 2026</td><td class="n">RM 150,000</td><td class="n muted">-</td><td class="muted">-</td><td class="n muted">-</td></tr>
+        <tr><td>1 Dec to 31 Dec 2026</td><td class="n">RM 110,000</td><td class="n muted">-</td><td class="muted">-</td><td class="n muted">-</td></tr>
+        <tr><td class="muted">3 more, to 31 Mar 2027</td><td></td><td></td><td></td><td></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="sec"><div class="sh">Commission <span class="co n">N9</span></div><div class="sb">
+    <div class="kv" style="margin-bottom:10px"><div><div class="l">How tiers pay</div>Higher rate above each threshold only</div></div>
+    <table><thead><tr><th>From % achieved</th><th>Rate (% of RM)</th><th>One-off bonus (RM)</th></tr></thead>
+    <tbody><tr><td>0</td><td>2.00</td><td class="muted">-</td></tr><tr><td>100</td><td>4.00</td><td>500</td></tr></tbody></table>
+  </div></div>
+</div></div></div>
+<div class="frame w375">
+  <div class="m-head"><div class="m-row" style="align-items:center"><b style="font-size:16px">TGT-000014 FY26 H2</b><span class="btn sm pri">Edit</span></div><div class="meta-strip"><span>For ALI - Ali Hassan</span></div></div>
+  <div class="m-line" style="background:#fafafa"><b>What counts</b></div>
+  <div class="m-line"><span class="nm">Amount, ordered, all products</span></div>
+  <div class="m-line" style="background:#fafafa"><b>Dates</b></div>
+  <div class="m-line"><span class="nm">1 Oct 2026 to 31 Mar 2027</span><span class="muted">monthly</span></div>
+  <div class="m-line" style="background:#fafafa"><b>Periods</b></div>
+  <div class="m-line" style="background:var(--primary-soft)"><span class="nm">Oct 2026 &middot; RM 150,000</span><span class="badge ok">106%</span></div>
+  <div class="m-line"><span class="nm">Nov 2026 &middot; RM 150,000</span><span class="muted">-</span></div>
+  <div class="m-line" style="background:#fafafa"><b>Commission</b></div>
+  <div class="m-line"><span class="nm">2% to 100%, 4% above, bonus RM 500</span></div>
+</div>
+<div class="notes"><ol>
+  <li><span class="co n">N5</span><div><b>The target's own page holds every detail</b> the list leaves out: number, subject, what counts, dates, each period's figure and result, and commission. Edit turns the same fields into inputs in place (December's RM 110,000 was edited here), in the same order. Duplicate starts a copy the day after this one ends. Delete is a countdown, no dialog.<span class="ruling">Owner ruling 26 Sep 06:01 (Lavish), N3, N4, N5</span><span class="ref">J14 &middot; S1-23</span></div></li>
+  <li><span class="co n">N6</span><div><b>Dates are a plain range.</b> Start date and end date. Split is optional: here every 1 month, so each month has its own figure. With the split off there is one period, the whole range.<span class="ruling">Owner ruling 26 Sep 06:01 (Lavish), N6, N7</span><span class="ref">S1-19, S1-25 &middot; round 4 Q1</span></div></li>
+  <li><span class="co n r5">T3</span><div><b>Ali's figure is his line of North's target.</b> What counts, the dates and the split are set on North FY26 H2 and shown here read-only; Ali's figures (December's RM 110,000) and his commission tiers are his own and edited here.<span class="ruling r5">Owner ruling 26 Sep 06:09, T3</span><span class="ref">S1-28, S4-12</span></div></li>
+  <li><span class="co n">N9</span><div><b>How tiers pay</b> is a standard dropdown (frame 7); here its chosen value is shown read-only.<span class="ruling">Owner ruling 26 Sep 06:01 (Lavish), N9</span><span class="ref">S4-11</span></div></li>
+</ol></div>
+</div>
+
+<h2 class="frame-title">7. Set target modal (S1, S4)</h2>
+<div class="layout">
+<div class="frame w640"><div class="modal">
+  <h4>Set target</h4>
+  <div class="two">
+    <div class="f"><label>Target for <span class="co n">N8</span></label><div class="dd">Agent</div></div>
+    <div class="f"><label>Sales agent</label><div class="dd">ALI - Ali Hassan</div></div>
+  </div>
+  <div class="f"><label>Name</label><div class="inp">Basins push</div></div>
+  <div class="three">
+    <div class="f"><label>Metric</label><div class="dd">Quantity</div></div>
+    <div class="f"><label>Counts <span class="co n r5">R3</span></label><div class="dd">Delivered (by DO date)</div></div>
+    <div class="f"><label>Applies to</label><div class="dd">Categories</div></div>
+  </div>
+  <div class="f"><label>Categories</label><div class="dd"><span><span class="pill">Basins &times;</span><span class="pill">Vanity cabinets &times;</span></span></div><div class="hint">Sub-categories are included.</div></div>
+  <div class="two">
+    <div class="f"><label>Dates <span class="co n">N6</span></label><div class="inp">01/10/2026 - 15/12/2026</div></div>
+    <div class="f"><label>Split <span class="co n">N7</span></label><div style="display:flex;gap:6px;align-items:center"><span class="sw on"></span>every <span class="inp" style="width:52px;min-height:0;padding:5px 8px">1</span><span class="dd clear" style="flex:1">month</span></div></div>
+  </div>
+  <div class="f"><label>Target per period (units)</label><div class="inp">300</div><div class="hint">3 periods: 1 to 31 Oct, 1 to 30 Nov, 1 to 15 Dec. Each can be changed on the target's page.</div></div>
+  <h5>Commission</h5>
+  <div class="f"><label>How tiers pay <span class="co n">N9</span> <span class="co n r5">R5</span></label><div class="dd">Higher rate above each threshold only</div>
+    <div class="menu"><div>None</div><div class="on">Higher rate above each threshold only</div><div>Highest rate on everything</div></div></div>
+  <table style="margin-bottom:8px">
+    <colgroup><col><col><col><col style="width:40px"></colgroup>
+    <thead><tr><th>From % achieved</th><th>Rate (RM per unit)</th><th>One-off bonus (RM)</th><th></th></tr></thead>
+    <tbody><tr><td>0</td><td>1.50</td><td class="muted">-</td><td>&times;</td></tr><tr><td>100</td><td>2.50</td><td>300</td><td>&times;</td></tr></tbody>
+  </table>
+  <span class="btn sm">+ Add tier</span>
+  <div class="foot"><span class="btn">Cancel</span><span class="btn pri">Save</span></div>
+</div></div>
+<div class="notes"><ol>
+  <li><span class="co n">N8</span><div><b>Every choice is our standard dropdown</b> (the searchable select used across the CRM): Target for, who, Metric, Counts, Applies to and the split unit. No more button strips.<span class="ruling">Owner ruling 26 Sep 06:01 (Lavish), N8</span><span class="ref">S1-24</span></div></li>
+  <li><span class="co n">N6</span><div><b>Just a date range.</b> Pick the first and last day. A week, a month, 2.5 months (as here) or a year are all the same field. "Starts" and "Runs for (months)" are gone.<span class="ruling">Owner ruling 26 Sep 06:01 (Lavish), N6</span><span class="ref">S1-19, S1-25</span></div></li>
+  <li><span class="co n">N7</span><div><b>No fixed quarter.</b> "One per quarter" is gone. Split is off by default (one figure for the whole range). Turn it on only if you want a figure per week, per month or per any N days, weeks or months; the last period is cut at the end date (here 1 to 15 Dec). Round 4 Q1 asks whether you want this option at all.<span class="ruling">Owner ruling 26 Sep 06:01 (Lavish), N7</span><span class="ref">S1-19 &middot; Q1</span></div></li>
+  <li><span class="co n r5">R3</span><div><b>Delivered counts by DO date.</b> Once the DO integration (from Monday 28 Sep) links each delivery order line to its sales order line, a delivery counts in the period its DO is dated. Until then, and for anything AutoCount shows as delivered with no linked DO, it counts by the order date as before. Nothing to switch.<span class="ruling r5">Owner ruling 26 Sep 06:09, R3</span><span class="ref">S1-26 &middot; plan 3.2</span></div></li>
+  <li><span class="co n r5">R5</span><div><b>Both ways of paying a higher tier ship now.</b> "Higher rate above each threshold only" is the default; "Highest rate on everything" can be picked on any target.<span class="ruling r5">Owner ruling 26 Sep 06:09, R5, T5</span><span class="ref">S4-4, S4-12</span></div></li>
+  <li><span class="co n">N9</span><div><b>How tiers pay is a dropdown</b> with the same three choices.<span class="ruling">Owner ruling 26 Sep 06:01 (Lavish), N9</span><span class="ref">S4-11</span></div></li>
+  <li><span class="co">22</span><div><b>Opened from the header</b>, Target for is preset to the tab (Team on the landing); opened from a "No target" row or a team page, the subject is filled in and fixed.<span class="ruling">Owner ruling 26 Sep (Lavish), L2, L3</span><span class="ref">S1-18</span></div></li>
+</ol></div>
+</div>
+
+<h2 class="frame-title">7b. Set target for a team: each agent's figure, added up (S1, round 5)</h2>
+<div class="layout">
+<div class="frame w640"><div class="modal">
+  <h4>Set target</h4>
+  <div class="two">
+    <div class="f"><label>Target for</label><div class="dd">Team</div></div>
+    <div class="f"><label>Sales team</label><div class="dd">North</div></div>
+  </div>
+  <div class="f"><label>Name</label><div class="inp">North FY26 H2</div></div>
+  <div class="three">
+    <div class="f"><label>Metric</label><div class="dd">Amount (RM)</div></div>
+    <div class="f"><label>Counts</label><div class="dd">Ordered</div></div>
+    <div class="f"><label>Applies to</label><div class="dd">All products</div></div>
+  </div>
+  <div class="two">
+    <div class="f"><label>Dates</label><div class="inp">01/10/2026 - 31/03/2027</div></div>
+    <div class="f"><label>Split</label><div style="display:flex;gap:6px;align-items:center"><span class="sw on"></span>every <span class="inp" style="width:52px;min-height:0;padding:5px 8px">1</span><span class="dd clear" style="flex:1">month</span></div></div>
+  </div>
+  <h5>Agents <span class="co n r5">T3</span></h5>
+  <table style="margin-bottom:6px">
+    <colgroup><col><col style="width:200px"></colgroup>
+    <thead><tr><th>Agent</th><th class="n">Target per period (RM)</th></tr></thead>
+    <tbody>
+      <tr><td>ALI - Ali Hassan</td><td class="n">150,000</td></tr>
+      <tr><td>MEI - Tan Mei Ling</td><td class="n">120,000</td></tr>
+      <tr><td>KIM - Kim Tan</td><td class="n">30,000</td></tr>
+    </tbody>
+  </table>
+  <div class="m-row" style="padding:8px 10px;background:var(--grey-soft);border-radius:6px"><b>Team target per period</b><b>RM 300,000</b></div>
+  <div class="hint">6 periods, 1 Oct 2026 to 31 Mar 2027.</div>
+  <h5>Commission</h5>
+  <div class="two">
+    <div class="f"><label>Team pool tiers</label><div class="dd">Higher rate above each threshold only</div></div>
+    <div class="f"><label>Agent tiers</label><div class="dd">Highest rate on everything</div></div>
+  </div>
+  <div class="foot"><span class="btn">Cancel</span><span class="btn pri">Save</span></div>
+</div></div>
+<div class="notes"><ol>
+  <li><span class="co n r5">T3</span><div><b>You type each agent's figure; the team's is their total.</b> Picking a team lists its agents with a figure each. The team target underneath adds them up as you type and cannot be typed over. Saving makes North's target plus one target per agent, all with the same dates, products and split. Recommended: no separate team figure, so the two can never disagree; a stretch goal above the total is a second team target.<span class="ruling r5">Owner ruling 26 Sep 06:09, T3</span><span class="ref">S1-27, S1-28 &middot; plan 3.8</span></div></li>
+  <li><span class="co n r5">T3</span><div><b>An agent who joins later</b> shows on North's page as "No figure yet" with Add figure, which adds to the total. Changing an agent's December figure on their own page changes North's December too.<span class="ruling r5">Owner ruling 26 Sep 06:09, T3</span><span class="ref">S1-28</span></div></li>
+  <li><span class="co n r5">R5</span><div><b>Two tier tables.</b> Team pool tiers pay the team's pool on the total (round 3 T4). Agent tiers are copied to each agent's target and can be changed per agent afterwards. Either can be "Highest rate on everything".<span class="ruling r5">Owner ruling 26 Sep 06:09, R5, T4</span><span class="ref">S4-12</span></div></li>
+</ol></div>
+</div>
+
+<h2 class="frame-title">8. Portal: a salesperson logs an opportunity, 375 (S2)</h2>
+<div class="layout">
+<div class="frame w375">
+  <div class="portal-top">Sorento portal &middot; Sales Opportunities</div>
+  <div class="modal">
+    <h4>New opportunity</h4>
+    <div class="f"><label>Customer or prospect <span class="co n">N10</span></label><div class="dd">Seri Indah Renovation</div>
+      <div class="menu"><div>KPM001 - Kedai Paip Maju</div><div class="add">+ Add "Seri Indah Renovation" as a new prospect</div></div></div>
+    <div class="f"><label>Title</label><div class="inp">Condo fit-out</div></div>
+    <div class="f"><label>Products (optional) <span class="co n">N11</span></label>
+      <table style="margin-bottom:6px"><colgroup><col><col style="width:56px"><col style="width:40px"></colgroup>
+        <thead><tr><th>Product</th><th class="n">Qty</th><th></th></tr></thead>
+        <tbody><tr><td>BSN-4521 Countertop basin, white</td><td class="n">200</td><td>&times;</td></tr><tr><td>TAP-110 Basin mixer</td><td class="n">200</td><td>&times;</td></tr></tbody></table>
+      <span class="btn sm">+ Add product</span></div>
+    <div class="two">
+      <div class="f"><label>Expected amount (RM)</label><div class="inp">40,000</div></div>
+      <div class="f"><label>Expected close date</label><div class="inp">20/11/2026</div></div>
+    </div>
+    <div class="foot"><span class="btn pri" style="flex:1;justify-content:center">Save</span></div>
+  </div>
+</div>
+<div class="frame w375"><div class="modal">
+  <h4>Same field, a known name</h4>
+  <div class="f"><label>Customer or prospect</label><div class="dd">Seri Indah</div>
+    <div class="menu"><div class="dis">Seri Indah is another agent's customer</div></div></div>
+  <div class="hint">No prospect option: the name is already a customer.</div>
+</div></div>
+<div class="notes"><ol>
+  <li><span class="co n">N10</span><div><b>No toggle: the search knows.</b> Type a name. Your own customers that match are listed. When no customer has that name, the last line offers "Add ... as a new prospect", and the opportunity keeps the prospect's name. When the name is another agent's customer, you are told instead, so a known customer is never logged as a prospect. Round 4 Q2 asks whether a prospect should stay on the opportunity only (recommended) or become a customer record.<span class="ruling">Owner ruling 26 Sep 06:01 (Lavish), N10</span><span class="ref">J6 &middot; S2-15 &middot; Q2</span></div></li>
+  <li><span class="co n">N11</span><div><b>"What they want" was the products,</b> so it is now product lines: a product search and a quantity per row, as on the portal complaint form. Optional, because an early lead may not know yet. The expected amount is still typed (round 4 Q3).<span class="ruling">Owner ruling 26 Sep 06:01 (Lavish), N11</span><span class="ref">S2-16 &middot; Q3</span></div></li>
+  <li><span class="co">11</span><div><b>Salespeople log their own, in the portal.</b> Only for a contact granted this form and linked to a sales agent; the agent is taken from the login. Stages come from the configurable stage table.<span class="ref">Owner ruling 26 Sep, G5, G9, G10 &middot; S2-3, S2-4</span></div></li>
+</ol></div>
+</div>
+
+<h2 class="frame-title">9. A contact's record: Sales updates tab, 1280, and its modal, 375 (S5)</h2>
+<div class="layout">
+<div class="scroll"><div class="frame w1280">
+  <div class="shell">
+    <nav class="side">
+      <div class="h">ADMINISTRATION</div><a><b>Users &amp; Access</b></a><a class="sub on">Internal Users</a><a class="sub">Teams</a><a class="sub">Roles</a>
+    </nav>
+    <div class="main">
+      <div class="ph"><div><h3>Ali Hassan</h3><div class="meta-strip"><span>+60 12-345 6789</span><span>Respond.io ID: 88213</span></div></div><div class="toolbar" style="margin:0"><span class="btn">&lsaquo; Prev</span><span class="btn">Next &rsaquo;</span><span class="btn">Edit</span></div></div>
+      <div class="tabs"><span>Profile</span><span>Access</span><span>Routing</span><span>Chat</span><span class="on">Sales updates <span class="co n">N12</span></span></div>
+      <div class="toolbar" style="justify-content:flex-end"><span class="btn">+ Add</span></div>
+      <table>
+        <colgroup><col style="width:190px"><col style="width:230px"><col style="width:260px"><col style="width:90px"><col style="width:170px"><col style="width:90px"></colgroup>
+        <thead><tr><th>Follows</th><th>When</th><th>Sees</th><th>Enabled</th><th>Next send</th><th></th></tr></thead>
+        <tbody>
+          <tr><td>Agent ALI</td><td>Weekly, Monday 09:00</td><td><span class="pill">Figures</span><span class="pill more">+2</span></td><td><span class="sw on"></span></td><td>Mon 19 Oct, 09:00</td><td><span class="btn sm">&hellip;</span></td></tr>
+          <tr><td>Team North</td><td>Monthly, last day, 17:30</td><td><span class="pill">Figures</span><span class="pill more">+1</span></td><td><span class="sw"></span></td><td class="muted">Off</td><td><span class="btn sm">&hellip;</span></td></tr>
+        </tbody>
+      </table>
+      <div class="hint" style="margin-top:10px"><span class="gone">Add suggested</span> <span class="co n">N13</span> removed</div>
+    </div>
+  </div>
+</div></div>
+<div class="frame w375"><div class="modal">
+  <h4>Add sales update</h4>
+  <div class="f"><label>Follows</label><div class="dd">Agent</div><div class="dd" style="margin-top:6px">ALI - Ali Hassan</div><div class="hint">Preset: this contact is Ali's WhatsApp contact.</div></div>
+  <div class="two"><div class="f"><label>How often</label><div class="dd">Weekly</div></div><div class="f"><label>On</label><div class="dd">Monday</div></div></div>
+  <div class="two"><div class="f"><label>Time</label><div class="inp">09:00</div></div><div class="f"><label>Time zone</label><div class="dd">Asia/Kuala_Lumpur</div></div></div>
+  <div class="f"><label>Shows</label>
+    <div><span class="sw on"></span>Commission earned</div>
+    <div style="margin-top:6px"><span class="sw on"></span>Pipeline</div>
+    <div style="margin-top:6px"><span class="sw"></span>One line per target</div></div>
+  <div class="foot"><span class="btn">Preview</span><span class="btn">Send now</span><span class="btn pri">Save</span></div>
+</div></div>
+<div class="notes"><ol>
+  <li><span class="co n">N12</span><div><b>One page for all of a contact's settings.</b> Open the contact from Internal Users (or the contacts list); a fifth tab, Sales updates, sits after Profile, Access, Routing and Chat. It lists what this contact receives, when, what they see, and whether it is on. The Recipients tab on Targets is gone. Dealers' contacts have the same tab on their record.<span class="ruling">Owner ruling 26 Sep 06:01 (Lavish), N12</span><span class="ref">J11 &middot; S5-15 &middot; plan 3.6</span></div></li>
+  <li><span class="co n">N13</span><div><b>"Add suggested", in plain words,</b> made a switched-off row for every agent who has a WhatsApp contact and every dealer target's main contact, in one click. With the settings now on each contact's own page, it is dropped: Add on this page already fills in the agent (or dealer) this contact belongs to.<span class="ruling">Owner ruling 26 Sep 06:01 (Lavish), N13</span><span class="ref">S5-16 &middot; plan 3.6</span></div></li>
+  <li><span class="co n">N8</span><div><b>Follows, How often, On and Time zone are standard dropdowns.</b><span class="ruling">Owner ruling 26 Sep 06:01 (Lavish), N8</span><span class="ref">S5-16</span></div></li>
+  <li><span class="co">14</span><div><b>Each row has its own schedule and ships switched off.</b> Preview, Send now to check, then switch it on. A team row follows one team or all agents.<span class="ref">Owner ruling 26 Sep, G7, G8 &middot; S5-1 to S5-14</span></div></li>
+</ol></div>
+</div>
+
+<h2 class="frame-title">10. The WhatsApp message (S5)</h2>
+<div class="layout">
+<div class="frame w375"><div class="wa" style="padding:0"><div class="top">Sorento</div><div style="padding:16px">
+  <div class="bubble">Hi Ali Hassan, your sales so far:
+FY26 H2 (1 to 31 Oct): RM 158,420 of RM 150,000 (106%). Target reached.
+Basins push (1 to 31 Oct): 212 of 300 units delivered (71%), 88 to go in 17 days.
+Commission earned so far: RM 4,455
+
+Open opportunities closing in this period: 2 (RM 12,500 weighted).<span class="t">Mon 09:00</span></div>
+</div></div></div>
+<div class="frame w375"><div class="wa" style="padding:0"><div class="top">Sorento</div><div style="padding:16px">
+  <div class="bubble">Hi Kedai Paip Maju, your purchases with Sorento this month:
+Target: RM 40,000
+Achieved: RM 27,450 (69%)
+To go: RM 12,550 in 17 days
+
+Thank you for your support. Your sales agent: Ali Hassan.<span class="t">Thu 15 Oct 10:00</span></div>
+</div></div></div>
+<div class="notes"><ol>
+  <li><span class="co">17</span><div><b>Agent (left), dealer (right).</b> Each sees only what their contact's Sales updates row allows. Periods are named by their dates now, not by quarter.<span class="ref">J12 &middot; S5-5, S5-6</span></div></li>
+  <li><span class="co">19</span><div><b>Outside the 24 hour window this must be an approved WhatsApp template,</b> so this wording goes to Meta for approval.<span class="ref">Plan 3.6 &middot; S5-9</span></div></li>
+</ol></div>
+</div>
+</div>
+</body>
+</html>

@@ -69,6 +69,10 @@ from app.services.shipping_order_ingest_service import (
     ShippingOrderIngestService,
     ShippingOrderReadService,
 )
+from app.services.stock_balance_ingest_service import (
+    STOCK_BALANCE_ENTITIES,
+    StockBalanceIngestService,
+)
 
 ingest_router = APIRouter()
 read_router = APIRouter()
@@ -93,6 +97,10 @@ INGEST_PERMISSIONS = {
     "purchase_orders": "scm.purchase_orders.edit",
     # Shipping orders (S3) - no header table, but the same slug shape.
     "shipping_orders": "scm.shipping_orders.edit",
+    # stock_balances (contract 2.5, D9): the same slugs the Stock screen's own
+    # write path already uses - pushing a balance through the ESB is that
+    # same act, so it is that same permission.
+    "stock_balances": "inventory.stock.edit",
 }
 READ_PERMISSIONS = {
     "product_categories": "master_data.product_categories.view",
@@ -106,6 +114,7 @@ READ_PERMISSIONS = {
     "sales_orders": "scm.sales_orders.view",
     "purchase_orders": "scm.purchase_orders.view",
     "shipping_orders": "scm.shipping_orders.view",
+    "stock_balances": "inventory.stock.view",
 }
 # Deleting through the ESB is its own act, so it takes its own slug on top of the
 # ingest guard the router already carries (group A4 mounts the route). Declared
@@ -124,6 +133,7 @@ DELETE_PERMISSIONS = {
     "sales_orders": "scm.sales_orders.delete",
     "purchase_orders": "scm.purchase_orders.delete",
     "shipping_orders": "scm.shipping_orders.delete",
+    "stock_balances": "inventory.stock.delete",
 }
 
 # A batch cap the ESB can design against. Exceeding it errors rather than
@@ -185,10 +195,16 @@ def _log_record_outcomes(
         )
 
 
-# Masters, documents and shipping orders on one surface. The set is built from
-# every registry rather than written out, so an entity that exists in none of
-# them cannot become reachable here by being spelled correctly in this file.
-SUPPORTED_ENTITIES = set(ENTITY_SPECS) | set(DOCUMENT_ENTITIES) | set(SHIPPING_ORDER_ENTITIES)
+# Masters, documents, shipping orders and stock balances on one surface. The
+# set is built from every registry rather than written out, so an entity that
+# exists in none of them cannot become reachable here by being spelled
+# correctly in this file.
+SUPPORTED_ENTITIES = (
+    set(ENTITY_SPECS)
+    | set(DOCUMENT_ENTITIES)
+    | set(SHIPPING_ORDER_ENTITIES)
+    | set(STOCK_BALANCE_ENTITIES)
+)
 
 # Bumped whenever the wire shape of an entity changes in a way the ESB must gate
 # on (a new required field, a changed enum). Read by `GET /external/contract`
@@ -210,7 +226,13 @@ SUPPORTED_ENTITIES = set(ENTITY_SPECS) | set(DOCUMENT_ENTITIES) | set(SHIPPING_O
 # kept). `/{entity}/deletions` gains an optional `codes` map for the same
 # reason, only ever read for `products`. Both additive: an ESB still on 2.3
 # sends no `codes` and simply keeps hitting the old conflict.
-CONTRACT_VERSION = "2.4"
+# "2.5" (ingest-stock-balances-2-5, Foundryx SR5): `stock_balances` joins as a
+# new push entity - upsert `stock.quantity_on_hand` for a (item_code,
+# location_code) pair, and `/{entity}/deletions` zeroes it rather than
+# removing the row (D7). `warehouse_inactive` joins `warnings`. Additive: an
+# ESB still on 2.4 never sees `stock_balances` in `entities` and keeps
+# whatever it did before (Pull stays unchanged, D12).
+CONTRACT_VERSION = "2.5"
 
 
 def _principal_may_delete(db: Session, current_user: dict, entity: str) -> bool:
@@ -746,6 +768,11 @@ def ingest_masters(
         extra["may_delete"] = _principal_may_delete(db, current_user, entity)
     elif entity in DOCUMENT_ENTITIES:
         ingester = DocumentIngestService
+    elif entity in STOCK_BALANCE_ENTITIES:
+        ingester = StockBalanceIngestService
+        # Fix round 2 (#1257): its Stock Ledger rows name the integration's
+        # act-as user as `created_by`.
+        extra["actor_user_id"] = current_user.get("id")
     else:
         ingester = MasterIngestService
     service = ingester(
@@ -885,15 +912,48 @@ def delete_records(
 
     company_id = resolve_company_anchor(db, payload, current_user)
 
-    service = DeletionService(
-        db,
-        integration_id=current_user.get("integration_id"),
-        company_id=company_id,
-    )
-    try:
-        result = service.delete(entity, source_refs, codes=codes, dry_run=dry_run)
-    except UnsupportedIngestEntity as exc:
-        raise AppException(status_code=404, message=str(exc), code="UNKNOWN_ENTITY")
+    # stock_balances (D7): a `pairs` map (`source_ref -> {item_code,
+    # location_code}`) instead of a reference this entity never stores - the
+    # SAME body-level shape/status the `codes` map above uses. Absent is
+    # treated as `{}` (every ref then reports `not_found`), never a 422 -
+    # unlike `codes`, `pairs` is this entity's only way to name what it means
+    # to delete, so there is nothing else the caller could have sent instead.
+    if entity in STOCK_BALANCE_ENTITIES:
+        pairs = payload.get("pairs")
+        if pairs is None:
+            pairs = {}
+        elif not isinstance(pairs, dict):
+            raise AppException(
+                status_code=422,
+                message="Body 'pairs' must be an object of source_ref -> {item_code, location_code}",
+                code="INVALID_BODY",
+            )
+        if len(pairs) > MAX_BATCH:
+            raise AppException(
+                status_code=413,
+                message=(
+                    f"Batch of {len(pairs)} 'pairs' entries exceeds the maximum of {MAX_BATCH}. "
+                    "Split it; the response is never silently truncated."
+                ),
+                code="BATCH_TOO_LARGE",
+            )
+        service = StockBalanceIngestService(
+            db,
+            integration_id=current_user.get("integration_id"),
+            company_id=company_id,
+            actor_user_id=current_user.get("id"),
+        )
+        result = service.delete(source_refs, pairs, dry_run=dry_run)
+    else:
+        service = DeletionService(
+            db,
+            integration_id=current_user.get("integration_id"),
+            company_id=company_id,
+        )
+        try:
+            result = service.delete(entity, source_refs, codes=codes, dry_run=dry_run)
+        except UnsupportedIngestEntity as exc:
+            raise AppException(status_code=404, message=str(exc), code="UNKNOWN_ENTITY")
 
     if dry_run:
         # The service has already rolled back; this is the second of two locks on
@@ -950,6 +1010,19 @@ def read_current_state(
         )
 
     company_id = resolve_company_anchor(db, payload, current_user)
+
+    if entity in STOCK_BALANCE_ENTITIES:
+        # D8: pairs, not refs alone - `source_ref` is never stored for this
+        # entity, so the caller has to name the (item_code, location_code)
+        # pair it wants read back for each ref. Absent is `{}`, every ref
+        # then reports `not_found` - the same "nothing to look up with"
+        # answer a genuinely unresolvable pair gives.
+        pairs = payload.get("pairs")
+        if not isinstance(pairs, dict):
+            pairs = {}
+        return StockBalanceIngestService(db, company_id=company_id).current_state(
+            source_refs, pairs
+        )
 
     if entity in SHIPPING_ORDER_ENTITIES:
         reader = ShippingOrderReadService

@@ -8,6 +8,9 @@ import type { DateColumn } from '../lib/scheduleTotals';
 import { sumQty } from '../lib/scheduleTotals';
 import { formatQty } from '../../components/SalesOrderMoney';
 import {
+  FlagCell,
+  FlagFootCell,
+  FlagHeading,
   PRODUCT_COL,
   ProductHeading,
   TOTAL_COL,
@@ -42,6 +45,7 @@ export function DeliveryScheduleByDateMatrix({
   dateColumns: DateColumn[];
 }) {
   const { columns } = controller;
+  const totalsColumns = controller.totalsColumns ?? columns;
 
   return (
     <div
@@ -59,8 +63,9 @@ export function DeliveryScheduleByDateMatrix({
                 'sticky left-0 top-0 border-b border-e border-border bg-muted px-2 py-2 text-start align-bottom font-medium',
               )}
             >
-              Product
+              Product (customer code)
             </th>
+            <FlagHeading />
 
             {dateColumns.map((dateColumn) => (
               <th
@@ -84,9 +89,8 @@ export function DeliveryScheduleByDateMatrix({
               </th>
             ))}
 
-            <TotalsHeading label="Our total" />
-            <TotalsHeading label="Schedule TOTAL QTY" />
-            <TotalsHeading label="PO quantity" />
+            <TotalsHeading label="Schedule" />
+            <TotalsHeading label="PO" />
           </tr>
         </thead>
 
@@ -102,8 +106,9 @@ export function DeliveryScheduleByDateMatrix({
                   column.reconciled ? 'bg-background' : UNRECONCILED_BG,
                 )}
               >
-                <ProductHeading column={column} controller={controller} />
+                <ProductHeading column={column} />
               </th>
+              <FlagCell column={column} controller={controller} idPrefix="schedule-by-date" />
 
               {dateColumns.map((dateColumn) => {
                 const cell = dateColumn.cells.get(column.key);
@@ -146,11 +151,10 @@ export function DeliveryScheduleByDateMatrix({
                 );
               })}
 
-              <TotalCell column={column} value={column.ourTotal} emphasise />
               <TotalCell
                 column={column}
-                value={column.reportedTotal}
-                missingLabel="Not printed"
+                value={column.ourTotal}
+                emphasise
                 wrong={column.blockers.some((blocker) => blocker.code === 'reported_mismatch')}
               />
               <TotalCell
@@ -177,6 +181,7 @@ export function DeliveryScheduleByDateMatrix({
             >
               Our total for the date
             </th>
+            <FlagFootCell />
             {dateColumns.map((dateColumn) => (
               <td
                 key={dateColumn.date}
@@ -196,15 +201,8 @@ export function DeliveryScheduleByDateMatrix({
                 'sticky bottom-0 border-t border-e border-border bg-muted px-2 py-1.5 text-end font-semibold tabular-nums',
               )}
             >
-              {sumQty(columns.map((column) => column.ourTotal))}
+              {sumQty(totalsColumns.map((column) => column.ourTotal))}
             </td>
-            <td
-              className={cn(
-                TOTAL_COL,
-                Z_PINNED,
-                'sticky bottom-0 border-t border-e border-border bg-muted px-2 py-1.5',
-              )}
-            />
             <td
               className={cn(
                 TOTAL_COL,

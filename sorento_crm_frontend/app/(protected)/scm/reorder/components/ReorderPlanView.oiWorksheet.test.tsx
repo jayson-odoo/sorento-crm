@@ -36,13 +36,10 @@ vi.mock('@/lib/toast', () => ({
 }));
 
 const exportOrderSheet = vi.fn();
-const exportLowStockReport = vi.fn();
 const exportOiWorksheet = vi.fn();
 const getOrderSummaryDemand = vi.fn();
-// PLAN-low-stock-export-split-25sep: the page now always mounts `LowStockExportDialog`
-// (closed), which reads `getLowStockPreview`/`previewLowStockExport` off this same module -
-// `importActual` keeps those real rather than undefined, while the four functions this
-// file already controlled stay stubbed.
+// `importActual` keeps the module's other exports real; only the functions this file
+// controls are stubbed.
 vi.mock('../services/summaryOrderService', async () => {
   const actual = await vi.importActual<typeof import('../services/summaryOrderService')>(
     '../services/summaryOrderService',
@@ -50,7 +47,6 @@ vi.mock('../services/summaryOrderService', async () => {
   return {
     ...actual,
     exportOrderSheet: (...args: unknown[]) => exportOrderSheet(...args),
-    exportLowStockReport: (...args: unknown[]) => exportLowStockReport(...args),
     exportOiWorksheet: (...args: unknown[]) => exportOiWorksheet(...args),
     getOrderSummaryDemand: (...args: unknown[]) => getOrderSummaryDemand(...args),
   };
@@ -112,7 +108,6 @@ function renderView() {
 describe('ReorderPlanView Actions menu - OI worksheet (AC-C1)', () => {
   beforeEach(() => {
     exportOrderSheet.mockReset();
-    exportLowStockReport.mockReset();
     exportOiWorksheet.mockReset();
     getOrderSummaryDemand.mockReset();
     toastSuccess.mockClear();
@@ -145,7 +140,6 @@ describe('ReorderPlanView Actions menu - OI worksheet (AC-C1)', () => {
 
     await waitFor(() => expect(exportOiWorksheet).toHaveBeenCalledWith('run-1'));
     expect(exportOrderSheet).not.toHaveBeenCalled();
-    expect(exportLowStockReport).not.toHaveBeenCalled();
     await waitFor(() =>
       expect(toastSuccess).toHaveBeenCalledWith(
         'Preparing the OI worksheet - it will appear in My Downloads.',
@@ -169,7 +163,8 @@ describe('ReorderPlanView Actions menu - OI worksheet (AC-C1)', () => {
     await waitFor(() => expect(toastError).toHaveBeenCalledWith('Narrow the plan first'));
   });
 
-  it('AC-C1: all FOUR export items disable while ANY of the three exports is in flight',
+  it('AC-C1: the three export items disable while ANY export is in flight; the low stock '
+    + 'item opens a page (PLAN-excel-preview-26sep S1), so it stays enabled',
     async () => {
     let resolveExport: (value: unknown) => void = () => {};
     exportOiWorksheet.mockImplementation(
@@ -189,7 +184,7 @@ describe('ReorderPlanView Actions menu - OI worksheet (AC-C1)', () => {
     await waitFor(() => expect(worksheet).toBeDisabled());
     expect(pdf).toBeDisabled();
     expect(xlsx).toBeDisabled();
-    expect(lowStock).toBeDisabled();
+    expect(lowStock).not.toBeDisabled();
     expect(exportOiWorksheet).toHaveBeenCalledTimes(1);
 
     resolveExport({ id: 'dl-42', kind: 'oi_worksheet_xlsx', status: 'pending', filename: null });

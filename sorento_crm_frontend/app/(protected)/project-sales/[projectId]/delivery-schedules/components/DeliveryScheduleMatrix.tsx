@@ -1,14 +1,13 @@
 'use client';
 
 import * as React from 'react';
-import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { formatDateInMalaysia } from '@/lib/helpers';
-import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
 import type { DeliverySchedulePhase } from '../../../_shared/types/deliverySchedule.types';
 import type { CellMeta, ColumnState } from '../lib/scheduleTotals';
 import { phaseRowLabel, sumQty } from '../lib/scheduleTotals';
-import { DeliveryScheduleProductPicker } from './DeliveryScheduleProductPicker';
+import { DeliveryScheduleFlagCell } from './DeliveryScheduleFlagCell';
+import type { FlagActions } from './DeliveryScheduleFlagCell';
 
 /**
  * A request to put the cursor in a column, with a nonce so pressing the same button twice
@@ -47,21 +46,21 @@ export function isDisplayed(node: HTMLElement | null): boolean {
 
 /** Everything the two views of the grid need. Built once in the review client. */
 export interface ScheduleGridController {
+  /** The rows on screen: every column, or only the ones that need attention. */
   columns: ColumnState[];
+  /**
+   * Every column, for the per-date totals at the foot. A filter decides which rows are
+   * READ, not what goes out on a date. Defaults to `columns`.
+   */
+  totalsColumns?: ColumnState[];
   phaseGroups: { area: string | null; phases: DeliverySchedulePhase[] }[];
   /** The quantity on screen for a cell: the reviewer's edit if there is one, else the stored value. */
   valueFor: (phaseId: string, columnKey: string) => string;
   setDraft: (phaseId: string, columnKey: string, value: string) => void;
   commit: (phaseId: string, column: ColumnState) => void;
-  resolveProduct: (columnIndex: number, productId: string) => void;
-  /**
-   * The products the PO this schedule is checked against orders, for the column pickers.
-   * Empty when there is no PO version to read, which sends the pickers to the catalogue.
-   */
-  poOptions: SearchableSelectOption[];
   canEdit: boolean;
-  /** Column indexes whose product was just identified, so the map note is shown once. */
-  learnedColumns: number[];
+  /** What the Flag cell on each row can do: pick the product, fix, dismiss (S3-7). */
+  flagActions: FlagActions;
   registerColumnRef: (columnKey: string, node: HTMLElement | null) => void;
   /**
    * What the document itself marked on one cell (section 9.7a/c): a tint, or a date this
@@ -70,7 +69,7 @@ export interface ScheduleGridController {
    */
   metaFor: (phaseId: string, columnKey: string) => CellMeta | undefined;
   /**
-   * A column the reviewer asked to be put inside, from the reconciliation list.
+   * A column the reviewer asked to be put inside, from its Flag cell's "Fix the quantities".
    *
    * Both views watch it. The matrix answers unconditionally because a browser refuses focus
    * to an element it is not rendering, so at phone width its attempt is a no-op; the phone
@@ -80,13 +79,21 @@ export interface ScheduleGridController {
   focusRequest: ColumnFocusRequest;
 }
 
-/**
- * The identity column, and it is wide because it carries the picker as well as the code.
- */
+/** The identity column: our code, and the customer's own code in full beneath it. */
 export const PRODUCT_COL = 'w-[240px] min-w-[240px] max-w-[240px]';
+/**
+ * The Flag column, pinned beside the product so a reviewer eight dates in still sees what is
+ * wrong with the row. Its `left` is the product column's width. Pinned from `md` up only:
+ * By date renders at 375 too, where the scroller is 341px and Product (240) plus a pinned
+ * Flag (190) left no room for a single date (review of #1265, B2).
+ */
+export const FLAG_COL = 'w-[190px] min-w-[190px] max-w-[190px]';
+export const FLAG_LEFT = 'md:left-[240px]';
+/** Below `md` the Flag scrolls with the dates, so its heading and foot sit on their layer. */
+const FLAG_Z_EDGE = 'z-(--z-sticky-content) md:z-(--z-sticky-content-corner)';
 /** One per delivery phase, sized for a date plus the phase it belongs to. */
 export const DATE_COL = 'w-[136px] min-w-[136px] max-w-[136px]';
-/** The three numbers that close every product row. */
+/** The two numbers that close every product row. */
 export const TOTAL_COL = 'w-[124px] min-w-[124px] max-w-[124px]';
 
 /**
@@ -148,6 +155,7 @@ export function DeliveryScheduleMatrix({
   controller: ScheduleGridController;
 }) {
   const { columns, phaseGroups, focusRequest } = controller;
+  const totalsColumns = controller.totalsColumns ?? columns;
   const rootRef = React.useRef<HTMLDivElement>(null);
 
   React.useEffect(() => {
@@ -196,8 +204,9 @@ export function DeliveryScheduleMatrix({
                 'sticky left-0 top-0 border-b border-e border-border bg-muted px-2 py-2 text-start align-bottom font-medium',
               )}
             >
-              Product
+              Product (customer code)
             </th>
+            <FlagHeading />
 
             {dateColumns.map(({ phase, area, startsGroup }) => (
               <th
@@ -239,12 +248,11 @@ export function DeliveryScheduleMatrix({
               </th>
             ))}
 
-            {/* The three numbers the reconciliation rests on, closing every row. Not pinned to
-                the right: four sticky columns need hand-computed offsets, and these same three
-                numbers are already side by side in the reconciliation table above. */}
-            <TotalsHeading label="Our total" />
-            <TotalsHeading label="Schedule TOTAL QTY" />
-            <TotalsHeading label="PO quantity" />
+            {/* The two numbers the reconciliation rests on, closing every row: our sum of the
+                schedule and what the PO orders. The schedule's own printed TOTAL QTY is named
+                in the Flag popover when it disagrees, which is the only time it matters. */}
+            <TotalsHeading label="Schedule" />
+            <TotalsHeading label="PO" />
           </tr>
         </thead>
 
@@ -255,8 +263,8 @@ export function DeliveryScheduleMatrix({
              *
              * Chrome refuses to auto-scroll a `position: sticky` element and says so in the
              * console ("Skipping auto-scroll behavior due to position: sticky"), so pointing
-             * the jump at the pinned identity cell made the reconciliation table's row links
-             * silently do nothing. The row is not pinned, and it is the thing being gone to.
+             * the jump at the pinned identity cell made the jump silently do nothing. The row
+             * is not pinned, and it is the thing being gone to.
              */
             <tr key={column.key} ref={(node) => controller.registerColumnRef(column.key, node)}>
               <th
@@ -268,8 +276,9 @@ export function DeliveryScheduleMatrix({
                   column.reconciled ? 'bg-background' : UNRECONCILED_BG,
                 )}
               >
-                <ProductHeading column={column} controller={controller} />
+                <ProductHeading column={column} />
               </th>
+              <FlagCell column={column} controller={controller} idPrefix="schedule-matrix" />
 
               {dateColumns.map(({ phase, startsGroup }) => {
                 const editable = controller.canEdit && Boolean(column.productId);
@@ -330,11 +339,10 @@ export function DeliveryScheduleMatrix({
                 );
               })}
 
-              <TotalCell column={column} value={column.ourTotal} emphasise />
               <TotalCell
                 column={column}
-                value={column.reportedTotal}
-                missingLabel="Not printed"
+                value={column.ourTotal}
+                emphasise
                 wrong={column.blockers.some(
                   (blocker) => blocker.code === 'reported_mismatch',
                 )}
@@ -367,6 +375,7 @@ export function DeliveryScheduleMatrix({
             >
               Our total for the date
             </th>
+            <FlagFootCell />
             {dateColumns.map(({ phase, startsGroup }) => (
               <td
                 key={phase.id}
@@ -378,7 +387,7 @@ export function DeliveryScheduleMatrix({
                 )}
               >
                 <DateTotal
-                  values={columns.map((column) =>
+                  values={totalsColumns.map((column) =>
                     controller.valueFor(phase.id, column.key),
                   )}
                 />
@@ -391,17 +400,10 @@ export function DeliveryScheduleMatrix({
                 'sticky bottom-0 border-t border-e border-border bg-muted px-2 py-1.5 text-end font-semibold tabular-nums',
               )}
             >
-              {sumQty(columns.map((column) => column.ourTotal))}
+              {sumQty(totalsColumns.map((column) => column.ourTotal))}
             </td>
-            {/* Nothing to total: the schedule's own TOTAL QTY row and the PO quantity are
-                per product, and adding them across products would invent a number. */}
-            <td
-              className={cn(
-                TOTAL_COL,
-                Z_PINNED,
-                'sticky bottom-0 border-t border-e border-border bg-muted px-2 py-1.5',
-              )}
-            />
+            {/* Nothing to total: the PO quantity is per product, and adding it across
+                products would invent a number. */}
             <td
               className={cn(
                 TOTAL_COL,
@@ -478,18 +480,13 @@ export function TotalCell({
 }
 
 /**
- * A product, as the head of its own row: what it is, whether it reconciles, and the way to
- * correct it when the code was matched to the wrong thing.
+ * A product, as the head of its own row: our code, and the customer's own code IN FULL beneath
+ * it. The customer code is what the reviewer reads off the paper, so it wraps rather than
+ * truncating. Whether the row reconciles, and the way to fix it, is the Flag cell beside it.
  */
-export function ProductHeading({
-  column,
-  controller,
-}: {
-  column: ColumnState;
-  controller: ScheduleGridController;
-}) {
+export function ProductHeading({ column }: { column: ColumnState }) {
   return (
-    <div className="space-y-1">
+    <div className="min-w-0">
       <span
         className="block truncate font-medium"
         title={column.productCode ?? 'Not identified'}
@@ -497,70 +494,64 @@ export function ProductHeading({
         {column.productCode ?? 'Not identified'}
       </span>
       {column.customerCode && (
-        <span
-          className="block truncate text-[11px] font-normal text-muted-foreground"
-          title={column.customerCode}
-        >
+        <span className="block break-all text-[11px] font-normal text-muted-foreground">
           {column.customerCode}
         </span>
       )}
-
-      <div className="flex flex-wrap items-center gap-1">
-        {column.dismissed ? (
-          <Badge variant="secondary" size="sm">
-            Dismissed
-          </Badge>
-        ) : column.blockers.length > 0 ? (
-          <Badge variant="destructive" appearance="light" size="sm">
-            {column.blockers.length === 1
-              ? '1 to fix'
-              : `${column.blockers.length} to fix`}
-          </Badge>
-        ) : column.warning ? (
-          <Badge variant="warning" appearance="light" size="sm">
-            Warning
-          </Badge>
-        ) : (
-          <Badge variant="success" appearance="light" size="sm">
-            Reconciled
-          </Badge>
-        )}
-
-        {column.fromRememberedMap && (
-          <Badge variant="secondary" size="sm" className="font-normal">
-            Remembered code
-          </Badge>
-        )}
-      </div>
-
-      {/**
-       * A product that HAS a match can still have the wrong one, and that is the usual
-       * reason a PO looks like it never ordered the item. Offering the picker only to the
-       * unidentified rows made a wrong match unfixable without deleting something. So:
-       * no product, a field to fill; wrong product, a quiet "Change the product". A row
-       * that agrees with the PO is left alone.
-       */}
-      {controller.canEdit && !column.reconciled && (
-        <div className="pt-0.5 font-normal">
-          <DeliveryScheduleProductPicker
-            idPrefix="schedule-matrix"
-            columnIndex={column.index}
-            customerCode={column.customerCode}
-            action={column.productId ? 'Change the product' : 'Pick the product'}
-            variant={column.productId ? 'compact' : 'field'}
-            poOptions={controller.poOptions}
-            onPick={(productId) => controller.resolveProduct(column.index, productId)}
-          />
-        </div>
-      )}
-
-      {controller.learnedColumns.includes(column.index) && column.customerCode && (
-        <p className="whitespace-normal pt-0.5 text-[11px] font-normal text-muted-foreground">
-          {`${column.customerCode} will resolve to ${
-            column.productCode ?? 'this product'
-          } on this customer's next schedule.`}
-        </p>
-      )}
     </div>
+  );
+}
+
+export function FlagHeading() {
+  return (
+    <th
+      scope="col"
+      className={cn(
+        FLAG_COL,
+        FLAG_LEFT,
+        FLAG_Z_EDGE,
+        'sticky top-0 border-b border-e border-border bg-muted px-2 py-2 text-start align-bottom font-medium',
+      )}
+    >
+      Flag
+    </th>
+  );
+}
+
+export function FlagFootCell() {
+  return (
+    <td
+      className={cn(
+        FLAG_COL,
+        FLAG_LEFT,
+        FLAG_Z_EDGE,
+        'sticky bottom-0 border-t border-e border-border bg-muted px-2 py-1.5',
+      )}
+    />
+  );
+}
+
+/** Pinned beside the product, opaque for the same reason every pinned cell is. */
+export function FlagCell({
+  column,
+  controller,
+  idPrefix,
+}: {
+  column: ColumnState;
+  controller: ScheduleGridController;
+  idPrefix: string;
+}) {
+  return (
+    <td
+      className={cn(
+        FLAG_COL,
+        FLAG_LEFT,
+        Z_PINNED,
+        'border-b border-e border-border px-2 py-2 align-top md:sticky',
+        column.reconciled ? 'bg-background' : UNRECONCILED_BG,
+      )}
+    >
+      <DeliveryScheduleFlagCell column={column} actions={controller.flagActions} idPrefix={idPrefix} />
+    </td>
   );
 }

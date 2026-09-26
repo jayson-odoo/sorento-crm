@@ -431,19 +431,3 @@ export interface OrderSummaryDecisionResult {
   location_allocations: OrderSummaryLocationAllocation[];
 }
 
-/**
- * The low stock report's export dialog preview (R4/AC-15b, PLAN-low-stock-export-split-
- * 25sep): `rows` is the visible row count (the workbook's own "All" count); `sheet_counts`
- * is the number of GROUPS the workbook would write under each non-`none` split, keyed
- * exactly as the workbook keys them (none-buckets included, pairs only when present). The
- * dialog itself doubles a group count into a sheet count (R2: every group is a
- * "<key> - Low" then "<key>" pair) - see `previewLowStockExport` in `summaryOrderService.ts`.
- */
-export interface LowStockPreview {
-  rows: number;
-  sheet_counts: {
-    supplier: number;
-    category: number;
-    supplier_category: number;
-  };
-}

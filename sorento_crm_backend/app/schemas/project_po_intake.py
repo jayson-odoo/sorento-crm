@@ -213,6 +213,14 @@ class POVersionDetailResponse(BaseModel):
     )
     failed_pages: List[int] = Field(default_factory=list)
     document_url: Optional[str] = None
+    attachment_id: Optional[str] = Field(
+        None,
+        description=(
+            "The scan's attachment. The in-app PDF viewer reads its bytes through "
+            "/resource-management/attachments/{id}/download, since document_url is "
+            "cross-origin with no CORS headers."
+        ),
+    )
     source_filename: Optional[str] = None
     header: POVersionHeader
     totals: POVersionTotals

@@ -223,9 +223,10 @@ class TestContractVersion22:
         body = res.json()
         # Bumped again (autocount-brands-ingest, AC-13): "2.3" adds `brands`.
         # Bumped again (ingest-products-code-wins, SR0): "2.4" adds products
-        # code-wins deletion `codes` - unrelated to the PO/SPO link fields
-        # this test pins, only the version literal needed to move.
-        assert body["version"] == "2.4"
+        # code-wins deletion `codes`. Bumped again (ingest-stock-balances-2-5,
+        # Foundryx SR5): "2.5" adds `stock_balances` - unrelated to the PO/SPO
+        # link fields this test pins, only the version literal needed to move.
+        assert body["version"] == "2.5"
         wanted = {
             "from_so_line_ref", "from_so_external", "from_po_line_ref", "from_po_number",
         }

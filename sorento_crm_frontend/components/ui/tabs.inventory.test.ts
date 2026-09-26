@@ -65,6 +65,10 @@ const SEGMENTED_KEEPERS = [
   'app/(auth)/portal/components/PeriodPicker.tsx',
   'components/common/ActivitiesNotesPanel/index.tsx',
   'components/common/ActivitiesNotesPanel/EntityActivitiesLayout.tsx',
+  // The low stock report's split (PLAN-excel-preview-26sep AC-11): four options, but a view
+  // toggle over one workbook, never navigation between panels - DESIGN-LANGUAGE section 4's
+  // pill case, specified as a pill by the UAC.
+  'app/(protected)/scm/low-stock-report/components/LowStockReportView.tsx',
 ];
 
 /** Every `.tsx` under the scanned roots, tests excluded. */

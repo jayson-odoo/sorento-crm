@@ -2,13 +2,12 @@
 
 import * as React from 'react';
 import { ChevronDown } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { phaseRowLabel } from '../lib/scheduleTotals';
 import { firstEditableCell, isDisplayed } from './DeliveryScheduleMatrix';
 import type { ScheduleGridController } from './DeliveryScheduleMatrix';
-import { DeliveryScheduleProductPicker } from './DeliveryScheduleProductPicker';
+import { DeliveryScheduleFlagCell } from './DeliveryScheduleFlagCell';
 
 /**
  * The same grid on a phone, turned ninety degrees.
@@ -16,7 +15,8 @@ import { DeliveryScheduleProductPicker } from './DeliveryScheduleProductPicker';
  * A 38-column matrix cannot be read at 375px and a horizontal scroller there means dragging
  * across two screens per row to find one number. The unit of work on this screen is a COLUMN
  * (reconciliation is per column, corrections are per column), so on a phone each column
- * becomes a card carrying its three totals, and its phase quantities open underneath. Only the
+ * becomes a card carrying its two totals and the same Flag pill the matrix row carries (its
+ * popover holds the fix and the Dismiss), and its phase quantities open underneath. Only the
  * open card renders inputs, which also keeps a 500-cell schedule from mounting 500 fields on a
  * phone.
  */
@@ -63,108 +63,63 @@ export function DeliveryScheduleColumnCards({
         return (
           <div
             key={column.key}
-            // The same registration the matrix does, so the reconciliation list above
-            // reaches its column on a phone too. Without it the list is a dead click at
-            // 375px: the matrix that owns the refs is not rendered at that width.
+            // The same registration the matrix does, so a jump to this column reaches it on
+            // a phone too: the matrix that owns the other refs is not laid out at 375px.
             ref={(node) => controller.registerColumnRef(column.key, node)}
             className={cn(
               'rounded-lg border',
               column.reconciled ? 'border-border' : 'border-destructive/40 bg-destructive/5',
             )}
           >
-            <button
-              type="button"
-              onClick={() => setOpenKey(open ? null : column.key)}
-              aria-expanded={open}
-              className="flex w-full items-start gap-2 px-3 py-2.5 text-start"
-            >
-              <span className="min-w-0 flex-1">
-                <span className="flex flex-wrap items-center gap-1.5">
-                  <span className="truncate text-sm font-medium">
+            <div className="flex items-start gap-2 px-3 py-2.5">
+              <button
+                type="button"
+                onClick={() => setOpenKey(open ? null : column.key)}
+                aria-expanded={open}
+                className="flex min-w-0 flex-1 items-start gap-2 text-start"
+              >
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium">
                     {column.productCode ?? 'Not identified'}
                   </span>
-                  {column.reconciled ? (
-                    <Badge variant="success" appearance="light" size="sm">
-                      Reconciled
-                    </Badge>
-                  ) : (
-                    <Badge variant="destructive" appearance="light" size="sm">
-                      {column.blockers.length === 1
-                        ? '1 to fix'
-                        : `${column.blockers.length} to fix`}
-                    </Badge>
+                  {column.customerCode && (
+                    <span className="mt-0.5 block break-all text-xs text-muted-foreground">
+                      {column.customerCode}
+                    </span>
                   )}
-                  {column.fromRememberedMap && (
-                    <Badge variant="secondary" size="sm" className="font-normal">
-                      Remembered code
-                    </Badge>
-                  )}
-                </span>
-                {column.customerCode && (
-                  <span
-                    className="mt-0.5 block truncate text-xs text-muted-foreground"
-                    title={column.customerCode}
-                  >
-                    {column.customerCode}
+                  <span className="mt-1 grid grid-cols-2 gap-2 text-xs">
+                    <NumberCell
+                      label="Schedule"
+                      value={column.ourTotal}
+                      emphasise
+                      wrong={column.blockers.some((b) => b.code === 'reported_mismatch')}
+                    />
+                    <NumberCell
+                      label="PO"
+                      value={column.poQty}
+                      missing="Not on the PO"
+                      wrong={column.blockers.some(
+                        (b) => b.code === 'po_mismatch' || b.code === 'not_on_po',
+                      )}
+                    />
                   </span>
-                )}
-                <span className="mt-1 grid grid-cols-3 gap-2 text-xs">
-                  <NumberCell label="Our total" value={column.ourTotal} emphasise />
-                  <NumberCell
-                    label="Schedule"
-                    value={column.reportedTotal}
-                    missing="Not printed"
-                    wrong={column.blockers.some((b) => b.code === 'reported_mismatch')}
-                  />
-                  <NumberCell
-                    label="PO"
-                    value={column.poQty}
-                    missing="Not on the PO"
-                    wrong={column.blockers.some(
-                      (b) => b.code === 'po_mismatch' || b.code === 'not_on_po',
-                    )}
-                  />
                 </span>
-              </span>
-              <ChevronDown
-                className={cn('mt-1 size-4 shrink-0 transition-transform', open && 'rotate-180')}
-                aria-hidden
-              />
-            </button>
+                <ChevronDown
+                  className={cn('mt-1 size-4 shrink-0 transition-transform', open && 'rotate-180')}
+                  aria-hidden
+                />
+              </button>
+              <div className="shrink-0">
+                <DeliveryScheduleFlagCell
+                  column={column}
+                  actions={controller.flagActions}
+                  idPrefix="schedule-phone"
+                />
+              </div>
+            </div>
 
             {open && (
               <div className="space-y-3 border-t border-border px-3 py-2.5">
-                {column.blockers.length > 0 && (
-                  <ul className="space-y-1 text-xs text-destructive">
-                    {column.blockers.map((blocker) => (
-                      <li key={blocker.code}>{blocker.detail}</li>
-                    ))}
-                  </ul>
-                )}
-
-                {/* Same rule as the matrix, so the two views cannot drift: a wrong-but-
-                    resolved column is correctable here too, without deleting anything. */}
-                {controller.canEdit && !column.reconciled && (
-                  <DeliveryScheduleProductPicker
-                    idPrefix="schedule-phone"
-                    columnIndex={column.index}
-                    customerCode={column.customerCode}
-                    action={column.productId ? 'Change the product' : 'Pick the product'}
-                    poOptions={controller.poOptions}
-                    onPick={(productId) =>
-                      controller.resolveProduct(column.index, productId)
-                    }
-                  />
-                )}
-
-                {controller.learnedColumns.includes(column.index) && column.customerCode && (
-                  <p className="text-xs text-muted-foreground">
-                    {`${column.customerCode} will resolve to ${
-                      column.productCode ?? 'this product'
-                    } on this customer's next schedule.`}
-                  </p>
-                )}
-
                 {phaseGroups.map((group) => (
                   <div key={group.area ?? '__none__'} className="space-y-1">
                     <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">

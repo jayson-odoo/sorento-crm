@@ -86,12 +86,18 @@ class TestCoverage:
         from app.services.document_ingest_service import DOCUMENT_ENTITIES
         from app.services.master_ingest_service import ENTITY_SPECS
         from app.services.shipping_order_ingest_service import SHIPPING_ORDER_ENTITIES
+        from app.services.stock_balance_ingest_service import STOCK_BALANCE_ENTITIES
 
-        # Masters, documents AND shipping orders: one route serves all three
-        # since group A3/S3, so a map that covers only some of the registries
-        # leaves the rest reachable-but-refused, which reads as a broken
-        # feature rather than a protected one.
-        served = set(ENTITY_SPECS) | set(DOCUMENT_ENTITIES) | set(SHIPPING_ORDER_ENTITIES)
+        # Masters, documents, shipping orders AND stock balances: one route
+        # serves all four since group A3/S3/SR5, so a map that covers only
+        # some of the registries leaves the rest reachable-but-refused, which
+        # reads as a broken feature rather than a protected one.
+        served = (
+            set(ENTITY_SPECS)
+            | set(DOCUMENT_ENTITIES)
+            | set(SHIPPING_ORDER_ENTITIES)
+            | set(STOCK_BALANCE_ENTITIES)
+        )
         assert set(INGEST_PERMISSIONS) == served
         assert set(READ_PERMISSIONS) == served
         # `/{entity}/deletions` (group A4) resolves its second guard from the same

@@ -3,26 +3,31 @@
 import * as React from 'react';
 import { ChevronLeft, ChevronRight, ExternalLink, FileWarning } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { PdfViewer } from '@/components/common/PdfViewer';
+import { apiFetch } from '@/lib/api';
 
 /**
  * The page the extraction came from, beside the extraction.
  *
- * A PDF renders in an iframe with a `#page=` fragment, which is the only page control the
- * browser's built-in viewer exposes. Changing a fragment on a live iframe does not always
- * re-navigate, so the element is keyed on the page number and remounted instead.
+ * A PDF renders in the shared `PdfViewer`, whose one toolbar carries the page bar; `page`
+ * drives it, so a line's note still opens its page. The bytes come through the
+ * authenticated download route when the version names its attachment, because the signed
+ * `document_url` is cross-origin with no CORS headers and a script cannot read it.
  *
  * The source is pinned per document (see `useStableDocumentSource`), because the backend
  * signs a fresh URL every time the version is read: accepting a note would otherwise hand
- * the iframe a new `src`, and the browser would throw away a rendered 1.2 MB scan and fetch
- * it again, losing the reader's place on every action.
+ * the viewer a new source, and it would throw away a rendered 1.2 MB scan and fetch it
+ * again, losing the reader's place on every action.
  */
 export function POIntakeDocumentViewer({
   documentUrl,
   documentKey,
+  attachmentId,
   pageCount,
   page,
   onPageChange,
   className,
+  documentLabel = 'Purchase order',
 }: {
   documentUrl: string | null;
   /**
@@ -30,15 +35,47 @@ export function POIntakeDocumentViewer({
    * id. Falls back to the URL with its signature stripped.
    */
   documentKey?: string | null;
+  /** The scan's attachment, read through the authenticated same-origin download route. */
+  attachmentId?: string | null;
   pageCount: number | null;
   page: number;
   onPageChange: (page: number) => void;
   className?: string;
+  /** What the file is, for the frame's accessible name: "Delivery schedule page 2". */
+  documentLabel?: string;
 }) {
   const total = pageCount && pageCount > 0 ? pageCount : 1;
   const current = Math.min(Math.max(page, 1), total);
   const source = useStableDocumentSource(documentUrl, documentKey);
   const kind = kindOf(source);
+  const loadData = React.useMemo(
+    () =>
+      attachmentId
+        ? async () => {
+            const response = await apiFetch(
+              `/api/v1/resource-management/attachments/${attachmentId}/download`,
+            );
+            if (!response.ok) throw new Error('The scan could not be read');
+            return response.arrayBuffer();
+          }
+        : undefined,
+    [attachmentId],
+  );
+
+  if (source && kind === 'pdf') {
+    return (
+      <PdfViewer
+        url={source}
+        loadData={loadData}
+        documentKey={documentKey ?? pathOf(source)}
+        title={documentLabel}
+        page={page}
+        onPageChange={onPageChange}
+        pageCountHint={pageCount}
+        className={`min-h-0 rounded-lg border border-border ${className ?? ''}`}
+      />
+    );
+  }
 
   return (
     <div
@@ -91,24 +128,11 @@ export function POIntakeDocumentViewer({
               Upload the document again from the POs tab if you need to see it.
             </p>
           </div>
-        ) : kind === 'image' ? (
+        ) : (
           <img
             src={source}
-            alt={`Purchase order page ${current}`}
+            alt={`${documentLabel} page ${current}`}
             className="h-full w-full rounded bg-white object-contain"
-          />
-        ) : (
-          // The browser's own PDF viewer, not a single flattened page: `#page=` only sets
-          // where it OPENS, and the viewer it renders inside still scrolls through every
-          // page of the document on its own. Filling the tab's full height (the caller sets
-          // it via `className`) is what makes that scroll worth anything - the old short
-          // fixed-height strip left most of a multi-page document out of view (owner hand
-          // test 25 Sep 2026, item 4).
-          <iframe
-            key={current}
-            src={`${source}#page=${current}&view=FitH`}
-            title={`Purchase order page ${current}`}
-            className="h-full w-full rounded border-0 bg-white"
           />
         )}
       </div>
@@ -121,7 +145,7 @@ export function POIntakeDocumentViewer({
  *
  * `document_url` is presigned on the server for every read of the version, so its query
  * string differs after each accept, edit and reject even though the bytes behind it are
- * identical. Handing that new string to the iframe reloads the scan. Identity is the caller's
+ * identical. Handing that new string to the viewer reloads the scan. Identity is the caller's
  * key when it has one, otherwise the URL without its signature.
  */
 function useStableDocumentSource(

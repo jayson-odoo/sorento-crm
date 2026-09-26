@@ -4,7 +4,6 @@ import * as React from 'react';
 import { Badge } from '@/components/ui/badge';
 import { useUOMSelectQuery } from '@/app/(protected)/master-data-management/shared/hooks/use-uom-select-query';
 import { getProductsForVariantSelect } from '@/app/(protected)/master-data-management/products/services/productService';
-import { fetchWarehouseOptions } from '../../_shared/services/warehouseSelectService';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import {
   InlineLineTable,
@@ -13,6 +12,13 @@ import {
   type InlineStaging,
 } from '../../_shared/components/InlineLineTable';
 import { multiplyMoney, sumMoney } from '../../_shared/lib/money';
+import {
+  buildFlagItems,
+  leadFlagItem,
+  FINDING_SEVERITY_BADGE_VARIANT,
+  FINDING_SEVERITY_LABEL,
+  type FlagItem,
+} from '../../_shared/lib/findings';
 import type {
   ProjectSalesOrderFinding,
   ProjectSalesOrderLine,
@@ -67,7 +73,7 @@ export function salesOrderLineToDraft(line: ProjectSalesOrderLine): InlineDraft 
  * The lines of one sales order draft, as a spreadsheet.
  *
  * WHY THIS IS NOT THE DATAGRID BESIDE IT: `SalesOrderLinesTable` is the READ, and it earns
- * its DataGrid - 99 lines, pagination, resizable columns, the set-explosion header rows. An
+ * its DataGrid - 99 lines, pagination, resizable columns, the drag handles. An
  * editor wants the opposite three things (an unsaved row, a cell that gives its whole width to
  * an input, a header that survives an empty table), which is exactly the trade
  * `InlineLineTable` was written for and is documented at the top of that file. So this is the
@@ -81,11 +87,14 @@ export function salesOrderLineToDraft(line: ProjectSalesOrderLine): InlineDraft 
 export function SalesOrderLinesEditor({
   lines,
   findings = [],
+  flagItems,
   editing,
   reference,
 }: {
   lines: ProjectSalesOrderLine[];
   findings?: ProjectSalesOrderFinding[];
+  /** The read table's Flag items; absent, built from `findings` alone. */
+  flagItems?: FlagItem[];
   /** Absent, the table is a plain read: no inputs, no add row, nothing to press. */
   editing?: SalesOrderLinesEditing | null;
   /** Names the order in the row labels, so a screen reader hears which document it is. */
@@ -127,21 +136,31 @@ export function SalesOrderLinesEditor({
     }));
   }, []);
 
-  const findingsByLine = React.useMemo(() => {
-    const map = new Map<string, ProjectSalesOrderFinding[]>();
-    findings.forEach((finding) => {
-      if (!finding.line_id) return;
-      map.set(finding.line_id, [...(map.get(finding.line_id) ?? []), finding]);
+  /** The most severe open item per line: the read table's Flag pill, without its popover. */
+  const flagByLine = React.useMemo(() => {
+    const byLine = new Map<string, FlagItem[]>();
+    (flagItems ?? buildFlagItems(findings, [])).forEach((item) => {
+      if (item.lineId) byLine.set(item.lineId, [...(byLine.get(item.lineId) ?? []), item]);
+    });
+    const map = new Map<string, FlagItem>();
+    byLine.forEach((items, lineId) => {
+      const lead = leadFlagItem(items);
+      if (lead) map.set(lineId, lead);
     });
     return map;
-  }, [findings]);
+  }, [findings, flagItems]);
 
   /**
    * The columns, in the printed order the read table uses: item number, what it is, how much,
-   * what it comes to, when it is due, then where it came from. `SalesOrderLinesTable` declares
-   * the same eleven headers in the same order, and `SalesOrderLinesEditor.test.tsx` asserts
-   * the two lists agree - the read view is what teaches somebody where a field is, so an edit
-   * that reshuffled them would make every edit start with re-finding the cell.
+   * what it comes to, when it is due. `SalesOrderLinesTable` declares the same headers in the
+   * same order, and `SalesOrderLinesEditor.test.tsx` asserts the two lists agree - the read
+   * view is what teaches somebody where a field is, so an edit that reshuffled them would make
+   * every edit start with re-finding the cell.
+   *
+   * No Area, From PO line or Stock location (owner hand test, PR #1264 notes 1 and 3): the
+   * first two are the schedule's facts, not this table's, and the stock location is derived
+   * from the sales agent's location group and stated once in the header. The draft still
+   * carries the line's stored `stock_location`, so a save never blanks it.
    */
   const columns = React.useMemo<InlineLineColumn<SalesOrderEditorRow>[]>(
     () => [
@@ -178,23 +197,20 @@ export function SalesOrderLinesEditor({
           }
           return { value: productId, label: 'Selected product' };
         },
-        annotate: (row) => {
-          if (!row?.line) return null;
-          const flagged = findingsByLine.get(row.line.id) ?? [];
-          // `acknowledged_at` is the backend's own gate; the name beside it is a display
-          // field that goes null when the acknowledger no longer resolves.
-          const blocking = flagged.some(
-            (finding) => finding.severity === 'hard' && !finding.acknowledged_at,
-          );
-          if (!blocking) return null;
+      },
+      {
+        key: 'flag',
+        header: 'Flag',
+        width: 190,
+        // Read-only while editing: a Dismiss writes at once, and an edit session writes
+        // nothing until Save. The pill still says which line holds Publish.
+        kind: 'derived',
+        derive: (_draft, _index, row) => {
+          const item = row?.line ? flagByLine.get(row.line.id) : undefined;
+          if (!item) return <span className="text-muted-foreground">-</span>;
           return (
-            <Badge
-              variant="destructive"
-              appearance="light"
-              size="sm"
-              className="mt-1 shrink-0"
-            >
-              Blocking
+            <Badge variant={FINDING_SEVERITY_BADGE_VARIANT[item.severity]} appearance="light" size="sm">
+              {FINDING_SEVERITY_LABEL[item.severity]}
             </Badge>
           );
         },
@@ -261,42 +277,8 @@ export function SalesOrderLinesEditor({
         placeholder: 'DD/MM/YYYY',
         formatReadOnly: (value) => formatDateInMalaysia(value),
       },
-      {
-        key: 'phase_label',
-        header: 'Area',
-        width: 160,
-        // The schedule's own row, so it is the schedule that changes it, not this table. A
-        // new line belongs to no area until a rebuild places it.
-        kind: 'derived',
-        derive: (_draft, _index, row) =>
-          row?.line?.phase_label ?? (row?.line ? 'Unlabeled area' : 'No area yet'),
-      },
-      {
-        key: 'source_po_line_no',
-        header: 'From PO line',
-        width: 120,
-        kind: 'derived',
-        align: 'end',
-        derive: (_draft, _index, row) =>
-          row?.line?.source_po_line_no ?? (row?.line ? '-' : 'Added by hand'),
-      },
-      {
-        key: 'stock_location',
-        header: 'Stock location',
-        width: 200,
-        // A warehouse picker rather than free text (captain, 19 Aug 2026): the line has no
-        // `warehouse_id` column (D17's `stock_location` is a bare string), so what is
-        // written and read back is the warehouse CODE the option carries as its value.
-        kind: 'searchable-select',
-        placeholder: 'Where it ships from',
-        fetchOptions: fetchWarehouseOptions,
-        resolveSelected: (_row, draft) =>
-          draft.stock_location
-            ? { value: draft.stock_location, label: draft.stock_location }
-            : undefined,
-      },
     ],
-    [fetchProducts, findingsByLine, uomOptions],
+    [fetchProducts, flagByLine, uomOptions],
   );
 
   const sortedLines = React.useMemo(
