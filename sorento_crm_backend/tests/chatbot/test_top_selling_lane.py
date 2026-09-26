@@ -784,6 +784,66 @@ class TestDealer:
         assert "escalate" not in reply.lower()
         assert _open_question(session_factory).get("kind") != "top_selling_pick"
 
+    @staticmethod
+    def _link_dealer(session_factory, name: str = "ZZT OWN DEALER SDN BHD") -> str:
+        """Link the harness contact to one customer of its own: a dealer contact."""
+        from tests._mc_lookup_seed import customer
+
+        db = session_factory()
+        own = customer(db, company_id=DEFAULT_COMPANY_ID, name=name)
+        db.execute(
+            text(
+                "INSERT INTO respond_contact_customers (id, contact_id, customer_id, company_id) "
+                "SELECT gen_random_uuid(), id, :cust, :company FROM respond_contacts WHERE respond_io_id = :cid"
+            ),
+            {"cust": str(own.id), "company": DEFAULT_COMPANY_ID, "cid": str(outstanding_lane.CONTACT_ID)},
+        )
+        db.commit()
+        return str(own.id)
+
+    def test_dealer_naming_another_customer_sees_no_names(self, session_factory, monkeypatch, route) -> None:
+        """Reviewer S2, PR #1273 (owner: a dealer sees only its own customers; ruling
+        pending owner confirmation): a linked dealer contact gets no customer picker. A
+        customer word that matches none of its own ledgers is refused with the plain
+        line before any lookup, so "hanlim" never lists HANLIM TRADING / HANLIM
+        HARDWARE, and nothing is fetched."""
+        _seed_contact(session_factory, variables={})
+        self._link_dealer(session_factory)
+        looked_up: list[Any] = []
+        services = _ambiguous_hanlim_resolve_services(lambda **_: {"items": [], "has_result": False})
+        inner = services.resolve_entity
+
+        def _spy(body):
+            looked_up.append(list(body.get("tokens") or []))
+            return inner(body)
+
+        services = services.__class__(access_types=services.access_types, resolve_entity=_spy, probe=services.probe)
+        reply, captured = _turn(
+            session_factory, monkeypatch,
+            _ts(entities=[{"raw": "hanlim", "hint": "customer", "canonical_code": None, "current_message": True, "confident": True}]),
+            "top selling for HANLIM by quantity", resolve_services=services,
+        )
+        assert "HANLIM TRADING" not in reply and "HANLIM HARDWARE" not in reply
+        assert "Which customer" not in reply
+        assert reply.strip() == REFUSED
+        assert _calls(captured) == []
+        assert all("hanlim" not in tokens for tokens in looked_up), looked_up
+
+    def test_dealer_naming_its_own_customer_runs_on_its_own_ledger(self, session_factory, monkeypatch, route) -> None:
+        """The other side: a word that matches the dealer's own ledger runs the ranking
+        on that ledger, with no picker and no lookup of anyone else's."""
+        _seed_contact(session_factory, variables={})
+        own_id = self._link_dealer(session_factory)
+        reply, captured = _turn(
+            session_factory, monkeypatch,
+            _ts(entities=[{"raw": "own dealer", "hint": "customer", "canonical_code": None, "current_message": True, "confident": True}]),
+            "top 5 for own dealer by quantity",
+            resolve_services=_ambiguous_hanlim_resolve_services(lambda **_: {"items": [], "has_result": False}),
+        )
+        (args,) = _calls(captured)
+        assert args["customer_ids"] == [own_id]
+        assert "Which customer" not in reply
+
 
 # --------------------------------------------------------------------------- #
 # AC-1964 / AC-1966 - the ranked list is a sticky pick list
