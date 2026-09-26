@@ -2676,6 +2676,7 @@ class ProjectScheduleService:
                     stale_orders[0], version.id
                 )
 
+        document_url = self.document_url(version)
         return {
             "id": str(version.id),
             "delivery_schedule_id": str(version.delivery_schedule_id),
@@ -2700,7 +2701,11 @@ class ProjectScheduleService:
             ),
             "page_count": extracted.get("page_count"),
             "pages_extracted": len(extracted.get("pages") or []),
-            "document_url": self.document_url(version),
+            "document_url": document_url,
+            # The in-app PDF viewer reads the bytes through the authenticated
+            # `/attachments/{id}/download` route: the signed URL is cross-origin and the
+            # bucket sends no CORS headers, so a script cannot read it (as the PO screen).
+            "attachment_id": str(version.attachment_id) if document_url else None,
             "schedule_date": version.schedule_date.isoformat() if version.schedule_date else None,
             "phases": phases,
             "products": products,
