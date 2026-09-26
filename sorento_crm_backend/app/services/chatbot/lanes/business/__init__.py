@@ -1339,6 +1339,12 @@ def run_fetch(
         # stay byte-inert for every non-HAS turn.
         "predicate": gate.get("predicate"),
     }
+    predicate = gate.get("predicate")
+    if isinstance(predicate, dict) and not predicate.get("qualifying_total"):
+        # Reviewer B2 on PR #833: a described set with nothing in it has no product to
+        # send, and the tool called without one answers about every product. The miss
+        # lane names the set, the scheme or the unknown word instead.
+        return _error_fragment("the described set qualifies nothing", outcome="not_found")
     args = fetch_mod.entity_ids_transformer(trigger, space_id=space_id)
     if (
         tool_name in policy_rows.ENTITY_FILTER_REQUIRED_TOOLS

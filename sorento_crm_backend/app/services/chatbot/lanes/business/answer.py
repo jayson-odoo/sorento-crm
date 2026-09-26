@@ -4023,6 +4023,15 @@ def build_suggest_offer(
         return keep
 
     misses = _ms_miss_resolutions(r, gate=g)
+    # Reviewer B2 on PR #833: a described set that qualifies nothing names its own miss
+    # (`not_found_error_message`'s set branches: the honest zero of AC-1319 with the
+    # codes it checked, the scheme or document type not on file of AC-1321 / R6). Its
+    # class word ("tap") forward-matched a few product codes, which is the set's own
+    # word and not a typo, so it offers no did-you-mean over the top of that sentence -
+    # the same code-shape rule `_unplaced_token_has_neighbours` applies.
+    from app.services.entity_resolver import _CODE_RE
+
+    zero_set = jsc.get(jsc.get(g, "predicate"), "qualifying_total") == 0
 
     d1s: list[dict[str, Any]] = []
     if not is_clar and not require_spec:
@@ -4030,6 +4039,8 @@ def build_suggest_offer(
         # number of missed tokens shown at 5, which with cap3 per token keeps the numbered
         # list at or under 15.
         for res in misses:
+            if zero_set and not _CODE_RE.fullmatch(jsc.nullish_str(jsc.get(res, "token")).strip()):
+                continue
             cands = token_candidates(res)
             if cands:
                 token = jsc.get(res, "token")
