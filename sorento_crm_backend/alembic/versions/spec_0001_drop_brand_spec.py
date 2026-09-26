@@ -31,6 +31,7 @@ Revision ID: spec_0001_drop_brand
 Revises: sales_0002_team_leader
 Create Date: 2026-09-26
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -123,14 +124,18 @@ def _add_is_searchable(bind) -> None:
 
 
 def _delete_registry_row(bind) -> None:
-    row = bind.execute(
-        text(
-            "SELECT user_values, value_labels, suppressed_values, user_synonyms,"
-            " excluded_values, value_weights, derivation_rules"
-            " FROM product_spec_registry WHERE spec_key = :key"
-        ),
-        {"key": _BRAND},
-    ).mappings().first()
+    row = (
+        bind.execute(
+            text(
+                "SELECT user_values, value_labels, suppressed_values, user_synonyms,"
+                " excluded_values, value_weights, derivation_rules"
+                " FROM product_spec_registry WHERE spec_key = :key"
+            ),
+            {"key": _BRAND},
+        )
+        .mappings()
+        .first()
+    )
     if row is None:
         return
     logger.warning(
@@ -147,20 +152,24 @@ def _rehash_active_stamps(bind) -> None:
     `current_values_hash` reads: the lowest product id with a spec row). A stamp that
     already disagrees with them is stale for another reason and is left alone.
     """
-    rows = bind.execute(
-        text(
-            'SELECT v.id, v.product_code, v.values_hash, c."values" AS vals'
-            " FROM product_spec_verifications v"
-            " CROSS JOIN LATERAL ("
-            '   SELECT ps."values" FROM product_specifications ps'
-            "   JOIN products p ON p.id = ps.product_id"
-            "   WHERE p.product_code = v.product_code"
-            "   ORDER BY p.id LIMIT 1"
-            " ) c"
-            " WHERE v.invalidated_at IS NULL AND c.\"values\" ? :key"
-        ),
-        {"key": _BRAND},
-    ).mappings().all()
+    rows = (
+        bind.execute(
+            text(
+                'SELECT v.id, v.product_code, v.values_hash, c."values" AS vals'
+                " FROM product_spec_verifications v"
+                " CROSS JOIN LATERAL ("
+                '   SELECT ps."values" FROM product_specifications ps'
+                "   JOIN products p ON p.id = ps.product_id"
+                "   WHERE p.product_code = v.product_code"
+                "   ORDER BY p.id LIMIT 1"
+                " ) c"
+                ' WHERE v.invalidated_at IS NULL AND c."values" ? :key'
+            ),
+            {"key": _BRAND},
+        )
+        .mappings()
+        .all()
+    )
     for row in rows:
         values = dict(row["vals"] or {})
         if _values_hash(values) != row["values_hash"]:
@@ -177,18 +186,22 @@ def _rehash_active_stamps(bind) -> None:
 
 
 def _strip_invalidated_diffs(bind) -> None:
-    rows = bind.execute(
-        text(
-            "SELECT id, product_code, invalidated_diff FROM product_spec_verifications"
-            " WHERE invalidated_diff IS NOT NULL"
-            " AND jsonb_typeof(invalidated_diff -> 'changed') = 'array'"
-            " AND EXISTS ("
-            "   SELECT 1 FROM jsonb_array_elements(invalidated_diff -> 'changed') e"
-            "   WHERE e ->> 'spec_key' = :key"
-            " )"
-        ),
-        {"key": _BRAND},
-    ).mappings().all()
+    rows = (
+        bind.execute(
+            text(
+                "SELECT id, product_code, invalidated_diff FROM product_spec_verifications"
+                " WHERE invalidated_diff IS NOT NULL"
+                " AND jsonb_typeof(invalidated_diff -> 'changed') = 'array'"
+                " AND EXISTS ("
+                "   SELECT 1 FROM jsonb_array_elements(invalidated_diff -> 'changed') e"
+                "   WHERE e ->> 'spec_key' = :key"
+                " )"
+            ),
+            {"key": _BRAND},
+        )
+        .mappings()
+        .all()
+    )
     for row in rows:
         diff = dict(row["invalidated_diff"] or {})
         dropped = [e for e in diff.get("changed") or [] if (e or {}).get("spec_key") == _BRAND]
@@ -224,15 +237,19 @@ def _delete_open_exceptions(bind) -> None:
 
 def _strip_values(bind) -> None:
     # A value a person typed is named one by one; everything derivation wrote is counted.
-    authored = bind.execute(
-        text(
-            'SELECT p.product_code, ps."values" -> :key AS typed, ps.provenance -> :key AS stamp'
-            " FROM product_specifications ps JOIN products p ON p.id = ps.product_id"
-            " WHERE ps.provenance -> :key ->> 'source' = ANY(:authored)"
-            " ORDER BY p.product_code"
-        ),
-        {"key": _BRAND, "authored": list(_AUTHORED)},
-    ).mappings().all()
+    authored = (
+        bind.execute(
+            text(
+                'SELECT p.product_code, ps."values" -> :key AS typed, ps.provenance -> :key AS stamp'
+                " FROM product_specifications ps JOIN products p ON p.id = ps.product_id"
+                " WHERE ps.provenance -> :key ->> 'source' = ANY(:authored)"
+                " ORDER BY p.product_code"
+            ),
+            {"key": _BRAND, "authored": list(_AUTHORED)},
+        )
+        .mappings()
+        .all()
+    )
     for row in authored:
         logger.warning(
             "spec_0001: clearing a brand set by hand on %s: %s (%s)",

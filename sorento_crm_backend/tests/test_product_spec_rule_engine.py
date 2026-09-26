@@ -235,6 +235,9 @@ def _skip_hit(compiled: dict, haystack: str):
         raw = match.group(group) if group else match.group(0)
         if compiled.get("skip") and re.search(compiled["skip"], haystack[: match.start()]):
             continue
+        if group is None:
+            # A Words rule sets its value; there is no number to scale.
+            return True
         if raw is not None and compiled.get("min") is not None:
             try:
                 if float(raw) < float(compiled["min"]):
@@ -276,7 +279,7 @@ def test_ac_s1_2_ignore_below_skips_a_small_number_and_reads_the_next():
 def test_ac_s1_2_number_between_reads_the_trap_length():
     from app.services.product_spec_rules import compile_builder
 
-    compiled = compile_builder({"kind": "number", "before": ["S TRAP", "P TRAP"], "after": ["MM"]})
+    compiled = compile_builder({"kind": "number", "after": ["S TRAP", "P TRAP"], "before": ["MM"]})
     for phrase in ("S-TRAP:250MM", "( S- TRAP 250MM )"):
         match = re.search(compiled["pattern"], _upper(phrase))
         assert match, phrase

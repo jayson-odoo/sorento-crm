@@ -26,6 +26,7 @@ the screen did not show.
 This module is a leaf: it imports nothing from the other spec services, so derivation,
 the registry and the API can all import it.
 """
+
 from __future__ import annotations
 
 import json
@@ -43,9 +44,7 @@ WRITTEN_IN_SCALE = {"centimetres": 10, "metres": 1000}
 
 # The one key that is never a specification (#1286, D1).
 BRAND_KEY = "brand"
-BRAND_IS_NOT_A_SPEC = (
-    "Brand is not a specification. The product's brand is on its Details tab."
-)
+BRAND_IS_NOT_A_SPEC = "Brand is not a specification. The product's brand is on its Details tab."
 
 # Which text a rule reads when its builder does not say. Product class reads the product
 # name without sizes and extras; everything else reads the description or the flyer.
@@ -533,7 +532,11 @@ def validate_rules(
 
         only_when = builder.get("only_when")
         if only_when is not None:
-            spec = str((only_when or {}).get("spec") or "").strip() if isinstance(only_when, dict) else ""
+            spec = (
+                str((only_when or {}).get("spec") or "").strip()
+                if isinstance(only_when, dict)
+                else ""
+            )
             values = (
                 [v for v in only_when.get("values") or [] if str(v).strip()]
                 if isinstance(only_when, dict)
@@ -585,7 +588,9 @@ def fold_rules(rules: list[dict]) -> list[dict]:
         if folded and key is not None and key == _fold_key(builder_of(folded[-1])):
             previous = dict(folded[-1])
             merged = dict(builder_of(previous))
-            merged["words"] = _upper_list(list(merged.get("words") or []) + list(builder.get("words") or []))
+            merged["words"] = _upper_list(
+                list(merged.get("words") or []) + list(builder.get("words") or [])
+            )
             previous["builder"] = merged
             folded[-1] = previous
             continue
@@ -653,7 +658,12 @@ def legacy_to_builder(rule: dict, spec_key: str | None = None) -> dict:
 
     builder: dict | None = None
     if match == "contains" and pattern:
-        builder = {"kind": "words", "look_in": look_in, "words": [pattern], "value": rule.get("value")}
+        builder = {
+            "kind": "words",
+            "look_in": look_in,
+            "words": [pattern],
+            "value": rule.get("value"),
+        }
     elif match == "ends_with" and pattern:
         builder = {
             "kind": "words",
@@ -695,7 +705,12 @@ def legacy_to_builder(rule: dict, spec_key: str | None = None) -> dict:
     elif legacy_kind == "size_triple":
         builder = {"kind": "size", "look_in": look_in, "pick": int(legacy.get("position") or 1)}
     elif match == "present" and pattern and _SPEAKABLE.fullmatch(pattern):
-        builder = {"kind": "words", "look_in": look_in, "words": [pattern], "value": rule.get("value", True)}
+        builder = {
+            "kind": "words",
+            "look_in": look_in,
+            "words": [pattern],
+            "value": rule.get("value", True),
+        }
     if builder is None:
         raise UnconvertibleRule(f"{match} {pattern!r} has no kind that can express it")
     if rule.get("scale") and builder["kind"] == "number":

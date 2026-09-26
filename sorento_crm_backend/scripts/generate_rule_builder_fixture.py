@@ -16,6 +16,7 @@ sorento_crm_backend/ (it only needs the settings to import, never the database):
 
 then commit the rewritten JSON with the change that caused it.
 """
+
 from __future__ import annotations
 
 import json
@@ -39,16 +40,54 @@ FIXTURE = (
 
 # Plan D5 examples and edge shapes the shipped list does not hold.
 EXAMPLES: list[tuple[str, dict]] = [
-    ("finish", {"kind": "words", "look_in": "any", "words": ["GUNMETAL", "GUN METAL"], "value": "gunmetal"}),
-    ("finish", {"kind": "words", "look_in": "flyer", "words": ["BRUSHED GOLD"], "value": "french_gold"}),
+    (
+        "finish",
+        {
+            "kind": "words",
+            "look_in": "any",
+            "words": ["GUNMETAL", "GUN METAL"],
+            "value": "gunmetal",
+        },
+    ),
+    (
+        "finish",
+        {"kind": "words", "look_in": "flyer", "words": ["BRUSHED GOLD"], "value": "french_gold"},
+    ),
     ("is_soft_close", {"kind": "words", "words": ["SOFT-CLOSE"], "value": True}),
-    ("material", {"kind": "words", "look_in": "description", "words": ["S/STEEL (304)", "SUS.304+"], "value": "stainless_steel"}),
+    (
+        "material",
+        {
+            "kind": "words",
+            "look_in": "description",
+            "words": ["S/STEEL (304)", "SUS.304+"],
+            "value": "stainless_steel",
+        },
+    ),
     ("dim_length", {"kind": "number", "look_in": "description", "after": ["LENGTH"]}),
-    ("dim_length", {"kind": "number", "look_in": "any", "before": ["CM"], "written_in": "centimetres"}),
+    (
+        "dim_length",
+        {"kind": "number", "look_in": "any", "before": ["CM"], "written_in": "centimetres"},
+    ),
     ("dim_width", {"kind": "size", "look_in": "any", "pick": 2}),
-    ("finish", {"kind": "code", "code_match": "starts_with", "texts": ["SRTSC", "srtwc"], "value": "chrome"}),
+    (
+        "finish",
+        {
+            "kind": "code",
+            "code_match": "starts_with",
+            "texts": ["SRTSC", "srtwc"],
+            "value": "chrome",
+        },
+    ),
     ("finish", {"kind": "code", "code_match": "contains", "texts": ["-GM-"], "value": "gunmetal"}),
-    ("diameter", {"kind": "size", "look_in": "description", "pick": 1, "only_when": {"spec": "shape", "is": True, "values": ["round", "square"]}}),
+    (
+        "diameter",
+        {
+            "kind": "size",
+            "look_in": "description",
+            "pick": 1,
+            "only_when": {"spec": "shape", "is": True, "values": ["round", "square"]},
+        },
+    ),
     ("dim_width", {"kind": "product", "fact": "width"}),
 ]
 
@@ -61,7 +100,9 @@ def entries() -> list[dict]:
     for spec_key, rules in _rules_from_shipped_tables().items():
         for rule in rules:
             builder = rule["builder"]
-            out.append({"spec_key": spec_key, "builder": builder, "compiled": compile_builder(builder)})
+            out.append(
+                {"spec_key": spec_key, "builder": builder, "compiled": compile_builder(builder)}
+            )
     for spec_key, builder in EXAMPLES:
         out.append({"spec_key": spec_key, "builder": builder, "compiled": compile_builder(builder)})
     return out

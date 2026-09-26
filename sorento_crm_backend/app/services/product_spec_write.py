@@ -34,6 +34,8 @@ from app.models.product import Brand, Product
 from app.models.product_spec import ProductSpecException, ProductSpecifications
 from app.services.error_handler import AppException
 from app.services.product_spec_rendering import render_spec_sentence
+# Brand is not a specification (#1286, D1); one message, shared with the rule engine.
+from app.services.product_spec_rules import BRAND_IS_NOT_A_SPEC
 
 logger = logging.getLogger(__name__)
 
@@ -258,11 +260,6 @@ def write_spec_row(
 # --------------------------------------------------------------------------- #
 _OPS = ("set", "absent", "revert")
 
-
-# Not a specification (#1286, D1): the product's brand field is the only brand.
-BRAND_IS_NOT_A_SPEC = (
-    "Brand is not a specification. The product's brand is on its Details tab."
-)
 
 
 def _prepare(entry: Mapping, actor: Mapping | None) -> dict:

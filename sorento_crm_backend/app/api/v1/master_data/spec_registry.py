@@ -33,7 +33,7 @@ from app.dependencies import (
 from app.models.product_spec import ProductSpecRegistry, ProductSpecSearchPolicy
 from app.services import product_spec_preview, product_spec_rederive
 from app.services.error_handler import AppException, handle_internal_error, handle_not_found
-from app.services.product_spec_write import BRAND_IS_NOT_A_SPEC
+from app.services.product_spec_rules import BRAND_IS_NOT_A_SPEC
 from app.services.product_spec_registry import (
     SEARCH_POLICY_SEED,
     active_registry,

@@ -40,6 +40,7 @@ Revision ID: spec_0002_rule_builders
 Revises: spec_0001_drop_brand
 Create Date: 2026-09-26
 """
+
 from __future__ import annotations
 
 import json

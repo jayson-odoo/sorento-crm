@@ -1242,6 +1242,121 @@ def seed_spec_registry(db: Session, *, commit: bool = False) -> dict:
     return {"created": created, "updated": updated}
 
 
+# --------------------------------------------------------------------------- #
+# removing one rule, one choice or one word (#1286, D7 / D13: deferred removes)
+#
+# Each is a record action (`record_actions`: `spec_rule.remove`, `spec_value.remove`,
+# `spec_word.remove`) that commits when its 5 s window lapses. They make exactly the
+# change the PATCH fields make, one item at a time, so a removal parked while somebody
+# else edits the same key cannot write back a list it read before their edit.
+# --------------------------------------------------------------------------- #
+def _registry_row_for_update(db: Session, spec_key: str) -> ProductSpecRegistry:
+    from app.services.error_handler import handle_not_found
+
+    row = (
+        db.query(ProductSpecRegistry)
+        .filter(ProductSpecRegistry.spec_key == spec_key)
+        .with_for_update()
+        .first()
+    )
+    if row is None:
+        raise handle_not_found("Spec key", spec_key)
+    return row
+
+
+def _gone(message: str):
+    from app.services.error_handler import AppException
+
+    return AppException(status_code=404, message=message, code="spec_registry_item_gone")
+
+
+def remove_rule(db: Session, spec_key: str, builder: dict) -> dict:
+    """Remove the first rule that reads what `builder` says, then re-read what changed.
+
+    Compared after the stored form's normalisation (`clean_builder`), so the rule the
+    screen shows and the rule stored are the same rule however the screen spelled its
+    words. A key still reading the shipped rules has them written to its column first:
+    removing one is the moment the list becomes the business's own.
+    """
+    from app.services import product_spec_rederive
+    from app.services.product_spec_rules import builder_identity
+
+    row = _registry_row_for_update(db, spec_key)
+    wanted = builder_identity(clean_builder(builder if isinstance(builder, dict) else {}))
+    rules = [
+        {"builder": builder_of(rule)}
+        for rule in (row.derivation_rules or _rules_from_shipped_tables().get(spec_key) or [])
+        if builder_of(rule)
+    ]
+    index = next(
+        (i for i, rule in enumerate(rules) if builder_identity(clean_builder(rule["builder"])) == wanted),
+        None,
+    )
+    if index is None:
+        raise _gone("That rule is no longer on this specification.")
+
+    fingerprint_before = product_spec_rederive.rules_fingerprint(db)
+    row.derivation_rules = rules[:index] + rules[index + 1 :]
+    db.commit()
+    updated = product_spec_rederive.reread_after_save(
+        db, spec_key, fingerprint_before=fingerprint_before
+    )
+    return {"spec_key": spec_key, "products_updated": updated}
+
+
+def remove_value(db: Session, spec_key: str, value: str) -> dict:
+    """Take one choice off a key: a staff-added one is dropped with its words and its
+    label; a shipped one is suppressed (the same effect as the PATCH's `user_values` and
+    `suppressed_values`), because the shipped list is the parser's contract."""
+    row = _registry_row_for_update(db, spec_key)
+    value = str(value or "").strip()
+    added = [str(v) for v in (row.user_values or [])]
+    shipped = [str(v) for v in (row.allowed_values or [])]
+
+    if value in added:
+        row.user_values = [v for v in added if v != value]
+        row.user_synonyms = {k: w for k, w in (row.user_synonyms or {}).items() if k != value}
+        row.value_labels = {k: w for k, w in (row.value_labels or {}).items() if k != value}
+    elif value in shipped:
+        suppressed = [str(v) for v in (row.suppressed_values or [])]
+        if value not in suppressed:
+            row.suppressed_values = [*suppressed, value]
+    else:
+        raise _gone("That choice is no longer on this specification.")
+
+    db.commit()
+    return {"spec_key": spec_key, "value": value}
+
+
+def remove_word(db: Session, spec_key: str, value: str, word: str) -> dict:
+    """Take one word off a choice (or off the key itself, `_self`): a staff-added word is
+    dropped, a shipped one is suppressed (the PATCH's `user_synonyms` and
+    `suppressed_synonyms`). Compared the way the words match: case and spacing folded."""
+    row = _registry_row_for_update(db, spec_key)
+    value = str(value or "").strip()
+    folded = normalise_vocabulary(word)
+    added = list((row.user_synonyms or {}).get(value) or [])
+    shipped = list((row.synonyms or {}).get(value) or [])
+
+    if any(normalise_vocabulary(w) == folded for w in added):
+        kept = [w for w in added if normalise_vocabulary(w) != folded]
+        words = {k: list(w) for k, w in (row.user_synonyms or {}).items() if k != value}
+        if kept:
+            words[value] = kept
+        row.user_synonyms = words
+    elif any(normalise_vocabulary(w) == folded for w in shipped):
+        suppressed = {k: list(w) for k, w in (row.suppressed_synonyms or {}).items()}
+        taken = suppressed.get(value) or []
+        if not any(normalise_vocabulary(w) == folded for w in taken):
+            suppressed[value] = [*taken, next(w for w in shipped if normalise_vocabulary(w) == folded)]
+        row.suppressed_synonyms = suppressed
+    else:
+        raise _gone("That word is no longer on this choice.")
+
+    db.commit()
+    return {"spec_key": spec_key, "value": value, "word": word}
+
+
 def delete_registry_key(db: Session, spec_key: str) -> None:
     """Delete a user-created key. Seeded keys are deactivated, never deleted.
 
