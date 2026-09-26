@@ -204,12 +204,12 @@ feed them to the parser in a fixed, capped shape. Episodes get real boundaries (
 and a deterministic written summary built from the turns' own trace (domains, entities,
 answers, offers, outcome): no extra LLM call, backfillable over the 4,414 live turns already
 in `chatbot.turns`. The profile gains a `facts` list inside the existing `chatbot_profile`
-JSONB (no new table): facts derived from CRM links, facts tallied from closed episodes, facts
-the dealer states, facts staff enter; each with source, last seen and expiry; staff see and
-edit them on the Contact page. Every parse gets a capped context (profile slice, last three
+JSONB (no new table): facts tallied from closed episodes, facts the dealer states, facts staff
+enter, each with source, last seen and expiry; CRM facts (customer, segment, salesperson) are
+read live from the CRM links, never stored; staff see and edit it all on the Contact page. Every parse gets a capped context (profile slice, last three
 episode summaries, the live episode's earlier messages, focus, open question, current
 message) assembled by one pure function under a per-layer token budget, and the recall
-re-parse is deleted, which pays for the added lines several times over. The low-signal lane
+re-parse is deleted. The low-signal lane
 (small talk, "what did I ask you", "can you give me a discount") gets the same memory slice
 and a reply shape (acknowledge, use what memory knows, offer the concrete thing the CRM can
 do, or hand over), and never sends a raw error or nothing at all.
@@ -223,9 +223,9 @@ function, `turn/profile_facts.py`). Staff can add a free-text note; nothing else
 
 | key | example value | sources allowed | fed to the parser | expiry |
 |---|---|---|---|---|
-| `customer` | "Chin Chun Trading (CC001)" | crm | yes | live (re-derived at each episode close) |
-| `segment` | "dealer" / "project" / "end user" | crm, staff | yes | live |
-| `salesperson` | "Aina" | crm | no (S4 composer only) | live |
+| `customer` | "Chin Chun Trading (CC001)" | crm (read live, not stored) | yes | none (live join) |
+| `segment` | "dealer" / "project" / "end user" | crm (read live), staff | yes | none |
+| `salesperson` | "Aina" | crm (read live) | no (S4 handover only) | none |
 | `language` | "ms" | staff, stated | yes | none (staff) / 180 days (stated) |
 | `role` | "purchaser" | stated, staff | yes | 180 days / none |
 | `usual_products` | ["SRTWB1455", "M486-75-BL"] | tallied, staff | yes | 90 days after last seen |
@@ -261,8 +261,12 @@ when a reply needs them (example 6 in section 7).
 }
 ```
 
-Why no table: one contact holds at most about 12 facts, nothing queries facts across contacts,
-and the row is already locked `FOR UPDATE` by the tail. Trigger for a table (written down per
+`crm` facts never appear in the JSONB: they are one join at read time
+(`respond_contact_customers` primary first, `customers.market_segment_code`,
+`customers.sales_agent_id`), so they cannot go stale and need no writer.
+
+Why no table: one contact holds at most about 12 facts and nothing queries facts across
+contacts. Trigger for a table (written down per
 PRINCIPLES): the first feature that must query facts across contacts (for example "every
 contact whose usual brand is X" for a campaign).
 
@@ -270,10 +274,17 @@ contact whose usual brand is X" for a campaign).
 
 | source | writer | when |
 |---|---|---|
-| `crm` | `profile_facts.derive_crm(contact)` from `respond_contact_customers` (primary first), `customers.market_segment_code`, `customers.sales_agent_id` | at each episode close, in the same transaction; replaces all `crm` facts |
-| `tallied` | `profile_facts.tally(contact)`: a product, brand or warehouse present in the entities of 2 or more closed episodes in the last 90 days; top 3 by count then recency | at each episode close |
+| `crm` | none: `profile_facts.crm_view(contact)` reads them live at intake and on the staff screen | every read |
+| `tallied` | `profile_facts.tally(contact)`: a product, brand or warehouse present in the entities of 2 or more closed episodes in the last 90 days; top 3 by count then recency | right after each episode is written |
 | `stated` | the parser's new optional `profile_statement` output (section 6.5), applied by APPLY into the tail's write | on the turn the dealer says it |
 | `staff` | `PUT /user-management/contacts/{id}/chatbot/facts/{key}` and `DELETE` of the same; the existing whole-profile PUT stops touching `facts` | on the Contact page |
+
+Every fact write is a single-key `jsonb_set` on `respond_contacts.chatbot_profile` under
+`SELECT ... FOR UPDATE` of that row at write time, never a read-modify-write of the snapshot
+loaded at intake (the parser call sits between the two for about 2.6 s, long enough for a
+staff save to land and be overwritten). `write_episode` commits on its own session today
+(`memory.py:62`, reasons in `engine.py:3330-3350`); the tally runs after that commit in its
+own short transaction.
 
 Precedence when two sources hold the same key: `staff` > `stated` > `crm` > `tallied`. A staff
 delete of a learned fact records a tombstone (`{"key": ..., "source": "staff", "value": null}`)
@@ -304,13 +315,18 @@ sections under the toggles, same layout on view and edit:
 - **Recent conversations** (read-only DataGrid): episode date, topic (domains), summary line,
   turn count, close reason; the row opens that turn range in Chat History (`rowHref`).
   Empty state with a link to Chat History.
-- **Open orders** (read-only, live from the linked customer, top 5): shown here because staff
-  asked "what does the bot know about this person" and orders are part of that answer; not a
-  fact, not stored.
+- **Open orders** (read-only, live from the linked customer, top 5): the brief lists open
+  orders as part of what the bot should know about a dealer, and this is the cheapest honest
+  form of it: a live read, not a fact, not stored, not in the prompt.
 
 Permissions: view needs the existing `user_management.contacts.view`; add, edit and delete
 need the existing `user_management.contacts.edit`. No new permission, so no grant sweep.
 Both dict builders (`contact_to_response_dict` and the chatbot GET) list `facts` (DoD 4).
+
+Contact deletion: `conversation_frames` has no FK to `respond_contacts`, so the contact delete
+service also deletes the contact's frames (by `contact_respond_id`), and the facts go with the
+row. A PDPA erasure request is the same path. `chatbot.turns` keep their own retention
+(BL-054 still open), so the 90-day episode retention is not by itself a privacy guarantee.
 
 ## 5. Layer 2: episodes
 
@@ -321,24 +337,39 @@ A contiguous run of one contact's turns about one thing. It is **closed** by the
 | trigger | close_reason | detected where |
 |---|---|---|
 | the parser says `topic_reset` (today's only trigger) | `topic_switch` | APPLY, written by the tail (unchanged seam) |
-| a gap: this turn arrives more than `episode_gap_minutes` (default 30) after the contact's previous turn | `idle` | intake, before the parser runs, inside the per-contact ticket |
-| the nightly memory sweep finds a live episode idle past the gap | `idle` | the existing scheduler (section 5.5) |
-| staff take over the conversation (human intervention flag) | `handover` | intake of the next bot turn |
+| a gap: this turn arrives more than `episode_gap_minutes` (default 30) after the contact's previous turn (any status, same `is_test` side) | `idle` | intake, before the parser runs |
+| the envelope's `is_human_intervened` custom field is true at intake (`engine.py:268-276`, read at `:1206-1215`) | `handover` | intake; the flag is one-shot today (the engine clears it and the turn continues), so it closes the range once |
 
-There is **no open row**. The live episode is simply "this contact's turns since the last
-closed frame's `closed_at`" (one indexed read of `chatbot.turns`, at most 4 rows needed). An
-episode is written once, already closed, as `write_episode` does today. This keeps the one
-writer (the tail, or intake for a gap close) and needs no "open then patch" state.
+There is **no open row**. The live episode is "this contact's turns created after the last
+frame's `last_activity_at`", where `last_activity_at` is set to the `created_at` of the
+episode's LAST turn (not the frame's write time: `closed_at` is a naive Python clock taken
+after the resetting turn started, so bounding by it would put the resetting turn in the
+closed episode). On a topic switch the resetting turn opens the new episode; the frame covers
+the turns before it. An episode is written once, already closed, as `write_episode` does
+today.
+
+The previous turn's time is free: `previous_reply_text` (`turn_runtime.py:211-253`) already
+selects this contact's newest done turn on the same `is_test` side; it also returns
+`created_at`. The live episode's earlier messages are one more read of at most 4 rows.
+
+Concurrency: the per-contact ticket serialises a contact's turns only in S7 mode, never on dry
+runs, and a Redis outage runs the turn unordered (`engine.py:831-860`). So the close is made
+idempotent in the database, not assumed: a unique index on
+`(contact_respond_id, is_test, (turn_ids[1]))`, and the writer inserts with
+`ON CONFLICT DO NOTHING`.
 
 Why 30 minutes: turns per contact per day are p50 4, p95 30 (#1275), and a WhatsApp dealer's
 burst is minutes long. Grill question 2 lets the owner pick another number; it is one value
-in the existing `system_settings.chatbot_memory` JSON (the Memory card already has the field
-slot; section 5.6).
+in the existing `system_settings.chatbot_memory` JSON (section 5.6).
 
-`is_test` turns (console) write frames flagged `is_test = true` and read only `is_test`
-frames, so console conversations never leak into a real dealer's memory and vice versa. Dry
-runs keep writing nothing (LESSONS-LEARNT #101: a dry run previews the decision, it does not
-persist it).
+Console turns are dry runs (`console_service.py`: "D14: zero writes outside
+`chatbot.turns`"), and two named exceptions already exist (media among them). Their live
+episode works without any exception, because it is read from `chatbot.turns`, which dry runs
+do write. Closing an episode is a write, so this plan asks for a **third named D14
+exception**: an `is_test` turn may write an `is_test = true` frame (never a fact, never
+anything else). Live turns never read `is_test` frames and `is_test` turns never read live
+ones. Without the exception, cross-episode memory can only be tested key-free with injected
+frames, never on the console. Grill question 15.
 
 ### 5.2 The written summary (deterministic, no LLM call)
 
@@ -386,8 +417,8 @@ hand pass show a question the digest cannot answer. Grill question 3.
 contact, walk live `chatbot.turns` of the last `episode_retention_days` (default 90) in order,
 cut episodes by the same two triggers (recorded `topic_reset` in the `apply` event, and the
 gap), write one frame per episode with its digest, and delete the placeholder frames whose
-summary matches `Closed the % topic.`. Key: `(contact_respond_id, first turn id)`, so a second
-run changes nothing. About 4.4k turns from 74 contacts today: seconds, not minutes. After it
+summary matches `Closed the % topic.`. Key: the unique index of 5.1, so a second run changes
+nothing. About 4.4k turns from 74 contacts today: seconds, not minutes. After it
 runs, every dealer already has memory on day one.
 
 ### 5.4 What the parser gets from episodes
@@ -411,21 +442,25 @@ Recent conversations:
   query, printed oldest first.
 - Recall is replaced by this. The vector recall and its second parse (`engine.py:1487-1520`)
   are deleted in S3: every parse already carries the last three summaries, and a reference
-  beyond three episodes is a history question the S4 composer answers from the table. The
-  embedding enqueue stays (it exists, costs nothing on the turn, and
-  `/external/memory/frames/search` still serves n8n). Grill question 5.
+  beyond three episodes is a history question the S4 history reply answers from the table.
+  With no reader left, the frame embedding enqueue is also removed (it spends embedding calls
+  for nothing; the n8n `/external/memory/frames/search` route filters on the old
+  `contact_id` and there is no evidence n8n calls it). Grill question 5.
 - The per-contact `chatbot_recall_enabled` toggle becomes the memory opt-out for that
-  contact (label "Use conversation memory"), default ON. Owner decision D3 of 15 Sep set
-  "global default off" for recall; this plan asks to flip it (grill question 1) because the
-  new blocks cost no extra call and carry no other contact's data.
+  contact (label "Use conversation memory"), default ON: the column default flips to true
+  and a data migration sets it true on every existing contact (74 had live turns 9 to 25
+  Sep). Owner decision D3 of 15 Sep set "global default off" for recall; this plan asks to
+  flip it (grill question 1) because the new blocks cost no extra call and carry no other
+  contact's data.
 
 ### 5.5 Retention
 
 A nightly sweep on the existing scheduler (`ENABLE_SCHEDULER` worker): deletes frames older
-than `episode_retention_days` (default 90), drops expired `tallied` / `stated` facts, and
-closes live episodes idle past the gap (so the staff screen and the tally are current even for
-a dealer who never writes again). The sweep is the only new scheduled job; it also closes
-BL-054's gap for frames (turns keep their own backlog item).
+than `episode_retention_days` (default 90) and drops expired `tallied` / `stated` facts
+(expired facts are also filtered at read, so the sweep is housekeeping, not correctness). It
+does not close idle episodes: the bot closes them lazily at the next turn, and the staff
+screen shows the unclosed tail as "current conversation", derived on read. The sweep is the
+only new scheduled job; turns keep their own retention item (BL-054).
 
 ### 5.6 Settings card: wire or remove
 
@@ -433,13 +468,13 @@ The four dead `chatbot_memory` keys become:
 
 | key today | becomes |
 |---|---|
-| `recall_default` | `memory_default` (bool, default true): the value a new contact's toggle starts at |
+| `recall_default` | removed; the column default (true) is the default, no setting reads it |
 | `episode_retention_days` | wired: sweep and backfill window (default 90) |
 | `profile_fields` | removed (the vocabulary is code; a field list that nothing reads is config for a hypothetical) |
 | `focus_reset_events` | removed; replaced by `episode_gap_minutes` (default 30) |
 
-Both dict builders of `system_settings` carry the two new keys (DoD 4); the card shows three
-controls. Grill question 11.
+Both dict builders of `system_settings` carry the two remaining keys (DoD 4); the card shows
+two controls. Grill question 11.
 
 ## 6. Layer 3: turn context assembly and the token budget
 
@@ -466,30 +501,35 @@ Current user message:          L1 (text, reply-to, media read line)
 
 ### 6.2 The budget, per layer
 
-Tokens are estimated as `ceil(utf8_bytes / 3)`, which over-counts English (about 4 bytes per
-token) and is close to exact for Malay and safe for Chinese (3 bytes per character, at most
-one token each). Over-estimating is the safe direction: the cap can only be undershot.
+Tokens are estimated as `ceil(utf8_bytes / 3)`. That over-counts English and Malay (about 4
+bytes per token) and is about right for common Chinese (3 bytes per character); rare CJK
+characters can take 2 to 3 tokens each, so the estimate is checked against the provider on
+real turns (6.3 item 3), not trusted blindly. Every cap below is in est. tokens, and every
+"cut at" is in bytes, so the two never mix.
 
-| layer | content | budget (est. tokens) | when over | never dropped |
+| layer | content | cap (est. tokens) | when over | kept whole |
 |---|---|---|---|---|
-| L0 system prompt | registry body + policy blocks + memory addendum | **22,100** hard ceiling (today's measured 21.2k + 0.9k); memory addendum at most 400, paid by cuts in the same slice (6.4) | CI fails (6.3) | |
-| L1 current message | text, `reply to:` quote (cut to 300 chars), media read line | 600 | quote cut first, then message cut at 1,500 chars with "(cut)" | the message itself |
+| L0 system prompt | registry body + policy blocks + memory addendum | **22,100** ceiling (today's measured 21.2k + 0.9k); addendum at most 400, paid by cuts (6.4) | CI fails (6.3) | |
+| L1 current message | text (cut at 1,500 bytes with "(cut)"), `reply to:` quote (cut at 600 bytes), media read line | 600 | quote cut first, then the text | the first 1,500 bytes of the text |
 | L2 focus + open question | `Current subject:`, `Pending:`, options (frozen) | 350 | options beyond 10 dropped with "(+N more)"; today's roster cap is 10 | the open question kind |
-| L3 live episode | earlier user messages (max 3 x 200 chars) + `Previous response:` (600 chars) | 450 | oldest earlier message first, then the previous response is cut to 300 chars | the previous response's first 300 chars |
-| L4 episode summaries | last 3 closed, 30 days, 240 chars each | 250 | oldest summary first | |
-| L5 profile slice | parser-fed facts, fixed key order, values cut to 60 chars, list values max 3 | 150 | `note` first, then `project`, then `usual_sites` | `customer`, `segment`, `language` |
-| **user block total** | L1 to L5 | **1,800 hard cap** | L5, then L4, then L3 trimmed to their "never dropped" floor | L1 message, L2 open question |
+| L3 live episode | earlier user messages (max 3, 600 bytes each) + `Previous response:` (1,800 bytes) | 450 | oldest earlier message first, then the previous response is cut to 900 bytes | the previous response's first 900 bytes |
+| L4 episode summaries | last 3 closed, 30 days, 720 bytes each | 250 | oldest summary first | |
+| L5 profile slice | parser-fed facts, fixed key order, values cut to 180 bytes, list values max 3 | 150 | `note` first, then `project`, then `usual_sites` | `customer`, `segment`, `language` |
+| **user block** | L1 to L5 | **1,800** = the sum of the layer caps; no separate global rule | each layer enforces its own cap, so the sum cannot be exceeded | |
 | output | `max_tokens` | 2,048 today, unchanged here (#1275 item 4 owns lowering it) | | |
-| recall re-parse | second full parser call | **0** (deleted; today up to +22.8k per recall turn) | | |
+| recall re-parse | second full parser call | **0** (deleted; today up to +22.8k per recall turn, rare because recall is off by default) | | |
 
-What this adds, worst case: L3 +about 200 over today's uncapped previous reply, L4 +250, L5
-+150 (today's `Profile:` line is about 10), plus the 400 addendum = **about +1,000 est.
-tokens on a turn with full memory**, about +4% of 24.8k. A first-time contact adds 0.
+What this adds, worst case, on a turn with full memory: L3 about +200 over today's uncapped
+previous reply, L4 +250, L5 +150 (today's `Profile:` line is about 10): **about +600 est.
+tokens on the user block**. The system prompt is net zero if 6.4's cuts cover the addendum.
+At +600, requested per call goes from about 24.8k to about 25.4k: 7.87 calls per minute
+instead of 8.06 (-2.4%) in the worst case; a first-time contact adds 0. Capacity itself is
+#1275's lane; this plan only promises not to make it materially worse.
 
 ### 6.3 How the budget is enforced (not just stated)
 
-1. **In code:** `assemble` never returns a block over 1,800 est. tokens; the truncation order is
-   the table above. Pure function, unit-tested on a worst-case fixture (every layer at 3x its
+1. **In code:** each layer renderer enforces its own cap in `assemble`; a test asserts the
+   invariant "user block <= 1,800 est. tokens" on a worst-case fixture (every layer at 3x its
    cap). AC-MEM060.
 2. **In CI, the system prompt:** `tests/chatbot/test_parser_prompt_budget.py` renders the
    production parser prompt (registry fallback + the policy blocks seed) and fails over 22,100
@@ -497,12 +537,16 @@ tokens on a turn with full memory**, about +4% of 24.8k. A first-time contact ad
    of 22 Sep (#1275). AC-MEM061.
 3. **In every trace:** the `understood` stage `facts` gain `prompt_tokens` and
    `completion_tokens` from the provider (not only `total_tokens`), and a `context` event
-   records est. tokens per layer and what was dropped. `usage.py` logs the turn id. The
-   recall-overwrite bug (`engine.py:1508`) disappears with the re-parse. AC-MEM062, AC-MEM063.
-4. **In production, the gate:** S3 ships only if, over the first 3 weekdays after deploy,
-   p95 of `prompt_tokens + 2048` per turn is **not higher than** the 3 weekdays before (the
-   24.8k line), measured with the query in 8.2. If it is higher, the memory addendum is
-   cut or the L4 / L5 caps are lowered before anything else ships. AC-MEM064.
+   records est. tokens per layer and what was cut. The provider reports only the total, so the
+   system prompt's own token count is recorded once per published prompt version (one probe
+   call with a one-word user block at publish), and the user block's real share is
+   `prompt_tokens - system_prompt_tokens(version)`; the estimator is checked against that.
+   `usage.py` logs the turn id. The recall-overwrite bug (`engine.py:1508`) disappears with the
+   re-parse. AC-MEM062, AC-MEM063.
+4. **In production, the gate:** over the first 3 weekdays after S3 deploys, p95 of
+   `prompt_tokens` per live turn is at most the p95 of the 3 weekdays before **plus 600** (the
+   stated worst case), measured with the query in 8.4. Over that, the L4 / L5 caps are lowered
+   before anything else ships. AC-MEM064. Grill question 8.
 
 ### 6.4 Paying for the addendum (net zero on the static prompt)
 
@@ -510,12 +554,17 @@ The memory addendum (about 400 tokens: what the three blocks mean, how to use th
 references, that memory never overrides the current message) is paid for in the same slice by
 deleting text measured as dead or ruled out:
 
-| cut | est. tokens | evidence |
-|---|---|---|
-| the `previous_conversation_state` input description (never sent) | about 40 | section 2.1 |
-| the n8n JS expression literal | about 197 | #1275 item 4 ("owner already ruled cut"); `parser-prompt-inventory.md` "dead" class |
-| the 536-token section #1275 names, if the parser corpus stays green | about 536 | #1275 item 4 |
-| **total** | **about 770** | covers the 400 addendum with margin |
+| cut | est. tokens | firm? | evidence |
+|---|---|---|---|
+| the `previous_conversation_state` input description (never sent) | about 40 | firm | section 2.1 |
+| the n8n JS expression literal | about 197 | firm | #1275 item 4 ("owner already ruled cut"); `parser-prompt-inventory.md` "dead" class |
+| the 536-token section #1275 names | about 536 | only if 8.2 stays green | #1275 item 4 |
+| **firm total** | **about 237** | | short of the 400 addendum by about 163 |
+
+So the firm cuts do not pay for a 400-token addendum on their own. The CI ceiling (22,100) is
+the rule, not the list: S3 either lands the 536 cut (or another cut from the inventory's dead
+or duplicated classes that 8.2 shows is safe), or the addendum is written to fit in what the
+firm cuts pay for (about 237 tokens). Either way the ceiling holds.
 
 The larger cut (finding the 9.4k added on 22 Sep) stays with #1275 item 4; this plan does not
 depend on it and does not duplicate it.
@@ -549,7 +598,7 @@ by a reachability test that each cue appears in the addendum (AC-MEM066).
 | step | today | budget after | how measured |
 |---|---|---|---|
 | intake memory reads (profile row already read; last 3 frames by the new index; live turns, limit 4) | n/a | p95 <= 40 ms | `received` stage `ms`, new `memory_ms` fact |
-| gap close at intake (digest + one insert + embedding enqueue) | n/a | p95 <= 60 ms, only on the first turn after a gap | `received` facts `episode_closed_ms` |
+| gap close at intake (digest + one insert) | n/a | p95 <= 60 ms, only on the first turn after a gap | `received` facts `episode_closed_ms` |
 | parser call with +1,000 tokens | p50 2.6 s | p50 +0.05 s at most (measured slope: +0.25 s per 9.4k tokens) | `understood` `ms` |
 | recall re-parse | +2.6 s on each recall turn | 0 (deleted) | no `recall` event |
 | tail (`remembered`), topic-switch close + tally | p95 105 ms | p95 <= 150 ms | `remembered` `ms` |
@@ -567,7 +616,7 @@ the n8n pre-turn gap and the resolver miss path, owned there.
 |---|---|---|---|---|
 | small talk, thanks, off-topic | "morning boss", "what's the weather in Penang" | `message_type` casual / unknown, no domain | `low_signal` (existing) | clarifier writes the acknowledgement only; the engine adds the memory line and the offer |
 | follow-up that needs the previous episode | "any update on that?" the next morning | a domain plus entities resolved from `Recent conversations` | business (existing) | the normal composer; the reply opens with one line naming what was carried ("For the outstanding DOs of Chin Chun Trading from yesterday:") |
-| a question about their own history | "what did I ask you last week?" | `message_type = history_question` (new) | `history` (new, deterministic) | the history composer, from `conversation_frames` only |
+| a question about their own history | "what did I ask you last week?" | `message_type = history_question` (new enum value) | `low_signal` (existing; no new route) | the ack plus a deterministic `memory_line` listing recent episodes from `conversation_frames` only |
 | a request the CRM cannot fulfil | "give me 10% off", "cancel my order", an unsupported domain | escalation / request_for_help / not supported | `out_of_scope` / `not_supported` (existing) | acknowledgement + what the CRM can do instead + the handover offer (existing team or member offer) |
 
 ### 7.2 The reply shape (one contract for all four)
@@ -585,16 +634,26 @@ reply = ack            one sentence, human, may use the dealer's first name
   not present in its own input is replaced by the canned acknowledgement for the language
   (`chatbot_reply_copy`, editable). Facts reach the dealer only through `memory_line` and the
   composers, which read data. AC-MEM081.
-- `memory_line` and `offer` are templates in `chatbot_reply_copy` (en, ms, zh), picked by
-  profile `language`, else the language of the dealer's message as the clarifier reports it.
-- **Never a bare refusal, never silence, never an exception.** Every bot turn that is not
-  under human takeover sends one visible line. This fixes the 28 `out_of_scope` and 16
+- Language. `chatbot_reply_copy` has one registry key per string today, no language variants,
+  and existing canned and composer text is English in code (`turn/compose.py:395-397`,
+  `lanes/business/answer.py:1691`). This plan does not translate existing text. The ack is
+  written by the LLM in the dealer's language; the clarifier's output gains a `language`
+  field (`en | ms | zh`) next to `ack`. Only the NEW `memory_line` and `offer` templates get
+  en, ms and zh keys (`chatbot_reply_copy` key suffix `.ms` / `.zh`, falling back to the bare
+  key), picked by profile `language`, else the clarifier's `language`. The escalation offer
+  wording is NOT translated: accepted-offer detection still matches it by regex until the
+  rearch S8 (`chatbot_reply_copy.py:14-19`), so a handover offer keeps the existing English
+  copy. Translating the rest is its own lane (grill question 16).
+- Names. The ack may use the contact's stored `first_name`; code never adds an honorific
+  ("Mr", "Encik"). Names in the examples below are illustrative.
+- **Never a bare refusal, never silence, never an exception.** Every turn that reaches the
+  reply stage sends exactly one visible line. This fixes the 28 `out_of_scope` and 16
   `escalation_declined` turns that sent nothing (#1275), and replaces
   `"There is some error encountered by the AI: " + str(exc)` with the existing "Sorry, I ran
   into a problem..." copy. AC-MEM084 to AC-MEM086.
-- A handover always names who: the linked salesperson (`salesperson` fact) when the ask is
-  commercial (discount, credit, price exception), else the domain's team from
-  `chatbot_domains`. It uses the existing offer and escalation path (`member_offer` /
+- A handover always names who: the linked salesperson (`salesperson`, read live) when the ask
+  is commercial (discount, credit, price exception) and the salesperson is reachable by the
+  member-offer path; otherwise the domain's team from `chatbot_domains`. It uses the existing offer and escalation path (`member_offer` /
   `team_pick`), so routing, assignment, comment and SLA row are unchanged.
 
 ### 7.3 Ten example exchanges
@@ -628,8 +687,10 @@ reply. Without memory: "Which customer?" (the focus from Tuesday may have been r
 > 2. Tue 23 Sep: outstanding DOs for Chin Chun Trading
 > Reply with a number and I'll run it again with today's figures.
 
-`history_question`; deterministic from frames; no figures from the past. Without memory: the
-clarify menu, or a stock search for the word "ask".
+`history_question`, answered in the `low_signal` lane: the ack from the clarifier, the list
+deterministic from frames, no figures from the past; "2" next turn is resolved by the parser
+against `Recent conversations`. Without memory: the clarify menu, or a stock search for the
+word "ask".
 
 **4. A request the bot cannot fulfil (commercial).**
 > Dealer: can give 10% discount for SO-2409-0112?
@@ -649,12 +710,14 @@ greeting or the clarify menu.
 
 **6. Frustration about a delivery.**
 > Dealer: my delivery late again, very frustrating
-> Bot: Sorry about that, Mr Tan, I understand. Chin Chun Trading has 2 open DOs: DO-2409-0331
-> and DO-2409-0350. Want me to check their status, or pass this to the Logistics team?
-> 1. Check status 2. Logistics team
+> Bot: Sorry about that, Mr Tan, I understand. Want me to check the outstanding DOs for Chin
+> Chun Trading now, or pass this to the Logistics team?
+> 1. Check outstanding DOs 2. Logistics team
 
-`low_signal` with a complaint tone; memory_line fetches open DOs live through the existing
-order tool (not a stored fact); offer is a two-option pick. Without memory: a clarify menu.
+`low_signal`; there is no complaint-tone signal and none is added: the clarifier's ack
+carries the tone. The offer names the customer from the live CRM link; nothing is fetched in
+this lane. "1" next turn runs the normal order lane (fresh data). Without memory: a clarify
+menu that does not know who the customer is.
 
 **7. A stated fact (profile write).**
 > Dealer: I'm the new purchaser here, taking over from Mr Lim
@@ -676,8 +739,9 @@ Without memory: "Which product?"
 > Bot: Boleh, Encik Tan. Lepas ni saya balas dalam Bahasa Melayu. Ada apa-apa yang saya boleh
 > semak?
 
-`profile_statement {language: ms}`; later canned lines and templates use ms. Without memory:
-English replies continue.
+`profile_statement {language: ms}`; later acks and the new memory templates use ms. Existing
+report and canned text stays English (grill question 16). Without memory: the next small-talk
+reply may drift back to English.
 
 **10. Wants a person, mid-conversation.**
 > Dealer: I want to talk to a real person
@@ -690,7 +754,8 @@ no context carried.
 
 Every example is a replay case in S4 (section 8.1). Examples 1, 2, 3, 4, 5, 8 and 10 go red
 with memory ablated (they read memory); 7 and 9 test the write path (the fact must be on the
-profile afterwards); 6 tests the live CRM read and the two-option offer.
+profile afterwards, asserted in pytest because replay is a dry run); 6 tests the live CRM
+link and the two-option offer.
 
 ## 8. How each layer is evaluated
 
@@ -706,14 +771,21 @@ expectations:
 ```
 given:    frames: [...]            closed episodes seeded for the contact (is_test)
           profile_facts: [...]     facts seeded into chatbot_profile.facts
-          live_turns: [...]        earlier turns of the live episode (message, branch, focus)
+          live_turns: [...]        earlier turns of the live episode (message, branch, focus,
+                                   created_at: injected, because now() is fixed for the whole
+                                   replay transaction and every step would get the same time)
 expected: prompt_contains: [...]   lines the assembled user block must contain
           context_caps: true       the ContextReport shows every layer within budget
           (plus the existing branch_kind, tools, focus_after, text, canned, action_kinds)
 ```
 
-Replay stubs the parser with the recorded verdict, so it proves the ENGINE side: assembly,
-routing, the history composer, the reply shape, the writes. Each case carries
+Replay stubs the parser with the recorded verdict, and every replay step is an `is_test` dry
+run (`test_turn_replay.py:845`; D14: no writes outside `chatbot.turns`), all on one shared
+Postgres connection (`tests/chatbot/conftest.py:24-48`), so seeded rows are visible. Replay
+therefore proves the ENGINE's READ side: assembly, routing, the history reply, the reply
+shape. The WRITE side (frames written with the right turn ids, facts on the profile after
+examples 7 and 9, the gap close) is proved by ordinary pytest on live-mode turns in
+`tests/chatbot/test_memory_*.py`, not by replay. Each case carries
 `needs_memory: true`, and a meta-test re-runs every such case with memory ablated (a fixture
 that empties L3 to L5 and the frames and facts reads) and **asserts it now fails**. A memory
 case that stays green without memory is a defect in the case (the PRINCIPLES kill test,
@@ -742,11 +814,15 @@ with memory, plus the expected verdict keys (resolved entities with `current_mes
 
 ### 8.3 Console check (live, after deploy; `documentation/agents/chatbot-verification.md`)
 
-`tests/chatbot/console_cases/2026-09-memory.yaml`: multi-turn sequences that close an episode
-by a natural topic switch (no clock tricks): "stock SRTWB1455" / "outstanding DO for chin
-chun" / "back to that sink, stock in kuching?" must answer SRTWB1455 in Kuching. Plus examples
-1, 3, 4 and 10 on the console contact. These run on `is_test` turns and so write and read
-`is_test` frames only.
+`tests/chatbot/console_cases/2026-09-memory.yaml`:
+
+- Within one live episode (works under D14 as it stands, the live episode is read from
+  `chatbot.turns`): "stock SRTWB1455" / "and in kuching?" must answer SRTWB1455 in Kuching.
+- Across episodes (needs the D14 exception of grill question 15): "stock SRTWB1455" /
+  "outstanding DO for chin chun" (topic switch closes an `is_test` episode) / "back to that
+  sink, stock in kuching?" must answer SRTWB1455 in Kuching. Plus examples 1, 3, 4 and 10.
+  Without the exception these cases are dropped and the cross-episode proof is key-free
+  replay plus the owner's hand pass only.
 
 ### 8.4 Token measurement (the S3 production gate)
 
@@ -767,8 +843,9 @@ group by 1 order by 1;
 Before S3 the same query uses `facts.tokens` (total) minus the completion estimate; S0 adds
 `prompt_tokens` to the facts early so the "before" window is measured the same way.
 
-Pass: p95 prompt tokens after <= p95 before; `recall_turns` = 0; the estimator is never below
-the provider's `prompt_tokens` for the user block's share (checked on the same window).
+Pass: p95 prompt tokens after <= p95 before + 600; `recall_turns` = 0; the estimator is never
+below the user block's real share (`prompt_tokens - system_prompt_tokens(version)`, 6.3) on
+the same window.
 
 ### 8.5 Latency
 
@@ -783,29 +860,43 @@ verdict is recorded verbatim in the PR.
 
 ## 9. Slices
 
-One lane, one branch (`feat/chatbot-memory`), one PR; slices land as commits (lane merge
-discipline). Phase 1 first: the FE for S2 (facts grid, episodes grid, open orders) and the
+Slices land as commits on their lane's branch (lane merge discipline); the recommended split
+into two lanes is below the table. Phase 1 first: the FE for S2 (facts grid, episodes grid, open orders) and the
 S0 drawer fix and S1 settings card, against mocks, verified in the browser. Then Phase 2 per
 slice, tester first. Phase 3 once for the lane; `security-reviewer` joins because S2 adds
 write routes on contacts and S3 changes what reaches an LLM from stored data.
 
 | slice | what | depends on | UAC |
 |---|---|---|---|
-| S0 | schema and write path: frame index + `is_test`; episode boundaries (topic switch, gap at intake, handover); every turn id recorded; trace `memory` event fixed; drawer contract fixed; `prompt_tokens` on the trace; usage logs carry turn id | none | AC-MEM001 to AC-MEM012 |
-| S1 | episode summaries: `episode_digest`; summary rules (no figures); backfill script; retention sweep; settings card wired / trimmed | S0 | AC-MEM020 to AC-MEM029 |
-| S2 | profile facts and staff screen: vocabulary, four writers, precedence, tombstones, "facts never grant", tier pick writes, Contact card sections, facts routes | S1 (tally reads digests) | AC-MEM030 to AC-MEM049 |
-| S3 | prompt assembly under budget: `turn/context.py`, per-layer caps, memory addendum and its paid cuts, `history_question` and `profile_statement` in the schema, recall re-parse deleted, date moved to the end, budget CI test, production token gate | S1, S2 | AC-MEM060 to AC-MEM072 |
-| S4 | out-of-boundary replies: reply shape, clarifier gets the memory slice, ack guard, history composer, handover names who, no silence, no exception text, language templates | S3 | AC-MEM080 to AC-MEM095 |
+| S0 | schema and write path: frame `is_test`, index and unique key; episode boundaries by turn time (topic switch, gap at intake, handover flag); every turn id recorded; trace `memory` event fixed; drawer contract fixed; `prompt_tokens` on the trace; usage logs carry turn id; contact delete removes frames | none | AC-MEM001 to AC-MEM013 |
+| S1 | episode summaries: `episode_digest`; summary rules (no figures); backfill script; retention sweep; settings card trimmed to two keys | S0 | AC-MEM020 to AC-MEM029 |
+| S2 | profile facts and staff screen: vocabulary, CRM view read live, tally, stated, staff, precedence, tombstones, single-key writes under lock, "facts never grant", tier pick writes, Contact card sections, facts routes | S1 (tally reads digests) | AC-MEM030 to AC-MEM049 |
+| S3 | prompt assembly under budget: `turn/context.py`, per-layer caps, memory addendum and its paid cuts, `history_question` and `profile_statement` in the schema, recall re-parse and frame embedding deleted, memory default flipped ON in the same migration, date moved to the end, budget CI test, production token gate | S1, S2 | AC-MEM060 to AC-MEM073 |
+| S4 | out-of-boundary replies: reply shape, clarifier gets the memory slice and reports language, ack guard, history reply, handover names who, no silence, no exception text, new templates in en / ms / zh | S3 | AC-MEM080 to AC-MEM095 |
+
+The memory default flip (grill question 1) lands in S3, in the same commit that deletes the
+recall re-parse. Flipping it earlier would switch the double parser call on for every
+contact, because the same column gates recall today.
+
+Lane split (grill question 17): recommended as two lanes, A = S0 to S3 (ships, then the
+3-weekday token and latency gate runs), B = S4 (changes what dealers read; starts from the
+measured A). Each is its own branch and PR, which the lane merge rule allows because B's
+acceptance depends on a production measurement of A, not on code alone.
 
 ### S0 - Schema and write path
 
 - Migration: `conversation_frames.is_test boolean not null default false`; index
-  `(contact_respond_id, is_test, closed_at desc)`. Revision id <= 32 chars, reparented at
-  PR time (`scripts/alembic-reparent.sh`).
-- `_write_episode` takes the full turn range (turns since the previous frame's `closed_at`),
-  writes on `topic_reset` and on a gap detected at intake inside the per-contact ticket; no
-  write when the range is empty; still none on a dry run.
-- Handover close: the first bot turn after a human takeover closes the range.
+  `(contact_respond_id, is_test, last_activity_at desc)`; unique index
+  `(contact_respond_id, is_test, (turn_ids[1]))`. Revision id <= 32 chars, reparented at PR
+  time (`scripts/alembic-reparent.sh`).
+- `_write_episode` takes the full turn range (turns created after the previous frame's
+  `last_activity_at`), sets `last_activity_at` to the last turn's `created_at`, inserts with
+  `ON CONFLICT DO NOTHING`, writes on `topic_reset` and on a gap detected at intake; no write
+  when the range is empty; none on a dry run unless grill question 15 grants the `is_test`
+  frame exception.
+- Handover close: `is_human_intervened` true at intake closes the range.
+- `previous_reply_text` also returns the previous turn's `created_at` (the gap check).
+- The contact delete service deletes the contact's frames.
 - The trace `memory` event records the frame WRITTEN this turn and the real profile before and
   after; `trace_detail._memory` and `TurnDetailDrawer` agree on one shape (backend shape wins;
   FE types follow it); a vitest crosses the seam with a recorded production trace
@@ -825,19 +916,21 @@ right turn ids; drawer shows the Memory panel on a real turn at 375 and 1280 px
 - `turn/episode_digest.py` (pure) and the summary line of 5.2, written by S0's writer.
 - `scripts/backfill_chatbot_episodes.py` over the retention window; deletes placeholder
   frames; idempotent.
-- Nightly sweep: retention, idle close.
-- Settings card: `memory_default`, `episode_retention_days`, `episode_gap_minutes`; the two
-  dead keys removed from model, schema, both dict builders and the card.
+- Nightly sweep: retention only (frames and expired facts).
+- Settings card: `episode_retention_days`, `episode_gap_minutes`; `recall_default`,
+  `profile_fields` and `focus_reset_events` removed from model, schema, both dict builders
+  and the card.
 
 DoD: digest golden tests over 10 recorded episodes from the 25 Sep dump (anonymised), each
 summary <= 240 chars with no figure; backfill run twice on a prod copy gives the same frame
 count; sweep deletes a 91-day frame and keeps an 89-day one; card saves and reloads each key;
-browser pass on the card.
+browser pass on the card at 375 and 1280 px.
 
 ### S2 - Profile facts and staff screen
 
-- `turn/profile_facts.py`: vocabulary, `derive_crm`, `tally`, `apply_statement`, precedence,
-  tombstones, expiry; called from the S0 writer's transaction and from APPLY's tail write.
+- `turn/profile_facts.py`: vocabulary, `crm_view` (live join), `tally`, `apply_statement`,
+  precedence, tombstones, expiry; every write a single-key `jsonb_set` under a row lock taken
+  at write time; `tally` runs after `write_episode` commits, `apply_statement` in the tail.
 - Routes: `GET /user-management/contacts/{id}/chatbot/memory` (facts, last 10 episodes, top 5
   open orders); `PUT` and `DELETE .../chatbot/facts/{key}` (deferred-action delete). The
   whole-profile PUT stops writing `facts`.
@@ -856,7 +949,9 @@ delete (countdown, no dialog) a fact, at 375 and 1280 px; both dict builders car
 - `turn/context.py` and its budget table (6.2); `build_user_block` becomes a caller.
 - Parser prompt: the memory addendum, the cuts of 6.4, the date moved to the end, the schema
   additions; published as a new registry version (Prompts page, one commit message).
-- Recall re-parse and its trace kind deleted; the per-contact toggle relabelled.
+- Recall re-parse, its trace kind and the frame embedding enqueue deleted; the per-contact
+  toggle relabelled "Use conversation memory"; migration flips its column default to true and
+  sets it true on every existing contact (same commit as the deletion).
 - CI: `test_parser_prompt_budget.py`, the `assemble` worst-case test, the ablation meta-test.
 
 DoD: 8.1 memory cases green and red under ablation; 8.2 bars met and the parity list ruled on
@@ -866,9 +961,11 @@ stays open, or a follow-up is filed, until the 3-weekday window is in).
 ### S4 - Out-of-boundary replies
 
 - Reply shape (7.2); clarifier input gains the L5 + L4 slice under 400 tokens and returns
-  `{"ack": ...}`; the guard; templates in `chatbot_reply_copy` (en, ms, zh).
-- `history` route and composer (frames only, numbered re-run options that the parser can
-  resolve next turn against `Recent conversations`).
+  `{"ack": ..., "language": ...}`; the guard; the new templates in `chatbot_reply_copy` with
+  `.ms` / `.zh` keys (existing copy untouched).
+- `history_question` in the `low_signal` lane: the memory_line lists recent episodes from
+  frames only, numbered, and the parser resolves the number next turn against
+  `Recent conversations`.
 - `out_of_scope` and `escalation_declined` always send a visible line; the error path sends
   the existing apology copy, never exception text.
 - Handover names the salesperson for commercial asks, the domain team otherwise; the routed
@@ -908,9 +1005,11 @@ query shows 0 `out_of_scope` / `escalation_declined` turns without a send over 3
   tail's `FOR UPDATE`; the staff fact routes update one key with `jsonb_set` under the same
   row lock, so a staff save never overwrites a learned fact (and the whole-profile PUT no longer
   touches `facts`).
-- **Overlap with #1275.** Both touch the parser prompt. This plan cuts only the three items of
-  6.4 and moves the date line; any larger cut is #1275's. Whichever lane merges second rebases
-  the prompt text and re-runs 8.2.
+- **Overlap with #1275.** Both touch the parser prompt, and a #1275 prompt cut landing inside
+  S3's before/after window would hide or fake S3's token effect. This lane waits for any
+  #1275 prompt change to be deployed first, and its "before" window starts after that deploy.
+  This plan cuts only the items of 6.4 and moves the date line; any larger cut is #1275's.
+  Whichever lane merges second rebases the prompt text and re-runs 8.2.
 - **Backfill on production.** Read-heavy over 90 days of turns; runs per contact in batches,
   idempotent, re-runnable; about 4.4k turns today.
 
@@ -933,3 +1032,82 @@ What Claude Code has and this plan does not build: acting on the user's behalf t
 that WRITE (create a quote, raise a complaint, place an order after a confirmation). That is
 the next step of the comparison and a different risk class (writes, approvals, audit). Grill
 question 14 asks whether to open it as its own ideation issue.
+
+## 13. Grill questions for the owner
+
+Each has a recommendation. The UAC is written to the recommendations; a different answer
+rewrites the ACs tagged with that question before any code. The draft was grilled once by a
+`planner` pass against the code (26 Sep); its corrections are already folded into sections 4
+to 9 (episode boundary by turn time, replay and console are dry runs, the one-shot takeover
+flag, no per-language copy today, firm prompt cuts short of the addendum, the recall default
+flip must land with the recall deletion).
+
+1. **Memory for every contact by default?** Today recall is per contact, default off (your D3
+   of 15 Sep). **Recommendation: ON for every contact**, the toggle becomes a per-contact
+   opt-out ("Use conversation memory"). The new memory costs no extra call and never carries
+   another contact's data. Lands in S3 together with the recall deletion.
+2. **When does a conversation end?** **Recommendation: on a topic switch, or after 30 minutes
+   with no message** (dealer bursts are minutes long; turns per contact per day p50 4). One
+   setting, editable on the Memory card.
+3. **Who writes the episode summary?** **Recommendation: code, from what the turns recorded,
+   no LLM call, and never a figure** (no stock count, price or ETA from the past; a follow-up
+   always re-fetches). Zero tokens on the shared limit, replayable, backfillable, cannot invent
+   a fact. It loses the colour of small talk; an LLM sentence is added only if a hand pass shows
+   a question the code summary cannot answer.
+4. **How much history rides on every parse?** **Recommendation: the last 3 conversation
+   summaries of the last 30 days, plus the current conversation's last 3 messages from the
+   dealer** (the parser has never seen a single earlier dealer message until now). Older
+   history is answered on request ("what did I ask last week").
+5. **Delete the vector recall (the second parser call)?** **Recommendation: yes, and stop
+   writing frame embeddings.** It doubles the tokens of the turns it fires on to hand the model
+   "Closed the stock topic."; the summaries on every parse replace it. The n8n search route
+   stays but loses new embeddings; say so if n8n still uses it.
+6. **Save what the dealer says about themselves?** ("I'm the purchaser", "reply in Malay",
+   "always show Kuching first".) **Recommendation: yes, at once, from a closed list of five
+   keys, validated against the masters, shown to staff as "Said" and deletable; never a
+   grant.** "I'm the owner of Iborn" changes nothing about what he can see.
+7. **How long is memory kept?** **Recommendation: conversations and learned facts 90 days
+   after last seen; stated facts 180 days; staff facts until staff remove them.** Contact
+   delete removes all of it. Chat turns keep their own retention (BL-054), so this is not by
+   itself a privacy guarantee.
+8. **What may memory cost in tokens?** **Recommendation: the static parser prompt may not grow
+   at all (a CI test fails above 22,100 tokens, so the memory instructions are paid for by
+   cutting dead text), and the per-turn memory block is capped at +600 tokens worst case;
+   production p95 may rise by at most 600 tokens (about -2.4% calls per minute worst case).**
+   The alternative, strict net zero per turn, needs about 600 more tokens of cuts that are not
+   yet identified.
+9. **Who writes the out-of-boundary reply?** **Recommendation: the LLM writes only the one
+   human sentence (the acknowledgement); every fact, name of a product, order or date comes
+   from data, and a guard replaces an acknowledgement that invents a number or a code.**
+10. **May the bot ever stay silent?** Today 44 turns (28 out of scope, 16 declined offers)
+    sent nothing in 17 days. **Recommendation: no; every turn that reaches the reply stage
+    sends exactly one visible line, and an error never shows exception text.**
+11. **The Memory settings card.** Four of its settings are saved and never read.
+    **Recommendation: keep two (retention days, conversation gap minutes), remove three**
+    (recall default, profile fields, focus reset events).
+12. **Where do staff see the memory?** **Recommendation: inside the existing Chatbot card on
+    the contact page**: "What the bot knows" (facts with source badges), "Recent
+    conversations", and the live "Open orders". No new tab.
+13. **Who gets a handover?** **Recommendation: a commercial ask (discount, credit, price
+    exception) goes to the dealer's own salesperson by name; everything else, or no reachable
+    salesperson, to the domain's team.**
+14. **"An enterprise version of Claude Code".** The missing half is the bot DOING things
+    (create a quote, raise a complaint, place an order after a confirmation), a different risk
+    class. **Recommendation: open it as its own ideation issue; this plan builds the memory
+    half only.**
+15. **Console memory across conversations.** Console turns may write nothing outside the turn
+    table (D14; two named exceptions exist). **Recommendation: a third named exception: a
+    console turn may write a console-only episode row (never a fact).** Without it,
+    cross-conversation memory is testable only in CI replay and in your hand pass.
+16. **Malay and Chinese.** No reply text has language variants today and the escalation offer
+    wording is matched by regex. **Recommendation: only the new memory lines get en / ms / zh
+    now; the acknowledgement follows the dealer's language; translating the existing reports
+    and canned text is its own lane.**
+17. **One lane or two?** **Recommendation: two.** Lane A = S0 to S3 (memory reaches the
+    parser; then a 3-weekday token and latency gate on production); lane B = S4 (what dealers
+    read), started on A's measured numbers.
+18. **Build the rarer pieces before measuring them?** Tallied "usual" products,
+    self-statements and "what did I ask" questions are probably rare in today's 4,414 turns,
+    because the bot cannot handle them. **Recommendation: build them (they are in your ask),
+    and record today's counts from the 25 Sep dump in S2 as the baseline S4 is measured
+    against.**
