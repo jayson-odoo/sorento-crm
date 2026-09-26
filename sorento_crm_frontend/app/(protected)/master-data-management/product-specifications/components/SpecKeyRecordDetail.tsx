@@ -36,7 +36,7 @@ const LIST_PATH = '/master-data-management/product-specifications';
 export function SpecKeyRecordDetail({ specKey }: { specKey: string }) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [tab, setTab] = useState('header');
+  const [tab, setTab] = useState('details');
 
   const { data: keys, isLoading, isError } = useSpecRegistryQuery();
   const row = selectSpecKey(keys, specKey);
@@ -92,12 +92,17 @@ export function SpecKeyRecordDetail({ specKey }: { specKey: string }) {
     return () => window.removeEventListener('beforeunload', handler);
   }, [record.mode]);
 
-  const backLink = <BackToList listPath={LIST_PATH} label="Back to Product Specifications" />;
+  // Back sits with the title (D11, AC-S3.6): the header lives INSIDE a `Container`
+  // of its own, the same gutter as the record card below it, in every state - not
+  // as a sibling of the body's `Container`, which is what left it flush against
+  // the window edge (review R1).
+  const backLink = <BackToList listPath={LIST_PATH} label="Back to specifications" />;
+  const header = <PageHeader title="Product Specifications" actions={backLink} />;
 
   if (isLoading) {
     return (
       <>
-        <PageHeader title="Product Specifications" actions={backLink} />
+        <Container>{header}</Container>
         <Container>
           <div className="space-y-4">
             <Skeleton className="h-24 w-full rounded-xl" />
@@ -111,7 +116,7 @@ export function SpecKeyRecordDetail({ specKey }: { specKey: string }) {
   if (isError || !row) {
     return (
       <>
-        <PageHeader title="Product Specifications" actions={backLink} />
+        <Container>{header}</Container>
         <Container>
           <Card className="flex flex-col items-center gap-3 p-10 text-center">
             <div className="text-sm font-semibold">Specification not found</div>
@@ -120,7 +125,7 @@ export function SpecKeyRecordDetail({ specKey }: { specKey: string }) {
               was made.
             </p>
             <Button variant="outline" onClick={() => router.push(LIST_PATH)}>
-              Back to Product Specifications
+              Back to specifications
             </Button>
           </Card>
         </Container>
@@ -147,7 +152,9 @@ export function SpecKeyRecordDetail({ specKey }: { specKey: string }) {
 
   return (
     <>
-      <PageHeader title={row.label} crumbTitle={row.label} actions={backLink} />
+      <Container>
+        <PageHeader title={row.label} crumbTitle={row.label} actions={backLink} />
+      </Container>
 
       <Container className="flex flex-col gap-4">
         <SpecKeyRecordCard
@@ -159,19 +166,22 @@ export function SpecKeyRecordDetail({ specKey }: { specKey: string }) {
           primary={primary}
         />
 
+        {/* Details, Choices and words, How it is read, Products, in that order, the
+            same in view and edit (AC-S1.11). Rules render on How it is read and
+            nowhere else. */}
         <Tabs value={tab} onValueChange={setTab} className="w-full">
           <TabsList variant="line" className="mb-4 w-full justify-start">
-            <TabsTrigger value="header">Header</TabsTrigger>
-            <TabsTrigger value="values">Values and words</TabsTrigger>
-            <TabsTrigger value="rules">Rules</TabsTrigger>
-            <TabsTrigger value="seen-in">Seen in products</TabsTrigger>
+            <TabsTrigger value="details">Details</TabsTrigger>
+            <TabsTrigger value="choices">Choices and words</TabsTrigger>
+            <TabsTrigger value="rules">How it is read</TabsTrigger>
+            <TabsTrigger value="products">Products</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="header" className="mt-0 focus-visible:outline-none">
+          <TabsContent value="details" className="mt-0 focus-visible:outline-none">
             <HeaderTab row={row} mode={record.mode} draft={record.draft} setDraft={record.setDraft} />
           </TabsContent>
 
-          <TabsContent value="values" className="mt-0 focus-visible:outline-none">
+          <TabsContent value="choices" className="mt-0 focus-visible:outline-none">
             <ValuesAndWordsTab
               row={row}
               mode={record.mode}
@@ -179,16 +189,22 @@ export function SpecKeyRecordDetail({ specKey }: { specKey: string }) {
               setDraft={record.setDraft}
               onEnterEdit={() => {
                 record.edit();
-                setTab('values');
+                setTab('choices');
               }}
             />
           </TabsContent>
 
           <TabsContent value="rules" className="mt-0 focus-visible:outline-none">
-            <RulesTab row={row} mode={record.mode} draft={record.draft} setDraft={record.setDraft} />
+            <RulesTab
+              row={row}
+              registry={keys ?? []}
+              mode={record.mode}
+              draft={record.draft}
+              setDraft={record.setDraft}
+            />
           </TabsContent>
 
-          <TabsContent value="seen-in" className="mt-0 focus-visible:outline-none">
+          <TabsContent value="products" className="mt-0 focus-visible:outline-none">
             <SeenInProductsTab
               specKey={row.spec_key}
               label={row.label}

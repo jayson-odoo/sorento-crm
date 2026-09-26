@@ -2,8 +2,13 @@
 
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
-import type { SpecKeyDraft } from '../../hooks/useSpecKeyRecord';
+import { WordsDataGrid } from '../WordsDataGrid';
+import { dedupe, type SpecKeyDraft } from '../../hooks/useSpecKeyRecord';
 import type { SpecRegistryKey } from '../../types/productSpec.types';
+
+/** The pseudo-value holding the words that name the SPECIFICATION itself ("oz",
+ *  "ounce", "ounces" for Capacity (oz)) rather than one of its values (D7). */
+const SELF_KEY = '_self';
 
 /** One labelled control. The label is the only chrome a field needs, present in
  *  both view and edit so a field's identity never moves between the two (B.2). */
@@ -25,23 +30,27 @@ export interface HeaderTabProps {
 }
 
 /**
- * The specification's own identity fields (B.2, D15b): Label, Unit, Active, and for
- * a numeric key the cap moved here from Values and words. First in the tab order -
- * a reader lands here to change what the specification IS before touching what it
- * says or how it is read.
+ * Details (AC-S1.12): Name, Unit (not on List specs), In use, Highest believable
+ * value, and Other names for this specification as a small data grid (D7, D13) -
+ * `_self`'s words, moved here from Choices and words, which never renders it. No
+ * code name, no "Built in / Added here", no rule count, no Advanced anywhere on
+ * this tab (D8): rules live only on their own tab.
  */
 export function HeaderTab({ row, mode, draft, setDraft }: HeaderTabProps) {
   const isNumeric = row.data_type === 'numeric';
+  const isList = row.data_type === 'enum';
+
+  const otherNames = draft ? draft.words[SELF_KEY] ?? [] : row.synonyms?.[SELF_KEY] ?? [];
 
   return (
     <div className="flex max-w-xl flex-col gap-4">
-      <Field label="Label">
+      <Field label="Name">
         {mode === 'edit' && draft ? (
           <Input
             value={draft.label}
             onChange={(event) => setDraft((d) => ({ ...d, label: event.target.value }))}
             className="h-8"
-            aria-label="Label"
+            aria-label="Name"
             maxLength={100}
           />
         ) : (
@@ -49,25 +58,27 @@ export function HeaderTab({ row, mode, draft, setDraft }: HeaderTabProps) {
         )}
       </Field>
 
-      <Field label="Unit">
-        {mode === 'edit' && draft ? (
-          <Input
-            value={draft.unit}
-            onChange={(event) => setDraft((d) => ({ ...d, unit: event.target.value }))}
-            className="h-8 w-40"
-            placeholder="e.g. mm"
-            aria-label="Unit"
-            maxLength={20}
-          />
-        ) : (
-          <span className="text-sm">{row.unit || 'None'}</span>
-        )}
-      </Field>
+      {!isList && (
+        <Field label="Unit">
+          {mode === 'edit' && draft ? (
+            <Input
+              value={draft.unit}
+              onChange={(event) => setDraft((d) => ({ ...d, unit: event.target.value }))}
+              className="h-8 w-40"
+              placeholder="e.g. mm"
+              aria-label="Unit"
+              maxLength={20}
+            />
+          ) : (
+            <span className="text-sm">{row.unit || '-'}</span>
+          )}
+        </Field>
+      )}
 
-      <Field label="Active">
+      <Field label="In use">
         <Switch
           size="sm"
-          aria-label="Active"
+          aria-label="In use"
           checked={mode === 'edit' && draft ? draft.isActive : row.is_active}
           disabled={mode !== 'edit' || !draft}
           onCheckedChange={(checked) => setDraft((d) => ({ ...d, isActive: checked }))}
@@ -75,13 +86,13 @@ export function HeaderTab({ row, mode, draft, setDraft }: HeaderTabProps) {
       </Field>
 
       {isNumeric && (
-        <Field label={`Ignore values above${row.unit ? ` (${row.unit})` : ''}`}>
+        <Field label="Highest believable value">
           {mode === 'edit' && draft ? (
             <Input
               type="number"
               step="1"
               min="0"
-              placeholder="no cap"
+              placeholder="no limit"
               className="h-8 w-40"
               value={draft.maxValue}
               onChange={(event) => setDraft((d) => ({ ...d, maxValue: event.target.value }))}
@@ -89,7 +100,7 @@ export function HeaderTab({ row, mode, draft, setDraft }: HeaderTabProps) {
           ) : (
             <span className="text-sm">
               {row.max_value === null || row.max_value === undefined
-                ? 'No cap'
+                ? 'No limit'
                 : row.unit
                   ? `${row.max_value} ${row.unit}`
                   : row.max_value}
@@ -97,6 +108,46 @@ export function HeaderTab({ row, mode, draft, setDraft }: HeaderTabProps) {
           )}
         </Field>
       )}
+
+      <Field label="Other names for this specification">
+        <WordsDataGrid
+          words={otherNames}
+          mode={mode}
+          emptyMessage="No other names yet."
+          addPlaceholder="e.g. oz"
+          onAdd={(word) =>
+            setDraft((d) => ({
+              ...d,
+              words: { ...d.words, [SELF_KEY]: dedupe([...(d.words[SELF_KEY] ?? []), word]) },
+            }))
+          }
+          onRename={(oldWord, newWord) =>
+            setDraft((d) => ({
+              ...d,
+              words: {
+                ...d.words,
+                [SELF_KEY]: dedupe(
+                  (d.words[SELF_KEY] ?? []).map((w) => (w === oldWord ? newWord : w)),
+                ),
+              },
+            }))
+          }
+          onRemove={(word) =>
+            setDraft((d) => {
+              const current = d.words[SELF_KEY] ?? [];
+              const seedWords = row.synonyms?.[SELF_KEY] ?? [];
+              const droppedForSelf = seedWords.includes(word)
+                ? dedupe([...(d.droppedWords[SELF_KEY] ?? []), word])
+                : (d.droppedWords[SELF_KEY] ?? []);
+              return {
+                ...d,
+                words: { ...d.words, [SELF_KEY]: current.filter((w) => w !== word) },
+                droppedWords: { ...d.droppedWords, [SELF_KEY]: droppedForSelf },
+              };
+            })
+          }
+        />
+      </Field>
     </div>
   );
 }

@@ -100,63 +100,112 @@ export interface SpecPreviewResult {
 }
 
 /**
- * A rule row's sentence form. The engine never reads this - it is compiled to
- * `match` / `pattern` / `capture` / `value` (see `compileBuilder` in `lib/ruleSentence.ts`)
- * and that compiled form is what actually runs. Present only on rows built from the
- * kind menu; a row edited into a pattern (Advanced -> Edit pattern) drops it.
+ * A rule's five kinds (plan D5, contract section 1), the only shape a rule may take.
+ * `compileBuilder` in `lib/ruleSentence.ts` mirrors the server's `compile_builder`
+ * exactly (contract 2, 2.1); nobody types or sees the compiled pattern.
  */
-export type SpecRuleBuilderKind =
-  | 'number_after'
-  | 'number_before'
-  | 'number_between'
-  | 'text_contains'
-  | 'text_ends_with'
-  | 'word_present'
-  | 'code_contains'
-  | 'code_starts_with'
-  | 'code_ends_with'
-  | 'from_field'
-  | 'size_triple'
-  | 'name_head';
+export type SpecRuleKind = 'words' | 'number' | 'size' | 'code' | 'product';
 
-export interface SpecRuleBuilder {
-  kind: SpecRuleBuilderKind;
-  /** number_after / number_before: the word. text_contains / text_ends_with / word_present
-   *  / code_*: the phrase or token. */
-  word?: string;
-  /** number_between only: the two phrases it reads between. */
-  from?: string;
-  to?: string;
-  /** text_contains / text_ends_with / code_*: what the key is set to when it matches. */
-  value?: string | number | boolean;
-  /** size_triple only: 1 = length, 2 = width, 3 = height, 4 = thickness. */
-  position?: number;
-  /** from_field only: category | brand | column:<products column>. */
-  field?: string;
+/** Where a rule reads from. Absent means the kind's own default (contract 1.1). */
+export type SpecRuleLookIn = 'any' | 'description' | 'flyer' | 'name';
+
+export type SpecRuleWrittenIn = 'centimetres' | 'metres' | null;
+
+export type SpecRuleSizePick = 1 | 2 | 3 | 4 | 'L' | 'W' | 'H';
+
+export type SpecRuleCodeMatch = 'contains' | 'starts_with' | 'ends_with';
+
+export type SpecRuleProductFact = 'class' | 'name' | 'length' | 'width' | 'height';
+
+/** "Only when Shape is not Round, Square" (contract 1.1). One condition per rule. */
+export interface SpecRuleOnlyWhen {
+  /** Another spec's key. Never `brand`. */
+  spec: string;
+  /** true = only when the spec holds one of `values`; false = except when it does. */
+  is: boolean;
+  values: string[];
 }
 
-/** One way of reading a value out of a product's text. */
+interface SpecRuleBuilderBase {
+  only_when?: SpecRuleOnlyWhen | null;
+}
+
+export interface SpecRuleWordsBuilder extends SpecRuleBuilderBase {
+  kind: 'words';
+  look_in?: SpecRuleLookIn;
+  words: string[];
+  at_end?: boolean;
+  skip_after?: string[];
+  /** The spec's choice key for a List spec, `true` for Yes or no, a number for Number. */
+  value: string | number | boolean;
+}
+
+export interface SpecRuleNumberBuilder extends SpecRuleBuilderBase {
+  kind: 'number';
+  look_in?: SpecRuleLookIn;
+  /** At least one of `before` / `after`. */
+  before?: string[];
+  after?: string[];
+  written_in?: SpecRuleWrittenIn;
+  ignore_below?: number | null;
+  skip_after?: string[];
+}
+
+export interface SpecRuleSizeBuilder extends SpecRuleBuilderBase {
+  kind: 'size';
+  look_in?: SpecRuleLookIn;
+  pick: SpecRuleSizePick;
+}
+
+export interface SpecRuleCodeBuilder extends SpecRuleBuilderBase {
+  kind: 'code';
+  code_match: SpecRuleCodeMatch;
+  texts: string[];
+  value: string | number | boolean;
+}
+
+export interface SpecRuleProductBuilder extends SpecRuleBuilderBase {
+  kind: 'product';
+  fact: SpecRuleProductFact;
+}
+
+/** A rule is its builder and nothing else (contract section 1). */
+export type SpecRuleBuilder =
+  | SpecRuleWordsBuilder
+  | SpecRuleNumberBuilder
+  | SpecRuleSizeBuilder
+  | SpecRuleCodeBuilder
+  | SpecRuleProductBuilder;
+
+/** What `compileBuilder` returns (contract 2.1) - what the engine and Try it run. */
+export interface SpecCompiledRule {
+  kind: SpecRuleKind;
+  /** `look_in` (or null when absent), `'code'` for code, `'product'` for product. */
+  scope: SpecRuleLookIn | 'code' | 'product' | null;
+  /** Null for code and product. */
+  pattern: string | null;
+  /** 1 for number, null otherwise. */
+  capture: number | null;
+  skip: string | null;
+  scale: number | null;
+  min: number | null;
+  pick: SpecRuleSizePick | null;
+  code_match: SpecRuleCodeMatch | null;
+  texts: string[] | null;
+  fact: SpecRuleProductFact | null;
+}
+
+/** One way of reading a value out of a product's text (contract section 1). */
 export interface SpecDerivationRule {
-  /** contains | ends_with | present | regex | code_contains | code_starts_with | code_suffix
-   *  | from_field. The compiled form - always kept in sync with `builder` when one is set. */
-  match: string;
-  pattern: string;
-  value?: string | number | boolean;
-  capture?: number;
-  /** Limit the rule to one text: description | flyer. Absent means both. */
-  source?: string;
-  /** The sentence this row was built from, when it was built that way. */
-  builder?: SpecRuleBuilder;
-  /** This row ships with the product; a small tag says so. Still an ordinary row -
-   *  draggable, editable, removable. */
-  shipped?: boolean;
-  /** A shipped row a migration prepended so an owned key kept the reader it used to
-   *  run silently. Renders the same `shipped` tag as `shipped`. */
-  shipped_backfill?: boolean;
+  builder: SpecRuleBuilder;
+  /** `compileBuilder(builder)`'s `pattern`, sent alongside the builder so the server
+   *  can refuse a save where its own compile disagrees (contract section 3). */
+  pattern?: string | null;
+  /** Shipped rules carry `_seed: true` internally; never rendered. */
+  _seed?: boolean;
   /**
    * Browser-only identity, so dragging a rule moves THAT RULE rather than that
-   * position. Not persisted: the API builds each stored rule from the fields it knows
-   * and drops everything else.
+   * position. Not persisted: the API builds each stored rule from `builder` alone.
    */
   _uid?: string;
 }
@@ -228,8 +277,6 @@ export interface SpecRegistryKey {
    * to - so a key with an empty column is not a key with no rules.
    */
   effective_rules: SpecDerivationRule[];
-  /** True while this key is still running the shipped rules rather than its own. */
-  rules_are_default: boolean;
   /** Seed + user words, already merged. What a customer can actually say. */
   synonyms: Record<string, string[]>;
   applies_when: Record<string, string[]>;

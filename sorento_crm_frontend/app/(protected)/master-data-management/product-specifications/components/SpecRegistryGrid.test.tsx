@@ -57,7 +57,6 @@ function baseKey(overrides: Record<string, unknown> = {}) {
     value_weights: {},
     derivation_rules: [],
     effective_rules: [{ match: 'contains', pattern: 'chrome' }],
-    rules_are_default: true,
     synonyms: {},
     applies_when: {},
     read_from: 'rules',

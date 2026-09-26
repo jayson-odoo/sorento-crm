@@ -23,7 +23,6 @@ function baseRow(overrides: Partial<SpecRegistryKey> = {}): SpecRegistryKey {
     value_weights: {},
     derivation_rules: [],
     effective_rules: [],
-    rules_are_default: true,
     applies_when: {},
     read_from: 'rules',
     rank_weight: 1,
@@ -41,7 +40,6 @@ function baseRow(overrides: Partial<SpecRegistryKey> = {}): SpecRegistryKey {
 describe('RulesTab - no per-tab Edit (D16)', () => {
   it('the shipped rules list plainly with their "default" pill - no banner, no button', () => {
     const row = baseRow({
-      rules_are_default: true,
       effective_rules: [{ match: 'contains', pattern: 'chrome', shipped: true }],
     });
     render(<RulesTab row={row} mode="view" draft={null} setDraft={() => {}} />);
