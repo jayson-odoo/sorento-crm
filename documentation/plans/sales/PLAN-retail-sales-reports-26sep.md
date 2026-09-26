@@ -1,6 +1,11 @@
 # PLAN: retail sales reports on the reports kernel, one query layer for the screens and the chatbot (#1267)
 
-Status: draft, round 5 (26 Sep 2026), ready to build (S0, S4 and S1 can start now). The owner's
+Status: S1 built (26 Sep 2026), track full, on PR #1269 (the plan rides inside the feature PR,
+owner ruling 26 Sep ~08:25Z; Q9 (a), Q10 (a); Mocha AutoCount connected in production, so S4
+shrinks to verifying Mocha sales orders arrive). S2, S3, S5, S6 not built. Build notes and the
+deviations S1 took from this text are in section S1-B below.
+
+Round 5 status line, kept: draft, round 5 (26 Sep 2026), ready to build (S0, S4 and S1 can start now). The owner's
 answers to round 4's Q6 to Q8 (PR #1269 comment 5844298765, 26 Sep 07:34:40Z, quoting "## Round
 4" with the answers inline) are folded in: section R5 carries an "Owner ruling 26 Sep 07:34
 Q<n>" line per answer. Q6: no scheduled WhatsApp send, every scheduled-WhatsApp path is withdrawn.
@@ -48,6 +53,43 @@ Issue: #1267.
 
 Backend paths are under `sorento_crm_backend/`, frontend under `sorento_crm_frontend/`, MCP under
 `sorento_crm_mcp/`. Line numbers are on origin/main 46711c61 unless a PR branch is named.
+
+## S1-B. S1 as built (26 Sep 2026)
+
+What S1 shipped, and where it differs from the text below (each deviation is the smaller
+design; nothing here changes a ruling):
+
+- **One measure follows the Basis filter.** `sales_value` reads the confirmed (delivered)
+  value or the ordered value by the Basis filter; `ordered_value` and `delivered_value` stay
+  in the catalogue for Configure summary. The basis line is `ReportDefinition.note`, printed
+  under the filter bar and in the workbook's title block.
+- **The Company filter is a select param the kernel knows** (`Dataset.company_param`): the
+  options are the caller's granted companies, the default is their current company, a
+  company outside the grant is 403, and the company arm is fail-closed (no grant, no rows).
+  A company-scoped dataset's statements run with the ORM company listener off; the kernel
+  applies the company itself (a user granted Sorento and Mocha reads Mocha from a Sorento
+  session). The export job carries the enqueuer's grant (`company_grants`).
+- **`sheet_per` writes blocks on the one SUMMARY sheet** (Q1 (b)), and the screen shows the
+  same blocks (`ReportLayouts.blocks`), each with its table and chart (J2).
+- **VARIANCE only when the rows are the period's years** (`Column.period_years`); re-pivoted
+  by month or channel the column totals come back (reviewer finding).
+- **The detail truncates** past the 5,000 line cap instead of refusing (`DetailLayout.cap`),
+  newest lines first, whole-set totals kept, so a three-year summary is never refused.
+- **Chatbot: no `compare_years` key.** The period dates carry the years ("2025 vs 2026" is
+  1 Jan 2025 to 31 Dec 2026); `group_by` gains `month` and `year`; new nullable keys
+  `sales_basis` and `sales_company`; the ask is `order_status "sales_analysis"`. The prompt is
+  republished and promoted by the S1 migration (the chatbot_rearch_s12 rule).
+- **The route is the chatbot's only** (`X-API-Key` required, security review B2), the dealer
+  check reads with the company scope off (B1), ten asks per contact per ten minutes.
+- **The `sales` module is enabled** wherever `order` is, in the migration (scm and dealer_kit
+  shipped dormant; a dormant module hides the menu item from every non-admin).
+- **AC-S1-6's "a list over 50 ids" is not applicable in S1**: no id-list param exists yet
+  (customer lists arrive with S2 and S5).
+- **Company names come from `companies.name`** ("SORENTO - DEALER"); the PDF's "SORENTO SDN
+  BHD" is a rename on the Companies screen, not a code change.
+- **New FE files:** the route wrapper, `ReportPivotChart.tsx` and `reportFormat.ts` (a plain
+  module for the whole-ringgit formatter: a 'use client' component file must export
+  components only, LESSONS-LEARNT 106).
 
 ## R5. Round 5: the owner's answers to round 4's Q6 to Q8 (26 Sep 07:34Z)
 

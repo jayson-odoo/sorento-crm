@@ -673,8 +673,15 @@ def _pivot(ctx: QueryContext, view: ReportViewConfig, cap: bool) -> ReportPivotL
         )
 
     layout = definition.pivot
+    # Year against year means something only when the ROWS are the years: re-pivoted by
+    # month or by channel (Configure summary, the chatbot's own views), the last row minus
+    # the one before is DEC minus NOV, or Project minus Dealer - so no VARIANCE, and the
+    # column totals come back (reviewer B1).
+    by_year = row_column.period_years
     variance_row, variance_total = (
-        _variance(row_values, cells, measures) if layout.variance == "last_two_rows" else (None, None)
+        _variance(row_values, cells, measures)
+        if layout.variance == "last_two_rows" and by_year
+        else (None, None)
     )
 
     return ReportPivotLayout(
@@ -700,7 +707,7 @@ def _pivot(ctx: QueryContext, view: ReportViewConfig, cap: bool) -> ReportPivotL
         variance_label="VARIANCE" if variance_row is not None else None,
         chart=layout.chart,
         whole_units=layout.whole_units,
-        show_column_totals=layout.column_totals,
+        show_column_totals=layout.column_totals or not by_year,
     )
 
 

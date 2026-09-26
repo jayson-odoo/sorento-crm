@@ -349,14 +349,46 @@ def test_ac_s1_17_ac_r4_7_one_sheet_both_blocks_variance_chart_and_values(db, de
     assert Decimal("-40.00") in [Decimal(str(c.value)) for c in money]
 
 
-def test_ac_s1_17_a_formula_looking_text_cell_is_escaped(db, definition, monkeypatch):
+def test_ac_s1_17_a_formula_looking_text_cell_is_escaped(db, definition):
+    """A text cell starting with =, +, - or @ is text in the file: no formula, and no stray
+    apostrophe in the value (Excel's quote prefix instead)."""
+    import io
+
+    from openpyxl import Workbook, load_workbook
+
     from app.services.reports import xlsx_renderer
 
-    assert xlsx_renderer.safe_text("=HYPERLINK(1)") == "'=HYPERLINK(1)"
-    assert xlsx_renderer.safe_text("+1") == "'+1"
-    assert xlsx_renderer.safe_text("-1") == "'-1"
-    assert xlsx_renderer.safe_text("@x") == "'@x"
-    assert xlsx_renderer.safe_text("SORENTO") == "SORENTO"
+    book = Workbook()
+    sheet = book.active
+    for index, text in enumerate(("=HYPERLINK(1)", "+1", "-1", "@x", "SORENTO"), start=1):
+        sheet.cell(row=index, column=1, value=text)
+        xlsx_renderer._mark_text(sheet.cell(row=index, column=1))
+    stream = io.BytesIO()
+    book.save(stream)
+    cells = [row[0] for row in load_workbook(io.BytesIO(stream.getvalue())).active.iter_rows()]
+    assert [c.value for c in cells] == ["=HYPERLINK(1)", "+1", "-1", "@x", "SORENTO"]
+    assert all(c.data_type == "s" for c in cells)
+    assert [c.quotePrefix for c in cells] == [True, True, True, True, False]
+
+
+def _view_of(rows, cols):
+    return _view(rows=rows, cols=cols)
+
+
+@pytest.mark.parametrize("rows, cols", [("month_of_year", "year"), ("channel", "year")])
+def test_reviewer_b1_no_variance_unless_the_rows_are_the_years(db, definition, rows, cols):
+    """Re-pivoted by month or by channel, last row minus the one before means nothing: no
+    VARIANCE, and the column totals come back, on screen and in the file."""
+    _line(db, order_date=date(2025, 11, 10), ordered=1, delivered=1, line_total=Decimal("100.00"))
+    _line(db, order_date=date(2025, 12, 10), ordered=1, delivered=1, line_total=Decimal("40.00"),
+          demand_class="project")
+    summary = _run(db, definition, rows=rows, cols=cols, channel=[]).layouts.summary
+    assert summary.variance_row is None and summary.variance_label is None
+    assert summary.show_column_totals is True
+    book = _workbook(db, definition, rows=rows, cols=cols, channel=[])
+    texts = [v for v in _cells(book["SUMMARY"]) if isinstance(v, str)]
+    assert "VARIANCE" not in texts
+    assert "TOTAL" in texts
 
 
 def test_the_sponsorship_workbook_keeps_its_month_sheets(db):
@@ -367,3 +399,28 @@ def test_the_sponsorship_workbook_keeps_its_month_sheets(db):
     assert sponsorship.workbook.sheet_per is None
     assert sponsorship.module_key == "procurement"
     assert sponsorship.pivot.variance is None and sponsorship.pivot.chart is None
+
+
+def test_reviewer_s2_a_company_dataset_with_no_company_param_is_fail_closed_too(db):
+    """The grant arm on its own: a scope="company" dataset that names no Company filter
+    reads nothing without a grant, and only its granted company's rows with one."""
+    import sqlalchemy as sa
+
+    from app.models.base import UNSET
+    from app.services.reports import engine
+    from tests import _report_fixture as fixture
+
+    fixture.create_table(db)
+    db.execute(sa.text(f"UPDATE {fixture.TABLE} SET company_id = :c WHERE agent = 'Alice'"),
+               {"c": DEFAULT_COMPANY_ID})
+    db.execute(sa.text(f"UPDATE {fixture.TABLE} SET company_id = :c WHERE agent = 'Bob'"),
+               {"c": MOCHA_ID})
+    definition = fixture.definition(fixture.dataset(scope="company"))
+    assert definition.dataset.company_param is None
+    params = {"date_basis": "booked_on", "period": {"kind": "year", "year": 2026}}
+    for grants in (UNSET, frozenset()):
+        assert engine.run(db, definition, params, company_grants=grants).row_count == 0
+    only = engine.run(db, definition, params, company_grants=frozenset({DEFAULT_COMPANY_ID}))
+    assert {r["agent"] for r in only.layouts.detail.rows} == {"Alice"}
+    everyone = engine.run(db, definition, params, company_grants=None)
+    assert {r["agent"] for r in everyone.layouts.detail.rows} == {"Alice", "Bob"}

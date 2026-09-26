@@ -183,7 +183,12 @@ def get_report_meta(
     grants = _company_grants(db, current_user, definition)
     default_view = ReportViewsService(db).default_config(key) or engine.view_config(definition)
     company_param = definition.dataset.company_param
-    if company_param and not (default_view.params.get(company_param) or []):
+    saved = default_view.params.get(company_param) or [] if company_param else []
+    if company_param and grants is not None and any(c not in grants for c in saved):
+        # A shared default saved on another company never hands this caller its id.
+        saved = []
+        default_view.params[company_param] = []
+    if company_param and not saved:
         # The report opens on the caller's current company, resolved now, per caller.
         ctx = engine.resolve(db, definition, {}, company_grants=grants)
         default_view.params[company_param] = ctx.values.get(company_param) or []

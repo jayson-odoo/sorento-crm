@@ -101,7 +101,7 @@ def _contact(db, companies=(DEFAULT_COMPANY_ID,), granted=(GRANT,)):
 
 
 @contextmanager
-def _client(db, principal, contact_companies, allow=(SLUG,)):
+def _client(db, principal, contact_companies, allow=(SLUG,), headers=None):
     from app.services.user_service import UserPermissionService
 
     def _override_db():
@@ -119,7 +119,8 @@ def _client(db, principal, contact_companies, allow=(SLUG,)):
     original = UserPermissionService.check_user_has_permission
     UserPermissionService.check_user_has_permission = lambda self, uid, slug: slug in allow
     try:
-        yield TestClient(app)
+        # The chatbot's route answers API-key callers only (security review B2).
+        yield TestClient(app, headers={"X-API-Key": "k"} if headers is None else headers)
     finally:
         UserPermissionService.check_user_has_permission = original
         app.dependency_overrides.clear()
@@ -208,6 +209,35 @@ def test_ac_s1_23_a_dealer_contact_is_refused_and_nothing_is_fetched(db, queue):
     assert body == {"status": "refused",
                     "message": "Sorry, I can only share sales figures for your own account."}
     assert _downloads(db) == before and not queue
+
+
+def test_security_b2_a_bearer_caller_is_refused_whatever_contact_it_names(db, queue):
+    """A JWT caller must not read a company through someone else's contact."""
+    seed_mocha  # noqa: B018
+    contact = _contact(db, companies=(MOCHA_ID,))
+    before = _downloads(db)
+    with _client(db, _actor(db), [DEFAULT_COMPANY_ID], headers={"Authorization": "Bearer x"}) as client:
+        response = client.get(ROUTE, params=_q(contact))
+    assert response.status_code == 403
+    assert response.json()["code"] == "api_key_required"
+    assert _downloads(db) == before and not queue
+
+
+def test_security_b1_a_dealer_is_refused_under_the_empty_scope_production_gives(db, queue):
+    """A NULL-workspace contact resolves to an EMPTY company scope on an API-key request;
+    the dealer link (company-scoped) must still be found."""
+    from app.models.access import RespondContactCustomer
+
+    contact = _contact(db)
+    db.add(RespondContactCustomer(contact_id=contact.id,
+                                  customer_id=customer(db, company_id=DEFAULT_COMPANY_ID).id,
+                                  company_id=DEFAULT_COMPANY_ID))
+    db.flush()
+    with _client(db, _actor(db), []) as client:
+        body = client.get(ROUTE, params=_q(contact)).json()
+    assert body == {"status": "refused",
+                    "message": "Sorry, I can only share sales figures for your own account."}
+    assert not queue
 
 
 # ------------------------------------------------------------------------ the 422s

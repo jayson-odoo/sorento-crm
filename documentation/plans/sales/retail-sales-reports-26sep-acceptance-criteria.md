@@ -286,6 +286,9 @@ and the time on the automation (Q7); the period is ruled (Q8).
 - **AC-R2-1 [FE][T]** (S1, S2) Both screens render `ReportPage` (`components/reports/ReportPage.tsx:270`)
   with keys `sales_yearly` and `sales`; the only new frontend files are the two route wrappers and
   `components/reports/ReportPivotChart.tsx`. An inventory test lists them.
+  - S1 build: plus `components/reports/reportFormat.ts`, the whole-ringgit formatter the table and
+    the chart share (a 'use client' component file must export components only, LESSONS-LEARNT
+    106). `config/menu.sales.test.ts` is the inventory test.
 - **AC-R2-2 [BE][T]** (S1) The `sales_order_lines` dataset and the two definitions are registered;
   `GET /reports` lists them to a holder of `sales.reports.view` and not to anyone else; the
   sponsorship report's meta, run and workbook are byte-for-byte unchanged.

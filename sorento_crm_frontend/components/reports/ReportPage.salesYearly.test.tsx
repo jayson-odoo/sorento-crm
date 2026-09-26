@@ -362,3 +362,40 @@ describe('Yearly comparison on the report page', () => {
     expect(call[1].basis).toEqual(['delivered']);
   });
 });
+
+describe('the filter bar on a one-basis report', () => {
+  it('shows no Date basis select when there is only one basis to pick', async () => {
+    render(
+      <ReportPage reportKey="sales_yearly" breadcrumb={[{ label: 'Sales' }]} />,
+    );
+    await screen.findByText('SORENTO - DEALER');
+    expect(screen.queryByText('Date basis')).toBeNull();
+    expect(runReport.mock.calls[0][1].date_basis).toBe('order_date');
+  });
+});
+
+describe('a shared default view saved on a company the caller cannot pick', () => {
+  it('opens on the caller own company instead of running a view that can only answer 403', async () => {
+    fetchReportViews.mockReset().mockResolvedValue({
+      mine: [],
+      shared: [
+        {
+          id: 'v-1',
+          name: 'Mocha dealer',
+          is_shared: true,
+          is_default: true,
+          owner_name: 'Admin',
+          view: {
+            ...META.default_view,
+            params: { ...META.default_view.params, company: ['c-mocha'] },
+          },
+        },
+      ],
+    });
+    render(
+      <ReportPage reportKey="sales_yearly" breadcrumb={[{ label: 'Sales' }]} />,
+    );
+    await screen.findByText('SORENTO - DEALER');
+    expect(runReport.mock.calls[0][1].company).toEqual(['c-1']);
+  });
+});

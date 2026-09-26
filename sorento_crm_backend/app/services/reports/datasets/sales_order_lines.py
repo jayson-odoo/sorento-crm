@@ -92,6 +92,8 @@ def _base(ctx) -> sa.Select:
 
 
 def years(db) -> List[int]:
+    """The years the period picker offers: any company's order years plus the last three.
+    Metadata only (which years exist), never a figure, so it is read across companies."""
     stmt = sa.select(sa.distinct(sa.extract("year", SalesOrder.order_date))).where(
         SalesOrder.order_date.isnot(None)
     )

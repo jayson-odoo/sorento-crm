@@ -280,3 +280,27 @@ def test_ac_r2_4_an_export_job_with_no_company_snapshot_writes_nothing_from_any_
         numbers = [c.value for r in book["SUMMARY"].iter_rows() for c in r
                    if isinstance(c.value, (int, float, Decimal))]
         assert Decimal("10.00") not in [Decimal(str(n)) for n in numbers]
+
+
+def test_a_shared_default_saved_on_another_company_never_hands_over_its_id(db):
+    """Security nit: a published default view carrying Mocha's id opens a Sorento-only
+    user on Sorento, and the Mocha id never reaches their screen."""
+    from app.schemas.report import ReportViewConfig
+    from app.services.reports.views_service import ReportViewsService
+
+    admin = _user(db, DEFAULT_COMPANY_ID, MOCHA_ID)
+    view = ReportViewConfig.model_validate({
+        "params": {"company": [MOCHA_ID], "channel": ["dealer"], "basis": ["delivered"],
+                   "date_basis": "order_date"},
+        "detail": {"columns": [], "order": []},
+        "pivot": {"rows": "year", "cols": "month_of_year", "measures": ["sales_value"]},
+    })
+    svc = ReportViewsService(db)
+    saved = svc.create("sales_yearly", admin["id"], "Mocha default", view)
+    svc.publish("sales_yearly", saved.id, admin["id"], True)
+    svc.set_default("sales_yearly", saved.id, admin["id"])
+    principal = _user(db, DEFAULT_COMPANY_ID)
+    with _client(db, principal) as client:
+        meta = client.get(BASE).json()
+    assert meta["default_view"]["params"]["company"] == [DEFAULT_COMPANY_ID]
+    assert MOCHA_ID not in str(meta)

@@ -77,7 +77,7 @@ REPORT = reg.register(
                 clearable=False,
             ),
             reg.DateBasisParam(key="date_basis", label="Date basis", default="order_date"),
-            reg.PeriodParam(key="period", label="As at", default=as_at_period),
+            reg.PeriodParam(key="period", label="Period", default=as_at_period),
         ),
         detail=reg.DetailLayout(title="Sales order lines", order_by=ds.order_by, cap="truncate"),
         pivot=reg.PivotLayout(

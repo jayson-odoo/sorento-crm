@@ -79,7 +79,23 @@ export function ReportPivotChart({ layout }: { layout: ReportPivotLayout }) {
           width={64}
           tickFormatter={(value: number) => wholeRinggit(value)}
         />
-        <ChartTooltip content={<ChartTooltipContent />} />
+        <ChartTooltip
+          content={
+            <ChartTooltipContent
+              formatter={(value, name) => (
+                // Whole ringgit, as the axis and the table read (AC-S1-16).
+                <div className="flex w-full items-center justify-between gap-4">
+                  <span className="text-muted-foreground">
+                    {config[String(name)]?.label ?? name}
+                  </span>
+                  <span className="font-medium tabular-nums">
+                    {wholeRinggit(Number(value))}
+                  </span>
+                </div>
+              )}
+            />
+          }
+        />
         <ChartLegend content={<ChartLegendContent />} />
         {rows.map((_row, index) => (
           <Line

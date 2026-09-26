@@ -23,6 +23,23 @@ carries no file and writes no row (AC-R4-3).
 
 GET, not POST, for the reason the low stock route gives: the MCP compiler adds
 `view=render` only to query-param tools.
+
+SECURITY - the trust boundary (the low stock route's note N-a, restated for this route)
+--------------------------------------------------------------------------------------
+**API key only.** `require_permission_with_api_key` also accepts a Bearer token, and this
+route answers with the figures of the CONTACT's company, which says nothing about the
+caller's own grant: a staffer granted Sorento could name a Mocha contact and read Mocha. So a
+request without `X-API-Key` is refused (403 `api_key_required`); the chatbot is the only
+caller. `contact_id` is both the subject and the delivery target, so a holder of
+`EXTERNAL_API_KEY` whose act-as principal holds `sales.reports.view` can cause a sales
+figure answer and an Excel push to any contact holding `sales_orders.sales_report`; that
+is accepted because the key is a staff-level credential that already reaches every read
+tool. What the caller CANNOT choose is whose figures they are (the contact's own
+companies), or make a dealer contact receive them (refused, looked up with the company
+scope OFF so a NULL-workspace contact is not waved through). The rate limit caps the
+volume: ten per contact per ten minutes. Ten, not the low stock report's five: an ask here
+is one query and one small render (no reorder run), and a sales conversation refines the
+same ask (company, channel, period, basis) several times in a row.
 """
 from __future__ import annotations
 
@@ -33,7 +50,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Union
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -57,7 +74,7 @@ MIME_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 #: The ask's axis words -> the dataset's dimensions.
 AXES = {"month": "month_of_year", "year": "year", "channel": "channel"}
 _MAX_N = 100
-_RATE_LIMIT = 20
+_RATE_LIMIT = 10
 _RATE_WINDOW_SECONDS = 600
 
 
@@ -204,9 +221,16 @@ def _prepare(
             message="Sales report is not enabled for your account.",
             code="sales_report_not_enabled",
         )
-    is_dealer = db.query(RespondContactCustomer.id).filter(
-        RespondContactCustomer.contact_id == str(resolved)
-    ).first()
+    # Scope OFF: the question is "is this contact linked to ANY customer account", and
+    # `respond_contact_customers` is company-scoped, so under an API-key request's scope
+    # (empty for a NULL-workspace contact) the lookup would find nothing and let a dealer
+    # through (security review B1).
+    from app.models.base import company_scope
+
+    with company_scope(db, None):
+        is_dealer = db.query(RespondContactCustomer.id).filter(
+            RespondContactCustomer.contact_id == str(resolved)
+        ).first()
     if is_dealer is not None:
         return {"status": "refused", "message": REFUSAL}
 
@@ -225,8 +249,10 @@ def _prepare(
     }
     if company:
         wanted = company.strip().casefold()
-        match = [cid for cid, (name, code) in companies.items()
-                 if wanted in (name.casefold(), code.casefold())]
+        # The NAME first (what a person types), then the code; never an arbitrary pick.
+        match = [cid for cid, (name, _code) in companies.items() if name.casefold() == wanted] or [
+            cid for cid, (_name, code) in companies.items() if code.casefold() == wanted
+        ]
         if not match:
             raise _unprocessable(f"Unknown company '{company}'", "unknown_company")
         if match[0] not in grants:
@@ -358,6 +384,7 @@ def _finish(db: Session, prepared: _Prepared, snapshot: Optional[dict]) -> Dict[
 
 @router.get("/analysis")
 async def sales_analysis(
+    request: Request,
     rows: str = Query("channel"),
     cols: str = Query("year"),
     channel: Optional[str] = Query(None),
@@ -375,6 +402,10 @@ async def sales_analysis(
     the file failed but the figures stand), or `clarify` / `refused` / `busy` with one line
     and no file. All HTTP 200 except the 403s and 422s, because each is something the bot
     can say."""
+    if not request.headers.get("X-API-Key"):
+        # The chatbot's route only (security review B2): see the module docstring.
+        raise AppException(status_code=403, message="This route is for the chatbot only",
+                           code="api_key_required")
     prepared = await asyncio.to_thread(
         _prepare, db,
         rows=rows, cols=cols, channel=channel, basis=basis, company=company,

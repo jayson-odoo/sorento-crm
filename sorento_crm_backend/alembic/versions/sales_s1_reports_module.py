@@ -29,7 +29,7 @@ Revises: sb2_stock_pair_unique
 import importlib.util
 import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import sqlalchemy as sa
@@ -70,7 +70,7 @@ def _load_s4():
 
 
 def seed_rbac_and_module(bind) -> None:
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     bind.execute(
         sa.text(
             "INSERT INTO user_permissions (id, slug, name, description, created_at) "
@@ -201,6 +201,7 @@ def downgrade() -> None:
                 session.commit()
     finally:
         session.close()
+    bind.execute(sa.text("DELETE FROM tenant_modules WHERE module_key = 'sales'"))
     bind.execute(sa.text("DELETE FROM app_modules_catalog WHERE module_key = 'sales'"))
     bind.execute(
         sa.text(

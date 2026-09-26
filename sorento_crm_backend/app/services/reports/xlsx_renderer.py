@@ -85,9 +85,17 @@ _FORMULA_LEAD = ("=", "+", "-", "@")
 
 
 def safe_text(value):
-    if isinstance(value, str) and value.startswith(_FORMULA_LEAD):
-        return "'" + value
+    """Kept as the text it is. openpyxl turns only a leading "=" into a formula, but the
+    other leads are escaped too, the way a spreadsheet's own import would: with Excel's
+    quote prefix (`_mark_text`), never a visible apostrophe in the value."""
     return value
+
+
+def _mark_text(cell) -> None:
+    value = cell.value
+    if isinstance(value, str) and value.startswith(_FORMULA_LEAD):
+        cell.data_type = "s"
+        cell.quotePrefix = True
 
 
 def _header_text(spec: WorkbookSpec, key: str, label: str) -> str:
@@ -156,8 +164,8 @@ def _title_block(
     """The four lines every sheet opens with, merged across the table (AC-G7)."""
     spec = definition.workbook
     lines = (
-        (_COMPANY_ROW, (company or spec.company_name).upper(), _COMPANY_FONT),
-        (_REPORT_ROW, (spec.report_title or definition.title).upper(), _REPORT_FONT),
+        (_COMPANY_ROW, safe_text((company or spec.company_name).upper()), _COMPANY_FONT),
+        (_REPORT_ROW, safe_text((spec.report_title or definition.title).upper()), _REPORT_FONT),
         (_PERIOD_ROW, period_date or period_text, _PERIOD_FONT),
     )
     for row, value, font in lines:
@@ -380,7 +388,7 @@ def _pivot_table(
     sheet.merge_cells(start_row=top, start_column=1, end_row=header, end_column=1)
 
     def _group(column: int, label: str) -> None:
-        sheet.cell(row=top, column=column, value=label)
+        sheet.cell(row=top, column=column, value=safe_text(label))
         if span > 1:
             sheet.merge_cells(
                 start_row=top, start_column=column, end_row=top, end_column=column + span - 1
@@ -433,8 +441,12 @@ def _pivot_table(
     last_data = row - 1
 
     if pivot.show_column_totals:
-        _line(row, spec.summary_total_row_label, pivot.col_totals, pivot.grand_total, bold=True)
-        sheet.cell(row=row, column=1).alignment = _CENTRE
+        # The label bold and centred, the amounts as values in plain weight: the client's
+        # own TOTAL SALES line, unchanged from before the pivot was split into blocks.
+        _line(row, spec.summary_total_row_label, pivot.col_totals, pivot.grand_total)
+        label = sheet.cell(row=row, column=1)
+        label.font = _TOTAL_FONT
+        label.alignment = _CENTRE
         row += 1
     if pivot.variance_row is not None:
         _line(row, pivot.variance_label or "VARIANCE", pivot.variance_row,
@@ -528,6 +540,11 @@ def render_workbook(definition: ReportDefinition, data: WorkbookData) -> bytes:
             sheet.label,
             sheet.month_start,
         )
+
+    for worksheet in workbook.worksheets:
+        for row in worksheet.iter_rows():
+            for cell in row:
+                _mark_text(cell)
 
     stream = BytesIO()
     workbook.save(stream)

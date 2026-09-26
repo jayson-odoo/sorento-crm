@@ -100,10 +100,7 @@ def generate_report_xlsx(
             key,
             len(content),
         )
-        from app.tasks import export_tasks
-
-        export_tasks._push_download_to_chat(db, download_id, provider=provider, key=stored_key)
-        return {"download_id": download_id, "status": "ready", "bytes": len(content)}
+        outcome = {"download_id": download_id, "status": "ready", "bytes": len(content)}
     except Exception as e:  # noqa: BLE001 - mark failed, never poison the queue
         logger.exception("generate_report_xlsx failed for download %s", download_id)
         _record_failure(db, svc, download_id, e, "generate_report_xlsx")
@@ -116,5 +113,16 @@ def generate_report_xlsx(
         except Exception:  # noqa: BLE001 - the export already failed; never raise here
             logger.exception("generate_report_xlsx: failure notice for %s failed", download_id)
         return {"download_id": download_id, "status": "failed", "error": str(e)}
+    else:
+        # OUTSIDE the render's try (reviewer nit): a push that fails must never mark a
+        # rendered, ready file as failed or tell the chat it could not be built. The push
+        # swallows and records its own failures; this guard is only belt and braces.
+        try:
+            from app.tasks import export_tasks
+
+            export_tasks._push_download_to_chat(db, download_id, provider=provider, key=stored_key)
+        except Exception:  # noqa: BLE001
+            logger.exception("generate_report_xlsx: chat push for %s failed", download_id)
+        return outcome
     finally:
         db.close()
