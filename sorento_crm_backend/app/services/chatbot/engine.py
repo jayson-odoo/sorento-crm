@@ -2331,6 +2331,7 @@ def _run_stages(  # noqa: PLR0915
                         # than replacing it - the same rule `turn_compose.compose`
                         # already applies on its own miss arm below.
                         carried_pending=state_out.pending,
+                        dealer_stock_ask=_dealer_stock_ask(state_out, plan),
                     )
                     if answer is not None:
                         bridge_answered = True
@@ -2612,6 +2613,10 @@ def _run_stages(  # noqa: PLR0915
             answer = turn_compose.Answer(text=SALES_REPORT_NOT_ENABLED_MESSAGE)
 
     if answer is not None and lane_error_text is None:
+        if _dealer_stock_ask(state_out, plan):
+            # Owner ruling 26 Sep 2026 (hand test F1): whatever composed this stock
+            # reply, a dealer is referred to their salesman, never offered a team.
+            answer = _dealer_refers_to_salesman(answer)
         return _run_answer(
             turn_id=turn_id,
             ctx=ctx,
@@ -2824,6 +2829,32 @@ def _contact_block(envelope: Envelope, known_phone: str | None) -> dict[str, Any
     if not jsc.truthy(contact.get("phone")) and known_phone:
         contact["phone"] = known_phone
     return contact
+
+
+def _dealer_stock_ask(state_out: Any, plan: Any) -> bool:
+    """Is this turn a stock ask by a dealer (an availability-only contact, hand test F1)?"""
+    profile = getattr(state_out, "profile", None)
+    if not getattr(profile, "stock_availability_only", False):
+        return False
+    domains = list(getattr(plan, "domains", None) or []) or list(
+        getattr(state_out.focus, "domains", None) or []
+    )
+    return "inventory" in domains
+
+
+def _dealer_refers_to_salesman(answer: Any) -> Any:
+    from app.services.chatbot import dealer_stock as dealer_mod
+
+    if getattr(answer, "question", None) is not None and (
+        (answer.question.payload or {}).get("stock_pick") is True
+    ):
+        return answer
+    text, question = dealer_mod.without_escalation(
+        getattr(answer, "text", "") or "", getattr(answer, "question", None)
+    )
+    if text == (getattr(answer, "text", "") or "") and question is getattr(answer, "question", None):
+        return answer
+    return dataclasses_replace(answer, text=text, question=question)
 
 
 def _stock_ask_reply(

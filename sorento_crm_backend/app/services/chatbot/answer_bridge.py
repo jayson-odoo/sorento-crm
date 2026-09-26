@@ -1442,6 +1442,7 @@ def answer_for(
     trace: Any = None,
     dry_run: bool = True,
     carried_pending: Any = None,
+    dealer_stock_ask: bool = False,
 ) -> turn_compose.Answer | None:
     """The MISS seam (R4): `None` outside its own two triggers (see module docstring),
     so a hit, an `access_denied` refusal, an infrastructure error and a multi-domain plan
@@ -1720,4 +1721,50 @@ def answer_for(
             payload={**carried_pending.payload, "escalate_offered": True},
         )
     text = _apply_crossdomain_render(text, crossdomain_result)
+    if dealer_stock_ask:
+        # Owner ruling 26 Sep 2026 (hand test F1): a dealer's stock ask never offers
+        # an escalation. The did-you-mean is a pick of the suggested code(s), carrying
+        # the quantity the dealer typed - one candidate included, which AC-1691's
+        # two-option minimum above would otherwise turn into a team offer. With no
+        # candidate at all, `engine._dealer_refers_to_salesman` strips the offer.
+        dealer = _dealer_did_you_mean(offer, parser, asked_at_turn)
+        if dealer is not None:
+            return turn_compose.Answer(text=dealer[0], question=dealer[1])
     return turn_compose.Answer(text=text, question=question)
+
+
+def _dealer_did_you_mean(
+    offer: Any, parser: Mapping[str, Any] | None, asked_at_turn: int | None
+) -> tuple[str, pending.Pending] | None:
+    from app.services.chatbot import dealer_stock as dealer_mod
+
+    if not isinstance(offer, Mapping):
+        return None
+    rows = [row for row in (offer.get("suggest_last_result_set") or []) if isinstance(row, Mapping)]
+    if not rows:
+        return None
+    named = [
+        e
+        for e in ((parser or {}).get("entities") or [])
+        if isinstance(e, Mapping) and e.get("hint") in (None, "product")
+    ]
+    typed = next(
+        (
+            c.get("for_raw")
+            for c in (offer.get("dym_candidates") or [])
+            if isinstance(c, Mapping) and c.get("for_raw")
+        ),
+        None,
+    ) or next((e.get("raw") for e in named if e.get("raw")), "")
+    quantities = {
+        int(e["quantity"])
+        for e in named
+        if isinstance(e.get("quantity"), (int, float)) and not isinstance(e.get("quantity"), bool)
+    }
+    quantity = next(iter(quantities)) if len(quantities) == 1 else (parser or {}).get("demand_qty")
+    return dealer_mod.did_you_mean(
+        str(typed),
+        [dict(row) for row in rows],
+        quantity=quantity,
+        asked_at_turn=asked_at_turn,
+    )

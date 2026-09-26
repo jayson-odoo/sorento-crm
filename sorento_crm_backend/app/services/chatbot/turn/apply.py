@@ -545,6 +545,25 @@ def _answer_pending(state: State, decision: Decision, trace: Trace):
         if answered is not None:
             return answered
 
+    if _stock_pick(pending):
+        # Owner ruling 26 Sep 2026 (hand test F1): "Couldn't find ELP3753. Did you mean
+        # ELP3754?" is a yes/no over its one option. A yes picks it (the carried quantity
+        # rides on the pick, `_spend_stock_pick`); a no refers the dealer to their
+        # salesman, with nothing left open - a dealer's stock ask is never escalated.
+        if decision.answers and decision.why == "affirmative" and len(pending.options) == 1:
+            decision = replace(decision, positions=(pending.options[0].get("position"),))
+            trace.rules_fired.append("stock_pick_yes")
+        elif decision.declined or (decision.negated and not decision.entities):
+            trace.rules_fired.append("stock_pick_declined")
+            trace.task_question = task_mod.REFER_TO_SALESMAN
+            focus.domains = ["inventory"]
+            return (
+                focus,
+                None,
+                Plan(domains=["inventory"], fetch=[], ask=None, denied=[], trace=trace),
+                False,
+            )
+
     if pending.kind in ESCALATION_OFFER_KINDS or _picks_a_member_option(pending, decision):
         # BEFORE the roster path: an accepted escalation offer is a handover, never a
         # fetch, whichever of the three ways it was accepted. The second disjunct (hand

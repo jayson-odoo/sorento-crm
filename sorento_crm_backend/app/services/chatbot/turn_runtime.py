@@ -310,9 +310,31 @@ def load_profile(
             # somehow did, matching these two columns' default-OFF rule.
             notify_salesman=row[3] is True,
             packing_list_allowed=row[4] is True,
+            stock_availability_only=_stock_availability_only(
+                db, contact_respond_id, space_id
+            ),
         ),
         bool(row[1]),
     )
+
+
+def _stock_availability_only(db: Session, contact_respond_id: str, space_id: str | None) -> bool:
+    """Is this contact's stock visibility policy "Availability only" (hand test F1)?
+
+    The same resolution the stock balance read applies (`stock_visibility.
+    resolve_policy`: the contact override, else the merged access types, else the
+    default), so the engine and the tool can never disagree about who is a dealer. A
+    read that fails is not a dealer: today's behaviour, never a silent refusal."""
+    try:
+        from app.services.stock_visibility import resolve_policy
+
+        # A savepoint, so a failed read cannot leave the turn's session aborted.
+        with db.begin_nested():
+            policy = resolve_policy(db, contact_respond_id, space_id)
+    except Exception:  # noqa: BLE001 - a policy read is a profile fact, not the turn
+        logger.warning("chatbot: stock visibility policy unreadable for %s", contact_respond_id)
+        return False
+    return policy is not None and policy.mode == "availability"
 
 
 def load_state(session_block: Any, *, profile: Profile, turn_no: int) -> State:

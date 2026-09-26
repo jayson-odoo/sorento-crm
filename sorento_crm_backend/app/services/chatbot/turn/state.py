@@ -144,6 +144,13 @@ class Profile:
     # gets no salesman notification and no packing list attachment by default.
     notify_salesman: bool = False
     packing_list_allowed: bool = False
+    # Owner ruling 26 Sep 2026 (hand test F1): "dealer ask cannot have escalation,
+    # cannot have direct escalation to warehouse, their contact point is sales person".
+    # A dealer is a contact whose stock visibility policy is "Availability only"
+    # (`stock_visibility.resolve_policy(...).mode == "availability"`), read once with the
+    # rest of the profile so the stock ask can refer them to their salesman instead of
+    # offering a team. Default OFF: an unresolved contact keeps today's behaviour.
+    stock_availability_only: bool = False
 
 
 @dataclass

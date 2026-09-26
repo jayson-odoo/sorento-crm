@@ -37,6 +37,10 @@ PARKED = "parked"
 #: that revision; the next new ask closes it.
 ANSWERED = "answered"
 
+#: Owner ruling 26 Sep 2026 (hand test F1): a dealer's stock ask ends here, never in an
+#: escalation offer. `dealer_stock.py` holds the rest of that rule.
+REFER_TO_SALESMAN = "Please refer to your salesman."
+
 
 @dataclass(frozen=True)
 class Slot:
