@@ -366,3 +366,113 @@ def test_w3_each_row_leads_with_the_product_name_and_key_spec_then_code_and_stoc
         ), text
     # One line per row: no field is left dangling on a line of its own.
     assert not [ln for ln in lines if ln.startswith("*Total:*") or ln.startswith("*Product Code:*")], text
+
+
+# --------------------------------------------------------------------------- #
+# W4: page answers keep the set                                                  #
+# --------------------------------------------------------------------------- #
+
+
+def _bare(**overrides: Any) -> dict[str, Any]:
+    from tests.chatbot.test_engine import _parser_output
+
+    base = dict(intent_hint=None, domain_hint=None, entities=[], user_goal=None)
+    base.update(overrides)
+    return _parser_output(**base)
+
+
+def _listed(text: str, world) -> list[str]:
+    """The product codes in the order the rows list them."""
+    codes = {p.product_code for p in world["every"]}
+    out = []
+    for line in text.splitlines():
+        m = re.match(r"^\d+\. .*?\*Product Code:\* (\S+)", line)
+        if m and m.group(1) in codes:
+            out.append(m.group(1))
+    return out
+
+
+@pytest.fixture()
+def small_list(monkeypatch):
+    from app.services.chatbot.lanes.business import answer as answer_mod
+
+    monkeypatch.setattr(answer_mod, "SET_LIST_MAX", 3)
+
+
+@pytest.mark.parametrize("shape", [0, 1], ids=["brand_entity", "brand_in_class_raw"])
+def test_w4_a_bare_count_after_the_count_question_keeps_the_brand_set(chat, world, small_list, shape):
+    """Owner turns 9 then 10: "144 products have stock ..." then "10" answered from the
+    earlier 334 set, the brand dropped."""
+    brand = world["sorento"].brand_name
+    ask = chat.say(
+        f"which {brand.lower()} wash basin has stock",
+        _stock_verdict(_brand_entity_shapes(brand.lower(), "wash basin")[shape], "which wash basin has stock"),
+    )
+    assert "5 wash basins have stock. That is too many to list" in ask, ask
+
+    page = chat.say("2", _bare())
+
+    first = page.splitlines()[0]
+    assert first == (
+        f"Brand: {_display(brand)}, Product type: Wash basin. 5 wash basins have stock. Here are the first 2."
+    ), page
+    listed = _listed(page, world)
+    assert len(listed) == 2 and set(listed) <= _codes(world["srt_basins"][:3] + world["srt_wall"]), page
+
+
+@pytest.mark.parametrize("parser_top_n", [None, 2], ids=["parser_null", "parser_reads_the_count"])
+def test_w4_another_n_continues_from_where_the_list_stopped(chat, world, small_list, parser_top_n):
+    """Owner turns 3 then 4: "10" listed the first 10, then "can give another 40?"
+    listed the SAME first 10 again with no header."""
+    brand = world["sorento"].brand_name
+    chat.say(
+        f"which {brand.lower()} wash basin has stock",
+        _stock_verdict(_brand_entity_shapes(brand.lower(), "wash basin")[0], "which wash basin has stock"),
+    )
+    page1 = chat.say("2", _bare())
+    page2 = chat.say("can give another 2?", _bare(top_n=parser_top_n))
+
+    first = page2.splitlines()[0]
+    assert first == (
+        f"Brand: {_display(brand)}, Product type: Wash basin. 5 wash basins have stock. Here are 3 to 4."
+    ), page2
+    one, two = _listed(page1, world), _listed(page2, world)
+    assert len(two) == 2 and not set(one) & set(two), (page1, page2)
+    every = sorted(_codes(world["srt_basins"][:3] + world["srt_wall"]))
+    assert one + two == every[:4], (page1, page2)
+
+    # And again: 5 to 5, the last one.
+    page3 = chat.say("another 2", _bare())
+    assert "Here are 5 to 5." in page3.splitlines()[0], page3
+    assert _listed(page3, world) == every[4:], page3
+
+
+def test_w4_another_n_after_a_listed_page_never_offers_more_itself(chat, world, small_list):
+    brand = world["sorento"].brand_name
+    chat.say(
+        f"which {brand.lower()} wash basin has stock",
+        _stock_verdict(_brand_entity_shapes(brand.lower(), "wash basin")[0], "which wash basin has stock"),
+    )
+    page = chat.say("2", _bare())
+    lowered = page.lower()
+    assert "more" not in lowered and "next" not in lowered, page
+
+
+def test_w4_a_count_that_moved_between_the_ask_and_the_page_is_said(chat, world, small_list):
+    """Owner turns 5 then 6: 2,306 became 2,322 with no word about it."""
+    brand = world["sorento"].brand_name
+    ask = chat.say(
+        f"which {brand.lower()} wash basin has stock",
+        _stock_verdict(_brand_entity_shapes(brand.lower(), "wash basin")[0], "which wash basin has stock"),
+    )
+    assert "5 wash basins have stock." in ask, ask
+    db = world["db"]
+    wh = _warehouse(db)
+    _stock_for(db, product_id=world["srt_basins"][3].id, warehouse_id=wh.id)
+    db.commit()
+
+    page = chat.say("2", _bare())
+
+    first = page.splitlines()[0]
+    assert "6 wash basins have stock." in first, page
+    assert "It was 5 when you asked." in first, page
