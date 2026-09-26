@@ -153,7 +153,13 @@ def test_t4_kind_pick_answer_sets_only_the_picked_kind():
     assert plan1.ask is not None and plan1.ask.kind == "kind_pick"
 
     state1 = State(focus=state1.focus, pending=plan1.ask, profile=state1.profile)
-    v2 = verdict(reference_positions=[2])
+    # Fix lane round 2, N1: the option order is the resolver's hit strength (ties
+    # alphabetical), not the transcript's numbering, so the customer option's position
+    # is read off the ask rather than assumed to be 2.
+    customer_position = next(
+        o["position"] for o in plan1.ask.options if o.get("entity_type") == "customer"
+    )
+    v2 = verdict(reference_positions=[customer_position])
     state2, _plan2 = apply(state1, v2, build_policy())
 
     # Guard (already true today): the picked kind lands cleanly, nothing else.

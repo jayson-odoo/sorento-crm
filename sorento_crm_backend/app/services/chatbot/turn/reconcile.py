@@ -40,21 +40,6 @@ def hits_for_token(resolved: dict[str, dict[str, int]] | None, raw: Any) -> dict
     return folded.get(key)
 
 
-# #1262 slice 7: a fixed priority for the ONE tie the codebase actually has to break
-# (customer vs. transporter, "Sorento" naming both) - see the diagnosis transcript's
-# own recorded roster, position 2 = the customer option. Any kind not listed here
-# keeps its resolver-order place, alphabetically, so a tie this file has never seen
-# still gets SOME deterministic order rather than crashing.
-_KIND_TIE_ORDER: tuple[str, ...] = ("transporter", "customer")
-
-
-def _kind_tie_key(kind: str) -> tuple[int, str]:
-    try:
-        return (_KIND_TIE_ORDER.index(kind), kind)
-    except ValueError:
-        return (len(_KIND_TIE_ORDER), kind)
-
-
 class ReconcileResult:
     def __init__(self) -> None:
         self.entities: list[dict[str, Any]] = []
@@ -87,11 +72,12 @@ def apply_reconciliation(
         # #1262 slice 7 (F1b): the resolver's own hit-dict order is an accident of
         # however its callers happened to run, not a contract - the SAME ambiguity
         # (customer/transporter on "Sorento") armed a DIFFERENT numbered pick turn
-        # to turn depending on which resolver ran first. `_KIND_TIE_ORDER` (below)
-        # pins it to the shape the real transcript recorded (its position 2 was the
-        # customer option), so the same tie always numbers its options the same way.
+        # to turn depending on which resolver ran first. Fix lane round 2, N1: the
+        # stated rule is the resolver's own hit strength - the kind with the most
+        # matches first, ties alphabetical - so the same tie always numbers its
+        # options the same way without a priority tuned to one transcript.
         if len(matched) > 1:
-            matched = sorted(matched, key=_kind_tie_key)
+            matched = sorted(matched, key=lambda k: (-hits[k], k))
         if len(matched) == 0:
             result.entities.append(e)
         elif len(matched) == 1:

@@ -76,3 +76,18 @@ def test_t4_kind_pick_answer_rewrites_hint_not_label():
         assert picked.get(field_name) != label, (
             f"the printed pick label leaked into focus.customers[0][{field_name!r}]: {picked!r}"
         )
+
+
+def test_n1_kind_pick_orders_by_resolver_hit_strength():
+    """Fix lane round 2, N1: the options are ordered by a stated rule - the resolver's
+    own hit count per kind, most hits first, ties alphabetical - never by a priority
+    tuned to reproduce one transcript's numbering."""
+    from app.services.chatbot.turn.reconcile import apply_reconciliation
+
+    entities = [{"raw": "Sorento", "hint": "brand", "confident": True, "current_message": True}]
+    stronger = apply_reconciliation(entities, {"Sorento": {"transporter": 1, "customer": 3}})
+    assert [o["entity_type"] for o in stronger.kind_pick_options] == ["customer", "transporter"]
+    tied = apply_reconciliation(entities, {"Sorento": {"transporter": 2, "customer": 2}})
+    assert [o["entity_type"] for o in tied.kind_pick_options] == ["customer", "transporter"]
+    reversed_strength = apply_reconciliation(entities, {"Sorento": {"customer": 1, "transporter": 4}})
+    assert [o["entity_type"] for o in reversed_strength.kind_pick_options] == ["transporter", "customer"]
