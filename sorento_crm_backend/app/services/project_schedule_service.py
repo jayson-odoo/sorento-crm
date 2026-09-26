@@ -793,18 +793,26 @@ class ProjectScheduleService:
 
     def document_url(self, version: DeliveryScheduleVersion) -> Optional[str]:
         """A signed URL for the side-by-side viewer. Never a stored signed URL: they
-        expire, and a detail page that 403s a week later reads as lost data."""
+        expire, and a detail page that 403s a week later reads as lost data.
+
+        None, never a URL the viewer cannot show: the Documents tab's R13 state only fires
+        on a falsy value. An attachment row can outlive its object, and an unsigned raw
+        path 403s at the CDN; either one in an iframe is the storage error page (review
+        of #1265, S2; the PO screen's own gate is #1237 B1)."""
         if not version.attachment_id:
             return None
         from app.models.resources import Attachment
-        from app.services.storage_router import resolve_signed_url
+        from app.services.storage_router import extract_key, get_backend, resolve_signed_url
 
         attachment = self.db.get(Attachment, version.attachment_id)
         if attachment is None or not attachment.file_path:
             return None
         try:
+            key = extract_key(attachment.file_path)
+            if not key or not get_backend(attachment.storage_provider).file_exists(key):
+                return None
             return resolve_signed_url(
-                attachment.file_path, provider=attachment.storage_provider
+                attachment.file_path, provider=attachment.storage_provider, strict=True
             )
         except Exception:  # noqa: BLE001 - a missing preview must not 500 the page
             logger.warning(
@@ -2668,6 +2676,7 @@ class ProjectScheduleService:
                     stale_orders[0], version.id
                 )
 
+        document_url = self.document_url(version)
         return {
             "id": str(version.id),
             "delivery_schedule_id": str(version.delivery_schedule_id),
@@ -2692,7 +2701,11 @@ class ProjectScheduleService:
             ),
             "page_count": extracted.get("page_count"),
             "pages_extracted": len(extracted.get("pages") or []),
-            "document_url": self.document_url(version),
+            "document_url": document_url,
+            # The in-app PDF viewer reads the bytes through the authenticated
+            # `/attachments/{id}/download` route: the signed URL is cross-origin and the
+            # bucket sends no CORS headers, so a script cannot read it (as the PO screen).
+            "attachment_id": str(version.attachment_id) if document_url else None,
             "schedule_date": version.schedule_date.isoformat() if version.schedule_date else None,
             "phases": phases,
             "products": products,
