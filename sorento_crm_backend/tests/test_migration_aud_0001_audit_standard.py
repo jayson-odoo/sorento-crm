@@ -24,8 +24,7 @@ BACKEND = Path(__file__).resolve().parents[1]
 VERSIONS = BACKEND / "alembic" / "versions"
 REVISION = "aud_0001_audit_standard_s0"
 NEW_COLUMNS = {
-    "root_entity_type", "root_entity_id", "event", "principal_type", "principal_id",
-    "on_behalf_of_user_id", "source", "reason", "correlation_id",
+    "root_entity_type", "root_entity_id", "event", "source", "reason", "correlation_id",
 }
 
 

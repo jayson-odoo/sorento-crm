@@ -1,33 +1,180 @@
-"""Request-scoped audit context for automatic audit logging (#1281 S0).
+"""Request-, job- and tick-scoped audit actor for automatic audit logging.
 
-One mutable ``AuditContext`` object per request (or job run, or scheduler tick) lives in a
-contextvar. ``LoggingMiddleware`` puts a fresh one there at the start of every request, and every
-auth dependency MUTATES it rather than calling ``.set()``. That is the point of the object:
-FastAPI runs a sync dependency (``get_current_user_or_api_key``) on a COPIED context in a
-threadpool, so a ``.set()`` made there never reached the endpoint and every audited write behind
-an API key recorded ``user_id = NULL``. A copied context still holds a reference to the same
-object, so a mutation is visible everywhere the request runs.
+One ``AuditActor`` says who did a write (identity S0, #1280; plan section 8):
 
-It holds the *real* user id (always the authenticated principal) plus the *effective* user id
-(the impersonation target when active, otherwise the same). Audit rows and ``created_by`` /
-``updated_by`` columns track the real user; authorization uses the effective one.
+- ``user_id`` is the EFFECTIVE actor (the impersonation target when an admin is
+  impersonating), ``real_user_id`` is who was at the keyboard. They differ only
+  under impersonation; ``created_by`` / ``updated_by`` columns keep the effective
+  user and ``real_user_id`` records the admin (plan 8.2).
+- ``actor_type`` is user | contact | integration | worker | scheduler |
+  public_link | system.
 
-The old function API (``set_audit_context``, ``get_audit_context``, ``set_trace_id``, ...) is
-kept as thin wrappers over the object, so its callers did not change.
+Carriers. ``stamp_actor`` writes the actor to three places at once:
+
+- the contextvar, for code on the same context (async dependencies, the path op,
+  an RQ job run in-process, a scheduler tick);
+- ``db.info["audit_actor"]``, which lives on the Session object and so survives
+  FastAPI running a sync dependency in a different threadpool thread from the
+  path op and the flush (the AC-12 gap);
+- ``request.state.audit_actor``, read by the API call log middleware.
+
+``get_actor(db)`` prefers ``db.info`` over the contextvar.
+
+``get_audit_context`` is the one older reader kept, for its service callers.
+
+Audit standard S0 (#1281) adds no actor of its own: WHO acted is always the ``AuditActor``
+above (plan section 8 of PLAN-unified-identity-26sep.md is the actor contract). S0 adds only
+the BUSINESS action around it, an ``AuditContext``: the ``@audit_event`` verb, the reason,
+the channel (``source``) and the ``correlation_id`` that ties one action's rows together
+across the request and its jobs. ``LoggingMiddleware`` puts a fresh one in a contextvar at
+the start of every request and code MUTATES it rather than calling ``.set()``: a sync
+dependency runs on a COPIED context in a threadpool, and a copy still holds the same object.
 """
 from __future__ import annotations
 
 import contextvars
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass, field
-from typing import Iterator, Optional
+from dataclasses import dataclass, field
+from typing import Any, Iterator, Optional
 
-# Every id column on audit_logs is String(64); an inbound header is caller-controlled.
-_ID_MAX = 64
+ACTOR_TYPES = ("user", "contact", "integration", "worker", "scheduler", "public_link", "system")
+
+_USER_AGENT_MAX = 512
+_DB_INFO_KEY = "audit_actor"
+
+
+@dataclass
+class AuditActor:
+    actor_type: str  # user | contact | integration | worker | scheduler | public_link | system
+    user_id: Optional[str] = None  # effective actor
+    real_user_id: Optional[str] = None  # at the keyboard; equals user_id unless impersonating
+    auth_method: Optional[str] = None  # password | phone_otp | portal_link | portal_token | api_key | impersonation
+    session_id: Optional[str] = None
+    integration_id: Optional[str] = None
+    contact_id: Optional[str] = None
+    job_id: Optional[str] = None
+    ip_address: Optional[str] = None
+    user_agent: Optional[str] = None  # truncated to 512
+    tool_name: Optional[str] = None  # MCP X-Tool-Name, written into description when the row has none
+
+    def __post_init__(self) -> None:
+        if self.user_agent is not None:
+            self.user_agent = str(self.user_agent)[:_USER_AGENT_MAX] or None
+
+
+_actor: contextvars.ContextVar[Optional[AuditActor]] = contextvars.ContextVar(
+    "audit_actor", default=None
+)
+
+
+def stamp_actor(actor: AuditActor, *, db: Any = None, request: Any = None) -> None:
+    """Record ``actor`` as the author of every audited write that follows."""
+    _actor.set(actor)
+    if db is not None:
+        try:
+            db.info[_DB_INFO_KEY] = actor
+        except Exception:
+            pass
+    if request is not None:
+        try:
+            request.state.audit_actor = actor
+        except Exception:
+            pass
+
+
+def get_actor(db: Any = None) -> Optional[AuditActor]:
+    """The current actor. ``db.info["audit_actor"]`` wins over the contextvar."""
+    if db is not None:
+        try:
+            stamped = db.info.get(_DB_INFO_KEY)
+        except Exception:
+            stamped = None
+        if stamped is not None:
+            return stamped
+    return _actor.get()
+
+
+def clear_actor(db: Any = None) -> None:
+    """Forget the stamped actor (the contextvar, and ``db.info`` when given)."""
+    _actor.set(None)
+    if db is not None:
+        try:
+            db.info.pop(_DB_INFO_KEY, None)
+        except Exception:
+            pass
+
+
+@contextmanager
+def actor_scope(actor: AuditActor, *, db: Any = None) -> Iterator[AuditActor]:
+    """Stamp ``actor`` for the body, then restore whatever was stamped before.
+
+    For jobs and ticks, which run on long-lived threads: without the restore, a
+    worker or scheduler actor would outlive its job on that thread.
+    """
+    token = _actor.set(actor)
+    previous_db_actor = None
+    if db is not None:
+        previous_db_actor = db.info.get(_DB_INFO_KEY)
+        db.info[_DB_INFO_KEY] = actor
+    try:
+        yield actor
+    finally:
+        _actor.reset(token)
+        if db is not None:
+            if previous_db_actor is None:
+                db.info.pop(_DB_INFO_KEY, None)
+            else:
+                db.info[_DB_INFO_KEY] = previous_db_actor
+
+
+# --------------------------------------------------------------------------- #
+# Older reader, kept for its service callers.                                  #
+# --------------------------------------------------------------------------- #
+def get_audit_context() -> tuple[Optional[str], Optional[str]]:
+    """Return (user_id, ip_address): the effective actor, as audit rows record it."""
+    actor = _actor.get()
+    if actor is None:
+        return None, None
+    return actor.user_id, actor.ip_address
+
+
+# Per-request correlation id (Sub-plan D Tier-2). The LoggingMiddleware stamps one
+# id per request (a job carries its enqueuer's); the audit listener copies it onto
+# every AuditLog row so all changes from one action are correlatable.
+_trace_id: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+    "audit_trace_id", default=None
+)
+
+
+def set_trace_id(trace_id: Optional[str]) -> None:
+    """Set the current request's trace/correlation id."""
+    _trace_id.set(trace_id)
+
+
+def get_trace_id() -> Optional[str]:
+    """Return the current request's trace/correlation id (None outside a request)."""
+    return _trace_id.get()
+
+
+# --------------------------------------------------------------------------- #
+# Audit standard S0 (#1281): the business action around the actor.            #
+# --------------------------------------------------------------------------- #
+_ID_MAX = 64  # correlation_id is String(64); an inbound header is caller-controlled
 
 # API-key integration type -> audit source. Anything unlisted is a generic external caller.
 _SOURCE_BY_INTEGRATION_TYPE = {"automation": "n8n", "mcp": "mcp"}
 _CHATBOT_PATH_PREFIX = "/api/v1/external/chat/"  # not /chat-history
+
+# Channel when nothing more specific was recorded, by the actor's type.
+_SOURCE_BY_ACTOR_TYPE = {
+    "user": "ui",
+    "contact": "portal",
+    "integration": "external_api",
+    "worker": "worker",
+    "scheduler": "scheduler",
+    "public_link": "public_link",
+}
+_PORTAL_AUTH_METHODS = ("portal_link", "portal_token")
 
 
 def _clamp(value: Optional[str]) -> Optional[str]:
@@ -39,14 +186,10 @@ def _clamp(value: Optional[str]) -> Optional[str]:
 
 @dataclass
 class AuditContext:
-    user_id: Optional[str] = None
-    effective_user_id: Optional[str] = None
-    ip_address: Optional[str] = None
-    contact_id: Optional[str] = None
-    principal_type: Optional[str] = None
-    principal_id: Optional[str] = None
+    # ui | portal | chatbot | mcp | n8n | external_api | import | worker | scheduler |
+    # public_link. Set where it is known (an integration key, the portal, a job's queue),
+    # else derived from the actor by ``source_for``. Never read from a caller header.
     source: Optional[str] = None
-    request_id: Optional[str] = None
     correlation_id: Optional[str] = None
     reason: Optional[str] = None
     event: Optional[str] = None
@@ -58,20 +201,14 @@ class AuditContext:
     # ``@audit_event`` decorator can tell which ids got no row. Not carried into jobs.
     event_hits: set = field(default_factory=set, repr=False)
 
-    @property
-    def on_behalf_of_user_id(self) -> Optional[str]:
-        if self.effective_user_id and self.effective_user_id != self.user_id:
-            return self.effective_user_id
-        return None
-
 
 _ctx: contextvars.ContextVar[Optional[AuditContext]] = contextvars.ContextVar(
-    "audit_context", default=None
+    "audit_business_context", default=None
 )
 
 
 def current_audit_context() -> Optional[AuditContext]:
-    """The context of the current request / job / tick, or None outside all of them."""
+    """The business context of the current request / job / tick, or None outside them."""
     return _ctx.get()
 
 
@@ -88,9 +225,8 @@ def _ensure() -> AuditContext:
 @contextmanager
 def audit_context_scope(**fields) -> Iterator[AuditContext]:
     """Run the block under a fresh ``AuditContext``; the previous one comes back after."""
-    for key in ("request_id", "correlation_id"):
-        if key in fields:
-            fields[key] = _clamp(fields[key])
+    if "correlation_id" in fields:
+        fields["correlation_id"] = _clamp(fields["correlation_id"])
     token = _ctx.set(AuditContext(**fields))
     try:
         yield _ctx.get()
@@ -98,56 +234,21 @@ def audit_context_scope(**fields) -> Iterator[AuditContext]:
         _ctx.reset(token)
 
 
-def start_request_context(
-    ip_address: Optional[str], request_id: str, correlation_id: Optional[str] = None
-) -> AuditContext:
+def start_request_context(correlation_id: Optional[str] = None) -> AuditContext:
     """Called once per request by ``LoggingMiddleware``: a fresh object, never a shared one.
 
-    ``correlation_id`` is the caller's X-Correlation-Id; it is trusted only after an API key
-    authenticates (``set_api_key_principal``). Until then the correlation id is the request id.
+    ``correlation_id`` is the caller's X-Correlation-Id; it is trusted only after an
+    integration key authenticates (``mark_integration_request``). Until then a row's
+    correlation id is the request's trace id.
     """
-    request_id = _clamp(request_id)
-    ctx = AuditContext(
-        ip_address=ip_address,
-        request_id=request_id,
-        correlation_id=request_id,
-        inbound_correlation_id=_clamp(correlation_id),
-    )
+    ctx = AuditContext(inbound_correlation_id=_clamp(correlation_id))
     _ctx.set(ctx)
     return ctx
 
 
-def set_audit_context(
-    user_id: Optional[str],
-    ip_address: Optional[str],
-    effective_user_id: Optional[str] = None,
-) -> None:
-    """Record the authenticated staff user. ``user_id`` is the real (audit) actor.
-
-    ``effective_user_id`` is the impersonation target when active; defaults to ``user_id``.
-    """
+def mark_integration_request(integration_type: Optional[str], path: Optional[str] = None) -> None:
+    """An integration key authenticated: derive the channel and trust its correlation id."""
     ctx = _ensure()
-    ctx.user_id = user_id
-    ctx.ip_address = ip_address
-    ctx.effective_user_id = effective_user_id or user_id
-    if user_id:
-        # A job or tick that names a user keeps its own principal: the worker still did it.
-        if ctx.principal_type not in ("api_key", "worker", "scheduler"):
-            ctx.principal_type = "user"
-            ctx.principal_id = str(user_id)
-            ctx.source = ctx.source or "ui"
-    elif ctx.principal_type in ("user", "api_key"):
-        ctx.principal_type = ctx.principal_id = ctx.source = None
-
-
-def set_api_key_principal(
-    integration_id: Optional[str], integration_type: Optional[str], path: Optional[str] = None
-) -> None:
-    """Record that an integration key authenticated. Source is derived here, never taken from
-    the caller's ``X-Source`` header."""
-    ctx = _ensure()
-    ctx.principal_type = "api_key"
-    ctx.principal_id = str(integration_id) if integration_id else None
     if ctx.inbound_correlation_id:
         ctx.correlation_id = ctx.inbound_correlation_id
     if path and path.startswith(_CHATBOT_PATH_PREFIX):
@@ -156,84 +257,34 @@ def set_api_key_principal(
         ctx.source = _SOURCE_BY_INTEGRATION_TYPE.get(integration_type or "", "external_api")
 
 
-def get_audit_context() -> tuple[Optional[str], Optional[str]]:
-    """Return (real_user_id, ip_address). Used by the audit event listener."""
-    ctx = _ctx.get()
-    return (ctx.user_id, ctx.ip_address) if ctx else (None, None)
+def set_source(source: Optional[str]) -> None:
+    """Record the channel of the current request where the route knows it (the portal)."""
+    _ensure().source = source
 
 
-def get_real_and_effective_user_ids() -> tuple[Optional[str], Optional[str]]:
-    """Return (real_user_id, effective_user_id) for the current request."""
-    ctx = _ctx.get()
-    return (ctx.user_id, ctx.effective_user_id) if ctx else (None, None)
+def source_for(actor: Optional[AuditActor], ctx: Optional[AuditContext]) -> Optional[str]:
+    """The channel a row is stamped with: the recorded one, else derived from the actor."""
+    if ctx is not None and ctx.source:
+        return ctx.source
+    if actor is None:
+        return None
+    if actor.auth_method in _PORTAL_AUTH_METHODS:
+        return "portal"
+    return _SOURCE_BY_ACTOR_TYPE.get(actor.actor_type)
 
 
-def set_trace_id(trace_id: Optional[str]) -> None:
-    """Set the current request id (``audit_logs.trace_id``), clamped to the column width."""
-    _ensure().request_id = _clamp(trace_id)
-
-
-def get_trace_id() -> Optional[str]:
-    """Return the current request id (None outside a request)."""
-    ctx = _ctx.get()
-    return ctx.request_id if ctx else None
-
-
-def set_actor_contact_id(contact_id: Optional[str]) -> None:
-    """Set the acting portal contact (respond_contacts.id) for the current request.
-
-    A contact is the principal only when no staff user authenticated: an admin impersonating a
-    contact in the portal stays the principal (``contact_impersonation.py``).
-    """
-    ctx = _ensure()
-    ctx.contact_id = contact_id
-    if contact_id:
-        ctx.source = "portal"
-        if not ctx.user_id:
-            ctx.principal_type = "contact"
-            ctx.principal_id = str(contact_id)
-    elif ctx.principal_type == "contact":
-        ctx.principal_type = ctx.principal_id = None
-        ctx.source = None
-
-
-def get_actor_contact_id() -> Optional[str]:
-    """Return the acting contact id for the current request (None if not a contact write)."""
-    ctx = _ctx.get()
-    return ctx.contact_id if ctx else None
+def correlation_for(ctx: Optional[AuditContext]) -> Optional[str]:
+    """One id per business action: a trusted inbound or inherited one, else the trace id."""
+    if ctx is not None and ctx.correlation_id:
+        return ctx.correlation_id
+    return _clamp(get_trace_id())
 
 
 # --- Jobs -------------------------------------------------------------------------
 
-_JOB_FIELDS = ("user_id", "effective_user_id", "contact_id", "correlation_id", "request_id")
 
-
-def snapshot_for_job() -> dict:
-    """What an enqueued job inherits from the request that queued it."""
-    ctx = _ctx.get()
-    if ctx is None:
-        return {}
-    data = asdict(ctx)
-    return {k: data[k] for k in _JOB_FIELDS if data.get(k) is not None}
-
-
-@contextmanager
-def restore_from_job_meta(meta: Optional[dict], queue_name: str, job_id: str) -> Iterator[AuditContext]:
-    """Run a job under the context its request stamped into ``job.meta``.
-
-    The person and the business action carry over (user, on-behalf-of, contact, correlation
-    id); the principal becomes the worker, the request id becomes the job id.
-    """
-    data = (meta or {}).get("audit_context") or {}
-    job_id = _clamp(job_id)
-    with audit_context_scope(
-        user_id=data.get("user_id"),
-        effective_user_id=data.get("effective_user_id") or data.get("user_id"),
-        contact_id=data.get("contact_id"),
-        principal_type="worker",
-        principal_id=queue_name,
-        source="import" if queue_name == "imports" else "worker",
-        request_id=job_id,
-        correlation_id=data.get("correlation_id") or job_id,
-    ) as ctx:
-        yield ctx
+def business_meta_for_job() -> dict:
+    """What an enqueued job inherits of the business action (the actor rides separately,
+    in ``job.meta["actor"]``): the correlation id, so the job's rows join its request's."""
+    correlation_id = correlation_for(_ctx.get())
+    return {"correlation_id": correlation_id} if correlation_id else {}

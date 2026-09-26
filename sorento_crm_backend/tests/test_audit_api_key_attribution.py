@@ -4,7 +4,8 @@
 threadpool, so the old `set_audit_context(...)` inside it (a contextvar `.set()`) was lost before
 the endpoint ran, and every audited write behind it recorded `user_id = NULL`. The report on
 #1281 inferred this from the code; this test drives the real dependency with a real integration
-key to prove it and to pin the fix (the mutable `AuditContext`).
+key to prove it and to pin the fix (#1303's actor on `db.info`, and S0's mutable `AuditContext`
+for the channel and correlation id).
 """
 from __future__ import annotations
 
@@ -15,7 +16,7 @@ from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
 import app.main  # noqa: F401
-from app.audit_context import set_actor_contact_id, set_audit_context, set_trace_id
+from app.audit_context import clear_actor, set_trace_id
 from app.database import get_db
 from app.dependencies import get_current_user_or_api_key
 from app.middleware.logging_middleware import LoggingMiddleware
@@ -35,9 +36,8 @@ def _listeners():
     register_company_scope_listeners()
     register_audit_listeners()
     yield
-    set_audit_context(None, None)
+    clear_actor()
     set_trace_id(None)
-    set_actor_contact_id(None)
 
 
 def _app(db, made):
@@ -89,8 +89,9 @@ def test_ac_s0_11_api_key_write_names_the_key_and_its_user(integration_type, pat
         assert r.status_code == 200, r.text
 
         (row,) = db.query(AuditLog).filter(AuditLog.entity_id == made["id"]).all()
-        assert row.user_id == principal.id
-        assert (row.principal_type, row.principal_id) == ("api_key", integration.id)
+        assert (row.user_id, row.real_user_id) == (principal.id, principal.id)
+        # Identity plan 8.1 (#1303): the integration row behind the key, as `integration`.
+        assert (row.actor_type, row.integration_id, row.auth_method) == ("integration", integration.id, "api_key")
         assert row.source == source
 
 

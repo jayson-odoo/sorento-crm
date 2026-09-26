@@ -17,13 +17,17 @@ from sqlalchemy import delete, select, text, update
 
 import app.main  # noqa: F401  register every model and the app's listeners
 from app.audit_context import (
+    AuditActor,
+    actor_scope,
     audit_context_scope,
+    business_meta_for_job,
+    clear_actor,
     current_audit_context,
-    restore_from_job_meta,
-    set_actor_contact_id,
-    set_audit_context,
+    get_actor,
+    mark_integration_request,
     set_trace_id,
-    snapshot_for_job,
+    stamp_actor,
+    start_request_context,
 )
 from app.database import Base
 from app.models.audit import AuditLog
@@ -55,9 +59,8 @@ def _listeners():
 @pytest.fixture(autouse=True)
 def _no_leaked_context():
     yield
-    set_audit_context(None, None)
+    clear_actor()
     set_trace_id(None)
-    set_actor_contact_id(None)
 
 
 @pytest.fixture()
@@ -286,65 +289,85 @@ class TestBulkDml:
         assert _rows(db, a.id, "UPDATE") == []
 
 
-# --- Context, principal and source ----------------------------------------------
+# --- Context: the actor is identity S0's (#1303, plan section 8) ---------------------
+
+
+def _user(user_id, ip=None):
+    return AuditActor(actor_type="user", user_id=user_id, real_user_id=user_id, auth_method="password", ip_address=ip)
 
 
 class TestContext:
     def test_ac_s0_10_a_sync_dependency_mutation_reaches_the_endpoint(self, db):
-        """The `get_current_user_or_api_key` shape: sync dependency, sync endpoint."""
+        """The shape S0 fixed: a sync dependency runs on a COPIED context in a threadpool. The
+        business context it mutates (source, correlation id) still reaches the endpoint."""
         from fastapi import Depends, FastAPI
         from fastapi.testclient import TestClient
 
-        from app.audit_context import get_audit_context
         from app.middleware.logging_middleware import LoggingMiddleware
 
-        actor = str(uuid.uuid4())
         probe = FastAPI()
         probe.add_middleware(LoggingMiddleware)
 
         def dep():
-            set_audit_context(actor, "10.0.0.9")
-            return actor
+            mark_integration_request("mcp", "/api/v1/master-data/x")
+            return True
 
         @probe.get("/probe")
         def endpoint(_=Depends(dep)):
-            return {"user": get_audit_context()[0]}
+            ctx = current_audit_context()
+            return {"source": ctx.source, "corr": ctx.correlation_id}
 
-        assert TestClient(probe).get("/probe").json() == {"user": actor}
+        r = TestClient(probe).get("/probe", headers={"X-Correlation-Id": "corr-dep"})
+        assert r.json() == {"source": "mcp", "corr": "corr-dep"}
 
     def test_ac_s0_12_jwt_principal_and_source(self, db):
         user_id = str(uuid.uuid4())
-        with audit_context_scope(ip_address="1.2.3.4"):
-            set_audit_context(user_id, "1.2.3.4")
+        with audit_context_scope():
+            stamp_actor(_user(user_id, "1.2.3.4"))
             b = _brand(db)
         (row,) = _rows(db, b.id)
-        assert row.user_id == user_id
-        assert (row.principal_type, row.principal_id, row.source) == ("user", user_id, "ui")
-        assert row.on_behalf_of_user_id is None
+        assert (row.user_id, row.real_user_id) == (user_id, user_id)
+        assert (row.actor_type, row.auth_method, row.source) == ("user", "password", "ui")
+        assert row.ip_address == "1.2.3.4"
 
     def test_ac_s0_12_impersonation_names_both(self, db):
+        """Identity plan 8.1: user_id is the TARGET (effective), real_user_id the admin."""
         admin, target = str(uuid.uuid4()), str(uuid.uuid4())
         with audit_context_scope():
-            set_audit_context(admin, None, effective_user_id=target)
+            stamp_actor(AuditActor(actor_type="user", user_id=target, real_user_id=admin, auth_method="impersonation"))
             b = _brand(db)
         (row,) = _rows(db, b.id)
-        assert row.user_id == admin
-        assert row.on_behalf_of_user_id == target
+        assert (row.user_id, row.real_user_id, row.auth_method) == (target, admin, "impersonation")
+
+    def test_ac_s0_12_impersonation_bulk_and_after_flush_rows_carry_the_actor(self, db):
+        """The Core INSERT paths (after-flush CREATE, bulk DML) stamp the same actor columns
+        as log_audit, so no row misses #1303's columns (review B2)."""
+        admin, target = str(uuid.uuid4()), str(uuid.uuid4())
+        integ = str(uuid.uuid4())
+        with audit_context_scope():
+            stamp_actor(AuditActor(
+                actor_type="integration", user_id=target, real_user_id=admin, auth_method="api_key",
+                integration_id=integ, session_id=None, user_agent="probe-agent",
+            ))
+            b = _brand(db)  # Brand's key is DB-generated: the after-flush CREATE path
+            db.query(Brand).filter(Brand.id == b.id).update({"manufacturer": "Z"}, synchronize_session=False)
+        for row in _rows(db, b.id):
+            assert (row.user_id, row.real_user_id, row.actor_type) == (target, admin, "integration"), row.action
+            assert (row.integration_id, row.auth_method, row.user_agent) == (integ, "api_key", "probe-agent")
 
     def test_ac_s0_13_portal_contact(self, db):
         contact = str(uuid.uuid4())
         with audit_context_scope():
-            set_actor_contact_id(contact)
+            stamp_actor(AuditActor(actor_type="contact", contact_id=contact, auth_method="portal_token"))
             b = _brand(db)
         (row,) = _rows(db, b.id)
-        assert (row.principal_type, row.principal_id, row.source) == ("contact", contact, "portal")
-        assert row.contact_id == contact
+        assert (row.actor_type, row.contact_id, row.source) == ("contact", contact, "portal")
+        assert row.user_id is None
 
-    def test_ac_s0_14_long_trace_id_is_clamped_and_correlation_header_kept(self, db):
+    def test_ac_s0_14_long_trace_id_is_replaced_and_correlation_header_kept(self, db):
         from fastapi import Depends, FastAPI
         from fastapi.testclient import TestClient
 
-        from app.database import get_db
         from app.middleware.logging_middleware import LoggingMiddleware
 
         probe = FastAPI()
@@ -362,19 +385,16 @@ class TestContext:
         client = TestClient(probe)
         client.post("/w", headers={"X-Trace-Id": "t" * 200, "X-Correlation-Id": "corr-1"})
         (row,) = _rows(db, made["id"])
-        assert row.trace_id == "t" * 64
+        # #1303 mints a fresh id for anything but a plain token of at most 64 characters.
+        assert row.trace_id and row.trace_id != "t" * 200 and len(row.trace_id) <= 64
         # No integration key authenticated, so the caller's correlation id is not trusted
         # (security review S2): it cannot stitch this write into another action.
-        assert row.correlation_id == "t" * 64
-        client.post("/w")
-        (row2,) = _rows(db, made["id"])
-        assert row2.trace_id and row2.correlation_id == row2.trace_id
-        assert get_db  # imported for parity with the real app's dependency
+        assert row.correlation_id == row.trace_id
 
     def test_ac_s0_15_no_context_is_system(self, db):
         b = _brand(db)
         (row,) = _rows(db, b.id)
-        assert row.principal_type == "system"
+        assert row.actor_type == "system"
         assert row.user_id is None
 
     def test_ac_s0_15_scheduler_session_stamps_scheduler(self, db):
@@ -382,12 +402,13 @@ class TestContext:
 
         with patch.object(task_scheduler, "SessionLocal", return_value=db), \
                 patch.object(db, "close"):
-            with task_scheduler.scheduler_session() as s:
+            with task_scheduler.scheduler_session("probe_tick") as s:
                 b = _brand(s)
-                assert current_audit_context().source == "scheduler"
+                corr = current_audit_context().correlation_id
         (row,) = _rows(db, b.id)
-        assert (row.principal_type, row.source) == ("scheduler", "scheduler")
-        assert row.trace_id
+        assert (row.actor_type, row.job_id, row.source) == ("scheduler", "probe_tick", "scheduler")
+        assert row.user_id is None
+        assert row.correlation_id == corr and corr
 
 
 # --- Worker ------------------------------------------------------------------------
@@ -399,47 +420,50 @@ class TestWorker:
 
         user_id = str(uuid.uuid4())
         fake_queue = MagicMock()
-        with audit_context_scope(request_id="req-1", correlation_id="corr-9"):
-            set_audit_context(user_id, None)
+        with audit_context_scope(correlation_id="corr-9"), actor_scope(_user(user_id)):
             with patch.object(queue_service, "get_queue", return_value=fake_queue):
                 queue_service.enqueue_job(print, "x", queue_name="imports")
-        meta = fake_queue.enqueue.call_args.kwargs["meta"]["audit_context"]
-        assert meta["user_id"] == user_id
-        assert meta["correlation_id"] == "corr-9"
+        meta = fake_queue.enqueue.call_args.kwargs["meta"]
+        assert meta["actor"]["user_id"] == user_id
+        assert meta["audit_context"] == {"correlation_id": "corr-9"}
 
     def test_ac_s0_16_the_job_writes_as_the_requesting_user(self, db):
+        from app.services.queue_service import job_actor_scope
+
         user_id = str(uuid.uuid4())
-        with audit_context_scope(request_id="req-2", correlation_id="corr-2"):
-            set_audit_context(user_id, None)
-            meta = {"audit_context": snapshot_for_job()}
-        with restore_from_job_meta(meta, queue_name="imports", job_id="job-123"):
+        with audit_context_scope(correlation_id="corr-2"), actor_scope(_user(user_id)):
+            meta = {"actor": {"user_id": user_id, "real_user_id": user_id}, "audit_context": business_meta_for_job()}
+        job = MagicMock(id="job-123", origin="imports", meta=meta)
+        with job_actor_scope(job):
             b = _brand(db)
         (row,) = _rows(db, b.id)
-        assert row.user_id == user_id
+        assert (row.user_id, row.real_user_id) == (user_id, user_id)
         assert row.correlation_id == "corr-2"
-        assert (row.principal_type, row.source, row.trace_id) == ("worker", "import", "job-123")
-        with restore_from_job_meta({}, queue_name="respond_io", job_id="job-9"):
+        assert (row.actor_type, row.source, row.job_id) == ("worker", "import", "job-123")
+        job2 = MagicMock(id="job-9", origin="respond_io", meta={})
+        with job_actor_scope(job2):
             c = _brand(db)
         (row2,) = _rows(db, c.id)
-        assert (row2.source, row2.correlation_id) == ("worker", "job-9")
+        assert (row2.source, row2.correlation_id, row2.job_id) == ("worker", "job-9", "job-9")
 
     def test_ac_s0_16_perform_job_restores_the_context(self):
         code = (
             "import worker\n"
             "from unittest.mock import patch, MagicMock\n"
             "from rq import Worker\n"
-            "from app.audit_context import current_audit_context\n"
+            "from app.audit_context import current_audit_context, get_actor\n"
             "def fake(self, job, queue):\n"
-            "    c = current_audit_context()\n"
-            "    print(c.user_id, c.source, c.request_id)\n"
-            "job = MagicMock(); job.id = 'jid-7'; job.meta = {'audit_context': {'user_id': 'u-7'}}\n"
+            "    c, a = current_audit_context(), get_actor()\n"
+            "    print(a.user_id, a.actor_type, c.source, c.correlation_id)\n"
+            "job = MagicMock(); job.id = 'jid-7'; job.origin = 'imports'\n"
+            "job.meta = {'actor': {'user_id': 'u-7'}, 'audit_context': {'correlation_id': 'c-7'}}\n"
             "queue = MagicMock(); queue.name = 'imports'\n"
             "with patch.object(Worker, 'perform_job', fake):\n"
             "    worker.ForkSafeWorker.perform_job(object.__new__(worker.ForkSafeWorker), job, queue)\n"
         )
         out = _fresh(code)
         assert out.returncode == 0, out.stderr
-        assert out.stdout.strip().splitlines()[-1] == "u-7 import jid-7"
+        assert out.stdout.strip().splitlines()[-1] == "u-7 worker import c-7"
 
     def test_ac_s0_16_in_process_drain_restores_the_context(self):
         from app.services import queue_service
@@ -447,11 +471,12 @@ class TestWorker:
         seen = {}
 
         def task():
-            seen["ctx"] = current_audit_context()
+            seen["ctx"], seen["actor"] = current_audit_context(), get_actor()
 
         job = MagicMock()
         job.id = "jid-8"
-        job.meta = {"audit_context": {"user_id": "u-8", "correlation_id": "c-8"}}
+        job.origin = "notifications"
+        job.meta = {"actor": {"user_id": "u-8"}, "audit_context": {"correlation_id": "c-8"}}
         job.func = task
         job.args, job.kwargs = (), {}
         from rq.job import JobStatus
@@ -462,8 +487,9 @@ class TestWorker:
         with patch.object(queue_service, "get_queue", return_value=q), \
                 patch.object(queue_service.Job, "fetch", return_value=job):
             queue_service.run_sync_rq_jobs("notifications", 2)
-        ctx = seen["ctx"]
-        assert (ctx.user_id, ctx.correlation_id, ctx.source, ctx.request_id) == ("u-8", "c-8", "worker", "jid-8")
+        ctx, actor = seen["ctx"], seen["actor"]
+        assert (actor.user_id, actor.actor_type, actor.job_id) == ("u-8", "worker", "jid-8")
+        assert (ctx.correlation_id, ctx.source) == ("c-8", "worker")
 
     def test_ac_s0_17_worker_registers_the_audit_listeners(self):
         out = _fresh(
@@ -540,13 +566,14 @@ class TestBusinessVerbs:
     def test_ac_s0_19_record_writes_an_event_row_with_context(self, db):
         user_id = str(uuid.uuid4())
         eid = str(uuid.uuid4())
-        with audit_context_scope(request_id="req-r"):
-            set_audit_context(user_id, "9.9.9.9")
+        set_trace_id("req-r")
+        with audit_context_scope(), actor_scope(_user(user_id, "9.9.9.9")):
             record(db, event="attachment.download", entity_type="attachment", entity_id=eid, reason="audit pull")
         (row,) = _rows(db, eid)
         assert (row.action, row.event, row.user_id, row.trace_id, row.reason) == (
             "EVENT", "attachment.download", user_id, "req-r", "audit pull"
         )
+        assert row.actor_type == "user"
         assert row.ip_address == "9.9.9.9"
 
 
@@ -615,17 +642,19 @@ def test_ac_s0_23_the_response_schema_carries_the_new_fields():
         id=str(uuid.uuid4()), entity_type="brands", entity_id="b1", action="EVENT",
         changed_at=__import__("datetime").datetime(2026, 9, 26), trace_id="req-1",
         correlation_id="corr-1", event="x.y.z", source="ui", reason="why",
-        principal_type="user", principal_id="u1", on_behalf_of_user_id=None,
+        actor_type="user", real_user_id=None,
         root_entity_type="brands", root_entity_id="b1",
     )
     dumped = AuditLogResponse.model_validate(row).model_dump()
     for key, value in {
         "request_id": "req-1", "correlation_id": "corr-1", "event": "x.y.z", "source": "ui",
-        "reason": "why", "principal_type": "user", "principal_id": "u1",
+        "reason": "why", "actor_type": "user",
         "root_entity_type": "brands", "root_entity_id": "b1",
     }.items():
         assert dumped[key] == value, key
-    assert "on_behalf_of_user_id" in dumped
+    # One actor model: S0's own actor fields are gone (review B2).
+    for gone in ("principal_type", "principal_id", "on_behalf_of_user_id"):
+        assert gone not in dumped
 
 
 def test_ac_s0_23_the_list_route_returns_the_new_fields(db):
@@ -636,7 +665,8 @@ def test_ac_s0_23_the_list_route_returns_the_new_fields(db):
     from app.main import app as real_app
 
     eid = str(uuid.uuid4())
-    with audit_context_scope(request_id="req-api", correlation_id="corr-api"):
+    set_trace_id("req-api")
+    with audit_context_scope(correlation_id="corr-api"):
         record(db, event="probe.api", entity_type="probe", entity_id=eid, reason="r")
 
     def _db():
@@ -723,14 +753,15 @@ class TestReviewRound1:
         assert getattr(ApiCallLog, "__audit_skip__", None)
 
     def test_s2_an_inbound_correlation_id_is_trusted_only_for_an_api_key(self, db):
-        from app.audit_context import set_api_key_principal, start_request_context
+        from app.audit_context import correlation_for
 
         with audit_context_scope():
-            ctx = start_request_context("1.1.1.1", "req-x", "someone-elses-action")
-            set_audit_context(str(uuid.uuid4()), "1.1.1.1")
-            assert ctx.correlation_id == "req-x"
-            set_api_key_principal("int-1", "mcp", "/api/v1/master-data/x")
-            assert ctx.correlation_id == "someone-elses-action"
+            set_trace_id("req-x")
+            ctx = start_request_context("someone-elses-action")
+            stamp_actor(_user(str(uuid.uuid4())))
+            assert correlation_for(ctx) == "req-x"
+            mark_integration_request("mcp", "/api/v1/master-data/x")
+            assert correlation_for(ctx) == "someone-elses-action"
 
     def test_s3_nested_json_and_the_missed_columns_are_redacted(self, db):
         eid = str(uuid.uuid4())
@@ -770,12 +801,10 @@ class TestReviewRound1:
         assert missed == []
 
     def test_n4_chat_history_is_not_the_chatbot(self):
-        from app.audit_context import set_api_key_principal
-
         with audit_context_scope():
-            set_api_key_principal("int-1", "automation", "/api/v1/external/chat-history/x")
+            mark_integration_request("automation", "/api/v1/external/chat-history/x")
             assert current_audit_context().source == "n8n"
-            set_api_key_principal("int-1", "automation", "/api/v1/external/chat/turn")
+            mark_integration_request("automation", "/api/v1/external/chat/turn")
             assert current_audit_context().source == "chatbot"
 
     def test_n3_run_now_names_the_user_who_pressed_it(self):
@@ -784,7 +813,7 @@ class TestReviewRound1:
         seen = {}
 
         def fake_execute(*args):
-            seen["ctx"] = current_audit_context()
+            seen["ctx"], seen["actor"] = current_audit_context(), get_actor()
 
         class _Thread:
             def __init__(self, target, args, **kw):
@@ -802,8 +831,9 @@ class TestReviewRound1:
                 patch.object(sts, "_execute_task_run", fake_execute), \
                 patch.object(sts.threading, "Thread", _Thread):
             sts.run_task_now(MagicMock(), "t-1", requested_by_user_id="u-run")
-        ctx = seen["ctx"]
-        assert (ctx.user_id, ctx.principal_type, ctx.source, ctx.request_id) == ("u-run", "scheduler", "scheduler", "run-1")
+        ctx, actor = seen["ctx"], seen["actor"]
+        assert (actor.user_id, actor.actor_type, actor.job_id) == ("u-run", "scheduler", "k")
+        assert (ctx.correlation_id, ctx.source) == ("run-1", None)
 
 
 class TestReviewerRound1:

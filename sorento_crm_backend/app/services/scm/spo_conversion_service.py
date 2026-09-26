@@ -2331,6 +2331,18 @@ def _write_allocations(
     return written
 
 
+def _deal_order(allocation: dict) -> tuple[float, str]:
+    """The order ticked demand is dealt across one line's allocations: the largest first (a
+    row lands whole wherever it can, rather than split), then by warehouse id.
+
+    A function of the allocations themselves, never of the order the list arrived in:
+    `create` hands the dealers its payload's split order, `revise` hands them `_own_state`'s,
+    which is Postgres heap order (no ORDER BY, and a row's heap slot moves whenever a page is
+    pruned or the row is updated). Dealing in arrival order let a Save with nothing changed
+    re-split a project row's one link into two (issue #1289)."""
+    return (-float(allocation.get("qty") or 0), str(allocation["warehouse_id"]))
+
+
 def _link_ticked_demand(
     db: Session,
     allocations: list[dict],
@@ -2376,7 +2388,9 @@ def _link_ticked_demand(
         pool = [dict(a) for a in by_line.get(line_id, [])]
         if not pool:
             continue
-        for key, requested in key_qtys.items():
+        # Rows in key order, for the same reason as `_deal_order`: two rows sharing one
+        # line's pool must meet it in the same order on `create` and on `revise`.
+        for key, requested in sorted(key_qtys.items()):
             if not key.startswith(f"{_COVERAGE_PROJECT}:"):
                 continue
             row_id = key.split(":", 1)[1]
@@ -2399,7 +2413,9 @@ def _link_ticked_demand(
             wanted_code = (row.stock_location or "").strip().upper() or None
             codes = _warehouse_ids_by_code(db) if wanted_code else {}
             preferred = codes.get(wanted_code) if wanted_code else None
-            pool.sort(key=lambda a: 0 if str(a["warehouse_id"]) == str(preferred) else 1)
+            pool.sort(
+                key=lambda a: (0 if str(a["warehouse_id"]) == str(preferred) else 1, *_deal_order(a))
+            )
             for allocation in pool:
                 if need <= 0:
                     break
@@ -2470,8 +2486,8 @@ def _write_retail_claims(
 
     Written FULLY RESOLVED via `claim_placed_on_po` (both `so_line_id` and
     `spo_allocation_id` known here, unlike a book claim that waits on `resolve()`) - the
-    first allocation this shipment line landed, mirroring `_link_ticked_demand`'s own
-    "first if several" reasoning for the project half. Best-effort per row, same as that
+    first of this shipment line's allocations in `_deal_order`, the same order
+    `_link_ticked_demand` deals the project half in. Best-effort per row, same as that
     function: one row's problem (a claim identity collision, say) never fails a confirm
     that has already written the SPO, its lines and its allocations.
     """
@@ -2481,7 +2497,7 @@ def _write_retail_claims(
     from app.services.scm.order_link_service import SOURCE_PLANNER, claim_placed_on_po
 
     alloc_by_line: dict[str, str] = {}
-    for allocation in allocations:
+    for allocation in sorted(allocations, key=_deal_order):
         alloc_by_line.setdefault(str(allocation["shipment_line_id"]), str(allocation["allocation_id"]))
 
     so_line_ids = {cover["so_line_id"] for covers in retail_cover.values() for cover in covers}

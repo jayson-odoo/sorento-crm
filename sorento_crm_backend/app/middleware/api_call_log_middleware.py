@@ -71,6 +71,27 @@ def _decode_headers(raw) -> dict:
     return out
 
 
+def _actor_label(state) -> str | None:
+    """`user:<id>`, `user:<real>/as:<effective>` under impersonation, or
+    `integration:<id>/as:<act-as user>`, from the stamped audit actor (identity S0,
+    plan 8.2: both the user and the integration)."""
+    try:
+        actor = (state or {}).get("audit_actor")
+    except Exception:  # noqa: BLE001
+        return None
+    if actor is None:
+        return None
+    if actor.actor_type == "integration" and actor.integration_id:
+        label = f"integration:{actor.integration_id}"
+        return f"{label}/as:{actor.user_id}"[:128] if actor.user_id else label
+    real = actor.real_user_id
+    if real and actor.user_id and real != actor.user_id:
+        return f"user:{real}/as:{actor.user_id}"[:128]
+    if actor.user_id:
+        return f"user:{actor.user_id}"
+    return None
+
+
 class ApiCallLogMiddleware:
     def __init__(self, app):
         self.app = app
@@ -87,6 +108,11 @@ class ApiCallLogMiddleware:
             return await self.app(scope, receive, send)
         if not getattr(settings, "api_call_log_enabled", True):
             return await self.app(scope, receive, send)
+
+        # The request state dict is created HERE, before any inner middleware copies
+        # the scope, so the audit actor the auth dependency stamps on
+        # `request.state.audit_actor` lands in the dict this middleware reads back.
+        state = scope.setdefault("state", {})
 
         # ---- buffer the request body so it can be logged AND replayed ----
         body = b""
@@ -148,6 +174,7 @@ class ApiCallLogMiddleware:
                 response_body=None,
                 latency_ms=int((time.perf_counter() - started) * 1000),
                 error_message=error_message,
+                actor=_actor_label(state),
             )
             raise
 
@@ -160,6 +187,7 @@ class ApiCallLogMiddleware:
             response_body=_OVERSIZE_MARKER if response_oversize else response_body,
             latency_ms=int((time.perf_counter() - started) * 1000),
             error_message=None,
+            actor=_actor_label(state),
         )
 
     def _write(
@@ -173,6 +201,7 @@ class ApiCallLogMiddleware:
         response_body,
         latency_ms,
         error_message,
+        actor=None,
     ) -> None:
         """Persist one row. Wrapped so no telemetry failure reaches the caller."""
         try:
@@ -194,7 +223,7 @@ class ApiCallLogMiddleware:
                     method=method[:10],
                     source=resolve_source(headers),
                     tool_name=resolve_tool_name(headers),
-                    actor=None,
+                    actor=actor,
                     status_code=status_code,
                     outcome=classify_outcome(status_code),
                     latency_ms=latency_ms,

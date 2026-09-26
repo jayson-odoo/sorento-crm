@@ -1,11 +1,19 @@
 """Logging middleware for API requests."""
+import re
 import time
 import uuid
 import logging
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from app.services.logging import log_api_request
-from app.audit_context import start_request_context
+from app.audit_context import AuditActor, stamp_actor, set_trace_id, start_request_context
+
+# An inbound X-Trace-Id is echoed in the response and written to every audit row, so
+# only a plain token is accepted; anything else gets a freshly minted id.
+_TRACE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+# Paths whose unauthenticated writes are a public link's (identity S0, plan 8.1).
+_PUBLIC_PREFIX = "/api/v1/public/"
 
 logger = logging.getLogger(__name__)
 
@@ -15,18 +23,30 @@ class LoggingMiddleware(BaseHTTPMiddleware):
     
     async def dispatch(self, request: Request, call_next):
         start_time = time.time()
-        # One fresh, MUTABLE audit context per request (#1281 S0). Auth dependencies fill in
-        # the principal by mutating this object, which a sync dependency running on a copied
-        # context can still reach. Request id: an inbound X-Trace-Id if present, else minted;
-        # correlation id: the request id, or an inbound X-Correlation-Id (the header
-        # api_call_log reads) once an integration key authenticates. Both clamped to 64.
+        # Reset and default-stamp the audit actor before anything else runs, so no
+        # request inherits a previous one's. The auth dependencies stamp the real
+        # principal over this; a request that never authenticates keeps it.
         ip = request.client.host if request.client else None
-        ctx = start_request_context(
-            ip,
-            request.headers.get("X-Trace-Id") or uuid.uuid4().hex[:16],
-            request.headers.get("X-Correlation-Id"),
+        stamp_actor(
+            AuditActor(
+                actor_type="public_link" if request.url.path.startswith(_PUBLIC_PREFIX) else "system",
+                ip_address=ip,
+                user_agent=request.headers.get("user-agent"),
+            ),
+            request=request,
         )
-        trace_id = ctx.request_id
+        # Correlation id for this request (honour an inbound X-Trace-Id if present,
+        # else mint one). Copied onto every audit row written during the request.
+        inbound = request.headers.get("X-Trace-Id")
+        trace_id = inbound if inbound and _TRACE_ID_RE.match(inbound) else uuid.uuid4().hex[:16]
+        set_trace_id(trace_id)
+        # One fresh, MUTABLE business context per request (#1281 S0): event, reason, source,
+        # correlation id. An inbound X-Correlation-Id (the header api_call_log reads) is held
+        # aside and trusted only once an integration key authenticates.
+        inbound_correlation = request.headers.get("X-Correlation-Id")
+        start_request_context(
+            inbound_correlation if inbound_correlation and _TRACE_ID_RE.match(inbound_correlation) else None
+        )
 
         # Skip logging for health check and docs
         if request.url.path in ["/health", "/docs", "/redoc", "/openapi.json"]:

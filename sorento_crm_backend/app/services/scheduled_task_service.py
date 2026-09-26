@@ -432,17 +432,18 @@ def run_task_now(db: Session, task_id: str, requested_by_user_id: Optional[str] 
     task_id_str = _task_id(task)
 
     def _run_as_requester(*args):
-        # A new thread starts with an empty context: name the user who pressed Run now.
-        from app.audit_context import audit_context_scope
+        # A new thread starts with an empty context: the `scheduler` actor names its task
+        # (identity plan 8.1) and, for Run now, the user who pressed it (#1281 S0).
+        from app.audit_context import AuditActor, actor_scope, audit_context_scope
 
-        with audit_context_scope(
-            user_id=requested_by_user_id,
-            effective_user_id=requested_by_user_id,
-            principal_type="scheduler",
-            principal_id=task_key,
-            source="scheduler",
-            request_id=run_id,
-        ):
+        with actor_scope(
+            AuditActor(
+                actor_type="scheduler",
+                user_id=requested_by_user_id,
+                real_user_id=requested_by_user_id,
+                job_id=task_key,
+            )
+        ), audit_context_scope(correlation_id=run_id):
             _execute_task_run(*args)
 
     thread = threading.Thread(
@@ -577,11 +578,16 @@ def run_due_tasks(db: Session) -> None:
                     )
                 continue
             run = create_run(db, _task_id(task), status="started")
+            from app.audit_context import AuditActor, actor_scope
+
             try:
                 # Per-task company scope. Restored to None afterwards so a narrowed
                 # task cannot leak its scope into the next task in the same sweep.
                 set_company_scope(db, task_company_scope(task))
-                summary = handler(db, task)
+                # Per-task audit actor (identity S0, AC-10): `scheduler`, job_id = the
+                # task key, restored after so the next task names itself.
+                with actor_scope(AuditActor(actor_type="scheduler", job_id=_task_key(task)), db=db):
+                    summary = handler(db, task)
             finally:
                 set_company_scope(db, None)
             duration_ms = int((datetime.utcnow() - start).total_seconds() * 1000)

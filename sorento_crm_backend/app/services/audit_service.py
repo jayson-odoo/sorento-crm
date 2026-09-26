@@ -13,7 +13,7 @@ import weakref
 
 from sqlalchemy.orm import Session
 from sqlalchemy import inspect, select, func, tuple_
-from sqlalchemy.orm.attributes import get_history
+from sqlalchemy.orm.attributes import PASSIVE_NO_INITIALIZE, get_history
 from sqlalchemy.sql.elements import BindParameter
 from typing import Optional, Any, Iterable
 from datetime import datetime, date, time, timedelta
@@ -154,7 +154,9 @@ def _old_new_from_dirty(
     for key in keys:
         if key in _TOUCH_COLUMNS:
             continue
-        hist = get_history(obj, key)
+        # Passive: an expired attribute must not be LOADED here. A load autoflushes (outside
+        # a flush) and costs a SELECT per dirty object; its old value is read below instead.
+        hist = get_history(obj, key, passive=PASSIVE_NO_INITIALIZE)
         if not hist.has_changes():
             continue
         new_val = _json_serial(hist.added[0]) if hist.added else None
@@ -257,26 +259,30 @@ def log_audit(
         root_entity_type, root_entity_id: default to the entity itself.
         skip_flush: If True, don't flush (useful when already inside a flush operation).
 
-    Principal, source, on-behalf-of, request id and correlation id always come from the
-    current ``AuditContext``; old / new values are redacted here, whoever the caller is.
+    Actor columns come from the stamped ``AuditActor`` (identity S0, plan 8, the actor
+    contract); source, trace id and correlation id from the current ``AuditContext``
+    (#1281 S0). Old / new values are redacted here, whoever the caller is.
     """
     from app.audit_context import current_audit_context
 
+    actor = _actor_for_row(db, user_id=user_id, contact_id=contact_id)
+    if description is None and actor is not None and actor.tool_name:
+        description = f"Tool: {actor.tool_name}"
     ctx = current_audit_context()
     entry = AuditLog(
         entity_type=entity_type,
         entity_id=entity_id,
         action=action.upper(),
         user_id=user_id,  # None for system/public actions (e.g. approval via public link)
-        contact_id=contact_id if contact_id is not None else (ctx.contact_id if ctx else None),
+        contact_id=contact_id if contact_id is not None else (actor.contact_id if actor else None),
         old_values=_redact(old_values),
         new_values=_redact(new_values),
         description=description,
-        ip_address=ip_address,
+        ip_address=ip_address if ip_address is not None else (actor.ip_address if actor else None),
         company_id=company_id,
-        **_context_columns(ctx, event=event, reason=reason),
         root_entity_type=root_entity_type or entity_type,
         root_entity_id=root_entity_id if root_entity_id is not None else entity_id,
+        **_context_columns(actor, ctx, event=event, reason=reason),
     )
     db.add(entry)
     if not skip_flush:
@@ -284,19 +290,55 @@ def log_audit(
     return entry
 
 
-def _context_columns(ctx: Any, *, event: Optional[str] = None, reason: Optional[str] = None) -> dict:
-    """The audit_logs columns the current context owns."""
-    if ctx is None:
-        return {"principal_type": "system", "event": event, "reason": reason}
+def _actor_for_row(db: Any, *, user_id: Any = None, contact_id: Any = None) -> Any:
+    """The stamped actor (identity S0, plan 8): who, how they signed in, and through what.
+
+    An explicit caller with nothing stamped (a service method, a script) owns the row it
+    names, so the screen keeps showing their name. Only no user and no contact is `system`.
+    """
+    from app.audit_context import AuditActor, get_actor
+
+    actor = get_actor(db)
+    if actor is None and user_id is not None:
+        actor = AuditActor(actor_type="user", user_id=str(user_id), real_user_id=str(user_id))
+    elif actor is None and contact_id is not None:
+        actor = AuditActor(actor_type="contact", contact_id=str(contact_id))
+    return actor
+
+
+def _context_columns(
+    actor: Any, ctx: Any, *, event: Optional[str] = None, reason: Optional[str] = None
+) -> dict:
+    """Every audit_logs column the actor (#1303) and the business context (#1281 S0) own, for
+    all four write paths: ``log_audit``, the after-flush CREATE insert and the bulk DML rows
+    (the last two are Core INSERTs that never pass through ``log_audit``)."""
+    from app.audit_context import correlation_for, get_trace_id, source_for
+
     return {
-        "trace_id": ctx.request_id,
-        "correlation_id": ctx.correlation_id,
-        "principal_type": ctx.principal_type or "system",
-        "principal_id": ctx.principal_id,
-        "on_behalf_of_user_id": ctx.on_behalf_of_user_id,
-        "source": ctx.source,
-        "event": event or ctx.event,
-        "reason": reason or ctx.reason,
+        "trace_id": get_trace_id(),
+        "correlation_id": correlation_for(ctx),
+        "source": source_for(actor, ctx),
+        "event": event or (ctx.event if ctx else None),
+        "reason": reason or (ctx.reason if ctx else None),
+        "actor_type": actor.actor_type if actor is not None else "system",
+        "real_user_id": _uuid_or_none(actor.real_user_id) if actor is not None else None,
+        "auth_method": actor.auth_method if actor is not None else None,
+        "session_id": _uuid_or_none(actor.session_id) if actor is not None else None,
+        "integration_id": _uuid_or_none(actor.integration_id) if actor is not None else None,
+        "job_id": (actor.job_id[:128] if actor is not None and actor.job_id else None),
+        "user_agent": actor.user_agent if actor is not None else None,
+    }
+
+
+def _core_actor_columns(session: Any, ctx: Any) -> dict:
+    """``_context_columns`` plus the who-columns ``log_audit`` fills from its arguments, for a
+    Core INSERT (after-flush CREATE rows, bulk DML rows, the bulk summary row)."""
+    actor = _actor_for_row(session)
+    return {
+        "user_id": _uuid_or_none(actor.user_id) if actor is not None else None,
+        "contact_id": actor.contact_id if actor is not None else None,
+        "ip_address": actor.ip_address if actor is not None else None,
+        **_context_columns(actor, ctx),
     }
 
 
@@ -315,9 +357,9 @@ def record(
 ) -> AuditLog:
     """Write one ``EVENT`` row for a side effect that changed no row (a download, a send, a
     login), attributed to the current context. The one explicit call for non-service code."""
-    from app.audit_context import current_audit_context
+    from app.audit_context import get_actor
 
-    ctx = current_audit_context()
+    actor = get_actor(db)
     return log_audit(
         db,
         entity_type,
@@ -325,8 +367,8 @@ def record(
         "EVENT",
         old_values=old_values,
         new_values=new_values,
-        user_id=ctx.user_id if ctx else None,
-        ip_address=ctx.ip_address if ctx else None,
+        user_id=_uuid_or_none(actor.user_id) if actor is not None else None,
+        ip_address=actor.ip_address if actor is not None else None,
         description=description,
         company_id=company_id,
         event=event,
@@ -468,7 +510,11 @@ def list_audit_logs(
     if user_id:
         if not _is_uuid(user_id):
             return [], 0
-        q = q.filter(AuditLog.user_id == user_id)
+        # Plan 8.1: an impersonated write carries the target as user_id and the admin
+        # as real_user_id, so filtering by a person finds both kinds of row.
+        from sqlalchemy import or_
+
+        q = q.filter(or_(AuditLog.user_id == user_id, AuditLog.real_user_id == user_id))
     if action:
         q = q.filter(AuditLog.action == action.upper())
     if trace_id:
@@ -491,28 +537,13 @@ def list_audit_logs(
     return items, total
 
 
-_ACTOR_FIELDS_INSERT = ("created_by_user_id", "created_by", "updated_by_user_id", "updated_by")
-_ACTOR_FIELDS_UPDATE = ("updated_by_user_id", "updated_by")
-
-
-def _swap_actor_fields_during_impersonation(session: Session) -> None:
-    """When the current request is impersonating, rewrite any ``created_by`` /
-    ``updated_by`` fields on new/dirty rows from the effective (target) user id
-    back to the real admin id. No-op outside impersonation.
-    """
-    from app.audit_context import get_real_and_effective_user_ids
-
-    real_id, effective_id = get_real_and_effective_user_ids()
-    if not real_id or not effective_id or real_id == effective_id:
-        return
-    for obj in session.new:
-        for field in _ACTOR_FIELDS_INSERT:
-            if hasattr(obj, field) and getattr(obj, field, None) == effective_id:
-                setattr(obj, field, real_id)
-    for obj in session.dirty:
-        for field in _ACTOR_FIELDS_UPDATE:
-            if hasattr(obj, field) and getattr(obj, field, None) == effective_id:
-                setattr(obj, field, real_id)
+def _uuid_or_none(value: Any) -> Optional[str]:
+    """A UUID column value, or None. A non-UUID actor id (a test's "REAL_ADMIN",
+    the legacy `system` principal) must not fail the audited write."""
+    if value is None:
+        return None
+    text_value = str(value)
+    return text_value if _is_uuid(text_value) else None
 
 
 _audit_table_cache: "weakref.WeakKeyDictionary[Any, bool]" = weakref.WeakKeyDictionary()
@@ -677,10 +708,8 @@ def _session_before_flush(session: Session, _flush_context: Any, _instances: Any
     # Skip if we're already inside an audit flush (avoid recursion)
     if session.info.get("audit_flushing"):
         return
-    # Rewrite created_by/updated_by from effective→real user during impersonation
-    # *before* we snapshot model state for audit, so the audit log captures the
-    # corrected actor too.
-    _swap_actor_fields_during_impersonation(session)
+    # created_by / updated_by keep the EFFECTIVE user during impersonation; the
+    # audit row's real_user_id says who was at the keyboard (identity S0, plan 8.2).
     skip_set = set(session.info.get("skip_audit_for") or [])
     # Entity-type-level suppression: bulk jobs that persist a tracked model per-row
     # (e.g. attachment bulk import via ORM create_attachment in a worker with no
@@ -764,14 +793,14 @@ def _session_before_flush(session: Session, _flush_context: Any, _instances: Any
     if not _audit_table_exists(session.get_bind()):
         session.info.pop("audit_pending", None)
         return
-    from app.audit_context import current_audit_context, get_audit_context, get_actor_contact_id
-    user_id, ip_address = get_audit_context()
-    # Acting contact for portal/public writes. Prefer session.info (set by the portal
-    # token dependency) over the contextvar: FastAPI runs sync dependencies in a
-    # SEPARATE threadpool thread from the path op, so a contextvar mutated in the
-    # dependency is NOT visible here - but session.info lives on the shared Session
-    # object and survives across threads. Fall back to the contextvar for in-thread callers.
-    contact_id = session.info.get("actor_contact_id") or get_actor_contact_id()
+    from app.audit_context import current_audit_context, get_actor
+    # session.info wins over the contextvar (get_actor): FastAPI runs a sync
+    # dependency in a SEPARATE threadpool thread from the path op, so a contextvar
+    # it mutated is not visible here, while session.info lives on the shared Session.
+    actor = get_actor(session)
+    user_id = _uuid_or_none(actor.user_id) if actor is not None else None
+    ip_address = actor.ip_address if actor is not None else None
+    contact_id = actor.contact_id if actor is not None else None
     ctx = current_audit_context()
     session.info["audit_flushing"] = True
     try:
@@ -805,11 +834,10 @@ def _session_after_flush(session: Session, _flush_context: Any) -> None:
     pending_new = session.info.pop("audit_pending_new", None)
     if not pending_new:
         return
-    from app.audit_context import current_audit_context, get_audit_context, get_actor_contact_id
+    from app.audit_context import current_audit_context
 
     ctx = current_audit_context()
-    user_id, ip_address = get_audit_context()
-    contact_id = session.info.get("actor_contact_id") or get_actor_contact_id()
+    who = _core_actor_columns(session, ctx)
     skip_set = set(session.info.get("skip_audit_for") or [])
     company_cache: dict = {}
     rows = []
@@ -834,16 +862,13 @@ def _session_after_flush(session: Session, _flush_context: Any) -> None:
             "entity_type": entity_type,
             "entity_id": entity_id,
             "action": "CREATE",
-            "user_id": user_id,
-            "contact_id": contact_id,
-            "ip_address": ip_address,
             "old_values": None,
             "new_values": _redact(new_values),
             "description": None,
             "company_id": snapshot.get("company_id") or _company_from_parent(session, session.connection(), cls, snapshot, company_cache),
             "root_entity_type": root[0],
             "root_entity_id": root[1],
-            **_context_columns(ctx),
+            **who,
         })
     if rows:
         conn = session.connection()
@@ -899,7 +924,7 @@ def _session_do_orm_execute(state: Any) -> None:
 def _write_bulk_rows(
     session: Session, conn: Any, cls: type, entity_type: str, statement: Any, is_delete: bool, params: dict
 ) -> None:
-    from app.audit_context import current_audit_context, get_audit_context, get_actor_contact_id
+    from app.audit_context import current_audit_context
 
     mapper = inspect(cls)
     table = mapper.local_table
@@ -956,15 +981,10 @@ def _write_bulk_rows(
 
     skip_set = set(session.info.get("skip_audit_for") or [])
     ctx = current_audit_context()
-    user_id, ip_address = get_audit_context()
-    contact_id = session.info.get("actor_contact_id") or get_actor_contact_id()
     common = {
         "entity_type": entity_type,
         "action": "DELETE" if is_delete else "UPDATE",
-        "user_id": user_id,
-        "contact_id": contact_id,
-        "ip_address": ip_address,
-        **_context_columns(ctx),
+        **_core_actor_columns(session, ctx),
     }
     company_cache: dict = {}
     out = []
