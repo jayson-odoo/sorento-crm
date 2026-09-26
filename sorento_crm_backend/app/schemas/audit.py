@@ -18,6 +18,7 @@ class AuditLogResponse(BaseModel):
     id: str
     entity_type: str
     entity_id: str
+    entity_label: Optional[str] = None  # the record in words (activity feed resolver), never an id
     action: str
     user_id: Optional[str] = None
     contact_id: Optional[str] = None  # acting contact (respond_contacts.id) for portal/public writes

@@ -286,6 +286,20 @@ def _resolve_labels(
     return resolved
 
 
+def entity_labels(db: Session, rows: list[AuditLog]) -> dict[str, str]:
+    """Audit row id -> the record in words, for the audit log list (identity S0,
+    AC-13: no UUID on the audit screens). Same labels as the feed below."""
+    labels = _resolve_labels(db, [r for r in rows if r.action != "IMPORT"])
+    out: dict[str, str] = {}
+    for r in rows:
+        if r.action == "IMPORT":
+            pretty = str(r.entity_type).replace("_", " ").title()
+            out[str(r.id)] = r.description or f"{pretty} import"
+        else:
+            out[str(r.id)] = labels[(r.entity_type, str(r.entity_id))][0]
+    return out
+
+
 # --------------------------------------------------------------------------- #
 # Query helpers                                                               #
 # --------------------------------------------------------------------------- #

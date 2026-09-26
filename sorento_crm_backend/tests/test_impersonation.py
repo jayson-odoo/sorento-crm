@@ -4,7 +4,6 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.main import app  # registers all routers, dependencies, models
-from app.audit_context import set_audit_context
 from app.dependencies import get_current_user, get_db, get_real_user
 from app.models.audit import AuditLog
 from app.models.impersonation import ImpersonationSession
@@ -232,8 +231,5 @@ def test_no_actor_swap_during_impersonation():
     old flush-time swap back to the admin is gone (see tests/test_audit_actor_contract.py
     for the audited write end to end)."""
     import app.services.audit_service as audit_service
-    from app.audit_context import get_real_and_effective_user_ids
 
     assert not hasattr(audit_service, "_swap_actor_fields_during_impersonation")
-    set_audit_context("REAL_ADMIN", None, effective_user_id="EFFECTIVE_USER")
-    assert get_real_and_effective_user_ids() == ("REAL_ADMIN", "EFFECTIVE_USER")

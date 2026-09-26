@@ -416,7 +416,7 @@ def _session_before_flush(session: Session, _flush_context: Any, _instances: Any
     actor = get_actor(session)
     user_id = _uuid_or_none(actor.user_id) if actor is not None else None
     ip_address = actor.ip_address if actor is not None else None
-    contact_id = session.info.get("actor_contact_id") or (actor.contact_id if actor is not None else None)
+    contact_id = actor.contact_id if actor is not None else None
     session.info["audit_flushing"] = True
     try:
         for entity_type, entity_id, action, old_values, new_values, entity_company_id in pending:

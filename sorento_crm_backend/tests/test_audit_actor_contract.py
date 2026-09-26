@@ -377,7 +377,7 @@ def test_ac11_impersonation_portal_token_write_credits_the_admin():
         row = _last_audit_row(db, contact_user.id)
         assert row is not None
         # Pre-fix observed value (today): the row carries no real_user_id / auth_method
-        # at all - get_portal_token only calls set_actor_contact_id, it never looks at
+        # at all - get_portal_token only stamped the contact, it never looked at
         # contact_impersonation_sessions, so an admin "viewing as" gets no credit.
         assert row.real_user_id == admin.id
         assert row.contact_id == contact.id

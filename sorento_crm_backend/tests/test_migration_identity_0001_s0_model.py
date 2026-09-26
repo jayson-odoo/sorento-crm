@@ -119,6 +119,63 @@ def test_preflight_blocks_on_case_duplicate_emails_names_users_no_ids():
             outer.rollback()
 
 
+def test_preflight_blocks_on_a_contact_claimed_by_two_users_names_users_no_ids():
+    """Plan 9.1 Q2 / AC-01: two users on one WhatsApp contact stop the migration
+    before any DDL, naming both users and the contact, never an id. Without this
+    refusal the unique index build dies on a raw UniqueViolation instead (reviewer
+    pass at 03d3b474, B1)."""
+    module = _load()
+    with engine.connect() as raw:
+        outer = raw.begin()
+        try:
+            # Strip the post-migration schema: uq_users_respond_contact_id would
+            # refuse the shared contact this test seeds.
+            _run(raw, module._downgrade)
+            nested = raw.begin_nested()
+            stem = f"{PREFIX}-q2-{uuid.uuid4().hex[:6]}"
+            contact_id, a_id, b_id = _mk_id(), _mk_id(), _mk_id()
+            raw.execute(
+                sa.text("INSERT INTO respond_contacts (id, phone_number, name) VALUES (:id, :phone, :name)"),
+                {"id": contact_id, "phone": f"+6011{uuid.uuid4().int % 10_000_000:07d}", "name": f"{stem} Contact"},
+            )
+            raw.execute(
+                sa.text(
+                    "INSERT INTO users (id, email, name, status, is_trashed, is_protected, "
+                    "respond_synced, daily_sla_summary_subscribed, respond_contact_id) VALUES "
+                    "(:a_id, :email_a, :name_a, 'ACTIVE', false, false, 'pending', true, :contact), "
+                    "(:b_id, :email_b, :name_b, 'ACTIVE', false, false, 'pending', true, :contact)"
+                ),
+                {
+                    "a_id": a_id,
+                    "email_a": f"{stem}-a@example.com",
+                    "name_a": f"{PREFIX} Alice",
+                    "b_id": b_id,
+                    "email_b": f"{stem}-b@example.com",
+                    "name_b": f"{PREFIX} Bob",
+                    "contact": contact_id,
+                },
+            )
+            with pytest.raises(RuntimeError) as excinfo:
+                _run(raw, lambda: module._upgrade(concurrently=False))
+            message = str(excinfo.value)
+            assert f"{PREFIX} Alice" in message
+            assert f"{PREFIX} Bob" in message
+            assert f"{stem} Contact" in message
+            for an_id in (a_id, b_id, contact_id):
+                assert an_id not in message
+            # Refused before any DDL: email is still NOT NULL.
+            nullable = raw.execute(
+                sa.text(
+                    "SELECT is_nullable FROM information_schema.columns "
+                    "WHERE table_name = 'users' AND column_name = 'email' AND table_schema = current_schema()"
+                )
+            ).scalar()
+            assert nullable == "NO"
+            nested.rollback()
+        finally:
+            outer.rollback()
+
+
 def test_upgrade_backfills_links_seeds_roles_and_is_idempotent():
     module = _load()
     with engine.connect() as raw:

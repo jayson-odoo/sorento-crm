@@ -25,8 +25,13 @@ METHOD_WORDS = {
 
 
 def actor_label(it, user_names: dict[str, str], contact_names: dict[str, str],
-                 integration_names: dict[str, str], legacy_label: str) -> str:
-    """Who did it, in words (identity S0, AC-13). Never an id."""
+                 integration_names: dict[str, str], legacy_label: str,
+                 scheduled_names: Optional[dict[str, str]] = None) -> str:
+    """Who did it, in words (identity S0, AC-13). Never an id.
+
+    ``scheduled_names`` maps a scheduled task's key (a scheduler row's ``job_id``)
+    to its name; a tick with no scheduled task row keeps its key.
+    """
     actor_type = getattr(it, "actor_type", None)
     user_id = str(it.user_id) if it.user_id is not None else None
     real_user_id = str(it.real_user_id) if getattr(it, "real_user_id", None) is not None else None
@@ -52,7 +57,10 @@ def actor_label(it, user_names: dict[str, str], contact_names: dict[str, str],
     if actor_type == "worker":
         return f"Background job for {_user(user_id)}" if user_id else "Background job"
     if actor_type == "scheduler":
-        return f"Scheduled: {it.job_id}" if getattr(it, "job_id", None) else "Scheduled"
+        job_id = getattr(it, "job_id", None)
+        if not job_id:
+            return "Scheduled"
+        return f"Scheduled: {(scheduled_names or {}).get(job_id) or job_id}"
     if actor_type == "contact":
         return f"Portal: {contact_names.get(contact_id) or 'unknown contact'} (no user)"
     if actor_type == "public_link":

@@ -20,15 +20,13 @@ Carriers. ``stamp_actor`` writes the actor to three places at once:
 
 ``get_actor(db)`` prefers ``db.info`` over the contextvar.
 
-The older helpers (``set_audit_context``, ``get_audit_context``,
-``set_actor_contact_id`` ...) keep working for their callers and map onto the
-same actor.
+``get_audit_context`` is the one older reader kept, for its service callers.
 """
 from __future__ import annotations
 
 import contextvars
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any, Iterator, Optional
 
 ACTOR_TYPES = ("user", "contact", "integration", "worker", "scheduler", "public_link", "system")
@@ -122,46 +120,14 @@ def actor_scope(actor: AuditActor, *, db: Any = None) -> Iterator[AuditActor]:
 
 
 # --------------------------------------------------------------------------- #
-# Older API, kept for its callers. Maps onto the actor above.                  #
+# Older reader, kept for its service callers.                                  #
 # --------------------------------------------------------------------------- #
-def set_audit_context(
-    user_id: Optional[str],
-    ip_address: Optional[str],
-    effective_user_id: Optional[str] = None,
-) -> None:
-    """Set the current actor from a (real user, ip, effective user) triple.
-
-    ``user_id`` is the real (keyboard) user; ``effective_user_id`` the
-    impersonation target when active (defaults to ``user_id``). No user and no ip
-    clears the actor.
-    """
-    if user_id is None:
-        _actor.set(AuditActor(actor_type="system", ip_address=ip_address) if ip_address else None)
-        return
-    _actor.set(
-        AuditActor(
-            actor_type="user",
-            user_id=effective_user_id or user_id,
-            real_user_id=user_id,
-            ip_address=ip_address,
-        )
-    )
-
-
 def get_audit_context() -> tuple[Optional[str], Optional[str]]:
     """Return (user_id, ip_address): the effective actor, as audit rows record it."""
     actor = _actor.get()
     if actor is None:
         return None, None
     return actor.user_id, actor.ip_address
-
-
-def get_real_and_effective_user_ids() -> tuple[Optional[str], Optional[str]]:
-    """Return (real_user_id, effective_user_id) for the current actor."""
-    actor = _actor.get()
-    if actor is None:
-        return None, None
-    return actor.real_user_id or actor.user_id, actor.user_id
 
 
 # Per-request correlation id (Sub-plan D Tier-2). The LoggingMiddleware stamps one
@@ -180,19 +146,3 @@ def set_trace_id(trace_id: Optional[str]) -> None:
 def get_trace_id() -> Optional[str]:
     """Return the current request's trace/correlation id (None outside a request)."""
     return _trace_id.get()
-
-
-def set_actor_contact_id(contact_id: Optional[str]) -> None:
-    """Set the acting contact (respond_contacts.id) on the current actor."""
-    actor = _actor.get()
-    if actor is None:
-        if contact_id is None:
-            return
-        actor = AuditActor(actor_type="contact")
-    _actor.set(replace(actor, contact_id=contact_id))
-
-
-def get_actor_contact_id() -> Optional[str]:
-    """Return the acting contact id of the current actor (None if not a contact write)."""
-    actor = _actor.get()
-    return actor.contact_id if actor is not None else None

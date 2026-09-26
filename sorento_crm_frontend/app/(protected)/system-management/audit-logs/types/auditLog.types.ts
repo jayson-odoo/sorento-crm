@@ -8,7 +8,10 @@ import type { DataGridApiResponse } from '@/components/ui/data-grid';
 export interface AuditLog {
   id: string;
   entity_type: string;
+  /** Internal record id; used for filtering only, never rendered (no UUIDs in the UI). */
   entity_id: string;
+  /** The record in words, resolved server-side, e.g. "Product SKU AB-100". */
+  entity_label?: string | null;
   action: string; // INSERT | UPDATE | DELETE | CREATE
   user_id?: string | null;
   /**
