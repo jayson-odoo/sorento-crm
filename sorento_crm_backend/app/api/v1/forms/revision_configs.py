@@ -31,6 +31,14 @@ from app.services.portal_service import GRANTABLE_PORTAL_FORM_TYPES
 
 router = APIRouter()
 
+# GRANTABLE_PORTAL_FORM_TYPES minus sales_opportunity: that kind has no revision-engine
+# wiring at all (no PortalRevisionService dispatch, no revise/save-draft route), so a
+# settings row for it would configure nothing - exactly the trap the SUPPORTED_TYPES
+# comment in portal_service.py warns about. Add it back here the day it gets one.
+REVISABLE_PORTAL_FORM_TYPES = tuple(
+    kind for kind in GRANTABLE_PORTAL_FORM_TYPES if kind != "sales_opportunity"
+)
+
 
 class PortalRevisionConfigResponse(BaseModel):
     """Every field the settings table reads.
@@ -90,10 +98,10 @@ def _disabled_placeholder(source_entity_type: str) -> dict:
 
 def _check_type(source_entity_type: str) -> str:
     kind = (source_entity_type or "").strip().lower()
-    if kind not in GRANTABLE_PORTAL_FORM_TYPES:
+    if kind not in REVISABLE_PORTAL_FORM_TYPES:
         raise handle_validation_error(
             f"Unsupported submission type: {source_entity_type!r}. "
-            f"Allowed: {', '.join(GRANTABLE_PORTAL_FORM_TYPES)}."
+            f"Allowed: {', '.join(REVISABLE_PORTAL_FORM_TYPES)}."
         )
     return kind
 
@@ -121,12 +129,12 @@ async def list_portal_revision_configs(
     }
     items = [
         _serialize(rows[kind]) if kind in rows else _disabled_placeholder(kind)
-        for kind in GRANTABLE_PORTAL_FORM_TYPES
+        for kind in REVISABLE_PORTAL_FORM_TYPES
     ]
     # A type that is no longer a portal submission type still shows, so a stale row
     # is visible (and editable back to disabled) rather than silently orphaned.
     items.extend(
-        _serialize(row) for kind, row in rows.items() if kind not in GRANTABLE_PORTAL_FORM_TYPES
+        _serialize(row) for kind, row in rows.items() if kind not in REVISABLE_PORTAL_FORM_TYPES
     )
     return {"items": items}
 

@@ -43,16 +43,16 @@ CONFIG_KEYS = {
 # AC-R6: price_tag_request is a fifth GRANTABLE_PORTAL_FORM_TYPES row (the
 # route lists placeholders from that tuple, not the narrower SUPPORTED_TYPES
 # the generic submissions CRUD uses - see app/api/v1/forms/revision_configs.py).
-# sales_opportunity (plan S2) is a sixth: it has no revision engine wiring of its
-# own yet, so its row is a disabled placeholder nobody's code reads - same shape
-# a brand-new grantable kind always starts in, before anything targets it.
+# sales_opportunity (plan S2) is NOT a seventh: it has no revision-engine wiring
+# at all (no PortalRevisionService dispatch, no revise/save-draft route), so a
+# settings row for it would configure nothing - the router excludes it via its
+# own REVISABLE_PORTAL_FORM_TYPES (GRANTABLE_PORTAL_FORM_TYPES minus this kind).
 PORTAL_TYPES = {
     "complaint",
     "stock_inquiry",
     "purchase_request",
     "sponsorship_form",
     "price_tag_request",
-    "sales_opportunity",
 }
 
 
@@ -115,6 +115,29 @@ def test_get_lists_one_entry_per_portal_type_even_with_no_rows(client):
     items = response.json()["items"]
     assert {item["source_entity_type"] for item in items} == PORTAL_TYPES
     assert all(item["is_enabled"] is False for item in items)
+
+
+def test_sales_opportunity_is_not_listed_and_not_puttable(client):
+    """sales_opportunity is in GRANTABLE_PORTAL_FORM_TYPES (S2-4) but has no
+    revision-engine wiring, so it must not offer a settings row that configures
+    nothing (REVISABLE_PORTAL_FORM_TYPES excludes it)."""
+    c, db = client
+    _as_office_user()
+
+    items = c.get(BASE).json()["items"]
+    assert "sales_opportunity" not in {i["source_entity_type"] for i in items}
+
+    response = c.put(
+        f"{BASE}/sales_opportunity",
+        json={
+            "is_enabled": True,
+            "max_revisions": None,
+            "allowed_statuses": [],
+            "restart_stage_code": None,
+        },
+    )
+    assert response.status_code == 400
+    assert db.query(PortalRevisionConfig).count() == 0
 
 
 def test_get_declares_every_field_the_settings_table_reads(client):
