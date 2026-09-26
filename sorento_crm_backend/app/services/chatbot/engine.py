@@ -786,9 +786,10 @@ def _answer_earlier_messages(
     contact_respond_id: str,
     contact_scope: frozenset,
     switches: "_TurnSwitches",
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Answer, oldest first, every earlier-sent message of this contact the CRM already
-    knows about and has not answered. Returns their actions, in send order.
+    knows about and has not answered, within `send_order.within_bounds`. Returns their
+    actions, in send order, and the facts this turn's own trace records about them.
 
     Each is answered as its own turn, on its own row with its own trace, exactly as its
     own delivery would have been, so the focus it leaves is what this turn then reads.
@@ -801,8 +802,13 @@ def _answer_earlier_messages(
         with _session(session_factory) as db:
             me = db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).first()
             if me is None:  # pragma: no cover - inserted by the caller
-                return []
+                return [], {}
             earlier = send_order.earlier_unanswered(db, contact_respond_id=contact_respond_id, me=me)
+            if not earlier:
+                return [], {}
+            from app.services.media_access_service import resolve_media_settings
+
+            media_wait = float(resolve_media_settings(db).sync_wait_seconds)
     except Exception:  # noqa: BLE001 - ordering is an improvement, not a precondition
         logger.warning(
             "chatbot send order: could not look up earlier messages for %s; answering "
@@ -810,13 +816,39 @@ def _answer_earlier_messages(
             contact_respond_id,
             exc_info=True,
         )
-        return []
-    if not earlier:
-        return []
+        return [], {}
+
+    budget = send_order.N8N_CHAT_TURN_TIMEOUT_SECONDS
+    if getattr(settings, "chatbot_turn_on_worker", False):
+        # Offloaded, the API stops waiting on the worker sooner than n8n stops waiting
+        # on the API.
+        budget = min(budget, float(getattr(settings, "chatbot_turn_wait_seconds", 60)))
+    taken, left, reasons = send_order.within_bounds(
+        earlier,
+        media_wait_seconds=media_wait,
+        own_carries_media=media_intake.detect(_inner_message(envelope)) is not None,
+        budget_seconds=budget,
+    )
+    left_count = len(left)
+    answered = 0
 
     mine = envelope.model_dump(mode="json")
+    my_message_id = _message_id(envelope)
     out: list[dict[str, Any]] = []
-    for item in earlier:
+    for item in taken:
+        if item.row_id is None and item.job_id is not None:
+            # Today's path (pre-S6): n8n's `media-route` replies on its own when its
+            # extraction fails or outlives its wait. Answering such a photo here too
+            # would send the customer a second message, so only a photo that has been
+            # READ is answered ahead; any other is left to its own delivery, with no row.
+            status = media_intake.await_existing_job(
+                item.job_id, timeout_seconds=media_wait, session_factory=session_factory
+            )
+            if status != "completed":
+                left_count += 1
+                if "photo_not_read" not in reasons:
+                    reasons.append("photo_not_read")
+                continue
         try:
             if item.row_id is not None:
                 earlier_envelope = Envelope.model_validate(item.envelope)
@@ -853,16 +885,31 @@ def _answer_earlier_messages(
                 exc_info=True,
             )
             continue
-        result = _answer_claimed(
-            earlier_envelope,
-            session_factory=session_factory,
-            turn_id=earlier_id,
-            contact_respond_id=contact_respond_id,
-            contact_scope=contact_scope,
-            switches=switches,
-        )
+        answered += 1
+        try:
+            result = _answer_claimed(
+                earlier_envelope,
+                session_factory=session_factory,
+                turn_id=earlier_id,
+                contact_respond_id=contact_respond_id,
+                contact_scope=contact_scope,
+                switches=switches,
+                answered_ahead_by={"turn_id": turn_id, "message_id": my_message_id},
+            )
+        except Exception:  # noqa: BLE001 - its stages raised, and so did closing its row
+            logger.warning(
+                "chatbot send order: an earlier message of %s failed and its row could not "
+                "be closed; answering this turn anyway",
+                contact_respond_id,
+                exc_info=True,
+            )
+            continue
         out.extend(result.actions or [])
-    return out
+    return out, {
+        "earlier_answered_ahead": answered,
+        "earlier_left_for_own_turns": left_count,
+        "earlier_left_because": ", ".join(reasons) if reasons else None,
+    }
 
 
 def _answer_claimed(
@@ -873,16 +920,20 @@ def _answer_claimed(
     contact_respond_id: str,
     contact_scope: frozenset,
     switches: "_TurnSwitches",
+    answered_ahead_by: dict[str, Any],
 ) -> TurnResult:
     """One earlier message's turn, on its own row: `run_turn`'s stages without the ticket
     (the caller already holds the contact's slot). A failure is recorded on that row and
-    still hands back the error reply, as it would have on its own delivery."""
+    still hands back the error reply, as it would have on its own delivery.
+
+    `answered_ahead_by` names the turn carrying this answer, for the row's first trace
+    record: an operator can then tell why this reply went out on that turn's response."""
     turn_trace = trace_mod.TurnTrace()
     turn_trace.start()
     stage: list[str] = ["received"]
     actions: list[dict[str, Any]] = []
     try:
-        media_box: dict[str, Any] = {}
+        media_box: dict[str, Any] = {"answered_ahead_by": answered_ahead_by}
         result = _run_stages(
             envelope,
             session_factory=session_factory,
@@ -1080,6 +1131,7 @@ def run_turn(
         stage: list[str] = ["received"]
         actions: list[dict[str, Any]] = []
         earlier_actions: list[dict[str, Any]] = []
+        send_order_facts: dict[str, Any] = {}
         if ticket is not None:
             # `stage[0]` carries `queued` through the wait, so the handler below files a
             # `QueueWait` under the stage it actually happened in without a special case
@@ -1125,10 +1177,8 @@ def run_turn(
             # Issue #1262: every earlier-SENT message of this contact the CRM already
             # knows about is answered before this one, on its own row, and its actions go
             # out ahead of this turn's. No timer: only messages the CRM has seen count.
-            earlier_actions = (
-                []
-                if dry_run
-                else _answer_earlier_messages(
+            if not dry_run:
+                earlier_actions, send_order_facts = _answer_earlier_messages(
                     envelope,
                     session_factory=session_factory,
                     turn_id=turn_id,
@@ -1136,8 +1186,7 @@ def run_turn(
                     contact_scope=contact_scope,
                     switches=switches,
                 )
-            )
-            media_box: dict[str, Any] = {}
+            media_box: dict[str, Any] = {"send_order": send_order_facts} if send_order_facts else {}
             result = _run_stages(
                 envelope,
                 session_factory=session_factory,
@@ -1489,8 +1538,26 @@ def _run_stages(  # noqa: PLR0915
             # ALWAYS present, empty list included: a reader must never have to tell
             # "no harness keys" from "this build does not report them".
             "harness_keys_ignored": harness_ignored,
+            # Issue #1262: what this turn answered ahead of itself and what it left to
+            # their own deliveries (and which bound left them).
+            **media_box.get("send_order", {}),
+            # ... or, on a row answered ahead, the message whose response carried it.
+            **(
+                {"answered_ahead_by_message": media_box["answered_ahead_by"].get("message_id")}
+                if media_box.get("answered_ahead_by")
+                else {}
+            ),
         },
-        raw={"session_vars": session_block},
+        # The carrying turn's id goes in `raw`, never `facts`: facts print verbatim on
+        # the trace screen, and a UUID never reaches the UI.
+        raw={
+            "session_vars": session_block,
+            **(
+                {"answered_ahead_by": media_box["answered_ahead_by"].get("turn_id")}
+                if media_box.get("answered_ahead_by")
+                else {}
+            ),
+        },
     )
 
     # -- MEDIA INTAKE (NO DB SESSION IS OPEN HERE, same window as the parser) --- #

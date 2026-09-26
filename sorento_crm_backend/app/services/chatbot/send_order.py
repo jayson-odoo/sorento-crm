@@ -28,6 +28,11 @@ The engine answers a claimed message on its own turn row, with its own trace, an
 earlier message's actions go out ahead of this turn's in the one response n8n executes in
 order. Nothing here waits for anything the CRM has not already seen; the only wait is the
 existing bounded media poll on an extraction job that already exists.
+
+Bounded (review round 2, S1), by counts and the existing per-item wait, never a clock:
+at most `MAX_EARLIER_PER_TURN` earlier messages per turn, and the media waits taken on,
+this turn's own included, stay below n8n's `chat-turn` timeout (`within_bounds`).
+Whatever is left goes to its own delivery, as it did before this module existed.
 """
 from __future__ import annotations
 
@@ -42,6 +47,13 @@ from sqlalchemy.orm import Session
 from app.models.chatbot_turn import ChatbotTurn
 
 QUEUED_STAGE = "queued"
+
+# A fixed count of earlier messages one turn answers ahead of itself. Each is a full turn
+# (an LLM call, maybe a media wait), and they all ride this request.
+MAX_EARLIER_PER_TURN = 2
+# n8n's HTTP timeout on its `/chat/turn` call. Every media wait the pre-step takes on is
+# spent inside it, so their worst-case sum must stay below it.
+N8N_CHAT_TURN_TIMEOUT_SECONDS = 90.0
 
 
 def sent_at_ms(envelope_message: Any) -> int | None:
@@ -92,6 +104,9 @@ class Earlier:
     media_url: str | None = None
     mime_type: str | None = None
     caption: str | None = None
+    job_id: str | None = None
+    # Whether answering it can sit in the media poll (a photo or voice note).
+    carries_media: bool = False
 
 
 def _epoch_ms(value: datetime | None) -> float:
@@ -133,10 +148,52 @@ def earlier_unanswered(db: Session, *, contact_respond_id: str, me: ChatbotTurn)
             envelope = row.envelope if isinstance(row.envelope, dict) else {}
             sent = sent_at_ms(envelope.get("message"))
             if sent is not None and sent < my_sent:
-                found.append(Earlier(order_key=float(sent), row_id=str(row.id), envelope=envelope))
+                found.append(
+                    Earlier(
+                        order_key=float(sent),
+                        row_id=str(row.id),
+                        envelope=envelope,
+                        carries_media=_envelope_carries_media(envelope),
+                    )
+                )
 
-    found.extend(_ledger_only_media(db, contact_respond_id=contact_respond_id, me=me))
+    found.extend(_ledger_only_media(db, contact_respond_id=contact_respond_id, me=me, my_sent=my_sent))
     return sorted(found, key=lambda e: e.order_key)
+
+
+def _envelope_carries_media(envelope: dict[str, Any]) -> bool:
+    from app.services.chatbot import media_intake
+
+    body = envelope.get("message") if isinstance(envelope.get("message"), dict) else {}
+    inner = body.get("message") if isinstance(body.get("message"), dict) else {}
+    return media_intake.detect(inner) is not None
+
+
+def within_bounds(
+    earlier: list[Earlier],
+    *,
+    media_wait_seconds: float,
+    own_carries_media: bool,
+    budget_seconds: float = N8N_CHAT_TURN_TIMEOUT_SECONDS,
+) -> tuple[list[Earlier], list[Earlier], list[str]]:
+    """Split `earlier` (oldest first) into what this turn answers and what it leaves.
+
+    Two bounds, both counts: `MAX_EARLIER_PER_TURN`, and the worst-case media waits (this
+    turn's own included) staying below `budget_seconds`. The first message that does not
+    fit ends the take, so nothing later is answered ahead of one that was left.
+    Returns (taken, left, reasons), `reasons` naming each bound that left something.
+    """
+    spent = media_wait_seconds if own_carries_media else 0.0
+    taken: list[Earlier] = []
+    for index, item in enumerate(earlier):
+        if len(taken) >= MAX_EARLIER_PER_TURN:
+            return taken, earlier[index:], ["count_bound"]
+        cost = media_wait_seconds if item.carries_media else 0.0
+        if cost and spent + cost >= budget_seconds:
+            return taken, earlier[index:], ["media_wait_budget"]
+        spent += cost
+        taken.append(item)
+    return taken, [], []
 
 
 def _latest_finished_arrival(db: Session, *, contact_respond_id: str, me: ChatbotTurn) -> datetime | None:
@@ -155,7 +212,9 @@ def _latest_finished_arrival(db: Session, *, contact_respond_id: str, me: Chatbo
     return row[0] if row is not None else None
 
 
-def _ledger_only_media(db: Session, *, contact_respond_id: str, me: ChatbotTurn) -> list[Earlier]:
+def _ledger_only_media(
+    db: Session, *, contact_respond_id: str, me: ChatbotTurn, my_sent: int | None
+) -> list[Earlier]:
     from app.models.media import ContactMediaUsage, MediaExtractionJob
 
     # This turn's own first sight: its arrival, or n8n's earlier media call for it.
@@ -202,6 +261,12 @@ def _ledger_only_media(db: Session, *, contact_respond_id: str, me: ChatbotTurn)
         query = query.filter(ContactMediaUsage.created_at > previous[0])
     if me.message_id:
         query = query.filter(ContactMediaUsage.message_id != me.message_id)
+    if my_sent is not None:
+        # The ledger has no send time, so its first sight must also predate THIS
+        # message's send time: two recorded instants, not a window. The column is naive
+        # UTC (`_epoch_ms`).
+        sent_at = datetime.fromtimestamp(my_sent / 1000, tz=timezone.utc).replace(tzinfo=None)
+        query = query.filter(ContactMediaUsage.created_at < sent_at)
 
     found: list[Earlier] = []
     for usage, job in query.order_by(ContactMediaUsage.created_at.asc()).all():
@@ -224,6 +289,8 @@ def _ledger_only_media(db: Session, *, contact_respond_id: str, me: ChatbotTurn)
                 media_url=job.media_url,
                 mime_type=job.mime_type,
                 caption=job.caption,
+                job_id=str(job.id),
+                carries_media=True,
             )
         )
     return found
