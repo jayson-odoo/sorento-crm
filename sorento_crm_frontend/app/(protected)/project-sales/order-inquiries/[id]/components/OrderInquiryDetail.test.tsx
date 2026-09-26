@@ -50,6 +50,7 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
 const acknowledgeFilterSpy = vi.fn(async () => ({ acknowledged: 0, results: [] }));
 const acknowledgeRowsSpy = vi.fn(async () => ({ acknowledged: 0, results: [] }));
 const autoPlaceSpy = vi.fn(async () => ({ linked: 0, results: [] }));
+const unacknowledgeSpy = vi.fn(async () => ({ unacknowledged: 0, results: [] }));
 // Lane B (`PLAN-order-sheet-oi-reports-22sep.md`, AC-B1/AC-B5): Export Excel goes
 // async (My Downloads), never a blob save - and the gear gets a "Download history" item.
 const exportOrderInquiryXlsxSpy = vi.hoisted(() => vi.fn(async () => ({
@@ -142,6 +143,8 @@ vi.mock('../../../_shared/services/orderInquiryService', async (importOriginal) 
     acknowledgeOrderInquiryRows: (...args: unknown[]) =>
       acknowledgeRowsSpy(...(args as [unknown])),
     autoPlaceOrderInquiryRows: (...args: unknown[]) => autoPlaceSpy(...(args as [unknown])),
+    unacknowledgeOrderInquiryRows: (...args: unknown[]) =>
+      unacknowledgeSpy(...(args as [unknown])),
   };
 });
 
@@ -188,6 +191,7 @@ beforeEach(() => {
   acknowledgeFilterSpy.mockClear();
   acknowledgeRowsSpy.mockClear();
   autoPlaceSpy.mockClear();
+  unacknowledgeSpy.mockClear();
   createPendingActionSpy.mockClear();
   cancelPendingActionSpy.mockClear();
   exportOrderInquiryXlsxSpy.mockClear();
@@ -330,6 +334,100 @@ describe('Confirm label / disabled follow the ticked scope (AC-DP-05, S5)', () =
 
     const confirmButton = await screen.findByRole('button', { name: 'Confirm' });
     expect(confirmButton).toBeDisabled();
+  });
+});
+
+/**
+ * Review S2 (PR #1266 at a98e01cf; SF1 at d0d328d7f): the header must never sit
+ * Outstanding on a used row that no tick can confirm (G6 rationale). A ticked line whose
+ * only waiting row is a used row enables Confirm and sends that used row's id.
+ */
+describe('Review S2: a line whose only waiting row is used confirms from the line', () => {
+  const lineRow = (over: Partial<OrderInquiryWorklistRow>) =>
+    ({
+      ...LINKED_LINE,
+      item_code: 'ZZT-USED',
+      core_line_id: 'cl-u',
+      line_no: 1,
+      verb: 'ORDER',
+      links: [],
+      ...over,
+    }) as OrderInquiryWorklistRow;
+
+  it('shape a: live rows confirmed, the used row changed - Confirm (1) sends both', async () => {
+    vi.mocked(getOrderInquiryHeaderLines).mockResolvedValueOnce([
+      lineRow({ id: 'row-live', state: 'placed', ack_state: 'acknowledged' }),
+      lineRow({ id: 'row-used', state: 'placed', redirected_to_pool: true, ack_state: 'changed' }),
+    ]);
+    renderDetail('oi-1');
+    await screen.findByRole('button', { name: 'Confirm' });
+
+    fireEvent.click(await screen.findByLabelText('Select ZZT-USED'));
+    const confirm = await screen.findByRole('button', { name: 'Confirm (1)' });
+    expect(confirm).not.toBeDisabled();
+    fireEvent.click(confirm);
+
+    await waitFor(() => expect(acknowledgeRowsSpy).toHaveBeenCalledTimes(1));
+    const sent = (acknowledgeRowsSpy.mock.calls[0] as unknown[])[0] as string[];
+    expect([...sent].sort()).toEqual(['row-live', 'row-used']);
+  });
+
+  it('shape b: a line with only a used row - it ticks, and Confirm (1) sends that row', async () => {
+    vi.mocked(getOrderInquiryHeaderLines).mockResolvedValueOnce([
+      lineRow({ id: 'row-used', state: 'placed', redirected_to_pool: true, ack_state: 'changed' }),
+    ]);
+    renderDetail('oi-1');
+    await screen.findByRole('button', { name: 'Confirm' });
+
+    fireEvent.click(await screen.findByLabelText('Select ZZT-USED'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Confirm (1)' }));
+
+    await waitFor(() => expect(acknowledgeRowsSpy).toHaveBeenCalledTimes(1));
+    expect((acknowledgeRowsSpy.mock.calls[0] as unknown[])[0]).toEqual(['row-used']);
+    expect(acknowledgeFilterSpy).not.toHaveBeenCalled();
+  });
+
+  it('shape b: a ticked used-only line never widens Auto link to the whole OI', async () => {
+    vi.mocked(getOrderInquiryHeaderLines).mockResolvedValueOnce([
+      lineRow({ id: 'row-used', state: 'placed', redirected_to_pool: true, ack_state: 'changed' }),
+    ]);
+    renderDetail('oi-1');
+    await screen.findByRole('button', { name: 'Confirm' });
+    fireEvent.click(await screen.findByLabelText('Select ZZT-USED'));
+    await screen.findByRole('button', { name: 'Confirm (1)' });
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Order inquiry options' }), {
+      button: 0,
+    });
+    fireEvent.click(await screen.findByRole('menuitem', { name: /auto link/i }));
+    expect(autoPlaceSpy).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Review S3 (PR #1266 at a98e01cf): since S2 the Lines fetch carries cancelled rows
+ * (`include_history`), so the whole-OI Unconfirm must still read the LIVE rows only.
+ */
+describe('Review S3: whole-OI Unconfirm sends only live acknowledged rows', () => {
+  it('with nothing ticked, Unconfirm skips the cancelled and the used acknowledged rows', async () => {
+    const lineRow = (over: Partial<OrderInquiryWorklistRow>) =>
+      ({ ...LINKED_LINE, verb: 'ORDER', links: [], ...over }) as OrderInquiryWorklistRow;
+    vi.mocked(getOrderInquiryHeaderLines).mockResolvedValueOnce([
+      lineRow({ id: 'row-live', item_code: 'ZZT-A', core_line_id: 'cl-a', line_no: 1, ack_state: 'acknowledged' }),
+      lineRow({ id: 'row-old', item_code: 'ZZT-A', core_line_id: 'cl-a', line_no: 1, state: 'cancelled', ack_state: 'acknowledged' }),
+      lineRow({ id: 'row-used', item_code: 'ZZT-B', core_line_id: 'cl-b', line_no: 2, redirected_to_pool: true, ack_state: 'acknowledged' }),
+    ]);
+    renderDetail('oi-1');
+    await screen.findByRole('button', { name: 'Confirm' });
+    await screen.findByLabelText('Select ZZT-A');
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Order inquiry options' }), {
+      button: 0,
+    });
+    fireEvent.click(await screen.findByRole('menuitem', { name: /unconfirm/i }));
+
+    await waitFor(() => expect(unacknowledgeSpy).toHaveBeenCalledTimes(1));
+    expect((unacknowledgeSpy.mock.calls[0] as unknown[])[0]).toEqual(['row-live']);
   });
 });
 

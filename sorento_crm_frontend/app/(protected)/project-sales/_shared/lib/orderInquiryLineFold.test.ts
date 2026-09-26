@@ -430,3 +430,107 @@ describe('W1 line confirmation', () => {
     });
   });
 });
+
+describe('Review S1 (PR #1266 at a98e01cf): a line AutoCount has not reconciled yet', () => {
+  // `core_sales_order_line_id` is null on every unreconciled line, and `core_line_id` /
+  // `line_no` come off that same join, so both are null too. The mirror line
+  // (`so_line_id`) is still there and is the key the header counts use (G10).
+  const unreconciled = (over: Partial<OrderInquiryWorklistRow>) =>
+    row({
+      core_line_id: null,
+      line_no: null,
+      so_line_id: 'sol-1',
+      so_line_no: 1,
+      so_line_qty: '5',
+      ...over,
+    });
+
+  it('folds a used row and a fresh row on an unreconciled line into ONE line', () => {
+    const lines = foldInquiryLines([
+      unreconciled({ id: 'used', qty: '2', redirected_to_pool: true, ack_state: 'changed' }),
+      unreconciled({ id: 'fresh', qty: '5', ack_state: 'changed' }),
+    ]);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].rows.map((r) => r.id).sort()).toEqual(['fresh', 'used']);
+    expect(lines[0].requested).toBe(5);
+  });
+
+  it('the SO Qty footer counts the unreconciled line once, not once per row', () => {
+    const lines = foldInquiryLines([
+      unreconciled({ id: 'used', qty: '2', redirected_to_pool: true }),
+      unreconciled({ id: 'fresh', qty: '5' }),
+    ]);
+    expect(lineFooterTotals(lines).soQty).toBe(5);
+  });
+
+  it('keys on the mirror line, so two unreconciled lines stay two lines', () => {
+    const lines = foldInquiryLines([
+      unreconciled({ id: 'a', so_line_id: 'sol-1', so_line_no: 1 }),
+      unreconciled({ id: 'b', so_line_id: 'sol-2', so_line_no: 2 }),
+    ]);
+    expect(lines).toHaveLength(2);
+    expect(foldKeyOf(lines[0].rows[0])).not.toBe(foldKeyOf(lines[1].rows[0]));
+  });
+
+  it('sorts unreconciled lines by the sales order line No. (so_line_no)', () => {
+    const lines = foldInquiryLines([
+      unreconciled({ id: 'b', so_line_id: 'sol-2', so_line_no: 2 }),
+      unreconciled({ id: 'a', so_line_id: 'sol-1', so_line_no: 1 }),
+    ]);
+    expect(lines.map((line) => line.lineNo)).toEqual([1, 2]);
+  });
+});
+
+describe('Review S2 (PR #1266): a line whose only waiting row is a used row reads To confirm', () => {
+  // One rule, shared with the header's `lines_to_confirm` and the Confirm sweep: a used
+  // row waits while it is not cancelled and its ack is awaiting or changed.
+  it('shape a: live rows already confirmed, the used row still changed', () => {
+    const [line] = foldInquiryLines([
+      row({ id: 'used', core_line_id: 'cl-1', qty: '2', redirected_to_pool: true, ack_state: 'changed' }),
+      row({ id: 'fresh', core_line_id: 'cl-1', qty: '5', state: 'placed', ack_state: 'acknowledged' }),
+    ]);
+    expect(line.state).toBe('to_confirm');
+    expect(line.waitingUsedRows.map((r) => r.id)).toEqual(['used']);
+  });
+
+  it('shape b: a line with only a used row, still changed, reads To confirm and is not greyed', () => {
+    const [line] = foldInquiryLines([
+      row({ id: 'used', core_line_id: 'cl-1', qty: '2', redirected_to_pool: true, ack_state: 'changed' }),
+    ]);
+    expect(line.state).toBe('to_confirm');
+    expect(line.muted).toBe(false);
+  });
+
+  it('a used row still awaiting waits too', () => {
+    const [line] = foldInquiryLines([
+      row({ id: 'used', core_line_id: 'cl-1', qty: '2', redirected_to_pool: true, ack_state: 'awaiting' }),
+    ]);
+    expect(line.state).toBe('to_confirm');
+  });
+
+  it('once the used row is confirmed the line reads Nothing to buy again, greyed', () => {
+    const [line] = foldInquiryLines([
+      row({ id: 'used', core_line_id: 'cl-1', qty: '2', redirected_to_pool: true, ack_state: 'acknowledged' }),
+    ]);
+    expect(line.state).toBe('nothing_to_buy');
+    expect(line.muted).toBe(true);
+    expect(line.waitingUsedRows).toEqual([]);
+  });
+
+  it('a cancelled used row is history and never waits', () => {
+    const [line] = foldInquiryLines([
+      row({ id: 'live', core_line_id: 'cl-1', qty: '5', state: 'placed', ack_state: 'acknowledged' }),
+      row({ id: 'old', core_line_id: 'cl-1', qty: '2', state: 'cancelled', redirected_to_pool: true, ack_state: 'changed' }),
+    ]);
+    expect(line.state).toBe('placed');
+    expect(line.waitingUsedRows).toEqual([]);
+  });
+
+  it('a cancelled SO line still reads Line cancelled while its used row waits', () => {
+    const [line] = foldInquiryLines([
+      row({ id: 'used', core_line_id: 'cl-1', qty: '2', redirected_to_pool: true, ack_state: 'changed', line_cancelled: true }),
+    ]);
+    expect(line.state).toBe('line_cancelled');
+    expect(line.waitingUsedRows.map((r) => r.id)).toEqual(['used']);
+  });
+});

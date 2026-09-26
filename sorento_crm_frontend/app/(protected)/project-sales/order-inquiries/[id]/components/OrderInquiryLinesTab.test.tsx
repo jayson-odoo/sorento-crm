@@ -124,3 +124,56 @@ describe('AC-ND-1 / 2 / 10 / 12: one row per sales order line', () => {
     expect(onChange).toHaveBeenLastCalledWith({ 'l1-fresh': true });
   });
 });
+
+/**
+ * Review S2 (PR #1266 at a98e01cf, SF1 at d0d328d7f): a line whose only waiting row is a
+ * used row must be tickable, or no tick can confirm what the header counts (G6).
+ */
+describe('Review S2: a line whose only waiting row is used can be ticked', () => {
+  const rows = [
+    line({ id: 'l1-used', item_code: 'CKS1050', core_line_id: 'cl-1', line_no: 1, qty: '2', redirected_to_pool: true, ack_state: 'changed' }),
+    line({ id: 'l2-used', item_code: 'TAP-88', core_line_id: 'cl-2', line_no: 2, qty: '3', redirected_to_pool: true, ack_state: 'acknowledged' }),
+  ];
+
+  function bodyRows() {
+    return screen.getAllByRole('row').filter((row) => row.closest('tbody'));
+  }
+
+  it('ticks a used-only line in changed and hands back its used row id', async () => {
+    const onChange = vi.fn();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <OrderInquiryLinesTab
+          lines={rows}
+          isLoading={false}
+          rowSelection={{}}
+          onRowSelectionChange={onChange}
+        />
+      </QueryClientProvider>,
+    );
+    await screen.findByText('CKS1050');
+    const [waiting, done] = bodyRows();
+    expect(waiting.className).not.toContain('opacity-60');
+    expect(within(done).getByRole('checkbox')).toBeDisabled();
+    fireEvent.click(within(waiting).getByRole('checkbox'));
+    expect(onChange).toHaveBeenLastCalledWith({ 'l1-used': true });
+  });
+
+  it('reads a ticked used-only line back as ticked', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <OrderInquiryLinesTab
+          lines={rows}
+          isLoading={false}
+          rowSelection={{ 'l1-used': true }}
+          onRowSelectionChange={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+    await screen.findByText('CKS1050');
+    expect(within(bodyRows()[0]).getByRole('checkbox')).toBeChecked();
+  });
+});
+

@@ -578,6 +578,13 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
   so_line_qty?: string | null;
   so_line_no?: number | null;
   /**
+   * PR #1266 review S1: the row's MIRROR sales order line, one-to-one with the core
+   * line but present before AutoCount reconciles it (`core_line_id` above is null until
+   * then). The Lines tab folds on it, the same key the header's Lines count reads (G10).
+   * Null when the row names no sales order line.
+   */
+  so_line_id?: string | null;
+  /**
    * S6 (AC-B6-1/AC-B6-7): the CORE sales-order line's own id, which the backend resolves
    * server-side off the row's mirror line - never the mirror id itself, which this screen
    * has no use for. Addresses the "SO line" link's own `?line=` param

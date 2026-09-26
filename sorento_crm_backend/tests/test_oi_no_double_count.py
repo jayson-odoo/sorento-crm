@@ -109,9 +109,34 @@ class _Order:
         self.db.flush()
         return inquiry
 
-    def line(self, line_no: int, qty: str, *, line_status: str = "open"):
-        """A core line (the SO grid's own No. and Qty) and its mirror, one-to-one."""
+    def line(
+        self,
+        line_no: int,
+        qty: str,
+        *,
+        line_status: str = "open",
+        reconciled: bool = True,
+    ):
+        """A core line (the SO grid's own No. and Qty) and its mirror, one-to-one.
+        `reconciled=False` is a mirror line AutoCount has not matched yet: no core line
+        at all, `core_sales_order_line_id` null (`project_so.py`: "NULL is the normal
+        state for every unreconciled line")."""
         product = _product(self.db, f"ZZT-ND-{_uid()[:8]}", f"{MARKER} product")
+        if not reconciled:
+            mirror = ProjectSalesOrderLine(
+                id=_uid(),
+                company_id=self.company_id,
+                project_sales_order_id=self.pso.id,
+                core_sales_order_line_id=None,
+                line_no=line_no,
+                product_id=product.id,
+                qty=Decimal(qty),
+                uom="UNIT",
+                delivery_date=date(2026, 10, 15),
+            )
+            self.db.add(mirror)
+            self.db.flush()
+            return product, None, mirror
         core = SalesOrderLine(
             id=_uid(),
             company_id=self.company_id,
@@ -393,19 +418,28 @@ def test_confirming_a_line_acknowledges_its_used_rows_AC_ND_24(api):
     assert header["status"] == "completed"
 
 
-def test_whole_inquiry_confirm_leaves_nothing_waiting_AC_ND_24(api):
+def test_confirming_an_already_confirmed_line_sweeps_its_used_row_AC_ND_24(api):
+    """Review N2 (PR #1266): replaces the whole-inquiry test, which the whole-OI
+    `acknowledge_scope` held on its own (it already names used rows), so removing the G6
+    sweep left it green. This one goes through the sweep: the line's live row was
+    confirmed before this PR and its used row still sits in `changed` (review S2 shape
+    a); naming only the live row, already acknowledged, still takes the used row on."""
     client, db, company_id = api
     order = _Order(db, company_id)
     product, _core, mirror = order.line(1, "5")
-    order.row(mirror, product, "2", redirected=True, ack_state=ACK_CHANGED)
-    order.row(mirror, product, "5", ack_state=ACK_CHANGED)
+    used = order.row(mirror, product, "2", redirected=True, ack_state=ACK_CHANGED)
+    fresh = order.row(mirror, product, "5", ack_state=ACK_ACKNOWLEDGED)
     db.commit()
+    assert _header_of(client, order.inquiry.id)["lines_to_confirm"] == 1
 
-    response = client.post(
-        ACK_URL, json={"filter": {"inquiry_id": order.inquiry.id}}
-    )
+    response = client.post(ACK_URL, json={"row_ids": [fresh.id]})
     assert response.status_code == 200, response.text
-    assert _header_of(client, order.inquiry.id)["lines_to_confirm"] == 0
+
+    db.expire_all()
+    assert db.get(OrderInquiryRow, used.id).ack_state == ACK_ACKNOWLEDGED
+    header = _header_of(client, order.inquiry.id)
+    assert header["lines_to_confirm"] == 0
+    assert header["status"] == "completed"
 
 
 def test_confirm_leaves_used_rows_on_other_lines_and_headers_alone_AC_ND_25(api):
@@ -437,3 +471,194 @@ def test_confirm_leaves_used_rows_on_other_lines_and_headers_alone_AC_ND_25(api)
     assert db.get(OrderInquiryRow, used_other_line.id).ack_state == ACK_CHANGED
     assert db.get(OrderInquiryRow, used_other_header.id).ack_state == ACK_CHANGED
     assert db.get(OrderInquiryRow, used_cancelled.id).ack_state == ACK_CHANGED
+
+
+def test_confirm_never_sweeps_a_used_row_on_a_cross_pair_of_header_and_line_N1(api):
+    """Review N1 (PR #1266, both passes): one Confirm names header A line 1 and header B
+    line 2. A used row on header A line 2 matches both ids on their own, but its
+    (header, line) pair was never confirmed, so it stays `changed`."""
+    client, db, company_id = api
+    order = _Order(db, company_id)
+    product_1, _c1, mirror_1 = order.line(1, "5")
+    product_2, _c2, mirror_2 = order.line(2, "9")
+    amendment = order.header(amendment=True)
+    fresh_a1 = order.row(mirror_1, product_1, "5", ack_state=ACK_CHANGED)
+    fresh_b2 = order.row(mirror_2, product_2, "9", inquiry=amendment, ack_state=ACK_CHANGED)
+    used_a2 = order.row(mirror_2, product_2, "3", redirected=True, ack_state=ACK_CHANGED)
+    db.commit()
+
+    response = client.post(ACK_URL, json={"row_ids": [fresh_a1.id, fresh_b2.id]})
+    assert response.status_code == 200, response.text
+
+    db.expire_all()
+    assert db.get(OrderInquiryRow, used_a2.id).ack_state == ACK_CHANGED
+
+
+# =============================================================================
+# Review S1 (PR #1266 at a98e01cf): a line AutoCount has not reconciled yet
+# =============================================================================
+
+
+def test_an_unreconciled_sales_order_line_is_one_line_S1_review(api):
+    """`core_sales_order_line_id` is null on every line not yet reconciled to AutoCount,
+    so a line key off the core line split its used row and its fresh row into two lines
+    (lines_total 2, lines_to_confirm 2). The key is the mirror line, one-to-one with the
+    core line, and every row carries it so the Lines tab folds on the same key."""
+    client, db, company_id = api
+    order = _Order(db, company_id)
+    product, _core, mirror = order.line(1, "5", reconciled=False)
+    used = order.row(mirror, product, "2", redirected=True, ack_state=ACK_CHANGED)
+    fresh = order.row(mirror, product, "5", ack_state=ACK_CHANGED)
+    db.commit()
+
+    by_id = {row["id"]: row for row in _lines_tab(client, order.inquiry.id)}
+    assert by_id[used.id]["so_line_id"] == by_id[fresh.id]["so_line_id"] == mirror.id
+    assert by_id[fresh.id]["core_line_id"] is None
+    assert by_id[fresh.id]["so_line_no"] == 1
+    assert Decimal(by_id[fresh.id]["so_line_qty"]) == Decimal("5")
+
+    header = _header_of(client, order.inquiry.id)
+    assert header["lines_total"] == 1
+    assert header["lines_to_confirm"] == 1
+    assert Decimal(str(header["qty_total"])) == Decimal("5")
+
+
+def test_a_row_with_no_sales_order_line_carries_a_null_so_line_id_S1_review(api):
+    client, db, company_id = api
+    order = _Order(db, company_id)
+    product, _core, _mirror = order.line(1, "10")
+    loose = order.row(None, product, "3")
+    db.commit()
+
+    found = next(r for r in _lines_tab(client, order.inquiry.id) if r["id"] == loose.id)
+    assert "so_line_id" in found and found["so_line_id"] is None
+
+
+# =============================================================================
+# Review S2 (PR #1266 at a98e01cf, and SF1 at d0d328d7f): one rule for a waiting used
+# row. A used row waits while it is not cancelled and its ack is awaiting or changed;
+# `lines_to_confirm` counts its line, the line reads To confirm, and Confirm takes it on.
+# =============================================================================
+
+
+def test_a_used_row_still_awaiting_is_swept_with_its_line_S2_review(api):
+    """`lines_to_confirm` counted a used row in `awaiting` (a row redirected before
+    purchasing read it) while the sweep only took `changed`, so the header sat
+    Outstanding after its line was confirmed."""
+    client, db, company_id = api
+    order = _Order(db, company_id)
+    product, _core, mirror = order.line(1, "5")
+    used = order.row(mirror, product, "2", redirected=True, ack_state=ACK_AWAITING)
+    fresh = order.row(mirror, product, "5", ack_state=ACK_AWAITING)
+    db.commit()
+    assert _header_of(client, order.inquiry.id)["lines_to_confirm"] == 1
+
+    response = client.post(ACK_URL, json={"row_ids": [fresh.id]})
+    assert response.status_code == 200, response.text
+
+    db.expire_all()
+    assert db.get(OrderInquiryRow, used.id).ack_state == ACK_ACKNOWLEDGED
+    header = _header_of(client, order.inquiry.id)
+    assert header["lines_to_confirm"] == 0
+    assert header["status"] == "completed"
+
+
+def test_a_line_confirmed_before_this_pr_confirms_from_the_line_S2_shape_a(api):
+    """Shape a: every line confirmed before this PR has its live rows acknowledged and its
+    used row still `changed`, because nothing swept then. The ticked line sends its live
+    row ids and its waiting used row ids; both are accepted and the header completes."""
+    client, db, company_id = api
+    order = _Order(db, company_id)
+    product, _core, mirror = order.line(1, "5")
+    used = order.row(mirror, product, "2", redirected=True, ack_state=ACK_CHANGED)
+    fresh = order.row(mirror, product, "5", ack_state=ACK_ACKNOWLEDGED)
+    db.commit()
+
+    response = client.post(ACK_URL, json={"row_ids": [fresh.id, used.id]})
+    assert response.status_code == 200, response.text
+
+    db.expire_all()
+    assert db.get(OrderInquiryRow, used.id).ack_state == ACK_ACKNOWLEDGED
+    assert _header_of(client, order.inquiry.id)["status"] == "completed"
+
+
+def test_a_line_whose_only_row_is_used_confirms_by_its_used_row_S2_shape_b(api):
+    """Shape b (O2, "Nothing to buy"): the line has only a used row, still `changed`. The
+    ticked line sends that used row's id, and Confirm takes it on."""
+    client, db, company_id = api
+    order = _Order(db, company_id)
+    product, _core, mirror = order.line(1, "5")
+    used = order.row(mirror, product, "5", redirected=True, ack_state=ACK_CHANGED)
+    db.commit()
+    header = _header_of(client, order.inquiry.id)
+    assert header["lines_to_confirm"] == 1
+    assert header["status"] == "outstanding"
+
+    response = client.post(ACK_URL, json={"row_ids": [used.id]})
+    assert response.status_code == 200, response.text
+
+    db.expire_all()
+    assert db.get(OrderInquiryRow, used.id).ack_state == ACK_ACKNOWLEDGED
+    header = _header_of(client, order.inquiry.id)
+    assert header["lines_to_confirm"] == 0
+    assert header["status"] == "completed"
+
+
+# =============================================================================
+# Review N3 (PR #1266 at d0d328d7f): include_history under company scope and RBAC
+# =============================================================================
+
+
+def test_include_history_stays_in_company_scope_and_behind_view_N3():
+    """The reviewer's scratch test, kept: another company's header read with
+    `include_history=true` returns nothing, a company-wide `include_history` read never
+    carries another company's cancelled row, no VIEW is 403, and Confirm without
+    `acknowledge` is 403 and sweeps nothing."""
+    from app.models.company import Company
+
+    with blank_session() as db:
+        company_a = _sorento(db)
+        company_b = _uid()
+        db.add(Company(id=company_b, name=f"{MARKER} other", code=f"ZZT{_uid()[:6]}"))
+        db.flush()
+        with company_scope(db, frozenset({company_b})):
+            theirs = _Order(db, company_b)
+            product_b, _cb, mirror_b = theirs.line(1, "5")
+            their_cancelled = theirs.row(mirror_b, product_b, "5", state=INQUIRY_CANCELLED)
+            theirs.row(mirror_b, product_b, "5")
+        with company_scope(db, frozenset({company_a})):
+            ours = _Order(db, company_a)
+            product_a, _ca, mirror_a = ours.line(1, "5")
+            used = ours.row(mirror_a, product_a, "2", redirected=True, ack_state=ACK_CHANGED)
+            fresh = ours.row(mirror_a, product_a, "5", ack_state=ACK_CHANGED)
+        user_id = _user(db, f"{MARKER} scope")
+        db.commit()
+        their_inquiry = theirs.inquiry.id
+        their_cancelled_id = their_cancelled.id
+
+        client, originals = _client(db, user_id, [VIEW])
+        try:
+            with company_scope(db, frozenset({company_a})):
+                assert _lines_tab(client, their_inquiry, include_history="true") == []
+                response = client.get(LIST, params={"include_history": "true", "limit": 1000})
+                assert response.status_code == 200, response.text
+                ids = {row["id"] for row in response.json()["data"]}
+                assert their_cancelled_id not in ids
+
+                # Confirm without `acknowledge`: refused, and the used row is untouched.
+                refused = client.post(ACK_URL, json={"row_ids": [fresh.id]})
+                assert refused.status_code == 403, refused.text
+                db.expire_all()
+                assert db.get(OrderInquiryRow, used.id).ack_state == ACK_CHANGED
+        finally:
+            _restore(originals)
+
+        client, originals = _client(db, user_id, [])
+        try:
+            with company_scope(db, frozenset({company_a})):
+                response = client.get(
+                    LIST, params={"inquiry_id": ours.inquiry.id, "include_history": "true"}
+                )
+                assert response.status_code == 403, response.text
+        finally:
+            _restore(originals)
