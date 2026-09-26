@@ -2635,9 +2635,14 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     # mode, availability included), so an answered `availability` reply would otherwise
     # end in a line that is not one of the four R6 sentences and whose digits are ours -
     # exactly what the intro and the numbering were already gated off of above, for the
-    # same reason. `compact` and `detailed` are untouched (R10): neither sets
-    # `stock_availability_answered`.
-    ts = None if stock_availability_answered else _fmt_ts(e.get("last_updated_at"))
+    # same reason. `compact` and `detailed` are untouched (R10): neither is a
+    # `stock_availability` reply.
+    #
+    # Owner hand test 26 Sep, slice 1: keyed on the RESULT TYPE, not on "answered". The
+    # quantity question ("How many units do you need?") is an availability reply too,
+    # and it printed the timestamp on T1, T3, T8, T13 and T16.
+    stock_availability_reply = jsc.js_string(e.get("result_type") or "") == "stock_availability"
+    ts = None if stock_availability_reply else _fmt_ts(e.get("last_updated_at"))
     if ts:
         msg += f"_Data last updated: {ts}_"
 

@@ -158,3 +158,69 @@ def test_answered_reply_carries_no_last_updated_footer():
 
     assert "Data last updated" not in out["response"]
     assert re.findall(r"\d+", out["response"]) == ["42", "7", "19", "10", "2026"]
+
+
+# --------------------------------------------------------------------------- #
+# Owner hand test 26 Sep, slice 1 (scout comment on PR #1247, section 5): the footer
+# was gated on "every entry answered", so the QUANTITY QUESTION turns (T1, T3, T8,
+# T13, T16) still ended in `_Data last updated: ..._` - a timestamp of ours on an
+# availability reply, which R14 / AC-SA312 do not allow. The gate is the result type.
+# --------------------------------------------------------------------------- #
+
+
+def _asking_entry(code: str) -> dict:
+    return {
+        **_real_entry(code, 0, "in_stock"),
+        "needs_quantity": True,
+        "requested_qty": None,
+        "branch": None,
+    }
+
+
+_SRTWC286_FAMILY = [
+    "SRTWC286-SH",
+    "SRTWC286-SH-UF",
+    "SRTWC286-SH-L",
+    "SRTWC286-SH-NL",
+    "SRTWC286-SH-W",
+    "SRTWC286-SH-B",
+    "SRTWC286-SH-G",
+    "SRTWC286-SH-M",
+    "SRTWC286-SH-C",
+    "SRTWC286-SH-R",
+]
+
+
+def test_t1_quantity_question_reply_carries_no_footer():
+    """T1 "check stock srtwc286": ten entries, every one `needs_quantity`. The reply is
+    a question, and still an availability reply - no timestamp of ours on it."""
+    envelope = _real_availability_envelope([_asking_entry(c) for c in _SRTWC286_FAMILY])
+
+    out = fetch.output_structurer(envelope, {"semantic_input": {}})
+
+    assert "Data last updated" not in out["response"]
+    assert "How many units do you need?" in out["response"]
+
+
+def test_t16_one_product_quantity_question_carries_no_footer():
+    """T16 / T13 shape: one product, no quantity bound - the single-product question."""
+    envelope = _real_availability_envelope([_asking_entry("ELP3754")])
+
+    out = fetch.output_structurer(envelope, {"semantic_input": {}})
+
+    assert "Data last updated" not in out["response"]
+
+
+def test_compact_reply_keeps_its_footer_r10():
+    """R10: staff (compact / detailed) replies are untouched - the footer still prints."""
+    envelope = {
+        "result_type": "stock_compact",
+        "intro": "Stock summary for the requested products.",
+        "items": [{"title": "SRT-A", "fields": [{"label": "KL", "value": 5}]}],
+        "has_result": True,
+        "last_updated_at": "2026-08-24T18:00:00",
+    }
+
+    out = fetch.output_structurer(envelope, {"semantic_input": {}})
+
+    assert "Data last updated" in out["response"]
