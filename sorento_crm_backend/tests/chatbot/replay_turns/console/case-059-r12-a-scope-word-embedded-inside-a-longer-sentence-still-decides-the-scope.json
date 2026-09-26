@@ -1,0 +1,223 @@
+{
+  "turns": [
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "Srtwc8518-SH dealer delivery order outstanding how many at BRW?",
+              "type": "text"
+            },
+            "messageId": "console-check-840cf96c1a59",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789473558"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message",
+          "send_attachments"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Product: SRTWC8518-SH\nCustomer: all\nLocation: BRW\nOrder date: all\n\n*Delivery order outstanding*\nDelivery orders: 10\nDO qty: 116\nDelivered: 0\nOutstanding: 116\nDO date range: 20/04/2026 to 24/07/2026\n*_By location_*\nBRW: 116 (O/S: 116)\n*_By customer_*\nHENG SENG HARDWARE SDN BHD [A/C III]: 34 (O/S: 34)\nDELUXE HOME CENTRE SDN BHD [A/C III]: 23 (O/S: 23)\nUNIMAX SANITARIO (M) SDN BHD [A/C III]: 20 (O/S: 20)\nNURTECH ESG SDN BHD (PROJECT): 11 (O/S: 11)\nGRAND WATERHOUSE SDN BHD [A/C III]: 10 (O/S: 10)\nBATHPRO ENTERPRISES [A/C III]: 9 (O/S: 9)\nSIN HON ENTERPRISE [A/C III]: 8 (O/S: 8)\nGLORY MOTION SDN BHD [A/C III]: 1 (O/S: 1)\n\nReply 1 for the delivery order list.",
+        "tools": [
+          {
+            "args_keys": [
+              "_diagnostics",
+              "access_levels",
+              "contact_id",
+              "date_mode",
+              "is_active",
+              "location_token",
+              "product_code",
+              "scope",
+              "space_id",
+              "view",
+              "warehouse_codes"
+            ],
+            "tool": "crm_outstanding_report"
+          }
+        ]
+      },
+      "resolutions": {
+        "resolutions": [
+          {
+            "matches": [],
+            "resolved": false,
+            "token": "Srtwc8518-SH"
+          },
+          {
+            "matches": [],
+            "resolved": false,
+            "token": "BRW"
+          }
+        ],
+        "tokens": [
+          "Srtwc8518-SH",
+          "BRW"
+        ],
+        "unresolved_tokens": [
+          "Srtwc8518-SH",
+          "BRW"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T21:01:34.368321+09:00",
+        "turn_id": "8906200b-5181-410d-8717-dd9eaf8d70b8"
+      },
+      "tool_results": [
+        {
+          "args": {
+            "_diagnostics": {
+              "entities_in": 5,
+              "scalar_truncated": [],
+              "skipped": [],
+              "total_uuids_passed": 5,
+              "unmapped_types": []
+            },
+            "access_levels": [
+              "dealer"
+            ],
+            "contact_id": "437264483",
+            "date_mode": null,
+            "is_active": null,
+            "location_token": "BRW",
+            "product_code": "SRTWC8518-SH",
+            "scope": "do",
+            "space_id": "364817",
+            "view": "render",
+            "warehouse_codes": [
+              "BRW"
+            ]
+          },
+          "envelope": {
+            "has_result": true,
+            "response": "Product: SRTWC8518-SH\nCustomer: all\nLocation: BRW\nOrder date: all\n\n*Delivery order outstanding*\nDelivery orders: 10\nDO qty: 116\nDelivered: 0\nOutstanding: 116\nDO date range: 20/04/2026 to 24/07/2026\n*_By location_*\nBRW: 116 (O/S: 116)\n*_By customer_*\nHENG SENG HARDWARE SDN BHD [A/C III]: 34 (O/S: 34)\nDELUXE HOME CENTRE SDN BHD [A/C III]: 23 (O/S: 23)\nUNIMAX SANITARIO (M) SDN BHD [A/C III]: 20 (O/S: 20)\nNURTECH ESG SDN BHD (PROJECT): 11 (O/S: 11)\nGRAND WATERHOUSE SDN BHD [A/C III]: 10 (O/S: 10)\nBATHPRO ENTERPRISES [A/C III]: 9 (O/S: 9)\nSIN HON ENTERPRISE [A/C III]: 8 (O/S: 8)\nGLORY MOTION SDN BHD [A/C III]: 1 (O/S: 1)\n\nReply 1 for the delivery order list.",
+            "result_type": "outstanding_report"
+          },
+          "tool": "crm_outstanding_report"
+        }
+      ],
+      "verdict": {
+        "access_levels": [
+          "Sorento Dealer"
+        ],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "order",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "Srtwc8518-SH"
+          },
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "warehouse",
+            "raw": "BRW"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_order",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": "do_outstanding",
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [
+          "quantity"
+        ],
+        "routing": {
+          "suggested_agent": "order_enquiries",
+          "suggested_team": "warehouse"
+        },
+        "scope_exclusive": false,
+        "scope_intent": "specific",
+        "top_n": null,
+        "user_goal": "trying to check how many outstanding delivery orders there are for Srtwc8518-SH at BRW"
+      }
+    }
+  ]
+}

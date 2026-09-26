@@ -141,8 +141,14 @@ describe('PortalLanding - Price Tag Request in the type dropdown', () => {
     mockContact(['stock_inquiry']);
     render(<PortalLanding slug="darren" />);
 
-    // The New button names the active kind, so it is what proves the fallback.
-    expect(await screen.findByText('New Stock Inquiry')).toBeInTheDocument();
+    // The New button names the active kind, so it is what proves the
+    // fallback. The label is split across spans (short "New" below `sm`,
+    // full label at `sm+`), so it is queried by accessible name (the whole
+    // label, which the button's `aria-label` always carries) rather than
+    // exact text.
+    expect(
+      await screen.findByRole('link', { name: /New Stock Inquiry/ }),
+    ).toBeInTheDocument();
     expect(screen.queryByText('PT-202608-0001')).toBeNull();
   });
 
@@ -181,5 +187,62 @@ describe('PortalLanding - Price Tag Request in the type dropdown', () => {
 
     await screen.findByRole('combobox');
     expect(screen.queryByText('Price Tag Requests')).toBeNull();
+  });
+});
+
+describe('PortalLanding - price tag card shows the revision badge/chip too (AC-R7)', () => {
+  // Same mechanism `PortalLanding.revBadge.test.tsx` already pins for the
+  // legacy kinds - the card reads `row.revision_no`/`row.has_revision_draft`
+  // with no kind-specific branch, so a price_tag_request row must behave
+  // identically once the settings row for it is enabled.
+  it('shows the "Rev N" badge for a revised price tag request', async () => {
+    searchParams = new URLSearchParams('type=price_tag_request');
+    mockContact(['price_tag_request']);
+    (listRequestsAsSummaries as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { ...PRICE_TAG_ROW, revision_no: 1, last_revised_at: '2026-09-01T00:00:00Z' },
+    ]);
+
+    render(<PortalLanding slug="darren" />);
+
+    await screen.findByText('PT-202608-0001');
+    expect(screen.getByText('Rev 1')).toBeInTheDocument();
+  });
+
+  it('shows the Revising chip when has_revision_draft is true', async () => {
+    searchParams = new URLSearchParams('type=price_tag_request');
+    mockContact(['price_tag_request']);
+    (listRequestsAsSummaries as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        ...PRICE_TAG_ROW,
+        revision_no: 1,
+        last_revised_at: '2026-09-01T00:00:00Z',
+        has_revision_draft: true,
+      },
+    ]);
+
+    render(<PortalLanding slug="darren" />);
+
+    await screen.findByText('PT-202608-0001');
+    const chip = screen.getByTestId('revising-chip');
+    expect(chip).toHaveTextContent('Revising');
+  });
+});
+
+describe('PortalLanding - card needed_by_date is formatted, not raw ISO (review round 3)', () => {
+  it('renders needed_by_date with toLocaleDateString like created_at', async () => {
+    searchParams = new URLSearchParams('type=price_tag_request');
+    mockContact(['price_tag_request']);
+    (listRequestsAsSummaries as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { ...PRICE_TAG_ROW, needed_by_date: '2026-09-04' },
+    ]);
+
+    render(<PortalLanding slug="darren" />);
+    await screen.findByText('PT-202608-0001');
+
+    const expected = new Date('2026-09-04').toLocaleDateString(undefined, {
+      dateStyle: 'medium',
+    });
+    expect(screen.getByText(expected)).toBeInTheDocument();
+    expect(screen.queryByText('2026-09-04')).toBeNull();
   });
 });

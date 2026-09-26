@@ -165,7 +165,12 @@ class TestToolSearch:
         (0.4537). The shipments tool's header carries no clearance checkpoints and no
         `field_access` block, so it can never render the container timeline - only the
         list tool can, and only the list tool is `tools[0]`."""
-        from app.services.chatbot.contracts import DOMAIN_SPEC
+        # Re-pinned 17 Sep 2026 (tester): `DOMAIN_SPEC` moved to the DB-backed
+        # `turn.policy.Policy` at S0/S6 (AC-1594) - `contracts.py`'s own comment names
+        # `turn.policy.default_policy()` as the frozen-seed reader that replaces it,
+        # same data (`turn.policy_rows.DEFAULT_DOMAIN_ROWS`), one copy. `DomainPolicy.
+        # tools` is the same tuple `DOMAIN_SPEC[name].tools` used to be.
+        from app.services.chatbot.turn.policy import default_policy
 
         fetch = _import_fetch()
 
@@ -175,7 +180,7 @@ class TestToolSearch:
         # Both other incoming tools stay in the tuple as allow-list members (a probe may
         # name `crm_incoming_stock_by_product`, which renders batch numbers on purpose)
         # and neither can be selected.
-        assert DOMAIN_SPEC["incoming"].tools[1:] == (
+        assert default_policy().domain("incoming").tools[1:] == (
             "crm_incoming_stock_by_product",
             "crm_incoming_stock_shipments",
         )
@@ -614,7 +619,9 @@ class TestOutputStructurer:
 
     def test_non_checkpoint_ask_does_not_expand(self):
         """`liner_code` is not a sequence key - asking for it must not pull in any
-        checkpoint beyond the ALWAYS-kept ETA."""
+        checkpoint beyond the ALWAYS-kept ETA. `eta_delay_date` rides along with the ETA
+        as its own always-kept key (the delay is IMPLIED by the ETA, never named), so it
+        is kept here too, same as `estimated_arrival_date`."""
         fetch = _import_fetch()
         envelope = self._checkpoint_envelope({"liner_code": "CMA"})
         ctx = {"semantic_input": {"requested_attributes": ["liner_code"]}}
@@ -625,8 +632,9 @@ class TestOutputStructurer:
         assert "liner_code" in kept
         assert "product_code" in kept  # identity
         assert "estimated_arrival_date" in kept  # ALWAYS_KEPT_KEYS, ships regardless
+        assert "eta_delay_date" in kept  # ALWAYS_KEPT_KEYS, rides with the ETA
         for k in (
-            "loading_date", "etc_date", "etd_date", "eta_delay_date", "inspection_date",
+            "loading_date", "etc_date", "etd_date", "inspection_date",
             "approval_date", "gatepass_date", "warehouse_arrival_date",
             "informed_collection_date", "collection_date",
         ):
@@ -788,7 +796,8 @@ class TestOutputStructurer:
 
     def test_bare_product_ask_stays_eta_only(self):
         """No `requested_attributes`, and the resolved entity is a `product` - a bare
-        product ask must NOT be widened into a timeline; only identity + ETA survive."""
+        product ask must NOT be widened into a timeline; only identity + the always-kept
+        ETA (and its delay, which rides along with it) survive."""
         fetch = _import_fetch()
         envelope = self._checkpoint_envelope({"liner_code": "CMA"})
         ctx = {
@@ -805,9 +814,9 @@ class TestOutputStructurer:
         out = fetch.output_structurer(envelope, ctx)
 
         kept = {f["key"] for f in out["answers"][0]["fields"]}
-        assert kept == {"product_code", "estimated_arrival_date"}, (
-            "a bare product ask keeps only identity + the always-kept ETA, never "
-            "widens into a full checkpoint timeline"
+        assert kept == {"product_code", "estimated_arrival_date", "eta_delay_date"}, (
+            "a bare product ask keeps only identity + the always-kept ETA (and its "
+            "always-kept delay), never widens into a full checkpoint timeline"
         )
 
     def test_container_ask_with_an_attribute_is_not_widened(self):
@@ -873,9 +882,9 @@ class TestOutputStructurer:
         }
         eta_out = fetch.output_structurer(eta_envelope, eta_ctx)
         eta_kept = {f["key"] for f in eta_out["answers"][0]["fields"]}
-        assert eta_kept == {"product_code", "estimated_arrival_date"}, (
+        assert eta_kept == {"product_code", "estimated_arrival_date", "eta_delay_date"}, (
             "a raw parser hint of 'product' must NOT widen into a timeline - only "
-            "identity + the always-kept ETA survive"
+            "identity + the always-kept ETA (and its always-kept delay) survive"
         )
 
 
@@ -906,6 +915,141 @@ def test_clearance_checkpoint_order_has_no_duplicates_and_matches_parser_vocabul
         "312_container_status_checkpoints.py - a migration adding a checkpoint must "
         "extend this tuple too"
     )
+
+
+# --------------------------------------------------------------------------- #
+# PLAN-chatbot-eta-delay-always-kept-24sep: the ETA delay rides along with the ETA on
+# every incoming answer, asked for or not - `eta_delay_date` joins `ALWAYS_KEPT_KEYS`.
+# `req_attrs` (the "the customer NAMED this field" list) is untouched, so a denied or
+# blank delay the customer never named stays silent: no refusal line, no "not recorded
+# yet" line. Only an EXPLICIT `eta_delay_date` ask still turns those notes on (AC-4,
+# covered by `test_timeline_sentinel_denies_mixed_array`'s `plain_ctx`/`plain_out` pair
+# above - left unchanged).
+# --------------------------------------------------------------------------- #
+
+
+class TestEtaDelayAlwaysKept:
+    def test_bare_eta_ask_keeps_delay(self):
+        """AC-1: no `requested_attributes` at all, no shipment named - the delay still
+        rides along with the ETA."""
+        fetch = _import_fetch()
+        envelope = {
+            "result_type": "incoming_stock",
+            "intro": "Here is what I found.",
+            "items": [
+                {
+                    "title": "row",
+                    "fields": [
+                        {"key": "product_code", "label": "Product Code", "value": "SRTWB7096"},
+                        {"key": "estimated_arrival_date", "label": "ETA", "value": "2026-09-28"},
+                        {"key": "eta_delay_date", "label": "ETA Delay", "value": "2026-10-02"},
+                    ],
+                }
+            ],
+            "has_result": True,
+            "field_access": None,
+        }
+        ctx = {"semantic_input": {"requested_attributes": []}}
+
+        out = fetch.output_structurer(envelope, ctx)
+
+        kept = {f["key"] for f in out["answers"][0]["fields"]}
+        assert "estimated_arrival_date" in kept
+        assert "eta_delay_date" in kept
+        response = (out.get("response") or "").lower()
+        assert "not recorded yet" not in response
+        assert "can't share" not in response
+
+    def test_explicit_eta_ask_keeps_delay(self):
+        """AC-2: an explicit `estimated_arrival_date` ask still keeps the delay riding
+        along, with no note text either way."""
+        fetch = _import_fetch()
+        envelope = {
+            "result_type": "incoming_stock",
+            "intro": "Here is what I found.",
+            "items": [
+                {
+                    "title": "row",
+                    "fields": [
+                        {"key": "product_code", "label": "Product Code", "value": "SRTWB7096"},
+                        {"key": "estimated_arrival_date", "label": "ETA", "value": "2026-09-28"},
+                        {"key": "eta_delay_date", "label": "ETA Delay", "value": "2026-10-02"},
+                    ],
+                }
+            ],
+            "has_result": True,
+            "field_access": None,
+        }
+        ctx = {"semantic_input": {"requested_attributes": ["estimated_arrival_date"]}}
+
+        out = fetch.output_structurer(envelope, ctx)
+
+        kept = {f["key"] for f in out["answers"][0]["fields"]}
+        assert "estimated_arrival_date" in kept
+        assert "eta_delay_date" in kept
+        response = (out.get("response") or "").lower()
+        assert "not recorded yet" not in response
+        assert "can't share" not in response
+
+    def test_denied_delay_silent_when_not_named(self):
+        """AC-3: the contact may not see `eta_delay_date` (already stripped by
+        `field_access.py` before the row reaches this function) and never named it in
+        `requested_attributes` - no refusal line, no "eta delay" mention at all. The ETA
+        itself is unaffected."""
+        fetch = _import_fetch()
+        envelope = {
+            "result_type": "incoming_stock",
+            "intro": "Here is what I found.",
+            "items": [
+                {
+                    "title": "row",
+                    "fields": [
+                        {"key": "product_code", "label": "Product Code", "value": "SRTWB7096"},
+                        {"key": "estimated_arrival_date", "label": "ETA", "value": "2026-09-28"},
+                        # eta_delay_date is ABSENT - field_access.py already stripped it.
+                    ],
+                }
+            ],
+            "has_result": True,
+            "field_access": {"denied": [{"field": "eta_delay_date", "label": "ETA Delay"}]},
+        }
+        ctx = {"semantic_input": {"requested_attributes": ["estimated_arrival_date"]}}
+
+        out = fetch.output_structurer(envelope, ctx)
+
+        kept = {f["key"] for f in out["answers"][0]["fields"]}
+        assert "estimated_arrival_date" in kept
+        response = (out.get("response") or "").lower()
+        assert "can't share" not in response
+        assert "eta delay" not in response
+        assert "not recorded yet" not in response
+
+    def test_blank_delay_silent_when_not_named(self):
+        """AC-5: the row has no `eta_delay_date` at all (not denied, just not recorded)
+        and it was never named in `requested_attributes` - no synthetic "not recorded
+        yet" entry for it."""
+        fetch = _import_fetch()
+        envelope = {
+            "result_type": "incoming_stock",
+            "intro": "Here is what I found.",
+            "items": [
+                {
+                    "title": "row",
+                    "fields": [
+                        {"key": "product_code", "label": "Product Code", "value": "SRTWB7096"},
+                        {"key": "estimated_arrival_date", "label": "ETA", "value": "2026-09-28"},
+                    ],
+                }
+            ],
+            "has_result": True,
+            "field_access": None,
+        }
+        ctx = {"semantic_input": {"requested_attributes": ["estimated_arrival_date"]}}
+
+        out = fetch.output_structurer(envelope, ctx)
+
+        notes = {f["key"]: f["value"] for f in out["answers"][0]["fields"] if f.get("key")}
+        assert "eta_delay_date" not in notes
 
 
 # --------------------------------------------------------------------------- #

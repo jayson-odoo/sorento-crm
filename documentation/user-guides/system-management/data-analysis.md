@@ -158,11 +158,20 @@ The **system-wide integration audit trail**: every inbound/outbound call to an e
 ## AutoCount integration (ESB) - contract version 2.1
 
 The AutoCount integration (the ESB) pushes masters and documents straight into Sorento on its
-own schedule, without a file ever being uploaded by hand. It has no settings screen of its own -
-this section is a reference for what it sends and how that interacts with data entered any other
-way. Every inbound call from it is logged the same as any other integration, on
+own schedule, without a file ever being uploaded by hand. This section is a reference for what it
+sends and how that interacts with data entered any other way. Every inbound call from it is
+logged the same as any other integration, on
 **[Integration Logs](/integration-management/integration-logs)** (`integration_channel` for the
 AutoCount pushes).
+
+**The AutoCount connection** (used by the on-demand Pull below, not by the scheduled push above)
+is entered on the **FoundryX ESB** record under **[Integration Management →
+Integrations](/integration-management/integrations)**: an admin types the gateway's base URL and
+the API key FoundryX issued, then clicks **Test**. Test reports **Connected**, or names the
+reason it failed - a rejected key, AutoCount's own service turned off, too many attempts, or the
+address unreachable. Test does not check that the key covers this company: a key valid for a
+different company still shows Connected there, and is refused on the first Pull instead, with
+AutoCount's own message.
 
 **What version 2.1 sends that earlier versions did not:**
 
@@ -190,6 +199,13 @@ See also the rules stated once, for every channel, on [Upload the product master
 (discontinued, dimensions, default supplier) and [Upload SPO allocations](../purchasing/upload-spo.md)
 (container number, inbound-shipment linking) - the AutoCount integration follows the same rules
 as the matching upload and as a manual create/edit, not a separate set of its own.
+
+**A separate, on-demand action** - where a company has it switched on, a checker can also pull a
+fresh snapshot of the items book or the stock book from AutoCount whenever they want, review what
+it would change, and confirm it themselves, instead of waiting for the scheduled push or doing a
+manual upload. See [Pull from AutoCount](../product/manage-products.md#pull-from-autocount) on the
+Products page and [Pull from AutoCount](../warehouse/upload-stock.md#pull-from-autocount) on the
+Stock page.
 
 ---
 
@@ -515,14 +531,15 @@ line as elapsed time, not raw timestamps.
 turns only** - narrows the list to contacts with at least one failed turn in that range. Inside a
 thread, the drawer has its own **Failed turns only** toggle scoped to that one conversation.
 
-> **Which lanes the CRM answers itself is a `system_settings` switch, not this table.**
-> `system_settings.chatbot_completed_lanes` (a list of `branch_kind` values) says which lanes the
-> CRM is allowed to finish on its own; anything not listed there still gets handed to the WhatsApp
-> automation side to answer, even though the turn row above still gets written either way.
-> `system_settings.chatbot_stock_denial_enabled` and `system_settings.chatbot_unsupported_domains`
-> are two narrower switches of the same kind (see the troubleshooting guide below for what each
-> does). None of these three have an in-app settings screen today - they are changed by the
-> engineering / integrations team, not from this admin reference.
+> **Which topics the CRM answers itself is decided by the turn engine now, not a standalone
+> `system_settings` switch.** `system_settings.chatbot_completed_lanes` is no longer read - the
+> engine decides for itself, per turn, what it can finish. `system_settings.chatbot_stock_denial_enabled`
+> (**Stock denial lanes** on **[Settings > Chatbot](/user-management/settings)**) still gates
+> whether the bot may ever tell a customer their stock question is refused. The list of domains
+> the bot refuses entirely used to be free text here (`chatbot_unsupported_domains`); that is
+> retired - each domain's own **Supported** switch on
+> **[Chatbot Domains](/system-management/chatbot-domains)** controls it now (see the
+> troubleshooting guide below for both).
 
 **Example questions**
 
@@ -552,6 +569,8 @@ thread, the drawer has its own **Failed turns only** toggle scoped to that one c
 
 * [Troubleshoot a failed notification (email or WhatsApp)](troubleshoot-failed-notifications.md)
 * [Read a chatbot turn trace, and retry a failed one](troubleshoot-chatbot-turn-failures.md)
+* [Chatbot Domains](chatbot-domains.md), [Entity kinds](chatbot-entity-kinds.md) and
+  [Chatbot settings](../user-management/chatbot-settings.md)
 * [Supply Chain - Upload the data a reorder plan is built from](../supply-chain/upload-plan-data.md)
 * [Upload the product master](../purchasing/upload-product-master.md)
 * [Upload SPO allocations](../purchasing/upload-spo.md)

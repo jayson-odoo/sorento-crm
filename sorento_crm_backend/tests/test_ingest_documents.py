@@ -119,10 +119,14 @@ class _Env:
     def __init__(self, client: TestClient, db):
         self.client = client
         self.db = db
-        self.refs = IntegrationReferenceService(db)
+        self.company_a = DEFAULT_COMPANY_ID
+        # Anchored to A: every seed helper below defaults to company_a, and a
+        # company-scoped `link`/`resolve` with no anchor now raises ValueError
+        # (plan D14, strict). A helper seeding into B constructs its OWN
+        # anchored instance instead of reusing this one - see `_link`.
+        self.refs = IntegrationReferenceService(db, company_id=self.company_a)
 
         suffix = uuid.uuid4().hex[:8]
-        self.company_a = DEFAULT_COMPANY_ID
         other = Company(id=str(uuid.uuid4()), name=f"{MARKER} B {suffix}", code=f"ZD{suffix}")
         db.add(other)
         db.flush()
@@ -153,9 +157,21 @@ class _Env:
         db.commit()
 
     # ------------------------------------------------------------- seed helpers
-    def _link(self, entity_type: str, entity_id: str, stem: str) -> str:
+    def _link(self, entity_type: str, entity_id: str, stem: str, *, company_id: str = None) -> str:
+        """Link through the anchor the row actually belongs to.
+
+        `self.refs` is anchored to company_a; a row seeded into company_b (or
+        any other company) needs its OWN anchored instance - plan D14 is
+        strict, so the constructor's anchor is what gets stored, not the
+        entity's own company (see `_anchor_for_link`).
+        """
         source_ref = _ref(stem)
-        self.refs.link(entity_type=entity_type, entity_id=str(entity_id), source_ref=source_ref)
+        svc = (
+            self.refs
+            if company_id is None or company_id == self.company_a
+            else IntegrationReferenceService(self.db, company_id=company_id)
+        )
+        svc.link(entity_type=entity_type, entity_id=str(entity_id), source_ref=source_ref)
         return source_ref
 
     def link_product(self, company_id: str) -> str:
@@ -169,7 +185,7 @@ class _Env:
         )
         self.db.add(row)
         self.db.flush()
-        return self._link("products", row.id, "ITEM")
+        return self._link("products", row.id, "ITEM", company_id=company_id)
 
     def link_warehouse(self, company_id: str) -> str:
         row = Warehouse(
@@ -181,7 +197,7 @@ class _Env:
         )
         self.db.add(row)
         self.db.flush()
-        return self._link("warehouses", row.id, "LOC")
+        return self._link("warehouses", row.id, "LOC", company_id=company_id)
 
     def link_customer(self, company_id: str) -> str:
         row = Customer(
@@ -191,7 +207,7 @@ class _Env:
         )
         self.db.add(row)
         self.db.flush()
-        return self._link("customers", row.id, "DEBTOR")
+        return self._link("customers", row.id, "DEBTOR", company_id=company_id)
 
     def link_supplier(self, company_id: str) -> str:
         row = Supplier(
@@ -201,7 +217,7 @@ class _Env:
         )
         self.db.add(row)
         self.db.flush()
-        return self._link("suppliers", row.id, "CREDITOR")
+        return self._link("suppliers", row.id, "CREDITOR", company_id=company_id)
 
     def loading_plan_line(self, po_line_id: str) -> str:
         """A `scm.loading_plan_line` pointing at a purchase-order LINE.
@@ -283,13 +299,27 @@ class _Env:
             },
         )
 
-    def header(self, table: str, source_ref: str):
+    def refs_for(self, company_id: str) -> IntegrationReferenceService:
+        """A service anchored to ``company_id`` - `self.refs` is fixed to
+        company_a, so a caller reading back a record pushed under company_b
+        needs its own anchored instance (plan D14: resolve() on a scoped type
+        only sees that anchor's own rows)."""
+        if company_id == self.company_a:
+            return self.refs
+        return IntegrationReferenceService(self.db, company_id=company_id)
+
+    def header(self, table: str, source_ref: str, *, company_id: str = None):
         """The header a ref points at, read WITHOUT the ORM scope filter.
 
         Which company the row landed in is one of the things under test, so the
-        filter that hides the answer is not welcome here.
+        filter that hides the answer is not welcome here. ``company_id``
+        defaults to company_a - pass the company the record was actually
+        pushed under (plan D14: `resolve()` on a scoped type only resolves
+        within its own anchor, so reading back a company_b record needs
+        company_id=env.company_b).
         """
-        entity_id = self.refs.resolve(entity_type=table, source_ref=source_ref)
+        refs = self.refs_for(company_id) if company_id is not None else self.refs
+        entity_id = refs.resolve(entity_type=table, source_ref=source_ref)
         if entity_id is None:
             return None
         return (
@@ -776,10 +806,17 @@ class TestAdoption:
         assert "source_ref" in entry["errors"]
         assert env.counts()["so"] == 1
 
-    def test_a_ref_linked_to_another_company_is_failed(self, env):
-        """The document mirror of AC-A1-7. `integration_references` is global, so
-        the ref finds its row whatever company asked; updating it here would be a
-        cross-company write wearing the clothes of a re-sync."""
+    def test_a_header_ref_linked_to_another_company_creates_a_new_row_here(self, env):
+        """AC-19b (autocount-brands-ingest BL-056, D15) - was the document
+        mirror of AC-A1-7 ('failed', 'outside this company anchor').
+
+        BL-056 scopes `integration_references` by `company_id`, so a ref
+        linked only under B is invisible to a `resolve()` scoped to A - the
+        same answer as a ref that was never linked at all. The push under A
+        therefore proceeds through the ordinary adopt-by-number/create path
+        and lands a brand NEW header row in A; B's row and its own reference
+        stay exactly as they were.
+        """
         theirs = SalesOrder(
             id=str(uuid.uuid4()),
             so_number=f"{MARKER}-SO-{uuid.uuid4().hex[:8]}",
@@ -789,15 +826,36 @@ class TestAdoption:
         env.db.add(theirs)
         env.db.flush()
         source_ref = _ref("SO")
-        env.refs.link(
+        # env.refs is anchored to company_a; theirs belongs to company_b, so
+        # linking it through env.refs would store company_a as the anchor
+        # (D14: the constructor's anchor wins, never the entity's own row).
+        IntegrationReferenceService(env.db, company_id=env.company_b).link(
             entity_type="sales_orders", entity_id=str(theirs.id), source_ref=source_ref
         )
 
         res = env.post(INGEST_SO, [_so_record(env, ref=source_ref)])
 
         entry = res.json()["records"][0]
-        assert entry["outcome"] == "failed", res.text
-        assert "outside this company anchor" in entry["errors"]["source_ref"]
+        assert entry["outcome"] == "created", res.text
+
+        rows = (
+            env.db.execute(
+                text("SELECT id, company_id, so_number FROM sales_orders WHERE id != :b"),
+                {"b": str(theirs.id)},
+            )
+            .mappings()
+            .all()
+        )
+        # company_id comes back a uuid.UUID; compare with str() on both sides.
+        new_rows = [r for r in rows if str(r["company_id"]) == env.company_a]
+        assert len(new_rows) == 1, "exactly one new header must land in A"
+
+        # B's row is untouched - same id, same status, no lines stolen.
+        b_row = env.db.execute(
+            text("SELECT company_id, status FROM sales_orders WHERE id = :i"),
+            {"i": str(theirs.id)},
+        ).mappings().first()
+        assert str(b_row["company_id"]) == env.company_b
         assert env.so_lines(theirs.id) == []
 
 
@@ -869,19 +927,27 @@ class TestUnresolvedReferences:
         assert "customer_ref" in entry["errors"]
         assert env.counts() == before
 
-    def test_a_master_ref_pointing_into_another_company_is_failed(self, env):
-        """A resolvable ref is not automatically a usable one: the row it names
-        may belong to the other company, and binding this order to it would move
-        demand across the partition."""
+    def test_a_master_ref_pointing_into_another_company_is_retryable(self, env):
+        """AC-19b (autocount-brands-ingest BL-056, D15) - was 'failed', 'outside
+        this company anchor'.
+
+        A ladder ref (customer_ref here) scoped to B is invisible to a
+        `resolve()` scoped to A - not a usable row and not a cross-company
+        write either, just a ref that resolves to nothing under this anchor.
+        That is exactly the sequencing shape `customer_ref: DEBTOR:NOT-SYNCED-
+        YET` already gets, so it is `retryable`, named in `errors`, and
+        nothing is written.
+        """
         foreign_customer = env.link_customer(env.company_b)
+        before = env.counts()
         record = _so_record(env, customer_ref=foreign_customer)
 
         res = env.post(INGEST_SO, [record])
 
         entry = res.json()["records"][0]
-        assert entry["outcome"] == "failed", res.text
-        assert "outside this company anchor" in str(entry["errors"])
-        assert env.counts()["so"] == 0
+        assert entry["outcome"] == "retryable", res.text
+        assert "customer_ref" in entry["errors"]
+        assert env.counts() == before
 
 
 # =============================================================== status (AC-A3-6)

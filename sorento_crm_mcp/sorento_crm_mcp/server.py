@@ -28,7 +28,12 @@ logger = logging.getLogger(__name__)
 
 TOOL_QUERY_ALIASES: dict[str, dict[str, tuple[str, ...]]] = {}
 
-TOOL_REQUIRED_QUERY_HINTS: dict[str, tuple[str, ...]] = {}
+TOOL_REQUIRED_QUERY_HINTS: dict[str, tuple[str, ...]] = {
+    # The low stock report is per-CONTACT: the route reads that contact's reveal key
+    # before it creates anything and answers 422 without the pair, so both ids have to
+    # be no-default arguments or the LLM reads them as optional and skips them.
+    "crm_low_stock_report": ("contact_id", "space_id"),
+}
 
 # Parent-relation tools: meaningless without a parent entity UUID.
 # These are "list X belonging to parent Y" tools, not general browse lists.
@@ -862,11 +867,16 @@ _PORTAL_LINK_TOOL = "crm_portal_link_get"
 # form_type, language, version, is_active, access_levels are internal noise the
 # assistant should never surface. Whitelist projection - keep ONLY these keys.
 _FORMS_LIST_TOOL = "crm_forms_management_forms_list"
-# Browse (no form_ids → "what forms do you have"): name only.
+# Browse (no form_ids → "what forms do you have"): name, plus `id` - not printed
+# to the customer (the chatbot presenter carries it as the item's own identity,
+# never as a rendered field), but the engine needs a stable id to arm a numbered
+# pick over a forms list and resolve "1" back to `form_ids=[id]` (chatbot turn
+# re-architecture item 1, 17 Sep 2026: a browse whitelisting `name` only left no
+# uuid a roster option could resolve through, so "1" re-ran the whole catalogue).
 # Narrowed (form_ids → a specific form): name + the attachment object so the
 # caller can actually deliver the form file. Attachment internals are scrubbed
 # separately by _strip_attachment_internals.
-_FORMS_LIST_KEEP_BROWSE = ("name",)
+_FORMS_LIST_KEEP_BROWSE = ("name", "id")
 _FORMS_LIST_KEEP_NARROW = ("name", "attachment")
 
 # Tools whose row payload carries an inline attachment(s) blob. Browse-mode

@@ -50,6 +50,14 @@ export interface SystemSetting {
   /** The code of the unit above, resolved by the backend - never a bare UUID on screen. */
   defaultUomCode?: string | null;
 
+  /**
+   * `PLAN-oi-request-cs-reserve.md` section 6c (F1): the reserve dialog's own
+   * configurable default Location - owner words, "list all the site pool with this BRW
+   * (configurable as default)". Null means no configured default; the dialog then
+   * falls back to the row's own site pool (R3).
+   */
+  oiReserveDefaultPoolWarehouseId?: string | null;
+
   /** Takeover cooldown window in seconds (0 = instant takeover). */
   takeoverCooldownSeconds?: number;
   /** Global default undo grace window for form-SLA actions, in seconds. */
@@ -66,6 +74,12 @@ export interface SystemSetting {
   deferredActionSeconds?: number;
 
   /**
+   * How many days an untouched price tag collection waits before the sweep
+   * closes it (r9 D10). 0 turns the sweep off; 7 is the shipped default.
+   */
+  priceTagAutoCollectDays?: number;
+
+  /**
    * SCM front planning: which grain new plans are DECIDED at (AC-F01).
    *
    * Admin policy, not a per-run selector. It is stamped onto each run when the run
@@ -73,6 +87,13 @@ export interface SystemSetting {
    * or unlocks an existing one.
    */
   planGrain?: 'product' | 'location';
+
+  /**
+   * Local-supplier Buy routing (PLAN-local-buy-routing-toggle.md), off by default.
+   * Off means the whole local rule does not run: no pill, every Buy reaches Order
+   * Inquiries and counts toward reorder demand.
+   */
+  localBuyRoutingEnabled?: boolean;
 
   /** System default approver for procurement "Send for approval" (skips chooser when set). */
   purchaseRequestDefaultApproverUserId?: string | null;
@@ -125,6 +146,11 @@ export interface SystemSetting {
   // Form handling-lock ("I'm handling this"): the source_entity_types the per-form lock
   // is enabled for (e.g. ["complaint", "stock_inquiry"]). Empty = lock off everywhere.
   handlingLockEnabledTypes: string[];
+
+  // Price tag packages (PLAN-price-tag-combos D2): the product class labels whose
+  // lines are warned about when they reach marketing without their catalogue
+  // package. Defaults to Bathroom Furniture + Kitchen Sink. Empty = warn nobody.
+  priceTagGuardedClasses: string[];
 
   // Portal submission revisions (UAC A1). `portalRevisionsEnabled` is the kill
   // switch and applies to every form type regardless of its own config row;

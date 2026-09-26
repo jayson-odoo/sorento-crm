@@ -9,6 +9,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { usePOVersions } from '../../_shared/hooks/usePOIntake';
 import type { POExtractionState } from '../../_shared/types/poIntake.types';
+import { projectTabOriginHref, withReviewOrigin } from '../../_shared/lib/reviewOrigin';
 
 const STATE_LABELS: Record<POExtractionState, string> = {
   queued: 'Waiting to be read',
@@ -97,7 +98,12 @@ export function POIntakeVersionsStrip({
               )}
             </span>
             <Button asChild variant="outline" size="sm" className="shrink-0">
-              <Link href={`/project-sales/${projectId}/purchase-orders/${version.id}`}>
+              <Link
+                href={withReviewOrigin(
+                  `/project-sales/${projectId}/purchase-orders/${version.id}`,
+                  projectTabOriginHref(projectId, 'pos'),
+                )}
+              >
                 {version.confirmed_at ? 'Open' : 'Review what we read'}
               </Link>
             </Button>

@@ -27,6 +27,8 @@ Three ideas shape the whole file:
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import (
     Boolean,
@@ -827,6 +829,11 @@ class OrderInquiry(Base, CompanyScopedMixin):
     # for the same reason: the read that mints it is company-scoped, so each company has
     # its own series.
     inquiry_no = Column(String(20), nullable=False)
+    # The number this header carried before the monthly renumber (`523_oi_monthly_no_
+    # raises`, R3) - never re-used going forward, kept only so a number already quoted
+    # in an old email still finds its OI (search matches it too). NULL for every header
+    # born after that migration.
+    legacy_inquiry_no = Column(String(20), nullable=True)
     project_sales_order_id = Column(
         UUID(as_uuid=False), ForeignKey("projects.sales_orders.id", ondelete="CASCADE"), nullable=False
     )
@@ -834,6 +841,11 @@ class OrderInquiry(Base, CompanyScopedMixin):
         UUID(as_uuid=False), ForeignKey("projects.so_amendments.id", ondelete="SET NULL"), nullable=True
     )
     state = Column(String(16), nullable=False, server_default=INQUIRY_RAISED)
+    # The FIRST raise (R5) - written once, at insert, and never re-stamped by a
+    # reconfirm since S1 (`523_oi_monthly_no_raises`). Every later raise/reconfirm is
+    # its own row on `OrderInquiryRaise` instead; these two columns stay the header's
+    # fixed "born on" fact so a number quoted from month N still reads as month N even
+    # after a dozen reconfirms.
     raised_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     raised_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
@@ -860,34 +872,48 @@ class OrderInquiry(Base, CompanyScopedMixin):
     )
 
 
-#: `OI-000001`. Six digits, the same width `PSO-000001` uses, so the two documents a
-#: project screen shows side by side are read the same way.
+#: `OI-2609-0001` (R3, `PLAN-oi-header-list-detail.md`): the MONTH of the header's own
+#: first raise, then a four-digit series that starts over every month. Superseded the
+#: flat `OI-000001` (six digits, no month) migration `523_oi_monthly_no_raises`
+#: renumbers - the old value survives on `legacy_inquiry_no`.
 INQUIRY_NO_PREFIX = "OI-"
-INQUIRY_NO_DIGITS = 6
+INQUIRY_NO_DIGITS = 4
+#: Every date this file numbers by is Asia/Kuala_Lumpur (R3): a header raised at
+#: 2026-09-30 17:30 UTC is already 1 Oct there, and must number under October.
+_MY_TZ = ZoneInfo("Asia/Kuala_Lumpur")
 
 
-def next_inquiry_no(bind, company_id) -> str:
-    """The next inquiry number for one company: the highest already issued, plus one.
+def _inquiry_no_prefix(ref_date) -> str:
+    """`OI-2609-` for any `date`/`datetime` in September 2026."""
+    return f"{INQUIRY_NO_PREFIX}{ref_date:%y%m}-"
+
+
+def next_inquiry_no(bind, company_id, ref_date) -> str:
+    """The next inquiry number for one company, for one MONTH: the highest already
+    issued in that month, plus one.
 
     HIGHEST plus one, never the count: a number that has been issued is in somebody's
-    email, so a departed inquiry must not hand it to a different one.
+    email, so a departed inquiry must not hand it to a different one. Scoped to the
+    month's own prefix rather than the whole series, so October opens at `-0001` no
+    matter how many September numbers already exist (R3).
 
     Per COMPANY, matching `uq_project_order_inquiry_no` and `provisional_ref` one table
     over. `bind` is whatever can execute a statement - the flush's own Connection when this
     runs from the stamp below, a Session when a caller asks directly - so the number is
     minted by ONE piece of code however it is reached.
     """
+    prefix = _inquiry_no_prefix(ref_date)
     table = OrderInquiry.__table__
     latest = bind.execute(
         select(table.c.inquiry_no)
         .where(table.c.company_id == company_id,
-               table.c.inquiry_no.like(f"{INQUIRY_NO_PREFIX}%"))
+               table.c.inquiry_no.like(f"{prefix}%"))
         .order_by(func.length(table.c.inquiry_no).desc(), table.c.inquiry_no.desc())
         .limit(1)
     ).scalar()
-    tail = (latest or "")[len(INQUIRY_NO_PREFIX):]
+    tail = (latest or "")[len(prefix):]
     highest = int(tail) if tail.isdigit() else 0
-    return f"{INQUIRY_NO_PREFIX}{highest + 1:0{INQUIRY_NO_DIGITS}d}"
+    return f"{prefix}{highest + 1:0{INQUIRY_NO_DIGITS}d}"
 
 
 @event.listens_for(OrderInquiry, "before_insert")
@@ -902,10 +928,60 @@ def _stamp_inquiry_no(_mapper, connection, target) -> None:
     inserted - two inquiries raised in one confirmation take consecutive numbers - and
     cannot re-enter the flush the way a session query would. A number already set (a
     migration backfill, a test pinning one) is left exactly as it is.
+
+    The MONTH the number opens under is the header's own `raised_at` (R3, converted to
+    its Asia/Kuala_Lumpur date) when the caller already set one, else this instant - the
+    same "now" the column's own `server_default=func.now()` would otherwise write, so
+    the two never disagree about when this header was born.
     """
     if getattr(target, "inquiry_no", None):
         return
-    target.inquiry_no = next_inquiry_no(connection, target.company_id)
+    raised_at = getattr(target, "raised_at", None)
+    ref_moment = raised_at if raised_at is not None else datetime.utcnow()
+    ref_date = ref_moment.replace(tzinfo=timezone.utc).astimezone(_MY_TZ).date()
+    target.inquiry_no = next_inquiry_no(connection, target.company_id, ref_date)
+
+
+#: The two things `OrderInquiryRaise.kind` can be (R5): the header's FIRST raise, and
+#: every later reconfirm. Written by `ProjectOrderInquiryService.ensure_inquiry` (create
+#: = `raised`, reuse = `reconfirmed`) and by the sheet import's own `_inquiry`, the same
+#: shape - never anywhere else, so "one row per confirmation" stays true everywhere a
+#: header can be raised or reconfirmed.
+OI_RAISE_RAISED = "raised"
+OI_RAISE_RECONFIRMED = "reconfirmed"
+
+
+class OrderInquiryRaise(Base, CompanyScopedMixin):
+    """One entry of an order inquiry's raise history (R5, S1
+    `PLAN-oi-header-list-detail.md`): who raised or reconfirmed it, and when.
+
+    `OrderInquiry.raised_at`/`raised_by` stay the header's fixed "born on" fact once
+    this table exists - the FIRST row here always agrees with them, and every later
+    reconfirm adds a row instead of overwriting those two columns, so a number quoted
+    in month N still reads as month N no matter how many times CS reconfirms after.
+
+    Its own table rather than `audit_logs` (measured, plan "Design"): audit is off for
+    this entity, carries no actor on the batch/import path, and a two-row backfill is
+    all migration `523_oi_monthly_no_raises` needs to seed here, while an audit read
+    would have nothing to backfill FROM at all.
+    """
+
+    __tablename__ = "order_inquiry_raises"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    order_inquiry_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.order_inquiries.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    kind = Column(String(16), nullable=False)
+    raised_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    raised_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_order_inquiry_raises_inquiry", "order_inquiry_id"),
+        {"schema": "projects"},
+    )
 
 
 class OrderInquiryRow(Base, CompanyScopedMixin):
@@ -1128,15 +1204,263 @@ class OrderInquiryLink(Base, CompanyScopedMixin):
     )
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
+    #: PLAN-oi-request-cs-reserve.md 3.1: the THIRD target a link may name - a row of an
+    #: `OrderInquiryReserveRequest` Eling confirmed.
+    #:
+    #: `CASCADE`, NOT `SET NULL` (B2, security review round 2 - the original `SET NULL`
+    #: was wrong, not merely unsafe-by-omission: `__table_args__` below requires EXACTLY
+    #: ONE of the three targets set at all times, so setting only THIS one null while a
+    #: reserve link's other two are already null leaves the row satisfying none of them,
+    #: which the CHECK rejects outright). Deleting the request row this link was made
+    #: against removes the placement WITH it - there is no "keep the link, forget which
+    #: request confirmed it" reading the CHECK would even allow, unlike a PO/SPO link,
+    #: whose OTHER two targets stay null while its own document is merely re-imported.
+    reserve_request_row_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey(
+            "projects.order_inquiry_reserve_request_rows.id",
+            ondelete="CASCADE",
+            name="fk_order_inquiry_links_reserve_request_row",
+        ),
+        nullable=True,
+    )
+
     __table_args__ = (
         CheckConstraint(
-            "(po_line_id IS NOT NULL)::int + (spo_allocation_id IS NOT NULL)::int = 1",
+            "(po_line_id IS NOT NULL)::int + (spo_allocation_id IS NOT NULL)::int"
+            " + (reserve_request_row_id IS NOT NULL)::int = 1",
             name="ck_order_inquiry_links_one_target",
         ),
         CheckConstraint("qty > 0", name="ck_order_inquiry_links_qty_positive"),
         Index("ix_order_inquiry_links_row", "row_id"),
         Index("ix_order_inquiry_links_po_line", "po_line_id"),
         Index("ix_order_inquiry_links_spo_allocation", "spo_allocation_id"),
+        Index("ix_order_inquiry_links_reserve_request_row", "reserve_request_row_id"),
+        # SF-9 (security review, `oirs_0002_reserve_round2` amended): the lost-update
+        # backstop for `commit_request` - at most one link may ever name a given reserve
+        # request row, so a caller that reaches the flush on a stale read (the
+        # `.with_for_update()` lock in the service is the primary defence) hits this
+        # constraint and 409s instead of writing a second link. Partial: the CHECK
+        # above already requires exactly one target per link, so every non-reserve
+        # link leaves this column NULL and must stay out of the unique set.
+        Index(
+            "uq_order_inquiry_links_reserve_request_row",
+            "reserve_request_row_id",
+            unique=True,
+            postgresql_where=text("reserve_request_row_id IS NOT NULL"),
+        ),
+        {"schema": "projects"},
+    )
+
+
+class OrderInquirySuggestedLink(Base, CompanyScopedMixin):
+    """A guess the cascade walk made, never a placement (`PLAN-oi-links-autocount-truth-
+    24sep.md` section 3.3, the owner's ruling on issue #1215: "the suggested link
+    shouldn't be counted as real link").
+
+    Same one-target CHECK shape as `OrderInquiryLink` above, minus the reserve target (a
+    CS reserve is always a person's act, never a guess) - and minus `claim_id` /
+    `linked_by`: a suggestion holds no `scm.order_link_claim` and nobody's name is on it.
+    CASCADE on BOTH the row and the target, unlike a real link's `SET NULL` on the
+    target: a real link keeps its display once its document is gone because it is
+    evidence of something that happened, while a suggestion of a line that no longer
+    exists means nothing and should simply vanish.
+
+    Written and replaced only by `ProjectOrderInquiryService._write_suggested_links`,
+    one pass at a time, and trimmed by `_write_link` (since `e5e3dd70`; `place_on_po_
+    allocations` calls it, but it is not the trim's own choke point) the moment a real
+    link lands on the same target (AC-LT-15). `qty` follows the row's own priority through
+    the walk, so `suggested_at` and the row's `delivery_date` (read via the row, not
+    duplicated here) are what a later trim reads to decide which suggestion goes first.
+    """
+
+    __tablename__ = "order_inquiry_suggested_links"
+    __audit_entity_type__ = "project_order_inquiry_suggested_links"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    row_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.order_inquiry_rows.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    po_line_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("purchase_order_lines.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    spo_allocation_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey(
+            "spo_allocations.id",
+            ondelete="CASCADE",
+            name="fk_order_inquiry_suggested_links_spo_allocation",
+        ),
+        nullable=True,
+    )
+    #: Denormalised the same way `OrderInquiryLink.document` is - see that column's own
+    #: comment. Here it is display only: nothing reads it to decide coverage.
+    document = Column(String(80), nullable=True)
+    qty = Column(Numeric(15, 4), nullable=False)
+    #: Why the walk offered this - `raise`, `worklist`, `link_now`, `acknowledge`,
+    #: `po_confirm`, `decision_confirm` - the same trigger vocabulary a real link's
+    #: `auto` note already carries, so "why is this suggested" is answerable the same way.
+    trigger = Column(String(32), nullable=True)
+    suggested_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "(po_line_id IS NOT NULL)::int + (spo_allocation_id IS NOT NULL)::int = 1",
+            name="ck_order_inquiry_suggested_links_one_target",
+        ),
+        CheckConstraint("qty > 0", name="ck_order_inquiry_suggested_links_qty_positive"),
+        Index("ix_order_inquiry_suggested_links_row", "row_id"),
+        Index("ix_order_inquiry_suggested_links_po_line", "po_line_id"),
+        Index("ix_order_inquiry_suggested_links_spo_allocation", "spo_allocation_id"),
+        {"schema": "projects"},
+    )
+
+
+#: PLAN-oi-request-cs-reserve.md (R1-R11): purchasing asks CS to cover part of a row from
+#: own or pool stock before buying the balance. Two tables: the REQUEST (one per ask,
+#: `OI-2609-0678 request #2`, addressed by ordinal within the inquiry rather than its own
+#: number - R5 repeats the cycle on the remaining qty rather than amending) and its ROWS
+#: (one per order-inquiry row asked, `OrderInquiryReserveRequestRow` below).
+RESERVE_REQUESTED = "requested"
+RESERVE_RESERVED = "reserved"
+RESERVE_CANCELLED = "cancelled"
+
+
+class OrderInquiryReserveRequest(Base, CompanyScopedMixin):
+    """One "request CS to reserve" ask, covering one or more order inquiry rows.
+
+    `ordinal` addresses it within the inquiry (`OI-2609-0678 request #2`) - a reserve
+    request earns no number of its own (section 2, "Reserve requests get NO number").
+    `state` walks `requested` -> `reserved` (Eling's Confirm, 3.3) or `requested` ->
+    `cancelled` (the requester's own Cancel, or anyone holding the reserve permission,
+    3.2); once `reserved` it stays history even if every link it wrote is later unlinked
+    (R5's "no amend after confirm; repeat instead", AC-RS-14).
+    """
+
+    __tablename__ = "order_inquiry_reserve_requests"
+    __audit_entity_type__ = "project_order_inquiry_reserve_requests"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    order_inquiry_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.order_inquiries.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    ordinal = Column(Integer, nullable=False)
+    state = Column(String(16), nullable=False, server_default=RESERVE_REQUESTED)
+    requested_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    requested_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    note = Column(Text, nullable=True)
+    reserved_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    reserved_at = Column(DateTime(timezone=False), nullable=True)
+    cancelled_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    cancelled_at = Column(DateTime(timezone=False), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            f"state IN ('{RESERVE_REQUESTED}', '{RESERVE_RESERVED}', '{RESERVE_CANCELLED}')",
+            name="ck_order_inquiry_reserve_requests_state",
+        ),
+        UniqueConstraint(
+            "order_inquiry_id", "ordinal", name="uq_order_inquiry_reserve_requests_ordinal"
+        ),
+        Index("ix_order_inquiry_reserve_requests_inquiry", "order_inquiry_id"),
+        {"schema": "projects"},
+    )
+
+
+class OrderInquiryReserveRequestRow(Base, CompanyScopedMixin):
+    """One order inquiry row named on a reserve request.
+
+    `warehouse_id` defaults to the row's own pool (R3) at request time and is Eling's own
+    to change at reserve time (3.3) - stored here, never re-derived, so the reserved mail
+    and the link's own `document` always print what she actually chose. `qty_reserved` is
+    null while the request is open; the moment Eling confirms it holds the answer for
+    every row of the request in one call (3.3's all-or-nothing), including a genuine `0`
+    with its required `reason`.
+    """
+
+    __tablename__ = "order_inquiry_reserve_request_rows"
+    __audit_entity_type__ = "project_order_inquiry_reserve_request_rows"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    request_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.order_inquiry_reserve_requests.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    row_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.order_inquiry_rows.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    qty_requested = Column(Numeric(15, 4), nullable=False)
+    warehouse_id = Column(
+        UUID(as_uuid=False), ForeignKey("warehouses.id", ondelete="SET NULL"), nullable=True
+    )
+    qty_reserved = Column(Numeric(15, 4), nullable=True)
+    reason = Column(Text, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("qty_requested > 0", name="ck_order_inquiry_reserve_rows_qty_positive"),
+        UniqueConstraint(
+            "request_id", "row_id", name="uq_order_inquiry_reserve_request_rows_row"
+        ),
+        Index("ix_order_inquiry_reserve_request_rows_request", "request_id"),
+        Index("ix_order_inquiry_reserve_request_rows_row", "row_id"),
+        {"schema": "projects"},
+    )
+
+
+#: PLAN-oi-request-cs-reserve.md section 6c, F3: one history row per reserve/unreserve
+#: on a request row. `requested` / `cancelled` are never rows here - they derive straight
+#: off `OrderInquiryReserveRequest` (`requested_at`/`requested_by`, `cancelled_at`/
+#: `cancelled_by`), which is already the one copy of that fact.
+RESERVE_EVENT_RESERVED = "reserved"
+RESERVE_EVENT_UNRESERVED = "unreserved"
+
+
+class OrderInquiryReserveEvent(Base, CompanyScopedMixin):
+    """One reserve or unreserve on a request row - the dialog's own History tab (F3).
+
+    `reserve_request_row_id` CASCADEs off its own parent row, so the history a request
+    row's `reserve/unreserve` calls wrote goes with it rather than orphaning; a reserve
+    LINK is a separate, live fact (`OrderInquiryLink.reserve_request_row_id`,
+    `SET NULL`) - this table is the append-only audit trail beside it, never the source
+    of the link's own quantity.
+    """
+
+    __tablename__ = "order_inquiry_reserve_events"
+    __audit_entity_type__ = "project_order_inquiry_reserve_events"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    reserve_request_row_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.order_inquiry_reserve_request_rows.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    kind = Column(String(16), nullable=False)
+    qty = Column(Numeric(15, 4), nullable=False)
+    warehouse_id = Column(
+        UUID(as_uuid=False), ForeignKey("warehouses.id", ondelete="SET NULL"), nullable=True
+    )
+    note = Column(Text, nullable=True)
+    actor_id = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            f"kind IN ('{RESERVE_EVENT_RESERVED}', '{RESERVE_EVENT_UNRESERVED}')",
+            name="ck_order_inquiry_reserve_events_kind",
+        ),
+        # 6e.4 (security N3): `>= 0` - "Reserve 0" writes a `reserved` event of 0 so
+        # History shows the decision (oirs_0004_reserve_event_zero).
+        CheckConstraint("qty >= 0", name="ck_order_inquiry_reserve_events_qty_positive"),
+        Index("ix_order_inquiry_reserve_events_row", "reserve_request_row_id"),
         {"schema": "projects"},
     )
 
@@ -1207,6 +1531,22 @@ class SOSupplyDecision(Base, CompanyScopedMixin):
     __tablename__ = "so_supply_decisions"
     __audit_entity_type__ = "project_so_supply_decisions"
     __audit_track__ = True
+    # `undo_journal` deliberately excluded (review round, board-undo-last-confirm): it
+    # is a replay script, not a fact CS or purchasing reads, and it can be large - the
+    # audit trail names WHAT happened, never carries the raw journal that reverses it.
+    __audit_columns__ = [
+        "project_sales_order_id",
+        "revision_no",
+        "state",
+        "source_revision",
+        "line_snapshots",
+        "confirmed_by",
+        "confirmed_at",
+        "suspected_system_issue",
+        "supersedes_id",
+        "superseded_at",
+        "superseded_reason",
+    ]
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     project_sales_order_id = Column(
@@ -1239,6 +1579,21 @@ class SOSupplyDecision(Base, CompanyScopedMixin):
     )
     superseded_at = Column(DateTime(timezone=False), nullable=True)
     superseded_reason = Column(Text, nullable=True)
+
+    #: What THIS revision's own Confirm wrote, for `undo_last_confirm` to replay
+    #: backwards (`PLAN-board-undo-last-confirm.md`, migration `undo_0001`). NULL means
+    #: unjournalled - minted outside the two board confirm routes (`uncover_lines`, a
+    #: pre-lane revision) - and therefore not undoable. `app.services.
+    #: project_supply_undo_service.UndoJournal` writes it; nothing else does.
+    #:
+    #: `none_as_null=True` (hotfix, undo_0003): without it, SQLAlchemy's JSON type
+    #: serialises a Python `None` VALUE as the JSON literal `null`, not a SQL NULL -
+    #: the column itself is never NULL, it holds a JSON scalar - and
+    #: `_journalled_decision_clause`'s `isnot(None)` guard does not see that, so
+    #: Postgres's `jsonb_array_length` throws on it. With `none_as_null=True`, writing
+    #: Python `None` through this type (ORM or Core `.values(undo_journal=None)`)
+    #: always produces a real SQL NULL.
+    undo_journal = Column(JSONB(none_as_null=True), nullable=True)
 
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 

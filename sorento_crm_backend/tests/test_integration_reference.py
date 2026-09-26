@@ -28,6 +28,7 @@ import pytest
 from sqlalchemy import text
 
 from app.models.integration_reference import IntegrationReference
+from app.services.company_scope import DEFAULT_COMPANY_ID
 from app.services.integration_reference_service import (
     SUPPORTED_ENTITY_TYPES,
     IntegrationReferenceService,
@@ -44,7 +45,13 @@ def db():
 
 @pytest.fixture()
 def svc(db):
-    return IntegrationReferenceService(db)
+    # Anchored to the incumbent company: every functional test here exercises
+    # a company-scoped type (`products`, `orders`) - plan D14 is strict, so an
+    # unanchored `link`/`resolve` on one now raises ValueError. None of the
+    # fixture rows below (`_product`, `_order`) set their own `company_id`, so
+    # the real seeded incumbent (migration 302 in production, seeded by hand
+    # on this lane's private DB) is the one real company id available here.
+    return IntegrationReferenceService(db, company_id=DEFAULT_COMPANY_ID)
 
 
 def _refs(db):
@@ -144,6 +151,8 @@ class TestEntityTypeAllowlist:
             "picking_lines",
             "orders",
             "order_lines",
+            # autocount-brands-ingest AC-15: brands joined the ingest surface.
+            "brands",
         }
 
     def test_every_supported_type_names_a_real_table(self, db):

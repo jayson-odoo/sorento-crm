@@ -42,6 +42,12 @@ pytest tests/test_rbac.py -q           # one file
 pytest tests/test_rbac.py::test_x      # one test
 ```
 
+`SORENTO_ENV_FILE=.env.ci-tests pytest ...` runs tests against a private DB without touching
+`.env` - the file a running dev server also reads (see `app.config._resolve_settings_env_file`,
+which Settings itself reads, and `app.main._load_env_file`, which does the same for os.environ).
+A SORENTO_ENV_FILE that is set but does not resolve to an existing file raises at import instead
+of silently falling back to the real `.env`.
+
 Pyright: root `pyrightconfig.json` points to `sorento_crm_backend/venv` and Python 3.12.
 
 ### Frontend (`sorento_crm_frontend/`)
@@ -82,6 +88,8 @@ docker compose up -d            # from sorento_crm/ (root compose at sorento_crm
 ## Dev sessions (Claude-managed)
 
 For any development task, Claude boots and owns the local stack as **background Bash sessions** so the user can test immediately. Boot all four at session start (or on first dev task):
+
+For a lane that goes to a Claude Code cloud environment instead of a local worktree, see `documentation/agents/cloud-lanes.md`.
 
 | Service  | Command (run from its own dir)                                                                 | Port | Reload behavior |
 |----------|------------------------------------------------------------------------------------------------|------|-----------------|
@@ -214,11 +222,20 @@ The shape: journey → grill → UAC → plan → tickets → **Phase 1** fronte
 backend, no tests yet) → **Phase 2** tester-first backend wiring, test-FIRST (the `tester` agent
 writes the red tests from the UAC + captain's test list BEFORE the `coder` agent, one instance
 kept alive for the whole lane, makes them green; pytest + vitest land here, never deferred) →
-**Phase 3** `reviewer` + `security-reviewer` + browser verification in parallel, once per lane →
-`guide-writer` → DoD gate → PR.
+**Phase 3** `reviewer` + browser verification in parallel, once per lane (`security-reviewer`
+joins only when the diff touches auth, RBAC, external ingest, uploads or multi-company scoping;
+otherwise it is skipped and the PR body says so) → DoD gate → PR. `guide-writer` no longer runs
+per lane (owner ruling, 24 Sep 2026): it runs on-request or as a weekly batch over merged lanes -
+see `.claude/agents/guide-writer.md`.
 
 Skipping or reordering a phase is a process violation; if a phase genuinely cannot be done, say so
 in the PR description.
+
+**Track is chosen by the diff, not by feel** (`PRINCIPLES.md` "Small fix track", owner rulings
+18 Sep 2026 + 24 Sep 2026): a lane whose expected diff is under ~300 changed lines, with no
+migration, no auth/RBAC/permission change, and no new external ingest surface, is the small fix
+track - no DB clone, one coder writing tests + fix, one reviewer, browser pass only for a
+changed screen. Name the track in the plan's Status line.
 
 ## Lane merge discipline (standing rule, 2026-09-02)
 
@@ -288,6 +305,11 @@ spawn a build "for handoff" on your own initiative.
   also drop clean worktrees already in `origin/main`, `--deep` for `node_modules`
   and `venv`), then `git worktree prune`. The script skips any worktree running
   `next dev` and never kills a process. This is `/feature` Step 11.
+- **Post-merge cleanup is pre-authorised, not owner-run** (`PRINCIPLES.md` "Post-merge cleanup",
+  owner ruling 24 Sep 2026): once a lane's PR merges, the captain removes the worktree, drops its
+  `.next`, and drops that lane's private `*_ci` DB + redis index without asking, subject to the
+  two standing guards there (grep every remaining worktree's `.env*` before any `DROP DATABASE`;
+  never touch a worktree that is a live process's cwd the captain did not start).
 - **Never `npm run build` while a `next start` serves that same `.next`** - the build replaces chunk
   files under the running server, which keeps its old manifests, so pages come back half-rendered.
   The tell looks like a code defect elsewhere: `tests/test_dealer_kit_pdf_render.py` failed 5 of 7
@@ -301,7 +323,7 @@ spawn a build "for handoff" on your own initiative.
 
 ## Lessons learned
 
-**Full log: `LESSONS-LEARNT.md` (80 entries).** Read it when a bug's cause is not obvious, before
+**Full log: `LESSONS-LEARNT.md` (113 entries).** Read it when a bug's cause is not obvious, before
 touching the worker, migrations, tests-in-CI, or anything Respond.io / Outline / storage related.
 When a lesson's cause is fixed in code, retire the entry rather than leaving it to accumulate.
 
@@ -339,7 +361,10 @@ The main session (Fable) plans and briefs; execution subagents run on **Sonnet**
 `coder`, `tester`, `guide-writer` and `triage` declare `model: sonnet` in `.claude/agents/`;
 `reviewer`, `security-reviewer` and `planner` stay `model: opus` (the review is the quality gate
 before a PR, and it has caught merge-blocking defects the cheaper pass would risk missing -
-captain's call, 30 Aug 2026). The captain's job is to make the brief precise enough that Sonnet
+captain's call, 30 Aug 2026). This routing stands as of 24 Sep 2026: the `opus` alias currently
+resolves to Opus 5.5, whose default effort is `medium` (one step below Opus 5), but the review
+seat is still the quality gate, so neither this default nor the per-spawn escalation rules below
+change. The captain's job is to make the brief precise enough that Sonnet
 can execute it mechanically: measured facts, exact file paths, the test list, the contract
 shapes. A vague brief is the captain's defect, not a reason to upgrade the model.
 

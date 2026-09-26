@@ -30,7 +30,6 @@ import pytest
 
 from app.services.chatbot import contracts
 from app.services.chatbot.head import parser as parser_mod
-from app.services.chatbot.head.route import DEFAULT_UNSUPPORTED_DOMAINS, decide
 from app.services.chatbot.lanes.business import _fetch_semantic_input
 from app.services.chatbot.lanes.business.fetch import (
     CHATBOT_READ_ONLY_TOOLS,
@@ -38,9 +37,15 @@ from app.services.chatbot.lanes.business.fetch import (
 )
 from app.services.chatbot_parser_prompt import (
     GROWTH_R1_ADDENDUM,
+    LAST_COST_ADDENDUM,
+    LOW_STOCK_ADDENDUM,
+    SALES_REPORT_ADDENDUM,
     SEMANTIC_PARSER_PROMPT,
-    SEMANTIC_PARSER_PROMPT_SLIM,
 )
+
+# AC-1592/D8: SEMANTIC_PARSER_PROMPT_SLIM is retired ("one prompt lineage (v3 shape).
+# v1 and SLIM retired") - every `for body in (SEMANTIC_PARSER_PROMPT,
+# SEMANTIC_PARSER_PROMPT_SLIM)` loop below now iterates the one real body only.
 
 #: The corpus lives INSIDE the test package, and that is not tidiness (CI, 8 Sep 2026).
 #: The backend image's build context is `./sorento_crm_backend` only, so nothing under the
@@ -123,15 +128,14 @@ class TestTheSchemaDeclaresTheTwoNewKeys:
             "type": ["integer", "null"]
         }
 
-    def test_a_pre_growth_r1_emission_still_post_processes(self) -> None:
-        """AC-910's compatibility half. Every captured raw emission predates these keys, so
-        `_assert_emission` must not require them or the whole replay corpus dies at the
-        first line of the post-processor."""
-        from app.services.chatbot.head.output_exchange import _required_emission_keys
-
-        required = _required_emission_keys()
-        assert "group_by" not in required
-        assert "top_n" not in required
+    # AC-1592: `test_a_pre_growth_r1_emission_still_post_processes` REMOVED here,
+    # RETIRED not ported. `_assert_emission`/`_required_emission_keys` no longer
+    # exist anywhere (grepped this session). AC-910's own compatibility concern - an
+    # old capture recorded before `group_by`/`top_n` existed must still replay clean
+    # - is now the REPLAY HARNESS's design, not a Python allow-list function:
+    # `test_turn_replay.py` mocks the parser straight from a recorded `verdict` dict
+    # and never enforces a required-key set on it at all, so an old verdict missing
+    # these two keys already replays with no special-casing needed.
 
 
 # --------------------------------------------------------------------------- #
@@ -142,18 +146,30 @@ class TestTheSchemaDeclaresTheTwoNewKeys:
 class TestBothPublishedBodiesCarryTheVocabulary:
     def test_the_addendum_is_appended_to_both_bodies(self) -> None:
         """Migration 490 publishes BOTH texts because prod's `production` label is on the
-        FULL body and dev's is on the SLIM one."""
-        assert SEMANTIC_PARSER_PROMPT.endswith(GROWTH_R1_ADDENDUM)
-        assert SEMANTIC_PARSER_PROMPT_SLIM.endswith(GROWTH_R1_ADDENDUM)
+        FULL body and dev's is on the SLIM one.
+
+        The strong `.endswith` form is restored (review S4, 12 Sep 2026) by stripping the
+        LATER addenda first, newest outermost: `SALES_REPORT_ADDENDUM`
+        (PLAN-chatbot-sales-report.md S4 wiring point 1), then `LOW_STOCK_ADDENDUM`
+        (PLAN-low-stock-report.md S7, 14 Sep 2026), then `LAST_COST_ADDENDUM`. Each stacks
+        AFTER `GROWTH_R1_ADDENDUM` on both bodies, the same way this addendum itself
+        stacked after the live text, so `GROWTH_R1_ADDENDUM` is still exactly the tail
+        once the later ones are off."""
+        for body in (SEMANTIC_PARSER_PROMPT,):
+            assert body.removesuffix(SALES_REPORT_ADDENDUM).removesuffix(
+                LOW_STOCK_ADDENDUM
+            ).removesuffix(
+                LAST_COST_ADDENDUM
+            ).endswith(GROWTH_R1_ADDENDUM)
 
     @pytest.mark.parametrize("key", ["group_by", "top_n"])
     def test_the_output_block_declares_each_new_key(self, key: str) -> None:
-        for body in (SEMANTIC_PARSER_PROMPT, SEMANTIC_PARSER_PROMPT_SLIM):
+        for body in (SEMANTIC_PARSER_PROMPT,):
             assert f'"{key}"' in body
 
     @pytest.mark.parametrize("value", ["so_outstanding", "purchase_order", "check_po"])
     def test_the_new_enum_values_are_named(self, value: str) -> None:
-        for body in (SEMANTIC_PARSER_PROMPT, SEMANTIC_PARSER_PROMPT_SLIM):
+        for body in (SEMANTIC_PARSER_PROMPT,):
             assert value in body
 
     @pytest.mark.parametrize("sample", _phrases(), ids=lambda s: s["phrase"])
@@ -190,6 +206,137 @@ class TestBothPublishedBodiesCarryTheVocabulary:
             "supplier",
         }
         assert {s["expect"].get("top_n") for s in _phrases()} >= {3, 5}
+
+
+# --------------------------------------------------------------------------- #
+# PLAN-chatbot-outstanding-report.md S4 point 1 + the 13 Sep 2026 console check:
+# the outstanding vocabulary and the location cue, TAUGHT and PUBLISHED.
+# --------------------------------------------------------------------------- #
+
+
+class TestTheOutstandingVocabularyIsTaught:
+    @pytest.mark.parametrize("value", ["do_outstanding", "outstanding_both"])
+    def test_both_bodies_name_the_two_new_buckets(self, value: str) -> None:
+        for body in (SEMANTIC_PARSER_PROMPT,):
+            assert value in body, (
+                f"{value} is a bucket the report lane reads, and the model can only emit "
+                "what the published prompt teaches"
+            )
+
+    @pytest.mark.parametrize("token", ['"IB"', '"BB"', '"BRW"', '"BRW-IB"', '"MWH"'])
+    def test_the_location_token_cue_names_the_real_codes(self, token: str) -> None:
+        """Console check finding 1 (13 Sep 2026): the parser hinted "IB" in
+        "Srtwt7443 sales order outstanding for IB" as a CUSTOMER, so the turn ended in
+        the customer-disambiguation picker and never reached the report at all. The
+        order domain has to teach that a short upper-case token beside a product is a
+        location, the way `487_chatbot_warehouse_cue` taught the arrival cue."""
+        assert token in GROWTH_R1_ADDENDUM, (
+            f"{token} is not named as a location token anywhere in the prompt"
+        )
+
+    @pytest.mark.parametrize(
+        "token", ['"ACTS"', '"BRW-IB"', '"FULLSHUN"']
+    )
+    def test_the_cue_is_bounded_by_length_not_by_case(self, token: str) -> None:
+        """N7 (re-review): the first wording called any 2 to 8 letter upper-case token a
+        location, and FULLSHUN - a real one-word customer on the prod copy, which the
+        console check already saw mis-hinted - is eight letters. The rule is now bounded:
+        a short token (at most 4 characters) or a hyphenated site code (at most 10), and
+        a longer letters-only word is a CUSTOMER. All three examples must be named, so
+        the model sees the boundary from both sides."""
+        assert token in GROWTH_R1_ADDENDUM, (
+            f"{token} is not named in the location-token rule"
+        )
+
+    def test_a_long_one_word_token_is_taught_as_a_customer(self) -> None:
+        cue = GROWTH_R1_ADDENDUM[GROWTH_R1_ADDENDUM.index("A LOCATION") :]
+        fullshun = cue.index('"FULLSHUN"')
+        assert "customer" in cue[fullshun : fullshun + 200].lower(), (
+            "FULLSHUN must be named as a CUSTOMER example inside the location rule, or "
+            "the boundary is stated without the case that crossed it"
+        )
+
+    def test_the_cue_says_warehouse_and_rules_out_customer(self) -> None:
+        assert 'hint "warehouse"' in GROWTH_R1_ADDENDUM
+        assert "NEVER \"customer\"" in GROWTH_R1_ADDENDUM, (
+            "the rule has to say what the token is NOT: 'customer' is the hint the model "
+            "chose on its own, on both published prompt versions"
+        )
+
+
+def _alembic_heads_excluding(revision: str) -> set[str]:
+    """The alembic head(s) of the real script directory, computed with `revision`'s own
+    file taken out of the graph - which is what "the head this migration chains onto"
+    means. Read from the scripts on disk (`ScriptDirectory`), never from a literal, so a
+    re-parent onto a newer head keeps this test true."""
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    backend_root = Path(__file__).resolve().parents[2]
+    cfg = Config(str(backend_root / "alembic.ini"))
+    cfg.set_main_option("script_location", str(backend_root / "alembic"))
+    revisions = list(ScriptDirectory.from_config(cfg).walk_revisions())
+
+    referenced: set[str] = set()
+    for rev in revisions:
+        if rev.revision == revision:
+            continue
+        down = rev.down_revision
+        for parent in (down if isinstance(down, (tuple, list)) else [down]):
+            if parent:
+                referenced.add(parent)
+    return {
+        rev.revision
+        for rev in revisions
+        if rev.revision != revision and rev.revision not in referenced
+    }
+
+
+class TestTheOutstandingVocabularyIsPublished:
+    """Console check finding 3: `ai_prompt_registry.render()` reads the PUBLISHED DB
+    row, and none of the 12 `chatbot_semantic_parser` versions carried
+    `do_outstanding` / `outstanding_both` - editing the Python constant reaches a live
+    customer NOWHERE. Publishing is a migration, the way 475 / 480 / 487 / 490 / 513
+    all do it."""
+
+    def _module(self):
+        import importlib.util
+
+        path = (
+            Path(__file__).resolve().parents[2]
+            / "alembic"
+            / "versions"
+            / "514_chatbot_outstanding_vocab.py"
+        )
+        assert path.exists(), (
+            "no migration publishes the outstanding vocabulary, so it reaches no live "
+            "prompt version (console check finding 3)"
+        )
+        spec = importlib.util.spec_from_file_location("zzt_outstanding_vocab_migration", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_the_migration_publishes_both_bodies(self) -> None:
+        module = self._module()
+        assert callable(module.publish)
+        for text in (module._full_text(), module._slim_text()):
+            assert "do_outstanding" in text
+            assert "outstanding_both" in text
+            assert 'hint "warehouse"' in text
+
+    def test_the_revision_chains_onto_the_current_head(self) -> None:
+        """N3 (re-review): the head is READ, never spelled out. Pinning the literal meant
+        the pre-PR re-parent (`scripts/alembic-reparent.sh`, which flips `down_revision`
+        onto main's newest head) would fail this test for doing exactly its job - main
+        has already merged the two 513 heads since this migration was written."""
+        module = self._module()
+        assert len(module.revision) <= 32, module.revision
+        heads = _alembic_heads_excluding(module.revision)
+        assert module.down_revision in heads, (
+            f"the migration must chain onto a current head; down_revision="
+            f"{module.down_revision!r}, heads without this migration = {sorted(heads)}"
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -257,26 +404,11 @@ class TestCheckPoReachesThePurchaseOrderTool:
         the tool-search filter entirely (turn b5b19cec)."""
         assert contracts.coerce_domain_hint("purchase_order") == "purchase_order"
 
-    def test_the_domain_is_supported_by_default(self) -> None:
-        assert "purchase_order" not in DEFAULT_UNSUPPORTED_DOMAINS
-
-    def test_a_po_turn_routes_to_the_business_lane_not_not_supported(self) -> None:
-        branch, _ = decide(
-            {
-                "parse": {
-                    "output": {
-                        "message_type": "business_query",
-                        "intent_hint": "check_po",
-                        "domain_hint": "purchase_order",
-                        "entities": [{"raw": "SRTWC8517", "hint": "product"}],
-                        "escalation": {},
-                    }
-                },
-                "access": {"allowed": True},
-                "contact": {"custom_fields": []},
-            }
-        )
-        assert branch == "business_query"
+    # AC-1592: `test_the_domain_is_supported_by_default` and `test_a_po_turn_routes_
+    # to_the_business_lane_not_not_supported` REMOVED here, ported to
+    # `test_rearch_port_growth_r1_reachability.py` against `Policy.from_rows`/
+    # `apply()`/`route()` (`head.route.DEFAULT_UNSUPPORTED_DOMAINS`/`decide` are
+    # deleted). Both confirmed CORRECT there.
 
     def test_the_tool_is_callable_and_takes_the_product_entity(self) -> None:
         assert PO_TOOL in CHATBOT_READ_ONLY_TOOLS
@@ -296,9 +428,9 @@ class TestCheckPoReachesThePurchaseOrderTool:
 
 
 class TestCheckSpoReachesTheLastReceiptTool:
-    def test_the_domain_is_supported_and_goods_receive_still_is_not(self) -> None:
-        assert "spo_allocation" not in DEFAULT_UNSUPPORTED_DOMAINS
-        assert "goods_receive" in DEFAULT_UNSUPPORTED_DOMAINS
+    # AC-1592: `test_the_domain_is_supported_and_goods_receive_still_is_not` REMOVED
+    # here, ported to `test_rearch_port_growth_r1_reachability.py` against
+    # `Policy.from_rows` (same as above). Confirmed CORRECT.
 
     def test_the_tool_is_callable(self) -> None:
         assert SPO_TOOL in CHATBOT_READ_ONLY_TOOLS
@@ -316,12 +448,13 @@ class TestCheckSpoReachesTheLastReceiptTool:
         assert "limit" not in args
         assert args["product_ids"] == [uuid]
 
-    def test_the_product_entity_is_not_blocked_by_the_domain(self) -> None:
-        """A6 unblocked the domain; the blocklist still dropped the only thing that narrows
-        the read, so "last in for SRTWC8517" answered about everything."""
-        from app.services.chatbot.head.output_exchange import DOMAIN_BLOCKED_HINTS
-
-        assert "product" not in DOMAIN_BLOCKED_HINTS["spo_allocation"]
+    # AC-1592: `test_the_product_entity_is_not_blocked_by_the_domain` REMOVED here,
+    # RETIRED not ported - `DOMAIN_BLOCKED_HINTS` no longer exists anywhere (kept
+    # deliberately inside the now-deleted `head/output_exchange.py`, per
+    # `contracts.py`'s own `DomainSpec` docstring). The fact itself is a DUPLICATE of
+    # already-green coverage: `test_warehouse_entity.py::TestGateKeepsWarehouse::
+    # test_spo_allocation_keeps_product_and_warehouse_and_drops_customer` already
+    # proves `gate.run_gate` keeps "product" compatible for `spo_allocation`.
 
 
 # --------------------------------------------------------------------------- #
@@ -376,15 +509,24 @@ def test_after_sync_every_domain_spec_tool_has_its_domain_stamped() -> None:
     the next migration that touches `mcp_tools` carries its drop, and so does this
     assertion, which is what keeps the two data copies from drifting while it does.
 
-    Runs a real sync against the shared database and rolls it back; skipped when
-    `mcp_tools` is empty (CI's database has no seed data - LESSONS-LEARNT).
+    Runs a real sync against `tests._pg_fixture.blank_session`'s scratch schema, not the
+    shared database (issue #1241): `sync_catalog`'s "deactivate tools missing from the code
+    catalog" step is an unfiltered, table-wide UPDATE by design - every stale row, not just
+    this test's own - so this test raced `tests/test_mcp_tool_registry_service.py` (same
+    real `sync_catalog`, same shared `mcp_tools`) whenever both landed on different xdist
+    workers at once: CI saw `DeadlockDetected`, and locally the same race silently
+    overwrote a freshly-synced row's `is_active` back to False. A scratch schema per test
+    removes the shared table entirely instead of serializing around it - the same fix
+    `test_mcp_catalog_ideation.py` already uses for this exact function - and it also
+    means this test never needs its own catalog data to already exist, so it no longer
+    skips when the shared database has none (CI's never did).
     """
     import sys
     from pathlib import Path
 
-    from app.database import SessionLocal
     from app.models.access import McpTool
     from app.services.mcp_tool_registry_service import sync_catalog
+    from tests._pg_fixture import blank_session
 
     # The SIBLING tree first when this is the monorepo: the venv's editable install of
     # `sorento_crm_mcp` (which `sync_catalog` imports) can point at another checkout (it
@@ -398,10 +540,7 @@ def test_after_sync_every_domain_spec_tool_has_its_domain_stamped() -> None:
         for mod in ("sorento_crm_mcp", "sorento_crm_mcp.catalog", "sorento_crm_mcp.module_loader"):
             sys.modules.pop(mod, None)
 
-    db = SessionLocal()
-    try:
-        if db.query(McpTool).count() == 0:
-            pytest.skip("mcp_tools is empty (CI has no data)")
+    with blank_session() as db:
         sync_catalog(db)
         db.flush()
         for domain, tools in DOMAIN_TOOLS.items():
@@ -413,6 +552,3 @@ def test_after_sync_every_domain_spec_tool_has_its_domain_stamped() -> None:
                     f"{tool!r} synced with chatbot_domain={row.chatbot_domain!r}, "
                     f"expected {domain!r}"
                 )
-    finally:
-        db.rollback()
-        db.close()

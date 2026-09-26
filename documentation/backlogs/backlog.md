@@ -40,6 +40,9 @@ Format: `ID · Title · Source plan · Priority · Status`. IDs are `BL-<NNN>`, 
 | BL-030 | **`pool_claims` and `_pile_book` tie-break differently** - the pool queue breaks a score tie on `(so_number, line_no, id)` while the pile book breaks it on `(required_date, so_number, ...)`, so under a policy that scores dates at 0 the pool's own queue is alphabetical by SO number rather than by date. The live fair policy weights the date, so the two agree today; align the tie-break (one helper both call) so the trail's rung 2 explanation can never contradict the queue dialog. Found by coder J2 on 19 Aug 2026 while wiring the pool pile into the trail. Closed 19 Aug 2026 in the code-review pass on that plan: `_pile_book`'s scoring and tie-break now live in one helper (`ProjectSupplyService._rank_pile` over `_pile_order`) and `pool_claims` inserts the asking line into the pool's queue and ranks the lot with it, pinned by `test_a_pool_draw_is_queued_by_the_same_rule_the_pile_book_orders_the_pool_by`. | `plans/scm/PLAN-fulfilment-planning-from-autocount-so.md` (13.11 / 13.12) | Low | Done |
 | BL-031 | **`tests/test_product_predicate_service.py` is red between 00:00 and 08:00 Malaysia time** - `test_certificate_object_form_filters_on_validity` and `test_promotion_leg_requires_an_active_unexpired_promotion` seed `valid_until` / `end_date` with the local `date.today() - 1 day` while the service compares against the UTC date, so for eight hours a day 'yesterday' is still 'today' and the expired row is kept. Green under `TZ=UTC` (CI). Pre-existing on main; fix by seeding relative to the same clock the service reads (or by using a two-day margin). | `plans/scm/PLAN-fulfilment-planning-from-autocount-so.md` (found during the 19 Aug empty-DB proof run) | Low | Done - fixed 2026-08-21 (deflake sweep): seeds now use `datetime.now(timezone.utc).date()` (`_utc_today()`) instead of local `date.today()`, matching the `func.current_date()` clock the service reads on a session pinned to UTC. |
 | BL-062 | **Chatbot not-found lines name companies where the code does not exist** - a per-company "*Mocha:* no stock / no orders / no incoming records for X" line is emitted for every company in the contact's scope, including companies whose catalogue does not hold the code (and "checked in Sorento and Mocha" lists both). Faithful to the live n8n spine: 314 such lines in 3,149 live turns (20 Aug to 6 Sep 2026), about 186 naming a company whose prefix belongs to the other brand (live exec 13303962 "check stock MCM7834-CR" -> "*Sorento:* no stock records for MCM7834-CR."). Owner rule if picked up: a company is in scope for the turn only when the resolver returned a row for the code (or customer/product) under that company; a non-resolving company is out of scope, never a miss, so it appears in no not-found sentence and no "checked in X and Y" list; a code under one company answers for that company with no company list. Register as an owner-ruled divergence, not a parity fix. PARKED by owner 7 Sep 2026 ("if live is like that then it is fine first"). Evidence: clone exec 15447018, console case #70. | `plans/chatbot/PLAN-chatbot-turn-engine.md` | Low | Parked |
+| BL-063 | **One-step undo of a board confirmation** - "reset one revision back" (owner, 16 Sep 2026): cancel the newest supply decision revision, restore `previous_qty` / `previous_delivery_date` on settled rows, cancel rows that revision raised, flip its batch rows back to `pending`. Reset planning is the UAT nuke and wiped OI-000477 on the dev copy. Data exists; needs its own journey. | `plans/scm/PLAN-oi-replan-received-links.md` | Medium | Open |
+| BL-064 | **`early_days` on OI links** - mirror of `late_days`: a 2027 line whose incoming lands in 2026 is invisible as borrowable to other planners. One field on the link dict plus the chip. | `plans/scm/PLAN-oi-replan-received-links.md` | Low | Open |
+| BL-065 | **Board with a pending change batch serves stale line facts.** `uncoverChangedLines` spreads the batch row's `proposal_json` snapshot over the live contribution, so `draft`, `item_flags`, `lent_to`, `contested`, `unplannable`, `pending_change_batch_id` read as they stood when the batch was raised (found 17 Sep while the `order_inquiry` half of it hid the `received` word; that key is now preserved, ad4d10a6b). Fix: merge only the composition keys the proposal is about, keep every live fact. | `plans/scm/PLAN-oi-replan-received-links.md` | Medium | Open |
 
 > Seeded 2026-07-13 from in-flight work at the time of the documentation restructure. Historical
 > plans predating this register carry their own inline "Deferred / follow-ups" sections; migrate
@@ -164,7 +167,7 @@ removed copy, for whoever restores a UI for them:
   record then fails on every retry. Not reachable today: refs are `{DatabaseName}:{AutoKey}` and
   one book is connected. **Trigger:** a second AutoCount database connects. Fix: add `company_id`
   to `integration_references` and include it in `resolve`/`link`, or skip the auto-link when the
-  local row was found by code rather than back-created. | `plans/autocount/PLAN-autocount-document-ingest-v2.md` | Medium | Open |
+  local row was found by code rather than back-created. **Closed 2026-09-12** in `plans/autocount/PLAN-autocount-brands-ingest.md` section 8 (migration 512: `company_id` on the table, two partial unique indexes, scoped `resolve`/`link`). | `plans/autocount/PLAN-autocount-document-ingest-v2.md` | Medium | Closed |
 - **BL-057** (2026-09-05, same review): a document `.edit` slug (`scm.sales_orders.edit`,
   `scm.purchase_orders.edit`, `scm.shipping_orders.edit`) can back-create suppliers, customers and
   shared sales agents through the ladder, while those masters have their own `.edit` slugs on the
@@ -213,3 +216,33 @@ removed copy, for whoever restores a UI for them:
   (rail / layers vertical group), not changed by r6. **Trigger:** any request with 3+ lines on a
   laptop-height viewport. Fix: give the rail its own `overflow-y-auto` with a min height, or
   size the rail panel from the line count. | `plans/dealer-kit/PLAN-price-tag-r6.md` | Medium | Open |
+- **BL-064** (2026-09-12, portal r8 security review): `POST /api/v1/public/portal/ai-extract`
+  has no per-contact or per-IP rate limit (only the 12 files / 150 MB per-call cap) while
+  `request-otp` is rate limited. Per-tile "Extract with AI" makes it a one-tap, repeatable LLM
+  spend surface for any valid portal token. **Trigger:** a contact over N extracts per hour in
+  `integration_logs`, or an LLM bill spike. Fix: reuse the `portal_otp` limiter shape keyed on
+  contact id. | `plans/portal/PLAN-portal-price-tag-journey-r8.md` | Low | Open |
+- **BL-065** (2026-09-14, low stock report plan): the deferred items from
+  `PLAN-low-stock-report.md`, all Open, all triggered when the named condition arrives:
+  - **Category as a run scope** ("water tap low stock"): a run has no category filter, so
+    the chat ask silently plans everything. **Trigger:** the owner asks to scope a plan (or
+    the report) by product category. Fix: add a category narrower to `create_run` / the
+    admission query, and to the low stock route's params.
+  - **Per-warehouse quantity columns on the "All" sheet:** the workbook prints the pool
+    total only (owner ruling). **Trigger:** a buyer asks to see the split by bin on the
+    sheet. Fix: widen `low_stock_report_service` with per-location columns from
+    `location_allocations`.
+  - **A PDF flavour of the low stock report.** **Trigger:** a request to print it, not
+    filter it. Fix: a `low_stock_pdf` kind through the same `export_low_stock` rows.
+  - **sku / product_class-scoped dead-stock days in the admission leg.** The leg reads the
+    GLOBAL `reorder_policy.dead_stock_days` only, unlike `dashboard_service._dead_days_for`.
+    **Trigger:** the first `scm.reorder_policy` row with `scope_type <> 'global'` carrying a
+    `dead_stock_days` on the prod copy (there are none today). Fix: reuse `_dead_days_for`'s
+    scoped resolution in the leg.
+  - **MCP compiler support for optional query params on body tools.** `crm_low_stock_report`
+    is a GET only because the compiler injects `view=render` on body-less tools and the lane
+    sends it on every call. **Trigger:** the compiler learns to inject `view` on a body
+    tool. Fix: revisit whether this route should be a POST.
+  | `plans/scm/PLAN-low-stock-report.md` | Low | Open |
+| BL-066 | **Reorder run `product_ids` likely carries the same JSON-null crash as `undo_journal` (#993 review finding R1)** - `scm.reorder_runs.product_ids` is a plain `JSONB` (`reorder_run_service.py` ~175, ~206-217) written with a Python `None` for an unnarrowed run, which SQLAlchemy's JSON type serialises as the JSON literal `null`, not a SQL NULL. The plans grid's sort by Products (`api/v1/scm/reorder_runs.py` ~145) reads `jsonb_array_length(COALESCE(product_ids, '[]'))`, and `COALESCE` does not catch a JSON null (only a real SQL NULL) - an unnarrowed run in that sort would 500 the same way `undo_journal` did. Same fix shape as #993 (`none_as_null=True` + a `jsonb_typeof` guard). Not verified against data - no reproduction run yet, unlike #993's raw-psql confirmation. | (none - reviewer finding, see PR #993) | Medium | Open |
+| BL-067 | **`tests/scm/conftest.py`'s Postgres probe (`:20-43`) reads `DATABASE_URL` from the environment or `.env` only, never `SORENTO_ENV_FILE`** - so `SORENTO_ENV_FILE=.env.ci-tests pytest ...` silently SKIPS every stock-debt test (64 on this lane) rather than running them against the CI database, and a full local run reads "413 passed, 64 skipped, 0 failed" as green when 64 tests never ran at all. Pre-existing on main, not this lane's own defect. **Trigger:** the next PR that touches `tests/scm/` and needs its suite to actually run under `SORENTO_ENV_FILE`. Fix: have the probe resolve the same env file `app.config._resolve_settings_env_file` does, instead of reading `DATABASE_URL`/`.env` directly. | (none - reviewer finding, see PR #1220) | Low | Open |

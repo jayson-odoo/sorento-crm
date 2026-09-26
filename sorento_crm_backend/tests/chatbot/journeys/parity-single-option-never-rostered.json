@@ -1,0 +1,34 @@
+{
+  "name": "parity-single-option-never-rostered",
+  "source": "PLAN-chatbot-answer-half-reattach.md slice R1 / AC-1691, AC-1692 (F8, hand pass 8, 20 Sep 2026): 'SRTWT165-FT CERT' and 'Technical drawings sttwc286-SH' each came back a ONE-OPTION roster echoing the customer's own typed token verbatim ('product_attachment search needs to be more specific. Multiple matches found. Please choose:\\n1. SRTWT165-FT' / '...\\n1. sttwc286-SH' - measured live against :8081 @ 484c79d92 by this session, twice, identical both times). Production's did-you-mean copy (stamped neighbours, 'Couldn't find X (product). Did you mean:') is a LATER slice (R4, AC-1703) - this chain pins only the R1 half named by AC-1691 ('no roster with fewer than two options') and AC-1692 ('a code the resolver could not place is never offered back'): no roster whose single option is the customer's own unresolved token. The UAC's third F8 text, 'Incoming srtwt7202-new', is measured live (this session, twice) NOT to reproduce this one-option-roster shape at all on the current head - it reproduces the OTHER R1 defect instead (an unfiltered 50-product catalogue dump, AC-1688) and is pinned there instead, in parity-incoming-miss-no-foreign-products.json, so this chain is not left carrying a case that is already accidentally green for the wrong reason.",
+  "cases": [
+    {
+      "name": "cert-ask-no-one-option-echo",
+      "cold": true,
+      "contact": "440987225",
+      "turns": [
+        {
+          "text": "SRTWT165-FT CERT",
+          "expect": {
+            "branch_kind": "business_query",
+            "reply_not_contains": ["1. SRTWT165-FT"]
+          }
+        }
+      ]
+    },
+    {
+      "name": "technical-drawings-ask-no-one-option-echo",
+      "cold": true,
+      "contact": "440987225",
+      "turns": [
+        {
+          "text": "Technical drawings sttwc286-SH",
+          "expect": {
+            "branch_kind": "business_query",
+            "reply_not_contains": ["1. sttwc286-SH", "1. STTWC286-SH"]
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -834,7 +834,7 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
     const first = 'so-a|1|WESERP10B|2026-08-31';
 
     fireEvent.click(screen.getByText('SO403340'));
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'Typing, not yet saved.' },
     });
 
@@ -865,7 +865,7 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
     const key = 'so-a|1|WESERP10B|2026-08-31';
 
     fireEvent.click(screen.getByText('SO403340'));
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'Typing, not yet saved.' },
     });
 
@@ -926,7 +926,7 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
     openLines();
 
     fireEvent.click(screen.getByText('SO403340'));
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'Cancelled by the customer.' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
@@ -954,7 +954,7 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
     const save = screen.getByRole('button', { name: 'Save decision' });
     expect(save).toBeDisabled();
 
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: {
         value: 'The site wants new stock, not what is standing there.',
       },
@@ -1271,7 +1271,7 @@ describe('BoardCellBreakdownDialog: the family lightbox, and its two tabs', () =
     // The ownership GROUP leads: it is the pile step 1 draws from, and nothing else on this
     // screen prints its name - the stock table below only speaks up when there is none.
     expect(screen.getByTestId('cell-dialog-context')).toHaveTextContent(
-      'BB group · 100 outstanding · 0 decided',
+      'BB group · 100 to plan · 0 decided',
     );
   });
 
@@ -1281,7 +1281,7 @@ describe('BoardCellBreakdownDialog: the family lightbox, and its two tabs', () =
     renderDialog([demand()]);
 
     expect(screen.getByTestId('cell-dialog-context')).toHaveTextContent(
-      '100 outstanding · 0 decided',
+      '100 to plan · 0 decided',
     );
     expect(screen.getByTestId('cell-dialog-context').textContent).not.toContain(
       'group',
@@ -2196,6 +2196,41 @@ describe('BoardCellBreakdownDialog: quick save as suggested and per-line undo', 
     expect(onDecide).toHaveBeenCalledTimes(1);
     expect(onDecide).toHaveBeenCalledWith('so-a|1|WESERP10B|2026-08-31', null);
   });
+
+  /**
+   * PLAN-board-change-proposed-pill, fix round: the grid's own "Contributing lines" table
+   * carries the same rule the List view's Verdict column does - this is the dialog the grid
+   * opens the contributing-lines table inside, so the two must agree.
+   */
+  it('a pre-marked line reads "Change proposed" and offers no Undo; a saved line still reads "Saved" with its Undo', () => {
+    const draft: BoardDraft = {
+      'so-a|1|WESERP10B|2026-08-31': { verdict: 'approved', preMarked: true },
+      'so-b|2|WESERP10B|2026-08-31': { verdict: 'approved' },
+    };
+    renderDialog(
+      [
+        demand({ line_no: 1, so_number: 'SO000001', sales_order_id: 'so-a' }),
+        demand({ line_no: 2, so_number: 'SO000002', sales_order_id: 'so-b' }),
+      ],
+      {},
+      draft,
+    );
+    openLines();
+
+    expect(
+      screen.getByTestId('decision-pill-so-a|1|WESERP10B|2026-08-31'),
+    ).toHaveTextContent('Change proposed');
+    expect(
+      screen.queryByRole('button', { name: 'Undo SO000001 line 1' }),
+    ).not.toBeInTheDocument();
+
+    expect(
+      screen.getByTestId('decision-pill-so-b|2|WESERP10B|2026-08-31'),
+    ).toHaveTextContent('Saved');
+    expect(
+      screen.getByRole('button', { name: 'Undo SO000002 line 2' }),
+    ).toBeInTheDocument();
+  });
 });
 
 /**
@@ -2552,6 +2587,29 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
       screen.queryByTestId(`trail-flag-${contribution.key}-not-classified`),
     ).not.toBeInTheDocument();
     expect(chips.textContent).not.toMatch(/ABC/);
+  });
+
+  it('AC-23: the discontinued chip reads "Discontinued" and its title no longer says a Buy needs a reason', () => {
+    const cell = cellOf([demand({ qty: '100' })]);
+    const contribution = cell.contributions[0];
+    contribution.item_flags = {
+      dealer_hot_selling: false,
+      dealer_hot_selling_where: [],
+      project_hot_selling: false,
+      project_hot_selling_where: [],
+      dealer_classified: false,
+      project_classified: false,
+      discontinued: true,
+      retail_classification_available: true,
+    };
+    renderCell(cell);
+    openLines();
+    openTrail(contribution.key);
+
+    const chip = screen.getByTestId(`trail-flag-${contribution.key}-discontinued`);
+    expect(chip).toHaveTextContent('Discontinued');
+    expect(chip).toHaveAttribute('title', 'Discontinued');
+    expect(chip.getAttribute('title')).not.toMatch(/needs a reason/);
   });
 
   it('shows a project hot-selling chip alongside the dealer one when both flags are set', () => {
@@ -2962,8 +3020,10 @@ describe('BoardCellBreakdownDialog: what purchasing has already been told', () =
 
     const row = table.querySelectorAll('tbody tr')[0] as HTMLElement;
     expect(within(row).getByText('OI-000123')).toBeInTheDocument();
-    // The worklist's own wording, so "Placed" cannot mean two things on two screens.
-    expect(within(row).getByText('Linked')).toBeInTheDocument();
+    // The worklist's own wording, so the state word cannot mean two things on two screens.
+    // S5 (`PLAN-board-oi-mechanical-22sep.md`, AC-B5-1, owner's pick, 22 Sep 2026): `placed`
+    // now reads "On PO/SPO", not "Linked".
+    expect(within(row).getByText('On PO/SPO')).toBeInTheDocument();
   });
 
   it('prints a dash for a line nobody has been told anything about', () => {
@@ -3846,5 +3906,200 @@ describe('BoardCellBreakdownDialog: S3 suggestion sentence, sticky toolbar, line
     fireEvent.change(search, { target: { value: '' } });
     await waitFor(() => expect(screen.getByText('SO403340')).toBeInTheDocument());
     expect(screen.getByText('SO398322')).toBeInTheDocument();
+  });
+});
+
+/**
+ * AC-S5-1 (`board-received-stock-own-arrival-acceptance-criteria.md` S5,
+ * `PLAN-board-received-stock-own-arrival.md` R7): the own-arrival credit (S3) composes as a
+ * Reserve carrying `source: 'own_arrival'` on the wire
+ * (`FulfilmentBoardService._source`, `project_fulfilment_board_service.py:~4056`). The board
+ * says so with a "Received N" chip, beside the existing per-source pills in the "Sourced
+ * from" cell - the same cell the `buy_origin === 'local'` Badge already sits in
+ * (`BoardCellBreakdownDialog.tsx`, the `sources` column) - carrying the PO number
+ * (`supply_document`) in its `title`. RED: nothing in `BoardCellBreakdownDialog` reads
+ * `source` today, so no such chip exists at any quantity.
+ */
+describe('BoardCellBreakdownDialog: own arrival (S5)', () => {
+  /** One line whose ladder composed 20 as an own-arrival Reserve off PO 202510-S0101. */
+  function cellWithOwnArrival(source: Record<string, unknown> = {}): BoardCell {
+    const cell = cellOf([demand({ qty: '20' })]);
+    const contribution = {
+      ...cell.contributions[0],
+      sources: [
+        {
+          kind: 'reserve',
+          rung: 'group_take',
+          qty: '20',
+          location: 'BRW-BB',
+          reason: '20 landed for this line on PO 202510-S0101, taken first.',
+          source: 'own_arrival',
+          supply_document: 'PO 202510-S0101 line 2',
+          ...source,
+        },
+      ],
+    };
+    return { ...cell, contributions: [contribution] } as unknown as BoardCell;
+  }
+
+  function renderDialogFor(cell: BoardCell) {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <BoardCellBreakdownDialog
+          cell={cell}
+          bucketLabel="31 Aug 2026"
+          draft={{}}
+          onDecide={vi.fn()}
+          onDecideMany={vi.fn()}
+          onClose={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+  }
+
+  it('AC-S5-1: a source carrying source: own_arrival renders a "Received N" chip naming the PO in its title', () => {
+    const cell = cellWithOwnArrival();
+    const key = cell.contributions[0].key;
+    renderDialogFor(cell);
+    openLines();
+
+    const chip = screen.getByTestId(`received-own-arrival-${key}`);
+    expect(chip.textContent).toBe('Received 20');
+    expect(chip).toHaveAttribute('title', expect.stringContaining('PO 202510-S0101'));
+  });
+
+  it('AC-S5-1: no chip when no source carries source: own_arrival', () => {
+    const cell = cellOf([demand({ qty: '20' })]);
+    const key = cell.contributions[0].key;
+    renderDialogFor(cell);
+    openLines();
+
+    expect(
+      screen.queryByTestId(`received-own-arrival-${key}`),
+    ).not.toBeInTheDocument();
+  });
+
+  it('AC-S5-1: an ordinary group-take Reserve with source: null renders no chip', () => {
+    const cell = cellWithOwnArrival({ source: null });
+    const key = cell.contributions[0].key;
+    renderDialogFor(cell);
+    openLines();
+
+    expect(
+      screen.queryByTestId(`received-own-arrival-${key}`),
+    ).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * `board-verdict-actions-chips-acceptance-criteria.md` AC-B1/AC-B11: the grid dialog's own
+ * Decision column carries the SAME Verdict trio the list view does, through the shared
+ * `BoardVerdictActions` component - so the two readings of the board can never drift about
+ * what a Suggested line offers. RED today: the Decision column shows only the pill and (once
+ * drafted) Undo - no Reject, no Change decision, and the Save icon lives outside this column
+ * entirely (the select checkbox's own bulk path).
+ */
+describe('AC-B1/AC-B11: the Decision column carries the same Verdict trio as the list view', () => {
+  it('a Suggested row (no draft) shows Accept, Reject and Change decision', () => {
+    renderDialog([demand()]);
+    openLines();
+
+    expect(
+      screen.getByRole('button', { name: 'Save SO403340 line 1 as suggested' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Reject SO403340 line 1' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Change decision for SO403340 line 1' }),
+    ).toBeInTheDocument();
+  });
+
+  /**
+   * SF-6 (reviewer, fix round 2): the reject popover lives inside a DIALOG here, which has
+   * its own Escape handler and its own focus scope, and the popover is portalled to the
+   * document root - outside that scope. So the two things worth pinning are that Escape
+   * reaches the popover and stops there (the breakdown a planner is mid-decision in must not
+   * close under them), and that the refusal it submits is addressed to THIS row's key.
+   */
+  it('SF-6: Escape closes the reject popover and leaves the breakdown dialog open', async () => {
+    renderDialog([demand()]);
+    openLines();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reject SO403340 line 1' }));
+    const textarea = await screen.findByPlaceholderText('In your own words');
+    fireEvent.keyDown(textarea, { key: 'Escape', code: 'Escape' });
+
+    await waitFor(() =>
+      expect(screen.queryByPlaceholderText('In your own words')).not.toBeInTheDocument(),
+    );
+    // The breakdown itself is still up, with its own tabs and its own table.
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Reject SO403340 line 1' })).toBeInTheDocument();
+  });
+
+  it('SF-6: submitting the popover posts the refusal for THIS row key, with the reason and the flag', async () => {
+    const cell = cellOf([demand()]);
+    const key = cell.contributions[0].key;
+    const { onDecide } = renderDialog([demand()]);
+    openLines();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reject SO403340 line 1' }));
+    const textarea = await screen.findByPlaceholderText('In your own words');
+    fireEvent.change(textarea, { target: { value: '  Customer put it on hold  ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
+
+    await waitFor(() => expect(onDecide).toHaveBeenCalledTimes(1));
+    expect(onDecide).toHaveBeenCalledWith(key, {
+      verdict: 'rejected',
+      reason: 'Customer put it on hold',
+      suspected_system_issue: false,
+    });
+  });
+
+  it('a Saved row (real draft) shows Undo and Change decision only - no Accept, no Reject', () => {
+    const cell = cellOf([demand()]);
+    const key = cell.contributions[0].key;
+    renderDialog([demand()], {}, { [key]: { verdict: 'approved' } });
+    openLines();
+
+    expect(
+      screen.getByRole('button', { name: 'Undo SO403340 line 1' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Change decision for SO403340 line 1' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Save SO403340 line 1 as suggested' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Reject SO403340 line 1' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('AC-DT-5 (round 2, PLAN-oi-decision-trail-ui.md): the Decision column carries the same History icon the list view does, for a covered line', () => {
+    const frozen = {
+      revision_no: 1,
+      timely_spo_qty: '0',
+      reserve: [],
+      borrow: [],
+      buy_qty: '43',
+    };
+    renderDialog([demand({ qty: '43', decision: frozen })]);
+    openLines();
+
+    expect(screen.getByRole('button', { name: /decision trail/i })).toBeInTheDocument();
+  });
+
+  it('hides it for a bare suggested line', () => {
+    renderDialog([demand()]);
+    openLines();
+
+    expect(
+      screen.queryByRole('button', { name: /decision trail/i }),
+    ).not.toBeInTheDocument();
   });
 });

@@ -13,7 +13,7 @@ import { formatDateInMalaysia } from '@/lib/helpers';
 import { ackStateOf } from '../../_shared/lib/orderInquiryAck';
 import { formatInquiryQty, linkedSummary } from '../../_shared/lib/orderInquiryWorklist';
 import type { OrderInquiryWorklistRow } from '../../_shared/types/orderInquiry.types';
-import { OrderInquiryDocumentLink } from './OrderInquiryDocumentDialog';
+import { OrderInquiryDocumentLink, ViaSpoPoNumber } from './OrderInquiryDocumentDialog';
 
 /**
  * What a bundled row's lightbox adds on top of the plain one (UAC D1-D3, D10): the
@@ -74,7 +74,7 @@ export function OrderInquiryBackingDocumentsDialog({
                 themselves live, always joined in full - never the count. */}
             {bundleNote?.fullyBundled
               ? `Included with ${bundleNote.itemCodes.join(' + ')}`
-              : (summary?.headline ?? 'Not found (new order)')}
+              : (summary?.headline ?? 'Nothing linked yet')}
           </DialogDescription>
         </DialogHeader>
         <DialogBody>
@@ -109,21 +109,53 @@ export function OrderInquiryBackingDocumentsDialog({
                         kind={link.kind}
                         document={link.document}
                         poId={link.po_id}
+                        // Blocking 1 (review of PR #1220): a PO opened from the
+                        // worklist is the main way into this lightbox, and it never
+                        // named a line - only the OI detail Lines tab did. `po_line_id`
+                        // is already on the wire (schemas/project_order_inquiry.py).
+                        poLineId={link.po_line_id}
+                        // R15 (owner rulings, 25 Sep 2026): the mirror for the SPO
+                        // lightbox - `spo_allocation_id` is already on the wire.
+                        spoLineId={link.spo_allocation_id}
                       />
+                      {/* S5, R-E: never a real link - the SAME "via" tag the cell itself
+                          shows, so the lightbox and the cell can never disagree. */}
+                      {link.derived ? (
+                        <span className="shrink-0 text-2xs text-muted-foreground">via PO</span>
+                      ) : null}
                     </div>
                     {/* Owner's 9 Sep feedback: "if we link by SPO, where do we see the PO
                         number of this SPO?" - named here, clearly subordinate to the SPO
-                        number above it (smaller, muted, no badge of its own). Never a
-                        link yet - a later slice decides where it goes. Absent rather than
-                        an empty label when the book named no source (AC-A14). */}
+                        number above it (smaller, muted, no badge of its own). Absent
+                        rather than an empty label when the book named no source (AC-A14).
+                        R17 (owner rulings, 25 Sep 2026, "I also need here to be
+                        clickable"): now the SAME trigger as the SPO number above it,
+                        resolved to the PO by `purchase_order_id` - resolved server side
+                        now (review round 2 Should fix 3, `links_for_rows`), by
+                        `po_line_id` when there is one or by `from_po_number` itself
+                        otherwise - the same resolution the Lines tab's own via-SPO cell
+                        uses. */}
                     {link.kind === 'spo' && link.source_po_number ? (
                       <div className="truncate text-2xs text-muted-foreground">
-                        from PO {link.source_po_number}
+                        from PO{' '}
+                        <ViaSpoPoNumber
+                          poNumber={link.source_po_number}
+                          purchaseOrderId={link.purchase_order_id}
+                        />
                       </div>
                     ) : null}
                     <div className="text-xs text-muted-foreground">
                       {link.location || 'no location'} · {formatInquiryQty(link.qty)}
                     </div>
+                    {/* AC-RL-02 (17 Sep rulings): a received document states the figure
+                        as its own line - an open one prints nothing extra here, the
+                        same "never say more than the fact" rule every other blank cell
+                        on this list follows. */}
+                    {link.received ? (
+                      <div className="text-xs text-muted-foreground">
+                        {`Received ${formatInquiryQty(link.received_qty ?? '0')} of ${formatInquiryQty(link.qty)}`}
+                      </div>
+                    ) : null}
                   </div>
                   <div className="shrink-0 text-right text-xs text-muted-foreground">
                     <div>

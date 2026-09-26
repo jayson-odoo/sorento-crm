@@ -23,6 +23,7 @@ from __future__ import annotations
 import pytest
 
 from tests.chatbot import _corpus, divergences
+from tests.chatbot.conftest import validating_resolve_entity
 
 # --------------------------------------------------------------------------- #
 # One runner per ported node. The runner reproduces the node's n8n execution
@@ -46,68 +47,18 @@ def _run_build_ctx(fixture: _corpus.Fixture) -> list:
     )
 
 
-def _run_route_turn(fixture: _corpus.Fixture) -> list:
-    """Graded with the R1 flag OFF, and bounded with it ON (review S9).
-
-    OFF is what production runs, so that is where parity is graded. ON is R1's whole
-    point: the corrected `check_stock` vocabulary WAKES the two lanes live has had dead by
-    typo, so some captured turns legitimately route differently under it - four in the
-    corpus today, all of them real `check_stock` turns from contacts with no stock access
-    (rs1a-15118057, 15129939, 15137785, 15139158). Those are the first evidence the lane
-    would fire at all.
-
-    Replaying only one flag value would grade one deployment and say nothing about the
-    other, so this does both and asserts the BLAST RADIUS: a turn may only move under the
-    flag if it is a `check_stock` turn moving into `stock_denied` / `demand_qty`. Anything
-    else diverging is the flag reaching somewhere R1 never authorised, and fails here.
-    """
-    from app.services.chatbot.head.route import route_turn
-
-    ctx = fixture.first("build-ctx")["ctx"]
-    off = route_turn(ctx, stock_denial_enabled=False)
-    try:
-        on = route_turn(ctx, stock_denial_enabled=True)
-    except TypeError:
-        # Live's own expression throws on a contact with no `is_allowed_stock` field, and
-        # the port reproduces that with the flag on. Nothing to compare; OFF is the graded
-        # value either way. (Plan hazard table, H1 row.)
-        return off
-    if on != off:
-        qf = jsc_output(ctx)
-        on_branch = (on[0].get("json") or {}).get("branch_kind")
-        assert qf.get("intent_hint") == "check_stock" and on_branch in (
-            "stock_denied",
-            "demand_qty",
-        ), (
-            f"{fixture.node}/{fixture.name} moves under chatbot_stock_denial_enabled but "
-            f"is not a check_stock turn landing in a stock lane: intent="
-            f"{qf.get('intent_hint')!r}, off={(off[0].get('json') or {}).get('branch_kind')!r}, "
-            f"on={on_branch!r}. R1 authorises the stock lanes and nothing else."
-        )
-    return off
-
-
-def jsc_output(ctx: dict) -> dict:
-    """`ctx.parse.output` - the parser's post-processed emission, defensively."""
-    return ((ctx or {}).get("parse") or {}).get("output") or {}
-
-
-def _run_output_exchange(fixture: _corpus.Fixture) -> list:
-    from app.services.chatbot.head.output_exchange import output_exchange
-
-    parent_input = fixture.first("When Executed by Another Workflow")
-    out = []
-    for item in fixture.input:
-        out.append({"json": output_exchange(item.get("json") or {}, parent_input)})
-    return out
-
-
-def _run_suggest_follow_up(fixture: _corpus.Fixture) -> list:
-    from app.services.chatbot.head.output_exchange import suggest_follow_up
-
-    parent_input = fixture.first("When Executed by Another Workflow")
-    first = (fixture.input[0] or {}).get("json") or {}
-    return [{"json": suggest_follow_up(first, parent_input)}]
+# B2 (reviewer finding) / AC-1592: `_run_route_turn` (`head/route.py`), `_run_output_
+# exchange` and `_run_suggest_follow_up` (both `head/output_exchange.py`) are RETIRED,
+# not ported - all three modules are deleted (AC-1594; `route_turn` has zero live
+# callers anywhere in `app/`, confirmed by a repo-wide grep, and `output_exchange`'s
+# logic was distributed across `turn_runtime.py`, `lanes/business/`, `lanes/
+# escalation.py`, `session_state.py`, `topic.py`, `resolve_gate.py` - every one of those
+# now only COMMENTS on the retired module for historical context, no live import). The
+# routing decision `route_turn` graded is now the parser-only decider in `turn/policy.py`
+# / `turn/route.py`, exercised end-to-end by `test_turn_replay.py`'s `branch_kind`
+# assertion (AC-1590/1591) and by `test_rearch_s*` unit tests - a real replacement, not a
+# coverage hole. `output_exchange`'s rule-by-rule behaviour is `test_output_exchange_
+# rules.py`'s own retirement (S10, separate item, not duplicated here).
 
 
 
@@ -294,7 +245,9 @@ def _run_whole_sub(fixture: _corpus.Fixture) -> list:
 
     services = ResolveGateServices(
         access_types=lambda **_: [{"name": n} for n in (aggregate.get("name") or [])],
-        resolve_entity=lambda _body: _corpus.json_round_trip(resolved),
+        resolve_entity=validating_resolve_entity(
+            lambda _body: _corpus.json_round_trip(resolved)
+        ),
         probe=lambda **kwargs: _corpus.json_round_trip(
             incoming if kwargs["tool"] == resolve_gate.INCOMING_PROBE_TOOL else customer
         ),
@@ -504,64 +457,22 @@ def _run_build_cs_member_offer(fixture: _corpus.Fixture) -> list:
     ]
 
 
-def _run_compile_current_state(fixture: _corpus.Fixture) -> list:
-    from app.services.chatbot.tail.compile_state import compile_current_state
-
-    compiled = compile_current_state(
-        (fixture.input[0] or {}).get("json") or {},
-        _ctx_of(fixture),
-        resolved=_ran(fixture, "resolve-entity"),
-        gate=_ran(fixture, "disallowed-entity-gate"),
-        execution_id=_execution_id(fixture),
-    )
-    # A pre-RS-3 capture recorded the bare patch; the shipping body seals it. Grading the
-    # shape the fixture actually recorded is what keeps 135 live captures gradeable.
-    expected_first = (fixture.expected[0] or {}).get("json") if fixture.expected else None
-    if isinstance(expected_first, dict) and "reply" not in expected_first:
-        return [{"json": compiled.item["reply"]["session_patch"]}]
-    return [{"json": compiled.item}]
-
-
-def _run_crossdomain_compose(fixture: _corpus.Fixture) -> list:
-    """The shipping body reads the block off `build-result`; the live body read it off
-    `crossdomain-render._xdBlock`. The diff between the two exported bodies is exactly
-    that read plus the RS-3 seal, so a live capture is replayed by handing the port the
-    SAME block through the shape it expects, rather than being written off as stale.
-    """
-    from app.services.chatbot.tail.compile_state import seal
-    from app.services.chatbot.tail.compose import crossdomain_compose
-
-    raw = (fixture.input[0] or {}).get("json") or {}
-    sealed = "reply" in raw
-    item = raw if sealed else {"reply": seal(raw)}
-    patch = item["reply"]["session_patch"]
-
-    build_result = _ran(fixture, "build-result")
-    if build_result is not None:
-        result = build_result
-    else:
-        render = _ran(fixture, "crossdomain-render")
-        result = (
-            {"result": {"xd": {"block": (render or {}).get("_xdBlock")}}}
-            if render is not None
-            else None
-        )
-
-    # The port takes `answered` as a VALUE (R3 / D11: no reading a reply back with a
-    # regex). The capture predates the marker, so the replay derives the same fact the
-    # JS derived, from the state the fixture recorded.
-    previous = ((patch.get("variables") or {}).get("response"))
-    answered = isinstance(previous, str) and previous.startswith("Previous turn (")
-
-    out = crossdomain_compose(item, result=result, answered=answered)
-    return [{"json": out if sealed else out["reply"]["session_patch"]}]
+# B2 (reviewer finding) / AC-1592: `_run_compile_current_state` (`tail/compile_state.py`)
+# and `_run_crossdomain_compose` (`tail/compose.py::crossdomain_compose`) are RETIRED,
+# not ported. `compile_state.py` is deleted (AC-1594) - `tail/__init__.py`'s own module
+# docstring documents it as retired, its "eight state rules, pending markers, offer and
+# picker carriers" half replaced by `turn/apply.py` + `turn/tail.py`. `tail/compose.py`
+# itself still exists, but `crossdomain_compose` has zero live callers anywhere in
+# `app/` (confirmed by a repo-wide grep - only its own definition and two historical
+# comments in `lanes/business/answer.py` name it); the live cross-domain composer is
+# `turn/compose.py::compose()`, exercised by `test_rearch_s3_compose_data.py` and the
+# other `test_rearch_s3_*` files - a real replacement, not a coverage hole.
 
 
 RUNNERS = {
     "build-ctx": _run_build_ctx,
-    "route-turn": _run_route_turn,
-    "output_exchange": _run_output_exchange,
-    "suggest-follow-up": _run_suggest_follow_up,
+    # "route-turn" / "output_exchange" / "suggest-follow-up" retired - see the "B2"
+    # comment near the top of this file, just above this section (AC-1592, B2).
     "disallowed-entity-gate": _run_disallowed_entity_gate,
     "tier-gate": _run_tier_gate,
     "build-ctx-resolved": _run_build_ctx_resolved,
@@ -588,8 +499,8 @@ RUNNERS = {
     "escalate-catalog": _run_escalate_catalog,
     "cs-roster-plan": _run_cs_roster_plan,
     "build-cs-member-offer": _run_build_cs_member_offer,
-    "compile-current-state": _run_compile_current_state,
-    "crossdomain-compose": _run_crossdomain_compose,
+    # "compile-current-state" / "crossdomain-compose" retired - see the "B2" comment in
+    # the "S2, the tail" section below, where their runners used to be (AC-1592, B2).
 }
 
 # `sub-resolve-and-gate` is the SYNTHETIC whole-sub replay: it has no fixture directory of

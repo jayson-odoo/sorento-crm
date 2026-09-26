@@ -23,6 +23,7 @@ import {
   matchesSuggestion,
   plannedLineCount,
   rankingNote,
+  rejectedCoveredLineIdsFor,
   rowMatchesSearch,
   shiftedDayWindow,
   unpostableDecidedFor,
@@ -627,6 +628,54 @@ describe('day granularity (13.3)', () => {
 });
 
 /**
+ * S1 (`PLAN-board-oi-mechanical-22sep.md`, AC-B1-6/AC-B1-7/AC-B1-9): the board's new default
+ * granularity - a column per distinct required date actually present, never a calendar
+ * window, labelled `DD/MM/YYYY`. The backend half (Phase 2) is not this lane's job to pin;
+ * this is the test-support fixture (`__testsupport__/boardFixture.ts`) the FE component tests
+ * build boards through, kept in step with the documented contract so a regression here shows
+ * up as a fixture-level red rather than only as a mysterious FulfilmentBoardPanel failure.
+ */
+describe('date granularity (S1, `PLAN-board-oi-mechanical-22sep.md`, AC-B1-6/AC-B1-9)', () => {
+  it('keys on the exact date - the same key day uses', () => {
+    expect(bucketKeyFor('2026-09-04', TODAY, 'date')).toBe(
+      bucketKeyFor('2026-09-04', TODAY, 'day'),
+    );
+    expect(bucketKeyFor(null, TODAY, 'date')).toBe('no_date');
+  });
+
+  it('renders one column per distinct date PRESENT, DD/MM/YYYY-labelled, no calendar fill - unlike day’s 30-day window', () => {
+    const board = buildBoard(
+      [
+        line({ line_no: 1, required_date: '2026-09-04' }),
+        line({ line_no: 2, required_date: '2027-06-01' }),
+      ],
+      { today: TODAY, granularity: 'date' },
+    );
+    const dated = board.dateBuckets.filter((bucket) => bucket.kind === 'dated');
+    expect(dated.map((bucket) => bucket.key)).toEqual(['2026-09-04', '2027-06-01']);
+    expect(dated.map((bucket) => bucket.label)).toEqual(['04/09/2026', '01/06/2027']);
+  });
+
+  it('still pins No date last, sorted ascending, each with its own is_past', () => {
+    const board = buildBoard(
+      [
+        line({ line_no: 1, required_date: '2026-09-04' }),
+        line({ line_no: 2, required_date: '2022-07-03' }),
+        line({ line_no: 3, required_date: null, fulfilment_location: null }),
+      ],
+      { today: TODAY, granularity: 'date' },
+    );
+    expect(board.dateBuckets.map((bucket) => bucket.key)).toEqual([
+      '2022-07-03',
+      '2026-09-04',
+      'no_date',
+    ]);
+    expect(board.dateBuckets[0].is_past).toBe(true);
+    expect(board.dateBuckets[1].is_past).toBe(false);
+  });
+});
+
+/**
  * Whether an amendment has to say why, read over the WHOLE composition.
  *
  * It used to look at the Reserve alone, which was all a board amendment could change. Now that
@@ -1199,6 +1248,52 @@ describe('confirmLinesFor reads the engine’s numbers', () => {
     });
   });
 
+  /**
+   * S1 (fix round 2, reviewer): this is the path SO420745 itself takes - an uncovered,
+   * approved line whose Save carried a reason the planner typed on a suggested borrow row
+   * (`BoardLineDecisionPanel`'s approving `save()`, board-confirm-left-out AC-3). Rebuilding
+   * `borrow` straight off `contribution.sources` (the engine's own auto-proposed borrow, with
+   * the engine's own sentence) posted that sentence back regardless of what the SAVED decision
+   * actually carried.
+   */
+  it('carries the reason the approving decision typed for a suggested borrow row', () => {
+    const withBorrow = [
+      {
+        ...base,
+        qty_proposed_reserve: '0',
+        qty_proposed_incoming: '0',
+        qty_proposed_buy: '0',
+        sources: [
+          {
+            kind: 'borrow' as const,
+            qty: '100',
+            location: 'MWH-IB',
+            warehouse_id: 'wh-mwh-ib',
+            reason: 'Cross-group cap allows this.',
+          },
+        ],
+      },
+    ];
+    const lines = confirmLinesFor(withBorrow, 'so-a', {
+      [base.key]: {
+        verdict: 'approved',
+        borrow: [
+          {
+            source: 'other_location',
+            warehouse_id: 'wh-mwh-ib',
+            qty: '100',
+            reason: 'Confirmed with the other site on WhatsApp.',
+          },
+        ],
+      },
+    });
+    expect(lines[0].borrow[0]).toMatchObject({
+      warehouse_id: 'wh-mwh-ib',
+      qty: '100',
+      reason: 'Confirmed with the other site on WhatsApp.',
+    });
+  });
+
   it('still moves an amendment’s difference into the Buy', () => {
     const withProposal = [
       { ...base, qty_proposed_reserve: '60', qty_proposed_incoming: '10', qty_proposed_buy: '30' },
@@ -1666,20 +1761,108 @@ describe('confirmLinesFor and a line an active decision already covers', () => {
   });
 
   /**
-   * N6 (code review round 3): resolution order `confirmed > rejected > stale > saved`, the
-   * same order `BoardDecisionPill` reads by. A covered line's frozen composition is what the
-   * server carries forward regardless of a local click - marking it "rejected" in THIS
-   * session cannot make Confirm refuse a line the database already holds, so it must not be
-   * counted as a rejection either.
+   * REWORKED (owner ruling 23 Sep 2026, `PLAN-board-reject-on-confirmed-line.md`, hand-test
+   * feedback: "we should confirm the rejection"): a reject on a covered line is a STAGED
+   * decision like every other board decision now, and Confirm is what actually withdraws it
+   * (`rejected_line_ids`) - so it counts as BOTH `rejected` (the planner's own decision) AND
+   * `toConfirm` (Confirm has something to DO with this press: carry the withdrawal). This test
+   * used to pin the opposite ("carried rather than rejected") from when a covered reject was
+   * refused outright at click time; superseded by the rework below.
    */
-  it('counts a covered line as carried rather than rejected, even when this session marked it rejected', () => {
+  it('counts a covered rejected line as BOTH rejected and something this press confirms', () => {
     const summary = confirmSummaryFor(contributions, {
       [keyOf(1)]: { verdict: 'rejected', reason: 'Changed my mind.' },
     });
-    expect(summary.rejected).toBe(0);
-    // Line 2 is uncovered and untouched, so it stays undecided (8 Sep 2026 ruling, reverses
-    // R11) - nothing is committable here.
+    expect(summary.rejected).toBe(1);
+    // Line 1's withdrawal is the one thing this press commits; line 2 is uncovered and
+    // untouched, so it stays undecided (8 Sep 2026 ruling, reverses R11).
+    expect(summary.toConfirm).toBe(1);
+  });
+
+  /**
+   * N1 (fix round): an INQUIRY-ONLY covered line's own staged reject still counts as the
+   * planner's `rejected` decision, but adds nothing to `toConfirm` - Confirm has no active
+   * decision to withdraw it from, unlike line 1's ACTIVE-decision reject above.
+   */
+  it('counts an inquiry-only covered rejected line as rejected, but NOT toward toConfirm', () => {
+    const inquiryOnly = {
+      ...contributions.find((entry) => entry.line_no === 2)!,
+      covered: true,
+      decision: null,
+    };
+    const summary = confirmSummaryFor([inquiryOnly], {
+      [inquiryOnly.key]: { verdict: 'rejected', reason: 'Not needed.' },
+    });
+    expect(summary.rejected).toBe(1);
     expect(summary.toConfirm).toBe(0);
+  });
+
+  it('rejectedCoveredLineIdsFor names the covered line’s own project_line_id', () => {
+    expect(
+      rejectedCoveredLineIdsFor(contributions, 'so-a', {
+        [keyOf(1)]: { verdict: 'rejected', reason: 'Changed my mind.' },
+      }),
+    ).toEqual(['pl-so-a-1']);
+  });
+
+  it('rejectedCoveredLineIdsFor leaves an UNCOVERED rejected line out - nothing active to withdraw', () => {
+    expect(
+      rejectedCoveredLineIdsFor(contributions, 'so-a', {
+        [keyOf(2)]: { verdict: 'rejected', reason: 'Not needed.' },
+      }),
+    ).toEqual([]);
+  });
+
+  it('rejectedCoveredLineIdsFor is empty when nothing is rejected', () => {
+    expect(rejectedCoveredLineIdsFor(contributions, 'so-a', {})).toEqual([]);
+  });
+
+  /**
+   * N1 (fix round, `PLAN-board-reject-on-confirmed-line.md`): `covered` spans TWO kinds of
+   * line - an ACTIVE decision (this describe block's line 1, `decision: frozen`), or a LIVE
+   * order-inquiry row naming it with none at all (`inquiry_decided`, migrated sheet lines,
+   * #875). Only the first has a `line_snapshots` entry Confirm's `rejected_line_ids` could
+   * ever name, so a staged reject on the SECOND kind must contribute no id and no count -
+   * built here by overriding line 2 (uncovered by default) to the inquiry-only shape,
+   * since the board fixture's own `covered` is `Boolean(line.decision)` and has no
+   * `inquiry_decided` knob of its own.
+   */
+  it('rejectedCoveredLineIdsFor and plannedLineCount exclude an INQUIRY-ONLY covered line - no active decision to withdraw', () => {
+    const inquiryOnly = {
+      ...contributions.find((entry) => entry.line_no === 2)!,
+      covered: true,
+      decision: null,
+    };
+    const draft = { [inquiryOnly.key]: { verdict: 'rejected' as const, reason: 'Not needed.' } };
+    expect(rejectedCoveredLineIdsFor([inquiryOnly], 'so-a', draft)).toEqual([]);
+    expect(plannedLineCount([inquiryOnly], 'so-a', draft)).toBe(0);
+  });
+
+  /**
+   * S4 (fix round, review): a pending planning-change batch has no shape for a
+   * withdrawal riding beside it (AC-B12, server refuses `rejected_line_ids` alongside
+   * `batch_id` outright) - so a covered line's staged reject on a BATCHED order must
+   * not count toward `plannedLineCount`/`toConfirm` either, or the "Confirm (N)" button
+   * promises a withdrawal the press cannot actually carry out ("Confirm (1) then
+   * nothing").
+   */
+  it('plannedLineCount excludes a covered rejected line when its order is in batchBlockedSalesOrderIds', () => {
+    const draft = { [keyOf(1)]: { verdict: 'rejected' as const, reason: 'Wrong site.' } };
+    // Unblocked: counts, exactly as `test_confirming_a_new_composition...` above pins.
+    expect(plannedLineCount(contributions, 'so-a', draft)).toBe(1);
+    // Blocked: the batch on so-a's own order holds it back.
+    expect(plannedLineCount(contributions, 'so-a', draft, new Set(['so-a']))).toBe(0);
+    // A DIFFERENT order's own batch block never reaches so-a's line.
+    expect(plannedLineCount(contributions, 'so-a', draft, new Set(['so-b']))).toBe(1);
+  });
+
+  it('confirmSummaryFor still counts the withdrawal as rejected, but not toward toConfirm, once batch-blocked', () => {
+    const draft = { [keyOf(1)]: { verdict: 'rejected' as const, reason: 'Wrong site.' } };
+    const blocked = confirmSummaryFor(contributions, draft, new Set(['so-a']));
+    expect(blocked.rejected).toBe(1);
+    expect(blocked.toConfirm).toBe(0);
+    const unblocked = confirmSummaryFor(contributions, draft);
+    expect(unblocked.toConfirm).toBe(1);
   });
 });
 
@@ -1731,6 +1914,43 @@ describe('confirmSummaryFor: changed (C4)', () => {
     const summary = confirmSummaryFor([saved], { [saved.key]: decision });
 
     expect(summary.changed).toBe(0);
+    expect(summary.toConfirm).toBe(1);
+  });
+});
+
+/**
+ * R3 (captain's ruling, 13 Sep board-display round, scenario S5): a cancelled changed line
+ * (the book removed it; a pending 'cancelled' `PlanningChangeRow` is what will retire it)
+ * must count toward `toConfirm` when the board's Confirm(N) is pressed - it applies through
+ * the retire path same as any other decided line. `confirmSummaryFor` has no concept of
+ * `cancelled` at all today: an uncovered, undraft line - which is exactly what a cancelled
+ * contribution looks like without a new field naming it - hits the SAME "untouched, nobody
+ * saved it" skip (line ~627, `if (!contribution.covered && !decision) continue;`) an
+ * ordinary undecided line does, so it is silently left out of `toConfirm`.
+ */
+describe('confirmSummaryFor: a cancelled changed line (R3, 13 Sep board-display round)', () => {
+  it('counts a cancelled line toward toConfirm, not as an ordinary untouched line', () => {
+    const board = buildBoard(
+      [line({ sales_order_id: 'so-s5', so_number: 'SO400884', line_no: 1, qty: '72' })],
+      { today: TODAY },
+    );
+    const base = board.cells[0].contributions[0];
+    const cancelled = {
+      ...base,
+      qty: '0',
+      qty_outstanding: '0',
+      covered: false,
+      decision: null,
+      // Not yet on `BoardContribution` (grepped `fulfilmentPlanning.types.ts` - absent) -
+      // the field the board-side fix is expected to add; rename if the coder picks a
+      // different key.
+      cancelled: true,
+    } as BoardContribution & { cancelled: boolean };
+
+    // No draft at all - a cancelled line's own retire is not something a planner "saves" the
+    // way an amend or an approval is; it is inherent to the row itself.
+    const summary = confirmSummaryFor([cancelled], {});
+
     expect(summary.toConfirm).toBe(1);
   });
 });
@@ -1954,10 +2174,10 @@ describe('confirmLinesFor and a line with no mirror', () => {
 });
 
 /**
- * A Buy on a DISCONTINUED product needs a reason (AC-B11), and the server refuses the whole
- * order's confirmation without one. The board states the flag on every line it judged, so a
- * line that would be refused is never posted from here: it is left out and NAMED, and the
- * planner gives the reason in the editor.
+ * D2 (AC-19, AC-20): a Buy on a DISCONTINUED product no longer needs a reason to post. The
+ * board still carries the discontinued flag (for the warning chip/badge elsewhere), but
+ * `lineFor` treats a discontinued Buy the same as any other line now - it posts with or
+ * without a `buy_reason`, and `unpostableDecidedFor` never names it for that cause.
  */
 describe('confirmLinesFor and a discontinued product', () => {
   const board = buildBoard(
@@ -1985,14 +2205,16 @@ describe('confirmLinesFor and a discontinued product', () => {
     contributions.map((entry) => [entry.key, { verdict: 'approved' as const }]),
   );
 
-  it('leaves an approved Buy of a discontinued product out of the body, and names why', () => {
+  it('AC-19/AC-20: posts an approved Buy of a discontinued product with no reason, same as any other line', () => {
     const lines = confirmLinesFor(contributions, 'so-a', approved);
-    expect(lines.map((entry) => entry.project_line_id)).toEqual(['pl-so-a-1']);
+    expect(lines.map((entry) => entry.project_line_id).sort()).toEqual([
+      'pl-so-a-1',
+      'pl-so-a-2',
+    ]);
     expect(
-      unpostableDecidedFor(contributions, 'so-a', approved).map(
-        (entry) => `${entry.contribution.item_code}: ${entry.reason}`,
-      ),
-    ).toEqual(['OLD-1: buy_reason_missing']);
+      lines.find((entry) => entry.project_line_id === 'pl-so-a-2')!.buy_reason,
+    ).toBeUndefined();
+    expect(unpostableDecidedFor(contributions, 'so-a', approved)).toEqual([]);
   });
 
   it('posts it once the amendment carries the reason', () => {
@@ -2011,7 +2233,30 @@ describe('confirmLinesFor and a discontinued product', () => {
     expect(unpostableDecidedFor(contributions, 'so-a', draft)).toEqual([]);
   });
 
-  it('still names it on an amendment that buys it without a reason (the other, SAVED line still posts)', () => {
+  /**
+   * BOARD-CONFIRM-LEFT-OUT (measured cause 1): an APPROVED (not amended) verdict already
+   * reads `decision.buy_reason` on this UNCOVERED derivation - this is the panel's own
+   * approving Save, once it carries the reason (`BoardLineDecisionPanel.test.tsx`). Pinned
+   * here so the derivation this test exercises cannot regress the same way the COVERED
+   * one did (see "confirmLinesFor and an approved COVERED line" below).
+   */
+  it('posts an approved Buy once the approval itself carries the reason', () => {
+    const draft = {
+      ...approved,
+      [old.key]: { verdict: 'approved' as const, buy_reason: 'Last batch for the site.' },
+    };
+    const lines = confirmLinesFor(contributions, 'so-a', draft);
+    expect(lines.map((entry) => entry.project_line_id).sort()).toEqual([
+      'pl-so-a-1',
+      'pl-so-a-2',
+    ]);
+    expect(lines.find((entry) => entry.project_line_id === 'pl-so-a-2')!.buy_reason).toBe(
+      'Last batch for the site.',
+    );
+    expect(unpostableDecidedFor(contributions, 'so-a', draft)).toEqual([]);
+  });
+
+  it('AC-19: posts an amended Buy of a discontinued product with no reason (the other, SAVED line also posts)', () => {
     const draft = {
       [contributions.find((entry) => entry.line_no === 1)!.key]: { verdict: 'approved' as const },
       [old.key]: {
@@ -2023,10 +2268,11 @@ describe('confirmLinesFor and a discontinued product', () => {
       },
     };
     const lines = confirmLinesFor(contributions, 'so-a', draft);
-    expect(lines.map((entry) => entry.project_line_id)).toEqual(['pl-so-a-1']);
-    expect(unpostableDecidedFor(contributions, 'so-a', draft).map((entry) => entry.reason)).toEqual([
-      'buy_reason_missing',
+    expect(lines.map((entry) => entry.project_line_id).sort()).toEqual([
+      'pl-so-a-1',
+      'pl-so-a-2',
     ]);
+    expect(unpostableDecidedFor(contributions, 'so-a', draft)).toEqual([]);
   });
 
   it('does not ask for a reason when the discontinued line buys nothing', () => {
@@ -2046,12 +2292,79 @@ describe('confirmLinesFor and a discontinued product', () => {
     expect(unpostableDecidedFor(covered, 'so-a', approved)).toEqual([]);
   });
 
-  it('names it on an order nobody has adopted yet, and does not count it as planned', () => {
+  it('AC-19: an order nobody has adopted yet is unaffected by the discontinued cause - both lines read no_mirror and both count as planned', () => {
     const unadopted = contributions.map((entry) => ({ ...entry, project_line_id: null }));
     expect(
       unpostableDecidedFor(unadopted, 'so-a', approved, false).map((entry) => entry.reason),
-    ).toEqual(['buy_reason_missing']);
-    expect(plannedLineCount(unadopted, 'so-a', approved)).toBe(1);
+    ).toEqual([]);
+    expect(plannedLineCount(unadopted, 'so-a', approved)).toBe(2);
+  });
+});
+
+/**
+ * BOARD-CONFIRM-LEFT-OUT (SO420745, 21 Sep 2026, measured cause 1): the COVERED-approved
+ * derivation rebuilds the suggestion (`suggestionWithReasons` in `boardAmend.ts`), because a
+ * covered line's `qty_proposed_*`/`sources` state the ACTIVE DECISION, not the engine's
+ * suggestion - so it cannot read `decision.buy_reason` off the derivation the way the
+ * UNCOVERED path above does. It used to drop `buy_reason` (and any borrow reason) on that
+ * rebuild, so a discontinued line the planner had already given a reason for, on an approving
+ * Save, still read `buy_reason_missing` at Confirm.
+ */
+describe('confirmLinesFor and an approved COVERED line: the buy reason travels with it', () => {
+  const frozen = {
+    revision_no: 1,
+    confirmed_at: '2026-08-18T02:00:00',
+    timely_spo_qty: '0',
+    reserve: [],
+    borrow: [],
+    buy_qty: '10',
+  };
+  const discontinuedFlags = {
+    dealer_hot_selling: false,
+    dealer_hot_selling_where: [],
+    project_hot_selling: false,
+    project_hot_selling_where: [],
+    dealer_classified: false,
+    project_classified: false,
+    discontinued: true,
+    retail_classification_available: true,
+  };
+  const board = buildBoard(
+    [
+      line({
+        sales_order_id: 'so-a',
+        so_number: 'SO420745',
+        line_no: 32,
+        item_code: 'SRTWT9610-GM',
+        qty: '10',
+        decision: frozen,
+      }),
+    ],
+    { today: TODAY },
+  );
+  const contributions = board.cells
+    .flatMap((cell) => cell.contributions)
+    .map((entry) => ({ ...entry, item_flags: discontinuedFlags }));
+  const key = contributions[0].key;
+  const REASON = 'Owner accepted this discontinued item for the project.';
+
+  it('is not unpostable once the approving decision carries a fresh buy reason', () => {
+    const draft = { [key]: { verdict: 'approved' as const, buy_reason: REASON } };
+    expect(unpostableDecidedFor(contributions, 'so-a', draft)).toEqual([]);
+  });
+
+  it('the confirm line carries the buy reason', () => {
+    const draft = { [key]: { verdict: 'approved' as const, buy_reason: REASON } };
+    const lines = confirmLinesFor(contributions, 'so-a', draft);
+    expect(lines[0].buy_reason).toBe(REASON);
+  });
+
+  it('AC-19/AC-20: no longer refuses it without one - the reason is optional now', () => {
+    const draft = { [key]: { verdict: 'approved' as const } };
+    expect(unpostableDecidedFor(contributions, 'so-a', draft)).toEqual([]);
+    const lines = confirmLinesFor(contributions, 'so-a', draft);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].buy_reason).toBeUndefined();
   });
 });
 
@@ -2371,4 +2684,64 @@ describe('rankingNote', () => {
   function cells_with_flags(cells: BoardCell[]): BoardCell[] {
     return cells.map((cell) => ({ ...cell, rank_separates: false, distinct_order_count: 1 }));
   }
+});
+
+/**
+ * Review round 1, B1: a composition is balanced against the PLAN quantity.
+ *
+ * The 14 September 2026 ruling split `qty` from `qty_outstanding` - the board asks for the
+ * whole ordered quantity because a delivered unit nobody sourced is a unit to put back - and
+ * the server's own balance check validates against that figure (`_LineFacts.open_qty`).
+ * Everything on this side that composes had gone on reading `qty_outstanding ?? qty`, so on
+ * any line with a delivery the client posted a body summing to less than the line asks for
+ * and the confirm refused the whole order.
+ */
+describe('a delivered line composes against its plan quantity', () => {
+  /** 3 ordered, 1 delivered: the plan quantity is 3 and 2 is merely what is still owed. */
+  const delivered: BoardContribution = {
+    key: 'so-d|1|WESERP10B|2026-08-17',
+    sales_order_id: 'so-d',
+    so_number: 'SO000009',
+    project_line_id: 'pl-so-d-1',
+    line_no: 1,
+    item_code: 'WESERP10B',
+    qty: '3',
+    qty_ordered: '3',
+    qty_delivered: '1',
+    qty_outstanding: '2',
+    qty_proposed_reserve: '0',
+    qty_proposed_incoming: '0',
+    qty_proposed_buy: '3',
+    fulfilment_location: 'BRW-BB',
+    fulfilment_warehouse_id: 'wh-BRW-BB',
+    rank_score: 1,
+    rank_factors: [],
+    sources: [
+      {
+        kind: 'buy',
+        qty: '3',
+        location: null,
+        warehouse_id: null,
+        reason: 'Nothing free at the location.',
+      },
+    ],
+    unplannable: false,
+    contested: false,
+  };
+
+  it('posts the whole 3 on an approval, not the 2 still owed', () => {
+    const [posted] = confirmLinesFor([delivered], 'so-d', {
+      [delivered.key]: { verdict: 'approved' },
+    });
+    expect(posted.buy_qty).toBe('3');
+    expect(
+      Number(posted.buy_qty) +
+        Number(posted.timely_spo_qty) +
+        posted.reserve.reduce((total, row) => total + Number(row.qty), 0),
+    ).toBe(3);
+  });
+
+  it('seeds the amend editor to balance against 3', () => {
+    expect(suggestionDraftFrom(delivered).open_qty).toBe('3');
+  });
 });

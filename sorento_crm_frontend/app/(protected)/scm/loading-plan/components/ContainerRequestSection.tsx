@@ -12,23 +12,23 @@ import {
   useReactTable,
 } from '@tanstack/react-table';
 import { useRouter } from 'next/navigation';
-import { ChevronDown, LayoutGrid, PackageSearch, RefreshCw, Table2 } from 'lucide-react';
+import { LayoutGrid, PackageSearch, RefreshCw, Table2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { COARSE_HIT_TARGET_CLASS, PRESSED_CLASS } from '@/components/ui/primitive-classes';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { cn } from '@/lib/utils';
 import { EM_DASH, fmtInt } from '../../lib/format';
+import { describeWindow } from '../../reorder/lib/runListing';
 import { useContainerRequestBuild, useContainerRequestHistory } from '../../hooks/useFulfilment';
 import type {
   ContainerRequestHistoryProduct,
@@ -96,12 +96,12 @@ import {
  * that used to sit under this grid as an inline `noticesCard` left for its own Sent tab
  * (`SentRequestsPanel.tsx`); `LoadingPlanView` owns the tab strip and both panels.
  *
- * S5 (2 Sep, section 3.5): a `has_demand: false` row no longer sits muted inside the ranked
- * table - it leaves the grid's data entirely and sits under a collapsed line below it, "N
- * products held with no open demand", expandable into a second grid with the SAME column
- * definitions and the same (default, pathname-derived) listing key, so the two share one
- * column-preference store. Collapsed on every load; no shared fold component is built, this
- * is its only consumer.
+ * S5 (2 Sep) put a `has_demand: false` row under a collapsed "N products held with no open
+ * demand" line, in a second grid of its own. Retired 15 Sep on the owner's call: the 18 rows
+ * behind that line got overlooked. ONE grid over every candidate again - a no-demand row
+ * stays muted and rankless, and sorts after every ranked row under the default (unsorted)
+ * order, which `displayRows` pre-orders for rather than seeding a sort the grid would have to
+ * carry around.
  */
 
 const MATRIX_AXIS_OPTIONS = [
@@ -125,6 +125,33 @@ const MATRIX_GRANULARITY_OPTIONS = [
  */
 export function holdingSortValue(row: ContainerRequestRow): number {
   return row.holding_qty ?? -1;
+}
+
+/**
+ * The netting rule with this row's own numbers in it (F2): what `engine_qty` IS, on the cell
+ * that shows it - "= <engine_qty>" is the last term in the string, on the Suggested qty cell,
+ * never on the Requested qty input beside it (review round, S3: the hover explains the ENGINE
+ * figure, and only the read-only cell shows that figure).
+ */
+function engineQtyFormulaTitle(row: ContainerRequestRow): string {
+  // R6: the fourth term, mocked off `incoming_pl` until Phase 2 sends the real figure (the
+  // part of it not yet turned into an SPO).
+  const incomingPlUnallocated = row.incoming_pl_unallocated ?? row.incoming_pl;
+  return `${fmtInt(row.open_so_need)} need - ${fmtInt(row.on_hand)} on hand - ${fmtInt(row.incoming_spo)} incoming SPO - ${fmtInt(incomingPlUnallocated)} incoming PL (not yet on an SPO) = ${fmtInt(row.engine_qty)}`;
+}
+
+/**
+ * Whether the Product cell's subtitle says something the code does not (AC-N1). Most of this
+ * supplier's rows carry a `product_name` equal to their own `item_code`, so printing it again
+ * underneath reads as a defect, not a fact - same rule as the order-inquiry worklist
+ * (`orderInquiryWorklistColumns.tsx`), trimmed and case-insensitive because a name and a code
+ * that differ only by spacing or case are still the same word to a reader scanning the grid.
+ */
+export function productNameDiffersFromCode(row: ContainerRequestRow): boolean {
+  if (!row.product_name) return false;
+  const name = row.product_name.trim().toLowerCase();
+  const code = (row.item_code ?? '').trim().toLowerCase();
+  return name !== code;
 }
 
 /**
@@ -238,6 +265,7 @@ function toDemandLines(lines: ContainerRequestSoLine[]): PlanDemandLineRow[] {
     project: l.project_title,
     agent: l.agent_label,
     price: l.unit_price,
+    open_qty: l.open_qty,
     qty: l.qty,
     required_date: l.required_date,
     channel: l.demand_class === 'project' ? 'project' : 'retail',
@@ -292,15 +320,10 @@ export function ContainerRequestSection({
 
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
   const [sorting, setSorting] = useState<SortingState>([]);
-  // The fold (S5): collapsed on every load, state in component memory only - never persisted,
-  // never read from a prop.
-  const [foldOpen, setFoldOpen] = useState(false);
-  const [foldPagination, setFoldPagination] = useState<PaginationState>({
-    pageIndex: 0,
-    pageSize: 25,
-  });
-  const [foldSorting, setFoldSorting] = useState<SortingState>([]);
   const [view, setView] = useState<'table' | 'schedule'>('table');
+  // AC-N3: client-side, every row is already on the client. Filters the grid and the Schedule
+  // view alike; the stat cards and Save (N) read `rows` unfiltered.
+  const [searchQuery, setSearchQuery] = useState('');
   const [matrixAxis, setMatrixAxis] = useState<ContainerRequestMatrixAxis>('product');
   const [matrixGranularity, setMatrixGranularity] =
     useState<ContainerRequestMatrixGranularity>('week');
@@ -314,11 +337,27 @@ export function ContainerRequestSection({
   const rows = useMemo(() => build.data?.rows ?? [], [build.data]);
   const soLines = useMemo(() => build.data?.lines ?? [], [build.data]);
 
-  // AC-E0/AC-E1: membership and placement are separate. Every candidate the build returned
-  // is either ranked (open demand) or folded (held, no open demand); nothing the build sends
-  // is dropped, it just changes which table it renders in.
-  const rankedRows = useMemo(() => rows.filter((r) => r.has_demand !== false), [rows]);
-  const foldedRows = useMemo(() => rows.filter((r) => r.has_demand === false), [rows]);
+  // AC-N3: case-insensitive substring over item_code, product_name and set_code. `rows`
+  // itself stays unfiltered - the stat cards and Save (N) read it directly.
+  const searchTerm = searchQuery.trim().toLowerCase();
+  // AC-F2/AC-N5: a no-demand row has no `rank`, and the sort comparator that would push it
+  // after every ranked row only runs once a column is actually clicked (`sorting` starts
+  // empty, and TanStack Table leaves an unsorted model in array order). Pre-ordering here -
+  // ranked rows first in the build's own order, no-demand rows after - gets that placement
+  // right on the very first render, with no sort state to seed and nothing to undo when a
+  // real sort is picked.
+  const displayRows = useMemo(() => {
+    const filtered = searchTerm
+      ? rows.filter((r) =>
+          [r.item_code, r.product_name, r.set_code].some(
+            (v) => v && v.toLowerCase().includes(searchTerm),
+          ),
+        )
+      : rows;
+    const ranked = filtered.filter((r) => r.has_demand !== false);
+    const noDemand = filtered.filter((r) => r.has_demand === false);
+    return [...ranked, ...noDemand];
+  }, [rows, searchTerm]);
 
   const linesByProduct = useMemo(() => {
     const map = new Map<string, ContainerRequestSoLine[]>();
@@ -342,9 +381,21 @@ export function ContainerRequestSection({
     return map;
   }, [rows]);
 
+  // AC-N3: the Schedule view reads the SAME filter, applied by product - a line whose product
+  // did not match the query is not on the plan she asked to see, whichever axis it is grouped
+  // by (an order row disappears entirely once none of its lines match).
+  const matchedProductIds = useMemo(
+    () => new Set(displayRows.map((r) => r.product_id)),
+    [displayRows],
+  );
+  const matrixSoLines = useMemo(
+    () => (searchTerm ? soLines.filter((l) => matchedProductIds.has(l.product_id)) : soLines),
+    [soLines, matchedProductIds, searchTerm],
+  );
+
   const matrix = useMemo(
-    () => buildContainerRequestMatrix(soLines, matrixAxis, matrixGranularity, rankByProductId),
-    [soLines, matrixAxis, matrixGranularity, rankByProductId],
+    () => buildContainerRequestMatrix(matrixSoLines, matrixAxis, matrixGranularity, rankByProductId),
+    [matrixSoLines, matrixAxis, matrixGranularity, rankByProductId],
   );
 
   const historyRef = useRef(new Map<string, ContainerRequestHistoryProduct>());
@@ -365,22 +416,23 @@ export function ContainerRequestSection({
 
   // A row edited to 0 leaves the request without being deleted from the grid - she can still
   // see and change her mind about it, it just does not go on the document.
+  //
+  // AC-Q4: a cancelled plan is a record of what was asked, not a form - there is no input left
+  // to disable, so it renders as plain text instead. No formula title here either way (review
+  // round, S3): the hover that explains the arithmetic belongs on the Suggested qty cell that
+  // shows `engine_qty`, not on this one's typed override.
   const renderQtyCell = useCallback((ctx: CellContext<ContainerRequestRow, unknown>) => {
     const original = ctx.row.original;
-    // R6: the fourth term, mocked off `incoming_pl` until Phase 2 sends the real figure
-    // (the part of it not yet turned into an SPO).
-    const incomingPlUnallocated = original.incoming_pl_unallocated ?? original.incoming_pl;
+    const value = qtyForRef.current(original);
+    if (readOnlyRef.current) {
+      return <span className="tabular-nums">{fmtInt(value)}</span>;
+    }
     return (
       <Input
         type="number"
         min={0}
         className="h-8 w-24 tabular-nums"
-        value={qtyForRef.current(original)}
-        disabled={readOnlyRef.current}
-        // The netting rule with this row's own numbers in it (F2): what the figure IS, on
-        // the figure, so nobody has to remember whether the packing list was subtracted.
-        // `engine_qty`, never the edited figure: it is the formula's own answer.
-        title={`${fmtInt(original.open_so_need)} need - ${fmtInt(original.on_hand)} on hand - ${fmtInt(original.incoming_spo)} incoming SPO - ${fmtInt(incomingPlUnallocated)} incoming PL (not yet on an SPO) = ${fmtInt(original.engine_qty)}`}
+        value={value}
         onChange={(e) => {
           const next = Math.max(0, Number(e.target.value) || 0);
           onQtyChangeRef.current(original.row_key, next);
@@ -409,6 +461,9 @@ export function ContainerRequestSection({
     () => [
       {
         id: 'rank',
+        // AC-N5: a row with no rank (has_demand: false) sorts after every ranked row, once a
+        // sort is actually applied, rather than tying with rank 1.
+        accessorFn: (row) => row.rank ?? Number.MAX_SAFE_INTEGER,
         header: ({ column }) => (
           <span className="flex items-center gap-1">
             <DataGridColumnHeader title="Rank" column={column} />
@@ -443,11 +498,13 @@ export function ContainerRequestSection({
           );
         },
         size: 110,
-        enableSorting: false,
+        enableSorting: true,
         meta: { headerTitle: 'Rank' },
       },
       {
         id: 'product',
+        // AC-N5: sorts by the code every row shows, product or set alike.
+        accessorFn: (row) => row.item_code ?? '',
         header: ({ column }) => <DataGridColumnHeader title="Product" column={column} />,
         cell: ({ row }) => {
           const original = row.original;
@@ -483,27 +540,35 @@ export function ContainerRequestSection({
                   </Badge>
                 ) : null}
               </span>
-              <span
-                className="truncate text-2xs text-muted-foreground"
-                title={
-                  original.row_kind === 'set'
-                    ? `Figures from ${original.driver_item_code ?? 'its driver member'}`
-                    : (original.product_name ?? '')
-                }
-              >
-                {original.row_kind === 'set'
-                  ? (original.driver_item_code ?? EM_DASH)
-                  : (original.product_name ?? EM_DASH)}
-              </span>
+              {original.row_kind === 'set' ? (
+                <span
+                  className="truncate text-2xs text-muted-foreground"
+                  title={`Figures from ${original.driver_item_code ?? 'its driver member'}`}
+                >
+                  {original.driver_item_code ?? EM_DASH}
+                </span>
+              ) : productNameDiffersFromCode(original) ? (
+                <span
+                  className="truncate text-2xs text-muted-foreground"
+                  title={original.product_name ?? ''}
+                >
+                  {original.product_name}
+                </span>
+              ) : null}
             </button>
           );
         },
         size: 210,
-        enableSorting: false,
+        enableSorting: true,
         meta: { headerTitle: 'Product' },
       },
       {
         id: 'suggested_qty',
+        // S3 (owner, 15 Sep): the formula's own answer, read-only - "every time we change the
+        // suggested quantity manually, we forgot what's the original suggested quantity" is
+        // answered by keeping `engine_qty` on screen beside the input rather than only in its
+        // hover title. Sortable on the engine figure, which is what this column now shows.
+        accessorFn: (row) => row.engine_qty,
         header: ({ column }) => (
           <span className="flex items-center gap-1">
             <DataGridColumnHeader title="Suggested qty" column={column} />
@@ -523,10 +588,33 @@ export function ContainerRequestSection({
             />
           </span>
         ),
+        cell: ({ row }) => {
+          const original = row.original;
+          const muted = original.has_demand === false;
+          return (
+            <span
+              className={cn('tabular-nums', muted && 'text-muted-foreground/60')}
+              title={engineQtyFormulaTitle(original)}
+            >
+              {fmtInt(original.engine_qty)}
+            </span>
+          );
+        },
+        size: 110,
+        enableSorting: true,
+        meta: { headerTitle: 'Suggested qty' },
+      },
+      {
+        id: 'requested_qty',
+        // Captain's call, review round 12 Sep: sortable on the row's own SAVED override (not
+        // the live-typed value mid-edit) - "what am I asking most of" is a real question over
+        // 60 rows, and this is the same rule the old single column sorted by.
+        accessorFn: (row) => row.suggested_qty,
+        header: ({ column }) => <DataGridColumnHeader title="Requested qty" column={column} />,
         cell: renderQtyCell,
         size: 140,
-        enableSorting: false,
-        meta: { headerTitle: 'Suggested qty' },
+        enableSorting: true,
+        meta: { headerTitle: 'Requested qty' },
       },
       {
         id: 'remark',
@@ -538,6 +626,7 @@ export function ContainerRequestSection({
       },
       {
         id: 'open_so_need',
+        accessorFn: (row) => row.open_so_need,
         header: ({ column }) => <DataGridColumnHeader title="Need" column={column} />,
         // S2: the figure that used to be plain text now opens its OWN dialog - project and
         // retail together, since Need is the sum of both.
@@ -560,7 +649,7 @@ export function ContainerRequestSection({
           );
         },
         size: 100,
-        enableSorting: false,
+        enableSorting: true,
         meta: { headerTitle: 'Need' },
       },
       {
@@ -584,7 +673,7 @@ export function ContainerRequestSection({
           />
         ),
         size: 140,
-        enableSorting: false,
+        enableSorting: true,
         meta: { headerTitle: 'Project' },
       },
       {
@@ -606,7 +695,7 @@ export function ContainerRequestSection({
           />
         ),
         size: 140,
-        enableSorting: false,
+        enableSorting: true,
         meta: { headerTitle: 'Retail' },
       },
       {
@@ -622,7 +711,7 @@ export function ContainerRequestSection({
           />
         ),
         size: 90,
-        enableSorting: false,
+        enableSorting: true,
         meta: { headerTitle: 'On hand' },
       },
       {
@@ -636,7 +725,7 @@ export function ContainerRequestSection({
           />
         ),
         size: 80,
-        enableSorting: false,
+        enableSorting: true,
         meta: { headerTitle: 'SPO' },
       },
       {
@@ -652,11 +741,13 @@ export function ContainerRequestSection({
           />
         ),
         size: 100,
-        enableSorting: false,
+        enableSorting: true,
         meta: { headerTitle: 'Incoming PL' },
       },
       {
         id: 'total_supply',
+        // AC-N5: sortable off the same sum the cell prints, so the two cannot disagree.
+        accessorFn: (row) => row.on_hand + row.incoming_spo + row.incoming_pl,
         header: ({ column }) => <DataGridColumnHeader title="Total supply" column={column} />,
         // R7: On hand + SPO + Incoming PL, plain - no lightbox of its own, the three source
         // columns and theirs are untouched.
@@ -666,7 +757,7 @@ export function ContainerRequestSection({
           </span>
         ),
         size: 110,
-        enableSorting: false,
+        enableSorting: true,
         meta: { headerTitle: 'Total supply' },
       },
       {
@@ -680,7 +771,7 @@ export function ContainerRequestSection({
           />
         ),
         size: 80,
-        enableSorting: false,
+        enableSorting: true,
         meta: { headerTitle: 'PO' },
       },
       {
@@ -705,7 +796,7 @@ export function ContainerRequestSection({
 
   const table = useReactTable({
     columns,
-    data: rankedRows,
+    data: displayRows,
     getRowId: (row) => row.row_key,
     state: { pagination, sorting },
     onPaginationChange: setPagination,
@@ -717,42 +808,13 @@ export function ContainerRequestSection({
     enableColumnResizing: true,
   });
 
-  // The fold's own table (S5): SAME column defs as the ranked grid, its own pagination and
-  // sorting so the two scroll independently, no `listingKey` passed on either grid so both
-  // fall back to the pathname - one preference store, one look.
-  const foldTable = useReactTable({
-    columns,
-    data: foldedRows,
-    getRowId: (row) => row.row_key,
-    state: { pagination: foldPagination, sorting: foldSorting },
-    onPaginationChange: setFoldPagination,
-    onSortingChange: setFoldSorting,
-    getCoreRowModel: getCoreRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    columnResizeMode: 'onChange',
-    enableColumnResizing: true,
-  });
-
   // AC-B8: the sidecar is asked for the products ON SCREEN, never the whole supplier. A
   // 120-product stock list would otherwise pay for 240 monthly series to read 25 rows.
-  const pageProductIds = useMemo(
+  const historyProductIds = useMemo(
     () => table.getRowModel().rows.map((r) => r.original.product_id),
     // The row model is rebuilt when any of these move; `table` itself is stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [table, rankedRows, pagination, sorting],
-  );
-  // Folded rows only pay for their own page of history once the fold is actually open -
-  // collapsed is the default on every load, so asking for it up front would be the same
-  // overfetch AC-B8 exists to avoid.
-  const foldPageProductIds = useMemo(
-    () => (foldOpen ? foldTable.getRowModel().rows.map((r) => r.original.product_id) : []),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [foldTable, foldedRows, foldPagination, foldSorting, foldOpen],
-  );
-  const historyProductIds = useMemo(
-    () => Array.from(new Set([...pageProductIds, ...foldPageProductIds])),
-    [pageProductIds, foldPageProductIds],
+    [table, displayRows, pagination, sorting],
   );
   const history = useContainerRequestHistory(supplierId, historyProductIds);
   historyRef.current = useMemo(() => {
@@ -794,10 +856,17 @@ export function ContainerRequestSection({
     );
   }
 
-  // AC-A1: the "no stock list yet" card is GONE. The plan is built from what we buy from
-  // this supplier crossed with what customers are owed, so a supplier who has never sent a
-  // stock list still gets a table; "They hold" reads their newest proforma, or a dash.
+  // AC-A1: the "no stock list yet" card is GONE. A plan with a file on it (stock list or
+  // proforma) lists what the file names; a plan with none lists what we buy from this
+  // supplier crossed with what customers are owed (the file-or-links rule, 12 Sep 2026), so a
+  // supplier who has never sent a stock list still gets a table; "They hold" reads their
+  // newest proforma, or a dash.
   if (!build.data || rows.length === 0) {
+    // Review round (12 Sep): a statement on file that named nothing of ours is a MATCHING
+    // gap, not an empty universe - the file-or-links rule (slice 1) means a file with real
+    // rows on it produced zero rows here, and "start a new plan" told her to redo work the
+    // Supplier codes tab already exists to finish.
+    const hasStatement = Boolean(build.data?.stock_list_as_of);
     return (
       <div className="space-y-4">
         <Card className="flex flex-col items-center gap-3 p-10 text-center">
@@ -805,11 +874,20 @@ export function ContainerRequestSection({
             <PackageSearch className="size-5" />
           </span>
           <p className="text-sm font-medium">
-            Nothing to ask {supplierName} for right now.
+            {hasStatement
+              ? 'This file named nothing in our catalogue yet.'
+              : `Nothing to ask ${supplierName} for right now.`}
           </p>
           <p className="text-2xs text-muted-foreground">
-            No open customer demand on what they supply, and nothing of theirs on file. Start a
-            new plan from the loading plans list to hand over a newer stock list or proforma.
+            {hasStatement ? (
+              'Match its codes on the Supplier codes tab.'
+            ) : (
+              <>
+                No open customer demand on what they supply, and nothing of theirs on file.
+                Start a new plan from the loading plans list to hand over a newer stock list
+                or proforma.
+              </>
+            )}
           </p>
         </Card>
       </div>
@@ -817,23 +895,29 @@ export function ContainerRequestSection({
   }
 
 
+  // AC-N7 (review round, 12 Sep): the window, both ends, ONE string - the heading and the
+  // Outstanding card's sub-label read the same `describeWindow` call so they cannot say two
+  // different things about what this build was worked out against.
+  const windowLabel = describeWindow(build.data.plan_horizon_start, build.data.plan_horizon_date);
+
   return (
     <div className="space-y-4">
       {/* The cards carry the swatches, which is why there is no legend row under them (r4). */}
       <ContainerRequestStatCards
         summary={summary}
-        horizonDate={
-          build.data.plan_horizon_date
-            ? formatDateInMalaysia(build.data.plan_horizon_date)
-            : null
-        }
+        planHorizonStart={build.data.plan_horizon_start}
+        planHorizonDate={build.data.plan_horizon_date}
       />
 
       <DataGrid
         table={table}
-        recordCount={rankedRows.length}
+        recordCount={displayRows.length}
         tableLayout={{ width: 'fixed', columnsResizable: true }}
-        emptyMessage="No open customer demand for what this supplier supplies."
+        emptyMessage={
+          searchTerm
+            ? 'No product matches'
+            : 'No open customer demand for what this supplier supplies.'
+        }
       >
         <Card>
           {/* The heading, and nothing else (R5): Send and the gear moved to the record's own
@@ -841,40 +925,48 @@ export function ContainerRequestSection({
           <CardHeader className="py-3">
             <h3 className="text-sm font-semibold">
               What to ask {supplierName}
-              {build.data.plan_horizon_date
-                ? ` to cover until ${formatDateInMalaysia(build.data.plan_horizon_date)}`
-                : ' for'}
+              {windowLabel === 'every open order' ? ' for' : ` to cover ${windowLabel}`}
             </h3>
           </CardHeader>
 
           <div className="flex flex-col gap-3 border-t border-border px-4 py-2.5 sm:flex-row sm:items-center sm:justify-between">
-            <div
-              className="inline-flex rounded-md border border-input"
-              role="group"
-              aria-label="Request view"
-            >
-              <Button
-                type="button"
-                size="sm"
-                variant={view === 'table' ? 'primary' : 'ghost'}
-                className="rounded-e-none"
-                aria-pressed={view === 'table'}
-                onClick={() => setView('table')}
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+              <div
+                className="inline-flex rounded-md border border-input"
+                role="group"
+                aria-label="Request view"
               >
-                <Table2 className="size-4" aria-hidden />
-                Table
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant={view === 'schedule' ? 'primary' : 'ghost'}
-                className="rounded-s-none border-s border-input"
-                aria-pressed={view === 'schedule'}
-                onClick={() => setView('schedule')}
-              >
-                <LayoutGrid className="size-4" aria-hidden />
-                Schedule
-              </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={view === 'table' ? 'primary' : 'ghost'}
+                  className="rounded-e-none"
+                  aria-pressed={view === 'table'}
+                  onClick={() => setView('table')}
+                >
+                  <Table2 className="size-4" aria-hidden />
+                  Table
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={view === 'schedule' ? 'primary' : 'ghost'}
+                  className="rounded-s-none border-s border-input"
+                  aria-pressed={view === 'schedule'}
+                  onClick={() => setView('schedule')}
+                >
+                  <LayoutGrid className="size-4" aria-hidden />
+                  Schedule
+                </Button>
+              </div>
+              {/* AC-N3: client-side over item_code/product_name/set_code - every row is
+                  already on the client, so there is no round trip to debounce. */}
+              <ListSearchInput
+                value={searchQuery}
+                onChange={setSearchQuery}
+                placeholder="Search product"
+                className="w-full sm:w-64"
+              />
             </div>
 
             {view === 'schedule' ? (
@@ -917,47 +1009,6 @@ export function ContainerRequestSection({
               <CardFooter>
                 <DataGridPagination />
               </CardFooter>
-              {foldedRows.length > 0 ? (
-                <Collapsible
-                  open={foldOpen}
-                  onOpenChange={setFoldOpen}
-                  className="border-t border-border"
-                >
-                  <CollapsibleTrigger asChild>
-                    <button
-                      type="button"
-                      className={cn(
-                        PRESSED_CLASS,
-                        COARSE_HIT_TARGET_CLASS,
-                        'flex w-full items-center gap-2 px-4 py-2.5 text-start text-sm text-muted-foreground hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 [&[data-state=open]_svg]:rotate-180',
-                      )}
-                    >
-                      {/* The chevron flips without a transition: this fold is opened and
-                          closed tens of times a day, and the frequency gate says an
-                          interaction that often gets no motion of its own. */}
-                      <ChevronDown className="size-4 shrink-0" aria-hidden />
-                      {foldedRows.length} products held with no open demand
-                    </button>
-                  </CollapsibleTrigger>
-                  {/* Tens-per-day interaction (row expand/collapse): no motion beyond what the
-                      trigger's own chevron does. The shared primitive's height keyframes are
-                      switched off here rather than reused as-is. */}
-                  <CollapsibleContent className="overflow-hidden data-[state=closed]:animate-none data-[state=open]:animate-none">
-                    <DataGrid
-                      table={foldTable}
-                      recordCount={foldedRows.length}
-                      tableLayout={{ width: 'fixed', columnsResizable: true }}
-                    >
-                      <CardTable>
-                        <DataGridTable />
-                      </CardTable>
-                      <CardFooter>
-                        <DataGridPagination />
-                      </CardFooter>
-                    </DataGrid>
-                  </CollapsibleContent>
-                </Collapsible>
-              ) : null}
             </>
           ) : matrix.rows.length === 0 ? (
             <div className="p-6 text-center">

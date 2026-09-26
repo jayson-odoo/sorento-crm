@@ -46,6 +46,7 @@ import { formatMoney, sumMoney } from './SalesOrderMoney';
 import { ReviewStatePill } from '../../_shared/components/ReviewStatePill';
 import { GroupingOriginNote, SalesOrderStatusPill } from './SalesOrderStatusPill';
 import { SalesOrderBuildDialog } from './SalesOrderBuildDialog';
+import { projectTabOriginHref, withReviewOrigin } from '../../_shared/lib/reviewOrigin';
 
 /**
  * Why one drafted sales order cannot be deleted, or undefined when it can.
@@ -402,7 +403,12 @@ export function SalesOrdersPanel({ project }: { project: Project }) {
         listingKey="projects.projects.view::project-sales-orders"
         tableLayout={{ width: 'fixed', columnsResizable: true }}
         onRowClick={(row) =>
-          router.push(`/project-sales/${project.id}/sales-orders/${row.id}`)
+          router.push(
+            withReviewOrigin(
+              `/project-sales/${project.id}/sales-orders/${row.id}`,
+              projectTabOriginHref(project.id, 'sales-orders'),
+            ),
+          )
         }
       >
         <Card>

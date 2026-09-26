@@ -152,6 +152,21 @@ export interface PriceBadgeParts {
   spLabel: string | null;
   /** The main figure, already formatted. Empty when there is no price at all. */
   amountText: string;
+  /**
+   * The colour to draw `amountText` in - resolved HERE, once, so the canvas
+   * and the print page can never disagree (the seam a blocker closed: a
+   * `promo` badge whose offer never resolved - `show_promo_price` false, or
+   * no sell price - falls through to the SAME unboxed branch a genuine
+   * `list_only` badge draws through, below. `list_only`'s own `textColor`
+   * default is black-on-background (B1); `promo`'s is white-on-red, for the
+   * boxed callout it normally draws. Reading `props.textColor` unconditionally
+   * in that shared unboxed branch would print a `promo` badge's white text
+   * straight onto the tag's own background - invisible. `'#000000'` for a
+   * `promo` badge that landed here, `props.textColor` for a genuine
+   * `list_only` one, `'#999999'` for the empty placeholder regardless of
+   * variant.
+   */
+  amountColor: string;
   /** The small `NETT` after the figure. Null when the layer switches it off. */
   nettLabel: string | null;
   /**
@@ -171,7 +186,7 @@ export interface PriceBadgeParts {
  * because a promotion ending mid-design must not blank a tag.
  */
 export function priceBadgeParts(
-  props: Pick<PriceBadgeLayerProps, 'variant' | 'showNett'> &
+  props: Pick<PriceBadgeLayerProps, 'variant' | 'showNett' | 'textColor'> &
     Partial<Pick<PriceBadgeLayerProps, 'showBox' | 'showCurrency'>>,
   input: PriceBadgeInput,
 ): PriceBadgeParts {
@@ -190,6 +205,7 @@ export function priceBadgeParts(
       polygonBox: false,
       spLabel: 'SP',
       amountText,
+      amountColor: props.textColor,
       nettLabel,
       plainText: ['SP', amountText, nettLabel].filter(Boolean).join(' '),
     };
@@ -202,6 +218,7 @@ export function priceBadgeParts(
       polygonBox: false,
       spLabel: null,
       amountText: '',
+      amountColor: '#999999',
       nettLabel: null,
       plainText: NO_PRICE_TEXT,
     };
@@ -217,6 +234,12 @@ export function priceBadgeParts(
     polygonBox: props.showBox === true,
     spLabel: null,
     amountText,
+    // A genuine `list_only` badge honours its own Text colour (B1); a
+    // `promo` badge that fell through to this shared unboxed branch (its
+    // offer never resolved) never does - its own default is white, for the
+    // boxed callout it normally draws, and white text drawn straight onto
+    // the tag's own background here would be invisible.
+    amountColor: props.variant === 'list_only' ? props.textColor : '#000000',
     nettLabel: null,
     plainText: amountText,
   };

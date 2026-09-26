@@ -24,6 +24,7 @@ rather than passing quietly.
 from __future__ import annotations
 
 import io
+import re
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
@@ -69,6 +70,9 @@ from app.services.project_so_draft_service import ProjectSODraftService
 from ._pg_fixture import blank_session
 
 MARKER = "zzt-oi"
+
+#: `OI-2609-0001` (R3, `PLAN-oi-header-list-detail.md`) - the dated monthly number.
+DATED_NUMBER_RE = re.compile(r"^OI-\d{4}-\d{4}$")
 
 
 def _uid() -> str:
@@ -337,9 +341,13 @@ def test_a_confirmation_with_no_buy_raises_no_inquiry_header(seeded):
 
 def test_a_later_confirmation_with_buy_raises_the_header_then(seeded):
     """The order's NEXT revision, once CS actually has something to buy, mints the header
-    the all-covered confirmation before it correctly declined - numbered `OI-000001`, not
-    retroactively assigned to the revision that raised nothing, proving no number was
-    burned by declining to raise a header for it.
+    the all-covered confirmation before it correctly declined - the FIRST number this
+    fresh, company-scoped scratch schema opens under, not retroactively assigned to the
+    revision that raised nothing, proving no number was burned by declining to raise a
+    header for it. Asserted by shape (`OI-YYMM-NNNN`, R3) rather than a hardcoded month -
+    `raised_at` is never set explicitly on the way in here, so the header opens under
+    whatever real month the test happens to run in - and by `-0001`, which the fresh
+    scratch schema's own emptiness guarantees for that month.
     """
     db, company_id, owner = seeded
     project = _project(db, company_id, owner)
@@ -351,7 +359,8 @@ def test_a_later_confirmation_with_buy_raises_the_header_then(seeded):
 
     inquiry = result["inquiry"]
     assert inquiry is not None
-    assert inquiry.inquiry_no == "OI-000001"
+    assert DATED_NUMBER_RE.match(inquiry.inquiry_no), inquiry.inquiry_no
+    assert inquiry.inquiry_no.endswith("-0001")
     assert result["created"] == 1
     active = [row for row in _rows(db, inquiry.id) if row.state != INQUIRY_CANCELLED]
     assert len(active) == 1
@@ -447,9 +456,12 @@ def test_publishing_a_sales_order_writes_no_core_sales_order(seeded):
 
 
 def test_deriving_twice_does_not_double_the_rows(seeded):
-    """AC-I1 / AC-D05 idempotency: a second confirmation must not tell purchasing to buy
-    it twice. The superseded row is CANCELLED rather than deleted, so the count of rows
-    grows and the count of ACTIVE ones does not - the old instruction stays auditable.
+    """AC-R2-10 (`PLAN-scm-oi-handover-r2-undo.md` S2, captain ruling 18 Sep) replaces
+    the old cancel-and-re-raise idempotency story this test pinned: a second
+    confirmation naming the SAME line at the SAME qty and date - `_confirmed_inquiry`'s
+    own default, `buy=None`, resolves to each line's full quantity both times - settles
+    the row IN PLACE rather than cancelling it and raising a fresh one. There is one
+    row, not a still-cancelled historical copy sitting beside an active replacement.
     """
     db, company_id, owner = seeded
     project = _project(db, company_id, owner)
@@ -462,7 +474,9 @@ def test_deriving_twice_does_not_double_the_rows(seeded):
     assert first.id == second.id
     active = [row for row in _rows(db, first.id) if row.state != INQUIRY_CANCELLED]
     assert len(active) == 1
-    assert len(_rows(db, first.id)) == 2
+    assert len(_rows(db, first.id)) == 1, (
+        "AC-R2-10: the unchanged row is settled in place, not cancelled and re-raised"
+    )
     assert (
         db.query(OrderInquiry)
         .filter(OrderInquiry.project_sales_order_id == order.id)
@@ -628,7 +642,9 @@ def test_publishing_an_amendment_derives_its_delta_in_purchasing_verbs(seeded):
         (IV_CANCEL_BALANCE, Decimal("30.0000")),
     ]
     # A verb on its own is not actionable: the row says what it moved from.
-    assert rows[0].note == "Was 2026-07-01"
+    # AC-R2-07 (`PLAN-scm-oi-handover-r2-undo.md` S1): every date reaching the
+    # handover email, this note included, is dd/mm/yyyy, not the old ISO spelling.
+    assert rows[0].note == "Was 01/07/2026"
     assert rows[0].delivery_date == date(2027, 1, 7)
     assert rows[1].note == "Was 600, now 570"
 
@@ -871,6 +887,91 @@ def test_the_list_filters_by_verb_and_by_state(seeded):
         "actioned": 1,
         "cancelled": 0,
     }
+
+
+# ---------------------------------------------------- AC-SD-5/6, so_date (list_rows)
+# `PLAN-oi-handover-so-date-autocount-25sep.md`: `list_rows`' own `so_date` follows
+# the same rule the handover email does - the AutoCount SO DOCUMENT date
+# (`sales_orders.order_date`) wins, never the day the CRM pulled the order.
+
+
+def test_list_rows_so_date_prefers_the_core_sos_order_date(seeded):
+    """AC-SD-5: an adopted order's rows carry `so_date` = the core SO's own
+    `order_date`, not the project SO's own `created_at` - the day the CRM pulled it."""
+    db, company_id, owner = seeded
+    project = _project(db, company_id, owner)
+    core = SalesOrder(
+        id=_uid(), company_id=company_id, so_number=f"ZZTSO{_uid()[:8]}",
+        order_date=date(2026, 9, 18),
+    )
+    db.add(core)
+    db.flush()
+    order = _sales_order(db, project, status="adopted", doc_no=core.so_number)
+    order.so_id = core.id
+    order.created_at = datetime(2026, 9, 23)
+    db.flush()
+    _line(db, order, _product(db, "CB7001"), "10", date(2026, 9, 30))
+
+    service = ProjectOrderInquiryService(db)
+    _confirmed_inquiry(db, order, actor_user_id=owner)
+    rows, total = service.list_rows(project.id)
+
+    assert total == 1
+    assert rows[0]["so_date"] == date(2026, 9, 18)
+
+
+def test_list_rows_so_date_falls_back_like_the_handover_email(seeded):
+    """AC-SD-6: the same fallback the handover email uses (AC-SD-3/AC-SD-4) - a core
+    SO with no `order_date` falls back to `published_at`, a core SO with neither
+    `order_date` nor the project SO's own `published_at` falls back to the project
+    SO's `created_at`, and an order with no core SO at all falls back to
+    `created_at` too."""
+    db, company_id, owner = seeded
+    project = _project(db, company_id, owner)
+
+    core = SalesOrder(id=_uid(), company_id=company_id, so_number=f"ZZTSO{_uid()[:8]}")
+    db.add(core)
+    db.flush()
+    with_core = _sales_order(
+        db, project, status=SO_STATUS_PUBLISHED, doc_no=core.so_number
+    )
+    with_core.so_id = core.id
+    with_core.published_at = datetime(2026, 9, 20)
+    db.flush()
+    _line(db, with_core, _product(db, "CB7002"), "10", date(2026, 9, 30))
+
+    # Core SO present but `order_date` NULL, and the project SO's own
+    # `published_at` NULL too - the review round 1 rung (AC-SD-6): falls all the
+    # way back to the project SO's `created_at`.
+    unpublished_core = SalesOrder(
+        id=_uid(), company_id=company_id, so_number=f"ZZTSO{_uid()[:8]}"
+    )
+    db.add(unpublished_core)
+    db.flush()
+    with_core_no_publish = _sales_order(
+        db, project, status=SO_STATUS_DRAFT, doc_no=unpublished_core.so_number
+    )
+    with_core_no_publish.so_id = unpublished_core.id
+    with_core_no_publish.created_at = datetime(2026, 9, 24)
+    db.flush()
+    _line(db, with_core_no_publish, _product(db, "CB7004"), "3", date(2026, 9, 29))
+
+    no_core = _sales_order(db, project, status=SO_STATUS_DRAFT)
+    no_core.created_at = datetime(2026, 9, 22)
+    db.flush()
+    _line(db, no_core, _product(db, "CB7003"), "5", date(2026, 9, 28))
+
+    service = ProjectOrderInquiryService(db)
+    _confirmed_inquiry(db, with_core, actor_user_id=owner)
+    _confirmed_inquiry(db, with_core_no_publish, actor_user_id=owner)
+    _confirmed_inquiry(db, no_core, actor_user_id=owner)
+    rows, total = service.list_rows(project.id)
+
+    assert total == 3
+    by_item = {row["item_code"]: row for row in rows}
+    assert by_item["CB7002"]["so_date"] == datetime(2026, 9, 20)
+    assert by_item["CB7004"]["so_date"] == datetime(2026, 9, 24)
+    assert by_item["CB7003"]["so_date"] == datetime(2026, 9, 22)
 
 
 def test_the_sales_order_view_carries_its_purchasing_task(seeded):

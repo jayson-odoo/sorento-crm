@@ -13,12 +13,13 @@ import {
   useReactTable,
 } from '@tanstack/react-table';
 import {
+  CalendarRange,
   Columns3,
   FileText,
   ListOrdered,
   LoaderCircleIcon,
   Move,
-  SquarePen,
+  Plus,
   Trash2,
   Truck,
 } from 'lucide-react';
@@ -45,6 +46,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Input } from '@/components/ui/input';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { useTableDeepLinkHighlight } from '@/hooks/useTableDeepLinkHighlight';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { DEMAND_CLASS_OPTIONS } from '@/app/(protected)/master-data-management/sales-agents/lib/demandClass';
 // The SAME pill the order-inquiry worklist reads, not a second one worded differently:
@@ -74,11 +76,16 @@ import { PlanNumberButton } from '../../../components/PlanNumberButton';
 import { SoLineLinksBody } from './SoLineLinksBody';
 import { fmtDate, fmtInt } from '../../../lib/format';
 import { demandClassBadge } from '../../../lib/demandClass';
+import { salesOrderPlannedBadge } from '../../../lib/salesOrderPlanned';
 import {
   salesOrderPriorityVariant,
   salesOrderStatusLabel,
   salesOrderStatusVariant,
 } from '../../../lib/salesOrderStatus';
+import {
+  productFallbackFor,
+  type LineDraft,
+} from './salesOrderLineDraft';
 import type {
   SalesOrder,
   SalesOrderLine,
@@ -88,8 +95,17 @@ import type {
 // ONE vocabulary for where supply comes from (PLAN-scm-cs-planning-uat.md section 2), shared
 // with the planning board rather than restated here.
 import { describe as describeSupply } from '../../../../project-sales/_shared/lib/supplyVocabulary';
+import { BoardChangeTable } from '@/app/(protected)/project-sales/fulfilment-planning/components/BoardChangeTable';
+import { lineChangeAnnotation } from './salesOrderLineChange';
 import BackToList, { useBackToListHref } from '@/components/common/BackToList';
 import { useSalesOrderActions } from '../../actions';
+import { PLAN_PERMISSION } from '../../lib/planActions';
+// Aliased: this file already has its own header-scoped `SOURCE_LABELS` above, worded
+// slightly differently ("Order inquiry sheet") for the header's own Source field - the
+// LINE column reads the list's map instead, so the two sit side by side rather than one
+// shadowing the other.
+import { SOURCE_LABELS as LINE_SOURCE_LABELS } from '../../lib/sourceLabels';
+import { useHasPermission } from '@/hooks/usePermissions';
 
 /**
  * The sales-order detail, built to mirror `PurchaseOrderDetail` section for section: the
@@ -166,6 +182,7 @@ function titleCase(v: string): string {
 /** Where the order came from. `history` is its own answer because "Manual" would claim
  *  somebody keyed a 2020 order by hand. Mirrors the purchase-order side's `import`. */
 const SOURCE_LABELS: Record<string, string> = {
+  autocount: 'AutoCount',
   inquiry: 'Order inquiry sheet',
   // The same word the list's Source column uses for the same row. It is read under a
   // "Source" label on the record of one sales order, so "Sales order upload" restated both.
@@ -258,16 +275,6 @@ function lineSignature(
     .join(',');
 }
 
-type LineDraft = {
-  sku: string;
-  qty_ordered: string;
-  warehouse_code: string;
-  required_date: string;
-  uom: string;
-  unit_price: string;
-  discount: string;
-};
-
 /** The in-progress draft for a line, or one seeded from the row as loaded when nothing has
  *  touched it yet - so any single field's onChange can spread this and set only the field it
  *  owns without silently dropping the other six. */
@@ -288,6 +295,25 @@ function seedDraft(row: SalesOrderLine): LineDraft {
     unit_price: row.unit_price ?? '',
     discount: row.discount ?? '',
   };
+}
+
+/**
+ * A removal or a qty-to-zero edit ends a line as `line_status: 'cancelled'` on the CORE
+ * row rather than deleting it (`PLAN-scm-change-management-one-engine.md`, Slice A rule 5)
+ * - the backend writes nothing for such a row, so an edit made here would silently revert
+ * on save. It can still arrive on THIS order's next load, inside an edit session, sitting
+ * beside lines that are still open - it renders read-only there (the same cells view mode
+ * already renders) rather than as another line the planner can edit or remove again.
+ */
+function isCancelledLine(row: SalesOrderLine): boolean {
+  return (row.line_status ?? 'open') === 'cancelled';
+}
+
+/** A line typed in THIS session: it has no server id yet, so Save sends it without one. */
+const NEW_LINE_PREFIX = 'new-';
+
+function isNewLine(row: Pick<SalesOrderLine, 'id'>): boolean {
+  return row.id.startsWith(NEW_LINE_PREFIX);
 }
 
 /**
@@ -312,25 +338,6 @@ function lineAmount(
 /** The money cell's text: the figure, or a plain "-" for a line nobody priced. */
 function fmtMoneyCell(value: string | null | undefined): string {
   return value ? formatMyrExact(value) : '-';
-}
-
-/**
- * The option the Product select shows for a line whose product is not on the page the
- * server just returned - which is most of them, against a 22,000-row catalogue.
- *
- * Only while the draft still names the line's OWN product: once a different one has been
- * picked, its label comes from the fetched page and this fallback would relabel it.
- */
-function productFallback(
-  row: SalesOrderLine,
-  draftSku: string | undefined,
-): SearchableSelectOption | undefined {
-  const sku = draftSku ?? row.sku;
-  if (!row.sku || sku !== row.sku) return undefined;
-  return {
-    value: row.sku,
-    label: row.product_name ? `${row.sku} · ${row.product_name}` : row.sku,
-  };
 }
 
 /**
@@ -366,13 +373,14 @@ export function SalesOrderDetail({ id }: { id: string }) {
   const router = useRouter();
   const pathname = usePathname();
   const { data, isLoading, isError } = useSalesOrder(id);
+  // Read here rather than off `so` below, which is narrowed after the loading and error
+  // returns: the Lines columns are built above them, and the What-changed dialog titles
+  // itself with the order this line belongs to.
+  const soNumber = data?.so_number ?? '';
   const backHref = useBackToListHref('/scm/sales-orders');
-  // The set the list row's "..." renders too (D15). Delete used to be a red icon
-  // in the list and nothing at all here, so a record could only be removed by
-  // finding it again in the list.
-  const { actions, pending: deletionPending } = useSalesOrderActions(data, {
-    onDeleted: () => router.push(backHref),
-  });
+  // Same gate the list's own "Plan selected" carries (S2, R3): a door that answers 403
+  // is worse than not offering it, so the primary is simply absent without it.
+  const canPlan = useHasPermission(PLAN_PERMISSION);
   const searchParams = useSearchParams();
 
   const updateMut = useUpdateSalesOrder();
@@ -426,6 +434,16 @@ export function SalesOrderDetail({ id }: { id: string }) {
   // docstring). Reset on every fresh session and after a save, so a leftover removal from a
   // prior edit cannot silently carry into the next one.
   const [removedLineIds, setRemovedLineIds] = useState<Set<string>>(new Set());
+  /**
+   * Lines ADDED in this session, before Save (R4c, the SO400884 walk).
+   *
+   * Placeholder rows, not server rows: they carry a `new-` id so the grid, the drafts map
+   * and the remove button can all address them the way they address a stored line, and the
+   * SAME cells edit them - one row control for a line however it got onto the order. Save
+   * sends them with no `id`, which is what the upsert reads as "this one is new"; Cancel
+   * drops them.
+   */
+  const [newLines, setNewLines] = useState<SalesOrderLine[]>([]);
 
   const beginEdit = (so: SalesOrder) => {
     setPlanningChangeBatch(null);
@@ -441,6 +459,7 @@ export function SalesOrderDetail({ id }: { id: string }) {
     }
     setLineDrafts(drafts);
     setRemovedLineIds(new Set());
+    setNewLines([]);
     originalLineSignatureRef.current = lineSignature(
       so.lines.map((l) => ({
         sku: l.sku,
@@ -456,10 +475,20 @@ export function SalesOrderDetail({ id }: { id: string }) {
     setIsEditing(true);
   };
 
+  // The set the list row's "..." renders too (D15). Delete used to be a red icon in the
+  // list and nothing at all here, so a record could only be removed by finding it again in
+  // the list. Edit moved in here too (S2, R3): the header's primary slot is now Plan, and
+  // the list surface calls this same hook with no `onEdit`, so its row menu shows no Edit.
+  const { actions, pending: deletionPending } = useSalesOrderActions(data, {
+    onDeleted: () => router.push(backHref),
+    onEdit: () => beginEdit(data as SalesOrder),
+  });
+
   const cancelEdit = () => {
     setIsEditing(false);
     setError(null);
     setRemovedLineIds(new Set());
+    setNewLines([]);
   };
 
   // `?edit=1` opens the session on arrival - the same entry the list's Pencil action uses -
@@ -477,8 +506,15 @@ export function SalesOrderDetail({ id }: { id: string }) {
   // totals footer and the "last line" guard all read this one array, so a row that has been
   // removed cannot still count toward any of them.
   const lines = useMemo<SalesOrderLine[]>(
-    () => (data?.lines ?? []).filter((l) => !isEditing || !removedLineIds.has(l.id)),
-    [data, isEditing, removedLineIds],
+    () => {
+      const stored = (data?.lines ?? []).filter(
+        (l) => !isEditing || !removedLineIds.has(l.id),
+      );
+      // A line added in this session sits at the END, where it was typed, and only while
+      // the session is open.
+      return isEditing && newLines.length ? [...stored, ...newLines] : stored;
+    },
+    [data, isEditing, newLines, removedLineIds],
   );
   // Sorted and searched here rather than by the API: the lines come embedded in the order
   // read, so there is no second request to spend and no page boundary to work across.
@@ -487,10 +523,13 @@ export function SalesOrderDetail({ id }: { id: string }) {
     value: lineSearchInput,
     setValue: setLineSearchInput,
     debouncedValue: lineSearch,
+    reset: resetLineSearch,
   } = useDebouncedSearch();
   // Kept in the URL, not component state (mirrors `ProductDetail`'s own `tab` param), so a
-  // bookmarked or shared link (`?tab=lines`) opens directly on that tab.
-  const tab = searchParams.get('tab') || 'general';
+  // bookmarked or shared link (`?tab=lines`) opens directly on that tab. S6 (AC-B6-3): a
+  // `?line=<id>` deep link always lands on Lines, whatever `tab` says - the only tab that
+  // line could ever be found on.
+  const tab = searchParams.get('line') ? 'lines' : searchParams.get('tab') || 'general';
   const handleTabChange = useCallback(
     (next: string) => {
       const params = new URLSearchParams(searchParams.toString());
@@ -563,11 +602,17 @@ export function SalesOrderDetail({ id }: { id: string }) {
         return;
       }
       setError(null);
-      setRemovedLineIds((prev) => {
-        const next = new Set(prev);
-        next.add(row.id);
-        return next;
-      });
+      if (isNewLine(row)) {
+        // Never saved, so there is nothing for the backend to be told about: the row simply
+        // stops existing.
+        setNewLines((prev) => prev.filter((ln) => ln.id !== row.id));
+      } else {
+        setRemovedLineIds((prev) => {
+          const next = new Set(prev);
+          next.add(row.id);
+          return next;
+        });
+      }
       setLineDrafts((prev) => {
         const next = { ...prev };
         delete next[row.id];
@@ -577,36 +622,105 @@ export function SalesOrderDetail({ id }: { id: string }) {
     [lines],
   );
 
+  // A CANCELLED line is out of every total (R4, the SO400884 walk). The book closed it, so
+  // its quantity is not ordered any more, nothing about it is outstanding, and what it was
+  // once priced at is not part of what this order is worth - the stale figures sat in the
+  // footer reading as though the line still counted.
+  const countedLines = useMemo(() => lines.filter((l) => !isCancelledLine(l)), [lines]);
+  /**
+   * Add line (R4c, the SO400884 walk): a blank row at the end of the grid, editable by the
+   * SAME cells every other line is edited by.
+   *
+   * A placeholder row rather than a second form: the grid already knows how to render a
+   * product select, a quantity, a date and a UoM for a line, so a new line is just a line
+   * the backend has not seen yet. It is sent on Save with no `id`, and Cancel drops it.
+   */
+  const handleAddLine = useCallback(() => {
+    setError(null);
+    const row: SalesOrderLine = {
+      id: `${NEW_LINE_PREFIX}${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      sku: '',
+      product_name: '',
+      qty_ordered: 0,
+      qty_delivered: 0,
+      uom: '',
+      warehouse_code: '',
+      line_status: 'open',
+      required_date: null,
+    };
+    setNewLines((prev) => [...prev, row]);
+    setLineDrafts((prev) => ({
+      ...prev,
+      [row.id]: {
+        sku: '',
+        qty_ordered: '',
+        warehouse_code: '',
+        required_date: '',
+        uom: '',
+        unit_price: '',
+        discount: '',
+      },
+    }));
+  }, []);
+
   const qtyOrderedTotal = useMemo(
     () =>
-      lines.reduce((sum, l) => {
+      countedLines.reduce((sum, l) => {
         const qty = isEditing
           ? Number(draftOrRow(lineDrafts, l).qty_ordered)
           : Number(l.qty_ordered);
         return sum + (Number.isFinite(qty) ? qty : 0);
       }, 0),
-    [lines, isEditing, lineDrafts],
+    [countedLines, isEditing, lineDrafts],
   );
   const qtyDeliveredTotal = useMemo(
     () => lines.reduce((sum, l) => sum + Number(l.qty_delivered), 0),
     [lines],
   );
   const outstandingTotal = useMemo(
-    () => lines.reduce((sum, l) => sum + outstandingOf(l), 0),
-    [lines, outstandingOf],
+    () => countedLines.reduce((sum, l) => sum + outstandingOf(l), 0),
+    [countedLines, outstandingOf],
   );
   const amountTotal = useMemo(() => {
-    const amounts = lines.map(amountOf).filter((a): a is string => a !== null);
+    const amounts = countedLines.map(amountOf).filter((a): a is string => a !== null);
     return amounts.length ? sumMoney(amounts) : null;
-  }, [lines, amountOf]);
+  }, [countedLines, amountOf]);
 
   const columns = useMemo<ColumnDef<SalesOrderLine>[]>(
     () => [
+      // LEFTMOST, so the grid reads left to right in the same order AutoCount does
+      // (PLAN-so-lines-autocount-order.md). A saved column order that predates this column
+      // has never seen its id, so `mergeColumnOrderWithLeafColumns` (the shared column-config
+      // merge every `DataGrid` runs) has no preceding neighbour to anchor it after and places
+      // it first regardless - the same reason a first-time visitor sees it first.
+      {
+        id: 'line_no',
+        accessorFn: (line) => line.line_no ?? null,
+        header: ({ column }) => <DataGridColumnHeader title="No." column={column} />,
+        // A VALUE, never an input, in or out of an edit session (3.3): AutoCount's own
+        // number is not something this screen offers to renumber. A session-local new line
+        // (`NEW_LINE_PREFIX`) has none yet, so it reads the same dash a never-numbered
+        // stored line does.
+        cell: ({ row }) =>
+          row.original.line_no == null ? (
+            <span className="text-muted-foreground">-</span>
+          ) : (
+            <span className="tabular-nums">{row.original.line_no}</span>
+          ),
+        // Numeric, never lexicographic - a bare string sort would read 1, 10, 11, 12, 2, 3.
+        sortingFn: 'basic',
+        size: 64,
+        meta: {
+          headerTitle: 'No.',
+          headerClassName: 'text-right',
+          cellClassName: 'text-right tabular-nums',
+        },
+      },
       {
         accessorKey: 'sku',
         header: ({ column }) => <DataGridColumnHeader title="Product" column={column} />,
         cell: ({ row }) => {
-          if (isEditing) {
+          if (isEditing && !isCancelledLine(row.original)) {
             const draft = lineDrafts[row.original.id];
             const selectId = `so-edit-line-${row.original.id}-product`;
             return (
@@ -628,10 +742,22 @@ export function SalesOrderDetail({ id }: { id: string }) {
                       [row.original.id]: { ...draftOrRow(prev, row.original), sku: v },
                     }))
                   }
+                  // The whole option, not only its code: this is what the cell shows after
+                  // the popover has closed and the page it was picked from is gone.
+                  onOptionChange={(option) =>
+                    setLineDrafts((prev) => ({
+                      ...prev,
+                      [row.original.id]: {
+                        ...draftOrRow(prev, row.original),
+                        sku: option?.value ?? '',
+                        picked_product: option,
+                      },
+                    }))
+                  }
                   paginated
                   pageSize={SELECT_PAGE_SIZE}
                   fetchOptions={searchProductOptions}
-                  selectedOption={productFallback(row.original, draft?.sku)}
+                  selectedOption={productFallbackFor(row.original, draft)}
                   placeholder="Select product"
                   emptyMessage="No product found."
                   size="sm"
@@ -667,7 +793,7 @@ export function SalesOrderDetail({ id }: { id: string }) {
         accessorFn: (line) => Number(line.qty_ordered),
         header: ({ column }) => <DataGridColumnHeader title="Qty ordered" column={column} />,
         cell: ({ row }) => {
-          if (isEditing) {
+          if (isEditing && !isCancelledLine(row.original)) {
             const draft = lineDrafts[row.original.id];
             return (
               <Input
@@ -767,7 +893,7 @@ export function SalesOrderDetail({ id }: { id: string }) {
         accessorFn: (line) => Number(line.unit_price ?? 0),
         header: ({ column }) => <DataGridColumnHeader title="Unit price" column={column} />,
         cell: ({ row }) => {
-          if (isEditing) {
+          if (isEditing && !isCancelledLine(row.original)) {
             const draft = draftOrRow(lineDrafts, row.original);
             return (
               <Input
@@ -803,7 +929,7 @@ export function SalesOrderDetail({ id }: { id: string }) {
         accessorFn: (line) => Number(line.discount ?? 0),
         header: ({ column }) => <DataGridColumnHeader title="Discount" column={column} />,
         cell: ({ row }) => {
-          if (isEditing) {
+          if (isEditing && !isCancelledLine(row.original)) {
             const draft = draftOrRow(lineDrafts, row.original);
             return (
               <Input
@@ -854,7 +980,7 @@ export function SalesOrderDetail({ id }: { id: string }) {
         accessorKey: 'warehouse_code',
         header: ({ column }) => <DataGridColumnHeader title="Location" column={column} />,
         cell: ({ row }) => {
-          if (isEditing) {
+          if (isEditing && !isCancelledLine(row.original)) {
             const draft = draftOrRow(lineDrafts, row.original);
             const selectId = `so-edit-line-${row.original.id}-warehouse`;
             return (
@@ -895,7 +1021,7 @@ export function SalesOrderDetail({ id }: { id: string }) {
         accessorFn: (line) => line.required_date ?? undefined,
         header: ({ column }) => <DataGridColumnHeader title="Delivery date" column={column} />,
         cell: ({ row }) => {
-          if (isEditing) {
+          if (isEditing && !isCancelledLine(row.original)) {
             const draft = draftOrRow(lineDrafts, row.original);
             return (
               <Input
@@ -924,7 +1050,7 @@ export function SalesOrderDetail({ id }: { id: string }) {
         accessorKey: 'uom',
         header: ({ column }) => <DataGridColumnHeader title="UoM" column={column} />,
         cell: ({ row }) => {
-          if (isEditing) {
+          if (isEditing && !isCancelledLine(row.original)) {
             const draft = draftOrRow(lineDrafts, row.original);
             const selectId = `so-edit-line-${row.original.id}-uom`;
             return (
@@ -978,6 +1104,27 @@ export function SalesOrderDetail({ id }: { id: string }) {
         meta: { headerTitle: 'Status' },
       },
       {
+        id: 'source',
+        accessorFn: (line) => line.source ?? 'manual',
+        header: ({ column }) => <DataGridColumnHeader title="Source" column={column} />,
+        // R2: the LINE's own provenance, never inherited from the header - a line with no
+        // source system of its own reads Manual even under an AutoCount or uploaded header.
+        // Same map the list's Source column and Source filter read (`lib/sourceLabels`).
+        cell: ({ row }) => (
+          <Badge
+            variant={row.original.source === 'inquiry' ? 'primary' : 'secondary'}
+            appearance="light"
+            size="md"
+          >
+            {LINE_SOURCE_LABELS[row.original.source ?? 'manual'] ?? 'Manual'}
+          </Badge>
+        ),
+        size: 130,
+        // Matches the list's own Source column: five values is a filter, not a sort.
+        enableSorting: false,
+        meta: { headerTitle: 'Source' },
+      },
+      {
         id: 'order_inquiry',
         accessorFn: (row) => row.order_inquiry?.inquiry_no ?? '',
         header: ({ column }) => (
@@ -990,14 +1137,29 @@ export function SalesOrderDetail({ id }: { id: string }) {
         cell: ({ row }) => {
           const inquiry = row.original.order_inquiry;
           if (!inquiry) return <span className="text-muted-foreground">-</span>;
+          const reference = inquiry.inquiry_no ?? '-';
+          // S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-2): lands on this exact row of
+          // the inquiry. Plain text when the payload carries neither id - a row raised
+          // before inquiries were numbered - rather than a link that lands nowhere.
+          const href =
+            inquiry.inquiry_id && inquiry.row_id
+              ? `/project-sales/order-inquiries/${inquiry.inquiry_id}?row=${inquiry.row_id}`
+              : null;
           return (
             <div className="flex min-w-0 items-center gap-1.5">
-              <span
-                className="min-w-0 truncate tabular-nums"
-                title={inquiry.inquiry_no ?? ''}
-              >
-                {inquiry.inquiry_no ?? '-'}
-              </span>
+              {href ? (
+                <Link
+                  href={href}
+                  className="min-w-0 truncate tabular-nums font-medium text-primary hover:underline"
+                  title={reference}
+                >
+                  {reference}
+                </Link>
+              ) : (
+                <span className="min-w-0 truncate tabular-nums" title={reference}>
+                  {reference}
+                </span>
+              )}
               <OrderInquiryStatePill state={inquiry.state} />
             </div>
           );
@@ -1032,35 +1194,38 @@ export function SalesOrderDetail({ id }: { id: string }) {
         // `supply_saved` never both answer for one line (Confirm deletes the draft it
         // promotes), so this is never a choice between two real compositions.
         cell: ({ row }) => {
-          if (row.original.supply_decided != null) {
+          const line = row.original;
+          const parts = line.supply_decided ?? line.supply_saved ?? null;
+          const text = (
+            <SupplyText parts={parts} ownLocation={line.warehouse_code} absent="-" />
+          );
+          // THE BOOK ACTUALLY CHANGED THIS LINE. The board's own dialog, on this screen: it
+          // says what moved and - once Apply has run - where the held quantity went, which a
+          // static "Suggestion changed" badge cannot, and which the board itself can no
+          // longer be asked once a cancelled line closes and leaves it.
+          const annotation = lineChangeAnnotation(line, soNumber);
+          if (annotation) {
             return (
-              <SupplyText
-                parts={row.original.supply_decided}
-                ownLocation={row.original.warehouse_code}
-                absent="-"
-              />
+              <div className="flex min-w-0 items-center gap-1.5">
+                <span className="min-w-0 flex-1">{text}</span>
+                <BoardChangeTable annotation={annotation} compact className="shrink-0" />
+              </div>
             );
           }
-          if (row.original.supply_saved == null) {
-            return <SupplyText parts={null} ownLocation={row.original.warehouse_code} absent="-" />;
-          }
+          // Unchanged lines keep exactly what they had: the decided composition alone, or
+          // the saved draft with its Saved / Suggestion changed badge beside it.
+          if (line.supply_decided != null || line.supply_saved == null) return text;
           return (
             <div className="flex min-w-0 items-center gap-1.5">
-              <span className="min-w-0 flex-1">
-                <SupplyText
-                  parts={row.original.supply_saved}
-                  ownLocation={row.original.warehouse_code}
-                  absent="-"
-                />
-              </span>
+              <span className="min-w-0 flex-1">{text}</span>
               <Badge
-                data-testid={`saved-decision-badge-${row.original.id}`}
-                variant={row.original.saved_stale ? 'warning' : 'success'}
+                data-testid={`saved-decision-badge-${line.id}`}
+                variant={line.saved_stale ? 'warning' : 'success'}
                 appearance="light"
                 size="sm"
                 className="shrink-0"
               >
-                {row.original.saved_stale ? 'Suggestion changed' : 'Saved'}
+                {line.saved_stale ? 'Suggestion changed' : 'Saved'}
               </Badge>
             </div>
           );
@@ -1107,19 +1272,22 @@ export function SalesOrderDetail({ id }: { id: string }) {
               header: () => null,
               enableSorting: false,
               enableHiding: false,
-              cell: ({ row }: { row: { original: SalesOrderLine } }) => (
-                <Button
-                  type="button"
-                  mode="icon"
-                  variant="ghost"
-                  size="sm"
-                  aria-label="Remove line"
-                  title="Remove line"
-                  onClick={() => handleRemoveLine(row.original)}
-                >
-                  <Trash2 className="size-4" />
-                </Button>
-              ),
+              // A cancelled line cannot be removed again - it already ended, and the
+              // backend has nothing left to do with a second removal of the same row.
+              cell: ({ row }: { row: { original: SalesOrderLine } }) =>
+                isCancelledLine(row.original) ? null : (
+                  <Button
+                    type="button"
+                    mode="icon"
+                    variant="ghost"
+                    size="sm"
+                    aria-label="Remove line"
+                    title="Remove line"
+                    onClick={() => handleRemoveLine(row.original)}
+                  >
+                    <Trash2 className="size-4" />
+                  </Button>
+                ),
               size: 56,
             } as ColumnDef<SalesOrderLine>,
           ]
@@ -1137,6 +1305,7 @@ export function SalesOrderDetail({ id }: { id: string }) {
       outstandingTotal,
       amountTotal,
       handleRemoveLine,
+      soNumber,
     ],
   );
 
@@ -1161,6 +1330,17 @@ export function SalesOrderDetail({ id }: { id: string }) {
     enableColumnResizing: true,
   });
   const visibleLineCount = table.getFilteredRowModel().rows.length;
+
+  // S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-3/10/11/12): a link from the OI Lines
+  // tab / worklist's own "SO line" cell lands on this exact row (`?line=<id>`) - `row.id`
+  // IS the core sales-order line id `core_line_id` addresses.
+  const lineDeepLink = useTableDeepLinkHighlight(table, {
+    paramName: 'line',
+    rowId: (row: SalesOrderLine) => row.id,
+    currentSearch: lineSearch,
+    clearSearch: () => resetLineSearch(''),
+    enabled: !isLoading,
+  });
 
   // Back and prev/next live on the RIGHT of the record header, next to each other, the way
   // the purchase-order and users screens do it.
@@ -1197,6 +1377,8 @@ export function SalesOrderDetail({ id }: { id: string }) {
 
   const so = data;
   const lineCount = so.line_count ?? lines.length;
+  // How far the order has been planned, in the same chip the list carries.
+  const plannedBadge = salesOrderPlannedBadge(so.planned_lines, so.plannable_lines);
   const linksLine = linksLineId ? (lines.find((l) => l.id === linksLineId) ?? null) : null;
 
   const handleSave = async () => {
@@ -1210,7 +1392,10 @@ export function SalesOrderDetail({ id }: { id: string }) {
     // see the class docstring - carrying either what the person typed or, for an untouched
     // line, exactly what the order loaded with. A removed line is left out here, before the
     // draft loop even runs - the BE's own upsert deletes whatever `lines` does not name.
-    const cleanedLines = so.lines.filter((ln) => !removedLineIds.has(ln.id)).map((ln) => {
+    const cleanedLines = [
+      ...so.lines.filter((ln) => !removedLineIds.has(ln.id)),
+      ...newLines,
+    ].map((ln) => {
       const draft = lineDrafts[ln.id];
       return {
         id: ln.id,
@@ -1223,7 +1408,17 @@ export function SalesOrderDetail({ id }: { id: string }) {
         discount: draft?.discount ?? ln.discount ?? '',
       };
     });
-    if (cleanedLines.some((l) => !l.sku || !(l.qty_ordered > 0))) {
+    // ZERO IS A REAL EDIT ON A LINE THAT EXISTS (R4, the SO400884 walk): the book's own way
+    // of closing a line is to order none of it, and the backend cancels the line for exactly
+    // that quantity (Slice A rule 5). Refusing it here left the screen unable to say the one
+    // thing the planner came to say. A line that does not exist yet is the other case - "add
+    // a line for none of something" is not an instruction, so a NEW row still needs a
+    // quantity above zero, and so does every line on create.
+    const badQuantity = cleanedLines.some((l) => {
+      if (!Number.isFinite(l.qty_ordered) || l.qty_ordered < 0) return true;
+      return isNewLine(l) && l.qty_ordered === 0;
+    });
+    if (cleanedLines.some((l) => !l.sku) || badQuantity) {
       return setError('Every line needs a product and a quantity above zero.');
     }
     // A removal carries no field change to compare - it is the LINE COUNT that moves, so a
@@ -1245,7 +1440,10 @@ export function SalesOrderDetail({ id }: { id: string }) {
           ...(linesUnchanged
             ? {}
             : {
-                lines: cleanedLines.map((l) => ({
+                lines: cleanedLines.map(({ id: lineId, ...l }) => ({
+                  // A session-local `new-` id is not a row the backend has ever seen, so it
+                  // is left off: no id means "match by SKU, or create it".
+                  ...(lineId.startsWith(NEW_LINE_PREFIX) ? {} : { id: lineId }),
                   ...l,
                   // Empty means "clear this figure", which is what the BE reads a `null` as.
                   unit_price: l.unit_price || null,
@@ -1257,6 +1455,7 @@ export function SalesOrderDetail({ id }: { id: string }) {
       setPlanningChangeBatch(result.planning_change_batch ?? null);
       setIsEditing(false);
       setRemovedLineIds(new Set());
+      setNewLines([]);
     } catch {
       // The mutation already toasted the reason; leave the session open so nothing typed
       // is lost.
@@ -1275,6 +1474,17 @@ export function SalesOrderDetail({ id }: { id: string }) {
                 <CardTitle className="text-lg">{so.so_number}</CardTitle>
                 <Badge variant={salesOrderStatusVariant(so.status)} appearance="light" size="md">
                   {salesOrderStatusLabel(so.status)}
+                </Badge>
+                {/* How far the order has been PLANNED, beside the status it keeps being
+                    confused with. The SAME chip the list carries, in the header rather than a
+                    tab body because it is read-only metadata about the whole record - so view
+                    and edit show it identically, with nothing to change about it here. */}
+                <Badge
+                  variant={plannedBadge.variant}
+                  appearance="light"
+                  size="md"
+                >
+                  {plannedBadge.label}
                 </Badge>
               </div>
               {/* Read-only metadata belongs in the header, not a tab body - the project the
@@ -1315,15 +1525,28 @@ export function SalesOrderDetail({ id }: { id: string }) {
                 actions={actions}
                 pendingAction={deletionPending}
                 gearLabel="Sales order options"
+                // The main action on this page is now PLAN, not Edit (S2, R3): this is the
+                // same board the list's "Plan selected" opens, on this one order, and it
+                // wears the main colour for the same reason an Add does on every list. Edit
+                // moved into the gear above, since a record already open has less need for
+                // a second, louder door into changing it. Absent - not disabled - without
+                // the permission the board's own page requires: a door that answers 403 is
+                // worse than no door. Also absent off a non-project demand class (AC-S2-6b):
+                // the fulfilment board only accepts project demand, so a retail order's Plan
+                // would open onto an empty board.
                 primary={
-                  <>
-                {/* The main action on this page, so it wears the main colour - the same
-                    filled primary button an Add is on every list. */}
-                <Button variant="primary" size="sm" className="gap-1.5" onClick={() => beginEdit(so)}>
-                  <SquarePen className="size-4" />
-                  Edit
-                </Button>
-                  </>
+                  canPlan && so.demand_class === 'project' ? (
+                    <Button asChild variant="primary" size="sm" className="gap-1.5">
+                      <Link
+                        href={`/project-sales/fulfilment-planning?orders=${encodeURIComponent(
+                          so.so_number,
+                        )}`}
+                      >
+                        <CalendarRange className="size-4" />
+                        Plan
+                      </Link>
+                    </Button>
+                  ) : undefined
                 }
               />
             )}
@@ -1548,9 +1771,16 @@ export function SalesOrderDetail({ id }: { id: string }) {
                     {(so.order_inquiries ?? []).map((inquiry, index) => (
                       <span key={inquiry.inquiry_no ?? index} className="block">
                         <Link
-                          href={`/project-sales/order-inquiries?query=${encodeURIComponent(
-                            so.so_number,
-                          )}`}
+                          // S3, AC-LK-01: the OI detail page, by header id, when the
+                          // payload carries one; the old filtered-list search only for
+                          // a payload from before that column existed.
+                          href={
+                            inquiry.id
+                              ? `/project-sales/order-inquiries/${inquiry.id}`
+                              : `/project-sales/order-inquiries?query=${encodeURIComponent(
+                                  so.so_number,
+                                )}`
+                          }
                           className="text-primary hover:underline"
                           title={`${inquiry.rows_placed}/${inquiry.rows_total} placed`}
                         >
@@ -1692,6 +1922,8 @@ export function SalesOrderDetail({ id }: { id: string }) {
             // code change (AC-K1 failed on a live account for exactly this reason). A fresh
             // key means everyone reads R4's own order once, same as a first-time visitor.
             listingKey="scm.dashboard.view::sales-order-lines-v2"
+            rowAttributes={lineDeepLink.rowAttributes}
+            rowClassName={lineDeepLink.rowClassName}
           >
             <Card>
               <CardHeader className="flex-wrap gap-3">
@@ -1699,6 +1931,20 @@ export function SalesOrderDetail({ id }: { id: string }) {
                   <CardTitle>Order lines</CardTitle>
                 </CardHeading>
                 <CardToolbar className="flex-wrap">
+                  {/* Only inside an edit session: outside one there is nothing to add a line
+                      TO that would ever be saved. */}
+                  {isEditing ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="gap-1.5"
+                      onClick={handleAddLine}
+                    >
+                      <Plus className="size-4" aria-hidden />
+                      Add line
+                    </Button>
+                  ) : null}
                   {/* The order is the unit here, so the search is over the lines already
                       loaded - no request, no paging, and it answers "is this item on this
                       order" on a 200-line contract. */}

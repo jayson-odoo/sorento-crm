@@ -44,6 +44,7 @@ from collections import defaultdict
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import (
+    AbstractSet,
     Any,
     Callable,
     Dict,
@@ -53,6 +54,7 @@ from typing import (
     MutableMapping,
     Optional,
     Sequence,
+    Set,
     Tuple,
 )
 
@@ -65,6 +67,7 @@ from app.models.product import Product
 from app.models.project_so import (
     ACK_REJECTED,
     DECISION_ACTIVE,
+    INQUIRY_CANCELLED,
     OrderInquiry,
     OrderInquiryRow,
     ProjectSalesOrder,
@@ -75,12 +78,14 @@ from app.models.sales_agent import SalesAgent
 from app.models.user import User
 from app.services import project_line_draft_service
 from app.services.error_handler import AppException
+from app.services.project_line_numbering import LineFacts, number_lines
 from app.services.project_supply_service import (
     LADDER_VERSION,
     ProjectSupplyService,
     _dec,
     _leading_factor,
     _open_of,
+    plan_qty_of,
 )
 from app.services.scm import priority
 from app.services.scm import sales_agent_service
@@ -90,7 +95,12 @@ from app.services.scm.planning_predicate import (
     OUTSIDE_FULFILMENT_PLANNING,
     outside_fulfilment_planning,
 )
-from app.services.scm.demand import demand_qty, is_open_demand, is_plan_demand_line
+from app.services.scm.demand import (
+    demand_qty,
+    is_open_demand,
+    is_plan_demand_line,
+    is_undecided_demand,
+)
 from app.services.scm.front_planning_engine import (
     BORROW,
     available_for_project,
@@ -132,7 +142,7 @@ NO_DATE_BUCKET = "no_date"
 #: the window.
 DAY_WINDOW_COLUMNS = 30
 
-GRANULARITIES = ("day", "week", "month")
+GRANULARITIES = ("day", "date", "week", "month")
 
 _MONTHS = (
     "Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -186,7 +196,7 @@ def bucket_key_for(
         return NO_DATE_BUCKET
     if granularity == "month":
         return required_date.replace(day=1).isoformat()
-    if granularity == "day":
+    if granularity in ("day", "date"):
         return required_date.isoformat()
     return week_start(required_date).isoformat()
 
@@ -196,7 +206,7 @@ def bucket_end(key: str, granularity: str) -> Optional[date]:
     if key == NO_DATE_BUCKET:
         return None
     start = date.fromisoformat(key)
-    if granularity == "day":
+    if granularity in ("day", "date"):
         return start
     if granularity == "week":
         return start + timedelta(days=6)
@@ -216,6 +226,8 @@ def _bucket_label(key: str, granularity: str) -> str:
         return f"{month} {when.year}"
     if granularity == "day":
         return f"{when.day} {month} {when.year}"
+    if granularity == "date":
+        return when.strftime("%d/%m/%Y")
     return f"w/c {when.day} {month} {when.year}"
 
 
@@ -379,6 +391,7 @@ class _Row:
         "line_id", "sales_order_id", "so_number", "customer_id", "customer_name",
         "agent_code", "agent_label", "agent_location_group",
         "project_label", "order_date", "line_no", "item_code", "product_id", "qty",
+        "qty_outstanding",
         "required_date", "warehouse_id", "location", "priority", "demand_class",
         "payment_terms_days", "bucket_key", "is_past", "rank_score", "rank_factors",
         "sources", "trail", "options", "contested", "qty_ordered", "qty_delivered",
@@ -389,9 +402,21 @@ class _Row:
         "outside_reserve_window",
         "project_sales_order_id", "project_line_id", "warehouse_ids", "project_key",
         "so_qty_ahead", "lines_ahead", "available_to_this_line",
-        "decision", "draft", "item_flags", "order_inquiry", "lent_to",
+        "decision", "decided_by_name", "draft", "item_flags", "order_inquiry",
+        "inquiry_decided", "lent_to",
         "unit_qty", "unit_line_count",
         "outside_planning",
+        #: R3 (13 Sep browser walk): the book CANCELLED this line and it still has a
+        #: PENDING change row nobody has decided on yet - `is_open_demand()` (`_demand_
+        #: rows`) already dropped it out of ordinary demand, so this pair is what carries
+        #: it back onto the board instead, read-only and at zero (`_cancelled_pending_
+        #: change_rows`). `False`/`None` for every ordinary row.
+        "cancelled", "pending_change_batch_id",
+        #: R7 (query-count): the core line's own `source_ref` / `company_id`, off the SAME
+        #: `SalesOrderLine` this row's own demand read already fetched - threaded onto
+        #: `_LineFacts` (`ProjectSupplyService.demand_facts`) so the own-arrival credit's
+        #: prefetch never pays a second query for a row this one already carries.
+        "source_ref", "company_id",
     )
 
     def __init__(self, **kw: Any) -> None:
@@ -439,6 +464,10 @@ class _Row:
         self.available_to_this_line: Optional[Decimal] = _ZERO
         # What the order's ACTIVE revision froze for this line, when it covers it (13.4).
         self.decision: Optional[Dict[str, Any]] = None
+        # AC-DT-2 (`PLAN-oi-decision-trail-ui.md`): who confirmed the decision that
+        # covers this line, by name - never an id. `None` on an uncovered line, the
+        # same as `decision` itself.
+        self.decided_by_name: Optional[str] = None
         # What somebody SAVED on this line without confirming it yet (S4, R-F), read off
         # `projects.so_supply_decision_drafts` by `_attach_drafts` once the ladder has run -
         # `stale` is judged against the proposal this build has just computed. None when
@@ -455,6 +484,12 @@ class _Row:
         # What purchasing has already been TOLD about this line, and how far they got:
         # `{inquiry_no, state}` off the inquiry row covering it, None when there is none.
         self.order_inquiry: Optional[Dict[str, Any]] = None
+        # A LIVE order inquiry row already names this line, so the migrated book decided it
+        # on the buying side (#875, 14 Sep 2026 ruling). Read off the same rule the Sales
+        # Orders list counts by (`demand.live_inquiry_core_line_ids`), never re-derived from
+        # `order_inquiry` above: that field is the CURRENT instruction, last writer winning,
+        # and a line whose newest row is cancelled can still carry a live one.
+        self.inquiry_decided: bool = False
         # The PLANNING UNIT this line was composed in (ladder v6): its order's lines for the
         # same item, location and delivery date, planned as one quantity. Filled by
         # `_allocate`; a line nobody proposed for (covered, unplannable) keeps the default,
@@ -464,14 +499,21 @@ class _Row:
 
     @property
     def covered(self) -> bool:
-        """An active decision already covers this line, so nothing is proposed for it.
+        """Somebody has already decided this line, so nothing is proposed for it.
 
-        The board kept re-planning such a line - "Buy 43" beside a confirmed borrow of 10 and
-        buy of 33 - because it stayed in the board's demand while the pile's own queue
-        (`_pile_book`) rightly left it out: it asked the projection for a share it is
-        deliberately not in, got nothing, and read that as "nothing is ahead of you".
+        TWO WAYS, equal in weight since the 14 September 2026 ruling. An ACTIVE decision
+        covers it - the board kept re-planning such a line, "Buy 43" beside a confirmed
+        borrow of 10 and buy of 33, because it stayed in the board's demand while the pile's
+        own queue (`_pile_book`) rightly left it out. Or a LIVE order inquiry row names it:
+        since #875 the migrated sheet raised rows on real sales-order lines, so purchasing
+        was told about 2,311 open lines the board would otherwise propose for all over again.
+
+        The second kind has NO composition to print - the instruction predates any board - so
+        it renders through `_apply_frozen` with an empty decision: no sources, no trail, no
+        share of a queue it is not in. `decision` stays null, which is how the screen tells
+        the two apart.
         """
-        return self.decision is not None
+        return self.decision is not None or self.inquiry_decided is True
 
     @property
     def unplannable(self) -> bool:
@@ -570,6 +612,7 @@ class FulfilmentBoardService:
         day_window_start: Optional[date] = None,
         preview_policy: Optional[str] = None,
         exclude_covered_line_ids: Optional[Sequence[str]] = None,
+        actor_user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """The board for one selection of sales orders.
 
@@ -577,6 +620,11 @@ class FulfilmentBoardService:
         reproducible, and it is echoed back in the response for the same reason: a board that
         quietly disagreed with itself between two reads would be disagreeing about which of the
         planner's commitments are already late.
+
+        `actor_user_id` is the requester, threaded through only for `board_undo_map`'s
+        own admin gate (AC-R2-30, S5): a journal-less order's `undo` reads
+        `mode="reconstructed"` for a superadmin/admin requester and `None` for every
+        other role, same as an order with no active decision at all.
 
         `exclude_covered_line_ids` (PROJECT line ids) previews the ladder for a line an ACTIVE
         decision currently covers, as if that one line's hold did not exist: its own reserve is
@@ -589,12 +637,12 @@ class FulfilmentBoardService:
             str(i) for i in (exclude_covered_line_ids or [])
         }
         self._locations_by_row = {}
-        self._buy_origin: Dict[str, str] = {}
+        self._buy_origin: Dict[str, Optional[str]] = {}
         if granularity not in GRANULARITIES:
             raise AppException(
                 status_code=422,
                 message=(
-                    "Granularity must be day, week or month, "
+                    "Granularity must be day, date, week or month, "
                     f"not '{granularity}'."
                 ),
                 code="board_granularity_unknown",
@@ -612,7 +660,83 @@ class FulfilmentBoardService:
         as_of = as_of or date.today()
         policy_name, weights, class_weights, is_preview = self._policy(preview_policy)
 
-        rows = self._demand_rows(numbers)
+        # ONE query for the adopted record, the pending-batch id per order and the core
+        # lines those pending rows name (query-count guard, `test_a_board_of_76_lines_does
+        # _not_scale_its_query_count_with_the_line_count`): `_standings` used to run these
+        # as two separate reads, and a bare `_cancelled_pending_change_rows` call below ran
+        # its own join every build whether or not anything was ever pending. Read once here
+        # instead - and BEFORE the demand rows, because the third value decides which of
+        # them an inquiry still counts as deciding.
+        adopted_by_so, pending_by_so, pending_core_lines = self._order_plan_status(numbers)
+        # Self-heal (issue #969, B2 owner ruling 17 Sep 2026): the board read is the one
+        # place the FE derives `no_mirror` from (`fulfilmentBoard.ts`) and the read
+        # confirm-all's own multi-order build comes from, so this is the seam that heals a
+        # core line that arrived after adoption - confirm stays a pure write (AC-PR8). Run
+        # BEFORE `_demand_rows` below, which is what resolves each line's `project_line_id`
+        # off the mirror this creates (`_mirror_addressing`) - a heal after it would leave
+        # this same response's late line addressed to nothing. Gated on an adopted,
+        # unauthored mirror (`status = 'adopted'`, `project_id IS NULL`), the same gate
+        # every other seam uses. `adopted_by_so` above already answers whether ANY selected
+        # order has a `ProjectSalesOrder` row at all - empty means none of them can need
+        # healing, so an ordinary (never-adopted) board build costs no extra statement
+        # (`test_a_board_of_76_lines_does_not_scale_its_query_count_with_the_line_count`).
+        if adopted_by_so:
+            from app.models.project_so import SO_STATUS_ADOPTED
+            from app.services.project_so_adoption_service import ProjectSOAdoptionService
+
+            heal_targets = (
+                self.db.query(ProjectSalesOrder)
+                .join(SalesOrder, SalesOrder.id == ProjectSalesOrder.so_id)
+                .filter(
+                    SalesOrder.so_number.in_(numbers),
+                    ProjectSalesOrder.status == SO_STATUS_ADOPTED,
+                    ProjectSalesOrder.project_id.is_(None),
+                )
+                .all()
+            )
+            if heal_targets:
+                adoption = ProjectSOAdoptionService(self.db)
+                for order in heal_targets:
+                    adoption.mirror_missing_lines(order)
+        # S1 (#978): one `undo` per selected order, keyed the same way `adopted_by_so`
+        # is. A separate read rather than folded into `_order_plan_status`'s own query -
+        # that one is a query-count guard over the LINE-scaling `PlanningChangeRow` join;
+        # this is bounded by the (<=50) order count regardless of how many lines a board
+        # holds, so it does not carry the same guard. Runs AFTER the self-heal above so a
+        # newly-healed order's own decision (none yet, but a future re-confirm's) is read
+        # off the mirror the heal just completed, not a stale one.
+        from app.services.project_supply_undo_service import board_undo_map
+
+        undo_by_so = board_undo_map(self.db, adopted_by_so, actor_user_id=actor_user_id)
+        # AC-DT-1 (`PLAN-oi-decision-trail-ui.md`): the board header's own "Revision N,
+        # confirmed by <name>" line, one per order. A SEPARATE read from `undo_by_so`
+        # above on purpose: that one is gated to journalled (or admin-reconstructable)
+        # revisions for the undo gear specifically, and a header built off it would read
+        # "No decision yet" on most confirmed orders - a pre-lane revision, or one
+        # minted outside the board's own confirm routes, still gets a header.
+        decision_headers_by_so = self._decision_headers(adopted_by_so)
+        rows = self._demand_rows(numbers, reopened_by_change=pending_core_lines)
+        # R3 (13 Sep browser walk): a cancelled line with a still-PENDING change row, read
+        # separately from ordinary demand and added to `contributions` alone, below - never
+        # to `rows` itself, so it takes no part in bucketing, ranking or the ladder walk
+        # (`_allocate`) that follows, and no part of `_standings`' totals either. Skipped
+        # entirely when NO selected order has a pending batch at all: its own predicate
+        # already requires one (`PlanningChangeBatch.applied_at IS NULL AND PlanningChangeRow
+        # .applied_state == pending`, exactly what `pending_by_so` above just answered), so
+        # an empty `pending_by_so` guarantees this would find nothing either.
+        cancelled_rows = (
+            # ALREADY-ADMITTED LINES ARE EXCLUDED, and since the board's predicate widened
+            # (14 Sep 2026) that is not a formality. This read's own predicate is pure book
+            # status - `line_status != 'open' OR demand_qty() <= 0` - which a closed-by-
+            # delivery undecided line now satisfies WHILE `_demand_rows` also admits it, so
+            # without the carve-out such a line would appear in `contributions` twice under
+            # one key: once planned, once read-only at zero.
+            self._cancelled_pending_change_rows(
+                numbers, admitted={row.line_id: row for row in rows}
+            )
+            if pending_by_so
+            else []
+        )
         # S3 (`PLAN-local-supplier-oi-routing.md`): ONE call for the whole board, never per
         # line - `test_buy_origin_computed_once_per_board_build` pins this.
         self._buy_origin = buy_origin_by_product(
@@ -623,7 +747,14 @@ class FulfilmentBoardService:
                 if row.project_line_id and row.project_line_id in self._exclude_covered_line_ids:
                     # Previewed as uncovered (see `build`'s docstring): the ladder is walked for
                     # it below like any other row, against facts that un-net its own hold.
+                    #
+                    # BOTH WAYS OF BEING COVERED, not just the decision. The caller has said
+                    # "treat this line as undecided"; leaving `inquiry_decided` standing would
+                    # honour half of that and hand back an empty composition - which is what
+                    # `build_batch` saw, because it builds this preview BEFORE its own change
+                    # row exists for `_order_plan_status` to find.
                     row.decision = None
+                    row.inquiry_decided = False
         for row in rows:
             row.bucket_key = bucket_key_for(row.required_date, as_of, granularity)
             # Per LINE, against its own date, which is the number the "N of M lines are past
@@ -728,8 +859,13 @@ class FulfilmentBoardService:
             # every bucket (`served`, above), so a line outside the window carries a real
             # proposal here even though no cell on screen shows it - Approve all, the strip and
             # the List view read this list, never `cells`, for exactly that reason.
-            "contributions": [self._contribution(row) for row in rows],
-            "orders": self._standings(rows),
+            "contributions": (
+                [self._contribution(row) for row in rows]
+                + [self._contribution(row) for row in cancelled_rows]
+            ),
+            "orders": self._standings(
+                rows, adopted_by_so, pending_by_so, undo_by_so, decision_headers_by_so
+            ),
             # SELECTION-scoped totals, counted over every contributing line before any window
             # is applied - never over the cells on screen.
             #
@@ -1010,6 +1146,50 @@ class FulfilmentBoardService:
         spo_qty = sum((ref.qty for _bid, ref in incoming_rows), _ZERO)
         free = sum((frees.get((str(product_id), bid), _ZERO) for bid in target_ids), _ZERO)
         held = sum((helds.get((str(product_id), bid), _ZERO) for bid in target_ids), _ZERO)
+        # PLAN-oi-request-cs-reserve.md 3.9 (section 6, verify item 2): the OI stock grid
+        # reuses `CellStockTable`, the SAME per-location matrix the board's cell dialog
+        # renders, so this read states its rows in that shape rather than the FE inventing
+        # a second one from `bins` alone. Aggregated from the documents already listed
+        # above - never a second query. `where` is `group` for every member of a GROUP
+        # read (a bare product+group carries no asking line, so this endpoint cannot say
+        # which one bin is "its own") and `own` for a plain one-bin read; `net`/`net_of`
+        # are stated on a GROUP read only, off the SAME aggregate this method already sums
+        # so the table's own subtotal can never disagree with it.
+        so_by_wid: Dict[str, Decimal] = {}
+        for row in rows:
+            wid = str(row.warehouse_id)
+            so_by_wid[wid] = so_by_wid.get(wid, _ZERO) + _dec(row.owed)
+        spo_by_wid: Dict[str, Decimal] = {}
+        for bin_id, ref in incoming_rows:
+            spo_by_wid[bin_id] = spo_by_wid.get(bin_id, _ZERO) + _dec(ref.qty)
+        locations = [
+            {
+                "location": codes.get(bin_id) or "",
+                "where": "group" if group else "own",
+                "product_id": str(product.id),
+                "warehouse_id": bin_id,
+                # No demand context at this endpoint (no cell, no asking line) - never
+                # rendered, `CellStockTable` carries no Demand column.
+                "qty": "0",
+                "qty_demand": "0",
+                "qty_on_hand": qty_text(
+                    levels.get((str(product_id), bin_id), (_ZERO, _ZERO))[0]
+                ),
+                "so_qty": qty_text(so_by_wid.get(bin_id, _ZERO)),
+                "spo_qty": qty_text(spo_by_wid.get(bin_id, _ZERO)),
+                "available_qty": qty_text(
+                    levels.get((str(product_id), bin_id), (_ZERO, _ZERO))[0]
+                    - so_by_wid.get(bin_id, _ZERO)
+                    + spo_by_wid.get(bin_id, _ZERO)
+                ),
+                **(
+                    {"net": qty_text(on_hand - so_qty + spo_qty), "net_of": group}
+                    if group
+                    else {}
+                ),
+            }
+            for bin_id in sorted(target_ids, key=lambda bid: codes.get(bid) or "")
+        ]
         return {
             "product_id": str(product.id),
             "item_code": product.product_code,
@@ -1020,6 +1200,7 @@ class FulfilmentBoardService:
             "location": warehouse.warehouse_code if warehouse is not None else None,
             "group": group or None,
             "bins": bins,
+            "locations": locations,
             "qty_on_hand": qty_text(on_hand),
             "so_qty": qty_text(so_qty),
             "spo_qty": qty_text(spo_qty),
@@ -1264,14 +1445,28 @@ class FulfilmentBoardService:
 
     # ------------------------------------------------------------ the demand
 
-    def _demand_rows(self, so_numbers: Sequence[str]) -> List[_Row]:
-        """Every still-owed line of the selected project-class sales orders.
+    def _demand_rows(
+        self,
+        so_numbers: Sequence[str],
+        *,
+        reopened_by_change: Optional[AbstractSet[str]] = None,
+    ) -> List[_Row]:
+        """Every UNDECIDED line of the selected project-class sales orders.
 
-        "Outstanding" is `is_open_demand()` plus the header predicate, unchanged and shared
-        with the netting engine (PLAN section 3), so the sales-order book screen, the worklist
-        and this board cannot disagree about which orders are still owed. Company scoping is
-        the session's, injected into every SELECT touching a scoped model - so an order of
-        another company is simply not there.
+        NOT "still owed" (14 September 2026 ruling, from SO421404). The board asks whether
+        anybody decided where a line's stock comes from, and delivery is not a decision: an
+        order that read Completed, three of three delivered and had never been planned was
+        invisible here, so no ORDER row ever reached purchasing and nothing was bought back.
+        The header admits `closed` orders beside `open` ones and the line predicate is
+        `is_undecided_demand()`; both are the board's alone. `is_open_demand()` stays exactly
+        as it was for the netting engine, the reorder plan and the worklist (AC-S2-11), and
+        the two diverge on purpose.
+
+        A `cancelled` ORDER is still refused outright. Its lines are owed to nobody, and the
+        line predicate cannot see an order's own status.
+
+        Company scoping is the session's, injected into every SELECT touching a scoped model -
+        so an order of another company is simply not there.
         """
         if not so_numbers:
             return []
@@ -1286,9 +1481,9 @@ class FulfilmentBoardService:
             .outerjoin(SalesAgent, SalesAgent.id == SalesOrder.sales_agent_id)
             .filter(
                 SalesOrder.so_number.in_(list(so_numbers)),
-                SalesOrder.status == "open",
+                SalesOrder.status.in_(["open", "closed"]),
                 SalesOrder.demand_class == "project",
-                is_open_demand(),
+                is_undecided_demand(),
             )
             .all()
         )
@@ -1306,8 +1501,9 @@ class FulfilmentBoardService:
         self._addressing = self._mirror_addressing([str(line.id) for line, *_r in records])
         line_numbers = self._line_numbers(records)
         # What an active revision already froze, per CORE line: the decision, and beside it
-        # the proposal the engine had made at that moment (AC-D1). One read for both.
-        frozen, frozen_proposals = self._frozen_decisions()
+        # the proposal the engine had made at that moment (AC-D1), and (AC-DT-2) who
+        # confirmed it. One read for all three.
+        frozen, frozen_proposals, frozen_decided_by = self._frozen_decisions()
         # What purchasing was already TOLD, per CORE line. One read for the whole board too.
         # The active decisions go in with it: a refusal is only news until CS answers it
         # (see `_order_inquiries`).
@@ -1341,9 +1537,14 @@ class FulfilmentBoardService:
                 line_no=line_numbers[str(line.id)],
                 item_code=product.product_code,
                 product_id=str(line.product_id),
-                # The same open quantity the sheet promises (AC-B01), imported rather than
-                # restated: what is still owed, in the line's own UOM.
-                qty=_open_of(line),
+                # The PLAN quantity, not the still-owed one: a delivered unit nobody
+                # sourced is a unit to put back, and the ladder is asked for the whole
+                # figure. Imported from the supply service rather than restated, so the
+                # board's ask and `_LineFacts.open_qty` cannot come to disagree.
+                qty=plan_qty_of(line),
+                # What is still owed the CUSTOMER, which the board now says separately
+                # because it and the planned quantity have stopped being the same number.
+                qty_outstanding=_open_of(line),
                 qty_ordered=_dec(line.qty_ordered),
                 qty_delivered=_dec(line.qty_delivered),
                 required_date=line.required_date,
@@ -1357,6 +1558,10 @@ class FulfilmentBoardService:
                 outside_planning=outside_fulfilment_planning(warehouse),
                 priority=line.priority,
                 demand_class=order.demand_class,
+                # R7 (query-count): off the SAME `line` row this read already fetched -
+                # see `_Row.__slots__`'s own docstring.
+                source_ref=line.source_ref,
+                company_id=str(line.company_id) if line.company_id else None,
             )
             addressing = self._addressing.get(str(line.id), {})
             # Null when nobody has adopted this sales order: there is no record to confirm
@@ -1369,6 +1574,9 @@ class FulfilmentBoardService:
             # Covered or not, and by what. A line an active decision covers is not planned
             # again: it states the composition that was frozen for it (13.4).
             row.decision = frozen.get(str(line.id))
+            # AC-DT-2: who confirmed the decision that covers this line, by name. None
+            # on an uncovered line, same as `row.decision` itself.
+            row.decided_by_name = frozen_decided_by.get(str(line.id))
             # What the engine had suggested for it when that decision was taken - the
             # STARTING value only. `_allocate` replaces it with the live ladder on every
             # line: the uncovered ones from the board's own walk, the covered ones from a
@@ -1381,8 +1589,151 @@ class FulfilmentBoardService:
             # board that carried only the first sent the planner to another screen for the
             # second.
             row.order_inquiry = inquiries.get(str(line.id))
+            # Purchasing was TOLD to buy for this line and nobody has withdrawn or refused
+            # that instruction, so it is decided on the buying side: read-only, naming the
+            # inquiry, never proposed for again (AC-S2-7). Popped rather than sent: it is
+            # how that read answers this question, not a field the screen has a use for.
+            told_by_the_book = bool((row.order_inquiry or {}).pop("_decides_line", False))
+            # THE BOOK MOVING A LINE BEATS PURCHASING HAVING BEEN TOLD (owner's ruling,
+            # 14 Sep 2026). A pending planning-change row says the book has moved this line
+            # since the instruction was written, and apply CANCELS and UNLINKS that placed
+            # row - so it is stale by definition and cannot be what decides the line. Left
+            # decided, the board stopped proposing for the very line the change re-opened.
+            row.inquiry_decided = told_by_the_book and str(line.id) not in (
+                reopened_by_change or frozenset()
+            )
             row.lent_to = lent.get(str(line.id), [])
             rows.append(row)
+        return rows
+
+    def _cancelled_pending_change_rows(
+        self,
+        so_numbers: Sequence[str],
+        *,
+        admitted: Optional[Mapping[str, _Row]] = None,
+    ) -> List[_Row]:
+        """R3 (13 Sep browser walk, widened on the second re-walk): a line the book has
+        CLOSED OUT - cancelled, or otherwise no longer open demand - still has a home on
+        the board while a change row about it is still PENDING.
+
+        PURE BOOK STATUS (S2, review round): `line_status != 'open' OR demand_qty() <= 0`,
+        deliberately NOT `~is_open_demand()`. `is_open_demand()` also requires
+        `purchasing_status != 'covered'`, and a covered-but-still-open, still-owed line is
+        a PERSON's ruling ("no purchase needed") - never "the book closed this line". That
+        line belongs in ordinary demand (`_demand_rows` excludes it correctly, via
+        `is_open_demand()`), and must NOT also read as a non-open row here: the two
+        predicates are deliberately NOT exact complements, this one and `is_open_demand()`
+        agree on every OTHER case (closed line status, or nothing left owed), and diverge
+        only on `purchasing_status == 'covered'`. NOT scoped to `kind == "cancelled"`
+        alone: a `product_changed` row on a line since fully delivered (closed,
+        `qty_delivered == qty_ordered`, an honest drift - see `_carry_snapshot_has_drifted`)
+        is just as invisible to `_demand_rows` and just as undecided, so the same book-
+        status predicate admits it here too, whatever kind its own pending row carries.
+        Read separately rather than folded into `_demand_rows`'s shared predicate
+        (`is_open_demand()` is read by the netting engine and the worklist too, and
+        neither of those wants a closed-out line back): the ladder never runs for one
+        (`qty` is forced to zero, `qty_delivered` is read straight off the core line,
+        UNCHANGED by a product change - the delivered figure is a fact about the OLD
+        product, not something this read invents), and `_contribution` prints it read-only
+        - the batch it is pending in, nothing to compose. `cancelled` is true only when the
+        row's own `kind` actually is "cancelled" (R3): a product change is a different
+        verdict and must not wear the same pill. Absent again the moment that row applies
+        (`applied_state` stops being `pending`).
+        """
+        if not so_numbers:
+            return []
+        from app.models.planning_change import PlanningChangeBatch, PlanningChangeRow
+        from app.services.planning_change_service import PLANNING_CHANGE_STATE_PENDING
+
+        records = (
+            self.db.query(
+                SalesOrderLine, SalesOrder, ProjectSalesOrderLine, PlanningChangeRow,
+                Warehouse, SalesAgent,
+            )
+            .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+            .join(
+                ProjectSalesOrderLine,
+                ProjectSalesOrderLine.core_sales_order_line_id == SalesOrderLine.id,
+            )
+            .join(
+                PlanningChangeRow,
+                PlanningChangeRow.project_line_id == ProjectSalesOrderLine.id,
+            )
+            .join(PlanningChangeBatch, PlanningChangeBatch.id == PlanningChangeRow.batch_id)
+            .outerjoin(Warehouse, Warehouse.id == SalesOrderLine.warehouse_id)
+            .outerjoin(SalesAgent, SalesAgent.id == SalesOrder.sales_agent_id)
+            .filter(
+                SalesOrder.so_number.in_(list(so_numbers)),
+                # THE SAME HEADER `_demand_rows` ADMITS. A closed order's pending change was
+                # invisible here while the board shows the order itself, so the one line
+                # this read exists for - the one ordinary demand cannot see - vanished on
+                # exactly the completed orders this lane put on screen.
+                SalesOrder.status.in_(["open", "closed"]),
+                SalesOrder.demand_class == "project",
+                (SalesOrderLine.line_status != "open") | (demand_qty() <= 0),
+                PlanningChangeRow.applied_state == PLANNING_CHANGE_STATE_PENDING,
+                PlanningChangeBatch.applied_at.is_(None),
+            )
+            .all()
+        )
+        if not records:
+            return []
+        # Same helper `_demand_rows` reads its customer names off - one query for the whole
+        # set rather than one per row.
+        customers = self._customers(
+            {str(order.customer_id) for _cl, order, *_r in records if order.customer_id}
+        )
+        rows: List[_Row] = []
+        already_admitted = admitted or {}
+        for core_line, order, project_line, change_row, warehouse, agent in records:
+            # ONE CONTRIBUTION PER LINE. Since the board's predicate widened (14 Sep 2026)
+            # this read and `_demand_rows` genuinely overlap - a closed-by-delivery line is
+            # "not open" by this read's book-status test AND undecided by the board's - so a
+            # second row here would put the same key on screen twice, once planned and once
+            # read-only at zero. The pending batch is stamped on the row that IS there
+            # instead, which is the fact this read exists to carry.
+            standing = already_admitted.get(str(core_line.id))
+            if standing is not None:
+                # The BATCH only. `cancelled` is left alone: on an admitted row it is the
+                # read-only-at-zero state this read gives a line `_demand_rows` cannot see,
+                # and stamping it on a line the ladder has just proposed for would print
+                # "Cancelled" over a live Buy.
+                standing.pending_change_batch_id = str(change_row.batch_id)
+                continue
+            customer_id = str(order.customer_id) if order.customer_id else None
+            rows.append(
+                _Row(
+                    line_id=str(core_line.id),
+                    sales_order_id=str(order.id),
+                    so_number=order.so_number,
+                    customer_id=customer_id,
+                    customer_name=customers.get(customer_id or ""),
+                    agent_code=agent.sales_agent if agent else None,
+                    agent_label=agent.person_label if agent else None,
+                    # Same field `_demand_rows` sets, same reason (nit, review round): the
+                    # cell's stock table reads the whole warehouse-suffix group off this,
+                    # and a non-open row is shown beside ordinary demand on the same board.
+                    agent_location_group=agent.location_group if agent else None,
+                    line_no=change_row.line_no,
+                    item_code=change_row.item_code,
+                    product_id=str(core_line.product_id) if core_line.product_id else None,
+                    project_sales_order_id=str(project_line.project_sales_order_id),
+                    project_line_id=str(project_line.id),
+                    qty=_ZERO,
+                    qty_ordered=core_line.qty_ordered,
+                    qty_delivered=core_line.qty_delivered,
+                    required_date=core_line.required_date,
+                    warehouse_id=str(core_line.warehouse_id) if core_line.warehouse_id else None,
+                    location=warehouse.warehouse_code if warehouse else None,
+                    bucket_key=NO_DATE_BUCKET,
+                    cancelled=change_row.kind == "cancelled",
+                    pending_change_batch_id=str(change_row.batch_id),
+                    source_ref=core_line.source_ref,
+                    company_id=(
+                        str(core_line.company_id) if core_line.company_id else None
+                    ),
+                )
+            )
         return rows
 
     def _lent_from(self, core_line_ids: Sequence[str]) -> Dict[str, List[Dict[str, Any]]]:
@@ -1445,6 +1796,15 @@ class FulfilmentBoardService:
     ) -> Dict[str, Dict[str, Any]]:
         """The instruction covering each core line, keyed by that line.
 
+        Each entry also carries `_decides_line`, popped by the caller the way
+        `with_order_inquiries` pops its own `_is_amendment`: whether a LIVE instruction no
+        board decision raised still stands on this line, which is what holds the row
+        read-only (AC-S2-7). Answered here because these are the same rows - the SQL twin
+        is `demand.live_inquiry_core_line_ids()`, which the Sales Orders list counts
+        `planned_lines` by, and a second statement per build would breach the query-count
+        bound (`test_a_board_of_76_lines_does_not_scale_its_query_count_with_the_line_
+        count`). Two spellings of one rule: change one and change the other.
+
         Through the mirror, the same link `_mirror_addressing` traverses:
         `projects.order_inquiry_rows.so_line_id` -> `projects.sales_order_lines` ->
         `core_sales_order_line_id`. A partial unique index makes that at most one project
@@ -1465,6 +1825,10 @@ class FulfilmentBoardService:
         pick the LIVE row when a refused row and the row CS raised in its place share a
         `created_at`. An answered refusal is therefore taken out of the running explicitly
         rather than left to lose the coin flip - see `_refusal_answered`.
+
+        A cancelled row is never a "last writer" either - it is skipped before it can seed
+        or overwrite an entry, so a withdrawn line falls back to whatever older row still
+        stands, or to no entry at all when none does.
         """
         if not core_line_ids:
             return {}
@@ -1473,6 +1837,10 @@ class FulfilmentBoardService:
             self.db.query(
                 ProjectSalesOrderLine.core_sales_order_line_id,
                 OrderInquiry.inquiry_no,
+                # S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-15): the HEADER's own id,
+                # beside the ROW's id read further down - the List view's OI column needs
+                # the pair to address the exact row, and prints neither.
+                OrderInquiry.id,
                 OrderInquiryRow.state,
                 # The handshake, so a REJECTED line says who refused it and why
                 # (`PLAN-scm-oi-handshake.md`, AC-H6). The line is undecided again by then
@@ -1482,6 +1850,16 @@ class FulfilmentBoardService:
                 OrderInquiryRow.rejected_at,
                 OrderInquiryRow.rejected_reason,
                 rejecter.name,
+                # Whose instruction it is. A row a confirmation raised carries its
+                # decision; the migrated sheet's rows (#875) carry none, and only those
+                # decide a line the board would otherwise propose for again.
+                OrderInquiryRow.supply_decision_id,
+                # AC-RL-07 (`PLAN-oi-replan-received-links.md`): what backs the
+                # instruction, and whether it was itself redirected off a document that
+                # had already landed (AC-RL-10) - the row id addresses `links_for_rows`
+                # below, `redirected_to_pool` reaches the wire as-is.
+                OrderInquiryRow.id,
+                OrderInquiryRow.redirected_to_pool,
             )
             .select_from(OrderInquiryRow)
             .join(
@@ -1527,8 +1905,39 @@ class FulfilmentBoardService:
         # standing, because the second was skipped wholesale; the cell should show the
         # inquiry it was last told about.
         answered_refusal_at: Dict[str, Optional[datetime]] = {}
-        for core_id, inquiry_no, state, ack_state, rejected_at, _reason, _name in rows:
+        # The NEWEST LIVE row per line, and its own payload. A line whose newest row was
+        # cancelled can still carry one that stands, and when it does that row is both what
+        # decides the line AND what the cell must name - a number off the cancelled row
+        # beside a read-only "decided" would send CS to an instruction nobody holds.
+        live_entry: Dict[str, Dict[str, Any]] = {}
+        for (
+            core_id, inquiry_no, inquiry_id, state, ack_state, rejected_at, _reason, _name,
+            supply_decision_id, row_id, redirected_to_pool,
+        ) in rows:
             core_key = str(core_id)
+            if (
+                supply_decision_id is None
+                and state != INQUIRY_CANCELLED
+                and ack_state != ACK_REJECTED
+            ):
+                # Rows arrive oldest first, so the last one seen is the newest.
+                live_entry[core_key] = {
+                    "inquiry_no": inquiry_no,
+                    "inquiry_id": str(inquiry_id) if inquiry_id else None,
+                    "state": state,
+                    "ack_state": ack_state,
+                    "rejected_reason": None,
+                    "rejected_by_name": None,
+                    "_row_id": str(row_id),
+                    "redirected": bool(redirected_to_pool),
+                }
+            if state == INQUIRY_CANCELLED:
+                # A cancelled row never becomes the column's entry, not even to seed one
+                # over a blank cell - so a line whose only surviving row is cancelled reads
+                # "-" rather than a number nobody holds. `live_entry` above already excludes
+                # it; this excludes it from last-writer-wins too, so an older row that is
+                # still live (or still-open refusal) wins the cell instead.
+                continue
             answered_refusal = ack_state == ACK_REJECTED and _refusal_answered(
                 core_key, rejected_at
             )
@@ -1540,6 +1949,7 @@ class FulfilmentBoardService:
                     continue
             out[core_key] = {
                 "inquiry_no": inquiry_no,
+                "inquiry_id": str(inquiry_id) if inquiry_id else None,
                 "state": state,
                 # NULL once CS has answered the refusal. The entry is still seeded from the
                 # row - the cell keeps the inquiry number it was last told about - but the
@@ -1549,6 +1959,10 @@ class FulfilmentBoardService:
                 "ack_state": None if answered_refusal else ack_state,
                 "rejected_reason": None,
                 "rejected_by_name": None,
+                # AC-RL-07: this ROW's own id (to address `links_for_rows`) and whether
+                # IT was redirected - popped/resolved below, never sent as `_row_id`.
+                "_row_id": str(row_id),
+                "redirected": bool(redirected_to_pool),
             }
             answered_refusal_at[core_key] = rejected_at if answered_refusal else None
         # The REFUSAL is read off the line rather than off its current row, and that is
@@ -1563,7 +1977,10 @@ class FulfilmentBoardService:
         # revision covering the line, confirmed after the refusal - the cell is about that
         # decision and not about the objection that prompted it. A flag that outlived the
         # answer would read as an open refusal on a line somebody had already dealt with.
-        for core_id, _inquiry_no, _state, ack_state, rejected_at, reason, name in rows:
+        for (
+            core_id, _inquiry_no, _inquiry_id, _state, ack_state, rejected_at, reason, name,
+            _decision_id, _row_id, _redirected_to_pool,
+        ) in rows:
             if ack_state != ACK_REJECTED:
                 continue
             entry = out.get(str(core_id))
@@ -1574,15 +1991,54 @@ class FulfilmentBoardService:
             entry["ack_state"] = ACK_REJECTED
             entry["rejected_reason"] = reason
             entry["rejected_by_name"] = name
+        # A LINE WITH A LIVE INSTRUCTION IS ABOUT THAT INSTRUCTION. It replaces whatever
+        # last-wins left standing, so the number the cell prints is the row that decides the
+        # line and not a cancelled or refused one that happened to be written after it. A
+        # refusal recorded above is dropped with it, for the same reason an answered one is:
+        # the line has a live instruction, so the objection is not what it is about.
+        for core_key, live in live_entry.items():
+            out[core_key] = {**live, "_decides_line": True}
+        for core_key, entry in out.items():
+            entry.setdefault("_decides_line", False)
+        # AC-RL-07 (`PLAN-oi-replan-received-links.md`): what is BEHIND the instruction,
+        # not only its number - the winning row's own documents and whether it was
+        # itself redirected off one that had already landed. Read through `links_for_
+        # rows`, the ONE reader every other surface (the worklist, the SCM sales-order
+        # detail) already uses - no second query shape for "where is this linked".
+        from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+        row_ids = [entry["_row_id"] for entry in out.values() if entry.get("_row_id")]
+        links_by_row = (
+            ProjectOrderInquiryService(self.db).links_for_rows(row_ids) if row_ids else {}
+        )
+        for entry in out.values():
+            row_id = entry.pop("_row_id", None)
+            # S6 (AC-B6-15): the same id, now on the WIRE as well - the List view's OI
+            # column addresses `?row=<row_id>` with it. Read off `_row_id` at the moment
+            # it is popped so the two can never name different rows.
+            entry["row_id"] = row_id
+            entry["documents"] = [
+                {
+                    "document": link["document"],
+                    "kind": link["kind"],
+                    "received": bool(link.get("received")),
+                }
+                for link in links_by_row.get(row_id, [])
+            ]
         return out
 
     def _frozen_decisions(
         self,
-    ) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Optional[List[Dict[str, Any]]]]]:
+    ) -> Tuple[
+        Dict[str, Dict[str, Any]],
+        Dict[str, Optional[List[Dict[str, Any]]]],
+        Dict[str, Optional[str]],
+    ]:
         """What each ACTIVE revision froze, keyed by the CORE line it covers.
 
-        Two maps off one read: the DECISION, and the PROPOSAL the engine had made when that
-        decision was taken (AC-D1). The second is `None` for a revision written before the
+        Three maps off one read: the DECISION, the PROPOSAL the engine had made when that
+        decision was taken (AC-D1), and (AC-DT-2, `PLAN-oi-decision-trail-ui.md`) who
+        confirmed it, by name. The second is `None` for a revision written before the
         proposal was frozen - which is "not recorded", not "the engine suggested nothing".
 
         The core line id is the key because that is what a snapshot names a covered line by,
@@ -1599,7 +2055,7 @@ class FulfilmentBoardService:
             if entry.get("project_sales_order_id")
         }
         if not pso_ids:
-            return {}, {}
+            return {}, {}, {}
         decisions = (
             self.db.query(SOSupplyDecision)
             .filter(
@@ -1608,8 +2064,14 @@ class FulfilmentBoardService:
             )
             .all()
         )
+        from app.services.project_service import resolve_user_names
+
+        confirmer_names = resolve_user_names(
+            self.db, {d.confirmed_by for d in decisions if d.confirmed_by}
+        )
         out: Dict[str, Dict[str, Any]] = {}
         proposals: Dict[str, Optional[List[Dict[str, Any]]]] = {}
+        decided_by_name: Dict[str, Optional[str]] = {}
         for decision in decisions:
             frozen = self.supply.frozen_lines_of(decision)
             for snapshot in decision.line_snapshots or []:
@@ -1618,13 +2080,18 @@ class FulfilmentBoardService:
                 if not core_line_id or line_id not in frozen:
                     continue
                 out[str(core_line_id)] = self._line_decision(decision, frozen[line_id])
+                decided_by_name[str(core_line_id)] = (
+                    confirmer_names.get(decision.confirmed_by)
+                    if decision.confirmed_by
+                    else None
+                )
                 proposed = frozen[line_id].get("proposed_components")
                 proposals[str(core_line_id)] = (
                     None
                     if proposed is None
                     else [self._frozen_source(component) for component in proposed]
                 )
-        return out, proposals
+        return out, proposals, decided_by_name
 
     @staticmethod
     def _frozen_source(component: Dict[str, Any]) -> Dict[str, Any]:
@@ -1837,34 +2304,39 @@ class FulfilmentBoardService:
     def _line_numbers(self, records: Sequence[tuple]) -> Dict[str, int]:
         """A line number per core line, because the core table has none.
 
-        Derived per sales order by (required date nulls last, item code, line id), which is
-        the same deterministic rule adoption uses to number the mirror - so the board and the
-        sheet call the same line by the same number. Where a mirror line ALREADY exists and
-        numbers every contributing line of that order distinctly, its numbers win: the mirror
-        is what the sheet shows, and Re-sync can renumber a later line.
+        `project_line_numbering.number_lines` (B1 review round): AutoCount's own `line_no`
+        wins once every contributing line of the order carries one, distinctly - gaps and
+        all. Otherwise every line falls back to a DERIVED 1..n, by (required date nulls
+        last, item code, line id) - the same rule `_resolve_core_line` and adoption's own
+        `_mirror` share, so a key the board hands out is readable by both without a mirror
+        having to exist first.
+
+        A mirror line, when it ALREADY exists and numbers every contributing line of that
+        order distinctly, still wins over both: the mirror is what the sheet shows, and
+        Re-sync can renumber a later line. `number_lines` has no opinion on the mirror -
+        that pass is applied here, same as before.
         """
-        by_order: Dict[str, List[tuple]] = defaultdict(list)
+        by_order: Dict[str, List[LineFacts]] = defaultdict(list)
         for line, order, product, _warehouse, _agent in records:
             by_order[str(order.id)].append(
-                (
-                    line.required_date is None,
-                    line.required_date or date.min,
-                    product.product_code or "",
-                    str(line.id),
+                LineFacts(
+                    str(line.id), line.line_no, line.required_date, product.product_code or ""
                 )
             )
         derived: Dict[str, int] = {}
         for entries in by_order.values():
-            for index, entry in enumerate(sorted(entries), start=1):
-                derived[entry[3]] = index
+            derived.update(number_lines(entries))
 
         mirrored = {
             core_id: entry["line_no"]
             for core_id, entry in self._addressing.items()
-            if entry.get("line_no")
+            # `is not None`, not truthiness (S-1, fix round): a mirror line_no of 0 is a
+            # real AutoCount number, ingest accepts it (`ge=0`), and a falsy check would
+            # drop it the way a resolver that used truthiness would too.
+            if entry.get("line_no") is not None
         }
         for entries in by_order.values():
-            ids = [entry[3] for entry in entries]
+            ids = [entry.id for entry in entries]
             numbers = [mirrored.get(line_id) for line_id in ids]
             if all(n is not None for n in numbers) and len(set(numbers)) == len(numbers):
                 for line_id, number in zip(ids, numbers):
@@ -2042,6 +2514,11 @@ class FulfilmentBoardService:
                     "product_id": row.product_id,
                     "warehouse_id": row.warehouse_id,
                     "open_qty": row.qty,
+                    # What the line is still OWED, beside what it asks for. `_group_offer`
+                    # un-nets this one - the group net subtracted `demand_qty()`, so adding
+                    # the ask back would return more than was ever taken - and a payload
+                    # without it left every board row un-netting zero.
+                    "owed_qty": row.qty_outstanding,
                     "required_date": row.required_date,
                     "order_date": row.order_date,
                     "payment_terms_days": row.payment_terms_days,
@@ -2049,6 +2526,12 @@ class FulfilmentBoardService:
                     "so_number": row.so_number,
                     "line_no": row.line_no,
                     "item_code": row.item_code,
+                    # R7 (query-count): off the same row's own core line - see `_Row
+                    # .__slots__`'s own docstring - so the own-arrival credit prefetch
+                    # never queries for a fact this payload already names.
+                    "sales_order_id": row.sales_order_id,
+                    "source_ref": row.source_ref,
+                    "company_id": row.company_id,
                 }
                 for row in plannable
             ],
@@ -2333,7 +2816,12 @@ class FulfilmentBoardService:
         by_order: Dict[str, List[_Row]] = defaultdict(list)
         for row in served:
             if (
-                row.covered
+                # A DECISION, specifically - not merely `covered`. A line the migrated book
+                # decided (a live inquiry row, no revision) has nothing frozen for a live
+                # suggestion to sit beside, and "here is what the engine would propose" over
+                # an instruction purchasing already holds is an invitation to raise a second
+                # one. It states the inquiry and nothing else (AC-S2-7).
+                row.decision is not None
                 and not row.unplannable
                 and row.project_sales_order_id
                 and row.project_line_id
@@ -2379,12 +2867,14 @@ class FulfilmentBoardService:
     def _apply_frozen(self, row: _Row) -> None:
         """A covered line states what was decided for it, and nothing else (13.4).
 
-        The sources are the FROZEN composition, including a Borrow - the engine proposes none,
-        but a person did, and printing it as anything else would describe a decision nobody
-        took. There is no trail because no ladder was walked, no contest because a decided line
-        is not competing, and no share of the queue because it is not in the queue: `null`
-        there, never `0`, which would be a claim about a contest it left. Its donors are the
-        one thing still read for it, by `_allocate`, because it can still be amended.
+        The sources are the FROZEN composition, including a Borrow - the engine's own ladder
+        (`order_borrow`/`supply_borrow`) can propose one too, but a decided line prints what was
+        actually confirmed for it, not what the ladder would propose if walked again today, and
+        printing anything else would describe a decision nobody took. There is no trail because
+        no ladder was walked, no contest because a decided line is not competing, and no share
+        of the queue because it is not in the queue: `null` there, never `0`, which would be a
+        claim about a contest it left. Its donors are the one thing still read for it, by
+        `_allocate`, because it can still be amended.
         """
         decision = row.decision or {}
         reserve = sum((_dec(c["qty"]) for c in decision.get("reserve") or []), _ZERO)
@@ -2820,6 +3310,15 @@ class FulfilmentBoardService:
             if getattr(component, "rung", None) == RUNG_GROUP_TAKE
             and component.source_location
         ]
+        # R7: what own-arrival credit this rung actually drew, so the trail can say WHICH
+        # PO landed it before the group-net sentence that follows - read off `components`
+        # (what was DRAWN), the same as `group_drawn` above.
+        own_arrival_drawn = [
+            (_dec(component.qty), getattr(component, "supply_document", None))
+            for component in components
+            if getattr(component, "rung", None) == RUNG_GROUP_TAKE
+            and getattr(component, "source", None) == "own_arrival"
+        ]
         group_offered = sum(
             (
                 _dec(c.get("qty"))
@@ -2859,6 +3358,7 @@ class FulfilmentBoardService:
                     group_drawn,
                     other=other_group_candidates,
                     offer=group_offered,
+                    own_arrival=own_arrival_drawn,
                 )
             ),
         )
@@ -2942,7 +3442,7 @@ class FulfilmentBoardService:
             "Buy",
             taken=bought,
             offered=bought,
-            why=lambda outcome: self._buy_why(fact, outcome, outside_window),
+            why=lambda outcome: self._buy_why(outcome, outside_window),
         )
         # Where a person could still borrow from, and it is exactly what the borrow steps
         # above put on the table - step 2's windowed donors, then the manual same-group
@@ -3455,6 +3955,7 @@ class FulfilmentBoardService:
         drawn: Sequence[Tuple[str, Decimal, bool]] = (),
         other: Sequence[Dict[str, Any]] = (),
         offer: Optional[Decimal] = None,
+        own_arrival: Sequence[Tuple[Decimal, Optional[str]]] = (),
     ) -> str:
         """Why rung 2 (the ownership group) ended where it did (section 1d).
 
@@ -3472,11 +3973,30 @@ class FulfilmentBoardService:
         by the required date (captain, 27 August 2026). The rest is NAMED, with its date,
         and never drawn: "30 on the water, arrives 1 Mar, not counted" is the one sentence
         that tells a planner why a group with stock coming still bought.
+
+        R7: `own_arrival` is what THIS rung drew as own-arrival credit, said FIRST and by
+        the document it landed on - "20 landed for this line on ..., taken first" - ahead
+        of whatever the ordinary group-net sentence below it says, because the two are
+        different facts answering the same question.
+
+        R7 FOLLOW-UP (`PLAN-r7-landed-reads-spo-received.md`, R1/R3): that document is now
+        the SPO the goods physically landed on, never the PO - a PO line's own
+        `qty_received` is the AutoCount TRANSFER onto a shipping order, not a receipt - so
+        the noun in front of it is dropped rather than saying "PO" of an SPO number.
         """
+        prefix = "".join(
+            (
+                f"{qty_text(qty)} landed for this line on {document}, taken first. "
+                if document
+                else f"{qty_text(qty)} landed for this line, taken first. "
+            )
+            for qty, document in own_arrival
+            if qty > _ZERO
+        )
         if outcome == "none_needed":
-            return _COVERED_BEFORE
+            return prefix + _COVERED_BEFORE
         if not fact.group_code:
-            return (
+            return prefix + (
                 "This location carries no ownership group, so there is no group to take "
                 "from."
             )
@@ -3494,12 +4014,12 @@ class FulfilmentBoardService:
             # group's net and never about a single warehouse. `MWH-IB` holding 7000 is not
             # an answer to "why nothing" while `BRW-IB` owes 27,804 against 5,290.
             if offer <= _ZERO:
-                return (
+                return prefix + (
                     f"The {fact.group_code} group nets {qty_text(net)}, so there is "
                     "nothing left for this line - whatever sits at any one of its "
                     f"locations is already owed at another.{late}"
                 )
-            return (
+            return prefix + (
                 f"The {fact.group_code} group nets {qty_text(net)}, leaving "
                 f"{qty_text(offer)} for this line, and none of it sits free at a location "
                 f"this line can draw from.{late}"
@@ -3517,7 +4037,7 @@ class FulfilmentBoardService:
                 )
                 for location, qty, is_water in drawn
             ) or ", ".join(str(c["location"]) for c in candidates)
-            return (
+            return prefix + (
                 f"The {fact.group_code} group nets {qty_text(net)}, leaving "
                 f"{qty_text(offer)} for this line; it was drawn as {taken_at}.{late}"
             )
@@ -3529,7 +4049,7 @@ class FulfilmentBoardService:
             )
             for c in candidates
         )
-        return (
+        return prefix + (
             f"The {fact.group_code} group nets {qty_text(net)}, leaving {qty_text(offer)} "
             f"for this line at {offered_at}. {_WHOLE_LINE_RULE_DROPPED}{late}"
         )
@@ -3573,10 +4093,8 @@ class FulfilmentBoardService:
         return _dec(self.supply.netting().donor_group_net(fact.product_id, group).net)
 
     @staticmethod
-    def _buy_why(fact: Any, outcome: str, outside_window: bool = False) -> str:
-        """Why the remainder is bought - and, for a discontinued item, that the buy will need
-        a reason. `is_discontinued` only ever forced a REASON on the buy; saying so here is
-        cheaper than a refusal at confirm being the first anybody hears of it.
+    def _buy_why(outcome: str, outside_window: bool = False) -> str:
+        """Why the remainder is bought.
 
         Beyond the reserve window "nothing left to take" is not what happened: none of the
         four questions was asked at all, and there may well be stock at a donor this line is
@@ -3584,15 +4102,12 @@ class FulfilmentBoardService:
         """
         if outcome != "took":
             return _COVERED_BEFORE
-        sentence = (
+        return (
             "The delivery date is beyond the lead time window, so the stock is kept for "
             "nearer orders and the quantity is bought."
             if outside_window
             else "Nothing left to take, so the remainder is bought."
         )
-        if fact.is_discontinued:
-            return f"{sentence} Discontinued: the buy needs a reason."
-        return sentence
 
     def _buy_reason(
         self,
@@ -3706,6 +4221,10 @@ class FulfilmentBoardService:
             "same_agent": bool(getattr(component, "same_agent", False)),
             "donor_core_line_id": getattr(component, "donor_core_line_id", None),
             "donor_required_date": getattr(component, "donor_required_date", None),
+            #: R7: `"own_arrival"` on a Reserve born from goods that landed for this line
+            #: (or the rest of its own order), `None` on an ordinary group-take Reserve -
+            #: what the cell's "Received N (own arrival)" chip keys off.
+            "source": getattr(component, "source", None),
         }
 
     # ------------------------------------------------------------ the answer
@@ -4462,23 +4981,26 @@ class FulfilmentBoardService:
             "project_key": row.project_key,
             "line_no": row.line_no,
             "item_code": row.item_code,
-            #: The owed quantity, kept under its old name because the frontend reads it.
-            #: `qty_outstanding` is the same number said unambiguously.
+            #: The quantity this board PLANS for, kept under its old name because the
+            #: frontend reads it. Since the 14 September 2026 ruling that is
+            #: `coalesce(qty_required, qty_ordered)` - a delivered unit nobody sourced is a
+            #: unit to put back - so it is no longer an alias of `qty_outstanding` below.
             "qty": qty_text(row.qty),
             #: What the customer ordered on this line, what has gone out, and what is still
-            #: owed. Three names rather than one `qty`, because they differ the moment a
-            #: delivery is part-made and the board plans against the LAST of them.
+            #: owed the CUSTOMER. Three separate facts, and the third is NOT what the board
+            #: plans against any more: printing the plan quantity under the name
+            #: "outstanding" would make the screen state a delivery that never happened.
             "qty_ordered": qty_text(row.qty_ordered or _ZERO),
             "qty_delivered": qty_text(row.qty_delivered or _ZERO),
-            "qty_outstanding": qty_text(row.qty),
+            "qty_outstanding": qty_text(row.qty_outstanding or _ZERO),
             #: The PLANNING UNIT this line was composed in (ladder v6): its own order's
             #: lines for the same item, location and delivery date, planned as one quantity.
             #: The line's own quantity and `1` when it was planned alone, which is most
             #: lines - and every covered or unplannable one, which was not planned here.
             "unit_qty": qty_text(row.qty if row.unit_qty is None else row.unit_qty),
             "unit_line_count": row.unit_line_count,
-            #: What the engine proposes to meet it with. The three add up to the outstanding
-            #: quantity, which is the balance invariant the per-order sheet also keeps.
+            #: What the engine proposes to meet it with. The three add up to the plan
+            #: quantity (`qty`), which is the balance invariant the per-order sheet also keeps.
             "qty_proposed_reserve": qty_text(row.proposed.get(RESERVE, _ZERO)),
             "qty_proposed_incoming": qty_text(row.proposed.get(TIMELY_SPO, _ZERO)),
             "qty_proposed_buy": qty_text(row.proposed.get(BUY, _ZERO)),
@@ -4560,11 +5082,23 @@ class FulfilmentBoardService:
             #: is not proposed for again: everything above states what was DECIDED.
             "covered": row.covered,
             "decision": row.decision,
+            #: AC-DT-2 (`PLAN-oi-decision-trail-ui.md`): the same three facts flattened
+            #: onto the line itself - the Confirmed chip's tooltip reads these rather
+            #: than reaching into `decision`, which is shaped for re-posting an
+            #: amendment and carries no confirmer at all. `None` on an uncovered line.
+            "decided_by_name": row.decided_by_name,
+            "decided_at": (row.decision or {}).get("confirmed_at"),
+            "decision_revision": (row.decision or {}).get("revision_no"),
             #: A decision SAVED on this line and not yet confirmed (S4, R-F). Beside
             #: `decision` rather than instead of it: that is what an ACTIVE revision froze,
             #: this is what somebody has settled but not committed, and a line can carry
             #: either, both or neither. Null when nobody has saved one.
             "draft": row.draft,
+            #: The same saver facts flattened, for the tooltip (AC-DT-2) - `row.draft`
+            #: already carries `saved_by`/`saved_at`, in the shape the draft PUT/GET
+            #: round-trips; these are the same values under the trail's own names.
+            "draft_saved_by_name": (row.draft or {}).get("saved_by") or None,
+            "draft_saved_at": (row.draft or {}).get("saved_at"),
             #: What ANOTHER sales order borrowed off this line (AC-L6): "71 lent to
             #: SO415472". Empty when nothing was lent, never absent.
             "lent_to": row.lent_to or [],
@@ -4598,6 +5132,12 @@ class FulfilmentBoardService:
             # S3 (`PLAN-local-supplier-oi-routing.md`): whether this line's product is
             # bought locally, computed once for the whole board (never per line).
             "buy_origin": self._buy_origin.get(str(row.product_id)) if row.product_id else None,
+            # R3 (13 Sep browser walk): the book CANCELLED this line and a change row for
+            # it is still PENDING - `false`/`null` for every ordinary row, which is every
+            # row `_demand_rows` itself ever builds (`_cancelled_pending_change_rows` is
+            # the only writer of a truthy pair, and it never runs the ladder for one).
+            "cancelled": bool(row.cancelled),
+            "pending_change_batch_id": row.pending_change_batch_id,
         }
 
     def _buckets(
@@ -4695,13 +5235,33 @@ class FulfilmentBoardService:
         future = [key for key in dated if date.fromisoformat(key) >= as_of]
         return date.fromisoformat(future[0] if future else dated[0])
 
-    def _standings(self, rows: Sequence[_Row]) -> List[Dict[str, Any]]:
+    def _standings(
+        self,
+        rows: Sequence[_Row],
+        adopted_by_so: Optional[Dict[str, str]] = None,
+        pending_by_so: Optional[Dict[str, str]] = None,
+        undo_by_so: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
+        decision_headers_by_so: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
+    ) -> List[Dict[str, Any]]:
         """Per order: how much of it is on this board, and how much of it can never be decided.
 
         `decided_count` is 0 from the server, always: the verdicts live in the board's client
         draft (13.4), and the screen recomputes this from the draft it holds. It is carried
         so the shape is the one the frontend already reads, not because the server knows.
+
+        `adopted_by_so` / `pending_by_so` are `_order_plan_status`'s own read, taken by the
+        caller BEFORE this runs (query-count guard: this used to run two of its own queries
+        here, and a bare board build's own line count must not swing on how many orders it
+        names). `None` reads as "nobody has adopted the sales order at all" and "no batch
+        is pending" respectively, never merely because no single line carried a mirror
+        (attempt 6, 13 Sep 2026: `project_sales_order_id` used to come from `setdefault`'s
+        FIRST `_Row`, whose own addressing - `_mirror_addressing`, per LINE, or
+        `_cancelled_pending_change_rows` - could easily carry none at all).
         """
+        adopted_by_so = adopted_by_so or {}
+        pending_by_so = pending_by_so or {}
+        undo_by_so = undo_by_so or {}
+        decision_headers_by_so = decision_headers_by_so or {}
         by_order: Dict[str, Dict[str, Any]] = {}
         for row in rows:
             standing = by_order.setdefault(
@@ -4709,17 +5269,144 @@ class FulfilmentBoardService:
                 {
                     "sales_order_id": row.sales_order_id,
                     #: The planning record this order's confirmation posts to
-                    #: (`POST /sales-orders/{pso_id}/confirm`). NULL when nobody has adopted
-                    #: the sales order yet - the screen then says so instead of guessing.
-                    "project_sales_order_id": row.project_sales_order_id,
+                    #: (`POST /sales-orders/{pso_id}/confirm`). Set below, off the ORDER's
+                    #: own adoption record - NULL only when nobody has adopted the sales
+                    #: order at all, never merely because no single line carried a mirror.
+                    "project_sales_order_id": adopted_by_so.get(row.sales_order_id),
                     "so_number": row.so_number,
                     "customer_name": row.customer_name,
                     "line_count": 0,
                     "decided_count": 0,
                     "unplannable_count": 0,
+                    "pending_change_batch_id": pending_by_so.get(row.sales_order_id),
+                    #: S1 (#978): whether the order's newest confirm can be undone from
+                    #: the gear, and why not when it cannot. `board_undo_map`'s own read.
+                    "undo": undo_by_so.get(row.sales_order_id),
+                    #: AC-DT-1 (`PLAN-oi-decision-trail-ui.md`): the ACTIVE decision's
+                    #: own header facts - revision, confirmer, when, how many lines -
+                    #: for the board panel's "Revision N, confirmed by <name>" line.
+                    #: Null when the order has no active decision. `_decision_headers`'s
+                    #: own read.
+                    "decision": decision_headers_by_so.get(row.sales_order_id),
                 },
             )
             standing["line_count"] += 1
             if row.unplannable:
                 standing["unplannable_count"] += 1
         return sorted(by_order.values(), key=lambda s: s["so_number"] or "")
+
+    def _decision_headers(
+        self, adopted_by_so: Dict[str, str]
+    ) -> Dict[str, Optional[Dict[str, Any]]]:
+        """AC-DT-1 (`PLAN-oi-decision-trail-ui.md`): the ACTIVE decision's own header
+        facts per selected order - revision, confirmer, when, how many lines - so the
+        board panel can print "Revision 1, confirmed by Nurain, 25 Sep 2026 09:20, 11
+        lines" beside "N to confirm - N rejected", or "No decision yet".
+
+        Read straight off `so_supply_decisions`, never through `board_undo_map`: that
+        read is gated to a JOURNALLED revision (or, admin-only, a reconstructable one)
+        for the undo gear specifically, and a header built off it would read "No
+        decision yet" on most confirmed orders - a pre-lane revision, or one minted
+        outside the board's own confirm routes, still gets a header here.
+
+        One query for the whole board's selection, keyed the same way `adopted_by_so`
+        is - by the CORE `sales_orders.id`. `None` for an order with no active decision.
+        """
+        out: Dict[str, Optional[Dict[str, Any]]] = {so_id: None for so_id in adopted_by_so}
+        pso_ids = {pso_id for pso_id in adopted_by_so.values() if pso_id}
+        if not pso_ids:
+            return out
+        decisions = (
+            self.db.query(SOSupplyDecision)
+            .filter(
+                SOSupplyDecision.project_sales_order_id.in_(list(pso_ids)),
+                SOSupplyDecision.state == DECISION_ACTIVE,
+            )
+            .all()
+        )
+        if not decisions:
+            return out
+        from app.services.project_service import resolve_user_names
+
+        names = resolve_user_names(
+            self.db, {d.confirmed_by for d in decisions if d.confirmed_by}
+        )
+        by_pso = {str(d.project_sales_order_id): d for d in decisions}
+        for so_id, pso_id in adopted_by_so.items():
+            decision = by_pso.get(pso_id) if pso_id else None
+            if decision is None:
+                continue
+            out[so_id] = {
+                "revision_no": decision.revision_no,
+                "confirmed_by_name": (
+                    names.get(decision.confirmed_by) if decision.confirmed_by else None
+                ),
+                "confirmed_at": decision.confirmed_at,
+                "line_count": len(decision.line_snapshots or []),
+            }
+        return out
+
+    def _order_plan_status(
+        self, so_numbers: Sequence[str]
+    ) -> Tuple[Dict[str, str], Dict[str, str], Set[str]]:
+        """Per selected order (by core `sales_orders.id`): its adoption record, its newest
+        PENDING planning-change batch, and the CORE LINES those pending rows name - ONE
+        query for all three (query-count guard,
+        `test_a_board_of_76_lines_does_not_scale_its_query_count_with_the_line_count`),
+        where `_standings` used to run two, and `_cancelled_pending_change_rows` a third
+        of its own regardless of whether anything was ever pending.
+
+        Both OUTER joins, from `ProjectSalesOrder` (the adoption record): an order with NO
+        pending-change row at all still needs to answer `project_sales_order_id`, and one
+        with rows but none of them PENDING still needs to answer `None` for the batch, not
+        be excluded from the read entirely. Absent from `adopted_by_so` means nobody has
+        adopted that order; absent from `pending_by_so` means nothing is pending for it -
+        neither is ever a `None` value, so a caller uses `.get(so_id)`.
+
+        The third value is the PER LINE half of the same read, and it costs nothing extra:
+        one more selected column on a query that already joins the pending rows. It is what
+        re-opens a line the migrated book had decided (see `_demand_rows`).
+        """
+        if not so_numbers:
+            return {}, {}, set()
+        from app.models.planning_change import PlanningChangeBatch, PlanningChangeRow
+        from app.services.planning_change_service import PLANNING_CHANGE_STATE_PENDING
+
+        rows = (
+            self.db.query(
+                SalesOrder.id, ProjectSalesOrder.id,
+                PlanningChangeBatch.id, PlanningChangeBatch.created_at,
+                PlanningChangeRow.core_line_id,
+            )
+            .join(ProjectSalesOrder, ProjectSalesOrder.so_id == SalesOrder.id)
+            .outerjoin(
+                PlanningChangeRow,
+                PlanningChangeRow.project_sales_order_id == ProjectSalesOrder.id,
+            )
+            .outerjoin(
+                PlanningChangeBatch,
+                (PlanningChangeBatch.id == PlanningChangeRow.batch_id)
+                & (PlanningChangeBatch.applied_at.is_(None))
+                & (PlanningChangeRow.applied_state == PLANNING_CHANGE_STATE_PENDING),
+            )
+            .filter(SalesOrder.so_number.in_(list(so_numbers)))
+            # The NEWEST pending batch wins, same tie-break as `pending_batch_id_by_
+            # sales_order`: rows arrive newest-batch-first, so the first one seen per
+            # order in the loop below is kept and a later, older one never overwrites it.
+            .order_by(PlanningChangeBatch.created_at.desc(), PlanningChangeBatch.id.desc())
+            .all()
+        )
+        adopted_by_so: Dict[str, str] = {}
+        pending_by_so: Dict[str, str] = {}
+        pending_core_lines: Set[str] = set()
+        for so_id, pso_id, batch_id, _created_at, core_line_id in rows:
+            adopted_by_so[str(so_id)] = str(pso_id)
+            if not batch_id:
+                continue
+            pending_by_so.setdefault(str(so_id), str(batch_id))
+            # THE BATCH THAT WON, not every pending batch the order has. `pending_by_so` is
+            # the newest one and the Changed badge opens the board on it, so a line whose
+            # only pending row belongs to an OLDER batch is not a line this board is about.
+            if core_line_id and pending_by_so[str(so_id)] == str(batch_id):
+                pending_core_lines.add(str(core_line_id))
+        return adopted_by_so, pending_by_so, pending_core_lines

@@ -21,8 +21,13 @@ from typing import Any
 
 import pytest
 
-from app.services.chatbot.contracts import DOMAIN_SPEC
 from app.services.chatbot.lanes.business import fetch as fetch_mod
+from app.services.chatbot.turn.policy import default_policy
+
+# AC-1594: contracts.DOMAIN_SPEC is deleted; fetch.select_tool itself already reads
+# turn.policy.default_policy() (see its own docstring) - this file's remaining direct
+# references port to the same real seam, not a hand-built stand-in.
+_POLICY_DOMAINS = {row.name: row for row in default_policy().domains}
 
 
 # The measured historic pick, per domain, pinned by hand (UAC AC-1). This table is
@@ -41,6 +46,9 @@ PINNED_PICK: dict[str, str] = {
     "forms": "crm_forms_management_forms_list",
     "purchase_order": "crm_procurement_po_placed_list",
     "portal_link": "crm_portal_link_get",
+    # PLAN-chatbot-last-purchase-cost.md, 12 Sep 2026: a domain this plan invents, so no
+    # captured turn can carry it - one tool, no choice to measure.
+    "purchase_cost": "crm_procurement_po_last_cost_list",
 }
 
 #: The two domains with an empty `tools` tuple. Nothing can answer them, which is why the
@@ -87,7 +95,7 @@ class TestDeterministicPick:
 
     def test_the_pinned_table_covers_every_answerable_domain(self) -> None:
         """A new domain with tools must be pinned here, or its pick is unmeasured."""
-        answerable = {d for d, spec in DOMAIN_SPEC.items() if spec.tools}
+        answerable = {d for d, spec in _POLICY_DOMAINS.items() if spec.tools}
         assert answerable == set(PINNED_PICK), (
             "every DOMAIN_SPEC domain with a non-empty `tools` tuple needs a row in "
             "PINNED_PICK naming the tool production actually chose"
@@ -95,11 +103,11 @@ class TestDeterministicPick:
 
     def test_the_pinned_tool_is_the_first_listed_one(self) -> None:
         """The FIRST entry of each `tools` tuple is now a contract, not an ordering."""
-        assert {d: spec.tools[0] for d, spec in DOMAIN_SPEC.items() if spec.tools} == PINNED_PICK
+        assert {d: spec.tools[0] for d, spec in _POLICY_DOMAINS.items() if spec.tools} == PINNED_PICK
 
     @pytest.mark.parametrize("domain", EMPTY_TOOL_DOMAINS)
     def test_a_domain_with_no_tools_picks_nothing(self, domain: str) -> None:
-        assert DOMAIN_SPEC[domain].tools == ()
+        assert _POLICY_DOMAINS[domain].tools == ()
         assert fetch_mod.select_tool(domain) == []
 
     def test_no_domain_and_an_unknown_domain_pick_nothing(self) -> None:
@@ -299,3 +307,27 @@ class TestSeamsAreGone:
             if name in path.read_text(encoding="utf-8")
         ]
         assert offenders == [], f"{name} still appears in: {', '.join(sorted(offenders))}"
+
+
+class TestSalesReportToolIsOnTheReadOnlyAllowList:
+    """Coder 25's own pins table (20 Sep 2026): main's deleted `test_domain_spec.py`
+    pinned `crm_sales_report` in `CHATBOT_READ_ONLY_TOOLS` (the MCP catalogue's own
+    read-only allow-list, `test_tool_pick_from_domain_spec.py`'s whole subject) -
+    ported here rather than against the retired `contracts.DOMAIN_SPEC`, against the
+    two real seams that now carry the same fact: `fetch.CHATBOT_READ_ONLY_TOOLS`
+    itself, and `turn/policy_rows.py::DEFAULT_DOMAIN_ROWS`'s `order` domain row (the
+    seed `chatbot_domains.tools` derives from, S9's sales-report port)."""
+
+    def test_crm_sales_report_is_read_only(self) -> None:
+        assert "crm_sales_report" in fetch_mod.CHATBOT_READ_ONLY_TOOLS, (
+            "a domain that can pick crm_sales_report must never reach a write path"
+        )
+
+    def test_the_order_domain_seed_row_carries_the_tool(self) -> None:
+        from app.services.chatbot.turn.policy_rows import DEFAULT_DOMAIN_ROWS
+
+        order_row = next(row for row in DEFAULT_DOMAIN_ROWS if row["name"] == "order")
+        assert "crm_sales_report" in order_row["tools"], (
+            f"the order domain's seed must offer crm_sales_report as a pickable tool: "
+            f"{order_row['tools']}"
+        )

@@ -8,6 +8,7 @@ from app.models.product import Product, ProductCategory, Brand, UnitOfMeasure
 from app.models.country import Country
 from app.models.product_set import ProductSet, ProductSetMember
 from app.models.product_companion import ProductCompanionRule, ProductCompanionRuleHost
+from app.models.product_combo import ProductCombo, ProductComboPart
 from app.models.product_set_proposal import ProductSetProposalBatch, ProductSetProposal
 from app.models.product_spec import ProductSpecRegistry, ProductSpecifications, ProductSpecException, ProductSpecVerification, ProductSpecFlyerBatch, ProductSpecFlyerProposal
 from app.models.order import Order, OrderStatus, Customer, CustomerContact, OrderLine, SalesOrder, SalesOrderLine
@@ -87,6 +88,7 @@ from app.models.ai_prompt import AIPromptVersion, AIPromptLabel
 from app.models.chat_history import ChatHistory
 from app.models.chatbot_turn import ChatbotTurn
 from app.models.conversation_frame import ConversationFrame
+from app.models.chatbot_policy import ChatbotDomain, ChatbotEntityKind
 from app.models.lookup import LookupSet, LookupOption, LookupOptionKeyword, LookupBinding
 from app.models.portal import (
     PortalToken,
@@ -320,6 +322,8 @@ __all__ = [
     "AIPromptLabel",
     "ChatHistory",
     "ConversationFrame",
+    "ChatbotDomain",
+    "ChatbotEntityKind",
     "LookupSet",
     "LookupOption",
     "LookupOptionKeyword",

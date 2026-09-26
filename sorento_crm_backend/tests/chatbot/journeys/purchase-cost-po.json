@@ -1,0 +1,37 @@
+{
+  "name": "purchase-cost-po",
+  "source": "browser-pass-6 chain 4 (handpass3-owner-17sep-purchase-cost-po.json) + its own supplementary check, browser-pass-7 row 5b, hand pass 3 ruling: 'Rosters under promotion and purchase_order carry stamps (has promo / no promo, has PO / no PO) ... the PO picker stays.'",
+  "cases": [
+    {
+      "name": "purchase-cost-denied-no-grant",
+      "cold": true,
+      "turns": [
+        {
+          "text": "Purchase cost for wc286",
+          "expect": {
+            "reply_contains": ["not allowed to access purchase cost"]
+          }
+        }
+      ]
+    },
+    {
+      "name": "po-roster-stamped-word-number-pick",
+      "cold": true,
+      "turns": [
+        {
+          "text": "PO for srtwc286",
+          "expect": {
+            "roster_min_options": 10,
+            "roster_stamped": true
+          }
+        },
+        {
+          "text": "Eight",
+          "expect": {
+            "reply_contains": ["SRTWC286-SH-NEW-P"]
+          }
+        }
+      ]
+    }
+  ]
+}

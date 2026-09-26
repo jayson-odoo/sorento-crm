@@ -19,6 +19,7 @@ import {
 } from '@tanstack/react-table';
 import { ChevronRight, Search, UserPlus, X } from 'lucide-react';
 import { toast } from '@/lib/toast';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
@@ -36,6 +37,7 @@ import {
 } from '@/lib/price-tag-status';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
+import { AUTO_UPDATE_STATUSES } from '@/lib/dealer-kit/product-data-changes';
 import {
   listPriceTagRequests,
   claimPriceTagRequest,
@@ -49,7 +51,8 @@ const STATUS_OPTIONS = [
   { value: 'proof_ready', label: 'Design Ready' },
   { value: 'changes_requested', label: 'Changes Requested' },
   { value: 'approved', label: 'Approved' },
-  { value: 'ready', label: 'Ready' },
+  { value: 'ready_for_collection', label: 'Ready for collection' },
+  { value: 'collected', label: 'Collected' },
   { value: 'rejected', label: 'Rejected' },
   { value: 'void', label: 'Void' },
 ];
@@ -293,6 +296,34 @@ export default function PriceTagRequestsList() {
         meta: {
           headerTitle: 'Assigned To',
           skeleton: <Skeleton className="h-4 w-24" />,
+        },
+      },
+      {
+        accessorKey: 'data_changed_tag_count',
+        // Stored, refreshed for a touched row only (AC-D4) - the query
+        // cannot order by a value that is not always current.
+        enableSorting: false,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Product data" column={column} />
+        ),
+        size: 170,
+        cell: ({ row }) => {
+          const count = row.original.data_changed_tag_count ?? 0;
+          if (count <= 0) return null;
+          const status = row.original.status;
+          const label =
+            status && AUTO_UPDATE_STATUSES.includes(status)
+              ? `Product data updated · ${count}`
+              : `Product data changed · ${count}`;
+          return (
+            <Badge size="sm" variant="warning" appearance="light">
+              {label}
+            </Badge>
+          );
+        },
+        meta: {
+          headerTitle: 'Product data',
+          skeleton: <Skeleton className="h-4 w-32" />,
         },
       },
       {

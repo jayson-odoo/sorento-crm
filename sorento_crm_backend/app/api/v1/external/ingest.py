@@ -41,6 +41,9 @@ from app.api.v1.external.company_anchor import resolve_company_anchor
 from app.api.v1.external.permissions import require_external_permission_for_path
 from app.dependencies import get_external_api_user
 from app.database import get_db
+from app.models.order import SalesOrderLine
+from app.models.procurement import PurchaseOrder, PurchaseOrderLine, SPOAllocation
+from app.models.project_so import OrderInquiryRow, ProjectSalesOrderLine
 from app.schemas.common import MAX_PAGE_LIMIT
 from app.services.error_handler import AppException
 from app.services.deletion_service import DeletionService
@@ -81,6 +84,9 @@ INGEST_PERMISSIONS = {
     "customers": "order_management.customers.edit",
     "products": "master_data.products.edit",
     "sales_agents": "master_data.sales_agents.edit",
+    # autocount-brands-ingest (contract 2.3), D5: ingest takes .edit, not .add,
+    # same as every sibling master.
+    "brands": "master_data.brands.edit",
     # Documents (group A3). Pushing an order through the ESB is the same act as
     # editing one on the SCM screen, so it is the same slug.
     "sales_orders": "scm.sales_orders.edit",
@@ -96,6 +102,7 @@ READ_PERMISSIONS = {
     "customers": "order_management.customers.view",
     "products": "master_data.products.view",
     "sales_agents": "master_data.sales_agents.view",
+    "brands": "master_data.brands.view",
     "sales_orders": "scm.sales_orders.view",
     "purchase_orders": "scm.purchase_orders.view",
     "shipping_orders": "scm.shipping_orders.view",
@@ -113,6 +120,7 @@ DELETE_PERMISSIONS = {
     "customers": "order_management.customers.delete",
     "products": "master_data.products.delete",
     "sales_agents": "master_data.sales_agents.delete",
+    "brands": "master_data.brands.delete",
     "sales_orders": "scm.sales_orders.delete",
     "purchase_orders": "scm.purchase_orders.delete",
     "shipping_orders": "scm.shipping_orders.delete",
@@ -193,7 +201,16 @@ SUPPORTED_ENTITIES = set(ENTITY_SPECS) | set(DOCUMENT_ENTITIES) | set(SHIPPING_O
 # shipping_orders lines, and from_so_numbers is now listed under
 # `fields_added` too (a v2-era field the ESB only now depends on reading
 # back). All additive and optional, same as every point release before it.
-CONTRACT_VERSION = "2.2"
+# "2.3" (autocount-brands-ingest): `brands` joins ENTITY_SPECS as a
+# first-class master, with its own INGEST/READ/DELETE permission slugs -
+# additive, an ESB on 2.2 simply never sees `brands` in `entities`.
+# "2.4" (ingest-products-code-wins, SR0): a product whose stored reference is
+# under the SAME source system as the incoming push now resolves by item
+# code instead of failing as a conflict (`ref_mismatch`, stored reference
+# kept). `/{entity}/deletions` gains an optional `codes` map for the same
+# reason, only ever read for `products`. Both additive: an ESB still on 2.3
+# sends no `codes` and simply keeps hitting the old conflict.
+CONTRACT_VERSION = "2.4"
 
 
 def _principal_may_delete(db: Session, current_user: dict, entity: str) -> bool:
@@ -214,7 +231,7 @@ def _principal_may_delete(db: Session, current_user: dict, entity: str) -> bool:
 
 def _run_document_hooks(
     db: Session, entity: str, service, *, actor: Optional[str]
-) -> None:
+) -> tuple[int, int]:
     """D7/S5 (plan section 2.6): post-write reactions, non-dry only.
 
     Runs AFTER the batch's own `db.commit()` - every hook here reacts to a
@@ -237,15 +254,27 @@ def _run_document_hooks(
     failure, so one exception mid-batch discarded every not-yet-committed
     record of the batch while the route still answered 200. Moved here so it
     runs against a batch that has already landed, same as every other hook.
+
+    Returns `(book_repair_moves_dropped, book_follow_rows_dropped)` - how many
+    `follow_book_repairing` moves (S4 review fix, 17 Sep) and how many
+    `follow_book_for_rows` rows (S2, `PLAN-oi-follow-book-chain.md`, AC-FB-24)
+    this push's own hooks (if they ran at all) dropped past their caps - 0 for
+    every entity/path that has no such hook.
     """
+    book_repair_moves_dropped = 0
+    book_follow_rows_dropped = 0
     if entity == "sales_orders":
         _run_plan_exception_hook(db, service, actor=actor)
         _run_planning_change_hook(db, service, actor=actor)
     elif entity == "purchase_orders":
-        _run_supersede_and_relink_hooks(db, service, actor=actor)
+        book_repair_moves_dropped = _run_supersede_and_relink_hooks(db, service, actor=actor)
+        book_follow_rows_dropped = _run_follow_book_po_hook(db, service, actor=actor)
     elif entity == "shipping_orders":
         _run_shipping_order_forward_match_hook(db, service, actor=actor)
         _run_shipping_order_shipment_refresh_hook(db, service, actor=actor)
+        book_repair_moves_dropped = _run_shipping_order_book_repair_hook(db, service, actor=actor)
+        book_follow_rows_dropped = _run_follow_book_spo_hook(db, service, actor=actor)
+    return book_repair_moves_dropped, book_follow_rows_dropped
 
 
 def _run_plan_exception_hook(db: Session, service, *, actor: Optional[str]) -> None:
@@ -325,13 +354,18 @@ def _run_planning_change_hook(db: Session, service, *, actor: Optional[str]) -> 
         logger.warning("ingest.planning_change_hook_failed", exc_info=True)
 
 
-def _run_supersede_and_relink_hooks(db: Session, service, *, actor: Optional[str]) -> None:
+def _run_supersede_and_relink_hooks(db: Session, service, *, actor: Optional[str]) -> int:
     """AC-V5-2: retire CRM-raised POs this push confirms, then relink placements.
 
     Two hooks, two try/except blocks, two commits - not one wrapping both -
     so a relink failure can never undo a supersession that already landed,
     and vice versa.
+
+    Returns the book-repair hook's own dropped-move count (S4 review fix, 17
+    Sep) - 0 when that hook never ran or its own transaction failed, since
+    either way nothing past the cap was actually applied.
     """
+    book_repair_moves_dropped = 0
     if service.po_supersede_triples:
         try:
             supersede_crm_raised_pos(db, service.po_supersede_triples)
@@ -352,6 +386,24 @@ def _run_supersede_and_relink_hooks(db: Session, service, *, actor: Optional[str
         except Exception:  # noqa: BLE001 - best-effort, the ingest already succeeded
             db.rollback()
             logger.warning("ingest.relink_to_matching_lines_failed", exc_info=True)
+
+    # S5 (`PLAN-oi-replan-received-links.md`): our own link follows `from_so_
+    # line_ref` wherever THIS push moved it, after the relink hook above -
+    # `service.ref_moves` is `DocumentIngestService`'s own capture, taken
+    # inside `_sync_lines` while the old ref was still on the row.
+    if getattr(service, "ref_moves", None):
+        try:
+            with db.begin_nested():
+                book_repair_moves_dropped = ProjectOrderInquiryService(db).follow_book_repairing(
+                    service.ref_moves, trigger="autocount_ingest",
+                    company_id=service.company_id, actor_user_id=actor,
+                )
+            db.commit()
+        except Exception:  # noqa: BLE001 - best-effort, the ingest already succeeded
+            db.rollback()
+            logger.warning("ingest.follow_book_repairing_failed", exc_info=True)
+
+    return book_repair_moves_dropped
 
 
 def _run_shipping_order_forward_match_hook(
@@ -384,6 +436,32 @@ def _run_shipping_order_forward_match_hook(
         logger.warning("ingest.shipping_order_forward_match_hook_failed", exc_info=True)
 
 
+def _run_shipping_order_book_repair_hook(
+    db: Session, service, *, actor: Optional[str]
+) -> int:
+    """S5 (`PLAN-oi-replan-received-links.md`): the SPO twin of the PO relink hook
+    above - `service.ref_moves` is `ShippingOrderIngestService`'s own capture, taken
+    inside `_write_row`'s in-place update path and inside `_supersede_xlsx_rows` for
+    the xlsx-era allocation the ESB's first ref-bearing push replaces.
+
+    Returns the dropped-move count (S4 review fix, 17 Sep) - 0 when there was
+    nothing to repair or the hook's own transaction failed."""
+    book_repair_moves_dropped = 0
+    if not getattr(service, "ref_moves", None):
+        return book_repair_moves_dropped
+    try:
+        with db.begin_nested():
+            book_repair_moves_dropped = ProjectOrderInquiryService(db).follow_book_repairing(
+                service.ref_moves, trigger="autocount_ingest",
+                company_id=service.company_id, actor_user_id=actor,
+            )
+        db.commit()
+    except Exception:  # noqa: BLE001 - best-effort, the ingest already succeeded
+        db.rollback()
+        logger.warning("ingest.shipping_order_book_repair_hook_failed", exc_info=True)
+    return book_repair_moves_dropped
+
+
 def _run_shipping_order_shipment_refresh_hook(
     db: Session, service, *, actor: Optional[str]
 ) -> None:
@@ -410,6 +488,174 @@ def _run_shipping_order_shipment_refresh_hook(
     except Exception:  # noqa: BLE001 - best-effort, the ingest already succeeded
         db.rollback()
         logger.warning("ingest.shipping_order_shipment_refresh_hook_failed", exc_info=True)
+
+
+def _rows_for_core_line_refs(
+    db: Session, refs: set[str], *, company_id: str
+) -> list[str]:
+    """Order-inquiry row ids whose reconciled core sales-order line carries one
+    of these `source_ref`s - what `follow_book_for_rows` (S1) already resolves
+    for a row it holds, only starting from the ref instead. Company-scoped by
+    hand on BOTH sides (review round item 6): the ESB `X-API-Key` principal's
+    ambient session scope is not necessarily narrowed to one company, and
+    `follow_book_for_rows` re-scopes internally too, so this is belt only,
+    never the sole guard - but the row's OWN `company_id` is checked here too,
+    not only the core line's, since a data anomaly could otherwise let a row
+    from one company resolve through a core line record another owns.
+
+    Ordered by `(created_at, id)` (review round item 6): `follow_book_for_rows`
+    caps AFTER narrowing to these rows, over this exact order, so which row a
+    tight cap admits does not depend on Postgres's own scan order either.
+    """
+    wanted = sorted({str(r) for r in refs if r})
+    if not wanted:
+        return []
+    rows = (
+        db.query(OrderInquiryRow.id)
+        .join(
+            ProjectSalesOrderLine,
+            ProjectSalesOrderLine.id == OrderInquiryRow.so_line_id,
+        )
+        .join(
+            SalesOrderLine,
+            SalesOrderLine.id == ProjectSalesOrderLine.core_sales_order_line_id,
+        )
+        .filter(
+            SalesOrderLine.source_ref.in_(wanted),
+            SalesOrderLine.company_id == company_id,
+            OrderInquiryRow.company_id == company_id,
+        )
+        .order_by(OrderInquiryRow.created_at.asc(), OrderInquiryRow.id.asc())
+        .all()
+    )
+    return [str(row_id) for (row_id,) in rows]
+
+
+def _run_follow_book_po_hook(db: Session, service, *, actor: Optional[str]) -> int:
+    """S2 (`PLAN-oi-follow-book-chain.md`, AC-FB-21/25): every SO line ref a
+    purchase-order LINE this push wrote (created or updated -
+    `service.written_po_line_refs`; `ref_moves` only ever names a ref that
+    CHANGED, so a freshly created line, or an existing line naming a
+    sales-order line for the FIRST time, is invisible to that capture)
+    resolved to the order-inquiry rows of those core lines and handed to
+    `ProjectOrderInquiryService.follow_book_for_rows`, so a row that already
+    existed picks up the book the moment the purchase side states it, not only
+    on the next cascade pass.
+
+    Same shape as the hooks above: its own savepoint, its own commit, best
+    effort. Returns the dropped-row count past `FOLLOW_BOOK_FOR_ROWS_MAX_ROWS`
+    (AC-FB-24) - 0 when there was nothing to follow or the hook's own
+    transaction failed.
+    """
+    book_follow_rows_dropped = 0
+    refs = getattr(service, "written_po_line_refs", None)
+    if not refs:
+        return book_follow_rows_dropped
+    try:
+        with db.begin_nested():
+            row_ids = _rows_for_core_line_refs(db, refs, company_id=service.company_id)
+            if row_ids:
+                book_follow_rows_dropped = ProjectOrderInquiryService(db).follow_book_for_rows(
+                    row_ids, trigger="autocount_ingest",
+                    company_id=service.company_id, actor_user_id=actor,
+                    max_rows=ProjectOrderInquiryService.FOLLOW_BOOK_FOR_ROWS_MAX_ROWS,
+                )
+        db.commit()
+    except Exception:  # noqa: BLE001 - best-effort, the ingest already succeeded
+        db.rollback()
+        logger.warning("ingest.follow_book_for_rows_po_hook_failed", exc_info=True)
+    return book_follow_rows_dropped
+
+
+def _refs_from_written_spo_allocations(
+    db: Session, allocation_ids: set[str], *, company_id: str
+) -> set[str]:
+    """The SO line refs the book states for these allocations - each one's own
+    `from_so_line_ref`, or, when it names only a purchase-order line, that
+    line's own `from_so_line_ref` (matched on `from_po_number` AND the line's
+    own `source_ref` - `_chain_allocations`'s exact-key reasoning:
+    `purchase_order_lines.source_ref` is not unique, the August extract wrote
+    bare ordinals onto hundreds of lines each).
+
+    `from_po_line_ref` is stripped before it becomes part of the key (review
+    round item 6), the same way `_chain_allocations` itself strips it: a
+    trailing/leading space on either side of the match would otherwise miss
+    silently rather than resolve."""
+    wanted = sorted({str(i) for i in allocation_ids if i})
+    if not wanted:
+        return set()
+    rows = (
+        db.query(
+            SPOAllocation.from_so_line_ref,
+            SPOAllocation.from_po_line_ref,
+            SPOAllocation.from_po_number,
+        )
+        .filter(SPOAllocation.id.in_(wanted), SPOAllocation.company_id == company_id)
+        .all()
+    )
+    refs = {r[0] for r in rows if r[0]}
+    chain_keys = {
+        (r[2], (r[1] or "").strip()) for r in rows if not r[0] and (r[1] or "").strip() and r[2]
+    }
+    if not chain_keys:
+        return refs
+    po_numbers = sorted({key[0] for key in chain_keys})
+    line_refs = sorted({key[1] for key in chain_keys})
+    po_lines = (
+        db.query(
+            PurchaseOrderLine.source_ref,
+            PurchaseOrderLine.from_so_line_ref,
+            PurchaseOrder.po_number,
+        )
+        .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+        .filter(
+            PurchaseOrder.po_number.in_(po_numbers),
+            PurchaseOrderLine.source_ref.in_(line_refs),
+            PurchaseOrderLine.company_id == company_id,
+        )
+        .all()
+    )
+    for source_ref, from_so_ref, po_number in po_lines:
+        if from_so_ref and (po_number, source_ref) in chain_keys:
+            refs.add(from_so_ref)
+    return refs
+
+
+def _run_follow_book_spo_hook(db: Session, service, *, actor: Optional[str]) -> int:
+    """S2 (`PLAN-oi-follow-book-chain.md`, AC-FB-22): the SPO twin of the PO
+    hook above - `service.written_spo_allocation_ids` is `ShippingOrderIngest
+    Service`'s own capture of every allocation this push wrote (created,
+    updated or adopted).
+
+    Same shape: its own savepoint, its own commit, best effort. Returns the
+    dropped-row count past `FOLLOW_BOOK_FOR_ROWS_MAX_ROWS` - 0 when there was
+    nothing to follow or the hook's own transaction failed.
+    """
+    book_follow_rows_dropped = 0
+    allocation_ids = getattr(service, "written_spo_allocation_ids", None)
+    if not allocation_ids:
+        return book_follow_rows_dropped
+    try:
+        with db.begin_nested():
+            refs = _refs_from_written_spo_allocations(
+                db, allocation_ids, company_id=service.company_id
+            )
+            row_ids = (
+                _rows_for_core_line_refs(db, refs, company_id=service.company_id)
+                if refs
+                else []
+            )
+            if row_ids:
+                book_follow_rows_dropped = ProjectOrderInquiryService(db).follow_book_for_rows(
+                    row_ids, trigger="autocount_ingest",
+                    company_id=service.company_id, actor_user_id=actor,
+                    max_rows=ProjectOrderInquiryService.FOLLOW_BOOK_FOR_ROWS_MAX_ROWS,
+                )
+        db.commit()
+    except Exception:  # noqa: BLE001 - best-effort, the ingest already succeeded
+        db.rollback()
+        logger.warning("ingest.follow_book_for_rows_spo_hook_failed", exc_info=True)
+    return book_follow_rows_dropped
 
 
 def _entity(entity: str) -> str:
@@ -527,9 +773,16 @@ def ingest_masters(
         # `DocumentIngestService` or `ShippingOrderIngestService` batch
         # reaches this.
         if isinstance(service, (DocumentIngestService, ShippingOrderIngestService)):
-            _run_document_hooks(
-                db, entity, service, actor=current_user.get("id")
-            )
+            # S4 review fix (17 Sep): the hook return is the only place this batch's
+            # own `follow_book_repairing` cap-overflow count reaches the caller - it
+            # runs after `result` was already built, so it is folded in here rather
+            # than lost to a log line only the operator never sees. S2 (AC-FB-24)
+            # widened the tuple to carry `follow_book_for_rows`' own dropped count
+            # the same way.
+            (
+                result.book_repair_moves_dropped,
+                result.book_follow_rows_dropped,
+            ) = _run_document_hooks(db, entity, service, actor=current_user.get("id"))
 
     logger.info(
         "ingest.batch entity=%s integration=%s company=%s dry_run=%s "
@@ -601,6 +854,35 @@ def delete_records(
             code="BATCH_TOO_LARGE",
         )
 
+    # "2.4" (ingest-products-code-wins, SR0): optional `codes`, a
+    # source_ref -> code map so a product deletion can still find its row
+    # when the reference alone misses. Absent is fine (every pre-2.4 caller);
+    # present has to be an object of strings, or nothing is deleted - the
+    # SAME shape/code as the `source_refs` check above, so the ESB does not
+    # learn two different 422 conventions on one endpoint.
+    codes = payload.get("codes")
+    if codes is not None:
+        if not isinstance(codes, dict) or any(
+            not isinstance(value, str) for value in codes.values()
+        ):
+            raise AppException(
+                status_code=422,
+                message="Body 'codes', when present, must be an object of source_ref -> code strings",
+                code="INVALID_BODY",
+            )
+        # Fix round 1: the SAME cap `source_refs` already carries, refused
+        # with the same status/code/shape - `codes` is a second per-batch
+        # array on this body and must not be a way around the limit above.
+        if len(codes) > MAX_BATCH:
+            raise AppException(
+                status_code=413,
+                message=(
+                    f"Batch of {len(codes)} 'codes' entries exceeds the maximum of {MAX_BATCH}. "
+                    "Split it; the response is never silently truncated."
+                ),
+                code="BATCH_TOO_LARGE",
+            )
+
     company_id = resolve_company_anchor(db, payload, current_user)
 
     service = DeletionService(
@@ -609,7 +891,7 @@ def delete_records(
         company_id=company_id,
     )
     try:
-        result = service.delete(entity, source_refs, dry_run=dry_run)
+        result = service.delete(entity, source_refs, codes=codes, dry_run=dry_run)
     except UnsupportedIngestEntity as exc:
         raise AppException(status_code=404, message=str(exc), code="UNKNOWN_ENTITY")
 

@@ -40,11 +40,19 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
+import { Field } from '@/components/common/Field';
+import AttachmentFileCard from '@/components/common/AttachmentFileCard';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { getProducts } from '@/app/(protected)/master-data-management/products/services/productService';
+import {
+  SET_OPTION_PREFIX,
+  aliasTargetFor,
+  fetchProductOrSetOptions,
+  isSetOption,
+  renderProductOrSetOption,
+} from '../../../components/productOrSetPicker';
 import { useUOMSelectQuery } from '@/app/(protected)/master-data-management/shared/hooks/use-uom-select-query';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useUrlTab } from '@/hooks/useUrlTab';
@@ -57,6 +65,7 @@ import {
   useProformaInvoicePacking,
   useProformaInvoicePackingMutations,
 } from '../../../hooks/useProformaInvoicePacking';
+import { useMatchSupplierCode } from '../../../hooks/useSupplierCodeAliases';
 import { packedQtyForLine } from '../../services/proformaInvoicePackingService';
 import { EM_DASH, fmtDate, fmtQty, fmtSupplierCost, fmtTrimmedDecimal } from '../../../lib/format';
 import {
@@ -67,7 +76,6 @@ import {
 } from '../../../services/proformaInvoiceService';
 import ConvertToPackingListDialog from '../../components/ConvertToPackingListDialog';
 import { DescriptionEnCell } from '../../components/DescriptionEnCell';
-import MatchToProductDialog from '../../../components/MatchToProductDialog';
 import OverCapacityDialog from '../../components/OverCapacityDialog';
 import { ProformaInvoicePackingListsTab } from './ProformaInvoicePackingListsTab';
 import { ProformaInvoicePackingTab } from './ProformaInvoicePackingTab';
@@ -82,6 +90,11 @@ import BackToList, { useBackToListHref } from '@/components/common/BackToList';
 
 const CONVERT_PERMISSION = 'scm.reorder.run';
 const ADJUST_PERMISSION = 'scm.proforma_invoice.upload';
+/** Writing a supplier-code ruling is `scm.reorder.run`, the permission the alias POST and
+ *  DELETE are behind (`fulfilment.py`). The Product picker acts on THAT, so it is offered
+ *  only to somebody who holds it as well as the invoice's own adjust permission - a select
+ *  that 403s on the pick is worse than a plain read-only code. */
+const RULING_PERMISSION = CONVERT_PERMISSION;
 
 /** Keyed off the read permission plus a stable id, never the record's own path - a 30-line
  *  invoice is read with the same few columns every time and the choice has to survive. */
@@ -94,29 +107,6 @@ const PRODUCT_PAGE_SIZE = 50;
  *  packing rows, AC-B9), Revisions, Packing lists (which SHIPMENT this invoice's lines
  *  went to, once converted - a different question from Packing). */
 const PI_TABS = ['general', 'lines', 'packing', 'revisions', 'packing-lists'] as const;
-
-function Field({
-  label,
-  htmlFor,
-  children,
-}: {
-  label: string;
-  htmlFor?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="flex flex-col gap-1">
-      {htmlFor ? (
-        <Label className="text-xs font-normal text-muted-foreground" htmlFor={htmlFor}>
-          {label}
-        </Label>
-      ) : (
-        <span className="text-xs text-muted-foreground">{label}</span>
-      )}
-      <span className="text-sm font-medium">{children}</span>
-    </div>
-  );
-}
 
 /**
  * One line as the EDIT DRAFT holds it - and, in view mode, as the grid reads it.
@@ -206,6 +196,9 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
   const backHref = useBackToListHref('/scm/proforma-invoices');
   const canConvert = useHasPermission(CONVERT_PERMISSION);
   const canAdjust = useHasPermission(ADJUST_PERMISSION);
+  const canRule = useHasPermission(RULING_PERMISSION);
+  /** Both, for the Product cell: it edits the line AND writes the supplier's ruling. */
+  const canPickProduct = canAdjust && canRule;
   const { data, isLoading, isError } = useProformaInvoice(id);
   // AC-B4: the master list, not free text - "unit" and "UNIT" read as one unit here and two
   // strings on the export.
@@ -238,6 +231,13 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
     verb: 'Forgetting',
     successMessage: 'Match forgotten.',
     invalidateKeys: [['scm', 'proforma-invoices', 'detail', id]],
+    // In the cell the picker was in (S7, AC-7.5): clearing the Product select IS the
+    // forget, so the countdown belongs where the control the reader just used stands,
+    // not in a toast over a screen they are still reading.
+    surface: 'inline',
+    // The cell is 240px, narrower than the countdown's own comfortable minimum: without
+    // this it overflowed the column and the Cancel button came out as "Canc".
+    countdownClassName: 'w-full min-w-0',
   });
   // Destructured for the Lines grid's `columns` memo below: `run` is the only thing that
   // memo calls, and it never changes reference (`useDeferredRowAction`'s own `useCallback`
@@ -247,6 +247,59 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
   // DIFFERENT row is open recomputed every column, remounted every row's `SearchableSelect`,
   // and silently closed the open popover (reproduced in isolation, S2 tester).
   const forgetMatch = matchForgetting.run;
+  // Which ruling is counting down, as a plain string: the cells below have to know, and
+  // depending on the countdown NODE would rebuild `columns` on every render of the window
+  // for the same reason the note above gives. The node itself is read through a ref at
+  // cell-render time, which costs the memo nothing.
+  const forgetTargetId = matchForgetting.targetId;
+  const forgetCountdownRef = useRef<React.ReactNode>(null);
+  forgetCountdownRef.current = matchForgetting.countdown;
+  // "This code is that product", written the moment it is picked (S7): the same hook the
+  // Match dialog used, so the rebind count is still toasted and every screen reading those
+  // rows is invalidated together.
+  const matchCode = useMatchSupplierCode();
+  // `mutateAsync` off the hook, not the hook's result object: the object is a new one on
+  // every render, and `columns` below depends on the writer.
+  const writeMatch = matchCode.mutateAsync;
+  /** A ruling is being written, so the pickers go quiet until the server has answered
+   *  (AC-7.3) - one ruling at a time, and the answer re-points rows on other lines too. */
+  const matchPending = matchCode.isPending;
+  const supplierId = data?.supplier_id ?? '';
+  // Read through a ref by the writer below: `patchLine` is declared further down (it needs
+  // the draft state) and a fresh function every render would rebuild `columns` every
+  // render, which is the one thing this grid cannot survive.
+  const patchLineRef = useRef<(key: string, patch: Partial<DraftLine>) => void>(() => {});
+  /** Record what the picked option means for this supplier's code (AC-7.3, AC-7.4).
+   *
+   *  The DRAFT is patched with the same answer once the server has taken it: in read mode
+   *  the invalidated detail query brings the new binding back on its own, but an edit
+   *  session renders from `draftLines`, which no refetch touches - the cell would have
+   *  gone on showing the old code until Cancel. Patching it also makes the eventual Save
+   *  agree with what the server already holds, so the line is written back unchanged
+   *  rather than reverted. */
+  const writeCodeMatch = useCallback(
+    async (supplierCode: string, option: SearchableSelectOption, rowKey: string) => {
+      const value = option.value;
+      if (!supplierId || !value) return;
+      try {
+        await writeMatch({
+          supplier_id: supplierId,
+          supplier_code: supplierCode,
+          ...aliasTargetFor(value),
+        });
+      } catch {
+        // The hook toasts the refusal; the cell keeps whatever it already held.
+        return;
+      }
+      const set = isSetOption(value);
+      patchLineRef.current(rowKey, {
+        productId: set ? null : value,
+        productSetId: set ? value.slice(SET_OPTION_PREFIX.length) : null,
+        productCode: option.code ?? null,
+      });
+    },
+    [supplierId, writeMatch],
+  );
 
   // The tab lives in the URL, not component state (S1, AC-A1-A4): reload, the record's own
   // prev/next pager, and pressing Edit all have to land back on the tab she was reading.
@@ -270,8 +323,6 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
     containerSizeId: string | null;
   } | null>(null);
   const [saving, setSaving] = useState(false);
-  /** The line whose supplier code is being answered by hand (R16). */
-  const [codeToMatch, setCodeToMatch] = useState<ProformaInvoiceLine | null>(null);
   /** Attach / Replace packing list (S2, AC-B10) - the shared upload dialog, opened with
    *  the supplier and this invoice preselected and locked (`attachTo`). */
   const [packingUploadOpen, setPackingUploadOpen] = useState(false);
@@ -301,26 +352,21 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
    *  default its item code from the product without parsing the option's label. */
   const productCodes = useRef<Map<string, { code: string; uom: string }>>(new Map());
 
-  const fetchProducts = useCallback(async (query: string, pageIndex: number) => {
-    const res = await getProducts({
-      pageIndex,
-      pageSize: PRODUCT_PAGE_SIZE,
-      sorting: [],
-      searchQuery: query,
-      status: 'active',
-    });
-    return (res.data ?? []).map((p) => {
-      productCodes.current.set(p.id, {
-        code: p.product_code,
-        uom: p.base_uom?.uom_code ?? '',
-      });
-      return {
-        value: p.id,
-        label: `${p.product_code} - ${p.product_name}`,
-        searchText: `${p.product_code} ${p.product_name}`,
-      };
-    });
-  }, []);
+  /**
+   * Products AND our product sets in one list (S7), the same picker the loading plan's
+   * Supplier codes cell reads from: the supplier prices a whole WC, and a line whose code
+   * means one of our SETS cannot be answered by a products-only list.
+   *
+   * The product half is recorded on the way past, because an added line fills its item code
+   * and UOM from the product chosen and an option value alone says neither.
+   */
+  const fetchProductOrSet = useCallback(
+    (query: string, pageIndex: number) =>
+      fetchProductOrSetOptions(query, pageIndex, (products) => {
+        for (const p of products) productCodes.current.set(p.id, { code: p.code, uom: p.uom });
+      }),
+    [],
+  );
 
   // Editing starts from whatever the server currently holds, every time - a draft left over
   // from a cancelled edit would silently re-apply what the user backed out of. It does NOT
@@ -353,6 +399,7 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
   const patchLine = (key: string, patch: Partial<DraftLine>) => {
     setDraftLines((prev) => prev.map((r) => (r.key === key ? { ...r, ...patch } : r)));
   };
+  patchLineRef.current = patchLine;
 
   const addLine = () => {
     setDraftLines((prev) => [
@@ -559,58 +606,140 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
       {
         id: 'product',
         header: ({ column }) => <DataGridColumnHeader title="Product" column={column} />,
+        /**
+         * What this line IS, and the one place it is answered (S7).
+         *
+         * A line the supplier gave a code for is answered by a supplier-code RULING, not by
+         * an edit: picking here writes "this code means that product or set" the moment it
+         * is picked, re-binds every row already on file under the code, and holds for every
+         * later upload. So the control is the same in read mode and in edit mode, and there
+         * is no Match column beside it offering the same decision through a second door.
+         *
+         * A row the operator added by hand has no code to rule on, so it keeps the draft
+         * behaviour it always had: pick in edit mode, written on Save.
+         */
         cell: ({ row }) => {
           const line = row.original;
+          const saved = line.source;
+          // The code ON FILE, never the one being typed: an alias is written against a code
+          // the invoice actually carries, and a half-typed one names nothing.
+          const supplierCode = saved?.item_code?.trim() ?? '';
+          const matchId = saved?.match_id ?? null;
+          const value = line.productId
+            ? line.productId
+            : line.productSetId
+              ? `${SET_OPTION_PREFIX}${line.productSetId}`
+              : '';
+          const label = line.productCode ?? saved?.set_code ?? null;
+
+          if (!canPickProduct) {
+            // AC-7.7: picking here edits the line and writes the supplier's ruling, so it
+            // takes both permissions; short of either, the answer is read-only text.
+            return label ? (
+              <span className="truncate" title={label}>
+                {label}
+              </span>
+            ) : (
+              <span className="text-muted-foreground">{EM_DASH}</span>
+            );
+          }
+
+          if (supplierCode) {
+            // The countdown, only while there IS one: `forgetTargetId` alone still named
+            // this row for a beat after Cancel, and the cell went blank with it.
+            const forgettingThis =
+              matchId && forgetTargetId === matchId ? forgetCountdownRef.current : null;
+            if (forgettingThis) {
+              return <>{forgettingThis}</>;
+            }
+            return (
+              <SearchableSelect
+                value={value}
+                onChange={() => {}}
+                onOptionChange={(opt) => {
+                  if (opt) {
+                    void writeCodeMatch(supplierCode, opt, line.key);
+                    return;
+                  }
+                  // Cleared: the ruling is withdrawn, not corrected - the code goes back to
+                  // whatever the ladder can work out on its own, after the window lapses.
+                  if (matchId) {
+                    forgetMatch({
+                      id: matchId,
+                      subject: `${supplierCode} means ${label ?? 'this product'}`,
+                    });
+                  }
+                }}
+                fetchOptions={fetchProductOrSet}
+                renderOption={renderProductOrSetOption}
+                paginated
+                pageSize={PRODUCT_PAGE_SIZE}
+                selectedOption={value && label ? { value, label } : undefined}
+                placeholder="Search a product or set"
+                emptyMessage="No product or set found."
+                size="sm"
+                truncateTriggerLabel
+                // Only a ruling can be withdrawn: a line the ladder has not answered has
+                // nothing to clear.
+                clearable={!!matchId}
+                disabled={matchPending || line.removed}
+              />
+            );
+          }
+
           if (editing) {
             // A line matched to a SET (R19) has no `productId` - the select still shows
             // the match, keyed by the set's id, so a bound line never reads empty in edit
-            // mode (AC-B2). This select only SEARCHES products; the only new value it can
-            // ever produce for `productSetId` is `null` - picking (or clearing) always
-            // resolves the line to one binding, never two at once.
-            const selectValue = line.productId ?? line.productSetId ?? '';
+            // mode (AC-B2).
             return (
               // SERVER-SEARCHED and paginated: the catalogue is tens of thousands of rows,
               // and a picker holding one cached page silently hides the item being looked for.
               <SearchableSelect
-                value={selectValue}
-                onChange={(v: string) => {
-                  const known = v ? productCodes.current.get(v) : undefined;
+                value={value}
+                onChange={() => {}}
+                onOptionChange={(opt) => {
+                  const v = opt?.value ?? '';
+                  const set = !!v && isSetOption(v);
+                  // The option's own code, so a SET reads as its set code rather than
+                  // keeping whatever product code was there before it. `productCodes` is
+                  // still consulted for the UOM, which only a product has.
+                  const code = opt?.code ?? null;
+                  const known = v && !set ? productCodes.current.get(v) : undefined;
                   patchLine(line.key, {
-                    productId: v || null,
-                    productSetId: null,
-                    productCode: known?.code ?? (v ? line.productCode : null),
+                    productId: set || !v ? null : v,
+                    productSetId: set ? v.slice(SET_OPTION_PREFIX.length) : null,
+                    productCode: code ?? (v ? line.productCode : null),
                     // Only where the operator has not written one themselves: the supplier's
                     // own spelling is the document of record, and overwriting it would make
-                    // our copy disagree with their paper.
-                    ...(known && !line.itemCode.trim() ? { itemCode: known.code } : {}),
+                    // our copy disagree with their paper. A hand-added row has no supplier
+                    // spelling at all, and a line with no code cannot be saved.
+                    ...(code && !line.itemCode.trim() ? { itemCode: code } : {}),
                     ...(known?.uom && !line.uom.trim() ? { uom: known.uom } : {}),
                   });
                 }}
-                fetchOptions={fetchProducts}
+                fetchOptions={fetchProductOrSet}
+                renderOption={renderProductOrSetOption}
                 paginated
                 pageSize={PRODUCT_PAGE_SIZE}
-                selectedOption={
-                  selectValue && line.productCode
-                    ? { value: selectValue, label: line.productCode }
-                    : undefined
-                }
-                placeholder="Search a product"
-                emptyMessage="No product found."
+                selectedOption={value && label ? { value, label } : undefined}
+                placeholder="Search a product or set"
+                emptyMessage="No product or set found."
                 size="sm"
+                truncateTriggerLabel
                 clearable
                 disabled={line.removed}
               />
             );
           }
-          return line.productCode ? (
-            <span className="truncate" title={line.productCode}>
-              {line.productCode}
+          return label ? (
+            <span className="truncate" title={label}>
+              {label}
             </span>
           ) : (
             <span className="text-muted-foreground">{EM_DASH}</span>
           );
         },
-        size: 190,
+        size: 240,
         enableSorting: false,
         meta: { headerTitle: 'Product' },
       },
@@ -960,121 +1089,6 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
         },
       },
       {
-        id: 'matched',
-        header: ({ column }) => <DataGridColumnHeader title="Match" column={column} />,
-        cell: ({ row }) => {
-          const line = row.original.source;
-          if (!line) {
-            // A row the operator added: it is matched by the product they picked, and there
-            // is no recorded supplier-code ruling to change or forget yet.
-            return row.original.productId ? (
-              <Badge variant="success" appearance="light">
-                Matched
-              </Badge>
-            ) : (
-              <span className="text-muted-foreground">{EM_DASH}</span>
-            );
-          }
-          if (!line.matched) {
-            // The code binds to nothing we hold. Answering it here is the point: the
-            // convert reads these lines, so an unmatched one is a line that cannot ship.
-            return (
-              <div className="flex flex-col items-start gap-1">
-                <Badge
-                  variant="secondary"
-                  appearance="light"
-                  title={line.unmatched_reason ?? undefined}
-                >
-                  Not in catalogue
-                </Badge>
-                {line.unmatched_reason ? (
-                  <span
-                    className="truncate text-2xs text-muted-foreground"
-                    title={line.unmatched_reason}
-                  >
-                    {line.unmatched_reason}
-                  </span>
-                ) : null}
-                {canAdjust ? (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 px-1.5 text-2xs"
-                    onClick={() => setCodeToMatch(line)}
-                  >
-                    Match to product or set
-                  </Button>
-                ) : null}
-              </div>
-            );
-          }
-          return (
-            <div className="flex flex-col items-start gap-0.5">
-              <span className="flex items-center gap-1">
-                <Badge variant="success" appearance="light">
-                  Matched
-                </Badge>
-                {line.set_code ? (
-                  // The supplier priced the whole WC, and our catalogue holds only its
-                  // parts (R19). Badged so nobody reads the set code as a product code we
-                  // are missing; the conversion is what splits it into members.
-                  <Badge
-                    variant="secondary"
-                    appearance="light"
-                    title={`Product set ${line.set_code}`}
-                  >
-                    Set
-                  </Badge>
-                ) : null}
-                {line.match_source === 'auto' ? (
-                  // A guess, marked as one, with the rung that made it in the title. The
-                  // reason is not spelled out on screen (no explanations here) - it is in
-                  // the tooltip for whoever is checking it.
-                  <Badge
-                    variant="secondary"
-                    appearance="light"
-                    title={`Matched by ${line.matched_by ?? 'the supplier code ladder'}`}
-                  >
-                    auto
-                  </Badge>
-                ) : null}
-              </span>
-              {canAdjust && line.match_source ? (
-                <span className="flex items-center gap-1">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 px-1.5 text-2xs"
-                    onClick={() => setCodeToMatch(line)}
-                  >
-                    Change
-                  </Button>
-                  {/* Withdrawing the ruling, not correcting it - the code goes back to
-                      whatever the ladder can work out on its own. */}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 px-1.5 text-2xs"
-                    onClick={() =>
-                      line.match_id &&
-                      forgetMatch({
-                        id: line.match_id,
-                        subject: `${line.item_code} means ${line.product_code ?? 'this product'}`,
-                      })
-                    }
-                  >
-                    Forget
-                  </Button>
-                </span>
-              ) : null}
-            </div>
-          );
-        },
-        size: 170,
-        enableSorting: false,
-        meta: { headerTitle: 'Match' },
-      },
-      {
         id: 'line_actions',
         header: '',
         // Marking, not deleting. The row stays on screen struck through until Save, and Undo
@@ -1111,7 +1125,19 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
       },
     ],
     // `forgetMatch`, not `matchForgetting` - see the note where it is destructured above.
-    [id, data?.currency, editing, canAdjust, fetchProducts, forgetMatch, uomSelectOptions],
+    [
+      id,
+      data?.currency,
+      editing,
+      canAdjust,
+      canPickProduct,
+      fetchProductOrSet,
+      forgetMatch,
+      forgetTargetId,
+      matchPending,
+      writeCodeMatch,
+      uomSelectOptions,
+    ],
   );
 
   const table = useReactTable({
@@ -1162,6 +1188,22 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
   const deleteBlockedReason = converted
     ? `Already converted to ${invoice.converted_shipments.map((s) => s.shipment_number ?? 'a packing list').join(', ')}`
     : undefined;
+
+  // The files the record actually LINKS (S8), and the one it can only name. A workbook
+  // whose filing failed leaves `source_ref` - the name the apply stamped - with no
+  // attachment behind it, so that row is still printed, without buttons it cannot honour.
+  // The packing workbook needs no such fallback: `packing_file` is DERIVED from these same
+  // links server-side, so a packing file with no link cannot reach this screen at all.
+  //
+  // D1 (PLAN-pi-header-fields-convert-fixes-24sep.md): shown only when there is NO linked
+  // source file at all - matched on whether a link EXISTS, never on whether its name
+  // happens to equal `source_ref`'s. `sanitize_storage_filename` strips characters like
+  // `（1）` on the way into the link's own name, so the same upload's link and its raw
+  // `source_ref` can legitimately spell the name two different ways (AC-S1) - a name
+  // comparison read that as "two different files" and printed the one upload twice.
+  const sourceFiles = invoice.source_files ?? [];
+  const unlinkedSourceRef =
+    invoice.source_ref && sourceFiles.length === 0 ? invoice.source_ref : null;
 
   /** The placement, as one chip in the header - "Not converted", "Split", or the container. */
   const placementBadge =
@@ -1365,8 +1407,14 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
                 )}
               </Field>
               <Field label="Invoice date">{fmtDate(invoice.invoice_date)}</Field>
+              {/* A3 (PLAN-pi-header-fields-convert-fixes-24sep.md), SO added by R-E (owner
+                  ruling 25 Sep): Container, Seal, BL, SO, Consignee in that order - the
+                  same five facts, same order, the converted packing list shows (H1/H2). */}
               <Field label="Container">{invoice.container_no ?? EM_DASH}</Field>
+              <Field label="Seal">{invoice.seal_no ?? EM_DASH}</Field>
               <Field label="BL">{invoice.bl_no ?? EM_DASH}</Field>
+              <Field label="SO">{invoice.so_no ?? EM_DASH}</Field>
+              <Field label="Consignee">{invoice.consignee ?? EM_DASH}</Field>
               <Field label="Currency">{invoice.currency ?? EM_DASH}</Field>
               <Field label="Total">
                 {fmtSupplierCost(invoice.total_amount, invoice.currency)}
@@ -1419,36 +1467,36 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
                 <CardTitle>Source files</CardTitle>
               </CardHeading>
             </CardHeader>
-            <section aria-label="Source files" className="p-4">
-              {!invoice.source_ref && !packing.data?.file ? (
+            <section aria-label="Source files" className="space-y-2 p-4">
+              {sourceFiles.length === 0 && !unlinkedSourceRef ? (
                 <p className="text-sm text-muted-foreground">No source file on record.</p>
               ) : (
-                <ul className="divide-y divide-border rounded-lg border text-sm">
-                  {invoice.source_ref ? (
-                    <li className="flex items-center justify-between gap-2 p-2.5">
-                      <div className="min-w-0">
-                        <p className="truncate font-medium" title={invoice.source_ref}>
-                          {invoice.source_ref}
-                        </p>
-                        <p className="text-2xs text-muted-foreground">
-                          Proforma invoice · {fmtDate(invoice.created_at)}
-                        </p>
-                      </div>
-                    </li>
+                <>
+                  {/* A linked file is the same row the packing list's own Documents card
+                      draws (S8): openable and downloadable, never merely named. Nothing is
+                      detached from here - the link IS what the invoice was read from. */}
+                  {sourceFiles.map((file) => (
+                    <AttachmentFileCard
+                      key={file.id}
+                      attachmentId={file.attachment_id}
+                      name={file.name ?? 'Source file'}
+                      typeLabel={file.type}
+                      sizeBytes={file.file_size_bytes ?? null}
+                    />
+                  ))}
+                  {/* A file uploaded before the link existed is still named here, with the
+                      date it arrived - there is no attachment to offer buttons for. */}
+                  {unlinkedSourceRef ? (
+                    <div className="rounded-lg border p-3">
+                      <p className="truncate text-sm font-medium" title={unlinkedSourceRef}>
+                        {unlinkedSourceRef}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Proforma invoice • {fmtDate(invoice.created_at)}
+                      </p>
+                    </div>
                   ) : null}
-                  {packing.data?.file ? (
-                    <li className="flex items-center justify-between gap-2 p-2.5">
-                      <div className="min-w-0">
-                        <p className="truncate font-medium" title={packing.data.file.name}>
-                          {packing.data.file.name}
-                        </p>
-                        <p className="text-2xs text-muted-foreground">
-                          Packing list · {fmtDate(packing.data.file.uploaded_at)}
-                        </p>
-                      </div>
-                    </li>
-                  ) : null}
-                </ul>
+                </>
               )}
             </section>
           </Card>
@@ -1515,24 +1563,9 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
           {/* Which containers this invoice's goods went into (ruling 26). One row per
               packing list and nothing else: what is still to place is the convert dialog's
               own table, and why a line cannot go is the Lines tab's Matched column. */}
-          <ProformaInvoicePackingListsTab
-            invoice={invoice}
-            onConvert={showConvert ? () => setConvertOpen(true) : undefined}
-            convertLabel={convertLabel}
-          />
+          <ProformaInvoicePackingListsTab invoice={invoice} />
         </TabsContent>
       </Tabs>
-
-      {/* "This code is that product" - recorded once, and every row already uploaded
-          under it is re-bound in the same write (R16). */}
-      <MatchToProductDialog
-        open={!!codeToMatch}
-        onOpenChange={(o) => !o && setCodeToMatch(null)}
-        supplierId={invoice.supplier_id}
-        supplierCode={codeToMatch?.item_code ?? null}
-        supplierLabel={codeToMatch?.description ?? null}
-        onMatched={() => setCodeToMatch(null)}
-      />
 
       <MarkAsRevisionDialog
         open={revisionOpen}

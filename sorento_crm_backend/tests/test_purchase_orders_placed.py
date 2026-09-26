@@ -65,6 +65,7 @@ def _po_line(
     header_expected=None,
     po_number=None,
     header_issue=None,
+    warehouse_id=None,
 ):
     po = PurchaseOrder(
         id=str(uuid.uuid4()),
@@ -81,6 +82,7 @@ def _po_line(
             id=str(uuid.uuid4()),
             purchase_order_id=po.id,
             product_id=product_id,
+            warehouse_id=warehouse_id,
             qty_ordered=ordered,
             qty_received=received,
             line_status=status,
@@ -89,6 +91,19 @@ def _po_line(
         )
     )
     return po
+
+
+def _warehouse(db, *, code="KL-WH"):
+    from app.models.inventory import Warehouse
+
+    row = Warehouse(
+        id=str(uuid.uuid4()),
+        warehouse_code=code,
+        company_id=DEFAULT_COMPANY_ID,
+    )
+    db.add(row)
+    db.flush()
+    return row
 
 
 # --------------------------------------------------------------------- service
@@ -339,14 +354,31 @@ def test_rows_carry_the_po_document_date(db):
     assert rows["PO-UNDATED"]["po_date"] is None
     assert set(rows["PO-DATED"]) == {
         "po_number", "product_id", "product_code", "product_name", "outstanding_qty",
-        "expected_date", "supplier", "po_date", "kind",
+        "expected_date", "supplier", "po_date", "kind", "ordered_qty", "location",
     }
+
+
+def test_po_row_carries_ordered_qty_and_the_lines_warehouse_as_location(db):
+    """The 11 Sep 2026 ruling: every row carries `ordered_qty` (the line's `qty_ordered`)
+    and `location` (the line's warehouse code, None when the line has no warehouse)."""
+    wh = _warehouse(db, code="KL-WH")
+    prod = product(db, company_id=DEFAULT_COMPANY_ID)
+    _po_line(db, product_id=prod.id, ordered=10, received=3, po_number="PO-WH", warehouse_id=wh.id)
+    _po_line(db, product_id=prod.id, ordered=8, received=0, po_number="PO-NO-WH")
+    db.commit()
+
+    rows = {r["po_number"]: r for r in purchase_orders_placed_rows(db, product_ids=[prod.id])}
+    assert rows["PO-WH"]["ordered_qty"] == 10
+    assert rows["PO-WH"]["location"] == "KL-WH"
+    assert rows["PO-NO-WH"]["ordered_qty"] == 8
+    assert rows["PO-NO-WH"]["location"] is None
 
 
 # --------------------------------------- item 5: unshipped SPO allocations are on order
 
 def _spo(db, *, product_id, allocated, received=0, status="pending", shipment=None, number=None,
-         issue=None, expected=None, supplier_id=None, po_line_id=None):
+         issue=None, expected=None, supplier_id=None, po_line_id=None, warehouse_id=None,
+         location_code=None):
     row = SPOAllocation(
         id=str(uuid.uuid4()),
         company_id=DEFAULT_COMPANY_ID,
@@ -360,6 +392,8 @@ def _spo(db, *, product_id, allocated, received=0, status="pending", shipment=No
         expected_date=expected,
         supplier_id=supplier_id,
         po_line_id=po_line_id,
+        warehouse_id=warehouse_id,
+        location_code=location_code,
     )
     db.add(row)
     db.flush()
@@ -383,7 +417,7 @@ def test_po_only_rows_carry_kind_po_and_nothing_else_moves(db):
     assert [(r["po_number"], r["kind"]) for r in rows] == [("PO-ONLY", "po")]
     assert set(rows[0]) == {
         "po_number", "product_id", "product_code", "product_name", "outstanding_qty",
-        "expected_date", "supplier", "po_date", "kind",
+        "expected_date", "supplier", "po_date", "kind", "ordered_qty", "location",
     }
 
 
@@ -404,6 +438,35 @@ def test_spo_only_rows_are_on_order_from_the_supplier(db):
     assert r["po_date"] == "2026-08-20" and r["expected_date"] == "2026-10-05"
     assert r["supplier"] == "Foshan Works"
     assert r["product_code"] == prod.product_code
+
+
+def test_spo_row_carries_ordered_qty_and_location_from_its_warehouse(db):
+    """The 11 Sep 2026 ruling: an SPO row's `ordered_qty` is `allocated_quantity`, and
+    `location` is the allocation's warehouse code when it has one."""
+    wh = _warehouse(db, code="BRW")
+    prod = product(db, company_id=DEFAULT_COMPANY_ID)
+    _spo(db, product_id=prod.id, allocated=15, number="SPO-WH", warehouse_id=wh.id)
+    db.commit()
+    rows = {r["po_number"]: r for r in purchase_orders_placed_rows(db, product_ids=[prod.id])}
+    assert rows["SPO-WH"]["ordered_qty"] == 15
+    assert rows["SPO-WH"]["location"] == "BRW"
+
+
+def test_spo_row_without_a_warehouse_falls_back_to_the_books_location_code(db):
+    prod = product(db, company_id=DEFAULT_COMPANY_ID)
+    _spo(db, product_id=prod.id, allocated=6, number="SPO-RAW-LOC", location_code="RAW-CODE-9")
+    db.commit()
+    rows = {r["po_number"]: r for r in purchase_orders_placed_rows(db, product_ids=[prod.id])}
+    assert rows["SPO-RAW-LOC"]["ordered_qty"] == 6
+    assert rows["SPO-RAW-LOC"]["location"] == "RAW-CODE-9"
+
+
+def test_spo_row_without_warehouse_or_location_code_has_location_none(db):
+    prod = product(db, company_id=DEFAULT_COMPANY_ID)
+    _spo(db, product_id=prod.id, allocated=9, number="SPO-NOWHERE")
+    db.commit()
+    rows = {r["po_number"]: r for r in purchase_orders_placed_rows(db, product_ids=[prod.id])}
+    assert rows["SPO-NOWHERE"]["location"] is None
 
 
 def test_an_spo_already_on_a_shipment_is_incoming_not_on_order(db):

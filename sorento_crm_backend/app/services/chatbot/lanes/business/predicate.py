@@ -2,8 +2,7 @@
 
 Work item B1 (`PLAN-attribute-first-asks.md`). No message-text matching beyond the
 existing `_CERT_RE` on an `attachment_type` entity's own `raw` - `derive_require` is
-`derive_routing`'s sibling (`app/services/chatbot/head/output_exchange.py`), not a
-second parser. A turn whose intent carries no leg returns `None` and behaves exactly
+`derive_routing`'s sibling, not a second parser. A turn whose intent carries no leg returns `None` and behaves exactly
 as it does today (AC-1322's invariant).
 
 Contract: `documentation/plans/chatbot/attribute-first-asks-acceptance-criteria.md`
@@ -14,7 +13,12 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from app.services.chatbot.head.output_exchange import _CERT_RE, _CERTIFICATE_RE
+# The two cert-word tests, declared HERE since the head module that used to own them is
+# retired with the rest of the post-processor. `_CERT_RE` also matches a SCHEME name
+# (span, sirim, bomba, ms####, halal, ikram), which is what lets "pps cert" split into a
+# bare leg plus a scheme; `_CERTIFICATE_RE` is the plain word on its own.
+_CERT_RE = re.compile(r"cert|ikram|span|sirim|bomba|ms\s?[0-9]|halal", re.IGNORECASE)
+_CERTIFICATE_RE = re.compile(r"cert|certificate", re.IGNORECASE)
 
 # Intents that need nothing beyond their own name to name a leg - the customer's own
 # word for each is also the leg's key, which is what `derive_predicate_words` below
@@ -75,6 +79,45 @@ def _attachment_type_raws(parser_output: dict[str, Any]) -> list[str]:
     return raws
 
 
+# The v3 verdict's own carrier for an attribute-first ask (turn re-architecture):
+# `requested_attributes` is what the customer asked ABOUT, and for these words the
+# attribute IS the leg. Read BEFORE the intent, because v3 states the attribute
+# explicitly where the pre-rearch prompt could only imply it through `intent_hint`.
+_LEG_BY_ATTRIBUTE_WORD: dict[str, str] = {
+    "cert": "certificate",
+    "certs": "certificate",
+    "certificate": "certificate",
+    "certificates": "certificate",
+    "certification": "certificate",
+    "certifications": "certificate",
+    "sijil": "certificate",
+    "stock": "stock",
+    "stok": "stock",
+    "incoming": "incoming",
+    "eta": "incoming",
+    "promotion": "promotion",
+    "promotions": "promotion",
+    "promo": "promotion",
+    "promosi": "promotion",
+}
+
+
+def _require_from_attributes(parser_output: dict[str, Any]) -> dict[str, Any] | None:
+    """`{leg: True}` for the first `requested_attributes` word that names a leg.
+
+    An attribute word the table does not know is NOT guessed into a leg: it stays a
+    plain requested attribute and the ordinary answer projects it, which is what a
+    spec question ("what is its width") has always done.
+    """
+    for raw in parser_output.get("requested_attributes") or []:
+        if not isinstance(raw, str):
+            continue
+        leg = _LEG_BY_ATTRIBUTE_WORD.get(raw.strip().lower())
+        if leg:
+            return {leg: True}
+    return None
+
+
 def derive_require(
     parser_output: dict[str, Any], *, message_text: str | None = None
 ) -> dict[str, Any] | None:
@@ -129,6 +172,10 @@ def derive_require(
     question, while "is this certified?" and the Malay "ada sijil untuk
     basin?" genuinely are one.
     """
+    from_attributes = _require_from_attributes(parser_output)
+    if from_attributes is not None:
+        return from_attributes
+
     intent = parser_output.get("intent_hint")
     if intent in _BARE_LEG_BY_INTENT:
         return {_BARE_LEG_BY_INTENT[intent]: True}
@@ -178,6 +225,9 @@ def derive_predicate_words(
     if not require:
         return []
     words = _attachment_type_raws(parser_output)
+    for raw in parser_output.get("requested_attributes") or []:
+        if isinstance(raw, str) and raw.strip() and raw not in words:
+            words.append(raw)
     intent = parser_output.get("intent_hint")
     if intent in _BARE_LEG_BY_INTENT:
         leg = _BARE_LEG_BY_INTENT[intent]

@@ -173,12 +173,47 @@ def test_the_payload_carries_this_company_and_no_other(db: Session, client: Test
             "debtor_name": "ZZT Dealer",
             "lines": [
                 {"line_type": "product", "product_id": mine.id},
-                {"line_type": "product", "product_id": theirs.id},
             ],
         },
     )
     db.flush()
-    line_ids = {line.product_id: line.id for line in request.lines}
+
+    # `create_request` / `replace_lines` now refuse a line whose product_id
+    # is not visible to the request's own company (INVALID_PART, 422) - the
+    # very thing this test exists to prove renders as nothing rather than as
+    # a leak. A foreign reference on a line is exactly what that guard is
+    # for going forward; what this test still needs is a LEGACY row that
+    # predates the guard (or one that reached the table some other way), so
+    # it is inserted directly through the ORM the way `_add_lines` /
+    # `_add_line_tags` build one, bypassing the guard on purpose rather than
+    # asking the service layer to create what it now refuses.
+    from app.models.price_tag import PriceTagRequestLine, PriceTagRequestTag
+
+    foreign_line = PriceTagRequestLine(
+        request_id=request.id,
+        line_type="product",
+        product_id=theirs.id,
+        show_promo_price=request.price_mode == "selling",
+        quantity=1,
+        sort_order=1,
+    )
+    db.add(foreign_line)
+    db.flush()
+    db.add(
+        PriceTagRequestTag(
+            line_id=foreign_line.id,
+            sort_order=0,
+            quantity=1,
+            choices={},
+        )
+    )
+    db.flush()
+    db.expire_all()
+
+    # `resolvedData` is keyed by TAG id since S3 (AC-S3-8): a line may print
+    # several tags, so a line id could no longer name one tile's data. One tag
+    # per line exists from creation, so the line's first tag IS its key here.
+    tag_ids = {line.product_id: line.tags[0].id for line in request.lines}
 
     download_id = _tag_sheet_download(db, request, _SORENTO)
     db.flush()
@@ -192,11 +227,11 @@ def test_the_payload_carries_this_company_and_no_other(db: Session, client: Test
     resolved = payload["resolvedData"]
 
     # This company's line is there...
-    assert line_ids[mine.id] in resolved
-    assert resolved[line_ids[mine.id]]["code"] == mine.product_code
+    assert tag_ids[mine.id] in resolved
+    assert resolved[tag_ids[mine.id]]["code"] == mine.product_code
     # `_resolved_payload` builds this dict by hand (not a `response_model`), so
     # nothing catches a field dropped on a future edit except a test naming it.
-    assert "barcode" in resolved[line_ids[mine.id]]
+    assert "barcode" in resolved[tag_ids[mine.id]]
     # ...and the other company's is not, by id or by code.
-    assert line_ids[theirs.id] not in resolved
+    assert tag_ids[theirs.id] not in resolved
     assert theirs.product_code not in response.text

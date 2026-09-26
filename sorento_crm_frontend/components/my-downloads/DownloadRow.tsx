@@ -42,6 +42,16 @@ export const KIND_LABEL: Record<string, string> = {
   quotation_pdf: 'Quotation PDF',
   quotation_xlsx: 'Quotation Excel',
   report_xlsx: 'Report Excel',
+  // The reorder plan's three printable views. The first two shipped without a label and
+  // rendered their raw kind whenever the row carried no filename yet (AC-3).
+  order_sheet_pdf: 'Order sheet PDF',
+  order_sheet_xlsx: 'Order sheet Excel',
+  low_stock_xlsx: 'Low stock report',
+  // V1 (fix round 1, PLAN-pi-header-fields-convert-fixes-24sep.md): the async
+  // packing-list export (E1/E2) writes rows with this kind; without a label here a
+  // row with no filename yet falls back to the raw key.
+  packing_list_xlsx: 'Packing list Excel',
+  stock_debt_xlsx: 'Stock debt Excel',
 };
 
 export function StatusBadge({ status }: { status: MyDownload['status'] }) {

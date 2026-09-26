@@ -22,16 +22,25 @@ const toasts = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn(), info: vi.fn
 vi.mock('@/lib/toast', () => ({ toast: toasts }));
 const toastError = toasts.error;
 
-vi.mock('../lib/price-tag-request-service', () => ({
+vi.mock('../lib/price-tag-request-service', async () => {
+  const { computeLinePricing } = await import('@/app/(auth)/portal/components/__fixtures__/line-pricing');
+  return {
+  lookupLinePricing: vi.fn(async (mode: string, lines: unknown[]) =>
+    computeLinePricing(mode as 'list' | 'selling', lines as never),
+  ),
   lookupDebtors: vi.fn(),
   lookupPromotions: vi.fn(async () => []),
   lookupTagItems: vi.fn(),
+  lookupProductCombos: vi.fn(async () => ({ host_guarded: false, combos: [] })),
   getRequest: vi.fn(),
   createRequest: vi.fn(),
   submitRequest: vi.fn(),
   approveRequest: vi.fn(),
   requestChanges: vi.fn(),
-}));
+  listReviewComments: vi.fn(async () => []),
+  collectRequest: vi.fn(),
+  };
+});
 
 /**
  * Stubbed as a native select so a pick is one `fireEvent.change`. The real
@@ -113,14 +122,35 @@ beforeEach(() => {
   (createRequest as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'req-1' });
 });
 
+// The lines table (and its "Add line" button) lives inside the "Sales Order
+// & Lines" section (D-P1), which is collapsed until a customer is picked
+// (AC-P3) or opened by hand - Radix's Collapsible unmounts its content while
+// closed, so a test that never picks a customer has to open it itself.
+function openSalesOrderSection() {
+  fireEvent.click(screen.getByRole('button', { name: /Sales Order & Lines/ }));
+}
+
 async function addLine() {
   fireEvent.click(screen.getByRole('button', { name: /Add line/ }));
+}
+
+/**
+ * r9 D7: `Printing` has no default and Submit refuses without it, so every
+ * test that expects a POST has to answer it first. The control lives in
+ * "Additional Information", which is collapsed until a price mode is chosen.
+ */
+async function pickPrinting() {
+  // AC-S1-1/S1-2 (r10): the portal no longer asks who prints - `printBy` is a
+  // constant 'self' every payload sends, so there is nothing left to click.
+  // Callers keep calling this (kept as a no-op) so the rest of each test body
+  // reads the same as it always has.
 }
 
 describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () => {
   it('adds a row with one button and offers sets and products in one dropdown', async () => {
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Debtor');
+    openSalesOrderSection();
 
     // The two Add buttons are gone: there is exactly one.
     expect(screen.queryByRole('button', { name: /^Product$/ })).toBeNull();
@@ -139,11 +169,10 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
 
   it('a picked product posts line_type product with the product id', async () => {
     render(<PriceTagRequestForm />);
+    // Need by is optional since D-P2b - Customer + one line is the whole
+    // requirement (AC-P10); picking the customer auto-opens Sales Order &
+    // Lines (AC-P3).
     await selectOption('Debtor', 'ZZTD01');
-    // The deadline starts empty since D48a, and Submit asks for it by name.
-    fireEvent.change(screen.getByLabelText(/Need by/), {
-      target: { value: '2026-09-30' },
-    });
 
     await addLine();
     await selectOption('Search a set or product...', 'product:prod-uuid-1');
@@ -151,6 +180,7 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
       target: { value: '2' },
     });
 
+    await pickPrinting();
     fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
 
     await waitFor(() => expect(createRequest).toHaveBeenCalled());
@@ -166,15 +196,13 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
 
   it('a picked set posts line_type product_set with no product id', async () => {
     render(<PriceTagRequestForm />);
+    // Need by is optional since D-P2b - see the note above.
     await selectOption('Debtor', 'ZZTD01');
-    // The deadline starts empty since D48a, and Submit asks for it by name.
-    fireEvent.change(screen.getByLabelText(/Need by/), {
-      target: { value: '2026-09-30' },
-    });
 
     await addLine();
     await selectOption('Search a set or product...', 'product_set:set-uuid-1');
 
+    await pickPrinting();
     fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
     await waitFor(() => expect(createRequest).toHaveBeenCalled());
     const payload = (createRequest as ReturnType<typeof vi.fn>).mock.calls[0][0];
@@ -183,14 +211,18 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
       product_set_id: 'set-uuid-1',
       product_id: null,
     });
-    // The field stays in the payload shape (an existing row still round-trips,
-    // D3) even though there is no longer a control to edit it.
-    expect(payload.lines[0].alternatives).toEqual([]);
+    // `alternatives` is GONE (S2, AC-S2-8) - the column is dropped and the
+    // payload never carries it again. What replaces it is `parts`: a set line
+    // has none (parts are a combo fact on a product line), so it posts empty
+    // rather than absent.
+    expect(payload.lines[0].alternatives).toBeUndefined();
+    expect(payload.lines[0].parts).toEqual([]);
   });
 
   it('a set row has no Alternatives column (D3/AC-S1-3)', async () => {
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Debtor');
+    openSalesOrderSection();
 
     await addLine();
     await selectOption('Search a set or product...', 'product_set:set-uuid-1');
@@ -202,6 +234,7 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
   it('a product row has no Alternatives column either', async () => {
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Debtor');
+    openSalesOrderSection();
 
     await addLine();
     await selectOption('Search a set or product...', 'product:prod-uuid-1');
@@ -213,6 +246,7 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
   it('removes a row without asking for a confirmation', async () => {
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Debtor');
+    openSalesOrderSection();
 
     await addLine();
     await screen.findByLabelText('Search a set or product...');
@@ -222,6 +256,54 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
       expect(screen.queryByLabelText('Search a set or product...')).toBeNull(),
     );
     expect(screen.getByText('No lines yet.')).toBeInTheDocument();
+  });
+});
+
+describe('PriceTagRequestForm - no line reorder arrows (R3-6, AC-R12)', () => {
+  it('renders no up/down move buttons on a line', async () => {
+    render(<PriceTagRequestForm />);
+    await screen.findByLabelText('Debtor');
+    openSalesOrderSection();
+
+    await addLine();
+    await screen.findByLabelText('Search a set or product...');
+
+    expect(screen.queryByLabelText(/Move line 1 up/)).toBeNull();
+    expect(screen.queryByLabelText(/Move line 1 down/)).toBeNull();
+    expect(screen.queryByTitle('Move up')).toBeNull();
+    expect(screen.queryByTitle('Move down')).toBeNull();
+  });
+});
+
+describe('PriceTagRequestForm - duplicate product refused inline (R3-7, AC-R12)', () => {
+  it('picking a product already on the request shows an inline message and does not add a line', async () => {
+    render(<PriceTagRequestForm />);
+    await screen.findByLabelText('Debtor');
+    openSalesOrderSection();
+
+    await addLine();
+    await selectOption('Search a set or product...', 'product:prod-uuid-1');
+
+    await addLine();
+    const pickers = screen.getAllByLabelText('Search a set or product...');
+    const secondPicker = pickers[1] as HTMLSelectElement;
+    // The mocked SearchableSelect resolves its options asynchronously
+    // (fetchOptions), so the second instance needs the same wait
+    // `selectOption` (test-utils) gives the first - firing the change before
+    // it resolves finds no matching option and the handler no-ops.
+    await waitFor(() =>
+      expect(Array.from(secondPicker.options).map((o) => o.value)).toContain(
+        'product:prod-uuid-1',
+      ),
+    );
+    fireEvent.change(secondPicker, { target: { value: 'product:prod-uuid-1' } });
+
+    expect(
+      await screen.findByText(/already on this request/i),
+    ).toBeInTheDocument();
+    // The second row stays an empty, unpicked line - the duplicate is
+    // refused before it ever becomes a second real line for the product.
+    expect(secondPicker).toHaveValue('');
   });
 });
 

@@ -22,27 +22,12 @@ from __future__ import annotations
 import logging
 from typing import Iterable, Optional
 
-from sqlalchemy import func, text
+from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session
 
-from app.models.order import SalesOrder
 from app.models.sales_agent import SalesAgent
 from app.services.error_handler import AppException
-from app.services.scm.demand_class import (
-    DEFAULT_DEMAND_CLASS,
-    DEMAND_CLASSES,
-    PROJECT,
-    PROJECT_SEGMENTS,
-    is_valid,
-)
-
-# Same substring match `demand_class.class_of` uses, rebuilt as SQL from `PROJECT_SEGMENTS`
-# itself (mirrors `analytics_service._PROJECT_SEGMENT_MATCH_SQL`) so the Python vocabulary
-# and the SQL cannot drift apart.
-_PROJECT_SEGMENT_MATCH_SQL = " OR ".join(
-    f"lower(trim(coalesce(c.market_segment_code, ''))) LIKE '%{seg}%'"
-    for seg in sorted(PROJECT_SEGMENTS)
-)
+from app.services.scm.demand_class import DEMAND_CLASSES, is_valid
 
 logger = logging.getLogger(__name__)
 
@@ -139,67 +124,38 @@ def assert_demand_class(value: Optional[str]) -> Optional[str]:
 
 
 def _backfill_null_class_orders(db: Session, agent: SalesAgent, demand_class: str) -> int:
-    """Give the agent's still-unclassified orders the class the ladder actually says.
+    """Give the agent's still-unclassified orders the agent's class.
 
-    `outstanding_import_service._classify_demand` reads the agent's class LAST, after order
-    type, the file's own type and the customer's market segment - so a row here (its
-    `demand_class` still NULL for THIS agent) has already had order type checked and found
-    silent, but its customer's segment has NOT been re-checked since. Filling every such row
-    from the agent, unconditionally, was the bug: a row whose segment answers must take the
-    SEGMENT's class, never the agent's - the agent is only a fallback for a customer with no
-    segment (or no customer at all). This mirrors the ladder for the two rungs that remain
-    live at backfill time instead of re-running the agent rung a second time as if it were
-    first.
+    PLAN-demand-class-agent-arrival.md (captain ruling 28 Aug 2026): the ladder puts the
+    selling agent ABOVE the customer's market segment
+    (`demand_class.classify_document`'s own order), because the sales force is split by
+    channel and one debtor can buy through both. A row here (its `demand_class` still NULL
+    for THIS agent) has already had order type checked and found silent, so the agent - not
+    a re-check of the customer's segment - is the next and correct answer. Re-ranking the
+    segment above the agent at backfill time, as this used to, disagreed with the ladder
+    every ingest push uses.
 
-    Two bulk UPDATEs, both scoped to `demand_class IS NULL` and `sales_agent_id = agent.id`
-    so only THIS agent's still-unclassified orders move and a row another rung already
-    answered keeps that answer:
-
-      1. Customer's `market_segment_code` states something -> segment's class (project via
-         the same substring match as `demand_class.class_of`, else retail).
-      2. No customer, or a customer with no stated segment -> the agent's class, same as
-         before.
-
-    Runs in the caller's transaction (flushed, not committed), so a demand class the policy
-    refuses leaves both the agent and its orders unchanged.
+    One bulk UPDATE, scoped to `demand_class IS NULL AND sales_agent_id = agent.id` so only
+    THIS agent's still-unclassified orders move and a row another rung already answered
+    keeps that answer. Runs in the caller's transaction (flushed, not committed), so a
+    demand class the policy refuses leaves both the agent and its orders unchanged.
     """
-    from_segment = db.execute(
-        text(
-            f"""
-            UPDATE sales_orders AS so
-               SET demand_class = CASE WHEN ({_PROJECT_SEGMENT_MATCH_SQL})
-                                        THEN :project_class ELSE :retail_class END
-              FROM customers AS c
-             WHERE c.id = so.customer_id
-               AND so.sales_agent_id = :agent_id
-               AND so.demand_class IS NULL
-               AND coalesce(trim(c.market_segment_code), '') <> ''
-            """
-        ),
-        {"agent_id": agent.id, "project_class": PROJECT, "retail_class": DEFAULT_DEMAND_CLASS},
-    ).rowcount or 0
-    from_agent = db.execute(
+    updated = db.execute(
         text(
             """
-            UPDATE sales_orders AS so
+            UPDATE sales_orders
                SET demand_class = :demand_class
-             WHERE so.sales_agent_id = :agent_id
-               AND so.demand_class IS NULL
-               AND NOT EXISTS (
-                   SELECT 1 FROM customers AS c
-                    WHERE c.id = so.customer_id
-                      AND coalesce(trim(c.market_segment_code), '') <> ''
-               )
+             WHERE sales_agent_id = :agent_id
+               AND demand_class IS NULL
             """
         ),
         {"agent_id": agent.id, "demand_class": demand_class},
     ).rowcount or 0
-    updated = from_segment + from_agent
     if updated:
         logger.info(
-            "sales_agent_service: backfilled demand_class onto %d NULL-class order(s) for "
-            "agent %s (%d from customer segment, %d from the agent's own class=%s)",
-            updated, agent.sales_agent, from_segment, from_agent, demand_class,
+            "sales_agent_service: backfilled demand_class=%s onto %d NULL-class order(s) "
+            "for agent %s",
+            demand_class, updated, agent.sales_agent,
         )
     return updated
 
@@ -368,3 +324,50 @@ def group_of_warehouse_code(code: Optional[str]) -> Optional[str]:
     _, _, suffix = text_code.partition("-")
     suffix = suffix.strip().upper()
     return suffix or None
+
+
+def scope_filter(scope):
+    """SQLAlchemy predicate for `sales_agents` rows visible under a caller's company scope,
+    for a LISTING (what to offer in a picker) - not for validating a single write, which
+    must compare against the record actually being written to instead (see
+    `CustomerService._resolve_sales_agent`, PR #1177 review security item 3: a user scoped
+    to {A, B} must not be able to put a company-B agent onto a company-A customer, which a
+    caller-scope check alone would allow).
+
+    `sales_agents` is deliberately NOT `CompanyScopedMixin` (see the model docstring) - a
+    shared master, `company_id` NULL for every one of the ~38 codes today, with a tenant's
+    own row a future possibility - so there is no `do_orm_execute` predicate to lean on.
+    Visible = shared (`company_id IS NULL`) or the agent's own company is inside `scope`.
+    Same shape as the `or_(cls.company_id.is_(None), ...)` predicates `rules/product_rules.
+    py` and `product_predicate_service.py` already use for a shared-vs-owned master.
+
+    Returns `None` for "no predicate" (`scope is None`, e.g. an unrestricted X-API-Key
+    caller). `UNSET`/an empty frozenset fails closed to shared rows only.
+    """
+    if scope is None:
+        return None
+    if isinstance(scope, frozenset) and scope:
+        return or_(SalesAgent.company_id.is_(None), SalesAgent.company_id.in_(list(scope)))
+    return SalesAgent.company_id.is_(None)
+
+
+def list_active(db: Session, query: Optional[str] = None, scope=None) -> list[SalesAgent]:
+    """Every active `sales_agents` row, optionally text-matched on the code or the person
+    label, optionally restricted to a caller's company scope (`scope_filter`).
+
+    The ONE query both `SalesOrderService.list_agents` (`GET /scm/sales-orders/agents`) and
+    the customer form's select (`GET /customers/sales-agents-select`) read from - a router
+    building its own copy is a `PRINCIPLES.md` hard-fail (DB query in a router) and the two
+    copies had already started to disagree about scoping before this existed (PR #1177
+    review, blocking item 1).
+    """
+    qs = db.query(SalesAgent).filter(SalesAgent.is_active.is_(True))
+    predicate = scope_filter(scope)
+    if predicate is not None:
+        qs = qs.filter(predicate)
+    if query:
+        like = f"%{query.strip()}%"
+        qs = qs.filter(
+            or_(SalesAgent.sales_agent.ilike(like), SalesAgent.person_label.ilike(like))
+        )
+    return qs.order_by(SalesAgent.sales_agent.asc()).all()

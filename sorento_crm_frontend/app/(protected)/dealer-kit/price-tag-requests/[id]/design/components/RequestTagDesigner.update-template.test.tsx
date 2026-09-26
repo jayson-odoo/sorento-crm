@@ -18,7 +18,10 @@
  */
 
 import React from 'react';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
+// The designer mounts a react-query mutation (the deferred tag Remove), so a
+// bare `render` throws "No QueryClient set" before the component exists.
+import { renderWithQueryClient as render } from './testQueryClient';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ToolbarButton,
@@ -168,7 +171,12 @@ vi.mock('../../../../services/tagTemplateService', () => ({
   publishTemplate: vi.fn(),
 }));
 vi.mock('../../../../services/priceTagRequestService', () => ({
-  resolveRequestLines: vi.fn(),
+  // One row per TAG since S3 (D3), auto-split at save so no Split / Pick one
+  // action exists any more. The two beside it are what the post-save
+  // reload calls.
+  resolveRequestTags: vi.fn(),
+  getPriceTagRequest: vi.fn(),
+  updateRequestTag: vi.fn(),
   transitionPriceTagRequest: vi.fn(),
   exportTagSheet: vi.fn(),
 }));
@@ -183,11 +191,12 @@ import {
   publishTemplate,
   updateTemplate,
 } from '../../../../services/tagTemplateService';
-import { resolveRequestLines } from '../../../../services/priceTagRequestService';
+import { resolveRequestTags } from '../../../../services/priceTagRequestService';
 import { RequestTagDesigner } from './RequestTagDesigner';
 import type {
   PriceTagRequestDetail,
   PriceTagRequestLine,
+  PriceTagRequestTag,
 } from '../../../../services/priceTagRequestService';
 import type {
   LineTagData,
@@ -198,7 +207,7 @@ import type {
 } from '@/lib/dealer-kit/tag-template-types';
 
 const mockListTemplates = vi.mocked(listPublishedTemplates);
-const mockResolveRequestLines = vi.mocked(resolveRequestLines);
+const mockResolveRequestTags = vi.mocked(resolveRequestTags);
 const mockUpdateTemplate = vi.mocked(updateTemplate);
 const mockPublishTemplate = vi.mocked(publishTemplate);
 
@@ -206,19 +215,38 @@ const mockPublishTemplate = vi.mocked(publishTemplate);
 // Fixtures
 // ---------------------------------------------------------------------------
 
-function line(overrides: Partial<PriceTagRequestLine> = {}): PriceTagRequestLine {
+/**
+ * The rail row label for a line's default tag.
+ *
+ * The product builds "1a"/"1b" from the line's position plus a letter; a
+ * fixture only needs two lines' tag rows to be separately clickable, so the
+ * label reuses the line id's own suffix ('line-b' -> 'ba'). The rail selects a
+ * TAG now, not a line - the line header is no longer a button - so every test
+ * that used to click a line's code or name clicks its tag row instead.
+ */
+function tagLabelFor(lineId: string): string {
+  return `${lineId.split('-').pop() ?? '1'}a`;
+}
+
+/**
+ * The one tag a line carries by default (S3, AC-S3-1).
+ *
+ * Its id IS the line id, so every id these tests already assert on stays the
+ * id they assert on: submit mints exactly one tag per line, and only a Split
+ * ever gives a line a second one.
+ */
+function requestTag(
+  lineId: string,
+  quantity: number,
+  overrides: Partial<PriceTagRequestTag> = {},
+): PriceTagRequestTag {
   return {
-    id: 'line-a',
-    line_type: 'product',
-    product_id: 'prod-a',
-    product_set_id: null,
-    name: 'Kitchen Sink',
-    code: 'AAA-1',
-    show_promo_price: false,
-    quantity: 1,
-    alternatives: [],
-    included_accessories: null,
+    id: lineId,
     sort_order: 0,
+    label: tagLabelFor(lineId),
+    quantity,
+    choices_display: [],
+    open_groups: [],
     marketing_price_override: null,
     marketing_override_reason: null,
     list_price: 1599,
@@ -227,14 +255,36 @@ function line(overrides: Partial<PriceTagRequestLine> = {}): PriceTagRequestLine
   };
 }
 
+function line(overrides: Partial<PriceTagRequestLine> = {}): PriceTagRequestLine {
+  const merged = {
+    id: 'line-a',
+    line_type: 'product' as const,
+    product_id: 'prod-a' as string | null,
+    product_set_id: null as string | null,
+    name: 'Kitchen Sink',
+    code: 'AAA-1',
+    show_promo_price: false,
+    quantity: 1,
+    included_accessories: null as string | null,
+    sort_order: 0,
+    list_price: 1599 as number | null,
+    sell_price: null as number | null,
+    parts: [],
+    package_warning: null,
+    ...overrides,
+  };
+  return {
+    ...merged,
+    tags: overrides.tags ?? [requestTag(merged.id, merged.quantity)],
+  } as PriceTagRequestLine;
+}
+
 function request(overrides: Partial<PriceTagRequestDetail> = {}): PriceTagRequestDetail {
   return {
     id: 'req-1',
     doc_number: 'PT-000001',
     debtor_code: null,
     debtor_name: null,
-    promotion_id: null,
-    promotion_name: null,
     needed_by_date: null,
     notes: null,
     status: 'designing',
@@ -253,7 +303,15 @@ function request(overrides: Partial<PriceTagRequestDetail> = {}): PriceTagReques
 }
 
 function lineTagData(overrides: Partial<LineTagData> = {}): LineTagData {
+  // One row per TAG since S3. The everyday request has one tag per line and the
+  // tag's id is the line's, so a row named by `line_id` keys on the same id it
+  // always did.
+  const lineId = overrides.line_id ?? 'line-a';
   return {
+    tag_id: lineId,
+    tag_label: '1a',
+    open_groups: [],
+    parts: [],
     line_id: 'line-a',
     code: 'AAA-1',
     name: 'Kitchen Sink',
@@ -367,7 +425,7 @@ beforeEach(() => {
  */
 async function mountBothOnSameTemplate() {
   mockListTemplates.mockResolvedValue([realTemplate()]);
-  mockResolveRequestLines.mockResolvedValue([
+  mockResolveRequestTags.mockResolvedValue([
     lineTagData({ line_id: 'line-a', code: 'AAA-1', name: 'Kitchen Sink' }),
     lineTagData({ line_id: 'line-b', code: 'BBB-2', name: 'Basin' }),
   ]);
@@ -384,9 +442,12 @@ async function mountBothOnSameTemplate() {
   );
   await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
 
-  fireEvent.click(screen.getByText('Basin'));
+  // D8 (PLAN-price-tag-ai-extract-resolver.md): one tag, no parts - each
+  // line folds to ONE block, selected by its code rather than the ordinal
+  // text a folded row no longer renders.
+  fireEvent.click(screen.getByText('BBB-2').closest('button') as HTMLElement);
   await waitFor(() => expect(screen.getByText(/canvas: 1 layers/)).toBeInTheDocument());
-  fireEvent.click(screen.getByText('Kitchen Sink'));
+  fireEvent.click(screen.getByText('AAA-1').closest('button') as HTMLElement);
   await waitFor(() => expect(screen.getByText(/canvas: 1 layers/)).toBeInTheDocument());
   return { onSave, onAutosave };
 }
@@ -458,7 +519,7 @@ describe('RequestTagDesigner - Update template (S6, AC-S6-1/2/3)', () => {
 describe('RequestTagDesigner - Update template strips bound text_override (B1)', () => {
   it('a bound layer\'s text_override is null in the PUT payload, an unbound layer keeps its text', async () => {
     mockListTemplates.mockResolvedValue([realTemplate()]);
-    mockResolveRequestLines.mockResolvedValue([
+    mockResolveRequestTags.mockResolvedValue([
       lineTagData({ line_id: 'line-a', code: 'AAA-1', name: 'Kitchen Sink' }),
     ]);
 
@@ -601,7 +662,7 @@ describe('RequestTagDesigner - a templates refresh never reverts the design (R2,
     const saved = onSave.mock.calls[0][0];
     const savedTag = saved.sheets
       .flatMap((sheet) => sheet.tags)
-      .find((tag) => tag.request_line_id === 'line-a');
+      .find((tag) => tag.request_tag_id === 'line-a');
     expect(savedTag?.layers[0].x_mm).toBe(MOVED_X_MM);
     expect(savedTag?.layers[0].y_mm).toBe(MOVED_Y_MM);
   });
@@ -642,14 +703,14 @@ describe('RequestTagDesigner - Update template sibling checkbox (S6, AC-S6-4/5)'
 
     await waitFor(() =>
       expect(mockToastSuccess).toHaveBeenCalledWith(
-        expect.stringContaining('applied to 1 other line'),
+        expect.stringContaining('applied to 1 other tag'),
         expect.anything(),
       ),
     );
 
     // Switch to the sibling line - its tag now carries the 2-layer design,
     // not the template's original 1-layer clone.
-    fireEvent.click(screen.getByText('Basin'));
+    fireEvent.click(screen.getByText('BBB-2').closest('button') as HTMLElement);
     await waitFor(() =>
       expect(screen.getByText(/canvas: 2 layers/)).toBeInTheDocument(),
     );
@@ -674,7 +735,7 @@ describe('RequestTagDesigner - Update template sibling checkbox (S6, AC-S6-4/5)'
     );
 
     // The sibling line's own tag is UNCHANGED - still its own 1-layer clone.
-    fireEvent.click(screen.getByText('Basin'));
+    fireEvent.click(screen.getByText('BBB-2').closest('button') as HTMLElement);
     await waitFor(() =>
       expect(screen.getByText(/canvas: 1 layers/)).toBeInTheDocument(),
     );

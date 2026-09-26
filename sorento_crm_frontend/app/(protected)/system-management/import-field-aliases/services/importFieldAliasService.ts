@@ -61,6 +61,7 @@ export async function createImportFieldAlias(data: {
   field: string;
   alias: string;
   locale?: string | null;
+  supplier_id?: string | null;
 }): Promise<ImportFieldAliasGroup> {
   const res = await apiFetch(BASE, {
     method: 'POST',

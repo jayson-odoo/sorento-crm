@@ -1,15 +1,19 @@
 'use client';
 
 import * as React from 'react';
-import { Check, CheckCircle2, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { Check, CheckCircle2, ChevronRight, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import {
   amendNeedsReason,
+  hasUnsuggestedBorrow,
   matchesSuggestion,
 } from '../../_shared/lib/fulfilmentBoard';
 import {
@@ -17,7 +21,9 @@ import {
   amendSummary,
   borrowCandidatesOf,
   decisionFromAmendDraft,
+  foldReasonIntoDraft,
   suggestionDraftFrom,
+  suggestionWithReasons,
 } from '../../_shared/lib/boardAmend';
 import {
   fromMinor,
@@ -37,6 +43,47 @@ import type {
 import { BoardLadderOptionsTable } from './BoardLadderOptionsTable';
 import { BorrowAddDialog } from './BorrowAddDialog';
 import { ReserveAddDialog } from './ReserveAddDialog';
+
+/**
+ * R1's own 409 sentence (`project_line_draft_service.save_draft`), stated here before the
+ * round trip rather than after it (R2): a covered line refuses a plain Save or Reject, so
+ * the panel says so up front instead of sending a PUT the server would only refuse.
+ *
+ * Carried in a Radix `Tooltip`, never a bare `title` (review round 1, S1): the `Button`
+ * primitive disables `pointer-events` on a disabled button, so a `title` attribute there
+ * never reaches a real hover - the sentence has to live on a focusable wrapper instead.
+ */
+const CONFIRMED_LINE_TITLE =
+  'This line is already confirmed. Amend it to change the decision, reject it with a reason, ' +
+  'or undo the confirmation.';
+
+/**
+ * D3 (S2): what the ONE Reason box seeds from - the first non-blank of a record's own
+ * "why this differs" (`reason` on a session decision, `amend_reason` on a frozen one), its
+ * `buy_reason` and its first borrow row's `reason`. Duck-typed rather than two near-identical
+ * functions: the session decision (`BoardDecision`) and the frozen one (`BoardLineDecision`)
+ * name the same field differently, and every field this reads is optional on both.
+ */
+function seedReason(
+  source:
+    | {
+        reason?: string | null;
+        amend_reason?: string | null;
+        buy_reason?: string | null;
+        borrow?: { reason?: string | null }[] | null;
+      }
+    | null
+    | undefined,
+): string {
+  if (!source) return '';
+  const candidates = [
+    source.reason,
+    source.amend_reason,
+    source.buy_reason,
+    source.borrow?.[0]?.reason,
+  ];
+  return candidates.find((text) => Boolean(text && text.trim()))?.trim() ?? '';
+}
 
 /**
  * The decision on one contributing line, taken IN THE ROW (PLAN section 3.C, ruling R7).
@@ -98,11 +145,13 @@ export function BoardLineDecisionPanel({
   const [draft, setDraft] = React.useState<DraftLine>(() =>
     draftFor(contribution, decision),
   );
-  // Seeded from the frozen decision's own `amend_reason`, not blank - the server's whole-line
-  // mix rule (`mixAllowed` below) now depends on this reaching Save even when nothing about
-  // the draft has changed since.
+  // D3 (S2): ONE Reason box now covers "why this differs", the discontinued Buy reason and
+  // every borrow reason, so it seeds from the first NON-BLANK of the three the row already
+  // carries (a record with three different texts shows the first; the others stay readable in
+  // the trail) - never blank while any of them holds something, which the server's whole-line
+  // mix rule (`mixAllowed` below) also depends on reaching Save unchanged.
   const [reason, setReason] = React.useState(
-    () => decision?.reason ?? contribution.decision?.amend_reason ?? '',
+    () => seedReason(decision) || seedReason(contribution.decision) || '',
   );
   // The draft's own answer, false included: an untick is a decision, and reading past it to
   // the frozen `true` on a covered line put the tick straight back on screen.
@@ -124,6 +173,21 @@ export function BoardLineDecisionPanel({
   /** Untouched since it opened. Saving or approving puts it back, because it is saved now. */
   const [dirty, setDirty] = React.useState(false);
   /**
+   * Fix round 1, S4: the write is in flight. Without this a second click before the first
+   * `onDecide` resolves fires a second PUT (and a second toast) - `disabled` on the plain
+   * Save/Reject buttons reads this alongside their own rules, so a click while one is already
+   * on the wire is a no-op rather than a race.
+   */
+  const [pending, setPending] = React.useState(false);
+  /**
+   * Fix round 3: `pending` is the visible answer, but it is STATE - two synchronous clicks in
+   * the SAME tick (a real double-click, or two `fireEvent.click`s before React re-renders)
+   * both read the pre-render `pending` (still `false`) and both proceed. `inFlight` is the
+   * actual guard, checked and set synchronously before either `save()`/`reject()` does
+   * anything else.
+   */
+  const inFlight = React.useRef(false);
+  /**
    * Whether this line's decision is SAVED as the panel stands (S4, AC-4.1; amended by D4,
    * captain 3 Sep).
    *
@@ -134,7 +198,29 @@ export function BoardLineDecisionPanel({
    * every input already sets). A line that opens on somebody else's saved draft starts
    * there too: pressing Save on it would write what is already written.
    */
-  const [savedOnce, setSavedOnce] = React.useState(() => Boolean(contribution.draft));
+  /**
+   * A rejected draft is NOT a saved one (fix round 1, B1): `useLineDraftMutation.save.onSuccess`
+   * patches `contribution.draft` before `mutateAsync` resolves, so `Boolean(contribution.draft)`
+   * alone is true for a landed Reject too - the button read Saved AND Rejected side by side.
+   * The two states are mutually exclusive by construction: seeded (and re-seeded below) off the
+   * SAME `contribution.draft`, split by its own verdict.
+   */
+  // Seed only - the N3 effect below recomputes its own local each time it re-seeds.
+  const rejectedDraft = contribution.draft?.decision?.verdict === 'rejected';
+  const [savedOnce, setSavedOnce] = React.useState(
+    () => Boolean(contribution.draft) && !rejectedDraft,
+  );
+  /**
+   * Whether this line's Reject has LANDED, the same reading `savedOnce` above gives a Save -
+   * `decide()` saves a rejection through the identical draft write a Save uses, so
+   * `contribution.draft.decision.verdict` carries `'rejected'` the same way it carries
+   * `'approved'`/`'amended'`. Seeded off `contribution.draft` rather than the `decision` prop
+   * for the same reason `savedOnce` is: the prop is the board's own session map and lags a
+   * beat behind what this panel can already read at mount.
+   */
+  const [rejectedOnce, setRejectedOnce] = React.useState(() => rejectedDraft);
+  /** Options closed until the planner asks - untouched per row, no persistence. */
+  const [optionsOpen, setOptionsOpen] = React.useState(false);
 
   /**
    * N3 (fix round 5): re-seeded whenever the contribution's OWN saved draft changes - a
@@ -145,7 +231,9 @@ export function BoardLineDecisionPanel({
    * while this panel's own `savedOnce` (still `true` from mount) kept the button on "Saved".
    */
   React.useEffect(() => {
-    setSavedOnce(Boolean(contribution.draft));
+    const rejected = contribution.draft?.decision?.verdict === 'rejected';
+    setSavedOnce(Boolean(contribution.draft) && !rejected);
+    setRejectedOnce(rejected);
   }, [contribution.draft]);
 
   /**
@@ -153,6 +241,8 @@ export function BoardLineDecisionPanel({
    * of any kind puts "Save decision" back without this having to know which one moved.
    */
   const saved = savedOnce && !dirty;
+  /** Rejected AND untouched since, the same reading `saved` gives a Save. */
+  const rejected = rejectedOnce && !dirty;
 
   React.useEffect(() => {
     onDirtyChange?.(dirty);
@@ -197,17 +287,59 @@ export function BoardLineDecisionPanel({
    * has always admitted.
    */
   const poolLimits = React.useMemo(() => poolShareLimitsOf(locations), [locations]);
+  // D3 (S2): the ONE box fanned onto the draft it would be saved from, so `lineBlockers`'s
+  // own borrow-reason check (shared with the per-order sheet, unchanged there) reads the box
+  // the same way Save will - a borrow row added by hand blocks Save until the box carries
+  // text, exactly as its own per-row Reason input used to.
+  const foldedDraft = React.useMemo(
+    () => foldReasonIntoDraft(draft, reason),
+    [draft, reason],
+  );
   // `mixAllowed`: the 8 Sep 2026 ruling. AC-L5's whole-line rule is lifted on this panel
-  // because `reason` (seeded from the frozen decision's own `amend_reason` above, or typed
-  // fresh) is what Save sends as `amend_reason` on the confirm line - `needsReason` below
-  // only forces a NEW one when the draft has moved since that baseline (`amendNeedsReason`),
-  // so an unchanged frozen mix re-saves on the reason it already carried. The per-order sheet
-  // does not pass this and still refuses the mix (`SupplyLineCard`).
-  const blockers = lineBlockers(draft, poolLimits, { mixAllowed: true });
-  const needsReason = amendNeedsReason(contribution, draft);
-  // Which verdict Save takes, and therefore what it may be pressed for: approving the engine's
-  // own composition is never blocked, because there is nothing about it to balance or justify.
+  // because `reason` (seeded from the frozen decision's own reason above, or typed fresh) is
+  // what Save sends as `amend_reason` on the confirm line - `needsReason` below only forces a
+  // NEW one when the draft has moved since that baseline (`amendNeedsReason`), so an unchanged
+  // frozen mix re-saves on the reason it already carried. The per-order sheet does not pass
+  // this and still refuses the mix (`SupplyLineCard`).
+  const blockers = lineBlockers(foldedDraft, poolLimits, { mixAllowed: true });
+  // D3: required exactly when the composition differs from its baseline, OR a borrow row the
+  // engine did not suggest is on the line - the server's own borrow-reason rule, asked here
+  // before the round trip. Reject's own requirement is unconditional and lives on its button.
+  const needsReason =
+    amendNeedsReason(contribution, draft) || hasUnsuggestedBorrow(contribution, draft.borrow);
+  /**
+   * Which verdict Save takes, and therefore what it may be pressed for: approving the
+   * engine's own composition is never blocked, because there is nothing about it to balance
+   * or justify. NEVER on a COVERED line, though (R1, `save()` below) - the server has
+   * refused an `approved` verdict there with a 409 since the SO314595 incident (17 Sep
+   * 2026), and the suspected-system-issue tick is part of what was decided, not a detail
+   * riding beside it, so it counts toward whether there is anything left to amend.
+   */
   const approving = matchesSuggestion(contribution, draft);
+  const covered = Boolean(contribution.covered);
+  /**
+   * `covered` alone spans TWO kinds of line (N1, fix round,
+   * `PLAN-board-reject-on-confirmed-line.md`): an ACTIVE `SOSupplyDecision` covers it, or a
+   * live order-inquiry row names it with no decision at all (`inquiry_decided`, migrated
+   * sheet lines, #875) - `project_fulfilment_board_service.py`'s own `covered` property.
+   * Confirm has a withdrawal seam (`rejected_line_ids`) for the first kind only: it reads
+   * the active decision's `line_snapshots`, which the second kind has none of. So Reject
+   * after Amend stays live only where `contribution.decision` (the frozen decision object)
+   * is non-null - the #989 disabled-with-`CONFIRMED_LINE_TITLE` shape is kept for the
+   * inquiry-only case, same predicate `BoardVerdictActions`' own `rejectable` reads.
+   */
+  const activelyCovered = covered && Boolean(contribution.decision);
+  const suspectedChanged =
+    suspected !== Boolean(contribution.decision?.suspected_system_issue);
+  /**
+   * R1/R2: on a covered line the server only accepts a real amendment, so the panel refuses
+   * BEFORE the round trip rather than after. `needsReason` is already "has the composition
+   * moved since the frozen decision" (`amendNeedsReason`'s own baseline, on a covered line,
+   * IS `contribution.decision`) - a draft that has not moved has nothing to amend. The tick
+   * is the other half: unticking (or ticking) it with the composition otherwise untouched is
+   * still a change to what was decided, so it alone must be enough to unlock Save.
+   */
+  const alreadyConfirmed = covered && !needsReason && !suspectedChanged;
   const canSave =
     blockers.length === 0 && (!needsReason || reason.trim().length > 0);
   const fromStockMinor =
@@ -339,58 +471,167 @@ export function BoardLineDecisionPanel({
    * (`decisionFromAmendDraft(suggestionDraftFrom(contribution), '')`), so this is the same
    * derivation one step earlier - a draft and its own confirmation cannot disagree about what
    * an approval actually composed.
+   *
+   * NEVER on a COVERED line (R1): the server refuses an `approved` verdict there outright,
+   * so a covered line always takes the ELSE branch below regardless of `approving` - an
+   * unlocked, re-typed suggestion on a confirmed line is still an amendment that happens to
+   * match the engine's numbers, not an approval.
+   *
+   * BOARD-CONFIRM-LEFT-OUT (measured cause 1): the approving branch used to post
+   * `decisionFromAmendDraft(suggestionDraftFrom(contribution), '')` verbatim, which drops the
+   * `buy_reason` a planner just typed for a discontinued Buy and any reason typed on a
+   * suggested borrow row - `matchesSuggestion` rightly compares quantities only, so typing a
+   * reason alone never stopped this from reading as an approval, and the reason never reached
+   * the server. `suggestionWithReasons` carries them across, matched by warehouse + donor
+   * (the same key `matchesSuggestion` uses) so a reason typed on the row it belongs to is the
+   * one that travels with it.
    */
   const save = async () => {
-    let ok: boolean | void;
-    if (approving) {
-      ok = await onDecide({
-        ...decisionFromAmendDraft(suggestionDraftFrom(contribution), ''),
-        verdict: 'approved',
-        suspected_system_issue: suspected,
-      });
-    } else {
-      ok = await onDecide({
-        ...decisionFromAmendDraft(draft, reason),
-        // THE BOOLEAN, never `|| undefined`: `false` is the planner's answer that the numbers
-        // are fine, and dropping the key let the frozen `true` behind it read as current.
-        suspected_system_issue: suspected,
-      });
+    if (inFlight.current) return;
+    inFlight.current = true;
+    setPending(true);
+    try {
+      let ok: boolean | void;
+      const approvingNow = approving && !covered;
+      if (approvingNow) {
+        ok = await onDecide({
+          ...suggestionWithReasons(contribution, {
+            // D3 (S2): the ONE box, not a per-field input any more - `foldedDraft` is the same
+            // fan-out Save's amending branch below uses. AC-28: `reason` travels on the
+            // approving branch too, not only the amending `else` below.
+            reason,
+            buy_reason: foldedDraft.buy_reason,
+            borrow: foldedDraft.borrow,
+            // S2 (fix round 2, reviewer): the Order back switch and Document cited box are on
+            // screen for this exact line - a wholly-bought approving save used to take them
+            // from the SUGGESTION draft (always false/'') and drop whatever the planner had
+            // actually ticked or typed.
+            order_back: draft.order_back,
+            cited_document: draft.cited_document,
+          }),
+          suspected_system_issue: suspected,
+        });
+      } else {
+        ok = await onDecide({
+          ...decisionFromAmendDraft(foldedDraft, reason),
+          // THE BOOLEAN, never `|| undefined`: `false` is the planner's answer that the numbers
+          // are fine, and dropping the key let the frozen `true` behind it read as current.
+          suspected_system_issue: suspected,
+        });
+      }
+      // S2 (code review round 3): the check state answers the click, but only for a click that
+      // actually landed - `onDecide` returning `false` (a rejected write) must not show a
+      // check the server never earned. `undefined` (a caller with nothing to report) reads as
+      // success, the same as before this fix.
+      //
+      // B1 (fix round 5): every "clean" state change - dirty, locked, and the approving branch's
+      // reseed to the suggestion - waits for that same guard. Setting them before the `await`
+      // meant a REJECTED second save still rendered the button as Saved and disabled: `dirty`
+      // was already false and `savedOnce` was already true from the first, successful save, so
+      // `saved = savedOnce && !dirty` read true over an edit the server never wrote.
+      if (ok === false) return;
+      setDirty(false);
+      setLocked(false);
+      if (approvingNow) {
+        // D3 (S2): the reason box is NOT cleared here any more (AC-28) - it is the one place
+        // `buy_reason` and every borrow reason now live, `foldReasonIntoDraft` reads it fresh
+        // on every render, and clearing it the instant its own save landed would wipe the
+        // reason off screen while it is still what was just saved.
+        const suggestion = suggestionDraftFrom(contribution);
+        setDraft({
+          ...suggestion,
+          // S2: the same reseed gap one field over - Order back and Document cited went back to
+          // the suggestion's own false/'' the instant the save that just carried them landed.
+          order_back: draft.order_back,
+          cited_document: draft.cited_document,
+        });
+      }
+      // S4/AC-4.1: the button answers the click itself, within the interaction, before the
+      // pill's own "Saved" and the toast even have to be looked at - and it keeps answering
+      // until the line is edited again (D4).
+      setSavedOnce(true);
+      // B1 (fix round 1): a Save on a line whose LAST landed verb was Reject must clear the
+      // stale "Rejected" reading - the two are mutually exclusive, and only one press ever
+      // sets the other back to false.
+      setRejectedOnce(false);
+    } finally {
+      inFlight.current = false;
+      setPending(false);
     }
-    // S2 (code review round 3): the check state answers the click, but only for a click that
-    // actually landed - `onDecide` returning `false` (a rejected write) must not show a
-    // check the server never earned. `undefined` (a caller with nothing to report) reads as
-    // success, the same as before this fix.
-    //
-    // B1 (fix round 5): every "clean" state change - dirty, locked, and the approving branch's
-    // reseed to the suggestion - waits for that same guard. Setting them before the `await`
-    // meant a REJECTED second save still rendered the button as Saved and disabled: `dirty`
-    // was already false and `savedOnce` was already true from the first, successful save, so
-    // `saved = savedOnce && !dirty` read true over an edit the server never wrote.
-    if (ok === false) return;
-    setDirty(false);
-    setLocked(false);
-    if (approving) {
-      setDraft(suggestionDraftFrom(contribution));
-      setReason('');
-    }
-    // S4/AC-4.1: the button answers the click itself, within the interaction, before the
-    // pill's own "Saved" and the toast even have to be looked at - and it keeps answering
-    // until the line is edited again (D4).
-    setSavedOnce(true);
   };
 
-  const reject = () => {
-    setDirty(false);
-    onDecide({
-      verdict: 'rejected',
-      reason: reason.trim(),
-      suspected_system_issue: suspected,
-    });
+  /**
+   * Mirrors `save()` above: the write lands before the button answers it, and a write the
+   * server refused (`ok === false`) leaves "Reject" exactly as a planner pressed it rather
+   * than claiming a rejection that never happened.
+   */
+  const reject = async () => {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    setPending(true);
+    try {
+      const ok = await onDecide({
+        verdict: 'rejected',
+        reason: reason.trim(),
+        suspected_system_issue: suspected,
+      });
+      if (ok === false) return;
+      setDirty(false);
+      setRejectedOnce(true);
+      // B1 (fix round 1): the mirror of the same guard on `save()` above.
+      setSavedOnce(false);
+    } finally {
+      inFlight.current = false;
+      setPending(false);
+    }
   };
 
   const summary = amendSummary(
     decisionFromAmendDraft(draft, reason),
     contribution.fulfilment_location,
+  );
+
+  // Shared between the bare Save button and its tooltip-wrapped, disabled twin below, so the
+  // two never drift apart on what the button says.
+  const saveButtonLabel = saved ? (
+    <>
+      <CheckCircle2 className="size-4" aria-hidden />
+      Saved
+    </>
+  ) : (
+    <>
+      <Check className="size-4" aria-hidden />
+      Save decision
+    </>
+  );
+
+  // Shared between the covered and uncovered Reject buttons (fix round 3, nit): the two
+  // were twenty-line twins differing only in whether a Tooltip wraps them, which is exactly
+  // the shape a shared element with a conditional wrapper is for - `disabled` and the pending
+  // guard have to move together on either branch, and duplicating them invited a drift.
+  const rejectButton = (
+    <Button
+      type="button"
+      size="sm"
+      variant="outline"
+      // Disabled ON the landed rejection too (mirrors Save/D4): there is nothing left to
+      // reject, and a live button under "Rejected" invites a second write. `pending` (fix
+      // round 1, S4): the write this same click just started is still on the wire.
+      disabled={rejected || pending || reason.trim().length === 0}
+      onClick={reject}
+    >
+      {rejected ? (
+        <>
+          <CheckCircle2 className="size-4" aria-hidden />
+          Rejected
+        </>
+      ) : (
+        <>
+          <X className="size-4" aria-hidden />
+          Reject
+        </>
+      )}
+    </Button>
   );
 
   /**
@@ -439,16 +680,41 @@ export function BoardLineDecisionPanel({
           1280px, let alone at 375. It is what the planner reads BEFORE typing, so it reads
           first. Display only - taking a different option is Amend, in the inputs below. */}
       {(contribution.options?.length ?? 0) > 0 && (
-        <div className="mb-3 space-y-1">
-          <p className="text-2xs uppercase tracking-wide text-muted-foreground">
-            Options
-          </p>
-          <BoardLadderOptionsTable
-            options={contribution.options ?? []}
-            contributionKey={contribution.key}
-            buyOrigin={contribution.buy_origin}
-          />
-        </div>
+        // Closed by default (owner, 22 Sep 2026): six columns of dates left open on every
+        // row wasted the space a planner opened this panel to compose the decision in.
+        <Collapsible open={optionsOpen} onOpenChange={setOptionsOpen} className="mb-3">
+          <CollapsibleTrigger asChild>
+            <button
+              type="button"
+              data-testid={`line-options-toggle-${contribution.key}`}
+              // Reads as a control (fix round 1, S3), the same interactive classes the
+              // in-repo `CollapsibleTrigger` precedents carry (`PlanSection`,
+              // `TagSizeControl`, `ProductAttachmentsTab`). `min-h-8`, not
+              // `COARSE_HIT_TARGET_CLASS` (fix round 2): every use of that class lives inside
+              // a `components/ui/*` primitive, none in a feature file - a bare button here
+              // does not reach for a primitive-internal class.
+              className="-mx-1 flex min-h-8 cursor-pointer items-center gap-1 rounded px-1 py-0.5 text-2xs uppercase tracking-wide text-muted-foreground hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+            >
+              <ChevronRight
+                className={cn(
+                  'size-3.5 shrink-0 transition-transform motion-reduce:transition-none',
+                  optionsOpen && 'rotate-90',
+                )}
+                aria-hidden
+              />
+              Options
+            </button>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <div className="pt-1">
+              <BoardLadderOptionsTable
+                options={contribution.options ?? []}
+                contributionKey={contribution.key}
+                buyOrigin={contribution.buy_origin}
+              />
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
       )}
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
         {/* THE COMPOSITION. The row above already states the outstanding quantity, so the
@@ -581,26 +847,6 @@ export function BoardLineDecisionPanel({
                         </Button>
                       )}
                     </div>
-                    <div className="space-y-1">
-                      <label
-                        className="block text-2xs uppercase tracking-wide text-muted-foreground"
-                        htmlFor={`line-borrow-reason-${contribution.key}-${row.key}`}
-                      >
-                        Reason <span className="text-destructive">*</span>
-                      </label>
-                      <Textarea
-                        id={`line-borrow-reason-${contribution.key}-${row.key}`}
-                        rows={2}
-                        value={row.reason}
-                        disabled={locked}
-                        placeholder="In your own words"
-                        onChange={(event) => {
-                          const next = [...draft.borrow];
-                          next[index] = { ...row, reason: event.target.value };
-                          setBorrow(next);
-                        }}
-                      />
-                    </div>
                   </div>
                 ))
               )}
@@ -700,26 +946,6 @@ export function BoardLineDecisionPanel({
                   )}
                 </div>
               )}
-              {draft.is_discontinued && (
-                <div className="space-y-1">
-                  <label
-                    className="block text-2xs uppercase tracking-wide text-muted-foreground"
-                    htmlFor={`line-buy-reason-${contribution.key}`}
-                  >
-                    Reason <span className="text-destructive">*</span>
-                  </label>
-                  <Textarea
-                    id={`line-buy-reason-${contribution.key}`}
-                    rows={2}
-                    value={draft.buy_reason}
-                    disabled={locked}
-                    placeholder="In your own words"
-                    onChange={(event) =>
-                      edit({ ...draft, buy_reason: event.target.value })
-                    }
-                  />
-                </div>
-              )}
             </div>
           </Block>
         </div>
@@ -763,13 +989,21 @@ export function BoardLineDecisionPanel({
 
           <div className="space-y-1">
             <label
-              className="block text-2xs uppercase tracking-wide text-muted-foreground"
+              className="flex items-center gap-1.5 text-2xs uppercase tracking-wide text-muted-foreground"
               htmlFor={`line-reason-${contribution.key}`}
             >
-              Why this differs
+              Reason
               {needsReason ? (
                 <span className="text-destructive"> *</span>
               ) : null}
+              {/* D3 (S2): a discontinued Buy no longer needs a reason (the gate is gone, S1) -
+                  the badge only says what the box is silent about; the box itself carries no
+                  asterisk for this cause alone. */}
+              {draft.is_discontinued && toMinor(draft.buy_qty) > 0 && (
+                <Badge variant="warning" appearance="light" size="sm">
+                  Discontinued
+                </Badge>
+              )}
             </label>
             <Textarea
               id={`line-reason-${contribution.key}`}
@@ -817,41 +1051,123 @@ export function BoardLineDecisionPanel({
             </Button>
           ) : (
             <div className="flex flex-wrap items-center gap-2">
-              <Button
-                type="button"
-                size="sm"
-                // Disabled ON the saved state too (D4): there is nothing left to save, and a
-                // live button under the word "Saved" invites a second write of the same row.
-                disabled={saved || (!approving && !canSave)}
-                onClick={save}
-              >
-                {saved ? (
-                  <>
-                    <CheckCircle2 className="size-4" aria-hidden />
-                    Saved
-                  </>
-                ) : (
-                  <>
-                    <Check className="size-4" aria-hidden />
-                    Save decision
-                  </>
-                )}
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={reason.trim().length === 0}
-                title={
-                  reason.trim().length === 0
-                    ? 'Say why this line is being refused first.'
-                    : undefined
-                }
-                onClick={reject}
-              >
-                <X className="size-4" aria-hidden />
-                Reject
-              </Button>
+              {covered ? (
+                // Wrapped for the LIFE of a covered line, not only while `alreadyConfirmed`
+                // is true: that flips as the draft moves (a tick, a composition edit), and
+                // swapping the wrapped Button for a bare one on that same flip would unmount
+                // and remount the button - the element a planner (or a test) is mid-focus or
+                // mid-click on. `disabled` and whether the tooltip carries the sentence are
+                // what move; the trigger itself does not.
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span
+                      tabIndex={0}
+                      className="inline-flex"
+                      data-testid={`save-decision-trigger-${contribution.key}`}
+                    >
+                      <Button
+                        type="button"
+                        size="sm"
+                        // `pending` (fix round 2): this Save is LIVE once Amend has unlocked
+                        // the row, so it needs the same in-flight guard the plain Save has -
+                        // a double-click here fired two `onDecide` calls.
+                        disabled={
+                          saved || pending || alreadyConfirmed || (!approving && !canSave)
+                        }
+                        onClick={save}
+                      >
+                        {saveButtonLabel}
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  {alreadyConfirmed && (
+                    // 375px (review round 2): the sentence alone is wider than the viewport,
+                    // so it needs its own max-width and Radix's own collision padding rather
+                    // than the primitive's ordinary width - every OTHER tooltip on the board
+                    // stays at that default.
+                    <TooltipContent
+                      className="max-w-[min(20rem,calc(100vw-2rem))] text-pretty"
+                      collisionPadding={16}
+                    >
+                      {CONFIRMED_LINE_TITLE}
+                    </TooltipContent>
+                  )}
+                </Tooltip>
+              ) : (
+                <Button
+                  type="button"
+                  size="sm"
+                  // Disabled ON the saved state too (D4): there is nothing left to save, and
+                  // a live button under the word "Saved" invites a second write of the same
+                  // row. `pending` (fix round 1, S4): the write this same click just started
+                  // is still on the wire.
+                  disabled={saved || pending || (!approving && !canSave)}
+                  onClick={save}
+                >
+                  {saveButtonLabel}
+                </Button>
+              )}
+              {activelyCovered ? (
+                // R3(b) (`PLAN-board-reject-on-confirmed-line.md`, 22 Sep 2026): Reject on an
+                // ACTIVELY covered line is no longer dead weight - it follows the UNCOVERED
+                // branch's own rule (disabled only while the reason is blank), because it now
+                // stages a withdrawal Confirm carries out. `CONFIRMED_LINE_TITLE` stays on
+                // Save alone (R2 of #989 still holds there); this tooltip only ever carries
+                // the "say why" sentence, and only while blank, so hovering an ENABLED Reject
+                // shows nothing (AC-F2/AC-F3). The wrapped span stays for the life of the
+                // covered line (AC-F4) - only `disabled` and whether the tooltip has content
+                // move.
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span
+                      tabIndex={0}
+                      className="inline-flex"
+                      data-testid={`reject-decision-trigger-${contribution.key}`}
+                    >
+                      {rejectButton}
+                    </span>
+                  </TooltipTrigger>
+                  {reason.trim().length === 0 && (
+                    <TooltipContent
+                      className="max-w-[min(20rem,calc(100vw-2rem))] text-pretty"
+                      collisionPadding={16}
+                    >
+                      Say why this line is being refused first.
+                    </TooltipContent>
+                  )}
+                </Tooltip>
+              ) : covered ? (
+                // N1 (fix round): a covered-but-not-ACTIVELY-covered line is the
+                // inquiry-only kind (#875, no `SOSupplyDecision` to withdraw from) -
+                // Confirm has no seam for it, so Reject keeps the ORIGINAL #989 shape:
+                // disabled outright, with `CONFIRMED_LINE_TITLE`, same as Save.
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span
+                      tabIndex={0}
+                      className="inline-flex"
+                      data-testid={`reject-decision-trigger-${contribution.key}`}
+                    >
+                      <Button type="button" size="sm" variant="outline" disabled>
+                        <X className="size-4" aria-hidden />
+                        Reject
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent
+                    className="max-w-[min(20rem,calc(100vw-2rem))] text-pretty"
+                    collisionPadding={16}
+                  >
+                    {CONFIRMED_LINE_TITLE}
+                  </TooltipContent>
+                </Tooltip>
+              ) : (
+                // No `title` here (fix round 2, nit): the Button primitive's
+                // `disabled:pointer-events-none` means a `title` on a disabled button never
+                // reaches a real hover (see the comment on `CONFIRMED_LINE_TITLE` above), so
+                // it was dead - no tooltip added either.
+                rejectButton
+              )}
             </div>
           )}
         </div>

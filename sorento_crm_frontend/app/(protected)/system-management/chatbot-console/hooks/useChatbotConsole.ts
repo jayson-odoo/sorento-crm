@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { extractTurnAttachments } from '@/components/chatbot/TurnAttachments';
 import { toast } from '@/lib/toast';
 import { getChatbotTurns } from '../../chat-history/services/chatbotTurnService';
 import { getRespondContactsOutbound } from '../../respond-contacts/services/respondContactOutboundService';
@@ -115,10 +116,13 @@ function contactLabel(row: { name: string | null; phone_number: string | null; r
 }
 
 /** `reply_text` plus one bubble per `send_messages` entry, exactly the shape the plan
- * describes - shared between a plain text turn and the tail of a resolved media turn. */
+ * describes - shared between a plain text turn and the tail of a resolved media turn.
+ * The turn's own `send_attachments` files (if any) ride the LAST bubble, the same
+ * place `quickReplies` already rides. */
 function turnBubbles(result: ConsoleTurnResponse, fallbackId: string): ChatbotConsoleMessage[] {
   const bodies = [...(result.reply_text ? [result.reply_text] : []), ...result.send_messages];
   if (bodies.length === 0) bodies.push('(no reply)');
+  const attachments = extractTurnAttachments(result.actions);
   return bodies.map((body, index) => ({
     id: `bot-${result.turn_id ?? fallbackId}-${index}`,
     role: 'bot' as const,
@@ -127,6 +131,7 @@ function turnBubbles(result: ConsoleTurnResponse, fallbackId: string): ChatbotCo
     branchKind: index === 0 ? result.branch_kind : undefined,
     promptVersion: result.prompt_version ?? null,
     quickReplies: index === bodies.length - 1 ? result.quick_replies : undefined,
+    attachments: index === bodies.length - 1 && attachments.length > 0 ? attachments : undefined,
   }));
 }
 

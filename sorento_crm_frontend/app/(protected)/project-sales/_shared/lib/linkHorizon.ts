@@ -3,11 +3,15 @@
  *
  * Every path that ties a document to an order-inquiry row reaches only as far as a date:
  * a row due after it is left Not linked, so a 2030 order stops eating a purchase order a
- * nearer one needed. Three presses share the date - Acknowledge, Link selected and Link
- * now - plus the manual Link dialog, which shows it and lets a person overrule it.
+ * nearer one needed. Two presses share the date - Acknowledge and Link now - plus the
+ * manual Link dialog, which shows it and lets a person overrule it. "Link selected"
+ * (R18, `PLAN-oi-links-autocount-truth-24sep.md`, supersedes G1) carries no horizon of
+ * its own either - it is the SAME `auto-place` call scoped to the ticked rows via
+ * `row_ids`, so it reports through `linkOutcomeText` below like every other caller of
+ * that route.
  *
- * The words a result is reported in live here too, so the three presses cannot come to
- * report the same outcome differently.
+ * The words a result is reported in live here too, so the presses cannot come to report
+ * the same outcome differently.
  */
 import { formatDateInMalaysia } from '@/lib/helpers';
 import type { AcknowledgeResult, AutoPlaceResult } from '../types/orderInquiry.types';
@@ -202,8 +206,26 @@ function afterPhrase(after: number, linkUpTo: string | null | undefined): string
  * the horizon changed nothing.
  */
 export function linkOutcomeText(result: AutoPlaceResult): string {
-  const placed = result.placed_rows ?? 0;
   const after = result.after_horizon ?? 0;
+  // G4 (`PLAN-oi-links-autocount-truth-24sep.md`): once "Auto link all" follows AutoCount
+  // first and only SUGGESTS the rest, the toast states the two apart - never one merged
+  // "linked" figure that would read a suggestion as bought. `book_linked_rows` /
+  // `suggested_rows` are absent on today's backend (S2/S3 not live yet), so this falls
+  // back to the figure the toast has always sent.
+  if (result.book_linked_rows !== undefined || result.suggested_rows !== undefined) {
+    const bookLinked = result.book_linked_rows ?? 0;
+    const suggested = result.suggested_rows ?? 0;
+    const parts = [`${bookLinked} linked from AutoCount`, `${suggested} suggested`];
+    // R18 (supersedes G1): "Link selected" is this SAME call, scoped to the ticked
+    // rows - the ruling asks it to also say how many of them actually moved, so
+    // recalculating against AutoCount can say whether it caught a mistake rather
+    // than a blanket re-link. Shown whenever the backend sends it (every auto-place
+    // caller, not only "Link selected"), same absence rule as the two counts above.
+    if (result.changed_rows !== undefined) parts.push(`${result.changed_rows} changed`);
+    if (after > 0) parts.push(afterPhrase(after, result.link_up_to));
+    return parts.join(', ');
+  }
+  const placed = result.placed_rows ?? 0;
   if (after > 0) {
     return `${placed} linked, ${afterPhrase(after, result.link_up_to)}`;
   }
@@ -214,16 +236,29 @@ export function linkOutcomeText(result: AutoPlaceResult): string {
   );
 }
 
-/** The same, for the Acknowledge press, which reports what it took on first. */
+/**
+ * The same, for the Confirm press (PLAN-oi-confirm-per-so, AC-CF-10: "Confirmed N rows" -
+ * R7 renamed Acknowledge to Confirm everywhere visible; this is the last spot that still
+ * said the old word), which reports what it took on first.
+ *
+ * `skipped` (AC-CF-8, review round: was on the wire but never shown) is a rejected or
+ * cancelled row the press matched and left alone - appended to whatever the rest of the
+ * sentence already says, never silently dropped from the toast the way it was never
+ * silently dropped from the response body.
+ */
 export function acknowledgeOutcomeText(result: AcknowledgeResult): string {
-  const rows = `${result.acknowledged} row${result.acknowledged === 1 ? '' : 's'} acknowledged`;
+  const rows = `Confirmed ${result.acknowledged} row${result.acknowledged === 1 ? '' : 's'}`;
   const after = result.after_horizon ?? 0;
+  let text: string;
   if (after > 0) {
-    return `${rows}, ${result.linked_rows} linked, ${afterPhrase(after, result.link_up_to)}`;
+    text = `${rows}, ${result.linked_rows} linked, ${afterPhrase(after, result.link_up_to)}`;
+  } else if (result.linked_rows === 0) {
+    text = rows;
+  } else {
+    text =
+      `${rows}, ${result.linked_rows} linked across ` +
+      `${result.links} document line${result.links === 1 ? '' : 's'}`;
   }
-  if (result.linked_rows === 0) return rows;
-  return (
-    `${rows}, ${result.linked_rows} linked across ` +
-    `${result.links} document line${result.links === 1 ? '' : 's'}`
-  );
+  const skipped = result.skipped ?? 0;
+  return skipped > 0 ? `${text}, ${skipped} skipped` : text;
 }

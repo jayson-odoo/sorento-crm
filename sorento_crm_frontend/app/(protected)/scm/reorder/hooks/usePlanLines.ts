@@ -54,7 +54,7 @@ import { trajectoryKey, type ChannelTrendEntry, type TrajectoryEntry } from '../
 import { isGroupedLine, type PlanChannel } from '../lib/planLineGrouping';
 import type { ProductPhotoStatus } from '../components/ProductPhotoPopover';
 import { levelKey, type LevelSuggestion } from '../lib/levelSuggestion';
-import { isProjectOnlyLine, type PoReceipt } from '../lib/poCover';
+import type { PoReceipt } from '../lib/poCover';
 import type { ProductPurchaseTrend } from '../lib/purchaseTrend';
 
 /**
@@ -530,24 +530,22 @@ export function usePlanLines(runId: string | null, enabled = true) {
    * inbound across this product's locations" reading the summed `on_hand`/`net_position`
    * fields already give the row.
    *
-   * A PROJECT row serves none (P8, `isProjectOnlyLine`): its purchase order is consumed by
-   * the Order Inquiry's own links, so offering it here would have the buyer net the same
-   * quantity a second time. Checked per MEMBER on a grouped row, so a product whose project
-   * bin and dealer bin are summed together still shows the dealer bin's receipts.
+   * P8 (`isProjectOnlyLine`) is retired (PLAN-reorder-one-formula.md): the engine nets the
+   * open PO book for every row since #828, so a project-only row hiding its own receipts
+   * broke the identity `Stock + PO + Buy = need` for exactly that row. The PO part shows
+   * whenever the row carries one, project-only or not.
    */
   const poFor = useCallback(
     (line: PlanLine): PoReceipt[] => {
       if (isGroupedLine(line)) {
         const out: PoReceipt[] = [];
         for (const member of line.__group.members) {
-          if (isProjectOnlyLine(member)) continue;
           const key = levelKey(member.product_id, member.warehouse_id);
           const hit = key ? poBook.data?.po_book[key] : undefined;
           if (hit) out.push(...hit);
         }
         return out;
       }
-      if (isProjectOnlyLine(line)) return [];
       const key = levelKey(line.product_id, line.warehouse_id);
       return (key ? poBook.data?.po_book[key] : undefined) ?? [];
     },

@@ -56,6 +56,55 @@ def _dismissed_codes(db: Session, supplier_id: str, codes: set[str]) -> set[str]
     return {r[0] for r in rows}
 
 
+def _bind_packing_rows_to_lines(
+    rows: list[ProformaInvoicePackingLine], lines: list[ProformaInvoiceLine],
+) -> dict[str, ProformaInvoiceLine]:
+    """ONE per-product/set cursor, walked over the WHOLE invoice's `rows` in SHEET order
+    (`row_no`) against `lines` in LINE order (`line_no`) - shared by `replace_packing_rows`
+    and `rebind_packing_rows` (R11, review round 1) so two DIFFERENT item codes that both
+    resolve to the SAME product agree on which row binds which line regardless of which
+    literal code each row carries, and rebinding ONE code reruns the WHOLE invoice's rows
+    through this same cursor rather than restarting a cursor at zero for just that code's
+    own rows - the two binders disagreeing was exactly R11's bug (`rebind_packing_rows`
+    used to pick the FIRST matching line, and, separately, scoped its cursor to one code).
+
+    `rows` must already be in `row_no` order and `lines` in `line_no` order - callers own
+    the query's `ORDER BY`. A SURPLUS row (more rows than the product has lines) binds to
+    the LAST one (C1, ruling 6, unchanged). Returns `{row.id: matched_line}`; a row absent
+    from the result matched no line (no product resolved, or the product names no line of
+    this invoice at all).
+    """
+    lines_by_product: dict[str, list[ProformaInvoiceLine]] = {}
+    lines_by_set: dict[str, list[ProformaInvoiceLine]] = {}
+    for l in lines:
+        if l.product_id:
+            lines_by_product.setdefault(str(l.product_id), []).append(l)
+        if l.product_set_id:
+            lines_by_set.setdefault(str(l.product_set_id), []).append(l)
+    product_cursor: dict[str, int] = {}
+    set_cursor: dict[str, int] = {}
+
+    def _next_line(candidates: list[ProformaInvoiceLine], cursor: dict[str, int], key: str):
+        if not candidates:
+            return None
+        idx = cursor.get(key, 0)
+        cursor[key] = idx + 1
+        return candidates[idx] if idx < len(candidates) else candidates[-1]
+
+    out: dict[str, ProformaInvoiceLine] = {}
+    for row in rows:
+        matched_line = None
+        if row.product_id:
+            pid = str(row.product_id)
+            matched_line = _next_line(lines_by_product.get(pid, []), product_cursor, pid)
+        elif row.product_set_id:
+            sid = str(row.product_set_id)
+            matched_line = _next_line(lines_by_set.get(sid, []), set_cursor, sid)
+        if matched_line is not None:
+            out[str(row.id)] = matched_line
+    return out
+
+
 def replace_packing_rows(
     db: Session,
     invoice: ProformaInvoice,
@@ -77,13 +126,16 @@ def replace_packing_rows(
     known = _with_supplier_codes(db, known, supplier_id=supplier_id, codes=codes, actor=actor)
     dismissed = _dismissed_codes(db, supplier_id, codes)
 
+    # Ordered by LINE POSITION (C1, PLAN-pi-header-fields-convert-fixes-24sep.md) - a
+    # repeated product's Nth packing row (sheet order, `row_no`) binds the Nth invoice line
+    # of that product, never every row of it onto ONE line (the old `{product_id: line}`
+    # dict collapse, last-writer-wins over an unordered query).
     inv_lines = (
         db.query(ProformaInvoiceLine)
         .filter(ProformaInvoiceLine.invoice_id == invoice.id)
+        .order_by(ProformaInvoiceLine.line_no)
         .all()
     )
-    line_by_product = {str(l.product_id): l for l in inv_lines if l.product_id}
-    line_by_set = {str(l.product_set_id): l for l in inv_lines if l.product_set_id}
 
     # A re-upload is a CORRECTION, never an append (AC-B5) - the whole set is replaced.
     db.query(ProformaInvoicePackingLine).filter(
@@ -129,11 +181,15 @@ def replace_packing_rows(
         if product:
             row.product_id = product.get("id")
             row.product_set_id = product.get("product_set_id")
-        matched_line = None
-        if product and product.get("id"):
-            matched_line = line_by_product.get(str(product["id"]))
-        elif product and product.get("product_set_id"):
-            matched_line = line_by_set.get(str(product["product_set_id"]))
+        db.add(row)
+        new_rows.append((row, code_upper))
+
+    # R11: ONE shared binder, over the WHOLE invoice's rows in sheet order - never a
+    # per-row cursor built inline here, which is what let this function and
+    # `rebind_packing_rows` disagree (the shared function's own docstring).
+    matches = _bind_packing_rows_to_lines([r for r, _ in new_rows], inv_lines)
+    for row, code_upper in new_rows:
+        matched_line = matches.get(str(row.id))
         if code_upper in dismissed:
             row.match_state = "dismissed"
             if matched_line is not None:
@@ -145,8 +201,8 @@ def replace_packing_rows(
             # A resolved product no line of this PI holds, or no product at all - both
             # read the same to the operator: this row is not on the invoice (AC-B6).
             row.match_state = "unmatched"
-        db.add(row)
-        new_rows.append(row)
+
+    new_rows = [r for r, _ in new_rows]
 
     # S2, text glossary lane (R3/R4): the English cache for `description` on every row
     # this replace just wrote, one batched memory lookup for the whole file.
@@ -181,7 +237,13 @@ def rebind_packing_rows(
     dismissal is `dismissed` whatever it resolves to. Every invoice a row moved on is
     re-rolled afterwards (AC-B8).
     """
-    rows = (
+    # R11 (review round 1): delegates to the SAME per-invoice, per-product cursor
+    # `replace_packing_rows` uses (`_bind_packing_rows_to_lines`) - run over the WHOLE
+    # invoice's rows, not just this code's own. Scoping the cursor to one code (the old
+    # shape here) let two codes sharing a product disagree with each other, and picking
+    # the FIRST matching line per row (older still) let every row of a repeated product
+    # collide on line one - both were R11's bug.
+    code_rows = (
         db.query(ProformaInvoicePackingLine)
         .join(
             ProformaInvoice,
@@ -193,40 +255,46 @@ def rebind_packing_rows(
         )
         .all()
     )
-    if not rows:
+    if not code_rows:
         return 0
 
     dismissed = bool(_dismissed_codes(db, str(supplier_id), {code}))
-    invoice_ids = {str(r.proforma_invoice_id) for r in rows}
-    lines_by_invoice: dict[str, list[ProformaInvoiceLine]] = {}
-    for line in (
-        db.query(ProformaInvoiceLine)
-        .filter(ProformaInvoiceLine.invoice_id.in_(invoice_ids))
-        .all()
-    ):
-        lines_by_invoice.setdefault(str(line.invoice_id), []).append(line)
-
-    for row in rows:
+    code_row_ids = {str(r.id) for r in code_rows}
+    invoice_ids = {str(r.proforma_invoice_id) for r in code_rows}
+    for row in code_rows:
         row.product_id = product_id
         row.product_set_id = product_set_id
-        matched_line = None
-        for line in lines_by_invoice.get(str(row.proforma_invoice_id), []):
-            if product_id and str(line.product_id or "") == str(product_id):
-                matched_line = line
-                break
-            if product_set_id and str(line.product_set_id or "") == str(product_set_id):
-                matched_line = line
-                break
-        row.proforma_invoice_line_id = matched_line.id if matched_line is not None else None
-        if dismissed:
-            row.match_state = _DISMISSED
-        else:
-            row.match_state = "matched" if matched_line is not None else "unmatched"
+
+    for invoice_id in invoice_ids:
+        all_rows = (
+            db.query(ProformaInvoicePackingLine)
+            .filter(ProformaInvoicePackingLine.proforma_invoice_id == invoice_id)
+            .order_by(ProformaInvoicePackingLine.row_no)
+            .all()
+        )
+        inv_lines = (
+            db.query(ProformaInvoiceLine)
+            .filter(ProformaInvoiceLine.invoice_id == invoice_id)
+            .order_by(ProformaInvoiceLine.line_no)
+            .all()
+        )
+        matches = _bind_packing_rows_to_lines(all_rows, inv_lines)
+        for row in all_rows:
+            matched_line = matches.get(str(row.id))
+            row.proforma_invoice_line_id = matched_line.id if matched_line is not None else None
+            # A row's OWN `match_state` follows from ITS OWN code's dismissal, never the
+            # rebind that merely repositioned it - a row of some OTHER code on this
+            # invoice keeps whatever dismissal ruling it already carried.
+            if str(row.id) in code_row_ids:
+                if dismissed:
+                    row.match_state = _DISMISSED
+                else:
+                    row.match_state = "matched" if matched_line is not None else "unmatched"
     db.flush()
 
     for invoice_id in invoice_ids:
         rollup_invoice(db, invoice_id)
-    return len(rows)
+    return len(code_rows)
 
 
 def rollup_invoice(db: Session, invoice_id: str) -> None:

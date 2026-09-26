@@ -100,6 +100,9 @@ export interface ProformaDocumentSummary {
   invoice_date: string | null;
   container_no: string | null;
   bl_no: string | null;
+  /** R-E (owner ruling 25 Sep): distinct from `bl_no` now. Optional so a hand-built
+   *  fixture from before this field existed still typechecks. */
+  so_no?: string | null;
   lines: number;
   qty: number | null;
   total: number | null;
@@ -177,6 +180,11 @@ export interface ProformaInvoiceListRow {
    *  seal and the SO. */
   consignee: string | null;
   bl_no: string | null;
+  /** R-E (owner ruling 25 Sep): the forwarder's booking/SO reference - its OWN header
+   *  field now, distinct from `bl_no`, never derived from it (the superseded 6 Sep
+   *  carry-BL-as-SO rule). Optional so a hand-built fixture from before this field
+   *  existed still typechecks; the real payload always states it. */
+  so_no?: string | null;
   total_amount: number | null;
   line_count: number;
   source_ref: string | null;
@@ -352,12 +360,56 @@ export interface RevisionDiff {
   changes: RevisionLineChange[];
 }
 
+/**
+ * One file this invoice was read from, as the record's own attachment link holds it.
+ *
+ * The workbook the lines were parsed out of, and the packing list uploaded against the same
+ * invoice: both are linked to the record, so both can be previewed and downloaded rather
+ * than merely named (S8).
+ */
+export interface ProformaInvoiceSourceFile {
+  /** The LINK's id, which is what identifies the row. */
+  id: string;
+  /** The attachment itself - what preview and download act on. */
+  attachment_id: string;
+  name: string | null;
+  /** The attachment type in words, e.g. "Packing list". */
+  type: string | null;
+  uploaded_at: string | null;
+  download_url: string;
+  file_size_bytes: number | null;
+  mime_type: string | null;
+}
+
+/** Container/seal/SO/BL/consignee EXACTLY as Convert (B1) will write them onto the draft -
+ *  B3/AC-C5: computed server-side by the SAME function `convert_to_draft_shipment` uses,
+ *  so the dialog's "Carried onto the draft" line can never disagree with what Convert
+ *  itself does. R-E (owner ruling 25 Sep): `so` and `bl` are two INDEPENDENT facts - `so`
+ *  lands on the packing list's `forwarder_order_ref`, `bl` on its `bill_of_lading_number` -
+ *  superseding the 6 Sep rule that put `bl_no` alone into the SO field. */
+export interface ProformaInvoiceConvertCarry {
+  container: string | null;
+  seal: string | null;
+  so: string | null;
+  /** R-E (owner ruling 25 Sep): the true bill of lading, distinct from `so` now - never
+   *  derived from it (the superseded 6 Sep carry-BL-as-SO rule). */
+  bl: string | null;
+  consignee: string | null;
+}
+
 export interface ProformaInvoiceDetail extends ProformaInvoiceListRow {
   lines: ProformaInvoiceLine[];
   converted_shipments: ConvertedShipmentRef[];
   revisions: RevisionRef[];
   revision_of_pi_number: string | null;
   diff: RevisionDiff | null;
+  /** Optional while an older payload (or a record uploaded before the link existed) carries
+   *  no links at all - the detail then names its files without offering to open them. */
+  source_files?: ProformaInvoiceSourceFile[];
+  /** Optional so a fixture/test payload built before this field existed still type-checks -
+   *  the real endpoint always sends it (B3); the convert dialog falls back to an
+   *  all-`null` carry when it is absent. */
+  convert_carry?: ProformaInvoiceConvertCarry;
 }
 
 /** One PI's outcome inside a convert - always present, so the caller can name every
@@ -425,6 +477,7 @@ function proformaForm(
   revisionOf?: RevisionSelection | null,
   fileAsNew?: string[] | null,
   loadingPlanId?: string | null,
+  headerRow?: number | null,
 ): FormData {
   const body = new FormData();
   body.append('file', file);
@@ -442,16 +495,20 @@ function proformaForm(
   // revised here is stamped with it, so the plan reads its own five blocks rather than
   // whichever single invoice sorted first for the supplier.
   if (loadingPlanId) body.append('loading_plan_id', loadingPlanId);
+  // The import column mapper's stepper (B6, AC-M3) - which row is the header, overriding
+  // the guess. Sent whenever the mapper has read one, never invented here.
+  if (headerRow != null) body.append('header_row', String(headerRow));
   return body;
 }
 
 export async function previewProformaInvoice(
   file: File,
   supplierId: string,
+  headerRow?: number | null,
 ): Promise<ProformaInvoicePreview> {
   const res = await apiFetch('/api/v1/scm/proforma-invoices/preview', {
     method: 'POST',
-    body: proformaForm(file, supplierId),
+    body: proformaForm(file, supplierId, null, null, null, headerRow),
   });
   return readJson<ProformaInvoicePreview>(res, 'Failed to read the proforma invoice');
 }
@@ -472,10 +529,11 @@ export async function applyProformaInvoice(
   revisionOf?: RevisionSelection | null,
   fileAsNew?: string[] | null,
   loadingPlanId?: string | null,
+  headerRow?: number | null,
 ): Promise<ProformaApplyResult> {
   const res = await apiFetch('/api/v1/scm/proforma-invoices/apply', {
     method: 'POST',
-    body: proformaForm(file, supplierId, revisionOf, fileAsNew, loadingPlanId),
+    body: proformaForm(file, supplierId, revisionOf, fileAsNew, loadingPlanId, headerRow),
   });
   return readJson<ProformaApplyResult>(res, 'Failed to save the proforma invoice');
 }
@@ -483,10 +541,11 @@ export async function applyProformaInvoice(
 export async function testProformaInvoice(
   file: File,
   supplierId: string,
+  headerRow?: number | null,
 ): Promise<UploadTestResult> {
   const res = await apiFetch('/api/v1/scm/proforma-invoices/apply?validate_only=true', {
     method: 'POST',
-    body: proformaForm(file, supplierId),
+    body: proformaForm(file, supplierId, null, null, null, headerRow),
   });
   return readJson<UploadTestResult>(res, 'Failed to test the proforma invoice');
 }

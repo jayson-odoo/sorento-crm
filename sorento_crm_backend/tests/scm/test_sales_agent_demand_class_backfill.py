@@ -145,9 +145,11 @@ def test_backfill_of_an_agent_with_no_orders_is_a_silent_zero(db):
     assert changed == 0
 
 
-def test_a_row_whose_customer_segment_answers_project_wins_over_the_agent(db):
-    """The demand-class priority bug: FANNY III (agent retail) rows whose customer's
-    segment is a project code must land on `project`, never on the agent's `retail`."""
+def test_the_agent_wins_over_a_customer_segment_that_would_answer_project(db):
+    """PLAN-demand-class-agent-arrival.md (captain ruling 28 Aug 2026): the ladder puts
+    the agent ABOVE the customer's market segment, so FANNY III (agent retail) rows whose
+    customer's segment is a project code still land on the agent's `retail` - the segment
+    is no longer re-checked at backfill time."""
     agent = _agent(db, sales_agent=unique_code("FANNY"), demand_class=DEFAULT_DEMAND_CLASS)
     customer = _customer(db, segment_stem="project")
     order = _order(db, agent, demand_class=None, customer=customer)
@@ -155,10 +157,10 @@ def test_a_row_whose_customer_segment_answers_project_wins_over_the_agent(db):
     svc.set_demand_class(db, agent.sales_agent, DEFAULT_DEMAND_CLASS)
 
     db.expire_all()
-    assert db.get(SalesOrder, order.id).demand_class == PROJECT
+    assert db.get(SalesOrder, order.id).demand_class == DEFAULT_DEMAND_CLASS
 
 
-def test_a_row_whose_customer_segment_answers_retail_still_uses_the_segment(db):
+def test_the_agent_wins_even_when_the_segment_would_answer_retail(db):
     agent = _agent(db, sales_agent=unique_code("SEGRETAIL"), demand_class=PROJECT)
     customer = _customer(db, segment_stem="retail")
     order = _order(db, agent, demand_class=None, customer=customer)
@@ -166,9 +168,9 @@ def test_a_row_whose_customer_segment_answers_retail_still_uses_the_segment(db):
     svc.set_demand_class(db, agent.sales_agent, PROJECT)
 
     db.expire_all()
-    # The segment says retail even though the agent is a project agent - segment outranks
-    # the agent, so the order must not inherit the agent's class here.
-    assert db.get(SalesOrder, order.id).demand_class == DEFAULT_DEMAND_CLASS
+    # The agent outranks the segment now, so a project agent's NULL-class row lands
+    # `project` even though the customer's own segment would have answered `retail`.
+    assert db.get(SalesOrder, order.id).demand_class == PROJECT
 
 
 def test_a_customer_with_no_segment_still_falls_back_to_the_agent(db):
@@ -192,15 +194,21 @@ def test_an_order_with_no_customer_at_all_falls_back_to_the_agent(db):
     assert db.get(SalesOrder, order.id).demand_class == PROJECT
 
 
-def test_backfill_count_covers_both_segment_and_agent_derived_rows(db):
-    agent = _agent(db, sales_agent=unique_code("MIXED"), demand_class=DEFAULT_DEMAND_CLASS)
+def test_backfill_count_covers_every_null_class_row_regardless_of_customer_segment(db):
+    """AC-8: every NULL-class order of the agent moves, whatever its customer's segment
+    says - the agent outranks the segment, so there is no longer a segment-derived vs
+    agent-derived split to count separately."""
+    agent = _agent(db, sales_agent=unique_code("MIXED"), demand_class=PROJECT)
     project_customer = _customer(db, segment_stem="project")
-    from_segment = _order(db, agent, demand_class=None, customer=project_customer)
-    from_agent = _order(db, agent, demand_class=None, customer=None)
+    retail_customer = _customer(db, segment_stem="retail")
+    with_project_segment = _order(db, agent, demand_class=None, customer=project_customer)
+    with_retail_segment = _order(db, agent, demand_class=None, customer=retail_customer)
+    no_customer = _order(db, agent, demand_class=None, customer=None)
 
-    changed = svc._backfill_null_class_orders(db, agent, DEFAULT_DEMAND_CLASS)
+    changed = svc._backfill_null_class_orders(db, agent, PROJECT)
 
-    assert changed == 2
+    assert changed == 3
     db.expire_all()
-    assert db.get(SalesOrder, from_segment.id).demand_class == PROJECT
-    assert db.get(SalesOrder, from_agent.id).demand_class == DEFAULT_DEMAND_CLASS
+    assert db.get(SalesOrder, with_project_segment.id).demand_class == PROJECT
+    assert db.get(SalesOrder, with_retail_segment.id).demand_class == PROJECT
+    assert db.get(SalesOrder, no_customer.id).demand_class == PROJECT

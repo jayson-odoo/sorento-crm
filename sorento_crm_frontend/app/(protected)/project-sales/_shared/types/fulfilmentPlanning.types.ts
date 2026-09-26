@@ -123,6 +123,13 @@ export interface FulfilmentPlanningRow {
   earliest_required_date?: string | null;
   review_state: ReviewState;
   updated_at?: string | null;
+  /**
+   * The newest PENDING planning-change batch on this order's core sales order, or null/absent
+   * (`PLAN-scm-board-picks-up-pending-change.md`, AC-B7). Same id the SCM Sales Orders list
+   * and the fulfilment board name off `planning_change_service.pending_batch_id_by_sales_order`
+   * - the `Changed` pill here links to the board with that batch already loaded.
+   */
+  planning_change_batch_id?: string | null;
 }
 
 export interface ReconciliationHeader {
@@ -412,10 +419,12 @@ export interface SupplyLine {
   /**
    * Whether the product's supplier sits in the home country (S3,
    * `PLAN-local-supplier-oi-routing.md`). A `local` Buy raises no Order Inquiry row on
-   * confirm - the sheet marks it with a `Local` pill and nothing else changes. Absent on a
-   * server that has not wired origin resolution yet.
+   * confirm - the sheet marks it with a `Local` pill and nothing else changes. `null`
+   * while `local_buy_routing_enabled` (System Settings) is off, the shipped default
+   * (`PLAN-local-buy-routing-toggle.md`) - every Buy then reaches Order Inquiries and
+   * no pill renders. Absent on a server that has not wired origin resolution yet.
    */
-  buy_origin?: 'local' | 'overseas';
+  buy_origin?: 'local' | 'overseas' | null;
   required_date?: string | null;
   /**
    * Warehouse CODE of the line's fulfilment location, read off the CORE sales-order line's
@@ -526,11 +535,29 @@ export interface SupplyProposal {
 export interface ConfirmReserveComponent {
   warehouse_id: string;
   qty: string;
+  /**
+   * The warehouse CODE the id names, when whoever built this component knew it.
+   *
+   * Addressing is the id's job and the endpoint reads nothing else; this is here so a
+   * READER does not have to guess. A composition read back off a planning-change row is
+   * printed in board words ("Pool share 15 at BRW"), and with the id alone the only
+   * honest thing to print is "another location" - or, before this existed, the raw UUID
+   * (measured on SO419595 line 9, 13 September 2026).
+   */
+  location?: string | null;
 }
 
 export interface ConfirmBorrowComponent {
   source: BorrowSource;
   warehouse_id: string;
+  /**
+   * The donor warehouse's CODE, when whoever built this component knew it.
+   *
+   * The same field `ConfirmReserveComponent` carries, and it matters more here: a borrow's
+   * donor is by definition a warehouse this line does not hold at, so it appears nowhere
+   * else on a planning-change row for a reader to resolve the id against.
+   */
+  location?: string | null;
   donor_project_id?: string | null;
   qty: string;
   /** Mandatory: no Borrow is written without one (AC-B09). */
@@ -569,7 +596,7 @@ export interface ConfirmLine {
   reserve: ConfirmReserveComponent[];
   borrow: ConfirmBorrowComponent[];
   buy_qty: string;
-  /** Mandatory when the product is discontinued and `buy_qty > 0` (AC-B11). */
+  /** Why this line still buys a discontinued product, when the product is discontinued and `buy_qty > 0`. Optional. */
   buy_reason?: string | null;
   /**
    * Why this composition is not the engine's, in the planner's own words. Frozen with the
@@ -598,6 +625,15 @@ export interface ConfirmSupplyBody {
    * a second revision.
    */
   batch_id?: string | null;
+  /**
+   * The mirror `project_line_id`s of COVERED lines a `rejected` draft was staged on (owner
+   * ruling 23 Sep 2026, `PLAN-board-reject-on-confirmed-line.md`: "we should confirm the
+   * rejection" - reject on a confirmed line is a STAGED decision like every other board
+   * decision, and Confirm is what commits it, never the draft save itself). Never overlaps
+   * `lines` - a line is either REPLACED (named in `lines`) or DROPPED (named here). Absent
+   * on every ordinary Confirm; may not travel alongside `batch_id`.
+   */
+  rejected_line_ids?: string[];
 }
 
 export interface ConfirmException {
@@ -631,6 +667,12 @@ export interface ConfirmResult {
   transfers_kept?: number | null;
   /** How many of the confirmed lines were flagged as a suspected system problem (R10). */
   suspected_issues?: number | null;
+  /**
+   * How many covered lines this SAME press withdrew (`ConfirmSupplyBody.rejected_line_ids`,
+   * owner ruling 23 Sep 2026). The toast needs it beside the confirmed count - "N confirmed"
+   * says nothing about the lines this press also took OUT.
+   */
+  rejected_count?: number | null;
 }
 
 export interface FulfilmentPlanningListEnvelope {
@@ -655,11 +697,13 @@ export interface FulfilmentPlanningListEnvelope {
 // ---------------------------------------------------------------------------
 
 /**
- * How the date axis is cut, as a calendar control: day, week or month (13.3, captain's
- * decision). Week is the default. Day renders a scrolling 30-day window rather than a column
- * per distinct date, because the book carries 349 of them.
+ * How the date axis is cut, as a calendar control: date, day, week or month (13.3, captain's
+ * decision; `date` added S1, PLAN-board-oi-mechanical-22sep.md, owner ruling 22 Sep 2026).
+ * `date` is the default: one column per distinct required date actually present, no calendar
+ * fill. `day` renders a scrolling 30-day window rather than a column per distinct date, because
+ * the book carries 349 of them - it stays available as its own option.
  */
-export type BoardGranularity = 'day' | 'week' | 'month';
+export type BoardGranularity = 'date' | 'day' | 'week' | 'month';
 
 /**
  * A column of the board. Every dated column is a real date, however far past (the captain,
@@ -1110,7 +1154,18 @@ export interface BoardContribution {
   project_key?: string | null;
   line_no: number;
   item_code: string;
-  /** The still-owed quantity. `qty_outstanding` is the same number under its own name. */
+  /**
+   * What this line ASKS FOR: the PLAN quantity, `coalesce(qty_required, qty_ordered)`.
+   *
+   * NOT the still-owed figure, and no longer an alias of `qty_outstanding` below (14 Sep
+   * 2026 ruling). The board asks who decided where a line's stock comes from rather than
+   * whether delivery is outstanding, so a delivered unit nobody sourced is a unit to put
+   * back and the ladder is asked for the whole quantity.
+   *
+   * This is the number every composition must sum to: the server's balance check validates
+   * against it (`_LineFacts.open_qty`), so the editor, `lineFor` and the cell total all
+   * read this one and never `qty_outstanding`.
+   */
   qty: string;
   /**
    * What the sales order ORDERED on this line, as a fact off the server.
@@ -1120,7 +1175,14 @@ export interface BoardContribution {
    * moved one of them. Absent renders as a stated absence, never as a guess.
    */
   qty_ordered?: string | null;
-  /** The owed quantity under its own name. `qty` is kept as an alias of it. */
+  /**
+   * What is still owed the CUSTOMER: ordered less delivered, floored at zero.
+   *
+   * A FACT ABOUT DELIVERY, and nothing composes against it. It was an alias of `qty` until
+   * the 14 September 2026 ruling and the two now differ on every line with a delivery -
+   * printing one under the other's name would make the screen state a delivery that never
+   * happened, or ask a planner to balance against a figure the server will refuse.
+   */
   qty_outstanding?: string | null;
   /** What has already been delivered against the line. Ordered - delivered = outstanding. */
   qty_delivered?: string | null;
@@ -1188,6 +1250,16 @@ export interface BoardContribution {
   fulfilment_warehouse_id?: string | null;
   /** The line states no location, so it cannot be planned and blocks its order (AC-FP16). */
   unplannable: boolean;
+  /**
+   * The BOOK closed this line, and a pending planning change is what will retire it (R3,
+   * scenario S5).
+   *
+   * It owes nothing - the board carries it at zero - but it is still on screen, because a
+   * line that vanished the moment it was cancelled would take its change with it and leave
+   * nobody anywhere to press Confirm. Nothing is decided FOR it: its apply is the retire
+   * path, which is why it counts toward Confirm (N) while carrying no decision of its own.
+   */
+  cancelled?: boolean;
   /** `sales_order_lines.priority`, when anybody stated one. Almost nobody does. */
   priority?: 'high' | 'medium' | 'low' | null;
   /**
@@ -1266,6 +1338,15 @@ export interface BoardContribution {
   /** What was frozen, when the row is covered. Absent otherwise, never an empty object. */
   decision?: BoardLineDecision | null;
   /**
+   * AC-DT-2 (`PLAN-oi-decision-trail-ui.md`): who confirmed the ACTIVE decision that
+   * covers this line, and when, flattened onto the line for the Confirmed chip's own
+   * tooltip - `decision` above carries no confirmer, since it is shaped for re-posting
+   * an amendment. `null`/absent on an uncovered line.
+   */
+  decided_by_name?: string | null;
+  decided_at?: string | null;
+  decision_revision?: number | null;
+  /**
    * A decision SAVED here but not yet confirmed (S4, R-F): survives leaving the page,
    * another device, another planner. `null`/absent on a line nobody has saved.
    *
@@ -1275,6 +1356,13 @@ export interface BoardContribution {
    * (untouched, running on the suggestion).
    */
   draft?: BoardLineDraft | null;
+  /**
+   * AC-DT-2: the same saver facts as `draft.saved_by` / `draft.saved_at`, flattened
+   * onto the line under the trail's own names for the tooltip. `null`/absent when
+   * nobody has saved one, same as `draft` itself.
+   */
+  draft_saved_by_name?: string | null;
+  draft_saved_at?: string | null;
   /**
    * The order inquiry purchasing was given for this line, reached through the planning
    * record's mirror line, and the state that instruction is in.
@@ -1295,10 +1383,12 @@ export interface BoardContribution {
    * Whether the product's supplier sits in the home country (S3,
    * `PLAN-local-supplier-oi-routing.md`), computed once per product for the whole board. A
    * `local` Buy raises no Order Inquiry row on confirm; the List view and the ladder options
-   * table mark it with a `Local` pill. Absent on a server that has not wired origin
-   * resolution yet.
+   * table mark it with a `Local` pill. `null` while `local_buy_routing_enabled` (System
+   * Settings) is off, the shipped default (`PLAN-local-buy-routing-toggle.md`) - every Buy
+   * then reaches Order Inquiries and no pill renders. Absent on a server that has not wired
+   * origin resolution yet.
    */
-  buy_origin?: 'local' | 'overseas';
+  buy_origin?: 'local' | 'overseas' | null;
 }
 
 /** What the engine suggested for one line, in the same shape a source is stated in. */
@@ -1323,6 +1413,16 @@ export interface BoardLineOrderInquiry {
   /** The ROW's own state (`raised` / `placed` / `actioned` / `cancelled`). */
   state: string;
   /**
+   * S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-15): the inquiry HEADER's own id and
+   * this row's own OI row id, addressing the List view's "OI" column link
+   * (`/project-sales/order-inquiries/<inquiry_id>?row=<row_id>`) - resolved server-side
+   * off the winning row (`project_fulfilment_board_service._order_inquiries`).
+   * Optional because a row raised before inquiries were numbered carries neither; absent
+   * means the cell reads as plain text.
+   */
+  inquiry_id?: string | null;
+  row_id?: string | null;
+  /**
    * The handshake (`PLAN-scm-oi-handshake.md`): `awaiting`, `acknowledged`, `changed` or
    * `rejected`. A different question from `state`, which says where the quantity sits.
    */
@@ -1338,6 +1438,25 @@ export interface BoardLineOrderInquiry {
    */
   rejected_reason?: string | null;
   rejected_by_name?: string | null;
+  /**
+   * AC-RL-07 (`PLAN-oi-replan-received-links.md`): what backs the instruction - the
+   * winning row's own documents, the SAME reader (`links_for_rows`) the OI worklist
+   * chip uses. Empty on a row nobody has linked.
+   */
+  documents?: BoardLineOrderInquiryDocument[];
+  /**
+   * Whether the winning row was itself redirected off a document that had already
+   * landed (AC-RL-10) - the fulfilment list's inquiry cell reads this for the `used`
+   * word (AC-RL-06).
+   */
+  redirected?: boolean;
+}
+
+/** One document behind a board line's instruction (AC-RL-07). */
+export interface BoardLineOrderInquiryDocument {
+  document: string | null;
+  kind: 'po' | 'spo';
+  received: boolean;
 }
 
 /**
@@ -1428,6 +1547,14 @@ export interface BoardSource {
    */
   supply_key?: string | null;
   supply_document?: string | null;
+  /**
+   * R7 (`PLAN-board-received-stock-own-arrival.md`, S3/S5): `"own_arrival"` on a Reserve
+   * born from goods that landed FOR this line (or the rest of its own sales order),
+   * `null`/absent on an ordinary Reserve. What the board's "Received N" chip keys off
+   * (AC-S5-1) - the same string the engine writes on `contribution["sources"]`
+   * (`FulfilmentBoardService._source`).
+   */
+  source?: 'own_arrival' | null;
 }
 
 /** A donor the engine found for a line's Borrow. Named, never an id. */
@@ -1661,6 +1788,57 @@ export interface BoardAxisRow {
   description?: string | null;
 }
 
+/**
+ * Why Undo of this order's newest confirm would be refused, even though it carries a journal
+ * (`PLAN-board-undo-last-confirm.md`, R1): purchasing has already acted on one of the order's
+ * OI rows since the confirm - linked a PO line, or marked a row actioned - after the confirm's
+ * own journal stopped writing. Null when nothing blocks it. `linked`, not `manual_link` (review
+ * round): the `auto` flag on the link is irrelevant - an AutoCount pairing purchasing's own
+ * upload placed is purchasing's work as much as a hand click.
+ *
+ * `changed` (`PLAN-scm-oi-handover-r2-undo.md`, S4, AC-R2-24): a row the journal covers now
+ * holds a value another writer wrote after the confirm - undo would overwrite that write, so
+ * the park refuses instead of silently discarding it.
+ */
+export type BoardUndoRefusal = 'linked' | 'actioned' | 'changed' | null;
+
+/**
+ * What the board knows about undoing an order's newest confirm (`undo_0001`, S1, #978): the
+ * revision the gear entry names, who confirmed it and when, and whether purchasing's own work
+ * since then refuses the undo. Null when the order has no active decision, or its active
+ * decision was not journalled (a pre-lane revision, or one minted by `uncover_lines` rather
+ * than the board's own confirm routes) - there is nothing this lane can replay.
+ */
+export interface BoardUndo {
+  revision_no: number;
+  confirmed_at?: string | null;
+  confirmed_by_name?: string | null;
+  refusal: BoardUndoRefusal;
+  /** Addressing only, never rendered: the pending action's payload, so a Confirm
+   * written during the countdown is detected server-side (AC-UC-28). */
+  decision_id: string;
+  /**
+   * `journal` replays the order's own journalled revision the normal way. `reconstructed`
+   * (`PLAN-scm-oi-handover-r2-undo.md`, S5, AC-R2-30) is a best-effort undo of a decision
+   * confirmed before the journal existed - the board only sets this for an admin/superadmin
+   * requester; every other role gets `undo: null` for that order and never sees the entry.
+   */
+  mode: 'journal' | 'reconstructed';
+}
+
+/**
+ * AC-DT-1 (`PLAN-oi-decision-trail-ui.md`): the board panel's own "Revision N, confirmed
+ * by <name>, N lines" line. Distinct from `BoardUndo` above, which is gated to a
+ * journalled (or, admin-only, reconstructable) revision for the undo gear specifically -
+ * this is a plain read of the ACTIVE decision and is present whenever the order has one.
+ */
+export interface BoardOrderDecisionHeader {
+  revision_no: number;
+  confirmed_by_name?: string | null;
+  confirmed_at?: string | null;
+  line_count: number;
+}
+
 /** One selected order's standing, which is what makes the partial-decision reality visible. */
 export interface BoardOrderStanding {
   sales_order_id: string;
@@ -1690,6 +1868,23 @@ export interface BoardOrderStanding {
   carried_count?: number;
   /** Lines that can never be decided here because their sales order states no location. */
   unplannable_count: number;
+  /**
+   * The newest PENDING planning-change batch on this order, or null/absent
+   * (`PLAN-scm-board-picks-up-pending-change.md`, AC-B1). Lets the board load and draw a
+   * change's Was/Now table and pre-marked suggestion without a `?batch=` URL param.
+   */
+  pending_change_batch_id?: string | null;
+  /**
+   * Whether the order's newest confirm can be undone from the gear, and why not when it
+   * cannot. Absent/null on a server that predates S1, or when the order has no active
+   * decision, or the active decision was never journalled.
+   */
+  undo?: BoardUndo | null;
+  /**
+   * AC-DT-1: the board panel's own "Revision N, confirmed by <name>, N lines" line.
+   * `null`/absent when the order has no active decision at all.
+   */
+  decision?: BoardOrderDecisionHeader | null;
 }
 
 /**
@@ -1709,7 +1904,10 @@ export interface BoardCommitPreview {
 }
 
 /**
- * `GET /project-sales/fulfilment-planning/board`. A pure read: opening it claims nothing.
+ * `GET /project-sales/fulfilment-planning/board`. Claims nothing - no stock is reserved and
+ * no decision is written by opening it - but it does mirror a core line that arrived after
+ * adoption onto the planning record for an adopted order, so the line carries a
+ * `project_line_id` and is confirmable in the same response (#969).
  *
  * The four `*_count` totals are SELECTION-scoped: counted over every contributing line before
  * any window is applied, so they are identical on day, week and month and do not move when the
@@ -1830,10 +2028,7 @@ export interface BoardDecision {
   reserve?: BoardReserveComponent[];
   borrow?: BoardBorrowComponent[];
   buy_qty?: string;
-  /**
-   * Mandatory when the product is discontinued and `buy_qty > 0` (AC-B11), the same rule the
-   * per-line card applies. The confirmation refuses the whole order without it.
-   */
+  /** Why this line still buys a discontinued product, when the product is discontinued and `buy_qty > 0`. Optional. */
   buy_reason?: string;
   /** The server's incoming cover, carried through unedited: it is dated supply, not a choice. */
   timely_spo_qty?: string;
@@ -1869,6 +2064,18 @@ export interface BoardDecision {
    * stores it beside `amend_reason` and counts it in the result.
    */
   suspected_system_issue?: boolean;
+  /**
+   * Seeded by the board's OWN pre-mark effect (`preMarkedKeys`, `FulfilmentBoardPanel`), never
+   * chosen by a person and never posted to the server - "Nothing is written here" until Confirm
+   * or an explicit Save/Amend/Reject replaces this whole entry with one a person actually gave
+   * (`decide()` always writes a fresh object, so an act on a pre-mark drops the flag on its own).
+   *
+   * PLAN-board-change-proposed-pill (owner ruling 18 Sep 2026): distinguishes the pill's
+   * "Change proposed" from "Saved" - a pre-mark with no server-saved `contribution.draft` yet is
+   * not an autosave, and the Verdict column reads it to withhold the Undo arrow too (nothing has
+   * actually been saved here to undo).
+   */
+  preMarked?: boolean;
 }
 
 /**
@@ -2022,6 +2229,16 @@ export interface StockDetail {
    */
   group?: string | null;
   bins?: StockDetailBin[];
+  /**
+   * `PLAN-oi-request-cs-reserve.md` 3.9: one entry per member of `bins` (the same set), in
+   * `CellStockTable`'s own shape - so the OI stock grid (`OrderInquiryStockGrid`) renders the
+   * SAME component the board's cell dialog does, rather than a second matrix built from
+   * `bins` alone, which carries on-hand only. `where` is `group` for every member of a
+   * GROUP read (this endpoint carries no asking line, so it cannot say which one bin is
+   * "its own") and `own` for a plain one-bin read; `net`/`net_of` are stated on a GROUP
+   * read only.
+   */
+  locations?: BoardCellLocation[];
   qty_on_hand: string;
   so_qty: string;
   spo_qty: string;
@@ -2263,15 +2480,25 @@ export interface PlanListEnvelope {
 export interface ConfirmManyOrderBody {
   pso_id: string;
   lines: ConfirmLine[];
+  /**
+   * This order's OWN planning-change batch (`PLAN-scm-board-picks-up-pending-change.md`,
+   * AC-B5/AC-B6): a board can show two orders on two different pending batches, so the
+   * batch an order answers travels WITH that order. `null`/absent when the order has none.
+   * Falls back to `ConfirmManyBody.batch_id` server-side when absent.
+   */
+  batch_id?: string | null;
+  /** This order's own half of `ConfirmSupplyBody.rejected_line_ids` (owner ruling 23 Sep
+   * 2026). Same rule, same refusal alongside a batch. */
+  rejected_line_ids?: string[];
 }
 
 export interface ConfirmManyBody {
   orders: ConfirmManyOrderBody[];
   /**
-   * The planning-change batch this press is answering (AC-P3-4). One per board: it is opened
-   * at `?orders=...&batch=<id>` and every order on it belongs to that batch. Absent on an
-   * ordinary Confirm; set, each order APPLIES its half of the batch rather than writing a
-   * plain revision beside it.
+   * DEPRECATED as the primary shape (change 4): the board-wide fallback for a single-batch
+   * press, kept so a caller that has not moved to `orders[].batch_id` still works. One per
+   * board: it was opened at `?orders=...&batch=<id>` and every order on it belonged to that
+   * batch. Absent on an ordinary Confirm.
    */
   batch_id?: string | null;
 }
@@ -2295,6 +2522,9 @@ export interface ConfirmManyOrderResult {
   transfers_kept?: number | null;
   /** The lines this order's planner flagged as a suspected system problem (R10). */
   suspected_issues?: number | null;
+  /** How many covered lines THIS order's own press withdrew, the per-order twin of
+   * `ConfirmResult.rejected_count` (owner ruling 23 Sep 2026). */
+  rejected_count?: number | null;
   error?: string | null;
   failing_lines?: SupplyFailingLine[] | null;
 }

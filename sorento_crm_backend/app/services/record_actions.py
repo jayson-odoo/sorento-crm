@@ -71,6 +71,32 @@ def _delete_product_companion_rule(db: Session, payload: dict):
     return ProductCompanionService(db).delete(_entity_id(payload))
 
 
+def _delete_product_combo(db: Session, payload: dict):
+    from app.services.product_combo_service import ProductComboService
+
+    return ProductComboService(db).delete(_entity_id(payload))
+
+
+def _delete_product_combo_part(db: Session, payload: dict):
+    from app.services.product_combo_service import ProductComboService
+
+    return ProductComboService(db).delete_part(_entity_id(payload))
+
+
+def _delete_price_tag_request_tag(db: Session, payload: dict):
+    from app.models.price_tag import PriceTagRequestTag
+    from app.services.price_tag_request_service import PriceTagRequestService
+
+    tag = (
+        db.query(PriceTagRequestTag)
+        .filter(PriceTagRequestTag.id == _entity_id(payload))
+        .first()
+    )
+    if tag is None:
+        return None
+    return PriceTagRequestService.delete_tag(db, tag)
+
+
 def _set_order_status(db: Session, payload: dict):
     from app.schemas.order import OrderUpdate
     from app.services.order_service import OrderService
@@ -80,6 +106,30 @@ def _set_order_status(db: Session, payload: dict):
         OrderUpdate(order_status_id=str(payload["order_status_id"])),
         payload.get("requested_by_id"),
     )
+
+
+def _delete_chatbot_domain(db: Session, payload: dict):
+    """The same two lines `DELETE /system/chatbot/domains/{id}` runs.
+
+    There is no `ChatbotDomainService` to call: the route builds the query itself, so
+    there is nothing to delegate to and inventing a service for one delete would be more
+    machinery than the rule it is meant to protect. Resolved by id only - the route also
+    accepts a NAME, for a caller holding one, and a parked action always carries the id.
+    """
+    from app.api.v1.system.chatbot_config import refuse_if_last_domain
+    from app.models.chatbot_policy import ChatbotDomain
+
+    row = (
+        db.query(ChatbotDomain).filter(ChatbotDomain.id == _entity_id(payload)).first()
+    )
+    if row is None:
+        return None
+    # The same rule the route enforces, imported rather than repeated: the loader falls
+    # back to the frozen seed when it reads no domains, so an emptied table gives the
+    # operator fourteen domains back on the next turn and a screen showing none.
+    refuse_if_last_domain(db, row)
+    db.delete(row)
+    return None
 
 
 def _delete_user(db: Session, payload: dict):
@@ -102,6 +152,17 @@ register(
         window=WINDOW_DESTRUCTIVE,
         permission="master_data.products.delete",
         label="Delete product",
+    )
+)
+
+register(
+    FormAction(
+        key="chatbot_domain.delete",
+        entity_types=("chatbot_domain",),
+        execute=_delete_chatbot_domain,
+        window=WINDOW_DESTRUCTIVE,
+        permission="system.chatbot_config.manage",
+        label="Delete chatbot domain",
     )
 )
 
@@ -135,6 +196,46 @@ register(
         window=WINDOW_DESTRUCTIVE,
         permission="master_data.products.edit",
         label="Delete rule",
+    )
+)
+
+# The two halves of AC-S1-5. A combo and a part are both deleted from the product
+# page's own Combos section, so both take the products edit slug and the destructive
+# window - there is nothing to un-delete once it lapses.
+register(
+    FormAction(
+        key="product_combo.delete",
+        entity_types=("product_combo",),
+        execute=_delete_product_combo,
+        window=WINDOW_DESTRUCTIVE,
+        permission="master_data.products.edit",
+        label="Delete combo",
+    )
+)
+
+register(
+    FormAction(
+        key="product_combo_part.delete",
+        entity_types=("product_combo_part",),
+        execute=_delete_product_combo_part,
+        window=WINDOW_DESTRUCTIVE,
+        permission="master_data.products.edit",
+        label="Remove part",
+    )
+)
+
+# AC-S3-6: removing a tag is a destructive action like any other, so it takes
+# the grace window rather than a dialog. The service refuses the line's LAST tag
+# with a 422 at commit time, which is the same answer the button already
+# prevents by disabling itself.
+register(
+    FormAction(
+        key="price_tag_request_tag.delete",
+        entity_types=("price_tag_request_tag",),
+        execute=_delete_price_tag_request_tag,
+        window=WINDOW_DESTRUCTIVE,
+        permission="dealer_kit.price_tag_requests.process",
+        label="Remove tag",
     )
 )
 
@@ -181,6 +282,78 @@ register(
         label="Remove supplier",
     )
 )
+
+
+def _unlink_order_inquiry_row(db: Session, payload: dict):
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+    return ProjectOrderInquiryService(db).unplace(
+        _entity_id(payload), actor_user_id=payload.get("requested_by_id")
+    )
+
+
+register(
+    FormAction(
+        key="order_inquiry_row.unlink",
+        entity_types=("order_inquiry_row",),
+        execute=_unlink_order_inquiry_row,
+        # Reversible: the document is still there, and re-linking the row restores the
+        # placement (AC-DP-06 - "Unlink is a deferred pending action, never a confirm
+        # dialog"). `link_id` is left unset so every link on the row goes, matching
+        # what "Unlink selected" means on the worklist today.
+        window=WINDOW_REVERSIBLE,
+        permission="projects.order_inquiry.action",
+        label="Unlink",
+    )
+)
+
+
+def _cancel_order_inquiry_reserve_request(db: Session, payload: dict):
+    from app.services.order_inquiry_reserve_service import OrderInquiryReserveService
+    from app.services.user_service import UserPermissionService
+
+    actor_id = payload.get("requested_by_id")
+    # SF-1 (review round): the requester or CS may cancel - recomputed HERE, at commit
+    # time, rather than trusted off whatever was true the moment the countdown started,
+    # since a role change during the window is the actor's CURRENT standing to act on.
+    actor_can_reserve = bool(actor_id) and UserPermissionService(db).check_user_has_permission(
+        str(actor_id), "projects.order_inquiries.reserve"
+    )
+    return OrderInquiryReserveService(db).cancel_request(
+        request_id=_entity_id(payload),
+        actor_user_id=actor_id,
+        actor_can_reserve=actor_can_reserve,
+    )
+
+
+register(
+    FormAction(
+        key="order_inquiry_reserve_request.cancel",
+        entity_types=("order_inquiry_reserve_request",),
+        execute=_cancel_order_inquiry_reserve_request,
+        # Reversible (PLAN-oi-request-cs-reserve.md 3.2): a cancel while nothing has been
+        # reserved yet takes nothing back except the ask itself, and the countdown gives
+        # a misclick a few seconds to catch itself. No email either way (R9's ONE email
+        # is the request itself; a cancel is silent).
+        window=WINDOW_REVERSIBLE,
+        # SF-4 (review round): the declared slug the generic registry contract checks
+        # (`test_record_actions_s6b.py`) - the requester's own grant. A RESERVE-only
+        # holder (Eling, who never raises a request) ALSO needs to start this countdown
+        # on a request that is not hers; `_ANY_OF_PERMISSIONS` in `pending_actions.py`
+        # widens the actual PARK-time gate to either grant, since `FormAction.permission`
+        # carries one slug only - the ownership question itself (whose request this is)
+        # stays inside `cancel_request` above, never at the park gate.
+        permission="projects.order_inquiries.acknowledge",
+        label="Cancel request",
+    )
+)
+
+
+# `order_inquiry_reserve_row.unreserve` (round 2, F5) retired round 4
+# (`PLAN-oi-request-cs-reserve.md` 6e.1, AC-RS-79): the per-row `.../unreserve` route
+# it deferred to is gone, superseded by "Amend reserve" through the commit endpoint's
+# own `amendments` list, which needs no countdown - the decision is not committed
+# until CS clicks `Reserve` on the Lines grid.
 
 
 def _actor(db: Session, payload: dict) -> dict:
@@ -715,6 +888,40 @@ def _remove_stock_visibility_policy(db: Session, payload: dict):
     return delete_policy(db, access_type_code=_entity_id(payload))
 
 
+def _remove_spec_visibility_policy(db: Session, payload: dict):
+    from app.services.error_handler import handle_not_found, handle_validation_error
+    from app.services.field_access import resolve_contact_id
+    from app.services.spec_visibility import delete_policy
+
+    # The scope is the entity: a contact override or a market-segment policy. The
+    # kind travels in the payload because the two are different columns, not
+    # different ids - same convention as `_remove_stock_visibility_policy`. The
+    # default tier has no DELETE route and is refused here the same way.
+    scope_kind = str(payload.get("scope_kind") or "")
+    if scope_kind == "contact":
+        # N1 (code review): resolved the SAME way the DELETE route resolves it -
+        # `entity_id` may be a Respond.io id rather than `respond_contacts.id`,
+        # and `delete_policy`'s own lookup is an exact-equality filter on the
+        # column, so an unresolved Respond.io id would match no row and return
+        # False - a SILENT no-op for anything but the internal id form.
+        #
+        # `raise_through=True` (SF-3, security re-verify): every handler's
+        # contract (`test_every_handler_resolves_its_service_import`) proves
+        # its lazy imports are correctly named by breaking the session and
+        # asserting the break itself surfaces - `resolve_contact_id`'s default
+        # fail-closed swallow would turn that into an ordinary 404 instead,
+        # hiding a renamed import exactly as it would hide a real DB failure.
+        resolved = resolve_contact_id(
+            db, _entity_id(payload), payload.get("space_id"), raise_through=True
+        )
+        if not resolved:
+            raise handle_not_found("Contact", _entity_id(payload))
+        return delete_policy(db, contact_id=resolved)
+    if scope_kind == "segment":
+        return delete_policy(db, segment_code=_entity_id(payload))
+    raise handle_validation_error("The default spec visibility policy cannot be removed.")
+
+
 def _remove_signin_background(db: Session, payload: dict):
     from app.services.signin_background import clear_signin_background
 
@@ -891,6 +1098,19 @@ register(
         window=WINDOW_REVERSIBLE,
         permission="inventory.stock.edit",
         label="Remove stock visibility",
+    )
+)
+
+register(
+    FormAction(
+        key="spec_visibility_policy.remove",
+        entity_types=("spec_visibility_policy",),
+        execute=_remove_spec_visibility_policy,
+        # Reversible: the tier falls back to the policy above it and the card can
+        # write the override again from what is still on screen.
+        window=WINDOW_REVERSIBLE,
+        permission="user_management.contacts.edit",
+        label="Remove spec visibility",
     )
 )
 
@@ -1527,5 +1747,136 @@ register(
         window=WINDOW_DESTRUCTIVE,
         permission=OWN_RECORD,
         label="Delete view",
+    )
+)
+
+
+def _void_price_tag_request(db: Session, payload: dict):
+    from app.services.price_tag_request_service import (
+        PriceTagRequestService,
+        STATUS_VOID,
+    )
+
+    return PriceTagRequestService.transition_status(
+        db,
+        _entity_id(payload),
+        STATUS_VOID,
+        user_id=str(payload.get("requested_by_id") or "") or None,
+    )
+
+
+register(
+    FormAction(
+        key="price_tag_request.void",
+        entity_types=("price_tag_request",),
+        execute=_void_price_tag_request,
+        # Destructive, and not a `.delete`: void is the end of the line for a
+        # request - no transition leaves it - so the grace window IS the way
+        # back, exactly as it is for a delete.
+        window=WINDOW_DESTRUCTIVE,
+        permission="dealer_kit.price_tag_requests.process",
+        label="Void request",
+    )
+)
+
+
+def _undo_confirm(db: Session, payload: dict):
+    """The board's gear entry, "Undo <SO> confirm (rev N)" (S2, #979).
+
+    `entity_id` is the planning record (`project_sales_order_id`), and `decision_id` in
+    the payload is the decision the pending action was created against - a Confirm
+    written during the countdown makes a DIFFERENT decision the newest by the time the
+    window lapses, and `undo_last_confirm` refuses `superseded` rather than undoing the
+    wrong revision (AC-UC-28).
+
+    `mode` (AC-R2-34, S5, `PLAN-scm-oi-handover-r2-undo.md`) routes to `reconstruct_
+    undo` instead when the gear entry was a reconstructed one - re-checked here
+    against the CURRENT active decision's own journal state (a park-time 409/403
+    already refused a mismatch or a non-admin caller; this is the same guard run
+    again at commit, the same belt-and-braces `undo_last_confirm`'s own `superseded`
+    check already is for the journal path).
+
+    B2 (review round 1): EXECUTE re-runs BOTH checks the journal path's own
+    `undo_last_confirm` already runs at commit and the reconstructed path was
+    missing entirely - the role gate (a countdown can span a demotion) and
+    `_assert_actor_can_undo` (Confirm's own per-project authorisation, over every
+    order the reconstruct touches, donor included) - not only the park-time gate.
+    Park already refused a non-admin/wrong-role caller before a window ever
+    started, so this is belt-and-braces for the countdown itself, exactly the same
+    reasoning `undo_last_confirm`'s own re-checks already document.
+    """
+    from app.services.project_supply_service import ProjectSupplyService
+    from app.services.project_supply_undo_service import _decision_is_journalled, undo_last_confirm
+
+    order = ProjectSupplyService(db).get_order(_entity_id(payload))
+    mode = payload.get("mode") or "journal"
+
+    if mode == "reconstructed":
+        from app.models.project_so import DECISION_ACTIVE, SOSupplyDecision
+        from app.services.error_handler import AppException
+        from app.services.project_supply_undo_reconstruct_service import reconstruct_undo
+        from app.services.project_supply_undo_service import (
+            _assert_actor_can_undo,
+            touched_project_sales_order_ids,
+        )
+        from app.services.user_service import UserPermissionService
+
+        actor_id = payload.get("requested_by_id")
+        role_slugs = (
+            UserPermissionService(db).get_user_role_slugs(actor_id) if actor_id else set()
+        )
+        if not (role_slugs & {"superadmin", "admin"}):
+            raise AppException(
+                status_code=403,
+                message="Only an admin can run a reconstructed undo.",
+                code="FORBIDDEN",
+            )
+
+        decision = (
+            db.query(SOSupplyDecision)
+            .filter(
+                SOSupplyDecision.project_sales_order_id == order.id,
+                SOSupplyDecision.state == DECISION_ACTIVE,
+            )
+            .first()
+        )
+        if decision is None or _decision_is_journalled(decision):
+            raise AppException(
+                status_code=409,
+                message="This confirm carries a journal; use the journal undo.",
+                code="mode_mismatch",
+            )
+        expected_decision_id = payload.get("decision_id")
+        if expected_decision_id and str(decision.id) != str(expected_decision_id):
+            raise AppException(
+                status_code=409,
+                message="A newer confirm has already replaced this one.",
+                code="superseded",
+            )
+        _assert_actor_can_undo(
+            db, actor_id, touched_project_sales_order_ids(db, decision)
+        )
+        return reconstruct_undo(db, order, decision, actor_user_id=actor_id)
+
+    return undo_last_confirm(
+        db,
+        order,
+        actor_user_id=payload.get("requested_by_id"),
+        expected_decision_id=payload.get("decision_id"),
+    )
+
+
+register(
+    FormAction(
+        key="project_sales_order.undo_confirm",
+        entity_types=("project_sales_order",),
+        execute=_undo_confirm,
+        # Reversible: the previous revision comes back exactly as it was (R2), not a
+        # hard delete with nothing left to catch.
+        window=WINDOW_REVERSIBLE,
+        # Confirm's own slug (`fulfilment_planning.py:73`) - undoing it takes the same
+        # grant as doing it.
+        permission="projects.projects.edit",
+        label="Undo confirm",
     )
 )

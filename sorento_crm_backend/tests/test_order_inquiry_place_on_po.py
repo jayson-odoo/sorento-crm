@@ -33,7 +33,9 @@ from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.inventory import Warehouse
 from app.models.project_so import (
     ACK_ACKNOWLEDGED,
+    ACK_AWAITING,
     INQUIRY_ACTIONED,
+    INQUIRY_CANCELLED,
     INQUIRY_PLACED,
     INQUIRY_RAISED,
     IV_ALREADY_INBOUND,
@@ -50,6 +52,7 @@ from app.models.user import User
 from app.services import project_seed_service
 
 from ._pg_fixture import blank_session, pg_session
+from .test_order_inquiry_suggested_links import _suggested_of
 from .test_so_supply_confirmation import (
     _client as _confirm_client,
     _core_line as _confirm_core_line,
@@ -327,7 +330,7 @@ def test_candidates_are_soonest_expected_date_first_with_the_earliest_covering_r
     response = client.get(f"{BASE}/order-inquiry-rows/{row.id}/po-candidates")
 
     assert response.status_code == 200, response.text
-    body = response.json()
+    body = response.json()["candidates"]
     assert [c["po_line_id"] for c in body] == [early_short.id, late_covers.id]
     assert body[0]["covers"] is False
     assert body[0]["recommended"] is False
@@ -353,7 +356,7 @@ def test_candidates_are_netted_by_what_other_placed_rows_already_tagged(api):
     response = client.get(f"{BASE}/order-inquiry-rows/{row_b.id}/po-candidates")
 
     assert response.status_code == 200, response.text
-    body = response.json()
+    body = response.json()["candidates"]
     assert body[0]["already_tagged"] == "20"
     assert body[0]["remaining"] == "30"
     assert body[0]["covers"] is True
@@ -388,7 +391,7 @@ def test_candidates_claims_array_names_every_other_row_tagged_with_price(api):
     response = client.get(f"{BASE}/order-inquiry-rows/{row_c.id}/po-candidates")
 
     assert response.status_code == 200, response.text
-    candidate = next(c for c in response.json() if c["po_line_id"] == line.id)
+    candidate = next(c for c in response.json()["candidates"] if c["po_line_id"] == line.id)
     assert candidate["already_tagged"] == "35"
     assert candidate["unit_cost"] == "12.75"
     assert candidate["currency"] == "MYR"
@@ -413,7 +416,7 @@ def test_candidates_unit_cost_and_currency_are_blank_when_the_line_carries_none(
     response = client.get(f"{BASE}/order-inquiry-rows/{row.id}/po-candidates")
 
     assert response.status_code == 200, response.text
-    candidate = response.json()[0]
+    candidate = response.json()["candidates"][0]
     assert candidate["unit_cost"] is None
     assert candidate["currency"] is None
     assert candidate["claims"] == []
@@ -432,10 +435,26 @@ def test_candidates_409_for_a_verb_that_is_not_placeable(api):
     assert response.json()["code"] == "order_inquiry_not_placeable_verb"
 
 
-def test_candidates_409_for_a_row_that_is_not_raised(api):
+def test_candidates_200_for_an_actioned_row_s8_widened_the_state_gate(api):
+    """S8 (AC-CF-23): "Choose document" is a one-press re-link, so a row already
+    ACTIONED - the old refusal this test used to pin - is offered candidates too, same
+    as PLACED. Only CANCELLED is refused now (the next test)."""
     client, db, world, _user_id = api
     row = _row(
         db, world["company_id"], world["inquiry"], verb=IV_ORDER, state=INQUIRY_ACTIONED,
+        qty="10", item_code=world["product"].product_code,
+    )
+
+    response = client.get(f"{BASE}/order-inquiry-rows/{row.id}/po-candidates")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["still_to_link"] == "10"
+
+
+def test_candidates_409_for_a_cancelled_row(api):
+    client, db, world, _user_id = api
+    row = _row(
+        db, world["company_id"], world["inquiry"], verb=IV_ORDER, state=INQUIRY_CANCELLED,
         qty="10", item_code=world["product"].product_code,
     )
 
@@ -562,7 +581,12 @@ def test_two_rows_tagging_the_same_line_cannot_exceed_its_balance(api):
     assert exact.json()["state"] == INQUIRY_PLACED
 
 
-def test_a_placed_row_cannot_be_placed_again(api):
+def test_a_fully_placed_row_has_nothing_left_for_the_single_line_form_to_add(api):
+    """S8 (AC-CF-23) widened `_assert_linkable`'s state gate to every state but
+    CANCELLED, so a second `place-on-po` on a PLACED row is no longer refused by the
+    state gate itself - but the single `po_line_id` form KEEPS its old ADD meaning (the
+    row's whole UNLINKED remainder), and that remainder is 0 once the row is fully
+    placed, so there is nothing to name."""
     client, db, world, _user_id = api
     line = _po_line(
         db, world["company_id"], world["po"], world["product"], world["warehouse"], qty_ordered="50",
@@ -580,8 +604,8 @@ def test_a_placed_row_cannot_be_placed_again(api):
     again = client.post(
         f"{BASE}/order-inquiry-rows/{row.id}/place-on-po", json={"po_line_id": other_line.id}
     )
-    assert again.status_code == 409
-    assert again.json()["code"] == "order_inquiry_not_raised"
+    assert again.status_code == 422
+    assert again.json()["code"] == "order_inquiry_no_allocations"
 
 
 def test_a_reader_cannot_place_a_row(reader_api):
@@ -904,7 +928,7 @@ def test_candidates_are_ordered_by_document_sequence_when_expected_dates_tie(api
     response = client.get(f"{BASE}/order-inquiry-rows/{row.id}/po-candidates")
 
     assert response.status_code == 200, response.text
-    body = response.json()
+    body = response.json()["candidates"]
     assert [c["po_line_id"] for c in body] == [line_a.id, line_b.id]
     # The cascade preview (`default_take`) walks the SAME order: the earlier document
     # takes its whole balance first, the later one takes only what is left.
@@ -924,7 +948,7 @@ def test_spo_prefixed_documents_are_never_candidates_the_flag_or_the_cascade(api
 
     candidates = client.get(f"{BASE}/order-inquiry-rows/{row.id}/po-candidates")
     assert candidates.status_code == 200, candidates.text
-    assert candidates.json() == []
+    assert candidates.json()["candidates"] == []
 
     listing = client.get(f"{BASE}/projects/{world['project'].id}/order-inquiry-rows")
     assert listing.status_code == 200, listing.text
@@ -940,6 +964,9 @@ def test_spo_prefixed_documents_are_never_candidates_the_flag_or_the_cascade(api
         )
     db.commit()
     assert result == {"placed_rows": 0, "allocations": 0, "products_touched": 0,
+                      "book_linked_rows": 0, "suggested_rows": 0,
+                      # R18: nothing was walked, so nothing changed.
+                      "changed_rows": 0,
                       "after_horizon": 0, "link_up_to": None,
                       "link_horizon": "none"}
     db.refresh(row)
@@ -1063,6 +1090,14 @@ def test_unlinking_one_link_leaves_the_row_partly_linked(api):
 
 
 def test_auto_place_for_products_is_idempotent(api):
+    """S3 reversal: the PO line carries no book match, so the walk SUGGESTS the row
+    rather than placing it - a suggestion-only row stays `raised` and re-enters the
+    walk on every pass (it is never a placement that settles the row), so
+    `placed_rows` does NOT drop to 0 on the second pass. What idempotence means now
+    is that an unchanged answer is not deleted and rewritten (`_same_placement`): the
+    suggestion itself carries the SAME id and `suggested_at` across both passes, and
+    the row's own note is never touched (`_write_suggested_links` writes nothing onto
+    the row - only a real link's `_write_link` does)."""
     client, db, world, user_id = api
     _po_line(
         db, world["company_id"], world["po"], world["product"], world["warehouse"],
@@ -1078,23 +1113,39 @@ def test_auto_place_for_products_is_idempotent(api):
             None, actor_user_id=user_id, trigger="test"
         )
         db.commit()
+        first_suggestion = _suggested_of(db, row.id)[0]
         second = ProjectOrderInquiryService(db).auto_place_for_products(
             None, actor_user_id=user_id, trigger="test"
         )
         db.commit()
+        second_suggestion = _suggested_of(db, row.id)[0]
 
     assert first == {"placed_rows": 1, "allocations": 1, "products_touched": 1,
+                     "book_linked_rows": 0, "suggested_rows": 1,
+                     # R18: the first pass writes a new suggestion, so the row changed.
+                     "changed_rows": 1,
                      "after_horizon": 0, "link_up_to": None,
                      "link_horizon": "none"}
-    assert second == {"placed_rows": 0, "allocations": 0, "products_touched": 0,
+    assert second == {"placed_rows": 1, "allocations": 1, "products_touched": 1,
+                      "book_linked_rows": 0, "suggested_rows": 1,
+                      # R18: the second pass writes the SAME suggestion
+                      # (`_same_placement`), so nothing changed.
+                      "changed_rows": 0,
                       "after_horizon": 0, "link_up_to": None,
                       "link_horizon": "none"}
     db.refresh(row)
-    assert row.state == INQUIRY_PLACED
-    assert "auto: test" in (row.note or "")
+    assert row.state == INQUIRY_RAISED
+    assert row.note is None, "a suggestion writes nothing onto the row"
+    assert second_suggestion.id == first_suggestion.id, (
+        "an unchanged answer is not deleted and rewritten"
+    )
+    assert second_suggestion.suggested_at == first_suggestion.suggested_at
 
 
 def test_auto_place_route_places_raised_rows_and_reports_totals(api):
+    """S3 reversal: the PO line carries no book match, so the route SUGGESTS the row
+    rather than placing it - `placed_rows` still counts it (a row the walk walked),
+    `book_linked_rows` is 0 (no book match) and `suggested_rows` is 1."""
     client, db, world, _user_id = api
     _po_line(
         db, world["company_id"], world["po"], world["product"], world["warehouse"],
@@ -1107,10 +1158,13 @@ def test_auto_place_route_places_raised_rows_and_reports_totals(api):
     assert response.status_code == 200, response.text
     body = response.json()
     assert body == {"placed_rows": 1, "allocations": 1, "products_touched": 1,
+                    "book_linked_rows": 0, "suggested_rows": 1,
+                    # R18: a new suggestion is written, so the row changed.
+                    "changed_rows": 1,
                     "after_horizon": 0, "link_up_to": None,
                     "link_horizon": "none"}
     db.refresh(row)
-    assert row.state == INQUIRY_PLACED
+    assert row.state == INQUIRY_RAISED
 
 
 def test_a_reader_cannot_trigger_auto_place(reader_api):
@@ -1121,16 +1175,23 @@ def test_a_reader_cannot_trigger_auto_place(reader_api):
     assert response.status_code == 403
 
 
-def test_a_decision_confirm_raises_the_buy_row_acknowledged_with_a_firm_link():
-    """REVERSED AGAIN by `PLAN-scm-oi-draft-links.md` R6 (captain, 27 Aug 2026), and once
-    more by `PLAN-scm-reorder-oi-feedback-1sep.md` S1 (G4, 1 Sep 2026).
+def test_a_decision_confirm_raises_the_buy_row_awaiting_with_a_firm_link():
+    """REVERSED AGAIN by `PLAN-scm-oi-draft-links.md` R6 (captain, 27 Aug 2026), once
+    more by `PLAN-scm-reorder-oi-feedback-1sep.md` S1 (G4, 1 Sep 2026), and once more
+    by `PLAN-oi-confirm-per-so.md` S1 (17 Sep 2026), which reverses G4 back out.
 
     G2's original trigger linked at the decision confirm; the handshake took it away
     because a buyer found their own documents dealt out to instructions they had never
     read; R6 restored the pass and answered that objection with what the link MEANT THEN -
-    a DRAFT, on a row still `awaiting`. S1 removes the manual confirm the draft was
-    waiting on entirely: the row comes out ACKNOWLEDGED, and the link the raise found is
-    firm from the moment it is written.
+    a DRAFT, on a row still `awaiting`. G4/S1 (1 Sep) removed the manual confirm the draft
+    was waiting on entirely, born ACKNOWLEDGED; `PLAN-oi-confirm-per-so.md` S1 puts the
+    manual Confirm press back - the row is born `awaiting` again, with null stamps, and it
+    is purchasing's own Confirm that takes it on. What R6 answered survives unchanged
+    either way: the raise-time cascade reaches the row from the moment it is written,
+    whatever the row's own ack_state - linking has never waited for confirm (AC-CF-4).
+
+    S3 reversal: the PO line carries no book match, so what the raise-time cascade
+    writes is a SUGGESTION, never a firm link - the row stays `raised`.
     """
     from app.models.base import company_scope
     from app.services.project_service import register_project
@@ -1145,11 +1206,12 @@ def test_a_decision_confirm_raises_the_buy_row_acknowledged_with_a_firm_link():
         )
         product = _confirm_product(db)
         warehouse = _confirm_warehouse(db, f"ZZT-CF-{_uid()[:4]}")
-        # H: what this test is actually proving - born acknowledged, firm from the moment
-        # the auto-cascade writes it - needs the cascade to WRITE something. A candidate is
-        # only ever auto-taken from a genuine POOL now (AC-H1/AC-H2), so `warehouse` has to
-        # be one, or the cascade would find its one candidate uncascadable and this test
-        # would be proving AC-H1 instead of G4/S1 (AC-H1 already has its own coverage in
+        # H: what this test is actually proving - the link is firm, written by the
+        # auto-cascade the instant the row is raised - needs the cascade to WRITE
+        # something. A candidate is only ever auto-taken from a genuine POOL now
+        # (AC-H1/AC-H2), so `warehouse` has to be one, or the cascade would find its
+        # one candidate uncascadable and this test would be proving AC-H1 instead of
+        # the birth state and the link timing (AC-H1 already has its own coverage in
         # `test_order_inquiry_links.py`).
         _confirm_warehouse(db, f"ZZT-CF-SIB-{_uid()[:4]}", pool_warehouse_id=warehouse.id)
         core_so = _confirm_core_so(db, company_id)
@@ -1183,9 +1245,13 @@ def test_a_decision_confirm_raises_the_buy_row_acknowledged_with_a_firm_link():
             .first()
         )
         assert row is not None
-        assert row.ack_state == ACK_ACKNOWLEDGED, "born acknowledged (S1)"
-        assert row.state == INQUIRY_PLACED, "the 30-line covers the whole 20"
-        assert str(row.po_line_id) == str(po_line.id), "the link names the open line"
+        assert row.ack_state == ACK_AWAITING, "born awaiting again (PLAN-oi-confirm-per-so S1)"
+        assert row.acknowledged_by is None
+        assert row.acknowledged_at is None
+        assert row.state == INQUIRY_RAISED, "the 30-line only suggests, it does not place"
+        assert row.po_line_id is None, "a suggestion never writes the row's own display field"
+        (suggestion,) = _suggested_of(db, row.id)
+        assert suggestion.po_line_id == po_line.id, "the suggestion names the open line"
 
 
 def test_partial_allocation_leaves_the_remainder_raised_and_in_committed_v():
@@ -1348,12 +1414,21 @@ def test_auto_place_ranks_by_the_active_policys_document_age_over_the_old_delive
     """AC-H5: the ranking that decides ANY draw-down is the same fulfilment priority
     policy. `older` has the LATER delivery date - the old `delivery_date`/`created_at`
     sort would have put it second - but its sales order is years older, and a policy
-    weighting `document_age` alone must still hand it the only PO quantity there is."""
+    weighting `document_age` alone must still hand it the only PO quantity there is.
+
+    S3 reversal: the line carries no book match, so the ranking decides which row gets
+    SUGGESTED the scarce quantity - never a real placement - and the loser gets nothing
+    at all, suggested or otherwise, since there is no capacity left for it.
+    """
     client, db, world, user_id = api
     _policy(db, {"document_age": 1.0}, {"project": 1.0})
+    # AC-EA-3: 2026-09-01 sat inside `older`'s 90-day lead-time window (delivery
+    # 2026-12-01, edge 2026-09-02) and would be removed as a candidate before the
+    # ranking under test ever ran. Moved a couple of days later so the line stays a
+    # candidate for BOTH rows and document_age still decides between them.
     _po_line(
         db, world["company_id"], world["po"], world["product"], world["warehouse"],
-        qty_ordered="10", expected_date=date(2026, 9, 1),
+        qty_ordered="10", expected_date=date(2026, 9, 3),
     )
     older = _competing_row(
         db, world["company_id"], world["project"],
@@ -1377,22 +1452,35 @@ def test_auto_place_ranks_by_the_active_policys_document_age_over_the_old_delive
         db.commit()
 
     assert result == {"placed_rows": 1, "allocations": 1, "products_touched": 1,
+                      "book_linked_rows": 0, "suggested_rows": 1,
+                      # R18: a new suggestion is written for the winning row, so it changed.
+                      "changed_rows": 1,
                       "after_horizon": 0, "link_up_to": None,
                       "link_horizon": "none"}
     db.refresh(older)
     db.refresh(newer)
-    assert older.state == INQUIRY_PLACED, "the older document must draw the scarce quantity"
+    assert older.state == INQUIRY_RAISED, "no book match - only a suggestion"
+    (older_suggestion,) = _suggested_of(db, older.id)
+    assert older_suggestion, "the older document must draw the scarce quantity"
     assert newer.state == INQUIRY_RAISED
+    assert _suggested_of(db, newer.id) == [], "nothing left for the newer document"
 
 
 def test_auto_place_ranks_by_the_active_policys_need_by_date_over_the_old_delivery_date_sort(api):
     """The mirror of the test above, same two rows: with `need_by_date` dominant instead,
-    the SOONER delivery date wins even though its own document is the newer one."""
+    the SOONER delivery date wins even though its own document is the newer one.
+
+    S3 reversal: the line carries no book match, so the winner gets SUGGESTED the
+    scarce quantity - never a real placement - and the loser gets nothing at all.
+    """
     client, db, world, user_id = api
     _policy(db, {"need_by_date": 1.0}, {"project": 1.0})
+    # AC-EA-3: same edge as the document_age test above - `older`'s 90-day window edge
+    # is 2026-09-02, so the line's promise has to land after it or the cascade drops it
+    # as a candidate before need_by_date gets to decide anything.
     _po_line(
         db, world["company_id"], world["po"], world["product"], world["warehouse"],
-        qty_ordered="10", expected_date=date(2026, 9, 1),
+        qty_ordered="10", expected_date=date(2026, 9, 3),
     )
     older = _competing_row(
         db, world["company_id"], world["project"],
@@ -1416,12 +1504,18 @@ def test_auto_place_ranks_by_the_active_policys_need_by_date_over_the_old_delive
         db.commit()
 
     assert result == {"placed_rows": 1, "allocations": 1, "products_touched": 1,
+                      "book_linked_rows": 0, "suggested_rows": 1,
+                      # R18: a new suggestion is written for the winning row, so it changed.
+                      "changed_rows": 1,
                       "after_horizon": 0, "link_up_to": None,
                       "link_horizon": "none"}
     db.refresh(older)
     db.refresh(newer)
-    assert newer.state == INQUIRY_PLACED, "the sooner delivery date must draw the scarce quantity"
+    assert newer.state == INQUIRY_RAISED, "no book match - only a suggestion"
+    (newer_suggestion,) = _suggested_of(db, newer.id)
+    assert newer_suggestion, "the sooner delivery date must draw the scarce quantity"
     assert older.state == INQUIRY_RAISED
+    assert _suggested_of(db, older.id) == [], "nothing left for the older document"
 
 
 def test_auto_place_scores_a_product_the_same_alone_or_beside_an_unrelated_products_extreme_date(api):
@@ -1441,9 +1535,12 @@ def test_auto_place_scores_a_product_the_same_alone_or_beside_an_unrelated_produ
     _policy(db, {"document_age": 0.6, "need_by_date": 0.4}, {"project": 1.0})
 
     def _arena(product):
+        # AC-EA-3: same edge as the document_age test above - `older_doc`'s 90-day
+        # window edge is 2026-09-02, so the line's promise has to land after it or the
+        # cascade drops it as a candidate before document_age gets to decide anything.
         line = _po_line(
             db, world["company_id"], world["po"], product, world["warehouse"],
-            qty_ordered="10", expected_date=date(2026, 9, 1),
+            qty_ordered="10", expected_date=date(2026, 9, 3),
         )
         # Wins on document_age (the older document) - loses on need_by_date (the later
         # delivery). Scoped 1-vs-1, `document_age`'s heavier weight (0.6 > 0.4) decides.
@@ -1475,8 +1572,11 @@ def test_auto_place_scores_a_product_the_same_alone_or_beside_an_unrelated_produ
     assert result_a["placed_rows"] == 1
     db.refresh(older_a)
     db.refresh(sooner_a)
-    assert older_a.state == INQUIRY_PLACED, "document_age's heavier weight must decide"
+    # S3 reversal: no book match, so the winner is SUGGESTED, never placed for real.
+    assert older_a.state == INQUIRY_RAISED
+    assert _suggested_of(db, older_a.id), "document_age's heavier weight must decide"
     assert sooner_a.state == INQUIRY_RAISED
+    assert _suggested_of(db, sooner_a.id) == []
 
     # Run B: an identical pair on a FRESH product, run for the WHOLE book (`product_ids=
     # None`) alongside a third row on `other_product` whose document date is extreme -
@@ -1499,8 +1599,11 @@ def test_auto_place_scores_a_product_the_same_alone_or_beside_an_unrelated_produ
     db.refresh(sooner_b)
     # The SAME winner as the scoped run (Run A) - the unrelated product's extreme date
     # must not have flipped which of these two won the only PO line for THEIR product.
-    assert older_b.state == INQUIRY_PLACED, result_b
+    # S3 reversal: no book match, so the winner is SUGGESTED, never placed for real.
+    assert older_b.state == INQUIRY_RAISED, result_b
+    assert _suggested_of(db, older_b.id), result_b
     assert sooner_b.state == INQUIRY_RAISED
+    assert _suggested_of(db, sooner_b.id) == []
 
 
 def test_auto_place_resolves_the_active_policy_once_not_once_per_product(api):

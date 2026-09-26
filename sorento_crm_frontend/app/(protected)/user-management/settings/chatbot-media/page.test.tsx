@@ -71,6 +71,7 @@ function settings(overrides: Partial<ChatbotMediaSettings> = {}): ChatbotMediaSe
     media_sync_wait_seconds: 30,
     media_extraction_timeout_seconds: 45,
     media_max_entities: 10,
+    low_stock_sync_wait_seconds: 40,
     ...overrides,
   };
 }
@@ -219,6 +220,28 @@ describe('ChatbotMediaSettingsPage numeric bounds', () => {
 
     expect(screen.getByText('Enter a whole number between 1 and 1000.')).toBeInTheDocument();
     expect(saveButton()).toBeDisabled();
+  });
+
+  // PLAN-low-stock-report AC-7: the low stock chat wait sits on this page beside the
+  // media wait, seeded from the settings row and bounded 5..90 like it.
+  it('seeds the low stock chat wait and refuses a value outside 5..90', () => {
+    mockQuery.mockReturnValue({
+      data: settings({ low_stock_sync_wait_seconds: 40 }),
+      isLoading: false,
+      isError: false,
+    });
+    renderWithClient();
+
+    expect(screen.getByText('Low stock report chat wait (seconds)')).toBeInTheDocument();
+    const input = document.getElementById('low-stock-sync-wait') as HTMLInputElement;
+    expect(input.value).toBe('40');
+
+    fireEvent.change(input, { target: { value: '120' } });
+    expect(screen.getByText('Enter a whole number between 5 and 90.')).toBeInTheDocument();
+    expect(saveButton()).toBeDisabled();
+
+    fireEvent.change(input, { target: { value: '60' } });
+    expect(saveButton()).toBeEnabled();
   });
 
   it('rejects voiceMaxSeconds = 0 (a clip must be at least 1 second)', () => {

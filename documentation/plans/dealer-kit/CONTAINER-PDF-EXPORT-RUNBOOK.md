@@ -88,6 +88,15 @@ Nothing else changes. `worker.py` already listens on `catalogue_render`
 alongside `imports` and `respond_io`, and the queue is separate on purpose so a
 slow Chromium render cannot block an Excel import.
 
+**The alias step above is now optional.** `_print_url` / `_tag_sheet_print_url`
+(`app/tasks/dealer_kit_export_tasks.py`) fall back to `FRONTEND_BASE_URL` - the
+same setting `portal_service.submission_link` already reads to build every
+portal link - when `DEALER_KIT_PRINT_BASE_URL` is unset, so a prod deploy that
+already sets `FRONTEND_BASE_URL` renders through the public frontend URL with
+no compose change. `DEALER_KIT_PRINT_BASE_URL` stays useful only where the
+worker must reach the frontend by an internal name instead (the alias setup
+above), and still wins over `FRONTEND_BASE_URL` when both are set.
+
 ## The image does not exist on main yet
 
 **Compose builds `context: ./sorento_crm_backend` of the CHECKOUT, and the

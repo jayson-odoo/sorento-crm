@@ -16,11 +16,7 @@ from sqlalchemy.orm import Session
 from tests._pg_fixture import blank_session, unique_code
 
 # Models used for seeding.
-from app.models.access import (
-    ContactAccessType,
-    RespondContact,
-    respond_contact_access_types,
-)
+from app.models.access import RespondContact
 from app.models.order import Customer, Order
 from app.models.price_tag import (
     ContactPortalFormOverride,
@@ -40,11 +36,15 @@ from app.services.price_tag_request_service import (
     STATUS_NEW,
     STATUS_PROOF_READY,
     STATUS_READY,
+    STATUS_READY_FOR_COLLECTION,
     STATUS_REJECTED,
     STATUS_VOID,
     VALID_TRANSITIONS,
 )
 from app.services.portal_form_visibility_service import resolve_visible_form_types
+from app.services.portal_service import SUPPORTED_TYPES
+from tests import _ptag_r9_seed
+from tests._portal_grant import link_contact_segment, seed_segment
 
 
 # ---------------------------------------------------------------------------
@@ -71,33 +71,6 @@ def _make_contact(db: Session, *, phone: str | None = None) -> RespondContact:
     db.add(c)
     db.flush()
     return c
-
-
-def _make_access_type(
-    db: Session,
-    *,
-    code: str | None = None,
-    portal_form_types: list[str] | None = None,
-) -> ContactAccessType:
-    """Seed a ContactAccessType with given portal_form_types."""
-    at = ContactAccessType(
-        code=code or unique_code("at"),
-        name=unique_code("Access Type"),
-        portal_form_types=portal_form_types or [],
-    )
-    db.add(at)
-    db.flush()
-    return at
-
-
-def _assign_access_type(db: Session, contact: RespondContact, access_type: ContactAccessType) -> None:
-    db.execute(
-        respond_contact_access_types.insert().values(
-            contact_id=contact.id,
-            access_type_code=access_type.code,
-        )
-    )
-    db.flush()
 
 
 def _make_product(
@@ -380,6 +353,9 @@ class TestStatusTransitions:
                 "lines": [],
             },
         )
+        # r9 D8: terminality is request-aware. An OFFICE print keeps `approved`
+        # in the middle of the graph, which is what every edge below assumes.
+        req.print_by = "office"
         if status != STATUS_NEW:
             req.status = status
             db.flush()
@@ -400,10 +376,15 @@ class TestStatusTransitions:
         result = PriceTagRequestService.transition_status(db, req.id, STATUS_APPROVED)
         assert result.status == STATUS_APPROVED
 
-    def test_approved_to_ready(self, db: Session):
+    def test_approved_to_ready_for_collection(self, db: Session):
+        """r9 D8 retired `ready`. An office print carries on from `approved` to
+        the hand-over instead; a self print ends there (asserted in
+        tests/test_price_tag_print_collection.py)."""
         req = self._create_request(db, STATUS_APPROVED)
-        result = PriceTagRequestService.transition_status(db, req.id, STATUS_READY)
-        assert result.status == STATUS_READY
+        result = PriceTagRequestService.transition_status(
+            db, req.id, STATUS_READY_FOR_COLLECTION
+        )
+        assert result.status == STATUS_READY_FOR_COLLECTION
 
     def test_proof_ready_to_changes_requested(self, db: Session):
         req = self._create_request(db, STATUS_PROOF_READY)
@@ -693,29 +674,28 @@ class TestAutoExportOnApprove:
 
 
 class TestPortalFormVisibility:
+    """r2 rule (PLAN-portal-forms-market-segment D1/D3): the group source is a
+    market segment, not an access type, and every contact already holds the
+    four legacy kinds by default - a segment only ever grants MORE (today:
+    price_tag_request). Test NAMES are kept from the pre-r2 lane (D8); bodies
+    are rewritten to the new contract."""
+
     def test_dealer_access_type(self, db: Session):
-        """Contact with a dealer access type sees price_tag_request + stock_inquiry."""
+        """Contact whose segment grants price_tag_request sees it, plus the base four."""
         contact = _make_contact(db)
-        at = _make_access_type(db, portal_form_types=["price_tag_request", "stock_inquiry"])
-        _assign_access_type(db, contact, at)
+        segment = seed_segment(db, kinds=["price_tag_request"])
+        link_contact_segment(db, contact.id, segment.code)
 
         visible = resolve_visible_form_types(db, contact.id)
         assert "price_tag_request" in visible
         assert "stock_inquiry" in visible
 
     def test_project_access_type(self, db: Session):
-        """Contact with project access type sees project-oriented forms."""
+        """Contact whose segment grants nothing extra still sees the base four,
+        and never price_tag_request without a grant."""
         contact = _make_contact(db)
-        at = _make_access_type(
-            db,
-            portal_form_types=[
-                "stock_inquiry",
-                "purchase_request",
-                "sponsorship_form",
-                "complaint",
-            ],
-        )
-        _assign_access_type(db, contact, at)
+        segment = seed_segment(db, kinds=[])
+        link_contact_segment(db, contact.id, segment.code)
 
         visible = resolve_visible_form_types(db, contact.id)
         assert "stock_inquiry" in visible
@@ -725,20 +705,21 @@ class TestPortalFormVisibility:
         assert "price_tag_request" not in visible
 
     def test_multiple_access_types_union(self, db: Session):
-        """Contact with multiple access types gets the union."""
+        """Contact in multiple segments gets the union of what they each grant -
+        one segment granting nothing does not shadow another's grant."""
         contact = _make_contact(db)
-        at_dealer = _make_access_type(db, portal_form_types=["price_tag_request", "stock_inquiry"])
-        at_project = _make_access_type(db, portal_form_types=["purchase_request", "complaint"])
-        _assign_access_type(db, contact, at_dealer)
-        _assign_access_type(db, contact, at_project)
+        segment_empty = seed_segment(db, kinds=[])
+        segment_price_tag = seed_segment(db, kinds=["price_tag_request"])
+        link_contact_segment(db, contact.id, segment_empty.code)
+        link_contact_segment(db, contact.id, segment_price_tag.code)
 
         visible = resolve_visible_form_types(db, contact.id)
-        assert visible == {"price_tag_request", "stock_inquiry", "purchase_request", "complaint"}
+        assert visible == set(SUPPORTED_TYPES) | {"price_tag_request"}
 
     def test_override_enable_adds_type(self, db: Session):
         """Per-contact override with is_enabled=True adds a type."""
         contact = _make_contact(db)
-        # No access types assigned at all.
+        # No market segment assigned at all.
         override = ContactPortalFormOverride(
             contact_id=contact.id,
             form_type="price_tag_request",
@@ -751,10 +732,11 @@ class TestPortalFormVisibility:
         assert "price_tag_request" in visible
 
     def test_override_disable_removes_type(self, db: Session):
-        """Per-contact override with is_enabled=False removes a type."""
+        """Per-contact override with is_enabled=False removes a type, even a
+        base one the contact would otherwise always see."""
         contact = _make_contact(db)
-        at = _make_access_type(db, portal_form_types=["price_tag_request", "stock_inquiry"])
-        _assign_access_type(db, contact, at)
+        segment = seed_segment(db, kinds=["price_tag_request"])
+        link_contact_segment(db, contact.id, segment.code)
 
         override = ContactPortalFormOverride(
             contact_id=contact.id,
@@ -769,40 +751,48 @@ class TestPortalFormVisibility:
         assert "stock_inquiry" in visible
 
     def test_no_access_types_empty(self, db: Session):
-        """Contact with no access types and no overrides sees nothing."""
+        """D3: a contact with no segment and no override is NOT empty any more -
+        it sees exactly the four legacy kinds (the base default), never
+        price_tag_request without a grant."""
         contact = _make_contact(db)
         visible = resolve_visible_form_types(db, contact.id)
-        assert visible == set()
+        assert visible == set(SUPPORTED_TYPES)
 
 
 # ---------------------------------------------------------------------------
-# 4. Set guard validation
+# 4. The package guard that replaced the set guard (S2, AC-S2-7)
+#
+# The hard refusal is retired: a guarded product with no package now SUBMITS
+# and carries a `package_warning` for marketing to read. The full warning
+# matrix lives in tests/test_price_tag_package_warning.py; what is pinned here
+# is that the two cases this file used to refuse no longer are, and that the
+# product_set path is untouched.
 # ---------------------------------------------------------------------------
 
 
 class TestSetGuard:
-    def test_bathroom_furniture_ala_carte_rejected(self, db: Session):
-        """Product with class 'Bathroom Furniture' submitted as ala carte is rejected."""
+    def test_bathroom_furniture_ala_carte_submits_with_a_warning(self, db: Session):
+        """Was a 422. Submit is never refused for a package reason again (AC-S2-7)."""
         product = _make_product(db, class_label="Bathroom Furniture")
         contact = _make_contact(db)
 
-        with pytest.raises(Exception) as exc_info:
-            PriceTagRequestService.submit_request(
-                db,
-                contact_id=contact.id,
-                company_id=_SORENTO_COMPANY_ID,
-                data={
-                    "debtor_name": "Dealer",
-                    "needed_by_date": date.today() + timedelta(days=7),
-                    "lines": [
-                        {
-                            "line_type": "product",
-                            "product_id": product.id,
-                        },
-                    ],
-                },
-            )
-        assert exc_info.value.status_code == 422
+        req = PriceTagRequestService.submit_request(
+            db,
+            contact_id=contact.id,
+            company_id=_SORENTO_COMPANY_ID,
+            data={
+                "debtor_name": "Dealer",
+                "needed_by_date": date.today() + timedelta(days=7),
+                "lines": [
+                    {
+                        "line_type": "product",
+                        "product_id": product.id,
+                    },
+                ],
+            },
+        )
+        assert req.status == STATUS_NEW
+        assert req.lines[0].package_warning == "No package defined"
 
     def test_bathroom_furniture_as_set_allowed(self, db: Session):
         """Product with class 'Bathroom Furniture' submitted as product_set line is allowed."""
@@ -1279,6 +1269,9 @@ class TestSubmitCompleteness:
             company_id=_SORENTO_COMPANY_ID,
             data={},
         )
+        # r9 D7: the print guard is refused on its own, BEFORE the list, so a
+        # test about the list has to have answered it.
+        req.print_by = "office"
         db.flush()
 
         with pytest.raises(Exception) as exc_info:
@@ -1287,11 +1280,17 @@ class TestSubmitCompleteness:
         err = exc_info.value
         assert err.status_code == 422
         assert err.detail["code"] == "SUBMIT_INCOMPLETE"
-        # The FE routes each key to the field it belongs to, so all three are named.
-        assert err.detail["detail"] == "debtor_name,needed_by_date,lines"
+        # needed_by_date is optional (D-P2b) - dropped from what "complete"
+        # requires. The FE routes each remaining key to the field it belongs
+        # to, so both are named.
+        assert err.detail["detail"] == "debtor_name,lines"
         assert "dealer" in err.detail["message"]
 
-    def test_submit_names_only_what_is_missing(self, db: Session):
+    def test_a_request_with_no_needed_by_date_is_complete(self, db: Session):
+        """D-P2b: needed_by_date is optional and no longer part of what
+        "complete" requires - a debtor plus one line is enough, so this no
+        longer raises (was test_submit_names_only_what_is_missing, which
+        asserted the opposite under the retired r7 rule)."""
         contact = _make_contact(db)
         product = _make_product(db, class_label="Kitchen Sink")
         req = PriceTagRequestService.create_request(
@@ -1303,12 +1302,11 @@ class TestSubmitCompleteness:
                 "lines": [{"line_type": "product", "product_id": product.id}],
             },
         )
+        # r9 D7: submit refuses without a print choice.
+        req.print_by = "office"
         db.flush()
 
-        with pytest.raises(Exception) as exc_info:
-            PriceTagRequestService.validate_submittable(req)
-
-        assert exc_info.value.detail["detail"] == "needed_by_date"
+        PriceTagRequestService.validate_submittable(req)
 
     def test_submit_refuses_a_request_with_no_lines(self, db: Session):
         contact = _make_contact(db)
@@ -1321,6 +1319,8 @@ class TestSubmitCompleteness:
                 "needed_by_date": date.today() + timedelta(days=7),
             },
         )
+        # r9 D7: submit refuses without a print choice.
+        req.print_by = "office"
         db.flush()
 
         with pytest.raises(Exception) as exc_info:
@@ -1341,17 +1341,26 @@ class TestSubmitCompleteness:
                 "lines": [{"line_type": "product", "product_id": product.id}],
             },
         )
+        # r9 D7: submit refuses without a print choice.
+        req.print_by = "office"
         db.flush()
 
         # No exception is the assertion.
         PriceTagRequestService.validate_submittable(req)
 
-    def test_the_set_guard_names_the_line_it_refused(self, db: Session):
-        """The message goes on the ROW, so the refusal has to say which row."""
+    def test_the_warning_goes_on_the_row_that_earned_it(self, db: Session):
+        """Per-line, not per-request: the clean line beside it stores NULL.
+
+        This replaces `test_the_set_guard_names_the_line_it_refused`, which
+        pinned the retired `detail="line:1"` refusal. The reason it pinned a
+        ROW has not changed - marketing reads the warning on the line the
+        salesperson typed - only the mechanism has.
+        """
         contact = _make_contact(db)
-        ok_product = _make_product(db, class_label="Kitchen Sink")
+        ok_product = _make_product(db, class_label="Accessories")
         bad_product = _make_product(db, class_label="Bathroom Furniture")
-        req = PriceTagRequestService.create_request(
+
+        req = PriceTagRequestService.submit_request(
             db,
             contact_id=contact.id,
             company_id=_SORENTO_COMPANY_ID,
@@ -1364,22 +1373,17 @@ class TestSubmitCompleteness:
                 ],
             },
         )
-        db.flush()
 
-        with pytest.raises(Exception) as exc_info:
-            PriceTagRequestService.validate_set_guard(db, req)
+        by_order = sorted(req.lines, key=lambda l: (l.sort_order or 0, l.id))
+        assert [line.package_warning for line in by_order] == [None, "No package defined"]
 
-        err = exc_info.value
-        assert err.status_code == 422
-        assert err.detail["code"] == "SET_GUARD_VIOLATION"
-        assert err.detail["detail"] == "line:1"
-        assert bad_product.product_code in err.detail["message"]
-
-    def test_the_set_guard_names_every_line_it_refused(self, db: Session):
+    def test_every_guarded_line_gets_its_own_warning(self, db: Session):
+        """Replaces `test_the_set_guard_names_every_line_it_refused`."""
         contact = _make_contact(db)
         first = _make_product(db, class_label="Bathroom Furniture")
         second = _make_product(db, class_label="Bathroom Furniture")
-        req = PriceTagRequestService.create_request(
+
+        req = PriceTagRequestService.submit_request(
             db,
             contact_id=contact.id,
             company_id=_SORENTO_COMPANY_ID,
@@ -1392,9 +1396,20 @@ class TestSubmitCompleteness:
                 ],
             },
         )
-        db.flush()
 
-        with pytest.raises(Exception) as exc_info:
-            PriceTagRequestService.validate_set_guard(db, req)
+        by_order = sorted(req.lines, key=lambda l: (l.sort_order or 0, l.id))
+        assert [line.package_warning for line in by_order] == [
+            "No package defined",
+            "No package defined",
+        ]
 
-        assert exc_info.value.detail["detail"] == "line:0,line:1"
+
+@pytest.fixture(autouse=True)
+def no_respond(monkeypatch):
+    """S8: no test run reaches api.respond.io. See `_ptag_r9_seed.block_respond`.
+
+    Every transition here goes through the real notifier, which sends over the
+    network unless something stops it - the run log used to carry a live
+    ``Window check: Respond.io list_messages failed`` per transition.
+    """
+    return _ptag_r9_seed.block_respond(monkeypatch)

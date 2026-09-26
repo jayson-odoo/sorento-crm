@@ -29,6 +29,7 @@ from app.models.resources import Attachment, AttachmentType
 from app.services.portal_service import PORTAL_ATTACHMENT_TYPE_CODE
 from app.services.price_tag_request_service import PriceTagRequestService
 from tests._pg_fixture import blank_session, unique_code
+from tests import _ptag_r9_seed
 
 _SORENTO_COMPANY_ID = "00000000-0000-0000-0000-000000000001"
 _ATTACHMENTS_BASE = "/api/v1/public/portal/attachments"
@@ -110,24 +111,13 @@ def _token(db: Session, contact: RespondContact, *, space_id: str = "zzt-space")
 
 
 def _grant_price_tag_visibility(db: Session, contact_id: str) -> None:
-    """Access-type grant the portal detail route checks (``_assert_visible`` in
-    portal_price_tag.py) before it will answer at all - separate from the
-    ownership check this file is mostly about."""
-    from app.models.access import ContactAccessType, respond_contact_access_types
+    """Per-contact override grant the portal detail route checks
+    (``_assert_visible`` in portal_price_tag.py) before it will answer at all
+    - separate from the ownership check this file is mostly about
+    (PLAN-portal-forms-market-segment D1: the grant moved off access types)."""
+    from tests._portal_grant import grant_portal_forms
 
-    access_type = ContactAccessType(
-        code=unique_code("at"),
-        name=unique_code("Access Type"),
-        portal_form_types=["price_tag_request"],
-    )
-    db.add(access_type)
-    db.flush()
-    db.execute(
-        respond_contact_access_types.insert().values(
-            contact_id=contact_id,
-            access_type_code=access_type.code,
-        )
-    )
+    grant_portal_forms(db, contact_id, ["price_tag_request"])
     db.commit()
 
 
@@ -531,3 +521,14 @@ class TestPortalDetailCarriesAttachments:
 
         assert res.status_code == 200, res.text
         assert res.json()["attachments"] == []
+
+
+@pytest.fixture(autouse=True)
+def no_respond(monkeypatch):
+    """S8: no test run reaches api.respond.io. See `_ptag_r9_seed.block_respond`.
+
+    Every transition here goes through the real notifier, which sends over the
+    network unless something stops it - the run log used to carry a live
+    ``Window check: Respond.io list_messages failed`` per transition.
+    """
+    return _ptag_r9_seed.block_respond(monkeypatch)

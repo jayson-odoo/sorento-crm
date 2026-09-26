@@ -17,10 +17,16 @@ vi.mock('next/navigation', () => ({
 const toasts = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn(), info: vi.fn() }));
 vi.mock('@/lib/toast', () => ({ toast: toasts }));
 
-vi.mock('../lib/price-tag-request-service', () => ({
+vi.mock('../lib/price-tag-request-service', async () => {
+  const { computeLinePricing } = await import('@/app/(auth)/portal/components/__fixtures__/line-pricing');
+  return {
+  lookupLinePricing: vi.fn(async (mode: string, lines: unknown[]) =>
+    computeLinePricing(mode as 'list' | 'selling', lines as never),
+  ),
   lookupDebtors: vi.fn(),
   lookupPromotions: vi.fn(async () => []),
   lookupTagItems: vi.fn(),
+  lookupProductCombos: vi.fn(async () => ({ host_guarded: false, combos: [] })),
   getRequest: vi.fn(),
   createRequest: vi.fn(),
   updateRequest: vi.fn(),
@@ -28,10 +34,17 @@ vi.mock('../lib/price-tag-request-service', () => ({
   submitRequest: vi.fn(),
   approveRequest: vi.fn(),
   requestChanges: vi.fn(),
-}));
+  listReviewComments: vi.fn(async () => []),
+  collectRequest: vi.fn(),
+  };
+});
 
 vi.mock('../lib/portal-client', () => ({
   uploadAttachment: vi.fn(),
+  // D7 r3: PriceTagRequestForm now reads visible_form_types off /me on
+  // mount for a NEW request - granted here so this suite (about save/submit
+  // validation) is unaffected.
+  fetchMe: vi.fn().mockResolvedValue({ visible_form_types: ['price_tag_request'] }),
 }));
 
 vi.mock('@/components/common/SearchableSelect', () => ({
@@ -132,15 +145,44 @@ beforeEach(() => {
   asMock(submitRequest).mockResolvedValue({ status: 'new' });
 });
 
+// The lines table, the "Add line" button and the Sales Order dropzone all
+// live inside the "Sales Order & Lines" section (D-P1), collapsed until a
+// customer is picked (AC-P3) or opened by hand - Radix's Collapsible
+// unmounts its content while closed.
+function openSalesOrderSection() {
+  fireEvent.click(screen.getByRole('button', { name: /Sales Order & Lines/ }));
+}
+
+// Need by and Notes live in "Additional Information" (D-P2b), which auto-
+// opens only once a price mode is chosen (AC-P8) - a blank form with no
+// price mode chosen has to open it by hand.
+function openAdditionalInformationSection() {
+  fireEvent.click(
+    screen.getByRole('button', { name: /Additional Information/ }),
+  );
+}
+
 async function addLineWithAProduct() {
   fireEvent.click(screen.getByRole('button', { name: /Add line/ }));
   await selectOption('Search a set or product...', 'product:prod-uuid-1');
+}
+
+/**
+ * r9 D7/AC-S3-1: `Printing` has no default and Submit refuses without it, so
+ * every test here that expects the POST to happen has to answer it first.
+ */
+async function pickPrinting() {
+  // AC-S1-1/S1-2 (r10): the portal no longer asks who prints - `printBy` is a
+  // constant 'self' every payload sends, so there is nothing left to click.
+  // Callers keep calling this (kept as a no-op) so the rest of each test body
+  // reads the same as it always has.
 }
 
 describe('Save Draft validates nothing (D48a)', () => {
   it('saves a form that has one line and no debtor and no date', async () => {
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Debtor');
+    openSalesOrderSection();
     await addLineWithAProduct();
 
     fireEvent.click(screen.getByRole('button', { name: /Save Draft/ }));
@@ -168,6 +210,7 @@ describe('Save Draft validates nothing (D48a)', () => {
   it('is disabled only while there is nothing at all to save', async () => {
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Debtor');
+    openAdditionalInformationSection();
 
     expect(screen.getByRole('button', { name: /Save Draft/ })).toBeDisabled();
 
@@ -185,6 +228,7 @@ describe('Save Draft validates nothing (D48a)', () => {
     // buffered file a draft to upload to.
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Debtor');
+    openSalesOrderSection();
 
     expect(screen.getByRole('button', { name: /Save Draft/ })).toBeDisabled();
 
@@ -203,6 +247,7 @@ describe('Save Draft validates nothing (D48a)', () => {
 
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Debtor');
+    openSalesOrderSection();
     fireEvent.click(screen.getByRole('button', { name: 'Attach PO file' }));
 
     fireEvent.click(screen.getByRole('button', { name: /Save Draft/ }));
@@ -217,10 +262,40 @@ describe('Save Draft validates nothing (D48a)', () => {
     expect(updateRequest).toHaveBeenCalledTimes(1);
     expect(asMock(updateRequest).mock.calls[0][0]).toBe('req-1');
   });
+
+  // S4 (code review): PARTS_NEED_COMBO and INVALID_PART are both 422s naming
+  // `line:<index>` (`price_tag_request_service.py`) - a reopened draft whose
+  // product lost its combo, or whose line points at a product this company
+  // can no longer see, lands on the row AND toasts "Line N: <message>" so the
+  // failure is visible even before the scroll lands. Both codes go through
+  // the same `line:<index>` vocabulary, so one case each pins that they map
+  // identically.
+  it.each([
+    ['PARTS_NEED_COMBO', 'This product has no package to add a part to.'],
+    ['INVALID_PART', "This line's product could not be found."],
+  ])('toasts "Line 1: <message>" on a %s save 422', async (code, message) => {
+    asMock(createRequest).mockRejectedValue(
+      Object.assign(new Error(message), { code, fields: ['line:0'] }),
+    );
+    render(<PriceTagRequestForm />);
+    await screen.findByLabelText('Debtor');
+    openSalesOrderSection();
+    await addLineWithAProduct();
+
+    fireEvent.click(screen.getByRole('button', { name: /Save Draft/ }));
+
+    await waitFor(() => expect(createRequest).toHaveBeenCalled());
+    expect(toasts.error).toHaveBeenCalledWith(`Line 1: ${message}`);
+    expect(await screen.findByText(message)).toBeInTheDocument();
+  });
 });
 
 describe('Submit says what is missing (D48b)', () => {
   it('is enabled on an empty form and reports instead of posting', async () => {
+    // Need by no longer blocks Submit (D-P2b, AC-P8b). r10 AC-S1-3: Printing
+    // no longer blocks Submit either - the control (and its refusal) is gone,
+    // `print_by` is a constant 'self' - so a blank form has two gaps left:
+    // Customer, Lines.
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Debtor');
 
@@ -231,10 +306,18 @@ describe('Submit says what is missing (D48b)', () => {
     expect(
       await screen.findByText('Select the dealer these tags are for.'),
     ).toBeInTheDocument();
-    expect(screen.getByText('Pick the date you need them by.')).toBeInTheDocument();
+    // The lines error renders inside "Sales Order & Lines", collapsed on a
+    // blank form - opened by hand to read it (AC-P10 promises the offending
+    // section opens itself; not asserted here, see PR notes).
+    openSalesOrderSection();
     expect(screen.getByText('Add at least one line.')).toBeInTheDocument();
+    expect(screen.queryByText('Pick the date you need them by.')).toBeNull();
+    // AC-S1-3: "Say who prints these tags." must never appear.
+    expect(
+      screen.queryByText('Say who prints these tags.'),
+    ).toBeNull();
     expect(screen.getByTestId('submit-problem-summary')).toHaveTextContent(
-      '3 things need attention',
+      '2 things need attention',
     );
     expect(createRequest).not.toHaveBeenCalled();
   });
@@ -242,9 +325,6 @@ describe('Submit says what is missing (D48b)', () => {
   it('names the row that has no item picked', async () => {
     render(<PriceTagRequestForm />);
     await selectOption('Debtor', 'ZZTD01');
-    fireEvent.change(screen.getByLabelText(/Need by/), {
-      target: { value: '2026-09-30' },
-    });
     fireEvent.click(screen.getByRole('button', { name: /Add line/ }));
 
     fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
@@ -279,10 +359,8 @@ describe('Submit says what is missing (D48b)', () => {
     );
     render(<PriceTagRequestForm />);
     await selectOption('Debtor', 'ZZTD01');
-    fireEvent.change(screen.getByLabelText(/Need by/), {
-      target: { value: '2026-09-30' },
-    });
     await addLineWithAProduct();
+    await pickPrinting();
 
     fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
 
@@ -304,10 +382,8 @@ describe('Submit says what is missing (D48b)', () => {
     );
     render(<PriceTagRequestForm />);
     await selectOption('Debtor', 'ZZTD01');
-    fireEvent.change(screen.getByLabelText(/Need by/), {
-      target: { value: '2026-09-30' },
-    });
     await addLineWithAProduct();
+    await pickPrinting();
 
     fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
 

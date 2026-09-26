@@ -92,6 +92,12 @@ _READ_COLUMNS: dict[str, dict[str, str]] = {
         "cost_price": "cost_price",
         "is_active": "is_active",
     },
+    "brands": {
+        "code": "brand_code",
+        "name": "brand_name",
+        "description": "description",
+        "is_active": "is_active",
+    },
 }
 
 
@@ -102,7 +108,7 @@ class MasterReadService:
         # partitioned per company, so "the current value" is not a question that
         # has one answer without naming one.
         self.company_id = company_id
-        self.refs = IntegrationReferenceService(db)
+        self.refs = IntegrationReferenceService(db, company_id=self.company_id)
 
     def current_state(self, entity_type: str, source_refs: list[str]) -> dict[str, Any]:
         columns = _READ_COLUMNS.get(entity_type)

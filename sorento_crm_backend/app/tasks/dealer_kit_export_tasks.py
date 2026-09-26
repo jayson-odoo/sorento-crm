@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import os
 
+from app.config import settings
 from app.database import SessionLocal
 from app.models.dealer_kit import Page
 from app.services.company_scope import set_company_scope
@@ -37,8 +38,23 @@ READY_SELECTOR = "[data-dk-print-ready='true']"
 READY_TIMEOUT_MS = 60_000
 
 
+def _print_base() -> str:
+    """`DEALER_KIT_PRINT_BASE_URL` if set, else `FRONTEND_BASE_URL` (the same
+    setting portal links are built from - `portal_service.submission_link`),
+    else the localhost default. A dedicated env stays only as an override for
+    a stack where the worker must reach the frontend by an internal name; a
+    normal deploy needs no second setting pointed at the same place."""
+    override = os.environ.get(PRINT_BASE_ENV)
+    if override:
+        return override.rstrip("/")
+    frontend_base = (getattr(settings, "frontend_base_url", None) or "").strip()
+    if frontend_base:
+        return frontend_base.rstrip("/")
+    return DEFAULT_PRINT_BASE.rstrip("/")
+
+
 def _print_url(download_id: str) -> str:
-    base = os.environ.get(PRINT_BASE_ENV, DEFAULT_PRINT_BASE).rstrip("/")
+    base = _print_base()
     token = render_token.issue(download_id)
     return f"{base}/c/print/{download_id}?token={token}"
 
@@ -48,7 +64,7 @@ def _tag_sheet_print_url(
     sheet_ids: list[str] | None = None,
 ) -> str:
     """Build the print URL for a tag sheet page."""
-    base = os.environ.get(PRINT_BASE_ENV, DEFAULT_PRINT_BASE).rstrip("/")
+    base = _print_base()
     token = render_token.issue(download_id)
     url = f"{base}/c/print/tag-sheet/{download_id}?token={token}"
     if sheet_ids:
@@ -214,6 +230,19 @@ def generate_tag_sheet_pdf(
             download_id,
             len(pdf_bytes),
         )
+        # r9 D12: the salesperson who prints their own tags is waiting for this
+        # file and has no other way to know it exists.
+        try:
+            export_request = export_service.get_request(db, download_id)
+            request_id = getattr(export_request, "request_id", None)
+            if request_id:
+                notify_price_tag_pdf_ready(db, str(request_id))
+        except Exception:
+            logger.warning(
+                "generate_tag_sheet_pdf: could not announce the PDF for %s",
+                download_id,
+                exc_info=True,
+            )
         return {"download_id": download_id, "status": "ready", "bytes": len(pdf_bytes)}
     except Exception as exc:  # noqa: BLE001 - mark failed, never poison the queue
         logger.exception("generate_tag_sheet_pdf failed for download %s", download_id)
@@ -227,3 +256,21 @@ def generate_tag_sheet_pdf(
         return {"download_id": download_id, "status": "failed", "error": str(exc)}
     finally:
         db.close()
+
+
+def notify_price_tag_pdf_ready(db, request_id: str) -> None:
+    """Tell the salesperson their PDF is downloadable (r9 D12/AC-S4-2).
+
+    Only for a SELF print. An office print's tags are collected at the counter -
+    the salesperson never downloads them, so a "your PDF is ready" there is a
+    message about something they are not going to do.
+    """
+    from app.models.price_tag import PriceTagRequest
+    from app.services import price_tag_notify
+
+    request = (
+        db.query(PriceTagRequest).filter(PriceTagRequest.id == request_id).first()
+    )
+    if request is None or request.print_by != "self":
+        return
+    price_tag_notify.notify_salesperson(db, request, "pdf_ready")

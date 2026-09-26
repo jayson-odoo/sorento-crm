@@ -226,6 +226,26 @@ def test_set_label_reports_production_and_staging(seeded: Session):
 
 
 # --------------------------------------------------------------------------- #
+# get_versions carries the code fallback (Slice E: a key with no saved         #
+# version opened an EMPTY editor - browser finding on every ai_extract_* key). #
+# --------------------------------------------------------------------------- #
+
+
+def test_get_versions_carries_the_fallback_text_for_a_key_with_no_saved_version(db: Session):
+    """`db` (unseeded) is the exact bug scenario: no `AIPromptVersion` row
+    exists for this key, so `versions` is genuinely empty and the FE has
+    nothing but `fallback_text` to seed the editor from."""
+    from app.services.ai_prompt_registry import PROMPT_KEYS
+
+    key = "ai_extract_portal_price_tag_request"
+    result = AIPromptService(db).get_versions(key)
+
+    assert result["versions"] == []
+    assert result["fallback_text"] == PROMPT_KEYS[key].fallback()
+    assert "REQUIRED" in result["fallback_text"]
+
+
+# --------------------------------------------------------------------------- #
 # List keys shape (UAC D1)                                                     #
 # --------------------------------------------------------------------------- #
 
@@ -446,6 +466,20 @@ def test_route_unknown_key_404(api):
     assert res.status_code == 404
 
 
+def test_route_get_versions_carries_fallback_text_on_the_wire(api):
+    """`response_model` silently drops an undeclared field - asserted on the
+    wire, per LESSONS-LEARNT. `router`'s v1 comes from the `seeded` fixture
+    behind `api`, so this also proves `fallback_text` rides along even when a
+    saved version already exists."""
+    client, allow = api
+    allow.add("system.ai_assistant_settings.view")
+    res = client.get("/api/v1/system/ai-assistant/prompts/router/versions")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert "fallback_text" in body
+    assert body["fallback_text"]
+
+
 def test_route_dry_run_dormant_key_400(api):
     client, allow = api
     allow.add("system.ai_assistant_settings.edit")
@@ -517,3 +551,19 @@ def test_the_model_shows_up_in_the_agent_list(seeded: Session):
     row = next(r for r in AIPromptService(seeded).list_keys() if r["name"] == "spec_understanding")
     assert row["model"] == "gpt-5.4-mini"
     assert row["provider"] == "openai"
+
+
+# ---------------------------------------------------------------------------
+# AC-S2-1 (PLAN-price-tag-r10.md S2): the price tag fallback carries rule (9),
+# which stops quantity being copied off the document - quantity is how many
+# TAGS marketing wants, never something a scanned document states.
+# ---------------------------------------------------------------------------
+
+
+def test_ac_s2_1_price_tag_fallback_carries_rule_9_omit_quantity():
+    from app.services.ai_prompt_registry import _ai_extract_price_tag_fallback
+
+    text = _ai_extract_price_tag_fallback()
+
+    assert "(9)" in text
+    assert "Omit `quantity`" in text

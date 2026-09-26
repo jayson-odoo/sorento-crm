@@ -802,6 +802,13 @@ def record_dict(
         # The plan is named by supplier + start time, exactly as a reorder run is. There is
         # no plan number to mint and nothing for a person to memorise.
         "started_at": plan.created_at.isoformat() if plan.created_at else None,
+        # "Sales orders needed" window (AC-N7): the same From/To shape the reorder run
+        # carries. `plan_horizon_start` is the new start-side twin; `plan_horizon_date`
+        # keeps its name ("Sales order cut-off") for compatibility with every existing
+        # reader of this dict.
+        "plan_horizon_start": (
+            plan.plan_horizon_start.isoformat() if plan.plan_horizon_start else None
+        ),
         "plan_horizon_date": (
             plan.plan_horizon_date.isoformat() if plan.plan_horizon_date else None
         ),
@@ -911,12 +918,15 @@ def create_record(
     document_kind: str,
     source_attachment_id: Optional[str],
     actor: Optional[str] = None,
+    plan_horizon_start: Optional[date] = None,
 ) -> LoadingPlan:
     """Start a plan. Raises `ValueError` when the supplier is not one this caller can see.
 
     `inventory_as_of` is stamped from the supplier's CURRENT stock-list snapshot, which is
     what pins the Document label: a newer list uploaded later changes the plan's numbers (R2,
     stated in the open) but must not rewrite which file this plan was started from.
+
+    `plan_horizon_start` (AC-N7) keeps a default so every existing caller compiles unchanged.
     """
     if _supplier_row(db, supplier_id) is None:
         raise ValueError("Supplier not found")
@@ -932,6 +942,7 @@ def create_record(
         id=str(uuid.uuid4()),
         supplier_id=supplier_id,
         status="planning",
+        plan_horizon_start=plan_horizon_start,
         plan_horizon_date=plan_horizon_date,
         document_kind=document_kind,
         source_attachment_id=source_attachment_id,

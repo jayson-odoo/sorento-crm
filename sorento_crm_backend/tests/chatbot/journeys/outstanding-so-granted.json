@@ -1,0 +1,34 @@
+{
+  "name": "outstanding-so-granted",
+  "source": "sibling of outstanding-hanlim-detail-so-switch.json, item 3 ruling - the SAME chain, but for a contact that HOLDS the sales-order grant, so step 2's detail offer has TWO options (SO list, DO list) and 'Sales order' at step 3 answers with real SO figures instead of the denial + DO-summary fallback. Justin (440987225) does not hold this grant (measured, browser-pass-7 row 4 run 2 and this lane's own journey runs); no other contact holding it has been supplied yet.",
+  "cases": [
+    {
+      "name": "hanlim-outstanding-detail-then-so-switch-granted",
+      "cold": true,
+      "contact": null,
+      "skip_unless_contact": true,
+      "_note": "needs a contact holding the outstanding sales-order grant; contact id to be supplied",
+      "turns": [
+        {
+          "text": "Outstanding quantity to hanlim",
+          "expect": {
+            "header_names_once": "HANLIM",
+            "reply_contains": ["Reply 1 for the delivery order list."]
+          }
+        },
+        {
+          "text": "2",
+          "expect": {
+            "reply_contains": ["Product:", "Customer:", "Location:", "Order date:"]
+          }
+        },
+        {
+          "text": "Sales order",
+          "expect": {
+            "reply_not_contains": ["Sales order figures are not enabled for your account"]
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -18,8 +18,11 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
+vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+
 import type { TagLayer } from '@/lib/dealer-kit/tag-template-types';
 import { InspectorPanel } from './InspectorPanel';
+import { toast } from '@/lib/toast';
 
 // The real select is a Radix popover + cmdk list, which jsdom cannot open.
 // A native <select> carrying the same options is enough to choose one, and
@@ -211,6 +214,52 @@ describe('InspectorPanel - text B/I/U/S toggle group (S2, AC-S2-5)', () => {
       't1',
       expect.objectContaining({ fontWeight: 400 }),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC-S16-1/S16-2 (PLAN-price-tag-ai-extract-resolver.md D21): a preview of
+// the rendered merge-field text, with a one-click copy - the canvas inline
+// edit still shows the source, so this is the only copy surface.
+// ---------------------------------------------------------------------------
+
+describe('InspectorPanel - copy the rendered text (S16)', () => {
+  it('AC-S16-1: a token layer shows the rendered text and a "Copy rendered text" button; clicking it copies and toasts "Copied"', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    });
+
+    render(
+      <InspectorPanel
+        layer={textLayer({ text: '{{product.code}} widget' })}
+        onUpdate={vi.fn()}
+        onUpdateProps={vi.fn()}
+        resolvedText="CBF3612 widget"
+      />,
+    );
+
+    expect(screen.getByText('CBF3612 widget')).toBeInTheDocument();
+    const copyBtn = screen.getByRole('button', { name: 'Copy rendered text' });
+
+    fireEvent.click(copyBtn);
+
+    expect(writeText).toHaveBeenCalledWith('CBF3612 widget');
+    expect(toast.success).toHaveBeenCalledWith('Copied');
+  });
+
+  it('AC-S16-2: a layer with no token in its content shows no preview line', () => {
+    render(
+      <InspectorPanel
+        layer={textLayer({ text: 'Plain words' })}
+        onUpdate={vi.fn()}
+        onUpdateProps={vi.fn()}
+        resolvedText="Plain words"
+      />,
+    );
+
+    expect(screen.queryByRole('button', { name: 'Copy rendered text' })).toBeNull();
   });
 });
 

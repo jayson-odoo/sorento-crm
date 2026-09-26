@@ -36,7 +36,15 @@ from tests.chatbot.test_engine import (  # noqa: F401 - fixtures used by name
 
 
 def _record(trace: list[dict[str, Any]], stage: str) -> dict[str, Any]:
-    rows = [r for r in trace if r["stage"] == stage]
+    """The one STAGE record for `stage`, never an event.
+
+    AC-1592 port: `Trace.persisted()` now interleaves stage records (`{"stage": ...}`)
+    with sub-events a stage's own `add()` calls append (`{"kind": ...}`, no `"stage"`
+    key at all - `trace.py::add`'s own docstring). A bare `r["stage"]` scan over the
+    combined list raised `KeyError` on the first event; `.get` reads "not a stage
+    record" as "not this one" instead.
+    """
+    rows = [r for r in trace if r.get("stage") == stage]
     assert len(rows) == 1, f"expected exactly one {stage!r} record, got {len(rows)}: {trace}"
     return rows[0]
 
@@ -77,7 +85,7 @@ def _session_vars(session_factory) -> Any:
         session_factory()
         .execute(
             text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :c"),
-            {"c": CONTACT_ID},
+            {"c": str(CONTACT_ID)},
         )
         .scalar()
     )
@@ -92,7 +100,13 @@ class TestHarnessInjectionsG6:
         stub_access()
         envelope = _envelope(
             test_run_id="ZZT-o2-g6",
-            mock_reformulator_output=_mock_output(domain_hint="inventory"),
+            # `asks`/`topic_reset` join DECLARED_KEYS (coder 14's last item, 4427bb6bb) -
+            # `_mock_output`'s base template (`_parser_output`) predates them, so a
+            # harness-supplied emission needs them named explicitly or `assert_emission`
+            # fails the bypassed turn at `understood`.
+            mock_reformulator_output=_mock_output(
+                domain_hint="inventory", asks=None, topic_reset=None
+            ),
         )
         assert envelope.dry_run is True
 
@@ -110,7 +124,11 @@ class TestHarnessInjectionsG6:
     ) -> None:
         stub_access()
         result = engine_mod.run_turn(
-            _envelope(is_test=True, mock_reformulator_output=_mock_output()),
+            _envelope(
+                is_test=True,
+                # Same DECLARED_KEYS gap as the test above.
+                mock_reformulator_output=_mock_output(asks=None, topic_reset=None),
+            ),
             session_factory=session_factory,
         )
         record = _record(_turn_row(session_factory, result.turn_id).trace, "understood")
@@ -150,6 +168,19 @@ class TestHarnessInjectionsG6:
         The stage and status are unchanged (R5 / H44); what this pins is that the ERROR
         names the key, and does so for a real model answer too, since both go through the
         same check.
+
+        **Confirmed ENGINE DEFECT, kept red, NOT retired (16 Sep 2026, tester):** measured
+        directly - the current engine no longer rejects a malformed verdict at `understood`
+        at all. `{"nope": True}` is coerced with defaults for every missing field (rather
+        than the old hard subscript failing fast) and the turn runs all the way through to
+        `status == "done"`, reaching entity resolution with a garbage token ("nothing",
+        apparently a stray default value) along the way. R5/H44's own rule - a malformed
+        parser emission fails the turn at `understood`, the same path a malformed MODEL
+        answer takes, never a soft default - is still the stated contract nothing in this
+        session's reading of the PLAN/UAC retires; this reads as a real validation gap in
+        the post-rearch verdict pipeline (APPLY's tolerant defaulting swallowing what the
+        old hard KeyError used to catch), not a stale assertion. Flagged for a coder/captain
+        look, not silently softened or invented around.
         """
         stub_access()
         result = engine_mod.run_turn(
@@ -321,3 +352,127 @@ class TestHarnessInjectionsG8:
             "previous_conversation_state",
             "referenced_result_set",
         ]
+
+
+# --------------------------------------------------------------------------- #
+# Fix 3 (PLAN-chatbot-order-status-all-orders-23sep.md, console contact 437264483,
+# turns 20:41:40 / 20:41:51 +09, 23 Sep 2026). `_inject_harness_session` wrote the
+# harness `previous_conversation_state` into `session_vars["variables"]` only, never
+# touching the stored row's own top-level `focus`/`open_question`/etc -
+# `session_state.five_keys` returns the STORED top-level keys the moment ANY of them
+# is present and never looks at `variables` in that case, so injection silently did
+# nothing for any contact whose stored row was already in the new five-key shape
+# (every contact since #952): a `customer_pick` the console showed one turn earlier
+# was invisible, and a numbered reply resolved against the contact's REAL stored
+# question instead.
+# --------------------------------------------------------------------------- #
+
+
+class TestFix3HarnessFiveKeyStateReplacesTheStoredFiveKeys:
+    """Unit-level on `_inject_harness_session` + `turn_runtime.load_state`, the same
+    two functions a real turn calls in sequence (`engine.py` ~1205 then ~1218)."""
+
+    #: A stored row already in the NEW five-key shape - the case injection used to be
+    #: unable to override at all.
+    STORED_SESSION_VARS: dict[str, Any] = {
+        "focus": {
+            "customers": [{"uuid": "zzt-stored-customer", "canonical_code": "ZZTSTORED"}],
+        },
+        "open_question": {
+            "kind": "outstanding_detail",
+            "options": [],
+            "expects": None,
+            "team": None,
+            "asked_at_turn": 3,
+            "payload": {},
+        },
+        "ideation": None,
+        "access_levels": [],
+        "contains_flyer": False,
+    }
+
+    def _session_block(self) -> dict[str, Any]:
+        return {"respond_io_id": "zzt-fix3", "session_vars": dict(self.STORED_SESSION_VARS)}
+
+    def test_ac_1868_harness_five_key_state_replaces_the_stored_five_keys(self) -> None:
+        """The measured defect: the stored row has an open `outstanding_detail`
+        question and a stored customer; the harness names a DIFFERENT customer and a
+        `customer_pick` question. Before the fix, `load_state` still returned the
+        stored `outstanding_detail` pending and the stored customer - RED."""
+        from app.services.chatbot import turn_runtime
+        from app.services.chatbot.turn.state import Profile
+
+        harness_state = {
+            "focus": {
+                "customers": [{"uuid": "zzt-harness-customer", "canonical_code": "ZZTHARNESS"}],
+            },
+            "open_question": {
+                "kind": "customer_pick",
+                "options": [
+                    {"position": 1, "label": "Customer A", "entity_type": "customer"},
+                    {"position": 2, "label": "Customer B", "entity_type": "customer"},
+                ],
+                "expects": "pick",
+                "team": None,
+                "asked_at_turn": 5,
+                "payload": {},
+            },
+        }
+        envelope = _envelope(is_test=True, previous_conversation_state=harness_state)
+
+        injected = engine_mod._inject_harness_session(self._session_block(), envelope)
+        state = turn_runtime.load_state(injected, profile=Profile(), turn_no=1)
+
+        assert state.pending is not None and state.pending.kind == "customer_pick", (
+            f"the harness question must win over the stored outstanding_detail one: {state.pending}"
+        )
+        assert [o.get("label") for o in state.pending.options] == ["Customer A", "Customer B"]
+        assert [c.get("uuid") for c in state.focus.customers] == ["zzt-harness-customer"], (
+            "the harness focus customer must win over the stored one"
+        )
+
+    def test_ac_1869_empty_harness_state_erases_the_stored_five_keys_for_the_turn(self) -> None:
+        """`{}` is membership, not truthiness (`_harness_keys_present`'s own rule): the
+        harness is saying "this contact remembers nothing", not "I said nothing"."""
+        from app.services.chatbot import turn_runtime
+        from app.services.chatbot.turn.state import Profile
+
+        envelope = _envelope(is_test=True, previous_conversation_state={})
+
+        injected = engine_mod._inject_harness_session(self._session_block(), envelope)
+        state = turn_runtime.load_state(injected, profile=Profile(), turn_no=1)
+
+        assert state.pending is None, "an empty harness state remembers no open question"
+        assert state.focus.customers == [], "an empty harness state remembers no focus"
+
+    def test_ac_1870_legacy_flat_harness_shape_still_projects_through_variables(self) -> None:
+        """The legacy flat shape (`contracts.LegacyVariables`, no five-key names) keeps
+        today's behaviour - it lands in `variables` - but the stored top-level five
+        keys must be stripped so `session_state.five_keys` falls through to the
+        legacy projection instead of returning the stored ones untouched."""
+        from app.services.chatbot import turn_runtime
+        from app.services.chatbot.turn.state import Profile
+
+        legacy_state = {
+            "pending": {"kind": "escalation_offer", "team": "customer_service", "ttl": 2},
+            "domain_hint": "order",
+        }
+        envelope = _envelope(is_test=True, previous_conversation_state=legacy_state)
+
+        injected = engine_mod._inject_harness_session(self._session_block(), envelope)
+
+        assert injected["session_vars"]["variables"] == legacy_state, (
+            "unchanged behaviour: a legacy flat shape still lands in `variables`"
+        )
+        assert "focus" not in injected["session_vars"], (
+            "the stored top-level five keys must be stripped so `five_keys` falls "
+            "through to the legacy projection instead of leaking the stored ones"
+        )
+
+        state = turn_runtime.load_state(injected, profile=Profile(), turn_no=1)
+        assert state.pending is not None and state.pending.kind == "team_pick", (
+            f"the legacy nest's own projection must win, not the stored outstanding_detail: {state.pending}"
+        )
+        assert state.focus.customers == [], (
+            "the stored customer must not leak through a legacy-shaped harness value"
+        )

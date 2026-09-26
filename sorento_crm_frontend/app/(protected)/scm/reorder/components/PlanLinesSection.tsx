@@ -387,11 +387,14 @@ export function PlanLinesSection({
         isBusy={planEdits.isConfirming}
         onConfirm={() => void doConfirm()}
       />
-      {/* Last, and only here: what it costs and whether that works. */}
+      {/* Last, and only here: what it costs and whether that works. PLAN-reorder-one-
+          formula.md S3/AC-13: `reportedTotals` (the tile's own default-visible figures),
+          never `planLines.totals` (every line the hook returned, hidden ones included) -
+          the footer and the tile must agree on what "the plan" is. */}
       <PlanBudgetReview
-        lines={planLines.lines}
+        lines={defaultVisibleLines}
         decisions={planLines.decisions}
-        totals={planLines.totals}
+        totals={reportedTotals}
       />
       {/* S13f: the level changes to carry into AutoCount, as one list + CSV. */}
       <div className="flex justify-end">

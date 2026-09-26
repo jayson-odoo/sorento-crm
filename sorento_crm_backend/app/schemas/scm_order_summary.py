@@ -27,6 +27,8 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
+from app.schemas.export_split import ExportSplit
+
 
 class OrderSummaryLocationAllocationOut(BaseModel):
     """One location's share of a Product-grain chosen quantity (AC-F08).
@@ -135,9 +137,14 @@ class OrderSummaryRowOut(BaseModel):
 
 class SupplyDocOut(BaseModel):
     """One open document's remaining quantity for a product (issue #795 Slice 3) - a PO
-    number or an SPO number, never a UUID."""
+    number or an SPO number, never a UUID.
+
+    `container` is the box the goods are in, present only on an SPO doc that names one
+    (PLAN-low-stock-report S2, AC-20); a PO has none. Declared here so `response_model`
+    does not silently drop it from the API row (reviewer N1)."""
 
     number: Optional[str] = None
+    container: Optional[str] = None
     qty: float = 0.0
 
 
@@ -154,6 +161,12 @@ class ProjectCustomerOut(BaseModel):
 class LastReceiptOut(BaseModel):
     date: str
     qty: float = 0.0
+    # PLAN-low-stock-last-in-and-list-scope S1: NULL on a run frozen before migration 518
+    # (R4, no backfill) - both are Optional so `response_model` does not drop them on a
+    # row that does carry them (a bare BaseModel field default silently strips an
+    # undeclared key).
+    spo_number: Optional[str] = None
+    container: Optional[str] = None
 
 
 class OrderSummaryReportOut(BaseModel):
@@ -279,12 +292,39 @@ class OrderSummaryExportIn(BaseModel):
     """S4, PLAN-po-spo-site-pool-and-order-sheet-downloads.md (AC-15): the async export
     request. `run_id` is opaque, same rule as every other read here; omitted means the
     newest completed run, exactly like the GET report. `format` is validated in the route
-    (422 on anything but ``pdf``/``xlsx``) rather than here, so the message stays the
-    existing wording the old synchronous export used.
+    (422 on anything but ``pdf`` / ``xlsx`` / ``low_stock_xlsx``) rather than here, so the
+    message stays the existing wording the old synchronous export used.
+
+    `split` (PLAN-low-stock-export-split-25sep, AC-12/AC-13/R6) applies to the low stock
+    report ONLY - the route refuses it 422 on any other format. An unrecognised value is
+    refused at THIS layer, by the `Literal` itself: pydantic's 422 on a bad `split` needs no
+    route-level check, unlike `format`, which the route validates against its own list of
+    plain strings.
     """
 
     run_id: Optional[str] = None
     format: str
+    split: ExportSplit = "none"
+
+
+class LowStockSheetCountsOut(BaseModel):
+    """The GROUP count the low stock workbook would write per non-`none` split (AC-15b) -
+    none-buckets ("No supplier" / "No category") included, pairs only when present. The
+    dialog doubles this into a sheet count itself (R2: every group is a `"<key> - Low"`
+    then `"<key>"` pair); the server states the group, not the sheet."""
+
+    supplier: int
+    category: int
+    supplier_category: int
+
+
+class LowStockPreviewOut(BaseModel):
+    """`GET /order-summary/low-stock-preview` (R4, AC-15b): `rows` is the visible row
+    count (the workbook's own "All" count), computed off the SAME `_split()` the workbook
+    itself is built from - a courtesy count for the split dialog, not a second guess."""
+
+    rows: int
+    sheet_counts: LowStockSheetCountsOut
 
 
 class OrderSummaryDecisionIn(BaseModel):

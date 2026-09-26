@@ -1,0 +1,37 @@
+console-check-1789239513  1 cases against http://127.0.0.1:8085  parser prompt: whatever the `production` label points at
+lane switches before: enabled=True lanes=['access_denied', 'escalate_offer', 'out_of_scope', 'ideate', 'offer_hold', 'escalation_declined', 'check_promotion', 'low_signal', 'clarify_menu', 'not_supported', 'stock_denied', 'demand_qty', 'business_query']
+lane switches for the run: enabled=True lanes=13
+FAIL  outstanding report journey - SO direct ask, missing-scope question, both, detail, customer filter, miss branch=business_query  "Customer: all customers Product: SRTWT02 Dates: all dates  Here's what you want: • product: SRTWT02 (+1 more)  But no ou"
+      - turn 1: reply does not contain 'SRTWT7443'
+      - turn 1: reply does not contain 'Location: IB'
+      - turn 1: reply does not contain 'BRW-IB'
+      - turn 1: reply does not contain 'Order date: all'
+      - turn 1: reply does not contain 'Sales order outstanding'
+      - turn 1: reply does not contain 'Outstanding:'
+      - turn 1: reply does not contain '1. Sales order list'
+      - turn 2: reply does not contain 'Outstanding for which document?'
+      - turn 2: reply does not contain '1. Sales orders'
+      - turn 2: reply does not contain '2. Delivery orders'
+      - turn 2: reply does not contain '3. Both'
+      - turn 2: reply contains 'Sales order outstanding' and must not
+      - turn 2: reply contains 'Delivery order pending' and must not
+      - turn 2: pending kind is None, expected 'outstanding_scope'
+      - turn 3: reply does not contain 'SRTWT7445'
+      - turn 3: reply does not contain '01/01/2026 to 31/12/2026'
+      - turn 3: reply does not contain 'Sales order outstanding'
+      - turn 3: reply does not contain 'Delivery order pending'
+      - turn 3: reply does not contain '1. Sales order list'
+      - turn 3: reply does not contain '2. Delivery order list'
+      - turn 3: pending kind is None, expected 'outstanding_detail'
+      - turn 4: branch_kind is 'low_signal', expected 'business_query'
+      - turn 4: reply does not contain 'SO Number:'
+      - turn 4: reply does not contain 'Ordered:'
+      - turn 4: reply does not contain 'Transferred to DO:'
+      - turn 4: reply does not contain 'Outstanding:'
+      - turn 4: reply does not contain 'Order Date:'
+      - turn 5: reply does not contain 'SRTWT7445'
+      - turn 6: reply does not contain 'No open sales order'
+      - turn 6: reply does not contain 'No pending delivery order'
+lane switches restored: enabled=True lanes=['access_denied', 'escalate_offer', 'out_of_scope', 'ideate', 'offer_hold', 'escalation_declined', 'check_promotion', 'low_signal', 'clarify_menu', 'not_supported', 'stock_denied', 'demand_qty', 'business_query']
+
+0 passed, 1 failed  (console-check-1789239513)

@@ -55,6 +55,7 @@ from dataclasses import dataclass, field, replace as dataclass_replace
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from functools import cmp_to_key
+from types import SimpleNamespace
 from typing import (
     Any,
     Callable,
@@ -69,7 +70,7 @@ from typing import (
     Tuple,
 )
 
-from sqlalchemy import func, nullslast, or_
+from sqlalchemy import case, func, null, nullslast, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased
 
@@ -86,7 +87,7 @@ from app.models.procurement import (
 from app.models.product import Product
 from app.models.sales_agent import SalesAgent
 from app.models.project_so import (
-    ACK_ACKNOWLEDGED,
+    ACK_AWAITING,
     ALLOC_SOURCE_BRW,
     ALLOC_SOURCE_GROUP_TAKE,
     ALLOC_SOURCE_ORDER,
@@ -217,6 +218,49 @@ PLAN_SORT_FIELDS: Tuple[str, ...] = (
 _hold_product = func.coalesce(SalesOrderLine.product_id, ProjectSalesOrderLine.product_id)
 
 
+def owed_qty_expr():
+    """`_open_of` as SQL, over the `SalesOrderLine` `_hold_query` already outer-joins.
+
+    The same three rules the Python primitive applies, in the same order: a CANCELLED line
+    owes nothing whatever its columns say (the book rarely reverses a delivered quantity
+    when it cancels one), what is owed is `ordered - delivered` floored at zero, and an
+    allocation with NO core line behind it is not a question this can answer - it returns
+    NULL there, and the caller decides what that means.
+
+    NULL rather than zero for the missing line is the whole reason for the leading branch.
+    Postgres `greatest()` IGNORES nulls, so `greatest(NULL - 0, 0)` is 0, not NULL: without
+    it, every allocation on an unreconciled mirror line would silently cap to zero and stop
+    holding stock it really is holding.
+    """
+    return case(
+        (SalesOrderLine.id.is_(None), null()),
+        (func.coalesce(SalesOrderLine.line_status, "open") == "cancelled", 0),
+        else_=func.greatest(
+            func.coalesce(SalesOrderLine.qty_ordered, 0)
+            - func.coalesce(SalesOrderLine.qty_delivered, 0),
+            0,
+        ),
+    )
+
+
+def held_qty_expr():
+    """What a confirmed allocation is ACTUALLY holding: `least(alloc.qty, still owed)`.
+
+    `so_line_allocations.qty` is frozen at confirm and delivery never shrinks it, while the
+    book has already taken the delivered units off `quantity_on_hand` - so a decided line
+    that has since shipped was subtracted twice, once by the warehouse and once by its own
+    hold, and the difference was stock the business had that no screen could see. Capping
+    here rather than at each reader is what makes the free-stock arithmetic, the Stock Debt
+    screen and the confirm-time refusal quote one figure (AC-S1-4).
+
+    An allocation with no core line keeps its raw quantity: there is nothing to cap against,
+    and guessing zero would release stock somebody is holding.
+    """
+    return func.least(
+        SOLineAllocation.qty, func.coalesce(owed_qty_expr(), SOLineAllocation.qty)
+    )
+
+
 def _pile_order(line: Dict[str, Any]) -> Tuple[Any, ...]:
     """The queue order at one pile: score, then required date (missing last), then the
     OPEN QUANTITY ascending, then sales-order number, line number, line id. See
@@ -258,6 +302,20 @@ def _group_budget_key(group: str) -> str:
     `_pile_key`'s water suffix does.
     """
     return f"group\x00{group}"
+
+
+def _own_arrival_spare_key(source_ref: str) -> str:
+    """How ONE sibling line's own-arrival SPARE is addressed in the walk's credit ledger
+    (MB2, review round 21 Sep 2026).
+
+    R7 tier 2 lends a sales order's landed-but-unclaimed stock to its other open lines, and
+    that spare belongs to the SIBLING, not to the bin: on a location holding plenty, two
+    open lines each read the whole of one closed sibling's 40 and both were credited off
+    it. Keyed by the sibling's own `source_ref` so the second line sees what the first
+    already took. The NUL keeps it out of the warehouse-code namespace the same ledger's
+    per-bin keys live in, exactly as `_pile_key` and `_group_budget_key` do.
+    """
+    return f"spare\x00{source_ref}"
 
 
 def _dec(value: Any, default: Decimal = _ZERO) -> Decimal:
@@ -375,11 +433,33 @@ def _open_of(core: Optional[SalesOrderLine]) -> Decimal:
     """AC-B01: the core line's CURRENT open fulfilment quantity, floored at zero.
 
     Not the original customer quantity, and not a figure a downstream reader has already
-    netted: what is still owed, in the line's own UOM.
+    netted: what is still owed, in the line's own UOM. A CANCELLED line owes nothing (R2c,
+    13 Sep browser walk): `qty_ordered - qty_delivered` alone does not read zero for one
+    (the book rarely reverses a delivered quantity when it cancels a line), and this is the
+    single primitive the drift check (`_carry_snapshot_has_drifted`) and the board's own
+    queue both read - reading it here is the one place that fixes both.
     """
-    if core is None:
+    if core is None or (core.line_status or "open") == "cancelled":
         return _ZERO
     return max(_dec(core.qty_ordered) - _dec(core.qty_delivered), _ZERO)
+
+
+def plan_qty_of(core: Optional[SalesOrderLine]) -> Decimal:
+    """What the BOARD plans one line for: `coalesce(qty_required, qty_ordered)`.
+
+    The Python twin of `demand.plan_qty()`, and the 14 September 2026 ruling in one line:
+    NOT the still-owed figure `_open_of` states. A delivered unit nobody ever sourced is a
+    unit to put back, so the ladder is asked for the whole quantity and a Buy on it raises
+    the order-back row. A CANCELLED line plans nothing, exactly as it owes nothing.
+
+    `_open_of` keeps its own readers, all of which genuinely mean "what is still owed": the
+    hold cap (S1), `project_line_draft_service`'s saved snapshot and `sales_order_service
+    .is_stale`.
+    """
+    if core is None or (core.line_status or "open") == "cancelled":
+        return _ZERO
+    required = core.qty_required
+    return max(_dec(core.qty_ordered if required is None else required), _ZERO)
 
 
 class SupplyLinesRefused(AppException):
@@ -399,6 +479,16 @@ class SupplyLinesRefused(AppException):
     ):
         super().__init__(status_code=status_code, message=message, code=code)
         self.detail["failing_lines"] = list(failing_lines)
+
+    @property
+    def failing_lines(self) -> List[Dict[str, Any]]:
+        """The refused lines under the name this class's own docstring gives them.
+
+        The wire shape is `detail["failing_lines"]` and stays that way - it is what the
+        frontend reads. This is the same list for a Python caller, so a test or a service
+        catching the refusal asks for it by name instead of reaching into the envelope.
+        """
+        return list(self.detail.get("failing_lines") or [])
 
 
 class ReserveOverHand(SupplyLinesRefused):
@@ -456,6 +546,13 @@ class _SpoRow:
     #: Who it is coming from. Display only, and defaulted so every existing construction of
     #: this row keeps working; the sheet does not read it, the stock drill-down does.
     supplier_name: Optional[str] = None
+    #: R26 (Stock Debt only): the SPO line's RAW `allocated_quantity`/`quantity_received`,
+    #: beside `qty` above which stays the NETTED outstanding balance every other caller
+    #: (the ladder, the board) already reads and keeps reading unchanged. Defaulted so the
+    #: one other construction of this row keeps working; only the Stock Debt drill's own
+    #: Qty/Received/Outstanding columns read either.
+    ordered_qty: Optional[Decimal] = None
+    received_qty: Optional[Decimal] = None
 
 
 @dataclass(frozen=True)
@@ -527,6 +624,14 @@ class _LineFacts:
     item_code: Optional[str] = None
     product_id: Optional[str] = None
     open_qty: Decimal = _ZERO
+    #: What is still owed the CUSTOMER on this line, floored at zero (`_open_of`).
+    #:
+    #: `open_qty` above is what the line ASKS FOR - the plan quantity since the 14 September
+    #: 2026 ruling - and the two differ on any line with a delivery. This one exists for the
+    #: arithmetic that has to agree with the NETTING engine, which counts `demand_qty()`:
+    #: see `_group_offer`, where un-netting the plan quantity would add back more than was
+    #: ever subtracted.
+    owed_qty: Decimal = _ZERO
     required_date: Optional[date] = None
     warehouse: Optional[Warehouse] = None
     pool: Optional[Warehouse] = None
@@ -602,14 +707,27 @@ class _LineFacts:
     #: while the IB group nets -15514, because those 7000 are already owed at `BRW-IB`.
     group_net: Decimal = _ZERO
     pools_net: Decimal = _ZERO
-    #: What the group's net leaves for THIS line: `max(group_net + its own open quantity,
-    #: 0)`. See `ProjectSupplyService._group_offer` for the rule and for the consequence it
-    #: carries: while a group cannot cover its own book, no line of it takes its stock.
+    #: What the group's net leaves for THIS line: `max(group_net + its own STILL-OWED
+    #: quantity, 0)`. See `ProjectSupplyService._group_offer` for the rule, for why the
+    #: un-net is `owed_qty` and not `open_qty`, and for the consequence it carries: while a
+    #: group cannot cover its own book, no line of it takes its stock.
     group_offer: Decimal = _ZERO
     #: Ladder v7.1: the CORE sales-order line ids of the planning UNIT this fact stands
     #: for. A unit of one is its own line; `_unit_fact` stamps every member's for a unit of
     #: several, because step 1's date-aware pile is what the assignment gave THOSE lines.
     unit_core_line_ids: List[str] = field(default_factory=list)
+    #: R7 (review round, query-count): the CORE line's own `source_ref` / `sales_order_id`
+    #: / `company_id`, carried on the fact for the BOARD path (`demand_facts`'s row is
+    #: already the full `SalesOrderLine` the board's own demand read fetched - see
+    #: `project_fulfilment_board_service._demand_rows` - so stamping them here costs no
+    #: second query). `own_arrival_credit_for`'s own read used to look its representative
+    #: core line up by id, fresh, once per FACT the walk asked about; a board of 76 lines
+    #: split into ten cells still paid ten identical-shaped round trips for it. `None` for
+    #: any caller that has not threaded them through yet - `_prefetch_own_arrival` falls
+    #: back to the old per-id read for those, so nothing regresses, only costs more.
+    source_ref: Optional[str] = None
+    sales_order_id: Optional[str] = None
+    line_company_id: Optional[str] = None
     #: The group's position location by location (`group_netting.LocationNet`), the evidence
     #: behind `group_net`.
     group_net_by_location: List[Any] = field(default_factory=list)
@@ -739,6 +857,31 @@ class _CapacityLedger:
         if claimed > self._basis[key]:
             self._left[key] += claimed - self._basis[key]
             self._basis[key] = claimed
+        return self._left[key]
+
+    def state_at_least(
+        self, product_id: Optional[str], warehouse_id: str, qty: Decimal
+    ) -> Decimal:
+        """State that this location's pile holds AT LEAST `qty` in total (S1, security
+        review round two) - a single re-statement about the bin ("N of this floor landed
+        for this line"), never a date-aware SLICE of demand the way `offer`'s `share` is.
+
+        `offer` folds its `share` into `_claimed`, the running sum every unit's own dated
+        slice at this bin is added to - right for another unit's genuine slice, wrong for
+        the own-arrival credit: `offer` grants the credit nothing when the pile's stated
+        basis already covers it (the common case), yet still adds it to `_claimed`, so a
+        LATER unit's own dated slice at the SAME bin can then sum past `_basis` by the
+        credit's own amount even though nothing physical backs that excess. `state_at_least`
+        raises `_basis` to `max(_basis, qty)` and `_left` by the same delta, and never
+        touches `_claimed` at all.
+        """
+        key = (product_id or "", warehouse_id)
+        if key not in self._left:
+            self._left[key] = _ZERO
+            self._basis[key] = _ZERO
+        if qty > self._basis[key]:
+            self._left[key] += qty - self._basis[key]
+            self._basis[key] = qty
         return self._left[key]
 
     def take(self, product_id: Optional[str], warehouse_id: str, qty: Decimal) -> None:
@@ -972,6 +1115,19 @@ class ProjectSupplyService:
         # walk did, or a board pinned to a simulated date pays for a second one against the
         # clock and answers from it.
         self._walk_as_of: Optional[date] = None
+        # R7's own-arrival reads, memoized for the whole request (review round, SF2/SF3):
+        # a board walks every line of a sales order and each one asks the SAME two
+        # questions of that order - which siblings of this product it holds, and what has
+        # landed against every purchase-order line bought for any of them. Keyed by
+        # (sales order, product, company), so one sales order costs ONE pair of queries
+        # per walk however many of its lines are composed rather than one pair per
+        # sibling per line. `_own_arrival_line_memo` is the same idea for the core line a
+        # fact names.
+        self._own_arrival_line_memo: Dict[str, Optional[Any]] = {}
+        self._own_arrival_order_memo: Dict[
+            Tuple[str, str, str],
+            Tuple[List[Any], Dict[str, Tuple[Decimal, Optional[str]]]],
+        ] = {}
 
     # ------------------------------------------------------------------ lookups
 
@@ -1018,8 +1174,10 @@ class ProjectSupplyService:
     def proposal_for(self, order: ProjectSalesOrder) -> Dict[str, Any]:
         """The Supply composition section for one Project SO (J04).
 
-        Reads live facts, challenges an active revision that no longer matches them, and
-        proposes a composition per line with the reason beside every quantity.
+        Reads live facts and proposes a composition per line with the reason beside every
+        quantity. A drift between the active revision's frozen snapshot and today's facts is
+        no longer a signal of its own here (Slice E, one signal): the sheet reads what is
+        confirmed, unchanged, and a manual edit or re-run raises its own change batch instead.
 
         TWO readings of the stock, when the order has a covered line, because there are two
         different questions on the page and they net that line's hold differently:
@@ -1034,7 +1192,6 @@ class ProjectSupplyService:
         One extra fact read, and only for an order that has a covered line at all.
         """
         lines = self.lines_of(str(order.id))
-        self.challenge_if_drifted(order, lines=lines)
         decision = self.active_decision(str(order.id))
         frozen = self._frozen_by_line(decision)
         covered_ids = {
@@ -1262,6 +1419,7 @@ class ProjectSupplyService:
         supply_left: Optional[MutableMapping[str, Decimal]] = None,
         own_group_left: Optional[MutableMapping[str, Decimal]] = None,
         pool_share_left: Optional[MutableMapping[str, Decimal]] = None,
+        own_arrival_left: Optional[MutableMapping[str, Decimal]] = None,
     ):
         """`compose_line` plus the five OPTIONS behind it (R36, AC-S3-14).
 
@@ -1274,6 +1432,7 @@ class ProjectSupplyService:
         # with the window as its reason, so "not walked" is visible rather than silent.
         outside_window = self.outside_reserve_window(fact, as_of=as_of)
         group_take: List[Dict[str, Any]] = []
+        own_arrival_candidates: List[Dict[str, Any]] = []
         other_group: List[Dict[str, Any]] = []
         order_borrow: List[Dict[str, Any]] = []
         supply_borrow: List[Dict[str, Any]] = []
@@ -1281,6 +1440,12 @@ class ProjectSupplyService:
         pools: List[Dict[str, Any]] = []
         own_offer = _ZERO
         other_group_short: Dict[str, Decimal] = {}
+        # S5: sized inside `if not outside_window` below; kept defined out here too, since
+        # the deferred own-arrival charge after `walk_line` returns reads them
+        # unconditionally.
+        credit_qty = _ZERO
+        credit_tier1_qty = _ZERO
+        credit_tier2: List[Tuple[str, Decimal, Optional[str]]] = []
         if not outside_window:
             pools = self._pool_chain(fact, pool_free_left=pool_free_left)
             group_take, other_group, own_offer, other_group_short = (
@@ -1289,6 +1454,35 @@ class ProjectSupplyService:
                     own_left=own_group_left,
                 )
             )
+            # R7: a candidate OF ITS OWN, drawn separately from the assignment's own
+            # group-take pile (`use_candidates_for`'s own return stays untouched for every
+            # other caller - the recheck at confirm time in particular must not see stock
+            # counted twice). `walk_line` draws it ahead of `group_take_candidates` and, as
+            # a sub-unit like `pool_share`, lets it cover PART of the line - and then
+            # SUBTRACTS what it drew from the ordinary candidates at that same bin
+            # (AC-S3-11), because the credit is a claim ON that pile, not a second pile
+            # beside it: a line needing 80 with 40 received and 40 on hand composes Reserve
+            # 40 plus Buy 40, never Reserve 80.
+            #
+            # S5: `_own_arrival_credit_components` only SIZES this candidate here - it does
+            # NOT charge `own_arrival_left` yet. `walk_line`'s own pool-share sub-step (0)
+            # runs BEFORE the own-arrival sub-step and may already cover part of the line,
+            # so what `walk_line` actually draws off this candidate (below, after it
+            # returns) can be smaller than the theoretical figure computed here - charging
+            # the theoretical amount would overcharge the ledger a sibling line at the same
+            # bin reads afterwards.
+            credit_qty, credit_po, credit_tier1_qty, credit_tier2 = (
+                self._own_arrival_credit_components(
+                    fact, own_arrival_left=own_arrival_left
+                )
+            )
+            if credit_qty > _ZERO:
+                own_arrival_candidates = [{
+                    "location": fact.own_code,
+                    "qty": credit_qty,
+                    "source": "own_arrival",
+                    "supply_document": credit_po,
+                }]
             order_borrow = self.order_borrow_candidates_for(
                 fact, as_of=as_of, borrow_left=borrow_left
             )
@@ -1300,7 +1494,7 @@ class ProjectSupplyService:
             )
         pools_net = fact.pools_net if pools_net_left is None else pools_net_left
         settings = self._fulfilment_settings()
-        return walk_line(
+        walked = walk_line(
             open_qty=fact.open_qty,
             line_no=fact.line_no,
             required_date=fact.required_date,
@@ -1315,6 +1509,7 @@ class ProjectSupplyService:
             is_discontinued=fact.is_discontinued,
             reorder_coverage_until=self._reorder_coverage_until(),
             group_take_candidates=group_take,
+            own_arrival_candidates=own_arrival_candidates,
             other_group_candidates=other_group,
             # R-M (3 Sep 2026): the other groups whose own book is short, so step 1's row
             # can say why it gave nothing rather than printing a bare 0.
@@ -1342,6 +1537,29 @@ class ProjectSupplyService:
             # and one number across the five pools spent them all at once.
             pool_share_left=pool_share_left,
         )
+        # S5: charge `own_arrival_left` with what `walk_line` ACTUALLY drew off the
+        # own-arrival candidate above, never the theoretical figure it was sized with -
+        # the pool-share sub-step may have already covered part of the line, leaving less
+        # than `credit_qty` for own-arrival to draw. Tier 1 (this line's own PO) first,
+        # only the rest off the siblings' tier-2 spare, same order as before (MB2).
+        if own_arrival_left is not None and credit_qty > _ZERO:
+            # S-c: SUMMED over every own-arrival component, not just the first - a line
+            # `walk_line` splits across more than one component (e.g. a partial pool-share
+            # sub-step beside an own-arrival one, or the candidate itself split) leaves a
+            # `next(...)` read blind to every component after the first.
+            drawn = sum(
+                (
+                    _dec(component.qty)
+                    for component in walked.components
+                    if getattr(component, "source", None) == "own_arrival"
+                ),
+                _ZERO,
+            )
+            if drawn > _ZERO:
+                self._charge_own_arrival_credit(
+                    fact, drawn, credit_tier1_qty, credit_tier2, own_arrival_left
+                )
+        return walked
 
     # ----------------------------------------------------- ladder v6: order units
 
@@ -1420,6 +1638,13 @@ class ProjectSupplyService:
             ],
             as_of=self._walk_as_of,
         )
+        # R7's own-arrival reads, batched for the WHOLE walk (review round, query-count):
+        # `_own_arrival_credit_components` used to look up its own representative core
+        # line by id lazily, one round trip per FACT it was asked about - a board of 76
+        # lines split into ten weekly units still paid ten identical-shaped queries for
+        # ten different rows. Seeded here off every entry's own core line id, before the
+        # per-unit walk below ever calls it.
+        self._prefetch_own_arrival(entries)
 
         # product id -> POOL LOCATION -> what is LEFT of that pool's FREE FLOOR in this
         # walk (AC-N.12, the R-N leftover). One ledger for EVERY pool, the asking bin's own
@@ -1456,6 +1681,14 @@ class ProjectSupplyService:
         # because what is left of a document is personal to the asker - one held by the
         # asker's own order is worth nothing to it and everything to the next order along.
         supply_left: Dict[str, Dict[str, Decimal]] = {}
+        # product id -> LOCATION CODE -> what is left of that location's physical on hand
+        # for R7's own-arrival credit, this walk (AC-S3-4), plus one entry per SIBLING
+        # SPARE (`_own_arrival_spare_key`, MB2). Seeded lazily, off `LocationNet.on_hand`,
+        # the first line that asks - the SAME physical pile the walk's ordinary group-take
+        # rung draws from, so a later line of the SAME order at the SAME bin cannot be
+        # offered units an earlier line already took as credit, and (AC-S3-11) so an
+        # ORDINARY draw at that bin by ANY line of this walk leaves the credit less to give.
+        own_arrival_left: Dict[str, Dict[str, Decimal]] = {}
         for unit_key in walk:
             arrived = units[unit_key]
             # The unit fact is the FIRST-ARRIVING member's, not the lowest-numbered one:
@@ -1537,6 +1770,14 @@ class ProjectSupplyService:
                 if unit_fact.product_id
                 else None
             )
+            # R7's own-arrival credit ledger (AC-S3-4): persists across every unit of the
+            # walk that shares this product, the same as `other_group`/`supply` above - a
+            # later line at the same bin must find what an earlier one already drew off it.
+            own_arrival = (
+                own_arrival_left.setdefault(unit_fact.product_id, {})
+                if unit_fact.product_id
+                else None
+            )
             # THE UNIT'S OWN ownership-group pile, and nobody else's (R-E). `use_candidates_for`
             # hands every member of the unit the SAME draw - what the assignment gave the
             # unit's lines by their own date - so without a ledger the second member would be
@@ -1574,6 +1815,7 @@ class ProjectSupplyService:
                     supply_left=supply,
                     own_group_left=own_group,
                     pool_share_left=share_open,
+                    own_arrival_left=own_arrival,
                 )
                 components = walked.components
                 if floors_open is not None:
@@ -1620,6 +1862,30 @@ class ProjectSupplyService:
                     code = component.source_location
                     if component.rung != RUNG_GROUP_TAKE or not code:
                         continue
+                    if (
+                        own_arrival is not None
+                        and component.kind == RESERVE
+                        and getattr(component, "source", None) != "own_arrival"
+                    ):
+                        # AC-S3-11 (security review, 21 Sep 2026): the PHYSICAL pile at the
+                        # bin, charged by every ORDINARY group-take Reserve of this walk as
+                        # well as by the credit. The credit is a claim on the same units the
+                        # ordinary rung hands out, so a ledger only the credit spends lets
+                        # one order's assignment and another order's credit each cover the
+                        # whole of one floor. The credit's OWN component is skipped here:
+                        # `self.walk` above already charged the ledger (S5's
+                        # `_charge_own_arrival_credit`, called with what `walk_line`
+                        # ACTUALLY drew, not the theoretical figure `_own_arrival_credit_
+                        # components` sized the candidate with) before this drawdown loop
+                        # ever runs, so charging it again here would spend those units
+                        # twice. Seeded off `LocationNet.on_hand`, the same figure
+                        # `_own_arrival_credit_components` seeds it with; a bin this fact's
+                        # netting says nothing about is left alone rather than invented as
+                        # zero.
+                        on_hand = self._on_hand_at(fact, code)
+                        if on_hand is not None:
+                            left = _dec(own_arrival.setdefault(code, on_hand))
+                            own_arrival[code] = max(left - component.qty, _ZERO)
                     lender = sales_agent_service.group_of_warehouse_code(code)
                     mine = lender == fact.group_code
                     ledger = own_group if mine else other_group
@@ -1630,6 +1896,16 @@ class ProjectSupplyService:
                     # THAT half: a Reserve is stock on a shelf, a Timely SPO is a promise on
                     # the water, and spending one does not spend the other.
                     pile = _pile_key(code, component.kind == TIMELY_SPO, mine)
+                    if (
+                        getattr(component, "source", None) == "own_arrival"
+                        and pile not in ledger
+                    ):
+                        # R7 + AC-S3-11: the credit DOES spend the unit's own pile where
+                        # that pile was offered one (the units are the same units), but it
+                        # is drawn outside `use_candidates_for`, so it must not invent a
+                        # budget of zero for a bin the assignment never offered this unit
+                        # at all - the same care the lending-group budget below takes.
+                        continue
                     ledger[pile] = max(ledger.get(pile, _ZERO) - component.qty, _ZERO)
                     if mine or not lender:
                         continue
@@ -1809,12 +2085,17 @@ class ProjectSupplyService:
                 first.unit_core_line_ids = member_ids
             return first
         total = sum((max(_dec(fact.open_qty), _ZERO) for _key, fact in members), _ZERO)
+        # The unit's own STILL-OWED total, summed separately: `_group_offer` un-nets this
+        # one and not the ask, for the reason its docstring gives. On a unit whose members
+        # have no delivery the two are the same number, which is nearly every unit.
+        owed_total = sum((max(_dec(fact.owed_qty), _ZERO) for _key, fact in members), _ZERO)
         unit = dataclass_replace(
             first,
             open_qty=total,
+            owed_qty=owed_total,
             unit_core_line_ids=member_ids,
             group_offer=(
-                max(first.group_net + total, _ZERO)
+                max(first.group_net + owed_total, _ZERO)
                 if first.group_code
                 else first.group_offer
             ),
@@ -2453,6 +2734,465 @@ class ProjectSupplyService:
                 # anything, and a sentence about it would be noise on every walk.
                 short[group] = -book
         return out, short
+
+    def _po_received_by_so_line_ref(
+        self,
+        source_refs: Sequence[str],
+        *,
+        product_id: Optional[str],
+        company_id: Optional[str],
+    ) -> Dict[str, Tuple[Decimal, Optional[str]]]:
+        """`source_ref -> (what has LANDED, the SPO it came off)` for every
+        `PurchaseOrderLine.from_so_line_ref` in `source_refs` - the raw figure R7's tier 1
+        and tier 2 are both built from, before either is capped by anything.
+
+        R7 FOLLOW-UP (`PLAN-r7-landed-reads-spo-received.md`, R1): every PO in this
+        business is received through an SPO, so `PurchaseOrderLine.qty_received` is the
+        AutoCount TRANSFER of the line onto a shipping order, never a physical receipt.
+        What has actually landed is `SPOAllocation.quantity_received`, resolved off the
+        PO line's own `source_ref` via `SPOAllocation.from_po_line_ref`. A PO line with
+        no SPO row naming it contributes nothing - the join below is an inner join.
+
+        ONE query for the whole sales order (review round, SF2): the caller asks about a
+        line's own ref and every sibling's in one go, so a board walking ten lines of one
+        order pays for one read rather than a hundred.
+
+        FILTERED BY PRODUCT (review round, MB3, and the R7 follow-up's own AC-6): `from_
+        so_line_ref` is a TEXT column with no unique constraint, so a collision - or a
+        data-entry mistake - on it would otherwise credit a line with a delivery of a
+        completely different item. Both the receiving purchase-order line AND the SPO
+        row that landed against it have to be for the SAME product as the line being
+        credited.
+
+        FILTERED BY COMPANY (security review, and the R7 follow-up's own AC-6):
+        `company_id` is stated explicitly rather than left to the ORM-level scope alone,
+        the same way `project_order_inquiry_service._resolve_ref_line` states it when
+        resolving the very same `from_so_line_ref` text - an unscoped text match must not
+        resolve another company's purchase-order line, or another company's SPO row, as
+        confidently as one of ours. Absent (a line with no company stamped, the
+        pre-isolation shape) means "do not narrow", exactly as `_resolve_ref_line` reads
+        it.
+
+        `spo_number` is the first one found per ref (own-arrival fixtures never split
+        one SO line's buy across two shipping orders); a mixed real one still returns a
+        true total, only the SENTENCE and the amend refusal name one SPO of it, which is
+        what R7's follow-up (R3) asks for.
+        """
+        refs = [ref for ref in {str(r).strip() for r in source_refs if r} if ref]
+        if not refs or not product_id:
+            return {}
+        query = (
+            self.db.query(
+                PurchaseOrderLine.from_so_line_ref,
+                SPOAllocation.quantity_received,
+                SPOAllocation.spo_number,
+            )
+            .join(
+                SPOAllocation,
+                SPOAllocation.from_po_line_ref == PurchaseOrderLine.source_ref,
+            )
+            .filter(
+                PurchaseOrderLine.from_so_line_ref.in_(refs),
+                PurchaseOrderLine.product_id == product_id,
+                SPOAllocation.product_id == product_id,
+            )
+        )
+        if company_id is not None:
+            query = query.filter(
+                PurchaseOrderLine.company_id == company_id,
+                SPOAllocation.company_id == company_id,
+            )
+        out: Dict[str, Tuple[Decimal, Optional[str]]] = {}
+        for ref, qty, spo_number in query.all():
+            total, held = out.get(str(ref), (_ZERO, None))
+            out[str(ref)] = (total + _dec(qty), held or spo_number)
+        return out
+
+    def _prefetch_own_arrival(
+        self, entries: Sequence[Tuple[Any, _LineFacts, Any]]
+    ) -> None:
+        """`compose_lines`'s own batch: seeds `_own_arrival_line_memo` and
+        `_own_arrival_order_memo` for the WHOLE walk in a handful of round trips, so
+        `_own_arrival_credit_components` (called once per unit from `walk()`) finds every
+        answer already memoized rather than paying for its own representative core line
+        one row at a time.
+
+        Up to two reads, however many entries the walk holds - and often none for the
+        first:
+
+        1. every entry's own core line, by id (`_own_arrival_line_memo`). A fact already
+           carrying its own core line at ZERO extra cost - the sheet's `core`, or the
+           board's `source_ref`/`sales_order_id`/`line_company_id` (`demand_facts`,
+           threaded off the same row `project_fulfilment_board_service._demand_rows`
+           already fetched) - is resolved from the fact itself, never queried; only a
+           fact from a caller that has not threaded them through falls back to one `IN`
+           fetch for whatever is left;
+        2. every one of those lines' siblings - same sales order, same product (MB3) - in
+           one query keyed by every sales order and product the walk actually names,
+           filtered client-side back down to the exact (order, product, company) triples
+           `_own_arrival_order_facts` would have asked for one at a time, plus what has
+           landed against every one of those siblings' own purchase-order lines
+           (`_po_received_by_so_line_ref`'s own shape), split back out by (product,
+           company) so a company-scoped key never sees another company's receipt.
+
+        A line with no `source_ref` never reaches `_own_arrival_order_facts` at all
+        (`_own_arrival_credit_components`'s own early return), so it costs this prefetch
+        nothing beyond resolving its own core line.
+        """
+        resolved: Dict[str, Any] = {}
+        unresolved: Set[str] = set()
+        for _key, fact, _unit_key in entries:
+            cid = self._core_id_of(fact)
+            if not cid or cid in self._own_arrival_line_memo or cid in resolved:
+                continue
+            if fact.core is not None:
+                resolved[cid] = fact.core
+            elif fact.sales_order_id and fact.product_id:
+                resolved[cid] = SimpleNamespace(
+                    id=cid,
+                    source_ref=fact.source_ref,
+                    sales_order_id=fact.sales_order_id,
+                    product_id=fact.product_id,
+                    company_id=fact.line_company_id,
+                )
+            else:
+                unresolved.add(cid)
+        for cid, line in resolved.items():
+            self._own_arrival_line_memo[cid] = line
+        fetched: List[Any] = []
+        if unresolved:
+            fetched = (
+                self.db.query(SalesOrderLine)
+                .filter(SalesOrderLine.id.in_(unresolved))
+                .all()
+            )
+            by_id = {str(line.id): line for line in fetched}
+            for cid in unresolved:
+                self._own_arrival_line_memo[cid] = by_id.get(cid)
+        core_lines = list(resolved.values()) + fetched
+        if not core_lines:
+            return
+
+        keys: Dict[Tuple[str, str, str], List[Any]] = {}
+        for line in core_lines:
+            if not line.source_ref or not line.sales_order_id or not line.product_id:
+                continue
+            key = (
+                str(line.sales_order_id), str(line.product_id),
+                str(getattr(line, "company_id", None) or ""),
+            )
+            keys.setdefault(key, [])
+        if not keys:
+            return
+
+        order_ids = {key[0] for key in keys}
+        product_ids = {key[1] for key in keys}
+        sibling_rows = (
+            self.db.query(SalesOrderLine)
+            .filter(
+                SalesOrderLine.sales_order_id.in_(order_ids),
+                SalesOrderLine.product_id.in_(product_ids),
+            )
+            .all()
+        )
+        siblings_by_key: Dict[Tuple[str, str, str], List[Any]] = {}
+        for row in sibling_rows:
+            row_key = (
+                str(row.sales_order_id), str(row.product_id),
+                str(getattr(row, "company_id", None) or ""),
+            )
+            siblings_by_key.setdefault(row_key, []).append(row)
+
+        refs = {str(row.source_ref).strip() for row in sibling_rows if row.source_ref}
+        received_all: Dict[str, Dict[str, Tuple[Decimal, Optional[str]]]] = {}
+        received_scoped: Dict[Tuple[str, str], Dict[str, Tuple[Decimal, Optional[str]]]] = {}
+        if refs and product_ids:
+            # R7 follow-up (`PLAN-r7-landed-reads-spo-received.md`): the same SPO join
+            # `_po_received_by_so_line_ref` reads, batched. `SPOAllocation.product_id ==
+            # PurchaseOrderLine.product_id` AND `SPOAllocation.company_id ==
+            # PurchaseOrderLine.company_id` in the JOIN itself (not only `.in_(product_ids)`
+            # on each side) - the single-read seam gets this for free by comparing both
+            # tables to the SAME literal `product_id`/`company_id` parameters; the batched
+            # read has no single parameter, only the whole walk's product SET across every
+            # company it touches, so an SPO row for a DIFFERENT product or a DIFFERENT
+            # company that both happen to appear somewhere in that set would otherwise pair
+            # across the join without ever being compared to each other (AC-6, fix-round
+            # S2).
+            rows = (
+                self.db.query(
+                    PurchaseOrderLine.from_so_line_ref,
+                    SPOAllocation.quantity_received,
+                    PurchaseOrderLine.product_id,
+                    PurchaseOrderLine.company_id,
+                    SPOAllocation.spo_number,
+                )
+                .join(
+                    SPOAllocation,
+                    (SPOAllocation.from_po_line_ref == PurchaseOrderLine.source_ref)
+                    & (SPOAllocation.product_id == PurchaseOrderLine.product_id)
+                    & (SPOAllocation.company_id == PurchaseOrderLine.company_id),
+                )
+                .filter(
+                    PurchaseOrderLine.from_so_line_ref.in_(refs),
+                    PurchaseOrderLine.product_id.in_(product_ids),
+                    SPOAllocation.product_id.in_(product_ids),
+                )
+                .all()
+            )
+            for ref, qty, product_id, company_id, spo_number in rows:
+                ref = str(ref)
+                bucket_all = received_all.setdefault(str(product_id), {})
+                total, held = bucket_all.get(ref, (_ZERO, None))
+                bucket_all[ref] = (total + _dec(qty), held or spo_number)
+                if company_id is not None:
+                    bucket_scoped = received_scoped.setdefault(
+                        (str(product_id), str(company_id)), {}
+                    )
+                    total, held = bucket_scoped.get(ref, (_ZERO, None))
+                    bucket_scoped[ref] = (total + _dec(qty), held or spo_number)
+
+        for key in keys:
+            sales_order_id, product_id, company_id = key
+            siblings = siblings_by_key.get(key, [])
+            received = (
+                received_scoped.get((product_id, company_id), {})
+                if company_id
+                else received_all.get(product_id, {})
+            )
+            self._own_arrival_order_memo[key] = (siblings, received)
+
+    def _own_arrival_order_facts(
+        self, core_line: Any
+    ) -> Tuple[List[Any], Dict[str, Tuple[Decimal, Optional[str]]]]:
+        """`(this product's sibling lines, ref -> received)` for `core_line`'s own sales
+        order, read ONCE per (order, product, company) per request (SF2).
+
+        Siblings are narrowed to the credited line's OWN product (MB3): a sibling holding
+        a different item says nothing about what this line may draw, and its receipt is a
+        different pile of stock entirely.
+        """
+        product_id = str(core_line.product_id) if core_line.product_id else ""
+        company_id = getattr(core_line, "company_id", None)
+        key = (str(core_line.sales_order_id), product_id, str(company_id or ""))
+        held = self._own_arrival_order_memo.get(key)
+        if held is not None:
+            return held
+        siblings = (
+            self.db.query(SalesOrderLine)
+            .filter(
+                SalesOrderLine.sales_order_id == core_line.sales_order_id,
+                SalesOrderLine.product_id == core_line.product_id,
+            )
+            .all()
+        )
+        received = self._po_received_by_so_line_ref(
+            [line.source_ref for line in siblings] + [core_line.source_ref],
+            product_id=product_id or None,
+            company_id=company_id,
+        )
+        self._own_arrival_order_memo[key] = (siblings, received)
+        return siblings, received
+
+    def own_arrival_credit_for(
+        self,
+        fact: _LineFacts,
+        *,
+        own_arrival_left: Optional[MutableMapping[str, Decimal]] = None,
+    ) -> Tuple[Decimal, Optional[str]]:
+        """R7: what landed FOR this line - tier 1, its own purchase order(s)
+        (`from_so_line_ref == this line's source_ref`), then tier 2, the rest of the same
+        sales order's landed stock OF THIS PRODUCT, each sibling's own claim on its own PO
+        subtracted first (a closed line's by its `qty_ordered` - what it delivered; an open
+        one's by the same field - what it still needs). Capped by physical on hand at the
+        line's own location (`LocationNet.on_hand`, already stamped on
+        `fact.group_net_by_location` by `_apply_group_nets` - no second query) and, via
+        `own_arrival_left`, by what the SAME walk has already spent of that location and of
+        each sibling's spare.
+
+        PUBLIC (review round): `project_order_inquiry_service`'s path picker asks the same
+        question of the same seam, and a cross-module caller must not have to reach for a
+        private name to get the ONE answer the board and the worklist have to agree on.
+
+        `own_arrival_left` is the walk's own ledger, `location code -> what is left of it`
+        plus `spare:<sibling source_ref> -> what is left of that sibling's spare`
+        (`_own_arrival_spare_key`). TWO things are bounded, and one does not stand in for
+        the other:
+
+        * the PHYSICAL pile at the bin (AC-S3-4, AC-S3-11) - charged here by the credit and
+          by `compose_lines` with every ORDINARY group-take Reserve drawn off the same bin,
+          because a credit and an assignment draw are two claims on one pile of units;
+        * each SIBLING's SPARE (MB2) - once L2 takes 10 of L1's 40, L3 sees 30, not 40.
+          The physical ledger cannot stand in for it: on a bin holding plenty, two open
+          lines would each read the whole of one closed sibling's spare and both be
+          credited off it.
+
+        Returns `(credit_qty, document)` - `document` is tier 1's own SPO where there is
+        one (R7 follow-up, R1/R3: what landed is `spo_allocations.quantity_received`,
+        never `purchase_order_lines.qty_received`, so this names the SPO, not the PO),
+        else the first tier-2 SPO the credit actually drew a spare from.
+
+        S5: this method charges `own_arrival_left` immediately with the credit it
+        returns, because for THIS caller the credit IS the final draw (`_check_line`'s
+        confirm-time recheck, `project_order_inquiry_service`'s path picker). `walk()`'s
+        own candidate-build-time call is different - `walk_line` may draw LESS than the
+        theoretical credit once its pool-share sub-step is netted out - so `walk()` reads
+        `_own_arrival_credit_components` directly (no charge) and charges
+        `_charge_own_arrival_credit` itself, afterwards, with what was actually drawn.
+        """
+        credit, po_number, tier1_qty, tier2 = self._own_arrival_credit_components(
+            fact, own_arrival_left=own_arrival_left
+        )
+        if own_arrival_left is not None and credit > _ZERO:
+            self._charge_own_arrival_credit(
+                fact, credit, tier1_qty, tier2, own_arrival_left
+            )
+        return credit, po_number
+
+    def _own_arrival_credit_components(
+        self,
+        fact: _LineFacts,
+        *,
+        own_arrival_left: Optional[MutableMapping[str, Decimal]] = None,
+    ) -> Tuple[Decimal, Optional[str], Decimal, List[Tuple[str, Decimal, Optional[str]]]]:
+        """S5: the READ-ONLY half of `own_arrival_credit_for` - tier 1's own SPO receipt
+        (R7 follow-up, R1: what LANDED is `spo_allocations.quantity_received`, never
+        `purchase_order_lines.qty_received`, a TRANSFER, not a receipt), tier 2's
+        sibling spare (netted against `own_arrival_left`'s own running balance, MB2, via
+        `setdefault` - a READ that seeds the ledger's starting point, not a charge), and
+        the THEORETICAL credit those two and the bin's on hand cap the line's open qty
+        to. Nothing is SPENT off `own_arrival_left` here - that is
+        `_charge_own_arrival_credit`'s job, called with whatever was actually drawn,
+        which for `walk()`'s own caller can be less than what is returned here.
+
+        Returns `(credit_qty, document, tier1_qty, tier2)` - `tier2` is the
+        `(source_ref, spare, document)` list a deferred charge walks in the SAME order
+        this computed it, so tier 1 is always spent before any sibling's tier-2 spare.
+        `document` names the SPO the goods landed on, never the PO (R3).
+        """
+        core_line_id = fact.unit_core_line_ids[0] if fact.unit_core_line_ids else None
+        if not core_line_id or not fact.own_code:
+            return _ZERO, None, _ZERO, []
+        if core_line_id in self._own_arrival_line_memo:
+            core_line = self._own_arrival_line_memo[core_line_id]
+        else:
+            core_line = (
+                self.db.query(SalesOrderLine)
+                .filter(SalesOrderLine.id == core_line_id)
+                .one_or_none()
+            )
+            self._own_arrival_line_memo[core_line_id] = core_line
+        if core_line is None or not core_line.source_ref:
+            return _ZERO, None, _ZERO, []
+        if not core_line.sales_order_id or not core_line.product_id:
+            return _ZERO, None, _ZERO, []
+
+        siblings, received = self._own_arrival_order_facts(core_line)
+        tier1_qty, tier1_po = received.get(
+            str(core_line.source_ref).strip(), (_ZERO, None)
+        )
+        # The siblings' spare, one entry each, kept as a LIST rather than a running sum so
+        # a charge (immediate or deferred) can spend exactly the ones the credit actually
+        # drew on (MB2).
+        tier2: List[Tuple[str, Decimal, Optional[str]]] = []
+        for sibling in siblings:
+            if str(sibling.id) == str(core_line.id) or not sibling.source_ref:
+                continue
+            ref = str(sibling.source_ref).strip()
+            sibling_received, sibling_po = received.get(ref, (_ZERO, None))
+            if sibling_received <= _ZERO:
+                continue
+            # AC-S3-5: net of what the sibling's own PO already owes IT - its own
+            # `qty_ordered`, delivered where it is closed, still-owed where it is not.
+            spare = sibling_received - min(sibling_received, _dec(sibling.qty_ordered))
+            if spare <= _ZERO:
+                continue
+            if own_arrival_left is not None:
+                # MB2: what is LEFT of this sibling's spare in this walk, not what it
+                # started with - an earlier open line of the same order may already have
+                # been credited part of it.
+                spare = max(
+                    _dec(
+                        own_arrival_left.setdefault(
+                            _own_arrival_spare_key(ref), spare
+                        )
+                    ),
+                    _ZERO,
+                )
+            if spare > _ZERO:
+                tier2.append((ref, spare, sibling_po))
+        tier2_qty = sum((spare for _ref, spare, _po in tier2), _ZERO)
+        tier2_po = next((po for _ref, _spare, po in tier2 if po), None)
+
+        # Capped by what the LINE itself still needs (AC-S3-4): a line whose own PO
+        # received more than it needs must not be sized a candidate bigger than what it
+        # could ever draw.
+        theoretical = min(tier1_qty + tier2_qty, max(_dec(fact.open_qty), _ZERO))
+        if theoretical <= _ZERO:
+            return _ZERO, None, tier1_qty, tier2
+
+        on_hand = self._on_hand_at(fact, fact.own_code)
+        if on_hand is None:
+            return _ZERO, None, tier1_qty, tier2
+
+        if own_arrival_left is not None:
+            remaining = own_arrival_left.get(fact.own_code)
+            if remaining is None:
+                remaining = on_hand
+        else:
+            remaining = on_hand
+
+        credit = min(theoretical, max(remaining, _ZERO))
+        if credit <= _ZERO:
+            return _ZERO, None, tier1_qty, tier2
+        return credit, tier1_po or tier2_po, tier1_qty, tier2
+
+    @staticmethod
+    def _charge_own_arrival_credit(
+        fact: _LineFacts,
+        drawn: Decimal,
+        tier1_qty: Decimal,
+        tier2: List[Tuple[str, Decimal, Optional[str]]],
+        own_arrival_left: MutableMapping[str, Decimal],
+    ) -> None:
+        """S5: charge `own_arrival_left` with what was ACTUALLY drawn (`drawn`), never
+        the theoretical credit `_own_arrival_credit_components` sized a candidate with -
+        `walk()`'s own caller learns `drawn` only after `walk_line` returns, once its
+        pool-share sub-step has told it how much of the line's need the own-arrival
+        sub-step was even asked to cover. Tier 1 (this line's own PO) is charged first,
+        exactly as `_own_arrival_credit_components` measured it; only what `drawn` takes
+        BEYOND tier 1 comes off the siblings' tier-2 spare, in the order they were read
+        (MB2) - unchanged from the charge `own_arrival_credit_for` used to do inline.
+        """
+        if not fact.own_code:
+            return
+        remaining = own_arrival_left.get(fact.own_code)
+        if remaining is None:
+            remaining = ProjectSupplyService._on_hand_at(fact, fact.own_code) or _ZERO
+        own_arrival_left[fact.own_code] = max(_dec(remaining) - drawn, _ZERO)
+        tier2_used = drawn - tier1_qty
+        for ref, spare, _po in tier2:
+            if tier2_used <= _ZERO:
+                break
+            spend = min(spare, tier2_used)
+            key = _own_arrival_spare_key(ref)
+            own_arrival_left[key] = max(
+                _dec(own_arrival_left.get(key, spare)) - spend, _ZERO
+            )
+            tier2_used -= spend
+
+    @staticmethod
+    def _on_hand_at(fact: _LineFacts, code: Optional[str]) -> Optional[Decimal]:
+        """Physical on hand at one of this fact's own group locations (`LocationNet
+        .on_hand`, already stamped on `fact.group_net_by_location` by `_apply_group_nets`
+        - no second query). `None` when the netting says nothing about that bin, which is
+        not the same answer as zero: the caller declines rather than assuming a floor.
+        """
+        if not code:
+            return None
+        for entry in fact.group_net_by_location or []:
+            if getattr(entry, "location", None) == code:
+                return _dec(getattr(entry, "on_hand", _ZERO))
+        return None
 
     def use_candidates_for(
         self,
@@ -3465,9 +4205,22 @@ class ProjectSupplyService:
                 unit_core_line_ids=(
                     [str(row["line_id"])] if row.get("line_id") else []
                 ),
+                # R7 (query-count): the same row already carries these off the board's own
+                # demand read - see the field's own docstring.
+                source_ref=row.get("source_ref"),
+                sales_order_id=(
+                    str(row["sales_order_id"]) if row.get("sales_order_id") else None
+                ),
+                line_company_id=(
+                    str(row["company_id"]) if row.get("company_id") else None
+                ),
                 item_code=row.get("item_code"),
                 product_id=product_id,
                 open_qty=_dec(row.get("open_qty")),
+                # The still-owed figure `_group_offer` un-nets. Absent from the payload it
+                # defaulted to zero, which silently turned the offer into the raw group net
+                # for every board row (review round 2, N1).
+                owed_qty=_dec(row.get("owed_qty")),
                 required_date=required_date,
                 warehouse=warehouse,
                 pool=pool,
@@ -3558,7 +4311,7 @@ class ProjectSupplyService:
             )
 
     def _group_offer(self, fact: _LineFacts, group: Any) -> Decimal:
-        """What the group's net leaves for this line: `max(group_net + its own open
+        """What the group's net leaves for this line: `max(group_net + its own OWED
         quantity, 0)`.
 
         THE CAPTAIN'S RULE, 26 August 2026, stated in the plan and in AC-L7: a group that
@@ -3577,13 +4330,20 @@ class ProjectSupplyService:
         alone on exactly the stock it needs would read a net of zero and buy stock that is
         sitting there waiting for it. Every OTHER line's demand stays netted.
 
+        WHAT IS UN-NETTED IS `owed_qty`, NOT `open_qty`. The group net is the netting
+        engine's own figure and it counts `demand_qty()` - what is STILL OWED - so adding
+        back the plan quantity would return more than was ever subtracted: a line 3 ordered
+        and 3 delivered contributed nothing to the net and would have handed its group a
+        free 3, offering stock the group does not have. The two were the same number until
+        the 14 September 2026 ruling split them.
+
         THE CONSEQUENCE, named rather than buried: on a group whose book runs ahead of its
         stock, EVERY line of that group buys - the line at the front of the queue included.
         1,015 on hand against 9,080 owed proposes a Buy for the 80 at the front as well as
         for the 9,000 behind it. That is the rule as ruled: while the group is short, its
         stock is not promised to anybody in particular, and whoever ships first uses it.
         """
-        return max(group.net + max(_dec(fact.open_qty), _ZERO), _ZERO)
+        return max(group.net + max(_dec(fact.owed_qty), _ZERO), _ZERO)
 
     def _pool_allowances(self, fact: _LineFacts) -> Dict[str, str]:
         """`{warehouse_id: available_for_project}` for every site pool this line's own
@@ -3754,6 +4514,9 @@ class ProjectSupplyService:
             "supply_key": component.supply_key,
             "supply_document": component.supply_document,
             "arrival_date": component.arrival_date,
+            # R7: `"own_arrival"` on a Reserve born from the own-arrival credit, `None`
+            # everywhere else - what `set_row_decision` reads to refuse a Buy amend over it.
+            "source": component.source,
         }
 
     def _resolve_source_warehouse_id(
@@ -3907,90 +4670,6 @@ class ProjectSupplyService:
         self.db.flush()
         return True
 
-    def challenge_if_drifted(
-        self,
-        order: ProjectSalesOrder,
-        *,
-        lines: Optional[Sequence[ProjectSalesOrderLine]] = None,
-    ) -> Optional[str]:
-        """Compare the active revision's snapshots against live facts (PLAN 5.3).
-
-        A revision is a statement about quantities, links and dates that were true when CS
-        pressed Confirm. When one of them moves the revision is no longer a promise anybody
-        can keep, so it is flipped to `challenged` and the SO reads Needs CS review again -
-        rather than staying Confirmed against facts that have gone.
-        """
-        decision = self.active_decision(str(order.id))
-        if decision is None:
-            return None
-        rows = list(lines if lines is not None else self.lines_of(str(order.id)))
-        by_id = {str(line.id): line for line in rows}
-        core_ids = [
-            str(line.core_sales_order_line_id)
-            for line in rows
-            if line.core_sales_order_line_id
-        ]
-        cores = {
-            str(core.id): core
-            for core in (
-                self.db.query(SalesOrderLine)
-                .filter(SalesOrderLine.id.in_(core_ids))
-                .all()
-                if core_ids
-                else []
-            )
-        }
-
-        reason = None
-        snapshots = decision.line_snapshots or []
-        for snapshot in snapshots:
-            line = by_id.get(str(snapshot.get("project_line_id") or ""))
-            if line is None:
-                reason = "A line the confirmed revision covered is no longer on this sales order."
-                break
-            frozen_core = snapshot.get("core_line_id")
-            live_core = (
-                str(line.core_sales_order_line_id)
-                if line.core_sales_order_line_id
-                else None
-            )
-            if frozen_core is not None and str(frozen_core) != (live_core or ""):
-                reason = (
-                    f"Line {line.line_no} now points at a different AutoCount line than "
-                    "the confirmed revision did."
-                )
-                break
-            core = cores.get(live_core or "")
-            frozen_open = snapshot.get("open_qty")
-            if frozen_open is not None and _dec(frozen_open) != _open_of(core):
-                reason = (
-                    f"Line {line.line_no} is now open for "
-                    f"{qty_text(_open_of(core))}, and the confirmed revision was balanced "
-                    f"against {qty_text(_dec(frozen_open))}."
-                )
-                break
-            frozen_date = snapshot.get("required_date")
-            live_date = core.required_date if core is not None else None
-            if frozen_date is not None and str(frozen_date) != (
-                live_date.isoformat() if live_date else ""
-            ):
-                reason = f"Line {line.line_no}'s required date has changed."
-                break
-        # A revision covering FEWER lines than the order has is not drift: since 13.4 a
-        # confirmation covers the subset the planner chose, and the remainder is
-        # deliberately undecided. Counting the two sets and challenging on a mismatch
-        # would flip every partial decision to `challenged` the instant it was written.
-        # A line the revision DID cover and that has since gone is caught above, by name.
-        if reason is None:
-            return None
-
-        decision.state = DECISION_CHALLENGED
-        decision.superseded_at = datetime.utcnow()
-        decision.superseded_reason = reason
-        self._release_supply_borrow_holds(order, decision, reason=reason)
-        self.db.flush()
-        return reason
-
     def _release_supply_borrow_holds(
         self, order: ProjectSalesOrder, decision: SOSupplyDecision, *, reason: str
     ) -> None:
@@ -4025,6 +4704,7 @@ class ProjectSupplyService:
         *,
         actor_user_id: str,
         uncover_line_ids: Sequence[str] = (),
+        uncover_reason_by_line: Optional[Mapping[str, str]] = None,
         settle_in_place_line_ids: Sequence[str] = (),
         defer_auto_place: bool = False,
     ) -> Dict[str, Any]:
@@ -4063,6 +4743,13 @@ class ProjectSupplyService:
         (`supersede_for_material_change`, which carries nothing at all) or a drift
         challenging it.
 
+        `uncover_reason_by_line` (S2/S3, `PLAN-board-reject-on-confirmed-line.md`, rework
+        fix round): the bare per-line reason for EACH id in `uncover_line_ids`, threaded
+        to `refresh_for_decision` so a withdrawn line's raised row reads "Taken out of
+        the confirmation: <its own reason>" rather than the ordinary carry-forward's
+        "Superseded by revision N". `None`/absent (an ordinary planning-change release,
+        which names no reason of its own) keeps that ordinary default.
+
         **The settle-in-place seam** (`PLAN-scm-cs-planning-uat.md` part 3, AC-P3-5): a
         line named in `settle_in_place_line_ids` has its existing order inquiry row
         UPDATED - same id, new quantity, new date, links kept - instead of superseded and
@@ -4097,6 +4784,11 @@ class ProjectSupplyService:
                 code="supply_order_not_published",
             )
 
+        # No self-heal here (issue #969, B2 owner ruling 17 Sep 2026): the heal moved to the
+        # board read (`FulfilmentBoardService.build`), the one place the FE derives
+        # `no_mirror` from and the read confirm-all's own multi-order build comes from.
+        # Confirm stays a pure write - AC-PR8 pins that confirming with no prior board read
+        # mirrors nothing.
         lines = self.lines_of(str(order.id))
         by_id = {str(line.id): line for line in lines}
         payload_lines = list(getattr(payload, "lines", []) or [])
@@ -4109,21 +4801,15 @@ class ProjectSupplyService:
                 ),
                 code="supply_nothing_to_confirm",
             )
-        # What the order's OWN active revision already holds per line, read before the
-        # drift check below can flip it to `challenged` (PLAN-so-book-diff-replanning.md
-        # section 10, defect A). A resubmitted component this order already holds is not a
-        # new ask, challenged or not: the challenge is about the SNAPSHOT (dates/quantities
-        # having moved), not about whether the physical hold behind an unrelated component
-        # is still this order's own. `_check_line` credits it back so re-affirming a hold
-        # this order has held all along does not compete in the queue against itself, or
-        # lose to a rival that only appeared after the hold was taken.
+        # What the order's OWN active revision already holds per line. A resubmitted
+        # component this order already holds is not a new ask: `_check_line` credits it
+        # back so re-affirming a hold this order has held all along does not compete in
+        # the queue against itself, or lose to a rival that only appeared after the hold
+        # was taken. Slice E, one signal: a drift against the frozen snapshot is no longer
+        # read here at all - the change batch is the only thing that supersedes an active
+        # revision now, and `_write_decision` below finds this one still active and
+        # supersedes it in the same transaction the new composition is written in.
         carried_holds = self._frozen_by_line(self.active_decision(str(order.id)))
-        # The same drift check the sheet runs, BEFORE the active revision is read for the
-        # carry: a revision whose frozen facts have moved is challenged here exactly as it
-        # would be on the next read, so its snapshots and holds are not carried verbatim
-        # into a fresh revision stamped as confirmed now. Nothing is carried from a
-        # challenged revision; the lines it covered are undecided again.
-        self.challenge_if_drifted(order, lines=lines)
         self._lock_stock(payload_lines, lines)
 
         named = {str(entry.project_line_id) for entry in payload_lines}
@@ -4156,6 +4842,12 @@ class ProjectSupplyService:
         # (S7: every pool AND every group-take sibling, not only this line's own pool).
         capacity_left = _CapacityLedger()
         borrow_left: _BorrowLedger = _BorrowLedger()
+        # AC-S3-10: the same product -> location -> remaining ledger `compose_lines` keeps
+        # for `own_arrival_credit_for` (R7), scoped to this ONE confirm call - a confirm
+        # may name several lines of one order, and credit `_check_line` already granted an
+        # earlier line in this same call must not be re-offered to a later one at the same
+        # bin.
+        own_arrival_left: Dict[str, Dict[str, Decimal]] = {}
         # THE COVERED SET, computed once and read twice: by the recheck below (which unit
         # each line was proposed in) and by the frozen proposal in `_write_decision`. It is
         # what an active revision still holds, less the lines this payload REPLACES and less
@@ -4208,6 +4900,7 @@ class ProjectSupplyService:
                 stale,
                 invalid,
                 carried_holds,
+                own_arrival_left,
             )
 
         # A line the payload does not name is NOT a failure any more (13.4). It is
@@ -4269,6 +4962,7 @@ class ProjectSupplyService:
             # inquiry row is UPDATED rather than superseded and re-raised.
             settle_in_place_line_ids=settle_in_place_line_ids,
             defer_auto_place=defer_auto_place,
+            uncover_reason_by_line=uncover_reason_by_line,
             # The day the planner was deciding on (the board's own dial), so the proposal
             # frozen beside the decision is the one they were shown. Absent means today.
             as_of=getattr(payload, "as_of", None),
@@ -4288,8 +4982,15 @@ class ProjectSupplyService:
         those are dropped from the new revision outright rather than carried.
 
         A snapshot for a line no longer on the order is not carried either: there is no
-        row to hold stock for, and the read-side drift check names exactly that case as a
-        challenge. Everything else comes across untouched.
+        row to hold stock for. Nor is one whose frozen link, open quantity or required
+        date has moved since the revision that covered it, or whose core line the book
+        CANCELLED (`_carry_snapshot_has_drifted`) - Slice E (one signal) judges that per
+        line, here, rather than flipping the whole decision to `challenged`: the lines
+        this confirmation DOES name still commit, and the drifted one is simply undecided
+        again, exactly as a line the revision never covered would be. A line whose PRODUCT
+        was renamed is carried, not excluded, its snapshot's identity patched to the live
+        product (R2, 13 Sep browser walk) - its demand did not change, only what it is
+        for. Everything else comes across untouched.
         """
         if previous is None:
             return []
@@ -4299,10 +5000,64 @@ class ProjectSupplyService:
             line_id = str(snapshot.get("project_line_id") or "")
             if not line_id or line_id in named or line_id not in by_id or line_id in uncover:
                 continue
+            fact = facts.get(line_id)
+            if self._carry_snapshot_has_drifted(by_id[line_id], snapshot, fact):
+                continue
+            # R2 (renamed product, 13 Sep browser walk): the line's own quantity is
+            # untouched, so it still carries - but never under a product that has left
+            # the order. Patched onto a COPY; `snapshot` is the previous revision's own
+            # stored dict and must read exactly as it was decided.
+            live_product = str(fact.product_id) if fact and fact.product_id else None
+            if live_product and str(snapshot.get("product_id") or "") != live_product:
+                snapshot = dict(snapshot)
+                snapshot["product_id"] = live_product
+                if fact.item_code:
+                    snapshot["item_code"] = fact.item_code
             out.append(
                 _CarriedLine(line=by_id[line_id], snapshot=snapshot, fact=facts[line_id])
             )
         return out
+
+    @staticmethod
+    def _carry_snapshot_has_drifted(
+        line: ProjectSalesOrderLine,
+        snapshot: Dict[str, Any],
+        fact: Optional[_LineFacts],
+    ) -> bool:
+        """Whether `line`'s live facts still match what `snapshot` froze - the per-line
+        check `_carried_lines` uses in place of the retired whole-decision `challenge_if_
+        drifted` flip.
+
+        R2/R2c (13 Sep browser walk, SO400884): a core line the book CANCELLED must never
+        be carried on the strength of the checks below alone. Caught explicitly rather
+        than relied on to fall out of the open-qty comparison - `_open_of` now floors a
+        cancelled line to zero, so most cancellations already disagree with a nonzero
+        frozen `open_qty`, but a line frozen at zero already (nothing left to fulfil when
+        it was confirmed) would not, and this line has genuinely left the book either way.
+
+        A RENAMED product is not this function's concern: the line's own demand has not
+        changed, only what it is for, and `_carried_lines` patches the carried snapshot's
+        identity to the live product rather than excluding the line here - excluding it
+        would read as the demand itself having gone, which is not what happened.
+        """
+        if fact is None:
+            return True
+        if fact.core is not None and (fact.core.line_status or "open") == "cancelled":
+            return True
+        frozen_core = snapshot.get("core_line_id")
+        live_core = (
+            str(line.core_sales_order_line_id) if line.core_sales_order_line_id else None
+        )
+        if frozen_core is not None and str(frozen_core) != (live_core or ""):
+            return True
+        frozen_open = snapshot.get("open_qty")
+        if frozen_open is not None and _dec(frozen_open) != fact.open_qty:
+            return True
+        frozen_date = snapshot.get("required_date")
+        live_date = fact.required_date.isoformat() if fact.required_date else ""
+        if frozen_date is not None and str(frozen_date) != live_date:
+            return True
+        return False
 
     def _lock_stock(
         self,
@@ -4390,6 +5145,7 @@ class ProjectSupplyService:
         stale: List[Dict[str, Any]],
         invalid: List[Dict[str, Any]],
         carried_holds: Dict[str, Dict[str, Any]],
+        own_arrival_left: Optional[Dict[str, Dict[str, Decimal]]] = None,
     ) -> None:
         """Recheck one line against authoritative facts (PLAN 3.1 steps 3 to 5).
 
@@ -4568,6 +5324,86 @@ class ProjectSupplyService:
             capacity[location] = capacity.get(location, _ZERO) + capacity_left.capacity(
                 fact.product_id, str(source.id), offer
             )
+        # AC-S3-10: the own-arrival credit (R7) is a rung the composer walks OUTSIDE
+        # `use_candidates_for` (`walk`'s own `own_arrival_candidates`, drawn ahead of the
+        # ordinary group-take pile), so a recheck seeded only from `own_use`/`other_use`
+        # never hears about it and refuses the very Reserve the board proposed - "ZZT-OWN
+        # has nothing free for this line now" in front of a composition the ladder credited
+        # for exactly this reason. Read with the LINE's own fact, never the unit's: the
+        # credit is this line's own purchase order, not something its unit siblings share.
+        # `own_arrival_left` is product -> location -> what is left, the same shape
+        # `compose_lines` keeps, scoped to this one confirm call so a second line of the
+        # same payload cannot be offered units an earlier line already drew off the same
+        # bin.
+        #
+        # AC-S3-11 (security review, 21 Sep 2026): the credit is stated THROUGH
+        # `capacity_left`, the ledger every other rung's capacity draws through, and never
+        # added straight onto the local `capacity` dict beside it. It is a second READING
+        # of one bin - "N of this floor landed for this line" - not a second pile, so the
+        # pile becomes whichever statement about it is larger, never their sum, and a bin
+        # another line of the same confirmation has already emptied grants the credit
+        # nothing at all.
+        #
+        # S1 (second review round): `offer` is the WRONG verb for this - it folds the
+        # credit into `_claimed`, the running sum a later unit's own DATED slice at this
+        # same bin is added to, so a credit that granted this line 0 (the pile's stated
+        # basis already covered it) still inflates `_claimed` by its own amount, letting
+        # that later slice cross `_basis` by units nothing physical backs. `state_at_least`
+        # states the pile is at least `credit_qty` without touching `_claimed`.
+        #
+        # B1 (round 3): the credit is a SECOND READING of the same bin - "this line's own
+        # PO put at least `credit_qty` of it there" - never a second pile added to whatever
+        # the ordinary reading already stated. `state_at_least(..., credit_qty)` intersects
+        # the two readings (`max(before, credit_qty)`, `state_at_least`'s own semantics);
+        # calling it with `before + credit_qty` summed them instead, so a competing earlier
+        # demand that had already netted the ordinary reading down still let the credited
+        # line's Reserve clear the bin's full, un-netted amount.
+        # AC-S3-15: hoisted above the `if` below (rather than declared inside it) so
+        # both survive to the Buy-over-credit check after the Reserve loop, which needs
+        # the SAME live credit reading this block computes for the capacity statement,
+        # not a second, possibly-inconsistent read.
+        credit_qty = _ZERO
+        credit_po: Optional[str] = None
+        # AC-S3-16: same verdict as the composer - `walk()` builds no own-arrival
+        # candidate at all for a line outside the reserve window, so the recheck must
+        # not credit one either. A line due beyond the window is never credited,
+        # composed or confirmed.
+        # `outside_reserve_window` below is called with no `as_of`, so it defaults to
+        # `date.today()` - per `ConfirmSupplyBody.as_of` ("live stock, the queue and
+        # every refusal are judged against now"), this window verdict is judged against
+        # today, never the body's `as_of`.
+        if (
+            own_arrival_left is not None
+            and fact.own_code
+            and not self.outside_reserve_window(fact)
+        ):
+            ledger = (
+                own_arrival_left.setdefault(fact.product_id, {})
+                if fact.product_id
+                else None
+            )
+            # S-b: `own_arrival_credit_for` (not the size-then-charge split `walk()` uses)
+            # charges the ledger with the full THEORETICAL credit immediately, which can
+            # be more than what this confirm's own Reserve ends up posting. Conservative,
+            # not a bug: it only ever makes a LATER line's own credit smaller (refuses
+            # rather than over-grants), and a confirm-time recheck has no "drawn" figure
+            # to defer the charge to the way `walk_line`'s candidate draw does.
+            credit_qty, credit_po = self.own_arrival_credit_for(
+                fact, own_arrival_left=ledger
+            )
+            if credit_qty > _ZERO:
+                source = self._warehouse_by_code(fact.own_code)
+                if source is not None:
+                    location_ids[fact.own_code] = str(source.id)
+                    before = capacity_left.capacity(
+                        fact.product_id, str(source.id), _ZERO
+                    )
+                    after = capacity_left.state_at_least(
+                        fact.product_id, str(source.id), credit_qty
+                    )
+                    capacity[fact.own_code] = capacity.get(
+                        fact.own_code, _ZERO
+                    ) + max(after - before, _ZERO)
         reserve_locations = self._reserve_ladder_locations(fact)
         by_id = {str(w.id): code for code, w in reserve_locations.items()}
         allowed = ", ".join(sorted(reserve_locations))
@@ -4695,15 +5531,61 @@ class ProjectSupplyService:
                 )
                 capacity_left.take(fact.product_id, budget_key, qty)
 
+        # AC-S3-15 (round-4 fix round, browser-pass finding): R7's Buy-over-credit
+        # refusal was wired only into `set_row_decision`'s amend path
+        # (`_refuse_buy_over_own_arrival`, `planning_change_service.py`, reading the
+        # FROZEN proposal's own `sources`) - the ordinary board Confirm never read this
+        # line's own-arrival credit before letting a Buy stand for it. `credit_qty` /
+        # `credit_po` are the SAME live reading already computed above for the Reserve
+        # capacity statement; only the part the posted Reserve at the CREDITED bin
+        # (`fact.warehouse`, `fact.own_code`'s own location) leaves uncovered is
+        # refused - a Buy beside a credit the Reserve already fully covers (the
+        # control) is untouched, the same "only the part that would drop Reserve below
+        # what is credited" rule `_refuse_buy_over_own_arrival` states for its own seam.
+        #
+        # Raised directly, the way `ReserveOverHand` above is - not folded into the
+        # `invalid`/`stale` buckets, whose shared "N line(s) cannot be confirmed"
+        # sentence would drop the credited quantity and the document this message names -
+        # and still `SupplyLinesRefused`, so `failing_lines` pins the same line the
+        # sheet marks for every other refusal. "Nothing was written" holds because this
+        # raises before `_write_decision` is ever reached (a draft save never calls
+        # `_check_line` at all, so it stays lenient as designed).
+        # `credit_qty > _ZERO` already implies `fact.warehouse is not None`
+        # (`fact.own_code`, gating `credit_qty` above, is
+        # `fact.warehouse.warehouse_code if fact.warehouse else None`).
+        if credit_qty > _ZERO and buy > _ZERO:
+            reserved_at_credit_bin = sum(
+                (
+                    _dec(item.qty)
+                    for item in entry.reserve or []
+                    if str(item.warehouse_id) == str(fact.warehouse.id)
+                ),
+                _ZERO,
+            )
+            uncovered = credit_qty - reserved_at_credit_bin
+            if uncovered > _ZERO:
+                # S-1 (round-5): names the CREDITED quantity, the same figure
+                # `_refuse_buy_over_own_arrival` states for its own seam - not
+                # whatever a partial Reserve happened to leave uncovered of it.
+                # R7 follow-up (R3): `credit_po` is now the document goods actually
+                # LANDED on - an SPO number, never a PO number - so the sentence names
+                # it bare, with no "PO" noun in front of it.
+                message = (
+                    f"{qty_text(credit_qty)} landed for this line on {credit_po}; "
+                    "nothing to buy for it"
+                    if credit_po
+                    else f"{qty_text(credit_qty)} landed for this line; nothing to buy "
+                    "for it"
+                )
+                raise SupplyLinesRefused(
+                    status_code=409,
+                    message=message,
+                    failing_lines=[{**subject, "reason": message}],
+                    code="planning_change_buy_over_own_arrival",
+                )
+
         for item in entry.borrow or []:
             self._check_borrow(item, fact, borrow_left, refuse, stale, invalid, carried_holds)
-
-        if fact.is_discontinued and buy > _ZERO and not (entry.buy_reason or "").strip():
-            refuse(
-                invalid,
-                "This product is discontinued. Say why it is still being bought before "
-                "confirming.",
-            )
 
         total = timely + reserve_total + borrow_total + buy
         if total != fact.open_qty:
@@ -4949,7 +5831,7 @@ class ProjectSupplyService:
                 SOLineAllocation.warehouse_id,
                 SalesOrder.so_number,
                 ProjectSalesOrderLine.line_no,
-                SOLineAllocation.qty,
+                held_qty_expr(),
             ),
         ).all()
         totals: Dict[Tuple[str, str], Dict[Tuple[Any, Any], Decimal]] = defaultdict(dict)
@@ -5542,6 +6424,7 @@ class ProjectSupplyService:
         as_of: Optional[date] = None,
         settle_in_place_line_ids: Sequence[str] = (),
         defer_auto_place: bool = False,
+        uncover_reason_by_line: Optional[Mapping[str, str]] = None,
     ) -> Dict[str, Any]:
         previous = self.active_decision(str(order.id))
         if previous is not None:
@@ -5723,6 +6606,7 @@ class ProjectSupplyService:
                 list(checked) + [(entry.line, entry, entry.fact) for entry in carried],
             ),
             settle_in_place_line_ids=settle_in_place_line_ids,
+            uncover_reason_by_line=uncover_reason_by_line,
         )
         # LADDER V7.1 STEP 3'S OTHER HALF (PLAN 3.3, R8): the placement MOVES. Run after
         # the handoff, because it needs the inquiry header the handoff mints and because the
@@ -5909,12 +6793,14 @@ class ProjectSupplyService:
                 note=(item.reason or "").strip() or None,
                 supply_decision_id=decision.id,
                 state=INQUIRY_RAISED,
-                # Born acknowledged (G4, `PLAN-scm-reorder-oi-feedback-1sep.md` S1): the
-                # sixth creation site - a borrow's asker-side row is purchasing's work the
-                # moment the borrow is confirmed, not something somebody has to say yes to.
-                ack_state=ACK_ACKNOWLEDGED,
-                acknowledged_by=actor_user_id,
-                acknowledged_at=datetime.utcnow(),
+                # Born awaiting (`PLAN-oi-confirm-per-so.md` S1): this row carries a
+                # `supply_decision_id`, so it is board-origin like every other decision-
+                # linked row and R1's flip applies to it too - the cascade may already have
+                # auto-linked it to the document, but purchasing still has to say yes
+                # before it feeds reorder planning.
+                ack_state=ACK_AWAITING,
+                acknowledged_by=None,
+                acknowledged_at=None,
             )
             self.db.add(row)
             self.db.flush()
@@ -6078,6 +6964,7 @@ class ProjectSupplyService:
         *,
         actor_user_id: str,
         reason: str,
+        reason_by_line: Optional[Mapping[str, str]] = None,
     ) -> bool:
         """Take these lines OUT of the active revision and leave the rest exactly as it is.
 
@@ -6100,6 +6987,14 @@ class ProjectSupplyService:
         buyer who rejected a row: this is CS's own decision minus one line, and stamping
         purchasing on it would make every order inquiry row of the order read as raised by
         the person who refused one of them.
+
+        `reason_by_line` (S2/S3, `PLAN-board-reject-on-confirmed-line.md`, rework fix
+        round): the BARE reason for EACH line in `line_ids`, keyed by id - the purchasing-
+        refusal caller (`reject_row`/`reject_rows`) still passes none, so its own single
+        row keeps stamping `reason` bare exactly as it always has (its `reason` IS already
+        bare - there is no "Line N rejected:" join on that path). The board's own reject
+        caller (`fulfilment_planning.py`) passes both: `reason` is the joined sentence for
+        `superseded_reason`, `reason_by_line` is what each row's own note reads instead.
         """
         from app.schemas.project_supply import ConfirmSupplyBody
 
@@ -6131,6 +7026,7 @@ class ProjectSupplyService:
                 ConfirmSupplyBody(lines=[]),
                 actor_user_id=str(active.confirmed_by or actor_user_id),
                 uncover_line_ids=sorted(wanted),
+                uncover_reason_by_line=reason_by_line,
             )
             # WHY the revision this call just retired was retired. `confirm` stamps its
             # own "Reconfirmed by CS.", which is not what happened here - nobody
@@ -6139,6 +7035,19 @@ class ProjectSupplyService:
             active.superseded_reason = reason
             self.db.flush()
         else:
+            # Owner case, 22 Sep 2026 (fix round, `PLAN-board-reject-on-confirmed-line.md`):
+            # "one confirmed Buy line, reject it, it must not flow to purchasing at all."
+            # This branch writes NO successor revision for the confirm-based path above to
+            # route the retirement through - `refresh_for_decision`'s own
+            # `_retire_uncovered_rows` call never runs - so the wanted lines' still-raised
+            # ORDER/ORDER_BACK rows are retired directly, the same way, before the revision
+            # they belong to is retired with no replacement. `supersede_for_material_change`
+            # already does this for a step-3 PLACEMENT (a document already covers the row);
+            # this is its own raised-instruction twin.
+            ProjectOrderInquiryService(self.db).retire_rows_for_dropped_lines(
+                str(order.id), active, sorted(wanted), reason=reason,
+                actor_user_id=actor_user_id, reason_by_line=reason_by_line,
+            )
             self.supersede_for_material_change(order, reason)
         return True
 
@@ -6285,6 +7194,27 @@ class ProjectSupplyService:
         # on the pile's own availability triple.
         order_backs: List[Dict[str, Any]] = []
         reference = order.autocount_doc_no or order.provisional_ref or ""
+        # AC-B2: "an ORDER_BACK row FOR THE DONOR" - a group borrow's hole is raised on the
+        # DONOR's own project line, not the asker's (which is what every OTHER row this
+        # method writes hangs off - the location-pile shortfall below has no single line to
+        # name it against). One batch query for every `donor_core_line_id` this
+        # confirmation's borrows name, rather than one lookup per component.
+        donor_core_line_ids = {
+            str(getattr(item, "donor_core_line_id", None))
+            for _line, entry, _fact in checked
+            for item in (entry.borrow or [])
+            if getattr(item, "donor_core_line_id", None) and _dec(item.qty) > _ZERO
+        }
+        donor_project_line_by_core: Dict[str, ProjectSalesOrderLine] = {}
+        if donor_core_line_ids:
+            for donor_line in (
+                self.db.query(ProjectSalesOrderLine)
+                .filter(
+                    ProjectSalesOrderLine.core_sales_order_line_id.in_(donor_core_line_ids)
+                )
+                .all()
+            ):
+                donor_project_line_by_core[str(donor_line.core_sales_order_line_id)] = donor_line
         for line, entry, fact in checked:
             for item in entry.borrow or []:
                 qty = _dec(item.qty)
@@ -6323,9 +7253,14 @@ class ProjectSupplyService:
                 code = warehouse.warehouse_code if warehouse else ""
                 line_text = f" line {donor_line_no}" if donor_line_no is not None else ""
                 agent_text = f" (agent {donor_agent_code})" if donor_agent_code else ""
+                # The DONOR's own project line when it has one - AC-B2's "for the donor".
+                # Falls back to the asking line only for a donor core line with no project
+                # mirror (never adopted onto `projects.sales_orders`), which has nowhere
+                # else to hang the row and is the pre-existing behaviour for that edge case.
+                donor_line = donor_project_line_by_core.get(str(donor_core_line_id), line)
                 order_backs.append(
                     {
-                        "line": line,
+                        "line": donor_line,
                         "item_code": fact.item_code,
                         "qty": qty,
                         "required_date": (
@@ -6839,10 +7774,23 @@ class ProjectSupplyService:
         reserve_locations = self._reserve_ladder_locations(fact)
         by_id = {str(w.id): code for code, w in reserve_locations.items()}
         siblings = self._group_sibling_warehouses(fact)
+        unowned = self._unowned_holds(line)
         for item in entry.reserve or []:
             qty = _dec(item.qty)
             if qty <= _ZERO:
                 continue
+            # A hold this line already has that belongs to NO revision is this reserve,
+            # not a second one: a reallocation handed it over (Slice D, AC-D4) precisely so
+            # it would survive every future revision, and writing a fresh row beside it
+            # would hold the same physical units twice - the floor would read short by
+            # that quantity for everybody else, for good.
+            standing = unowned.get(str(item.warehouse_id), _ZERO)
+            if standing > _ZERO:
+                adopted = min(standing, qty)
+                unowned[str(item.warehouse_id)] = standing - adopted
+                qty -= adopted
+                if qty <= _ZERO:
+                    continue
             location = self._warehouse_of(fact, str(item.warehouse_id)) or by_id.get(
                 str(item.warehouse_id)
             )
@@ -6942,6 +7890,36 @@ class ProjectSupplyService:
                     confirmed_at=now,
                 )
             )
+
+    def _unowned_holds(self, line: ProjectSalesOrderLine) -> Dict[str, Decimal]:
+        """What this line already holds under NO revision, by warehouse.
+
+        A reallocation writes one (`planning_change_service._move_reserve`): a reserve
+        another order gave this line, deliberately tied to no decision so that superseding
+        one cannot make it read gone. Every later revision that names the same reserve is
+        naming THAT hold. Scoped to the reallocation's own `reason` prefix rather than to
+        `decision_id IS NULL` alone - `_hold_query`'s docstring is explicit that NULL also
+        covers every row written before Stage 1C, a much wider set this method has no
+        business summing, and a future backfill of THOSE rows must not silently change what
+        every confirm writes here.
+        """
+        rows = (
+            self.db.query(SOLineAllocation.warehouse_id, SOLineAllocation.qty)
+            .filter(
+                SOLineAllocation.so_line_id == line.id,
+                SOLineAllocation.decision_id.is_(None),
+                SOLineAllocation.confirmed_at.isnot(None),
+                SOLineAllocation.warehouse_id.isnot(None),
+                SOLineAllocation.source_type != ALLOC_SOURCE_ORDER,
+                SOLineAllocation.reason.like("Reallocated from %"),
+            )
+            .all()
+        )
+        held: Dict[str, Decimal] = {}
+        for warehouse_id, qty in rows:
+            key = str(warehouse_id)
+            held[key] = held.get(key, _ZERO) + _dec(qty)
+        return held
 
     def _carry_allocations(
         self,
@@ -7318,7 +8296,8 @@ class ProjectSupplyService:
                 line_no=line.line_no,
                 item_code=codes.get(product_id or ""),
                 product_id=product_id,
-                open_qty=_open_of(core),
+                open_qty=plan_qty_of(core),
+                owed_qty=_open_of(core),
                 required_date=required_date,
                 warehouse=warehouse,
                 pool=pool,
@@ -7514,7 +8493,7 @@ class ProjectSupplyService:
                 exclude_line_ids=None,
                 entities=(
                     SOLineAllocation.warehouse_id,
-                    SOLineAllocation.qty,
+                    held_qty_expr(),
                     SalesOrder.so_number,
                     SalesOrderLine.required_date,
                     SalesOrderLine.warehouse_id,
@@ -7702,7 +8681,7 @@ class ProjectSupplyService:
                         _hold_product,
                         SOLineAllocation.warehouse_id,
                         ProjectSalesOrder.project_id,
-                        SOLineAllocation.qty,
+                        held_qty_expr(),
                     )
                 )
             )
@@ -7972,6 +8951,8 @@ class ProjectSupplyService:
                     qty=balance,
                     overdue_days=spo_supply.overdue_days(arrival, today),
                     supplier_name=row.shipment_supplier_name or row.spo_supplier_name,
+                    ordered_qty=_dec(row.allocated_quantity),
+                    received_qty=_dec(row.quantity_received),
                 )
             )
         return out
@@ -9423,6 +10404,11 @@ class ProjectSupplyService:
                         "transfers_failed": body.get("transfers_failed"),
                         "transfers_kept": body.get("transfers_kept"),
                         "suspected_issues": body.get("suspected_issues"),
+                        # How many covered lines THIS order's own press withdrew (owner
+                        # ruling 23 Sep 2026, `PLAN-board-reject-on-confirmed-line.md`) -
+                        # `.get`, the same reason every field above reads one: a body this
+                        # order's own write never populated must not fail the whole result.
+                        "rejected_count": body.get("rejected_count"),
                     }
                 )
             except Exception as exc:  # noqa: BLE001 - every order must get an answer

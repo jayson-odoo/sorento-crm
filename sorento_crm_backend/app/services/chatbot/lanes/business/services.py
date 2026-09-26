@@ -13,7 +13,7 @@ makes the 254-fixture replay a pure function over JSON (AC-602).
 | `MCP Client1` (mcpClient, raw IP) | `mcp_call` | `MCPRuntimeClient` at `settings.ai_assistant_mcp_url` (H52) |
 
 `Execute 'sub-get-rag'` (executeWorkflow -> an embedding call plus pgvector SQL) has NO
-seam: the tool is read off `contracts.DOMAIN_SPEC[domain].tools[0]` in `fetch.select_tool`,
+seam: the tool is read off the domain row's own first tool in `fetch.select_tool`,
 which touches neither a provider nor the database (H53). Measured over the 740 business
 turns in the 7 Sep 2026 prod copy, the search picked that first-listed tool every time,
 and its seeding chain cannot run in the deployed backend image at all - so the seam was
@@ -93,7 +93,7 @@ class FetchServices:
 
     It was three. `embed` and `tool_search` were the two halves of `sub-get-rag` (embed the
     prompt, then search the tool pool) and both are gone: `fetch.select_tool` reads the
-    domain's tool off `contracts.DOMAIN_SPEC`, so the only I/O the fetch step still does is
+    domain's tool off `turn.policy.default_policy()`, so the only I/O the fetch step still does is
     the MCP call. A bundle with one field is kept as a dataclass rather than collapsed to a
     bare callable because every lane takes a bundle and the next seam this step grows
     belongs in it.
@@ -227,7 +227,7 @@ def _mcp_call(db: Session | None = None) -> McpCallFn:
         three, the did-you-mean probe) and go nowhere near the ported call node. This is
         the single choke point where a tool name becomes an MCP request, so it is where the
         rule has to hold. The probes name read tools and are unaffected, and so is the
-        fetch step, whose tool is `DOMAIN_SPEC`'s own and therefore on the list by
+        fetch step, whose tool is the domain row's own and therefore on the list by
         construction.
 
         **The PARSE is here too, for the same reason the read-only check is.**
@@ -258,7 +258,7 @@ def _mcp_call(db: Session | None = None) -> McpCallFn:
     return call
 
 
-def _mcp_probe(db: Session | None = None) -> McpProbeFn:
+def _mcp_probe(db: Session | None = None, *, call: McpCallFn | None = None) -> McpProbeFn:
     """The PROBE seam: `sub-get-results`' workflowInputs in, the tool's answer out.
 
     The four probe call sites build what the n8n node builds - `crossdomain-probe`'s and
@@ -280,8 +280,14 @@ def _mcp_probe(db: Session | None = None) -> McpProbeFn:
     (`test_s6c_answer_lane.py::TestCrossdomainProbe`). The sub-workflow boundary is the
     seam, so the seam is where its first node runs - which is exactly what `run_fetch`'s
     own tier probe already does inline.
+
+    `call`: the underlying MCP call to transform-and-dispatch through. Defaults to a
+    fresh `_mcp_call(db)`, kept for `answer_services_for`'s no-session bundle. Passed
+    explicitly by `production_answer_services`, which hands in the SAME `mcp_call`
+    `fetch_services(db)` already built for this session, so a rung probe and the
+    primary fetch go through one `MCPRuntimeClient`, not two.
     """
-    call = _mcp_call(db)
+    call = call or _mcp_call(db)
 
     def probe(name: str, args: dict[str, Any]) -> Any:
         from app.services.chatbot.lanes.business.fetch import entity_ids_transformer
@@ -349,8 +355,33 @@ def _family_fetch(db: Session) -> FamilyFetchFn:
 
 
 def production_answer_services(db: Session) -> AnswerServices:
-    """S6c's bundle. The probe is the SAME MCP client the fetch step uses (H52, D10)."""
-    return AnswerServices(mcp_probe=_mcp_probe(db), family_fetch=_family_fetch(db))
+    """S6c's bundle. The probe is the SAME MCP client the fetch step uses (H52, D10) -
+    `fetch_services(db).mcp_call`, not a second `_mcp_call(db)` instance, so a turn that
+    climbs the ladder through `answer_bridge.answer_for` (`bridge_owns_ladder`, reviewer
+    S1) makes its rung probe through the identical seam a test's `fetch_services` double
+    already covers, the same way `ctx.tool_runner` and `turn/fetch.py::_climb` share one
+    seam for a turn the bridge does NOT own. `fetch_services` is looked up by its bare
+    module name (not re-imported), so a caller that monkeypatches this module's own
+    `fetch_services` attribute - `business_services.fetch_services` from `engine.py` -
+    is picked up here too.
+
+    `parse_mcp_content` wraps it: production's own `_mcp_call(db)` already parses before
+    returning (its docstring: "The PARSE is here too"), so `fetch_services(db).mcp_call`
+    hands back an already-structured dict there and this is a no-op (idempotent on a
+    non-string). A test's `FetchServices(mcp_call=...)` double is the OTHER shape the
+    `McpCallFn` contract allows - the raw MCP wire string, parsed downstream by whatever
+    reads the fetch fragment - so without parsing here too, `_mcp_probe`'s own
+    `run_crossdomain`/`_apply_crossdomain_rung` callers see the STRING where they expect
+    the envelope dict and degrade to `no_envelope` on every double this module does not
+    build itself."""
+    from app.services.chatbot.lanes.business.fetch import parse_mcp_content
+
+    raw_call = fetch_services(db).mcp_call
+
+    def call(name: str, args: dict[str, Any]) -> Any:
+        return parse_mcp_content(raw_call(name, args))
+
+    return AnswerServices(mcp_probe=_mcp_probe(db, call=call), family_fetch=_family_fetch(db))
 
 
 def answer_services_for(session_factory: Any) -> AnswerServices:
@@ -398,6 +429,68 @@ def fetch_space_id(db: Session) -> str | None:
     from app.services.chatbot.head.access import default_space_id
 
     return default_space_id(db)
+
+
+def outstanding_customer_echo(db: Session, customer_ids: Any) -> str:
+    """The `Customer:` line for a set of resolved customer ids - ONE source, the
+    customer ROWS (R19b, owner round 7, 13 Sep 2026).
+
+    Delegates to the report route's own `_customer_echo`, which is what renders the
+    line under the REPORT (AC-1136) and applies AC-1163's distinct, first-seen-order
+    rule. The scope question asked the same thing of a different source and got a
+    different answer: it printed the PICKER's roster label, company-code suffix and
+    all ("CHIN CHUN HARDWARE SDN BHD (MCH, SRT)"), while the report two turns later
+    named the eight ledger rows. A roster label is a display string for the PICK, not
+    a customer name, and one line asked about one filter cannot have two sources.
+
+    Reads on the ENGINE's own per-contact scoped session, like
+    `resolve_warehouse_token` above and for the same reason.
+    """
+    from app.services.outstanding_report_service import _customer_echo
+
+    ids = [str(uid) for uid in (customer_ids or []) if uid]
+    if not ids:
+        return ""
+    return _customer_echo(db, None, ids) or ""
+
+
+def resolve_warehouse_token(db: Session, token: str) -> list[str]:
+    """D5 (PLAN-chatbot-outstanding-report.md, S4 point 7): a token equal to a
+    `warehouse_code` (case-insensitive) resolves to that code ONLY (`BRW` -> `BRW`); a
+    token that is the suffix of one or more codes after the LAST `-` resolves to all of
+    them (`IB` -> `BRW-IB`, `MWH-IB`); a token matching neither resolves to nothing.
+    Reads the `warehouses` table, never a hard-coded list - the risk section measured
+    codes with `/` and no `-` at all (`SPARE/P`), which this simply never matches.
+
+    Runs on `db` under the ENGINE's own per-contact scope
+    (`app/services/chatbot/engine.py`'s `_scoped_factory`), same as every other
+    company-scoped read this turn makes (the product/customer resolution the generic
+    resolver runs on the SAME session). `warehouses` is `CompanyScopedMixin` like
+    `products`; there is no narrower argument for widening THIS read past the
+    contact's own company than there would be for widening the product lookup, and a
+    contact with no `respond_contact_companies` row already gets zero rows there too -
+    a genuinely UNMAPPED contact fails closed everywhere in the turn, not selectively.
+    """
+    from sqlalchemy import func
+
+    from app.models.inventory import Warehouse
+
+    word = (token or "").strip()
+    if not word:
+        return []
+    exact = (
+        db.query(Warehouse.warehouse_code)
+        .filter(func.lower(Warehouse.warehouse_code) == word.lower())
+        .first()
+    )
+    if exact:
+        return [exact[0]]
+    suffix = word.lower()
+    return [
+        code
+        for (code,) in db.query(Warehouse.warehouse_code).all()
+        if "-" in code and code.rsplit("-", 1)[-1].lower() == suffix
+    ]
 
 
 def production_services(db: Session, *, space_id: str | None = None) -> ResolveGateServices:

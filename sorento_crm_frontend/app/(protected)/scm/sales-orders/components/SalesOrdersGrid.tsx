@@ -28,16 +28,11 @@ import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { RowActionsMenu } from '@/components/common/RowActionsMenu';
@@ -46,9 +41,10 @@ import { useRowPending } from '@/hooks/useDeferredRowAction';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { formatMyrExact } from '@/app/(protected)/project-sales/_shared/lib/money';
-import { buildPlanActions } from '../lib/planActions';
+import { buildPlanActions, PLAN_PERMISSION } from '../lib/planActions';
 import { formatStatusLabel } from '@/lib/status-badge';
 import { demandClassBadge } from '../../lib/demandClass';
+import { salesOrderPlannedBadge } from '../../lib/salesOrderPlanned';
 import {
   SALES_ORDER_STATUS_FILTER_OPTIONS,
   salesOrderPriorityVariant,
@@ -63,6 +59,7 @@ import {
   useSalesOrders,
 } from '../../hooks/useSalesOrders';
 import { useSalesAgentOptions } from '../hooks/useSalesAgentOptions';
+import { SOURCE_FILTER_OPTIONS, SOURCE_LABELS } from '../lib/sourceLabels';
 import { fmtDate, fmtInt } from '../../lib/format';
 import type { SalesOrder, SalesOrderFormData } from '../../types/scm.types';
 import { SalesOrderFormModal } from './SalesOrderFormModal';
@@ -89,16 +86,6 @@ import { useListingViewPreferences } from '@/lib/listing-column-preferences/useL
  * the toolbar, the row click and the footer are the list's own.
  */
 
-/** Who wrote the order. `Order inquiry` is separate from `Sales order upload` because an
- *  order Joey's sheet created is one CS has never seen, and it decides who may edit it. */
-const SOURCE_FILTER_OPTIONS = [
-  { value: '', label: 'All sources' },
-  { value: 'inquiry', label: 'Order inquiry' },
-  { value: 'upload', label: 'Upload' },
-  { value: 'history', label: 'Absorbed history' },
-  { value: 'manual', label: 'Manual' },
-];
-
 /** How many purchase orders to name in the cell before collapsing the rest into a count. */
 const WAITING_ON_LIMIT = 2;
 
@@ -113,23 +100,8 @@ const ORDER_INQUIRY_LIMIT = 2;
  */
 const MAX_PLAN_SELECTION = 50;
 
-/** Who may open the fulfilment planning board. Same gate the board's own page carries. */
-const PLAN_PERMISSION = 'projects.projects.view';
 /** What the backend gates Reset planning on: the buyer's own write permission. */
 const RESET_PERMISSION = 'scm.reorder.run';
-
-const SOURCE_LABELS: Record<string, string> = {
-  inquiry: 'Order inquiry',
-  // Just "Upload" (the captain, 27 Aug). The column is called Source and every row of this
-  // list is a sales order, so "Sales order upload" spent two of its three words repeating
-  // the screen it is on - and the pill is a fixed-width cell that truncated the third.
-  upload: 'Upload',
-  // 11,006 of the orders in the book were absorbed from a six-year AutoCount export. Calling
-  // one "Manual" claims somebody keyed a 2020 order by hand, and it is the same word the
-  // detail page uses so the two screens cannot disagree about the same row.
-  history: 'Absorbed history',
-  manual: 'Manual',
-};
 
 /** The planning class - what the classification agents actually resolved, as distinct from
  *  the rarely-stated `order_type_label`. `unclassified` reads `demand_class IS NULL`. */
@@ -647,6 +619,34 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
         meta: { headerTitle: 'Status' },
       },
       {
+        id: 'planned',
+        // A PLAIN TITLE, not `DataGridColumnHeader` (AC-S4-8). That primitive renders a
+        // button whatever `enableSorting` says, so the header read as a control that does
+        // nothing when clicked.
+        header: () => <span>Planned</span>,
+        // BESIDE STATUS, because it is the question Status keeps being read as answering and
+        // does not: Completed says the book shipped it, this says whether anybody ever decided
+        // where the stock came from. SO421404 read Completed, 3 of 3 delivered, and had never
+        // been planned - which is exactly the order somebody has to go and plan.
+        //
+        // NOT SORTABLE AND NOT FILTERABLE in this lane: the counts are already on the row and
+        // nobody has asked to slice by them. Trigger for adding either: the owner asks.
+        cell: ({ row }) => {
+          const badge = salesOrderPlannedBadge(
+            row.original.planned_lines,
+            row.original.plannable_lines,
+          );
+          return (
+            <Badge variant={badge.variant} appearance="light" size="md">
+              {badge.label}
+            </Badge>
+          );
+        },
+        enableSorting: false,
+        size: 130,
+        meta: { headerTitle: 'Planned' },
+      },
+      {
         accessorKey: 'order_inquiries',
         header: ({ column }) => <DataGridColumnHeader title="Order inquiries" column={column} />,
         // What purchasing has been told to do about this order, by NUMBER. There is no
@@ -673,9 +673,16 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
                 <span key={inquiry.inquiry_no ?? index}>
                   {index > 0 ? ', ' : null}
                   <Link
-                    href={`/project-sales/order-inquiries?query=${encodeURIComponent(
-                      row.original.so_number,
-                    )}`}
+                    // S3, AC-LK-01: the OI detail page, by header id, when the payload
+                    // carries one; the old filtered-list search only for a payload from
+                    // before that column existed.
+                    href={
+                      inquiry.id
+                        ? `/project-sales/order-inquiries/${inquiry.id}`
+                        : `/project-sales/order-inquiries?query=${encodeURIComponent(
+                            row.original.so_number,
+                          )}`
+                    }
                     onClick={(e) => e.stopPropagation()}
                     className="text-primary hover:underline"
                   >
@@ -688,7 +695,6 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
           );
         },
         size: 180,
-        enableSorting: false,
         meta: { headerTitle: 'Order inquiries' },
       },
       {
@@ -849,6 +855,10 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
         ),
     },
   );
+  // Exactly one action, or none without the board's own permission (`buildPlanActions`) -
+  // the toolbar's primary CTA, not a menu to map over.
+  const planAction = planActions[0];
+  const PlanIcon = planAction?.icon;
 
   const selectedOrders = table.getSelectedRowModel().rows.map((r) => r.original);
   const resetActions = canReset
@@ -1111,18 +1121,31 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
                 ),
               }}
               // No `bulkActions`: the strip keeps its count, its Export and Clear, and
-              // nothing else. Plan selected lives in the "Start" menu instead - the strip
-              // only exists once rows are ticked, so an action that lived there could not
-              // be found by anyone who had not already guessed it was there, and its
-              // refusal over the board's bound read as a dead click.
+              // nothing else. Plan selected is the toolbar's own primary button (the owner's
+              // ruling, 22 Sep 2026) rather than a strip action, so the strip does not need to
+              // carry it too - and a strip action only exists once rows are ticked, so it
+              // could not be found by anyone who had not already guessed it was there.
               exportConfig={{ filename: 'sales_orders_export.xlsx' }}
               // Two secondary actions is what makes the shared toolbar collapse them into
               // an "Actions" dropdown (data-grid-list-toolbar.tsx) instead of a single loose
               // button, matching Delivery Orders (OrdersList.tsx).
-              // Actions is the housekeeping menu (the captain, 27 Aug): add one order by
-              // hand, put a walk back to never-planned, re-read the page. Everything that
-              // STARTS a piece of work moved to the Start button on the right.
+              // Actions is the housekeeping menu: put the order book in, add one order by
+              // hand, walk one back to never-planned, re-read the page. Planning is the one
+              // thing this list STARTS, so it is the primary button instead, not a menu item.
               secondaryActions={[
+                // The upload carries the WHOLE book, so it belongs to the book's own screen.
+                // Offering it inside one agent's record would read as "upload this agent's
+                // orders", which is not what the file is.
+                ...(pinnedToAgent
+                  ? []
+                  : [
+                      {
+                        key: 'upload-sales-orders',
+                        label: 'Upload sales orders',
+                        icon: Upload,
+                        onClick: () => setUploadOpen(true),
+                      },
+                    ]),
                 // A new order created from inside one agent's record would carry no agent,
                 // so the record it was added from would not list it.
                 ...(pinnedToAgent
@@ -1144,49 +1167,36 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
                 },
               ]}
               primaryAction={
-                // START: the two ways a day's work begins on this list - put the book in,
-                // or take a set of orders to the planning board. One button rather than two,
-                // because they are the same question asked a week apart, and the dropdown
-                // carries no heading row of its own (the menu's trigger already says Start).
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button>
-                      Start
-                      <ChevronDown className="size-3.5 opacity-60" aria-hidden />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-56">
-                    {/* The upload carries the WHOLE book, so it belongs to the book's own
-                        screen. Offering it inside one agent's record would read as "upload
-                        this agent's orders", which is not what the file is. */}
-                    {pinnedToAgent ? null : (
-                      <DropdownMenuItem onSelect={() => setUploadOpen(true)}>
-                        <Upload className="size-4" aria-hidden />
-                        Upload sales orders
-                      </DropdownMenuItem>
-                    )}
-                    {planActions.map((action) => {
-                      const Icon = action.icon;
-                      return (
-                        <DropdownMenuItem
-                          key={action.key}
-                          disabled={action.disabled}
-                          // Not wired at all while disabled, the same rule the shared
-                          // toolbar's own overflow follows: Radix suppresses `onSelect`
-                          // for a disabled item, and a plain `onClick` would still fire.
-                          onSelect={action.disabled ? undefined : action.onClick}
-                          // The refusal (nothing ticked, or more than the board's bound)
-                          // travels as the browser's own tooltip - there is no room for a
-                          // Tooltip wrapper inside a menu item.
-                          title={action.disabled ? action.disabledReason : undefined}
-                        >
-                          {Icon ? <Icon className="size-4" aria-hidden /> : null}
-                          {action.label}
-                        </DropdownMenuItem>
-                      );
-                    })}
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                // Plan selected is the CTA (the owner's ruling, 22 Sep 2026, on a screenshot
+                // of this list): the one thing the list starts is taking a set of orders to
+                // the fulfilment board, so it gets the button rather than a menu item behind
+                // a second click. `buildPlanActions` returns nothing without the board's own
+                // permission, so the button itself disappears rather than opening a door that
+                // answers 403.
+                planAction ? (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      {/* A `title` on a disabled Button never reaches a real browser's
+                          hover - the primitive sets `disabled:pointer-events-none`, so no
+                          pointer event ever lands on it. The refusal travels in a Radix
+                          Tooltip on a focusable wrapper instead, the same pattern
+                          BoardLineDecisionPanel uses for its own disabled Save/Reject. */}
+                      <span
+                        tabIndex={0}
+                        className="inline-flex"
+                        data-testid="plan-selected-trigger"
+                      >
+                        <Button disabled={planAction.disabled} onClick={planAction.onClick}>
+                          {PlanIcon ? <PlanIcon className="size-4" aria-hidden /> : null}
+                          {planAction.label}
+                        </Button>
+                      </span>
+                    </TooltipTrigger>
+                    {planAction.disabled && planAction.disabledReason ? (
+                      <TooltipContent>{planAction.disabledReason}</TooltipContent>
+                    ) : null}
+                  </Tooltip>
+                ) : null
               }
             />
           </CardHeader>

@@ -31,6 +31,9 @@ def resolve_recipients(
     - include_promotion_owner: bool
     - include_assigned_cs_pic: bool  (needs source_id; resolves the active
         customer-service form-SLA assignee for that entity)
+    - include_actor: bool  (Cc the person who raised the triggering event, read
+        from `promotion_context["actor"]["email"]`; a trigger with no actor adds
+        nothing)
     - extra_emails: list[str]
     """
     config = config or {}
@@ -96,12 +99,32 @@ def resolve_recipients(
             if pic is not None:
                 add(getattr(pic, "email", None), getattr(pic, "name", None), str(getattr(pic, "id")))
 
+    if config.get("include_actor") and promotion_context:
+        actor = promotion_context.get("actor") or {}
+        if actor.get("email"):
+            add(actor.get("email"), actor.get("name"))
+
     if config.get("include_promotion_owner") and promotion_context:
         owner_id = (promotion_context.get("promotion") or {}).get("created_by")
         if owner_id:
             owner = db.query(User).filter(User.id == owner_id, User.is_trashed.is_(False)).first()
             if owner is not None:
                 add(getattr(owner, "email", None), getattr(owner, "name", None), str(getattr(owner, "id")))
+
+    # PLAN-oi-request-cs-reserve.md 3.6 (AC-RS-16): Cc the person who REQUESTED the
+    # reserve and/or the person who RAISED the order inquiry - two more of the same
+    # "read a person off the context" shape `include_actor` already is, added in this
+    # order so `include_requester` resolves before `include_raiser` (the reserved
+    # mail's own To/Cc order, since it sets neither `user_ids` nor `include_actor`).
+    if config.get("include_requester") and promotion_context:
+        requester = promotion_context.get("requester") or {}
+        if requester.get("email"):
+            add(requester.get("email"), requester.get("name"))
+
+    if config.get("include_raiser") and promotion_context:
+        raiser = promotion_context.get("raiser") or {}
+        if raiser.get("email"):
+            add(raiser.get("email"), raiser.get("name"))
 
     for raw in config.get("extra_emails") or []:
         add(str(raw))

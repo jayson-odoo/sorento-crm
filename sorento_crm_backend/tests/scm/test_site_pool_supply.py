@@ -504,9 +504,22 @@ def test_po_book_serves_the_product_grain_key_with_site_pool_lines(db):
     assert remaining == 42.0, f"the bin's PO reached the product-grain key: {book[key]}"
 
 
-def test_po_book_keeps_p8_project_only_exclusion(db):
-    """Non-regression: a cell whose demand is entirely project-class still serves no
-    receipts at all (P8)."""
+def test_po_book_serves_a_project_only_cell_too_now_that_p8_is_retired(db):
+    """P8 is RETIRED (PLAN-reorder-one-formula.md, 11 Sep 2026), and this is the case that
+    names the change.
+
+    P8 hid a project-only cell's receipts on the reasoning that the Order Inquiry already
+    consumes that PO, so offering it again on the plan counted the same quantity twice.
+    Since #828 the ENGINE nets the open PO book into `net` for every row, project demand
+    included - so the quantity is netted exactly once, by the engine, and what the plan
+    shows is a DISPLAY of that netting. Hiding the part for exactly this row broke the
+    Suggestion's own identity, `Stock + PO + Buy = need`: the buy was already net of a PO
+    the row then refused to name, so the parts did not add up and the buyer could not see
+    where their units had gone.
+
+    Same seeding as before, opposite expectation, and the sum is asserted rather than mere
+    presence - a key serving an empty list would pass a bare `in` check.
+    """
     cat, uom = _cat_uom(db)
     product = _product2(db, cat, uom)
     head, bin_ = _pool2(db)
@@ -521,7 +534,11 @@ def test_po_book_keeps_p8_project_only_exclusion(db):
 
     book = po_book_service.po_book_for_run(db, run.id)["po_book"]
     key = f"{product.id}:{head.id}"
-    assert key not in book, "a project-only cell must serve no receipts (P8)"
+    assert key in book, (
+        f"a project-only cell serves its own receipts now that the engine nets them "
+        f"once: {book.keys()}"
+    )
+    assert sum(l["remaining"] for l in book[key]) == 42.0, book[key]
 
 
 def test_po_book_location_row_at_a_bin_serves_nothing(db):

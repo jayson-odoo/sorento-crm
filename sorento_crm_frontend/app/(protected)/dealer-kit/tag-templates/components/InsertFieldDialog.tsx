@@ -44,6 +44,11 @@ interface InsertFieldDialogProps {
   data: TagBindingData | null;
   /** The spec vocabulary, so a new key appears with no code change (D58). */
   specKeys: SpecKeyOption[];
+  /** Narrows the catalog to only these groups (S11) - omitted, every group
+   *  offers, same as before this existed. The Specifications tab's own price
+   *  tag description passes `['Product', 'Specs']`: it cannot address a
+   *  line, a set or a combo part. */
+  groups?: MergeFieldGroup[];
   onCancel: () => void;
   onDone: (content: string) => void;
 }
@@ -53,6 +58,7 @@ export function InsertFieldDialog({
   value,
   data,
   specKeys,
+  groups,
   onCancel,
   onDone,
 }: InsertFieldDialogProps) {
@@ -72,7 +78,7 @@ export function InsertFieldDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  const catalog = useMemo(() => mergeFieldCatalog(specKeys), [specKeys]);
+  const catalog = useMemo(() => mergeFieldCatalog(specKeys, groups), [specKeys, groups]);
 
   const matches = useMemo(() => {
     const needle = query.trim().toLowerCase();

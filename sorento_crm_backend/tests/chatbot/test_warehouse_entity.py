@@ -11,6 +11,7 @@ from typing import Any
 
 from app.services.chatbot.lanes.business import fetch
 from app.services.chatbot.lanes.business.gate import run_gate
+from tests.chatbot.conftest import validating_resolve_entity
 
 PRODUCT_UUID = "11111111-1111-1111-1111-111111111111"
 WAREHOUSE_UUID = "22222222-2222-2222-2222-222222222222"
@@ -247,7 +248,7 @@ def _services(db: Any, calls: list[dict[str, Any]]):
 
     return ResolveGateServices(
         access_types=lambda **_: [],
-        resolve_entity=resolve_entity,
+        resolve_entity=validating_resolve_entity(resolve_entity),
         probe=lambda **_: None,
     )
 
@@ -371,71 +372,16 @@ class TestProductAndWarehouseResolveTogether:
 
 
 # --------------------------------------------------------------------------- #
-# `warehouse` is not a document filter (review S1, 8 Sep 2026).
+# `TestAWarehouseIsNotADocumentFilter` (review S1, 8 Sep 2026, live exec 11818957) -
+# REMOVED here (AC-1592) and ported to `test_rearch_port_warehouse_not_a_document_
+# filter.py` as a RED finding, not a straight port. The old `output_exchange`'s
+# post-process step dropped a `warehouse` entity before it could wrongly filter a
+# document-list tool (`crm_resource_attachments_list` has no warehouse parameter);
+# grepped the whole `app/services/chatbot/` tree for `broaden_dropped` this session -
+# zero hits anywhere, including `lanes/business/fetch.py` and `gate.py`. Probed
+# `gate.run_gate` directly with a `resource_attachment` domain + a warehouse entity:
+# `gate_reason` reads "domain 'resource_attachment' not in matrix; passing through
+# unscoped" and `compatible_entities` still carries the warehouse - the gate does not
+# reproduce the drop either. The live-incident fix this class proved appears to have
+# no equivalent anywhere in the new architecture; not the tester's fix to make.
 # --------------------------------------------------------------------------- #
-# `TYPE_TO_PARAM["warehouse"] = "warehouse_ids"` made `warehouse_ids` a NARROWING_PARAM,
-# so a carried warehouse token now satisfies `ENTITY_FILTER_REQUIRED_TOOLS` for
-# `crm_resource_attachments_list` - a tool with no warehouse parameter at all. Real
-# warehouse codes read like ordinary words (HOLD, DISPLAY, REPAIR), so a document turn
-# could be let through on a filter the document read cannot apply. Same fix, same reason,
-# as the brand / category row above it (live exec 11818957).
-
-
-def _emission(**over: Any) -> dict[str, Any]:
-    """A parser emission with every key `output_exchange`'s own validator requires."""
-    base: dict[str, Any] = {
-        "message_type": "business_query", "intent_hint": None, "domain_hint": None,
-        "scope_intent": None, "is_affirmative": None, "user_goal": None,
-        "access_levels": [], "date_mode": None, "date_filter_start": None,
-        "date_filter_end": None, "match_mode": "and", "demand_qty": None, "entities": [],
-        "entity_op": None, "scope_exclusive": None, "requested_attributes": [],
-        "contains_flyer": None, "reference_positions": [], "reference_target": None,
-        "person_mention": None, "is_active": None, "order_status": None,
-        "correction": None, "routing": {"suggested_team": None, "suggested_agent": None},
-        "escalation": {"is_escalation_confirmation": False, "company_pick": None},
-    }
-    base.update(over)
-    return base
-
-
-def _post(emission: dict[str, Any], latest: str) -> dict[str, Any]:
-    from app.services.chatbot.head.output_exchange import output_exchange
-
-    return output_exchange(
-        {"output": {"output": emission}},
-        {
-            "previous_conversation_state": {},
-            "latest_user_message": latest,
-            "previous_response": "",
-        },
-    )["output"]
-
-
-class TestAWarehouseIsNotADocumentFilter:
-    def test_a_warehouse_is_dropped_on_a_document_turn(self) -> None:
-        out = _post(
-            _emission(
-                intent_hint="get_resource_attachment",
-                domain_hint="resource_attachment",
-                entities=[
-                    {"raw": "hold", "hint": "warehouse", "current_message": True},
-                ],
-            ),
-            latest="send me the hold document",
-        )
-        assert [e["hint"] for e in out["entities"]] == []
-        assert out["broaden_dropped"] == ["warehouse:hold"]
-
-    def test_the_two_domains_whose_tools_take_warehouse_ids_still_keep_it(self) -> None:
-        """The negative that keeps the block narrow: `warehouse` is the whole point of the
-        entity on `inventory` and `spo_allocation`."""
-        for domain, intent in (("inventory", "check_stock"), ("spo_allocation", "check_spo")):
-            out = _post(
-                _emission(
-                    intent_hint=intent,
-                    domain_hint=domain,
-                    entities=[{"raw": "brw", "hint": "warehouse", "current_message": True}],
-                ),
-                latest=f"{intent} at brw",
-            )
-            assert [e["hint"] for e in out["entities"]] == ["warehouse"], (domain, out)

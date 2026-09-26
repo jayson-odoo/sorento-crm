@@ -151,6 +151,26 @@ def _linked(db, row_id) -> float:
     )
 
 
+def _suggested(db, row_id) -> float:
+    """Reversal (review round 4 Blocking 1, `PLAN-oi-links-autocount-truth-24sep.md` S3,
+    G2): `own_so_claim` (a write-time or `po_upload` claim, this file's whole subject)
+    decides whether a candidate is CASCADABLE at all - it does not make the cascade
+    WALK's own terminal write real, which since S3 is a suggestion for every door,
+    whatever priority the claim earned the candidate. `_linked` stays for the two control
+    assertions above that check the walk truly took NOTHING (0 either way) and for the
+    book-attribution paths (`from_so_line_ref`, untouched by S3) elsewhere in this file."""
+    return float(
+        db.execute(
+            text(
+                "SELECT COALESCE(SUM(qty), 0) FROM projects.order_inquiry_suggested_links "
+                " WHERE row_id = :r"
+            ),
+            {"r": row_id},
+        ).scalar()
+        or 0
+    )
+
+
 def _so_ref(db, pso_id) -> str:
     """What `claim_identity` writes into a claim: the project order's AutoCount number
     where it has one, its provisional reference where it does not."""
@@ -184,7 +204,7 @@ def test_a_plan_confirm_claims_its_bin_line_for_both_rows_that_sized_it(db):
     refuse to place the very rows that sized it unless the line is attributed to them.
 
     One line of 114 at BRW-IB sized by SO X (30) and SO Y (84): TWO claims, both
-    `crm_supply`, and both rows linked for their own quantity. One PO line, never two -
+    `crm_supply`, and both rows suggested for their own quantity. One PO line, never two -
     the claim is an attribution, not a split.
 
     AC-H11 (owner's ruling, 8 Sep 2026, correcting an over-read of slice H): the automatic
@@ -193,6 +213,11 @@ def test_a_plan_confirm_claims_its_bin_line_for_both_rows_that_sized_it(db):
     `own_claim`, read by `_candidate` as `own_so_claim`. It is not a new mechanism and it
     is not gated on slice F: it is the SAME evidence that already cleared G12's project-bin
     lock, and it clears the new pool-membership test the same way.
+
+    Reversal (review round 4 Blocking 1, `PLAN-oi-links-autocount-truth-24sep.md` S3, G2):
+    `own_so_claim` still clears the candidate to be taken automatically at all; the
+    cascade's own terminal write for it is a suggestion now, like every other door's -
+    `_suggested` replaces `_linked` below.
     """
     actor = seed_user(db, None)
     bin_id = _project_bin(db, f"{MARKER}-IB-{uuid.uuid4().hex[:6].upper()}")
@@ -209,8 +234,8 @@ def test_a_plan_confirm_claims_its_bin_line_for_both_rows_that_sized_it(db):
     assert all(c["so_line_id"] for c in claims), (
         "an unresolved claim is invisible to dedication, so the attribution would do nothing"
     )
-    assert _linked(db, x["inquiry_row"].id) == 30.0
-    assert _linked(db, y["inquiry_row"].id) == 84.0
+    assert _suggested(db, x["inquiry_row"].id) == 30.0
+    assert _suggested(db, y["inquiry_row"].id) == 84.0
     assert (
         db.execute(
             text(
@@ -270,9 +295,13 @@ def test_the_cascade_never_claims_a_project_bin_line_it_did_not_create(db):
 
     THE CONTROL still proves the walk was reachable, unchanged by AC-H11: attribute the
     SAME line to this row's own order (the book's own FromSODocList feed, never the
-    cascade's own write) and the identical call places it - `own_so_claim` is exactly the
-    exception the owner preserved, so a project-bin line the row's OWN sales order claims
-    is `cascadable` again, same as before slice H.
+    cascade's own write) and the identical call suggests it - `own_so_claim` is exactly
+    the exception the owner preserved, so a project-bin line the row's OWN sales order
+    claims is `cascadable` again, same as before slice H.
+
+    Reversal (review round 4 Blocking 1, S3, G2): the identical pass's own terminal write
+    is a suggestion now, not a real link - `_suggested` replaces `_linked` for the
+    control's own final assertion.
     """
     from tests.scm.test_channel_read_model import _confirmed_leg
     from tests.scm.test_m3_run import _mk_product
@@ -348,8 +377,8 @@ def test_the_cascade_never_claims_a_project_bin_line_it_did_not_create(db):
     ProjectOrderInquiryService(db).auto_place_for_products(
         [pid], actor_user_id=seed_user(db, None), trigger="test", include_awaiting=True,
     )
-    assert _linked(db, leg["inquiry_row"].id) == 30.0, (
-        "with the book's own attribution the identical pass places it"
+    assert _suggested(db, leg["inquiry_row"].id) == 30.0, (
+        "with the book's own attribution the identical pass suggests it"
     )
 
 
@@ -367,6 +396,14 @@ def test_one_claim_backing_two_links_on_one_document_is_netted_once(db):
     every sort key, so which one the first row starts on is a coin flip).
 
     Both lines at a POOL here on purpose: this is G7's arithmetic, not G12's lock.
+
+    Reversal (review round 4 Blocking 1, S3, G2): the `po_confirm` cascade write is a
+    suggestion now - `_suggested` replaces `_linked` below. The claim this test's title
+    names was never G12's write-time claim (a pool line is explicitly excluded from that,
+    AC-6.10) - it was `_write_link`'s OWN claim, written alongside the real link the
+    cascade used to place. Since a suggestion never claims (G2), that claim is gone too;
+    the netting this test is actually about now shows up as the suggestion capacity split
+    correctly between the two rows instead (the `_suggested` assertions above).
     """
     from tests.scm.test_channel_read_model import _confirmed_leg
     from tests.scm.test_m3_run import _mk_product, _mk_warehouse
@@ -384,8 +421,8 @@ def test_one_claim_backing_two_links_on_one_document_is_netted_once(db):
 
     PurchaseOrderService(db).bulk_confirm([po_id], actor=actor)
 
-    assert _linked(db, first["inquiry_row"].id) == 5.0
-    assert _linked(db, second["inquiry_row"].id) == 3.0, (
+    assert _suggested(db, first["inquiry_row"].id) == 5.0
+    assert _suggested(db, second["inquiry_row"].id) == 3.0, (
         "the first row's own claim was subtracted a second time from what it had already "
         "taken, and the second row found nothing left"
     )
@@ -400,7 +437,10 @@ def test_one_claim_backing_two_links_on_one_document_is_netted_once(db):
             {"i": po_id},
         )
     ]
-    assert claims == [2], "one claim per sales order, whatever the line count"
+    assert claims == [0], (
+        "a suggestion never claims (G2) - the cascade's own real-link claim is gone with "
+        "the real link it used to write"
+    )
 
 
 # ------------------------------------------------------------------------------- D2
@@ -987,7 +1027,11 @@ def test_one_line_is_rationed_across_its_claimants_in_sales_order_date_order(db)
 def test_the_earlier_sales_order_can_still_auto_take_its_own_rationed_share(db):
     """The consequence S-1 exists for: with 120 reserved on a 100 line, the earlier order's
     own cascade saw 100 - 60 (the other claim) = 40 and could not place its 60. Rationed,
-    it sees the 40 the later order holds and takes its own 60."""
+    it sees the 40 the later order holds and takes its own 60.
+
+    Reversal (review round 4 Blocking 1, S3): the cascade's own terminal write is a
+    suggestion now - `_suggested` replaces `_linked` below.
+    """
     from tests.scm.test_channel_read_model import _confirmed_leg, _core_so_line
     from tests.scm.test_m3_run import _mk_product, _mk_warehouse
     from app.services.project_order_inquiry_service import ProjectOrderInquiryService
@@ -1042,7 +1086,7 @@ def test_the_earlier_sales_order_can_still_auto_take_its_own_rationed_share(db):
         [pid], actor_user_id=seed_user(db, None), trigger="test", include_awaiting=True,
     )
 
-    assert _linked(db, row.id) == 60.0, (
+    assert _suggested(db, row.id) == 60.0, (
         "the earlier order could not take its own share, because the line had promised 120"
     )
 

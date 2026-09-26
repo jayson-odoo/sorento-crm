@@ -6,9 +6,14 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { TurnAttachments } from '@/components/chatbot/TurnAttachments';
+import AttachmentPreviewModal, {
+  type AttachmentPreviewItem,
+} from '@/components/common/AttachmentPreviewModal';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import type { ChatMessageRow } from '../types/chatHistory.types';
-import type { ChatbotTurn } from '../types/chatbotTurn.types';
+import type { ChatbotTurn, ChatbotTurnMedia } from '../types/chatbotTurn.types';
+import { isMediaDenied, mediaReadCount, turnAttachments } from '../turnPresentation';
 import { StateTracePanel } from './StateTracePanel';
 import { TurnPanel } from './TurnPanel';
 
@@ -65,8 +70,16 @@ export function ChatTranscript({
 }: ChatTranscriptProps) {
   const [term, setTerm] = useState('');
   const [activeMatch, setActiveMatch] = useState(0);
+  // The image lightbox: one shared instance for the whole transcript (the same primitive
+  // every other CRM attachment viewer uses), opened with whichever bubble's photo was
+  // clicked rather than one modal per message.
+  const [previewItem, setPreviewItem] = useState<AttachmentPreviewItem | null>(null);
   const turnFor = (m: ChatMessageRow) =>
     m.message_id ? turnsByMessageId?.get(m.message_id) : undefined;
+  /** The turn's media, unless a `media_denied` turn stopped before any of it could be
+   *  shown (AC-1846). */
+  const mediaFor = (turn: ChatbotTurn | undefined): ChatbotTurnMedia | null =>
+    turn?.media && !isMediaDenied(turn) ? turn.media : null;
 
   // AC-255. A failed turn is a PAIR the operator wants to read: what the customer sent
   // and what the bot sent back. Filtering the incoming message alone would leave the
@@ -212,6 +225,14 @@ export function ChatTranscript({
             const isMatch = matchIdx !== -1;
             const isActive = isMatch && matchIdx === activeMatch;
             const turn = turnFor(m);
+            const media = !outgoing ? mediaFor(turn) : null;
+            // Voice notes carry no caption on WhatsApp - the transcript is shown instead,
+            // never alongside an already-identical caption (plan S1, "never duplicate the
+            // caption").
+            const bubbleText =
+              media?.modality === 'voice' && !m.message.trim()
+                ? (media.transcript_or_rendered_text ?? '')
+                : m.message;
             return (
               <div
                 key={m.id}
@@ -239,8 +260,9 @@ export function ChatTranscript({
                       </Badge>
                     )}
                   </div>
+                  {media && <MediaBlock media={media} onOpenImage={setPreviewItem} />}
                   <p className="whitespace-pre-wrap break-words">
-                    {highlight(m.message, term.trim()).map((seg, i) =>
+                    {highlight(bubbleText, term.trim()).map((seg, i) =>
                       seg.hit ? (
                         <mark key={i} className="bg-amber-200 text-inherit rounded-sm">
                           {seg.text}
@@ -261,6 +283,11 @@ export function ChatTranscript({
                     one to read; the older raw state trace stays as the fallback for
                     messages that predate the turn engine, and goes when every message has
                     a turn (Phase 2). */}
+                {!outgoing && turn && (
+                  <div className="max-w-[85%]">
+                    <TurnAttachments attachments={turnAttachments(turn)} />
+                  </div>
+                )}
                 {!outgoing &&
                   (turn ? (
                     <TurnPanel turn={turn} retryUnavailableReason={retryUnavailableReason} />
@@ -271,6 +298,102 @@ export function ChatTranscript({
             );
           })}
       </div>
+
+      <AttachmentPreviewModal
+        open={Boolean(previewItem)}
+        onOpenChange={(open) => !open && setPreviewItem(null)}
+        items={previewItem ? [previewItem] : []}
+      />
+    </div>
+  );
+}
+
+const IMAGE_EXT_BY_MIME: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+  'image/gif': 'gif',
+};
+
+/** A filename `AttachmentPreviewModal` recognises as an image, since it reads the
+ *  extension off the name rather than `mime_type`. */
+function mediaFileName(media: ChatbotTurnMedia): string {
+  return `photo.${IMAGE_EXT_BY_MIME[media.mime_type ?? ''] ?? 'jpg'}`;
+}
+
+/**
+ * The photo or voice note behind an incoming bubble (AC-1842 to AC-1846), above the
+ * message text and never duplicating it. An image opens the shared attachment
+ * lightbox on click; a voice note is a plain player, its transcript already in the
+ * bubble text below.
+ */
+function MediaBlock({
+  media,
+  onOpenImage,
+}: {
+  media: ChatbotTurnMedia;
+  onOpenImage: (item: AttachmentPreviewItem) => void;
+}) {
+  const readCount = mediaReadCount(media);
+  if (media.modality === 'voice') {
+    return (
+      <div className="mb-1.5">
+        {media.url && (
+          <audio
+            controls
+            src={media.url}
+            aria-label="Voice note"
+            className="h-9 w-full max-w-full"
+          />
+        )}
+      </div>
+    );
+  }
+
+  const caption = media.transcript_or_rendered_text || 'Photo';
+  return (
+    <div className="mb-1.5 space-y-1">
+      {media.url && (
+        <button
+          type="button"
+          onClick={() =>
+            onOpenImage({
+              id: media.attachment_id ?? 'chat-media',
+              // AttachmentPreviewModal picks its slide type off the FILE NAME'S
+              // extension, not `mimeType` - a name without one (the caption has
+              // no extension) opens as "no inline preview" instead of the image.
+              name: mediaFileName(media),
+              url: media.url as string,
+            })
+          }
+          aria-label="Open photo"
+          className="block w-full overflow-hidden rounded-md"
+        >
+          {/* Respond.io/CDN media: a plain <img> (next/image needs configured hosts). */}
+          <img
+            src={media.url}
+            alt={caption}
+            // Review round nit: the standard scale's `h-28` (7rem/112px), not an
+            // arbitrary bracket value - the roster's own fixed-height thumbnail
+            // rows (`DriveGridView`) use `aspect-square`/`aspect-[3/4]` instead,
+            // which a bubble of unpredictable width would stretch unpredictably.
+            className="h-28 w-full object-cover"
+            loading="lazy"
+          />
+        </button>
+      )}
+      <Badge
+        variant={media.truncated ? 'warning' : 'secondary'}
+        appearance="light"
+        size="sm"
+        // AC-1845: "amber when truncated" - the shared `warning` variant already
+        // IS this tone (`--color-yellow-*`); this class names it literally so a
+        // reader (and this screen's own test) can tell the two chip states apart
+        // without needing the design-token indirection.
+        className={media.truncated ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300' : undefined}
+      >
+        Read {readCount} {readCount === 1 ? 'item' : 'items'}
+      </Badge>
     </div>
   );
 }

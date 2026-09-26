@@ -140,6 +140,8 @@ export interface ProjectSalesOrderFinding {
   detail: string;
   line_id?: string | null;
   line_no?: number | null;
+  /** `SODraftFindingRow.detail_json`: the subject fields `collapseFindings` reads (S3-3). */
+  detail_json?: Record<string, unknown> | null;
   acknowledged_by_name?: string | null;
   acknowledged_reason?: string | null;
   acknowledged_at?: string | null;

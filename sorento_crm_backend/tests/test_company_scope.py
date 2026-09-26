@@ -323,6 +323,13 @@ _COMPANY_ID_ALLOWLIST = {
     # a narrowed run - the whole point of the row is to say "notify me about
     # company X" from a session that is scoped to company Y.
     "user_product_discontinued_scopes",
+    # A scoped reference's company_id is per-company; a SHARED master's
+    # (sales_agents) is deliberately NULL - the mixin's auto-filter would hide
+    # every shared-type row from any scoped session, and its auto-stamp would
+    # reject the NULL-company insert `link()` writes for one on purpose
+    # (BL-056, autocount-brands-ingest). `IntegrationReferenceService` scopes
+    # both reads and writes explicitly instead.
+    "integration_references",
 }
 
 
@@ -523,7 +530,32 @@ def test_every_company_id_table_is_registered():
     # reaches rows across invoices by supplier and item code - three id-keyed paths that
     # never pass through a scoped parent query. The mixin also stamps the company at
     # insert, which is what keeps a row written under one scope unreadable under another.
-    expected_owned = 132
+    #
+    # PLAN-price-tag-r9-review-loop.md adds 1: `price_tag_review_comments` is owned
+    # because `create_comments` stamps the request's company onto the row at insert,
+    # the CRM `PATCH .../review-comments/{id}` and the Done toggle load a row BY ID off
+    # a route that names only the request and the row, and the portal's list must never
+    # surface another company's pins even when a line id is guessed.
+    # PLAN-oi-header-list-detail.md adds 1: `order_inquiry_raises` is company-owned, not
+    # shared (security review 21 Sep 2026).
+    # PLAN-oi-request-cs-reserve.md adds 2: `order_inquiry_reserve_requests` is ONE
+    # company's ask to its own CS to commit stock, and `order_inquiry_reserve_request_rows`
+    # is that ask's own per-row answer. The rows are owned rather than derived through the
+    # request because Eling's reserve call and the cancel path both load the row BY ID off
+    # a route that names only the request (`reserve()` takes `request_row_id`s), and the
+    # mixin stamps the company at insert so a row written under one scope is unreadable
+    # under another.
+    # PLAN-oi-request-cs-reserve.md section 6c (review round 2) adds 1:
+    # `order_inquiry_reserve_events` is one company's own history of a reserve line
+    # (F3) - the reserve/unreserve route both load and write it BY the reserve request
+    # row's id, never through a scoped parent query, so it is owned outright like its
+    # sibling reserve tables above.
+    # PLAN-oi-links-autocount-truth-24sep.md (issue #1215) adds 1:
+    # `order_inquiry_suggested_links` is one company's own guess the cascade walk made
+    # against its own order inquiry row, written and trimmed by
+    # `ProjectOrderInquiryService._write_suggested_links` off the scoped row - owned the
+    # same reason `order_inquiry_links` beside it is owned.
+    expected_owned = 138
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )

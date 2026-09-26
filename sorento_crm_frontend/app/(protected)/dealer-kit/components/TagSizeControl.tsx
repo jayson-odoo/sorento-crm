@@ -25,17 +25,24 @@
  * (a template has no sheet to fit, unlike a request's imposition).
  */
 
-import { useState } from 'react';
-import { X } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { ChevronDown, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
 import {
   MIN_TAG_SIZE_MM,
+  resolveSizeGrid,
   resolveTagSize,
+  type SheetGridConfig,
   type TagSizeBounds,
   type TagSizePreset,
 } from '@/lib/dealer-kit/request-tags';
@@ -61,6 +68,31 @@ function sizeKey(width_mm: number, height_mm: number): string {
   return `${width_mm}x${height_mm}`;
 }
 
+/** D9: the panel's open/closed state, remembered per browser - one key, no
+ *  server preference, no prop. Read/written inside try/catch so a browser
+ *  with localStorage disabled just stays collapsed rather than crashing. */
+const TAG_SIZE_OPEN_KEY = 'dealer-kit.tag-size.open';
+
+function readTagSizeOpen(): boolean {
+  try {
+    return window.localStorage.getItem(TAG_SIZE_OPEN_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function writeTagSizeOpen(open: boolean): void {
+  try {
+    if (open) {
+      window.localStorage.setItem(TAG_SIZE_OPEN_KEY, '1');
+    } else {
+      window.localStorage.removeItem(TAG_SIZE_OPEN_KEY);
+    }
+  } catch {
+    // Best effort - a failed write just means the next mount collapses.
+  }
+}
+
 export interface TagSizeControlProps {
   width_mm: number;
   height_mm: number;
@@ -75,6 +107,17 @@ export interface TagSizeControlProps {
   deletingSavedSizeId?: string | null;
   /** "Save as size" button (absent hides it - the caller owns the dialog). */
   onSaveAsSize?: () => void;
+  /**
+   * The per-A4 grid CONFIGURED for this size (S7, AC-S7-14), or null/absent
+   * for none - in which case the row shows what arrange would derive on its
+   * own, greyed. Absent `onSheetGridChange` hides the whole row (a template
+   * with no print size yet, say).
+   */
+  sheetGrid?: SheetGridConfig | null;
+  /** Commits a typed grid - to the template's print size (template editor)
+   *  or the size preset (request designer's Save as size). `null` clears it
+   *  back to Auto (AC-S7-14). */
+  onSheetGridChange?: (grid: SheetGridConfig | null) => void;
 }
 
 export function TagSizeControl({
@@ -88,6 +131,8 @@ export function TagSizeControl({
   onDeleteSavedSize,
   deletingSavedSizeId,
   onSaveAsSize,
+  sheetGrid = null,
+  onSheetGridChange,
 }: TagSizeControlProps) {
   // Held as TEXT and committed on blur/Enter, not on every keystroke: the
   // control used to call `onResize` per keystroke, which changed a doc key
@@ -99,6 +144,26 @@ export function TagSizeControl({
   const [wDraft, setWDraft] = useState<string | null>(null);
   const [hDraft, setHDraft] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Per-A4 grid drafts (S7, AC-S7-14) - same "text until blur" pattern as
+  // width/height above, kept separate so typing cols does not fight rows.
+  const [colsDraft, setColsDraft] = useState<string | null>(null);
+  const [rowsDraft, setRowsDraft] = useState<string | null>(null);
+  // D9: collapsed by default; a viewer who opens it once keeps it open on
+  // their next request, on this browser.
+  //
+  // S5 (code review): starts collapsed and reads localStorage in an EFFECT,
+  // not the `useState` initialiser - the template page renders this
+  // server-side, where localStorage does not exist, so a value read at
+  // mount time (during SSR) always disagrees with the client's real answer
+  // and hydrates mismatched. An effect runs client-only, after hydration.
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (readTagSizeOpen()) setOpen(true);
+  }, []);
+  const handleOpenChange = (next: boolean) => {
+    setOpen(next);
+    writeTagSizeOpen(next);
+  };
 
   const commit = (axis: 'w' | 'h') => {
     const draft = axis === 'w' ? wDraft : hDraft;
@@ -128,6 +193,30 @@ export function TagSizeControl({
     if (e.key === 'Enter') e.currentTarget.blur();
   };
 
+  // Per-A4 grid (S7, AC-S7-14): what arrange resolves for THIS size, whether
+  // or not `sheetGrid` names a configured one - `resolved.configured` is what
+  // tells the boxes below whether to show it plain or greyed, and
+  // `resolved.refusedCell` is the one-line refusal (AC-S7-13).
+  const resolvedGrid = resolveSizeGrid(width_mm, height_mm, sheetGrid);
+  const commitGrid = (axis: 'cols' | 'rows') => {
+    const draft = axis === 'cols' ? colsDraft : rowsDraft;
+    const setDraft = axis === 'cols' ? setColsDraft : setRowsDraft;
+    if (draft === null) return;
+    const n = Math.round(parseFloat(draft));
+    setDraft(null);
+    if (!Number.isFinite(n) || n <= 0) return;
+    const cols = axis === 'cols' ? n : (sheetGrid?.cols ?? resolvedGrid.cols);
+    const rows = axis === 'rows' ? n : (sheetGrid?.rows ?? resolvedGrid.rows);
+    onSheetGridChange?.({ cols, rows, turn: sheetGrid?.turn ?? resolvedGrid.rotation === 90 });
+  };
+  const setTurn = (turn: boolean) => {
+    onSheetGridChange?.({
+      cols: sheetGrid?.cols ?? resolvedGrid.cols,
+      rows: sheetGrid?.rows ?? resolvedGrid.rows,
+      turn,
+    });
+  };
+
   // Every size choice, template-derived AND saved, keyed the same way:
   // "Template sizes" first (not deletable here), then "Saved sizes" (each
   // with an `x`, when `onDeleteSavedSize` is given). `savedByKey` is what
@@ -148,7 +237,10 @@ export function TagSizeControl({
       group: 'Saved sizes',
     })),
   ];
-  const allSizes: { width_mm: number; height_mm: number }[] = [...presets, ...savedSizes];
+  const allSizes: { width_mm: number; height_mm: number }[] = [
+    ...presets,
+    ...savedSizes,
+  ];
   const matchingPreset = allSizes.find(
     (p) => p.width_mm === width_mm && p.height_mm === height_mm,
   );
@@ -164,108 +256,199 @@ export function TagSizeControl({
   };
 
   return (
-    <div className="flex shrink-0 flex-col gap-2 border-b border-r p-3">
-      <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-        Tag Size
-      </span>
-      <SearchableSelect
-        value={matchingPreset ? sizeKey(matchingPreset.width_mm, matchingPreset.height_mm) : CUSTOM_SIZE_VALUE}
-        onChange={(value) => {
-          const found = allSizes.find((p) => sizeKey(p.width_mm, p.height_mm) === value);
-          if (!found) return;
-          applySize(found.width_mm, found.height_mm);
-        }}
-        options={options}
-        placeholder="Custom"
-        renderOption={(opt) => {
-          const saved = savedByKey.get(opt.value);
-          return (
-            <div className="flex min-w-0 flex-1 items-center justify-between gap-2">
-              <span className="truncate break-words">{opt.label}</span>
-              {saved && onDeleteSavedSize && (
-                (() => {
-                  const pending = deletingSavedSizeId === saved.id;
-                  return (
+    <div className="flex shrink-0 flex-col border-b border-r">
+      <Collapsible open={open} onOpenChange={handleOpenChange}>
+        <CollapsibleTrigger asChild>
+          <button
+            type="button"
+            className="flex w-full items-center justify-between gap-2 p-3 text-left hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+          >
+            <span className="flex items-center gap-1.5">
+              <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                Tag Size
+              </span>
+              {!open && (
+                <span className="text-xs text-foreground">
+                  {width_mm} x {height_mm} mm
+                </span>
+              )}
+            </span>
+            <ChevronDown
+              className={cn(
+                'size-4 shrink-0 text-muted-foreground transition-transform',
+                open && 'rotate-180',
+              )}
+              aria-hidden
+            />
+          </button>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <div className="flex flex-col gap-2 p-3 pt-0">
+            <SearchableSelect
+              value={
+                matchingPreset
+                  ? sizeKey(matchingPreset.width_mm, matchingPreset.height_mm)
+                  : CUSTOM_SIZE_VALUE
+              }
+              onChange={(value) => {
+                const found = allSizes.find(
+                  (p) => sizeKey(p.width_mm, p.height_mm) === value,
+                );
+                if (!found) return;
+                applySize(found.width_mm, found.height_mm);
+              }}
+              options={options}
+              placeholder="Custom"
+              renderOption={(opt) => {
+                const saved = savedByKey.get(opt.value);
+                return (
+                  <div className="flex min-w-0 flex-1 items-center justify-between gap-2">
+                    <span className="truncate break-words">{opt.label}</span>
+                    {saved &&
+                      onDeleteSavedSize &&
+                      (() => {
+                        const pending = deletingSavedSizeId === saved.id;
+                        return (
+                          <button
+                            type="button"
+                            aria-label={`Delete saved size ${saved.name}`}
+                            disabled={pending}
+                            className={cn(
+                              'shrink-0 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-destructive',
+                              pending && 'pointer-events-none opacity-50',
+                            )}
+                            onPointerDown={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                            }}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              onDeleteSavedSize(saved.id, saved.name);
+                            }}
+                          >
+                            <X className="size-3.5" />
+                          </button>
+                        );
+                      })()}
+                  </div>
+                );
+              }}
+            />
+            <div className="grid grid-cols-2 gap-2">
+              <div className="flex flex-col gap-1">
+                <Label className="text-xs text-muted-foreground">W (mm)</Label>
+                <Input
+                  type="number"
+                  className="h-7 px-2 text-xs"
+                  aria-label="Tag width (mm)"
+                  value={wDraft ?? width_mm}
+                  step={0.5}
+                  onChange={(e) => setWDraft(e.target.value)}
+                  onBlur={() => commit('w')}
+                  onKeyDown={onEnter}
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <Label className="text-xs text-muted-foreground">H (mm)</Label>
+                <Input
+                  type="number"
+                  className="h-7 px-2 text-xs"
+                  aria-label="Tag height (mm)"
+                  value={hDraft ?? height_mm}
+                  step={0.5}
+                  onChange={(e) => setHDraft(e.target.value)}
+                  onBlur={() => commit('h')}
+                  onKeyDown={onEnter}
+                />
+              </div>
+            </div>
+            {error && <p className="text-2xs text-destructive">{error}</p>}
+
+            {/* Per A4 grid (S7, AC-S7-14): configured (typed) numbers show
+                plain; a value nobody set shows the DERIVED fit, greyed. */}
+            {onSheetGridChange && (
+              <div className="flex flex-col gap-1 border-t pt-2">
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs text-muted-foreground">Per A4</Label>
+                  {sheetGrid && (
                     <button
                       type="button"
-                      aria-label={`Delete saved size ${saved.name}`}
-                      disabled={pending}
-                      className={cn(
-                        'shrink-0 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-destructive',
-                        pending && 'pointer-events-none opacity-50',
-                      )}
-                      onPointerDown={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                      }}
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        onDeleteSavedSize(saved.id, saved.name);
-                      }}
+                      className="text-2xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                      onClick={() => onSheetGridChange(null)}
                     >
-                      <X className="size-3.5" />
+                      Auto
                     </button>
-                  );
-                })()
+                  )}
+                </div>
+                <div className={cn('flex items-center gap-1.5', !sheetGrid && 'text-muted-foreground')}>
+                  <Input
+                    type="number"
+                    className="h-7 w-14 px-2 text-xs"
+                    aria-label="Grid columns per A4"
+                    min={1}
+                    value={colsDraft ?? (sheetGrid?.cols ?? resolvedGrid.cols)}
+                    onChange={(e) => setColsDraft(e.target.value)}
+                    onBlur={() => commitGrid('cols')}
+                    onKeyDown={onEnter}
+                  />
+                  <span className="text-xs">x</span>
+                  <Input
+                    type="number"
+                    className="h-7 w-14 px-2 text-xs"
+                    aria-label="Grid rows per A4"
+                    min={1}
+                    value={rowsDraft ?? (sheetGrid?.rows ?? resolvedGrid.rows)}
+                    onChange={(e) => setRowsDraft(e.target.value)}
+                    onBlur={() => commitGrid('rows')}
+                    onKeyDown={onEnter}
+                  />
+                  <label className="ml-1 flex items-center gap-1 text-xs">
+                    <input
+                      type="checkbox"
+                      aria-label="Turn 90 degrees"
+                      checked={sheetGrid?.turn ?? resolvedGrid.rotation === 90}
+                      onChange={(e) => setTurn(e.target.checked)}
+                    />
+                    Turn
+                  </label>
+                </div>
+                {resolvedGrid.refusedCell && (
+                  <p className="text-2xs text-destructive">
+                    Cell is {resolvedGrid.refusedCell.width_mm} x {resolvedGrid.refusedCell.height_mm} mm -
+                    too small for this tag, using the best fit instead
+                  </p>
+                )}
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              {onResizeAll && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-7 flex-1 text-xs"
+                  onClick={() => onResizeAll(width_mm, height_mm)}
+                >
+                  Apply to all lines
+                </Button>
+              )}
+              {!matchingPreset && onSaveAsSize && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-7 flex-1 text-xs"
+                  onClick={onSaveAsSize}
+                >
+                  Save as size
+                </Button>
               )}
             </div>
-          );
-        }}
-      />
-      <div className="grid grid-cols-2 gap-2">
-        <div className="flex flex-col gap-1">
-          <Label className="text-xs text-muted-foreground">W (mm)</Label>
-          <Input
-            type="number"
-            className="h-7 px-2 text-xs"
-            aria-label="Tag width (mm)"
-            value={wDraft ?? width_mm}
-            step={0.5}
-            onChange={(e) => setWDraft(e.target.value)}
-            onBlur={() => commit('w')}
-            onKeyDown={onEnter}
-          />
-        </div>
-        <div className="flex flex-col gap-1">
-          <Label className="text-xs text-muted-foreground">H (mm)</Label>
-          <Input
-            type="number"
-            className="h-7 px-2 text-xs"
-            aria-label="Tag height (mm)"
-            value={hDraft ?? height_mm}
-            step={0.5}
-            onChange={(e) => setHDraft(e.target.value)}
-            onBlur={() => commit('h')}
-            onKeyDown={onEnter}
-          />
-        </div>
-      </div>
-      {error && <p className="text-2xs text-destructive">{error}</p>}
-      <div className="flex gap-2">
-        {onResizeAll && (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-7 flex-1 text-xs"
-            onClick={() => onResizeAll(width_mm, height_mm)}
-          >
-            Apply to all lines
-          </Button>
-        )}
-        {!matchingPreset && onSaveAsSize && (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-7 flex-1 text-xs"
-            onClick={onSaveAsSize}
-          >
-            Save as size
-          </Button>
-        )}
-      </div>
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
     </div>
   );
 }

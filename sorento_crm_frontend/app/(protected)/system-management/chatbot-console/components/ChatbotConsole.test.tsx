@@ -131,6 +131,66 @@ describe('ChatbotConsole - sending a turn', () => {
   });
 });
 
+describe('ChatbotConsole - a send_attachments action', () => {
+  it('renders the file list under the reply that carries one', async () => {
+    postConsoleTurn.mockResolvedValue({
+      turn_id: 'turn-promo',
+      branch_kind: 'business_query',
+      reply_text: 'Here are the promo files.',
+      quick_replies: [],
+      send_messages: [],
+      session_vars: {},
+      trace_summary: { tool: null, args_short: null, crossdomain_rungs: [], reveals_dropped: [] },
+      actions: [
+        { kind: 'send_message', text: 'Here are the promo files.' },
+        {
+          kind: 'send_attachments',
+          dry_run: true,
+          attachments_src: [
+            {
+              url: 'https://cdn.example.com/promo-a.pdf',
+              filename: 'promo-a.pdf',
+              mimeType: 'application/pdf',
+              attachmentType: 'Promotion',
+            },
+          ],
+        },
+      ],
+    });
+
+    renderConsole();
+    fireEvent.change(textarea(), { target: { value: 'promo for srtwc286' } });
+    fireEvent.keyDown(textarea(), { key: 'Enter' });
+
+    await waitFor(() => expect(postConsoleTurn).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText('Here are the promo files.')).toBeInTheDocument();
+    const link = screen.getByRole('link', { name: 'promo-a.pdf' });
+    expect(link).toHaveAttribute('href', 'https://cdn.example.com/promo-a.pdf');
+    expect(screen.getByText('Promotion')).toBeInTheDocument();
+  });
+
+  it('renders nothing extra when the turn carries no send_attachments action', async () => {
+    postConsoleTurn.mockResolvedValue({
+      turn_id: 'turn-plain',
+      branch_kind: 'business_query',
+      reply_text: 'Stock is 12 on hand.',
+      quick_replies: [],
+      send_messages: [],
+      session_vars: {},
+      trace_summary: { tool: null, args_short: null, crossdomain_rungs: [], reveals_dropped: [] },
+      actions: [{ kind: 'send_message', text: 'Stock is 12 on hand.' }],
+    });
+
+    renderConsole();
+    fireEvent.change(textarea(), { target: { value: 'stock for srtwc286' } });
+    fireEvent.keyDown(textarea(), { key: 'Enter' });
+
+    await waitFor(() => expect(postConsoleTurn).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText('Stock is 12 on hand.')).toBeInTheDocument();
+    expect(screen.queryByTestId('turn-attachments')).not.toBeInTheDocument();
+  });
+});
+
 describe('ChatbotConsole - composer keyboard', () => {
   it('Enter sends the message', async () => {
     postConsoleTurn.mockResolvedValue({

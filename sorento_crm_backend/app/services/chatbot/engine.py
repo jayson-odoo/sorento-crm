@@ -21,11 +21,12 @@ state; the tail (S2) is what fills it.
 """
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import time
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as dataclasses_replace
 from datetime import datetime, timezone
 from typing import Any, Callable, Iterator, Mapping
 
@@ -35,29 +36,37 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models.base import set_company_scope
 from app.models.chatbot_turn import ChatbotTurn
-from app.services.chatbot import dispatch, jsc, trace as trace_mod
+from app.services.chatbot import dispatch, jsc, media_intake, trace as trace_mod
 from app.services.chatbot.contracts import (
     BUSINESS_BRANCH_KINDS,
+    CRM_COMPLETED_BRANCH_KINDS,
     SELF_CLOSING_BRANCH_KINDS,
     TURN_FAILURE_STAGES,
     Envelope,
-    coerce_domain_hint,
 )
-from app.services.chatbot.delegate import delegate_for, enabled_lanes_from
+from app.services.chatbot.delegate import enabled_lanes_from
 from app.services.error_handler import AppException
 from app.services.chatbot.head import parser
 from app.services.chatbot.head.access import check_access, default_space_id
 from app.services.chatbot.head.build_ctx import build_ctx
-from app.services.chatbot.head.output_exchange import (
-    ParserOutputError,
-    post_process,
-    suggest_follow_up,
-)
-from app.services.chatbot.head.route import decide
 from app.services.chatbot.lanes import business, canned as canned_lanes, casual
 from app.services.chatbot.lanes.escalation import run as run_escalation_lane
 from app.services.chatbot.lanes.business import resolve_gate, services as business_services
 from app.services.chatbot.usage import record_parser_usage
+# Stages C to G (PLAN-chatbot-turn-rearch.md "Turn order"). `turn/` is the pure core -
+# APPLY, the narrower, the plan, the router, the composer, the tail - and `turn_runtime`
+# is everything that has to touch a database or a tool on its behalf.
+from app.services.chatbot import session_state, turn_runtime
+from app.services.chatbot.turn import pending as turn_pending
+from app.services.chatbot.turn import state as turn_state
+from app.services.chatbot.turn import compose as turn_compose
+from app.services.chatbot.turn import fetch as run_fetch_mod
+from app.services.chatbot.turn import memory as memory_mod
+from app.services.chatbot.turn import tail as turn_tail
+from app.services.chatbot.turn.apply import apply as turn_apply
+from app.services.chatbot.turn.apply import is_product_shaped_entity
+from app.services.chatbot.turn.policy import load_policy
+from app.services.chatbot.turn.route import route as turn_route
 # Module level and by name, the same shape `app/api/v1/external/media.py` uses for its own
 # enqueue-and-wait: the offload is one flag away from being the normal path, and a lazy
 # import inside the branch would hide the dependency from anything reading this file.
@@ -79,16 +88,22 @@ SessionFactory = Callable[[], Session]
 # business turn that did not reach its answer half still closes as `delegated`.
 _CRM_FINISHED_HERE: frozenset[str] = SELF_CLOSING_BRANCH_KINDS - BUSINESS_BRANCH_KINDS
 
+# The arms whose whole answer IS the question the plan is asking, so the composer renders
+# the roster and the tail stores it - rather than the canned registry answering with a
+# sentence that names none of the options the customer is looking at. `business_query`
+# belongs here for the same reason the other two do: a narrowing question raised inside a
+# business domain now routes to that domain's own arm (`turn/route.py`), so the arm that
+# has to render the roster is the business one. The escalation kinds are deliberately
+# absent - a `team_pick` / `member_offer` / `company_pick` question is composed by the
+# escalation lane, which knows the teams.
+_ASK_BRANCH_KINDS: frozenset[str] = frozenset(
+    {"clarify_menu", "check_promotion", "business_query"}
+)
+
 # "the caller did not pass a row", which `None` cannot mean here: `None` is the real value
 # when the settings singleton does not exist yet.
 _UNSET: Any = object()
 
-# H5 / AC-107: `sub-media-intake` did not patch a transcript onto an audio turn, so the
-# spine's audio branch had no successor and the turn died silently. It is now a FAILED
-# turn with an explicit reason and today's error reply.
-AUDIO_NOT_PATCHED_ERROR = (
-    "media intake did not transcribe this voice note, so there is no text to understand"
-)
 GENERIC_ERROR_REPLY = parser.PARSER_ERROR_REPLY
 
 # AC-703. The queue the offloaded turn runs on, classified `fast` in `worker.QUEUES`: a
@@ -367,6 +382,29 @@ def _inject_harness_session(
     trace showed the contact's real memory while the lane ran on injected memory would be
     the worst kind of unreadable.
 
+    Fix 3 (console defect, contact 437264483, 23 Sep 2026): `session_state.five_keys`
+    returns the STORED top-level five keys whenever ANY of them is present on
+    `session_vars`, and only falls through to the `variables` nest when none is - so
+    writing the harness value into `variables` alone, leaving the stored row's own
+    top-level `focus`/`open_question`/etc untouched, meant injection silently did
+    nothing for any contact whose stored row was already in the new five-key shape
+    (every contact since #952). Two shapes the harness value can take, told apart by
+    `session_state.FIVE_KEYS` membership (the same membership rule `_harness_keys_
+    present` already uses: `{}` is a real instruction, not "nothing to do"):
+
+    * carries any of the five keys (the console's own echo of `result.session_vars`),
+      or is `{}` ("remembers nothing"): every one of the five keys is set from it
+      (`value.get(key)`, so an omitted key becomes `None`) - the harness state
+      REPLACES the memory for this turn, it does not merge with the stored row's.
+    * neither (the legacy flat shape, `contracts.LegacyVariables`): unchanged
+      behaviour - it is written to `variables`, and the five keys are stripped from
+      `session_vars` so `session_state.five_keys` falls through to its legacy
+      projection instead of reading the (now absent) stored top-level keys.
+
+    A harness value that is not a dict at all (e.g. JSON `null`) is treated the same
+    as `{}` - the memory is wiped for this turn. The console never sends one; this
+    only matters for a hand-built envelope.
+
     Nothing here writes: the head persists no session state at all (the tail does, at S2),
     and D14 already forbids that write on a dry run. The guarantee is asserted by
     `TestHarnessInjectionsG8::test_the_injected_state_is_never_written_back`.
@@ -376,42 +414,25 @@ def _inject_harness_session(
         return session_block
     session_vars = dict(jsc.get(session_block, "session_vars") or {})
     if "previous_conversation_state" in present:
-        session_vars["variables"] = _harness_value(envelope, "previous_conversation_state")
+        value = _harness_value(envelope, "previous_conversation_state")
+        value = value if isinstance(value, dict) else {}
+        session_vars.pop("variables", None)
+        for key in session_state.FIVE_KEYS:
+            session_vars.pop(key, None)
+        if value == {} or any(key in value for key in session_state.FIVE_KEYS):
+            for key in session_state.FIVE_KEYS:
+                session_vars[key] = value.get(key)
+        else:
+            session_vars["variables"] = value
     if "referenced_result_set" in present:
         session_vars["referenced_result_set"] = _harness_value(envelope, "referenced_result_set")
     return {**session_block, "session_vars": session_vars}
 
 
-def _drop_unknown_carried_domain(variables: Any) -> None:
-    """F3: an out-of-enum `domain_hint` in the contact's MEMORY, dropped on the way in.
-
-    The emission guard in `output_exchange` is not enough on its own. Live turn
-    fca4aa5e-806b-4403-aa2e-fc2d0961fb2d parsed cleanly as `incoming` and still reached
-    the gate as `purchasing`: the carried `variables.domain_hint` was `"purchasing"` (a
-    TEAM name written by an earlier turn, or by n8n, before that guard existed), and
-    `resolve_gate.retype_shipment_miss` adopted it over this turn's own domain. Seven more
-    sites in `output_exchange` inherit the carried domain the same way, so the value is
-    cleaned ONCE here, where the stored state enters the turn, rather than at each of them.
-
-    Mutates in place, deliberately: this dict IS `session_block.session_vars.variables`,
-    which becomes both `parent_input.previous_conversation_state` and `ctx.session` - the
-    two objects every carried-domain reader in the turn holds.
-    """
-    if not isinstance(variables, dict) or "domain_hint" not in variables:
-        return
-    variables["domain_hint"] = coerce_domain_hint(variables.get("domain_hint"))
 
 
-def _pending_kind(variables: dict[str, Any]) -> str | None:
-    """R3: the persisted marker, read where the JS matched a frozen reply string."""
-    pending = variables.get("pending")
-    kind = jsc.get(pending, "kind")
-    return str(kind) if kind else None
 
 
-# --------------------------------------------------------------------------- #
-# Reads (session-bound, short)
-# --------------------------------------------------------------------------- #
 
 
 def _read_session_vars(db: Session, *, respond_io_id: str, reply_to_id: str | None) -> dict:
@@ -732,6 +753,21 @@ def _duplicate_result(row: ChatbotTurn) -> TurnResult:
 # --------------------------------------------------------------------------- #
 
 
+def _asks_outstanding(verdict: dict[str, Any]) -> bool:
+    """Is this turn an OUTSTANDING order ask, in either vocabulary?
+
+    R20's carve-out is decided on the ask's own delivery-status axis, and that axis is
+    spelled twice on the wire: `status` is the v3 key the rearch reads, `order_status`
+    the bucketed one an older prompt version (and every recorded verdict) still carries.
+    Reading only one of them silenced the carve-out for half the corpus.
+    """
+    from app.services.chatbot.lanes.business.resolve_gate import OUTSTANDING_ORDER_STATUS
+
+    if jsc.nullish_str(verdict.get("status")).strip() == "outstanding":
+        return True
+    return jsc.nullish_str(verdict.get("order_status")).strip() in OUTSTANDING_ORDER_STATUS
+
+
 def run_turn(
     envelope: Envelope, *, session_factory: SessionFactory, offload: bool | None = None
 ) -> TurnResult:
@@ -743,7 +779,7 @@ def run_turn(
     could reorder two messages a customer sent one after the other), and the row insert.
     Everything after that is wrapped, so an unexpected exception anywhere - a provider
     error while resolving config, an access-service failure, the stock predicate throwing
-    on a contact with no `is_allowed_stock` field - closes the turn as `failed` with the
+    on a contact row it could not read - closes the turn as `failed` with the
     stage it reached and hands the caller today's error reply. A turn left at `processing`
     with a null error and no trace is exactly the dropped turn H32 is about. The ticket is
     released in a `finally` around all of it.
@@ -758,9 +794,8 @@ def run_turn(
     # read, and the offload path's row close - carries the contact's company scope.
     # Resolved once, on a session of its own, from the same rule the X-API-Key
     # dependency uses. An unknown contact fails closed to zero rows.
-    session_factory = _scoped_factory(
-        session_factory, _contact_company_scope(session_factory, contact_respond_id)
-    )
+    contact_scope = _contact_company_scope(session_factory, contact_respond_id)
+    session_factory = _scoped_factory(session_factory, contact_scope)
 
     if offload is None:
         offload = bool(getattr(settings, "chatbot_turn_on_worker", False))
@@ -896,17 +931,26 @@ def run_turn(
                         exc_info=True,
                     )
                 stage[0] = "received"
+            media_box: dict[str, Any] = {}
             result = _run_stages(
                 envelope,
                 session_factory=session_factory,
                 turn_trace=turn_trace,
                 turn_id=turn_id,
                 contact_respond_id=contact_respond_id,
+                contact_scope=contact_scope,
                 dry_run=dry_run,
                 actions=actions,
                 stage=stage,
                 switches=switches,
+                media_box=media_box,
             )
+            _apply_media_reply_prefix(result, media_box.get("outcome"))
+            # Guarded on `media_box.get("outcome")` (not just inside the helper): a
+            # plain text turn - the overwhelming majority - must not pay for a SELECT
+            # that only ever matters when a media outcome actually ran.
+            if media_box.get("outcome") is not None:
+                _repersist_media_prefixed_reply(session_factory, turn_id, result, dry_run)
             # D14: `is_test` is decided on the ENVELOPE, so it belongs on every answer the
             # head returns, whichever arm produced it. Stamped at this ONE exit rather than
             # on each arm's own `TurnResult`, which is exactly how three arms - the canned
@@ -1096,6 +1140,39 @@ def _worker_failed(
     return _failed_result(turn_id, "queued", message, [], envelope.dry_run)
 
 
+def _fanout_domain_hint(domains: list[Any], entities: Any) -> Any:
+    """Which of a fan-out's domains the resolver gate is asked about (AC-1708, MB-1).
+
+    `gate.run_gate` reads `parser.domain_hint` as the SOLE key into `gate.ALLOWED`, and
+    that matrix is per-domain: the `order` row carries `customer`, while `incoming`,
+    `inventory`, `promotion` and `spo_allocation` do not. A fan-out verdict names no
+    domain of its own, so the hint has to be CHOSEN - and choosing `plan.domains[0]`
+    (message order) meant "incoming and orders for hanlim" handed the gate a row with no
+    `customer` in it, the ambiguous customer was dropped from the gate's own scan, and
+    the turn answered "Here are the results." over two empty sections. The mirrored
+    wording, "orders and incoming for hanlim", asked the question correctly.
+
+    So: the first domain in the plan whose row COVERS every hint this turn's entities
+    carry, and no injection at all when none does. Refusing to inject restores the
+    generic picker (`turn/compose.py`'s own "Which one do you mean?"), which asks a badly
+    worded question rather than losing the ask.
+    """
+    from app.services.chatbot.lanes.business.gate import ALLOWED
+
+    hints = {
+        jsc.nullish_str(e.get("hint")).strip().lower()
+        for e in (entities or [])
+        if isinstance(e, dict) and jsc.nullish_str(e.get("hint")).strip()
+    }
+    for domain in domains:
+        row = ALLOWED.get(jsc.js_string(domain))
+        if row is None:
+            continue
+        if hints <= {jsc.js_string(kind).strip().lower() for kind in row}:
+            return domain
+    return None
+
+
 def _run_stages(  # noqa: PLR0915
     envelope: Envelope,
     *,
@@ -1103,17 +1180,28 @@ def _run_stages(  # noqa: PLR0915
     turn_trace: trace_mod.TurnTrace,
     turn_id: str,
     contact_respond_id: str,
+    contact_scope: frozenset,
     dry_run: bool,
     actions: list[dict[str, Any]],
     stage: list[str],
     switches: _TurnSwitches,
+    media_box: dict[str, Any],
 ) -> TurnResult:
     """received -> understood -> access -> routed. Wrapped by `run_turn`.
 
     `switches` is the settings snapshot `run_turn` already read (AC-810): this function
     does not read the singleton itself, because S7 mode is needed before the ticket, which
-    is before this runs.
+    is before this runs. `contact_scope` is the SAME frozenset `run_turn` already resolved
+    to build the scoped `session_factory` - threaded through rather than re-queried, for
+    the roster-plan re-validation below (security SF-1, hand pass 11 final).
+
+    `media_box` is `stage`'s own trick, one more mutable single-key box: this function
+    stashes the media-intake outcome onto it (chatbot media-into-turn, S2) so `run_turn`
+    can read it back AFTER this returns and prepend the "I read .../I heard ..." prefix
+    in the ONE place every answering arm's reply passes through, rather than at each of
+    this function's own dozen return sites.
     """
+    media_detected = None
     with _session(session_factory) as db:
         # AC-108: today's `set-human-intervened` path. The turn CONTINUES; the caller
         # clears the flag on the contact.
@@ -1126,33 +1214,14 @@ def _run_stages(  # noqa: PLR0915
                 }
             )
 
-        # AC-107 / H5: the attachment is still audio, so media intake did not patch a
-        # transcript in. n8n's audio branch simply had no successor and the turn vanished.
-        if _attachment_type(envelope) == "audio":
-            # Two stage names, on purpose. The ROW says `intake` (AC-107's word, and the
-            # real stopping point - media intake, which runs in n8n, is what failed). The
-            # TRACE row says `received`, because `TurnStage` is the closed set of eight
-            # the timeline renders and `intake` is not one of them. `facts.stage` carries
-            # the precise answer so the screen can show it without widening the timeline.
-            turn_trace.record(
-                "received",
-                status="failed",
-                summary="Could not read the voice note.",
-                why="Media intake returned no transcript, so there is nothing to understand.",
-                facts={"attachment_type": "audio", "stage": "intake"},
-                error=AUDIO_NOT_PATCHED_ERROR,
-                raw={"message": _inner_message(envelope)},
-            )
-            _close_turn(
-                db,
-                turn_id,
-                status="failed",
-                stage="intake",
-                branch_kind=None,
-                error=AUDIO_NOT_PATCHED_ERROR,
-                records=turn_trace.persisted(),
-            )
-            return _failed_result(turn_id, "intake", AUDIO_NOT_PATCHED_ERROR, actions, dry_run)
+        # Chatbot media-into-turn, S2/S3: an image or voice attachment is intaked
+        # INSIDE the turn - decided below, in the no-DB-session window the parser
+        # call already uses. A document, a video, or a sticker is not this step's
+        # concern (AC-1804): it falls through unchanged, on its caption text.
+        # `patched_upstream` is the SEPARATE transition-window signal (AC-1805): when
+        # n8n's own pipeline already decided this one, no intake runs here at all.
+        patched_modality = media_intake.patched_upstream(envelope)
+        media_detected = None if patched_modality else media_intake.detect(_inner_message(envelope))
 
         session_block = _read_session_vars(
             db,
@@ -1166,17 +1235,33 @@ def _run_stages(  # noqa: PLR0915
         harness_ignored: list[str] = [] if dry_run else harness_present
         if dry_run:
             session_block = _inject_harness_session(session_block, envelope)
-        variables = jsc.get(jsc.get(session_block, "session_vars"), "variables") or {}
-        _drop_unknown_carried_domain(variables)
-        referenced_result_set = jsc.get(
-            jsc.get(session_block, "session_vars"), "referenced_result_set"
-        )
         latest_user_message = build_latest_user_message(envelope, session_block)
-        parser_config = parser.resolve_config(
+        # -- stage A's three shelves (PLAN "State: three shelves, one writer each") --- #
+        policy = load_policy(db)
+        # Roster cap (PLAN-chatbot-answer-half-reattach.md, owner ruling 20 Sep 2026):
+        # `{entity kind: chatbot_entity_kinds.roster_cap}`, read off the SAME policy
+        # object every other per-kind fact (`did_you_mean`, `default_narrowing`) comes
+        # from, and handed down to `resolve_kinds` -> `resolve_gate.run` -> `gate.run_gate`
+        # - the one place a roster is actually cut.
+        roster_caps = {row.kind: row.roster_cap for row in policy.kinds}
+        profile, recall_enabled = turn_runtime.load_profile(db, contact_respond_id)
+        known_phone = turn_runtime.contact_phone(db, contact_respond_id)
+        turn_no = turn_runtime.turn_number(db, contact_respond_id)
+        state_in = turn_runtime.load_state(session_block, profile=profile, turn_no=turn_no)
+        remembered_before = session_state.five_keys(session_block)
+        # The parser's `Previous response:` line. Read here, at `received`, with the
+        # other contact facts and off the SAME session: it is what the bot last said to
+        # this contact, and the parser is the one component allowed to read prose.
+        previous_reply = turn_runtime.previous_reply_text(
             db,
-            current_date=_current_date_directive(),
-            override_version_id=_prompt_override(envelope, parser.PROMPT_KEY, dry_run=dry_run),
+            contact_respond_id=contact_respond_id,
+            ingress=envelope.ingress,
+            is_test=bool(dry_run),
         )
+        # `parser_config` is resolved AFTER media intake, not here: AC-1810's "no
+        # parser call" means no parser SETUP either - a media-denied turn (no API
+        # key required to check a gate/quota/burst decision) must not fail because
+        # nothing configured a provider for a parser this turn will never reach.
 
     turn_trace.record(
         "received",
@@ -1184,9 +1269,10 @@ def _run_stages(  # noqa: PLR0915
         why="Every turn starts from the contact's stored conversation state.",
         facts={
             "ingress": envelope.ingress,
-            "remembered_keys": len(variables),
+            "remembered_keys": len([k for k, v in remembered_before.items() if v]),
             "quoted_a_message": _reply_to_message_id(envelope) is not None,
             "dry_run": dry_run,
+            "turn_no": turn_no,
             # ALWAYS present, empty list included: a reader must never have to tell
             # "no harness keys" from "this build does not report them".
             "harness_keys_ignored": harness_ignored,
@@ -1194,25 +1280,155 @@ def _run_stages(  # noqa: PLR0915
         raw={"session_vars": session_block},
     )
 
-    # -- understood (NO DB SESSION IS OPEN HERE) ---------------------------- #
+    # -- MEDIA INTAKE (NO DB SESSION IS OPEN HERE, same window as the parser) --- #
+    if patched_modality is not None:
+        # AC-1805 (review round S3 + security item 4): n8n's own pipeline already
+        # decided, metered and recorded this one upstream - no intake runs here.
+        turn_trace.record(
+            "media_intake",
+            status="ok",
+            summary="Read the photo." if patched_modality == "image" else "Heard the voice note.",
+            why="n8n's own media pipeline already decided this one before /chat/turn ran.",
+            facts={"skipped": "patched_upstream", "modality": patched_modality},
+            raw=None,
+        )
+        media_box["patched_modality"] = patched_modality
+    elif media_detected is not None:
+        modality, attachment = media_detected
+        if not jsc.truthy(jsc.get(attachment, "url")):
+            # AC-107/H5, restated (captain ruling 23 Sep 2026): an attachment whose
+            # own `url` is falsy is unreadable, not a plain-text fallthrough. Never
+            # reaches `run()`'s decide/meter/enqueue pipeline - nothing to fetch, so
+            # no ledger row, no job.
+            outcome = media_intake.no_url_outcome(modality)
+        else:
+            caption = jsc.js_string(jsc.get(attachment, "description")) or None
+            outcome = media_intake.run(
+                respond_io_id=contact_respond_id,
+                message_id=_message_id(envelope),
+                modality=modality,
+                attachment=attachment,
+                caption=caption,
+                turn_id=turn_id,
+                session_factory=session_factory,
+                # note (a): the console already stored these bytes itself
+                # (`console_service._upload_console_media`, under `chatbot-console/`) -
+                # `_store_media_bytes` reads this back off the job to skip a second copy.
+                source="console" if envelope.ingress == "console" else "chat-turn",
+            )
+        media_box["outcome"] = outcome
+        turn_trace.record(
+            "media_intake",
+            status="failed" if outcome.stops_here else "ok",
+            summary=(
+                "Read the photo." if modality == "image" else "Heard the voice note."
+            ) if not outcome.stops_here else (
+                "Could not read the photo." if modality == "image" else "Could not hear the voice note."
+            ),
+            why="The customer sent media; this is what the intake pipeline decided and read.",
+            facts=_media_intake_facts(outcome),
+            error=outcome.reply_text if outcome.stops_here and outcome.turn_status == "failed" else None,
+            # Review round S5: `job_id`/`attachment_id`/the full `result` live here,
+            # never in `facts` - `TurnPanel`'s generic StageRow prints every `facts`
+            # value verbatim (`String(value)`), so a bare id there is a UUID on
+            # screen (cursor rule) and the nested `result` object prints as
+            # "[object Object]". `console_service`/`chatbot.py`'s own readers merge
+            # `facts` and `raw` back together, so nothing downstream of the trace
+            # itself lost a field.
+            raw={"job_id": outcome.job_id, "attachment_id": outcome.attachment_id, "result": outcome.result},
+        )
+        if outcome.stops_here:
+            close_stage = "sent" if outcome.turn_status == "done" else "media_intake"
+            reply_text = outcome.reply_text or ""
+            lane_actions = list(actions)
+            if reply_text:
+                lane_actions = [
+                    *actions,
+                    {
+                        "kind": "send_message",
+                        "text": reply_text,
+                        "quick_replies": None,
+                        "dry_run": dry_run,
+                    },
+                ]
+            # A media-denied turn never reaches `_run_answer`/`_record_memory_trace`
+            # (there is no `Answer` object - it closed before APPLY even ran), so those
+            # two stage records are written directly here, in the same minimal shape,
+            # so the trace still reads received -> media_intake -> replied -> remembered
+            # like every other declared branch kind (AC-007, captain ruling 23 Sep 2026).
+            turn_trace.record(
+                "replied",
+                summary=f"Replied: {reply_text}" if reply_text else "Sent no reply; the burst repeat stayed silent.",
+                why="The reply is the media intake's own denial text, never the customer's words.",
+                facts={"lane": "media_denied", "sections": 0, "asking": None, "files": 0},
+                raw={"reply": {"text": reply_text}},
+            )
+            turn_trace.record(
+                "remembered",
+                summary=(
+                    "Nothing was written: this is a test turn (D14)."
+                    if dry_run
+                    else "Nothing changed in what the bot remembered."
+                ),
+                why="A media-denied turn never reached APPLY, so there is no state to write.",
+                facts={"written": False, "dry_run": dry_run},
+                raw=None,
+            )
+            with _session(session_factory) as close_db:
+                _close_turn(
+                    close_db,
+                    turn_id,
+                    status=outcome.turn_status,
+                    stage=close_stage,
+                    branch_kind="media_denied",
+                    error=None if outcome.turn_status == "done" else reply_text,
+                    records=turn_trace.persisted(),
+                    response={"actions": lane_actions, "reply": {"text": reply_text}},
+                )
+            return TurnResult(
+                turn_id=turn_id,
+                is_test=dry_run,
+                branch_kind="media_denied",
+                delegate=None,
+                reply={"text": reply_text, "quick_replies": None},
+                actions=lane_actions,
+                status=outcome.turn_status,
+                stage=close_stage,
+            )
+        # AC-1807/AC-1808/AC-1809: the parser reads the intake's OWN rendered text -
+        # the caption plus entity raws, or the entity raws alone with no caption
+        # (`needs_clarification` no longer nulls it - service.py's own change), or
+        # the transcript verbatim - never the url, never the envelope's own text.
+        latest_user_message = outcome.rendered_text or ""
+
+    # Resolved HERE, not inside the `received` session block above: a media-denied
+    # turn returned before this line and never needed a provider configured for a
+    # parser it will not call (AC-1810's "no parser call" reading extended to setup).
+    with _session(session_factory) as db:
+        parser_config = parser.resolve_config(
+            db,
+            current_date=_current_date_directive(),
+            override_version_id=_prompt_override(envelope, parser.PROMPT_KEY, dry_run=dry_run),
+        )
+
+    # -- B PARSER (NO DB SESSION IS OPEN HERE) ------------------------------ #
+    # One call, one schema. What comes back IS the verdict - a plain dict, validated once
+    # by the parser's own schema and never re-modelled (PLAN "APPLY contract"). The
+    # post-processor that used to sit here, and the thirteen places inside it that
+    # overrode the parser's answer, are gone: APPLY is the one place a verdict becomes a
+    # decision now.
     stage[0] = "understood"
-    parent_input = {
-        "latest_user_message": latest_user_message,
-        "contact_id": contact_respond_id,
-        "previous_conversation_state": variables,
-        "referenced_result_set": referenced_result_set,
-    }
+    profile_words = memory_mod.profile_block(state_in.profile)
+    pending_options = _pending_option_labels(state_in.pending)
     user_block = parser.build_user_block(
-        previous_response=variables.get("response"),
+        previous_response=previous_reply,
         latest_user_message=latest_user_message,
-        pending_kind=_pending_kind(variables),
+        pending_kind=state_in.pending.kind if state_in.pending is not None else None,
+        pending_options=pending_options,
+        profile_block=profile_words,
+        focus=state_in.focus,
     )
-    # G6: a dry run may supply the emission instead of paying for it. The mock goes
-    # through the SAME `post_process` + `suggest_follow_up` the real parse takes, so a
-    # harness turn routes off DERIVED state and exercises the code under test rather than
-    # whatever the harness happened to type. A mock that is not a parser emission raises
-    # `ParserOutputError` from `post_process` and lands on the failed-`understood` arm
-    # below, exactly as a malformed model answer does (R5 / H44).
+    # G6: a dry run may supply the emission instead of paying for it.
     parser_bypassed = dry_run and "mock_reformulator_output" in harness_present
     parse_started = time.perf_counter()
     try:
@@ -1222,9 +1438,17 @@ def _run_stages(  # noqa: PLR0915
             parser_raw = parser.parse(parser_config, user_block)
         # Empty on a bypassed parse: no call, no spend to record.
         parser_usage = getattr(parser_raw, "usage", {}) or {}
-        parse_block = post_process({"output": parser_raw}, {}, parent_input)
-        parse_block = suggest_follow_up(parse_block, parent_input)
-    except (parser.ParserError, ParserOutputError) as exc:
+        if not isinstance(parser_raw, dict) or not parser_raw:
+            raise parser.ParserError("parser returned no usable emission")
+        if parser_bypassed:
+            # G6's own half of R5 / H44. A PROVIDER's answer was held to the declared
+            # keys inside `parser.parse`; the harness value never went near it, so
+            # `{"nope": true}` (the 5 Sep 2026 production case) routed a whole turn off
+            # tolerant defaults and finished `done`. Same rule, same wording, named here
+            # because this is the seam that skipped it.
+            parser.assert_emission(parser_raw)
+        verdict: dict[str, Any] = dict(parser_raw)
+    except parser.ParserError as exc:
         # R5 / H44: no soft default and no default routing. A failed understanding is a
         # failed turn with today's error reply.
         message = str(exc)
@@ -1259,13 +1483,48 @@ def _run_stages(  # noqa: PLR0915
             )
         return _failed_result(turn_id, "understood", message, actions, dry_run)
 
-    qf = parse_block.get("output") or {}
+    # -- recall: ONE re-parse, behind two flags (AC-1547) ------------------- #
+    # `anaphora.backward_reference` is the parser's own signal that the message points at
+    # something outside this turn's focus; `chatbot_recall_enabled` is the contact's own
+    # switch, off by default. Both, or neither: recall doubles the parser spend on the
+    # turns it fires, and it is never another contact's memory.
+    recalled: list[dict[str, Any]] = []
+    if recall_enabled and jsc.get(verdict.get("anaphora"), "backward_reference") is True:
+        with _session(session_factory) as db:
+            recalled = memory_mod.recall(contact_respond_id, verdict, db)
+        if recalled:
+            user_block = parser.build_user_block(
+                previous_response=previous_reply,
+                latest_user_message=latest_user_message,
+                pending_kind=state_in.pending.kind if state_in.pending is not None else None,
+                pending_options=pending_options,
+                profile_block=profile_words,
+                episodes_block=memory_mod.episodes_block(recalled),
+                focus=state_in.focus,
+            )
+            try:
+                parser_raw = parser.parse(parser_config, user_block)
+                verdict = dict(parser_raw)
+                parser_usage = getattr(parser_raw, "usage", {}) or {}
+            except parser.ParserError:
+                # The FIRST verdict is already a usable answer; a failed re-parse costs
+                # the episodes, never the turn.
+                logger.warning("chatbot turn %s: the recall re-parse did not answer", turn_id)
+        turn_trace.add(
+            "recall",
+            {
+                "frame_ids": [f.get("id") for f in recalled],
+                "frames": len(recalled),
+                "reparsed": bool(recalled),
+            },
+        )
+
     turn_trace.record(
         "understood",
         summary=(
             "Parser bypassed by harness."
             if parser_bypassed
-            else trace_mod.understood_summary(qf)
+            else trace_mod.understood_summary(verdict)
         ),
         why=(
             "A test envelope supplied the parser's answer, so no model was asked; "
@@ -1274,24 +1533,32 @@ def _run_stages(  # noqa: PLR0915
             else "The parser is the only step that reads the customer's words; everything after it works on structured state."
         ),
         facts={
-            "message_type": qf.get("message_type"),
-            "domain": qf.get("domain_hint"),
-            "intent": qf.get("intent_hint"),
-            "entities": len(qf.get("entities") or []),
+            "message_type": verdict.get("message_type"),
+            "domain": verdict.get("domain_hint"),
+            "intent": verdict.get("intent_hint"),
+            "entities": len(verdict.get("entities") or []),
             "prompt_version": parser_config.prompt_version,
-            # Always present, 0 when the parse was bypassed or the provider reported
-            # nothing: a missing row reads as "free", which no LLM call is.
             "tokens": int(parser_usage.get("total_tokens") or 0),
             "parser_bypassed": parser_bypassed,
+            "recalled_frames": len(recalled),
+            # D17: WHICH options the parser was shown, on the record.
+            "open_question_options": pending_options,
         },
-        raw={"parser_raw": parse_block.get("_parser_raw"), "derived": qf},
+        raw={"parser_raw": parser_raw, "derived": verdict},
     )
+    turn_trace.add("prompt_text", {"text": user_block})
 
-    # -- access + routed ---------------------------------------------------- #
+    # The routing default lands ONCE, here, after the last parse and before the access
+    # read (finding 2b): every reader downstream - access, the lanes, the trace - sees
+    # the same `suggested_agent`. SRTSC07 (prod transcript, 22 Sep 2026): `pending=` lets
+    # a null parser agent on the ACCEPTANCE turn carry the offer's own agent forward, the
+    # same way `lane_parse_output` already carries the team - so the access check just
+    # below is made against the CARRIED agent, not the default. No `session=` (reviewer
+    # round 1, SHOULD-4): no writer ever produces a prior-turn agent nest to read.
+    verdict = turn_runtime.with_routing_agent_default(verdict, pending=state_in.pending)
+
+    # -- access, C APPLY, D ROUTE ------------------------------------------- #
     stage[0] = "access"
-    # Set inside the block below when the CRM owns the turn and the fetch failed for a
-    # reason that is not an absence; returned after the session closes, like every other
-    # result this function hands back.
     hard_failure: TurnResult | None = None
     with _session(session_factory) as db:
         _record_parser_usage(
@@ -1302,7 +1569,7 @@ def _run_stages(  # noqa: PLR0915
             dry_run=dry_run,
             answered=True,
         )
-        suggested_agent = jsc.get(qf.get("routing"), "suggested_agent")
+        suggested_agent = jsc.get(verdict.get("routing"), "suggested_agent")
         access = check_access(
             db,
             agent_code=suggested_agent,
@@ -1326,319 +1593,1007 @@ def _run_stages(  # noqa: PLR0915
         )
 
         stage[0] = "routed"
+        settings_row = switches
+        stock_denial_enabled = _stock_denial_enabled(db, settings_row)
+        enabled_lanes = _enabled_lanes(db, settings_row)
+        s7_mode = _s7_mode(db, settings_row)
+        space_id_for_turn = business_services.fetch_space_id(db)
+
+        # C APPLY, first pass: state and plan from the verdict alone.
+        state_out, plan = turn_apply(state_in, verdict, policy)
+
+        # The resolver seam, and the ONE re-entry of APPLY it feeds (PLAN "Turn order":
+        # "Reconciliation lives in E because it needs the resolver, but its RULE is
+        # declared in C's policy and its outcome is written back into state' before F
+        # runs"). Asked only when the turn named something to resolve.
+        parsed_output = turn_runtime.lane_parse_output(
+            verdict,
+            focus=state_out.focus,
+            pending=state_in.pending,
+            # An accepted escalation offer routes by the team the customer just
+            # picked (contract 108); a multi-team offer's own `pending.team` is
+            # null until one of its options is chosen.
+            accepted_team=plan.trace.team,
+            accepted_assignee=plan.trace.assignee,
+            # The company a numbered pick over the company clarify named - written onto
+            # `escalation.company_pick`, the one key `escalation_context` validates a
+            # named company through (hand pass 11, blocker 2).
+            accepted_company=plan.trace.company,
+            declined_offer_copy=plan.trace.lane == "offer_declined",
+            prior_session=session_block,
+            # R6 (22 Sep 2026): a null `routing.suggested_team` falls back to the
+            # QUESTION's own domain team before the flat "customer_service" literal.
+            policy=policy,
+        )
+        # Security N-3/S2 (hand pass 11 security review): an accepted offer whose options
+        # carry a COMPANY needs that company - and above all its `company_id` - to reach
+        # `escalation_context`, whose two company arms both read this one legacy field.
+        # See `turn_runtime.escalation_roster_plan`'s own docstring.
+        # A copy of `session_block` for `ctx` only; `lane_parse_output` above already
+        # read the UNPATCHED one, so this cannot change what this turn's own team
+        # resolved to.
+        ctx_session = session_block
+        roster_plan = turn_runtime.escalation_roster_plan(
+            state_in.pending,
+            accepted_lane=plan.trace.lane,
+            accepted_rules=plan.trace.rules_fired,
+        )
+        # Security SF-1 (hand pass 11 final): the plan is minted from a PERSISTED offer,
+        # which can be turns old, so a row's company must still be in the contact's
+        # CURRENT scope before it drives routing - a revoked membership must not keep
+        # routing to the company it lost. Filtered here, at the one injection point, so
+        # the printed clarify pool and the routed id can never disagree. An emptied plan
+        # degrades to `None`, which is the contact-derived company in
+        # `resolve_routing_company` - the pre-feature behaviour.
+        if roster_plan:
+            roster_plan = [
+                row
+                for row in roster_plan
+                if row.get("company_id") and str(row["company_id"]) in contact_scope
+            ] or None
+        if roster_plan:
+            session_vars = session_block.get("session_vars") if isinstance(session_block, dict) else None
+            prior_variables = (session_vars or {}).get("variables") or {}
+            ctx_session = {
+                **session_block,
+                "session_vars": {
+                    **(session_vars if isinstance(session_vars, dict) else {}),
+                    "variables": {
+                        **prior_variables,
+                        "routing_roster_plan": roster_plan,
+                        # MERGE, never replace (reviewer N-c): `variables.routing` is a
+                        # whole routing block on a session n8n wrote, and this needs
+                        # exactly one key of it - the team, so `escalation_context`'s own
+                        # `same_team` equality check holds for the offer we just accepted.
+                        "routing": {
+                            **(
+                                prior_variables.get("routing")
+                                if isinstance(prior_variables.get("routing"), dict)
+                                else {}
+                            ),
+                            "suggested_team": plan.trace.team,
+                        },
+                    },
+                },
+            }
         ctx = build_ctx(
-            contact=envelope.contact,
+            contact=_contact_block(envelope, known_phone),
             text=_tf_message(envelope),
-            session=session_block,
-            parse=parse_block,
+            session=ctx_session,
+            parse={"output": parsed_output, "_parser_raw": verdict},
             access=access,
             media=getattr(envelope, "media", None),
         )[0]["json"]["ctx"]
 
-        # The settings snapshot `run_turn` read on its first session. Named
-        # `settings_row` because every helper below reads it with `getattr` and does not
-        # care whether it was handed the ORM row or the snapshot of it.
-        settings_row = switches
-        stock_denial_enabled = _stock_denial_enabled(db, settings_row)
-        enabled_lanes = _enabled_lanes(db, settings_row)
-        # AC-810: both switches come off that same row, so the turn decides once and every
-        # branch below reads a local boolean. Re-reading per branch would mean a query per
-        # decision and, worse, a turn that could see the switch change halfway through it.
-        s7_mode = _s7_mode(db, settings_row)
-        business_lane_enabled = _business_lane_enabled(db, settings_row)
-        # D5, once per turn: the respond workspace's own `space_id`, never n8n's hard-coded
-        # 364817. Read HERE because S6c's probes run after this session has closed.
-        space_id_for_turn = business_services.fetch_space_id(db)
-        # AC-304: the configured unsupported-domain list, or None when the owner has set
-        # none. `route.decide` owns the fallback to the two literals the JS hard-codes, so
-        # None travels as an argument rather than as an absent one - one call shape, and
-        # the default lives in exactly one file.
-        branch_kind, tier_stamp = decide(
-            ctx,
-            stock_denial_enabled=stock_denial_enabled,
-            unsupported_domains=_unsupported_domains(settings_row),
-        )
-        item = _stamp_item(access, branch_kind, tier_stamp)
+        # Grant before roster (SF-1, PLAN-chatbot-answer-half-reattach.md slice R2):
+        # an ungranted contact's sales-report ask is refused HERE, before the resolver
+        # ever runs. Read off `parsed_output` (the PROJECTED `order_status` -
+        # `lane_parse_output` derives it from `focus.status` when this turn's own
+        # verdict names none, exactly the carried-offer/carried-focus shape SF-2's
+        # own tests pin), never the raw verdict alone: a position pick answering a
+        # `sales_report_detail` offer, or a plain message under a carried
+        # `focus.status == "sales_report"`, names no `order_status` of its own, and
+        # checking the raw verdict here let the R4 bridge's own pre-fetch miss arm
+        # (a resolver `not_found` exit needs no fetch to answer) compose a reply
+        # before `lanes.business.run_fetch`'s own second-line check ever ran -
+        # measured, `test_sales_report_grant_security.py::TestSF2...` (SF-2(i)/(ii)).
+        # Mirrors main's own R-S3 check (`lanes.business.run_until_exit`'s bypass) for
+        # the same reason it exists there: the ambiguous-customer picker is an
+        # interactive, multi-choice prompt naming real customer matches, and showing
+        # it before refusing leaks that enumeration for nothing. `lanes.business.
+        # run_fetch`'s own `_SALES_REPORT_GRANT` check stays as the second line of
+        # defence, for a re-entry path that calls it directly.
+        from app.services.chatbot.lanes.business import _SALES_REPORT_GRANT
 
+        sales_report_grant_refused = (
+            jsc.js_string(parsed_output.get("order_status") or "").strip() == "sales_report"
+            and _SALES_REPORT_GRANT not in set(access.get("attributes") or [])
+        )
+        if sales_report_grant_refused:
+            # Same event shape `lanes.business.run_fetch`'s own sales-report grant
+            # check emits (`__init__.py:1216`), so an operator reading the trace sees
+            # one denial shape regardless of which seam refused it.
+            turn_trace.add(
+                "domain_grant",
+                {
+                    "domain": verdict.get("domain_hint"),
+                    "skipped": "not_granted",
+                    "needs": _SALES_REPORT_GRANT,
+                },
+            )
+
+        resolved_kinds: dict[str, dict[str, int]] = {}
+        compatible_entities: list[dict[str, Any]] = []
+        predicate: dict[str, Any] | None = None
+        resolved_candidates: dict[str, list[dict[str, Any]]] = {}
+        unplaced_tokens: dict[str, str] = {}
+        spec_tier = False
+        # R2 (PLAN-chatbot-answer-half-reattach.md): the raw `resolve_gate.run` payload
+        # (`resolved`, `gate`, `aggregate`, `tier_gate`, `_exit_kind`), carried through
+        # `ResolveOutcome.payload` - `None` until the resolver actually runs. Nothing
+        # consumes it yet beyond handing the real gate to `make_tool_runner` below.
+        resolver_payload: dict[str, Any] | None = None
+        # AC-1701/AC-1702: the parse output the ANSWER composers read. `complete_answer`
+        # reads the SAME `ctx["parse"]["output"]` the resolver ran on, so the bridge does
+        # too - see `turn_runtime.answer_parse_output`. The bare verdict is the fallback
+        # for a turn that never reaches the resolver at all.
+        answer_parse_output: dict[str, Any] = (ctx.get("parse") or {}).get("output") or {}
+        # SF-1: a refused sales-report ask never reaches the resolver at all - no
+        # `resolve_gate.run` call, no roster built from what it would have found.
+        if not sales_report_grant_refused and (plan.fetch or plan.ask is not None):
+            # The REAL branch this plan belongs to, the SAME function "D ROUTE" below
+            # calls on the (possibly reconciled) plan - not a literal "business_query"
+            # for every turn, so a promotion ask reaches `resolve_gate.run` at
+            # "access_check" instead of the generic "resolve" entry
+            # (`lanes.business.ENTRY_BY_BRANCH_KIND`). One rule, one place: called twice
+            # on two plan snapshots, never duplicated.
+            provisional_branch_kind = turn_route(plan)
+            # The RESOLVER's own ctx: a roster has to list things that exist, with the
+            # stamps the picker probe measures ("SRTWC286-SH-NEW-P - has incoming"), and
+            # a turn that named no product of its own ("incoming", after a stock answer
+            # about ten variants) gave the resolver nothing to look up. The carried
+            # subject is handed over for that question.
+            #
+            # A FETCH turn hands over the UNSETTLED carry only. A settled carry is
+            # already in the plan and re-resolving one is how a stale subject gets back
+            # into an answer; a carry that is still only a TOKEN is in the plan as a word
+            # no `*_ids` param can be built from, so the fetch runs about nothing. That
+            # is browser pass 6's promo defect exactly (turn 0bd47e62): the tier pick
+            # settled the tier, and the ruling "a pick settles only its kind" leaves the
+            # product on the fetch - but it was never resolved, so the promotion tool was
+            # called with no product at all.
+            # AC-1708 (reviewer S7): and the domain the plan is actually asking about.
+            # `gate.py:357` reads `parser.domain_hint` and nothing else - it is the key
+            # into `ALLOWED`, so a verdict that names none leaves `gate_debug` as
+            # `{"domain": null}` with no `allowed_lookup`, the gate raises no picker at
+            # all (`gate_passed: True`, `gate_clarification: ""`), and the ambiguous
+            # customer falls through to `turn/compose.py`'s generic "Which one do you
+            # mean?". The pre-rearch head had no such turn - one verdict named one
+            # domain - so `domain_hint` was never absent there; contract 122's fan-out
+            # (`asks: [{"domain": "order"}, {"domain": "incoming"}]`) is what introduced
+            # it. WHICH domain is `_fanout_domain_hint`'s own rule (reviewer MB-1): the
+            # first one whose `ALLOWED` row takes the kinds this turn's entities carry,
+            # and no hint at all when none does - message order alone decided it before,
+            # so "incoming and orders for hanlim" handed the gate a row with no
+            # `customer` and lost the ambiguous customer entirely.
+            resolver_parse_output = turn_runtime.with_carried_entities(
+                (ctx.get("parse") or {}).get("output") or {},
+                state_out.focus,
+                unsettled_only=plan.ask is None,
+            )
+            if (
+                len(plan.domains) > 1
+                and resolver_parse_output.get("entities")
+                and not jsc.truthy(resolver_parse_output.get("domain_hint"))
+            ):
+                fanout_domain = _fanout_domain_hint(
+                    plan.domains, resolver_parse_output.get("entities")
+                )
+                if fanout_domain is not None:
+                    resolver_parse_output = {
+                        **resolver_parse_output,
+                        "domain_hint": fanout_domain,
+                    }
+            resolver_ctx = {
+                **ctx,
+                "parse": {**(ctx.get("parse") or {}), "output": resolver_parse_output},
+            }
+            resolve_outcome = (
+                turn_runtime.resolve_kinds(
+                    db,
+                    ctx=resolver_ctx,
+                    branch_kind=provisional_branch_kind,
+                    space_id=space_id_for_turn,
+                    dry_run=dry_run,
+                    # The roster about to be printed is an INCOMING one: it carries the
+                    # has/no-incoming stamp whether the customer named the family this
+                    # turn or the conversation carried it (browser pass 3, turn 2).
+                    stamp_incoming=plan.ask is not None and "incoming" in plan.domains,
+                    # Item 2: the customer roster carries has DO / no DO, the way the
+                    # product roster carries has/no incoming. Read off the CUSTOMER TOKEN
+                    # this turn named, not off `plan.ask`: on this pass the plan is the
+                    # FIRST one, taken before the resolver ran, and the roster it is about
+                    # to ask for does not exist yet (the same reason `stamp_incoming`
+                    # reads the domain rather than the ask). R20's carve-out stands and is
+                    # decided on the ask's OWN status: the probe measures DELIVERED
+                    # orders, the opposite population from the outstanding report's DO
+                    # block, so an outstanding ask is stamped with nothing rather than
+                    # with a claim its own answer contradicts two turns later.
+                    stamp_customer=(
+                        any(
+                            jsc.nullish_str(e.get("hint")).strip().lower() == "customer"
+                            for e in (verdict.get("entities") or [])
+                            if isinstance(e, dict)
+                        )
+                        and not _asks_outstanding(verdict)
+                    ),
+                    # Rows 1 and 7: the promotion and purchase-order product rosters carry
+                    # has promo / no promo and has PO / no PO, read the same way
+                    # `stamp_incoming` is - off the DOMAIN the turn is about to ask under,
+                    # because the roster itself does not exist yet on this first plan.
+                    stamp_promotion=plan.ask is not None and "promotion" in plan.domains,
+                    stamp_purchase_order=(
+                        plan.ask is not None and "purchase_order" in plan.domains
+                    ),
+                    roster_caps=roster_caps,
+                )
+            )
+            resolved_kinds = resolve_outcome.resolved_kinds
+            compatible_entities = resolve_outcome.compatible_entities
+            predicate = resolve_outcome.predicate
+            resolved_candidates = resolve_outcome.resolved_candidates
+            unplaced_tokens = resolve_outcome.unplaced_tokens
+            spec_tier = resolve_outcome.spec_tier
+            resolver_payload = resolve_outcome.payload
+            answer_parse_output = turn_runtime.answer_parse_output(
+                resolver_ctx["parse"]["output"],
+                gate=(resolver_payload or {}).get("gate"),
+                domains=plan.domains,
+                db=db,
+            )
+            if resolved_kinds or resolved_candidates:
+                # The ONE re-entry the plan allows: what the resolver found goes back
+                # into APPLY, so the narrower asks about things that exist and a
+                # reconciled kind lands before anything is fetched.
+                state_out, plan = turn_apply(
+                    state_in,
+                    verdict,
+                    policy,
+                    resolved_kinds,
+                    resolved_candidates,
+                    frozenset(unplaced_tokens),
+                )
+
+        # D ROUTE. Two facts outrank the plan and neither is IN one: a refused access
+        # agent (contract 58, fail closed) and the stock-denial switch, which is decided
+        # from the CONTACT's own record (contract 61, 62).
+        if access.get("allowed") is not True:
+            branch_kind = "access_denied"
+        elif stock_denial_enabled and _stock_check_denied(db, envelope, verdict):
+            branch_kind = "demand_qty" if _demand_qty_missing(verdict) else "stock_denied"
+        else:
+            branch_kind = turn_route(plan)
+        item = _stamp_item(access, branch_kind, {})
+
+        # AC-1546: the episode belongs to the topic that just CLOSED, and a topic closes
+        # because the customer changed subject - not because this turn's lane went on to
+        # answer. Written HERE, where the reset is decided, so a turn whose fetch failed
+        # or whose lane refused still remembers the topic it ended. Once per turn, never
+        # mid-topic, never on a dry run.
+        if not dry_run and verdict.get("topic_reset") is True:
+            _write_episode(
+                db,
+                contact_respond_id=contact_respond_id,
+                before=remembered_before,
+                turn_id=turn_id,
+            )
+
+        turn_trace.add(
+            "apply",
+            {
+                "verdict": verdict,
+                # What APPLY read this message AS, before any rule acted on it
+                # (`turn/decide.py`): ANSWER, REFINE, NEW_ASK or CARRY, plus the one
+                # rule that decided it.
+                "decision": dict(plan.trace.decision) if plan.trace.decision else None,
+                "state_diff": turn_runtime.focus_diff(state_in.focus, state_out.focus),
+                "narrowing": list(plan.trace.narrowing),
+                "reconciled": [list(r) for r in plan.trace.reconciled],
+                "rules_fired": list(plan.trace.rules_fired),
+                "plan": {
+                    "domains": list(plan.domains),
+                    "fetch": [spec.domain for spec in plan.fetch],
+                    "denied": list(plan.denied),
+                    "ask": plan.ask.kind if plan.ask is not None else None,
+                    "lane": plan.trace.lane,
+                },
+            },
+        )
         turn_trace.record(
             "routed",
-            summary=f"Routed to {trace_mod.lane_words(branch_kind, qf.get('domain_hint'))}.",
-            why=trace_mod.routed_why(branch_kind, qf, bool(access.get("allowed"))),
+            summary=f"Routed to {trace_mod.lane_words(branch_kind, verdict.get('domain_hint'))}.",
+            why=trace_mod.routed_why(branch_kind, verdict, bool(access.get("allowed"))),
             facts={
                 "lane": branch_kind,
-                "tier_pick": tier_stamp.get("tier_pick"),
+                "domains": list(plan.domains),
+                "asking": plan.ask.kind if plan.ask is not None else None,
                 "stock_denial_enabled": stock_denial_enabled,
-                # Why this turn went to n8n or did not, without reading the settings row.
                 "lane_completed_by_crm": branch_kind in enabled_lanes,
             },
             raw={"item": item},
         )
 
-        # -- the business lane's resolve + gate (S6a) ----------------------- #
-        # THE one call site into `lanes/`. Three arms reach `sub-resolve-and-gate` in
-        # n8n (`check_promotion` through `tag-entry-access-check`, `stock_denied` and
-        # `business_query` through `tag-entry-resolve`), so those three run it here and
-        # hand the caller the sub's own output item; the other ten delegate unchanged.
-        #
-        # It runs INSIDE this session on purpose - the resolver is a database service and
-        # cannot be called without one. That leaves the session held across the resolver's
-        # optional spec-search model call (2 to 3 s when `understand_phrase` fires), which
-        # is the ONE place this turn breaks the plan's "never hold a session across
-        # provider I/O" rule. Named rather than hidden: S6b moves fetch into its own stage
-        # and is where the split belongs, because it adds the MCP call this lane does not
-        # yet make.
-        delegate = delegate_for(branch_kind, enabled_lanes)
-        if delegate is None and business.handles(branch_kind) and not business_lane_enabled:
-            # The settings row named a business arm, but `chatbot_business_lane_enabled`
-            # (the lane's own switch, S6a) is off, so the block below never runs and
-            # nothing in this build would answer the turn. Without this the turn closes
-            # `done` at `routed` with no reply and no delegate - the silent turn H11 names,
-            # reached through the settings form instead of through a bug. The two switches
-            # are ordered on purpose (deploy, compare, switch on, cut n8n); this is what
-            # makes the wrong order safe rather than silent.
-            delegate = business.DELEGATE
-        completes_here = delegate is None
+        # S3 (chatbot media-into-turn): bare entities, no domain, no carried focus -
+        # resolved and answered deterministically here, never through the generic
+        # fetch/ask machinery below (there is nothing for it to fetch: `plan.fetch`
+        # and `plan.ask` are both empty for this lane) and never through the `casual`
+        # lane's LLM clarifier.
+        if plan.trace.lane == "entities_only":
+            return _run_entities_only_arm(
+                db,
+                turn_id=turn_id,
+                ctx=ctx,
+                item=item,
+                verdict=verdict,
+                state=state_out,
+                actions=actions,
+                dry_run=dry_run,
+                session_factory=session_factory,
+                turn_trace=turn_trace,
+                stage=stage,
+                contact_respond_id=contact_respond_id,
+                space_id=space_id_for_turn,
+                remembered_before=remembered_before,
+                recalled=recalled,
+                from_photo=_media_source_modality(media_box) == "image",
+                # Review round nit: a LIVE media outcome (image or voice) already got
+                # its own "I read .../I heard ..." line from `_apply_media_reply_prefix`
+                # - this arm's own lead would double it (most visibly on voice: "I
+                # heard: X" followed by "I have X."). `None` on a patched-upstream
+                # turn (no outcome ran here at all - S3), which still needs this arm's
+                # own lead.
+                media_prefixed=bool(media_box.get("outcome")),
+            )
+
+        # D9: no engine switch. The re-architected turn IS the engine, so a lane the
+        # CODE can complete is completed here - `system_settings.chatbot_completed_lanes`
+        # no longer gates it, because there is no second implementation to fall back to
+        # (the n8n lanes it used to hand back to read the retired head's state). Rollback
+        # is a blue/green redeploy, which is what the plan's own D9 says it is.
+        # `delegate` stays on the response for the kinds no lane here can finish, so the
+        # outer loop's arm Switch reads exactly what it always has (AC-1507).
+        completes_here = branch_kind in CRM_COMPLETED_BRANCH_KINDS
+        delegate = None if completes_here else branch_kind
 
         # S4: the low_signal lane finishes INSIDE the CRM, and its model call must not
-        # run with a session open. Everything it needs from the database is read here,
-        # while one already is; `_run_casual_lane` below does the rest with none.
-        #
-        # Gated on `completes_here`, not on the branch kind alone: while the lane is off in
-        # `chatbot_completed_lanes` this turn belongs to n8n, and running the clarifier
-        # anyway would spend a model call and the customer's time on an answer nobody
-        # reads. Shadow mode compares the two lanes by REPLAYING captures, not by paying
-        # for every live turn twice.
+        # run with a session open. Everything it needs from the database is read here.
         clarifier_prompt: dict[str, Any] | None = None
         clarifier_config: Any = None
         clarifier_setup_error: str | None = None
         if branch_kind == "low_signal" and completes_here:
             try:
-                resolved = casual.resolve_for_prompt(db, ctx=ctx)
-                clarifier_prompt = casual.construct_user_prompt(ctx, resolved)
+                resolved_for_prompt = casual.resolve_for_prompt(db, ctx=ctx)
+                clarifier_prompt = casual.construct_user_prompt(ctx, resolved_for_prompt)
                 clarifier_config = casual.resolve_clarifier_config(
                     db,
                     override_version_id=_prompt_override(
                         envelope, casual.PROMPT_KEY, dry_run=dry_run
                     ),
                 )
-            except Exception as exc:  # noqa: BLE001 - see below
-                # Everything in this block exists to make the clarifier call possible: the
-                # entities that go into its prompt, and the prompt / model / key it runs
-                # on. A failure here is the same customer-visible event as the call itself
-                # failing - the lane cannot answer - and AC-403 fixes what that looks like:
-                # `stage = casual_llm`, `branch_kind` still `low_signal`, and today's
-                # `sub-error-logger` text. Letting it reach `run_turn`'s catch-all instead
-                # would null the branch kind and send another lane's error reply.
+            except Exception as exc:  # noqa: BLE001 - AC-403: the lane's own failure shape
                 logger.warning(
                     "chatbot turn %s: low_signal lane setup failed", turn_id, exc_info=True
                 )
                 clarifier_setup_error = str(exc)
 
-        delegate_payload: dict[str, Any] | None = None
+        # -- BRIDGE: a single-domain resolver exit answers via production's own
+        #    composers, before any fetch runs (PLAN-chatbot-answer-half-reattach.md
+        #    slice R3, AC-1683). `access_ask` (the resolver's own exit for a contact
+        #    with no access rows at all) and `offer` (the gate's own ambiguous
+        #    customer/product picker) are both decided by `resolve_gate.run` itself,
+        #    so nothing here needs a fetch to answer them. `not_found` (R4, AC-1699 to
+        #    AC-1705) is the SAME early exit - "nothing resolved at all" (H11's
+        #    zero-tool case) - answered by the bridge's own miss arm instead.
+        #    Precedence: where this and `narrow.decide`'s own roster arms would both
+        #    ask, the bridge wins for a single-domain plan - `plan.ask` is left
+        #    standing (R6 deletes the now-shadowed `narrow` arms) but never reaches
+        #    `turn_compose.compose_question` while `answer` is already set here.
+        answer: Any = None
+        # Set the moment the bridge itself answers (either arm) - the FETCH section
+        # below always assigns `answer` too (even `turn_compose.compose([])`'s own
+        # empty Answer, for a plan with nothing to fetch), so `answer is None` alone
+        # cannot tell "the bridge already answered" from "nothing has answered yet" by
+        # the time the ASK section runs.
+        bridge_answered = False
         lane_error_text: str | None = None
-        # Set only when the CRM owns this turn (the lane is switched on) AND the fetch
-        # failed for a reason that is not an absence: the customer gets the generic error
-        # reply, not the miss lane's words. See the `error` arm below.
-        fetch_failed_hard: str | None = None
-        # S6c: does the CRM FINISH this business turn, or hand the payload back to n8n?
-        # Both switches are required, and they are independent on purpose:
-        # `system_settings.chatbot_business_lane_enabled` says the lane may RUN (S6a's
-        # shadow switch), and `system_settings.chatbot_completed_lanes` says it may ANSWER. Deploy,
-        # compare, switch on, cut n8n stays four reversible steps.
-        business_completes = False
-        if business.handles(branch_kind) and business_lane_enabled:
-            stage[0] = "looked_up"
-            try:
-                fragment = business.run_until_exit(
-                    ctx,
-                    item,
-                    branch_kind=branch_kind,
-                    services=business_services.production_services(db),
-                    space_id=default_space_id(db),
-                    probe_default_start=resolve_gate.default_probe_start(),
-                    # D14, evaluated before anything side-effecting: the resolver's
-                    # spec-search reader is the one row a test turn could still write.
-                    dry_run=dry_run,
+        if (
+            branch_kind in ("business_query", "check_promotion")
+            and completes_here
+            and not sales_report_grant_refused
+            # AC-1708 (captain's ruling, 20 Sep 2026): an `offer` / `access_ask` exit is
+            # the SAME question whether the message named one domain or two - "which
+            # customer do you mean?" has one answer, and asking it twice in two wordings
+            # is the defect. The domain count gated this until now, so a two-domain
+            # ambiguous-customer ask printed `turn/compose.py`'s generic header while the
+            # one-domain one printed `gate.py`'s. HIT and MISS composition for a
+            # multi-domain plan is untouched and still `turn/compose.py`'s: neither is an
+            # `offer`/`access_ask` exit, and `question_for` answers nothing else.
+            and isinstance(resolver_payload, dict)
+            and (
+                resolver_payload.get("_exit_kind") in ("access_ask", "offer")
+                # R5: a `not_found` exit (the product never resolved) still needing a
+                # tier pick - `entry == "access_check"` already ran the tier gate
+                # before resolve-entity even tried the product, so its own
+                # `tier_ask: True` outranks the product's own absence. Same gate
+                # `answer_bridge.question_for` itself re-checks, kept in lockstep so
+                # neither can decide alone that the other agrees.
+                or (
+                    isinstance(resolver_payload.get("tier_gate"), dict)
+                    and resolver_payload["tier_gate"].get("tier_ask") is True
+                    and resolver_payload.get("_exit_kind") == "not_found"
                 )
-            except Exception as lane_error:  # noqa: BLE001 - shadow until n8n is rewired
-                # The lane is SHADOW while n8n still calls `sub-resolve-and-gate` itself,
-                # so its failure must not take a turn n8n can still answer. It is recorded
-                # loudly instead: the n8n cutover's own precondition is a shadow window
-                # with zero of these (n8n-changes.md, S6a).
-                logger.exception("chatbot turn %s: business lane failed", turn_id)
-                lane_error_text = f"{type(lane_error).__name__}: {lane_error}"
-                # The same restore the fetch-raise handler below makes, and for the same
-                # reason: `fragment` never bound here, so without this a turn on an arm the
-                # owner has switched ON closes `done` with no reply AND no delegate - a
-                # silent turn. The resolver is the seam the plan records as un-retried
-                # (n8n retries `resolve-entity`, the port does not), so a transient failure
-                # here is the expected case rather than the exotic one.
-                delegate = business.DELEGATE
+            )
+        ):
+            from app.services.chatbot import answer_bridge
+            from app.services.chatbot import copy as copy_mod
+
+            answer = answer_bridge.question_for(
+                resolver_payload,
+                parser=answer_parse_output,
+                ctx=ctx,
+                canned=copy_mod.resolve(db),
+                db=db,
+                asked_at_turn=turn_no,
+            )
+            bridge_answered = True
+
+        # A resolver `not_found` exit is answered by the SAME `answer_bridge.answer_for`
+        # call the FETCH section below already makes post-fetch (`via_resolver_exit`
+        # inside `answer_for` itself reads `payload.get("_exit_kind") == "not_found"`,
+        # independent of what the fetch envelope carries) - there is no separate
+        # PRE-fetch trigger here on purpose (R5, captain's ruling 20 Sep 2026, reverting
+        # coder 28's R4 shortcut). `turn_runtime.make_tool_runner`'s `runner()` calls the
+        # KEPT `lanes.business.run_fetch` unconditionally for every `FetchSpec`, whether
+        # or not anything resolved (it is what decides "needs scope" / "not found" /
+        # picker text for the unresolved shapes today, and `_answered_unfiltered`
+        # relabels its own fragment `outcome: "not_found"` when nothing filtered it) - so
+        # skipping straight to a customer-facing miss BEFORE that call ran means a
+        # genuine infrastructure failure inside it is never seen: measured live,
+        # `test_engine_failure_paths.py::TestTheBusinessLaneOnFetchFailure::
+        # test_an_mcp_failure_that_raises_is_a_failed_turn_not_a_not_found` and
+        # `test_s3_switch_and_complete_by_body.py::TestSendActionShape::
+        # test_every_completed_lane_pins_quick_replies_string_or_null_never_a_list`
+        # both mock `lanes.business.run_fetch` to raise and expect `status == "failed"`;
+        # the pre-fetch shortcut answered "not found" instead because the mocked raise
+        # was never reached. Same reply text either way (`not_found_error_message` and
+        # `miss_suggest.run_miss_lane` read `resolved`/`gate`/`parser`, never the fetch
+        # fragment itself), so removing the shortcut costs nothing observable on a live
+        # not_found turn and buys back the failure-not-silence guarantee.
+
+        # R3's second access_ask trigger (`fetch_arm == "tier-ask"`) is discovered only
+        # once `lanes.business.run_fetch` has actually run the per-tier promotion probe -
+        # but `narrow.decide`'s own `narrow_by_tier` policy (untouched this slice) treats
+        # an unsettled tier as something to ASK about BEFORE fetching, so `plan.fetch` is
+        # empty for exactly the turn that needs this arm (measured live: a two-tier
+        # promotion ask). The SAME override also covers the coordinator's add-on
+        # (`tier_proceed is True`): exactly ONE entitled tier needs no ask at all -
+        # `needs_tier_ask` is false, `run_fetch`'s tool-selection path (not its tier_ask
+        # arm) reads `tier_gate.access_levels_recomposed` and fetches straight away
+        # (`lanes/business/__init__.py:637-649`) - so the SAME forced fetch, with no
+        # bridge Answer at all, naturally wins over `narrow_by_tier`'s stale
+        # entitlement-blind ask via `bridge_answered` alone. The bridge wins here too
+        # (same precedence as access_ask/offer above): the resolver's OWN `tier_gate`
+        # already says whether a pick is needed or a tier settles automatically, so this
+        # fetch runs from a ONE-SPEC plan built for the occasion rather than waiting on
+        # `narrow.py`'s now-shadowed ask.
+        fetch_plan = plan
+        if (
+            answer is None
+            and branch_kind in ("business_query", "check_promotion")
+            and completes_here
+            and not sales_report_grant_refused
+            and not plan.fetch
+            and len(plan.domains) == 1
+            and isinstance(resolver_payload, dict)
+            and resolver_payload.get("_exit_kind") == "continue"
+            and isinstance(resolver_payload.get("tier_gate"), dict)
+            and (
+                resolver_payload["tier_gate"].get("tier_ask") is True
+                or resolver_payload["tier_gate"].get("tier_proceed") is True
+            )
+        ):
+            import dataclasses
+
+            from app.services.chatbot.turn.plan import FetchSpec as _FetchSpec
+
+            bridge_answered = True
+
+            fetch_plan = dataclasses.replace(
+                plan,
+                fetch=[_FetchSpec(domain=plan.domains[0], entities=[], filters={}, date_window=None)],
+            )
+
+        # -- E FETCH + F COMPOSE, for the turn that has something to look up --- #
+        if (
+            answer is None
+            and branch_kind in ("business_query", "check_promotion")
+            and completes_here
+            and not sales_report_grant_refused
+        ):
+            stage[0] = "looked_up"
+            turn_ctx = turn_runtime.TurnContext(
+                db=db,
+                contact_respond_id=contact_respond_id,
+                trace=turn_trace,
+                policy=policy,
+                profile=state_out.profile,
+                tool_runner=turn_runtime.make_tool_runner(
+                    db,
+                    ctx=ctx,
+                    verdict=verdict,
+                    focus=state_out.focus,
+                    compatible_entities=compatible_entities,
+                    predicate=predicate,
+                    unplaced=unplaced_tokens,
+                    space_id=space_id_for_turn,
+                    dry_run=dry_run,
+                    turn_trace=turn_trace,
+                    counted_set=spec_tier and bool(turn_runtime.class_scope_terms(verdict)),
+                    resolver_gate=(
+                        resolver_payload.get("gate")
+                        if isinstance(resolver_payload, dict)
+                        else None
+                    ),
+                    resolver_tier_gate=(
+                        resolver_payload.get("tier_gate")
+                        if isinstance(resolver_payload, dict)
+                        else None
+                    ),
+                    # R4 (owner ruling 5): the record-key rerun gate asks the RESOLVER
+                    # what this message's token is, not the parser's hint.
+                    resolved_kinds=resolved_kinds,
+                    # R6 (fix round 2): so a null `routing.suggested_team` inside the
+                    # per-domain fetch context gets the same domain-aware fill this
+                    # turn's own `ctx.parse.output` already got above.
+                    policy=policy,
+                ),
+                granted_reveals=access.get("attributes"),
+                access_levels=list(verdict.get("access_levels") or []),
+                contains_flyer=bool(verdict.get("contains_flyer")),
+                # SRTSC07 (prod transcript, 22 Sep 2026): the SAME `routing.
+                # suggested_agent` `with_routing_agent_default` already resolved at
+                # L1399, before `compose()` mints a fresh `team_pick` off it.
+                suggested_agent=jsc.get(verdict.get("routing"), "suggested_agent"),
+                # Round 4 (owner-approved, 22 Sep 2026): this turn's own resolved
+                # brand, off the SAME gate dict `resolver_gate=` two lines up already
+                # reads - `lanes/business/gate.py::run_gate`'s own `routing_brand`.
+                # `jsc.get` never raises on a non-dict `gate`, same contract as every
+                # other reader of this payload.
+                routing_brand=jsc.get(
+                    resolver_payload.get("gate") if isinstance(resolver_payload, dict) else None,
+                    "routing_brand",
+                ),
+            )
+            # Will `answer_bridge.answer_for` (R4/R5) answer this turn's miss? ONE
+            # rule, computed once, read TWICE below: it gates that call, and it is
+            # what tells `run_fetch` the bridge owns the cross-domain ladder for this
+            # turn (reviewer S1 - the bridge's miss arm walks production's own
+            # `answer.run_crossdomain`, so a rung `turn/fetch.py::_climb` also climbs
+            # is fetched and then discarded, since the composer reads `envelopes[0]`
+            # alone). The two facts that cannot exist until the fetch has run
+            # (`answer`, `envelopes`) stay on the call site.
+            #
+            # A genuine absence, discovered once the fetch has actually run - either
+            # the resolver's OWN exit was already "not_found" (`answer_for`'s
+            # `via_resolver_exit`, R5: this is now the ONLY place that trigger is read,
+            # so a mocked/broken fetch lane is always given the chance to raise first)
+            # or `make_tool_runner.runner`'s own "answered unfiltered" fallback marked
+            # the fragment `outcome: "not_found"`, carried through untouched as
+            # `raw_fragment` (`via_error_fragment`). Single-domain only, same
+            # precedence as every other bridge arm above.
+            #
+            # An outstanding report's own REFINE re-run (`turn/apply.py::
+            # _answer_outstanding`) already built a real `FetchSpec` in the FIRST apply
+            # pass, independent of whatever the resolver says about a location/status
+            # WORD this turn named - that word's own "not_found" is not a verdict on
+            # the report itself. `_answered_unfiltered`'s own docstring names the
+            # report as the one exception to "unfiltered means nothing to narrow by",
+            # and the SAME carve-out has to hold here or the bridge answers a generic
+            # escalate offer over a report that never even ran. Measured live,
+            # `test_outstanding_lane.py::TestDateNarrowingUnderAnOpenOffer` and
+            # siblings.
+            #
+            # The SAME carve-out, for the FIRST ask rather than a REFINE re-run: an
+            # outstanding-shaped order ask (`order_status` in the
+            # `_DOCUMENT_STATUS_TO_ORDER_STATUS` family, every value containing
+            # "outstanding") whose only named subject is a customer that did not
+            # resolve is deferred per the 16 Sep 2026 ruling (`turn/narrow.py::
+            # _narrow`'s own docstring: "a single un-uuid'd candidate... passes
+            # through, deferred, rather than an ask manufactured from a name alone") -
+            # never a manufactured escalate offer either. Measured live:
+            # `lanes/business/__init__.py::run_fetch`'s own
+            # `ENTITY_FILTER_REQUIRED_TOOLS` early return (the outstanding report needs
+            # a filter, none could be built from an unresolved customer name) already
+            # answers `_error_fragment(..., outcome="not_found")` WITHOUT ever calling
+            # the report tool - R4's own `raw_fragment` carry-through then let this
+            # bridge route that SAME fragment through the rich miss composer, which
+            # mints an escalate `team_pick` `run_miss_lane` never used to reach for
+            # this domain (`test_rearch_s3_journey_chain.py::TestJourneyChain::
+            # test_step_4_outstanding_do_customer_must_narrow_one_no_document_question`,
+            # green on R3, before R4's `raw_fragment` existed at all). A genuinely
+            # RESOLVED customer/product on the SAME ask reaches the real report tool
+            # instead (`kind: "result"`, no `outcome` key), so this exclusion never
+            # hides an actual zero-row report answer.
+            # Hand pass 9, D4: dropped its own `and isinstance(resolver_payload, dict)`
+            # clause. `resolve_kinds` returns `payload=None` on two of its own early
+            # returns - the resolver raised, OR (the one that bit here) this turn named
+            # NO entities to resolve at all, which is exactly what an after-a-PICK turn
+            # looks like: `turn/apply.py::_answer_pending` already assembled a fully
+            # SETTLED entity (code + uuid) directly from the roster option, so
+            # `with_carried_entities(unsettled_only=True)` finds nothing left to hand
+            # the resolver. Requiring a dict here sent that turn's miss to `run_fetch`'s
+            # OLD `_climb` rung (`bridge_owns_ladder=False`) instead of the bridge's own
+            # AC-1705 ladder - live turn 139f5282-4968-4802-bd11-501de55bca50's "Stock
+            # details found for the requested products." raw MCP-presenter intro,
+            # never the bridge's "But no incoming matched these." sentence. The call
+            # site below already hands `answer_bridge.answer_for` `resolver_payload or
+            # {}` (the SAME "no opinion" fallback `answer_parse_output`'s own `gate=`
+            # read uses two lines above `resolve_outcome` is unpacked), so a None here
+            # degrades to an empty payload rather than skipping the bridge outright -
+            # `answer_for`'s own `via_fetched_empty` trigger reads the FETCH envelope's
+            # `raw_fragment`, not `resolver_payload`, so it still fires correctly.
+            bridge_answers_a_miss = (
+                len(fetch_plan.fetch) == 1
+                and plan.ask is None
+                and not any(spec.filters.get("outstanding") for spec in fetch_plan.fetch)
+                and "outstanding" not in str(parsed_output.get("order_status") or "")
+            )
+            try:
+                envelopes = run_fetch_mod.run_fetch(
+                    fetch_plan, turn_ctx, bridge_owns_ladder=bridge_answers_a_miss
+                )
+                # BRIDGE (R3): the tier-ask arm is discovered only once the fetch has
+                # actually run the per-tier promotion probe (`lanes.business.run_fetch`'s
+                # own tier_ask arm) - `envelope_of` carries its fetch fragment through as
+                # `tier_ask_fetch`, `None` on every other fetch. Single-domain only, same
+                # precedence as the access_ask/offer bridge above.
+                tier_fetch = (
+                    envelopes[0].get("tier_ask_fetch")
+                    if len(fetch_plan.fetch) == 1 and envelopes
+                    else None
+                )
+                if tier_fetch is not None:
+                    from app.services.chatbot import answer_bridge
+                    from app.services.chatbot import copy as copy_mod
+
+                    answer = answer_bridge.question_for(
+                        {"_exit_kind": "continue"},
+                        fetch=tier_fetch,
+                        parser=answer_parse_output,
+                        ctx=ctx,
+                        canned=copy_mod.resolve(db),
+                        db=db,
+                        asked_at_turn=turn_no,
+                    )
+                    bridge_answered = True
+                # BRIDGE (R4/R5): a genuine absence, discovered once the fetch has
+                # actually run - either the resolver's OWN exit was already "not_found"
+                # (`answer_bridge.answer_for`'s `via_resolver_exit`, R5: this is now the
+                # ONLY place that trigger is read, so a mocked/broken fetch lane is
+                # always given the chance to raise first) or `make_tool_runner.runner`'s
+                # own "answered unfiltered" fallback marked the fragment
+                # `outcome: "not_found"`, carried through untouched as `raw_fragment`
+                # (`via_error_fragment`). Single-domain only, same precedence as every
+                # other bridge arm above.
+                if answer is None and envelopes and bridge_answers_a_miss:
+                    from app.services.chatbot import answer_bridge
+                    from app.services.chatbot import copy as copy_mod
+
+                    answer = answer_bridge.answer_for(
+                        resolver_payload or {},
+                        envelope=envelopes[0],
+                        parser=answer_parse_output,
+                        ctx=ctx,
+                        canned=copy_mod.resolve(db),
+                        services=business_services.production_answer_services(db),
+                        db=db,
+                        asked_at_turn=turn_no,
+                        roster_caps=roster_caps,
+                        # The four `complete_answer` hands its own miss half and
+                        # cross-domain call (reviewer B3/N3/N4): the configured ladder
+                        # - without it `answer._next_crossdomain_rung` returns None for
+                        # a non-dict and the SECOND rung, the PO rung from migration
+                        # `491_chatbot_ladder_incoming_po` (owner ruling 8 Sep 2026),
+                        # never ran - plus the turn id, the turn's own trace and the
+                        # lane's real dry-run flag.
+                        crossdomain_ladder=_crossdomain_ladder(switches),
+                        turn_id=turn_id,
+                        trace=turn_trace,
+                        dry_run=dry_run,
+                        # Hand pass 9 D2: the roster `apply()` carried into this turn
+                        # (a still-open pick still answerable), so a bare escalate
+                        # offer over ANOTHER miss patches onto it (contract 36) rather
+                        # than replacing it - the same rule `turn_compose.compose`
+                        # already applies on its own miss arm below.
+                        carried_pending=state_out.pending,
+                    )
+                    if answer is not None:
+                        bridge_answered = True
+                if answer is None:
+                    answer = turn_compose.compose(envelopes, state_out, policy, turn_ctx)
+                    # BRIDGE (R5): the HIT arm, AC-1694 to AC-1696 - a single-domain
+                    # ORDER fetch that genuinely found rows opens with the
+                    # Customer/Product/Dates scope block. A no-op for every other
+                    # domain (`answer_bridge.apply_scope_block`'s own
+                    # `search_scope_header` returns `None` outside "order") and for
+                    # a miss (`envelope_missed`), so the miss composer's own text is
+                    # never touched here. `resolver_payload` is `None` on a bare
+                    # positional pick (no entity of its own, so `resolve_kinds`
+                    # never ran) - the gate/resolved axes fall back to the FOCUS
+                    # carry (`apply_scope_block`'s own `focus_customers`/
+                    # `focus_products`), which is where a customer picker's own
+                    # pick and the original ask's product both already live.
+                    # `own_header` (`envelope_of`'s own flag, true for the
+                    # outstanding report) is excluded the SAME way `turn/compose.py`'s
+                    # own `date_line` decoration already is: the outstanding report
+                    # prints its OWN four-line Customer/Product/Location/Order-date
+                    # header (`lanes/business/__init__.py::
+                    # _outstanding_scope_filter_lines`), and stacking this one on top
+                    # of it said the same thing twice - measured live,
+                    # `test_outstanding_lane.py`'s own
+                    # `test_report_skips_search_scope_header`.
+                    # `not envelope_missed(...)` alone is not "this turn found rows":
+                    # `turn/fetch.py::envelope_missed` returns False for a DENIED
+                    # envelope too (a whole-domain grant refusal, `envelope_of`'s own
+                    # `outcome == "access_denied"` arm), so a refusal was getting the
+                    # Customer/Product/Dates block prepended - and this header's third
+                    # fallback prints the gate row's own DB title, a name the contact
+                    # never typed, over a turn they were refused.
+                    if (
+                        len(fetch_plan.fetch) == 1
+                        and envelopes
+                        and not envelopes[0].get("denied")
+                        and not run_fetch_mod.envelope_missed(envelopes[0])
+                        and not envelopes[0].get("own_header")
+                    ):
+                        from app.services.chatbot import answer_bridge
+
+                        # Hand pass 12 round 3, Group F (owner ruling): a bare positional
+                        # pick runs no resolver of its own (`resolver_payload is None`),
+                        # so this header falls to the FOCUS carry - and a multi-uuid
+                        # customer option's own focus rows carry NO name at all
+                        # (`turn/apply.py::_answer_pending`'s own Group F rule: a name is
+                        # only stamped when the option covers ONE identity), only the
+                        # picked option's rollup `canonical_code`. Filled here the SAME
+                        # way `turn_runtime.py::make_tool_runner.runner` already fills a
+                        # FETCHED row's `display_name` - a local copy, `entity_type`
+                        # stamped so the shared filler recognises them (a focus row's own
+                        # key is `hint`, never `entity_type`), never written back onto
+                        # `state_out.focus` itself.
+                        focus_customers_named = [
+                            {**row, "entity_type": "customer"}
+                            for row in state_out.focus.customers
+                        ]
+                        turn_runtime.fill_customer_names(db, focus_customers_named)
+
+                        answer = answer_bridge.apply_scope_block(
+                            answer,
+                            domain=fetch_plan.fetch[0].domain,
+                            qf=(ctx.get("parse") or {}).get("output"),
+                            gate_json=(
+                                resolver_payload.get("gate")
+                                if isinstance(resolver_payload, dict)
+                                else None
+                            ),
+                            resolver_json=(
+                                resolver_payload.get("resolved")
+                                if isinstance(resolver_payload, dict)
+                                else None
+                            ),
+                            focus_customers=focus_customers_named,
+                            focus_products=state_out.focus.products,
+                        )
+                        # BRIDGE (hand pass 11, defect 1): a zero-stock HIT climbs the
+                        # SAME cross-domain ladder a miss does. `apply_crossdomain_hit`
+                        # is a no-op off `crossdomain_zeroset`'s own gate on the
+                        # PARSER's `domain_hint` for every hint but inventory/incoming,
+                        # and off its own probeable-product gate when there is nothing
+                        # zero to climb for - so calling it unconditionally here costs
+                        # nothing on every other single-domain HIT.
+                        aggregate = (
+                            resolver_payload.get("aggregate")
+                            if isinstance(resolver_payload, dict)
+                            and isinstance(resolver_payload.get("aggregate"), dict)
+                            else None
+                        )
+                        answer = answer_bridge.apply_crossdomain_hit(
+                            answer,
+                            envelope=envelopes[0],
+                            parser=answer_parse_output,
+                            resolved=(
+                                resolver_payload.get("resolved")
+                                if isinstance(resolver_payload, dict)
+                                else None
+                            ),
+                            entities_names=aggregate.get("name") if aggregate is not None else [],
+                            crossdomain_ladder=_crossdomain_ladder(switches),
+                            ctx=ctx,
+                            services=business_services.production_answer_services(db),
+                            contact_id=(ctx.get("contact") or {}).get("id"),
+                            space_id=space_id_for_turn,
+                            trace=turn_trace,
+                            dry_run=dry_run,
+                            asked_at_turn=turn_no,
+                            turn_id=turn_id,
+                            focus_products=state_out.focus.products,
+                        )
+                        # BRIDGE (hand pass 11, defect 3): a HIT in one of several
+                        # searched companies still offers the SILENT company's own
+                        # team. No-op off its own `lookup_companies` gate for every
+                        # single-company turn.
+                        answer = answer_bridge.apply_silent_company_offer(
+                            answer,
+                            envelope=envelopes[0],
+                            parser=answer_parse_output,
+                            # For the silent company's own `brand_code`, off the gate's
+                            # per-company routing axis - the SAME read `apply_scope_block`
+                            # above already makes of this payload.
+                            gate=(
+                                resolver_payload.get("gate")
+                                if isinstance(resolver_payload, dict)
+                                else None
+                            ),
+                            asked_at_turn=turn_no,
+                            turn_id=turn_id,
+                        )
+            except Exception as fetch_error:  # noqa: BLE001 - a lane failure, not a crash
+                logger.exception("chatbot turn %s: fetch or compose failed", turn_id)
+                lane_error_text = f"{type(fetch_error).__name__}: {fetch_error}"
                 turn_trace.record(
                     "looked_up",
                     status="failed",
-                    summary="Could not resolve what the customer named.",
-                    why="The lookup the business lane depends on did not answer.",
-                    facts={"lane": "business", "branch_kind": branch_kind},
+                    summary="Could not look an answer up.",
+                    why="The read the answer needs did not come back.",
+                    facts={"lane": "business", "domains": [s.domain for s in fetch_plan.fetch]},
                     error=lane_error_text,
                     raw=None,
                 )
             else:
-                payload: dict[str, Any] = fragment["payload"]
-                # The lane names the n8n lane that would run this turn (all three arms
-                # converge on `business_query`), and that is the right answer ONLY while
-                # the turn is being handed back. `delegate_for` has already decided the
-                # other case at the top of this block, and overwriting it there is what
-                # made a completed turn still report a delegate.
-                if not completes_here:
-                    delegate = fragment["delegate"]
-                delegate_payload = payload
-                gate_block = payload.get("gate") or {}
+                # AC-1317: where the counted set got to, so "more" pages the SAME set
+                # next turn instead of counting it again from nothing.
+                #
+                # Written only for a SPEC-tier answer: the counted set is how that tier
+                # of the ONE product ladder renders, and a code-tier answer is a list,
+                # which leaves no page behind. `set_page_carry` refuses a set with no
+                # scope term of its own on top of that, so a "more" can never page the
+                # whole catalogue (turns 92d565a5 / b383d402 / 2e7ca929, 17 Sep 2026).
+                #
+                # Security B2 (re-check round): the carry records the ENTITLEMENT this
+                # page answered under, off the envelope's own `access_levels_used` (the
+                # recomposed list the tool call actually carried). The next "more"
+                # recounts the set by that, never by the parser's list, which a bare
+                # "more" leaves empty and which reads downstream as "no tier filter".
+                class_terms = turn_runtime.class_scope_terms(verdict)
+                if predicate is not None and plan.fetch and spec_tier:
+                    state_out.focus.set_page = turn_runtime.set_page_carry(
+                        predicate,
+                        plan.fetch[0],
+                        class_terms,
+                        access_levels=(
+                            envelopes[0].get("access_levels_used") if envelopes else None
+                        ),
+                    )
+                elif not any(isinstance(s.filters.get("set_page"), dict) for s in plan.fetch):
+                    # An answer that is not a counted set closes the page: the customer
+                    # has moved on, and "more" must not resume a set they left.
+                    state_out.focus.set_page = None
                 turn_trace.record(
                     "looked_up",
-                    summary=(
-                        "Resolved what the customer named and checked it against the "
-                        f"{jsc.js_string(qf.get('domain_hint'))} domain."
-                    ),
+                    summary="Looked the answer up.",
                     why=(
-                        "The business lane decides whether the turn can be answered, needs "
-                        "a choice from the customer, or found nothing."
+                        "One tool is read per domain in the plan, and the answer is "
+                        "rendered from what they returned."
                     ),
                     facts={
-                        "exit": payload.get("_exit_kind"),
-                        "gate_passed": gate_block.get("gate_passed"),
-                        "gate_reason": gate_block.get("gate_reason"),
+                        "domains": [s.domain for s in fetch_plan.fetch],
+                        "sections": len(answer.sections),
+                        "missed": [s.domain for s in answer.sections if s.miss and not s.figures],
                     },
-                    raw={"resolve_gate": payload},
+                    raw={"envelopes": envelopes},
                 )
-
-                # -- S6b: the fetch step, on the `continue` exit only ---------- #
-                # The other three exits are answers in their own right: `access_ask`
-                # needs a tier from the customer, `not_found` and `offer` have nothing
-                # to look up. Only `continue` means "the gate is satisfied, go read".
-                if payload.get("_exit_kind") != "continue":
-                    # S6c: those three exits ARE answers, so the answer half runs on them
-                    # straight away - `access_level_choice_message` for the tier ask, the
-                    # gate's own picker for `offer`, the miss lane for `not_found`.
-                    business_completes = completes_here
-                else:
-                    try:
-                        fetch_fragment = business.run_fetch(
-                            payload,
-                            services=business_services.fetch_services(db),
-                            dry_run=dry_run,
-                            space_id=business_services.fetch_space_id(db),
-                            trace=turn_trace,
-                        )
-                    except Exception as fetch_error:  # noqa: BLE001 - shadow, like above
-                        logger.exception("chatbot turn %s: fetch step failed", turn_id)
-                        lane_error_text = f"{type(fetch_error).__name__}: {fetch_error}"
-                        # The CRM cannot answer this turn, so it goes to the n8n lane that
-                        # still can - on an arm the owner has switched ON as much as on one
-                        # he has not. A lane crash must not take a turn n8n can answer while
-                        # its Switch output exists (the same shadow rule the outer handler
-                        # states); after AC-610 deletes it, nothing answers either way and
-                        # the turn is findable by `stage = 'looked_up'`.
-                        delegate = business.DELEGATE
-                        turn_trace.record(
-                            "looked_up",
-                            status="failed",
-                            summary="Could not look up an answer.",
-                            why="The fetch step the business lane depends on did not answer.",
-                            facts={"lane": "business", "step": "fetch"},
-                            error=lane_error_text,
-                            raw=None,
-                        )
-                    else:
-                        delegate_payload = {**payload, "fetch": fetch_fragment.get("fetch")}
-                        if fetch_fragment.get("kind") == "error":
-                            # The `error` arm carries TWO different events and they get
-                            # two different answers (captain's ruling, round 2):
-                            #
-                            # * `outcome == "not_found"` is a GENUINE ABSENCE - the
-                            #   question was understood and no tool matches it. AC-604 /
-                            #   H11: with the lane switched on the CRM answers it itself
-                            #   through the miss lane, instead of the empty turn.
-                            # * anything else is an INFRASTRUCTURE failure (MCP raised,
-                            #   error envelope, tool search down). Telling the customer
-                            #   "I could not find anything" would assert an absence the
-                            #   read never established, so the turn is recorded `failed`
-                            #   at `looked_up` with the generic error reply and R4's
-                            #   manual retry. Live does the same: `Call 'sub-get-results'`
-                            #   is `continueErrorOutput` into `set-ran-query-formulator`
-                            #   ("There is some error encountered by the AI: ..."), never
-                            #   into `not-found-error-message`.
-                            #
-                            # With the lane OFF both cases delegate, and `lane_error_text`
-                            # is what makes `WHERE stage = 'looked_up'` find the turn.
-                            fetch_error_text = jsc.js_string(fetch_fragment.get("error"))
-                            absent = fetch_fragment.get("outcome") == "not_found"
-                            business_completes = completes_here and absent
-                            if not business_completes:
-                                lane_error_text = fetch_error_text
-                            if completes_here and not absent:
-                                fetch_failed_hard = fetch_error_text
-                            turn_trace.record(
-                                "looked_up",
-                                status="ok" if business_completes else "failed",
-                                summary=(
-                                    "Found nothing to look the answer up with."
-                                    if absent
-                                    else "Could not look the answer up."
-                                ),
-                                why=(
-                                    "No tool matched the question."
-                                    if absent
-                                    else "The read the answer needs did not come back."
-                                ),
-                                facts={
-                                    "arm": fetch_fragment.get("_fetch_arm"),
-                                    "outcome": fetch_fragment.get("outcome"),
-                                    # The reason belongs on the record either way; it is
-                                    # only an ERROR on the turn nobody answers.
-                                    "reason": fetch_error_text,
-                                },
-                                error=None if business_completes else fetch_error_text,
-                                raw={"fetch": fetch_fragment.get("fetch")},
-                            )
-                        else:
-                            business_completes = completes_here
-                            turn_trace.record(
-                                "looked_up",
-                                summary=trace_mod.looked_up_summary(fetch_fragment)
-                                if hasattr(trace_mod, "looked_up_summary")
-                                else "Looked the answer up.",
-                                why=(
-                                    "One tool is chosen per turn and read once; the answer "
-                                    "is rendered from what it returned."
-                                ),
-                                facts={
-                                    "arm": fetch_fragment.get("_fetch_arm"),
-                                    "tool": (
-                                        (fetch_fragment.get("fetch") or {}).get("tool") or {}
-                                    ).get("name"),
-                                },
-                                raw={"fetch": fetch_fragment.get("fetch")},
-                            )
             stage[0] = "routed"
 
-        # S6a review S1: a SHADOW lane failure must be findable without reading the trace
-        # JSON. `error` and `status` stay as they are - the TURN did not fail, n8n still
-        # answers it, and claiming otherwise would make every shadow blip look like a
-        # customer-visible outage on the trace screen. What changes is `stage`, which
-        # records how far the turn got: it stops at `looked_up` instead of reaching
-        # `routed`, so `WHERE stage = 'looked_up' AND status IN ('delegated','done')` is
-        # the operator's query, and `response.delegate_error` beside it carries the reason
-        # (`ENTITY_PIN_MISMATCH` included, which arrives here as an AppException).
-        # -- the lanes the CRM finishes itself (S3, AC-301) ------------------ #
-        # Gated on `completes_here` exactly as the low_signal block above is: the code
-        # half is `contracts.CRM_COMPLETED_BRANCH_KINDS` and the data half is
-        # `chatbot_completed_lanes`, and `delegate_for` is the ONE place that reads both.
+        # -- the ASK: the composer's question IS the answer on this turn ------ #
+        # `not bridge_answered`, never `answer is None`: the FETCH section above always
+        # assigns `answer` (even `turn_compose.compose([])`'s own empty Answer, for a
+        # plan with nothing to fetch), so `answer is None` cannot tell "the bridge
+        # already answered" from "nothing has answered yet" - `bridge_answered` is the
+        # one flag that means the former (R3).
+        # `not sales_report_grant_refused` is SF-1's own rule, and this was the one
+        # section that did not carry it - unlike the resolver block, the bridge, the
+        # forced tier fetch and the FETCH/COMPOSE entry. An ungranted sales-report ask
+        # naming TWO customer words builds `narrow.decide`'s `must_narrow_one` roster
+        # from the contact's OWN typed words (the resolver never ran, so no DB names
+        # and no stamps), which set `answer` here and swallowed the refusal composed
+        # below entirely: the contact read "Which one do you mean?" over a question
+        # they were never entitled to ask. The grant comes before ANY question.
+        if (
+            not bridge_answered
+            and not sales_report_grant_refused
+            and plan.ask is not None
+            and completes_here
+            and branch_kind in _ASK_BRANCH_KINDS
+        ):
+            # Hand pass 12 Phase 3 finding P1: a fresh roster over a DIFFERENT axis
+            # (e.g. a product pick, once a multi-ledger `customer_pick` already
+            # settled) must still name every carried customer, not just print the
+            # option's shared rollup code - `turn/apply.py::_answer_pending`'s own
+            # multi-uuid rows carry no `name` at all. Filled the SAME way the HIT-arm
+            # scope block above already does (~2158-2166): a LOCAL copy, `entity_type`
+            # stamped for the shared filler, never written back onto `state_out.focus`
+            # itself.
+            subject_state = state_out
+            if state_out.focus.customers:
+                focus_customers_named = [
+                    {**row, "entity_type": "customer"} for row in state_out.focus.customers
+                ]
+                turn_runtime.fill_customer_names(db, focus_customers_named)
+                subject_state = dataclasses_replace(
+                    state_out,
+                    focus=dataclasses_replace(state_out.focus, customers=focus_customers_named),
+                )
+            answer = turn_compose.compose_question(plan.ask, subject_state)
+
+        # -- the REFUSAL: a denied stock check is an answer, not silence ------- #
+        # `stock_denied` is one of the three business branch kinds, so it is outside
+        # `canned_lanes.COMPLETED_BRANCH_KINDS` (that set is what the canned composer
+        # knows how to build) and outside the fetch gate above - deliberately, because a
+        # contact who is not allowed stock must not be shown the rows. Nothing else
+        # composed it, so before this the turn closed `done` with no reply and no action
+        # at all. The refusal is the whole reply and it takes the SAME tail every other
+        # composed answer takes, so the turn is remembered and the caller is handed a
+        # `send_message` to send (AC-105/AC-107: even a failed turn hands back a reply).
+        if answer is None and branch_kind == "stock_denied" and completes_here:
+            from app.services.chatbot import copy as copy_mod
+
+            stage[0] = "replied"
+            answer = turn_compose.Answer(
+                text=canned_lanes.stock_denied_text(copy_mod.resolve(db))
+            )
+
+        # -- the REFUSAL: SF-1's grant-before-roster, same idiom as stock_denied ---- #
+        # No new branch kind: the resolver never ran (gated above), so `plan` is
+        # still the first, unreconciled pass and `branch_kind` reads as an ordinary
+        # `business_query` - the fetch gate above already excludes this turn, so
+        # nothing else composed it, exactly the shape `stock_denied` handles the
+        # same way just above.
+        if answer is None and sales_report_grant_refused and completes_here:
+            from app.services.chatbot.lanes.business import SALES_REPORT_NOT_ENABLED_MESSAGE
+
+            stage[0] = "replied"
+            answer = turn_compose.Answer(text=SALES_REPORT_NOT_ENABLED_MESSAGE)
+
+    if answer is not None and lane_error_text is None:
+        return _run_answer(
+            turn_id=turn_id,
+            ctx=ctx,
+            item=item,
+            branch_kind=branch_kind,
+            actions=actions,
+            answer=answer,
+            state=state_out,
+            remembered_before=remembered_before,
+            dry_run=dry_run,
+            session_factory=session_factory,
+            turn_trace=turn_trace,
+            stage=stage,
+            contact_respond_id=contact_respond_id,
+            verdict=verdict,
+            recalled=recalled,
+        )
+
+    with _session(session_factory) as db:
         if branch_kind in canned_lanes.COMPLETED_BRANCH_KINDS and completes_here:
-            # `ideate` makes a TOOL call, so a failure there stops at `looked_up` the way
-            # every other lookup does; the canned kinds have nothing to look up and go
-            # straight to composing. The distinction is what the trace screen shows an
-            # operator when an MCP call is what broke.
             stage[0] = "looked_up" if branch_kind == "ideate" else "replied"
             reply, session_patch, extra_actions = _complete_canned_lane(
                 db,
@@ -1649,6 +2604,7 @@ def _run_stages(  # noqa: PLR0915
                 dry_run=dry_run,
                 contact_respond_id=contact_respond_id,
                 turn_trace=turn_trace,
+                state=state_out,
             )
             actions = [*actions, *extra_actions]
             _close_turn(
@@ -1666,48 +2622,22 @@ def _run_stages(  # noqa: PLR0915
                 ctx=ctx,
                 item=item,
                 branch_kind=branch_kind,
-                # D4: the CRM finished it, so there is no lane left for n8n to run. Its
-                # `head-arm` Switch reads exactly this and sends.
                 delegate=None,
                 actions=actions,
                 reply=reply,
-                # D14: the would-be patch on a dry run, so a console or clone turn can be
-                # inspected without anything having been written.
                 session_patch=session_patch if dry_run else None,
                 status="done",
                 stage="sent",
             )
 
-        # A lane the CRM is FINISHING is the exception: its turn is not over yet, so
-        # closing it here would record a `done` turn before the reply exists - and that
-        # record would STAND, because `_close_turn` refuses a second terminal write. Each
-        # such arm closes the row itself once its lane has answered - `_run_casual_lane`
-        # after the clarifier, `_run_escalation_arm` after the handover,
-        # `_run_business_answer` after S6c's answer half. With the lane switched off there
-        # is nothing to wait for and this closes as `delegated`, exactly as it did before
-        # S4. The S3 canned kinds are not in this set because their block above has
-        # already returned.
-        #
-        # THREE outcomes, in this order, and the order is the contract (AC-715 sits
-        # between two arms that both look like it and are not):
-        #
-        # 1. `fetch_failed_hard` - the CRM OWNS this turn (the lane is switched on, so
-        #    `delegate` is None) and cannot answer it. A failure, not a misconfiguration.
-        # 2. the S7 orphan guard - `delegate` is NOT None, so the turn was handed back,
-        #    and in S7 mode there is nothing on the other side to take it. It fires only
-        #    on a real delegate, which after S6c means a lane outside
-        #    `chatbot_completed_lanes` (or one whose deployment flag is off, or one that
-        #    raised) - a completed business turn has already set `delegate` to None above
-        #    and reaches its answer half instead.
-        # 3. everything else closes here at `routed`, as it always did.
-        if fetch_failed_hard is not None:
+        if lane_error_text is not None and completes_here:
             # The CRM owns this turn and cannot answer it. Recorded `failed` at the stage
-            # it stopped, with the reply the caller sends, so the trace screen's Retry (R4:
-            # manual, never automatic) has something to retry.
+            # it stopped, with the reply the caller sends, so the trace screen's Retry
+            # (R4: manual, never automatic) has something to retry.
             hard_failure = _failed_result(
                 turn_id,
                 "looked_up",
-                fetch_failed_hard,
+                lane_error_text,
                 actions,
                 dry_run,
                 ctx=ctx,
@@ -1720,78 +2650,29 @@ def _run_stages(  # noqa: PLR0915
                 status="failed",
                 stage="looked_up",
                 branch_kind=branch_kind,
-                error=fetch_failed_hard,
+                error=lane_error_text,
                 records=turn_trace.persisted(),
                 response={
                     "ctx": ctx,
                     "item": item,
                     "actions": hard_failure.actions,
                     "reply": hard_failure.reply,
-                    "delegate_payload": delegate_payload,
-                    "delegate_error": fetch_failed_hard,
+                    "delegate_error": lane_error_text,
                 },
             )
         elif delegate is not None and s7_mode and not dry_run:
-            # S7 mode retires the n8n tail: `/turn/{id}/complete` answers 410 Gone, so a
-            # turn that still delegates has NOBODY to finish it. Left `delegated` it would
-            # sit as a ghost until the TTL sweep - ten minutes of a customer waiting for a
-            # reply that no process is going to compose - so it is closed here, at the
-            # stage it actually reached, with the reason an operator can act on and the
-            # error reply the customer gets for every other failure.
-            #
-            # It is a MISCONFIGURATION, not a lane failure: the flag was turned on before
-            # the CRM could complete this lane. R4's manual Retry applies unchanged, and it
-            # is the right button - once the lane is in `chatbot_completed_lanes`, retrying
-            # the original message answers it properly.
-            #
-            # LIVE turns only, and the exception is load-bearing rather than convenient. A
-            # dry run has no customer waiting and nothing that would have completed it
-            # either way: the clone's `test-guard` records actions and never calls
-            # `/complete`, and the load gate posts `is_test` envelopes precisely to measure
-            # the plumbing - the ticket, the wait, the row writes - which happen before this
-            # point. Failing them would make the AC-711 gate, the shadow window and every
-            # console turn unable to run in the mode they exist to prove out (measured: all
-            # 30 turns of a gate run went red on this arm). The trace note below is written
-            # for a dry run too, so the harness still SEES the lane it could not complete.
-            stage[0] = "looked_up" if lane_error_text else "routed"
-            # The message has to name the CAUSE, because it is read on a live outage and
-            # acted on. Three of them reach here and they need different instructions:
-            # the arm is not switched on, the arm IS switched on but its deployment flag
-            # is not, or the lane ran and raised. Telling an operator to add a lane that
-            # is already listed leaves them stuck on the settings form with the customer
-            # still waiting.
-            if (
-                business.handles(branch_kind)
-                and not business_lane_enabled
-                and branch_kind in enabled_lanes
-            ):
-                orphan_error = (
-                    f"S7 mode is on (system_settings.chatbot_ordering_enabled), so the "
-                    f"CRM owns the tail and /complete is gone. {branch_kind!r} IS in "
-                    f"system_settings.chatbot_completed_lanes, but the business lane's "
-                    f"own switch chatbot_business_lane_enabled is off, so nothing in this "
-                    f"build runs it. Turn the business lane on under Settings > Chatbot, "
-                    f"or turn S7 mode off."
-                )
-            else:
-                orphan_error = (
-                    f"S7 mode is on (system_settings.chatbot_ordering_enabled), so the "
-                    f"CRM owns the tail and /complete is gone, but the {delegate!r} lane "
-                    f"is not completed in the CRM. Add {branch_kind!r} to "
-                    f"system_settings.chatbot_completed_lanes on a build that can complete "
-                    f"it, or turn S7 mode off."
-                )
-            if lane_error_text:
-                # The lane IS completed by this build and still handed the turn back,
-                # because it raised. Saying only "not completed in the CRM" would send an
-                # operator to the settings form for a crash, so the reason travels too.
-                orphan_error = (
-                    f"{orphan_error} The lane handed this turn back after failing: "
-                    f"{lane_error_text}"
-                )
+            # S7 mode retires the n8n tail: a turn that still delegates has NOBODY to
+            # finish it, so it is closed here rather than left as a ghost.
+            orphan_error = (
+                f"S7 mode is on (system_settings.chatbot_ordering_enabled), so the CRM "
+                f"owns the tail and /complete is gone, but the {delegate!r} lane is not "
+                f"completed in the CRM. Add {branch_kind!r} to "
+                f"system_settings.chatbot_completed_lanes on a build that can complete "
+                f"it, or turn S7 mode off."
+            )
             logger.error("chatbot turn %s: %s", turn_id, orphan_error)
             turn_trace.record(
-                stage[0],  # type: ignore[arg-type]
+                "routed",
                 status="failed",
                 summary="The turn was routed to a lane the CRM cannot finish.",
                 why=(
@@ -1802,14 +2683,9 @@ def _run_stages(  # noqa: PLR0915
                 error=orphan_error,
                 raw={"item": item},
             )
-            # Built BEFORE the close, exactly as the `fetch_failed_hard` branch above
-            # does it and for the same two reasons: the row must record the apology the
-            # customer was actually sent, so the trace screen shows the whole event, and
-            # a D15 duplicate delivery replays that same reply and action list instead of
-            # a bare `ctx`.
             orphan_failure = _failed_result(
                 turn_id,
-                stage[0],
+                "routed",
                 orphan_error,
                 actions,
                 dry_run,
@@ -1821,7 +2697,7 @@ def _run_stages(  # noqa: PLR0915
                 db,
                 turn_id,
                 status="failed",
-                stage=stage[0],
+                stage="routed",
                 branch_kind=branch_kind,
                 error=orphan_error,
                 records=turn_trace.persisted(),
@@ -1830,74 +2706,33 @@ def _run_stages(  # noqa: PLR0915
                     "item": item,
                     "actions": orphan_failure.actions,
                     "reply": orphan_failure.reply,
-                    "delegate_payload": delegate_payload,
-                    "delegate_error": lane_error_text,
+                    "delegate_error": orphan_error,
                 },
             )
             return orphan_failure
-
-        if delegate is not None and s7_mode and dry_run:
-            # See above: the turn is NOT failed, but the harness is told what would have
-            # happened to a live one, so a shadow or clone run is what surfaces a lane that
-            # is not ready before the flag reaches a customer.
-            turn_trace.record(
-                "routed",
-                status="skipped",
-                summary="A live turn on this lane would have no tail to go to.",
-                why=(
-                    "S7 mode retires the n8n tail, and this lane is not completed in the "
-                    "CRM - a dry run is allowed through because nothing was going to "
-                    "complete it either way."
-                ),
-                facts={"lane": delegate, "s7_mode": True, "lane_completed_by_crm": False},
-                error=None,
-                raw=None,
-            )
-
-        if fetch_failed_hard is None and not (
-            (branch_kind in _CRM_FINISHED_HERE and completes_here) or business_completes
-        ):
+        elif not (branch_kind in _CRM_FINISHED_HERE and completes_here):
             _close_turn(
                 db,
                 turn_id,
                 status="delegated" if delegate else "done",
-                stage="looked_up" if lane_error_text else "routed",
+                stage="routed",
                 branch_kind=branch_kind,
                 error=None,
                 records=turn_trace.persisted(),
-                # S2 / D15: a duplicate delivery replays THIS, so n8n's re-emitters never
-                # see a null `ctx` or `item`. `actions` rides along because the caller must
-                # not execute them twice either - it gets the original list and its own
-                # Switch on `duplicate` decides to send nothing.
-                response={
-                    "ctx": ctx,
-                    "item": item,
-                    "actions": actions,
-                    "delegate_payload": delegate_payload,
-                    "delegate_error": lane_error_text,
-                },
+                response={"ctx": ctx, "item": item, "actions": actions},
             )
 
     if hard_failure is not None:
         return hard_failure
 
-    if business_completes and not lane_error_text:
-        return _run_business_answer(
-            turn_id=turn_id,
-            ctx=ctx,
-            item=item,
-            branch_kind=branch_kind,
-            actions=actions,
-            payload=delegate_payload or {},
-            dry_run=dry_run,
-            session_factory=session_factory,
-            turn_trace=turn_trace,
-            stage=stage,
-            space_id=space_id_for_turn,
-            crossdomain_ladder=_crossdomain_ladder(settings_row),
-        )
-
     if branch_kind == "out_of_scope" and completes_here:
+        # Owner correction, 21 Sep (hand pass 12 round 3): reverts hand pass 12 round
+        # 2's `_run_member_offer_arm` detour (commit 8e4ecdac7). A "yes" accepting a
+        # customer_service escalation offer with no member preference assigns by
+        # ROUND ROBIN IMMEDIATELY, exactly as production - the CS roster does not
+        # show on a SEPARATE later turn. Where the roster belongs instead: riding IN
+        # THE SAME REPLY as the offer itself (see `tail/outcome.py::cs_offer_gate`
+        # and `answer_bridge.py::_miss_question`, Group B2, hand pass 12 round 3).
         return _run_escalation_arm(
             turn_id=turn_id,
             ctx=ctx,
@@ -1907,6 +2742,7 @@ def _run_stages(  # noqa: PLR0915
             session_factory=session_factory,
             turn_trace=turn_trace,
             stage=stage,
+            state=state_out,
         )
 
     if branch_kind == "low_signal" and completes_here:
@@ -1922,6 +2758,7 @@ def _run_stages(  # noqa: PLR0915
             clarifier_prompt=clarifier_prompt,
             clarifier_config=clarifier_config,
             setup_error=clarifier_setup_error,
+            state=state_out,
         )
 
     return TurnResult(
@@ -1931,126 +2768,615 @@ def _run_stages(  # noqa: PLR0915
         item=item,
         branch_kind=branch_kind,
         delegate=delegate,
-        delegate_payload=delegate_payload,
+        delegate_payload=None,
         actions=actions,
-        # D14: on a dry run the response carries the would-be session patch. The HEAD
-        # writes no session state at all, so there is nothing to patch yet and this is
-        # null for every turn in S1; the tail (S2) is what fills it.
         session_patch=None,
         status="delegated" if delegate else "done",
-        stage="looked_up" if lane_error_text else "routed",
+        stage="routed",
     )
 
 
-def _run_business_answer(
+def _contact_block(envelope: Envelope, known_phone: str | None) -> dict[str, Any]:
+    """respond.io's contact record, with the one gap the CRM can close filled in.
+
+    Verbatim but for `phone`: see `turn_runtime.contact_phone` for why a missing one is
+    the difference between a handover and a 400.
+    """
+    contact = dict(envelope.contact or {})
+    if not jsc.truthy(contact.get("phone")) and known_phone:
+        contact["phone"] = known_phone
+    return contact
+
+
+def _run_answer(
     *,
     turn_id: str,
     ctx: dict[str, Any],
     item: dict[str, Any],
     branch_kind: str,
     actions: list[dict[str, Any]],
-    payload: dict[str, Any],
+    answer: Any,
+    state: Any,
+    remembered_before: dict[str, Any],
     dry_run: bool,
     session_factory: SessionFactory,
     turn_trace: Any,
     stage: list[str],
-    space_id: str | None,
-    crossdomain_ladder: dict[str, list[str]] | None = None,
+    contact_respond_id: str,
+    verdict: dict[str, Any],
+    recalled: list[dict[str, Any]],
 ) -> TurnResult:
-    """S6c's handover: the answer half plus the tail, with NO database session open.
+    """G TAIL for a turn the composer answered: persist, record, hand the actions back.
 
-    Split out of `_run_stages` for the same reason `_run_casual_lane` is: the capacity rule
-    is visible in the signature rather than in a comment. This takes a `session_factory`,
-    never a `Session`, so the two MCP probes and the family read cannot run with a routing
-    connection held open (the 96/100-connection incident is the evidence).
-
-    A failure here is the LANE's failure, not the engine's, exactly as S4 ruled for the
-    clarifier: the turn keeps its `branch_kind`, fails at `stage = replied` (the answer
-    half is what composes the reply), and the customer gets today's error reply. Letting it reach `run_turn`'s catch-all would null
-    the branch kind and send the PARSER's error text, which is a different lane's words for
-    a different failure.
+    One tail for the two arms that reach it (a fetched answer and an ask), because the
+    turn's memory must not depend on which of them ran - the `Answer` carries the text,
+    the actions and the question, and this writes exactly that.
     """
     stage[0] = "replied"
-    close_turn_for_tail(
-        turn_id,
-        session_factory=session_factory,
-        branch_kind=branch_kind,
-        ctx=ctx,
-        item=item,
-        actions=actions,
-        records=turn_trace.persisted(),
+    reply = {
+        **_reply_of(answer),
+        "attachments_src": answer.files or None,
+    }
+    turn_trace.record(
+        "replied",
+        summary=trace_mod.replied_summary(reply, branch_kind),
+        why="The reply is composed from what the plan fetched, never from the customer's words.",
+        facts={
+            "lane": branch_kind,
+            "sections": len(answer.sections),
+            "asking": answer.question.kind if answer.question is not None else None,
+            "files": len(answer.files),
+        },
+        raw={"reply": reply},
     )
-    try:
-        completed = business.complete_answer(
-            payload,
-            turn_id=turn_id,
-            ctx=ctx,
-            item=item,
-            branch_kind=branch_kind,
-            services=business_services.answer_services_for(session_factory),
-            session_factory=session_factory,
-            space_id=space_id,
-            dry_run=dry_run,
-            crossdomain_ladder=crossdomain_ladder,
-            trace=turn_trace,
+
+    stage[0] = "remembered"
+    written = False
+    with _session(session_factory) as db:
+        tail_ctx = turn_runtime.TurnContext(
+            db=db,
+            contact_respond_id=contact_respond_id,
+            access_levels=list(verdict.get("access_levels") or []),
+            contains_flyer=bool(verdict.get("contains_flyer")),
+            ideation=remembered_before.get("ideation"),
         )
-    except Exception as exc:  # noqa: BLE001 - the lane's failure, with the lane's reply
-        logger.exception("chatbot turn %s: business answer failed", turn_id)
-        failed = f"{type(exc).__name__}: {exc}"
-        # AC-507: `quick_replies` is n8n's comma-joined string or null, never a list -
-        # `sub-sendmsg` runs string methods on it, so a list is a send that never leaves.
-        # This is the one path where the lane apologises to the customer, and in S7 mode
-        # the caller executes these actions directly, so getting the type wrong here is
-        # silence on an already-failed turn. Null, like every other hand-built site.
-        reply = {"text": GENERIC_ERROR_REPLY, "quick_replies": None}
-        answer_actions = [
-            *actions,
-            {
-                "kind": "send_message",
-                "text": GENERIC_ERROR_REPLY,
-                "quick_replies": None,
-                "dry_run": dry_run,
-            },
-        ]
-        with _session(session_factory) as db:
-            _close_turn(
-                db,
-                turn_id,
-                status="failed",
-                stage="replied",
-                branch_kind=branch_kind,
-                error=failed,
-                records=turn_trace.persisted(),
-                response={"ctx": ctx, "item": item, "actions": answer_actions, "reply": reply},
-            )
-        return TurnResult(
-            turn_id=turn_id,
-            ctx=ctx,
-            item=item,
+        # ONE payload for both kinds of turn: a live turn writes it, a dry run hands it
+        # back as `session_patch` and writes nothing (D14). Same rule `run_tail` applies
+        # for the older lanes, so every asking lane carries its question to the next
+        # console or replay turn the same way (finding 2a).
+        session_payload = turn_tail.session_payload(state, answer, tail_ctx)
+        if not dry_run:
+            turn_tail.persist(state, answer, tail_ctx)
+            _log_session_write(db, turn_id=turn_id, contact_respond_id=contact_respond_id)
+            written = True
+        _record_memory_trace(
+            turn_trace,
+            before=remembered_before,
+            state=state,
+            answer=answer,
+            recalled=recalled,
+            dry_run=dry_run,
+            written=written,
+        )
+        lane_actions = [*actions, *_answer_actions(answer, dry_run=dry_run)]
+        turn_trace.record(
+            "sent",
+            summary="Handed the reply to the caller to send.",
+            why="The CRM never sends on the turn path; n8n owns respond.io egress (D9).",
+            facts={"lane": branch_kind, "actions": len(lane_actions), "dry_run": dry_run},
+            raw={"actions": lane_actions},
+        )
+        _close_turn(
+            db,
+            turn_id,
+            status="done",
+            stage="sent",
             branch_kind=branch_kind,
-            delegate=None,
-            reply=reply,
-            actions=answer_actions,
-            session_patch=None,
-            status="failed",
-            stage="replied",
-            error=failed,
+            error=None,
+            records=turn_trace.persisted(),
+            response={"ctx": ctx, "item": item, "actions": lane_actions, "reply": reply},
         )
 
     return TurnResult(
         turn_id=turn_id,
+        is_test=dry_run,
         ctx=ctx,
         item=item,
         branch_kind=branch_kind,
         delegate=None,
-        reply=completed.get("reply"),
-        actions=completed.get("actions") or [],
-        # D14: on a dry run the tail wrote nothing and hands back what it WOULD have
-        # written, so a console or clone turn can be inspected.
-        session_patch=completed.get("session_patch"),
-        status=completed.get("status") or "done",
-        stage=completed.get("stage") or "remembered",
+        actions=lane_actions,
+        reply=reply,
+        session_patch=session_payload if dry_run else None,
+        status="done",
+        stage="sent",
     )
+
+
+def _run_entities_only_arm(
+    db: Session,
+    *,
+    turn_id: str,
+    ctx: dict[str, Any],
+    item: dict[str, Any],
+    verdict: dict[str, Any],
+    state: Any,
+    actions: list[dict[str, Any]],
+    dry_run: bool,
+    session_factory: SessionFactory,
+    turn_trace: Any,
+    stage: list[str],
+    contact_respond_id: str,
+    space_id: str | None,
+    remembered_before: dict[str, Any],
+    recalled: list[dict[str, Any]],
+    from_photo: bool,
+    media_prefixed: bool = False,
+) -> TurnResult:
+    """S3 (PLAN-chatbot-media-into-turn.md): bare entities, no domain, no carried
+    focus (AC-1822 to AC-1832). Resolved directly against the SAME resolver seam
+    the fetch would use (`business_services.production_services(db).resolve_entity`),
+    never through the business lane's fetch/ask machinery - there is no domain for
+    it to fetch against - and never through the `casual` lane's LLM clarifier.
+
+    Placed tokens settle onto `focus.products` WITH a uuid (`focus_settles_product`,
+    AC-1823); `state.focus.products` already carries an entry per token (`apply()`'s
+    own `_focus_rules`, run before this arm), unresolved raw and all, so this only
+    needs to ENRICH the matching rows rather than build the list from nothing.
+    """
+    stage[0] = "looked_up"
+    # Review round B1(b): filtered the SAME way the lane gate was (`turn/apply.py::
+    # is_product_shaped_entity`) - a customer/order/brand token riding alongside a
+    # real code in one message must never be resolved as a "missed" product and
+    # reported back as "Couldn't find Hanlim".
+    entities = [
+        e
+        for e in (verdict.get("entities") or [])
+        if isinstance(e, dict)
+        and e.get("current_message") is True
+        and e.get("raw")
+        and is_product_shaped_entity(e)
+    ]
+    raws = [e["raw"] for e in entities]
+    placed: list[str] = []
+    unplaced: list[str] = []
+    if raws:
+        from app.api.v1.system.references import ResolveReferenceRequest
+
+        # Security fix B2 (browser pass, reproduced 2/2): `resolve_reference_post`
+        # is a ROUTE function, called in-process rather than over HTTP, so the
+        # naive worry was that the router dependency which would normally stamp
+        # company scope onto the request session (`apply_company_scope`) never
+        # runs for it. MEASURED (hot-fix follow-up) rather than assumed: an
+        # explicit `set_company_scope(db, contact_scope)` re-stamp right here was
+        # tried and is REDUNDANT - `db` already carries the correct scope by the
+        # time this line runs, because `run_turn` wraps `session_factory` itself
+        # (`_scoped_factory`, H56, top of this file) before `_run_stages` opens
+        # ANY session, including this arm's own `db`. Proved for a NON-default
+        # company too (`test_the_explicit_restamp_is_load_bearing_for_a_non_
+        # default_company`, deliberately named for the hypothesis it disproved):
+        # a contact mapped to Mocha, with a same-code decoy product under
+        # Sorento, still places the Mocha row with the line deleted. The actual
+        # bug this fix's other half caught (`resolutions` keyed on the wrong
+        # field, see below) is what made every code look unplaced regardless of
+        # scope - not a missing re-stamp.
+        services = business_services.production_services(db, space_id=space_id)
+        body = {"tokens": raws, "allowed_entity_types": ["product"]}
+        ResolveReferenceRequest(**body)  # validated the same way every other caller is
+        result = services.resolve_entity(body)
+        # B2 fix, second half (browser pass): `resolve_reference_post`'s own
+        # resolutions carry `token`, never `raw` - keying on `raw` here silently
+        # collapsed every resolution to `None` and every code came back unplaced
+        # regardless of company scope. Masked in every OTHER test in this file by
+        # `_resolve_services`'s stub, which (correctly, for the real API) sets
+        # BOTH keys on each entry.
+        resolutions = {
+            r.get("token"): r for r in jsc.array(jsc.get(result, "resolutions")) if isinstance(r, dict)
+        }
+        by_raw = {row.get("raw"): row for row in state.focus.products if isinstance(row, dict)}
+        # Live browser pass finding: the ONE `apply` trace event every turn gets is
+        # recorded BEFORE this arm ever runs (`_run_stages`, right after parsing) -
+        # the normal business-fetch path re-enters `turn_apply` with the resolver's
+        # own output and so its OWN `apply` event (still the only one) already
+        # reflects resolved entities; this arm never re-enters `turn_apply` at all,
+        # so the drawer's Apply tab stayed on the pre-resolution snapshot forever,
+        # reading as "the code never resolved" even on a turn that resolved it
+        # correctly (proven by the SAME turn's Memory tab / `focus.products` itself).
+        # A snapshot BEFORE the loop mutates these dicts in place, so the second
+        # `apply` event below can show a real before/after rather than identical
+        # dicts.
+        before_products = copy.deepcopy(by_raw)
+        for raw in raws:
+            resolution = resolutions.get(raw)
+            matches = jsc.array(jsc.get(resolution, "matches")) if resolution else []
+            row = by_raw.get(raw)
+            if matches and row is not None:
+                match = matches[0]
+                row["uuid"] = jsc.get(match, "uuid")
+                row["entity_type"] = jsc.get(match, "entity_type")
+                row["canonical_code"] = jsc.get(match, "canonical_code")
+                placed.append(raw)
+            else:
+                unplaced.append(raw)
+        turn_trace.add(
+            "apply",
+            {
+                "verdict": verdict,
+                "decision": None,
+                "state_diff": {
+                    "products": {
+                        "before": [before_products.get(raw) for raw in raws],
+                        "after": [by_raw.get(raw) for raw in raws],
+                    }
+                },
+                "narrowing": [],
+                "reconciled": [],
+                "rules_fired": ["entities_only_resolved"],
+                "plan": {"domains": [], "fetch": [], "denied": [], "ask": None, "lane": "entities_only"},
+            },
+        )
+
+    turn_trace.record(
+        "looked_up",
+        summary="Read the codes and looked each one up.",
+        why="The entities-only arm resolves bare codes directly; there is no domain to fetch against yet.",
+        facts={"placed": len(placed), "unplaced": len(unplaced)},
+        raw={"placed": placed, "unplaced": unplaced},
+    )
+
+    text = turn_compose.entities_only_reply(
+        placed, unplaced, from_photo=from_photo, media_prefixed=media_prefixed
+    )
+    answer = turn_compose.Answer(text=text)
+    # `_run_answer` opens and commits its OWN session for the tail (persist, close);
+    # this caller's own `db` (the "access, apply, route" session, still open) must
+    # have nothing pending on it first - every OTHER caller of `_run_answer` reaches
+    # it after a write of its own already committed `db` along the way (the resolver
+    # route call among them); this arm's own `resolve_entity` call is read-only, so
+    # nothing does that here, and leaving `db` mid-transaction across the tail's own
+    # nested session left the tail's commit invisible once THIS session's later
+    # close rolled its own (empty but still savepoint-scoped) transaction back -
+    # measured: `focus.products` persisted correctly inside `_run_answer`, then read
+    # back as the pre-turn seed the moment `_run_stages`'s outer session closed.
+    db.commit()
+    return _run_answer(
+        turn_id=turn_id,
+        ctx=ctx,
+        item=item,
+        branch_kind="business_query",
+        actions=actions,
+        answer=answer,
+        state=state,
+        remembered_before=remembered_before,
+        dry_run=dry_run,
+        session_factory=session_factory,
+        turn_trace=turn_trace,
+        stage=stage,
+        contact_respond_id=contact_respond_id,
+        verdict=verdict,
+        recalled=recalled,
+    )
+
+
+def _answer_actions(answer: Any, *, dry_run: bool) -> list[dict[str, Any]]:
+    """What the caller executes: the message, then any files, in that order."""
+    built: list[dict[str, Any]] = []
+    words = getattr(answer, "text", "") or ""
+    if words.strip():
+        built.append(
+            {
+                "kind": "send_message",
+                **_reply_of(answer),
+                "dry_run": dry_run,
+            }
+        )
+    if answer.files:
+        built.append(
+            {"kind": "send_attachments", "attachments_src": answer.files, "dry_run": dry_run}
+        )
+    return built
+
+
+def _quick_replies_of(answer: Any) -> str | None:
+    """n8n's own shape: a comma-joined string or null, never a list (AC-507).
+
+    Owner ruling 23 Sep 2026 (AC-1866): a `member_offer`'s own numbered text list is
+    the offer - `turn_pending.quick_replies_suppressed` withholds ITS options from
+    this string; `result_set` (the roster a numbered reply resolves through) is a
+    separate read and is untouched here.
+    """
+    if answer.question is None:
+        return None
+    if turn_pending.quick_replies_suppressed(getattr(answer.question, "kind", None)):
+        return None
+    labels = [str(o.get("label")) for o in answer.question.options if o.get("label")]
+    return ", ".join(labels) if labels else None
+
+
+def _reply_of(answer: Any) -> dict[str, Any]:
+    """The three fields every `Answer`-shaped reply derives the same way: the text,
+    the quick replies (through `_quick_replies_of`, so a suppressed kind stays
+    suppressed at every caller), and the roster a numbered follow-up resolves
+    against. Shared by `_run_answer`'s persisted reply and `_answer_actions`'s own
+    `send_message` action, which each add their own remaining key(s) on top
+    (`attachments_src` vs `kind`/`dry_run`) - one seam, so a fix here reaches both.
+    """
+    return {
+        "text": getattr(answer, "text", "") or None,
+        "quick_replies": _quick_replies_of(answer),
+        "result_set": list(answer.question.options) if answer.question is not None else [],
+    }
+
+
+def _pending_option_labels(pending: Any) -> list[str] | None:
+    """D17: the numbered options the parser is shown, so a worded answer can resolve."""
+    if pending is None or not pending.options:
+        return None
+    return [str(o.get("label")) for o in pending.options if o.get("label")] or None
+
+
+def _apply_media_reply_prefix(result: TurnResult, outcome: Any) -> None:
+    """AC-1817 to AC-1821: the "I read .../I heard ..." line, prepended exactly
+    once, wherever the answering arm's reply landed.
+
+    One wrapping step over the WHOLE result rather than a change inside each of
+    `_run_stages`'s dozen answering arms (fetch, ask, roster, escalation offer) -
+    every one of them already funnels its text onto `result.reply["text"]` and
+    its own `send_message` action by the time this runs. `outcome` is `None` on
+    a plain text turn (AC-1820) and skipped when the intake itself stopped the
+    turn (AC-1810 to AC-1814 already composed their own reply with no prefix).
+    """
+    if outcome is None or outcome.stops_here:
+        return
+    prefix = media_intake.reply_prefix(outcome)
+    notices = media_intake.notice_texts(outcome)
+    reply = result.reply or {}
+    body = reply.get("text") or ""
+    lines = [prefix, *([body] if body else []), *notices]
+    full_text = "\n".join(lines)
+    result.reply = {**reply, "text": full_text}
+    for action in result.actions or []:
+        if isinstance(action, dict) and action.get("kind") == "send_message" and action.get("text") == body:
+            action["text"] = full_text
+
+
+def _repersist_media_prefixed_reply(
+    session_factory: SessionFactory, turn_id: str, result: TurnResult, dry_run: bool
+) -> None:
+    """Review round S1: `_apply_media_reply_prefix` mutates the in-memory `TurnResult`
+    handed back to the caller, but by the time it runs, the answering arm's own tail
+    (`_run_answer`/`_run_entities_only_arm`/etc, plural rather than one shared
+    `_finish_turn`) already persisted the row's `response` and its trace's `sent`/
+    `replied` record with the UN-prefixed text - so `chatbot.turns.response` and a
+    `_duplicate_result` replay disagreed with the words the customer actually got.
+    Patched back onto the row here, in place, on its own short session - a no-op
+    whenever `_apply_media_reply_prefix` itself was a no-op (a plain turn, or a
+    media-denied turn that never reaches an answering arm at all).
+    """
+    if dry_run:
+        return
+    new_text = (result.reply or {}).get("text")
+    db = session_factory()
+    try:
+        row = db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).first()
+        if row is None or not isinstance(row.response, dict):
+            return
+        response = row.response
+        reply = response.get("reply") if isinstance(response.get("reply"), dict) else {}
+        if reply.get("text") == new_text:
+            return  # nothing to fix - either no prefix applied, or already persisted right
+        response = {**response, "reply": {**reply, "text": new_text}}
+        if isinstance(response.get("actions"), list):
+            response["actions"] = result.actions
+        row.response = response
+        trace = [dict(r) if isinstance(r, dict) else r for r in (row.trace or [])]
+        for record in trace:
+            if not isinstance(record, dict) or record.get("stage") not in ("sent", "replied"):
+                continue
+            raw = record.get("raw")
+            if not isinstance(raw, dict):
+                continue
+            if isinstance(raw.get("reply"), dict):
+                raw["reply"] = {**raw["reply"], "text": new_text}
+            if isinstance(raw.get("actions"), list):
+                raw["actions"] = result.actions
+        row.trace = trace
+        db.commit()
+    finally:
+        db.close()
+
+
+def _media_source_modality(media_box: dict[str, Any]) -> str | None:
+    """This turn's media source, whichever of the two intake paths produced it - a
+    live outcome this module ran itself, or a modality n8n's own pipeline already
+    decided upstream (`patched_upstream`, review round S3). `None` on a plain text
+    turn. Used for `from_photo` (the entities-only arm's wording), which must read
+    the same either way."""
+    outcome = media_box.get("outcome")
+    if outcome is not None:
+        return outcome.modality
+    return media_box.get("patched_modality")
+
+
+def _attributes_summary(attributes: list[Any]) -> str | None:
+    """"2 quantity, 1 size" - one count per `MediaAttribute.kind` (review round S5).
+    `None` on an empty list, so a text turn's facts carry no `attributes` key at
+    all rather than a printed empty string."""
+    from collections import Counter
+
+    counts = Counter(
+        a.get("kind") or "attribute" for a in attributes if isinstance(a, dict)
+    )
+    if not counts:
+        return None
+    return ", ".join(f"{n} {kind}" for kind, n in counts.items())
+
+
+def _media_intake_facts(outcome: media_intake.MediaIntakeOutcome) -> dict[str, Any]:
+    """The `media_intake` trace record's facts (AC-1800/AC-1801, AC-1836's own
+    `attachment_error`) - FLATTENED to exactly what `TurnPanel`'s generic StageRow
+    prints (review round S5): every value here is a plain string/number/bool the
+    component renders with `String(value)` - never a nested object (which would
+    print as "[object Object]") and never a bare id (no UUIDs on screen, the
+    cursor rule) - `job_id`/`attachment_id`/the full `result` live in the trace
+    record's `raw` instead (never printed; see the `turn_trace.record` call site).
+    """
+    entities = [e for e in (outcome.result.get("entities") or []) if isinstance(e, dict)]
+    raws = [e.get("raw") for e in entities if e.get("raw")]
+    facts: dict[str, Any] = {
+        "modality": outcome.modality,
+        "decision": outcome.decision,
+        "status": outcome.status,
+        "elapsed_ms": outcome.elapsed_ms,
+    }
+    if raws:
+        facts["entities"] = ", ".join(raws)
+    attributes_summary = _attributes_summary(outcome.result.get("attributes") or [])
+    if attributes_summary:
+        facts["attributes"] = attributes_summary
+    if outcome.result.get("notes"):
+        facts["notes"] = outcome.result["notes"]
+    if outcome.result.get("truncated"):
+        facts["truncated"] = True
+    if outcome.attachment_error:
+        facts["attachment_error"] = outcome.attachment_error
+    if outcome.extraction_error:
+        facts["extraction_error"] = outcome.extraction_error
+    return facts
+
+
+def _stock_check_denied(db: Session, envelope: Envelope, verdict: dict[str, Any]) -> bool:
+    """Contract 61: the contact is not allowed stock and this turn asked for it.
+
+    Read off the CONTACT's own record, which is why it cannot be a plan fact: the plan
+    knows what was asked, not who is asking. S6 (owner ruling, 16 Sep 2026): the record
+    is the CRM's `respond_contacts.chatbot_stock_allowed`, default ON, read through
+    `turn_runtime.load_profile` - the one seam for the contact's facts. The envelope's
+    respond.io custom field (formerly `is_allowed_stock`) is not read at all: a console
+    turn that borrowed an envelope with an empty `custom_fields` read it as "not
+    allowed" and answered a stock ask with the demand-quantity question. No row at all
+    fails open, like the profile.
+    """
+    profile, _recall = turn_runtime.load_profile(db, _contact_respond_id(envelope))
+    return (
+        profile.stock_allowed is not True
+        and verdict.get("intent_hint") == "check_stock"
+        and not jsc.is_empty(verdict.get("entities"))
+    )
+
+
+def _demand_qty_missing(verdict: dict[str, Any]) -> bool:
+    """Contract 62: a denied stock check with no quantity asks for one first."""
+    return jsc.is_empty(verdict.get("demand_qty")) or verdict.get("demand_qty") == 0
+
+
+def _record_memory_trace(
+    turn_trace: Any,
+    *,
+    before: dict[str, Any],
+    state: Any,
+    answer: Any,
+    recalled: list[dict[str, Any]],
+    dry_run: bool,
+    written: bool,
+) -> None:
+    """The `memory` trace record: three shelves, before and after, writer per shelf."""
+    from app.services.chatbot.turn.pending import to_wire
+    from app.services.chatbot.turn.state import focus_to_wire
+
+    turn_trace.add(
+        "memory",
+        {
+            "focus": {
+                "before": before.get("focus") or {},
+                "after": focus_to_wire(state.focus),
+                "writer": "apply",
+            },
+            "profile": {
+                "before": {"tier": state.profile.tier, "language": state.profile.language},
+                "after": {"tier": state.profile.tier, "language": state.profile.language},
+                "writer": "contact",
+            },
+            "episodes": {
+                "before": [f.get("id") for f in recalled],
+                "after": [f.get("id") for f in recalled],
+                "writer": "tail",
+            },
+            "open_question": {
+                "before": before.get("open_question"),
+                "after": to_wire(answer.question) if answer is not None else None,
+                "writer": "apply",
+            },
+            "written": written,
+            "dry_run": dry_run,
+        },
+    )
+    turn_trace.record(
+        "remembered",
+        summary=(
+            "Nothing was written: this is a test turn (D14)."
+            if dry_run
+            else "Wrote the conversation state."
+        ),
+        why="The CRM is the only writer of the conversation state on the turn path (D2).",
+        facts={"written": written, "dry_run": dry_run},
+        raw=None,
+    )
+
+
+def _write_episode(
+    db: Session, *, contact_respond_id: str, before: dict[str, Any], turn_id: str
+) -> None:
+    """AC-1546: the topic this turn RESET is the one that just closed, so it is the one
+    written. Never mid-topic, and never the topic this turn is opening.
+
+    **It writes on the TURN's session, and `memory.write_episode` commits it.** Review
+    asked for a session of its own, the way the escalation lane owns one
+    (`escalation_services.production_session`); both ways of doing that were measured on
+    16 Sep 2026 and neither works today:
+
+    * An own session NESTED inside this stage's block loses the write in every test.
+      `tests/chatbot/conftest.py::session_factory` binds every session to ONE connection
+      with `join_transaction_mode="create_savepoint"`, so an inner session's commit only
+      releases into the enclosing session's savepoint and the enclosing session's close
+      rolls it back. Probed directly: the frame was written, read back as 1 immediately
+      after, and 0 at the end of the test. Production is unaffected (each `SessionLocal`
+      takes its own connection), but the whole engine suite would be red.
+    * Moving the call out of the stage block instead reintroduces the bug this line was
+      put here to fix: a turn whose fetch failed or whose lane refused must still close
+      the topic it ended, which is why the write sits where APPLY decides `topic_reset`
+      rather than on the answer arm.
+
+    Trigger for revisiting: a test fixture that gives each session its OWN connection.
+    At that point this takes `session_factory` and opens one through `_session`, and the
+    nesting stops mattering.
+    """
+    focus_before = before.get("focus") if isinstance(before.get("focus"), dict) else {}
+    domains = focus_before.get("domains") or []
+    domain = domains[0] if domains else None
+    if not domain:
+        return
+    try:
+        memory_mod.write_episode(
+            db,
+            contact_respond_id=contact_respond_id,
+            domain=domain,
+            intent=None,
+            entities={
+                key: [
+                    jsc.js_string(e.get("canonical_code") or e.get("raw"))
+                    for e in value
+                    if isinstance(e, dict)
+                ]
+                for key, value in focus_before.items()
+                if isinstance(value, list) and value and isinstance(value[0], dict)
+            },
+            tools_used=[],
+            turn_ids=[turn_id],
+            summary=f"Closed the {domain} topic.",
+            close_reason="topic_switch",
+        )
+    except Exception:  # noqa: BLE001 - a lost episode is never a lost turn
+        logger.warning("chatbot: the episode write did not run", exc_info=True)
 
 
 def _run_casual_lane(
@@ -2066,6 +3392,7 @@ def _run_casual_lane(
     clarifier_prompt: dict[str, Any] | None,
     clarifier_config: Any,
     setup_error: str | None = None,
+    state: Any = None,
 ) -> TurnResult:
     """The `low_signal` lane, from the model call to the closed turn (AC-401, AC-403).
 
@@ -2221,6 +3548,9 @@ def _run_casual_lane(
         turn_id,
         {"item": answer, "ctx": ctx, "answer": answer},
         session_factory=session_factory,
+        # The clarifier asks nothing of its own, so whatever question was open before
+        # this greeting is still open after it (contract 36 / 56, cluster 4's carry).
+        state=state,
     )
 
     return TurnResult(
@@ -2249,6 +3579,7 @@ def _run_escalation_arm(
     session_factory: SessionFactory,
     turn_trace: Any,
     stage: list[str],
+    state: Any = None,
 ) -> TurnResult:
     """The `out_of_scope` lane, from the lane call to the closed turn (AC-501 to AC-505).
 
@@ -2372,6 +3703,9 @@ def _run_escalation_arm(
             ),
         },
         session_factory=session_factory,
+        # An accepted offer was CONSUMED by APPLY, so this carries nothing; a clarify
+        # arm asks its own question and `_question_offered` reads it back.
+        state=state,
     )
 
     # -- seal the send actions with what the tail composed -------------------- #
@@ -2745,9 +4079,6 @@ FRAGMENT_FIELDS: tuple[str, ...] = (
     "crossdomain_render",
     "answer",
     "clarify",
-    # SEC-B1/AC-1333: the recomposed access_levels the fetch step actually used,
-    # None on any arm that never called the tool - see `business.complete_answer`.
-    "access_levels_used",
 )
 
 
@@ -2939,33 +4270,35 @@ def run_tail(
     turn_trace: trace_mod.TurnTrace,
     write_session: bool = True,
     lane_quick_replies: Any = None,
+    state: Any = None,
+    question: Any = None,
+    remembered_before: Mapping[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
-    """outcome -> CS member offer -> compile-state -> compose -> validate -> persist.
+    """outcome -> CS member offer -> reply ladder -> persist the five keys.
 
     ONE tail, TWO callers. `complete_turn` runs it for a lane that ran in n8n, and
-    `run_turn` runs it for a lane the CRM finished itself (S3) - and they must be the same
+    `run_turn` runs it for a lane the CRM finished itself - and they must be the same
     code, because the whole claim of the port is that a turn's memory does not depend on
     which half of the migration answered it.
 
-    `write_session` is the ONE thing a caller may vary, and it is not a dry-run flag:
-    `access_denied` answers WITHOUT the tail's write on a live turn (n8n's `route[0]`
-    goes straight to the send node and never reaches `compile-current-state`), and a
-    contact refused the
-    agent must not have the turn written into their memory. `dry_run` suppresses the write
-    for a different reason (D14) and both suppress it independently.
+    What the re-architecture changed is the SECOND half. The reply is still composed from
+    the producers this branch built (`tail/reply_ladder.py`, the surviving half of the
+    retired compiler); the MEMORY is no longer re-derived from that reply. The five keys
+    are written from the `State` APPLY computed and the question the composer asked, so
+    there is one writer, one shape, and no ladder of markers to keep in step.
 
-    Returns `(reply, session_patch)`, where `session_patch` is `None` when the sealed
-    reply carried no patch AT ALL - which is not the same as an explicit `{}` (a reset the
-    compiler asked for, and still written). See the note at the read site: collapsing the
-    two wiped a live customer's memory on a turn that never asked for it (H57). Raises
-    before writing anything when the compiled variables carry a key outside the allowlist
-    (AC-203).
+    `state` is APPLY's own `state'` when the caller has one (every lane that runs inside
+    `run_turn`): its focus is what gets written, and its `pending` is what an answering
+    lane carried.
+
+    `write_session` is the ONE thing a caller may vary, and it is not a dry-run flag:
+    `access_denied` answers WITHOUT the tail's write on a live turn, and a contact refused
+    the agent must not have the turn written into their memory.
     """
     from app.services.chatbot.contracts import SessionVars
-    from app.services.chatbot.tail import compose as compose_mod
     from app.services.chatbot.tail import member_offer as member_mod
     from app.services.chatbot.tail import outcome as outcome_mod
-    from app.services.chatbot.tail.compile_state import compile_current_state
+    from app.services.chatbot.tail import reply_ladder
 
     # -- what this branch built ---------------------------------------- #
     producers: dict[str, Any] = {}
@@ -2999,124 +4332,239 @@ def run_tail(
             outcome_input = offer
 
     outcome_items = outcome_mod.build_outcome([{"json": outcome_input}], producers)
+    outcome = jsc.get(outcome_items[0]["json"], "outcome") or {}
 
-    # -- what to say, and what to remember ------------------------------ #
-    # SEC-B1/AC-1333: two facts folded into a COPY of `gate` rather than new
-    # `compile_current_state` keyword params - several existing tests stub that
-    # function with a fixed `(item, ctx, *, resolved=None, gate=None,
-    # execution_id="")` signature (`test_dry_run_isolation.py`'s own stated
-    # convention), and a new required-by-name kwarg at this, its one call site,
-    # broke every one of them. `gate` is already the vehicle `_set_page_carry`
-    # reads gate-shaped facts off (`gate_json`), so this is the same seam, not
-    # a new one: `values["result"]` is None on every arm that never rendered a
-    # set answer (tier_ask, error, offer, not_found) - the carry must arm off
-    # THIS, never off `gate.predicate` alone, which is present the moment the
-    # resolver ran regardless of whether the fetch step ever reached the tool
-    # call.
-    gate_for_tail = {**(values["gate"] or {})}
-    gate_for_tail["_fetch_rendered_result"] = values.get("result") is not None
-    gate_for_tail["_access_levels_used"] = values.get("access_levels_used")
-    compiled = compile_current_state(
-        outcome_items[0]["json"],
-        ctx,
-        resolved=values["resolved"],
-        gate=gate_for_tail,
-        execution_id=turn_id,
-    )
-    composed = compose_mod.crossdomain_compose(
-        compiled.item,
-        result=values["result"],
-        answered=compiled.answered_domain is not None,
-    )
-    sealed = composed.get("reply") or {}
-    # A lane may have composed quick replies of its own before the tail ran: the
-    # escalation clarifies name the teams so the answer is a tap, and the tail composes no
-    # `quick_reply` on that arm. Seeded HERE rather than at the send seal so the persisted
-    # reply, the `replied` trace fact and the action all say the same thing - Chat History
-    # and the trace screen read the REPLY, and they were showing `null` / `False` about a
-    # turn that had sent two buttons. The tail's own value always wins.
-    if jsc.truthy(lane_quick_replies) and not jsc.truthy(sealed.get("quick_replies")):
-        sealed = {**sealed, "quick_replies": lane_quick_replies}
-    # H57: an ABSENT `session_patch` and an EXPLICIT `{}` are two different instructions,
-    # and `or {}` collapsed them. `{}` is a RESET the compiler asked for and is written;
-    # absent means the sealed reply carried no memory to save, and the only correct answer
-    # to that is to leave the customer's remembered state exactly as it was. Under the old
-    # default a lane that produced no state wiped it, which reads to the customer as the
-    # bot forgetting the conversation mid-thread. `None` is what "no instruction" is called
-    # from here down; every read of the patch below tolerates it.
-    raw_patch = sealed.get("session_patch")
-    session_patch = raw_patch if isinstance(raw_patch, dict) else None
-    variables = (session_patch or {}).get("variables") or {}
+    # -- what to say ----------------------------------------------------- #
+    composed = reply_ladder.compose_reply(outcome)
+    if question is None:
+        question = _question_offered(ctx, values, outcome, composed)
+    quick_replies = composed.get("quick_replies")
+    if jsc.truthy(lane_quick_replies) and not jsc.truthy(quick_replies):
+        # A lane may have composed quick replies of its own before the tail ran: the
+        # escalation clarifies name the teams so the answer is a tap.
+        quick_replies = lane_quick_replies
+    reply = {
+        "text": composed.get("text"),
+        "quick_replies": quick_replies,
+        "result_set": composed.get("result_set") or [],
+        "attachments_src": _attachments_src(values["answer"]),
+    }
 
     turn_trace.record(
         "replied",
-        summary=trace_mod.replied_summary(sealed, branch_kind),
+        summary=trace_mod.replied_summary(reply, branch_kind),
         why="The reply is composed from what the lane built, never from the customer's words.",
         facts={
             "lane": branch_kind,
-            "quick_replies": bool(sealed.get("quick_replies")),
-            "rows_offered": len(variables.get("last_result_set") or []),
-            "cross_domain_block": composed is not compiled.item,
+            "quick_replies": bool(reply["quick_replies"]),
+            "rows_offered": len(reply["result_set"]),
         },
-        raw={"reply": sealed},
+        raw={"reply": reply},
     )
 
-    # AC-203 / H15: the allowlist is checked BEFORE anything is written. A key the
-    # compiler should not be writing fails the turn here rather than landing in a
-    # real customer's session, where nothing would ever notice it.
-    SessionVars(**variables)
+    # -- what to remember ------------------------------------------------ #
+    # The five keys, from the state this turn computed (AC-1504, AC-1532). The allowlist
+    # check `LegacyVariables` used to run is now the shape itself: `SessionVars` forbids
+    # every key outside the five, so a producer cannot leak one into a real contact's
+    # memory.
+    # What APPLY decided this turn, when the caller ran one. `/complete` is n8n's own
+    # entry and has no APPLY state at all, so it re-reads the session this turn STARTED
+    # with - which is exactly why the carry below reads `applied` and not `state`: that
+    # reloaded pending is the question as it stood BEFORE the turn, and writing it back
+    # would re-open a question the lane has just answered.
+    applied = state
+    if state is None:
+        state = turn_runtime.load_state(
+            {"session_vars": jsc.get(jsc.get(ctx, "session"), "session_vars")},
+            profile=turn_state.Profile(),
+            turn_no=0,
+        )
+    before = dict(remembered_before or session_state.five_keys(jsc.get(ctx, "session")))
+    payload = {
+        "focus": turn_state.focus_to_wire(state.focus),
+        # The lane's OWN question, else the one APPLY carried - the same rule the
+        # composed arms run through `turn/tail.py::session_payload` ("no new question"
+        # is not "no question", AC-1532). A lane that answers nothing and clears nothing
+        # must leave the open question exactly where it found it: hand-pass 2 sent
+        # "hello" while an escalate offer was open, the casual lane wrote a patch with
+        # no question in it, and the "1" that followed had nothing left to answer
+        # (browser pass 3, turns 8 and 9).
+        "open_question": turn_pending.to_wire(
+            question if question is not None else (applied.pending if applied else None)
+        ),
+        # The ideate lane's own pointer wins over the turn-start value (owner console
+        # walk 25 Sep 2026: three turns minted three drafts because this always read
+        # `before`). Only `lanes/ideate.py::build_reply` sets `ideation` on the tail
+        # item, `None` clearing it on a terminal status - pre-re-architecture
+        # `tail/compile_state.py:773` wrote `ideate.ideation if ideate else prev.ideation`
+        # and commit 0a335146e dropped that arm.
+        "ideation": item.get("ideation") if "ideation" in item else before.get("ideation"),
+        "access_levels": list(before.get("access_levels") or []),
+        "contains_flyer": bool(before.get("contains_flyer")),
+    }
+    SessionVars(**payload)
+    reply_ladder.sanitize_em_dash(payload)
 
-    # `ctx.session` is `get-session-vars`'s own body, so the previous variables sit
-    # one level in. Same accessor the compiler uses, so "kept" on the trace screen and
-    # "carried" in the compiler can never disagree about what was there before.
-    before_variables = (
-        jsc.get(jsc.get(jsc.get(ctx, "session"), "session_vars"), "variables") or {}
-    )
-    remembered = trace_mod.memory_delta(
-        before=before_variables,
-        # With no patch there is no write, so the memory is KEPT exactly as it was.
-        # Reporting the empty `variables` above as the "after" would file every remembered
-        # value under `cleared` on the trace screen and describe a wipe that never happens.
-        after=variables if session_patch is not None else before_variables,
-    )
-    written = (not dry_run) and write_session and session_patch is not None
+    written = (not dry_run) and write_session
     if written:
         from app.services.conversation_variables_service import overwrite_for_contact
 
-        overwrite_for_contact(db, respond_io_id=contact_respond_id, state=session_patch)
+        overwrite_for_contact(db, respond_io_id=contact_respond_id, state=payload)
         _log_session_write(db, turn_id=turn_id, contact_respond_id=contact_respond_id)
     turn_trace.record(
         "remembered",
-        summary=trace_mod.remembered_summary(remembered, dry_run=dry_run),
-        why=(
+        summary=(
             "Nothing was written: this is a test turn (D14)."
             if dry_run
             else "Nothing was written: a refused turn is not remembered."
             if not write_session
-            else "Nothing was written: this reply carried no state to save, so what was "
-            "remembered before is kept."
-            if session_patch is None
-            else "The CRM is the only writer of the conversation state on the turn path (D2)."
+            else "Wrote the conversation state."
+        ),
+        why=(
+            "The CRM is the only writer of the conversation state on the turn path (D2)."
         ),
         facts={
-            "kept": len(remembered["kept"]),
-            "new": len(remembered["new"]),
-            "cleared": len(remembered["cleared"]),
+            "asking": payload["open_question"]["kind"] if payload["open_question"] else None,
             "dry_run": dry_run,
             "written": written,
         },
-        raw={"session_patch": session_patch},
+        raw={"session_patch": payload},
     )
 
-    reply = {
-        "text": sealed.get("text"),
-        "quick_replies": sealed.get("quick_replies"),
-        # What `sub-sendmsg` and `send-attachments` reach for by name today, handed
-        # back as fields so their expressions become one read each (AC-207).
-        "result_set": variables.get("last_result_set"),
-        "attachments_src": _attachments_src(values["answer"]),
-    }
-    return reply, session_patch
+    return reply, payload
+
+
+def _question_offered(
+    ctx: Mapping[str, Any], values: Mapping[str, Any], outcome: Mapping[str, Any], composed: Mapping[str, Any]
+) -> Any:
+    """The one open question a KEPT lane's own producers just put on screen.
+
+    The re-architected arms hand `run_tail` their composer's `question` directly. These
+    four are the lanes that still build their ask as copy (the team clarify, the company
+    clarify, the CS member roster and the escalate offer), so the pending they leave open
+    is read back off what they offered - one place, rather than the four markers the
+    retired compiler wrote independently.
+    """
+    def _options(rows: Any, kind: str) -> list[dict[str, Any]]:
+        built: list[dict[str, Any]] = []
+        for index, row in enumerate(jsc.array(rows)):
+            if not jsc.truthy(row):
+                continue
+            label = jsc.get(row, "label") or jsc.get(row, "company_name") or jsc.get(row, "name")
+            # Security N-2 (hand pass 11 final): for `kind == "company"` this `value` is a
+            # COMPANY id, not an entity uuid. It is safe here only because
+            # `ESCALATION_OFFER_KINDS` routes `company_pick` to `turn/apply.py::
+            # _answer_offer` BEFORE the generic roster path, so it never reaches
+            # `focus.uuids` or a tool call - removing `company_pick` from that set would
+            # change that.
+            value = jsc.get(row, "team") or jsc.get(row, "uuid") or jsc.get(row, "company_id")
+            built.append(
+                {
+                    "position": jsc.get(row, "idx") or index + 1,
+                    "label": label,
+                    "uuid": value,
+                    "uuids": [value] if value else [],
+                    "entity_type": kind,
+                    "payload": _option_payload(row, kind),
+                }
+            )
+        return built
+
+    def _option_payload(row: Any, kind: str) -> dict[str, Any]:
+        """What the ANSWER to this option carries into the next turn.
+
+        A team option names its team; a COMPANY option names its company and, above all,
+        its `company_id` - the only field routing reads (`lanes/escalation.py::
+        _next_assignee_body`), and what makes the tapped number and the typed company
+        name reach `escalation_context` through the same seam (hand pass 11, blocker 2).
+
+        SRTSC07 review round 1, SHOULD-2: a TEAM option also carries THIS turn's
+        `routing.suggested_agent` beside its own `team` - read straight off `ctx`
+        (the enclosing function's own parameter) rather than off a locally-assigned
+        variable, so this stays correct regardless of which branch calls it. Round 4
+        (owner-approved, 22 Sep 2026): `brand_code` is the SAME idiom, one axis over,
+        read off `values["gate"]` (the enclosing function's own parameter too -
+        `lanes/business/gate.py::run_gate`'s own `routing_brand`).
+        """
+        if kind == "team":
+            routing = jsc.get(jsc.get(jsc.get(ctx, "parse"), "output") or {}, "routing") or {}
+            return {
+                "team": jsc.get(row, "team"),
+                "agent": jsc.get(routing, "suggested_agent"),
+                "brand_code": jsc.get(values.get("gate"), "routing_brand"),
+            }
+        if kind == "company":
+            return {
+                "company": jsc.get(row, "company_name") or jsc.get(row, "label"),
+                "company_id": jsc.get(row, "company_id") or None,
+                "brand_code": jsc.get(row, "brand_code") or None,
+            }
+        return {}
+
+    clarify = values.get("clarify")
+    if jsc.truthy(clarify):
+        if jsc.truthy(jsc.get(clarify, "clarify_team")):
+            return turn_pending.ask(
+                "team_pick", _options(jsc.get(clarify, "clarify_team_options"), "team"), expects="pick"
+            )
+        if jsc.truthy(jsc.get(clarify, "clarify_text")):
+            # The clarify's OWN pool first (`escalation.clarify_company_reply`'s
+            # `clarify_company_options`): the companies it just printed, carrying the ids
+            # that route. `result_set` stays the fallback for a clarify composed by a
+            # producer that filled one - the member roster the n8n arm clarifies over.
+            routing = jsc.get(jsc.get(jsc.get(ctx, "parse"), "output") or {}, "routing") or {}
+            rows = jsc.get(clarify, "clarify_company_options") or composed.get("result_set")
+            return turn_pending.ask(
+                "company_pick",
+                _options(rows, "company"),
+                # The team the offer was made for: an acceptance names none of its own
+                # (contract 108), and a clarify that dropped it sent the answering turn
+                # to whatever team the fresh parse happened to suggest.
+                team=jsc.get(clarify, "team") or jsc.get(routing, "suggested_team"),
+                expects="pick",
+                # SRTSC07 review round 1, SHOULD-2: same reasoning as `team` above,
+                # one axis over - on the pending's own top-level payload, since a
+                # company clarify's own bare "yes" answers it without a position.
+                # `brand_code` (round 4) is the SAME idiom, off `values["gate"]`.
+                payload={
+                    "agent": jsc.get(routing, "suggested_agent"),
+                    "brand_code": jsc.get(values.get("gate"), "routing_brand"),
+                },
+            )
+
+    member = outcome.get("build-cs-member-offer")
+    if jsc.truthy(member):
+        routing = jsc.get(jsc.get(jsc.get(ctx, "parse"), "output") or {}, "routing") or {}
+        return turn_pending.ask(
+            "member_offer",
+            _options(jsc.get(member, "cs_last_result_set"), "member"),
+            expects="pick",
+            # SRTSC07 review round 1, SHOULD-2: picking a member option IS an
+            # escalation acceptance (`turn/apply.py:546`). `brand_code` (round 4) is
+            # the SAME idiom, off `values["gate"]`.
+            payload={
+                "agent": jsc.get(routing, "suggested_agent"),
+                "brand_code": jsc.get(values.get("gate"), "routing_brand"),
+            },
+        )
+
+    catalog = outcome.get("escalate-catalog")
+    if jsc.truthy(catalog) and jsc.get(catalog, "is_escalate_offer") is True:
+        routing = jsc.get(jsc.get(jsc.get(ctx, "parse"), "output") or {}, "routing") or {}
+        return turn_pending.ask(
+            "team_pick",
+            [{"position": 1, "label": "Yes", "entity_type": "team", "payload": {}}],
+            team=jsc.get(routing, "suggested_team"),
+            expects="yes_no",
+            # SRTSC07 review round 1, SHOULD-2: the escalate-catalog twin of
+            # `answer_bridge.py::_miss_question`'s own bare-"Yes" arm. `brand_code`
+            # (round 4) is the SAME idiom, off `values["gate"]`.
+            payload={
+                "agent": jsc.get(routing, "suggested_agent"),
+                "brand_code": jsc.get(values.get("gate"), "routing_brand"),
+            },
+        )
+    return None
 
 
 def _send_actions(
@@ -3177,6 +4625,7 @@ def _complete_canned_lane(
     dry_run: bool,
     contact_respond_id: str,
     turn_trace: trace_mod.TurnTrace,
+    state: Any = None,
 ) -> tuple[dict[str, Any], dict[str, Any] | None, list[dict[str, Any]]]:
     """One of S3's eight lanes, answered inside the turn. `(reply, patch, actions)`.
 
@@ -3202,12 +4651,9 @@ def _complete_canned_lane(
 
     canned = copy_mod.resolve(db)
     reply_extras: dict[str, Any] = {}
-    # Only the `ideate` arm can set this: it is the one canned lane whose reply text comes
-    # from a seam, so it is the one whose `send_message` stands a value in (AC-507).
-    preview = False
 
     if branch_kind in canned_lanes.NO_SESSION_WRITE_BRANCH_KINDS:
-        text = canned_lanes.access_denied_text(ctx, canned)
+        text = canned_lanes.access_denied_text(db, ctx, canned)
         reply = {"text": text, "quick_replies": None, "result_set": [], "attachments_src": None}
         session_patch: dict[str, Any] | None = {}
         turn_trace.record(
@@ -3229,13 +4675,12 @@ def _complete_canned_lane(
             jsc.get(jsc.get(ctx, "session"), "session_vars"), "variables"
         ) or {}
         if branch_kind == "ideate":
-            # D14 / H37: `dry_run` goes INTO the lane, not around it. The lane's seam is
-            # an MCP write tool that mints a real idea record and pulls the contact's
-            # media, so the guard has to sit before the call rather than after it.
+            # `dry_run` goes INTO the lane, not around it: the lane's seam is an MCP write
+            # tool, and on a dry run it is called as a TEST turn (`is_test`) rather than
+            # skipped (#1179), so the reply is the tool's own words on both kinds of turn.
             lane = ideate_mod.run(ctx, item, dry_run=dry_run)
             tail_item = lane["item"]
             reply_extras = lane["reply_extras"]
-            preview = bool(lane.get("preview"))
             fragments: dict[str, Any] = {"item": tail_item}
         else:
             fragments = canned_lanes.fragments_for(branch_kind, item, ctx, prev_variables, canned)
@@ -3252,10 +4697,11 @@ def _complete_canned_lane(
             dry_run=dry_run,
             contact_respond_id=contact_respond_id,
             turn_trace=turn_trace,
+            state=state,
         )
         reply = {**reply, **reply_extras}
 
-    actions = _send_actions(reply, dry_run=dry_run, preview=preview)
+    actions = _send_actions(reply, dry_run=dry_run)
     turn_trace.record(
         "sent",
         summary="Handed the reply to the caller to send.",
@@ -3273,6 +4719,7 @@ def complete_turn(  # noqa: PLR0915 - one linear pipeline, and the order IS the 
     session_factory: SessionFactory,
     compose_send_action: bool = False,
     lane_trace: Any = None,
+    state: Any = None,
 ) -> CompleteResult:
     """Run the tail of one turn: outcome -> member offer -> state -> compose -> persist.
 
@@ -3286,9 +4733,14 @@ def complete_turn(  # noqa: PLR0915 - one linear pipeline, and the order IS the 
     become a live write by calling a different URL. The response carries the would-be
     `session_patch` instead.
 
-    **The session write is validated BEFORE it happens.** `SessionVars(extra="forbid")`
+    **The session write is validated BEFORE it happens.** `LegacyVariables(extra="forbid")`
     is what stops a harness key leaking into a customer's session (H15, AC-203), and it
     has to raise before `overwrite_for_contact`, not after.
+
+    `state` is APPLY's `state'`, handed over by the lanes that run inside `run_turn`, so
+    the session this writes carries the focus and the still-open question THIS turn
+    computed rather than a re-read of the one it started with. `/complete` is n8n's path
+    and has none.
 
     `compose_send_action` is for a lane that finishes IN the CRM and only learns its own
     words here (S6c's business arms): it puts the `send_message` on the row before the row
@@ -3394,6 +4846,7 @@ def complete_turn(  # noqa: PLR0915 - one linear pipeline, and the order IS the 
                 dry_run=dry_run,
                 contact_respond_id=contact_respond_id,
                 turn_trace=turn_trace,
+                state=state,
                 # NOT a `FRAGMENT_FIELD`: those are the lane CARRIERS the tail composes
                 # from, and this is one value the tail could not have composed for itself
                 # - what the lane already decided the customer can tap.

@@ -66,8 +66,31 @@ export interface OrderInquiryBundledWith {
   /** The anchor row's OWN coverage ("1 of 1"), resolved server-side (review round 1
    * item 8) - never resolved client-side by scanning a page's own loaded rows, which
    * is only ever right when the anchor happens to be on the SAME page as this row.
-   * Null when the anchor has no links of its own yet ("Not found (new order)"). */
+   * Null when the anchor has no links of its own yet ("Nothing linked yet", S5). */
   anchor_headline: string | null;
+}
+
+/**
+ * One HOST's own change (`PLAN-oi-bundled-row-host-change.md`), read from that host's
+ * own live row at display time - a bundled companion has no sheet row, no PO and no Was
+ * of its own, so the (i) reads each host's instead. `qty`/`delivery_date`/`previous_qty`/
+ * `previous_delivery_date` are all null when the host has no open row on the same order
+ * inquiry header.
+ */
+export interface OrderInquiryBundledHostChange {
+  item_code: string;
+  qty: string | null;
+  delivery_date: string | null;
+  previous_qty: string | null;
+  previous_delivery_date: string | null;
+}
+
+/** One PRIOR raise of the same SO line under the same inquiry
+ * (PLAN-oi-worklist-split-customer-project.md, Slice 2) - the Raised at cell's own
+ * tooltip. */
+export interface OrderInquiryRaiseHistoryEntry {
+  raised_at?: string | null;
+  raised_by_name?: string | null;
 }
 
 /**
@@ -117,13 +140,127 @@ export interface OrderInquiryLink {
   /** Addresses the PO popover. Null on an SPO link - there is no purchase order to open. */
   po_id?: string | null;
   /**
+   * Issue #1215 point 2: which PO line this link sits on, so the lightbox can
+   * highlight it on the lines grid. Null on an SPO link.
+   */
+  po_line_id?: string | null;
+  /**
+   * R15 (owner rulings, 25 Sep 2026, hand test on stack C): the mirror of `po_line_id`
+   * above for the other book - which `spo_allocations` row this link sits on, so the
+   * SPO lightbox can highlight it the same way the PO lightbox already does. Null on a
+   * `po`-kind link.
+   */
+  spo_allocation_id?: string | null;
+  /**
+   * R17 (owner rulings, 25 Sep 2026): the purchase order an SPO link's allocation
+   * draws its supply from (`SPOAllocation.po_line_id` traced to its own header) - lets
+   * the "via SPO" PO cell open that PO directly rather than guessing by number. Null
+   * on a `po`-kind link and on an SPO allocation with no resolved supply PO line.
+   */
+  purchase_order_id?: string | null;
+  /**
    * The purchase order an SPO link's allocation was raised FROM, per the AutoCount
    * feed's own statement (owner's 9 Sep feedback: "if we link by SPO, where do we see
    * the PO number of this SPO?"). Plain text, never a link yet - a later slice decides
    * where it goes. Null on a `po`-kind link and on an SPO the book named no source for.
    */
   source_po_number?: string | null;
+  /**
+   * WRITTEN NOWHERE (PLAN-scm-oi-worklist-excel-parity.md, R-E): an SPO entry the SPO
+   * column shows because the row's linked PO line has an open SPO allocation for the
+   * same product, marked "via PO" - not a link a person or the cascade made. Absent or
+   * false on every link written today.
+   */
+  derived?: boolean;
+  /**
+   * The mirror: this `po`-kind entry's `source_po_number` is itself read off an SPO
+   * link, so the PO column marks it "via SPO" (R-E). Absent or false otherwise.
+   */
+  derived_po?: boolean;
+  /**
+   * The document this link points at is FULLY received (`PLAN-oi-replan-received-links.md`
+   * S1, AC-RL-17): a PO line whose `qty_received >= qty_ordered` or `line_status =
+   * 'closed'`, or an SPO allocation that fails `open_incoming_clauses()`. Goods that have
+   * landed are location stock, not a promise still in transit - the PO/SPO chip and the
+   * backing-documents dialog mark it so purchasing reads it as history rather than as
+   * something still to chase. Absent or false on an open document.
+   */
+  received?: boolean;
+  /**
+   * How much of THIS link's document line has been received: `PurchaseOrderLine.
+   * qty_received` for a `po`-kind link, `SPOAllocation.quantity_received` for `spo`.
+   * Present on every link regardless of `received` - a partly received document states
+   * the figure too, even though `received` itself only flips true once the WHOLE line is
+   * done. Null or absent when the book states no receipt yet.
+   */
+  received_qty?: string | null;
+  /**
+   * S1b (`PLAN-oi-replan-received-links.md`, AC-RL-20 to AC-RL-24): a concrete
+   * instruction on an open link that has drifted outside the product's lead-time
+   * window - never a reason, never "early" (owner ruling 16 Sep), never the word
+   * "repoint" on screen (ruling 17 Sep). `reallocate` names EVERY other linkable row
+   * of the same product with open need, earliest first - the first is the suggested
+   * target; `unlink` means there is no such row. Null on a received link or one still
+   * inside the window. Nothing is written from the chip's own lightbox - purchasing
+   * acts in AutoCount, and S5 (our link follows the book) reacts to that.
+   */
+  suggestion?: OrderInquiryLinkSuggestion | null;
 }
+
+/**
+ * One document line the cascade SUGGESTS for this row - never an `order_inquiry_links`
+ * row (`PLAN-oi-links-autocount-truth-24sep.md` section 3.3, owner ruling "the idea is
+ * the suggested link shouldn't be counted as real link and actually appearing in the PO
+ * or SPO column"). Always called a SUGGESTED LINK, in code and on screen - unrelated to
+ * `OrderInquiryLink.suggestion` (S1b's `reallocate`/`unlink` advice on a REAL link),
+ * which keeps its own name so the two concepts can never be confused.
+ *
+ * `suggested_links` rides on the row (`OrderInquiryRow`/`OrderInquiryWorklistRow`) only -
+ * dropped from the lightbox payloads (`OrderInquiryPoDetail`/`OrderInquirySpoDetail`,
+ * review round 2 Should fix 5) once R13 retired the lightbox's own separate "Suggested
+ * for" panel: the row's own array and the Lines tab's Allocated/Suggested columns are
+ * the whole answer now. Separate from `links` either way - a row's PO/SPO cells and
+ * State pill never read this array (section 3.5/3.7).
+ */
+export interface OrderInquirySuggestedLink {
+  /** Which book. `spo` only on an ORDER BACK row, same as a real link. */
+  kind: 'po' | 'spo';
+  /** `202607-S0105`, `SPO-2026/08-0061`. Never an id: what the buyer quotes. */
+  document: string;
+  /** Addresses the PO lightbox. Null on an SPO suggestion. */
+  po_id?: string | null;
+  po_line_id?: string | null;
+  spo_allocation_id?: string | null;
+  location?: string | null;
+  qty: string;
+  expected_date?: string | null;
+  /** BY HOW MUCH the suggested document lands after the row's own required date - same
+   * convention as `OrderInquiryLink.late_days`. Null or absent when it is not late. */
+  late_days?: number | null;
+  /** Which cascade door wrote it (section 2.5/3.4) - never rendered, `converted` only
+   * ever appears after the S5 conversion script (section 3.8). */
+  trigger?: string | null;
+}
+
+/** One row a `reallocate` suggestion could move the link to (AC-RL-20). */
+export interface OrderInquiryLinkSuggestionCandidate {
+  inquiry_no: string | null;
+  item_code: string | null;
+  so_number: string | null;
+  delivery_date: string;
+  open_qty: string;
+}
+
+/**
+ * A `reallocate` suggestion names EVERY sooner row with open need, earliest first -
+ * the first is the suggested target (17 Sep rulings); `unlink` names none.
+ */
+export type OrderInquiryLinkSuggestion =
+  | {
+      kind: 'reallocate';
+      candidates: OrderInquiryLinkSuggestionCandidate[];
+    }
+  | { kind: 'unlink' };
 
 /**
  * The HANDSHAKE (`PLAN-scm-oi-handshake.md`), beside `state` and never merged with it:
@@ -192,8 +329,20 @@ export interface OrderInquiryRow extends OrderInquiryAckFields {
    * link's document, kept as the one-word display the older screens read.
    */
   links?: OrderInquiryLink[];
-  /** The sum of `links[].qty`. `qty - linked_qty` is what still flows to reorder planning. */
+  /**
+   * The sum of `links[].qty` for the REAL links only - `links` also carries synthetic
+   * "via PO" entries (`derived: true`) for a linked PO's own open SPO allocations, which
+   * never wrote an `order_inquiry_links` row and are excluded from this sum.
+   * `qty - linked_qty` is what still flows to reorder planning.
+   */
   linked_qty?: string;
+  /**
+   * `PLAN-oi-links-autocount-truth-24sep.md` section 3.5: what the cascade suggests for
+   * this row's unlinked remainder - never a real link, never read by `state`/`po_ref`/
+   * `spo_ref`. Empty or absent on a row the cascade has not covered (S2 mock: absent on
+   * every row the real backend answers today, until S3/S4 land).
+   */
+  suggested_links?: OrderInquirySuggestedLink[];
   /** The document CS cited on an order back, which the cascade tries before any other. */
   cited_document?: string | null;
   po_ref?: string | null;
@@ -277,11 +426,22 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
   so_date?: string | null;
   so_number?: string | null;
   item_code?: string | null;
+  /** Addressing only, never rendered - two products share one item code on the live
+   * book, so the stock grid (`OrderInquiryStockGrid`) keys on this, never `item_code`. */
+  product_id?: string | null;
   product_name?: string | null;
   qty: string;
   delivery_date?: string | null;
-  /** `BUIMACO / TUJU RESIDENCE`, or the core order's customer when there is no project. */
+  /** `BUIMACO / TUJU RESIDENCE`, or the core order's customer when there is no project.
+   * Stays for the Excel export and the search box; the worklist screen itself prints
+   * `customer_name` and `project_title` below as two columns instead. */
   project_customer?: string | null;
+  /** The Customer column, split out of `project_customer` (PLAN-oi-worklist-split-
+   * customer-project.md). */
+  customer_name?: string | null;
+  /** The Project column, split out of `project_customer`. Carries the same PRE-ORDER
+   * note the combined field does. */
+  project_title?: string | null;
   /** Blank until a purchase order the row can be traced to exists. Never a guess. */
   supplier?: string | null;
   supplier_id?: string | null;
@@ -310,6 +470,12 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
   links?: OrderInquiryLink[];
   linked_qty?: string;
   /**
+   * `PLAN-oi-links-autocount-truth-24sep.md` section 3.5: the Suggested column, after
+   * SPO, on both the worklist and the OI detail Lines tab (`orderInquirySuggestedColumn`
+   * reads this - never `links`). Absent or empty on every row today (S2, FE mock).
+   */
+  suggested_links?: OrderInquirySuggestedLink[];
+  /**
    * PLAN-scm-supplied-with-companions.md, S2. `bundled_qty` never exceeds `qty - linked_qty`
    * (a link a person already made stays a link); `bundled_with` is null on an un-bundled
    * row, or when a rule matched but the bundle worked out to 0 (e.g. supplier mismatch,
@@ -317,10 +483,47 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
    */
   bundled_qty?: string;
   bundled_with?: OrderInquiryBundledWith | null;
+  /**
+   * PLAN-oi-bundled-row-host-change.md. One entry per host item code, in rule order,
+   * for a bundled row - null on a non-bundled row. The companion has no Was of its own
+   * (no sheet row, no PO), so the (i) reads each host's OWN change instead.
+   */
+  bundled_host_changes?: OrderInquiryBundledHostChange[] | null;
   /** The document CS cited on an order back. Named on the row so the walk can honour it. */
   cited_document?: string | null;
   /** Same as `OrderInquiryRow.has_link_candidate`, for this cross-project worklist. */
   has_link_candidate?: boolean;
+  /**
+   * The row's linked document turned out to be FULLY RECEIVED by the time a replan met it
+   * (`PLAN-oi-replan-received-links.md`, S3): goods already shipped to other orders are
+   * location stock, not this line's any more, so settle-in-place did not carry the row -
+   * it kept its old `qty`/`delivery_date`/`links` as history and a fresh ORDER row was
+   * raised for the full need instead. The Qty cell marks it and the Buy / Purchased /
+   * Incoming card totals ignore it (AC-RL-04, AC-RL-16) - it is not owed anywhere any
+   * more. Absent or false on every row today (0 rows on prod as of 16 Sep 2026; this
+   * plan is the first writer of the column).
+   */
+  redirected_to_pool?: boolean;
+  /**
+   * PLAN-oi-cancelled-line-used-confirm.md (AC-CL-1): true when the sales order line
+   * this row sits on has `line_status = cancelled`. Greyed the same way a used row is,
+   * with its own `cancelled` pill beside the quantity, and excluded from Buy only -
+   * Purchased/Incoming still count it when it holds a link (AC-CL-4). Absent or false
+   * on every row before this plan.
+   */
+  line_cancelled?: boolean;
+  /** `PLAN-oi-request-cs-reserve.md` 3.5 (AC-RS-20): `requested` while an open reserve
+   * request row exists, `reserved` once CS has actually reserved something (and no open
+   * request), `declined` when CS's latest answer was 0 (6e.4), else null. */
+  reserve_state?: 'requested' | 'reserved' | 'declined' | string | null;
+  /** 3.4 (AC-RS-12): the sum of the row's reserve links - already included in
+   * `taken_from_po`/`remaining_open`, both of which sum every link with no target filter. */
+  reserved_qty?: string;
+  /** Round 4 (`PLAN-oi-request-cs-reserve.md` 6e.2): the OPEN reserve request row's
+   * own `qty_requested` for this row - "0" when `reserve_state` is not `requested`.
+   * The Lines grid's `Request to reserve N` pill and the tick's default stage both
+   * read N off this. */
+  requested_qty?: string;
   /** Who sold it (`sales_orders.sales_agent_id` -> `sales_agents`), off the same core
    * sales order the S/O no column reaches. Null when the row reaches no core order, or
    * that order carries no agent. */
@@ -337,6 +540,24 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
    * Never an id: the cell prints this as it comes. Null when nobody was recorded.
    */
   raised_by_name?: string | null;
+  /**
+   * The Raised at cell's own tooltip (PLAN-oi-worklist-split-customer-project.md): a re-confirm
+   * cancels a carried line's row and raises a fresh one, so `raised_at` above moves on
+   * to that re-confirm's own time - this is where the earlier raise(s) still live.
+   * Newest first. Empty on a row with no SO line, or nothing prior. Never on the Excel
+   * export.
+   */
+  raise_history?: OrderInquiryRaiseHistoryEntry[];
+  /**
+   * AC-DT-3 (`PLAN-oi-decision-trail-ui.md`): the actual `order_inquiry_raises` EVENT
+   * this row traces to - Raised or Reconfirmed, by whom, when - distinct from
+   * `raised_by_name`/`raised_at` above, which name WHO currently owns the row (a
+   * coalesce, not an event). `null` on all three when nothing matches - a row migrated
+   * before raises were recorded.
+   */
+  raise_event_kind?: 'raised' | 'reconfirmed' | null;
+  raise_event_by_name?: string | null;
+  raise_event_at?: string | null;
   verb: OrderInquiryVerb | string;
   note?: string | null;
 
@@ -344,6 +565,20 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
   project_id?: string | null;
   project_sales_order_id?: string | null;
   core_sales_order_id?: string | null;
+  /**
+   * S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-1/AC-B6-7): the AutoCount line number,
+   * for the "SO line" column's own text (`SO402757 · L5`, `orderInquirySoLineLabel`).
+   */
+  line_no?: number | null;
+  /**
+   * S6 (AC-B6-1/AC-B6-7): the CORE sales-order line's own id, which the backend resolves
+   * server-side off the row's mirror line - never the mirror id itself, which this screen
+   * has no use for. Addresses the "SO line" link's own `?line=` param
+   * (`orderInquirySoLineHref`); null when the mirror reaches no core line, in which case
+   * the cell reads as plain text, the same fallback `orderInquiryRowHref` already uses
+   * for a row that reaches no book at all.
+   */
+  core_line_id?: string | null;
   /** Came from the AutoCount book rather than a document authored here. */
   is_adopted?: boolean;
   /**
@@ -356,12 +591,25 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
 
 export interface OrderInquiryWorklistParams {
   query?: string;
+  /**
+   * `PLAN-oi-header-list-detail.md`, S3/AC-DT-02: every non-cancelled row of ONE header -
+   * the OI detail page's own Lines tab, Export Excel, and a whole-OI Confirm's `filter`
+   * payload (AC-CF-01).
+   */
+  inquiry_id?: string;
   /** `YYYY-MM`, the delivery month, which is the sheet tab. */
   delivery_month?: string;
   /** `YYYY-MM-DD`, the day the rows were raised, which is the per-day tab. */
   raised_date?: string;
   state?: string;
   project_id?: string;
+  /**
+   * S5 (`PLAN-oi-project-label-from-so.md` section 5): the Project column's own text,
+   * exact match - a registered project's title or an adopted order's SO-level label,
+   * off the summary's own `projects` facet. Separate from `project_id`, which stays
+   * UUID-only for an existing deep link; the filter picker sends this one now.
+   */
+  project?: string;
   supplier_id?: string;
   /** The id of the person who raised the rows, picked off the summary's own list. */
   raised_by?: string;
@@ -386,10 +634,46 @@ export interface OrderInquiryWorklistParams {
    * because both mean the same thing to purchasing - nobody has said yes to this yet.
    */
   ack?: OrderInquiryAckState | 'to_confirm';
+  /** The row's Location column, equality (S1, R-K). Warehouse code, never a UUID. */
+  location?: string;
+  /** The row's Agent column, equality (S1, R-K). The sales agent's id. */
+  agent?: string;
+  /** `YYYY-MM` on the SO date (S1, R-K) - the "SO month" filter. */
+  so_month?: string;
+  /**
+   * Prefix, case-insensitive (S1, R-K): a row's PO link document, or an SPO link's
+   * `source_po_number`.
+   */
+  po_number?: string;
+  /** Prefix, case-insensitive (S1, R-K): a row's SPO link (own or derived, S5). */
+  spo_number?: string;
+  /**
+   * The bounds of one schedule-matrix cell's own period (S3): a click's drilldown asks
+   * the list for exactly this cell's axis + period rather than reading rows back out of
+   * the matrix response. `YYYY-MM-DD`, inclusive both ends.
+   */
+  delivery_from?: string;
+  delivery_to?: string;
+  /**
+   * The same cell's axis (S3): equality on the very column the matrix grouped by, which
+   * is what the drilldown narrows on rather than a text match on the printed label. Both
+   * together or neither - `axis` names the column, `axis_key` the value.
+   */
+  axis?: OrderInquiryMatrixAxis;
+  axis_key?: string;
   page?: number;
   limit?: number;
   sort?: string;
   dir?: 'asc' | 'desc';
+}
+
+/**
+ * The matrix's own request (S3): the same list filters, plus which axis and which date
+ * cut. `GET {BASE}/order-inquiries/matrix?axis=&by=&<list filters>`.
+ */
+export interface OrderInquiryMatrixParams extends OrderInquiryWorklistParams {
+  axis: OrderInquiryMatrixAxis;
+  by: OrderInquiryMatrixGranularity;
 }
 
 export interface OrderInquiryWorklistEnvelope {
@@ -452,6 +736,13 @@ export interface OrderInquiryWorklistSummary {
   projects: OrderInquiryFacet[];
   /** The people who raised the rows in view, id + name. The "Raised by" filter's list. */
   raised_by: OrderInquiryFacet[];
+  /**
+   * The Location and Agent filters' own lists (S1, R-K), each computed with its own
+   * filter dropped like every other axis here. Optional while the backend still answers
+   * without them (Phase 1 mock) - the select then renders empty rather than erroring.
+   */
+  locations?: OrderInquiryFacet[];
+  agents?: OrderInquiryFacet[];
   /**
    * The three cards above both views: quantity linked to SPO allocations, quantity
    * linked to purchase order lines, and the unlinked remainder that still has to be
@@ -522,17 +813,39 @@ export interface AcknowledgeResult {
   link_up_to?: string | null;
   /** Whether a horizon was in force at all (S1). */
   link_horizon?: 'date' | 'none';
+  /**
+   * PLAN-oi-confirm-per-so (AC-CF-8): a rejected or cancelled row named in `row_ids` or
+   * matching `filter` that this press left alone. Optional so a page rendered against an
+   * older answer still reads; the FE reads `undefined` as 0 rather than hiding the count.
+   */
+  skipped?: number;
+}
+
+/**
+ * What one Unconfirm press did (PLAN-oi-worklist-split-customer-project.md, owner 18 Sep 2026) - the
+ * Actions menu's own reverse of Confirm. No linking figures: unlike Confirm, nothing
+ * else moves.
+ */
+export interface UnacknowledgeResult {
+  /** Rows that were `acknowledged`/`changed` and are now back to `awaiting`. */
+  updated: number;
+  /** Rows named that were already `awaiting`/`rejected`, cancelled, or not this
+   * company's to touch - never an error, always just left alone. */
+  skipped: number;
 }
 
 /* --------------------------------------------------------- the schedule matrix
  *
- * A 2D read of the SAME worklist rows the list shows (D1, reworked): the captain wanted
+ * A 2D read of the same worklist rows the list shows (D1, reworked): the captain wanted
  * "vertically I can see by product, by sales order, by customer, by agent, then
  * horizontally is the dates ... by date, by month, by year" - a matrix like the
- * fulfilment planning board's, not a day-grid calendar. Built entirely CLIENT-SIDE off
- * one unpaged fetch of the already-filtered worklist: there is nothing here the server
- * needs to compute that grouping the rows in the browser cannot answer just as well, and
- * a second endpoint would be a second idea of what a row is.
+ * fulfilment planning board's, not a day-grid calendar.
+ *
+ * S3 (16 Sep 2026): computed SERVER-SIDE now, not client-side off an unpaged list fetch -
+ * the old approach capped at `MATRIX_FETCH_LIMIT` (1,000) rows and a delivery-filtered
+ * worklist has already exceeded that on prod. `GET {BASE}/order-inquiries/matrix?axis=
+ * &by=&<list filters>` groups the SAME filtered set server-side, one row GROUP BY, and
+ * answers every bucket rather than the first 1,000 rows' worth of them.
  */
 
 /** The vertical axis the captain named, in the order they named it. */
@@ -541,33 +854,43 @@ export type OrderInquiryMatrixAxis = 'product' | 'sales_order' | 'customer' | 'a
 /** How the date axis is cut. Week is the default, matching the planning board's own. */
 export type OrderInquiryMatrixGranularity = 'day' | 'week' | 'month' | 'year';
 
-export type OrderInquiryMatrixBucketKind = 'dated' | 'no_date';
-
-/** One column. Only buckets a row actually owes exist - never a full calendar grid. */
-export interface OrderInquiryMatrixBucket {
-  key: string;
-  kind: OrderInquiryMatrixBucketKind;
-  label: string;
-  /** ISO date of the bucket's start, dated buckets only. The ordering key. */
-  start?: string | null;
+/**
+ * One cell of the matrix, exactly as the server answers it (contract section 6): this
+ * axis value, by this date bucket, across every matching row that lands there.
+ *
+ * `axis_key`/`period` are never rendered (no UUIDs in the UI); `axis_label` is. `period`
+ * is the ISO date the bucket STARTS on - week buckets start Monday, month/year bucket on
+ * the first of the month/year - and is also the bucket's own ordering and grouping key,
+ * so the FE never invents a second one. `buy`/`po`/`spo` are the stage sums of R-F, and
+ * `rows` is the ROW COUNT summed into the cell, not the rows themselves: a click drills
+ * down by asking the list for this cell's own axis + period, never by reading rows back
+ * out of the matrix response (S3, "the drilldown keeps calling the list").
+ */
+export interface OrderInquiryMatrixCell {
+  axis_key: string;
+  axis_label: string;
+  period: string;
+  qty: string;
+  buy: string;
+  po: string;
+  spo: string;
+  rows: number;
 }
 
-/** One row, whichever axis produced it. `key` is never rendered; `label` is. */
+/** One row of the table, built off the distinct `axis_key`/`axis_label` pairs the
+ * server's cells carry. `key` is never rendered; `label` is. */
 export interface OrderInquiryMatrixRow {
   key: string;
   label: string;
-  /** Secondary text - a product's name under its code, an agent's name under their code. */
-  description?: string | null;
 }
 
-/** One cell: this row, by this bucket, across every worklist row that lands there. */
-export interface OrderInquiryMatrixCell {
-  row_key: string;
-  bucket_key: string;
-  /** Summed across every contributing row. Decimal STRING, same reason the rows are. */
-  qty: string;
-  /** The contributing rows themselves - what a click on the cell drills down to. */
-  rows: OrderInquiryWorklistRow[];
+/** One column of the table, built off the distinct `period` values the server's cells
+ * carry, labelled client-side for the chosen granularity. */
+export interface OrderInquiryMatrixBucket {
+  key: string;
+  label: string;
+  /** ISO date of the bucket's start - the ordering key, same value as `period`. */
+  start: string;
 }
 
 /* --------------------------------------------------------- Place on PO (section G, G2)
@@ -654,6 +977,34 @@ export interface OrderInquiryPoCandidate {
    * still succeeds and writes the claim; always false on a pool-destination line.
    */
   unattributed?: boolean;
+  /**
+   * S8 (AC-CF-24): what THIS row already takes off this line, `"0"` when it holds none.
+   * `remaining` is already credited back to include it, so re-placing the same take
+   * never reads as over the line's remaining.
+   */
+  current_take?: string;
+  /**
+   * S8 review round (17 Sep): `false` only on a candidate FORCED into the list because
+   * this row already links to it - a line closed, or its PO taken off active/partial,
+   * since that link was written. Every ordinary candidate the walk offers is `true`.
+   */
+  line_open?: boolean;
+}
+
+/**
+ * The Link dialog's own GET (S8): the candidate list, plus the header line the dialog
+ * reads - "N still to link of Q" - computed off the row's own unlinked remainder.
+ */
+export interface OrderInquiryPoCandidatesResponse {
+  candidates: OrderInquiryPoCandidate[];
+  still_to_link: string;
+  /**
+   * S8 review round (17 Sep): `row.qty - row.bundled_qty` - the SAME ceiling
+   * `_place_on_po_set` enforces server-side. The dialog's own capacity check and
+   * footer total read this, not the row's bare `qty` prop, which overstates what a
+   * bundled row can actually hold.
+   */
+  linkable_qty?: string;
 }
 
 /**
@@ -685,6 +1036,13 @@ export interface AutoPlaceRequest {
    * Omitted still means the plan's own; `'date'` is implied by `link_up_to`.
    */
   link_horizon?: 'date' | 'plan' | 'none';
+  /**
+   * `PLAN-oi-header-list-detail.md`, AC-AL-01: the OI detail page's own "Auto link" with
+   * nothing ticked - runs the cascade over that header's linkable rows only, touching no
+   * row of another header. Mutually exclusive with `row_ids` on the wire, same as the
+   * acknowledge endpoint's own `filter`.
+   */
+  filter?: { inquiry_id: string };
 }
 
 export interface AutoPlaceResult {
@@ -698,6 +1056,25 @@ export interface AutoPlaceResult {
   /** Whether a horizon was in force at all (S1) - `'none'` says the null above is a
    *  deliberate "no horizon", not a plan that has never named one. */
   link_horizon?: 'date' | 'none';
+  /**
+   * G4 (`PLAN-oi-links-autocount-truth-24sep.md`): "Auto link all"'s own book step -
+   * rows AutoCount itself ties to a document, a REAL link. Absent on a backend that has
+   * not yet split the cascade into suggested links (S2/S3); the toast then falls back to
+   * `placed_rows` alone, exactly as it reads today.
+   */
+  book_linked_rows?: number;
+  /** The rows the cascade only SUGGESTED, on top of `book_linked_rows` - never written
+   * as an `order_inquiry_links` row, never counted as bought. Same absence rule. */
+  suggested_rows?: number;
+  /**
+   * R18 (`PLAN-oi-links-autocount-truth-24sep.md` 3.6, supersedes G1): how many rows
+   * this pass actually moved - book-linked this pass, or given a different suggestion
+   * than the one they held coming in. "Link selected" is THIS route, scoped to the
+   * ticked rows via `row_ids` - there is no separate route for it - and reads this to
+   * say whether recalculating against AutoCount caught a mistake, rather than a
+   * blanket re-link.
+   */
+  changed_rows?: number;
 }
 
 /**
@@ -713,6 +1090,8 @@ export interface UnplaceAllRequest {
   delivery_month?: string;
   raised_date?: string;
   project_id?: string;
+  /** S5: text, exact match on the Project column - separate from `project_id`. */
+  project?: string;
   supplier_id?: string;
   raised_by?: string;
 }
@@ -754,11 +1133,23 @@ export interface UnplaceAllPreview {
  * line's own balance - never netted against other rows' claims, which is a different
  * reading that belongs to the "Place on PO" candidates. */
 export interface OrderInquiryPoDetailLine {
+  /**
+   * Issue #1215 point 2: the line's own identity, so the lightbox can highlight the
+   * exact line an opening row's link sits on - the SKU alone is ambiguous the moment a
+   * PO carries two lines of the same item.
+   */
+  id?: string | null;
   sku?: string | null;
   product_name?: string | null;
   qty_ordered: string;
   qty_received: string;
   remaining: string;
+  /**
+   * Every order inquiry row's own placement on THIS line, summed - never netted
+   * against anything else, unlike the "Place on PO" candidate walk's own `remaining`.
+   * Optional only for a caller that predates this field.
+   */
+  allocated?: string | null;
   location?: string | null;
   /**
    * The AutoCount book's own sales-order linkage for this line - the SAME fact and the
@@ -789,6 +1180,11 @@ export interface OrderInquiryDocumentAllocation {
    * field the endpoint sends.
    */
   linked_at?: string | null;
+  /**
+   * Issue #1215 point 2: which PO line this allocation sits on, so the lightbox can
+   * highlight it on the lines grid. Null on an SPO allocation.
+   */
+  po_line_id?: string | null;
 }
 
 export interface OrderInquiryPoDetail {
@@ -815,6 +1211,13 @@ export interface OrderInquiryPoDetail {
 
 /** One allocation line of the shipping order: what is on it, what has landed, where. */
 export interface OrderInquirySpoDetailLine {
+  /**
+   * R15 (owner rulings, 25 Sep 2026, hand test on stack C): the line's own identity
+   * (`spo_allocations.id`), the same reason `OrderInquiryPoDetailLine.id` exists
+   * (issue #1215 point 2) - without it the SPO lightbox has no field to highlight a
+   * line by, unlike the PO lightbox next door.
+   */
+  id?: string | null;
   sku?: string | null;
   product_name?: string | null;
   allocated: string;
@@ -831,6 +1234,11 @@ export interface OrderInquirySpoDetailLine {
    * no source.
    */
   source_po_number?: string | null;
+  /**
+   * This line's own `spo_allocations.spo_line_number` (R31b, stock debt lane) - what a
+   * caller's `highlightLines` names to mark and jump to a specific line.
+   */
+  spo_line_number?: number | null;
 }
 
 export interface OrderInquirySpoDetail {
@@ -853,4 +1261,102 @@ export interface OrderInquirySpoDetail {
 export interface OrderInquiryBulkRejectResult {
   rejected: number;
   results?: { row_id: string; ok: boolean; error?: string | null }[];
+}
+
+/* -------------------------------------------------- the OI DOCUMENT (header)
+ *
+ * `PLAN-oi-header-list-detail.md` (contract section). One row per order inquiry HEADER -
+ * one sales order's whole set of purchasing instructions - as distinct from the per-LINE
+ * worklist above. `orderInquiryService.ts`'s header functions call the real
+ * `GET /api/v1/project-sales/order-inquiry-headers*` routes; this shape matches the
+ * backend response models field for field.
+ */
+
+export type OrderInquiryHeaderStatus = 'outstanding' | 'completed';
+
+/** One row of the Documents view (AC-HL-02). */
+export interface OrderInquiryHeader {
+  id: string;
+  inquiry_no: string;
+  /** The pre-renumbering number (plan S1) - never shown, only ever matched by search. */
+  legacy_inquiry_no?: string | null;
+  /** The FIRST raise, fixed for life (owner ruling R5). */
+  raised_at?: string | null;
+  raised_by_name?: string | null;
+  /** The CORE sales order id, for the S/O no link (AC-HL-06). Null when there is none. */
+  sales_order_id?: string | null;
+  project_sales_order_id?: string | null;
+  so_number?: string | null;
+  so_date?: string | null;
+  customer_name?: string | null;
+  customer_code?: string | null;
+  project_id?: string | null;
+  project_title?: string | null;
+  agent_name?: string | null;
+  /** Non-cancelled rows only (AC-LS-05). */
+  lines_total: number;
+  lines_to_confirm: number;
+  qty_total: string;
+  /** Derived, never stored (plan S2): `lines_to_confirm > 0` is outstanding. */
+  status: OrderInquiryHeaderStatus;
+}
+
+/** One entry of the detail page's Raise history card (AC-DP-07). Newest first. */
+export interface OrderInquiryHeaderRaiseEntry {
+  kind: 'raised' | 'reconfirmed';
+  by_name?: string | null;
+  at?: string | null;
+}
+
+/** `GET /order-inquiry-headers/{id}` (AC-DT-01). */
+export interface OrderInquiryHeaderDetail extends OrderInquiryHeader {
+  /** The ERP document type, when the order carries one (General tab's Order card). */
+  order_type?: string | null;
+  raise_history: OrderInquiryHeaderRaiseEntry[];
+}
+
+export interface OrderInquiryHeaderListParams {
+  state?: OrderInquiryHeaderStatus | 'all';
+  query?: string;
+  raised_by?: string;
+  agent?: string;
+  /** Exact match on the Project column's own text (reviewer B2, fix round 22 Sep
+   * 2026) - never a `projects.id`: 0 of 738 headers on the prod copy carry a
+   * registered project. */
+  project?: string;
+  page?: number;
+  limit?: number;
+  sort?: string;
+  dir?: 'asc' | 'desc';
+}
+
+export interface OrderInquiryHeaderListEnvelope {
+  data: OrderInquiryHeader[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+/** One purchase order this header's lines are linked to (AC-DT-03, AC-DP-08). */
+export interface OrderInquiryRelatedPurchaseOrder {
+  po_id: string;
+  po_number: string;
+  supplier_name?: string | null;
+  po_date?: string | null;
+  lines_linked: number;
+  qty_linked: string;
+}
+
+/** One shipping order this header's lines are linked to. */
+export interface OrderInquiryRelatedSpo {
+  spo_number: string;
+  supplier_name?: string | null;
+  lines_linked: number;
+  qty_linked: string;
+}
+
+/** `GET /order-inquiry-headers/{id}/related-documents`. */
+export interface OrderInquiryHeaderRelatedDocuments {
+  purchase_orders: OrderInquiryRelatedPurchaseOrder[];
+  spos: OrderInquiryRelatedSpo[];
 }

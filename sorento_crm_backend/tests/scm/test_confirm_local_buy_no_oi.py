@@ -38,7 +38,7 @@ from app.models.project_so import (
 )
 from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 
-from tests._pg_fixture import blank_session
+from tests._pg_fixture import blank_session, pg_session
 from tests.scm.test_project_supply_service_ladder import _seed_line, _world
 
 MARKER = "zzt-local-oi"
@@ -106,6 +106,10 @@ def test_board_and_supply_carry_buy_origin():
     from app.schemas.project_board import BoardContribution
     from app.schemas.project_supply import SupplyLine
 
+    # The column itself (default false) is pinned by
+    # test_local_buy_routing_toggle.py::test_setting_column_defaults_false. This test's
+    # own dicts are hand-built and never read the setting, so there is nothing to gate
+    # here - it only pins that both schemas still carry the `buy_origin` field.
     assert "buy_origin" in BoardContribution.model_fields
     assert "buy_origin" in SupplyLine.model_fields
 
@@ -329,11 +333,18 @@ def test_mixed_order_raises_only_overseas():
 
 
 # --------------------------------------------------------------------------- #
-# AC-2.17: a row raised before this lane, on a line now local, is left untouched
+# AC-2.17, SUPERSEDED 17 Sep 2026 by R9 (`PLAN-oi-worklist-one-header.md` S9,
+# `oi-worklist-one-header-acceptance-criteria.md` AC-OH-90): a row raised before this
+# lane, on a line now local, is no longer left untouched. Found via the owner's hand
+# test on `sorento_oioh_stack` (SO314595/TPE-9204): a local buy is not purchasing's
+# job, so leaving the old row alive read as "purchasing must still buy this" at the
+# OLD, pre-local quantity - the worklist's own reader, not the SO detail this file's
+# other tests exercise. The row is retired (cancelled) exactly like any other decided
+# line's, not carried forward silently.
 # --------------------------------------------------------------------------- #
 
 
-def test_prior_raised_row_on_now_local_line_untouched():
+def test_prior_raised_row_on_now_local_line_is_superseded_AC_OH_90():
     with blank_session() as db:
         company_id, owner, project, product = _world(db)
         from tests.scm.test_project_supply_service_ladder import _group_sites
@@ -350,22 +361,23 @@ def test_prior_raised_row_on_now_local_line_untouched():
         assert first["created"] == 1
         first_row = _raised_rows(db, line.id)[0]
         first_row_id = first_row.id
-        first_state = first_row.state
-        first_verb = first_row.verb
 
-        # Revision 2: same product, now resolved local. The old row must be untouched:
-        # not re-raised (no second row), not cancelled (state/verb unchanged).
+        # Revision 2: same product, now resolved local. R9: the old row is superseded
+        # (cancelled, "Superseded by revision 2"), no fresh row is raised, and the line
+        # joins settled_in_place so the reaction pass raises no DELAY/ADVANCE for it.
         second = _confirm(db, order, actor_user_id=owner, origin_by_line={str(line.id): "local"})
 
         assert second["created"] == 0
+        assert str(line.id) in second["settled_in_place"]
         rows = (
             db.query(OrderInquiryRow)
             .filter(OrderInquiryRow.so_line_id == line.id)
             .all()
         )
-        assert [r.id for r in rows] == [first_row_id]
-        assert rows[0].state == first_state
-        assert rows[0].verb == first_verb
+        assert [r.id for r in rows] == [first_row_id], "the row is retired, not recreated"
+        db.refresh(first_row)
+        assert first_row.state == INQUIRY_CANCELLED
+        assert first_row.note == "Superseded by revision 2"
 
 
 # --------------------------------------------------------------------------- #
@@ -469,6 +481,23 @@ def test_scm_demand_sees_no_local_buy():
         company_id, owner, project, product = _world(db)
         from tests.scm.test_project_supply_service_ladder import _group_sites
 
+        # PLAN-local-buy-routing-toggle.md (18 Sep 2026): this test's `buy_lines` origin
+        # is hand-built, not resolved through `buy_origin_by_product`, so this flag write
+        # is NOT a gate on the test - flipping it back to False would not change the
+        # result. It is left here purely as documentation that this test's assertions
+        # describe the ON state (a local Buy is skipped), for a reader who lands here
+        # while auditing which tests pin ON versus OFF behaviour.
+        from app.models.user import SystemSetting
+
+        setting_row = db.query(SystemSetting).first()
+        if setting_row is None:
+            setting_row = SystemSetting(id=str(uuid.uuid4()))
+            db.add(setting_row)
+            db.flush()
+        db.query(SystemSetting).filter(SystemSetting.id == setting_row.id).update(
+            {SystemSetting.local_buy_routing_enabled: True}
+        )
+
         _group, sites = _group_sites(db)
         own, _pool = sites["BRW"]
         order, line, _core_so, core_line = _seed_line(
@@ -489,3 +518,177 @@ def test_scm_demand_sees_no_local_buy():
             {"p": str(product.id), "w": str(own.id)},
         ).scalar()
         assert float(project_committed or 0) == 0.0
+
+
+# --------------------------------------------------------------------------- #
+# PLAN-brand-flows-to-purchasing.md (owner ruling 22 Sep 2026, R4-R7): a brand marked
+# `flows_to_purchasing = false` makes its Buys skip Order Inquiries the same way a
+# local Buy does (R5: same `Local` pill, no new state). Every test below runs with
+# `local_buy_routing_enabled` OFF (the default, no row set), through the REAL
+# `buy_origin_by_product` resolver rather than a hand-built "local" string, so the
+# brand read itself is exercised end to end.
+#
+# RED for Phase 2: `brands.flows_to_purchasing` does not exist yet - every test below
+# fails against TODAY's code with an AttributeError / UndefinedColumn.
+# --------------------------------------------------------------------------- #
+
+
+def test_confirm_blocked_brand_buy_mints_no_oi_header_toggle_off():
+    """AC-9: a Buy on a blocked-brand product, the order's only Buy, mints no header
+    and raises no ORDER row.
+
+    AC-12, strengthened (review fix round, 23 Sep 2026): also proves the demand side -
+    a blocked-brand Buy never became an OI row, so `scm.committed_v` shows no project
+    demand for it, exactly the same shape `test_scm_demand_sees_no_local_buy` pins for
+    a local Buy. `pg_session` (the real database) rather than `blank_session`'s
+    schema-translated scratch copy, because `committed_v` is a migration-created VIEW,
+    not part of `Base.metadata`, so it does not exist in a `blank_session` schema at
+    all - `test_scm_demand_sees_no_local_buy` already established this is real-DB-only.
+    """
+    from app.services.scm.supply_origin import buy_origin_by_product
+    from tests.scm.test_supply_origin import _brand
+
+    with pg_session() as db:
+        company_id, owner, project, product = _world(db)
+        from tests.scm.test_project_supply_service_ladder import _group_sites
+
+        blocked = _brand(db, flows_to_purchasing=False)
+        product.brand_id = blocked.id
+        db.flush()
+
+        _group, sites = _group_sites(db)
+        own, _pool = sites["BRW"]
+        order, line, _core_so, _core_line = _seed_line(
+            db, company_id, project, product, own, qty_ordered="10",
+            required_date=date(2026, 9, 3),
+        )
+
+        origins = buy_origin_by_product(db, [str(product.id)])
+        assert origins[str(product.id)] == "local"
+
+        result = _confirm(
+            db, order, actor_user_id=owner,
+            origin_by_line={str(line.id): origins[str(product.id)]},
+        )
+
+        assert result["created"] == 0
+        assert _raised_rows(db, line.id) == []
+        from app.models.project_so import OrderInquiry
+
+        assert (
+            db.query(OrderInquiry)
+            .filter(OrderInquiry.project_sales_order_id == order.id)
+            .count()
+            == 0
+        )
+
+        # AC-12: `project_committed` is the view's own exposed column
+        # (498_committed_v_bundled_qty.py); `project_qty` is internal to the view's
+        # CTE and not selectable from the outside.
+        project_committed = db.execute(
+            text(
+                "SELECT COALESCE(SUM(project_committed), 0) FROM scm.committed_v "
+                "WHERE product_id = :p AND warehouse_id = :w"
+            ),
+            {"p": str(product.id), "w": str(own.id)},
+        ).scalar()
+        assert float(project_committed or 0) == 0.0
+
+
+def test_confirm_mixed_order_raises_only_the_default_brand_line_toggle_off():
+    """AC-10: a mixed order, one blocked-brand Buy and one default-brand Buy - the
+    header is minted and exactly one ORDER row is raised, for the default-brand
+    line."""
+    from app.services.scm.supply_origin import buy_origin_by_product
+    from tests.scm.test_supply_origin import _brand
+
+    with blank_session() as db:
+        company_id, owner, project, blocked_product = _world(db)
+        from tests.scm.test_project_supply_service_ladder import _group_sites
+        from tests.test_so_supply_confirmation import _core_line, _core_so, _product, _project_line
+
+        blocked = _brand(db, flows_to_purchasing=False)
+        blocked_product.brand_id = blocked.id
+        default_product = _product(db)
+        db.flush()
+
+        _group, sites = _group_sites(db)
+        own, _pool = sites["BRW"]
+
+        order, blocked_line, _cso1, _cline1 = _seed_line(
+            db, company_id, project, blocked_product, own, qty_ordered="10",
+            required_date=date(2026, 9, 3), line_no=10,
+        )
+        core_so2 = _core_so(db, company_id)
+        core_line2 = _core_line(
+            db, core_so2, default_product, own, qty_ordered="6",
+            required_date=date(2026, 9, 3),
+        )
+        default_line = _project_line(
+            db, order, line_no=20, product=default_product, core_line=core_line2,
+        )
+        db.commit()
+
+        origins = buy_origin_by_product(db, [str(blocked_product.id), str(default_product.id)])
+        assert origins[str(blocked_product.id)] == "local"
+        assert origins[str(default_product.id)] is None
+
+        result = _confirm(
+            db, order, actor_user_id=owner,
+            origin_by_line={
+                str(blocked_line.id): origins[str(blocked_product.id)],
+                str(default_line.id): origins[str(default_product.id)],
+            },
+        )
+
+        assert result["created"] == 1
+        assert _raised_rows(db, blocked_line.id) == []
+        default_rows = _raised_rows(db, default_line.id)
+        assert len(default_rows) == 1
+        assert default_rows[0].order_inquiry_id == result["inquiry"].id
+
+
+def test_confirm_a_raised_row_whose_brand_is_later_blocked_is_retired_toggle_off():
+    """AC-11: a line with a raised ORDER row whose brand is set to blocked afterwards
+    has that row retired (not raised) on the next confirm, and no fresh row raised."""
+    from app.services.scm.supply_origin import buy_origin_by_product
+    from tests.scm.test_supply_origin import _brand
+
+    with blank_session() as db:
+        company_id, owner, project, product = _world(db)
+        from tests.scm.test_project_supply_service_ladder import _group_sites
+
+        _group, sites = _group_sites(db)
+        own, _pool = sites["BRW"]
+        order, line, _core_so, _core_line = _seed_line(
+            db, company_id, project, product, own, qty_ordered="10",
+            required_date=date(2026, 9, 3),
+        )
+
+        # Revision 1: no brand yet, resolves overseas, raises a row.
+        origins_before = buy_origin_by_product(db, [str(product.id)])
+        assert origins_before[str(product.id)] is None
+        first = _confirm(
+            db, order, actor_user_id=owner,
+            origin_by_line={str(line.id): origins_before[str(product.id)]},
+        )
+        assert first["created"] == 1
+        first_row_id = _raised_rows(db, line.id)[0].id
+
+        # The brand is flipped to blocked. Revision 2, same line, resolves local.
+        blocked = _brand(db, flows_to_purchasing=False)
+        product.brand_id = blocked.id
+        db.flush()
+        origins_after = buy_origin_by_product(db, [str(product.id)])
+        assert origins_after[str(product.id)] == "local"
+
+        second = _confirm(
+            db, order, actor_user_id=owner,
+            origin_by_line={str(line.id): origins_after[str(product.id)]},
+        )
+
+        assert second["created"] == 0
+        rows = _raised_rows(db, line.id)
+        assert [r.id for r in rows] == [first_row_id], "the row is retired, not recreated"
+        db.refresh(rows[0])
+        assert rows[0].state == INQUIRY_CANCELLED

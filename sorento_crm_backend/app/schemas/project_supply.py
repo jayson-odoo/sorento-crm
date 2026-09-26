@@ -316,11 +316,24 @@ class SupplyProposal(BaseModel):
 class ConfirmReserveComponent(BaseModel):
     warehouse_id: str
     qty: Decimal = Decimal("0")
+    #: The warehouse CODE the id names (R4, review round, second re-walk). Optional and
+    #: ignored on the way IN - addressing is the id's job, and the endpoint reads nothing
+    #: else here - but this SAME schema is reused as the OUTPUT shape for a planning-change
+    #: row's stored `composition` (`app/schemas/planning_change.py` imports `ConfirmLine`
+    #: from this module), and without this field declared, `response_model` drops the code
+    #: `_validate_composition_shape` already wrote into the stored JSON on its way back out
+    #: over the wire - a reader of the ROUTE's response never sees it, only a reader of the
+    #: row directly off the database would.
+    location: Optional[str] = None
 
 
 class ConfirmBorrowComponent(BaseModel):
     source: BorrowSource
     warehouse_id: str
+    #: The warehouse CODE the id names (R4), same reasoning as `ConfirmReserveComponent.
+    #: location` - ignored on input, needed on output since this schema is reused for a
+    #: planning-change row's stored `composition`.
+    location: Optional[str] = None
     donor_project_id: Optional[str] = None
     qty: Decimal = Decimal("0")
     #: Required, but NOT by the schema: an empty reason is a failing LINE, named by line
@@ -417,6 +430,21 @@ class ConfirmSupplyBody(BaseModel):
     #: Confirm naming a batch already applied is refused with a message rather than
     #: writing a second revision.
     batch_id: Optional[str] = None
+    #: The mirror `project_line_id`s of COVERED lines a `rejected` draft was staged on
+    #: (owner ruling 23 Sep 2026, `PLAN-board-reject-on-confirmed-line.md`: "we should
+    #: confirm the rejection" - reject on a confirmed line is a STAGED decision like every
+    #: other board decision, and Confirm is what commits it, never the draft save itself).
+    #: Never overlaps `lines` above - a line is either being REPLACED (named in `lines`) or
+    #: DROPPED (named here), and the route refuses a line named in both. Absent on every
+    #: ordinary Confirm; a batch Confirm (`batch_id` set) may not carry this - the two are
+    #: refused together (422), because a pending planning change has no shape for a
+    #: withdrawal alongside it.
+    #:
+    #: DEDUPED, not refused (nit, fix round, review): the route drops a repeated id
+    #: rather than 422ing over it - a line named twice is one withdrawal either way, and
+    #: nothing about a duplicate is a stale-client signal worth refusing over the way a
+    #: line named in BOTH `lines` and here is.
+    rejected_line_ids: List[str] = Field(default_factory=list)
 
 
 class ConfirmException(BaseModel):
@@ -452,6 +480,12 @@ class ConfirmResult(BaseModel):
     #: (R10). Reported rather than logged: the flag is a request to look at something, and a
     #: request nobody is told about is a request nobody answers.
     suspected_issues: int = 0
+    #: How many covered lines this SAME press withdrew (`ConfirmSupplyBody.rejected_line_ids`,
+    #: owner ruling 23 Sep 2026). The toast needs it beside `lines_decided` - "N confirmed"
+    #: says nothing about the lines this press also took OUT, and `response_model` drops an
+    #: undeclared field silently, so it has to be named here rather than left in the
+    #: in-process dict the way `settled_in_place`/`auto_place_products` are.
+    rejected_count: int = 0
 
 
 # ------------------------------------------------------------------- the Plans page (D1)
@@ -496,18 +530,28 @@ class ConfirmManyOrderBody(BaseModel):
 
     pso_id: str
     lines: List[ConfirmLine] = Field(default_factory=list)
+    #: This order's OWN planning-change batch (`PLAN-scm-board-picks-up-pending-change.md`,
+    #: AC-B5/AC-B6): a board can now show two orders on two different batches, so the batch
+    #: an order answers has to travel WITH that order, not once for the whole press. Falls
+    #: back to `ConfirmManyBody.batch_id` when absent, so the pre-slice shape (one
+    #: body-level id applied to every order) keeps working during the deploy window.
+    batch_id: Optional[str] = None
+    #: This order's own half of `ConfirmSupplyBody.rejected_line_ids` - same rule, same
+    #: refusal alongside a batch (owner ruling 23 Sep 2026,
+    #: `PLAN-board-reject-on-confirmed-line.md`).
+    rejected_line_ids: List[str] = Field(default_factory=list)
 
 
 class ConfirmManyBody(BaseModel):
     orders: List[ConfirmManyOrderBody] = Field(default_factory=list)
     #: The planning-change batch this press is ANSWERING (part 3, AC-P3-4).
     #:
-    #: One batch per board, which is the shape the board already has: it is opened at
-    #: `?orders=...&batch=<id>` and every order on it belongs to that batch. Set, each
-    #: order's lines become its batch rows' own compositions and the batch is applied for
-    #: THAT order - the same single write `POST .../sales-orders/{id}/confirm` does with its
-    #: own `batch_id`, once per order rather than once per press. Absent on every ordinary
-    #: board Confirm.
+    #: DEPRECATED as the primary shape (`PLAN-scm-board-picks-up-pending-change.md`, change
+    #: 4): a board with two orders on two different batches cannot name one body-level id
+    #: for both. `ConfirmManyOrderBody.batch_id` is read first; this is the FALLBACK for a
+    #: caller that has not moved to the per-order id yet - one batch per board, which was
+    #: the only shape the board had before this slice: opened at `?orders=...&batch=<id>`,
+    #: every order on it belonging to that one batch. Absent on every ordinary board Confirm.
     batch_id: Optional[str] = None
 
 
@@ -531,6 +575,9 @@ class ConfirmManyOrderResult(BaseModel):
     transfers_kept: Optional[int] = None
     #: The lines flagged as a suspected system problem, summed the same way (R10).
     suspected_issues: Optional[int] = None
+    #: How many covered lines this order's own press withdrew, the per-order twin of
+    #: `ConfirmResult.rejected_count` (owner ruling 23 Sep 2026).
+    rejected_count: Optional[int] = None
     error: Optional[str] = None
     #: The lines the server refused, named the way `SupplyFailingLine` always is (AC-C02),
     #: when the refusal named any.

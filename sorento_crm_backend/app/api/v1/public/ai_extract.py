@@ -27,7 +27,9 @@ from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from sqlalchemy.orm import Session
 
 from app.api.v1.public.portal import get_portal_token
+from app.api.v1.public.portal_price_tag import _resolve_company
 from app.database import get_db
+from app.models.base import company_scope
 from app.models.portal import PortalToken
 from app.services.ai_extract.extract_service import (
     AIExtractService,
@@ -35,10 +37,22 @@ from app.services.ai_extract.extract_service import (
     ExtractResult,
 )
 from app.services.error_handler import handle_validation_error
+from app.services.portal_form_visibility_service import require_form_visible
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# A `portal.<kind>` form_key names the same gated kind the generic portal
+# submission routes do (SEC4, r4/AC-R7) - `master.*` keys have no such kind
+# to check against and are issue #964, left alone.
+_PORTAL_FORM_KEY_PREFIX = "portal."
+
+
+def _require_form_key_visible(db: Session, token: PortalToken, form_key: str) -> None:
+    if form_key.startswith(_PORTAL_FORM_KEY_PREFIX):
+        kind = form_key[len(_PORTAL_FORM_KEY_PREFIX) :]
+        require_form_visible(db, token.contact_id, kind)
 
 
 # Same constraints as the portal attachment quota; mirrored here so the
@@ -75,6 +89,7 @@ def ai_extract_schema(
     token: PortalToken = Depends(get_portal_token),
     db: Session = Depends(get_db),
 ) -> dict:
+    _require_form_key_visible(db, token, form_key)
     try:
         return AIExtractService(db).get_schema_with_guidance(form_key)
     except KeyError:
@@ -99,6 +114,7 @@ def ai_extract(
     upload route, which stays ``async def`` precisely so it can refuse oversized
     bytes as they arrive. Sibling fix: PR #164.
     """
+    _require_form_key_visible(db, token, form_key)
     if not files:
         raise handle_validation_error("Upload at least one file.")
     if len(files) > _MAX_FILES:
@@ -110,7 +126,7 @@ def ai_extract(
     total = 0
     for f in files:
         ext = _ext(f.filename, f.content_type)
-        if ext and ext not in _ALLOWED_EXTS:
+        if ext not in _ALLOWED_EXTS:
             raise handle_validation_error(
                 f"Unsupported file type: {f.filename}. Allowed: "
                 f"{', '.join(sorted(_ALLOWED_EXTS))}."
@@ -131,11 +147,20 @@ def ai_extract(
 
     service = AIExtractService(db)
     try:
-        return service.extract(
-            form_key,
-            payload,
-            user_id=None,
-            portal_contact_id=token.contact_id,
-        )
+        # Browser check finding: the router-level `apply_company_scope`
+        # dependency scopes a portal token to the CONTACT'S companies
+        # (plural - `RespondContactCompany`), not the one company this
+        # request belongs to. A code that exists in two of them (the same
+        # product master shared across Sorento/Mocha-style setups) came back
+        # ambiguous under that wider scope and the extract read "Not found"
+        # for something that does exist. Narrowed here exactly like
+        # `portal_lookup_product_combos` narrows the sibling combos lookup.
+        with company_scope(db, frozenset({_resolve_company(db, token)})):
+            return service.extract(
+                form_key,
+                payload,
+                user_id=None,
+                portal_contact_id=token.contact_id,
+            )
     except KeyError:
         raise handle_validation_error(f"Unknown form_key: {form_key}")

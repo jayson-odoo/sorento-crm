@@ -66,6 +66,22 @@ class CanonicalProductCategory(_Canonical):
     is_active: Optional[bool] = None
 
 
+class CanonicalBrand(_Canonical):
+    """Products sync AFTER brands (autocount-brands-ingest D1/D2): a brand
+    push gives the ESB's auto-create-on-product-push path (D9, unchanged) a
+    proper master row with its own integration reference, instead of only
+    the code = name placeholder a product's `brand_code` creates today. Caps
+    are the `brands` column widths (`app/models/product.py`), not the 100/255
+    the other reference masters use."""
+
+    code: str = Field(..., min_length=1, max_length=50)
+    name: str = Field(..., min_length=1, max_length=150)
+    description: Optional[str] = None
+    # Absent vs null (D14): omitted leaves the stored value untouched (or, on
+    # create, the model's own True default); an explicit null clears it.
+    is_active: Optional[bool] = None
+
+
 class CanonicalUnitOfMeasure(_Canonical):
     """Likewise for products.base_uom_id."""
 

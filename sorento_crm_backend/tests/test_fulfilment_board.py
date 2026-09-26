@@ -245,6 +245,11 @@ def test_bucket_assignment_for_day_week_and_month():
     assert bucket_key_for(when, TODAY, "day") == "2026-09-03"
     assert bucket_key_for(when, TODAY, "week") == "2026-08-31"
     assert bucket_key_for(when, TODAY, "month") == "2026-09-01"
+    # AC-B1-9 (`PLAN-board-oi-mechanical-22sep.md`, S1): `date` keys exactly like `day` -
+    # the line's own required date, never a week/month bucket. Today `bucket_key_for` only
+    # special-cases `"month"` and `"day"`, so an unrecognised granularity value falls
+    # through to the week branch - red on the mismatch below, not on a missing symbol.
+    assert bucket_key_for(when, TODAY, "date") == bucket_key_for(when, TODAY, "day")
 
 
 def test_a_past_date_keeps_its_own_period_and_only_no_date_is_special():
@@ -365,6 +370,61 @@ def test_day_granularity_is_a_thirty_day_window_not_a_column_per_distinct_date()
 
 
 # --------------------------------------------------------------------------- #
+# S1 (`PLAN-board-oi-mechanical-22sep.md`) - AC-B1-6/7/8: `date` granularity
+# --------------------------------------------------------------------------- #
+
+
+def test_date_granularity_bucket_keys_are_required_date_iso_and_only_populated_dates():
+    """AC-B1-6/AC-B1-9. `date` granularity keys each bucket by the line's own
+    `required_date` ISO string - never a week bucket, never the day-window's 30-column
+    calendar fill - and `dateBuckets` lists only the dates somebody actually owes,
+    sorted ascending with `No date` last. `granularity="date"` is not in `GRANULARITIES`
+    today and `bucket_key_for` does not special-case it, so it falls through to the week
+    branch: three lines a week apart collapse onto fewer than three columns, and none of
+    those columns' keys match the lines' own dates - red on the mismatch, not on a
+    missing route (the service is called directly, the same way every other test in
+    this file calls it)."""
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="5", required_date=date(2026, 11, 1), warehouse=warehouse)
+        _line(db, order, product, qty="5", required_date=date(2027, 2, 1), warehouse=warehouse)
+        _line(db, order, product, qty="5", required_date=date(2027, 4, 1), warehouse=warehouse)
+        _line(db, order, product, qty="5", required_date=None, warehouse=warehouse)
+
+        board = _service(db).build([order.so_number], granularity="date", as_of=TODAY)
+
+        keys = [b["key"] for b in board["dateBuckets"]]
+        assert keys == ["2026-11-01", "2027-02-01", "2027-04-01", "no_date"], keys
+        for bucket in board["dateBuckets"]:
+            assert "is_past" in bucket
+
+        cell = _cell(board, product.product_code, "2026-11-01")
+        assert cell["contributions"][0]["required_date"] == date(2026, 11, 1)
+
+
+def test_date_granularity_label_is_dd_mm_yyyy():
+    """AC-B1-7. `date` granularity's own bucket label is `DD/MM/YYYY` - not the week's
+    `w/c ...` phrasing `_bucket_label` falls back to for any granularity value it does
+    not recognise (only `"month"` and `"day"` are special-cased today)."""
+    from app.services.project_fulfilment_board_service import _bucket_label
+
+    assert _bucket_label("2026-11-01", "date") == "01/11/2026"
+
+
+def test_day_granularity_unchanged():
+    """AC-B1-8, pinned: `day` granularity is untouched by the new `date` option.
+    `test_day_granularity_is_a_thirty_day_window_not_a_column_per_distinct_date` above
+    already covers the 30-column window end to end; this is the narrower `bucket_key_
+    for` pin the AC names directly."""
+    from app.services.project_fulfilment_board_service import bucket_key_for
+
+    when = date(2026, 9, 3)
+    assert bucket_key_for(when, TODAY, "day") == "2026-09-03"
+
+
+# --------------------------------------------------------------------------- #
 # aggregation
 # --------------------------------------------------------------------------- #
 
@@ -417,30 +477,49 @@ def test_the_contribution_key_is_the_one_the_frontend_recomputes():
         )
 
 
-def test_only_open_demand_of_an_open_project_order_reaches_the_board():
+def test_only_undecided_lines_reach_the_board():
+    """AC-S2-12, rewritten from `test_only_open_demand_of_an_open_project_order_reaches_the
+    _board` for the 14 September 2026 ruling.
+
+    THE BOARD ASKS WHO DECIDED, NOT WHETHER DELIVERY IS OUTSTANDING. A line the book says
+    shipped, that nobody ever sourced, is a unit to put back - so it is on the board at its
+    ORDERED quantity, and the closed-by-delivery line with it. What is still out is what
+    somebody RULED on: `purchasing_status = covered` is a person saying no purchase is
+    needed, and a cancelled line is not owed at all.
+
+    `is_open_demand()` is untouched (AC-S2-11). The netting engine, the reorder plan and the
+    worklist go on answering "what is still owed"; only this predicate answers "what is
+    undecided", and the two diverge on purpose.
+    """
     with blank_session() as db:
         product = _product(db, f"ZZT-{_uid()[:6]}")
         warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
         order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        # Still owed, nobody has decided it.
         _line(db, order, product, qty="10", required_date=date(2026, 9, 3), warehouse=warehouse)
+        # Shipped whole and CLOSED by that delivery. Undecided, so it is demand here - and at
+        # 10, the ordered quantity, not at the 0 that is still owed.
         _line(
             db, order, product, qty="10", required_date=date(2026, 9, 3),
-            warehouse=warehouse, delivered="10",
+            warehouse=warehouse, delivered="10", line_status="closed",
         )
+        # A person ruled "no purchase needed": decided, and not the board's business.
         _line(
             db, order, product, qty="7", required_date=date(2026, 9, 3),
             warehouse=warehouse, purchasing_status="covered",
         )
+        # Cancelled: owed to nobody, whatever the delivered column says.
         _line(
             db, order, product, qty="9", required_date=date(2026, 9, 3),
-            warehouse=warehouse, line_status="closed",
+            warehouse=warehouse, line_status="cancelled", delivered="4",
         )
 
         board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
 
         cell = _cell(board, product.product_code, "2026-08-31")
-        assert cell["total_qty"] == "10", "only the still-owed line is demand"
-        assert len(cell["contributions"]) == 1
+        assert cell["total_qty"] == "20", "the delivered line is planned at its ordered qty"
+        assert len(cell["contributions"]) == 2
+        assert sorted(c["qty"] for c in cell["contributions"]) == ["10", "10"]
 
 
 # --------------------------------------------------------------------------- #
@@ -1256,15 +1335,24 @@ def test_a_contribution_states_the_sales_order_quantities_by_name():
         assert contribution["qty_ordered"] == "28"
         assert contribution["qty_delivered"] == "8"
         assert contribution["qty_outstanding"] == "20"
-        # The owed quantity is what the board plans against, never the original order.
-        assert contribution["qty"] == contribution["qty_outstanding"]
+        # AC-S2-4: the PLAN quantity is what the board plans against, and it is the ordered
+        # (or required) figure, not the still-owed one - a delivered unit nobody sourced is a
+        # unit to put back. The two are asserted BY NAME rather than against each other,
+        # because an equality between them is the retired rule restated: they differ the
+        # moment a delivery is part-made, which is the whole of this slice.
+        assert contribution["qty"] == "28"
+        assert contribution["qty"] != contribution["qty_outstanding"]
 
 
 def test_a_contribution_states_the_proposal_by_name():
     """Ladder v2's whole-line rule (section E rule 6): `_quantity_world` has no pool, so the
     5 free at the own location and the 7 arriving in time can never together reach the whole
-    20 owed - every partial component is dropped, not mixed in, and the WHOLE line is bought,
-    including the incoming portion that would have covered part of it on its own."""
+    28 the line PLANS for - every partial component is dropped, not mixed in, and the WHOLE
+    line is bought, including the incoming portion that would have covered part of it on its
+    own.
+
+    28, not the 20 still owed (AC-S2-4): 8 of those units have shipped with nothing behind
+    them, and buying only what is still to ship would leave them never put back."""
     with blank_session() as db:
         order, product, _warehouse = _quantity_world(db)
 
@@ -1273,13 +1361,15 @@ def test_a_contribution_states_the_proposal_by_name():
         contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
         assert contribution["qty_proposed_reserve"] == "0"
         assert contribution["qty_proposed_incoming"] == "0"
-        assert contribution["qty_proposed_buy"] == "20"
-        # And they still add up to what is owed, which is the invariant the sheet also keeps.
+        assert contribution["qty_proposed_buy"] == "28"
+        # And they still add up to the quantity being PLANNED, which is the invariant the
+        # sheet also keeps - stated against `qty` now, since that is what the ladder was
+        # asked about.
         assert (
             int(contribution["qty_proposed_reserve"])
             + int(contribution["qty_proposed_incoming"])
             + int(contribution["qty_proposed_buy"])
-        ) == int(contribution["qty_outstanding"])
+        ) == int(contribution["qty"])
 
 
 def test_a_cells_location_states_the_availability_not_only_the_demand():
@@ -1287,9 +1377,13 @@ def test_a_cells_location_states_the_availability_not_only_the_demand():
 
     The raw stock/incoming facts are read-only strip figures and stay exactly what the pile
     holds, whether or not the ladder ever draws on them. Ladder v2's whole-line rule (no pool
-    here) means it never does: 5 free plus 7 incoming still falls short of the 20 owed, so the
-    whole line is bought and the PROPOSED figures read 0/0/20 while the STOCK figures stay
-    30/25/5/7.
+    here) means it never does: 5 free plus 7 incoming still falls short of the 28 being
+    planned, so the whole line is bought and the PROPOSED figures read 0/0/28 while the STOCK
+    figures stay 30/25/5/7.
+
+    `qty_demand` is the PLAN quantity too (AC-S2-4). The strip answers "how much is wanted
+    here", and what is wanted at this bin is every unit nobody decided a source for - the 8
+    already shipped included.
     """
     with blank_session() as db:
         order, product, warehouse = _quantity_world(db)
@@ -1298,7 +1392,7 @@ def test_a_cells_location_states_the_availability_not_only_the_demand():
 
         location = _cell(board, product.product_code, "2026-08-31")["locations"][0]
         assert location["location"] == warehouse.warehouse_code
-        assert location["qty_demand"] == "20"
+        assert location["qty_demand"] == "28"
         assert location["qty_on_hand"] == "30"
         assert location["qty_reserved"] == "25"
         # What this engine may actually use, after existing holds - the number the strip was
@@ -1307,7 +1401,7 @@ def test_a_cells_location_states_the_availability_not_only_the_demand():
         assert location["qty_incoming"] == "7"
         assert location["qty_proposed_reserve"] == "0"
         assert location["qty_proposed_incoming"] == "0"
-        assert location["qty_proposed_buy"] == "20"
+        assert location["qty_proposed_buy"] == "28"
 
 
 def test_a_cells_location_names_the_incoming_document_and_its_arrival_date():
@@ -1983,16 +2077,23 @@ def test_a_reserve_source_carries_the_warehouse_by_id_and_the_pool_names_the_poo
         assert all(s["warehouse_id"] is None for s in buy_only)
 
 
-def test_a_core_line_added_since_adoption_is_named_null_while_its_order_is_addressable():
-    """The one state where the two ids disagree, and the frontend has to handle it.
+def test_a_core_line_added_since_adoption_is_mirrored_on_the_board_read_and_addressable():
+    """Issue #969, owner ruling B2 (17 Sep 2026): the board READ self-heals the mirror.
 
     Adoption mirrors the order's open lines at the time it runs; next week's upload can add a
-    core line that has no mirror yet. Its order is still confirmable, so
-    `orders[].project_sales_order_id` is set - but that LINE cannot be named to the confirm
-    endpoint, so its `project_line_id` is null and it must be left out of the body. Re-sync on
-    the sheet is what fixes it; inventing an id here would post a line the service would refuse
-    with "That line is not on this sales order any more."
+    core line that has no mirror yet. This used to be the one state where the two ids
+    disagreed: `orders[].project_sales_order_id` was set but that LINE's `project_line_id`
+    came back null, the frontend derived `no_mirror` from it and left the line out of the
+    confirm body, and a manual Re-sync on the sheet was the only fix. Now `build` runs
+    `ProjectSOAdoptionService.mirror_missing_lines` for each adopted, unauthored record
+    (`status = 'adopted'`, `project_id IS NULL`) before it collects contributions, so the
+    late line comes back with a real mirror id and the first Confirm posts every line.
+
+    `_adopt` is the real `ProjectSOAdoptionService.adopt`, which leaves `project_id` NULL,
+    so the seeded order already sits inside the heal's gate.
     """
+    from app.models.project_so import ProjectSalesOrderLine
+
     with blank_session() as db:
         product_a = _product(db, f"ZZT-{_uid()[:6]}")
         product_b = _product(db, f"ZZT-{_uid()[:6]}")
@@ -2001,7 +2102,9 @@ def test_a_core_line_added_since_adoption_is_named_null_while_its_order_is_addre
         _line(db, order, product_a, qty="4", required_date=date(2026, 9, 3), warehouse=warehouse)
         pso_id = _adopt(db, str(order.id))
         # The upload lands, and it carries a line adoption never saw.
-        _line(db, order, product_b, qty="6", required_date=date(2026, 9, 3), warehouse=warehouse)
+        late = _line(
+            db, order, product_b, qty="6", required_date=date(2026, 9, 3), warehouse=warehouse
+        )
 
         board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
 
@@ -2012,7 +2115,20 @@ def test_a_core_line_added_since_adoption_is_named_null_while_its_order_is_addre
             for contribution in cell["contributions"]
         }
         assert named[product_a.product_code] is not None
-        assert named[product_b.product_code] is None
+        mirror_id = named[product_b.product_code]
+        assert mirror_id is not None, "the board read must mirror the late line (#969)"
+
+        mirrors = (
+            db.query(ProjectSalesOrderLine)
+            .filter(
+                ProjectSalesOrderLine.project_sales_order_id == pso_id,
+                ProjectSalesOrderLine.core_sales_order_line_id == str(late.id),
+            )
+            .all()
+        )
+        assert [m.id for m in mirrors] == [mirror_id], (
+            "exactly one mirror row for the late core line, and it is the id the board named"
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -3861,7 +3977,8 @@ def test_the_trail_asks_the_four_questions_in_order_and_then_buy():
 
 def test_every_row_of_the_proof_answers_yes_or_no_and_says_what_it_took():
     """AC-V1's shape: one word, one quantity, one place, one sentence. `_quantity_world` has
-    7 on the water against 20 owed and no pool, so every question but Buy answers No."""
+    7 on the water against the 28 the line plans for (AC-S2-4, not the 20 still owed) and no
+    pool, so every question but Buy answers No."""
     with blank_session() as db:
         order, product, _warehouse = _quantity_world(db)
 
@@ -3880,7 +3997,7 @@ def test_every_row_of_the_proof_answers_yes_or_no_and_says_what_it_took():
         ]
         buy = _step(contribution, "buy")
         assert buy["location"] is None
-        assert buy["took"] == "20"
+        assert buy["took"] == "28"
         assert not any(step["kind"] == "incoming" for step in _trail(contribution)), (
             "there is no row named Incoming under ladder v5"
         )
@@ -4374,8 +4491,15 @@ def test_a_hot_selling_rung_still_names_the_classification_in_the_pool_sentence(
 
 
 def test_the_supply_on_the_water_is_inside_question_ones_own_offer():
-    """AC-V2 on the board. `_quantity_world` has 7 open on ZZT-SPO-0001 against 20 owed and
-    no pool, so the group can offer 12 of the 20 and the whole-line rule buys the lot.
+    """AC-V2 on the board. `_quantity_world` has 7 open on ZZT-SPO-0001 against the 28 the
+    line plans for (AC-S2-4, not the 20 still owed).
+
+    The group HAS stock to give - it nets 17 and leaves 12 for this line, 5 free at the bin
+    and the 7 on the water - and 12 cannot cover 28, so the whole-line rule takes none of it
+    and buys the lot. Said this way because the sentence matters: while `owed_qty` was never
+    wired through to the board the offer read 0 and this test passed for the wrong reason,
+    "the group cannot cover it" (review round 2, N1). There is no pool, which is why the
+    only stock in play is the group's own.
 
     What is pinned is that there is NO row named Incoming and no rung of its own for the
     document: the water is inside question 1's offer, and question 1's sentence names the
@@ -4392,7 +4516,7 @@ def test_the_supply_on_the_water_is_inside_question_ones_own_offer():
             "pool", "own", "order_borrow", "supply_borrow", "buy",
         ]
         assert "group nets" in _step(contribution, "own")["why"]
-        assert _step(contribution, "buy")["took"] == "20"
+        assert _step(contribution, "buy")["took"] == "28"
 
 
 # --------------------------------------------------------------------------- #
@@ -5281,9 +5405,13 @@ def test_the_pool_rung_names_the_classification_beside_what_it_gave():
         assert step["why"].startswith(f"Dealer hot-selling at {pool.warehouse_code}")
 
 
-def test_a_discontinued_item_says_the_buy_needs_a_reason_on_the_buy_rung():
-    """`is_discontinued` only ever forced a REASON on the buy; now it says so where the buy
-    is explained, instead of surfacing for the first time as a refusal at confirm."""
+def test_a_discontinued_item_no_longer_names_a_reason_requirement_on_the_buy_rung():
+    """AC-43: `is_discontinued` no longer forces a reason at confirm (the gate in
+    `project_supply_service.py` is removed), so the buy-rung explanation drops the
+    "Discontinued: the buy needs a reason." suffix - the sentence is the plain buy
+    explanation, unchanged from any other Buy. `item_flags` still reports the product
+    as discontinued; that flag is informational (drives the frozen `lifecycle_warning`),
+    not a confirmation requirement."""
     with blank_session() as db:
         product = _product(db, f"ZZT-{_uid()[:6]}")
         product.is_discontinued = True
@@ -5298,8 +5426,7 @@ def test_a_discontinued_item_says_the_buy_needs_a_reason_on_the_buy_rung():
         contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
         assert _flags(contribution)["discontinued"] is True
         why = _step(contribution, "buy")["why"]
-        assert why.endswith("Discontinued: the buy needs a reason.")
-        assert why.startswith("Nothing left to take")
+        assert why == "Nothing left to take, so the remainder is bought."
 
 
 def test_a_line_the_ladder_never_walked_carries_no_flags_rather_than_false_ones():
@@ -7139,3 +7266,857 @@ def test_the_pools_drill_lists_every_site_pool_even_for_an_agent_with_no_group()
     ] == "0", "a pool holding nothing is LISTED reading 0, never left out"
     assert detail["five_pool_net"] == subtotal["net"] == "77"
     assert detail["available_qty"] == "77"
+
+
+# --------------------------------------------------------------------------- #
+# S2 - the board plans what NOBODY DECIDED, delivered or not
+#
+# `PLAN-fulfilment-board-plans-delivered-lines.md` S2, UAC AC-S2-1 to AC-S2-13. Written
+# TEST-FIRST: `plan_qty()` / `is_undecided_demand()` in `app.services.scm.demand`,
+# `plan_qty_of()` in `project_supply_service`, and `_Row.inquiry_decided` do not exist yet.
+#
+# The rule in one line: A LINE IS PLANNED WHEN NOBODY HAS DECIDED IT. DELIVERY IS NOT A
+# DECISION. Decided means an active decision on the core line OR a live order inquiry row on
+# it (state not `cancelled`, ack_state not `rejected`) - the migrated book is the decision on
+# the buying side (#875).
+# --------------------------------------------------------------------------- #
+
+
+def _mirror(db, order, core_lines, *, status=None):
+    """The planning record and its mirror lines for `order`, seeded by hand.
+
+    BY HAND, deliberately. `ProjectSOAdoptionService.adopt` refuses a sales order whose status
+    is not `open` and mirrors only `is_open_demand()` lines - so the very lines this slice puts
+    on the board (delivered, closed, on a completed order) get no mirror from it, and a
+    contribution with no `project_line_id` has nothing for `confirm` to name. That gap is the
+    adoption service's to answer, not this test's; what is seeded here is the shape a board
+    confirmation needs, so the assertions below are about the board and the confirm rules
+    rather than about how the record came to exist.
+    """
+    from app.models.project_so import (
+        SO_STATUS_ADOPTED,
+        ProjectSalesOrder,
+        ProjectSalesOrderLine,
+    )
+
+    company_id = _sorento(db)
+    record = ProjectSalesOrder(
+        id=_uid(),
+        company_id=company_id,
+        project_id=None,
+        provisional_ref=order.so_number,
+        autocount_doc_no=order.so_number,
+        so_id=order.id,
+        status=status or SO_STATUS_ADOPTED,
+        grouping_origin="area",
+    )
+    db.add(record)
+    db.flush()
+    mirrors = []
+    for index, core_line in enumerate(core_lines, start=1):
+        row = ProjectSalesOrderLine(
+            id=_uid(),
+            company_id=company_id,
+            project_sales_order_id=record.id,
+            line_no=index,
+            product_id=core_line.product_id,
+            description=f"{MARKER} mirror {index}",
+            qty=core_line.qty_ordered,
+            uom="UNIT",
+            unit_price=Decimal("100.00"),
+            amount=Decimal("100.00"),
+            delivery_date=core_line.required_date,
+            core_sales_order_line_id=core_line.id,
+        )
+        db.add(row)
+        mirrors.append(row)
+    db.flush()
+    return record, mirrors
+
+
+def _inquiry_row(db, mirror_line, *, state, ack_state, inquiry_no=None, rejected_at=None):
+    """What purchasing was already TOLD about this line - the migrated book's own row (#875).
+
+    Returns the inquiry number, which is what the board has to name on the decided row.
+    """
+    from app.models.project_so import (
+        ACK_AWAITING,
+        IV_ORDER,
+        OrderInquiry,
+        OrderInquiryRow,
+    )
+
+    company_id = _sorento(db)
+    number = inquiry_no or f"ZZT-OI-{_uid()[:8]}"
+    inquiry = OrderInquiry(
+        id=_uid(),
+        company_id=company_id,
+        project_sales_order_id=mirror_line.project_sales_order_id,
+        state="raised",
+        inquiry_no=number,
+    )
+    db.add(inquiry)
+    db.flush()
+    row = OrderInquiryRow(
+        id=_uid(),
+        company_id=company_id,
+        order_inquiry_id=inquiry.id,
+        so_line_id=mirror_line.id,
+        item_code=f"{MARKER}-ITEM",
+        qty=mirror_line.qty,
+        verb=IV_ORDER,
+        state=state,
+        ack_state=ack_state or ACK_AWAITING,
+    )
+    if rejected_at is not None:
+        row.rejected_at = rejected_at
+    db.add(row)
+    db.flush()
+    return number
+
+
+def _confirm_composition(db, record, lines, actor):
+    """Post a composition the way the board's Confirm does, through the service itself."""
+    from app.schemas.project_supply import ConfirmLine, ConfirmSupplyBody
+    from app.services.project_supply_service import ProjectSupplyService
+
+    return ProjectSupplyService(db).confirm(
+        record,
+        ConfirmSupplyBody(lines=[ConfirmLine(**line) for line in lines]),
+        actor_user_id=actor,
+    )
+
+
+def _free_at(db, product, warehouse) -> Decimal:
+    """Free stock as the supply service computes it, off a FRESH service - the per-request
+    caches on an instance that has already answered would hand back the pre-confirm figure."""
+    from app.services.project_supply_service import ProjectSupplyService
+
+    free = ProjectSupplyService(db)._free_stock([str(product.id)], exclude_line_ids=None)
+    return free.get((str(product.id), str(warehouse.id)), _ZERO_DEC)
+
+
+_ZERO_DEC = Decimal("0")
+
+
+# --------------------------------------------------------------------------- AC-S2-1
+
+
+def test_closed_order_delivered_undecided_line_is_admitted_at_ordered_qty():
+    """SO421404's own shape: Completed, 3 ordered, 3 delivered, 0 outstanding, no plan ever
+    made. The stock left the bin with nothing behind it, so the units are owed back."""
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+        _stock(db, product, warehouse, on_hand=0)
+        order = _order(
+            db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1),
+            status="closed",
+        )
+        _line(
+            db, order, product, qty="3", required_date=date(2026, 9, 3),
+            warehouse=warehouse, delivered="3", line_status="closed",
+        )
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+
+        cell = _cell(board, product.product_code, "2026-08-31")
+        assert len(cell["contributions"]) == 1
+        contribution = cell["contributions"][0]
+        assert contribution["qty"] == "3", "the PLAN quantity, not the 0 still owed"
+        assert contribution["qty_ordered"] == "3"
+        assert contribution["qty_delivered"] == "3"
+        assert contribution["covered"] is False
+        # The ladder walked it: a proposal, not a read-only row.
+        assert contribution["sources"], "an undecided line is proposed for"
+
+
+# --------------------------------------------------------------------------- AC-S2-2
+
+
+def test_delivered_undecided_line_with_empty_bin_proposes_buy():
+    """The delivery emptied the bin, so there is nothing to source from: Buy the whole 3, and
+    the confirmation raises the ORDER row that tells purchasing to put them back."""
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse, pool = _pooled_warehouses(db)
+        _stock(db, product, warehouse, on_hand=0)
+        _stock(db, product, pool, on_hand=0)
+        order = _order(
+            db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1),
+            status="closed",
+        )
+        _line(
+            db, order, product, qty="3", required_date=date(2026, 9, 3),
+            warehouse=warehouse, delivered="3", line_status="closed",
+        )
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+
+        contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
+        assert [(s["kind"], s["qty"]) for s in contribution["sources"]] == [("buy", "3")]
+        assert contribution["qty_proposed_buy"] == "3"
+        assert board["line_count"] == 1
+
+
+# --------------------------------------------------------------------------- AC-S2-3
+
+
+def test_delivered_undecided_line_with_stock_uses_own_location_and_holds_nothing():
+    """The location still holds the units, so the board sources from it - and the hold that
+    confirmation writes counts as ZERO, because the line owes nothing (AC-S1-2).
+
+    "Own location" here is the line's own supply chain, which since ladder v2 rule 7 means its
+    SITE POOL rather than the bin itself - the same shape every other Reserve case in this file
+    is built on. The point of the criterion is the hold, not which rung found the stock.
+    """
+    from app.models.project_so import DECISION_ACTIVE, SOSupplyDecision
+
+    with blank_session() as db:
+        actor = _user(db, f"{MARKER} Eling")
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse, pool = _pooled_warehouses(db)
+        _stock(db, product, warehouse, on_hand=0)
+        _stock(db, product, pool, on_hand=10)
+        order = _order(
+            db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1),
+            status="closed",
+        )
+        core_line = _line(
+            db, order, product, qty="3", required_date=date(2026, 9, 3),
+            warehouse=warehouse, delivered="3", line_status="closed",
+        )
+        record, mirrors = _mirror(db, order, [core_line])
+        db.commit()
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+        contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
+        assert [(s["kind"], s["qty"]) for s in contribution["sources"]] == [("reserve", "3")]
+
+        assert _free_at(db, product, pool) == Decimal("10")
+        _confirm_composition(
+            db, record,
+            [{
+                "project_line_id": str(mirrors[0].id),
+                "reserve": [{"warehouse_id": str(pool.id), "qty": "3"}],
+            }],
+            actor,
+        )
+        db.commit()
+
+        assert (
+            db.query(SOSupplyDecision)
+            .filter(
+                SOSupplyDecision.project_sales_order_id == record.id,
+                SOSupplyDecision.state == DECISION_ACTIVE,
+            )
+            .count()
+            == 1
+        )
+        assert _free_at(db, product, pool) == Decimal("10"), (
+            "the units already shipped, so the confirmed allocation holds nothing"
+        )
+
+
+# --------------------------------------------------------------------------- AC-S2-4
+
+
+def test_partial_delivered_undecided_line_asks_full_qty_and_holds_only_owed():
+    """3 ordered, 1 delivered: the board plans the WHOLE 3 - one still to ship, one to put
+    back - while the hold a confirmation writes is capped at the 2 still owed.
+
+    So a Reserve of 1 on this line takes 1 out of free stock for everybody else, not 0 and
+    not 3.
+    """
+    with blank_session() as db:
+        actor = _user(db, f"{MARKER} Eling")
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse, pool = _pooled_warehouses(db)
+        _stock(db, product, warehouse, on_hand=0)
+        _stock(db, product, pool, on_hand=10)
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        core_line = _line(
+            db, order, product, qty="3", required_date=date(2026, 9, 3),
+            warehouse=warehouse, delivered="1",
+        )
+        record, mirrors = _mirror(db, order, [core_line])
+        db.commit()
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+        contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
+        assert contribution["qty"] == "3", "the plan quantity, not the 2 still owed"
+        assert contribution["qty_ordered"] == "3"
+        assert contribution["qty_delivered"] == "1"
+
+        _confirm_composition(
+            db, record,
+            [{
+                "project_line_id": str(mirrors[0].id),
+                "reserve": [{"warehouse_id": str(pool.id), "qty": "1"}],
+                "buy_qty": "2",
+                "buy_reason": "ZZT put the delivered unit back",
+                "amend_reason": "ZZT one still to ship, one to put back",
+            }],
+            actor,
+        )
+        db.commit()
+
+        assert _free_at(db, product, pool) == Decimal("9"), (
+            "min(reserve 1, owed 2) = 1 comes out of free stock, and nothing more"
+        )
+
+
+# --------------------------------------------------------------------------- AC-S2-5
+
+
+def test_covered_line_is_not_admitted():
+    """`purchasing_status = covered` is a person saying "no purchase needed". That is a
+    decision, and the board does not re-open it."""
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+        order = _order(
+            db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1),
+            status="closed",
+        )
+        _line(
+            db, order, product, qty="3", required_date=date(2026, 9, 3),
+            warehouse=warehouse, delivered="3", line_status="closed",
+            purchasing_status="covered",
+        )
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+
+        assert board["line_count"] == 0
+        assert board["cells"] == []
+
+
+# --------------------------------------------------------------------------- AC-S2-6
+
+
+def test_cancelled_line_and_cancelled_order_are_not_admitted():
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+        live = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(
+            db, live, product, qty="9", required_date=date(2026, 9, 3),
+            warehouse=warehouse, line_status="cancelled", delivered="4",
+        )
+        dead = _order(
+            db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1),
+            status="cancelled",
+        )
+        _line(db, dead, product, qty="5", required_date=date(2026, 9, 3), warehouse=warehouse)
+
+        board = _service(db).build(
+            [live.so_number, dead.so_number], granularity="week", as_of=TODAY
+        )
+
+        assert board["line_count"] == 0, "a cancelled line owes nothing; a cancelled order too"
+        assert board["cells"] == []
+
+
+# --------------------------------------------------------------------------- AC-S2-7
+
+
+def test_live_inquiry_row_reads_covered_without_decision():
+    """The migrated book already told purchasing to buy for this line (#875), so it is DECIDED
+    on the buying side: read-only, naming the inquiry, no composition, never proposed for.
+
+    `covered` true with `decision` null is the whole shape - the board has no frozen
+    composition to print, because the instruction predates any board.
+    """
+    from app.models.project_so import ACK_ACKNOWLEDGED, INQUIRY_RAISED
+
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse, pool = _pooled_warehouses(db)
+        _stock(db, product, warehouse, on_hand=0)
+        _stock(db, product, pool, on_hand=50)
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        core_line = _line(
+            db, order, product, qty="3", required_date=date(2026, 9, 3), warehouse=warehouse
+        )
+        _record, mirrors = _mirror(db, order, [core_line])
+        number = _inquiry_row(
+            db, mirrors[0], state=INQUIRY_RAISED, ack_state=ACK_ACKNOWLEDGED
+        )
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+
+        contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
+        assert contribution["covered"] is True, "a live inquiry row decides the line"
+        assert contribution["decision"] is None, "there is no board composition to print"
+        assert contribution["order_inquiry"]["inquiry_no"] == number
+        assert contribution["proposed"] is None
+        assert contribution["sources"] == []
+        assert contribution["trail"] == []
+        assert contribution["qty_proposed_buy"] == "0"
+        assert contribution["qty_proposed_reserve"] == "0"
+        # Not in the pile's queue either: a decided line does not stand in the ranking that
+        # decides who gets the last unit, and `null` is how the board says so.
+        assert contribution["so_qty_ahead"] is None
+
+
+def test_the_order_inquiry_dict_carries_its_documents_and_whether_it_was_redirected():
+    """AC-RL-07 (`PLAN-oi-replan-received-links.md`): the board contribution's `order_
+    inquiry` dict names what is BEHIND the instruction, not only its number - the
+    line's live row's own documents (`{document, kind, received}`) and whether that
+    row was itself redirected off a document that had already landed (AC-RL-10),
+    the exact shape S2's replan writes."""
+    from app.models.procurement import SPOAllocation
+    from app.models.project_so import (
+        ACK_ACKNOWLEDGED,
+        INQUIRY_PARTLY_LINKED,
+        IV_ORDER,
+        OrderInquiry,
+        OrderInquiryLink,
+        OrderInquiryRow,
+    )
+
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse, pool = _pooled_warehouses(db)
+        _stock(db, product, warehouse, on_hand=0)
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        core_line = _line(
+            db, order, product, qty="182", required_date=date(2026, 9, 3), warehouse=warehouse
+        )
+        _record, mirrors = _mirror(db, order, [core_line])
+
+        company_id = _sorento(db)
+        inquiry = OrderInquiry(
+            id=_uid(), company_id=company_id,
+            project_sales_order_id=mirrors[0].project_sales_order_id,
+            state="raised", inquiry_no=f"ZZT-OI-{_uid()[:8]}",
+        )
+        db.add(inquiry)
+        db.flush()
+        # A CLOSED, fully-received allocation - the AC-RL-10 shape a redirected row's
+        # own history link stands on.
+        allocation = SPOAllocation(
+            id=_uid(), company_id=company_id, spo_number=f"ZZT-SPO-{_uid()[:8]}",
+            spo_line_number=1, product_id=product.id, warehouse_id=warehouse.id,
+            allocated_quantity=158, quantity_received=158, receipt_status="fully_received",
+            line_status="closed",
+        )
+        db.add(allocation)
+        db.flush()
+        row = OrderInquiryRow(
+            id=_uid(), company_id=company_id, order_inquiry_id=inquiry.id,
+            so_line_id=mirrors[0].id, item_code=f"{MARKER}-ITEM", qty=Decimal("182"),
+            verb=IV_ORDER, state=INQUIRY_PARTLY_LINKED, ack_state=ACK_ACKNOWLEDGED,
+            redirected_to_pool=True,
+        )
+        db.add(row)
+        db.flush()
+        db.add(OrderInquiryLink(
+            id=_uid(), company_id=company_id, row_id=row.id,
+            spo_allocation_id=allocation.id, document=allocation.spo_number,
+            qty=Decimal("158"),
+        ))
+        db.flush()
+        db.commit()
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+
+        contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
+        order_inquiry = contribution["order_inquiry"]
+        assert order_inquiry["inquiry_no"] == inquiry.inquiry_no
+        assert order_inquiry["documents"] == [
+            {"document": allocation.spo_number, "kind": "spo", "received": True},
+        ]
+        assert order_inquiry["redirected"] is True
+
+
+def test_the_order_inquiry_dict_reaches_the_wire_with_its_inquiry_and_row_ids():
+    """S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-15/AC-B6-9): the List view's own
+    OI column links to `/project-sales/order-inquiries/<inquiry_id>?row=<row_id>`, so
+    the contribution has to carry BOTH ids - and carry them to the WIRE, which is why
+    this is asserted off the route rather than off `build()`: `response_model` silently
+    drops any field the service returns that `BoardLineOrderInquiry` does not declare,
+    and the cell would then fall back to plain text with nothing failing."""
+    from app.models.base import company_scope
+    from app.models.project_so import (
+        ACK_ACKNOWLEDGED,
+        INQUIRY_RAISED,
+        IV_ORDER,
+        OrderInquiry,
+        OrderInquiryRow,
+    )
+
+    with blank_session() as db:
+        company_id = _sorento(db)
+        actor = _user(db, f"{MARKER} Eling")
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse, pool = _pooled_warehouses(db)
+        _stock(db, product, warehouse, on_hand=0)
+        _stock(db, product, pool, on_hand=0)
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        core_line = _line(
+            db, order, product, qty="3", required_date=date(2026, 9, 3), warehouse=warehouse
+        )
+        _record, mirrors = _mirror(db, order, [core_line])
+        inquiry = OrderInquiry(
+            id=_uid(), company_id=company_id,
+            project_sales_order_id=mirrors[0].project_sales_order_id,
+            state="raised", inquiry_no=f"ZZT-OI-{_uid()[:8]}",
+        )
+        db.add(inquiry)
+        db.flush()
+        row = OrderInquiryRow(
+            id=_uid(), company_id=company_id, order_inquiry_id=inquiry.id,
+            so_line_id=mirrors[0].id, item_code=f"{MARKER}-ITEM", qty=Decimal("3"),
+            verb=IV_ORDER, state=INQUIRY_RAISED, ack_state=ACK_ACKNOWLEDGED,
+        )
+        db.add(row)
+        db.flush()
+        db.commit()
+
+        client, originals = _client(db, actor, [VIEW])
+        try:
+            with company_scope(db, frozenset({company_id})):
+                response = client.get(
+                    f"{BASE}/fulfilment-planning/board",
+                    params={
+                        "orders": order.so_number,
+                        "granularity": "week",
+                        "as_of": TODAY.isoformat(),
+                    },
+                )
+        finally:
+            _restore(originals)
+
+        assert response.status_code == 200, response.text
+        order_inquiry = response.json()["contributions"][0]["order_inquiry"]
+        assert order_inquiry["inquiry_no"] == inquiry.inquiry_no
+        assert order_inquiry["inquiry_id"] == str(inquiry.id), order_inquiry
+        assert order_inquiry["row_id"] == str(row.id), order_inquiry
+
+
+# --------------------------------------------------------------------------- AC-S2-8
+
+
+def test_cancelled_or_rejected_inquiry_row_leaves_line_undecided():
+    """A row that went away, and a row purchasing REFUSED that CS has not answered, are both
+    the absence of an instruction. The line is undecided, and the board proposes for it."""
+    from datetime import datetime
+
+    from app.models.project_so import (
+        ACK_AWAITING,
+        ACK_REJECTED,
+        INQUIRY_CANCELLED,
+        INQUIRY_RAISED,
+    )
+
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse, pool = _pooled_warehouses(db)
+        _stock(db, product, warehouse, on_hand=0)
+        _stock(db, product, pool, on_hand=0)
+
+        withdrawn = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        withdrawn_line = _line(
+            db, withdrawn, product, qty="3", required_date=date(2026, 9, 3), warehouse=warehouse
+        )
+        _record_a, mirrors_a = _mirror(db, withdrawn, [withdrawn_line])
+        _inquiry_row(db, mirrors_a[0], state=INQUIRY_CANCELLED, ack_state=ACK_AWAITING)
+
+        refused = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        refused_line = _line(
+            db, refused, product, qty="4", required_date=date(2026, 9, 3), warehouse=warehouse
+        )
+        _record_b, mirrors_b = _mirror(db, refused, [refused_line])
+        _inquiry_row(
+            db, mirrors_b[0], state=INQUIRY_RAISED, ack_state=ACK_REJECTED,
+            rejected_at=datetime(2026, 8, 1, 9, 0),
+        )
+
+        board = _service(db).build(
+            [withdrawn.so_number, refused.so_number], granularity="week", as_of=TODAY
+        )
+
+        by_order = {
+            c["so_number"]: c
+            for c in _cell(board, product.product_code, "2026-08-31")["contributions"]
+        }
+        assert by_order[withdrawn.so_number]["covered"] is False
+        assert by_order[withdrawn.so_number]["sources"], "a withdrawn row decides nothing"
+        assert by_order[refused.so_number]["covered"] is False
+        assert by_order[refused.so_number]["sources"], (
+            "purchasing refusing it puts the line back in CS's hands, undecided"
+        )
+
+
+# --------------------------------------------------------------------------- AC-S2-9
+
+
+def test_confirm_sum_check_compares_to_plan_qty():
+    """The balance check is against the PLAN quantity now, so a delivered line can be
+    confirmed at all - and the refusal, when the composition does not add up, names that
+    figure rather than the zero still owed."""
+    from app.services.project_supply_service import SupplyLinesRefused
+
+    with blank_session() as db:
+        actor = _user(db, f"{MARKER} Eling")
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse, pool = _pooled_warehouses(db)
+        _stock(db, product, warehouse, on_hand=0)
+        _stock(db, product, pool, on_hand=0)
+        order = _order(
+            db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1),
+            status="closed",
+        )
+        core_line = _line(
+            db, order, product, qty="3", required_date=date(2026, 9, 3),
+            warehouse=warehouse, delivered="3", line_status="closed",
+        )
+        record, mirrors = _mirror(db, order, [core_line])
+        db.commit()
+
+        # Nothing at all is not a composition for a line that plans 3, and the sentence has
+        # to say 3 or the planner is told to balance against a number nobody can see.
+        with pytest.raises(SupplyLinesRefused) as refusal:
+            _confirm_composition(
+                db, record, [{"project_line_id": str(mirrors[0].id)}], actor
+            )
+        reasons = " ".join(
+            entry["reason"] for entry in (refusal.value.failing_lines or [])
+        )
+        assert "3" in reasons, reasons
+        db.rollback()
+
+        # And the whole 3 IS confirmable: this is the Buy that raises the order-back row.
+        result = _confirm_composition(
+            db, record,
+            [{
+                "project_line_id": str(mirrors[0].id),
+                "buy_qty": "3",
+                "buy_reason": "ZZT the delivery emptied the bin",
+            }],
+            actor,
+        )
+        assert result["revision_no"] == 1
+
+
+# --------------------------------------------------------------------------- AC-S2-10
+
+
+def test_frozen_decision_on_undelivered_line_is_not_drifted():
+    """A GUARD, not a red test. Every decided line on the 0907 copy has nothing delivered (97
+    of 97, measured 14 Sep), so moving `_LineFacts.open_qty` from the still-owed figure to the
+    plan quantity must not make a single existing revision look stale."""
+    from app.services.project_supply_service import ProjectSupplyService
+
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse, _pool = _pooled_warehouses(db)
+        _stock(db, product, warehouse, on_hand=0)
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        core_line = _line(
+            db, order, product, qty="3", required_date=date(2026, 9, 3), warehouse=warehouse
+        )
+        record, mirrors = _mirror(db, order, [core_line])
+        db.commit()
+
+        facts = ProjectSupplyService(db)._facts_for(record, mirrors)
+        fact = facts[str(mirrors[0].id)]
+        snapshot = {
+            "core_line_id": str(core_line.id),
+            "open_qty": "3",
+            "required_date": core_line.required_date.isoformat(),
+        }
+
+        assert fact.open_qty == Decimal("3")
+        assert (
+            ProjectSupplyService._carry_snapshot_has_drifted(mirrors[0], snapshot, fact)
+            is False
+        )
+
+
+# --------------------------------------------------------------------------- AC-S2-11
+
+
+def test_netting_predicate_still_excludes_delivered_lines():
+    """A GUARD. `is_open_demand()` and `demand_qty()` are the NETTING predicates, and the
+    netting engine, the reorder plan and the worklist go on asking "what is still owed". Only
+    the board's own predicate changed."""
+    from app.services.scm.demand import demand_qty, is_open_demand
+
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        owed = _line(
+            db, order, product, qty="3", required_date=date(2026, 9, 3), warehouse=warehouse
+        )
+        shipped = _line(
+            db, order, product, qty="3", required_date=date(2026, 9, 3),
+            warehouse=warehouse, delivered="3",
+        )
+
+        still_owed = {
+            str(row.id)
+            for row in db.query(SalesOrderLine)
+            .filter(SalesOrderLine.sales_order_id == order.id, is_open_demand())
+            .all()
+        }
+        assert still_owed == {str(owed.id)}
+
+        qty = (
+            db.query(demand_qty())
+            .filter(SalesOrderLine.id == shipped.id)
+            .scalar()
+        )
+        assert Decimal(str(qty)) == Decimal("0")
+
+
+# --------------------------------------------------------------------------- AC-S2-13
+
+
+def test_selection_of_only_cancelled_or_covered_lines_is_an_empty_board():
+    """The one board that is genuinely empty, and the only one the "No lines to plan on these
+    sales orders" state belongs to (AC-S3-1). `line_count` is what the copy is chosen off, so
+    it has to be 0 here and nonzero on a day window that merely shows nothing."""
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+        order = _order(
+            db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1),
+            status="closed",
+        )
+        _line(
+            db, order, product, qty="3", required_date=date(2026, 9, 3),
+            warehouse=warehouse, delivered="3", line_status="cancelled",
+        )
+        _line(
+            db, order, product, qty="4", required_date=date(2026, 9, 3),
+            warehouse=warehouse, purchasing_status="covered",
+        )
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+
+        assert board["line_count"] == 0
+        assert board["cells"] == []
+
+
+def test_a_delivered_line_does_not_inflate_its_groups_offer():
+    """Review round 1, S3. `_group_offer` un-nets THIS line's own quantity because the group
+    net has already subtracted it - and what the net subtracted is `demand_qty()`, which is
+    what is STILL OWED.
+
+    So the figure added back has to be the owed one. This line is 24 ordered and 24
+    delivered, so the net never counted it at all and the group reads a clean 9 (10 on hand
+    against an earlier order's 1). Un-netting the PLAN quantity would add a free 24 on top:
+    `max(9 + 24, 0)` = 33 offered where the group holds 10.
+
+    Asserted on `group_offer` itself, because that is the number the mistake changes - a
+    proposal read off it can come out the same by other constraints and hide the defect.
+    """
+    from app.services.project_supply_service import ProjectSupplyService
+
+    with blank_session() as db:
+        _group, product, own, mine = _group_world(
+            db, on_hand=10, other_qty=1, own_qty="24"
+        )
+        line = (
+            db.query(SalesOrderLine)
+            .filter(SalesOrderLine.sales_order_id == mine.id)
+            .one()
+        )
+        line.qty_delivered = Decimal("24")
+        line.line_status = "closed"
+        db.flush()
+        record, mirrors = _mirror(db, mine, [line])
+        db.commit()
+
+        fact = ProjectSupplyService(db)._facts_for(record, mirrors)[str(mirrors[0].id)]
+
+        assert fact.open_qty == Decimal("24"), "it is still PLANNED at its ordered quantity"
+        assert fact.owed_qty == Decimal("0"), "and owed nothing, because it all shipped"
+        assert fact.group_net == Decimal("9"), (
+            "10 on hand against the other order's 1; this line weighs nothing"
+        )
+        assert fact.group_offer == Decimal("9"), (
+            "the group offers what it holds; un-netting the plan quantity offered 33"
+        )
+        assert str(own.warehouse_code).endswith(fact.group_code or "")
+
+
+def _board_facts(service, so_numbers):
+    """The `_LineFacts` the board actually built, captured off the call it makes.
+
+    Through the real `build()` and the real payload, because the defect N1 names lives in
+    the WIRING between the two: a fact constructed here by hand would carry every field the
+    board forgot to send and prove nothing.
+    """
+    from unittest.mock import patch
+
+    from app.services.project_supply_service import ProjectSupplyService
+
+    seen = {}
+    original = ProjectSupplyService.demand_facts
+
+    def spy(self, rows, **kw):
+        built = original(self, rows, **kw)
+        seen["rows"] = rows
+        seen["facts"] = built
+        return built
+
+    with patch.object(ProjectSupplyService, "demand_facts", spy):
+        service.build(list(so_numbers), granularity="week", as_of=TODAY)
+    return seen["rows"], seen["facts"]
+
+
+def test_the_board_un_nets_each_lines_own_owed_quantity_from_its_group():
+    """Review round 2, N1. The `owed_qty` fix was INERT on the board.
+
+    `_group_offer` adds this line's own demand back because the group net already subtracted
+    it, and review round 1 moved that un-net from `open_qty` to `owed_qty`. The board builds
+    its facts through `demand_facts`, which carried no `owed_qty` at all - so every board row
+    un-netted ZERO and the offer collapsed to the raw group net, offering a group's own line
+    nothing it could actually have.
+
+    `_quantity_world` is 28 ordered and 8 delivered: 20 owed, a group netting 17, and an
+    offer of 17 + 20 = 37.
+    """
+    with blank_session() as db:
+        order, _product, _warehouse = _quantity_world(db)
+
+        service = _service(db)
+        rows, facts = _board_facts(service, [order.so_number])
+        fact = next(iter(facts.values()))
+
+        assert "owed_qty" in rows[0], "the board has to SEND it, not only read it"
+        assert fact.open_qty == Decimal("28"), "the line asks for its ordered quantity"
+        assert fact.owed_qty == Decimal("20"), (
+            "and owes 20 - the figure the netting engine actually subtracted"
+        )
+        assert fact.group_net == Decimal("17")
+        assert fact.group_offer == Decimal("37"), (
+            "the group's net plus this line's own owed quantity; 17 was the defect"
+        )
+
+
+def test_a_board_group_offer_covers_a_line_the_group_can_actually_meet():
+    """Review round 2, N1, on the ownership-group world: 10 on hand, 1 owed by an earlier
+    order, 9 asked for here and all 9 still owed.
+
+    The group nets 0 - its whole 10 is spoken for once this line's own 9 is counted - and
+    offers this line 9 once its own demand is added back. Un-netting nothing left the offer
+    at 0, which says a group holding 10 can give one of its own lines nothing.
+    """
+    with blank_session() as db:
+        _group, _product, own, mine = _group_world(
+            db, on_hand=10, other_qty=1, own_qty="9"
+        )
+
+        service = _service(db)
+        _rows, facts = _board_facts(service, [mine.so_number])
+        fact = next(iter(facts.values()))
+
+        assert fact.owed_qty == Decimal("9")
+        assert fact.group_net == Decimal("0")
+        assert fact.group_offer == Decimal("9")
+        assert str(own.warehouse_code).endswith(fact.group_code or "")

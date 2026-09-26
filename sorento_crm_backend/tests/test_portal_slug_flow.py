@@ -357,8 +357,15 @@ def test_me_returns_portal_slug(client, db, cleanup):
     assert body["whatsapp_number"] == "60123456789"
     # The landing gates its entry points on this list; response_model would
     # silently drop an undeclared field, so its presence is asserted here.
-    # A contact with no access types resolves to nothing (fail-closed).
-    assert body["visible_form_types"] == []
+    # PLAN-portal-forms-market-segment D3: a contact with no market segment
+    # and no override still sees the four base kinds - price_tag_request is
+    # the only one that stays opt-in.
+    assert set(body["visible_form_types"]) == {
+        "complaint",
+        "stock_inquiry",
+        "purchase_request",
+        "sponsorship_form",
+    }
 
 
 def test_token_info_returns_slug_and_mask(client, db, cleanup):

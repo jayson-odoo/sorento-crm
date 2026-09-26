@@ -71,8 +71,8 @@ from tests.chatbot.test_engine import (  # noqa: F401 - fixtures used by name
     stub_access,
     stub_parser,
 )
+from tests.chatbot.test_s6c_answer_lane import stub_resolve_gate_bundle
 from tests.chatbot.test_s6c_engine_paths import (
-    _EngineWiring,
     _no_probe_answer_services,
     _srtwc8517_resolved_bundle,
 )
@@ -134,7 +134,7 @@ def _wire_business_lane(engine_mod_ref: Any, monkeypatch: Any) -> None:
     switches on) reach the SAME `not_found` outcome through `run_until_exit` +
     `run_fetch`, run for real - the only thing standing in for the network is the MCP
     seam and the two probes `_no_probe_answer_services` names as unreached on this arm."""
-    bundle = _EngineWiring._stub_bundle([])
+    bundle = stub_resolve_gate_bundle([])
     monkeypatch.setattr(
         engine_mod_ref.business_services, "production_services", lambda db, *, space_id=None: bundle
     )
@@ -161,7 +161,20 @@ def _set_completed_lanes(session_factory: Any, system_settings_row: Any, lanes: 
 
 
 class TestBusinessQueryExitMatrixAc715:
-    """AC-715: three outcomes, eight cells, never a fourth."""
+    """AC-715: three outcomes, eight cells, never a fourth.
+
+    Ported (AC-1592, this session): the matrix's own premise - `crm_completes = lane_in_
+    settings and business_on` - is stale. `business_query` is in `CRM_COMPLETED_BRANCH_
+    KINDS` unconditionally (S6c reached full coverage), `chatbot_completed_lanes` no
+    longer gates completion at all (contract 73 superseded), and `chatbot_business_lane_
+    enabled` is defined but never read from `run_turn` (grep-confirmed) - so all EIGHT
+    cells complete `done` today, regardless of every switch combination. The matrix has
+    collapsed to one outcome; the other two arms (`ordering_on` orphan-failure,
+    `else` delegated) are dead code paths no real branch kind can reach anymore, since
+    nothing is ever left un-completable for `run_turn` to hand off or fail on their
+    behalf. `test_s3_switch_and_complete_by_body.py::TestTheCompletedLaneSwitch`'s own
+    retirement note makes the identical finding independently.
+    """
 
     _CELLS = [
         pytest.param(True, True, True, id="lane_on-business_on-ordering_on"),
@@ -206,66 +219,33 @@ class TestBusinessQueryExitMatrixAc715:
         try:
             result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
 
-            crm_completes = lane_in_settings and business_on
-            if crm_completes:
-                # Both switches on: the CRM answers this turn itself, regardless of
-                # ordering - AC-715 does not apply to a lane it can finish.
-                assert result.status == "done", result.error
-                assert result.delegate is None
-                assert [a["kind"] for a in result.actions] == ["send_message"]
-                assert isinstance(result.reply.get("text"), str) and result.reply["text"], (
-                    "never done with no reply"
-                )
-            elif ordering_on:
-                # AC-715's own subject: the lane cannot be finished by this build/config,
-                # and S7 mode has nobody left to hand it to.
-                assert result.status == "failed", (result.status, result.error)
-                assert result.delegate is None, "S7 mode must not hand the caller a lane to run"
-                assert [a["kind"] for a in result.actions] == ["send_message"]
-                assert result.actions[0]["text"] == engine_mod.GENERIC_ERROR_REPLY
-                assert "business_query" in (result.error or "")
-                assert "chatbot_completed_lanes" in (result.error or "")
-            else:
-                # Ordering off, today's production shape: n8n still owns this lane.
-                assert result.status == "delegated", (result.status, result.error)
-                assert result.delegate == "business_query"
-                assert result.error is None
-
+            # Every cell completes `done` today - see the class docstring for the
+            # measured reason. `lane_in_settings`/`business_on`/`ordering_on` are kept as
+            # parametrize inputs (rather than collapsing to a single un-parametrised
+            # test) so a FUTURE regression that makes any one of them matter again shows
+            # up as a cell-specific failure, not a single aggregate one.
+            assert result.status == "done", (result.status, result.error)
+            assert result.delegate is None
+            assert [a["kind"] for a in result.actions] == ["send_message"]
+            assert isinstance(result.reply.get("text"), str) and result.reply["text"], (
+                "never done with no reply"
+            )
             assert not (ordering_on and result.status == "delegated"), (
                 "a live turn must never delegate while S7 mode is on"
             )
         finally:
             _clear_contact_keys(redis_client, CONTACT_ID)
 
-    def test_a_dry_run_with_ordering_on_still_delegates_with_a_skipped_trace_note_ac715(
-        self, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch, redis_client
-    ) -> None:
-        """The documented exception: nothing was going to complete this lane either way,
-        so a harness turn is let through rather than failed, and the trace records why."""
-        _clear_contact_keys(redis_client, CONTACT_ID)
-        _set_completed_lanes(session_factory, system_settings_row, [])
-        set_chatbot_switches(session_factory, business_lane=False, ordering=True)
-        monkeypatch.setattr(settings, "chatbot_queue_wait_seconds", 5.0, raising=False)
-
-        stub_parser(_parser_output(domain_hint="forms", entities=[], user_goal="checking a form"))
-        stub_access()
-
-        try:
-            result = engine_mod.run_turn(_envelope(is_test=True), session_factory=session_factory)
-
-            assert result.status == "delegated"
-            assert result.delegate == "business_query"
-            assert result.error is None
-
-            db = session_factory()
-            row = db.query(ChatbotTurn).filter(ChatbotTurn.id == result.turn_id).one()
-            assert any(
-                record.get("status") == "skipped"
-                and "no tail to go to" in (record.get("summary") or "")
-                for record in (row.trace or [])
-            ), row.trace
-        finally:
-            _clear_contact_keys(redis_client, CONTACT_ID)
+    # RETIRED (AC-1592, this session): `test_a_dry_run_with_ordering_on_still_delegates_
+    # with_a_skipped_trace_note_ac715` pinned the "documented exception" for a dry run
+    # that could not complete either way - moot now that EVERY cell above completes
+    # `done` (a dry run behaves identically to a live turn for the completion DECISION;
+    # only the write is gated, D14). Measured: a dry-run `business_query` turn with the
+    # SAME setup also reaches `status="done"` with a computed `session_patch` preview,
+    # same as the live cells. Replacement coverage for D14's own "no write on a dry run"
+    # guarantee already exists and is unaffected by this retirement:
+    # `test_engine.py::TestDryRun.test_a_test_envelope_writes_nothing_outside_chatbot_
+    # turns`. No new test needed here - re-deriving one would duplicate that file.
 
 
 # --------------------------------------------------------------------------- #
@@ -274,11 +254,15 @@ class TestBusinessQueryExitMatrixAc715:
 
 
 def _wire_answered_business_turn(monkeypatch: Any, *, on_fetch: Any = None) -> dict[str, Any]:
-    """A `business_query` turn the CRM answers all the way through `sub_answer` -
-    `has_result: True` is `answer.dispatch`'s only gate (`answer.py:67-79`), so this is
-    the shortest real path to `_run_answer_half` and, through
-    `sub_answer.answer_result`, to `outcome_fragment['central-exchange']` -
-    `engine._attachments_src`'s own read - landing on `reply.attachments_src`."""
+    """A `business_query` turn the CRM answers all the way through the composer.
+
+    Ported (AC-1592): `outcome_fragment['central-exchange']` is the OLD n8n-node-named
+    read this docstring used to cite; the CURRENT read is `turn_runtime.envelope_of`,
+    `files = fetched.get("attachments")` (grep-confirmed, `turn_runtime.py`) - a fetch
+    fragment's `"fetch"` dict needs an `"attachments"` key (a list of dicts), which the
+    old `answers` shape below never carried, so no `send_attachments` action was ever
+    possible to reach through it.
+    """
     from app.services.chatbot import engine as engine_ref
 
     call_count = {"run_fetch": 0}
@@ -286,6 +270,7 @@ def _wire_answered_business_turn(monkeypatch: Any, *, on_fetch: Any = None) -> d
         "answers": [{"product": "SRTWC8517", "stock_qty": 2}],
         "response": "2 in stock",
         "has_result": True,
+        "attachments": [{"url": "s3://zzt/spec.pdf", "filename": "spec.pdf"}],
     }
     bundle = _srtwc8517_resolved_bundle()
     monkeypatch.setattr(
@@ -347,9 +332,13 @@ class TestSendActionsAttachmentsAndDuplicateAc507D15:
         assert send.get("quick_replies") is None or isinstance(send["quick_replies"], str)
 
         assert attach.get("attachments_src") is not None
-        # The whole SEALED reply, verbatim - not a copy carrying only the attachment.
-        assert attach["reply"] == result.reply
-        assert attach["reply"]["text"] == result.reply["text"]
+        # Ported (AC-1592): the composed-answer path builds its actions through
+        # `engine._answer_actions`, not `_send_actions` (the canned-lane builder) - its
+        # `send_attachments` shape is `{kind, attachments_src, dry_run}` only, no `reply`
+        # key (measured, grep-confirmed in `engine.py`). The property that matters - the
+        # SAME files the reply names are what gets attached - is what this checks
+        # instead.
+        assert attach["attachments_src"] == result.reply["attachments_src"]
 
         assert sum(1 for a in result.actions if a["kind"] == "send_message") == 1, (
             "never a second send_message"
@@ -396,14 +385,33 @@ class TestTicketReleaseUnderS6cClosesAc705:
     def _second_turn_delegates_fast(session_factory, monkeypatch) -> tuple[Any, float]:
         """The follow-up message: business lane switched off so it cannot re-raise, only
         used to prove the ticket a moment earlier is free - `elapsed` is what AC-705's own
-        re-injected Retry depends on staying small."""
+        re-injected Retry depends on staying small.
+
+        `elapsed` is how long the follow-up's `wait_for_turn` blocked, NOT the whole turn:
+        a released ticket returns from the wait on its first Redis read, while a ticket
+        never released sits there for the whole `chatbot_queue_wait_seconds` budget (5 s
+        here) and raises `QueueWait`. The turn's own parser + DB work is not part of that
+        property - it took 3.2 s on a loaded four-worker xdist runner (CI run 36087026240)
+        with ticket 1 already released, which the old whole-turn clock read as a deadlock.
+        """
         set_chatbot_switches(session_factory, business_lane=False)
-        started = time.monotonic()
+        real_wait = dispatch.wait_for_turn
+        waited: list[float] = []
+
+        def _timed_wait(*args: Any, **kwargs: Any) -> None:
+            started = time.monotonic()
+            try:
+                real_wait(*args, **kwargs)
+            finally:
+                waited.append(time.monotonic() - started)
+
+        monkeypatch.setattr(dispatch, "wait_for_turn", _timed_wait)
         result = engine_mod.run_turn(
             _second_message_envelope(CONTACT_ID, "ZZT-msg-s6s7-followup"),
             session_factory=session_factory,
         )
-        return result, time.monotonic() - started
+        assert waited, "ordering is on, so the follow-up must take a ticket and wait on it"
+        return result, waited[0]
 
     def test_a_fetch_raise_outage_close_still_releases_the_ticket_ac705(
         self, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch, redis_client
@@ -457,16 +465,26 @@ class TestTicketReleaseUnderS6cClosesAc705:
     def test_a_tail_raise_terminal_close_still_releases_the_ticket_ac705(
         self, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch, redis_client
     ) -> None:
+        """Ported (AC-1592): `engine.business.complete_answer` is the OLD "answer half"
+        seam (S3 rewired the dispatcher; `turn_compose.compose` runs inside the SAME
+        fetch try/except now, so raising there lands at `looked_up`, not a TAIL failure
+        at all) - the attribute still exists on `business` but nothing calls it, so the
+        old monkeypatch silently never fired (measured: `first.status` was `"done"`, not
+        `"failed"`). The seam for a genuine TAIL failure (composed, then the WRITE
+        breaks) is `turn_tail.persist` - called from `engine._run_answer` right after
+        `stage[0] = "remembered"` (measured, not guessed), which is also why `row.stage`
+        below is `"remembered"` now, not the old `"replied"`.
+        """
         _clear_contact_keys(redis_client, CONTACT_ID)
         _set_completed_lanes(session_factory, system_settings_row, ["business_query"])
         set_chatbot_switches(session_factory, business_lane=True)
         self._enable_ordering(session_factory, monkeypatch)
         _wire_answered_business_turn(monkeypatch)
 
-        def _boom_complete_answer(*args: Any, **kwargs: Any) -> Any:
+        def _boom_persist(*args: Any, **kwargs: Any) -> Any:
             raise RuntimeError("tail exploded")
 
-        monkeypatch.setattr(engine_mod.business, "complete_answer", _boom_complete_answer)
+        monkeypatch.setattr(engine_mod.turn_tail, "persist", _boom_persist)
         stub_parser(
             _parser_output(
                 domain_hint="inventory",
@@ -482,11 +500,8 @@ class TestTicketReleaseUnderS6cClosesAc705:
 
             db = session_factory()
             row = db.query(ChatbotTurn).filter(ChatbotTurn.id == first.turn_id).one()
-            # `close_turn_for_tail` wrote `delegated` at `routed` first; the lane's own
-            # failure handler is the FIRST terminal write and it is what stood - the
-            # write-once guard `_close_turn`'s docstring names.
             assert row.status == "failed"
-            assert row.stage == "replied"
+            assert row.stage == "remembered"
 
             assert redis_client.get(dispatch.seq_key(CONTACT_ID)) == "1"
             assert redis_client.get(dispatch.done_key(CONTACT_ID)) == "1", (

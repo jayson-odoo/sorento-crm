@@ -10,6 +10,7 @@ import { canQuickSave } from '../../_shared/lib/boardAmend';
 import { toMinor } from '../../_shared/lib/supplyComposition';
 import { BoardChangeTable } from './BoardChangeTable';
 import { BoardDecidedMarker, decidedRevisions } from './BoardDecidedMarker';
+import { isPreMarkOnly } from './BoardDecisionPill';
 import { SupplyBar } from '../../_shared/components/SupplyBar';
 import {
   COLOURS,
@@ -25,6 +26,26 @@ import type {
   BoardDateBucket,
   BoardDraft,
 } from '../../_shared/types/fulfilmentPlanning.types';
+
+/**
+ * Pending changes grouped by the LINE they happened to, in the order the lines first appear
+ * (AC-D5). The planning line first, then the sales order's own address for a line nobody has
+ * adopted - the same pair `FulfilmentBoardListView`'s own `changeIcons` keys a row by.
+ */
+function changesByLine(
+  annotations: BoardChangeAnnotation[],
+): BoardChangeAnnotation[][] {
+  const byLine = new Map<string, BoardChangeAnnotation[]>();
+  for (const annotation of annotations) {
+    const key =
+      annotation.projectLineId ??
+      `${annotation.soNumber}|${annotation.lineNo}|${annotation.itemCode}`;
+    const held = byLine.get(key);
+    if (held) held.push(annotation);
+    else byLine.set(key, [annotation]);
+  }
+  return [...byLine.values()];
+}
 
 const PRODUCT_COL = 'w-[190px] min-w-[190px] max-w-[190px]';
 /**
@@ -257,16 +278,31 @@ export function FulfilmentBoardMatrix({
                           onUndoMany={onUndoMany}
                         />
                         {/* What the re-uploaded book did to the lines in this cell
-                            (AC-P3-2). A SIBLING of the button, never inside it: a table is
-                            not phrasing content, and nesting one in a button is invalid
-                            HTML the browser reflows out of it. */}
-                        {(
-                          annotations?.get(`${product.key}|${bucket.key}`) ?? []
-                        ).map((annotation) => (
-                          <div key={annotation.rowId} className="px-2 pb-1.5">
-                            <BoardChangeTable annotation={annotation} compact />
+                            (AC-P3-2), as ONE hazard icon per changed line beside the
+                            figure - the detail is a click away (AC-C9, owner feedback 13
+                            September 2026: the inline table was "abit too big"). A SIBLING
+                            of the button, never inside it: a button inside a button is
+                            invalid HTML the browser reflows out of it. */}
+                        {(annotations?.get(`${product.key}|${bucket.key}`) ?? []).length >
+                        0 ? (
+                          <div className="flex flex-wrap items-center gap-1 px-2 pb-1.5">
+                            {/* ONE icon per changed LINE, not per pending batch row
+                                (AC-D5, owner finding 22 Sep: "why so many warning
+                                signs") - two rows that both moved the same line's date
+                                are one warning about one line, and the lightbox behind
+                                the icon lists them. A cell holding three DIFFERENT
+                                lines still draws three icons: they are three lines. */}
+                            {changesByLine(
+                              annotations?.get(`${product.key}|${bucket.key}`) ?? [],
+                            ).map((group) => (
+                              <BoardChangeTable
+                                key={group[0].rowId}
+                                annotations={group}
+                                compact
+                              />
+                            ))}
                           </div>
-                        ))}
+                        ) : null}
                       </div>
                     ) : null}
                   </td>
@@ -470,7 +506,14 @@ function BoardCellQuickAction({
   onUndoMany: (keys: string[]) => Promise<{ saved: number; failed: number }>;
 }) {
   const eligible = cell.contributions.filter((entry) => canQuickSave(entry, draft));
-  const drafted = cell.contributions.filter((entry) => Boolean(draft[entry.key]));
+  // No pre-mark in this count (PLAN-board-change-proposed-pill, fix round): a pre-mark has
+  // nothing saved on the server yet, so `onUndoMany` -> `deleteLineDraft` on it is a DELETE
+  // against a row that was never written - it tolerates the 404, but the pre-mark's own key
+  // never gets re-seeded (`preMarkedBatchIds` already saw this batch), so the line silently
+  // drops out of Confirm (N) until the page reloads.
+  const drafted = cell.contributions.filter(
+    (entry) => Boolean(draft[entry.key]) && !isPreMarkOnly(entry, draft[entry.key] ?? null),
+  );
 
   if (eligible.length > 0) {
     const keys = eligible.map((entry) => entry.key);

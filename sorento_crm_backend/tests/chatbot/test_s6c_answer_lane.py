@@ -73,7 +73,7 @@ from typing import Any
 import pytest
 
 from tests.chatbot import _corpus, divergences
-from tests.chatbot.conftest import set_chatbot_switches
+from tests.chatbot.conftest import validating_resolve_entity
 from tests.chatbot.test_engine import (  # noqa: F401  - fixtures used by name (S6a precedent)
     _envelope,
     seeded,
@@ -722,224 +722,56 @@ class TestIf6Dispatch:
 
 
 # --------------------------------------------------------------------------- #
-# Coordinator note: the CRM completes `business_query` / `check_promotion` /
-# `stock_denied` end to end ONLY when that branch kind is in
-# `system_settings.chatbot_completed_lanes` (a JSON list column, default `[]` - new,
-# beside `chatbot_stock_denial_enabled` from S3). With the default (empty list) the
-# business lane still runs up to S6a's delegate seam
-# (`system_settings.chatbot_business_lane_enabled`) and delegates with `delegate_payload`
-# attached, exactly as `test_s6a_gate_dry_run_and_seams.py` already covers - this is
-# the SAME decision, gated by a second, independent flag rather than replacing the
-# first. `engine._enabled_lanes(db, row)` reads the column off the row the turn already
-# read (LESSONS: a new system_settings column needs the two manual dict builders too,
-# but that is the FE-facing settings read, not this turn-time gate) and
-# `delegate.delegate_for` is the pure predicate over it. The engine-level tests below
-# pin the NEW seam `lanes.business.complete_answer` engine.py calls when the branch is
-# completed - the coder is free to refine that function's internals, but `run_turn`
-# must call it and use its `{reply, actions}` return.
+# RETIRED (AC-1592, this session): `TestChatbotCompletedLanesEngineWiring` (2 methods)
+# and `TestAC604FetchErrorIsAnOutcomeNotAnEmptyTurn` (2 methods) pinned the S6a-era
+# "shadow lane" wiring this comment block itself describes - `engine.decide` (a
+# ctx-in/branch-kind-out dispatcher, deleted, AttributeError, grep-confirmed),
+# `result.delegate_payload["_exit_kind"]`, and `lanes.business.run_until_exit` /
+# `complete_answer` (the old lane-exit seams, replaced by `turn/fetch.py::run_fetch` +
+# `turn_runtime.make_tool_runner`, calling the SAME kept `lanes/business.run_fetch`
+# directly - tester 11's finding, `test_engine_failure_paths.py`). `chatbot_completed_
+# lanes` no longer gates completion at all (contract 73 superseded) - `business_query`
+# is in `CRM_COMPLETED_BRANCH_KINDS` unconditionally today.
+#
+# Replacement coverage, already landed:
+# - The completion/delegate property (`TestChatbotCompletedLanesEngineWiring`):
+#   `test_s3_switch_and_complete_by_body.py::TestTheCompletedLaneSwitch`.
+# - AC-604's own property (`TestAC604FetchErrorIsAnOutcomeNotAnEmptyTurn` - a RETURNED
+#   error fragment is answered as a miss, never left empty or failed):
+#   `test_engine_failure_paths.py::TestTheBusinessLaneOnFetchFailure.
+#   test_a_returned_error_fragment_is_answered_as_a_miss_not_a_failure` (tester 11) -
+#   measured the CURRENT engine's identical guarantee: a returned error-shaped fragment
+#   (any `outcome`, including `not_found`) never raises, so the turn completes `done`
+#   with an ordinary miss reply - only a RAISED exception fails a turn today, a real
+#   architecture change from the old `_fetch_arm == "error" and outcome is None` split.
+# `TestErrorArmRendersTheMissLane` below (a different class, still green) is unaffected -
+# it drives `lanes.business.complete_answer` directly as a unit, not through `run_turn`.
 # --------------------------------------------------------------------------- #
 
 
-# The gate's own unit tests live in `test_completed_lanes_switch.py`, against the ONE
-# implementation the engine uses (`delegate.delegate_for` over
-# `engine._enabled_lanes`). What is pinned HERE is the wiring below: that `run_turn`
-# calls `lanes.business.complete_answer` when the branch is enabled and uses its return.
+def stub_resolve_gate_bundle(calls: list[str]):
+    """A `ResolveGateServices` bundle that records which of its three seams a turn
+    reached, without resolving anything for real. Kept as a MODULE function (not a
+    retired class's staticmethod) - `test_s6c_engine_paths.py` and
+    `test_s6_s7_integration.py` both import this by name, unrelated to the S6a shadow-
+    lane classes retired above."""
+    from app.services.chatbot.lanes.business.services import ResolveGateServices
 
+    def _access_types(*, contact_id, space_id):
+        calls.append("access_types")
+        return [{"name": "Sorento Dealer"}]
 
-class TestChatbotCompletedLanesEngineWiring:
-    """`engine.run_turn`, on Postgres, exactly like `test_s6a_gate_dry_run_and_seams.py`
-    (same fixtures: `session_factory`, `seeded`, `stub_parser`, `stub_access`, plus
-    `system_settings_row` from `conftest.py`)."""
+    def _resolve_entity(body):
+        calls.append("resolve_entity")
+        return {"tokens": [], "resolutions": [], "unresolved_tokens": []}
 
-    @staticmethod
-    def _stub_bundle(calls: list[str]):
-        from app.services.chatbot.lanes.business.services import ResolveGateServices
+    def _probe(**kwargs):
+        calls.append("probe")
+        return None
 
-        def _access_types(*, contact_id, space_id):
-            calls.append("access_types")
-            return [{"name": "Sorento Dealer"}]
-
-        def _resolve_entity(body):
-            calls.append("resolve_entity")
-            return {"tokens": [], "resolutions": [], "unresolved_tokens": []}
-
-        def _probe(**kwargs):
-            calls.append("probe")
-            return None
-
-        return ResolveGateServices(
-            access_types=_access_types, resolve_entity=_resolve_entity, probe=_probe
-        )
-
-    def test_default_completed_lanes_still_delegates_with_payload(
-        self, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
-    ) -> None:
-        """One case proving the default (`chatbot_completed_lanes` unset, i.e. `[]`)
-        still delegates - the S6c completion gate is ADDITIVE to S6a's existing
-        `chatbot_business_lane_enabled` seam, never a silent behaviour change for an
-        install that has not opted a lane in yet."""
-        from app.services.chatbot import engine as engine_mod
-        from tests.chatbot.test_engine import _envelope
-
-        set_chatbot_switches(session_factory, business_lane=True)
-        calls: list[str] = []
-        bundle = self._stub_bundle(calls)
-        monkeypatch.setattr(
-            engine_mod.business_services,
-            "production_services",
-            lambda db, *, space_id=None: bundle,
-        )
-        monkeypatch.setattr(
-            engine_mod, "decide", lambda ctx, *, stock_denial_enabled, **_: ("business_query", {})
-        )
-        stub_parser()
-        stub_access()
-
-        result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
-
-        assert result.branch_kind == "business_query"
-        assert result.delegate == "business_query"
-        assert result.delegate_payload is not None
-        assert result.delegate_payload["_exit_kind"] in ("continue", "access_ask", "not_found", "offer")
-
-    def test_seeded_completed_lane_finishes_the_turn_without_delegating(
-        self, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
-    ) -> None:
-        from app.models.user import SystemSetting
-        from app.services.chatbot import engine as engine_mod
-        from tests.chatbot.test_engine import _envelope
-
-        db = session_factory()
-        setting = db.query(SystemSetting).filter(SystemSetting.id == system_settings_row.id).one()
-        setting.chatbot_completed_lanes = ["business_query"]
-        db.commit()
-
-        set_chatbot_switches(session_factory, business_lane=True)
-        bundle = self._stub_bundle([])
-        monkeypatch.setattr(
-            engine_mod.business_services,
-            "production_services",
-            lambda db, *, space_id=None: bundle,
-        )
-        monkeypatch.setattr(
-            engine_mod, "decide", lambda ctx, *, stock_denial_enabled, **_: ("business_query", {})
-        )
-        canned_reply = {"text": "Here is what I found.", "quick_replies": []}
-        canned_actions = [{"kind": "send_message", "text": "Here is what I found."}]
-        monkeypatch.setattr(
-            engine_mod.business,
-            "complete_answer",
-            lambda *args, **kwargs: {"reply": canned_reply, "actions": canned_actions},
-            raising=False,
-        )
-        stub_parser()
-        stub_access()
-
-        result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
-
-        assert result.branch_kind == "business_query"
-        assert result.delegate is None, (
-            "chatbot_completed_lanes named business_query - the turn must finish itself, "
-            f"not hand back to n8n (got delegate={result.delegate!r})"
-        )
-        assert result.reply == canned_reply
-        assert result.actions == canned_actions
-
-
-class TestAC604FetchErrorIsAnOutcomeNotAnEmptyTurn:
-    """H11 / AC-604: "no tool matched" and "the read did not come back" are answers.
-
-    `fetch-result`'s `error` arm used to leave `business_completes` False, so a turn on a
-    lane the owner had switched ON still closed `delegated` at `looked_up` and returned
-    `delegate = "business_query"` - and once n8n's Switch output is deleted (AC-610) that
-    is the empty turn H11 names. Both switch positions are graded.
-    """
-
-    @staticmethod
-    def _error_fragment() -> dict:
-        return {
-            "kind": "error",
-            "_fetch_arm": "error",
-            "error": "no MCP tool matched this question",
-            "outcome": "not_found",
-            "fetch": {"_fetch_arm": "error", "error": "no MCP tool matched this question"},
-        }
-
-    def _wire(self, session_factory, engine_mod, monkeypatch, calls: list) -> None:
-        set_chatbot_switches(session_factory, business_lane=True)
-        bundle = TestChatbotCompletedLanesEngineWiring._stub_bundle([])
-        monkeypatch.setattr(
-            engine_mod.business_services,
-            "production_services",
-            lambda db, *, space_id=None: bundle,
-        )
-        monkeypatch.setattr(
-            engine_mod, "decide", lambda ctx, *, stock_denial_enabled, **_: ("business_query", {})
-        )
-        monkeypatch.setattr(
-            engine_mod.business,
-            "run_until_exit",
-            lambda *args, **kwargs: {
-                "delegate": "business_query",
-                "payload": {"_exit_kind": "continue", "resolved": {}, "gate": {}},
-            },
-        )
-        monkeypatch.setattr(
-            engine_mod.business, "run_fetch", lambda *args, **kwargs: self._error_fragment()
-        )
-        monkeypatch.setattr(
-            engine_mod.business,
-            "complete_answer",
-            lambda payload, **kwargs: calls.append(payload)
-            or {"reply": {"text": "Couldn't find that.", "quick_replies": []}, "actions": []},
-            raising=False,
-        )
-
-    def test_with_the_lane_on_the_crm_answers_the_not_found_itself(
-        self, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
-    ) -> None:
-        from app.models.user import SystemSetting
-        from app.services.chatbot import engine as engine_mod
-        from tests.chatbot.test_engine import _envelope
-
-        db = session_factory()
-        setting = db.query(SystemSetting).filter(SystemSetting.id == system_settings_row.id).one()
-        setting.chatbot_completed_lanes = ["business_query"]
-        db.commit()
-
-        answered: list[dict] = []
-        self._wire(session_factory, engine_mod, monkeypatch, answered)
-        stub_parser()
-        stub_access()
-
-        result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
-
-        assert answered, "the answer half never ran - the error arm is still an empty turn"
-        assert answered[0]["fetch"]["_fetch_arm"] == "error", (
-            "the miss lane is reached through the fetch item's own arm"
-        )
-        assert result.delegate is None
-        assert result.reply == {"text": "Couldn't find that.", "quick_replies": []}
-
-    def test_with_the_lane_off_it_still_delegates_and_records_the_reason(
-        self, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
-    ) -> None:
-        from app.services.chatbot import engine as engine_mod
-        from tests.chatbot.test_engine import _envelope
-
-        assert (system_settings_row.chatbot_completed_lanes or []) == []
-        answered: list[dict] = []
-        self._wire(session_factory, engine_mod, monkeypatch, answered)
-        stub_parser()
-        stub_access()
-
-        result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
-
-        assert not answered, "the lane is switched off - n8n answers this turn"
-        assert result.delegate == "business_query"
-        assert result.stage == "looked_up", (
-            "a delegated fetch error stops at looked_up so the operator's query finds it"
-        )
+    return ResolveGateServices(
+        access_types=_access_types, resolve_entity=validating_resolve_entity(_resolve_entity), probe=_probe
+    )
 
 
 class TestErrorArmRendersTheMissLane:
@@ -1013,6 +845,17 @@ class TestErrorArmRendersTheMissLane:
         fragments = captured["fragments"]
         assert "not_found" in fragments, "the error arm must render the miss lane"
         assert "SRTWC8517" in fragments["not_found"]["escalate_message"]
+        # Owner ruling 22 Sep 2026, R6 - `ctx.parse.output` above carries NO `routing`
+        # key at all (a bare `parser` dict, the shape `not_found_error_message`'s own
+        # belt-and-braces fallback exists for): `domain_hint = "inventory"` must still
+        # reach the customer as "warehouse", never the generic "customer_service"
+        # literal. Deleting `answer.py`'s own `default_policy()` fallback (kept
+        # alongside `turn_runtime.lane_parse_output`'s domain-aware fill, which this
+        # direct `complete_answer` call bypasses entirely - no `engine.run_turn`, no
+        # `policy` in the loop) turns this assertion red.
+        assert "escalate to warehouse team?" in fragments["not_found"]["escalate_message"], (
+            fragments["not_found"]["escalate_message"]
+        )
 
     def test_pre_fetch_not_found_arm_still_offers_the_sibling_family(self, monkeypatch) -> None:
         """Owner console defect item 3: `_run_miss_half`'s call site for the PRE-FETCH
@@ -1596,7 +1439,9 @@ class TestR1DemandQuantityAnswer:
 
         services = ResolveGateServices(
             access_types=lambda **_: [],
-            resolve_entity=lambda body: {"tokens": [], "resolutions": [], "unresolved_tokens": []},
+            resolve_entity=validating_resolve_entity(
+                lambda body: {"tokens": [], "resolutions": [], "unresolved_tokens": []}
+            ),
             probe=lambda **_: None,
         )
         return run_until_exit(
@@ -1612,14 +1457,60 @@ class TestR1DemandQuantityAnswer:
         "has_result": True,
     }
 
+    @staticmethod
+    def _decide(ctx: dict, *, stock_denial_enabled: bool, session_factory=None) -> str:
+        """AC-1592 port: `head.route.decide` is deleted. Contract 61/62 (stock_denied /
+        demand_qty) are decided from the CONTACT's own record before a plan exists at
+        all (`turn/route.py`'s own docstring), which the rearch settles in
+        `engine.py::run_turn` via `_stock_check_denied`/`_demand_qty_missing` - the
+        real seam this test now targets, not a hand-rolled reimplementation of the
+        rule.
+
+        S6 ruling (coordinator, 16 Sep 2026): the contact's record is now
+        `respond_contacts.chatbot_stock_allowed`, read via a real db session - the
+        envelope's `custom_fields` (still set on `ctx["contact"]` above for the OTHER
+        assertions this class makes) is no longer read by `_stock_check_denied` at all.
+        """
+        from sqlalchemy import text
+
+        from app.services.chatbot.contracts import Envelope
+        from app.services.chatbot.engine import _demand_qty_missing, _stock_check_denied
+
+        envelope = Envelope(contact=ctx["contact"], message={
+            "event_type": "message.received",
+            "contact": {"id": ctx["contact"]["id"]},
+            "message": {
+                "messageId": "ZZT-r1-msg",
+                "contactId": ctx["contact"]["id"],
+                "channelId": "whatsapp",
+                "traffic": "incoming",
+                "message": ctx["text"]["message"]["message"],
+            },
+        })
+        verdict = ctx["parse"]["output"]
+        if stock_denial_enabled:
+            assert session_factory is not None, "stock_denial_enabled=True needs session_factory"
+            db = session_factory()
+            db.execute(
+                text(
+                    "INSERT INTO respond_contacts (id, respond_io_id, phone_number, "
+                    "session_vars, chatbot_stock_allowed) VALUES (gen_random_uuid()::text, "
+                    ":cid, '+60000000001', CAST('{}' AS jsonb), false)"
+                ),
+                {"cid": str(ctx["contact"]["id"])},
+            )
+            db.commit()
+            if _stock_check_denied(db, envelope, verdict):
+                return "demand_qty" if _demand_qty_missing(verdict) else "stock_denied"
+        return "business_query"
+
     def test_with_the_switch_on_the_arm_stamps_and_the_answer_is_the_quantity_verdict(
-        self,
+        self, session_factory
     ) -> None:
-        from app.services.chatbot.head.route import decide
         from app.services.chatbot.lanes.business.answer import validator
 
         ctx = self._ctx(5)
-        branch_kind, _ = decide(ctx, stock_denial_enabled=True)
+        branch_kind = self._decide(ctx, stock_denial_enabled=True, session_factory=session_factory)
         assert branch_kind == "stock_denied"
 
         payload = self._lane(ctx, branch_kind)["payload"]
@@ -1649,11 +1540,10 @@ class TestR1DemandQuantityAnswer:
         """Default R1 position: the route cannot decide `stock_denied` at all, the
         `business_query` arm carries no stamp, and `validator` leaves the fetched
         response untouched."""
-        from app.services.chatbot.head.route import decide
         from app.services.chatbot.lanes.business.answer import validator
 
         ctx = self._ctx(5)
-        branch_kind, _ = decide(ctx, stock_denial_enabled=False)
+        branch_kind = self._decide(ctx, stock_denial_enabled=False)
         assert branch_kind == "business_query"
 
         payload = self._lane(ctx, branch_kind)["payload"]
@@ -2550,6 +2440,14 @@ class TestStatusAwareMissMessageOmitsTheEtaDate:
         out = not_found_error_message({}, parser=parser, resolved=resolved, gate=gate)
         message = out.get("escalate_message") or ""
 
+        # AC-1863: a single resolved order must be byte-identical to before the
+        # AC-1860/AC-1861/AC-1862 fix (the escalate question stays on the SAME line,
+        # a space away, never a newline) - pinned exactly, not just by substring.
+        assert message == (
+            "Order DO12345 (ACME Sdn Bhd) hasn't been delivered yet - current status: "
+            "processing. Would you like me to escalate to customer service team?"
+        ), message
+
         assert "hasn't been delivered yet" in message
         assert "current status: processing" in message, (
             f"the current status must be named: {message!r}"
@@ -2561,6 +2459,150 @@ class TestStatusAwareMissMessageOmitsTheEtaDate:
         assert "estimated delivery" not in message, (
             f"no estimated-delivery phrasing at all in the miss message: {message!r}"
         )
+
+
+# --------------------------------------------------------------------------- #
+# PLAN-chatbot-order-status-all-orders-23sep / AC-1860..1865 (prod, 23 Sep 2026, contact
+# 482766833, turn 48): "STATUS DELIVERY / PS202609-0374 / PS202609-0398 / PS202609-0410"
+# resolved THREE orders (`gate.compatible_entities` had three `customer_order` rows) but
+# the status-filter-aware branch above took the FIRST match only and named one order,
+# silently dropping the other two. The fix loops every resolved order, deduped by uuid,
+# in `gate.compatible_entities` order, one line each, ONE escalate question at the end.
+# --------------------------------------------------------------------------- #
+
+
+class TestStatusAwareMissMessageNamesEveryResolvedOrder:
+    def _order_match(self, code: str, uuid: str, customer: str, status: str) -> dict:
+        return {
+            "entity_type": "customer_order",
+            "uuid": uuid,
+            "canonical_code": code,
+            "display": {"customer_name": customer, "status": status},
+        }
+
+    def _matches(self) -> list[dict]:
+        return [
+            self._order_match(
+                "PS202609-0374",
+                "33333333-3333-4333-9333-333333333333",
+                "MATRIX EXCELCON SDN BHD (PROJECT)",
+                "New Order",
+            ),
+            self._order_match(
+                "PS202609-0398",
+                "44444444-4444-4444-9444-444444444444",
+                "MATRIX EXCELCON SDN BHD (PROJECT)",
+                "New Order",
+            ),
+            self._order_match(
+                "PS202609-0410",
+                "55555555-5555-4555-9555-555555555555",
+                "COMMERCE HOUSE SDN BHD (PROJECT)",
+                "New Order",
+            ),
+        ]
+
+    def _gate(self, matches: list[dict]) -> dict:
+        return {
+            "gate_passed": True,
+            "compatible_entities": [
+                {"uuid": m["uuid"], "entity_type": "customer_order", "code": m["canonical_code"]}
+                for m in matches
+            ],
+        }
+
+    def _parser(self, order_status: str) -> dict:
+        return {
+            "domain_hint": "order",
+            "order_status": order_status,
+            "entities": [
+                {"hint": "order", "raw": "PS202609-0374"},
+                {"hint": "order", "raw": "PS202609-0398"},
+                {"hint": "order", "raw": "PS202609-0410"},
+            ],
+            "routing": {"suggested_team": "customer_service"},
+            "access_levels": [],
+        }
+
+    def test_ac_1860_delivered_names_all_three_orders_one_line_each(self) -> None:
+        from app.services.chatbot.lanes.business.answer import not_found_error_message
+
+        matches = self._matches()
+        resolved = {
+            "tokens": [m["canonical_code"] for m in matches],
+            "unresolved_tokens": [],
+            "resolutions": [{"token": m["canonical_code"], "matches": [m]} for m in matches],
+            "intersection": matches,
+            "by_entity_type": {"customer_order": matches},
+        }
+        out = not_found_error_message(
+            {}, parser=self._parser("delivered"), resolved=resolved, gate=self._gate(matches)
+        )
+        message = out.get("escalate_message") or ""
+
+        assert message.count("hasn't been delivered yet") == 3, message
+        assert message.count("Would you like me to escalate") == 1, message
+        # the three lines appear in `compatible_entities` order, each naming its own
+        # code, customer and status - the earlier bug rendered PS202609-0374 only.
+        idx_374 = message.index("PS202609-0374")
+        idx_398 = message.index("PS202609-0398")
+        idx_410 = message.index("PS202609-0410")
+        assert idx_374 < idx_398 < idx_410, message
+        for code, customer in (
+            ("PS202609-0374", "MATRIX EXCELCON SDN BHD (PROJECT)"),
+            ("PS202609-0398", "MATRIX EXCELCON SDN BHD (PROJECT)"),
+            ("PS202609-0410", "COMMERCE HOUSE SDN BHD (PROJECT)"),
+        ):
+            assert f"Order {code} ({customer}) hasn't been delivered yet - current status: New Order." in message, (
+                message
+            )
+        assert message.rstrip().endswith(
+            "Would you like me to escalate to customer service team?"
+        ), message
+
+    def test_ac_1861_outstanding_names_all_three_orders_one_line_each(self) -> None:
+        from app.services.chatbot.lanes.business.answer import not_found_error_message
+
+        matches = self._matches()
+        resolved = {
+            "tokens": [m["canonical_code"] for m in matches],
+            "unresolved_tokens": [],
+            "resolutions": [{"token": m["canonical_code"], "matches": [m]} for m in matches],
+            "intersection": matches,
+            "by_entity_type": {"customer_order": matches},
+        }
+        out = not_found_error_message(
+            {}, parser=self._parser("outstanding"), resolved=resolved, gate=self._gate(matches)
+        )
+        message = out.get("escalate_message") or ""
+
+        assert message.count("has no outstanding items") == 3, message
+        assert message.count("Would you like me to escalate") == 1, message
+
+    def test_ac_1862_duplicate_matches_across_intersection_by_type_and_resolutions_render_once(
+        self,
+    ) -> None:
+        from app.services.chatbot.lanes.business.answer import not_found_error_message
+
+        matches = self._matches()
+        # each match appears in `intersection`, `by_entity_type` AND `resolutions` - the
+        # real shape `all_matches` is built from - so a naive concat triples every uuid.
+        resolved = {
+            "tokens": [m["canonical_code"] for m in matches],
+            "unresolved_tokens": [],
+            "resolutions": [{"token": m["canonical_code"], "matches": [m]} for m in matches],
+            "intersection": matches,
+            "by_entity_type": {"customer_order": matches},
+        }
+        out = not_found_error_message(
+            {}, parser=self._parser("delivered"), resolved=resolved, gate=self._gate(matches)
+        )
+        message = out.get("escalate_message") or ""
+
+        assert message.count("PS202609-0374") == 1, message
+        assert message.count("PS202609-0398") == 1, message
+        assert message.count("PS202609-0410") == 1, message
+        assert message.count("hasn't been delivered yet") == 3, message
 
 
 # --------------------------------------------------------------------------- #

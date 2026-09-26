@@ -21,6 +21,10 @@ sorento_crm_backend/.next/*
 # `git add -A` swept one in. The exact-name entries above do not cover the shape.
 .env.slot*
 
+# Private test-DB env (`SORENTO_ENV_FILE=.env.ci-tests`, see CLAUDE.md) - carries a DB
+# password and was not matched by any rule above (review, round 2).
+.env.ci-tests
+
 # Playwright MCP scratch (console logs, page snapshots)
 .playwright-mcp/
 
@@ -71,6 +75,10 @@ private_key.pem
 # clearance data, and is per-environment. Keep it on the box, out of the repo.
 sorento_crm_backend/scripts/container_status_trial_snapshot.json
 
+# Operator-script backup/preview JSON (e.g. dedupe_spo_number_format.py). Per-run,
+# per-environment, holds full row dumps - never shipped.
+sorento_crm_backend/scripts/out/
+
 # Session handoff artifacts are machine-local, never shipped
 /HANDOFF-*.md
 
@@ -86,3 +94,6 @@ sorento_crm_backend/scripts/container_status_trial_snapshot.json
 # It was committed by accident on this lane and is per-machine, never shipped.
 sorento_crm_mcp/*.egg-info/
 .env.*.bak
+
+# per-lane private test DB env, never committed
+.env.ci-tests

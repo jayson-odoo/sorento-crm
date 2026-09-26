@@ -252,7 +252,7 @@ describe('Focus rings on the S9-02 outline-none sweep (S9-02)', () => {
     { file: 'components/common/find-in-text/FindBar.tsx', needle: 'focus-visible:ring-2 focus-visible:ring-ring' },
     { file: 'components/common/find-in-text/SearchableCode.tsx', needle: 'focus-visible:ring-2 focus-visible:ring-ring' },
     { file: 'components/common/conversation/ConversationSearchBar.tsx', needle: 'focus-visible:ring-2 focus-visible:ring-ring' },
-    { file: 'components/common/AttachmentPreviewModal.tsx', needle: 'focus-visible:ring-2 focus-visible:ring-ring' },
+    { file: 'components/common/PreviewModalChrome.tsx', needle: 'focus-visible:ring-2 focus-visible:ring-ring' },
     { file: 'components/ui/rich-text-editor.tsx', needle: 'focus-within:ring-2 focus-within:ring-ring' },
   ];
 

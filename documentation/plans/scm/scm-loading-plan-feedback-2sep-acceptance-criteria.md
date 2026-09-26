@@ -125,19 +125,24 @@ the match.
   read from the alias table (no column added to `product_suppliers`); blank renders per
   ADR 1e. `GET /procurement/product-suppliers/product/{id}` and `ProductSupplierResponse` carry
   `supplier_item_code` (asserted in a pytest, since `response_model` drops undeclared fields).
-- **AC-D3** `[BE][T]` The container-request universe for a supplier includes every product
+- **AC-D3** ~~`[BE][T]` The container-request universe for a supplier includes every product
   or set that has a non-dismissed alias for that supplier, in addition to `product_suppliers`
-  links and the statement on file.
+  links and the statement on file.~~ **SUPERSEDED 12 Sep 2026 by AC-U1/AC-U2**
+  (`scm-loading-plan-lines-feedback-12sep-acceptance-criteria.md`): an alias binds a file's
+  code to our product and is no membership of its own.
 - **AC-D4** `[BE][T]` Undo of a manual match (alias delete) does NOT delete the
   `product_suppliers` link it created; the link is sourcing data and is removed from the
   supplier's own screen.
 
 ## E. Held-but-not-needed rows fold (S5)
 
-- **AC-E0** `[BE][T]` Membership and placement are separate: the candidate set is links ∪
-  this plan's statement ∪ non-dismissed aliases ∪ set drivers; a candidate with open demand is
-  a ranked row, a candidate without is a folded row; a product with open demand and none of
-  the four memberships is absent (pytest seeds one of each).
+- **AC-E0** `[BE][T]` Membership and placement are separate: ~~the candidate set is links ∪
+  this plan's statement ∪ non-dismissed aliases ∪ set drivers~~ **the candidate set is the
+  plan's statement (products and set drivers its rows bind to) when one is on file, else
+  `product_suppliers` links alone - SUPERSEDED 12 Sep 2026 by AC-U1..U3
+  (`scm-loading-plan-lines-feedback-12sep-acceptance-criteria.md`)**; a candidate with open
+  demand is a ranked row, a candidate without is a folded row; a product with open demand
+  and no membership is absent.
 
 - **AC-E1** `[FE]` Rows with `has_demand: false` leave the ranked table body and sit under one
   line beneath it: "N products held with no open demand" with a chevron; expanded, they render

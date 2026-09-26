@@ -13,7 +13,9 @@ between the two screens.
 
 Owner-gated (``_require_own_request``, same as every other portal price tag
 route) and status-gated to ``proof_ready | changes_requested | approved |
-ready`` - 404 everywhere else (``new``, ``designing``, and a portal DRAFT,
+ready_for_collection | collected`` - r9 D8 retired ``ready`` and put the two
+collection statuses in its place, so a design stays readable right through the
+hand-over. 404 everywhere else (``new``, ``designing``, and a portal DRAFT,
 whose status is also ``new`` but is never a status this route allows
 regardless), so a design that is still being worked on never leaks to the
 portal before marketing means it to.
@@ -30,17 +32,15 @@ from sqlalchemy.orm import Session
 # MUST be first app import - resolves the circular import in app.modules.runtime.guards
 from app.main import app  # noqa: E402
 from tests._pg_fixture import blank_session, unique_code
+from tests import _ptag_r9_seed
 
 _SORENTO_COMPANY_ID = "00000000-0000-0000-0000-000000000001"
 _DESIGN_URL = "/api/v1/public/portal/submissions/price_tag_request/{id}/design"
 
 
 def _seed_contact_who_can_see_the_form(db: Session) -> str:
-    from app.models.access import (
-        ContactAccessType,
-        RespondContact,
-        respond_contact_access_types,
-    )
+    from app.models.access import RespondContact
+    from tests._portal_grant import link_contact_segment, seed_segment
 
     contact = RespondContact(
         id=str(uuid.uuid4()),
@@ -48,20 +48,9 @@ def _seed_contact_who_can_see_the_form(db: Session) -> str:
         name=unique_code("contact"),
     )
     db.add(contact)
-    access_type = ContactAccessType(
-        code=unique_code("at"),
-        name=unique_code("Access Type"),
-        portal_form_types=["price_tag_request"],
-    )
-    db.add(access_type)
     db.flush()
-    db.execute(
-        respond_contact_access_types.insert().values(
-            contact_id=contact.id,
-            access_type_code=access_type.code,
-        )
-    )
-    db.flush()
+    segment = seed_segment(db, kinds=["price_tag_request"])
+    link_contact_segment(db, contact.id, segment.code)
     return contact.id
 
 
@@ -166,7 +155,8 @@ def client():
 
 
 @pytest.mark.parametrize(
-    "status", ["proof_ready", "changes_requested", "approved", "ready"]
+    "status",
+    ["proof_ready", "changes_requested", "approved", "ready_for_collection", "collected"],
 )
 class TestAllowedStatuses:
     def test_the_owning_contact_gets_200_with_the_expected_keys(self, client, status):
@@ -276,3 +266,14 @@ class TestMalformedId:
         res = c.get(_DESIGN_URL.format(id="not-a-uuid"))
 
         assert res.status_code == 404, res.text
+
+
+@pytest.fixture(autouse=True)
+def no_respond(monkeypatch):
+    """S8: no test run reaches api.respond.io. See `_ptag_r9_seed.block_respond`.
+
+    Every transition here goes through the real notifier, which sends over the
+    network unless something stops it - the run log used to carry a live
+    ``Window check: Respond.io list_messages failed`` per transition.
+    """
+    return _ptag_r9_seed.block_respond(monkeypatch)

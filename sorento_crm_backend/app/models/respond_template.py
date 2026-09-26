@@ -93,6 +93,12 @@ TEMPLATE_DEFAULT_USE_CASES = (
     # (PLAN-ticket-resolved-closing-message). Sent to the CONTACT. Map params to
     # ``contact_name`` + ``message`` (the enquiry excerpt) at minimum.
     "ticket_resolved",
+    # Price tag request status update (PLAN-price-tag-ai-extract-resolver). Sent to
+    # the salesperson when their price tag request moves (received, design ready,
+    # changes requested, approved, PDF ready, ready for collection, collected,
+    # rejected) and their 24h window is closed. Map params to ``message`` at
+    # minimum; ``entity_number`` / ``portal_url`` when the template carries them.
+    "price_tag_update",
     # Chat reply templates (PLAN-unified-conversation-composer-smart-send). Sent when
     # an admin types a free message in an entity's chat composer while the contact's
     # 24h window is CLOSED - the typed text is wrapped into these per-form templates
@@ -111,6 +117,13 @@ TEMPLATE_DEFAULT_USE_CASES = (
     # seeded: connecting the WeChat channel and approving its template is a Respond.io task
     # with its own go, and until then an out-of-window send is refused with a reason.
     "supplier_request_chat",
+    # Ideation idle-draft reminder (PLAN-ideation-intake-redesign-24sep, S4). Sent
+    # once, 24h after the last turn on an open draft; due exactly when the 24h
+    # free-text window closes, so it will almost always go as a template. Map a
+    # slot to ``message`` at minimum - the body carries the fixed reminder text
+    # naming the idea's title. Unmapped -> the send is skipped and logged, the
+    # draft still closes on schedule (AC-1405).
+    "ideation_draft_reminder",
 )
 
 # Chat reply use cases - a *_chat / conversation_chat default MUST map a slot to the

@@ -27,6 +27,7 @@ from app.models.inventory import Warehouse
 from app.models.order import SalesOrder, SalesOrderLine
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.project_so import (
+    INQUIRY_CANCELLED,
     INQUIRY_PLACED,
     INQUIRY_RAISED,
     IV_ORDER,
@@ -182,6 +183,11 @@ def test_a_contribution_names_the_inquiry_raised_for_its_line():
         record = _adopted(db, company_id, order)
         mirror = _mirror(db, company_id, record, core_line)
         inquiry = _inquiry(db, company_id, record, mirror, state=INQUIRY_PLACED)
+        row = (
+            db.query(OrderInquiryRow)
+            .filter(OrderInquiryRow.order_inquiry_id == inquiry.id)
+            .one()
+        )
 
         board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
 
@@ -190,12 +196,20 @@ def test_a_contribution_names_the_inquiry_raised_for_its_line():
         # is where the supply stands, `ack_state` (and the refusal beside it) is whether
         # purchasing has taken the instruction on. A row nobody has read says `awaiting`
         # and names no refusal, which is exactly what an untouched cell must say.
+        # A row nobody has redirected carries no documents.
+        # `inquiry_id` / `row_id` (AC-B6-17, S6): the header's own id and this row's own
+        # id, addressing only - the List view's OI column links to
+        # `/project-sales/order-inquiries/<inquiry_id>?row=<row_id>`.
         assert contribution["order_inquiry"] == {
             "inquiry_no": inquiry.inquiry_no,
+            "inquiry_id": str(inquiry.id),
+            "row_id": str(row.id),
             "state": INQUIRY_PLACED,
             "ack_state": "awaiting",
             "rejected_reason": None,
             "rejected_by_name": None,
+            "redirected": False,
+            "documents": [],
         }
         # Stamped by the model's own listener, not invented here.
         assert inquiry.inquiry_no.startswith("OI-")
@@ -265,6 +279,84 @@ def test_the_latest_instruction_wins_when_a_line_carries_several():
         assert _contribution(board, product.product_code)["order_inquiry"]["state"] == (
             INQUIRY_RAISED
         )
+
+
+def test_board_oi_column_is_empty_once_the_lines_only_row_is_cancelled():
+    """CS rejecting a confirmed board line withdraws it by cancelling its row (this same
+    PR's own flow). A cancelled row is never the current instruction, so the line's only
+    row leaves no entry at all - the column reads "-", not the withdrawn row's own number."""
+    with blank_session() as db:
+        company_id = _sorento(db)
+        product = _product(db)
+        order = _order(db)
+        core_line = _line(db, order, product, _warehouse(db))
+        record = _adopted(db, company_id, order)
+        mirror = _mirror(db, company_id, record, core_line)
+        _inquiry(db, company_id, record, mirror, state=INQUIRY_CANCELLED)
+
+        entry = _service(db)._order_inquiries([str(core_line.id)]).get(str(core_line.id))
+
+    assert entry is None
+
+
+def test_board_oi_column_keeps_the_raised_row_beside_an_older_cancelled_one():
+    """A line carries an older cancelled row (superseded by a revision) and a newer raised
+    one. The raised row still wins, unchanged by the cancelled-row exclusion since it was
+    already the last writer among the survivors."""
+    from datetime import datetime
+
+    with blank_session() as db:
+        company_id = _sorento(db)
+        product = _product(db)
+        order = _order(db)
+        core_line = _line(db, order, product, _warehouse(db))
+        record = _adopted(db, company_id, order)
+        mirror = _mirror(db, company_id, record, core_line)
+        inquiry = _inquiry(
+            db, company_id, record, mirror, state=INQUIRY_CANCELLED,
+            created_at=datetime(2026, 8, 1, 9, 0),
+        )
+        db.add(OrderInquiryRow(
+            id=_uid(), company_id=company_id, order_inquiry_id=inquiry.id,
+            so_line_id=mirror.id, item_code=f"{MARKER}-ITEM", qty=Decimal("10"),
+            verb=IV_ORDER, state=INQUIRY_RAISED,
+            created_at=datetime(2026, 8, 12, 9, 0),
+        ))
+        db.flush()
+
+        entry = _service(db)._order_inquiries([str(core_line.id)])[str(core_line.id)]
+
+    assert entry["state"] == INQUIRY_RAISED
+
+
+def test_board_oi_column_keeps_an_older_live_row_when_the_newer_one_is_cancelled():
+    """The G2 cascade splits a placed allocation from its raised remainder; when that
+    remainder is later cancelled, the placed row - older, but still live - is what the
+    column names, not nothing and not the cancelled row."""
+    from datetime import datetime
+
+    with blank_session() as db:
+        company_id = _sorento(db)
+        product = _product(db)
+        order = _order(db)
+        core_line = _line(db, order, product, _warehouse(db))
+        record = _adopted(db, company_id, order)
+        mirror = _mirror(db, company_id, record, core_line)
+        inquiry = _inquiry(
+            db, company_id, record, mirror, state=INQUIRY_PLACED,
+            created_at=datetime(2026, 8, 1, 9, 0),
+        )
+        db.add(OrderInquiryRow(
+            id=_uid(), company_id=company_id, order_inquiry_id=inquiry.id,
+            so_line_id=mirror.id, item_code=f"{MARKER}-ITEM", qty=Decimal("6"),
+            verb=IV_ORDER, state=INQUIRY_CANCELLED,
+            created_at=datetime(2026, 8, 12, 9, 0),
+        ))
+        db.flush()
+
+        entry = _service(db)._order_inquiries([str(core_line.id)])[str(core_line.id)]
+
+    assert entry["state"] == INQUIRY_PLACED
 
 
 def test_two_answered_refusals_leave_the_LATEST_inquiry_number_on_the_cell():

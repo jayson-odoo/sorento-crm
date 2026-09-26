@@ -146,7 +146,7 @@ describe('DeliveryScheduleMatrix', () => {
     const july = screen.getByRole('columnheader', { name: /01\/07\/2026/ });
     expect(july).toHaveTextContent('Level 2 & 7');
     // An unlabelled COMMON AREA phase is still identifiable by its number.
-    expect(screen.getByRole('columnheader', { name: /Phase 3/ })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: /Area 3/ })).toBeInTheDocument();
 
     // A product is a ROW, headed by its code with the customer's own code beneath.
     const product = screen.getByRole('rowheader', { name: /SRTWC8613-RL/ });

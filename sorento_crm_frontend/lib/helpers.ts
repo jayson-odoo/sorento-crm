@@ -233,9 +233,19 @@ export function parseNaiveDateTimeAsLocal(dateString: string | Date): Date {
   return new Date(cleanString);
 }
 
+/** A bare calendar day off the wire - `so_date`, `delivery_date` and every other DATE
+ * column the API serializes without a time. */
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+
 /**
  * Parse API datetime string as UTC (backend sends naive UTC strings).
  * Use for duration calculations so (responded_at - initiated_at) is correct.
+ *
+ * A DATE-ONLY string gets a full `T00:00:00Z`, never a bare `Z` (owner, iOS Safari, 16
+ * Sep): `new Date('2025-09-10Z')` is a non-standard string that V8 parses leniently and
+ * Safari's parser REJECTS, so it returned Invalid Date, `formatDateInMalaysia` returned
+ * `''`, and the SO date column was blank on an iPhone while Chrome showed it. The instant
+ * is the same one Chrome already computed, so nothing moves on any other browser.
  */
 export function parseDateTimeAsUTC(dateString: string | Date): Date {
   if (dateString instanceof Date) {
@@ -245,6 +255,9 @@ export function parseDateTimeAsUTC(dateString: string | Date): Date {
   if (!s) return new Date(NaN);
   if (s.endsWith('Z') || /[+-]\d{2}:?\d{2}$/.test(s)) {
     return new Date(s);
+  }
+  if (DATE_ONLY.test(s)) {
+    return new Date(`${s}T00:00:00Z`);
   }
   return new Date(s + 'Z');
 }
@@ -308,6 +321,12 @@ export function formatPromotionBoundaryInMalaysia(input: Date | string | number)
  * Format a UTC datetime (from API/DB) as date only in Malaysia timezone.
  * Pass naive UTC strings from the backend; they are parsed as UTC then displayed in Malaysia.
  */
+/**
+ * `04/09/2026` in Malaysia. For the `4 Sep` shape a SENTENCE needs, use `shortDay` in
+ * `app/(protected)/project-sales/_shared/lib/boardChangeAnnotations.ts`: it names the months
+ * itself, because `Intl`'s `en-GB` short form spells September "Sept" while the planning
+ * engine composes its own labels with "Sep", and the two sat two lines apart in one lightbox.
+ */
 export function formatDateInMalaysia(input: Date | string | number): string {
   const date = toUTCDate(input);
   if (Number.isNaN(date.getTime())) return '';
@@ -326,7 +345,7 @@ export function formatTimeShortMalaysia(input: Date | number): string {
   return new Intl.DateTimeFormat('en-GB', {
     hour: 'numeric',
     minute: '2-digit',
-    hour12: true,
+    hourCycle: 'h12',
     timeZone: MALAYSIA_TZ,
   }).format(date);
 }
@@ -438,7 +457,7 @@ export function formatDateTimeInMalaysia(input: Date | string | number): string 
     year: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
-    hour12: true,
+    hourCycle: 'h12',
     timeZone: MALAYSIA_TZ,
   }).format(date);
 }

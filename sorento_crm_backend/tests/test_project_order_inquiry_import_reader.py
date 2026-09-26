@@ -18,6 +18,7 @@ file, and one sample file is better than three copies drifting apart.
 """
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -121,3 +122,98 @@ def test_a_sheet_that_is_not_order_inquiry_is_named_rather_than_ignored():
     assert out.ok is False
     assert "SUMMARY" in out.sheets_skipped
     assert out.problems
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        # Real text shapes measured across all 38 tabs of `JAN - DEC 2026 ORDERabc.xlsx`
+        # (round 4, 19 Sep 2026): d.m.yyyy, d.mm.yyyy, dd-mm-yyyy, and one `//` typo.
+        ("1.3.2026", date(2026, 3, 1)),
+        ("1.12.2026", date(2026, 12, 1)),
+        ("30-04-2026", date(2026, 4, 30)),
+        ("27/10//2026", date(2026, 10, 27)),
+        # Prose that must stay unparsed, same as before this change.
+        ("MARCH - APRIL 2026", None),
+        ("ASAP", None),
+        ("WAREHOUSE MISSING", None),
+        ("STOCK TAKE ADJUST", None),
+        # An impossible date (month 13) - the shape matches, the value does not exist.
+        ("13.13.2026", None),
+    ],
+)
+def test_ac_17_a_text_date_cell_is_read_day_first(text, expected):
+    """AC-17 (round 4, 19 Sep 2026). SO314593's own JUNE rows write the DELIVERY DATE cell
+    as the literal text `1.6.2026`, day first - not an Excel date at all, which is why
+    `_as_date` answered `None` for them regardless of anything 7.4 or its reversal did. A
+    range (`MARCH - APRIL 2026`), a plain word (`ASAP`, `WAREHOUSE MISSING`) and an
+    impossible date (`13.13.2026`, month 13) all still answer `None`."""
+    from app.services.project_order_inquiry_reader import _as_date
+
+    assert _as_date(text) == expected
+
+
+def test_ac_17b_order_back_as_text_still_carries_no_date():
+    """AC-17. `ORDER BACK BRW-BB` is still words, not a date - `_as_date` answers `None`,
+    and the ORDER BACK detection (a separate regex over the raw cell, in the importer's own
+    read loop) is untouched by this change."""
+    from app.services.project_order_inquiry_reader import _ORDER_BACK, _as_date
+
+    assert _as_date("ORDER BACK BRW-BB") is None
+    assert _ORDER_BACK.search("ORDER BACK BRW-BB")
+
+
+# --------------------------------------------------------------------------- #
+# AC-OB-1/2/3 (`PLAN-oi-order-back-not-capped.md`, R1): the REMARK cell also says      #
+# ORDER BACK, not only the delivery-date cell                                          #
+# --------------------------------------------------------------------------- #
+
+
+def _one_row_sheet(remark: str, delivery_date):
+    """A minimal single-sheet-form workbook (`STOCK LOCATION` + `REMARK`), one data row."""
+    import io
+
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+    ws.append(["SO NO", "ITEM CODE", "QTY", "DELIVERY DATE", "STOCK LOCATION", "REMARK"])
+    ws.append(["ZZT-OB-SO", "ZZT-OB-ITEM", 3, delivery_date, "BRW-BB", remark])
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def test_ac_ob_1_a_remark_cell_reading_order_back_also_sets_the_flag():
+    """AC-OB-1 (R1). "order back" in the REMARK column, case-insensitive and whatever the
+    whitespace between the two words, also makes the row an order back - not only the
+    delivery-date cell the reader has always read (AC-OB-2). The delivery date cell here
+    holds a REAL date, and it must survive: CS did not overwrite it, so the row keeps it
+    (unlike the date-cell shape, where the words sit where the date would be)."""
+    out = read_order_inquiry(_one_row_sheet("  Order   BACK  ", date(2026, 9, 20)))
+
+    assert out.ok, out.problems
+    row = out.rows[0]
+    assert row.order_back is True
+    assert row.delivery_date == date(2026, 9, 20)
+
+
+def test_ac_ob_2_a_date_cell_reading_order_back_still_sets_the_flag_with_no_date():
+    """AC-OB-2. Unchanged: the delivery-date cell reading `ORDER BACK` still sets the
+    flag, with no delivery date (CS wrote words where the date belongs)."""
+    out = read_order_inquiry(_one_row_sheet("", "ORDER BACK"))
+
+    assert out.ok, out.problems
+    row = out.rows[0]
+    assert row.order_back is True
+    assert row.delivery_date is None
+
+
+def test_ac_ob_3_neither_cell_reading_order_back_leaves_the_flag_false():
+    """AC-OB-3. A row with neither cell reading ORDER BACK reads `order_back=False`."""
+    out = read_order_inquiry(_one_row_sheet("check with supplier", date(2026, 9, 20)))
+
+    assert out.ok, out.problems
+    row = out.rows[0]
+    assert row.order_back is False

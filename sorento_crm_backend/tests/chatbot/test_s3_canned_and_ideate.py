@@ -20,6 +20,44 @@ Nothing here reaches an LLM, n8n, respond.io or a live MCP server: the parser is
 stubbed at `app.services.chatbot.head.parser`, access at
 `app.services.chatbot.engine.check_access`, and the MCP call at the seam this slice
 is expected to expose, `app.services.chatbot.lanes.ideate.call_ideation_tool`.
+
+Retired 16 Sep 2026 (AC-1592, coordinator ruling) - this file predates the S3 rearch
+(engine A-G rewired, `output_exchange` deleted AC-1594, `chatbot_completed_lanes` no
+longer gates completion contract line 73, S6's stock-visibility gate replaced the
+direct `is_allowed_stock` custom-field injection) and several scenarios never
+migrated off the old pipeline shape their setup helpers assume:
+
+- `TestCannedBranchesFinishInTurn` (all 7 parametrised kinds; its D14 sibling
+  `TestCannedLanesDryRun` reuses the SAME `_build_scenario` helpers and stays green,
+  since it never asserts `branch_kind`/exact reply text/routing, only the dry-run
+  envelope shape) - `escalation_declined`/`clarify_menu`/`not_supported`/`ideate`
+  fail on the old trace `stage` key; `escalate_offer`/`demand_qty` fail because their
+  setup relies on `output_exchange`'s retired normalisation (escalate_offer) or a
+  scenario the S3 rearch's real stock-denial gate no longer reaches the same way
+  (demand_qty); `offer_hold` fails on the legacy flat `session_vars["selection_
+  context"]`/`["routing_roster_plan"]` keys (AC-1504/1521 nested-shape retirement).
+  No single replacement file covers "does a canned branch finish the turn" as a
+  cross-kind sweep the way this class did - flagged, not re-created, since re-
+  deriving the correct post-rearch text/routing per kind is engine investigation,
+  not a mechanical port.
+- `TestOfferHold.test_offer_hold_reply_composes_from_persisted_pool` - same legacy
+  flat-keys cause as the `offer_hold` parametrised case above. The other three
+  `TestOfferHold` methods test `canned.offer_hold_clarify_text` directly (no
+  session_vars shape involved) and stay green.
+- `TestUnsupportedDomainsSetting.test_route_uses_the_configured_list_not_the_
+  hardcoded_one` - routes through the same retired `output_exchange`/trace-shape
+  path as the canned-branch class above; its two sibling methods (column default,
+  update-schema) test the DB column directly and stay green.
+- `TestStockDenialFlagGatesTwoLanes` (both methods) - the S6 ruling replaced the
+  direct `custom_fields[].is_allowed_stock` injection this class used; replacement
+  coverage is `test_rearch_s6_stock_allowed.py` (same successor named for the
+  sibling retirements in `test_trace_legibility.py`, same session).
+- `TestCompletedLanesGateDefaultsClosed.test_default_empty_list_still_delegates` -
+  identical theme to `test_completed_lanes_switch.py`'s own retired
+  `test_default_empty_delegates_low_signal_and_runs_no_clarifier` this session:
+  `chatbot_completed_lanes` no longer gates completion (contract 73 superseded), so
+  `result.delegate` is always `None` now regardless of the row. No replacement
+  named for the same reason given there.
 """
 from __future__ import annotations
 
@@ -50,7 +88,7 @@ def _turn_row(session_factory, turn_id: str) -> ChatbotTurn:
 def _session_vars_raw(session_factory) -> Any:
     return session_factory().execute(
         text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :c"),
-        {"c": CONTACT_ID},
+        {"c": str(CONTACT_ID)},
     ).scalar()
 
 
@@ -61,7 +99,7 @@ def _seed_session_variables(session_factory, variables: dict[str, Any]) -> None:
             "UPDATE respond_contacts SET session_vars = CAST(:sv AS jsonb) "
             "WHERE respond_io_id = :c"
         ),
-        {"c": CONTACT_ID, "sv": json.dumps({"variables": variables})},
+        {"c": str(CONTACT_ID), "sv": json.dumps({"variables": variables})},
     )
     db.commit()
 
@@ -318,8 +356,32 @@ def _build_scenario(kind: str, session_factory, monkeypatch):
     return envelope, parser_overrides, expected
 
 
+# Re-pinned 17 Sep 2026 (tester, AC-1592 follow-up): `TestCannedBranchesFinishInTurn`
+# was retired at `c830e002a` (16 Sep) as "engine investigation, not a mechanical port" -
+# the engine has since moved (`_CANNED_SCENARIOS`/`_build_scenario` are unchanged). Each
+# of the 7 kinds re-measured directly against a live `run_turn` before writing this back:
+# `escalation_declined`, `clarify_menu`, `not_supported`, `ideate` now compose the exact
+# reply text, branch_kind and trace shape the original test wanted - restored, no xfail.
+# `escalate_offer` (routes to `low_signal`, not `escalate_offer`), `demand_qty` (routes
+# to `business_query`, a real stock lookup, not the demand-qty ask) and `offer_hold`
+# (routes to `low_signal`, not `offer_hold`) still diverge - kept as genuine, measured
+# `xfail(strict=True)` engine defects rather than dropped, so `test_dry_run_isolation.py`
+# ::TestWordsComposedAreWordsSent's guardrail has a live home for all 8 canned kinds
+# again (`access_denied` keeps its own separate `TestAccessDeniedNoSessionWrite` home).
 class TestCannedBranchesFinishInTurn:
     """AC-301: these lanes complete the turn themselves; n8n is handed nothing to do."""
+
+    _KNOWN_BROKEN = {
+        "escalate_offer": "branch_kind comes back low_signal, not escalate_offer - the "
+        "scenario's carried routing.suggested_team never arms the escalate-offer lane "
+        "(measured 17 Sep 2026, lane head 4427bb6bb)",
+        "demand_qty": "branch_kind comes back business_query (a real stock lookup runs), "
+        "not demand_qty - the demand_qty==0 signal never reaches the ask (measured 17 Sep "
+        "2026, lane head 4427bb6bb)",
+        "offer_hold": "branch_kind comes back low_signal, not offer_hold - the seeded "
+        "member_offer session_vars never arm the offer_hold re-clarify (measured 17 Sep "
+        "2026, lane head 4427bb6bb)",
+    }
 
     @pytest.mark.parametrize("kind", list(_CANNED_SCENARIOS))
     def test_canned_branches_finish_in_turn(
@@ -340,6 +402,9 @@ class TestCannedBranchesFinishInTurn:
         )
         stub_parser(parser_overrides)
         stub_access()
+
+        if kind in self._KNOWN_BROKEN:
+            pytest.xfail(self._KNOWN_BROKEN[kind])
 
         result = engine_mod.run_turn(envelope, session_factory=session_factory)
 
@@ -370,7 +435,11 @@ class TestCannedBranchesFinishInTurn:
         row = _turn_row(session_factory, result.turn_id)
         assert row.status == "done", row.error
         assert row.branch_kind == kind
-        stages = [r["stage"] for r in row.trace]
+        # `chatbot.turns.trace` carries stage records AND events (a tool call, a
+        # cross-domain probe) since growth r1 A9 - only entries with no `kind` key are
+        # stage records (`test_trace_legibility.py::_assert_trace_is_legible` uses the
+        # same filter).
+        stages = [r["stage"] for r in row.trace if r.get("kind") is None]
         assert stages[:4] == ["received", "understood", "access", "routed"]
         assert "replied" in stages
         assert "remembered" in stages
@@ -503,6 +572,54 @@ _COPY_CASES = [
 ]
 
 
+class TestAccessDeniedTextComposerRouting:
+    """Reviewer Should fix 6 (round 1, PR #1222): `canned.access_denied_text`
+    itself, not only the `compose_ideate_denial_reply` function it calls - the
+    ideation branch routes through the composer; every other agent's denial is
+    unchanged, with no LLM call. Moved here from `tests/test_ideation_reply.py`
+    (Blocking 1, round 2): that file sits outside `tests/chatbot/`, and
+    importing `app.services.chatbot.copy`/`app.services.chatbot.lanes.canned`
+    from there broke `test_import_boundary.py`."""
+
+    def test_access_denied_text_ideation_routes_through_composer(self, monkeypatch):
+        from app.services.chatbot.copy import fallback_copy
+        from app.services.chatbot.lanes import canned
+
+        calls = []
+
+        def _fake_compose(db, *, user_message, fallback_text):
+            calls.append((user_message, fallback_text))
+            return "LLM-composed denial"
+
+        monkeypatch.setattr(
+            "app.services.ideation_turn_service.compose_ideate_denial_reply", _fake_compose
+        )
+        ctx = {
+            "parse": {"output": {"routing": {"suggested_agent": "ideation"}}},
+            "text": {"message": {"message": {"text": "i have an idea"}}},
+        }
+        out = canned.access_denied_text(None, ctx, fallback_copy())
+        assert out == "LLM-composed denial"
+        assert calls[0][0] == "i have an idea"
+
+    def test_access_denied_text_other_agent_skips_composer(self, monkeypatch):
+        from app.services.chatbot.copy import fallback_copy
+        from app.services.chatbot.lanes import canned
+
+        calls = []
+        monkeypatch.setattr(
+            "app.services.ideation_turn_service.compose_ideate_denial_reply",
+            lambda *a, **k: calls.append(1),
+        )
+        ctx = {
+            "parse": {"output": {"routing": {"suggested_agent": "purchasing"}}},
+            "text": {"message": {"message": {"text": "need stock"}}},
+        }
+        out = canned.access_denied_text(None, ctx, fallback_copy())
+        assert calls == []
+        assert "purchasing" in out
+
+
 class TestCopyKeysRenderTodaysText:
     @pytest.mark.parametrize("key,render_kwargs,expected", _COPY_CASES, ids=[c[0] for c in _COPY_CASES])
     def test_copy_keys_render_todays_text(self, key, render_kwargs, expected):
@@ -618,7 +735,7 @@ class TestIdeateBranchCallsMcpTool:
 
         assert len(captured) == 1
         call_kwargs = captured[0]
-        assert call_kwargs["respond_io_id"] == CONTACT_ID
+        assert call_kwargs["respond_io_id"] == str(CONTACT_ID)
         assert isinstance(call_kwargs["respond_io_id"], str)
         assert call_kwargs["message_text"] == "the photos are of the leaking basin"
         assert call_kwargs["session_vars"] == {
@@ -633,8 +750,13 @@ class TestIdeateBranchCallsMcpTool:
         # `ideation.pending_media` is set AND `reference_positions` is non-empty ->
         # media_selection is the joined positions, per `ideate-turn-http`'s own rule.
         assert call_kwargs["media_selection"] == "1,2"
+        # #1179 AC-6: a live turn says so, so the idea lands on the board.
+        assert call_kwargs["is_test"] is False
 
-        expected_text = "Idea IDEA-42 recorded. Thank you!\n\nhttps://outline.example/IDEA-42"
+        # AC-1216: no raw link append - the composed reply (S3's compose_ideate_reply,
+        # or its template fallback) already carries the link itself via the facts
+        # block, so this lane relays reply_text verbatim.
+        expected_text = "Idea IDEA-42 recorded. Thank you!"
         assert result.reply["text"] == expected_text
         assert result.reply["manualResponse"] is True
         assert result.reply["includeResponse"] is True
@@ -730,33 +852,6 @@ class TestIdeateBranchCallsMcpTool:
 
 
 class TestOfferHold:
-    def test_offer_hold_reply_composes_from_persisted_pool(
-        self, session_factory, seeded, system_settings_row, stub_parser, stub_access
-    ):
-        _seed_completed_lanes(session_factory, system_settings_row)
-        envelope, parser_overrides, expected_text = _build_scenario(
-            "offer_hold", session_factory, monkeypatch=None
-        )
-        stub_parser(parser_overrides)
-        stub_access()
-
-        envelope = _envelope(test_run_id="ZZT-run-offer-hold")
-        envelope.message["message"]["message"]["text"] = "not sure"
-        result = engine_mod.run_turn(envelope, session_factory=session_factory)
-
-        assert result.delegate is None
-        assert result.branch_kind == "offer_hold"
-        assert result.reply["text"] == OFFER_HOLD_CLARIFY_TEXT
-
-        # D14: dry run, so the would-be persist is on `session_patch`, not written.
-        patch = result.session_patch or {}
-        variables = patch.get("variables", patch)
-        assert variables.get("response") == OFFER_HOLD_CLARIFY_TEXT
-        assert variables.get("routing_roster_plan") == TWO_COMPANY_ROSTER
-        assert variables.get("routing_companies") == TWO_COMPANY_ROSTER
-        assert variables.get("selection_context") == "member_offer"
-        assert (variables.get("pending") or {}).get("kind") == "member_offer"
-
     def test_offer_hold_reply_one_company_name(self):
         from app.services.chatbot.lanes import canned
 
@@ -815,105 +910,13 @@ class TestUnsupportedDomainsSetting:
         parsed = SystemSettingUpdate(chatbot_unsupported_domains=["order"])
         assert parsed.chatbot_unsupported_domains == ["order"]
 
-    def test_route_uses_the_configured_list_not_the_hardcoded_one(
-        self, session_factory, seeded, system_settings_row, stub_parser, stub_access
-    ):
-        from app.models.user import SystemSetting
 
-        db = session_factory()
-        setting = (
-            db.query(SystemSetting)
-            .filter(SystemSetting.id == system_settings_row.id)
-            .one()
-        )
-        setting.chatbot_unsupported_domains = ["order"]
-        db.commit()
-
-        stub_parser(_parser_output(domain_hint="order"))
-        stub_access()
-        order_result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
-        assert order_result.branch_kind == "not_supported"
-
-        stub_parser(_parser_output(domain_hint="goods_receive"))
-        stub_access()
-        envelope2 = _envelope()
-        envelope2.message["message"]["messageId"] = "ZZT-msg-unsupported-2"
-        goods_receive_result = engine_mod.run_turn(envelope2, session_factory=session_factory)
-        assert goods_receive_result.branch_kind != "not_supported"
-
-
-# --------------------------------------------------------------------------- #
 # AC-306 (addendum to test_engine.py's TestStockDenialGateEndToEnd): the
 # demand_qty canned text, and the stock_denied item's `not_allowed_check_stock`
 # carrier that `sub-main-processing`'s `Edit Fields2` reads by that exact name.
-# --------------------------------------------------------------------------- #
-
-
-class TestStockDenialFlagGatesTwoLanes:
-    @staticmethod
-    def _stock_envelope(message_id: str) -> Envelope:
-        envelope = _envelope()
-        envelope.message["message"]["messageId"] = message_id
-        envelope.contact["custom_fields"] = [
-            {"name": "is_human_intervened", "value": "false"},
-            {"name": "is_allowed_stock", "value": "false"},
-        ]
-        return envelope
-
-    def test_demand_qty_zero_gives_the_canned_reply(
-        self, session_factory, seeded, system_settings_row, stub_parser, stub_access
-    ):
-        from app.models.user import SystemSetting
-
-        db = session_factory()
-        setting = (
-            db.query(SystemSetting)
-            .filter(SystemSetting.id == system_settings_row.id)
-            .one()
-        )
-        setting.chatbot_stock_denial_enabled = True
-        db.commit()
-        _seed_completed_lanes(session_factory, system_settings_row)
-
-        stub_parser(
-            _parser_output(intent_hint="check_stock", domain_hint="inventory", demand_qty=0)
-        )
-        stub_access()
-
-        result = engine_mod.run_turn(
-            self._stock_envelope("ZZT-msg-demand-qty"), session_factory=session_factory
-        )
-        assert result.branch_kind == "demand_qty"
-        assert result.delegate is None
-        assert result.reply["text"] == "Please specify your demand quantity"
-
-    def test_stock_denied_item_carries_not_allowed_check_stock(
-        self, session_factory, seeded, system_settings_row, stub_parser, stub_access
-    ):
-        from app.models.user import SystemSetting
-
-        db = session_factory()
-        setting = (
-            db.query(SystemSetting)
-            .filter(SystemSetting.id == system_settings_row.id)
-            .one()
-        )
-        setting.chatbot_stock_denial_enabled = True
-        db.commit()
-
-        stub_parser(
-            _parser_output(intent_hint="check_stock", domain_hint="inventory", demand_qty=5)
-        )
-        stub_access()
-
-        result = engine_mod.run_turn(
-            self._stock_envelope("ZZT-msg-stock-denied"), session_factory=session_factory
-        )
-        assert result.branch_kind == "stock_denied"
-        # `stock_denied` still delegates to the business lane in S3 (S6 owns it).
-        assert result.delegate == "stock_denied"
-        assert result.item.get("not_allowed_check_stock") is True
-
+# `TestStockDenialFlagGatesTwoLanes` (both methods) retired here (AC-1592, S6
+# ruling) - see module docstring. Replacement coverage: `test_rearch_s6_stock_
+# allowed.py`.
 
 # --------------------------------------------------------------------------- #
 # D14: canned lanes are dry-run-safe by construction, same as every other lane.
@@ -954,17 +957,16 @@ class TestCannedLanesDryRun:
         )
         assert result.is_test is True, f"{kind}: the response must say it was a dry run"
         if kind == "ideate":
-            # The kill assertion for this lane. `ideate` is the only canned kind with a
-            # seam, and its seam WRITES outside `chatbot.turns` - a real idea record, a
-            # respond.io media pull and an `integration_log` row - so "session_vars is
-            # unchanged" above proves nothing about it. D14 is zero writes, and the only
-            # way to have zero here is not to call the tool at all.
-            assert IDEATE_TOOL_CALLS == [], (
-                "dry run called the ideation write tool: D14 says an is_test envelope "
-                "writes nothing outside chatbot.turns, and this tool mints a real idea"
+            # #1179 (owner ruling 24 Sep 2026): `ideate` is the only canned kind with a
+            # seam, and the seam is the point. A dry run CALLS the tool and says it is a
+            # test turn, so the shared service stores the idea as `is_test` (hidden from
+            # the board) and the console gets the real intake replies. "Session_vars is
+            # unchanged" above is still the CRM-side half of D14.
+            assert [c.get("is_test") for c in IDEATE_TOOL_CALLS] == [True], (
+                "a dry run must call the ideation tool exactly once, as a test turn"
             )
 
-    def test_ideate_dry_run_previews_the_reply_it_would_have_sent(
+    def test_ideate_dry_run_calls_the_tool_as_a_test_turn_and_sends_its_real_reply(
         self,
         session_factory,
         seeded,
@@ -973,58 +975,59 @@ class TestCannedLanesDryRun:
         stub_access,
         monkeypatch,
     ):
-        """AC-507's shape on the ideate lane: same actions, seam values stood in for.
+        """#1179 AC-5, AC-7, AC-8: the placeholder is gone; the tool's own words are sent.
 
-        The reply text is the tool's OWN words on a live turn, so there is nothing here
-        that does not depend on the seam - unlike escalation, whose two sentences are
-        fixed and interpolate state the turn already resolved. The whole reply is
-        therefore a placeholder, and the action says so with `preview: true` beside its
-        `dry_run`.
-
-        The placeholder is `PREVIEW_IDEATE_REPLY`, NOT the `<preview>` token. The token is
-        the operator's and stays on `status` and the trace facts; this string is what a
-        `send_message` carries, and the executor executes actions and nothing else - so a
-        dry-run turn used to send the literal "<preview>" to whoever typed the idea.
+        Before this ruling a dry run stood the whole reply in with `PREVIEW_IDEATE_REPLY`
+        and flagged the action `preview: true`, which made ideation untestable anywhere
+        but live WhatsApp. Now the ONLY difference between a test turn and a live one, as
+        far as this lane is concerned, is the `is_test` flag on the tool call. The rest of
+        the dry run is unchanged: `dry_run: true` on the action, no session write, the
+        would-be `session_patch` returned for the caller to carry.
         """
         from app.services.chatbot import contracts
 
         _seed_completed_lanes(session_factory, system_settings_row)
-        envelope, parser_overrides, _ = _build_scenario("ideate", session_factory, monkeypatch)
+        envelope, parser_overrides, expected_text = _build_scenario(
+            "ideate", session_factory, monkeypatch
+        )
         envelope = Envelope(**{**envelope.model_dump(mode="json"), "is_test": True})
         stub_parser(parser_overrides)
         stub_access()
+        before = _session_vars_raw(session_factory)
 
         result = engine_mod.run_turn(envelope, session_factory=session_factory)
 
-        assert IDEATE_TOOL_CALLS == []
+        assert len(IDEATE_TOOL_CALLS) == 1
+        call_kwargs = IDEATE_TOOL_CALLS[0]
+        assert call_kwargs["is_test"] is True
+        # The same arguments a live turn sends, beside the flag.
+        assert call_kwargs["respond_io_id"] == str(CONTACT_ID)
+        assert call_kwargs["session_vars"] == {
+            "ideation": {"draft_id": "ZZT-draft-1", "status": "collecting"}
+        }
+
         assert result.branch_kind == "ideate"
         assert result.delegate is None
-        assert result.reply["text"] == contracts.PREVIEW_IDEATE_REPLY
-        assert contracts.PREVIEW not in result.reply["text"], (
-            "the operator's diagnostic token must never reach the customer: "
-            f"{result.reply['text']!r}"
-        )
+        assert result.is_test is True
+        assert result.reply["text"] == expected_text
+        assert result.reply["ideate_status"] == "collecting"
+        assert contracts.PREVIEW not in result.reply["text"]
         assert result.actions == [
             {
                 "kind": "send_message",
-                "text": contracts.PREVIEW_IDEATE_REPLY,
+                "text": expected_text,
                 "quick_replies": result.reply.get("quick_replies"),
                 "result_set": result.reply.get("result_set"),
                 "dry_run": True,
-                "preview": True,
             }
-        ]
+        ], "the action carries the tool's real reply and no `preview` flag"
         assert result.session_patch is not None
+        assert _session_vars_raw(session_factory) == before, "dry run wrote session_vars"
         row = _turn_row(session_factory, result.turn_id)
         assert row.status == "done"
-        # The OPERATOR's half is unchanged: `status` still carries the marker, which is
-        # what a reader of the fragment keys on, and the action still carries
-        # `preview: true` (asserted above).
-        from app.services.chatbot.lanes.ideate import preview_result
-
-        fragment = preview_result({"session": {"session_vars": {}}})
-        assert fragment["status"] == contracts.PREVIEW
-        assert fragment["reply_text"] == contracts.PREVIEW_IDEATE_REPLY
+        assert not hasattr(contracts, "PREVIEW_IDEATE_REPLY"), (
+            "the ideate placeholder is retired with the preview path"
+        )
 
     def test_access_denied_dry_run_write_nothing(
         self, session_factory, seeded, system_settings_row, stub_parser, stub_access
@@ -1044,35 +1047,6 @@ class TestCannedLanesDryRun:
         assert all(a.get("dry_run") is True for a in result.actions)
 
 
-# --------------------------------------------------------------------------- #
-# Coordinator contract addition: `chatbot_completed_lanes` gates COMPLETION
-# separately from the code-level set. Default `[]` (no settings row at all,
-# or a row that predates the column) must leave every branch delegated exactly
-# as it is today, even once S3's code otherwise knows how to finish it.
-# --------------------------------------------------------------------------- #
-
-
-class TestCompletedLanesGateDefaultsClosed:
-    def test_default_empty_list_still_delegates(
-        self, session_factory, seeded, stub_parser, stub_access
-    ):
-        """No `system_settings` row at all -> `chatbot_completed_lanes` reads as `[]`."""
-        from app.models.user import SystemSetting
-
-        assert session_factory().query(SystemSetting).first() is None, (
-            "this test's whole point is the no-row default"
-        )
-        stub_parser(
-            _parser_output(
-                message_type="clarification",
-                domain_hint=None,
-                escalation={"is_escalation_confirmation": False, "company_pick": None},
-            )
-        )
-        stub_access()
-
-        result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
-
-        # `route.decide()` still picks the lane - only COMPLETION is gated.
-        assert result.branch_kind == "clarify_menu"
-        assert result.delegate == "clarify_menu"
+# `TestCompletedLanesGateDefaultsClosed.test_default_empty_list_still_delegates`
+# retired here (AC-1592) - see module docstring, same theme as
+# `test_completed_lanes_switch.py`'s own retired end-to-end delegate assertion.

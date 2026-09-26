@@ -147,7 +147,10 @@ class TestContractEndpoint:
 
         assert res.status_code == 200, res.text
         body = res.json()
-        assert body["version"] == "2.2"
+        # Bumped again (autocount-brands-ingest, AC-13): "2.3" adds `brands`
+        # as a first-class EntitySpec. Bumped again (ingest-products-code-wins,
+        # SR0): "2.4" adds products code-wins deletion `codes`.
+        assert body["version"] == "2.4"
         entities = set(body["entities"])
         for expected in (
             "sales_orders",
@@ -475,6 +478,12 @@ class TestMigration473WidensTheSourceCheck:
             transaction.rollback()
             connection.close()
 
+    # `serial_ddl`: `bind` is a plain `engine.connect()` on the REAL database and the
+    # two statements below DROP and ADD a constraint on the SHARED
+    # `scm.order_link_claim`, which holds an AccessExclusiveLock on it until the
+    # rollback. Same hazard as issue #987's `scm.committed_v` DDL, in the sharded
+    # `test-backend` job rather than the SCM one, so it leaves the xdist pool too.
+    @pytest.mark.serial_ddl
     def test_apply_widens_an_old_constraint_and_an_autocount_claim_then_inserts(
         self, bind
     ):

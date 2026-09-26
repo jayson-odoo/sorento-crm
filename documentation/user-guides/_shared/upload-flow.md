@@ -61,6 +61,14 @@ Folder operations live on the same **Files** page, on the left sidebar.
 
 To **rename a single file**, click the pencil icon on the file row in the attachments table - the dialog is titled **Rename file**.
 
+## Opening a file to view it
+
+Wherever a file preview shows an **Open** button (Files, packing lists, complaints, price tag
+requests, project documents, and elsewhere), **Open** shows PDFs, images, and plain text files in
+a new browser tab. Other file types (e.g. Excel, Word) can't be shown in a tab, so **Open**
+downloads them instead and shows a toast saying so. **Download**, next to it, always downloads
+the file regardless of type.
+
 ## Quick Access (menu pinning)
 
 The left sidebar has a **Quick Access** section near the top. Click **Add shortcut** to pin a menu item, drag-and-drop to reorder, or click the unpin icon on a shortcut to remove it. Folders can be pinned the same way through their **Folder actions** menu.

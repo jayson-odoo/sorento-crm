@@ -18,7 +18,9 @@ quantity_received > 0`, visible to no rung - this module read PO lines only and 
 last-receipt tool reads `fully_received` only. They now come back here as rows of the
 SAME shape with `kind = "spo"` (PO rows say `kind = "po"`): `po_number` is the SPO
 number, `po_date` its `issue_date`, `expected_date` its promised arrival,
-`outstanding_qty` the unreceived remainder, `supplier` from `supplier_id`.
+`outstanding_qty` the unreceived remainder, `supplier` from `supplier_id`,
+`ordered_qty` its `allocated_quantity`, `location` its warehouse code else
+`location_code` (owner ruling 11 Sep 2026).
 
 NO `po_line_id` DEDUPE (review round 2, S3): measured 0 of 80,468 `spo_allocations`
 carry `po_line_id`, so a "child of an open PO line" cannot exist today and the extra
@@ -35,6 +37,7 @@ from typing import Any, Optional
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.models.inventory import Warehouse
 from app.models.procurement import PurchaseOrder, PurchaseOrderLine, SPOAllocation, Supplier
 from app.models.product import Product
 from app.services.company_scope import build_company_predicate, get_company_scope
@@ -66,18 +69,19 @@ def purchase_orders_placed_rows(
 ) -> list[dict]:
     """Open PO lines: `qty_ordered - qty_received > 0`, `line_status='open'`.
 
-    One row per line - PO number, product, outstanding qty, expected date
-    (line, else header), supplier. `supplier` is ALWAYS populated here; the
-    restricted-field drop that hides it from a dealer runs downstream in
-    `output_structurer` (`restricted_fields`), never here - the MCP itself
-    stays unfiltered (Slice A design).
+    One row per line - PO number, product, ordered qty, outstanding qty, expected
+    date (line, else header), supplier, location (the line's warehouse). `supplier`
+    is ALWAYS populated here; the restricted-field drop that hides it from a dealer
+    runs downstream in `output_structurer` (`restricted_fields`), never here - the
+    MCP itself stays unfiltered (Slice A design).
     """
     delta = PurchaseOrderLine.qty_ordered - PurchaseOrderLine.qty_received
     q = (
-        db.query(PurchaseOrderLine, PurchaseOrder, Product, Supplier)
+        db.query(PurchaseOrderLine, PurchaseOrder, Product, Supplier, Warehouse)
         .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
         .join(Product, Product.id == PurchaseOrderLine.product_id)
         .outerjoin(Supplier, Supplier.id == PurchaseOrder.supplier_id)
+        .outerjoin(Warehouse, Warehouse.id == PurchaseOrderLine.warehouse_id)
         .filter(PurchaseOrderLine.line_status == "open", delta > 0)
     )
     if product_ids:
@@ -100,7 +104,7 @@ def purchase_orders_placed_rows(
         .all()
     )
     out: list[dict] = []
-    for line, po, product, supplier in rows:
+    for line, po, product, supplier, warehouse in rows:
         expected = line.expected_date or po.expected_date
         out.append(
             {
@@ -118,6 +122,13 @@ def purchase_orders_placed_rows(
                 # PO was raised, not only when the goods are due. Additive; every field
                 # above is byte-identical.
                 "po_date": po.issue_date.isoformat() if po.issue_date else None,
+                # Owner ruling 11 Sep 2026: the line's own ordered quantity and
+                # warehouse, alongside the outstanding remainder above. `location` is
+                # None when the line has no warehouse, or its warehouse is outside the
+                # caller's company scope (the scope predicate lands in the join's ON
+                # clause, so the row still returns).
+                "ordered_qty": _plain_number(line.qty_ordered),
+                "location": warehouse.warehouse_code if warehouse else None,
             }
         )
 
@@ -137,7 +148,7 @@ def purchase_orders_placed_rows(
     )
     if not spo_rows:
         return out  # PO-only data: the SQL order above is the answer, byte-identical
-    for alloc, product, supplier in spo_rows:
+    for alloc, product, supplier, warehouse in spo_rows:
         out.append(
             {
                 "kind": "spo",
@@ -149,6 +160,15 @@ def purchase_orders_placed_rows(
                 "expected_date": alloc.expected_date.isoformat() if alloc.expected_date else None,
                 "supplier": supplier.supplier_name if supplier else None,
                 "po_date": alloc.issue_date.isoformat() if alloc.issue_date else None,
+                # Owner ruling 11 Sep 2026: `ordered_qty` is the allocation's own
+                # quantity; `location` is its warehouse code, else the book's raw
+                # `location_code`, else None (see `_unshipped_spo_query`'s docstring
+                # for why `warehouse_id` is absent on most rows) - also None when the
+                # allocation's warehouse is outside the caller's company scope (the
+                # scope predicate lands in the join's ON clause, so the row still
+                # returns).
+                "ordered_qty": _plain_number(alloc.allocated_quantity),
+                "location": (warehouse.warehouse_code if warehouse else None) or alloc.location_code,
             }
         )
     return _merge_sorted(out, sort=sort, dir=dir, limit=limit)
@@ -203,9 +223,10 @@ def _unshipped_spo_query(db: Session, *, product_ids: Optional[list[str]]):
     from app.services.scm import spo_supply
 
     q = (
-        db.query(SPOAllocation, Product, Supplier)
+        db.query(SPOAllocation, Product, Supplier, Warehouse)
         .join(Product, Product.id == SPOAllocation.product_id)
         .outerjoin(Supplier, Supplier.id == SPOAllocation.supplier_id)
+        .outerjoin(Warehouse, Warehouse.id == SPOAllocation.warehouse_id)
         .filter(
             SPOAllocation.receipt_status == "pending",
             SPOAllocation.inbound_shipment_id.is_(None),

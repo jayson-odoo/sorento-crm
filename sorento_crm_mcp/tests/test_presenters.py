@@ -1666,41 +1666,81 @@ def test_by_product_summary_without_the_key_renders_no_so_field():
         assert "SO Outstanding" not in [f["label"] for f in it["fields"]]
 
 
-def test_purchase_orders_placed_po_date_sits_before_expected_date():
-    """Owner ruling (8 Sep 2026): the PO document date rides on the row as `po_date`;
-    absent -> no field, so every pre-existing envelope is byte-identical."""
+def test_purchase_orders_placed_field_order_no_source_no_expected_date():
+    """Owner ruling (11 Sep 2026): the row order is PO Number, Product Code, Ordered Qty,
+    Outstanding Qty, PO Date, Location - Source (`kind`) and Expected Date never render
+    again, even when the row still carries `kind` / `expected_date` (the backend keeps
+    both on the raw row for its own filtering/sorting; only the presenter drops them)."""
     out = env("crm_procurement_po_placed_list", {
-        "data": [{"po_number": "PO-1001", "product_code": "SRTWC8517", "outstanding_qty": 50,
-                  "po_date": "2026-05-01", "expected_date": "2026-07-01"}],
+        "data": [{
+            "company_name": "Sorento HQ", "po_number": "PO-1001", "kind": "po",
+            "product_code": "SRTWC8517", "ordered_qty": 50, "outstanding_qty": 50,
+            "po_date": "2026-05-01", "expected_date": "2026-07-01",
+            "location": "KL-WH", "supplier": "Acme Supplies",
+        }],
     })
-    fields = out["items"][0]["fields"]
-    labels = [f["label"] for f in fields]
-    assert labels.index("PO Date") == labels.index("Expected Date") - 1
-    assert next(f for f in fields if f["key"] == "po_date")["value"] == "2026-05-01"
-    without = env("crm_procurement_po_placed_list", {
-        "data": [{"po_number": "PO-1001", "product_code": "SRTWC8517", "outstanding_qty": 50,
-                  "expected_date": "2026-07-01"}],
-    })
-    assert "PO Date" not in [f["label"] for f in without["items"][0]["fields"]]
+    labels = [f["label"] for f in out["items"][0]["fields"]]
+    assert labels == [
+        "Company", "PO Number", "Product Code", "Ordered Qty",
+        "Outstanding Qty", "PO Date", "Location", "Supplier",
+    ]
+    assert "Source" not in labels
+    assert "Expected Date" not in labels
 
 
-def test_purchase_orders_placed_source_names_the_kind_after_po_number():
-    """Item 5 (8 Sep 2026): rows carry `kind` ("po" / "spo"); the presenter prints it as
-    Source right after PO Number; absent -> nothing (byte identity for old envelopes)."""
+def test_purchase_orders_placed_without_company_starts_at_po_number():
+    """Company is scope-gated and only present when the resolver widened scope; unchanged
+    by this ruling."""
+    out = env("crm_procurement_po_placed_list", {
+        "data": [{"po_number": "PO-1001", "product_code": "SRTWC8517", "outstanding_qty": 50}],
+    })
+    labels = [f["label"] for f in out["items"][0]["fields"]]
+    assert labels[0] == "PO Number"
+    assert "Company" not in labels
+
+
+def test_purchase_orders_placed_row_without_ordered_qty_or_location_omits_them():
+    out = env("crm_procurement_po_placed_list", {
+        "data": [{"po_number": "PO-1001", "product_code": "SRTWC8517", "outstanding_qty": 50}],
+    })
+    labels = [f["label"] for f in out["items"][0]["fields"]]
+    assert "Ordered Qty" not in labels
+    assert "Location" not in labels
+
+
+def test_purchase_orders_placed_ordered_qty_and_location_render_when_present():
+    out = env("crm_procurement_po_placed_list", {
+        "data": [{"po_number": "PO-1001", "product_code": "SRTWC8517",
+                  "ordered_qty": 30, "outstanding_qty": 30, "location": "BRW"}],
+    })
+    f = {x["label"]: x["value"] for x in out["items"][0]["fields"]}
+    assert f["Ordered Qty"] == "30"
+    assert f["Location"] == "BRW"
+
+
+def test_purchase_orders_placed_item_carries_kind_at_the_top_level():
+    """The item dict now carries `kind` as a TOP-LEVEL key (sibling of `title`/`fields`/
+    `flags`), not a rendered field - the chatbot rung reads it from there so it can still
+    tell a PO row from an SPO row with no rendered Source field."""
     out = env("crm_procurement_po_placed_list", {
         "data": [
             {"po_number": "202607-S0031", "kind": "po", "product_code": "C-FH14", "outstanding_qty": 27},
             {"po_number": "SPO-2026/09-0001", "kind": "spo", "product_code": "C-FH14", "outstanding_qty": 7},
         ],
     })
-    for item, expect in zip(out["items"], ("PO", "SPO")):
-        labels = [f["label"] for f in item["fields"]]
-        assert labels.index("Source") == labels.index("PO Number") + 1
-        assert next(f for f in item["fields"] if f["key"] == "kind")["value"] == expect
-    old = env("crm_procurement_po_placed_list", {
+    assert [item.get("kind") for item in out["items"]] == ["po", "spo"]
+    for item in out["items"]:
+        assert "Source" not in [f["label"] for f in item["fields"]]
+        assert "kind" not in [f.get("key") for f in item["fields"]]
+
+
+def test_purchase_orders_placed_item_has_no_kind_key_when_row_has_none():
+    """Byte identity for an older/kind-less row: no top-level `kind` key at all, not
+    `None`."""
+    out = env("crm_procurement_po_placed_list", {
         "data": [{"po_number": "PO-1001", "product_code": "SRTWC8517", "outstanding_qty": 50}],
     })
-    assert "Source" not in [f["label"] for f in old["items"][0]["fields"]]
+    assert "kind" not in out["items"][0]
 
 
 def test_product_attachment_with_no_link_is_listed_with_the_unavailable_note_and_never_attached():

@@ -4,9 +4,21 @@ on:
   push:
     branches:
       - main
+  # `types: [labeled]` ONLY - a push to the PR branch fires no `pull_request`
+  # event at all (GitHub still fires `labeled` again on the PR's CURRENT head
+  # every time any label is added, so the orchestrator re-adds `ci` to re-run
+  # against a new head). Every root job below then gates on
+  # `github.event.label.name == 'ci'`, so labeling with anything else is a
+  # no-op. This exists because push-triggered PR runs were burning most of the
+  # account's 20 concurrent job slots and queuing push-to-main deploys behind
+  # them for 30-50+ minutes (2026-09-25: runs 36103575754/36105804527/36107711150
+  # all queued behind one PR run). A PR with no `ci` label therefore shows NO
+  # checks and cannot merge - see the required-checks note on `check-migration-heads`
+  # and `changes` below; this is intended, not a bug.
   pull_request:
     branches:
       - main
+    types: [labeled]
   # Merge-queue entries: GitHub creates a temporary branch containing the
   # candidate merge result (this PR merged onto main plus every entry queued
   # ahead of it) and fires this event. Every validate/test job below runs for
@@ -22,6 +34,26 @@ on:
         required: false
         default: false
         type: boolean
+
+# Cancels a PR's own superseded runs without touching push-to-main runs, which
+# is why the group key and cancel-in-progress both differ by event instead of
+# being one flat rule:
+#   - pull_request: the group key is the PR number, so every push to the same
+#     PR lands in the same group, and cancel-in-progress is true, so GitHub
+#     cancels that PR's older queued/running run per the docs' per-group
+#     cancellation semantics (https://docs.github.com/actions/using-jobs/using-concurrency).
+#     This is the fix: a lane pushing after every green step no longer queues
+#     one full ~17-job run per push.
+#   - push (to main) and merge_group: github.event.pull_request.number is
+#     empty, so the group key falls back to github.run_id, which is unique to
+#     this run. A unique group can never collide with another run's group, so
+#     cancel-in-progress here is a no-op and every main push still runs its
+#     full matrix independently, exactly as before this change. The dedicated
+#     `deploy-production` job-level group below is untouched (cancel-in-progress
+#     false) so no merge ever loses its deploy.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   IMAGE_REPO: jayson1004/sorento-crm
@@ -40,6 +72,18 @@ jobs:
   check-migration-heads:
     name: Single alembic head (fast gate)
     runs-on: ubuntu-latest
+    # Root job (no `needs`): gates the whole `pull_request` run on the `ci`
+    # label. `github.event_name != 'pull_request'` keeps push/merge_group/
+    # workflow_dispatch running exactly as before; on a `pull_request` event
+    # (now `labeled` only) this only passes when the label just added is `ci`,
+    # so labeling with anything else no-ops. No status-check function
+    # (success()/always()/etc) appears in this expression, so every job that
+    # `needs` this one (directly or transitively) is skipped automatically
+    # when it is skipped - see https://docs.github.com/actions/using-jobs/using-conditions-to-control-job-execution.
+    # The job NAME is unchanged, so branch-protection required checks keep
+    # matching; a PR with no `ci` label simply never reports this check,
+    # which is what keeps it unmergeable until the orchestrator labels it.
+    if: github.event_name != 'pull_request' || github.event.label.name == 'ci'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -100,6 +144,12 @@ jobs:
   changes:
     name: Changed areas
     runs-on: ubuntu-latest
+    # Same gate as check-migration-heads above, and for the same reason: this
+    # is the other root job (no `needs`), so skipping it here skips every job
+    # that depends on it transitively (validate-backend, validate-mcp,
+    # test-backend, test-backend-scm, validate-frontend, typecheck-frontend,
+    # build-images) without touching their own `if` conditions.
+    if: github.event_name != 'pull_request' || github.event.label.name == 'ci'
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
       frontend: ${{ steps.filter.outputs.frontend }}
@@ -314,11 +364,21 @@ jobs:
   # that point outside tests/scm are harmless `--ignore` paths for a run that was
   # never going to collect them, and keeping one shared expression means an
   # exclusion cannot be added to one half and forgotten in the other.
+  #
+  # Sharded 3-way (run 35945594213, 2026-09-24): one runner took 25:39 wall
+  # clock for 3951 tests (23:53 under xdist plus 18s for the serial_ddl step),
+  # and that single job was the gate's critical path. pytest-split assigns
+  # every collected test to exactly one group, so the three groups together
+  # are the full tests/scm suite and no test runs twice or is dropped.
   test-backend-scm:
-    name: Backend test suite - SCM (Postgres)
+    name: Backend test suite - SCM (Postgres, xdist)
     needs: [changes]
     if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     services:
       postgres:
         # pgvector image, not plain postgres: the embedding tables need the
@@ -399,12 +459,71 @@ jobs:
         working-directory: sorento_crm_backend
         run: python -m scripts.bootstrap_env
 
+      # `-m "not serial_ddl"` is the SCM half of the same rule the `test-backend`
+      # job states below for tests/test_migration_*.py, and it is not an
+      # optimization either.
+      #
+      # A handful of tests here run DDL against the REAL, SHARED `scm` relations
+      # rather than a scratch schema, because that is the only way to exercise a
+      # migration's own frozen `upgrade()` body: `scm` is schema-qualified in
+      # that SQL, so it ignores the search_path `blank_session` pins and lands on
+      # the live relation. That used to be `DROP VIEW IF EXISTS scm.committed_v
+      # CASCADE` in tests/scm/test_committed_v_migration_chain.py, which held an
+      # AccessExclusiveLock on `committed_v` and on every view CASCADE reaches
+      # (`net_position_v` first) until the test's transaction rolled back, while
+      # another worker's reorder run read those same views in the opposite
+      # order - a lock cycle, and Postgres kills one side of it.
+      #
+      # Four hits, issue #987: PR #973 run 35150767560, PR #985 run 35176172055
+      # (twice) - all three inside `reorder_run_service._planning_rows`, killed on
+      # the READING side - and PR #1001 run 35292962581, killed on the DDL side in
+      # tests/scm/test_committed_v_migration_chain.py. Reproduced locally at
+      # `-n 4 --dist loadfile`: `committed_v` vs `net_position_v`, exactly that
+      # cycle. `--dist loadfile` serializes the tests of ONE file and can do
+      # nothing about two files on two workers.
+      #
+      # #1013 moved that file's round trips onto a scratch schema instead, so it
+      # no longer carries this marker. The SCM members of the marked set today
+      # are the ALTER TABLE test in test_description_translation.py and the 273
+      # downgrade (a real `DROP SCHEMA scm CASCADE`) in test_m0_cp1_schema.py -
+      # a few seconds of test time, so it runs in a second pass with the pool
+      # drained and nothing else on the database.
       - name: Run SCM backend suite (executing gate)
         working-directory: sorento_crm_backend
         run: |
           IGNORES=$(grep -vE '^\s*#|^\s*$' tests/ci_excluded.txt | sed 's|^|--ignore=|' | tr '\n' ' ')
-          echo "excluding $(echo "$IGNORES" | wc -w) path(s)"
-          python -m pytest -q -p no:cacheprovider -n auto --dist loadfile --durations=30 $IGNORES tests/scm/
+          echo "excluding $(echo "$IGNORES" | wc -w) path(s) plus the serial_ddl tests; shard ${{ matrix.shard }} of 3"
+          python -m pytest -q -p no:cacheprovider -n auto --dist loadfile --durations=30 \
+            --splits 3 --group ${{ matrix.shard }} \
+            --store-durations --durations-path .test_durations \
+            -m "not serial_ddl" $IGNORES tests/scm/
+
+      # Feeds `.test_durations` (see test-backend): the checked-out committed
+      # file is what `duration_based_chunks` reads to balance the 3 groups,
+      # and `--store-durations` then overwrites it with that same history
+      # plus fresh numbers for the tests THIS shard ran, so every shard's
+      # artifact carries the full file, not just its own slice - merged by
+      # hand (any shard's value for a key it did not run is unchanged from
+      # the committed baseline, so any shard's copy is a safe base to
+      # overwrite with the values from the shards that did run each test).
+      - name: Upload SCM shard durations artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scm-durations-${{ matrix.shard }}
+          path: sorento_crm_backend/.test_durations
+          retention-days: 7
+          # The durations file is a dotfile; upload-artifact excludes those by
+          # default and silently uploads nothing ("No files were found").
+          include-hidden-files: true
+
+      - name: Run SCM serial_ddl tests serially (executing gate)
+        if: matrix.shard == 1
+        working-directory: sorento_crm_backend
+        run: |
+          IGNORES=$(grep -vE '^\s*#|^\s*$' tests/ci_excluded.txt | sed 's|^|--ignore=|' | tr '\n' ' ')
+          python -m pytest -q -p no:cacheprovider -p no:xdist --durations=10 \
+            -m serial_ddl $IGNORES tests/scm/
 
   # The executing backend gate, run in parallel under pytest-xdist `-n auto`.
   #
@@ -448,14 +567,22 @@ jobs:
     runs-on: ubuntu-latest
     # The suite is CPU-bound (~3 s of CPU per test across 9k tests) and a
     # standard runner has 4 vCPUs, so one job takes ~29 min no matter how the
-    # database is tuned. Four runners in parallel, each still xdist across its
-    # own 4 cores, is 4x the CPU. pytest-split assigns every collected test to
-    # exactly one group, so the four groups together are the full suite and no
+    # database is tuned. Six runners in parallel, each still xdist across its
+    # own 4 cores, is 6x the CPU. pytest-split assigns every collected test to
+    # exactly one group, so the six groups together are the full suite and no
     # test runs twice or is dropped.
+    #
+    # Shards are balanced by the committed `sorento_crm_backend/.test_durations`
+    # (see the "Run backend suite under xdist" step below), not by test count -
+    # a count-based split measured 6:10 to 22:08 across 6 shards (run
+    # 35951319369, 2026-09-24). A test missing from the file gets the average
+    # duration, so a brand-new test does not need a manual refresh to be
+    # balanced correctly. Refresh the committed file when the longest shard
+    # drifts more than ~3 min above the shortest.
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6]
     services:
       postgres:
         # pgvector image, not plain postgres: the embedding tables need the
@@ -548,7 +675,8 @@ jobs:
       # Everything except tests/ci_excluded.txt - see that file for why each entry
       # is out (they assert against business data a fresh database has no reason
       # to contain) - MINUS tests/scm, which `test-backend-scm` runs in parallel,
-      # MINUS tests/test_migration_*.py, which the serial step below runs alone.
+      # MINUS tests/test_migration_*.py, which the serial step below runs alone,
+      # MINUS anything marked `serial_ddl`, which the step after that runs alone.
       #
       # `--durations=30` prints the 30 slowest tests of the run. It is the only
       # per-test timing this job produces, and reviewers are pointed at it by
@@ -558,11 +686,41 @@ jobs:
         working-directory: sorento_crm_backend
         run: |
           IGNORES=$(grep -vE '^\s*#|^\s*$' tests/ci_excluded.txt | sed 's|^|--ignore=|' | tr '\n' ' ')
-          echo "excluding $(echo "$IGNORES" | wc -w) path(s) plus tests/scm and tests/test_migration_*.py; shard ${{ matrix.shard }} of 4"
+          echo "excluding $(echo "$IGNORES" | wc -w) path(s) plus tests/scm, tests/test_migration_*.py and the serial_ddl tests; shard ${{ matrix.shard }} of 6"
           python -m pytest -q -p no:cacheprovider -n auto --dist loadfile --durations=30 \
-            --splits 4 --group ${{ matrix.shard }} \
+            --splits 6 --group ${{ matrix.shard }} \
+            --store-durations --durations-path .test_durations \
             --ignore-glob='tests/test_migration_*.py' \
+            -m "not serial_ddl" \
             $IGNORES --ignore=tests/scm tests/
+
+      # Balances the 6 groups by the checked-out committed `.test_durations`
+      # (`duration_based_chunks`, pytest-split's default algorithm - not
+      # overridden to `least_duration`), instead of the old count-based split
+      # that measured 6:10 to 22:08 across shards (run 35951319369,
+      # 2026-09-24). A test missing from the file gets the average duration,
+      # so a brand-new test needs no manual refresh before it is balanced
+      # correctly.
+      #
+      # `--store-durations` then overwrites `.test_durations` with that same
+      # committed history plus fresh numbers for the tests THIS shard ran, so
+      # every shard's artifact carries the FULL file, not just its own slice.
+      # Refreshing the committed file is therefore: download every shard's
+      # artifact from a run, merge them (any shard's copy is a safe base -
+      # for a key it did not run, its value is still the unchanged committed
+      # baseline, identical across all shards' copies), and commit the
+      # result. Refresh when the longest shard drifts more than ~3 min above
+      # the shortest; a small drift is not worth the churn.
+      - name: Upload backend shard durations artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-durations-${{ matrix.shard }}
+          path: sorento_crm_backend/.test_durations
+          retention-days: 7
+          # The durations file is a dotfile; upload-artifact excludes those by
+          # default and silently uploads nothing ("No files were found").
+          include-hidden-files: true
 
       # Migration tests run serially, outside the xdist pool, on one shard only.
       #
@@ -576,16 +734,38 @@ jobs:
       # tests/test_order_inquiry_place_on_po.py's SELECT on another worker and
       # Postgres killed the DDL side. The whole migration set is a few seconds of
       # test time, so it runs here serially, after the xdist pool has drained,
-      # with nothing else on the database. Shard 2 is the shortest shard (about
-      # 7 minutes against shard 3's 18), so this adds nothing to the wall clock.
-      # Glob rather than a list: a future migration test with DDL is covered
-      # without anyone remembering to register it.
+      # with nothing else on the database. Run 35945594213 (2026-09-24, uneven
+      # count-based split across 4 shards) measured shard 1 as the shortest at
+      # 9:03 against shard 2's 19:34, so shard 1 is where these two serial
+      # steps land now that the matrix is rebalanced to 6 shards. Glob rather
+      # than a list: a future migration test with DDL is covered without
+      # anyone remembering to register it.
       - name: Run migration tests serially (executing gate)
-        if: matrix.shard == 2
+        if: matrix.shard == 1
         working-directory: sorento_crm_backend
         run: |
           python -m pytest -q -p no:cacheprovider -p no:xdist --durations=10 \
             tests/test_migration_*.py
+
+      # The same hazard outside the `test_migration_*.py` naming, which is why the
+      # marker exists alongside the glob: `tests/test_ingest_contract_v2.py`'s
+      # TestMigration473WidensTheSourceCheck holds an AccessExclusiveLock on the
+      # SHARED `scm.order_link_claim` (DROP CONSTRAINT / ADD CONSTRAINT on a plain
+      # `engine.connect()`), and nothing about its filename says so. Same cycle as
+      # issue #987, same treatment, no shard but this one.
+      #
+      # `-m serial_ddl` over the whole tree rather than a path list: a future test
+      # that marks itself is picked up without anyone remembering to register it
+      # here. Collection of tests/ costs about 25 seconds, and shard 1 has the
+      # headroom.
+      - name: Run view/DDL tests serially (executing gate)
+        if: matrix.shard == 1
+        working-directory: sorento_crm_backend
+        run: |
+          IGNORES=$(grep -vE '^\s*#|^\s*$' tests/ci_excluded.txt | sed 's|^|--ignore=|' | tr '\n' ' ')
+          python -m pytest -q -p no:cacheprovider -p no:xdist --durations=10 \
+            -m serial_ddl --ignore-glob='tests/test_migration_*.py' \
+            $IGNORES --ignore=tests/scm tests/
 
   validate-frontend:
     name: Validate frontend (vitest)
@@ -806,13 +986,14 @@ jobs:
     # queue merges it, so each change still deploys exactly once, from main.
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    # Job-level, not workflow-level: a workflow-level group would also queue PR
-    # runs behind each other, which is not the problem here. Two merges close
-    # together used to run two deploys overlapped - the second recreated the
-    # worker while the first was still mid blue/green, killing in-flight RQ
-    # jobs (AbandonedJobError). This queues the second deploy behind the
-    # first instead. cancel-in-progress is false because every merge must
-    # still deploy, none can be dropped for a later one.
+    # Job-level, and a fixed group name rather than the workflow-level group
+    # above (which is per-run for push events, so it never serializes deploys
+    # on its own). Two merges close together used to run two deploys overlapped
+    # - the second recreated the worker while the first was still mid
+    # blue/green, killing in-flight RQ jobs (AbandonedJobError). This queues
+    # the second deploy behind the first instead. cancel-in-progress is false
+    # because every merge must still deploy, none can be dropped for a later
+    # one.
     concurrency:
       group: deploy-production
       cancel-in-progress: false
@@ -912,9 +1093,32 @@ jobs:
           command_timeout: 2m
           script: |
             set -e
-            # Frontend / backend via host nginx (public domain)
-            curl -fsS -o /dev/null https://fe-sorento.foundryx.my/ \
-              || curl -fsS -o /dev/null http://127.0.0.1/
+            # Frontend / backend via host nginx (public domain), with a WAIT.
+            #
+            # The nginx swap (step 4 of blue_green_deploy.sh) points the upstream at the
+            # new colour the moment its container reports healthy, and Next.js then needs
+            # a few seconds more before it answers the first request: on run 34855082817
+            # this check got six 504s over 30 seconds and failed a deploy that was
+            # entirely fine (blue healthy, nginx swapped, worker recreated, alembic at
+            # 511). So it now polls for up to 90 seconds, prints each attempt's code and
+            # the elapsed time, and only then tries local nginx and gives up. 90s plus
+            # the MCP check below sits inside this step's own `command_timeout: 2m`.
+            started=$(date +%s)
+            ok=""
+            while [ $(( $(date +%s) - started )) -lt 90 ]; do
+              code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 \
+                https://fe-sorento.foundryx.my/ || true)
+              waited=$(( $(date +%s) - started ))
+              echo "public URL: HTTP ${code:-000} after ${waited}s"
+              case "$code" in
+                2*|3*) ok="yes"; break;;
+              esac
+              sleep 5
+            done
+            if [ -z "$ok" ]; then
+              echo "public URL never answered in 90s, trying local nginx"
+              curl -fsS -o /dev/null http://127.0.0.1/
+            fi
             # MCP via host nginx (n8n entrypoint, port stays 8765 forever)
             code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8765/mcp || true)
             # 406 expected for plain GET (MCP demands SSE Accept header); means nginx reached MCP.
@@ -975,4 +1179,29 @@ jobs:
         if: steps.smtp.outputs.configured != 'true'
         run: |
           echo "Email notification skipped: set SMTP_SERVER, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, OWNER_EMAIL secrets."
+
+  # Makes the `ci` label a one-shot trigger rather than a standing state: the
+  # instant a `pull_request labeled` event with label `ci` fires (which is
+  # also what let every other job above run this time), this job removes the
+  # label again. GitHub fires a fresh `labeled` event every time the label is
+  # ADDED, even if it was already present and removed since, so the
+  # orchestrator re-labels the PR to re-run CI against its current head - a
+  # push alone never does, per the trigger comment above. `always()` plus no
+  # `needs` means this runs independently of whether the gated jobs above
+  # passed or failed; the label removal itself must not block on their
+  # result.
+  release-ci-label:
+    name: Release ci label (one-shot trigger)
+    runs-on: ubuntu-latest
+    if: always() && github.event_name == 'pull_request' && github.event.label.name == 'ci'
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Remove ci label so a future add re-triggers CI
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr edit "${{ github.event.pull_request.number }}" \
+            --repo "${{ github.repository }}" \
+            --remove-label ci
 

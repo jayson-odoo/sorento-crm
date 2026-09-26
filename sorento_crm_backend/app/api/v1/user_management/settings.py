@@ -3,7 +3,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from starlette.datastructures import UploadFile as StarletteUploadFile
 from sqlalchemy.orm import Session
-from typing import Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field
 from app.database import get_db
 from app.dependencies import get_current_user, require_permission
@@ -79,6 +79,9 @@ class SystemSettingUpdate(BaseModel):
     # the new model's clothes. Both must appear here AND in the GET dict below.
     deferred_delete_seconds: Optional[int] = Field(None, ge=1, le=600)
     deferred_action_seconds: Optional[int] = Field(None, ge=1, le=600)
+    # r9 D10. Zero is meaningful here, unlike the countdowns above: it turns the
+    # auto-collect sweep off and leaves the hand-over waiting for a person.
+    price_tag_auto_collect_days: Optional[int] = Field(None, ge=0, le=90)
     n8n_attachment_webhook_url: Optional[str] = None
     n8n_crm_chat_outbound_webhook_url: Optional[str] = None
     n8n_stock_inquiry_revise_webhook_url: Optional[str] = None
@@ -148,7 +151,15 @@ class SystemSettingUpdate(BaseModel):
     media_sync_wait_seconds: Optional[int] = Field(None, ge=5, le=90)
     media_extraction_timeout_seconds: Optional[int] = Field(None, ge=5, le=110)
     media_max_entities: Optional[int] = Field(None, ge=1, le=100)
+    # How long the low stock report route holds a chat turn open before it answers
+    # `pending` and leaves delivery to the worker push (PLAN-low-stock-report S5, AC-43).
+    # The same 5..90 band the media wait carries, and for the same reason: a turn held
+    # longer than the chatbot's own queue-wait budget is a turn nobody is waiting on.
+    low_stock_sync_wait_seconds: Optional[int] = Field(None, ge=5, le=90)
     chatbot_stock_denial_enabled: Optional[bool] = None
+    # PLAN-local-buy-routing-toggle.md: local-supplier Buy routing is a switch, off
+    # by default. Off means the rule does not run at all (no pill, every Buy raises).
+    local_buy_routing_enabled: Optional[bool] = None
     # AC-304 (D5): the unsupported-domain list. `List[str]`, so an owner cannot save a
     # bare string that would then be iterated one CHARACTER at a time by the route's
     # membership test.
@@ -156,6 +167,10 @@ class SystemSettingUpdate(BaseModel):
     # A7 (chatbot-growth-r1): the cross-domain probe ladder, per origin domain -
     # {"inventory": ["incoming", "purchase_order"], "incoming": ["inventory"]} by default.
     chatbot_crossdomain_ladder: Optional[Dict[str, List[str]]] = None
+    # Chatbot turn re-architecture (AC-1502): the tier order, one copy.
+    chatbot_tier_order: Optional[List[str]] = None
+    # Chatbot turn re-architecture (AC-1513): the Memory card, one JSONB.
+    chatbot_memory: Optional[Dict[str, Any]] = None
     # Which chatbot lanes the CRM may FINISH, by `branch_kind`. `[]` (the default) means
     # none, and every turn delegates to n8n exactly as today. Validated as a list of
     # strings only: an unknown branch kind is the ENGINE's problem to ignore-and-warn, not
@@ -166,6 +181,15 @@ class SystemSettingUpdate(BaseModel):
     # above - they must appear HERE and in the GET dict, because both are manual.
     chatbot_business_lane_enabled: Optional[bool] = None
     chatbot_ordering_enabled: Optional[bool] = None
+    # Price tag packages (D2): the product classes a request line is WARNED about
+    # when it reaches marketing without its catalogue package. Same rule as every
+    # block above - it must appear HERE and in the GET dict, because both are manual.
+    price_tag_guarded_classes: Optional[list[str]] = None
+    # PLAN-oi-request-cs-reserve.md section 6c (F1): the reserve dialog's own default
+    # Location, owner-configurable. `null` clears it back to "no configured default"
+    # (the dialog then falls back to the row's own site pool, R3). Same rule as every
+    # block above - it must appear HERE and in the GET dict, because both are manual.
+    oi_reserve_default_pool_warehouse_id: Optional[str] = None
 
 
 class ChatbotLane(BaseModel):
@@ -189,7 +213,7 @@ class SmtpTestResult(BaseModel):
 class AppConfigResponse(BaseModel):
     """The non-sensitive slice of the system settings singleton.
 
-    Six fields, and the model is what makes "and nothing else" enforceable:
+    A short list, and the model is what makes "and nothing else" enforceable:
     anything not declared here is dropped on serialization rather than leaking
     because a dict builder grew a line. Do NOT extend it - see the route below.
     """
@@ -200,6 +224,14 @@ class AppConfigResponse(BaseModel):
     purchase_request_default_approver_email: Optional[str] = None
     sponsorship_form_default_approver_user_id: Optional[str] = None
     sponsorship_form_default_approver_email: Optional[str] = None
+    #: r9 D10. A number of days, read by the price tag detail card.
+    price_tag_auto_collect_days: Optional[int] = None
+    #: PLAN-oi-request-cs-reserve.md section 6c (F1): the reserve dialog's own default
+    #: Location must reach every `projects.order_inquiries.reserve` holder (Eling, CS),
+    #: who does not hold `user_management.settings.view` - the same reason
+    #: `price_tag_auto_collect_days` is here. A warehouse id, never rendered as text -
+    #: only matched against the dialog's own resolved pool options.
+    oi_reserve_default_pool_warehouse_id: Optional[str] = None
 
 
 @router.get("/")
@@ -276,6 +308,13 @@ async def get_settings(
                     getattr(settings, "deferred_action_seconds", 5) or 5
                     if settings
                     else 5
+                ),
+                # A new settings column reaches the FE only if it is in this
+                # manual dict too (LESSONS).
+                "price_tag_auto_collect_days": (
+                    getattr(settings, "price_tag_auto_collect_days", 7)
+                    if settings
+                    else 7
                 ),
                 "takeover_cooldown_seconds": (
                     getattr(settings, "takeover_cooldown_seconds", 60) if settings else None
@@ -376,12 +415,28 @@ async def get_settings(
                 "media_sync_wait_seconds": getattr(settings, "media_sync_wait_seconds", 30) if settings else None,
                 "media_extraction_timeout_seconds": getattr(settings, "media_extraction_timeout_seconds", 45) if settings else None,
                 "media_max_entities": getattr(settings, "media_max_entities", 10) if settings else None,
+                # PLAN-low-stock-report S5 (AC-43/AC-48): in BOTH manual builders, or the
+                # System Settings screen never sees the column at all.
+                "low_stock_sync_wait_seconds": getattr(settings, "low_stock_sync_wait_seconds", 40) if settings else None,
                 "chatbot_stock_denial_enabled": getattr(settings, "chatbot_stock_denial_enabled", False) if settings else None,
+                # PLAN-local-buy-routing-toggle.md: BOTH manual builders, or the setting
+                # never reaches the General settings screen at all.
+                "local_buy_routing_enabled": getattr(settings, "local_buy_routing_enabled", False) if settings else None,
                 "chatbot_unsupported_domains": getattr(settings, "chatbot_unsupported_domains", None) if settings else None,
                 "chatbot_crossdomain_ladder": getattr(settings, "chatbot_crossdomain_ladder", None) if settings else None,
+                "chatbot_tier_order": getattr(settings, "chatbot_tier_order", None) if settings else None,
+                "chatbot_memory": getattr(settings, "chatbot_memory", None) if settings else None,
                 "chatbot_completed_lanes": getattr(settings, "chatbot_completed_lanes", None) or [] if settings else None,
                 "chatbot_business_lane_enabled": getattr(settings, "chatbot_business_lane_enabled", False) if settings else None,
                 "chatbot_ordering_enabled": getattr(settings, "chatbot_ordering_enabled", False) if settings else None,
+                "price_tag_guarded_classes": getattr(settings, "price_tag_guarded_classes", None) or [] if settings else None,
+                # PLAN-oi-request-cs-reserve.md section 6c (F1): BOTH manual builders,
+                # or the setting never reaches the General settings screen at all.
+                "oi_reserve_default_pool_warehouse_id": (
+                    getattr(settings, "oi_reserve_default_pool_warehouse_id", None)
+                    if settings
+                    else None
+                ),
                 "smtp": smtp_response,
             } if settings else None,
             "roles": [{"id": r.id, "name": r.name} for r in roles]
@@ -427,6 +482,20 @@ async def get_app_config(
             purchase_request_default_approver_email=user_pr.email if user_pr else None,
             sponsorship_form_default_approver_user_id=sf_uid,
             sponsorship_form_default_approver_email=user_sf.email if user_sf else None,
+            # r9 D10: the CRM price tag card says when a hand-over auto-collects,
+            # and marketing does not hold `user_management.settings.view`. A
+            # number of days is not sensitive.
+            price_tag_auto_collect_days=(
+                getattr(settings, "price_tag_auto_collect_days", 7) if settings else 7
+            ),
+            # PLAN-oi-request-cs-reserve.md section 6c (F1): the reserve dialog's own
+            # default pool must reach every `projects.order_inquiries.reserve` holder,
+            # who does not hold `user_management.settings.view`.
+            oi_reserve_default_pool_warehouse_id=(
+                getattr(settings, "oi_reserve_default_pool_warehouse_id", None)
+                if settings
+                else None
+            ),
         )
     except Exception as e:
         raise handle_internal_error(str(e))
@@ -511,6 +580,36 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
             update_data["default_uom_id"] = uid_clean
         else:
             update_data["default_uom_id"] = None
+
+    # PLAN-oi-request-cs-reserve.md section 6c (F1): the reserve dialog's own default
+    # Location must be an ACTIVE POOL - a bare warehouse code, no `-SUFFIX` group and no
+    # `pool_warehouse_id` of its own naming another warehouse as ITS pool. 422, not 400
+    # (the sibling id fields above are 400): this is a shape refusal about WHAT KIND of
+    # warehouse was named, the same family as the other 422s in this function.
+    if "oi_reserve_default_pool_warehouse_id" in update_data:
+        wid = update_data["oi_reserve_default_pool_warehouse_id"]
+        if wid is not None and str(wid).strip():
+            from app.models.inventory import Warehouse
+            from app.services.scm.group_netting import group_of_warehouse_code
+
+            wid_clean = str(wid).strip()
+            warehouse = (
+                db.query(Warehouse)
+                .filter(Warehouse.id == wid_clean, Warehouse.is_active.is_(True))
+                .first()
+            )
+            is_group_member = (
+                warehouse is not None
+                and group_of_warehouse_code(warehouse.warehouse_code) is not None
+            )
+            if warehouse is None or is_group_member:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Choose an active site pool, not a group warehouse.",
+                )
+            update_data["oi_reserve_default_pool_warehouse_id"] = wid_clean
+        else:
+            update_data["oi_reserve_default_pool_warehouse_id"] = None
 
     for col in (
         "purchase_request_default_approver_user_id",
@@ -630,14 +729,45 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
                 ),
             )
 
+    # `chatbot_memory` is one JSONB carrying four named keys (AC-1513). An unknown key
+    # would be stored, returned and read by nobody, and the card that was meant to set it
+    # would read as broken with no error anywhere - the same silent failure the
+    # `chatbot_completed_lanes` check above exists for. A key set is validated, not the
+    # values: those are the owner's to get wrong and fix.
+    if update_data.get("chatbot_memory") is not None:
+        from app.modules.chatbot.lane_vocabulary import CHATBOT_MEMORY_KEYS
+
+        memory = update_data["chatbot_memory"]
+        if not isinstance(memory, dict):
+            raise HTTPException(
+                status_code=422, detail="chatbot_memory must be an object."
+            )
+        unknown_keys = sorted(set(memory) - set(CHATBOT_MEMORY_KEYS))
+        if unknown_keys:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "chatbot_memory does not carry "
+                    + ", ".join(unknown_keys)
+                    + ". Its keys are: "
+                    + ", ".join(CHATBOT_MEMORY_KEYS)
+                    + "."
+                ),
+            )
+
     # The chatbot columns are NOT NULL with a default, so an explicit `null` in the body
     # means "reset to the default" - not a null write. Without this the loop below sends
     # NULL into a NOT NULL column and the PUT 500s at commit, which reads to the caller as
     # an outage rather than as the clear it asked for. The defaults repeat
     # `SystemSetting`'s own (`app/models/user.py`), which is the source of truth.
-    from app.modules.chatbot.lane_vocabulary import default_unsupported_domains
+    from app.modules.chatbot.lane_vocabulary import default_chatbot_memory, default_tier_order, default_unsupported_domains
 
     _CHATBOT_COLUMN_DEFAULTS: dict[str, object] = {
+        # Not a chatbot column, but it has the identical shape and the identical
+        # failure: NOT NULL with a default, so an explicit `null` here would send
+        # NULL into it and 500 at commit. An empty LIST is a legitimate answer
+        # (warn about nothing) and is written as sent; only `null` resets.
+        "price_tag_guarded_classes": ["Bathroom Furniture", "Kitchen Sink"],
         # NOT a literal (AC-931): read from the chatbot module's own doorway, which
         # projects it off `contracts.DOMAIN_SPEC`. This copy is why the doorway exists -
         # A6 unblocked `spo_allocation` in route.py and in the migration and this third
@@ -646,6 +776,7 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
         "chatbot_unsupported_domains": default_unsupported_domains(),
         "chatbot_completed_lanes": [],
         "chatbot_stock_denial_enabled": False,
+        "local_buy_routing_enabled": False,
         "chatbot_business_lane_enabled": False,
         "chatbot_ordering_enabled": False,
         # A7 (chatbot-growth-r1): repeats SystemSetting.chatbot_crossdomain_ladder's own
@@ -654,6 +785,13 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
             "inventory": ["incoming", "purchase_order"],
             "incoming": ["inventory"],
         },
+        # Chatbot turn re-architecture (AC-1502): repeats `SystemSetting.
+        # chatbot_tier_order`'s own default (app/models/user.py), through the same
+        # doorway `chatbot_unsupported_domains` above uses.
+        "chatbot_tier_order": default_tier_order(),
+        # AC-1513: repeats `SystemSetting.chatbot_memory`'s own default through the
+        # same doorway, so an explicit null on the form resets the whole card.
+        "chatbot_memory": default_chatbot_memory(),
     }
     for column, default in _CHATBOT_COLUMN_DEFAULTS.items():
         if column in update_data and update_data[column] is None:

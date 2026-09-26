@@ -8,8 +8,8 @@ import type { AmendmentUnmatched } from '../../_shared/types/projectSalesOrder.t
 /**
  * Rows that could not be matched between the two versions.
  *
- * This section renders whether or not there is anything in it. A delta that quietly drops a
- * phase it could not pair up is a delta that lies, and the reviewer has no way of knowing.
+ * This section renders whether or not there is anything in it. A delta that quietly drops an
+ * area it could not pair up is a delta that lies, and the reviewer has no way of knowing.
  */
 export function AmendmentUnmatchedSection({ unmatched }: { unmatched: AmendmentUnmatched[] }) {
   return (
@@ -31,7 +31,7 @@ export function AmendmentUnmatchedSection({ unmatched }: { unmatched: AmendmentU
             className="rounded-lg border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground"
             data-testid="unmatched-empty"
           >
-            Every phase and product matched across the two versions.
+            Every area and product matched across the two versions.
           </p>
         ) : (
           unmatched.map((entry, index) => (

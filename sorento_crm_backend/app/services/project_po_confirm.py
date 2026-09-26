@@ -91,6 +91,63 @@ from app.services.project_po_reading import (  # noqa: F401 - shared vocabulary
 
 logger = logging.getLogger(__name__)
 
+# How many line numbers the blocking message spells out before it says "and N more".
+_BLOCKING_LINES_NAMED = 3
+
+
+def blocking_annotations(
+    annotations: List[ProjectPOAnnotation], lines: List[ProjectPOLine]
+) -> List[ProjectPOAnnotation]:
+    """The handwritten notes that hold Confirm: still proposed AND naming a line on this version.
+
+    The one rule for "a note still needs a decision". The Lines tab reads the same one
+    (``blockingNotes`` in ``POIntakeLinesGrid.tsx``): a note is reviewed from the note icon on
+    the line it names, so a note naming no line on this version (a signature, "Continue To
+    Next Page", delivery instructions) has nowhere on screen to be reviewed and never blocks.
+    Owner re-test 25 Sep 2026: the gate counting those too refused Confirm over 11 notes the
+    screen no longer showed.
+    """
+    line_nos = {line.line_no for line in lines}
+    return [
+        annotation
+        for annotation in annotations
+        if annotation.state == ANNOTATION_PROPOSED
+        and line_nos.intersection(_int_list(annotation.refers_to_lines))
+    ]
+
+
+def blocking_notes_message(
+    blocking: List[ProjectPOAnnotation], lines: List[ProjectPOLine]
+) -> str:
+    """What the reader does next, on the Lines tab: which lines, and where to click."""
+    line_nos = {line.line_no for line in lines}
+    named = sorted(
+        {
+            line_no
+            for annotation in blocking
+            for line_no in _int_list(annotation.refers_to_lines)
+            if line_no in line_nos
+        }
+    )
+    shown = [f"line {line_no}" for line_no in named[:_BLOCKING_LINES_NAMED]]
+    rest = len(named) - len(shown)
+    if rest:
+        listed = f"{', '.join(shown)} and {rest} more line{'s' if rest > 1 else ''}"
+    elif len(shown) > 1:
+        listed = f"{', '.join(shown[:-1])} and {shown[-1]}"
+    else:
+        listed = shown[0]
+    listed = listed[0].upper() + listed[1:]
+    if len(named) == 1:
+        noun = "a handwritten note" if len(blocking) == 1 else "handwritten notes"
+        return (
+            f"{listed} has {noun} to accept or reject. Open the note icon on that line."
+        )
+    return (
+        f"{listed} have handwritten notes to accept or reject. "
+        "Open the note icon on each line."
+    )
+
 
 class POConfirmationMixin:
     """Requires ``self.db`` and the lifecycle lookups."""
@@ -123,24 +180,16 @@ class POConfirmationMixin:
                 code="po_version_not_extracted",
             )
 
-        pending = [
-            annotation
-            for annotation in self._annotations(version.id)
-            if annotation.state == ANNOTATION_PROPOSED
-        ]
-        if pending:
+        lines = self._lines(version.id)
+        blocking = blocking_annotations(self._annotations(version.id), lines)
+        if blocking:
             raise AppException(
                 status_code=409,
-                message=(
-                    f"{len(pending)} handwritten note"
-                    f"{'s' if len(pending) > 1 else ''} on this document still need a "
-                    "decision. Accept, edit or reject each card first -- a cancellation "
-                    "written in pencil is the only place some of these lines exist."
-                ),
+                message=blocking_notes_message(blocking, lines),
                 code="po_version_annotations_pending",
             )
 
-        lines = self._lines(version.id)
+
         live = [line for line in lines if not line.is_cancelled]
         if not live:
             raise AppException(

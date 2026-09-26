@@ -18,6 +18,26 @@ Two deliberate choices:
     so deriving thousands of codes inline would run the whole catalogue's derivation
     inside the import's own commit hook.
 
+A fourth choice, added after a live deadlock (RQ worker wedged 14 minutes on a `FOR
+UPDATE` against its own caller's row lock - `tests/test_spec_listener_savepoint.py` pins
+the repro):
+
+  * the re-derive waits for the session's OUTERMOST commit, never a SAVEPOINT release.
+    `SessionTransaction.commit()` dispatches `Session.after_commit` whenever
+    `self._parent is None OR self.nested` - i.e. on releasing a SAVEPOINT too, not only
+    on a real top-level commit. `MasterIngestService` wraps every record in
+    `db.begin_nested()`, so releasing one record's savepoint used to fire this listener
+    while the batch's own outer transaction (and the row lock its UPDATE took) was still
+    open - `_rederive_inline` then opened a fresh session whose `FOR UPDATE` waited on a
+    lock its own caller held. Pending codes are now kept per transaction level (in
+    `session.info[_PENDING_KEY]`, keyed by the `SessionTransaction` object itself) and
+    folded upward on each SAVEPOINT's own commit; only the true outermost commit - the
+    `SessionTransaction` `_on_commit` resolves (`session.get_nested_transaction() or
+    session.get_transaction()`) has `parent is None` - pops the lot and fires. A
+    rollback drops only the level it ends: a SAVEPOINT rollback
+    discards that record's own codes without disturbing an earlier sibling record's
+    already-folded-up ones; a rollback of the outermost transaction drops everything.
+
 Kept out of `embedding_change_listener` on purpose: different concern, and that module
 is under active change on other branches.
 """
@@ -26,7 +46,7 @@ from __future__ import annotations
 import logging
 
 from sqlalchemy import event, inspect
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, SessionTransaction
 
 from app.models.base import company_scope
 from app.models.product import Product
@@ -58,10 +78,22 @@ def _derivation_input_changed(target: Product) -> bool:
     return any(state.attrs[field].history.has_changes() for field in DERIVATION_INPUTS)
 
 
+def _current_transaction(session: Session) -> SessionTransaction | None:
+    """The innermost transaction in progress - a SAVEPOINT if one is open, else the
+    session's own root transaction. `None` only if nothing has begun yet, which does
+    not happen mid-flush (any write already autobegan one).
+    """
+    return session.get_nested_transaction() or session.get_transaction()
+
+
 def _collect(session: Session, target: Product) -> None:
     if not getattr(target, "product_code", None):
         return
-    session.info.setdefault(_PENDING_KEY, set()).add(target.product_code)
+    transaction = _current_transaction(session)
+    if transaction is None:
+        return
+    buckets: dict[SessionTransaction, set[str]] = session.info.setdefault(_PENDING_KEY, {})
+    buckets.setdefault(transaction, set()).add(target.product_code)
 
 
 def enqueue_spec_embedding(db: Session, product_id: str) -> None:
@@ -182,8 +214,48 @@ def register_product_spec_listeners() -> None:
 
     @event.listens_for(Session, "after_commit")
     def _on_commit(session):  # noqa: ANN001
-        codes = session.info.pop(_PENDING_KEY, None)
-        if codes:
-            rederive_codes(codes)
+        buckets: dict[SessionTransaction, set[str]] | None = session.info.get(_PENDING_KEY)
+        if not buckets:
+            return
+        # `close()` (which would drop this transaction from
+        # `session.get_nested_transaction()`) has not run yet, so a SAVEPOINT's own
+        # commit still reports itself here - that is exactly the signal that tells a
+        # savepoint release apart from the real outermost commit.
+        transaction = session.get_nested_transaction() or session.get_transaction()
+        codes = buckets.pop(transaction, None) if transaction is not None else None
+        if transaction is not None and transaction.parent is not None:
+            # A SAVEPOINT release, not the outermost commit - the caller's own
+            # transaction (and any row lock it holds) is still open. Fold this
+            # record's codes into the enclosing level and keep waiting.
+            if codes:
+                buckets.setdefault(transaction.parent, set()).update(codes)
+            return
+        # The outermost commit (or no active transaction to fold into at all): pop
+        # `_PENDING_KEY` UNCONDITIONALLY, before checking whether THIS transaction's own
+        # bucket had any codes - this sweeps this level AND any ORPHAN bucket a session
+        # path that closed a transaction level some other way (no matching commit/
+        # rollback at that level) may have left behind. An orphan is DROPPED, never
+        # fired: it belongs to a level that ended without its own commit, so whatever it
+        # would re-derive was never made durable (N1, opus review, fix round 3).
+        session.info.pop(_PENDING_KEY, None)
+        if not codes:
+            return
+        rederive_codes(codes)
+
+    @event.listens_for(Session, "after_rollback")
+    def _on_rollback(session):  # noqa: ANN001
+        buckets: dict[SessionTransaction, set[str]] | None = session.info.get(_PENDING_KEY)
+        if not buckets:
+            return
+        transaction = session.get_nested_transaction() or session.get_transaction()
+        if transaction is None:
+            return
+        buckets.pop(transaction, None)
+        if transaction.parent is None:
+            # The outermost transaction rolled back - nothing any of its savepoints
+            # collected (whether still pending or already folded up here) survives.
+            session.info.pop(_PENDING_KEY, None)
+        elif not buckets:
+            session.info.pop(_PENDING_KEY, None)
 
     _REGISTERED = True

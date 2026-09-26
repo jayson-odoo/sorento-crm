@@ -56,12 +56,14 @@ vi.mock('@/components/common/RespondChatList', () => ({
     mediaProxy,
     searchController,
     onLoadOlder,
+    maxHeightClass,
   }: {
     items: unknown[];
     comments?: unknown[];
     mediaProxy?: unknown;
     searchController?: unknown;
     onLoadOlder?: () => void;
+    maxHeightClass?: string;
   }) => (
     <div
       data-testid="chat-list"
@@ -69,6 +71,7 @@ vi.mock('@/components/common/RespondChatList', () => ({
       data-has-media-proxy={mediaProxy ? 'yes' : 'no'}
       data-has-search={searchController ? 'yes' : 'no'}
       data-has-scrollback={onLoadOlder ? 'yes' : 'no'}
+      data-max-height={maxHeightClass ?? ''}
     >
       {items.length} message(s)
     </div>
@@ -262,5 +265,29 @@ describe('SlaTrackingChatRecords (AC-N8)', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Refresh messages' }));
     expect(refetch).toHaveBeenCalled();
+  });
+
+  // R3: the popup thread flex-fills the sheet, like the worklist drawer.
+  it('AC-CP-5: showAsPopup gives the thread the flex-fill treatment, never the 55vh cap', () => {
+    render(<SlaTrackingChatRecords trackingId="t1" respondInboxUrl="https://respond.io/x" showAsPopup />);
+
+    const panel = screen.getByTestId('ticket-conversation-panel');
+    // Fix round 5: `min-h-40`, not `min-h-0` - the floor has to sit on this
+    // root too, not only the inner scroll box (AC-CP-B1 375px overlap).
+    expect(panel.className).toContain('min-h-40');
+    expect(panel.className).toContain('flex-1');
+
+    // Fix round 6: the INNER scroll box no longer floors itself - the root
+    // does (above), and a second, equal floor on the inner box overflowed
+    // the root by exactly the header/search chrome's height.
+    const maxHeight = screen.getByTestId('chat-list').getAttribute('data-max-height') ?? '';
+    expect(maxHeight).toBe('min-h-0 flex-1');
+    expect(maxHeight).not.toContain('max-h-[55vh]');
+  });
+
+  it('AC-CP-6: the inline (non-popup) mount keeps the fixed 400px cap', () => {
+    render(<SlaTrackingChatRecords trackingId="t1" respondInboxUrl="https://respond.io/x" />);
+
+    expect(screen.getByTestId('chat-list')).toHaveAttribute('data-max-height', 'max-h-[400px]');
   });
 });

@@ -9,6 +9,7 @@ import {
   ACK_FILTER_OPTIONS,
   ACK_LABELS,
   ackStateOf,
+  bundledHostChangeLines,
   isBulkRejectable,
   isRejectable,
   previousValueOf,
@@ -42,21 +43,25 @@ describe('ACK_LABELS (R7: Confirm replaced Acknowledge everywhere a person can s
   });
 });
 
-describe('ACK_ANY / ACK_FILTER_OPTIONS (S3, review of PR #471: no "To confirm" option)', () => {
+describe('ACK_ANY / ACK_FILTER_OPTIONS (PLAN-oi-confirm-per-so, AC-CF-13: G4/G5 reversed)', () => {
   it('ACK_ANY is the URL word for "show me everything"', () => {
     expect(ACK_ANY).toBe('all');
   });
 
-  it('offers acknowledged, changed and rejected only - a row is born acknowledged now', () => {
+  it('offers To confirm, Confirmed, Changed, Rejected, All - a row is born awaiting again', () => {
     expect(ACK_FILTER_OPTIONS.map((option) => option.value)).toEqual([
+      'to_confirm',
       'acknowledged',
       'changed',
       'rejected',
+      'all',
     ]);
     expect(ACK_FILTER_OPTIONS.map((option) => option.label)).toEqual([
+      'To confirm',
       'Confirmed',
       'Changed',
       'Rejected',
+      'All',
     ]);
   });
 });
@@ -133,5 +138,87 @@ describe('previousValueOf', () => {
 
   it('ignores the note entirely - it is prose, not a value', () => {
     expect(previousValueOf({ note: 'Was 10 on 2026-08-25' } as never)).toBeNull();
+  });
+});
+
+describe('bundledHostChangeLines (PLAN-oi-bundled-row-host-change.md)', () => {
+  it('returns null for a row that carries no bundled_host_changes at all', () => {
+    expect(bundledHostChangeLines({})).toBeNull();
+    expect(bundledHostChangeLines({ bundled_host_changes: null })).toBeNull();
+    expect(bundledHostChangeLines({ bundled_host_changes: [] })).toBeNull();
+  });
+
+  it('reads a hosts own Was/Now, in the order the entries came in', () => {
+    expect(
+      bundledHostChangeLines({
+        bundled_host_changes: [
+          {
+            item_code: 'SRTWCX8605-S-RL-PJ',
+            qty: '280',
+            delivery_date: '2027-03-01',
+            previous_qty: '182',
+            previous_delivery_date: '2026-06-01',
+          },
+        ],
+      }),
+    ).toEqual(['with SRTWCX8605-S-RL-PJ: Was 182 on 01/06/2026, now 280 on 01/03/2027']);
+  });
+
+  it('reads a live host with no Was of its own as "no change"', () => {
+    expect(
+      bundledHostChangeLines({
+        bundled_host_changes: [
+          {
+            item_code: 'SRTWCY8605-PJ',
+            qty: '50',
+            delivery_date: '2026-05-01',
+            previous_qty: null,
+            previous_delivery_date: null,
+          },
+        ],
+      }),
+    ).toEqual(['with SRTWCY8605-PJ: 50 on 01/05/2026, no change']);
+  });
+
+  it('reads a host with no live row of its own as "no open row"', () => {
+    expect(
+      bundledHostChangeLines({
+        bundled_host_changes: [
+          {
+            item_code: 'SRTWCZ',
+            qty: null,
+            delivery_date: null,
+            previous_qty: null,
+            previous_delivery_date: null,
+          },
+        ],
+      }),
+    ).toEqual(['with SRTWCZ: no open row']);
+  });
+
+  it('lists every host, one line each, in the order the server sent them', () => {
+    expect(
+      bundledHostChangeLines({
+        bundled_host_changes: [
+          {
+            item_code: 'X',
+            qty: '280',
+            delivery_date: '2027-03-01',
+            previous_qty: '182',
+            previous_delivery_date: '2026-06-01',
+          },
+          {
+            item_code: 'Y',
+            qty: '50',
+            delivery_date: '2026-05-01',
+            previous_qty: null,
+            previous_delivery_date: null,
+          },
+        ],
+      }),
+    ).toEqual([
+      'with X: Was 182 on 01/06/2026, now 280 on 01/03/2027',
+      'with Y: 50 on 01/05/2026, no change',
+    ]);
   });
 });

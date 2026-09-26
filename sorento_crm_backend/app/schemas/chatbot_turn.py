@@ -41,6 +41,12 @@ class ChatbotTurnResponse(BaseModel):
     # The answer the turn returned: `{ctx, item, actions}` today, `{reply, actions}` from
     # S3. Null on a turn that failed or is still running.
     response: dict[str, Any] | None = None
+    # The photo or voice note this turn read (chatbot media-into-turn, S4). Built by
+    # the route from the turn's own `media_intake` trace stage - never an ORM column,
+    # so a plain `model_validate(row)` never fills it; the route merges it in by hand
+    # (`_media_block`). Null on a text turn. Declared here or `response_model` drops
+    # it even when the route DOES set it (the lesson this file's own docstring names).
+    media: dict[str, Any] | None = None
 
 
 class ChatbotTurnDetailResponse(ChatbotTurnResponse):
@@ -159,6 +165,12 @@ class ConsoleTurnResponse(BaseModel):
     # `understood` stage's own fact, the same value the trace screen shows), so each bot
     # bubble can wear it. None when the turn never reached the parser.
     prompt_version: int | None = None
+    # The turn's own raw `TurnResult.actions` (loosely typed on purpose, like
+    # `ChatbotTurnResponse.response` above - it is the engine's shape, not this
+    # endpoint's own). Carried through so the console can render a `send_attachments`
+    # action's own file list under the reply it belongs to, the same source
+    # `ChatbotTurn.response.actions` already gives the Chat History screen.
+    actions: list[dict[str, Any]] | None = None
 
 
 class ConsolePromptVersion(BaseModel):

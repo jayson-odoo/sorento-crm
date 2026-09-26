@@ -25,7 +25,7 @@ import os
 import tempfile
 import time
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any, Iterable, Literal
 
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -42,6 +42,7 @@ from app.services.ai_extract.form_schema_registry import (
     ExtractFieldSpec,
     get_form_schema,
 )
+from app.services.entity_resolver import resolve_references
 from app.services.error_handler import AppException
 from app.services.llm_provider import (
     ChatResult,
@@ -96,6 +97,15 @@ def _form_has_line_items(form_key: str) -> bool:
     return form_key in FORMS_WITH_LINE_ITEMS
 
 
+def extract_prompt_key(form_key: str) -> str:
+    """The `PROMPT_KEYS` name for one form's own AI-extract system prompt
+    (PLAN price-tag-currency-token-extract-prompt, Slice B) - one key per
+    form key, so a production override on one form's prompt (the price tag
+    request's rule 8) never leaks into another form's extract.
+    """
+    return "ai_extract_" + form_key.replace(".", "_")
+
+
 # ---- Result schemas -------------------------------------------------------
 
 
@@ -112,6 +122,14 @@ class ExtractedProductLine(BaseModel):
     unit_price: float | None = None
     total: float | None = None
     notes: str | None = None
+    # D2: set when `product_code` resolved to exactly one company-scoped
+    # `product` or `product_set` row via `resolve_references` (exact tier
+    # only). `None` on no match AND on an ambiguous token - either way the
+    # caller has nothing to pin, and `product_code` keeps the raw extracted
+    # text so the dialog can show what was read.
+    match: Literal["product", "product_set"] | None = None
+    product_id: str | None = None
+    product_set_id: str | None = None
 
 
 class TokenUsage(BaseModel):
@@ -147,6 +165,11 @@ class ExtractFile:
 
 
 class AIExtractService:
+    # No price-tag / portal line ceiling exists to defer to for the resolver
+    # batch cap (`_resolve_product_codes`) - a plain sales order this long is
+    # not a real extract, so 100 is the bound.
+    _MAX_RESOLVE_CANDIDATES = 100
+
     def __init__(self, db: Session):
         self.db = db
 
@@ -699,38 +722,55 @@ class AIExtractService:
                 spec["multi"] = True
             field_specs.append(spec)
 
-        system = (
-            "You are an information-extraction assistant. The user uploads "
-            "documents (delivery orders, photos, message screenshots, PDFs). "
-            "Read every attachment and return a single JSON object whose top-level "
-            "keys are the form field names below. Rules: "
-            "(1) Omit any field you cannot find or are not confident about - "
-            "do not guess. "
-            "(2) For fields with a `lookup`, return ONLY one of the listed "
-            "option `value` strings, exactly. "
-            "(3) For `do_number` fields with `multi: true`, return an array of "
-            "strings. "
-            "(4) For `date` fields, use ISO-8601 (YYYY-MM-DD). "
-            "(5) For `fk_product`, return the closest-matching product_code "
-            "from the supplied examples; if nothing matches, return the raw "
-            "code as printed in the document. If multiple distinct product "
-            "codes apply, return them as a single comma-separated string "
-            "(e.g. \"TPE-9201, TPE-9203\") - never as a JSON array. "
-            "(6) For `text`, `textarea`, and `fk_customer` fields, if the "
-            "document shows multiple distinct values for the same field, "
-            "return them as a single comma-separated string. "
-            "(7) Never invent values. Never include explanations or prose."
-        )
-        line_items_clause = (
-            " Optionally include a top-level `products` array of "
-            "{product_code, product_name, quantity, unit_price, total, notes} "
-            "when the document lists line items. Only include `unit_price` and "
-            "`total` when the document actually shows them; omit otherwise."
-            if has_line_items
-            else " Do NOT include a top-level `products` array - this form has "
-            "no line-item table. Distinct product codes belong in the "
-            "`product_code` field as a comma-separated string."
-        )
+        # PLAN price-tag-currency-token-extract-prompt, Slice B: the system
+        # text is now PER FORM KEY, resolved from the prompt registry so it
+        # can be edited from System Management > AI Assistant without a
+        # deploy - a hardcoded string here had no key at all. A local import:
+        # this module must not import `ai_prompt_registry` at module scope,
+        # since that registry's own `_register_ai_extract_keys()` imports
+        # `extract_prompt_key` from here (call shape as
+        # `product_spec_understanding.py:552`).
+        from app.services.ai_prompt_registry import get_prompt
+
+        system = get_prompt(self.db, extract_prompt_key(form_key)).text
+        # Security review 16 Sep: a blank system prompt (a bad publish that
+        # wiped the production version, a bug in the registry's own fallback)
+        # must not send the model an LLM call with no rules at all - that
+        # answers SOMETHING, silently ungoverned, rather than failing loudly.
+        if not system or not system.strip():
+            raise AppException(
+                status_code=500,
+                message="AI extract prompt is not configured for this form.",
+                code="ai_extract_prompt_missing",
+            )
+        is_price_tag_form = form_key == "portal.price_tag_request"
+        if has_line_items and is_price_tag_form:
+            # S2 (PLAN-price-tag-r10.md, rule 9): the entry shape itself drops
+            # the fields a document never states for this form - how many
+            # tags marketing wants is decided later, never read off a DO or a
+            # photo. The word this clause must never use is spelled out in
+            # rule 9's own text, not repeated here, so a stray mention never
+            # regresses AC-S2-2's "not present anywhere" assertion.
+            line_items_clause = (
+                " Include a top-level `products` array of "
+                "{product_code, product_name, notes} "
+                "when the document lists line items (see rule 8). Do not state "
+                "how many of each are wanted or their prices - see rule 9."
+            )
+        elif has_line_items:
+            line_items_clause = (
+                " Include a top-level `products` array of "
+                "{product_code, product_name, quantity, unit_price, total, notes} "
+                "when the document lists line items"
+                ". Only include `unit_price` and `total` when the document "
+                "actually shows them; omit otherwise."
+            )
+        else:
+            line_items_clause = (
+                " Do NOT include a top-level `products` array - this form has "
+                "no line-item table. Distinct product codes belong in the "
+                "`product_code` field as a comma-separated string."
+            )
         user_text = (
             f"Form: {form_key}\n"
             f"Fields:\n{json.dumps(field_specs, ensure_ascii=False, indent=2)}\n\n"
@@ -828,11 +868,17 @@ class AIExtractService:
                         raw=raw, canonical=items, source="llm"
                     )
             elif f.kind == "fk_product":
+                # S6 (code review): a `fk_product` field names a PRODUCT, on
+                # a stock inquiry / purchase request form - never a set. The
+                # wider `{"product", "product_set"}` default is only for
+                # `_extract_products`'s own sales-order lines below.
                 if isinstance(raw, list):
+                    raw_codes = [str(x).strip() for x in raw if str(x).strip()]
+                    resolved = self._resolve_product_codes(
+                        raw_codes, allowed_entity_types=frozenset({"product"})
+                    )
                     codes = [
-                        self._canonical_product_code(str(x))
-                        for x in raw
-                        if str(x).strip()
+                        resolved[c][0] if c in resolved else c for c in raw_codes
                     ]
                     csv = ", ".join(c for c in codes if c)
                     if not csv:
@@ -842,12 +888,20 @@ class AIExtractService:
                         raw=raw, canonical=csv, source="product_master"
                     )
                 else:
-                    code = self._canonical_product_code(str(raw))
+                    raw_code = str(raw).strip()
+                    resolved = (
+                        self._resolve_product_codes(
+                            [raw_code], allowed_entity_types=frozenset({"product"})
+                        )
+                        if raw_code
+                        else {}
+                    )
+                    code = resolved[raw_code][0] if raw_code in resolved else raw_code
                     values[f.name] = code
                     per_field[f.name] = ExtractFieldMeta(
                         raw=raw,
                         canonical=code,
-                        source="product_master" if code != str(raw).strip() else "llm",
+                        source="product_master" if code != raw_code else "llm",
                     )
             elif f.kind == "date":
                 s = str(raw).strip()
@@ -931,47 +985,142 @@ class AIExtractService:
             return [p for p in parts if p]
         return []
 
-    def _canonical_product_code(self, raw: str) -> str:
-        code = raw.strip()
-        if not code:
-            return code
-        try:
-            row = (
-                self.db.query(Product.product_code)
-                .filter(Product.product_code.ilike(code))
-                .first()
-            )
-        except Exception:  # noqa: BLE001
-            return code
-        return row[0] if row else code
+    def _resolve_product_codes(
+        self,
+        codes: list[str],
+        *,
+        allowed_entity_types: frozenset[str] = frozenset({"product", "product_set"}),
+    ) -> dict[
+        str,
+        tuple[str, Literal["product", "product_set"] | None, str | None, str | None, str | None],
+    ]:
+        """codes -> (canonical_code, match, product_id, product_set_id,
+        display_name), `resolve_references` called once per 100-code chunk
+        (D1), exact tier only (`enable_prefix_fallback=False`,
+        `enable_embedding_fallback=False`): a prefix or semantic guess would
+        print a tag for a product the sheet never named. A code with no exact
+        match, or an ambiguous one (more than one scoped hit), is left out of
+        the map so the caller keeps the raw extracted text (D2). Company-scoped
+        by whatever `company_scope` the caller is already inside.
+
+        `allowed_entity_types` lets a caller (the scalar `fk_product` field
+        path below) narrow the match to `{"product"}` alone - a stock inquiry
+        / purchase request field names a PRODUCT, never a set, and the wider
+        default is only for `_extract_products`'s own sales-order lines.
+
+        Security review: `resolve_references` itself TRUNCATES its token list
+        to `max_candidates` (`tokens = tokens[:max_candidates]`) rather than
+        merely capping the cost of its own trigram "did you mean" pass over
+        the misses - so a flat cap silently dropped code 101 onward instead of
+        just bounding that pass. Chunked into batches of
+        `_MAX_RESOLVE_CANDIDATES` and resolved one call per chunk instead, so
+        every code is still answered and no single call runs the resolver's
+        alternatives pass over an unbounded batch (no line ceiling exists in
+        the price tag / portal code to defer to for the chunk size, and
+        `resolve_references` exposes no switch to skip that pass on its own -
+        simplest is to bound the batch, not add one).
+        """
+        cleaned = [c for c in (codes or []) if c]
+        if not cleaned:
+            return {}
+        out: dict[
+            str,
+            tuple[
+                str, Literal["product", "product_set"] | None, str | None, str | None, str | None
+            ],
+        ] = {}
+        for start in range(0, len(cleaned), self._MAX_RESOLVE_CANDIDATES):
+            chunk = cleaned[start : start + self._MAX_RESOLVE_CANDIDATES]
+            try:
+                result = resolve_references(
+                    self.db,
+                    chunk,
+                    allowed_entity_types=allowed_entity_types,
+                    enable_prefix_fallback=False,
+                    enable_embedding_fallback=False,
+                    max_candidates=len(chunk),
+                )
+            except Exception:
+                # A resolver failure must not turn an LLM extract that already
+                # cost real money into a 500 on the public route - every code
+                # in THIS chunk answers as the D2 "no match" shape (raw text,
+                # no ids) instead; the other chunks are unaffected.
+                logger.exception(
+                    "resolve_references failed during AI extract product matching"
+                )
+                continue
+            for tr in result.resolutions:
+                if not tr.resolved or len(tr.matches) != 1:
+                    continue
+                match = tr.matches[0]
+                # Re-review finding: `resolve_references` widens a `product`
+                # request to ALSO probe `product_set` internally (n8n relies
+                # on that widening elsewhere - `_expand_entity_types` in
+                # `entity_resolver.py`), so a caller that asked for
+                # `{"product"}` alone (the fk_product path, S6) still gets a
+                # `product_set` row back in `tr.matches` when that is the
+                # only thing that matched. The resolver's own D10b guard only
+                # uses this distinction to decide whether to compute "did you
+                # mean" alternatives - `tr.matches` itself is unfiltered.
+                # Filtered against THIS caller's own `allowed_entity_types`
+                # (not the resolver's internally-widened set), so a type the
+                # caller never asked for reads exactly like no match at all,
+                # not a match to something it has nowhere to send.
+                if match.entity_type not in allowed_entity_types:
+                    continue
+                if match.entity_type == "product":
+                    name = (match.display or {}).get("product_name")
+                    out[tr.token] = (match.canonical_code, "product", match.uuid, None, name)
+                elif match.entity_type == "product_set":
+                    name = (match.display or {}).get("name")
+                    out[tr.token] = (match.canonical_code, "product_set", None, match.uuid, name)
+        return out
 
     def _extract_products(self, parsed: dict[str, Any]) -> list[ExtractedProductLine]:
         raw = parsed.get("products")
         if not isinstance(raw, list):
             return []
-        out: list[ExtractedProductLine] = []
-        for item in raw:
-            if not isinstance(item, dict):
-                continue
-            code = str(item.get("product_code") or "").strip() or None
-            if code:
-                code = self._canonical_product_code(code)
-            def _coerce_float(raw: Any) -> float | None:
-                if raw is None or raw == "":
-                    return None
-                try:
-                    return float(raw)
-                except (TypeError, ValueError):
-                    return None
+        items = [item for item in raw if isinstance(item, dict)]
+        raw_codes = [str(item.get("product_code") or "").strip() for item in items]
+        resolved = self._resolve_product_codes([c for c in raw_codes if c])
 
+        def _coerce_float(raw: Any) -> float | None:
+            if raw is None or raw == "":
+                return None
+            try:
+                return float(raw)
+            except (TypeError, ValueError):
+                return None
+
+        out: list[ExtractedProductLine] = []
+        for item, raw_code in zip(items, raw_codes):
+            code: str | None = raw_code or None
+            match: Literal["product", "product_set"] | None = None
+            product_id: str | None = None
+            product_set_id: str | None = None
+            # S1 (code review): the CRM's own name on a resolved match, not
+            # the sales order's freeform description the LLM read off the
+            # page - the two drift (abbreviations, a customer's own wording),
+            # and the applied line's Item is what marketing/the salesperson
+            # reads back. A miss keeps the LLM text; there is nothing else to
+            # show for a code the resolver could not place.
+            llm_name = str(item.get("product_name") or "").strip() or None
+            product_name = llm_name
+            if raw_code and raw_code in resolved:
+                code, match, product_id, product_set_id, display_name = resolved[raw_code]
+                if display_name:
+                    product_name = display_name
             out.append(
                 ExtractedProductLine(
                     product_code=code,
-                    product_name=str(item.get("product_name") or "").strip() or None,
+                    product_name=product_name,
                     quantity=_coerce_float(item.get("quantity")),
                     unit_price=_coerce_float(item.get("unit_price")),
                     total=_coerce_float(item.get("total")),
                     notes=str(item.get("notes") or "").strip() or None,
+                    match=match,
+                    product_id=product_id,
+                    product_set_id=product_set_id,
                 )
             )
         return out

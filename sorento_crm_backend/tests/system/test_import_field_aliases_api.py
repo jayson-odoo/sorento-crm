@@ -176,3 +176,50 @@ def test_fields_list_is_built_from_the_readers_own_declared_fields(scm_app):
     # asks for these by name in `proforma_invoice_reader.py`) - never a hand-typed list.
     assert "item_code" in fields
     assert "qty" in fields
+
+
+def test_admin_create_allows_second_supplier_same_triple(scm_app):
+    """Round 3 (owner ruling A supersedes review round 3's own note in this route's
+    `create_import_field_alias`, which still says "matched on the TRIPLE alone,
+    regardless of supplier_id ... a second row on that same triple is not an override").
+    That comment is stale: the DB split uniqueness per-supplier (migration
+    `ifa_supplier_uniq`) specifically so a second supplier could hold its own row for a
+    header an earlier supplier had already claimed (R11) - but this route's own duplicate
+    check still queries `WHERE doc_type=... AND field=... AND alias=...` with NO
+    `supplier_id` filter, so it still 409s a second supplier's row today."""
+    client, db = _client(scm_app, view=True, edit=True)
+    _clear(db, "proforma_invoice")
+    from app.models.procurement import Supplier
+
+    supplier_a = Supplier(
+        id=_u(), supplier_code=f"{MARKER}-A-{uuid.uuid4().hex[:6]}",
+        supplier_name=f"{MARKER} supplier A", is_active=True,
+    )
+    supplier_b = Supplier(
+        id=_u(), supplier_code=f"{MARKER}-B-{uuid.uuid4().hex[:6]}",
+        supplier_name=f"{MARKER} supplier B", is_active=True,
+    )
+    db.add_all([supplier_a, supplier_b])
+    db.flush()
+
+    def _payload(supplier_id):
+        return {
+            "doc_type": "proforma_invoice", "field": "cartons", "alias": f"{MARKER}_件数",
+            "supplier_id": supplier_id,
+        }
+
+    r_a = client.post(URL, json=_payload(supplier_a.id))
+    assert r_a.status_code == 201, r_a.text
+
+    r_b = client.post(URL, json=_payload(supplier_b.id))
+    assert r_b.status_code == 201, r_b.text
+
+    # Shared (no supplier) twice: the second IS a duplicate of the first shared row.
+    r_shared_1 = client.post(URL, json=_payload(None))
+    assert r_shared_1.status_code == 201, r_shared_1.text
+    r_shared_2 = client.post(URL, json=_payload(None))
+    assert r_shared_2.status_code == 409, r_shared_2.text
+
+    # The SAME supplier saving the SAME triple twice: that IS a duplicate.
+    r_a_again = client.post(URL, json=_payload(supplier_a.id))
+    assert r_a_again.status_code == 409, r_a_again.text

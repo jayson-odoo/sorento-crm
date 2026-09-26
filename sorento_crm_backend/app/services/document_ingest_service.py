@@ -349,9 +349,38 @@ class DocumentIngestService(MasterRefResolver):
         self.touched_product_ids: set[str] = set()
         self.so_numbers: set[str] = set()
         self.written_header_ids: set[str] = set()
+        # S2 (`PLAN-oi-follow-book-chain.md`, AC-FB-21/25): every `from_so_line_ref`
+        # a purchase-order LINE carried on a line this push CREATED or UPDATED -
+        # `ref_moves` only ever captures a ref that CHANGED, so a freshly created
+        # line, or an existing line that names a sales-order line for the FIRST
+        # time, is invisible to it. Read off `line_values` in `_record_hook_state`
+        # (below), which already holds the resolved value for every line this
+        # record wrote, so no second capture site is needed inside `_sync_lines`.
+        self.written_po_line_refs: set[str] = set()
         # (product_id, supplier_id, po_number) triples, purchase_orders only -
         # what `supersede_crm_raised_pos` (the extracted shared function) wants.
         self.po_supersede_triples: set[tuple[str, str, str]] = set()
+        # S5 (`PLAN-oi-replan-received-links.md`): every PO line whose
+        # `from_so_line_ref` changed on THIS push (including to/from null),
+        # `{"target_kind": "po", "target_id", "old_ref", "new_ref"}`. What the
+        # route's `follow_book_repairing` hook reads to move our own order-inquiry
+        # links the same way the book just moved the pairing - captured here,
+        # inside `_sync_lines`'s matched-row branch, which is the only place both
+        # the OLD value (still on `row`) and the NEW one (about to overwrite it)
+        # are in hand at once.
+        #
+        # AC-RL-49 (security review, 17 Sep): `ref_moves` is published ONLY from
+        # `_record_hook_state`, the last statement of `_apply` - reached only once
+        # everything else in the record has already succeeded. `_pending_ref_moves`
+        # is where `_sync_lines` actually appends: a plain Python list is not part
+        # of the record's own SAVEPOINT, so a move captured for line 1 mid-`_sync_
+        # lines` would otherwise survive the rollback a later line's own failure in
+        # the SAME record triggers, and the post-commit hook would then apply a
+        # move whose ref change was never actually persisted. Reset at the top of
+        # `_apply` for every record, so a failed record's own leftover never leaks
+        # into the next one's publish.
+        self.ref_moves: list[dict[str, Optional[str]]] = []
+        self._pending_ref_moves: list[dict[str, Optional[str]]] = []
         # sales_orders only: the BEFORE half of the route's plan-exception hook
         # (AC-V5-1), keyed by product id. Captured ONCE for the whole batch,
         # before the record loop runs (`ingest()` calls
@@ -537,6 +566,11 @@ class DocumentIngestService(MasterRefResolver):
         # the savepoint - which is a guarantee about this transaction, not about
         # the order the work happens in.
         #
+        # AC-RL-49: fresh per record - THIS record's own ref moves, staged until
+        # `_record_hook_state` below publishes them, never a previous (possibly
+        # failed) record's leftover.
+        self._pending_ref_moves = []
+        #
         # Shared across the header and every line: a back-create triggered by
         # line 3 belongs on the SAME record verdict as one triggered by the
         # header, not a per-line list nothing reads (D9).
@@ -572,6 +606,13 @@ class DocumentIngestService(MasterRefResolver):
             canonical_status = derive_document_status(line_dicts, existing_canonical)
         status = self._status(spec, canonical_status)
         header_values = self._header_values(spec, payload, status, warnings, header)
+        # PLAN-po-line-currency-follows-header-22sep.md: a line with no stated currency
+        # takes the HEADER's own resolved currency (already filled by `_header_values`
+        # above when the header itself stated none), never a hardcoded CNY. `.get()`
+        # rather than `header.currency`: for a spec with no `currency` header column at
+        # all (every non-PO document) this is simply `None` and `_line_values`' own
+        # shape-driven guard never reads it.
+        header_currency = header_values.get("currency")
         # D9: a line whose product does not resolve is DROPPED, not a reason
         # to fail the whole document - `_line_values`' only raise is the
         # ladder's Product rung (`line_refs` never resolves anything else that
@@ -588,7 +629,9 @@ class DocumentIngestService(MasterRefResolver):
         dropped_refs: list[str] = []
         for index, line in enumerate(payload.lines):
             try:
-                line_values.append(self._line_values(spec, line, index, status, warnings))
+                line_values.append(
+                    self._line_values(spec, line, index, status, warnings, header_currency)
+                )
             except MissingReference:
                 dropped += 1
                 ref = getattr(line, "source_ref", None)
@@ -724,6 +767,12 @@ class DocumentIngestService(MasterRefResolver):
     ) -> None:
         """What the route's post-write hooks (D7) need, gathered per record."""
         self.written_header_ids.add(str(header.id))
+        # AC-RL-49: THIS record has now fully succeeded (everything above this call
+        # in `_apply` already ran without raising) - its own staged ref moves are
+        # promoted to the batch-level list the route's hook reads, and never before.
+        if self._pending_ref_moves:
+            self.ref_moves.extend(self._pending_ref_moves)
+            self._pending_ref_moves = []
         for values in line_values:
             product_id = values.get("product_id")
             if product_id:
@@ -740,6 +789,10 @@ class DocumentIngestService(MasterRefResolver):
                         self.po_supersede_triples.add(
                             (str(product_id), str(supplier_id), payload.po_number)
                         )
+            for values in line_values:
+                ref = values.get("from_so_line_ref")
+                if ref:
+                    self.written_po_line_refs.add(str(ref))
 
     def _write_order_link_claims(self, header: Any, payload: Any) -> None:
         """V4 (plan section 2.5): a PO line dedicating its purchase against
@@ -829,16 +882,20 @@ class DocumentIngestService(MasterRefResolver):
         return mapped
 
     def _header(self, spec: DocumentSpec, payload: Any) -> tuple[Any, IngestOutcome]:
-        """The row this document addresses: by reference, then by number, then new."""
+        """The row this document addresses: by reference, then by number, then new.
+
+        BL-056 (D15): `self.refs` is scoped to this anchor company, so a
+        header ref linked under a DIFFERENT company never resolves here - the
+        same as a ref that was never linked - and falls through to
+        adopt-by-number/create below, landing a brand new row in THIS company.
+        The cross-company refusal this used to need
+        (`MasterRefResolver._require_same_company`) is unreachable through
+        refs now and has been removed.
+        """
         existing_id = self.refs.resolve(
             entity_type=spec.entity_type, source_ref=payload.source_ref
         )
         if existing_id is not None:
-            self._require_same_company(
-                spec.header_model,
-                existing_id,
-                f"source_ref {payload.source_ref!r}",
-            )
             return self._load(spec, existing_id), IngestOutcome.UPDATED
 
         # Within the company, and through the model: `so_number` is unique per
@@ -905,7 +962,7 @@ class DocumentIngestService(MasterRefResolver):
         }
         values["status"] = status
         for column, ref_field, model, code_field, name_field in spec.header_refs:
-            values[column] = self._resolve_master(
+            resolved = self._resolve_master(
                 model=model,
                 ref_field=ref_field,
                 ref=getattr(payload, ref_field),
@@ -914,6 +971,26 @@ class DocumentIngestService(MasterRefResolver):
                 name=getattr(payload, name_field) if name_field else None,
                 warnings=warnings,
             )
+            # Seam 1b (PLAN-demand-class-agent-arrival.md): `sales_agent_id`
+            # only, and only when this push named NO agent at all - measured
+            # on the 0918 prod copy, of 2031 sales-order pushes an agent
+            # followed by a null agent happened 0 times, a null then an agent
+            # 5 times, agent A changed to a DIFFERENT agent B 7 times, so
+            # nothing legitimate relies on an agent-less push blanking a
+            # stored one. Dropping the key here (rather than writing `None`)
+            # keeps it off the setattr loop below AND off `_diff`'s dry-run
+            # report, so an agent-less re-push neither blanks the column nor
+            # is reported as changing it. A push naming a DIFFERENT agent
+            # still overwrites it (A -> B unchanged) and still does not
+            # re-decide the demand class, since `header.sales_agent_id`
+            # stays non-empty for that push.
+            if (
+                column == "sales_agent_id"
+                and resolved is None
+                and getattr(header, "sales_agent_id", None)
+            ):
+                continue
+            values[column] = resolved
         # `debtor_code` (v2, D9): written from `customer_code` whenever it is
         # SENT, independent of whether the customer itself resolved - an
         # order whose debtor Sorento does not (yet) hold still carries the
@@ -1015,19 +1092,37 @@ class DocumentIngestService(MasterRefResolver):
         A stored `demand_class` is a settled fact - possibly set by CS by hand,
         possibly by an order_type this same ladder decided on an earlier push -
         and this ingest never overwrites or blanks it, whatever a fresh run of
-        the ladder would say today (AC-V2-6). Only when NOTHING is stored yet
-        does `classify_document` run at all.
+        the ladder would say today (AC-V2-6), WITH ONE EXCEPTION
+        (PLAN-demand-class-agent-arrival.md): AutoCount pushes a new sales
+        order before its agent is filled in - SO421912 first pushed with
+        `agent_code: null` on 17 Sep 2026, then a second push 78 minutes later
+        carried the agent. When the stored header still has no agent AND this
+        push resolves one whose demand class is known, the ladder is run
+        again exactly as for a new document (so a stored or stated order type
+        still outranks the agent) and the answer, if any, is written - it is
+        never blanked. That includes a class set by hand while the order had
+        no agent yet: it is re-decided, once, the first time an agent with a
+        demand class of its own arrives. A stored class with a stored agent,
+        or an arriving agent with no demand class, is still settled and
+        returns immediately - and `_header_values`' own fill-only guard on
+        `sales_agent_id` (Seam 1b) is what keeps an agent-less re-push from
+        ever blanking a stored agent and re-arming this exception by
+        accident.
         """
         stored_order_type = getattr(header, "order_type", None)
         stated_order_type = payload.order_type
         if not stored_order_type and stated_order_type:
             values["order_type"] = stated_order_type
 
-        if getattr(header, "demand_class", None):
-            return
-
         agent_id = values.get("sales_agent_id")
         agent_demand_class = self._agent_demand_class(agent_id)
+        stored_class = getattr(header, "demand_class", None)
+        agent_arriving = bool(
+            stored_class and not getattr(header, "sales_agent_id", None) and agent_demand_class
+        )
+        if stored_class and not agent_arriving:
+            return
+
         debtor_code = customer_code or getattr(header, "debtor_code", None)
         customer_id = values.get("customer_id")
         if not debtor_code and customer_id:
@@ -1123,6 +1218,12 @@ class DocumentIngestService(MasterRefResolver):
                     qty=float(row.qty_ordered or 0),
                     required_date=row.required_date,
                     row_ref=str(row.id),
+                    # Same identity `SalesOrderService._propagate_planning_change` sets
+                    # (Slice A review round, R-S1): a product swap on the SAME line, if
+                    # the ingest sync writes IN PLACE, pairs by `line_id` into one
+                    # `product_changed` row instead of a `closed` plus an unrelated
+                    # `added`.
+                    line_id=str(row.id),
                 )
             )
 
@@ -1149,11 +1250,18 @@ class DocumentIngestService(MasterRefResolver):
                     qty=float(row.qty_ordered or 0),
                     required_date=row.required_date,
                     row_ref=str(row.id),
+                    line_id=str(row.id),
                 )
             )
 
     def _line_values(
-        self, spec: DocumentSpec, line: Any, index: int, status: str, warnings: list[str]
+        self,
+        spec: DocumentSpec,
+        line: Any,
+        index: int,
+        status: str,
+        warnings: list[str],
+        header_currency: Optional[str] = None,
     ) -> dict[str, Any]:
         values: dict[str, Any] = {
             column: getattr(line, field) for column, field in spec.line_fields
@@ -1180,10 +1288,13 @@ class DocumentIngestService(MasterRefResolver):
             if model is Warehouse and not (ref_value or code_value):
                 continue
             values[column] = resolved_id
-        # Same shape-driven PO currency fill as the header, for the per-line
-        # `currency` column purchase-order lines alone carry.
+        # Owner ruling 22 Sep 2026 ("we shouldn't assume CNY"): a line with no stated
+        # currency takes its HEADER's currency, never a hardcoded default. `currency`
+        # only exists on this dict for a purchase-order line (shape-driven, same guard
+        # the header fill uses); `header_currency` is `None` when the header itself
+        # named none either, which leaves the line NULL too.
         if "currency" in values and not values["currency"]:
-            values["currency"] = DEFAULT_PO_CURRENCY
+            values["currency"] = header_currency
         # NOT NULL on both line tables, and an absent figure means none delivered.
         for column in ("qty_ordered", spec.line_delivered_field):
             if values.get(column) is None:
@@ -1195,8 +1306,22 @@ class DocumentIngestService(MasterRefResolver):
         values["source_ref"] = line.source_ref
         # AutoCount's Seq (D11), position only - popped before persistence by
         # every setattr site in `_sync_lines`/`_adopt_lines`. No column exists
-        # for it on either line table.
+        # for it on the purchase-order line table.
         values["line_number"] = getattr(line, "line_number", None)
+        # PLAN-so-lines-autocount-order.md 3.1: the SAME `Seq` is now ALSO kept, as
+        # `sales_order_lines.line_no` - the sales-order spec only, a purchase-order line
+        # still has nowhere to put it. A separate key from `line_number` above (which
+        # stays popped everywhere, unconditionally present, for the D11 position
+        # tie-break) so this one flows through the ordinary `setattr`/constructor path at
+        # every call site with no further change there.
+        #
+        # Absent_vs_null, the same rule the V5 fields just below already follow: `_sync_
+        # lines`/`_adopt_lines` only ever see this dict, never `line` itself, so the
+        # `model_fields_set` presence check has to happen here. An omitted `line_number`
+        # on a re-push must leave a stored `line_no` alone - proven by an explicit `null`,
+        # which DOES clear, since `model_fields_set` is presence, not truthiness.
+        if spec.entity_type == "sales_orders" and "line_number" in line.model_fields_set:
+            values["line_no"] = line.line_number
         # V5 (AutoCount linkage widen, B2 review fix - uniform on both line
         # tables): raw pass-through onto `purchase_order_lines` - see the
         # column comments in `app/models/procurement.py`.
@@ -1224,6 +1349,30 @@ class DocumentIngestService(MasterRefResolver):
                 external.model_dump(exclude_unset=True) if external is not None else None
             )
         return values
+
+    def _sync_mirror_line(self, core_line: SalesOrderLine, values: dict[str, Any]) -> None:
+        """S2, `PLAN-esb-change-row-refresh.md`: the mirror `projects.sales_order_lines`
+        row (`ProjectSalesOrderLine`) follows the core line's `required_date`/
+        `qty_ordered` on every re-push, not just at creation - a later ESB push that moves
+        or resizes an already-mirrored line otherwise leaves the mirror the board actually
+        reads drifting behind the book (SO419122). A line with no mirror yet (the order
+        was never adopted) is left alone, no error (AC-8).
+        """
+        if "required_date" not in values and "qty_ordered" not in values:
+            return
+        from app.models.project_so import ProjectSalesOrderLine
+
+        mirror = (
+            self.db.query(ProjectSalesOrderLine)
+            .filter(ProjectSalesOrderLine.core_sales_order_line_id == str(core_line.id))
+            .one_or_none()
+        )
+        if mirror is None:
+            return
+        if "required_date" in values:
+            mirror.delivery_date = core_line.required_date
+        if "qty_ordered" in values:
+            mirror.qty = core_line.qty_ordered
 
     def _sync_lines(
         self,
@@ -1295,11 +1444,23 @@ class DocumentIngestService(MasterRefResolver):
                 unresolved_dropped += 1
 
         counts = {"adopted": 0, "created": 0, "updated": 0, "deleted": 0, "cancelled": 0}
+        # PLAN-oi-cancelled-line-used-confirm.md (AC-CL-6/7, write site 2): every
+        # SALES ORDER line this push cancels, captured only on the TRANSITION - two
+        # collection points, both guarded the same way (prior status read BEFORE the
+        # write, appended only when it was not already `cancelled`): the matched-by-ref
+        # setattr loop just below (the same precedent `from_so_line_ref` capture-
+        # before-setattr already uses a few lines down), and the leftover-cancel sweep
+        # (3.2a, ~1481-1487) further down, which walks `already_cancelled` on EVERY
+        # push and would re-flag a reconfirmed row without the same guard. A re-push
+        # that flags nothing at either site never even calls
+        # `flag_rows_for_cancelled_lines`.
+        newly_cancelled_so_line_ids: list[str] = []
 
         unmatched: list[dict[str, Any]] = []
         for values in line_values:
             row = by_ref.pop(values["source_ref"], None)
             if row is not None:
+                prior_line_status = row.line_status
                 values.pop("line_number", None)
                 # D22: a resolved warehouse that DIFFERS from what the row
                 # already carries overwrites it (the AutoCount location wins)
@@ -1324,9 +1485,36 @@ class DocumentIngestService(MasterRefResolver):
                                 source="autocount_esb",
                             )
                         )
+                # S5: capture the move BEFORE the setattr loop below overwrites
+                # `row`'s own value - a PO line only, the one book `follow_book_
+                # repairing` moves our own links to follow. `"from_so_line_ref"
+                # in values` is presence (`model_fields_set`), never truthiness,
+                # so a payload that explicitly sends `null` is captured too.
+                if spec.entity_type == "purchase_orders" and "from_so_line_ref" in values:
+                    old_ref = row.from_so_line_ref
+                    new_ref = values["from_so_line_ref"]
+                    if old_ref != new_ref:
+                        # AC-RL-49: staged, not published - see `_pending_ref_moves`'s
+                        # own docstring in `__init__`.
+                        self._pending_ref_moves.append(
+                            {
+                                "target_kind": "po",
+                                "target_id": str(row.id),
+                                "old_ref": old_ref,
+                                "new_ref": new_ref,
+                            }
+                        )
                 for column, value in values.items():
                     setattr(row, column, value)
                 counts["updated"] += 1
+                if spec.entity_type == "sales_orders":
+                    self._sync_mirror_line(row, values)
+                if (
+                    spec.entity_type == "sales_orders"
+                    and prior_line_status != CANCELLED
+                    and row.line_status == CANCELLED
+                ):
+                    newly_cancelled_so_line_ids.append(row.id)
             else:
                 unmatched.append(values)
 
@@ -1353,16 +1541,50 @@ class DocumentIngestService(MasterRefResolver):
         # once here rather than once per row inside `is_referenced`.
         line_referrers = referrers_of(self.db, line_table)
         for row in [*by_ref.values(), *pool, *dup_ref, *already_cancelled]:
+            prior_line_status = row.line_status
             if is_referenced(self.db, line_table, row.id, referrers=line_referrers):
                 # Quantities and prices are left exactly as they were: this row
                 # is now evidence of what a transfer moved or a plan was built
                 # from, and rewriting it would falsify that record.
                 row.line_status = CANCELLED
                 counts["cancelled"] += 1
+                # PLAN-oi-cancelled-line-used-confirm.md (3.2a): this loop walks
+                # `already_cancelled` on EVERY push (its whole reason to be there is
+                # the ref-less xlsx-era adoption guard), so the TRANSITION guard has
+                # to be here too, not just at the matched-by-ref site above - an
+                # unconditional append would re-flag a row purchasing already
+                # re-confirmed on every later push of the same reduced document.
+                if spec.entity_type == "sales_orders" and prior_line_status != CANCELLED:
+                    newly_cancelled_so_line_ids.append(row.id)
             else:
                 self.db.delete(row)
                 counts["deleted"] += 1
         self.db.flush()
+        if newly_cancelled_so_line_ids:
+            from app.services.project_order_inquiry_service import (
+                flag_rows_for_cancelled_lines,
+            )
+
+            flag_rows_for_cancelled_lines(self.db, newly_cancelled_so_line_ids)
+        # Self-heal (issue #969): the ESB push is the true writer behind almost every
+        # unmirrored line measured live (394 of them, all `source_system = autocount`) -
+        # `_upsert_lines`'s self-heal never sees this write, it is the manual FE edit's
+        # own path. Same gate as the confirm-side heal: an adopted, unauthored mirror only.
+        if spec.entity_type == "sales_orders" and counts.get("created"):
+            from app.models.project_so import SO_STATUS_ADOPTED, ProjectSalesOrder
+            from app.services.project_so_adoption_service import ProjectSOAdoptionService
+
+            order = (
+                self.db.query(ProjectSalesOrder)
+                .filter(
+                    ProjectSalesOrder.so_id == str(header.id),
+                    ProjectSalesOrder.status == SO_STATUS_ADOPTED,
+                    ProjectSalesOrder.project_id.is_(None),
+                )
+                .first()
+            )
+            if order is not None:
+                ProjectSOAdoptionService(self.db).mirror_missing_lines(order)
         return counts
 
     def _adopt_lines(
@@ -1605,7 +1827,7 @@ class DocumentReadService:
     def __init__(self, db: Session, *, company_id: str):
         self.db = db
         self.company_id = company_id
-        self.refs = IntegrationReferenceService(db)
+        self.refs = IntegrationReferenceService(db, company_id=self.company_id)
 
     def current_state(self, entity_type: str, source_refs: list[str]) -> dict[str, Any]:
         # The route 404s an unknown entity (`_entity`) and dispatches to this

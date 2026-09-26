@@ -1,0 +1,833 @@
+"""Product combos: the catalogue package a product is sold as (S1, D1).
+
+UAC: `documentation/plans/dealer-kit/price-tag-combos-acceptance-criteria.md`
+(AC-S1-2, AC-S1-3, AC-S1-5, AC-S1-6, AC-S1-7, AC-S1-8).
+
+Written test-FIRST (PRINCIPLES.md Phase 2). Neither `app/models/product_combo.py`
+nor the routes exist yet, so the model import below fails the WHOLE FILE with one
+`ImportError` at collection - every case here is red for that one reason until S1
+lands, not for six unrelated ones.
+
+Route contract (the frontend already mocks it, Phase 1, committed - the header of
+`sorento_crm_frontend/.../products/services/productComboService.ts` is the
+authority where it and the plan differ):
+
+    GET    /api/v1/master-data/products/{id}/combos          -> {"data": [...]}
+    POST   /api/v1/master-data/products/{id}/combos          -> row (201), 409
+    PATCH  /api/v1/master-data/product-combos/{combo_id}     -> row
+    DELETE /api/v1/master-data/product-combos/{combo_id}     -> 204
+    POST   /api/v1/master-data/product-combos/{id}/parts     -> row (201), 422
+    PATCH  /api/v1/master-data/product-combo-parts/{id}      -> row
+    DELETE /api/v1/master-data/product-combo-parts/{id}      -> 204
+    GET    /api/v1/master-data/products/{id}/sold-with       -> {"data": [...]}
+
+No dedicated permission slug (AC-X-5): reads take `master_data.products.view`,
+writes take `master_data.products.edit`. Combos are company scoped THROUGH the
+host, so a caller scoped elsewhere gets 404 on the host, never an empty list.
+
+Auth + scope pattern borrowed from `tests/test_product_companion_rules.py`, which
+is the #779 precedent this slice copies.
+"""
+from __future__ import annotations
+
+import uuid
+from decimal import Decimal
+
+import pytest
+from fastapi import Depends
+from fastapi.testclient import TestClient
+
+# MUST be first app import - resolves a circular import in app.modules.runtime.guards
+from app.main import app  # noqa: E402
+
+from app.database import get_db
+from app.dependencies import get_current_user, get_current_user_or_api_key
+from app.models.base import set_company_scope
+from app.models.company import Company
+from app.models.product import Product, ProductCategory, UnitOfMeasure
+from app.models.user import User, UserStatus
+from app.services.company_scope import DEFAULT_COMPANY_ID
+from app.services.company_scope_resolver import apply_company_scope
+from app.services.user_service import UserPermissionService
+
+from tests._fake_storage import FakeStorage
+
+# THE red import. Everything below fails to collect until
+# `app/models/product_combo.py` exists with these two names (PLAN D1).
+from app.models.product_combo import (  # noqa: E402
+    ProductCombo,
+    ProductComboPart,
+)
+
+from tests._pg_fixture import blank_session, unique_code
+
+COMBOS = "/api/v1/master-data/products/{product_id}/combos"
+SOLD_WITH = "/api/v1/master-data/products/{product_id}/sold-with"
+COMBO = "/api/v1/master-data/product-combos/{combo_id}"
+COMBO_PARTS = "/api/v1/master-data/product-combos/{combo_id}/parts"
+COMBO_PART = "/api/v1/master-data/product-combo-parts/{part_id}"
+
+SORENTO = DEFAULT_COMPANY_ID
+MOCHA = "00000000-0000-0000-0000-000000000002"
+VIEW = "master_data.products.view"
+EDIT = "master_data.products.edit"
+
+
+def _uid() -> str:
+    return str(uuid.uuid4())
+
+
+@pytest.fixture()
+def db():
+    with blank_session() as session:
+        yield session
+
+
+def _product(db, stem: str, *, company_id: str = SORENTO, class_label: str | None = None) -> Product:
+    """A product and its whole FK chain.
+
+    CI's database is empty, so the category and the uom are seeded here rather
+    than borrowed - an invented FK aborts the transaction on Postgres.
+    """
+    uom = UnitOfMeasure(id=_uid(), uom_code=unique_code("u")[:20], uom_name="Unit")
+    category = ProductCategory(
+        id=_uid(),
+        category_code=unique_code("cat")[:50],
+        category_name="ZZT combo cat",
+        class_label=class_label,
+    )
+    db.add_all([uom, category])
+    db.flush()
+    row = Product(
+        id=_uid(),
+        company_id=company_id,
+        product_code=unique_code(stem),
+        product_name=f"ZZT {stem}",
+        category_id=category.id,
+        base_uom_id=uom.id,
+        list_price=Decimal("100.00"),
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _mocha(db) -> None:
+    """The second company. Not seeded by the blank schema - only Sorento is."""
+    existing = db.query(Company).filter(Company.id == MOCHA).first()
+    if existing is not None:
+        return
+    db.add(Company(id=MOCHA, name="ZZT Mocha", code=unique_code("MCH")[:20], is_active=True))
+    db.flush()
+
+
+def _combo(db, host: Product, name: str, *, sort_order: int = 0) -> ProductCombo:
+    row = ProductCombo(
+        id=_uid(),
+        host_product_id=host.id,
+        name=name,
+        sort_order=sort_order,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _part(db, combo: ProductCombo, product: Product, *, choice_group=None, sort_order=0):
+    row = ProductComboPart(
+        id=_uid(),
+        combo_id=combo.id,
+        part_product_id=product.id,
+        choice_group=choice_group,
+        sort_order=sort_order,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _install_overrides(db, caller: dict, company_id):
+    def _override_db():
+        yield db
+
+    def _override_scope(_db=Depends(get_db)):
+        scope = frozenset({company_id}) if company_id else None
+        set_company_scope(_db, scope)
+        return scope
+
+    app.dependency_overrides[get_db] = _override_db
+    app.dependency_overrides[get_current_user] = lambda: caller
+    app.dependency_overrides[get_current_user_or_api_key] = lambda: caller
+    app.dependency_overrides[apply_company_scope] = _override_scope
+
+
+@pytest.fixture(autouse=True)
+def _clear_overrides():
+    yield
+    app.dependency_overrides.pop(get_db, None)
+    app.dependency_overrides.pop(get_current_user, None)
+    app.dependency_overrides.pop(get_current_user_or_api_key, None)
+    app.dependency_overrides.pop(apply_company_scope, None)
+
+
+def _caller(db, allow: set[str], monkeypatch, *, company_id=SORENTO) -> TestClient:
+    user = User(
+        id=_uid(),
+        email=f"{unique_code('combo-caller')}@zzt.test",
+        name="ZZT Combo Caller",
+        status=UserStatus.ACTIVE.value,
+    )
+    db.add(user)
+    db.flush()
+    caller = {"id": str(user.id), "email": user.email}
+
+    _install_overrides(db, caller, company_id)
+    monkeypatch.setattr(
+        UserPermissionService,
+        "check_user_has_permission",
+        lambda self, uid, slug: slug in allow,
+    )
+    monkeypatch.setattr(UserPermissionService, "get_user_role_slugs", lambda self, uid: set())
+    return TestClient(app)
+
+
+# --------------------------------------------------------------------------- AC-S1-2
+
+
+def test_product_combos_create_duplicate_name_409(db, monkeypatch):
+    """A host's combo names are unique: "3 in 1" twice is a 409 the modal shows inline.
+
+    Not a 422 and not a silent second row - the catalogue names a package once,
+    and two combos called the same thing on one cabinet is the marketing user
+    having lost their place, which the form has to say out loud.
+    """
+    host = _product(db, "SRTBF11834")
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+    url = COMBOS.format(product_id=host.id)
+
+    first = client.post(url, json={"name": "3 in 1"})
+    assert first.status_code == 201, first.text
+    assert first.json()["name"] == "3 in 1"
+    # Created EMPTY - parts are added one at a time afterwards.
+    assert first.json()["parts"] == []
+
+    second = client.post(url, json={"name": "3 in 1"})
+    assert second.status_code == 409, second.text
+    assert second.json()["code"] == "COMBO_NAME_TAKEN"
+
+    # And a DIFFERENT name on the same host is still fine.
+    other = client.post(url, json={"name": "4 in 1"})
+    assert other.status_code == 201, other.text
+
+
+# --------------------------------------------------------------------------- AC-S1-3
+
+
+def test_combo_part_refuses_host_and_duplicate(db, monkeypatch):
+    """The host cannot be a part of its own combo, and no product twice.
+
+    Both are answered inline under the picker, so both have to be a named 422
+    rather than a generic integrity error the form can only render as a toast.
+    """
+    host = _product(db, "SRTBF11834")
+    mirror = _product(db, "SRTMR502-BL")
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+
+    combo = client.post(COMBOS.format(product_id=host.id), json={"name": "3 in 1"}).json()
+    url = COMBO_PARTS.format(combo_id=combo["id"])
+
+    as_host = client.post(url, json={"part_product_id": host.id})
+    assert as_host.status_code == 422, as_host.text
+    assert as_host.json()["code"] == "COMBO_PART_IS_HOST"
+
+    added = client.post(url, json={"part_product_id": mirror.id})
+    assert added.status_code == 201, added.text
+    # The row names the part by its own code, name and dimensions - the reader
+    # never sees an id (AC-X-2).
+    assert added.json()["code"] == mirror.product_code
+    assert added.json()["product_name"] == mirror.product_name
+    assert added.json()["choice_group"] is None
+
+    again = client.post(url, json={"part_product_id": mirror.id})
+    assert again.status_code == 422, again.text
+    assert again.json()["code"] == "COMBO_PART_DUPLICATE"
+
+
+# --------------------------------------------------------------------------- AC-S1-5
+
+
+def test_combo_delete_cascades_parts(db, monkeypatch):
+    """Deleting a combo takes its parts with it and leaves the products alone.
+
+    And the second half of AC-S1-5: a part product already named by a SUBMITTED
+    request line's part row is still deletable from the combo. The line keeps its
+    own product reference - what the salesperson asked for is a fact about that
+    request, not a live pointer into the catalogue's current packaging.
+    """
+    from app.models.price_tag import PriceTagRequest, PriceTagRequestLine
+    # S2's table. Named here because the second half of AC-S1-5 is exactly the
+    # question "does a request row pin a combo part in place?".
+    from app.models.price_tag import PriceTagRequestLinePart
+
+    host = _product(db, "SRTBF11834")
+    mirror = _product(db, "SRTMR502-BL")
+    combo = _combo(db, host, "3 in 1")
+    part = _part(db, combo, mirror)
+
+    from app.models.access import RespondContact
+
+    # `price_tag_requests.contact_id` is NOT NULL, so the chain starts at a
+    # contact rather than at the request.
+    contact = RespondContact(
+        id=_uid(), phone_number=f"+60{uuid.uuid4().hex[:9]}", name=unique_code("contact")
+    )
+    db.add(contact)
+    db.flush()
+    request = PriceTagRequest(
+        id=_uid(),
+        company_id=SORENTO,
+        contact_id=contact.id,
+        doc_number=unique_code("PT")[:40],
+        status="new",
+    )
+    db.add(request)
+    db.flush()
+    line = PriceTagRequestLine(
+        id=_uid(),
+        request_id=request.id,
+        line_type="product",
+        product_id=host.id,
+        combo_id=combo.id,
+        quantity=1,
+        sort_order=0,
+    )
+    db.add(line)
+    db.flush()
+    db.add(
+        PriceTagRequestLinePart(
+            id=_uid(),
+            line_id=line.id,
+            product_id=mirror.id,
+            role=None,
+            candidates=[],
+            sort_order=0,
+        )
+    )
+    db.flush()
+
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+
+    # The PART alone first: a submitted line naming the same product does not
+    # pin it.
+    removed = client.delete(COMBO_PART.format(part_id=part.id))
+    assert removed.status_code == 204, removed.text
+
+    # Put it back, then delete the whole combo: the parts go with it.
+    part = _part(db, combo, mirror)
+    deleted = client.delete(COMBO.format(combo_id=combo.id))
+    assert deleted.status_code == 204, deleted.text
+
+    assert db.query(ProductCombo).filter(ProductCombo.id == combo.id).first() is None
+    assert (
+        db.query(ProductComboPart).filter(ProductComboPart.combo_id == combo.id).count() == 0
+    ), "deleting a combo must cascade its parts, not orphan them"
+    # Neither product was touched, and the request line survives with its combo
+    # reference cleared rather than being deleted along with it.
+    assert db.query(Product).filter(Product.id == mirror.id).first() is not None
+    db.refresh(line)
+    assert line.combo_id is None
+    assert (
+        db.query(PriceTagRequestLinePart)
+        .filter(PriceTagRequestLinePart.line_id == line.id)
+        .count()
+        == 1
+    ), "the line keeps what the salesperson asked for even after the combo is gone"
+
+
+# --------------------------------------------------------------------------- AC-S1-6
+
+
+def test_sold_with_lists_hosts_across_combos(db, monkeypatch):
+    """The mirror on a PART's own page names every host + combo it belongs to.
+
+    Across hosts, not just the first one found: a basin sold with two different
+    cabinets is exactly the case the read-only list exists for, and one row would
+    quietly hide the other cabinet.
+    """
+    basin = _product(db, "SRTBS900-WH")
+    cabinet_a = _product(db, "SRTBF11834")
+    cabinet_b = _product(db, "SRTBF11835")
+    combo_a = _combo(db, cabinet_a, "3 in 1")
+    combo_b = _combo(db, cabinet_b, "4 in 1")
+    _part(db, combo_a, basin, choice_group="Basin")
+    _part(db, combo_b, basin, choice_group="Basin")
+
+    # A combo on a third host that does NOT name the basin must not appear.
+    other = _product(db, "SRTBF11836")
+    _combo(db, other, "2 in 1")
+
+    client = _caller(db, {VIEW}, monkeypatch)
+    response = client.get(SOLD_WITH.format(product_id=basin.id))
+    assert response.status_code == 200, response.text
+
+    rows = response.json()["data"]
+    assert len(rows) == 2
+    assert {(row["host_code"], row["combo_name"]) for row in rows} == {
+        (cabinet_a.product_code, "3 in 1"),
+        (cabinet_b.product_code, "4 in 1"),
+    }
+    # Codes and names, because the list is rendered as "SRTBF11834 - 3 in 1".
+    for row in rows:
+        assert row["host_name"]
+        assert row["host_product_id"] in {cabinet_a.id, cabinet_b.id}
+
+
+# --------------------------------------------------------------------------- AC-S1-7
+
+
+def test_combos_cross_company_404(db, monkeypatch):
+    """A caller scoped to Mocha gets 404 on a Sorento host, never an empty list.
+
+    An empty list reads as "this cabinet has no packages" and invites marketing
+    to create a second set of combos on a product they cannot see. 404 says the
+    product is not theirs.
+    """
+    _mocha(db)
+    host = _product(db, "SRTBF11834", company_id=SORENTO)
+    _combo(db, host, "3 in 1")
+
+    client = _caller(db, {VIEW, EDIT}, monkeypatch, company_id=MOCHA)
+
+    listed = client.get(COMBOS.format(product_id=host.id))
+    assert listed.status_code == 404, listed.text
+
+    # The write path is scoped through the same host resolution.
+    created = client.post(COMBOS.format(product_id=host.id), json={"name": "Sneaky"})
+    assert created.status_code == 404, created.text
+
+    sold_with = client.get(SOLD_WITH.format(product_id=host.id))
+    assert sold_with.status_code == 404, sold_with.text
+
+
+# --------------------------------------------------------------------------- AC-S1-8
+
+
+def test_business_gate_ignores_combos(db):
+    """A stock question for the cabinet resolves the CABINET, with no combo read.
+
+    The owner rejected a product set as the package object precisely because the
+    chatbot searches sets. Combos must stay invisible to it: the resolver answers
+    the host product alone, and never reads the combo tables on the way.
+    """
+    from sqlalchemy import event
+
+    from app.models.base import company_scope
+    from app.services import entity_resolver
+
+    host = _product(db, "SRTBF11834")
+    mirror = _product(db, "SRTMR502-BL")
+    combo = _combo(db, host, "3 in 1")
+    _part(db, combo, mirror)
+
+    statements: list[str] = []
+
+    def _record(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    event.listen(db.get_bind(), "before_cursor_execute", _record)
+    try:
+        with company_scope(db, frozenset({SORENTO})):
+            result = entity_resolver.resolve_references(db, host.product_code)
+    finally:
+        event.remove(db.get_bind(), "before_cursor_execute", _record)
+
+    matches = [
+        match
+        for resolution in result.resolutions
+        for match in resolution.matches
+    ]
+    assert matches, "the cabinet's own code must still resolve"
+    assert {match.entity_type for match in matches} == {"product"}
+    assert {match.uuid for match in matches} == {host.id}
+
+    # The mirror is NOT dragged in as part of the answer, and no combo table was
+    # touched to produce it.
+    assert mirror.id not in {match.uuid for match in matches}
+    combo_reads = [s for s in statements if "product_combo" in s.lower()]
+    assert combo_reads == [], (
+        "the resolver read the combo tables: " + "; ".join(combo_reads[:2])
+    )
+
+
+# ---------------------------------------------------------------------------
+# AC-S5-2 .. AC-S5-4 (PLAN-price-tag-r10.md S5): the combo image upload.
+#
+# Contract (the plan names no route path beyond "POST /product-combos/{id}/
+# image" - this suite hangs it off the same `/api/v1/master-data` prefix
+# every other combo route already uses):
+#
+#     POST   /api/v1/master-data/product-combos/{combo_id}/image   multipart
+#     DELETE /api/v1/master-data/product-combos/{combo_id}/image
+#
+# Red until the route exists (404) - every case below is red for that one
+# reason, not for six unrelated ones.
+# ---------------------------------------------------------------------------
+
+COMBO_IMAGE = "/api/v1/master-data/product-combos/{combo_id}/image"
+
+
+@pytest.fixture()
+def storage(monkeypatch) -> FakeStorage:
+    """Every combo-image upload, signed URL and delete in this file goes
+    through an in-process fake, never the real bucket.
+
+    CI has no storage credentials, so a real upload from these tests failed
+    outright there (`ValueError: S3 configuration incomplete`) - the tests
+    only ever passed locally because this lane's own dotenv carries real AWS
+    keys, which means every prior local run of this file silently uploaded
+    to the PRODUCTION bucket.
+
+    Patched in BOTH namespaces, the same idiom `tests/_fake_storage.py`'s
+    own `patch_storage` uses for `asset_service`: `product_combo_service`
+    imports `default_provider`/`get_backend`/`cdn_base_url` BY NAME at
+    module load (`from app.services.storage_router import (...)`), so it
+    holds its OWN bound copy of each - patching only `storage_router` would
+    leave that copy pointing at the real functions.
+    `resolve_signed_url`/`delete_object_best_effort` are deliberately NOT
+    patched here either (same as `patch_storage`): both are DEFINED in
+    `storage_router.py`, so their own internal `get_backend(...)` calls
+    resolve from `storage_router`'s module globals regardless of which
+    module's copy of the NAME called them.
+    """
+    from app.services import product_combo_service, storage_router
+
+    fake = FakeStorage()
+    for module in (storage_router, product_combo_service):
+        monkeypatch.setattr(module, "default_provider", lambda: "s3")
+        monkeypatch.setattr(module, "get_backend", lambda provider: fake)
+        monkeypatch.setattr(
+            module, "cdn_base_url", lambda provider, key: f"https://cdn.test/{key}"
+        )
+    return fake
+
+
+def _jpg_bytes() -> bytes:
+    # A minimal valid-enough JPEG header; the route only needs to see a
+    # plausible image/jpeg upload, not decode pixels.
+    return bytes.fromhex("ffd8ffe000104a4649460001") + b"\x00" * 32 + bytes.fromhex("ffd9")
+
+
+def test_ac_s5_2_upload_creates_a_combo_image_attachment_and_sets_it(db, monkeypatch, storage):
+    host = _product(db, "SRTBF11834")
+    combo = _combo(db, host, "3 in 1")
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+
+    response = client.post(
+        COMBO_IMAGE.format(combo_id=combo.id),
+        files={"file": ("combo.jpg", _jpg_bytes(), "image/jpeg")},
+    )
+
+    assert response.status_code in (200, 201), response.text
+    body = response.json()
+    assert body["attachment_id"]
+    assert body["url"]
+
+    # AC-S5-2: exactly one object actually written through the fake - the
+    # thing the real bucket can never assert about itself.
+    assert len(storage.objects) == 1, storage.objects
+    assert any(body["attachment_id"] in key for key in storage.objects), storage.objects
+
+    db.expire_all()
+    fresh_combo = db.query(ProductCombo).filter(ProductCombo.id == combo.id).one()
+    assert str(fresh_combo.image_attachment_id) == body["attachment_id"]
+
+    from app.models.product import ProductAttachment
+
+    link = (
+        db.query(ProductAttachment)
+        .filter(ProductAttachment.attachment_id == body["attachment_id"])
+        .first()
+    )
+    assert link is not None, "the image must also be linked to the HOST product"
+    assert str(link.product_id) == str(host.id)
+
+
+def test_ac_s5_2_a_non_image_upload_is_422(db, monkeypatch, storage):
+    host = _product(db, "SRTBF11834")
+    combo = _combo(db, host, "3 in 1")
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+
+    response = client.post(
+        COMBO_IMAGE.format(combo_id=combo.id),
+        files={"file": ("combo.txt", b"not an image", "text/plain")},
+    )
+
+    assert response.status_code == 422, response.text
+
+
+def test_ac_s5_2_an_oversized_upload_is_422(db, monkeypatch, storage):
+    host = _product(db, "SRTBF11834")
+    combo = _combo(db, host, "3 in 1")
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+
+    oversized = b"\xff" * (11 * 1024 * 1024)  # over the 10 MB Combo Image cap
+    response = client.post(
+        COMBO_IMAGE.format(combo_id=combo.id),
+        files={"file": ("combo.jpg", oversized, "image/jpeg")},
+    )
+
+    assert response.status_code == 422, response.text
+
+
+def test_ac_s5_2_a_combo_of_another_company_is_404_on_upload_and_delete(db, monkeypatch, storage):
+    _mocha(db)
+    host = _product(db, "SRTBF11834", company_id=SORENTO)
+    combo = _combo(db, host, "3 in 1")
+    client = _caller(db, {VIEW, EDIT}, monkeypatch, company_id=MOCHA)
+
+    upload = client.post(
+        COMBO_IMAGE.format(combo_id=combo.id),
+        files={"file": ("combo.jpg", _jpg_bytes(), "image/jpeg")},
+    )
+    assert upload.status_code == 404, upload.text
+
+    delete = client.delete(COMBO_IMAGE.format(combo_id=combo.id))
+    assert delete.status_code == 404, delete.text
+
+
+def test_ac_s5_3_a_second_upload_replaces_the_first(db, monkeypatch, storage):
+    host = _product(db, "SRTBF11834")
+    combo = _combo(db, host, "3 in 1")
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+
+    first = client.post(
+        COMBO_IMAGE.format(combo_id=combo.id),
+        files={"file": ("first.jpg", _jpg_bytes(), "image/jpeg")},
+    )
+    assert first.status_code in (200, 201), first.text
+    first_attachment_id = first.json()["attachment_id"]
+
+    second = client.post(
+        COMBO_IMAGE.format(combo_id=combo.id),
+        files={"file": ("second.jpg", _jpg_bytes(), "image/jpeg")},
+    )
+    assert second.status_code in (200, 201), second.text
+    second_attachment_id = second.json()["attachment_id"]
+    assert second_attachment_id != first_attachment_id
+
+    # AC-S5-3: the OLD object's bytes are gone, and only the new one remains
+    # - the fake makes both halves of "replace" observable, not just the DB
+    # row.
+    assert len(storage.objects) == 1, storage.objects
+    assert any(second_attachment_id in key for key in storage.objects), storage.objects
+    assert not any(first_attachment_id in key for key in storage.objects), storage.objects
+
+    db.expire_all()
+    fresh_combo = db.query(ProductCombo).filter(ProductCombo.id == combo.id).one()
+    assert str(fresh_combo.image_attachment_id) == second_attachment_id
+
+    from app.models.resources import Attachment
+
+    old = db.query(Attachment).filter(Attachment.id == first_attachment_id).first()
+    assert old is None, "the replaced attachment must be deleted, not orphaned"
+
+
+def test_ac_s5_3_delete_clears_and_deletes(db, monkeypatch, storage):
+    host = _product(db, "SRTBF11834")
+    combo = _combo(db, host, "3 in 1")
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+
+    uploaded = client.post(
+        COMBO_IMAGE.format(combo_id=combo.id),
+        files={"file": ("combo.jpg", _jpg_bytes(), "image/jpeg")},
+    )
+    attachment_id = uploaded.json()["attachment_id"]
+    assert len(storage.objects) == 1, storage.objects
+
+    response = client.delete(COMBO_IMAGE.format(combo_id=combo.id))
+    assert response.status_code == 204, response.text
+
+    # AC-S5-3: the bytes are gone too, not only the row.
+    assert storage.objects == {}, storage.objects
+
+    db.expire_all()
+    fresh_combo = db.query(ProductCombo).filter(ProductCombo.id == combo.id).one()
+    assert fresh_combo.image_attachment_id is None
+
+    from app.models.resources import Attachment
+
+    assert db.query(Attachment).filter(Attachment.id == attachment_id).first() is None
+
+
+def test_ac_s5_4_get_combos_carries_the_image_field(db, monkeypatch, storage):
+    host = _product(db, "SRTBF11834")
+    combo = _combo(db, host, "3 in 1")
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+
+    before = client.get(COMBOS.format(product_id=host.id))
+    assert before.json()["data"][0]["image"] is None
+
+    client.post(
+        COMBO_IMAGE.format(combo_id=combo.id),
+        files={"file": ("combo.jpg", _jpg_bytes(), "image/jpeg")},
+    )
+
+    after = client.get(COMBOS.format(product_id=host.id))
+    image = after.json()["data"][0]["image"]
+    assert image is not None
+    assert image["attachment_id"]
+    assert image["url"]
+
+
+# ---------------------------------------------------------------------------
+# AC-S5-12 (captain's ruling, phase 3 review): the extension is the
+# allowlist, and the stored mime is DERIVED from it - a client-supplied
+# content type is not trusted either way. Replacing an image whose
+# attachment is also linked elsewhere (seeded by hand) must not delete a
+# still-referenced row.
+# ---------------------------------------------------------------------------
+
+
+def test_ac_s5_12_svg_content_type_is_refused_despite_the_image_prefix(db, monkeypatch, storage):
+    host = _product(db, "SRTBF11834")
+    combo = _combo(db, host, "3 in 1")
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+
+    response = client.post(
+        COMBO_IMAGE.format(combo_id=combo.id),
+        files={"file": ("x.svg", b"<svg onload=alert(1)></svg>", "image/svg+xml")},
+    )
+
+    assert response.status_code == 422, response.text
+
+
+def test_ac_s5_12_an_exe_claiming_to_be_a_png_is_refused_by_its_extension(db, monkeypatch, storage):
+    host = _product(db, "SRTBF11834")
+    combo = _combo(db, host, "3 in 1")
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+
+    response = client.post(
+        COMBO_IMAGE.format(combo_id=combo.id),
+        files={"file": ("x.exe", _jpg_bytes(), "image/png")},
+    )
+
+    assert response.status_code == 422, response.text
+
+
+def test_ac_s5_12_extension_wins_over_a_generic_client_content_type(db, monkeypatch, storage):
+    """A caller who sends no real content type (`application/octet-stream`,
+    what a plain `<input type=file>` sends for an unrecognised extension on
+    some platforms) must not be refused when the FILENAME extension is a
+    real, allowed image type - the mime stored is derived from the
+    extension, never trusted from the client."""
+    host = _product(db, "SRTBF11834")
+    combo = _combo(db, host, "3 in 1")
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+
+    response = client.post(
+        COMBO_IMAGE.format(combo_id=combo.id),
+        files={"file": ("x.PNG", _jpg_bytes(), "application/octet-stream")},
+    )
+
+    assert response.status_code in (200, 201), response.text
+    attachment_id = response.json()["attachment_id"]
+
+    from app.models.resources import Attachment
+
+    stored = db.query(Attachment).filter(Attachment.id == attachment_id).one()
+    assert stored.mime_type == "image/png", stored.mime_type
+
+
+def test_ac_s5_12_replace_survives_an_attachment_still_linked_elsewhere(db, monkeypatch, storage):
+    host = _product(db, "SRTBF11834")
+    combo = _combo(db, host, "3 in 1")
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+
+    first = client.post(
+        COMBO_IMAGE.format(combo_id=combo.id),
+        files={"file": ("first.jpg", _jpg_bytes(), "image/jpeg")},
+    )
+    assert first.status_code in (200, 201), first.text
+    first_attachment_id = first.json()["attachment_id"]
+
+    # Seeded by hand: some OTHER product also links this same attachment,
+    # for an unrelated reason (e.g. it was separately attached there too).
+    from app.models.product import ProductAttachment
+
+    other_host = _product(db, "SRTOTHERHOST")
+    other_link = ProductAttachment(
+        id=_uid(),
+        product_id=other_host.id,
+        attachment_id=first_attachment_id,
+        is_primary=False,
+        access_levels=["dealer", "end_user"],
+        company_id=SORENTO,
+    )
+    db.add(other_link)
+    db.commit()
+
+    second = client.post(
+        COMBO_IMAGE.format(combo_id=combo.id),
+        files={"file": ("second.jpg", _jpg_bytes(), "image/jpeg")},
+    )
+    assert second.status_code in (200, 201), second.text
+    second_attachment_id = second.json()["attachment_id"]
+
+    # AC-S5-12: the OLD object's bytes must survive too, not only the row -
+    # the fake is the only place "still-referenced bytes were not deleted"
+    # is actually checkable, rather than merely inferred from the row.
+    assert len(storage.objects) == 2, storage.objects
+    assert any(first_attachment_id in key for key in storage.objects), storage.objects
+    assert any(second_attachment_id in key for key in storage.objects), storage.objects
+
+    from app.models.resources import Attachment
+
+    db.expire_all()
+    assert (
+        db.query(Attachment).filter(Attachment.id == first_attachment_id).first()
+        is not None
+    ), "an attachment another product still links must not be hard-deleted"
+    assert (
+        db.query(ProductAttachment)
+        .filter(ProductAttachment.id == other_link.id)
+        .first()
+        is not None
+    ), "the OTHER product's own link must survive the combo's replace"
+
+
+def test_ac_s5_12_the_attachments_company_id_is_the_host_products_company(db, monkeypatch, storage):
+    host = _product(db, "SRTBF11834")
+    combo = _combo(db, host, "3 in 1")
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+
+    response = client.post(
+        COMBO_IMAGE.format(combo_id=combo.id),
+        files={"file": ("combo.jpg", _jpg_bytes(), "image/jpeg")},
+    )
+    assert response.status_code in (200, 201), response.text
+
+    from app.models.resources import Attachment
+
+    stored = db.query(Attachment).filter(Attachment.id == response.json()["attachment_id"]).one()
+    assert str(stored.company_id) == str(host.company_id)
+
+
+def test_ac_s5_13_the_stored_attachment_carries_the_real_entity_type(db, monkeypatch, storage):
+    """AC-S5-13 (captain's ruling, phase 3 review): the value under test in
+    `test_migration_ptag_0013_r10.py`'s CHECK-constraint fix must be the
+    value the upload route ACTUALLY writes, or the migration test proves
+    nothing about the real 500."""
+    host = _product(db, "SRTBF11834")
+    combo = _combo(db, host, "3 in 1")
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+
+    response = client.post(
+        COMBO_IMAGE.format(combo_id=combo.id),
+        files={"file": ("combo.jpg", _jpg_bytes(), "image/jpeg")},
+    )
+    assert response.status_code in (200, 201), response.text
+
+    from app.models.resources import Attachment
+
+    stored = db.query(Attachment).filter(Attachment.id == response.json()["attachment_id"]).one()
+    assert stored.entity_type == "product_combo_image"

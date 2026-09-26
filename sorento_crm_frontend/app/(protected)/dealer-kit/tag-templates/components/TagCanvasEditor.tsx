@@ -59,6 +59,7 @@ import {
   buildSetBlock,
   isDynamic,
   layerDisplay,
+  layerText,
   rebindImageLayers,
   resolveSlotText,
   PRODUCT_BLOCK_SIZE,
@@ -132,6 +133,7 @@ import {
   ArrowDownToLine,
   ArrowUp,
   ArrowUpToLine,
+  Check,
   ChevronLeft,
   ChevronRight,
   ClipboardPaste,
@@ -148,6 +150,7 @@ import {
   Scissors,
   SquareDashed,
   Trash2,
+  Undo2,
   Ungroup,
   Unlock,
   X,
@@ -156,6 +159,7 @@ import type { ImperativePanelHandle } from 'react-resizable-panels';
 import { AssetPickerDialog } from './AssetPickerDialog';
 import { FontUploadDialog } from './FontUploadDialog';
 import { ProductPickDialog, type PickMode } from './ProductPickDialog';
+import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useKitLibrary, useTagBindings } from './useTagBindings';
 import { getProductTagData } from '../../services/tagDataService';
@@ -210,6 +214,7 @@ import {
   Image as KonvaImage,
 } from 'react-konva';
 import { KonvaTagLayer } from './KonvaTagLayer';
+import type { CanvasReviewPin } from '@/lib/dealer-kit/review-comments';
 import { useHtmlImage } from './useHtmlImage';
 import {
   CROP_HANDLE_ANCHORS,
@@ -416,6 +421,25 @@ interface TagCanvasEditorProps {
    * `CanvasToolbar`'s own `trailing` slot. Absent renders no trailing group.
    */
   toolbarTrailing?: ToolbarTrailingAction[];
+  /**
+   * The salesperson's pinned change requests on THIS tag (r9 S2/D6), already
+   * numbered. Drawn over the artboard at their own fractions; clicking one
+   * opens its comment and selects no layer, which is why they are a DOM
+   * overlay in the same coordinate space as the inline text editor rather
+   * than Konva nodes inside the stage's own hit testing.
+   *
+   * The host owns the `Comments` toggle: hidden means an empty list.
+   */
+  reviewPins?: CanvasReviewPin[];
+  /**
+   * D13: how to resolve/reopen a pin from ITS OWN popover, same copy and
+   * icons as `RequestDesignSection`'s footer (Check "Done", Undo2 "Reopen").
+   * Rendered only when this is given - the template page and any other
+   * read-only surface pass no `reviewPins` at all, and even a surface that
+   * does but has nowhere to persist the decision simply omits this, and the
+   * popover renders with no Done button.
+   */
+  onReviewPinResolve?: (pinId: string, resolved: boolean) => void | Promise<void>;
 }
 
 /** What the canvas is currently asking the user to pick. */
@@ -459,8 +483,12 @@ export function TagCanvasEditor({
   hideSaveBar,
   docId,
   toolbarTrailing,
+  reviewPins,
+  onReviewPinResolve,
 }: TagCanvasEditorProps) {
   const [layers, setLayers] = useState<TagLayer[]>(doc.layers);
+  /** Which change-request marker has its comment open (r9 S2/D6). */
+  const [openPinId, setOpenPinId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   /** The text layer the inline editor (S2, D5) is currently open on, if any. */
   const [editingLayerId, setEditingLayerId] = useState<string | null>(null);
@@ -3076,9 +3104,37 @@ export function TagCanvasEditor({
 
   const selectedData = selectedLayer ? dataOf(selectedLayer) : null;
 
-  /** What the inspector's Content box falls back to when nothing was typed. */
+  /**
+   * D7/AC-S4-1/S4-7: the CANVAS's own tag parts and parent code - `boundData`
+   * rather than `selectedData`, so the Layers panel's suffix still shows with
+   * nothing selected. Every layer on this canvas is on the same tag, so one
+   * binding serves the Inspector's picker AND every row's suffix. Empty/null
+   * on a bare product or set block, or in the template editor (no
+   * `boundData` at all) - neither carries parts, so the picker never shows
+   * (AC-S4-2).
+   */
+  const subjectParts = boundData?.kind === 'line' ? boundData.line.parts : undefined;
+  const subjectParentCode =
+    boundData?.kind === 'line'
+      ? boundData.line.code
+      : boundData?.kind === 'product'
+        ? boundData.product.code
+        : null;
+
+  /**
+   * What the inspector's Content box falls back to when nothing was typed,
+   * AND what its "Copy rendered text" preview shows (D21/S16 code review).
+   *
+   * `layerText` is the same function the print renderer resolves a layer's
+   * final text through (`TagSheetRenderer.tsx`) - it is not `resolveSlotText`
+   * alone, which answers null for a layer with NO `slot_binding` even when
+   * its own `props.text` carries a `{{token}}` (`Made of {{spec.material}}`,
+   * D57). `isDynamic` already gates the box to layers that carry a token
+   * either way, so the InspectorPanel decides whether to show this; this only
+   * has to compute what it would show.
+   */
   const selectedResolvedText = selectedLayer
-    ? resolveSlotText(selectedLayer, selectedData)
+    ? layerText(selectedLayer, selectedData, 'print')
     : null;
 
   /**
@@ -3413,11 +3469,10 @@ export function TagCanvasEditor({
                   onResize={handleRailResize}
                   className="flex flex-col"
                 >
-                  {/* The Panel itself clips at its own bounds (overflow:hidden
-                      from the primitive) - this inner div is what actually
-                      scrolls once the divider drags the pane below the rail's
-                      natural content height. */}
-                  <div className="flex h-full flex-col overflow-y-auto">{leftRail}</div>
+                  {/* D9: no scroll on this wrapper any more - LINES (the
+                      rail's own `flex-1` child) scrolls itself, and TAG SIZE
+                      sits below it, both always in view. */}
+                  <div className="flex h-full flex-col">{leftRail}</div>
                 </ResizablePanel>
                 <ResizableHandle
                   withHandle
@@ -3433,6 +3488,7 @@ export function TagCanvasEditor({
                     onToggleLock={handleToggleLock}
                     onMoveLayer={handleMoveLayer}
                     overflowingIds={overflowingIds}
+                    subjectParts={subjectParts}
                   />
                 </ResizablePanel>
               </ResizablePanelGroup>
@@ -3446,6 +3502,7 @@ export function TagCanvasEditor({
                   onToggleLock={handleToggleLock}
                   onMoveLayer={handleMoveLayer}
                   overflowingIds={overflowingIds}
+                  subjectParts={subjectParts}
                 />
               </div>
             )}
@@ -4017,6 +4074,114 @@ export function TagCanvasEditor({
                 </>
               )}
 
+              {/* The salesperson's pinned change requests (r9 S2/D6), in the
+                  SAME coordinate space as the inline editor below: the
+                  artboard IS this line's tag, so a comment's fractions land
+                  on the part of the tag it was pinned to at any zoom or pan.
+                  A DOM overlay rather than Konva nodes, so a click can open
+                  the comment without ever reaching the stage's selection. */}
+              {(reviewPins ?? []).map((pin) => {
+                const left = RULER_THICKNESS + view.panX + pin.x * canvasWidthPx;
+                const top = RULER_THICKNESS + view.panY + pin.y * canvasHeightPx;
+                return (
+                  <div key={pin.id}>
+                    {pin.w > 0 && pin.h > 0 && (
+                      <div
+                        className={cn(
+                          'pointer-events-none absolute z-20 rounded-sm border-2',
+                          pin.resolved
+                            ? 'border-muted-foreground/40 bg-muted-foreground/10'
+                            : 'border-primary bg-primary/10',
+                        )}
+                        style={{
+                          left,
+                          top,
+                          width: pin.w * canvasWidthPx,
+                          height: pin.h * canvasHeightPx,
+                        }}
+                      />
+                    )}
+                    <button
+                      type="button"
+                      data-testid={`canvas-pin-${pin.id}`}
+                      aria-label={`Change request ${pin.number}`}
+                      className={cn(
+                        'absolute z-20 flex size-5 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-2 border-background text-2xs font-semibold text-white shadow',
+                        pin.resolved ? 'bg-muted-foreground/60' : 'bg-primary',
+                      )}
+                      style={{ left, top }}
+                      onMouseDown={(event) => event.stopPropagation()}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setOpenPinId((current) =>
+                          current === pin.id ? null : pin.id,
+                        );
+                      }}
+                    >
+                      {pin.number}
+                    </button>
+                    {openPinId === pin.id && (
+                      <div
+                        // A comment bubble, not a static box: the role is what
+                        // lets it carry the mousedown guard that keeps a click
+                        // inside it away from the canvas's own selection.
+                        role="note"
+                        className="absolute z-30 w-56 rounded-lg border bg-popover p-2 text-xs shadow-md"
+                        style={{ left: Math.max(RULER_THICKNESS, left - 112), top: top + 14 }}
+                        onMouseDown={(event) => event.stopPropagation()}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <span className="text-2xs uppercase tracking-wide text-muted-foreground">
+                            {pin.caption}
+                          </span>
+                          <button
+                            type="button"
+                            aria-label="Close comment"
+                            className="text-muted-foreground hover:text-foreground"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setOpenPinId(null);
+                            }}
+                          >
+                            <X className="size-3.5" />
+                          </button>
+                        </div>
+                        <p className="mt-1 whitespace-pre-wrap">{pin.body}</p>
+                        {/* D13 (AC-S9-1/S9-2): dismiss the comment from the
+                            pin that opened it, same copy/icons as
+                            `RequestDesignSection`'s footer - only when the
+                            host wired somewhere for the decision to go. */}
+                        {onReviewPinResolve && (
+                          <Button
+                            type="button"
+                            variant={pin.resolved ? 'ghost' : 'outline'}
+                            size="sm"
+                            className="mt-2 h-6 px-2 text-2xs"
+                            onMouseDown={(event) => event.stopPropagation()}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void onReviewPinResolve(pin.id, !pin.resolved);
+                            }}
+                          >
+                            {pin.resolved ? (
+                              <>
+                                <Undo2 className="mr-1 size-3" />
+                                Reopen
+                              </>
+                            ) : (
+                              <>
+                                <Check className="mr-1 size-3" />
+                                Done
+                              </>
+                            )}
+                          </Button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
               {/* Inline text edit (S2, D5): a plain textarea laid over the
                   node, same maths `KonvaTagLayer` uses for the node itself.
                   Kept open on `editingLayer` regardless of where the
@@ -4232,6 +4397,8 @@ export function TagCanvasEditor({
               onToggleEditPoints={(layerId) =>
                 setEditingPointsId((prev) => (prev === layerId ? null : layerId))
               }
+              subjectParts={subjectParts}
+              subjectParentCode={subjectParentCode}
             />
           </ResizablePanel>
         </ResizablePanelGroup>

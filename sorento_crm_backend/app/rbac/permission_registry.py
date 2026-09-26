@@ -194,12 +194,20 @@ PERMISSION_REGISTRY.extend(_crud("master_data", "products", "Products"))
 PERMISSION_REGISTRY.append({"slug": "master_data.products.import", "name": "Import Products", "description": "Permission to bulk import products."})
 PERMISSION_REGISTRY.append({"slug": "master_data.products.export", "name": "Export Products", "description": "Permission to export products with dynamic fields."})
 PERMISSION_REGISTRY.append({"slug": "master_data.products.bulk_delete", "name": "Bulk Delete Products", "description": "Permission to bulk delete products."})
+# PLAN-autocount-pull-review.md: pull a frozen products snapshot from AutoCount (via
+# FoundryX) and review/confirm it, instead of exporting + uploading the workbook by hand.
+PERMISSION_REGISTRY.append({"slug": "master_data.products.autocount_pull", "name": "Pull Products from AutoCount", "description": "Permission to pull a products snapshot from AutoCount and review/confirm it."})
 # The spec-search vocabulary. Editing it silently reshapes every future product search
 # for every customer, so it gets its own permission rather than riding on products.edit.
 PERMISSION_REGISTRY.extend(_crud("master_data", "spec_registry", "Spec Registry"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "product_attachments", "Product Attachments"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "product_sets", "Product Sets"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "product_categories", "Product Categories"))
+# Chatbot stock ask v2 S1 (PLAN-chatbot-stock-ask-v2-24sep.md, R2): gates editing the
+# X / Y chatbot answer limits on a category or product. Only .view (see the two values)
+# and .edit (change them) are read by code; .add / .delete are the _crud pattern's
+# siblings and gate nothing (there is no row of its own to add or delete).
+PERMISSION_REGISTRY.extend(_crud("master_data", "chatbot_stock_limits", "Chatbot Stock Limits"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "brands", "Brands"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "lookup_sets", "Lookup Sets"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "units_of_measure", "Units of Measure"))
@@ -255,6 +263,9 @@ PERMISSION_REGISTRY.extend([
 PERMISSION_REGISTRY.extend(_with_import_export("inventory", "warehouses", "Warehouses"))
 PERMISSION_REGISTRY.extend(_crud("inventory", "storage_zones", "Storage Zones"))
 PERMISSION_REGISTRY.extend(_with_import_export("inventory", "stock", "Stock"))
+# PLAN-autocount-pull-review.md: pull a frozen stock-balance snapshot from AutoCount (via
+# FoundryX) and review/confirm it, instead of exporting + uploading the Stock List by hand.
+PERMISSION_REGISTRY.append({"slug": "inventory.stock.autocount_pull", "name": "Pull Stock from AutoCount", "description": "Permission to pull a stock balance snapshot from AutoCount and review/confirm it."})
 PERMISSION_REGISTRY.extend(_crud("inventory", "stock_batches", "Stock Batches"))
 PERMISSION_REGISTRY.extend(_crud("inventory", "stock_ledger", "Stock Ledger"))
 PERMISSION_REGISTRY.extend(_crud("inventory", "stock_transfers", "Stock Transfers"))
@@ -362,6 +373,11 @@ PERMISSION_REGISTRY.extend([
     {"slug": "system.chat_history.view", "name": "View Chat History", "description": "View stored WhatsApp/chat messages and round-trip latency. Message content is customer PII."},
     {"slug": "system.chat_history.export", "name": "Export Chat History", "description": "Export chat messages to CSV via My Downloads."},
     {"slug": "system.chat_history.manage", "name": "Manage chatbot turns", "description": "Retry a failed chatbot turn from the turn trace, which re-posts the customer's original message at the chatbot ingress."},
+    # Chatbot turn re-architecture (AC-1561). Separate from `chat_history.view`, which
+    # READS one customer's conversation: this one edits the policy every conversation
+    # is then answered by, so an operator who may read a turn is not thereby allowed to
+    # change what the next thousand turns do.
+    {"slug": "system.chatbot_config.manage", "name": "Manage Chatbot Configuration", "description": "Create, edit and delete chatbot domains and entity kinds - the policy the turn engine routes and narrows on."},
     {"slug": "system.email_event_configs.view", "name": "View Email Event Configs", "description": "View per-event email kill switches and rate overrides."},
     {"slug": "system.email_event_configs.manage", "name": "Manage Email Event Configs", "description": "Toggle per-event email kill switches and adjust rate overrides."},
 ])
@@ -589,6 +605,17 @@ PERMISSION_REGISTRY.extend([
             "Separate from `projects.order_inquiry.action`, which is marking a row's "
             "supply state: acknowledging is purchasing taking CS's instruction on, and "
             "CS may not do it for them."
+        ),
+    },
+    {
+        "slug": "projects.order_inquiries.reserve",
+        "name": "Reserve Stock for Order Inquiries",
+        "description": (
+            "CS-head grant (R1, `PLAN-oi-request-cs-reserve.md`): confirm how much of a "
+            "purchasing 'request CS to reserve' ask is actually reserved from own or "
+            "pool stock. Narrow on purpose - only the person who may commit stock "
+            "against a request holds it, separate from `projects.order_inquiries."
+            "acknowledge`, which is purchasing's own grant to raise the request."
         ),
     },
     {

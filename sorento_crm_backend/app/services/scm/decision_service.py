@@ -46,7 +46,7 @@ import uuid
 from datetime import date, datetime, timedelta
 from typing import Optional
 
-from sqlalchemy import Numeric, cast, text
+from sqlalchemy import text
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.inventory import Warehouse
@@ -59,7 +59,6 @@ from app.models.scm import (
 )
 from app.services.error_handler import AppException
 from app.services.scm import plan_grain
-from app.services.scm import plan_scope
 from app.services.scm.reorder_engine import allocate as eng_allocate
 from app.services.numbering_service import NumberingService
 
@@ -140,7 +139,8 @@ def _refresh_run_counts(db: Session, run_id: str) -> None:
     row = db.execute(
         text(
             """
-            SELECT count(DISTINCT r.product_id) AS planned,
+            SELECT count(DISTINCT r.product_id)
+                     FILTER (WHERE NOT r.hidden_by_default) AS planned,
                    count(DISTINCT r.product_id)
                      FILTER (WHERE d.id IS NOT NULL) AS decided,
                    count(DISTINCT r.product_id)
@@ -1388,42 +1388,22 @@ def list_plan_row_decisions(db: Session, run_id: str) -> dict:
     one query apiece, keyed by what the row needs (supplier id, `(product_id,
     supplier_id)`, recommendation id) rather than re-run per row.
     """
-    # S7, PLAN-plan-list-tile-sheet-one-scope.md (AC-2): a hidden-by-default row (the SAME
-    # `plan_scope.hidden_by_default` rule the recommendations list serializer stamps) is
-    # not decidable BY DEFAULT, so it does not count toward the tile's total - "tile
-    # counts what the list show" (owner, 10 Sep). Reviewer pass 3 (round D, D1): SELECTs
-    # only the four scalars the rule needs, extracted with `->>`/cast in SQL, never the
-    # whole `inputs` JSONB - measured on the 12,948-rec run, fetching the full blob (this
-    # query's earlier shape) cost 29.3 MB / 356 ms against 69 ms for the narrow read.
+    # S7, PLAN-plan-list-tile-sheet-one-scope.md (AC-2): a hidden-by-default row is not
+    # decidable BY DEFAULT, so it does not count toward the tile's total - "tile counts
+    # what the list show" (owner, 10 Sep). PLAN-reorder-one-formula.md S3/AC-12: reads the
+    # STORED `hidden_by_default` column (stamped once, at write time, by `_build_rec` -
+    # see its own docstring) rather than re-deriving the rule per row here - three
+    # independent re-derivations is exactly what drifted apart per the owner's 10 Sep
+    # measurement (list 415, tile "0 of 950", sheet 950).
     candidates = (
-        db.query(
-            ReorderRecommendation.product_id,
-            ReorderRecommendation.rec_type,
-            ReorderRecommendation.inputs["policy_type"].astext,
-            cast(ReorderRecommendation.inputs["reorder_level"].astext, Numeric),
-            cast(ReorderRecommendation.inputs["master_reorder_level"].astext, Numeric),
-            ReorderRecommendation.net_position,
-        )
+        db.query(ReorderRecommendation.product_id, ReorderRecommendation.hidden_by_default)
         .filter(
             ReorderRecommendation.run_id == run_id,
             ReorderRecommendation.rec_type.in_(_PLAN_ROW_DECIDABLE_TYPES),
         )
         .all()
     )
-    decidable_product_ids = {
-        pid
-        for pid, rec_type, policy_type, reorder_level, master_reorder_level, net_position
-        in candidates
-        if not plan_scope.hidden_by_default(
-            rec_type=rec_type,
-            policy_type=policy_type,
-            reorder_level=float(reorder_level) if reorder_level is not None else None,
-            master_reorder_level=(
-                float(master_reorder_level) if master_reorder_level is not None else None
-            ),
-            net_position=float(net_position) if net_position is not None else None,
-        )
-    }
+    decidable_product_ids = {pid for pid, hidden in candidates if not hidden}
     total = len(decidable_product_ids)
     quads = (
         db.query(PlanRowDecision, ReorderRecommendation.id,

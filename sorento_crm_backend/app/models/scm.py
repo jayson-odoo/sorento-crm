@@ -35,6 +35,7 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
 from app.models.base import CompanyScopedMixin
+from app.services.scm.demand_class import check_constraint_sql
 import uuid
 
 
@@ -262,7 +263,10 @@ class PurchasingBudget(Base, CompanyScopedMixin):
 class ReorderRun(Base, CompanyScopedMixin):
     """One planning run; recommendations freeze their inputs against it."""
     __tablename__ = "reorder_run"
-    __table_args__ = {"schema": "scm"}
+    __table_args__ = (
+        CheckConstraint(check_constraint_sql("demand_class"), name="ck_scm_reorder_run_demand_class"),
+        {"schema": "scm"},
+    )
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     created_by = Column(String, nullable=True)
@@ -289,6 +293,17 @@ class ReorderRun(Base, CompanyScopedMixin):
     # all is always counted (G2, 9 Sep ruling), the same reading the end date already gives
     # it.
     plan_horizon_start = Column(Date, nullable=True)
+    # Demand scope (PLAN-reorder-plan-demand-class-orders.md, 21 Sep 2026): which leg of
+    # demand this run nets. NULL (the default) nets BOTH legs, unchanged from before this
+    # column existed - the closed vocabulary is the same one `demand_class.py` already
+    # governs for sales_orders/sales_agents, so the check constraint is built off it rather
+    # than restated here.
+    demand_class = Column(String(16), nullable=True)
+    # The SO scope this run was launched with, project runs only. NULL means none was
+    # asked for; an EMPTY list means Project was chosen with no SO narrowed (every project
+    # order in range), the same "asked for nothing vs asked for everything" split
+    # `product_ids` above already carries.
+    so_numbers = Column(JSONB, nullable=True)
     policy_snapshot_ref = Column(String, nullable=True)
     started_at = Column(DateTime(timezone=False), nullable=True)
     finished_at = Column(DateTime(timezone=False), nullable=True)
@@ -328,6 +343,11 @@ class ReorderRun(Base, CompanyScopedMixin):
     superseded_by_run_id = Column(
         UUID(as_uuid=False), ForeignKey("scm.reorder_run.id", ondelete="SET NULL"), nullable=True
     )
+    # Who asked for this run: `chat` when the low stock report tool created it over
+    # WhatsApp (PLAN-low-stock-report S5, AC-42), NULL when a person started it in Reorder
+    # Planning or the scheduler did. Drives the "via chat" marker on the plans list, so a
+    # buyer can see why a plan nobody here launched exists.
+    requested_via = Column(String(10), nullable=True)
 
     recommendations = relationship(
         "ReorderRecommendation",
@@ -404,6 +424,14 @@ class ReorderRecommendation(Base, CompanyScopedMixin):
         UUID(as_uuid=False), ForeignKey("warehouses.id", ondelete="SET NULL"), nullable=True
     )
     pool_warehouse_code = Column(String(50), nullable=True)
+    # PLAN-reorder-one-formula.md S3: the ONE scope rule (`plan_scope.hidden_by_default`),
+    # stamped at write time so every SQL reader (the run's own counts, the recommendations
+    # serializer, the decisions total) reads the SAME answer the Python rule already gives -
+    # never a fourth re-derivation. The Python rule stays the only RUNTIME source; this
+    # column is a cache of its own answer, not a second rule.
+    hidden_by_default = Column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
 
     run = relationship("ReorderRun", back_populates="recommendations")
     overrides = relationship(
@@ -945,9 +973,18 @@ class OrderSummaryRow(Base, CompanyScopedMixin):
     #: `pool_predicate.ACTIVE_SITE_POOL_SQL` rule the PO column above applies) - an
     #: allocation at a project bin or naming no warehouse is not counted.
     incoming_spo_qty = Column(Numeric, nullable=True)
-    #: The latest `goods_received` picking line for the product, network-wide.
+    #: The newest VISIBLE `spo_allocations` line for the product, network-wide, RECEIVED OR
+    #: NOT (owner ruling, second round, PLAN-low-stock-last-in-and-list-scope S1: "even
+    #: haven't GR we also show as last in"). NOT goods_received picking lines:
+    #: `picking_lines.qty_accepted` was measured NULL on every row, which is why this
+    #: column existed but always printed 0 beside a real date. `last_receipt_qty` is the
+    #: SPO's own `allocated_quantity`, never `quantity_received`.
     last_receipt_date = Column(Date, nullable=True)
     last_receipt_qty = Column(Numeric, nullable=True)
+    #: Migration 518. NULL on a run frozen before it (R4, no backfill) - the sheet's "Last
+    #: in qty" cell then prints the bare quantity instead of the SPO/container line.
+    last_receipt_spo_number = Column(String(100), nullable=True)
+    last_receipt_container_number = Column(String(100), nullable=True)
     #: The suggested supplier's own MOQ (`ProductSupplier.moq`), alongside its name above.
     moq = Column(Numeric, nullable=True)
 
@@ -1395,6 +1432,11 @@ class SupplierInventory(Base, CompanyScopedMixin):
         UUID(as_uuid=False), ForeignKey("suppliers.id", ondelete="CASCADE"), nullable=False
     )
     item_code = Column(String(100), nullable=False)
+    #: The 型号 exactly as the supplier wrote it (S1, `PLAN-stock-list-bare-model-codes.md`) -
+    #: `item_code` may be a COMPOSED guess for a bare 型号 (`SRTWC8613-250`), and "Supplier
+    #: says" (the Supplier codes tab) has to lead with what the sheet actually printed, not
+    #: our own derivation of it. Nullable: every row before this column existed has none.
+    model_no = Column(String(120), nullable=True)
     product_id = Column(
         UUID(as_uuid=False), ForeignKey("products.id", ondelete="SET NULL"), nullable=True
     )
@@ -1492,6 +1534,12 @@ class LoadingPlan(Base, CompanyScopedMixin):
     #: "Sales order cut-off". NULL means every open order counts, the same words and the same
     #: rule the reorder run uses.
     plan_horizon_date = Column(Date, nullable=True)
+    # "Sales orders needed FROM" (AC-N7, PLAN-scm-loading-plan-lines-feedback-12sep.md): the
+    # start-side twin, the same column and the same reading `scm.reorder_run.plan_horizon_start`
+    # already gives the reorder engine. NULL (the default) plans every open SO line regardless
+    # of when it was needed. Demand carrying no date at all is always counted, the same reading
+    # the end date already gives it.
+    plan_horizon_start = Column(Date, nullable=True)
     #: `stock_list` | `proforma` | `none` - which document the plan was started from.
     document_kind = Column(String(20), nullable=False, server_default=text("'none'"))
     #: The retained sheet itself, so the record can offer "View uploaded list". Not an FK:
@@ -1675,15 +1723,23 @@ class ProformaInvoice(Base, CompanyScopedMixin):
     currency = Column(String(3), nullable=True)
 
     container_ref = Column(String(100), nullable=True)
+    #: The forwarder's own bill of lading number, when the supplier states one distinctly
+    #: from the SO/booking number below. Carried onto the draft's `bill_of_lading_number`
+    #: (R-E, 25 Sep - a column that existed already but nothing had ever written to).
     bl_ref = Column(String(100), nullable=True)
+    #: The forwarder's booking/SO reference (R-E, owner ruling 25 Sep) - a header field OF
+    #: ITS OWN now, distinct from `bl_ref`: some suppliers' `提单号` genuinely is a bill of
+    #: lading, others' is the SO number, and which is which is a per-supplier mapper pick
+    #: (F1/F2), never a shared alias. Superseded the 6 Sep rule that carried `bl_ref` into
+    #: the draft's SO field unconditionally - carries onto `forwarder_order_ref` instead.
+    so_ref = Column(String(100), nullable=True)
     #: The container's seal number (S2/S4 standing ruling, captain 9 Sep) - filled from the
     #: packing document when the PI itself stated none, same convention `container_ref`/
     #: `bl_ref` already follow. Read by convert's header carry-over (AC-D2c) alongside them.
     seal_ref = Column(String(100), nullable=True)
     #: Who the document bills (`客户名` / `Customer Name` / `客户`, ruling 28) - the fourth
     #: header fact the supplier states and the packing list needs, carried onto the draft
-    #: with the other three. `bl_ref` holds `提单号`, which is the forwarder's SO, not a
-    #: bill of lading (6 Sep ruling) - the name is historical.
+    #: with the other three.
     consignee_ref = Column(String(150), nullable=True)
 
     #: What the document totals ITSELF to when it states a total, else the sum of its lines.

@@ -1,11 +1,13 @@
 /**
  * Who handled this conversation, on the DETAIL page header (feedback
- * 2026-08-16, item 1).
+ * 2026-08-16, item 1; superseded by owner ruling S4, 23 Sep 2026,
+ * PLAN-keep-assignee-on-resolve-22sep).
  *
  * The captain landed here from "Recently resolved" and could not see who had
  * answered: the assignee was only inside a collapsed section, and on a resolved
- * row it is NULL anyway (resolve clears it), so it read "-". The header now
- * names the assignee while the row is open and the resolver once it is closed.
+ * row it used to read "-" (resolve cleared it). Resolve keeps the assignee for
+ * audit now, so the header names the assignee on every row, open or resolved,
+ * and additionally names the resolver alongside it once the row is resolved.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -89,12 +91,12 @@ describe('ConversationSLATrackingDetail handler line', () => {
     );
   });
 
-  it('a resolved row names who resolved it (the assignee is cleared on resolve)', () => {
+  it('a resolved row names both its assignee and its resolver, even when they differ', () => {
     useConversationSLATrackingDetail.mockReturnValue({
       data: tracking({
         is_resolved: true,
-        assigned_to_id: null,
-        assigned_user_name: null,
+        assigned_to_id: 'u-1',
+        assigned_user_name: 'Aisyah Rahman',
         resolved_at: new Date('2026-08-12T04:00:00Z'),
         resolved_by_user_name: 'Charissa Tan',
       }),
@@ -103,22 +105,37 @@ describe('ConversationSLATrackingDetail handler line', () => {
     render(<ConversationSLATrackingDetail trackingId="tr-1" />);
 
     expect(screen.getByTestId('tracking-handler')).toHaveTextContent(
+      'Assigned to: Aisyah Rahman',
+    );
+    expect(screen.getByTestId('tracking-resolver')).toHaveTextContent(
       'Resolved by: Charissa Tan',
     );
   });
 
-  it('names nobody rather than printing an id', () => {
+  it('an open row shows no resolver line at all', () => {
+    useConversationSLATrackingDetail.mockReturnValue({
+      data: tracking(),
+      isLoading: false,
+    });
+    render(<ConversationSLATrackingDetail trackingId="tr-1" />);
+
+    expect(screen.queryByTestId('tracking-resolver')).not.toBeInTheDocument();
+  });
+
+  it('names nobody rather than printing an id, for either role', () => {
     useConversationSLATrackingDetail.mockReturnValue({
       data: tracking({
         is_resolved: true,
         assigned_to_id: null,
         assigned_user_name: null,
+        assigned_to: '8f14e45f-ceea-467a-9c8b-0f3f6a1d5c22',
         resolved_by_user_name: '8f14e45f-ceea-467a-9c8b-0f3f6a1d5c22',
       }),
       isLoading: false,
     });
     render(<ConversationSLATrackingDetail trackingId="tr-1" />);
 
-    expect(screen.getByTestId('tracking-handler')).toHaveTextContent('Resolved by: -');
+    expect(screen.getByTestId('tracking-handler')).toHaveTextContent('Assigned to: -');
+    expect(screen.getByTestId('tracking-resolver')).toHaveTextContent('Resolved by: -');
   });
 });

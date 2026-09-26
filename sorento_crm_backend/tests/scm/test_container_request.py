@@ -34,7 +34,7 @@ from app.models.scm import PriorityPolicy
 from app.models.supplier_notice import SupplierNoticeLine
 from app.services.scm import supplier_notice_service
 from tests.scm.conftest import as_user, requires_pg, seed_user
-from tests.scm.test_container_request_universe import _place as place_on_po
+from tests.scm.test_container_request_universe import _place_spo as place_on_spo
 from tests.scm.test_container_request_universe import _project_need as project_need
 from tests.scm.test_loading_plan import World
 from tests.scm.test_outstanding_import_routes import as_company_user
@@ -603,12 +603,13 @@ def test_build_on_hand_nets_a_placed_projects_bin_stock_against_retail_demand(sc
     supply sides - this pins the known, accepted residue rather than a bug this test is
     blessing by accident (see `_stock_context`'s docstring for the record of it).
 
-    `_project_open_need` nets a project line's demand by what CS has already placed on a PO
-    (R15) - a fully placed line leaves NOTHING in `open_so_need` for it. The widened `on_hand`
-    does not ask what a bin's stock is FOR: once that placement lands as received stock in the
-    project's own bin, this screen counts it anyway. The stock is therefore counted with its
-    own matching demand already gone, and it nets instead against whatever OTHER (retail)
-    demand for the SAME product is still open.
+    AC-P8 (`PLAN-loading-plan-project-spo-only.md`, owner 18 Sep 2026): the placement that
+    nets a project line's demand to zero is an SPO, not a PO (R1) - a PO tells the supplier
+    what was bought, not what is coming to be shipped. The widened `on_hand` does not ask
+    what a bin's stock is FOR: once that placement lands as received stock in the project's
+    own bin, this screen counts it anyway. The stock is therefore counted with its own
+    matching demand already gone, and it nets instead against whatever OTHER (retail) demand
+    for the SAME product is still open.
     """
     app, db, gcu, gcuk = scm_app
     as_company_user(app, db, gcu, gcuk)
@@ -618,9 +619,10 @@ def test_build_on_hand_nets_a_placed_projects_bin_stock_against_retail_demand(sc
     # Retail demand, still fully open - the only thing this screen has left to ask for.
     _so(db, w, "A", 100, demand_class="retail")
 
-    # A project line CS has already placed IN FULL - `_project_open_need` nets it to zero.
+    # A project line CS has already placed IN FULL, on an SPO - `_project_open_need` nets
+    # only an SPO placement to zero (R1); a PO placement would leave it open.
     project_line = project_need(db, w, "A", 30)
-    place_on_po(db, w, project_line, 30)
+    place_on_spo(db, w, project_line, 30)
 
     # That placement has since landed: the stock sits in the project's own bin.
     group = _warehouse(db, segment="project")
@@ -688,11 +690,15 @@ def test_build_incoming_packing_list_ignores_shipments_that_have_arrived(scm_app
 
 
 def test_build_nets_incoming_pl_only_for_the_part_not_yet_on_an_spo(scm_app):
-    # R6/AC-D1 (purchasing consolidation, 6 Sep): netting the FULL incoming_pl would
-    # double-subtract a container that already has its SPO. Shipment X's line (qty 50)
-    # already has 20 of itself turned into the SPO allocation counted in incoming_spo, so
-    # only the remaining 30 nets against the ask - not the wrong answer netting the whole
-    # 50 would give (100 - 10 - 20 - 50 = 20).
+    # R6/AC-D1 (purchasing consolidation, 6 Sep), superseded on the CELL by AC-N2 (12 Sep):
+    # netting the FULL incoming_pl would double-subtract a container that already has its
+    # SPO. Shipment X's line (qty 50) already has 20 of itself turned into the SPO allocation
+    # counted in incoming_spo, so only the remaining 30 nets against the ask - not the wrong
+    # answer netting the whole 50 would give (100 - 10 - 20 - 50 = 20). AC-N2 (12 Sep 2026)
+    # widens the fix from the netting formula alone to the CELL itself: `incoming_pl` is now
+    # `incoming_pl_unallocated` everywhere it is shown, because Total supply (on hand + SPO +
+    # incoming PL) added the same 20 units in twice - once as the SPO, once again as the
+    # packing list it came off - even though the suggestion below was already right.
     app, db, gcu, gcuk = scm_app
     as_company_user(app, db, gcu, gcuk)
     w = World(db)
@@ -740,7 +746,7 @@ def test_build_nets_incoming_pl_only_for_the_part_not_yet_on_an_spo(scm_app):
     row = _row(r.json()["rows"], "A", w)
     assert row["on_hand"] == 10
     assert row["incoming_spo"] == 20
-    assert row["incoming_pl"] == 50  # the whole unreceived quantity, unchanged meaning
+    assert row["incoming_pl"] == 30  # AC-N2: the unallocated part, not the whole 50
     assert row["incoming_pl_unallocated"] == 30  # 50 shipped - 20 allocated - 0 received
     assert row["suggested_qty"] == 40  # 100 - 10 - 20 - 30, not 20
 
@@ -1290,3 +1296,42 @@ def test_send_requires_the_write_permission(scm_app):
     )
 
     assert r.status_code == 403, r.text
+
+
+def test_build_open_need_ignores_a_redirected_rows_placement(scm_app):
+    """AC-RL-16e (S5, code review 17 Sep): `_SPO_PLACED_ON_LINE_SQL` sums EVERY link on
+    the core line's project mirror with no `redirected_to_pool` exclusion - a
+    redirected row's placement (goods that already shipped to another order,
+    AC-RL-10) still nets the loading plan's own open need down, so purchasing
+    reads less to buy than the line genuinely still needs. Placed on an SPO, not a
+    PO (R1, `PLAN-loading-plan-project-spo-only.md`): a PO placement never nets
+    here at all, so only an SPO placement exercises the exclusion this test guards."""
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = World(db)
+    # A trace of stock so the product row survives the "no demand, no stock" drop
+    # (`test_build_no_demand_rows_with_stock_but_zero_quantity_are_left_out_entirely`)
+    # even if the bug under test nets this line's OWN need to zero.
+    w.stock("A", packed=1, cbm=0.1)
+
+    project_line = project_need(db, w, "A", 30)
+    place_on_spo(db, w, project_line, 30)
+
+    from app.models.project_so import OrderInquiryRow, ProjectSalesOrderLine
+    psl = (
+        db.query(ProjectSalesOrderLine)
+        .filter(ProjectSalesOrderLine.core_sales_order_line_id == project_line.id)
+        .one()
+    )
+    row = db.query(OrderInquiryRow).filter(OrderInquiryRow.so_line_id == psl.id).one()
+    row.redirected_to_pool = True
+    db.flush()
+
+    r = TestClient(app).post(BUILD_URL, json={"plan_id": _plan(db, w)})
+
+    assert r.status_code == 200, r.text
+    row_out = _row(r.json()["rows"], "A", w)
+    assert row_out["project_qty"] == 30, (
+        "a redirected row's placement must not net this line's own open need"
+    )
+    assert row_out["open_so_need"] == 30

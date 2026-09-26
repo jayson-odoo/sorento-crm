@@ -31,8 +31,11 @@ from sqlalchemy.orm import Session
 
 from app.models.product import Product
 from app.models.scm import SupplierInventory
+from app.services.error_handler import AppException
+from app.services.scm.supplier_code_composer import WordList
 from app.services.scm.supplier_inventory_reader import InventoryReadResult, read_workbook
 from app.services.scm.supplier_scope import (
+    is_uuid,
     supplier_check as _supplier_check,
     supplier_mismatch_warning as _supplier_mismatch_warning,
 )
@@ -55,8 +58,25 @@ def _uuid() -> str:
     return str(uuid.uuid4())
 
 
-def _parse(db: Session, data: bytes) -> InventoryReadResult:
-    return read_workbook(data, db=db)
+def _parse(
+    db: Session,
+    data: bytes,
+    supplier_id: Optional[str] = None,
+    header_row: Optional[int] = None,
+) -> InventoryReadResult:
+    """The read, with the CHOSEN supplier's own word list (D1-D6): a bare 型号 composes
+    through it, a letter-led one never consults it at all (D1/D2's regression guard).
+
+    `header_row` (B6, AC-M3) threads the mapper's stepper pick into the read. The
+    resolver is supplier-scoped (B1) whenever a supplier is chosen, same as every other
+    reader here - a shared-only resolver otherwise, matching the old behaviour.
+    """
+    from app.services.import_alias_service import AliasResolver
+    from app.services.scm.supplier_inventory_reader import DOC_TYPE
+
+    words = WordList.for_supplier(db, supplier_id) if supplier_id else None
+    resolver = AliasResolver.for_supplier(db, DOC_TYPE, supplier_id)
+    return read_workbook(data, resolver=resolver, words=words, header_row=header_row)
 
 
 def _products_by_code(
@@ -159,7 +179,12 @@ def _summarise(
 
 
 def preview(
-    db: Session, data: bytes, *, supplier_id: str, loading_plan_id: Optional[str] = None
+    db: Session,
+    data: bytes,
+    *,
+    supplier_id: str,
+    loading_plan_id: Optional[str] = None,
+    header_row: Optional[int] = None,
 ) -> dict:
     """What the file says, and what it would replace, before anything is written.
 
@@ -170,8 +195,17 @@ def preview(
     absent (the standalone stock-list page, and the "Plan a container" dialog - which previews
     before the plan it will apply into exists, so there is nothing of that plan's own to
     count) narrows to `loading_plan_id IS NULL`, exactly as `apply`'s own replace scope does.
+
+    A `supplier_id` that is not a real id at all (review round 3, R18) is refused here,
+    format-only - not `assert_supplier`'s company-scoped existence check, which this route
+    has never done and is not this fix's call to add - because `SupplierInventory.
+    supplier_id == supplier_id` below is a raw comparison against a UUID column: an
+    unparseable string reaches Postgres and raises `InvalidTextRepresentation`, a 500, not
+    a form mistake.
     """
-    parsed = _parse(db, data)
+    if not is_uuid(supplier_id):
+        raise AppException(422, "That supplier does not exist.", detail="supplier_id")
+    parsed = _parse(db, data, supplier_id, header_row)
     summary = _summarise(db, parsed, supplier_id) if parsed.ok else {}
     held_scope = db.query(SupplierInventory).filter(
         SupplierInventory.supplier_id == supplier_id
@@ -185,6 +219,10 @@ def preview(
     return {
         "readable": parsed.ok,
         "missing_columns": parsed.missing_columns,
+        # AC-M4 (review round 1, R7): named at the TOP LEVEL, same as the PI/packing-list
+        # channels - previously only `validate()`'s warning TEXT read this internally, so
+        # a stock-list preview with unresolved columns never told the mapper what they were.
+        "unmapped_headers": parsed.unmapped_headers,
         "problems": [{"row": p.row_number, "reason": p.reason} for p in parsed.problems[:50]],
         "supplier_id": supplier_id,
         "supplier_name": _supplier_label(db, supplier_id),
@@ -192,6 +230,7 @@ def preview(
         "sample": [
             {
                 "item_code": r.item_code,
+                "model_no": r.model_no,
                 "product_name": r.product_name,
                 "qty_packed": r.qty_packed,
                 "qty_unfinished": r.qty_unfinished,
@@ -203,9 +242,11 @@ def preview(
     }
 
 
-def validate(db: Session, data: bytes, *, supplier_id: str) -> dict:
+def validate(
+    db: Session, data: bytes, *, supplier_id: str, header_row: Optional[int] = None
+) -> dict:
     """The Test verdict: the same read `apply` performs, with nothing written."""
-    parsed = _parse(db, data)
+    parsed = _parse(db, data, supplier_id, header_row)
     if not parsed.ok:
         missing = ", ".join(parsed.missing_columns)
         reason = (
@@ -263,7 +304,9 @@ def apply(
     supplier_id: str,
     as_of: Optional[date] = None,
     actor: Optional[str] = None,
+    actor_label: Optional[str] = None,
     loading_plan_id: Optional[str] = None,
+    header_row: Optional[int] = None,
 ) -> dict:
     """Replace a snapshot with the file. Does not commit.
 
@@ -273,8 +316,15 @@ def apply(
     - it replaces the rows no plan owns (`loading_plan_id IS NULL`), which is what "the
     supplier's snapshot" has meant since 454: a plan's rows belong to that plan, and a
     standalone upload must not delete them.
+
+    TWO provenance values, because two columns answer two different questions. `actor` is the
+    caller's ID and it is what `supplier_inventory.uploaded_by` records - a principal
+    reference an audit trail joins back to a user row. `actor_label` is their NAME, and it is
+    what the ladder stamps on any alias it remembers along the way, because that column is
+    read straight off the screen by a buyer. Without the label the ladder fell back to the
+    id and the Remembered table printed a UUID at her.
     """
-    parsed = _parse(db, data)
+    parsed = _parse(db, data, supplier_id, header_row)
     if not parsed.ok:
         return {
             "readable": False,
@@ -287,7 +337,10 @@ def apply(
     summary = _summarise(db, parsed, supplier_id, check_supplier=False)
     stamp = as_of or datetime.now().date()
     known = _products_by_code(
-        db, {r.item_code for r in parsed.rows}, supplier_id=supplier_id, actor=actor
+        db,
+        {r.item_code for r in parsed.rows},
+        supplier_id=supplier_id,
+        actor=actor_label or actor,
     )
 
     scope = db.query(SupplierInventory).filter(
@@ -317,13 +370,16 @@ def apply(
                 "brand": None,
                 "spec": None,
                 "remark": None,
+                "model_no": None,
             },
         )
         cur["qty_packed"] += r.qty_packed
         cur["qty_unfinished"] += r.qty_unfinished
         if cur["cbm_per_unit"] is None and r.cbm_per_unit is not None:
             cur["cbm_per_unit"] = r.cbm_per_unit
-        for f in ("product_name", "brand", "spec", "remark"):
+        # First row wins, same as product_name/brand/spec/remark below - the family's own
+        # 型号 (owner feedback round 5), not the composed `item_code` it merged on.
+        for f in ("product_name", "brand", "spec", "remark", "model_no"):
             if cur[f] is None:
                 cur[f] = getattr(r, f)
 
@@ -334,6 +390,7 @@ def apply(
                 id=_uuid(),
                 supplier_id=supplier_id,
                 item_code=code,
+                model_no=v["model_no"],
                 product_id=(known.get(code) or {}).get("product_id"),
                 product_set_id=(known.get(code) or {}).get("product_set_id"),
                 qty_packed=v["qty_packed"],
@@ -484,6 +541,7 @@ def snapshot(db: Session, *, supplier_id: str) -> dict:
         "rows": [
             {
                 "item_code": r.item_code,
+                "model_no": r.model_no,
                 "product_id": str(r.product_id) if r.product_id else None,
                 "product_name": r.product_name,
                 "qty_packed": float(r.qty_packed or 0),

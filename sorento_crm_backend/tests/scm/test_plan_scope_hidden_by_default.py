@@ -33,6 +33,7 @@ from fastapi.testclient import TestClient
 
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.scm import ReorderRecommendation, ReorderRun
+from app.services.scm import plan_scope
 from app.services.scm import summary_order_service as svc
 from app.services.sla_service import MALAYSIA_TZ, to_naive_datetime
 from tests._pg_fixture import pg_session
@@ -79,6 +80,29 @@ def _run_row(db) -> str:
     return rid
 
 
+def _hidden_flag(rec_type: str, inputs: dict, net_position) -> bool:
+    """What `reorder_run_service._build_rec` would stamp on this row.
+
+    Since PLAN-reorder-one-formula.md S3 the rule is evaluated ONCE, at write time, into
+    `scm.reorder_recommendation.hidden_by_default`, and every reader under test here (the
+    serializer, the decisions total, the export and its guard) reads that COLUMN instead
+    of re-deriving the rule for itself - which is the whole point of S3, since three
+    independent re-derivations is exactly what drifted (list 415, tile "0 of 950", sheet
+    950). A hand-seeded row therefore has to be stamped the way the real writer stamps it,
+    or it is not standing in for a real row at all.
+
+    Computed through `plan_scope.hidden_by_default` rather than hardcoded per case, so a
+    broken RULE still turns these tests red instead of the fixture agreeing with itself.
+    """
+    return plan_scope.hidden_by_default(
+        rec_type=rec_type,
+        policy_type=inputs.get("policy_type"),
+        reorder_level=inputs.get("reorder_level"),
+        master_reorder_level=inputs.get("master_reorder_level"),
+        net_position=None if net_position is None else float(net_position),
+    )
+
+
 def _rec_row(db, run_id: str, product_id: str, warehouse_id, *, rec_type: str,
              net_position, inputs: dict, supplier_id=None) -> str:
     from sqlalchemy import text
@@ -87,12 +111,13 @@ def _rec_row(db, run_id: str, product_id: str, warehouse_id, *, rec_type: str,
         INSERT INTO scm.reorder_recommendation
             (id, run_id, rec_type, product_id, warehouse_id, supplier_id, net_position,
              rounded_qty, recommended_qty, status, unit_cost, currency, inputs,
-             company_id, created_at)
+             hidden_by_default, company_id, created_at)
         VALUES (CAST(:id AS uuid), CAST(:run AS uuid), :rt, CAST(:p AS uuid),
                 CAST(:w AS uuid), CAST(:s AS uuid), :net, 40, 40, 'proposed', 10, 'MYR',
-                CAST(:inputs AS jsonb), CAST(:co AS uuid), now())
+                CAST(:inputs AS jsonb), :hidden, CAST(:co AS uuid), now())
     """), {"id": rec_id, "run": run_id, "rt": rec_type, "p": product_id, "w": warehouse_id,
            "s": supplier_id, "net": net_position, "inputs": json.dumps(inputs),
+           "hidden": _hidden_flag(rec_type, inputs, net_position),
            "co": SORENTO_COMPANY_ID})
     db.flush()
     return rec_id
@@ -233,21 +258,20 @@ def three_product_run(db):
     db.add(run)
     db.flush()
 
-    db.add(ReorderRecommendation(
-        id=_u(), run_id=run.id, rec_type="buy", product_id=buy_p.id, warehouse_id=None,
-        rounded_qty=100, net_position=-100,
-        inputs={"policy_type": "reorder_level", "reorder_level": 50},
-    ))
-    db.add(ReorderRecommendation(
-        id=_u(), run_id=run.id, rec_type="covered", product_id=hidden_p.id, warehouse_id=None,
-        rounded_qty=0, net_position=1447,
-        inputs={"policy_type": "reorder_level", "reorder_level": 50},
-    ))
-    db.add(ReorderRecommendation(
-        id=_u(), run_id=run.id, rec_type="covered", product_id=shown_p.id, warehouse_id=None,
-        rounded_qty=0, net_position=40,
-        inputs={"policy_type": "reorder_level", "reorder_level": 50},
-    ))
+    # Stamped the way `_build_rec` stamps a real row (see `_hidden_flag`): S3 moved the
+    # rule to write time, so a seeded row that leaves the column at its default is not a
+    # row any reader under test would ever meet.
+    basis = {"policy_type": "reorder_level", "reorder_level": 50}
+    for rec_type, product, rounded, net in (
+        ("buy", buy_p, 100, -100),
+        ("covered", hidden_p, 0, 1447),
+        ("covered", shown_p, 0, 40),
+    ):
+        db.add(ReorderRecommendation(
+            id=_u(), run_id=run.id, rec_type=rec_type, product_id=product.id,
+            warehouse_id=None, rounded_qty=rounded, net_position=net, inputs=dict(basis),
+            hidden_by_default=_hidden_flag(rec_type, basis, net),
+        ))
     db.flush()
     return {"run": run, "buy": buy_p, "hidden": hidden_p, "shown": shown_p}
 

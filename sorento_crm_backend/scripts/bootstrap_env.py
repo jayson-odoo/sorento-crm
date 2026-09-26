@@ -468,6 +468,39 @@ def seed_scm_module_data() -> None:
     module_483 = importlib.util.module_from_spec(spec_483)
     spec_483.loader.exec_module(module_483)
 
+    # 506 adds the Jinbaichuan spellings (`Customer Name 客户名` / `客户名` / `Customer Name`
+    # for `consignee`, `封条号` for `seal_no`) to BOTH `packing_list` and `proforma_invoice`.
+    # Same create_all gap as every alias migration above: without this row a combined
+    # Jinbaichuan-style header ("封条号：OOLLGZ7182") resolves no label at all, so the
+    # container value it follows never gets split off (test_pi_header_cells_and_convert.py).
+    spec_506 = importlib.util.spec_from_file_location(
+        "_scm_seed_506", versions / "506_scm_pi_consignee_ref.py"
+    )
+    module_506 = importlib.util.module_from_spec(spec_506)
+    spec_506.loader.exec_module(module_506)
+
+    # `ifa_supplier_word_col` adds the `supplier_inventory_word` doc type: the D7 word list
+    # (`SORENTO` -> `SRT`, `连体马桶` -> `WC`, ...) a bare stock-list model number composes
+    # through. Same create_all gap as every alias migration above - without the replay a
+    # bootstrapped database resolves no words at all, so every bare 型号 falls back to the
+    # raw-join key and waits in the Supplier codes picker instead of binding on the first
+    # upload.
+    spec_ifa_word = importlib.util.spec_from_file_location(
+        "_scm_seed_ifa_word", versions / "ifa_supplier_word_col.py"
+    )
+    module_ifa_word = importlib.util.module_from_spec(spec_ifa_word)
+    spec_ifa_word.loader.exec_module(module_ifa_word)
+
+    # `ifa_bare_container_seal` adds the bare `柜号` (container_no) / `封条` (seal_no) shared
+    # aliases DAFUYUAN and NEW YANGGANG's combined-file headers need to split past their first
+    # pair. Same create_all gap as every alias migration above; its own unique partial index
+    # (`WHERE supplier_id IS NULL`) makes the replay idempotent.
+    spec_ifa_bare = importlib.util.spec_from_file_location(
+        "_scm_seed_ifa_bare", versions / "ifa_bare_container_seal.py"
+    )
+    module_ifa_bare = importlib.util.module_from_spec(spec_ifa_bare)
+    spec_ifa_bare.loader.exec_module(module_ifa_bare)
+
     with engine.begin() as conn:
         aliases = module.seed_import_field_aliases(conn)
         policies = module.seed_priority_policy(conn)
@@ -482,12 +515,15 @@ def seed_scm_module_data() -> None:
         aliases += module_436.seed(conn)
         aliases += module_459.seed(conn)
         aliases += module_483.seed(conn)
+        module_506.seed(conn)
+        aliases += module_ifa_word.seed_supplier_word_rows(conn)
+        module_ifa_bare.seed(conn)
         module_440.seed_inbound_shipment_draft_rule(conn)
         for field, alias in module_347._ALIASES:
             conn.execute(_text(
                 "INSERT INTO import_field_alias (doc_type, field, alias, locale) "
                 "VALUES ('reorder_level', :f, :a, NULL) "
-                "ON CONFLICT (doc_type, field, alias) DO NOTHING"
+                "ON CONFLICT (doc_type, field, alias) WHERE supplier_id IS NULL DO NOTHING"
             ), {"f": field, "a": alias})
             aliases += 1
     log.info("scm module data seeded -> aliases=%d priority_policy=%d", aliases, policies)
@@ -619,6 +655,96 @@ def seed_products_list_query_fields() -> None:
         inserted = module.seed(conn)
     log.info("products list-query field catalog seeded -> exclude_from_planning: %s",
              "added" if inserted else "already present")
+
+
+def seed_chatbot_policy() -> None:
+    """Replay the chatbot turn re-architecture's migration-body seeds (AC-1501,
+    AC-1502, AC-1550, AC-1594).
+
+    `chatbot_rearch_s0` seeds `chatbot_domains` / `chatbot_entity_kinds`,
+    `chatbot_rearch_s4` publishes the first `chatbot_semantic_parser` version with the
+    policy blocks rendered from those two tables, and `chatbot_rearch_s6d` /
+    `chatbot_rearch_s6e` / `chatbot_rearch_s7` / `chatbot_rearch_s8` / `chatbot_rearch_
+    s11` / `chatbot_rearch_s12` update six domains' narrowing and `chatbot_rearch_s9`
+    appends `crm_sales_report` to the order domain's tools. `chatbot_rearch_s12` then
+    republishes the parser version over its own narrowing changes and moves the
+    `production` label onto it (owner ruling 21 Sep 2026: the deploy ships the config,
+    nothing is promoted by hand). All nine are migration-BODY work: `create_all` gives a
+    bootstrapped database the TABLES and COLUMNS (every one is a plain model default)
+    but none of the rows these migrations INSERT/UPDATE, so a fresh CI database has
+    empty policy tables and no published parser version at all.
+
+    Each migration's own function is imported and called directly, in the same order
+    the real migration chain applies them (s0 -> s4 -> s6d -> s6e -> s7 -> s8 -> s9 ->
+    s11 -> s12 - s4's publish reads whatever `chatbot_domains` holds at the moment it
+    runs, same as a real `alembic upgrade head` replay would, and s12's republish is
+    therefore the one that ends up labelled), so the two paths can never
+    drift and bootstrap produces the identical row set a genuinely migrated database
+    has. Every step is idempotent (see each migration's own docstring); safe to call
+    twice.
+    """
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    from app.database import engine
+
+    alembic_dir = Path(__file__).resolve().parent.parent / "alembic"
+    versions = alembic_dir / "versions"
+    # `chatbot_rearch_s0.seed_domains_and_kinds` does `from _chatbot_policy_seed import
+    # ...` by bare module name - `_chatbot_policy_seed.py` lives in `alembic/`, not
+    # `alembic/versions/`. Real `alembic upgrade` resolves it because `ScriptDirectory`
+    # puts its own `script_location` (`alembic/`) on `sys.path` (measured:
+    # `ScriptDirectory.from_config(cfg).get_revision(...)` leaves
+    # `.../alembic` at `sys.path[0]`); loading the migration module directly (below)
+    # does not, so it is added here too.
+    if str(alembic_dir) not in sys.path:
+        sys.path.insert(0, str(alembic_dir))
+
+    def _load(name: str, filename: str):
+        spec = importlib.util.spec_from_file_location(name, versions / filename)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    s0 = _load("_chatbot_rearch_s0", "chatbot_rearch_s0.py")
+    s4 = _load("_chatbot_rearch_s4", "chatbot_rearch_s4.py")
+    s6d = _load("_chatbot_rearch_s6d", "chatbot_rearch_s6d.py")
+    s6e = _load("_chatbot_rearch_s6e", "chatbot_rearch_s6e.py")
+    s7 = _load("_chatbot_rearch_s7", "chatbot_rearch_s7.py")
+    s8 = _load("_chatbot_rearch_s8", "chatbot_rearch_s8.py")
+    s9 = _load("_chatbot_rearch_s9", "chatbot_rearch_s9.py")
+    s11 = _load("_chatbot_rearch_s11", "chatbot_rearch_s11.py")
+    s12 = _load("_chatbot_rearch_s12", "chatbot_rearch_s12.py")
+
+    with engine.begin() as conn:
+        domains_inserted, kinds_inserted = s0.seed_domains_and_kinds(conn)
+    with engine.begin() as conn:
+        s4.publish_policy_blocks(conn)
+    with engine.begin() as conn:
+        s6d.apply_narrowing(conn)
+    with engine.begin() as conn:
+        s6e.apply_narrowing(conn)
+    with engine.begin() as conn:
+        s7.apply_narrowing(conn)
+    with engine.begin() as conn:
+        s8.apply_narrowing(conn)
+    with engine.begin() as conn:
+        s9.apply_tools(conn)
+    with engine.begin() as conn:
+        s11.apply_narrowing(conn)
+    with engine.begin() as conn:
+        s12.apply_narrowing(conn)
+    # LAST, and after every narrowing step: it renders the blocks from the tables as
+    # they now stand and leaves `production` on that version.
+    with engine.begin() as conn:
+        s12.republish_and_promote(conn)
+    log.info(
+        "chatbot policy seeded -> domains=%d kinds=%d (narrowing + first prompt "
+        "version applied)",
+        domains_inserted,
+        kinds_inserted,
+    )
 
 
 def _seed_default_company() -> None:
@@ -767,6 +893,7 @@ def main() -> int:
         seed_fulfilment_planning_flags()
         seed_customer_import_aliases()
         seed_products_list_query_fields()
+        seed_chatbot_policy()
     stamp_head()
     log.info("bootstrap complete")
     return 0

@@ -41,15 +41,17 @@ const ROOTS = ['app', 'components'];
  * Only the two `StockDocumentsPanel` entries are a grid inside a grid. The rest
  * expand into a form, a hand-rolled `<table>` carve-out or a list, and are here
  * so the next one to become a grid is visible as a diff on this file.
+ *
+ * `POIntakeLinesGrid.tsx` (LineAnnotationPanel) is retired as of the F2 owner
+ * hand-test fix (25 Sep 2026, commit 7f64a3a6): the always-expanded note cards
+ * became a compact Flag-cell popover instead, so the row no longer uses
+ * `meta.expandedContent` / `getExpandedRowModel` at all. The popover holds no
+ * grid, so it is not a new site for the floating-surface scan below either.
  */
 const EXPANDED_CONTENT_SITES = new Map<string, string>([
   [
     'app/(protected)/procurement-management/packing-lists/components/SpoPlannerTable.tsx',
     'LocationSplitPanel - a form, no grid',
-  ],
-  [
-    'app/(protected)/project-sales/[projectId]/components/POIntakeLinesGrid.tsx',
-    'LineAnnotationPanel - annotation cards, no grid',
   ],
   [
     'app/(protected)/project-sales/fulfilment-planning/components/BoardCellBreakdownDialog.tsx',
@@ -79,6 +81,14 @@ const EXPANDED_CONTENT_SITES = new Map<string, string>([
     'app/(protected)/system-management/health/components/HealthDashboard.tsx',
     'IntegrationFailuresList - a <ul> of links, no grid',
   ],
+  [
+    'app/(protected)/project-sales/_shared/components/LinkDocumentDialog.tsx',
+    'CandidateExpandPanel - a definition-list of fields plus a hand-rolled <table> of other rows already linked on the line, no grid',
+  ],
+  [
+    'app/(protected)/project-sales/order-inquiries/[id]/components/orderInquiryHeaderLinesColumns.tsx',
+    'NESTED GRID: OrderInquiryStockGrid, a thin wrapper over CellStockTable (the hand-rolled <table> carve-out) whose rows open StockDocumentsPanel (PanelDataGrid). The expansion sits inside the OI detail lines grid\'s own provider, so the context default covers it, AND StockDocumentsPanel passes scrollerMaxHeight={false} itself (S3, PLAN-oi-request-cs-reserve.md, stock grid on the OI page)',
+  ],
   // The primitives themselves: the prop declaration, the renderer, and the
   // wrapper that forwards `expanded`. Not nesting sites.
   ['components/ui/data-grid.tsx', 'declares the ColumnMeta field'],
@@ -87,6 +97,10 @@ const EXPANDED_CONTENT_SITES = new Map<string, string>([
     'renders it (DataGridTableBodyRowExpandded)',
   ],
   ['components/common/PanelDataGrid.tsx', 'forwards expanded/onExpandedChange'],
+  [
+    'components/ui/data-grid-table-dnd.tsx',
+    'AC-RS-69 (PLAN-oi-request-cs-reserve.md section 6d G3): reads meta.expandedContent to skip the drag grip on an expanded-row column - does not render the expansion itself, not a nesting site',
+  ],
 ]);
 
 /**
@@ -113,7 +127,7 @@ const IN_GRID_SUBTREE_SITES = new Map<string, string>([
     'NESTED GRID: AttachmentDetailModal opens inside the promotions grid and holds a PanelDataGrid of linkages. Covered by the context default AND its own scrollerMaxHeight={false} (SF-1)',
   ],
   [
-    'app/(protected)/scm/reorder/components/PlanLinesGrid.tsx:1348',
+    'app/(protected)/scm/reorder/components/PlanLinesGrid.tsx:1347',
     'NESTED GRID: PlanRowDialog opens inside the plan grid and holds DrillTable/OnHandTable/StockDocumentsPanel. Every one already passes scrollerMaxHeight={false}; the context default now agrees with them',
   ],
 ]);
@@ -137,8 +151,8 @@ const GRID_IN_FLOATING_SURFACE_SITES = new Map<string, string>([
     'NESTED GRID: the items popover opens from a CELL of this section\'s own grid. It names scrollerMaxHeight="16rem", so the nested default leaves it alone and it keeps its sticky header inside that window',
   ],
   [
-    'app/(protected)/project-sales/fulfilment-planning/components/BoardCellBreakdownDialog.tsx:1172',
-    'Contributing lines, in a dialog opened as a sibling of the board (a hand-rolled matrix). Already scrollerMaxHeight={false}',
+    'app/(protected)/project-sales/fulfilment-planning/components/BoardCellBreakdownDialog.tsx:1268',
+    'Contributing lines, in a dialog opened as a sibling of the board (a hand-rolled matrix). Already scrollerMaxHeight={false}. (Line moved 1223 -> 1251 when the Decision column gained the Verdict actions and the Product column its chip; 1251 -> 1268 when PLAN-oi-decision-trail-ui.md round 2 added a DecisionTrailButton after the verdict chip in the same cell renderer; the census is keyed by line, so a site that moves is a one-line diff here rather than a silent pass)',
   ],
   [
     'app/(protected)/project-sales/fulfilment-planning/components/FulfilmentPlanningSheet.tsx:457',
@@ -149,23 +163,39 @@ const GRID_IN_FLOATING_SURFACE_SITES = new Map<string, string>([
     'Pile queue in a dialog body. Already scrollerMaxHeight={false}',
   ],
   [
-    'app/(protected)/project-sales/order-inquiries/components/OrderInquiryMatrixCellDrilldown.tsx:57',
-    'Drilldown dialog, rendered BEFORE the list grid in OrderInquiriesClient, not inside it. Already scrollerMaxHeight={false}',
+    'app/(protected)/project-sales/order-inquiries/components/OrderInquiryMatrixCellDrilldown.tsx:97',
+    'Drilldown dialog, rendered BEFORE the list grid in OrderInquiriesClient, not inside it. Already scrollerMaxHeight={false}. (Line moved 57 -> 97 when the cell drilldown gained its `axis`/`axis_key` filters; the census is keyed by line, so a site that moves is a one-line diff here rather than a silent pass)',
   ],
   [
-    'app/(protected)/project-sales/stock-debt/components/StockDebtCellDialog.tsx:378',
-    'Demand tab, dialog rendered after the calendar grid closes. Already scrollerMaxHeight={false}',
+    'app/(protected)/project-sales/stock-debt/components/StockDebtCellDialog.tsx:588',
+    "Demand tab, dialog rendered after the calendar grid closes. Already scrollerMaxHeight={false}. (Line moved 635 -> 588 when R31a folded the R30 SPO/OI columns back into one Covered-by column, still rendering the OI screens' own `OrderInquiryDocumentLink`.)",
   ],
   [
-    'app/(protected)/project-sales/stock-debt/components/StockDebtCellDialog.tsx:396',
-    'Supply tab, same dialog',
+    'app/(protected)/project-sales/stock-debt/components/StockDebtCellDialog.tsx:619',
+    'Supply tab, same dialog. (Line moved 666 -> 619, same round.)',
   ],
   [
-    'app/(protected)/scm/proforma-invoices/components/ConvertToPackingListDialog.tsx:403',
+    'app/(protected)/scm/proforma-invoices/components/ConvertToPackingListDialog.tsx:455',
     "What goes in the container, in a dialog opened as a sibling of the invoice list or the invoice's own detail - no grid context. It KEEPS the default `--grid-max-h` bound rather than turning it off: the dialog body does not scroll, so the table is what scrolls, with its header sticking inside that window while the container size select and Convert stay put",
   ],
   [
-    'app/(protected)/scm/proforma-invoices/components/ConvertToPackingListDialog.tsx:414',
+    'app/(protected)/scm/proforma-invoices/components/ConvertToPackingListDialog.tsx:468',
+    'The DataGridTable of the same grid, not a second one',
+  ],
+  [
+    'app/(protected)/project-sales/_shared/components/LinkDocumentDialog.tsx:343',
+    "S8's candidate DataGrid, in a dialog opened as a sibling of the worklist. Already scrollerMaxHeight={false}",
+  ],
+  [
+    'app/(protected)/project-sales/_shared/components/LinkDocumentDialog.tsx:349',
+    'The DataGridTable of the same grid, not a second one',
+  ],
+  [
+    'app/(protected)/project-sales/order-inquiries/[id]/components/ReserveRequestDialog.tsx:257',
+    "G6 (PLAN-oi-request-cs-reserve.md section 6d): one row per selected line, in a dialog opened as a sibling of the OI Lines tab (Request CS to reserve). Already scrollerMaxHeight={false}. Round 4 review (24 Sep, AC-RS-89): line moved - the inert outer overflow-x-auto wrapper is gone and columnsDraggable: false was added.",
+  ],
+  [
+    'app/(protected)/project-sales/order-inquiries/[id]/components/ReserveRequestDialog.tsx:269',
     'The DataGridTable of the same grid, not a second one',
   ],
 ]);

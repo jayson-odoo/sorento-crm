@@ -103,6 +103,11 @@ export interface PromptVersionsResponse {
   variables: string[];
   labels: { production: number | null; staging: number | null };
   versions: PromptVersionRow[];
+  /** Slice E: the code fallback the backend always sends - optional here
+   *  only so a fixture literal built before this field existed still
+   *  type-checks; the editor seeds its draft from it when `versions` is
+   *  empty (no saved version yet). */
+  fallback_text?: string;
 }
 
 export interface PromptVersionDetail {
@@ -282,5 +287,26 @@ export async function dryRunPrompt(name: string, payload: DryRunPayload): Promis
     body: JSON.stringify(payload),
   });
   if (!r.ok) throw new Error(await extractApiError(r, 'Dry-run failed'));
+  return r.json();
+}
+
+/**
+ * The Prompts page's "domain block out of date" banner (chatbot turn re-architecture,
+ * AC-1552). Hash based, not timestamp based, and compared against `production` only -
+ * see `app/api/v1/system/chatbot.py::prompt_blocks_status`'s own docstring.
+ *
+ * GET /api/v1/system/chatbot/prompt-blocks/status -> PromptBlocksStatus
+ */
+export interface PromptBlocksStatus {
+  stale: boolean;
+  current_hash: string;
+  published_hash: string | null;
+  published_version: number | null;
+  published_at: string | null;
+}
+
+export async function getPromptBlocksStatus(): Promise<PromptBlocksStatus> {
+  const r = await apiFetch('/api/v1/system/chatbot/prompt-blocks/status');
+  if (!r.ok) throw new Error(await extractApiError(r, 'Failed to load the prompt block status'));
   return r.json();
 }

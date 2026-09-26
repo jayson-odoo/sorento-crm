@@ -1,9 +1,19 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 
 import { AttachmentDropzone } from './AttachmentDropzone';
 import type { PortalAttachment } from '../lib/portal-client';
+
+vi.mock('../lib/portal-preview', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../lib/portal-preview')>();
+  return {
+    ...original,
+    portalFetchBytes: vi.fn(),
+  };
+});
+
+import { portalFetchBytes } from '../lib/portal-preview';
 
 vi.mock('../lib/portal-client', async (importOriginal) => {
   const original = await importOriginal<typeof import('../lib/portal-client')>();
@@ -170,5 +180,40 @@ describe('AttachmentDropzone (portal)', () => {
     expect(props.items[0].downloadUrl).toBe(
       '/api/v1/public/portal/attachments/att-1/download',
     );
+  });
+
+  it("tapping a tile's Extract twice quickly calls onExtract once and shows a pending state (review round 2)", async () => {
+    let resolveBytes: (res: { blob: () => Promise<Blob> }) => void = () => {};
+    const pending = new Promise<{ blob: () => Promise<Blob> }>((resolve) => {
+      resolveBytes = resolve;
+    });
+    (portalFetchBytes as ReturnType<typeof vi.fn>).mockReturnValue(pending);
+
+    const onExtract = vi.fn();
+    render(
+      <AttachmentDropzone
+        kind="price_tag_request"
+        submissionId="sub-1"
+        attachments={[contactUpload()]}
+        onChange={vi.fn()}
+        onExtract={onExtract}
+      />,
+    );
+
+    const extractButton = screen.getByLabelText('Extract with AI from my-photo.jpg');
+    fireEvent.click(extractButton);
+    fireEvent.click(extractButton);
+
+    // A second tap while the first is still reading bytes must be a no-op,
+    // and the tile should say so rather than looking inert.
+    expect(extractButton).toBeDisabled();
+
+    await act(async () => {
+      resolveBytes({ blob: async () => new Blob(['x']) });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(onExtract).toHaveBeenCalledTimes(1);
   });
 });

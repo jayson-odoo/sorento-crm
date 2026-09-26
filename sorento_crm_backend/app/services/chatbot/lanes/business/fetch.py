@@ -7,7 +7,7 @@ JavaScript, with the same `jsc` shim S6a uses for JS truthiness / `String()` / `
 Three hazards are fixed here rather than reproduced, and each says so at its own site:
 
 * **H53** - `sub-get-rag` is GONE, SQL and vector alike. The tool is read straight off
-  `contracts.DOMAIN_SPEC[domain].tools[0]` (`select_tool` below), so this module names no
+  the domain row's own first tool (`select_tool` below), so this module names no
   table, writes no SQL, and makes no provider call. Measured over the 740 business turns
   in the 7 Sep 2026 prod copy, the embedding pick WAS the domain's first-listed tool on
   every turn, and the seeding chain the search depended on cannot run in the deployed
@@ -23,7 +23,7 @@ Three hazards are fixed here rather than reproduced, and each says so at its own
   tools (`crm_order_cancel`, `crm_complaint_close`, the two purchase-request approvals,
   `crm_it_support_ticket_create`, `crm_ideation_turn`), and `tool_filter` takes the single
   candidate with no further test. `CHATBOT_READ_ONLY_TOOLS` below is the allow-list, and
-  since the candidate is now `DOMAIN_SPEC`'s own first tool the hazard is structural
+  since the candidate is now the domain row's own first tool the hazard is structural
   rather than scored: nothing outside that table can be named, and `ensure_read_only`
   refuses anything off the list at both call seams anyway. The embedded POOL keeps the
   write tools, on purpose - the in-app AI assistant retrieves them and confirms with a
@@ -54,12 +54,9 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from app.services.chatbot import jsc
-from app.services.chatbot.contracts import (
-    DOMAIN_CLAIMED_TOOLS,
-    DOMAIN_SPEC,
-    UNDOMAINED_CHATBOT_TOOLS,
-)
-from app.services.chatbot.contracts import is_timeline
+from app.services.chatbot.contracts import UNDOMAINED_CHATBOT_TOOLS, is_timeline
+from app.services.chatbot.turn.policy import default_policy
+from app.services.chatbot.turn import policy_rows
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +103,7 @@ def tool_filter(candidates: Any, *, has_product: bool | None) -> ToolPick:
 
     The BODY is n8n's, unchanged and graded byte for byte against 38 captures (D8), which
     is why the ranking is still here after the pick stopped being a ranking. `select_tool`
-    now hands it exactly one candidate off `DOMAIN_SPEC` (similarity 1.0), so the sort has
+    now hands it exactly one candidate off the domain row (similarity 1.0), so the sort has
     one element and the argmax is the identity - the node keeps working the way its
     captures say it does, and nothing about how the candidate was chosen leaked into it.
 
@@ -150,10 +147,13 @@ def tool_filter(candidates: Any, *, has_product: bool | None) -> ToolPick:
 
 
 def select_tool(domain: str | None) -> list[dict[str, Any]]:
-    """The domain's tool, read off `DOMAIN_SPEC`. No embedding, no database, no network.
+    """The domain's tool, read off `turn.policy.default_policy()` (AC-1594: was
+    `contracts.DOMAIN_SPEC`, now the frozen seed `chatbot_domains` is migrated from). No
+    embedding, no database, no network.
 
-    `[{"name": DOMAIN_SPEC[domain].tools[0], "similarity": 1.0}]` for a domain with a
-    non-empty `tools` tuple, `[]` for everything else: no domain, a domain outside the
+    `[{"name": default_policy().domain(domain).tools[0], "similarity": 1.0}]` for a
+    domain with a non-empty `tools` tuple, `[]` for everything else: no domain, a domain
+    outside the
     table, and the two domains that answer from nothing (`goods_receive`, `ideate`). The
     empty list reaches `tool_filter` and ends the turn `not_found`, exactly as a zero-row
     search did (H11).
@@ -197,17 +197,15 @@ def select_tool(domain: str | None) -> list[dict[str, Any]]:
     name, and ended `not_found`; one that got past both guards would end the same way here,
     by falling off the table rather than by zeroing a `LIKE` filter.
     """
-    spec = DOMAIN_SPEC.get(domain) if domain else None
-    if spec is None or not spec.tools:
+    row = default_policy().domain(domain) if domain else None
+    if row is None or not row.tools:
         return []
-    return [{"name": spec.tools[0], "similarity": 1.0}]
+    return [{"name": row.tools[0], "similarity": 1.0}]
 
 
 # --------------------------------------------------------------------------- #
 # tier-probe-plan / tier-probe-collect
 # --------------------------------------------------------------------------- #
-
-TIER_ORDER = ("dealer", "office", "end_user")
 
 
 def tier_probe_plan(tier_gate: dict[str, Any] | None) -> list[dict[str, Any]]:
@@ -290,7 +288,9 @@ def tier_probe_collect(
         **base,
         "tier_availability": availability,
         "tier_available_list": (
-            [t for t in TIER_ORDER if availability.get(t)] if availability is not None else None
+            [t for t in default_policy().tier_order if availability.get(t)]
+            if availability is not None
+            else None
         ),
         "tier_any_available": any_available,
         "_tier_probe_count": len(results),
@@ -320,9 +320,9 @@ TYPE_TO_PARAM: dict[str, str] = {
     "attachment_type": "attachment_type_ids",
     "attachment": "attachment_ids",
     "certificate": "certificate_ids",
-    # Three tools accept it: `crm_inventory_stock_balance_list`,
-    # `crm_inventory_warehouses_list` and
-    # `crm_procurement_spo_allocations_last_receipt_list`.
+    # Four tools accept it: `crm_inventory_stock_balance_list`,
+    # `crm_inventory_warehouses_list`, `crm_procurement_spo_allocations_last_receipt_list`
+    # and `crm_procurement_po_last_cost_list`.
     "warehouse": "warehouse_ids",
 }
 
@@ -331,13 +331,38 @@ _UUID_RE = re.compile(
 )
 
 
+def entity_has_resolved_uuid(entity: dict[str, Any]) -> bool:
+    """The single-entity half of `entity_ids_transformer`'s own `missing_or_bad_uuid`
+    read, lifted out so a second caller can ask the SAME question rather than a second
+    uuid rule: a real, `_UUID_RE`-shaped id, not a bare code the resolver could not
+    place. `turn/fetch.py::_climb` is that second caller (R1 addendum, AC-1688) - a
+    cross-domain rung must never run for a spec where nothing in it would actually
+    narrow the rung's own tool call, the exact test this transformer's loop already
+    applies per entity before building `*_ids`.
+    """
+    uuid = jsc.get(entity, "uuid") if jsc.truthy(entity) else None
+    return bool(jsc.truthy(uuid) and _UUID_RE.match(jsc.js_string(uuid)))
+
+
 # Tools that answer a DOCUMENT request and must be given something to narrow by.
 # `crm_resource_attachments_list`'s own contract says it: "They named NO document at all ->
 # this tool returns NOTHING, by design. `contact_id` alone is NOT a narrowing filter". The
 # transformer is uuid-only, so an entity it could not resolve contributes no `*_ids` key at
 # all, and the call went out carrying `view` / `contact_id` / `space_id` only - a listing of
 # every attachment the contact is entitled to, which is a directory dump, not an answer.
-ENTITY_FILTER_REQUIRED_TOOLS: frozenset[str] = frozenset({"crm_resource_attachments_list"})
+#
+# SF6 (security review, PLAN-chatbot-last-purchase-cost.md, 12 Sep 2026):
+# `crm_procurement_po_last_cost_list` joins for the same reason - a brand/category-only ask
+# builds no `*_ids` at all (neither hint maps to a `TYPE_TO_PARAM` entry) and a
+# warehouse-only ask builds `warehouse_ids` with no `product_ids`, so without this either
+# would fall through to the service's UNSCOPED branch: every product's cost at that
+# warehouse, or across the whole table, none of them named by the customer. Refused as an
+# absence instead, same as an unfiltered document ask.
+# `ENTITY_FILTER_REQUIRED_TOOLS` and `PRODUCT_ID_REQUIRED_TOOLS` moved to
+# `turn/policy_rows.py` (AC-1594, S6): hand-curated per-TOOL exceptions, not domain or
+# kind data, so they have no row in either policy table - see that module's own comment
+# for why they live there instead. Referenced here as `policy_rows.X` (not imported by
+# name) so this module keeps no attribute of either name.
 
 # What counts as narrowing on those tools: every entity-id param the transformer can emit,
 # plus the document-type filters the tool takes by name.
@@ -352,10 +377,17 @@ NARROWING_PARAMS: frozenset[str] = frozenset(TYPE_TO_PARAM.values()) | frozenset
 )
 
 
-def has_narrowing_filter(args: Any) -> bool:
-    """True when the built args carry at least one non-empty narrowing key."""
+def has_narrowing_filter(args: Any, *, tool_name: str | None = None) -> bool:
+    """True when the built args carry at least one non-empty narrowing key.
+
+    `tool_name` in `policy_rows.PRODUCT_ID_REQUIRED_TOOLS` narrows the bar to
+    `product_ids` specifically (SF6) - every other `policy_rows.
+    ENTITY_FILTER_REQUIRED_TOOLS` member keeps the generic "any narrowing param" rule.
+    """
     if not isinstance(args, dict):
         return False
+    if tool_name in policy_rows.PRODUCT_ID_REQUIRED_TOOLS:
+        return jsc.truthy(args.get("product_ids"))
     return any(jsc.truthy(args.get(key)) for key in NARROWING_PARAMS)
 
 
@@ -380,7 +412,43 @@ DATE_PARAMS: dict[str, tuple[str, str]] = {
     "crm_resource_attachments_catalogue": ("uploaded_at_from", "uploaded_at_to"),
     "crm_sla_conversation_event_logs_list": ("date_from", "date_to"),
     "crm_procurement_po_placed_list": ("expected_date_from", "expected_date_to"),
+    # S4 point 8 (PLAN-chatbot-outstanding-report.md): the report's own contract
+    # is order_date, never actual_delivery_date - a pending DO by definition has
+    # none, and the SO arm has no delivery date at all.
+    "crm_outstanding_report": ("order_date_from", "order_date_to"),
+    # PLAN-chatbot-sales-report.md S4 wiring point 5: the report's own contract, on
+    # the bucket date (required_date, else order_date) - never actual_delivery_date.
+    "crm_sales_report": ("date_from", "date_to"),
+    # AC-71: the low stock report's window narrows which sales orders the fresh plan
+    # counts as demand - the run's own "plan until" pair, under the route's names.
+    "crm_low_stock_report": ("date_from", "date_to"),
 }
+
+def _current_myt_year() -> int:
+    """S18: the current CALENDAR YEAR in Malaysia time (UTC+8, no DST) - the SAME
+    formula `engine._current_date_directive` uses for "today" in the parser prompt,
+    so this default and that directive can never disagree about what year it is."""
+    from datetime import datetime, timedelta, timezone
+
+    return (datetime.now(timezone.utc) + timedelta(hours=8)).year
+
+
+# S4 point 3 (AC-1131 fetch half): so_outstanding/do_outstanding/outstanding_both ->
+# so/do/both. Bare "outstanding" is deliberately absent - it is resolved by the
+# field-reveal gate in `run_fetch`, not by this table (D13).
+ORDER_STATUS_TO_SCOPE: dict[str, str] = {
+    "so_outstanding": "so",
+    "do_outstanding": "do",
+    "outstanding_both": "both",
+}
+
+# D13, S2 (security review, 13 Sep 2026): the one sentence a contact without
+# `sales_orders.outstanding` sees in front of EITHER SO-gated answer -
+# `crm_outstanding_report`'s own redirect to the DO block (`_outstanding_report_
+# output` below) and the legacy `so_outstanding` bucket's redirect to `outstanding`
+# (`lanes/business/__init__.py::run_fetch`). One literal, not two, so the two
+# refusals can never drift apart in wording.
+SO_NOT_ENABLED_MESSAGE = "Sales order figures are not enabled for your account."
 
 ORDER_TOOLS: frozenset[str] = frozenset(
     {"crm_order_management_orders_list", "crm_order_management_orders_by_product_list"}
@@ -399,7 +467,13 @@ GROUP_BY_TOOLS: frozenset[str] = frozenset(
 # A6: the one tool with its OWN `top_n` param (default 1, "last 3 in"); every
 # other GROUP_BY_TOOLS/ORDER_TOOLS member aliases `top_n` to `limit` instead
 # (above), since it has no `top_n` param of its own.
-TOP_N_DIRECT_TOOLS: frozenset[str] = frozenset({"crm_procurement_spo_allocations_last_receipt_list"})
+TOP_N_DIRECT_TOOLS: frozenset[str] = frozenset(
+    {
+        "crm_procurement_spo_allocations_last_receipt_list",
+        # PLAN-chatbot-last-purchase-cost.md: this tool has its own `top_n` too.
+        "crm_procurement_po_last_cost_list",
+    }
+)
 
 # n8n hard-codes this and OVERRIDES the `semantic_input` value with it (which carried the
 # identical string in all 24 sampled executions). D5 says the respond.io space id comes
@@ -446,7 +520,7 @@ def entity_ids_transformer(
     for e in jsc.array(entities):
         entity_type = jsc.get(e, "entity_type") if jsc.truthy(e) else None
         uuid = jsc.get(e, "uuid") if jsc.truthy(e) else None
-        if not jsc.truthy(uuid) or not _UUID_RE.match(jsc.js_string(uuid)):
+        if not entity_has_resolved_uuid(e):
             skipped.append(
                 {"code": jsc.get(e, "code") if jsc.truthy(e) else None, "reason": "missing_or_bad_uuid"}
             )
@@ -510,6 +584,179 @@ def entity_ids_transformer(
         if jsc.has(semantic_input, key):
             out[key] = semantic_input[key]
 
+    # S4 points 2/7/9 (PLAN-chatbot-outstanding-report.md): crm_outstanding_report's
+    # OWN contract (`product_code` a string, `scope`, `customer_ids`, `warehouse_codes`
+    # csv, `order_date_from/to` above) is not the generic UUID-list shape every other
+    # order tool takes, so it is built here rather than through TYPE_TO_PARAM.
+    if tool_name == "crm_outstanding_report":
+        out.pop("product_ids", None)
+        out.pop("warehouse_ids", None)
+        # AC-1119: one rule for which code this report is about, shared with both filter
+        # builders (`outstanding_product_codes`).
+        picked_codes = outstanding_product_codes(entities, semantic_input)
+        if len(picked_codes) == 1:
+            out["product_code"] = picked_codes[0]
+        elif picked_codes:
+            # The SEVERAL-code form, only when there are several: one code keeps the
+            # argument it has always travelled under, so an ordinary outstanding ask is
+            # byte-identical to before.
+            out["product_codes"] = picked_codes
+        scope = jsc.get(semantic_input, "outstanding_scope")
+        if jsc.truthy(scope):
+            out["scope"] = jsc.js_string(scope)
+        warehouse_codes = jsc.get(semantic_input, "outstanding_warehouse_codes")
+        if isinstance(warehouse_codes, list) and warehouse_codes:
+            out["warehouse_codes"] = warehouse_codes
+        # AC-1105 (review round, 13 Sep 2026): the WORD the customer typed, echoed by
+        # the route onto its own body so the presenter can render "IB (BRW-IB, MWH-IB)".
+        # The lane never re-renders that header itself: one writer, one wording.
+        location_token = jsc.js_string(jsc.get(semantic_input, "outstanding_location_token") or "")
+        # The route caps it at 32 characters (it is a word, not a filter). `warehouse_code`
+        # is `String(50)`, so an exact match on a very long code could otherwise 422 the
+        # whole report over a header echo; the codes still travel, the word just does not.
+        if location_token and len(location_token) <= 32 and isinstance(warehouse_codes, list) and warehouse_codes:
+            out["location_token"] = location_token
+        # D13/AC-1141: the same wire trip for the withheld SO half, so the refusal line
+        # prints IN PLACE (after the header, before the DO block) rather than in front
+        # of the whole reply.
+        if jsc.truthy(jsc.get(semantic_input, "outstanding_so_refused")):
+            out["so_refused"] = True
+        # AC-1132: the scope-answer's carried customer_ids are ALREADY resolved UUIDs
+        # (restored by `head/output_exchange.py`, never re-parsed) - they win over
+        # whatever THIS turn's own (empty) entity list produced.
+        carried_customers = jsc.get(semantic_input, "outstanding_carried_customer_ids")
+        if isinstance(carried_customers, list) and carried_customers:
+            out["customer_ids"] = carried_customers
+        # AC-1138 (D10 on main): "1"/"2" against an open detail offer re-runs THIS
+        # SAME tool with `detail=so|do` - the MCP layer swaps in the numbered list
+        # (S4 point 5); the route's own computation is unchanged by it.
+        detail_pick = jsc.get(semantic_input, "outstanding_detail_pick")
+        if detail_pick in ("so", "do", "both"):
+            out["detail"] = detail_pick
+
+    # PLAN-chatbot-sales-report.md S4 wiring point 5: `crm_sales_report`'s OWN
+    # contract - the SAME shape `crm_outstanding_report` above builds by hand
+    # (`product_code` a string, `customer_ids`, `warehouse_codes` csv, `date_from`/
+    # `date_to` above), plus `channel` (S4 point 5's `sales_channel` -> `channel`).
+    if tool_name == "crm_sales_report":
+        out.pop("product_ids", None)
+        out.pop("warehouse_ids", None)
+        picked_code = sales_report_product_code(entities, semantic_input)
+        if jsc.truthy(picked_code):
+            out["product_code"] = picked_code
+        warehouse_codes = jsc.get(semantic_input, "outstanding_warehouse_codes")
+        if isinstance(warehouse_codes, list) and warehouse_codes:
+            out["warehouse_codes"] = warehouse_codes
+        location_token = jsc.js_string(jsc.get(semantic_input, "outstanding_location_token") or "")
+        if location_token and len(location_token) <= 32 and isinstance(warehouse_codes, list) and warehouse_codes:
+            out["location_token"] = location_token
+        # AC-1132-equivalent: the offer's carried customer_ids are ALREADY resolved
+        # UUIDs (restored by `head/output_exchange.py`, never re-parsed) - they win
+        # over whatever THIS turn's own (empty) entity list produced.
+        carried_customers = jsc.get(semantic_input, "outstanding_carried_customer_ids")
+        if isinstance(carried_customers, list) and carried_customers:
+            out["customer_ids"] = carried_customers
+        # R-B3 (reviewer finding, Phase 3 fix round): the turn's OWN sales_channel wins
+        # when given; a pick or a refinement of an open sales_report_detail offer names
+        # no channel of its own, so the offer's CARRIED channel (restored by
+        # `head/output_exchange.py::_apply_outstanding_pending`) is the fallback.
+        channel = jsc.get(semantic_input, "sales_channel")
+        if not jsc.truthy(channel):
+            channel = jsc.get(semantic_input, "outstanding_carried_channel")
+        if jsc.truthy(channel):
+            out["channel"] = jsc.js_string(channel)
+        detail_pick = jsc.get(semantic_input, "outstanding_detail_pick")
+        if detail_pick == "so":
+            out["detail"] = "so"
+
+        # S18 (owner ruling, mid-lane): a PRODUCT-ONLY ask (a resolved product, no
+        # customer) with no date window defaults to the CURRENT CALENDAR YEAR
+        # (Malaysia time) - a customer ask, or a customer+product ask, with no date
+        # stays all dates (S4, unchanged). Built HERE, in the lane, never the route:
+        # `date_from`/`date_to` absent still means all dates when the route is
+        # called directly (e.g. n8n). "All dates" said in words (`broaden_axis ==
+        # "date"`, the SAME field R15's date-window-drop already reads) turns the
+        # default off - no word table, the parser already decided it.
+        if (
+            jsc.truthy(out.get("product_code"))
+            and not jsc.truthy(out.get("customer_ids"))
+            and not jsc.truthy(out.get("date_from"))
+            and not jsc.truthy(out.get("date_to"))
+            and jsc.lower_or_empty(jsc.get(semantic_input, "broaden_axis")) != "date"
+        ):
+            year = _current_myt_year()
+            out["date_from"] = f"{year}-01-01"
+            out["date_to"] = f"{year}-12-31"
+            # Mutated onto `semantic_input` too (not just `out`, this function's own
+            # return value): `output_structurer` -> `_sales_report_output` ->
+            # `_sales_report_filters_from_ctx` reads `ctx["semantic_input"]` - the
+            # SAME dict object `run_fetch` built `trigger` with - to arm the detail
+            # offer's stored filter set, so the default has to land there too, or a
+            # later "1" would list every date instead of the year just answered.
+            if isinstance(semantic_input, dict):
+                semantic_input["date_filter_start"] = out["date_from"]
+                semantic_input["date_filter_end"] = out["date_to"]
+
+    # PLAN-low-stock-report S6 (AC-66/AC-71): this tool's own contract is CODES too - the
+    # route resolves warehouse and product CODES, and a UUID would silently match nothing.
+    # So the generic UUID params are POPPED rather than left to be dropped by FastMCP,
+    # where a replay diff could not show they had gone. The warehouse codes come off
+    # `semantic_input` (set by `run_fetch` from the SAME token resolution the outstanding
+    # report uses, so a location word like "IB" is already expanded to exact codes); the
+    # product codes come off the entities' own resolved codes.
+    if tool_name == "crm_low_stock_report":
+        out.pop("warehouse_ids", None)
+        out.pop("product_ids", None)
+        # The warehouse scope comes off `semantic_input` (the token resolution `run_fetch`
+        # already did); the product scope is read off the entities handed in. Those
+        # entities have ALREADY been pruned to the ones the CURRENT MESSAGE named, in
+        # `run_fetch`'s low-stock override (console round 3, defect B) - this function
+        # cannot tell a carried entity from a fresh one, and `replace_combine` merges the
+        # previous turn's into the gate's list, which is how a bare "low stock report"
+        # came to be scoped to two products from an earlier question and planned "0 of 0".
+        warehouse_codes = jsc.get(semantic_input, "low_stock_warehouse_codes")
+        if isinstance(warehouse_codes, list) and warehouse_codes:
+            out["warehouse_codes"] = warehouse_codes
+        product_codes: list[str] = []
+        for e in jsc.array(entities):
+            if not isinstance(e, dict) or jsc.js_string(e.get("entity_type")) != "product":
+                continue
+            code = e.get("code") or e.get("canonical_code")
+            if jsc.truthy(code) and jsc.js_string(code) not in product_codes:
+                product_codes.append(jsc.js_string(code))
+        if product_codes:
+            out["product_codes"] = product_codes
+        # #892 (console, 14 Sep): this tool REQUIRES both ids - the route 422s without
+        # them, and they drive the company scope the write needs - so it must NOT depend on
+        # the shared tail below surviving a refactor or a None `semantic_input`. Carry them
+        # explicitly here, from the trigger first (`run_fetch` stamps `contact_id` on it),
+        # then `semantic_input`, exactly the resolution the bottom of this function uses.
+        _lsr_contact = trig.get("contact_id")
+        if _lsr_contact is None:
+            _lsr_contact = jsc.get(semantic_input, "contact_id")
+        out["contact_id"] = jsc.nullish_str(_lsr_contact).strip()
+        out["space_id"] = space_id_or_default(
+            space_id if space_id is not None else jsc.get(semantic_input, "space_id")
+        )
+
+    # S2 (review round, 13 Sep 2026): a warehouse entity on a PLAIN order ask.
+    # `TYPE_TO_PARAM` maps it to `warehouse_ids`, which NEITHER order-list tool declares
+    # ("any DO for X at BRW" therefore sent a param the MCP dropped, and the answer was
+    # presented as if it had been scoped to BRW). Both tools take `warehouse_codes`
+    # (S3), so the resolved CODE is what travels; the id is removed rather than left to
+    # be dropped somewhere the operator cannot see it.
+    if tool_name in ORDER_TOOLS and "warehouse_ids" in out:
+        out.pop("warehouse_ids", None)
+        codes: list[str] = []
+        for e in jsc.array(entities):
+            if not isinstance(e, dict) or jsc.js_string(e.get("entity_type")) != "warehouse":
+                continue
+            code = e.get("code") or e.get("canonical_code")
+            if jsc.truthy(code) and jsc.js_string(code) not in codes:
+                codes.append(jsc.js_string(code))
+        if codes:
+            out["warehouse_codes"] = codes
+
     # order_status (order tools only): "outstanding" | "delivered" | "so_outstanding"
     # (A3, AC-905); omitted when null.
     if tool_name in ORDER_TOOLS and jsc.get(semantic_input, "order_status") in (
@@ -540,7 +787,15 @@ def entity_ids_transformer(
         # ToolSpec (`catalog.py`: orders_list and orders_by_product_list), which is what
         # keeps the MCP from stripping it - pinned by
         # `test_growth_fix_opt_in_envelope_fields.py`.
-        out["include_pipeline"] = True
+        #
+        # S2 (security review, 13 Sep 2026): NOT requested when `so_bucket_refused`
+        # is set - the pipeline summary carries `so_outstanding_qty`, the SAME figure
+        # the redirect below exists to withhold, and asking for it here would hand it
+        # straight back on a plain quantity ask over the DO bucket the redirect
+        # switched to. `include_summary` above stays: a bare DO quantity is not
+        # gated.
+        if not jsc.truthy(jsc.get(semantic_input, "so_bucket_refused")):
+            out["include_pipeline"] = True
 
     # A1/A2 (chatbot-growth-r1), opt-in from THIS caller (fix, 7 Sep 2026): these two
     # used to be defaulted ON in `sorento_crm_mcp/server.py`'s
@@ -611,9 +866,17 @@ def entity_ids_transformer(
     # sites write `{{ ... .json.id }} ` with a trailing space inside the template. A number
     # has no `.trim`, so `String()` must come first - `.trim().toString()` is a TypeError on
     # the int the answer path actually receives. `String(x ?? '')` handles int, string,
-    # padded string, null and undefined without knowing which caller sent what, and lands on
-    # `''` (a scope that matches nothing) rather than `undefined`, which would DROP the key
-    # and widen the read to every customer.
+    # padded string, null and undefined without knowing which caller sent what, and lands
+    # on `''` rather than `undefined`, which would DROP the key rather than send it blank.
+    # N-4 (security review, 20 Sep 2026): a blank `contact_id` here is NOT a scope that
+    # matches nothing - that fail-closed rule is `resolve_contact_company_scope`'s own
+    # (`company_scope_resolver.py`), which the chatbot ENGINE already calls once, in
+    # process, before this tool call, to stamp the session's company scope (see
+    # `engine.py`'s own comment above `_contact_company_scope`). This `out["contact_id"]`
+    # is a separate value, sent to the MCP tool call itself, and the ROUTER dependency
+    # that reads it (`_resolve_api_key_scope`, `company_scope_resolver.py:233-237`)
+    # returns `None` for a blank `contact_id`/`space_id` pair - `None` means ALL
+    # companies (AC-F1, backward-compat), the opposite of "matches nothing".
     raw_contact = trig.get("contact_id")
     if raw_contact is None:
         raw_contact = jsc.get(semantic_input, "contact_id")
@@ -686,18 +949,22 @@ class ToolNotAllowed(RuntimeError):
 # behind a user confirmation and a permission check. The chatbot has no user to confirm
 # with, which is the whole difference.
 #
-# **Where the names live (D9, AC-931).** Still a frozen literal, for every reason above -
-# it is simply no longer a THIRD list. Each name is either claimed by exactly one domain
-# (`contracts.DOMAIN_SPEC[domain].tools`) or named in `contracts.UNDOMAINED_CHATBOT_TOOLS`
-# as claimed by nobody on purpose, and this set is their union. This list is the ALLOW-list
+# **Where the names live (D9, AC-931, AC-1594).** Still a frozen set, for every reason
+# above - it is simply no longer a THIRD list. Each name is either claimed by exactly one
+# domain (`turn.policy.default_policy().domains[*].tools`, the frozen seed
+# `chatbot_domains` is migrated from) or named in `contracts.UNDOMAINED_CHATBOT_TOOLS` as
+# claimed by nobody on purpose, and this set is their union. This list is the ALLOW-list
 # for every seam a tool name can reach the MCP client through (the probes and the
 # cross-domain rung name their tool directly); the one tool a turn is ANSWERED from is
-# `DOMAIN_SPEC[domain].tools[0]`, read by `select_tool`.
+# `default_policy().domain(domain).tools[0]`, read by `select_tool`. A STATIC allow-list
+# on purpose, not a live per-turn `Policy` read: this is a security boundary
+# (`ensure_read_only` below), and an owner editing `chatbot_domains.tools` must not
+# silently widen what the chatbot may call without a deliberate migration/review.
 # `tests/chatbot/test_tool_pool_is_read_only.py` still pins the whole union against the MCP
 # catalogue's read-only set, unchanged.
 CHATBOT_READ_ONLY_TOOLS: frozenset[str] = frozenset(
-    DOMAIN_CLAIMED_TOOLS + UNDOMAINED_CHATBOT_TOOLS
-)
+    tool for row in default_policy().domains for tool in row.tools
+) | frozenset(UNDOMAINED_CHATBOT_TOOLS)
 
 
 def ensure_read_only(name: Any) -> None:
@@ -726,8 +993,8 @@ def call_tool(name: str, args: dict[str, Any], *, mcp: Any) -> Any:
     **The allow-list check is HERE, at the egress, and it is not defensive coding (H58).**
     The tool used to be chosen by cosine similarity over a pool that contains write tools,
     so the only thing standing between a customer's phrasing and `crm_order_cancel` was
-    that no phrasing had scored it first. `select_tool` now reads the name off
-    `DOMAIN_SPEC`, so a write tool cannot be PICKED at all; this is what stops one being
+    that no phrasing had scored it first. `select_tool` now reads the name off the
+    domain row, so a write tool cannot be PICKED at all; this is what stops one being
     CALLED however else it was named - the tier probe, and any tool name that arrived on a
     payload rather than from the domain table.
     """
@@ -762,9 +1029,13 @@ IDENTITY_KEYS: frozenset[str] = frozenset(
     }
 )
 
-# ETA is kept ALWAYS, asked for or not: it is the public answer to "where is my container",
-# and the cross-domain renderer sorts incoming rows on it.
-ALWAYS_KEPT_KEYS: frozenset[str] = frozenset({"estimated_arrival_date"})
+# ETA and its delay are kept always, asked for or not: the ETA is the public answer to
+# "where is my container", and the cross-domain renderer sorts incoming rows on it. The
+# delay is IMPLIED by the ETA, never NAMED, so `req_attrs` does not carry it: a denied
+# delay is stripped upstream (`app/services/field_access.py`) and gets no "can't share"
+# note, a blank delay gets no "not recorded yet" note. Only an explicit `eta_delay_date`
+# in `requested_attributes` turns those notes on.
+ALWAYS_KEPT_KEYS: frozenset[str] = frozenset({"estimated_arrival_date", "eta_delay_date"})
 
 # Chronological order of an inbound container's clearance checkpoints. Mirrors the
 # admin-editable `statuses` rows (entity_type "inbound_shipment", by sort_order) as they
@@ -847,12 +1118,18 @@ def group_axis(ctx: Any) -> str:
     return jsc.js_string(si.get("group_by") or "").strip()
 
 
+#: What an answer says when the tool found nothing. Named so a caller that decides NOT to
+#: call a tool (`turn_runtime.make_tool_runner`'s unfiltered-fetch guard) says it in the
+#: same words, rather than printing a header with nothing under it.
+NO_RESULT_INTRO = "No matching results found."
+
+
 def _extract_envelope(j: Any) -> dict[str, Any]:
     empty = {
         "items": [],
         "attachments": [],
         "action_links": [],
-        "intro": "No matching results found.",
+        "intro": NO_RESULT_INTRO,
         "has_result": False,
     }
     p = _find_payload(j)
@@ -1100,7 +1377,6 @@ _PRODUCT_IDENTITY_LABELS: frozenset[str] = frozenset(
 )
 
 _SPEC_KEY_PREFIX = "spec:"
-_SPEC_SUMMARY_CAP = 8
 
 
 def _normalize_spec_word(v: Any) -> str:
@@ -1117,17 +1393,14 @@ def _normalize_spec_word(v: Any) -> str:
 #: only the one multi-token entry ("list price") may be contained in a longer ask -
 #: same discipline as item 8's own matching, kept for the same reason ("seat size"
 #: must not read as a hit on "size").
-_BASE_PROPERTY_WORDS: frozenset[str] = frozenset(
-    {
-        "price", "list price", "harga", "cost",
-        "dimension", "dimensions", "size", "ukuran", "saiz",
-        "description", "name",
-    }
-)
-
-
+#:
+#: Was a module-level frozenset here (AC-1594, S6): the words are `chatbot_entity_kinds`.
+#: `base_property_words`' KEYS now, read through `Policy` (AC-1535) - which is a superset
+#: of the old literal (also "discontinued" and "brand", the S0 migration's own seed), a
+#: deliberate widening: a "discontinued" ask no longer needs its own miss line either.
 def _names_a_base_property(norm: str) -> bool:
-    for w in _BASE_PROPERTY_WORDS:
+    words = default_policy().kind("product")
+    for w in (words.base_property_words if words is not None else {}):
         if norm == w or (" " in w and w in norm):
             return True
     return False
@@ -1140,7 +1413,9 @@ def _tokens(norm: str) -> set[str]:
     return set(norm.split())
 
 
-def _project_product_specs(e: dict[str, Any], req_attrs: list[Any]) -> None:
+def _project_product_specs(
+    e: dict[str, Any], req_attrs: list[Any], hidden_spec_keys: list[Any] | None = None
+) -> None:
     """A1 (AC-901/AC-902): the product spec projection, product envelopes ONLY.
 
     A SEPARATE branch from the clearance/incoming projection above - deliberately
@@ -1150,8 +1425,9 @@ def _project_product_specs(e: dict[str, Any], req_attrs: list[Any]) -> None:
     reusing that gate would delete the very thing this function exists to add.
 
     No requested_attributes: every item keeps its base fields, plus ONE synthetic
-    "Specs:" field summarising up to `_SPEC_SUMMARY_CAP` populated keys ("and N
-    more" beyond that). Byte-identical to before item 8.
+    "Specs:" field naming EVERY populated spec key, in registry order (D1, 12 Sep
+    2026 owner finding: "and N more" left no way to see the rest, so there is no
+    cap and no truncation - the field lists all of them).
 
     With requested_attributes (item 8 / D12, 8 Sep 2026), every item ALWAYS keeps its
     base fields (`_PRODUCT_IDENTITY_LABELS`: Product Code, Product Name, Description,
@@ -1176,13 +1452,33 @@ def _project_product_specs(e: dict[str, Any], req_attrs: list[Any]) -> None:
          items loop.)
     An item with no spec hit for any asked word keeps its base fields only - byte
     identity with the no-attribute path's own field set.
+
+    `hidden_spec_keys` (PLAN-spec-visibility-policy.md "Chatbot seam", AC-15/AC-16):
+    every `spec:<key>` field whose key is hidden is dropped BEFORE either branch
+    above runs - before the "Specs:" summary is built and before asked-word
+    matching - and hidden keys are removed from the vocabulary used for matching
+    too, so a hidden key can never register a hit. An asked word naming a hidden
+    key (exact key/label, or every asked token contained in it - the same rule as
+    an ordinary hit) produces ONE `spec_hidden:<key>` miss, "<label>: not
+    available", instead of the ordinary "not recorded" line - and instead of, not
+    in addition to it.
     """
+    hidden = frozenset(str(k) for k in (hidden_spec_keys or []))
     vocab_raw = e.get("spec_vocabulary")
     vocab: dict[str, str] = vocab_raw if isinstance(vocab_raw, dict) else {}
-    # (spec_key, label, norm_key, norm_label) per registry row, registry order kept
+    # (spec_key, label, norm_key, norm_label) per registry row, registry order kept.
+    # Hidden keys are excluded here - "removed from the vocabulary used for
+    # matching" - and kept in a SEPARATE list below, only for naming the "not
+    # available" line's label.
     vocab_rows: list[tuple[str, str, str, str]] = [
         (str(key), str(label), _normalize_spec_word(key), _normalize_spec_word(label))
         for key, label in vocab.items()
+        if str(key) not in hidden
+    ]
+    hidden_vocab_rows: list[tuple[str, str, str, str]] = [
+        (str(key), str(label), _normalize_spec_word(key), _normalize_spec_word(label))
+        for key, label in vocab.items()
+        if str(key) in hidden
     ]
 
     def vocab_label_for(norm: str) -> str | None:
@@ -1195,6 +1491,18 @@ def _project_product_specs(e: dict[str, Any], req_attrs: list[Any]) -> None:
         for _k, label, nk, nl in vocab_rows:
             if toks and (toks <= _tokens(nk) or toks <= _tokens(nl)):
                 return label
+        return None
+
+    def hidden_ref_for(norm: str) -> tuple[str, str] | None:
+        """`(registry key, label)` when the asked word names a HIDDEN key - same
+        matching rule as `vocab_label_for`, over the hidden-only rows."""
+        for k, label, nk, nl in hidden_vocab_rows:
+            if norm in (nk, nl):
+                return (k, label)
+        toks = _tokens(norm)
+        for k, label, nk, nl in hidden_vocab_rows:
+            if toks and (toks <= _tokens(nk) or toks <= _tokens(nl)):
+                return (k, label)
         return None
 
     # The normalised word AND the word the customer actually typed, PAIRED (review, nit
@@ -1213,7 +1521,23 @@ def _project_product_specs(e: dict[str, Any], req_attrs: list[Any]) -> None:
             asked.append((norm, text))
             seen_norms.add(norm)
 
-    missed_codes: dict[str, list[str]] = {norm: [] for norm, _ in asked}
+    # Asked words that name a HIDDEN key, resolved once (not per item): a
+    # `spec_hidden:<key>` miss instead of the ordinary flow, never both.
+    hidden_asks: dict[str, tuple[str, str]] = {}
+    for norm, _asked_word in asked:
+        ref = hidden_ref_for(norm)
+        if ref is not None:
+            hidden_asks[norm] = ref
+
+    missed_codes: dict[str, list[str]] = {
+        norm: [] for norm, _ in asked if norm not in hidden_asks
+    }
+
+    # AC-17 / code review S2: the keys ACTUALLY removed from this envelope, for
+    # the turn trace's `spec_visibility.dropped` - not vocabulary membership,
+    # which says nothing about whether the product this turn showed even
+    # carried the key.
+    dropped_keys: set[str] = set()
 
     for it in e.get("items") or []:
         if not jsc.truthy(it) or not isinstance(jsc.get(it, "fields"), list):
@@ -1229,21 +1553,38 @@ def _project_product_specs(e: dict[str, Any], req_attrs: list[Any]) -> None:
             for f in fields
             if not (isinstance(f, dict) and jsc.js_string(f.get("key") or "").startswith(_SPEC_KEY_PREFIX))
         ]
-        spec_fields = [
+        # Hidden keys are dropped HERE, before either branch below runs - the
+        # "Specs:" summary and the asked-word matching both read `spec_fields`.
+        raw_spec_fields = [
             f
             for f in fields
             if isinstance(f, dict) and jsc.js_string(f.get("key") or "").startswith(_SPEC_KEY_PREFIX)
         ]
+        spec_fields = []
+        for f in raw_spec_fields:
+            raw_key = jsc.js_string(f.get("key") or "")[len(_SPEC_KEY_PREFIX):]
+            if raw_key in hidden:
+                dropped_keys.add(raw_key)
+            else:
+                spec_fields.append(f)
 
         if not asked:
-            # No attribute asked: base fields untouched, plus the compact summary.
+            # No attribute asked: base fields untouched, plus the compact summary -
+            # EVERY populated spec key, in registry order, no cap (D1).
+            # The write is UNCONDITIONAL. `base` is this item's fields minus every
+            # `spec:` field, so it is what the item must end up with whether or not a
+            # summary follows; guarding the write on `spec_fields` left `it["fields"]`
+            # as the ORIGINAL list the moment the visible set came back empty - and
+            # with every key hidden (a Contact override hiding all of them, measured
+            # 14 Sep 2026 on turn 8c432988) that original list still carried every
+            # hidden `spec:` field, which `output_structurer` then rendered one line
+            # per key. A product with no spec fields at all keeps exactly the fields
+            # it has today: `base` IS `fields` there.
+            fields_out = list(base)
             if spec_fields:
-                shown = spec_fields[:_SPEC_SUMMARY_CAP]
-                remainder = len(spec_fields) - len(shown)
-                summary = ", ".join(f"{f.get('label')}: {f.get('value')}" for f in shown)
-                if remainder > 0:
-                    summary += f" and {remainder} more"
-                it["fields"] = base + [{"key": "specs_summary", "label": "Specs", "value": summary}]
+                summary = ", ".join(f"{f.get('label')}: {f.get('value')}" for f in spec_fields)
+                fields_out.append({"key": "specs_summary", "label": "Specs", "value": summary})
+            it["fields"] = fields_out
             continue
 
         # An attribute was asked: identity fields + the base fields + the spec keys it names.
@@ -1260,7 +1601,14 @@ def _project_product_specs(e: dict[str, Any], req_attrs: list[Any]) -> None:
         seen_field_ids: set[int] = {id(f) for f in kept_base}
         for norm, _asked_word in asked:
             # 1. spec keys: an exact key/label match AND every key whose key or label
-            #    tokens contain every asked token - ALL of them, in registry order
+            #    tokens contain every asked token - ALL of them, in registry order.
+            #    Runs REGARDLESS of whether `norm` also names a hidden key (code
+            #    review S1): "thickness" with `thickness` hidden and
+            #    `board_thickness` visible must still render the visible field -
+            #    the hidden field is already gone from `spec_fields` above, so it
+            #    can never itself be matched here, but a DIFFERENT visible key
+            #    whose tokens contain the same asked word (like `board_thickness`
+            #    containing "thickness") is a real, separate hit.
             toks = _tokens(norm)
             contained = [
                 f
@@ -1272,15 +1620,24 @@ def _project_product_specs(e: dict[str, Any], req_attrs: list[Any]) -> None:
                 if id(f) not in seen_field_ids:
                     matched.append(f)
                     seen_field_ids.add(id(f))
+            if norm in hidden_asks:
+                # Handled once, after the items loop, as a `spec_hidden:` miss
+                # instead of - never in addition to - the ordinary "not
+                # recorded" one, whatever the visible-key matching above found.
+                continue
             # 2. a spec miss - UNLESS the word names a base property, which is already
             #    on the page (kept_base, above) and needs no "not recorded" line.
             if not hit and not _names_a_base_property(norm):
                 missed_codes[norm].append(jsc.js_string(code))
         it["fields"] = kept_base + matched
 
-    # 3. one miss line per asked word, rendered ONCE after the items
+    # 3. one miss line per asked word, rendered ONCE after the items - ordinary
+    # "not recorded" misses first, then one `spec_hidden:` "not available" line
+    # per asked word naming a hidden key (AC-16).
     misses: list[dict[str, Any]] = []
     for norm, asked_word in asked:
+        if norm in hidden_asks:
+            continue
         codes = missed_codes.get(norm) or []
         if not codes:
             continue
@@ -1289,8 +1646,443 @@ def _project_product_specs(e: dict[str, Any], req_attrs: list[Any]) -> None:
         extra = len(codes) - _MISS_CODES_CAP
         value = f"not recorded for {listed}" + (f" (+{extra} more)" if extra > 0 else "")
         misses.append({"key": f"spec_miss:{norm}", "label": label, "value": value})
+    for norm, _asked_word in asked:
+        ref = hidden_asks.get(norm)
+        if ref is None:
+            continue
+        key, label = ref
+        misses.append({"key": f"spec_hidden:{key}", "label": label, "value": "not available"})
     if misses:
         e["spec_misses"] = misses
+
+    # AC-17 / code review S2: what this function actually removed, for the turn
+    # trace (`run_fetch`'s `spec_visibility` event) - always set when this
+    # function ran, even `[]`, so the trace reads "ran, nothing to drop" rather
+    # than reaching for a vocabulary check of its own.
+    e["spec_hidden_dropped"] = sorted(dropped_keys)
+
+
+# --------------------------------------------------------------------------- #
+# crm_outstanding_report - never the generic envelope below (S4 point 5)
+# --------------------------------------------------------------------------- #
+
+
+#: Both shapes the presenter writes: the numbered line when TWO scopes are offered, and
+#: R9's single sentence when only one is (`Reply 1 for the sales order list.`). One
+#: pattern per scope, so a reader here cannot drift from what the customer can see.
+_SO_LIST_OFFER_RE = re.compile(
+    r"(?m)^\d+\.\s*Sales order list\s*$|^Reply \d+ for the sales order list\.$"
+)
+_DO_LIST_OFFER_RE = re.compile(
+    r"(?m)^\d+\.\s*Delivery order list\s*$|^Reply \d+ for the delivery order list\.$"
+)
+
+
+def _outstanding_offer_from_text(text: str) -> list[dict[str, Any]]:
+    """The same offer, read off ALREADY-RENDERED text (production: `present_response`
+    rendered this server-side, so there is no `so`/`do` block left to inspect here) -
+    the option lines the S1 presenter itself writes are the only source of truth
+    left, and reusing them can never disagree with what the customer is looking at."""
+    rows: list[dict[str, Any]] = []
+    if _SO_LIST_OFFER_RE.search(text):
+        rows.append({"idx": len(rows) + 1, "label": "Sales order list", "value": "so"})
+    if _DO_LIST_OFFER_RE.search(text):
+        rows.append({"idx": len(rows) + 1, "label": "Delivery order list", "value": "do"})
+    if len(rows) == 2:
+        # R14 (owner ruling, 13 Sep 2026): with both lists on offer, the presenter adds
+        # `3. Both lists` - so the stored roster carries it too, or the position the
+        # customer can see would resolve against nothing.
+        rows.append({"idx": 3, "label": "Both lists", "value": "both"})
+    return rows
+
+
+def outstanding_product_codes(entities: Any, semantic_input: Any) -> list[str]:
+    """WHICH products this report is about, in one place (AC-1119, reviewer N5 +
+    console run 4 finding 5).
+
+    `run_fetch` matches the gate's products against the codes the customer TYPED and
+    stamps the winner as `semantic_input.outstanding_product_code`; that one wins, alone.
+    Only when no candidate equalled a typed code (a prefix or spec-search hit, where the
+    family member is the only answer there is) do the product entities themselves stand.
+
+    A LIST, since hand pass 3: "all" over a ten-variant product roster picks ten codes,
+    and the old rule took the FIRST entity and reported on one of them under a header
+    that named it (turn 0a6f0379, 16 Sep 2026). One entity gives a list of one and
+    behaves exactly as before.
+
+    Every caller that names the product goes through here - the tool arguments, the
+    detail offer's stored filters and the scope question's stored filters - so the
+    question, the answer and the header can never disagree about which codes were asked
+    about, which is exactly what console run 4 read on the scope-question arm.
+    """
+    si = semantic_input if isinstance(semantic_input, dict) else {}
+    carried = [jsc.js_string(c) for c in jsc.array(si.get("outstanding_product_codes")) if jsc.truthy(c)]
+    if carried:
+        return carried
+    typed = si.get("outstanding_product_code")
+    if jsc.truthy(typed):
+        return [jsc.js_string(typed)]
+    codes: list[str] = []
+    for e in jsc.array(entities):
+        if not isinstance(e, dict) or jsc.js_string(e.get("entity_type")) != "product":
+            continue
+        # `gate.py` renames the resolver's `canonical_code` to `code` when it builds
+        # `compatible_entities`; a caller that hands entities straight in (this module's
+        # own tests) still spells it `canonical_code`.
+        code = e.get("code") or e.get("canonical_code")
+        if jsc.truthy(code) and jsc.js_string(code) not in codes:
+            codes.append(jsc.js_string(code))
+    return codes
+
+
+#: The shortest a `crm_sales_report` `product_code` may be - the route 422s
+#: `product_code_too_short` under it (AC-1627, S19).
+_SALES_REPORT_MIN_PREFIX = 3
+
+
+def sales_report_product_code(entities: Any, semantic_input: Any) -> str:
+    """WHICH product the SALES report is about, as ONE string.
+
+    `outstanding_product_codes` is the shared rule for which codes are in play (AC-1119);
+    this route's own parameter is different in kind, because `crm_sales_report`'s
+    `product_code` is a PREFIX that covers a family (S19), not an exact code, and the
+    route declares no `product_codes` list at all.
+
+    So a carry of SEVERAL codes - "all" over a product roster, `outstanding_carried_
+    product_codes` - travels as the longest prefix they share, which covers exactly them
+    (and any sibling sitting between them) rather than reporting on the first alone under
+    a header naming it (the outstanding report's own turn 0a6f0379, 16 Sep 2026). One
+    code, which is every ordinary ask, is returned verbatim and this is a no-op.
+    """
+    codes = outstanding_product_codes(entities, semantic_input)
+    if not codes:
+        return ""
+    if len(codes) == 1:
+        return codes[0]
+    shared = codes[0]
+    for code in codes[1:]:
+        while shared and not code.upper().startswith(shared.upper()):
+            shared = shared[:-1]
+    return shared if len(shared) >= _SALES_REPORT_MIN_PREFIX else codes[0]
+
+
+#: The offer BLOCK the presenter appended, in either form: R9's single sentence, or the
+#: numbered list and every option line under it, to the end of the reply.
+_OFFER_BLOCK_RE = re.compile(
+    r"(?ms)^(?:Reply \d+ for the .+? list\.|Reply with a number for detail:\n(?:\d+\..*\n?)+)\s*\Z"
+)
+
+
+def _outstanding_offer_block(text: str) -> str:
+    """The exact bytes of the offer the customer was shown, or "".
+
+    Kept VERBATIM rather than re-rendered (AC-1102, 13 Sep 2026): the offer's wording is
+    the MCP presenter's, the backend container cannot import that module, and a second
+    renderer here drifted from it the first time the presenter's wording changed - a
+    single-scope report offered `Reply 1 for the sales order list.` and its own re-print
+    answered with the numbered form, two wordings for one offer in one conversation.
+    Storing what was rendered is the only copy that cannot disagree with itself.
+    """
+    match = _OFFER_BLOCK_RE.search(text or "")
+    return match.group(0).strip() if match else ""
+
+
+def _outstanding_filters_from_ctx(ctx: dict[str, Any]) -> dict[str, Any]:
+    """The SAME `outstanding_filters` shape `business/__init__.py::_outstanding_filters_from`
+    builds for the scope-question ask - the detail offer carries the identical filter
+    set forward so a later "1"/"2" re-runs the tool with them, unchanged (D10)."""
+    semantic_input = ctx.get("semantic_input")
+    if isinstance(semantic_input, str):
+        semantic_input = _safe_json(semantic_input)
+    semantic_input = semantic_input if isinstance(semantic_input, dict) else {}
+    product_codes = outstanding_product_codes(ctx.get("entities"), semantic_input)
+    customer_ids: list[Any] = []
+    for e in jsc.array(ctx.get("entities")):
+        if not isinstance(e, dict):
+            continue
+        if e.get("entity_type") == "customer":
+            uid = e.get("uuid")
+            if uid and uid not in customer_ids:
+                customer_ids.append(uid)
+    if not customer_ids:
+        # R13: a CUSTOMER-subject answering turn resolved no entity this turn - the ids
+        # rode in on the carried filter set, and they have to ride back out on it too, or
+        # the offer this hit arms loses the only subject it has.
+        customer_ids = [
+            uid for uid in jsc.array(semantic_input.get("outstanding_carried_customer_ids")) if uid
+        ]
+    return {
+        "product_code": product_codes[0] if product_codes else None,
+        # Only when there are SEVERAL: one code keeps the single key every reader
+        # already speaks, so an ordinary ask's stored filters are unchanged.
+        **({"product_codes": product_codes} if len(product_codes) > 1 else {}),
+        "date_filter_start": semantic_input.get("date_filter_start"),
+        "date_filter_end": semantic_input.get("date_filter_end"),
+        "customer_ids": customer_ids,
+        "warehouse_codes": semantic_input.get("outstanding_warehouse_codes") or [],
+        # AC-1132/AC-1138 (review round): the location is part of the filter set, and
+        # the TOKEN travels with the codes - the answering turn has to print the same
+        # header ("IB (BRW-IB, MWH-IB)") as the turn that asked.
+        "location_token": semantic_input.get("outstanding_location_token"),
+        # AC-1157 (R15): WHICH scope this report was run for. The offer exists only
+        # because a report ran, so the scope is settled by the time this filter set is
+        # built - and a REFINEMENT of that offer ("this month only") has to re-run the
+        # same scope rather than re-ask a question the customer already answered.
+        "scope": semantic_input.get("outstanding_scope"),
+    }
+
+
+def _outstanding_report_output(result: Any, ctx: dict[str, Any]) -> dict[str, Any]:
+    """S4 point 5 (AC-1114b/AC-1135/AC-1138/AC-1141): `crm_outstanding_report` never
+    goes through the generic envelope below - the report's shape (two named blocks,
+    each with its own By location / By customer subgroup) has no row list to build
+    items from.
+
+    `result` is the MINIMAL envelope `sorento_crm_mcp.presenters.present_response`
+    returns for this tool: `response` (the already-rendered reply, used VERBATIM) and
+    `has_result`. There is no second, local rendering of the report here - a lane that
+    re-derived the header from a raw payload could disagree with the text the customer
+    is reading, and the backend container cannot import `sorento_crm_mcp` to share the
+    presenter (`CHATBOT_READ_ONLY_TOOLS`'s own docstring above explains why).
+
+    `has_result` has to come off the wire: the rendered header prints on a TOTAL MISS
+    too ("Product: ... / No open sales order."), so reading the text would call every
+    miss an answer and the existing escalate offer (AC-1107) would never fire - which
+    is exactly what the 13 Sep console check saw.
+    """
+    envelope = result if isinstance(result, dict) else {}
+    if "response" in envelope:
+        text = jsc.js_string(envelope.get("response") or "")
+        has_result = envelope.get("has_result") is True
+    else:
+        # The render never happened (an MCP that returned the raw body, or a failure
+        # fallback). Nothing can be said about absence from a shape this function did
+        # not get, so the text stands and the turn is treated as an answer.
+        text = result if isinstance(result, str) else jsc.js_string(result)
+        has_result = bool(text.strip())
+    offer = _outstanding_offer_from_text(text)
+
+    outstanding_ask = (
+        {
+            "kind": "outstanding_detail",
+            "last_result_set": offer,
+            # NOT a filter: the offer's own text, carried in the same bag because it
+            # travels to exactly the same place and is needed by exactly the same turn -
+            # the one that re-prints an offer the customer has not answered yet.
+            "filters": {**_outstanding_filters_from_ctx(ctx), "offer_text": _outstanding_offer_block(text)},
+        }
+        if offer
+        else None
+    )
+    return {
+        "response": text,
+        "response_intro": None,
+        "answers": [],
+        "attachments": [],
+        "action_links": [],
+        "last_updated_at": None,
+        "has_result": has_result,
+        "alternatives": [],
+        "relaxed_axis": None,
+        "field_access": None,
+        "requested_attributes": [],
+        "keys_served": False,
+        "outstanding_ask": outstanding_ask,
+        # AC-1139: the report carries its OWN Product / Customer / Location / Order date
+        # lines, so `tail/compile_state.py` must skip the generic search-scope header it
+        # prints above a delivery-order answer. Read there off this marker.
+        "outstanding_report": True,
+    }
+
+
+def _sales_report_filters_from_ctx(ctx: dict[str, Any]) -> dict[str, Any]:
+    """The `outstanding_filters` shape the sales-report lane arms its own detail
+    offer with (PLAN-chatbot-sales-report.md S4 wiring point 7). `tool` names WHICH
+    report this stored filter set belongs to - carried for a reader of the stored
+    session state, but the re-run itself is decided by the PENDING KIND, not this
+    key: `head/output_exchange.py::_apply_outstanding_pending` stamps `order_status:
+    "sales_report"` off `kind == "sales_report_detail"` directly, the same way an
+    `outstanding_detail` offer's own scope decides its re-run."""
+    semantic_input = ctx.get("semantic_input")
+    if isinstance(semantic_input, str):
+        semantic_input = _safe_json(semantic_input)
+    semantic_input = semantic_input if isinstance(semantic_input, dict) else {}
+    product_code = sales_report_product_code(ctx.get("entities"), semantic_input)
+    customer_ids: list[Any] = []
+    for e in jsc.array(ctx.get("entities")):
+        if not isinstance(e, dict):
+            continue
+        if e.get("entity_type") == "customer":
+            uid = e.get("uuid")
+            if uid and uid not in customer_ids:
+                customer_ids.append(uid)
+    if not customer_ids:
+        # R13-equivalent: a CUSTOMER-subject answering turn resolved no entity this
+        # turn - the ids rode in on the carried filter set, and they have to ride
+        # back out on it too, or the offer this hit arms loses its only subject.
+        customer_ids = [
+            uid for uid in jsc.array(semantic_input.get("outstanding_carried_customer_ids")) if uid
+        ]
+    return {
+        "tool": "crm_sales_report",
+        "product_code": product_code,
+        "date_filter_start": semantic_input.get("date_filter_start"),
+        "date_filter_end": semantic_input.get("date_filter_end"),
+        "customer_ids": customer_ids,
+        "warehouse_codes": semantic_input.get("outstanding_warehouse_codes") or [],
+        "location_token": semantic_input.get("outstanding_location_token"),
+        "channel": semantic_input.get("sales_channel"),
+    }
+
+
+def _sales_report_output(result: Any, ctx: dict[str, Any]) -> dict[str, Any]:
+    """S4 wiring point 7 (AC-1654/AC-1655/AC-1658): `crm_sales_report` never goes
+    through the generic envelope below - mirrors `_outstanding_report_output` for
+    the sibling tool, the SAME reason: the report's shape (a month block per
+    bucket) has no row list to build items from.
+
+    `_outstanding_offer_from_text` is REUSED, not copied: this report's own single
+    closing sentence (`Reply 1 for the sales order list.`) is byte-identical to the
+    outstanding report's single-scope offer, so the same regex finds it and returns
+    the SAME one-row shape (`idx` 1, `Sales order list`, `so`) this tool's own
+    detail offer needs.
+    """
+    envelope = result if isinstance(result, dict) else {}
+    if "response" in envelope:
+        text = jsc.js_string(envelope.get("response") or "")
+        has_result = envelope.get("has_result") is True
+    else:
+        # The render never happened (an MCP that returned the raw body, or a failure
+        # fallback). Nothing can be said about absence from a shape this function did
+        # not get, so the text stands and the turn is treated as an answer.
+        text = result if isinstance(result, str) else jsc.js_string(result)
+        has_result = bool(text.strip())
+    offer = _outstanding_offer_from_text(text)
+
+    outstanding_ask = (
+        {
+            "kind": "sales_report_detail",
+            "last_result_set": offer,
+            "filters": {
+                **_sales_report_filters_from_ctx(ctx),
+                "offer_text": _outstanding_offer_block(text),
+            },
+        }
+        if offer
+        else None
+    )
+    return {
+        "response": text,
+        "response_intro": None,
+        "answers": [],
+        "attachments": [],
+        "action_links": [],
+        "last_updated_at": None,
+        "has_result": has_result,
+        "alternatives": [],
+        "relaxed_axis": None,
+        "field_access": None,
+        "requested_attributes": [],
+        "keys_served": False,
+        "outstanding_ask": outstanding_ask,
+        # AC-1659: this report carries its OWN Customer / Product / Channel /
+        # Location / Delivery date header, so `tail/compile_state.py` must skip the
+        # generic search-scope header (the same marker `crm_outstanding_report`
+        # already reuses this for, S4 point 9).
+        "outstanding_report": True,
+    }
+
+
+#: The miss line for an unrendered low stock payload (N6). The presenter carries the same
+#: wording for its own error envelope; this copy covers only the "render never happened"
+#: fallback, where the presenter's text never reached this function.
+_LOW_STOCK_ERROR_TEXT = "Could not run the low stock report right now."
+
+
+def _low_stock_report_output(result: Any) -> dict[str, Any]:
+    """PLAN-low-stock-report S6 (AC-66): `crm_low_stock_report`'s own envelope.
+
+    `_outstanding_report_output`'s shape, with one difference that is the whole point:
+    `attachments` is carried through from the presenter's envelope instead of being an
+    empty list. `engine._attachments_src` turns a non-empty list into a `send_attachments`
+    action, and that action IS the in-turn delivery of the workbook (AC-43).
+
+    The reply text is the presenter's, verbatim - one writer, one wording, for the same
+    reason the outstanding report's is: the backend container cannot import
+    `sorento_crm_mcp`, so a second rendering here could disagree with the text the customer
+    is reading and nothing would catch it.
+
+    `has_result` comes off the wire and is True on every presenter branch - ready, pending,
+    busy and error are all terminal answers the bot gives verbatim. The presenter renders an
+    error as the "could not run" line (reviewer S1/N6, refined by the console: a False here
+    routes into the inventory domain's GENERIC miss, the wrong wording for a failed run), so
+    the lane must NOT force the turn onto the miss path; it carries the presenter's text and
+    `has_result` through unchanged.
+    """
+    envelope = result if isinstance(result, dict) else {}
+    if "response" in envelope:
+        text = jsc.js_string(envelope.get("response") or "")
+        has_result = envelope.get("has_result") is True
+        attachments = envelope.get("attachments")
+    else:
+        # The render never happened (an MCP that returned a RAW route body - `{status:
+        # error|busy|...}` - or a failure fallback). This tool has a side effect and no
+        # safe default text, so state the error line verbatim as a terminal answer rather
+        # than stringing a raw status dict into the reply or dropping into the generic
+        # inventory miss.
+        text = _LOW_STOCK_ERROR_TEXT
+        has_result = True
+        attachments = None
+    return {
+        "response": text,
+        "response_intro": None,
+        "answers": [],
+        "attachments": attachments if isinstance(attachments, list) else [],
+        "action_links": [],
+        "last_updated_at": None,
+        "has_result": has_result,
+        "alternatives": [],
+        "relaxed_axis": None,
+        "field_access": None,
+        "requested_attributes": [],
+        "keys_served": False,
+    }
+
+
+#: `chatbot_domains.forms.tools[0]` (`policy_rows.py`) - the one tool this domain calls.
+_FORMS_LIST_TOOL = "crm_forms_management_forms_list"
+
+
+def _forms_browse_ask(e: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any] | None:
+    """Item 1 (17 Sep 2026): a forms BROWSE that found several forms arms a `form_pick`
+    roster beside the numbered list it already prints, so "1" can answer it - the same
+    `outstanding_ask` shape `_outstanding_report_output` hands `envelope_of` (read there
+    as `lane_ask`), built off the MCP presenter's own `id` (`sorento_crm_mcp.presenters.
+    _forms`, `_FORMS_LIST_KEEP_BROWSE`).
+
+    Never when this call already NAMED a form: `ctx["entities"]` carrying a `form` entity
+    means the pick already resolved (the customer's own "1", or the resolver matched a
+    name) and this is the narrowed lookup that answer runs, not a fresh browse to arm
+    another roster over.
+    """
+    if any(
+        isinstance(ent, dict) and ent.get("entity_type") == "form"
+        for ent in jsc.array(ctx.get("entities"))
+    ):
+        return None
+    items = [it for it in (e.get("items") or []) if isinstance(it, dict) and jsc.truthy(it.get("id"))]
+    if len(items) < 2:
+        # One form, or none: nothing to choose between (`narrow.decide`'s own
+        # `_choices() <= 1` rule for a roster policy, read here for the same reason).
+        return None
+    return {
+        "kind": "form_pick",
+        "last_result_set": [
+            {"idx": i + 1, "label": it.get("title"), "value": it["id"]}
+            for i, it in enumerate(items)
+        ],
+        "filters": {},
+    }
 
 
 def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]:
@@ -1301,7 +2093,27 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     parameters and nothing else about the body changes.
     """
     ctx = ctx if isinstance(ctx, dict) else {}
+    if jsc.js_string(ctx.get("tool") or "") == "crm_outstanding_report":
+        return _outstanding_report_output(result, ctx)
+    if jsc.js_string(ctx.get("tool") or "") == "crm_sales_report":
+        return _sales_report_output(result, ctx)
+    if jsc.js_string(ctx.get("tool") or "") == "crm_low_stock_report":
+        return _low_stock_report_output(result)
     e = _extract_envelope(result)
+    # Read once, for both the restricted-field drop below and the spec-visibility
+    # drop (PLAN-spec-visibility-policy.md "Chatbot seam") - one contact, one
+    # `ctx.access`, two consumers.
+    access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
+
+    # S2 (security review, 13 Sep 2026): `run_fetch` redirected a customer-only
+    # `so_outstanding` ask (no product, so the outstanding-report override above
+    # never runs) to `outstanding` (the DO bucket) because the contact lacks
+    # `sales_orders.outstanding`. Prefixed onto the reply here, not there - this
+    # generic envelope is the only place this tool's own text gets composed.
+    ctx_semantic_input = ctx.get("semantic_input") if isinstance(ctx.get("semantic_input"), dict) else {}
+    so_bucket_refusal = (
+        SO_NOT_ENABLED_MESSAGE if jsc.truthy(ctx_semantic_input.get("so_bucket_refused")) else None
+    )
 
     # -- restricted-field drop (A2/A5/A6, general rule) ---------------------- #
     # A presenter marks a field or summary item RESTRICTED by putting its key in
@@ -1317,7 +2129,6 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     # restricted field is ever dropped for the chatbot.
     restricted = e.get("restricted_fields")
     if isinstance(restricted, dict) and restricted:
-        access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
         granted_raw = access_ctx.get("attributes")
         granted = set(granted_raw) if isinstance(granted_raw, list) else set()
 
@@ -1397,7 +2208,9 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     # product with zero derived specs (no `spec_vocabulary` at all) still gets the
     # plain today's-four-fields answer rather than being skipped by accident.
     if jsc.js_string(e.get("result_type") or "") == "products":
-        _project_product_specs(e, req_attrs)
+        hidden_raw = access_ctx.get("hidden_spec_keys")
+        hidden_spec_keys = hidden_raw if isinstance(hidden_raw, list) else []
+        _project_product_specs(e, req_attrs, hidden_spec_keys)
 
     # H46: CONTAINS the sentinel, not IS it. `contracts.is_timeline` is the one declaration
     # (S6a put it there for exactly this consumer); re-deriving it here is what let a
@@ -1567,9 +2380,16 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
         and len(e["summary_items"])
         and e.get("has_result") is True
     )
+    # Hand pass 12, Group A: a carried order-domain status/document MAY stay on focus
+    # across a domain change ("remembering is one thing, whether I use it is another" -
+    # owner ruling) - what must stop is a NON-ORDER tool's reply using it. `ctx["tool"]`
+    # is this turn's own tool, so the gate is the same `ORDER_TOOLS` membership
+    # `entity_ids_transformer` already uses for the tool-args side of this same carry.
     order_status = semantic_input.get("order_status")
+    tool_is_order = jsc.js_string(ctx.get("tool") or "").strip() in ORDER_TOOLS
     if (
-        jsc.truthy(e.get("has_result"))
+        tool_is_order
+        and jsc.truthy(e.get("has_result"))
         and isinstance(e.get("items"), list)
         and len(e["items"])
         and order_status in ("outstanding", "delivered")
@@ -1733,7 +2553,15 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     # summaries, ...) is untouched. Deferred-import: `answer.py` imports FROM this
     # module (`DATE_PARAMS`, `space_id_or_default`), so a module-level import here
     # would be circular.
+    #
+    # `set_header` also travels out as its OWN key (below, `out["set_header"]`), not
+    # only baked into `response` - R-d (owner hand pass 7, 19 Sep 2026) has
+    # `turn/compose.py` print this arm's `lane_text` VERBATIM as the whole section
+    # whenever the envelope carries one, rows or not (`turn/compose.py`'s own R-d
+    # comment), so without a header of its own a counted-set answer's `lane_text`
+    # would render with no leading count/attribute line at all.
     predicate = ctx.get("predicate") if isinstance(ctx.get("predicate"), dict) else None
+    set_header: str | None = None
     if predicate is not None:
         from app.services.chatbot.lanes.business.answer import (
             build_set_header,
@@ -1792,11 +2620,19 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
                 elif set_noun.endswith("s"):
                     set_noun = set_noun[:-1]
             header = build_set_header(qualifying_total, shown, set_noun, require)
+        set_header = header
         msg = f"{header}\n{msg}"
 
+    final_response = msg.strip()
+    if so_bucket_refusal:
+        final_response = f"{so_bucket_refusal}\n\n{final_response}"
+
     out: dict[str, Any] = {
-        "response": msg.strip(),
+        "response": final_response,
         "response_intro": e.get("intro"),
+        # The counted-set header alone (AC-1316/AC-1317), so a reader that renders its
+        # own rows can still prefix the right line - see the note above `predicate`.
+        "set_header": set_header,
         # GROUPED: the flat `items` order and the NUMBERED order the customer just read
         # are two different orders, and `answers` is what a positional pick ("2") resolves
         # against - so a grouped answer used to hand back a different record than the one
@@ -1828,6 +2664,11 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     )
     if len(lookup_cos) > 1:
         out["lookup_companies"] = lookup_cos
+    if jsc.js_string(ctx.get("tool") or "") == _FORMS_LIST_TOOL:
+        # Beside `out["answers"]`, never instead of it: the numbered list still prints
+        # through the generic per-row grammar, and `forms_ask` only gives `envelope_of`
+        # something to arm a pick from (item 1).
+        out["forms_ask"] = _forms_browse_ask(e, ctx)
     return out
 
 

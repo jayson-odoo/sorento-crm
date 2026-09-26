@@ -576,13 +576,22 @@ def test_a_revision_of_another_inquiry_is_a_404(db):
 
 
 def _request_with_one_revision(db, kind):
-    """Original (Marker project / ITEM-A) -> revision 1 (Revised / ITEM-B)."""
+    """Original (Marker project / ITEM-A) -> revision 1 (Revised / ITEM-B).
+
+    #1232 blocking 4: a sponsorship form revise is gated the same way submit
+    is - a unit price on every line, unrelated to what this file is about (PDF
+    snapshot rendering), so the revised line just needs a valid one. Purchase
+    requests are unaffected.
+    """
     token, row = _setup(db, kind)
+    line = {"item_code": "ITEM-B", "quantity": 3}
+    if kind == "sponsorship_form":
+        line["unit_price"] = 10
     _revise(
         db, token, kind, row,
         {
             "project_title": "Revised project",
-            "products": [{"item_code": "ITEM-B", "quantity": 3}],
+            "products": [line],
         },
         FIRST_REASON, 0,
     )

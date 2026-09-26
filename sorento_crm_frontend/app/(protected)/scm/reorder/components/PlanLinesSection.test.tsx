@@ -91,7 +91,21 @@ vi.mock('./PlanLinesGrid', () => ({
     </div>
   ),
 }));
-vi.mock('./PlanBudgetReview', () => ({ PlanBudgetReview: () => <div>budget-review</div> }));
+// The mock surfaces `totals` (as text, alongside the plain "budget-review" marker every
+// existing case in this file already matches on) so AC-13 can assert WHICH totals object
+// `PlanLinesSection` actually hands the review panel, without pulling in the real
+// component (heavy children stay mocked, per this file's own stated purpose).
+vi.mock('./PlanBudgetReview', () => ({
+  PlanBudgetReview: ({ totals }: { totals: { decided: number; undecided: number } }) => (
+    <div>
+      <div>budget-review</div>
+      <div>{`${totals.decided} of ${totals.decided + totals.undecided}`}</div>
+      {totals.undecided > 0 ? (
+        <div>{`${totals.undecided} line${totals.undecided === 1 ? '' : 's'} still to decide`}</div>
+      ) : null}
+    </div>
+  ),
+}));
 vi.mock('./LevelChangesPanel', () => ({ LevelChangesPanel: () => <div>level-changes</div> }));
 
 import { PlanLinesSection } from './PlanLinesSection';
@@ -297,6 +311,35 @@ describe('PlanLinesSection - reports totals upward for the decision-progress til
     expect(onTotalsChange).toHaveBeenCalledWith(
       expect.objectContaining({ decided: 0, undecided: 1 }),
     );
+  });
+
+  it('PLAN-reorder-one-formula.md, AC-13: PlanBudgetReview reads the DEFAULT-VISIBLE ' +
+    'totals, not every line the hook returned', () => {
+    // 3 lines, 1 hidden_by_default. `planLines.totals` is stubbed to the WRONG (every-line)
+    // figure on purpose - it is what `<PlanBudgetReview totals={planLines.totals}>` reads
+    // today - so a pass here would mean the component still hands the review panel the
+    // unfiltered total rather than `reportedTotals` (computed over `defaultVisibleLines`,
+    // the same set the tile and the grid already agree on).
+    const a = line({ id: 'a', sku: 'BUY-1', type: 'buy' });
+    const b = line({ id: 'b', sku: 'BUY-2', type: 'buy' });
+    const hidden = line({
+      id: 'c', sku: 'COV-HIDDEN', type: 'covered',
+      policy_type: 'reorder_level', reorder_level: 120, net_position: 135,
+      hidden_by_default: true,
+    });
+    stubPlanLines({
+      lines: [a, b, hidden],
+      decisions: {},
+      totals: {
+        decided: 0, undecided: 3, buying: 2, usingStock: 0, usingPo: 0, skipped: 0,
+        units: 0, cost: 0, unpriced: 0,
+      },
+    });
+    render(<PlanLinesSection runId="run-1" />);
+
+    expect(screen.getByText('0 of 2')).toBeInTheDocument();
+    expect(screen.getByText('2 lines still to decide')).toBeInTheDocument();
+    expect(screen.queryByText('0 of 3')).not.toBeInTheDocument();
   });
 
   it('counts the per-warehouse rows even under a Product-grain run (S16, 21 Aug): a decision ' +

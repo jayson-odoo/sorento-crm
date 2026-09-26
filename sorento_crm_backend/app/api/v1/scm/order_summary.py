@@ -39,6 +39,7 @@ from app.services.uuid_path_param import validate_uuid_path
 from app.schemas.scm_order_summary import (
     KeyedStatusIn,
     KeyedStatusOut,
+    LowStockPreviewOut,
     OrderSummaryDecisionIn,
     OrderSummaryDecisionOut,
     OrderSummaryDemandDrillOut,
@@ -48,10 +49,22 @@ from app.schemas.scm_order_summary import (
     OrderSummarySuppliersOut,
     PoWorklistOut,
 )
+from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
+from app.services.scm import low_stock_report_service
 from app.services.scm import reorder_run_service
 from app.services.scm import summary_order_service as svc
 
 log = logging.getLogger(__name__)
+
+#: The third value `POST /order-summary/export` accepts, and the `user_downloads.kind` it
+#: creates - one string, so the format on the wire and the kind in the drawer cannot drift
+#: (PLAN-low-stock-report S3, AC-30).
+LOW_STOCK_FORMAT = "low_stock_xlsx"
+
+#: Lane C, PLAN-order-sheet-oi-reports-22sep.md (AC-C1/AC-C2): the fourth `format` value -
+#: the OI worksheet, a run's OWN Start Plan scope of live OI Buy rows (`kind` on the wire
+#: is this plus `_xlsx`, `oi_worksheet_xlsx`, matching the other two formats' own rule).
+OI_WORKSHEET_FORMAT = "oi_worksheet"
 
 router = APIRouter()
 
@@ -98,20 +111,6 @@ def get_order_summary(
     return svc.report(db, run_id=run_id)
 
 
-def _ddmmyyyy_compact(iso: Optional[str]) -> str:
-    """`2026-09-10` -> `10092026`, for a FILENAME (no separators). Falls back to today
-    when the run froze no rows (`report()`'s own `as_of` is then None) - the row itself
-    still needs a name, and today is the only date anyone has to stamp on it."""
-    from datetime import date as _date, datetime as _datetime
-
-    if not iso:
-        return _date.today().strftime("%d%m%Y")
-    try:
-        return _datetime.strptime(str(iso)[:10], "%Y-%m-%d").strftime("%d%m%Y")
-    except ValueError:
-        return _date.today().strftime("%d%m%Y")
-
-
 @router.post("/order-summary/export", response_model=DownloadResponse)
 def export_order_summary(
     payload: OrderSummaryExportIn = Body(...),
@@ -132,8 +131,39 @@ def export_order_summary(
     uses, before the report is ever read.
     """
     fmt = (payload.format or "").strip().lower()
-    if fmt not in ("pdf", "xlsx"):
-        raise AppException(status_code=422, message="format must be pdf or xlsx.")
+    if fmt not in ("pdf", "xlsx", LOW_STOCK_FORMAT, OI_WORKSHEET_FORMAT):
+        raise AppException(
+            status_code=422,
+            message="format must be pdf, xlsx, low_stock_xlsx or oi_worksheet.",
+        )
+    # R6 (PLAN-low-stock-export-split-25sep, AC-13): `split` names how the LOW STOCK
+    # workbook re-files its sheets - it is meaningless on the other three formats, and
+    # silently ignoring it there would let a caller believe a split it never got. Checked
+    # before any guard below creates a row or touches the queue.
+    if payload.split != "none" and fmt != LOW_STOCK_FORMAT:
+        raise AppException(
+            status_code=422,
+            message="split applies to the low stock report only",
+        )
+    if fmt == OI_WORKSHEET_FORMAT:
+        # Fix round 1 (security review): the worksheet prints the OI worklist's own row
+        # shape, so it needs the OI worklist's own view permission on top of
+        # `scm.dashboard.view` (`_EXPORT`'s dependency) - a caller who can only see the
+        # dashboard, and never the worklist itself, must not be able to print it. Checked
+        # IN-BODY rather than as a second route dependency, so the order sheet and low
+        # stock formats stay reachable on `scm.dashboard.view` alone.
+        from app.services.user_service import UserPermissionService
+
+        from app.api.v1.projects.order_inquiries import VIEW as OI_WORKLIST_VIEW
+
+        if not UserPermissionService(db).check_user_has_permission(
+            current_user["id"], OI_WORKLIST_VIEW
+        ):
+            raise AppException(
+                403,
+                "You do not have permission to export the OI worksheet.",
+                code="oi_worksheet_permission_required",
+            )
     run_id = payload.run_id
     if run_id:
         run_id = validate_uuid_path(run_id, resource="Reorder run")
@@ -143,11 +173,49 @@ def export_order_summary(
     # request thread (reviewer nit, review fix round A, A5) - the row-count guard (M1,
     # Phase 3 security review) and the sheet's own `as_of` - which names the file - come
     # off one lightweight query rather than serialising every row just to maybe refuse.
+    #
+    # The low stock workbook now shares this SAME guard (PLAN-low-stock-last-in-and-list-
+    # scope S2, owner ruling 15 Sep - "I prefer All to match the list exported"):
+    # `low_stock_guard_stats` (which counted every frozen row, unreduced) is gone, and the
+    # low stock format's row count is checked against its OWN cap, `MAX_LOW_STOCK_ROWS`.
+    #
+    # AC-C6: the OI worksheet's row set is OI rows, not `scm.order_summary_row` rows, so
+    # `stats["row_count"]` (still read here, for `run_id`/`as_of`) says nothing about it -
+    # it is guarded separately, against `run_scope_oi_rows`'s own count and the writer's
+    # own `MAX_WORKSHEET_ROWS`, the run's Start Plan scope (A3/C2: product ids and SO
+    # numbers when the run named them, its own window) rather than the order sheet's cap.
     stats = svc.export_guard_stats(db, run_id=run_id)
-    if stats["row_count"] > svc.MAX_EXPORT_ROWS:
-        raise AppException(422, "Narrow the plan first")
+    if fmt == OI_WORKSHEET_FORMAT:
+        from app.models.scm import ReorderRun
+        from app.services.scm import demand
 
-    kind = f"order_sheet_{fmt}"
+        run = db.query(ReorderRun).filter(ReorderRun.id == stats["run_id"]).one_or_none()
+        if run is None:
+            raise AppException(404, "That plan does not exist.")
+        # Fix round 1: `run.product_ids` passed straight through, NOT `run.product_ids or
+        # None` - `run_scope_oi_rows` already reads `None` as "no product filter" and `[]`
+        # as "this run's product scope resolved to nothing" (`or None` was silently
+        # turning the second case into the first, widening a run scoped to nothing into
+        # every product).
+        scope_rows = demand.run_scope_oi_rows(
+            db, run.product_ids, so_numbers=run.so_numbers,
+            horizon_start=run.plan_horizon_start, horizon=run.plan_horizon_date,
+        )
+        if len(scope_rows) > OrderInquiryWorklistService.MAX_WORKSHEET_ROWS:
+            raise AppException(422, "Narrow the plan first")
+    else:
+        cap = (
+            low_stock_report_service.MAX_LOW_STOCK_ROWS if fmt == LOW_STOCK_FORMAT
+            else svc.MAX_EXPORT_ROWS
+        )
+        if stats["row_count"] > cap:
+            raise AppException(422, "Narrow the plan first")
+
+    kind = (
+        LOW_STOCK_FORMAT if fmt == LOW_STOCK_FORMAT
+        else f"{OI_WORKSHEET_FORMAT}_xlsx" if fmt == OI_WORKSHEET_FORMAT
+        else f"order_sheet_{fmt}"
+    )
     # AC-16b (security S5, amended reviewer R1): one in-flight sheet per user per run PER
     # FORMAT - the EXACT kind, so a pending PDF never blocks an Excel request for the same
     # run (matches the AC-23 evidence: PDF then Excel back to back both succeed). No queue
@@ -158,6 +226,18 @@ def export_order_summary(
         user_id=str(current_user["id"]), kind=kind,
         source_entity_type="reorder_run", source_entity_id=stats["run_id"],
     ):
+        if fmt == LOW_STOCK_FORMAT:
+            raise AppException(
+                status_code=409,
+                message="A low stock report for this plan is already being prepared - "
+                        "check My Downloads.",
+            )
+        if fmt == OI_WORKSHEET_FORMAT:
+            raise AppException(
+                status_code=409,
+                message="An OI worksheet for this plan is already being prepared - "
+                        "check My Downloads.",
+            )
         fmt_label = "Excel" if fmt == "xlsx" else fmt.upper()
         raise AppException(
             status_code=409,
@@ -165,7 +245,12 @@ def export_order_summary(
                     "prepared - check My Downloads.",
         )
 
-    filename = f"order-sheet-{_ddmmyyyy_compact(stats['as_of'])}.{fmt}"
+    stamp = svc.compact_ddmmyyyy(stats["as_of"])
+    filename = (
+        f"low-stock-{stamp}.xlsx" if fmt == LOW_STOCK_FORMAT
+        else f"oi-worksheet-{stamp}.xlsx" if fmt == OI_WORKSHEET_FORMAT
+        else f"order-sheet-{stamp}.{fmt}"
+    )
     download = DownloadService(db).create(
         user_id=str(current_user["id"]),
         kind=kind,
@@ -175,17 +260,41 @@ def export_order_summary(
     )
     try:
         from app.services.queue_service import enqueue_job
-        from app.tasks.export_tasks import generate_order_sheet
-
-        enqueue_job(
+        from app.tasks.export_tasks import (
+            generate_low_stock_report,
+            generate_oi_worksheet,
             generate_order_sheet,
-            str(download.id),
-            stats["run_id"],
-            fmt,
-            str(current_user["id"]),
-            queue_name="imports",
-            job_timeout=600,
         )
+
+        if fmt == LOW_STOCK_FORMAT:
+            enqueue_job(
+                generate_low_stock_report,
+                str(download.id),
+                stats["run_id"],
+                str(current_user["id"]),
+                queue_name="imports",
+                job_timeout=600,
+                split=payload.split,
+            )
+        elif fmt == OI_WORKSHEET_FORMAT:
+            enqueue_job(
+                generate_oi_worksheet,
+                str(download.id),
+                stats["run_id"],
+                str(current_user["id"]),
+                queue_name="imports",
+                job_timeout=600,
+            )
+        else:
+            enqueue_job(
+                generate_order_sheet,
+                str(download.id),
+                stats["run_id"],
+                fmt,
+                str(current_user["id"]),
+                queue_name="imports",
+                job_timeout=600,
+            )
     except Exception as e:
         DownloadService(db).mark_failed(
             str(download.id), f"Could not queue order sheet generation: {e}"
@@ -196,6 +305,29 @@ def export_order_summary(
         )
 
     return DownloadResponse.model_validate(DownloadService(db).get(str(download.id)))
+
+
+@router.get("/order-summary/low-stock-preview", response_model=LowStockPreviewOut)
+def get_low_stock_preview(
+    run_id: Optional[str] = Query(
+        None,
+        description=(
+            "Which plan's low stock report to preview. Omitted means the newest completed "
+            "plan. Opaque, and never rendered."
+        ),
+    ),
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """The split dialog's own courtesy read (R4, AC-15b): fired once when the dialog opens,
+    never on page load. Same visibility gate as the export itself - a named `run_id` is
+    validated as a UUID (404 on a malformed one, the same non-committal answer a genuinely-
+    absent run gets) before the report is ever read.
+    """
+    if run_id:
+        run_id = validate_uuid_path(run_id, resource="Reorder run")
+        reorder_run_service.assert_run_visible(db, run_id)
+    return low_stock_report_service.low_stock_preview(db, run_id)
 
 
 @router.get(

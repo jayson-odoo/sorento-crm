@@ -984,6 +984,13 @@ class PortalService:
                     contact=self.get_contact(token),
                     project_id=getattr(row, "project_id", None),
                 )
+                # #1227: same reasoning as the project-requirement gate above - a
+                # sponsorship line without a usable unit price is a draft's business,
+                # never a submission's. Checked against the lines actually persisted by
+                # `_replace_request_lines_if_needed` above (autoflushed by this query),
+                # so a bare resubmit of an already-saved draft is checked too, not only
+                # a submit that also sends a fresh `products` payload.
+                self._require_sponsorship_unit_prices(row)
             approval_rejected = (
                 (getattr(row, "approval_status", None) or "").strip().lower() == "rejected"
             )
@@ -1405,6 +1412,29 @@ class PortalService:
                 )
             )
 
+    def _require_sponsorship_unit_prices(self, row: Any) -> None:
+        """#1227: refuse a sponsorship form submit while any line lacks a usable unit
+        price. Same detail shape `price_tag_request_service` uses for a line refusal
+        (``detail=f"line:{index}"``) so the portal can name the offending line exactly
+        like it already does for a price tag request line. Purchase requests are
+        unchanged - this is never called for that kind.
+        """
+        lines = (
+            self.db.query(PurchaseRequestLine)
+            .filter(PurchaseRequestLine.purchase_request_id == row.id)
+            .order_by(PurchaseRequestLine.sort_order)
+            .all()
+        )
+        for index, line in enumerate(lines):
+            price = line.unit_price
+            if price is None or price < 0:
+                raise AppException(
+                    status_code=422,
+                    message="Unit price is required.",
+                    detail=f"line:{index}",
+                    code="SPONSORSHIP_UNIT_PRICE_REQUIRED",
+                )
+
     def _replace_complaint_lines_if_needed(self, row: Any, payload: dict) -> None:
         """Rebuild complaint product lines from payload['product_lines'] (the new
         per-product widget) and re-derive the legacy product_code / product_type /
@@ -1483,6 +1513,24 @@ class PortalService:
                 "remark",
                 "additional_remark",
             )
+        if kind == "price_tag_request":
+            # price_tag_request has its own dedicated router/service
+            # (portal_price_tag.py, not this class's generic CRUD) - this
+            # branch exists ONLY so the revision engine's `build_snapshot` /
+            # `revise()._apply_payload` (both keyed on this ONE list, UAC J2)
+            # know the header fields for this type too.
+            # D1 (S6): `promotion_id` is gone - the promotion is a LINE fact,
+            # carried through `products[].promotion_id` in `_apply_price_tag_lines`
+            # (`portal_revision_service.py`), never this header whitelist. A
+            # stray header `promotion_id` here used to `setattr` onto a column
+            # the model no longer has - a silent no-op, not a write.
+            return (
+                "debtor_code",
+                "debtor_name",
+                "needed_by_date",
+                "notes",
+                "price_mode",
+            )
         return (
             "customer_name",
             "pic",
@@ -1521,6 +1569,8 @@ class PortalService:
             return ("complaint_date",)
         if kind in ("purchase_request", "sponsorship_form"):
             return ("expected_delivery_date", "expected_po_date")
+        if kind == "price_tag_request":
+            return ("needed_by_date",)
         return ()
 
     @staticmethod

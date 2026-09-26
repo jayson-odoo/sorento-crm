@@ -24,13 +24,14 @@ from decimal import Decimal
 
 import openpyxl
 import pytest
-from sqlalchemy import text
+from sqlalchemy import event, text
 
 from app.models.company import Company
 from app.models.inventory import Warehouse
 from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.procurement import (
     InboundShipment,
+    ProductSupplier,
     PurchaseOrder,
     PurchaseOrderLine,
     SPOAllocation,
@@ -38,10 +39,12 @@ from app.models.procurement import (
 )
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.project_so import (
+    ACK_ACKNOWLEDGED,
     INQUIRY_ACTIONED,
     INQUIRY_PLACED,
     INQUIRY_RAISED,
     IV_ALREADY_INBOUND,
+    IV_DELAY,
     IV_ORDER,
     SO_STATUS_DRAFT,
     OrderInquiry,
@@ -172,6 +175,13 @@ def _client(db, user_id: str, permissions):
     from app.services.user_service import UserPermissionService
 
     actor = {"id": user_id, "email": f"{user_id}@zzt.test", "role": "user"}
+    # Captured BEFORE this call's own overrides are set, so `_restore` can put back
+    # whatever an OUTER `_client` call (an `_as(...)` block nested inside `api`, for
+    # instance) had already installed - an unconditional `app.dependency_overrides.
+    # clear()` here wiped the outer client's overrides too, so the outer `client`
+    # object used again after the `with` block exited fell through to the REAL
+    # dependencies with no override at all.
+    previous_overrides = dict(app.dependency_overrides)
     app.dependency_overrides[get_db] = lambda: db
     app.dependency_overrides[get_current_user] = lambda: dict(actor)
     app.dependency_overrides[get_current_user_or_api_key] = lambda: dict(actor)
@@ -180,6 +190,7 @@ def _client(db, user_id: str, permissions):
     originals = (
         UserPermissionService.check_user_has_permission,
         UserPermissionService.get_user_permission_slugs,
+        previous_overrides,
     )
     granted = list(permissions)
     UserPermissionService.check_user_has_permission = (
@@ -196,6 +207,7 @@ def _restore(originals) -> None:
     UserPermissionService.check_user_has_permission = originals[0]
     UserPermissionService.get_user_permission_slugs = originals[1]
     app.dependency_overrides.clear()
+    app.dependency_overrides.update(originals[2])
 
 
 def _seed(db, company_id: str, user_id: str) -> dict:
@@ -718,6 +730,233 @@ def test_the_supplier_and_po_are_the_ones_the_row_actually_links_to(api):
     assert [row["id"] for row in filtered["data"]] == [seeded["adopted_row"].id]
 
 
+def test_the_links_payload_pins_po_line_id_for_highlighting_the_lightbox_line(api):
+    """Should-fix 6 (review of PR #1220): `po_line_id` is the field the PO lightbox's
+    linked-line highlight (issue #1215 point 2) and the worklist's backing-documents
+    dialog (review Blocking 1) both key off - `links_for_rows` already computed it, but
+    `response_model` silently drops an undeclared field (LESSONS-LEARNT), and nothing
+    asserted it actually reaches the wire."""
+    client, db, company_id, seeded = api
+    po = _purchase_order(db, company_id)
+    # A fresh order, not `seeded["authored"]`/`seeded["adopted"]` - each already carries
+    # its own inquiry, and `order_inquiries` allows exactly one per sales order.
+    pso = ProjectSalesOrder(
+        id=_uid(), company_id=company_id, provisional_ref=f"ZZT-PSO-{_uid()[:8]}",
+    )
+    db.add(pso)
+    db.flush()
+    inquiry = _inquiry_for(db, company_id, pso)
+    row = _row(
+        db, company_id, inquiry, po_line_id=po["line"].id,
+        item_code=po["product"].product_code, qty="5", state=INQUIRY_PLACED,
+    )
+    db.commit()
+
+    body = client.get(LIST, params={"limit": 200}).json()
+    wire_row = next(r for r in body["data"] if r["id"] == row.id)
+    [link] = wire_row["links"]
+
+    assert link["po_line_id"] == po["line"].id
+
+
+def test_the_links_payload_pins_spo_allocation_id_for_highlighting_the_spo_lightbox_line(api):
+    """R15 (owner rulings, 25 Sep 2026, hand test on stack C): the SPO lightbox never
+    highlighted its own linked line because `spo_allocation_id` - the exact mirror of
+    `po_line_id` above, already computed by `links_for_rows` - never reached the wire
+    either. Same response_model silent-drop gap, same fix."""
+    client, db, company_id, seeded = api
+    supplier = Supplier(
+        id=_uid(), company_id=company_id, supplier_code=f"ZZT-{_uid()[:8]}",
+        supplier_name=f"{MARKER} SPO SUPPLIER",
+    )
+    db.add(supplier)
+    db.flush()
+    product = _product(db, f"ZZT-SPOLINE-{_uid()[:6]}", f"{MARKER} spo line item")
+    allocation = SPOAllocation(
+        id=_uid(), company_id=company_id, spo_number=f"ZZT-SPO-{_uid()[:8]}",
+        spo_line_number=1, product_id=product.id, allocated_quantity=40,
+        quantity_received=0, receipt_status="pending", line_status="open",
+        source_system="scm_upload", supplier_id=supplier.id,
+    )
+    db.add(allocation)
+    db.flush()
+    pso = ProjectSalesOrder(
+        id=_uid(), company_id=company_id, provisional_ref=f"ZZT-PSO-{_uid()[:8]}",
+    )
+    db.add(pso)
+    db.flush()
+    inquiry = _inquiry_for(db, company_id, pso)
+    row = OrderInquiryRow(
+        id=_uid(), company_id=company_id, order_inquiry_id=inquiry.id, verb=IV_ORDER,
+        state=INQUIRY_PLACED, qty=Decimal("5"), item_code=product.product_code,
+    )
+    db.add(row)
+    db.flush()
+    db.add(
+        OrderInquiryLink(
+            id=_uid(), company_id=company_id, row_id=row.id,
+            spo_allocation_id=allocation.id, document=allocation.spo_number, qty=row.qty,
+        )
+    )
+    db.commit()
+
+    body = client.get(LIST, params={"limit": 200}).json()
+    wire_row = next(r for r in body["data"] if r["id"] == row.id)
+    [link] = wire_row["links"]
+
+    assert link["spo_allocation_id"] == allocation.id
+    assert link["kind"] == "spo"
+
+
+def test_the_links_payload_pins_purchase_order_id_for_an_spo_link_with_a_resolved_supply_line(api):
+    """R17 (owner rulings, 25 Sep 2026): the Lines tab's "<number> via SPO" cell needs
+    the PO id an SPO allocation draws its supply from (`SPOAllocation.po_line_id` traced
+    to its own header), so it can open that PO directly instead of guessing by number.
+    `links_for_rows` already resolves this as `purchase_order_id`; nothing pinned that
+    it reaches the wire."""
+    client, db, company_id, seeded = api
+    po = _purchase_order(db, company_id)
+    supplier = Supplier(
+        id=_uid(), company_id=company_id, supplier_code=f"ZZT-{_uid()[:8]}",
+        supplier_name=f"{MARKER} SPO SUPPLIER 2",
+    )
+    db.add(supplier)
+    db.flush()
+    product = _product(db, f"ZZT-SPOLINE2-{_uid()[:6]}", f"{MARKER} spo line item 2")
+    allocation = SPOAllocation(
+        id=_uid(), company_id=company_id, spo_number=f"ZZT-SPO-{_uid()[:8]}",
+        spo_line_number=1, product_id=product.id, allocated_quantity=40,
+        quantity_received=0, receipt_status="pending", line_status="open",
+        source_system="scm_upload", supplier_id=supplier.id, po_line_id=po["line"].id,
+        from_po_number=po["order"].po_number,
+    )
+    db.add(allocation)
+    db.flush()
+    pso = ProjectSalesOrder(
+        id=_uid(), company_id=company_id, provisional_ref=f"ZZT-PSO-{_uid()[:8]}",
+    )
+    db.add(pso)
+    db.flush()
+    inquiry = _inquiry_for(db, company_id, pso)
+    row = OrderInquiryRow(
+        id=_uid(), company_id=company_id, order_inquiry_id=inquiry.id, verb=IV_ORDER,
+        state=INQUIRY_PLACED, qty=Decimal("5"), item_code=product.product_code,
+    )
+    db.add(row)
+    db.flush()
+    db.add(
+        OrderInquiryLink(
+            id=_uid(), company_id=company_id, row_id=row.id,
+            spo_allocation_id=allocation.id, document=allocation.spo_number, qty=row.qty,
+        )
+    )
+    db.commit()
+
+    body = client.get(LIST, params={"limit": 200}).json()
+    wire_row = next(r for r in body["data"] if r["id"] == row.id)
+    [link] = wire_row["links"]
+
+    assert link["purchase_order_id"] == po["order"].id
+    assert link["source_po_number"] == po["order"].po_number
+
+
+def test_the_links_payload_pins_purchase_order_id_for_an_spo_link_named_by_number_only(api):
+    """Review round 2 Should fix 3. The R17 test above covers a Sorento-raised SPO
+    with its own `po_line_id` FK back to the supply line - the NARROW case. Most
+    book-fed allocations carry only the AutoCount pass-through PO NUMBER
+    (`from_po_number`), no `po_line_id` at all, and a PO reached ONLY through an
+    SPO never appears as a `po`-kind link on any row - the exact case the old
+    client-side `useOrderInquiryPoIdByNumber` scan of the worklist could never
+    answer for. `links_for_rows` now resolves it server side, one batched
+    `PurchaseOrder.po_number IN (...)` query."""
+    client, db, company_id, seeded = api
+    po = _purchase_order(db, company_id)
+    supplier = Supplier(
+        id=_uid(), company_id=company_id, supplier_code=f"ZZT-{_uid()[:8]}",
+        supplier_name=f"{MARKER} SPO SUPPLIER 3",
+    )
+    db.add(supplier)
+    db.flush()
+    product = _product(db, f"ZZT-SPOLINE3-{_uid()[:6]}", f"{MARKER} spo line item 3")
+    allocation = SPOAllocation(
+        id=_uid(), company_id=company_id, spo_number=f"ZZT-SPO-{_uid()[:8]}",
+        spo_line_number=1, product_id=product.id, allocated_quantity=40,
+        quantity_received=0, receipt_status="pending", line_status="open",
+        source_system="scm_upload", supplier_id=supplier.id, po_line_id=None,
+        from_po_number=po["order"].po_number,
+    )
+    db.add(allocation)
+    db.flush()
+    pso = ProjectSalesOrder(
+        id=_uid(), company_id=company_id, provisional_ref=f"ZZT-PSO-{_uid()[:8]}",
+    )
+    db.add(pso)
+    db.flush()
+    inquiry = _inquiry_for(db, company_id, pso)
+    row = OrderInquiryRow(
+        id=_uid(), company_id=company_id, order_inquiry_id=inquiry.id, verb=IV_ORDER,
+        state=INQUIRY_PLACED, qty=Decimal("5"), item_code=product.product_code,
+    )
+    db.add(row)
+    db.flush()
+    db.add(
+        OrderInquiryLink(
+            id=_uid(), company_id=company_id, row_id=row.id,
+            spo_allocation_id=allocation.id, document=allocation.spo_number, qty=row.qty,
+        )
+    )
+    db.commit()
+
+    body = client.get(LIST, params={"limit": 200}).json()
+    wire_row = next(r for r in body["data"] if r["id"] == row.id)
+    [link] = wire_row["links"]
+
+    assert link["purchase_order_id"] == po["order"].id
+    assert link["source_po_number"] == po["order"].po_number
+
+
+def test_supplier_reads_off_an_spo_only_links_own_supplier(api):
+    """AC-FB-52 (measured on the prod copy: 5,156 SPO-only rows show "Not linked"
+    under Supplier): a row whose ONLY link is an SPO allocation with no `po_line_id`
+    at all (a genuine book-chain SPO, never resolved back to a source PO line) must
+    still serialise top-level `supplier` off THAT allocation's own `supplier_id` -
+    not blank. `_SPO_LINKED_PO_ID` requires `SPOAllocation.po_line_id` to be set, so
+    `_PLACED_PO_ID` (the coalesce every one of its three legs reads) comes back NULL
+    for this row and the Supplier outerjoin (keyed off `PurchaseOrder.supplier_id`,
+    never `SPOAllocation.supplier_id` directly) never even considers it. A row with
+    a PO link is unchanged (the test above)."""
+    client, db, company_id, seeded = api
+    line = _line_on_authored_order(db, company_id, seeded, qty="12", day=9)
+    supplier = Supplier(
+        id=_uid(), company_id=company_id, supplier_code=f"ZZT-{_uid()[:8]}",
+        supplier_name=f"{MARKER} SPO ONLY SUPPLIER",
+    )
+    db.add(supplier)
+    db.flush()
+    allocation = SPOAllocation(
+        id=_uid(), company_id=company_id, spo_number=f"ZZT-SPO-{_uid()[:6]}",
+        spo_line_number=1, product_id=line.product_id, allocated_quantity=12,
+        quantity_received=0, line_status="open", supplier_id=supplier.id,
+        po_line_id=None,
+    )
+    db.add(allocation)
+    db.flush()
+    inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)
+    row = _row(
+        db, company_id, inquiry, so_line_id=line.id, qty="12", state="placed",
+    )
+    db.add(OrderInquiryLink(
+        id=_uid(), company_id=company_id, row_id=row.id,
+        spo_allocation_id=allocation.id, document=allocation.spo_number,
+        qty=Decimal("12"),
+    ))
+    db.commit()
+
+    body = client.get(LIST).json()
+    listed = next(r for r in body["data"] if r["id"] == row.id)
+    assert listed["supplier"] == supplier.supplier_name, listed
+
+
 # ------------------------------------------------------------------- location
 
 
@@ -849,6 +1088,245 @@ def test_the_order_is_total_so_paging_neither_repeats_nor_drops_a_row(api):
     assert len(seen) == len(set(seen)) == 3
 
 
+# ------------------------------------------------ SPO / Agent / Instruction sort keys
+
+
+@pytest.mark.parametrize("direction", ["asc", "desc"])
+def test_sorting_by_the_three_worklist_columns_that_draw_a_sort_arrow_is_accepted(
+    api, direction
+):
+    """AC-1: SPO, Agent and Instruction are sortable columns on the worklist (they draw
+    a sort arrow in `orderInquiryWorklistColumns.tsx`), so `sort` must accept the same
+    ids those columns are keyed by - `spo_number`, `agent_code`, `verb` - in both
+    directions. One fixture per direction rather than per id x direction (review round
+    1): the same six checks, a third of the setup cost."""
+    client, _db, _company_id, _seeded = api
+
+    for field in ("spo_number", "agent_code", "verb"):
+        response = client.get(LIST, params={"sort": field, "dir": direction})
+        assert response.status_code == 200, f"{field} {direction}: {response.text}"
+
+
+def test_spo_sort_orders_by_the_rows_own_link_then_by_spo_ref_blanks_last(api):
+    """AC-2: the SPO column prints the row's own first linked SPO number ahead of a bare
+    `spo_ref`, so the sort reads in the same order - own link, earliest `linked_at`,
+    then `spo_ref` for a row with no link at all, and a row with neither trails last in
+    BOTH directions (the generic `.nulls_last()` every sort field already gets)."""
+    client, db, company_id, seeded = api
+    inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)
+
+    warehouse = Warehouse(
+        id=_uid(),
+        company_id=company_id,
+        warehouse_code=f"ZZT{_uid()[:6]}",
+        warehouse_name=f"{MARKER} SPO sort WH",
+    )
+    db.add(warehouse)
+    db.flush()
+    allocation = SPOAllocation(
+        id=_uid(),
+        company_id=company_id,
+        spo_number="ZZT-SPO-SORT-0100",
+        product_id=_product(db, f"ZZT-P-{_uid()[:6]}", f"{MARKER} spo sort product").id,
+        warehouse_id=warehouse.id,
+        allocated_quantity=Decimal("10"),
+    )
+    db.add(allocation)
+    db.flush()
+
+    linked_line = _line_on_authored_order(db, company_id, seeded, qty="10", day=11)
+    linked_row = _row(
+        db,
+        company_id,
+        inquiry,
+        so_line_id=linked_line.id,
+        item_code=f"{MARKER}-SPOSORT-LINKED",
+        qty="10",
+        state="partly_linked",
+        delivery_date=date(2026, 4, 11),
+    )
+    db.add(
+        OrderInquiryLink(
+            id=_uid(),
+            company_id=company_id,
+            row_id=linked_row.id,
+            spo_allocation_id=allocation.id,
+            document=allocation.spo_number,
+            qty=Decimal("10"),
+        )
+    )
+
+    ref_line = _line_on_authored_order(db, company_id, seeded, qty="10", day=12)
+    ref_row = _row(
+        db,
+        company_id,
+        inquiry,
+        so_line_id=ref_line.id,
+        item_code=f"{MARKER}-SPOSORT-REF",
+        qty="10",
+        delivery_date=date(2026, 4, 12),
+        spo_ref="ZZT-SPO-SORT-0200",
+    )
+
+    blank_line = _line_on_authored_order(db, company_id, seeded, qty="10", day=13)
+    blank_row = _row(
+        db,
+        company_id,
+        inquiry,
+        so_line_id=blank_line.id,
+        item_code=f"{MARKER}-SPOSORT-BLANK",
+        qty="10",
+        delivery_date=date(2026, 4, 13),
+    )
+    db.commit()
+
+    ascending = client.get(
+        LIST, params={"sort": "spo_number", "dir": "asc", "query": "SPOSORT"}
+    ).json()["data"]
+    assert [row["id"] for row in ascending] == [
+        linked_row.id,
+        ref_row.id,
+        blank_row.id,
+    ]
+
+    descending = client.get(
+        LIST, params={"sort": "spo_number", "dir": "desc", "query": "SPOSORT"}
+    ).json()["data"]
+    assert [row["id"] for row in descending] == [
+        ref_row.id,
+        linked_row.id,
+        blank_row.id,
+    ]
+
+
+def test_agent_code_sort_matches_agent_sort_and_is_not_secretly_item_code(api):
+    """Kill test (review round 1): a `sort=agent_code` that quietly pointed at
+    `item_code` would still return 200 and would still print SOMETHING, so the AC-1
+    "not a 422" check alone cannot catch it. Two rows with DIFFERENT agents, sorted
+    ascending, must print their agent codes non-decreasing - and `agent_code` is the
+    SAME underlying expression (`SalesAgent.sales_agent`) `agent` already sorts by, so
+    the two must return the identical row sequence."""
+    client, db, company_id, seeded = api
+    customer = seeded["customer"]
+
+    def _row_with_agent(agent_code: str, suffix: str, day: int) -> OrderInquiryRow:
+        core = SalesOrder(
+            id=_uid(),
+            company_id=company_id,
+            so_number=f"ZZTSO{_uid()[:8]}",
+            customer_id=customer.id,
+            order_date=date(2026, 5, day),
+        )
+        agent = SalesAgent(
+            id=_uid(),
+            company_id=company_id,
+            sales_agent=agent_code,
+            person_label=f"{MARKER} {agent_code}",
+        )
+        db.add_all([core, agent])
+        db.flush()
+        core.sales_agent_id = agent.id
+        db.add(core)
+        project_order = ProjectSalesOrder(
+            id=_uid(),
+            company_id=company_id,
+            project_id=None,
+            so_id=core.id,
+            provisional_ref=core.so_number,
+            autocount_doc_no=core.so_number,
+            status="adopted",
+        )
+        db.add(project_order)
+        db.flush()
+        product = _product(db, f"ZZT-AGSORT-{_uid()[:6]}", f"{MARKER} agent sort product")
+        line = ProjectSalesOrderLine(
+            id=_uid(),
+            company_id=company_id,
+            project_sales_order_id=project_order.id,
+            line_no=1,
+            product_id=product.id,
+            description=f"{MARKER} agent sort",
+            qty=Decimal("5"),
+            uom="UNIT",
+            unit_price=Decimal("10.00"),
+            amount=Decimal("50.00"),
+            delivery_date=date(2026, 5, day),
+        )
+        db.add(line)
+        db.flush()
+        inquiry = _inquiry_for(db, company_id, project_order)
+        return _row(
+            db,
+            company_id,
+            inquiry,
+            so_line_id=line.id,
+            item_code=f"{MARKER}-AGENTSORT-{suffix}",
+            qty="5",
+            delivery_date=date(2026, 5, day),
+        )
+
+    # `item_code` is deliberately the OPPOSITE order of `agent_code` here (row_a's
+    # item_code sorts last, row_b's sorts first): a sort key that quietly pointed at
+    # `item_code` would print `[row_b, row_a]`, not `[row_a, row_b]` - the two orders
+    # can only agree below if the key actually reads the agent.
+    row_a = _row_with_agent("ZZT-AGENT-A", "ZLAST", 1)
+    row_b = _row_with_agent("ZZT-AGENT-B", "AFIRST", 2)
+    db.commit()
+
+    by_agent_code = client.get(
+        LIST, params={"sort": "agent_code", "dir": "asc", "query": "AGENTSORT"}
+    ).json()["data"]
+    assert [row["id"] for row in by_agent_code] == [row_a.id, row_b.id]
+    codes = [row["agent_code"] for row in by_agent_code if row["agent_code"] is not None]
+    assert codes == sorted(codes)
+
+    by_agent = client.get(
+        LIST, params={"sort": "agent", "dir": "asc", "query": "AGENTSORT"}
+    ).json()["data"]
+    assert [row["id"] for row in by_agent] == [row["id"] for row in by_agent_code]
+
+
+def test_verb_sort_is_non_decreasing_across_two_distinct_verbs(api):
+    """Kill test (review round 1): the same "not a 422" gap as `agent_code` above, for
+    `verb`. Two rows with different verbs (`DELAY` sorts before `ORDER`), sorted
+    ascending, must print in that order. `item_code` is deliberately the OPPOSITE order
+    (the `DELAY` row's item_code sorts last, the `ORDER` row's sorts first) - a sort key
+    that quietly pointed at `item_code` would print the pair reversed."""
+    client, db, company_id, seeded = api
+    inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)
+
+    delay_line = _line_on_authored_order(db, company_id, seeded, qty="5", day=21)
+    delay_row = _row(
+        db,
+        company_id,
+        inquiry,
+        so_line_id=delay_line.id,
+        item_code=f"{MARKER}-VERBSORT-ZLATE",
+        qty="5",
+        verb=IV_DELAY,
+        delivery_date=date(2026, 4, 21),
+    )
+    order_line = _line_on_authored_order(db, company_id, seeded, qty="5", day=22)
+    order_row = _row(
+        db,
+        company_id,
+        inquiry,
+        so_line_id=order_line.id,
+        item_code=f"{MARKER}-VERBSORT-AFIRST",
+        qty="5",
+        verb=IV_ORDER,
+        delivery_date=date(2026, 4, 22),
+    )
+    db.commit()
+
+    ascending = client.get(
+        LIST, params={"sort": "verb", "dir": "asc", "query": "VERBSORT"}
+    ).json()["data"]
+    assert [row["id"] for row in ascending] == [delay_row.id, order_row.id]
+    verbs = [row["verb"] for row in ascending]
+    assert verbs == sorted(verbs)
+
+
 # ------------------------------------------------------------------- summary
 
 
@@ -888,7 +1366,9 @@ def test_the_summary_offers_the_suppliers_and_projects_actually_present(api):
     body = client.get(f"{LIST}/summary").json()
 
     assert [entry["id"] for entry in body["suppliers"]] == [placed["supplier"].id]
-    assert [entry["id"] for entry in body["projects"]] == [seeded["project"].id]
+    # The facet's `id` is the Project column's own TEXT now, not a registered project's
+    # uuid (owner ask, `PLAN-oi-project-label-from-so.md` section 5).
+    assert [entry["id"] for entry in body["projects"]] == [seeded["project"].title]
 
 
 # --------------------------------------------------------------------- agent
@@ -1142,6 +1622,554 @@ def test_a_redirected_placed_row_no_longer_counts_toward_taken_from_po(api):
     assert "Redirected" in (by_id[redirected.id]["note"] or "")
 
 
+def test_worklist_stage_totals_exclude_a_redirected_row(api):
+    """AC-RL-16 (`PLAN-oi-replan-received-links.md` S3): a redirected row's quantity is
+    not owed anywhere any more - the Buy / Purchased / Incoming cards (`_kinds`) must not
+    move when one is added, on top of the taken_from_po / remaining_open exclusion the
+    sibling test above already covers. The row's own `redirected_to_pool` also has to
+    reach the wire - `response_model` silently drops a field it is not told about."""
+    client, db, company_id, seeded = api
+    before = client.get(f"{LIST}/summary").json()["kinds"]
+
+    inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)
+    line = _line_on_authored_order(db, company_id, seeded, qty="158", day=6)
+    po_line = _purchase_order(db, company_id)["line"]
+    redirected = _row(
+        db,
+        company_id,
+        inquiry,
+        so_line_id=line.id,
+        item_code=f"{MARKER}-REDIRECT-KIND",
+        qty="158",
+        state=INQUIRY_PLACED,
+        delivery_date=date(2026, 4, 6),
+        redirected_to_pool=True,
+        po_line_id=po_line.id,
+    )
+    db.commit()
+
+    after = client.get(f"{LIST}/summary").json()["kinds"]
+    body = client.get(LIST, params={"delivery_month": "2026-04"}).json()
+    wire_row = next(r for r in body["data"] if r["id"] == redirected.id)
+
+    assert wire_row["redirected_to_pool"] is True
+    assert wire_row["taken_from_po"] == "0"
+    assert wire_row["remaining_open"] == "0"
+    assert after == before, "a redirected row's quantity must not move any card"
+
+
+def test_worklist_kind_buy_excludes_a_redirected_rows_unlinked_remainder(api):
+    """AC-RL-16c (S1, code review 17 Sep): `_kinds`' own summary already excludes a
+    redirected row (the sibling test above), but the LIST's `kind=buy` row filter
+    (`order_inquiry_worklist_service.py` ~:892, `_UNLINKED_QTY > 0`) is a SEPARATE
+    query with no `redirected_to_pool` exclusion of its own - a redirected row that
+    is only PARTLY linked (its unlinked remainder still positive) still lists under
+    `kind=buy`, so a click into the Buy card shows a row the card's own number has
+    already excluded. The plan scenario: a redirected row of 182 (158 linked, 24
+    still unlinked) beside a fresh row of 220 - the rows returned for `kind=buy`
+    must sum to 220, never 244 (220 + the redirected row's own unlinked 24)."""
+    client, db, company_id, seeded = api
+    inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)
+    item_code = f"{MARKER}-BUYKIND"
+    line = _line_on_authored_order(db, company_id, seeded, qty="182", day=8)
+    po_line = _purchase_order(db, company_id)["line"]
+    redirected = _row(
+        db, company_id, inquiry, so_line_id=line.id, item_code=item_code,
+        qty="182", state="partly_linked", delivery_date=date(2026, 4, 8),
+        redirected_to_pool=True,
+    )
+    db.add(OrderInquiryLink(
+        id=_uid(), company_id=company_id, row_id=redirected.id,
+        po_line_id=po_line.id, document="ZZT-PO-BUYKIND", qty=Decimal("158"),
+    ))
+    _fresh = _row(
+        db, company_id, inquiry, so_line_id=line.id, item_code=item_code,
+        qty="220", state=INQUIRY_RAISED, delivery_date=date(2026, 4, 8),
+    )
+    db.commit()
+
+    body = client.get(LIST, params={"kind": "buy", "delivery_month": "2026-04"}).json()
+    matching = [r for r in body["data"] if r["item_code"] == item_code]
+    total_unlinked = sum(
+        (Decimal(r["qty"]) - Decimal(r["linked_qty"]) for r in matching), Decimal("0")
+    )
+    assert total_unlinked == Decimal("220"), matching
+
+
+def test_link_dict_carries_received_qty_and_received(api):
+    """AC-RL-17: `links_for_rows` states the receipt figure on every link, PO or SPO -
+    `received_qty` always, `received` once the document is fully received - and
+    `OrderInquiryLinkOut` ships both, through the worklist ROUTE (`response_model`
+    silently drops a field it is not told about)."""
+    client, db, company_id, seeded = api
+    inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)
+    line = _line_on_authored_order(db, company_id, seeded, qty="200", day=7)
+    row = _row(
+        db,
+        company_id,
+        inquiry,
+        so_line_id=line.id,
+        item_code=f"{MARKER}-RECEIVED",
+        qty="200",
+        state="partly_linked",
+        delivery_date=date(2026, 4, 7),
+    )
+    supplier = Supplier(
+        id=_uid(),
+        company_id=company_id,
+        supplier_code=f"ZZT-{_uid()[:8]}",
+        supplier_name=f"{MARKER} received supplier",
+    )
+    warehouse = Warehouse(
+        id=_uid(),
+        company_id=company_id,
+        warehouse_code=f"ZZT{_uid()[:6]}",
+        warehouse_name=f"{MARKER} WH",
+    )
+    db.add_all([supplier, warehouse])
+    db.flush()
+    allocation = SPOAllocation(
+        id=_uid(),
+        company_id=company_id,
+        spo_number=f"ZZT-SPO-RECV-{_uid()[:6]}",
+        product_id=_product(db, f"ZZT-P-RECV-{_uid()[:6]}", f"{MARKER} recv product").id,
+        warehouse_id=warehouse.id,
+        allocated_quantity=Decimal("158"),
+        quantity_received=Decimal("158"),
+        receipt_status="fully_received",
+        line_status="closed",
+    )
+    po = PurchaseOrder(
+        id=_uid(),
+        company_id=company_id,
+        po_number=f"ZZT-PO-OPEN-{_uid()[:6]}",
+        supplier_id=supplier.id,
+    )
+    db.add_all([allocation, po])
+    db.flush()
+    open_line = PurchaseOrderLine(
+        id=_uid(),
+        company_id=company_id,
+        purchase_order_id=po.id,
+        product_id=allocation.product_id,
+        warehouse_id=warehouse.id,
+        qty_ordered=Decimal("42"),
+        qty_received=Decimal("0"),
+        line_status="open",
+    )
+    db.add(open_line)
+    db.flush()
+    db.add_all(
+        [
+            OrderInquiryLink(
+                id=_uid(),
+                company_id=company_id,
+                row_id=row.id,
+                spo_allocation_id=allocation.id,
+                document=allocation.spo_number,
+                qty=Decimal("158"),
+            ),
+            OrderInquiryLink(
+                id=_uid(),
+                company_id=company_id,
+                row_id=row.id,
+                po_line_id=open_line.id,
+                document=po.po_number,
+                qty=Decimal("42"),
+            ),
+        ]
+    )
+    db.commit()
+
+    body = client.get(LIST, params={"delivery_month": "2026-04"}).json()
+    wire_row = next(r for r in body["data"] if r["id"] == row.id)
+    by_document = {link["document"]: link for link in wire_row["links"]}
+
+    spo_link = by_document[allocation.spo_number]
+    assert spo_link["received"] is True
+    assert spo_link["received_qty"] == "158"
+
+    po_link = by_document[po.po_number]
+    assert po_link["received"] is False
+    assert po_link["received_qty"] == "0"
+
+
+# ---------------------------------------------------------------------------
+# S1b: the reallocate / unlink suggestion on an open link
+# (`PLAN-oi-replan-received-links.md` S1b, AC-RL-20 to AC-RL-24)
+# ---------------------------------------------------------------------------
+
+
+def _lead_time(db, company_id: str, product: Product, *, days: int) -> ProductSupplier:
+    """The STATED source `ProjectSupplyService.lead_times` reads (`standard_lead_time_
+    days`) - no `SupplierPerformance` row is seeded, so the MEASURED source never
+    outranks it."""
+    supplier = Supplier(
+        id=_uid(),
+        company_id=company_id,
+        supplier_code=f"ZZT-{_uid()[:8]}",
+        supplier_name=f"{MARKER} lead supplier",
+    )
+    db.add(supplier)
+    db.flush()
+    row = ProductSupplier(
+        id=_uid(),
+        company_id=company_id,
+        product_id=product.id,
+        supplier_id=supplier.id,
+        standard_lead_time_days=days,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _line_for(
+    db, company_id: str, seeded: dict, *, product: Product, qty: str, delivery_date, line_no: int
+) -> ProjectSalesOrderLine:
+    """A fresh line on the seed's own AUTHORED order - the row this suggestion is
+    ABOUT, named the way `_line_on_authored_order` is, but for an explicit product
+    rather than a fresh one per call: a suggestion trigger needs several rows sharing
+    ONE product."""
+    line = ProjectSalesOrderLine(
+        id=_uid(),
+        company_id=company_id,
+        project_sales_order_id=seeded["authored"].id,
+        line_no=line_no,
+        product_id=product.id,
+        description=f"{MARKER} suggestion line",
+        qty=Decimal(qty),
+        uom="UNIT",
+        unit_price=Decimal("10.00"),
+        amount=Decimal("0"),
+        delivery_date=delivery_date,
+    )
+    db.add(line)
+    db.flush()
+    return line
+
+
+def _candidate_row(
+    db, company_id: str, *, product: Product, qty: str, delivery_date, so_number: str
+):
+    """A row on its OWN sales order (the adopted shape `_seed` already uses) - the
+    candidate a suggestion may name. Its own SO, its own inquiry, so `suggestion.
+    inquiry_no` / `so_number` genuinely trace back to IT rather than being read off
+    whatever inquiry the row under test happens to share."""
+    core = SalesOrder(
+        id=_uid(), company_id=company_id, so_number=so_number, order_date=date(2026, 1, 1)
+    )
+    db.add(core)
+    db.flush()
+    order = ProjectSalesOrder(
+        id=_uid(),
+        company_id=company_id,
+        project_id=None,
+        so_id=core.id,
+        provisional_ref=so_number,
+        autocount_doc_no=so_number,
+        status="adopted",
+    )
+    db.add(order)
+    db.flush()
+    line = ProjectSalesOrderLine(
+        id=_uid(),
+        company_id=company_id,
+        project_sales_order_id=order.id,
+        line_no=1,
+        product_id=product.id,
+        description=f"{MARKER} candidate",
+        qty=Decimal(qty),
+        uom="UNIT",
+        unit_price=Decimal("10.00"),
+        amount=Decimal("0"),
+        delivery_date=delivery_date,
+    )
+    db.add(line)
+    db.flush()
+    inquiry = _inquiry_for(db, company_id, order)
+    row = _row(
+        db,
+        company_id,
+        inquiry,
+        so_line_id=line.id,
+        item_code=product.product_code,
+        qty=qty,
+        state=INQUIRY_RAISED,
+        delivery_date=delivery_date,
+        ack_state=ACK_ACKNOWLEDGED,
+    )
+    return order, inquiry, row
+
+
+def _early_link(
+    db, company_id: str, seeded: dict, inquiry, *, product, qty, delivery_date, expected_date,
+    line_no,
+):
+    """A row of `qty` wholly on ONE open purchase-order line whose `expected_date`
+    the caller states - the shape every S1b scenario starts from."""
+    line = _line_for(
+        db, company_id, seeded, product=product, qty=qty, delivery_date=delivery_date,
+        line_no=line_no,
+    )
+    po_line = _purchase_order(db, company_id, expected_date=expected_date)["line"]
+    # `_purchase_order` mints its OWN product - this link has to be on the SAME one
+    # the row (and the lead time) is seeded for. `_purchase_order`'s own `expected_date`
+    # kwarg only stamps the ORDER header, never the LINE `links_for_rows` actually reads
+    # (`PurchaseOrderLine.expected_date`), and its line is seeded `qty_received=15`
+    # unconditionally - both restated here so this really is the OPEN line at the
+    # caller's own `expected_date` every S1b scenario needs.
+    po_line.product_id = product.id
+    po_line.qty_ordered = Decimal(qty)
+    po_line.qty_received = Decimal("0")
+    po_line.expected_date = expected_date
+    db.flush()
+    row = _row(
+        db,
+        company_id,
+        inquiry,
+        so_line_id=line.id,
+        item_code=product.product_code,
+        qty=qty,
+        state="partly_linked",
+        delivery_date=delivery_date,
+        po_line_id=po_line.id,
+    )
+    return row
+
+
+def test_link_suggests_reallocate_to_every_sooner_open_row(api):
+    """AC-RL-20 (17 Sep rulings): an open link that lands well inside the product's
+    lead-time window suggests reallocating to EVERY OTHER linkable row of the same
+    product with open need - never a row on the SAME SO line - ordered delivery date
+    ascending then open need descending; the first candidate is the suggested
+    target."""
+    client, db, company_id, seeded = api
+    inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)
+
+    # -- earliest date wins, and every qualifying row is listed
+    product = _product(db, f"ZZT-SUGGEST-{_uid()[:6]}", f"{MARKER} suggest")
+    _lead_time(db, company_id, product, days=60)
+    row_x = _early_link(
+        db, company_id, seeded, inquiry, product=product, qty="158",
+        delivery_date=date(2027, 4, 1), expected_date=date(2026, 9, 1), line_no=201,
+    )
+    # W: on the SAME SO line as X - must never be offered, however early its own date.
+    _row(
+        db, company_id, inquiry, so_line_id=row_x.so_line_id, item_code=product.product_code,
+        qty="20", state=INQUIRY_RAISED, delivery_date=date(2026, 10, 1),
+        ack_state=ACK_ACKNOWLEDGED,
+    )
+    _order_y, inquiry_y, row_y = _candidate_row(
+        db, company_id, product=product, qty="90", delivery_date=date(2026, 12, 1),
+        so_number=f"ZZT-CANDY-{_uid()[:6]}",
+    )
+    _order_z, inquiry_z, row_z = _candidate_row(
+        db, company_id, product=product, qty="300", delivery_date=date(2027, 1, 15),
+        so_number=f"ZZT-CANDZ-{_uid()[:6]}",
+    )
+    db.commit()
+
+    body = client.get(LIST, params={"limit": 200}).json()
+    wire_row = next(r for r in body["data"] if r["id"] == row_x.id)
+    [link] = wire_row["links"]
+    suggestion = link["suggestion"]
+
+    assert suggestion["kind"] == "reallocate"
+    assert [c["inquiry_no"] for c in suggestion["candidates"]] == [
+        inquiry_y.inquiry_no, inquiry_z.inquiry_no,
+    ], "Y (2026-12-01) must lead Z (2027-01-15) - earliest date first"
+
+    first = suggestion["candidates"][0]
+    assert first["item_code"] == product.product_code
+    assert first["so_number"] == _order_y.autocount_doc_no
+    assert first["delivery_date"] == "2026-12-01"
+    assert first["open_qty"] == "90"
+
+    second = suggestion["candidates"][1]
+    assert second["item_code"] == product.product_code
+    assert second["so_number"] == _order_z.autocount_doc_no
+    assert second["delivery_date"] == "2027-01-15"
+    assert second["open_qty"] == "300"
+
+    # -- tie on date: the LARGER open need leads
+    product2 = _product(db, f"ZZT-TIE-{_uid()[:6]}", f"{MARKER} tie")
+    _lead_time(db, company_id, product2, days=60)
+    row_x2 = _early_link(
+        db, company_id, seeded, inquiry, product=product2, qty="50",
+        delivery_date=date(2027, 4, 1), expected_date=date(2026, 9, 1), line_no=211,
+    )
+    _order_small, inquiry_small, _row_small = _candidate_row(
+        db, company_id, product=product2, qty="40", delivery_date=date(2026, 12, 1),
+        so_number=f"ZZT-TIESMALL-{_uid()[:6]}",
+    )
+    _order_big, inquiry_big, _row_big = _candidate_row(
+        db, company_id, product=product2, qty="120", delivery_date=date(2026, 12, 1),
+        so_number=f"ZZT-TIEBIG-{_uid()[:6]}",
+    )
+    db.commit()
+
+    body2 = client.get(LIST, params={"limit": 200}).json()
+    wire_row2 = next(r for r in body2["data"] if r["id"] == row_x2.id)
+    [link2] = wire_row2["links"]
+    suggestion2 = link2["suggestion"]
+
+    assert suggestion2["kind"] == "reallocate"
+    assert [c["inquiry_no"] for c in suggestion2["candidates"]] == [
+        inquiry_big.inquiry_no, inquiry_small.inquiry_no,
+    ], "same date on both - the larger open need (120) must lead the smaller (40)"
+    assert [c["open_qty"] for c in suggestion2["candidates"]] == ["120", "40"]
+
+
+def test_link_suggests_unlink_when_no_sooner_row(api):
+    """AC-RL-21: the same early-link shape, with no candidate at all (a decoy of a
+    DIFFERENT product is seeded to prove it is not offered) - `suggestion.kind` reads
+    `unlink`."""
+    client, db, company_id, seeded = api
+    inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)
+
+    product = _product(db, f"ZZT-NOSOON-{_uid()[:6]}", f"{MARKER} no sooner")
+    _lead_time(db, company_id, product, days=60)
+    row_x = _early_link(
+        db, company_id, seeded, inquiry, product=product, qty="80",
+        delivery_date=date(2027, 4, 1), expected_date=date(2026, 9, 1), line_no=301,
+    )
+    other_product = _product(db, f"ZZT-OTHERP-{_uid()[:6]}", f"{MARKER} other product")
+    _candidate_row(
+        db, company_id, product=other_product, qty="10", delivery_date=date(2026, 11, 1),
+        so_number=f"ZZT-DECOY-{_uid()[:6]}",
+    )
+    db.commit()
+
+    body = client.get(LIST, params={"limit": 200}).json()
+    wire_row = next(r for r in body["data"] if r["id"] == row_x.id)
+    [link] = wire_row["links"]
+
+    # Unchanged shape (17 Sep rulings): `{"kind": "unlink"}` and nothing else.
+    assert link["suggestion"] == {"kind": "unlink"}
+
+
+def test_no_suggestion_inside_lead_time_or_received(api):
+    """AC-RL-22: a link inside the lead-time window (not enough slack to redirect and
+    still rebuy in time) states no suggestion, and neither does a fully received
+    link - however early it landed - even with a real candidate waiting."""
+    client, db, company_id, seeded = api
+    inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)
+
+    # -- inside the window: only 30 days of slack against a 60-day lead time.
+    product_a = _product(db, f"ZZT-INWIN-{_uid()[:6]}", f"{MARKER} in window")
+    _lead_time(db, company_id, product_a, days=60)
+    row_a = _early_link(
+        db, company_id, seeded, inquiry, product=product_a, qty="40",
+        delivery_date=date(2027, 4, 14), expected_date=date(2027, 3, 15), line_no=401,
+    )
+    _candidate_row(
+        db, company_id, product=product_a, qty="15", delivery_date=date(2026, 10, 1),
+        so_number=f"ZZT-INWINCAND-{_uid()[:6]}",
+    )
+
+    # -- fully received: goods are in, whatever the date says.
+    product_b = _product(db, f"ZZT-RECV-{_uid()[:6]}", f"{MARKER} received")
+    _lead_time(db, company_id, product_b, days=60)
+    row_b = _early_link(
+        db, company_id, seeded, inquiry, product=product_b, qty="25",
+        delivery_date=date(2027, 4, 1), expected_date=date(2025, 1, 1), line_no=402,
+    )
+    po_line_b = db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_b.id).one().po_line_id
+    db.query(PurchaseOrderLine).filter(PurchaseOrderLine.id == po_line_b).update(
+        {"qty_received": Decimal("25")}
+    )
+    _candidate_row(
+        db, company_id, product=product_b, qty="30", delivery_date=date(2026, 10, 1),
+        so_number=f"ZZT-RECVCAND-{_uid()[:6]}",
+    )
+    db.commit()
+
+    body = client.get(LIST, params={"limit": 200}).json()
+    wire_a = next(r for r in body["data"] if r["id"] == row_a.id)
+    wire_b = next(r for r in body["data"] if r["id"] == row_b.id)
+    [link_a] = wire_a["links"]
+    [link_b] = wire_b["links"]
+
+    assert link_a["suggestion"] is None
+    assert link_b["received"] is True, "the fixture has to be genuinely received for this to mean anything"
+    assert link_b["suggestion"] is None
+
+
+def test_worklist_api_declares_link_suggestion(api):
+    """AC-RL-23 (first half): `OrderInquiryLinkOut` declares `suggestion` - through the
+    worklist ROUTE, so `response_model` is what is actually exercised."""
+    client, db, company_id, seeded = api
+    inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)
+
+    product = _product(db, f"ZZT-WIRE-{_uid()[:6]}", f"{MARKER} wire")
+    _lead_time(db, company_id, product, days=60)
+    row = _early_link(
+        db, company_id, seeded, inquiry, product=product, qty="15",
+        delivery_date=date(2027, 4, 1), expected_date=date(2026, 9, 1), line_no=501,
+    )
+    db.commit()
+
+    body = client.get(LIST, params={"limit": 200}).json()
+    wire_row = next(r for r in body["data"] if r["id"] == row.id)
+    [link] = wire_row["links"]
+
+    assert "suggestion" in link
+    assert link["suggestion"]["kind"] == "unlink"
+
+
+def test_suggestion_is_one_grouped_query_per_page(api):
+    """AC-RL-23 (second half): the suggestion is computed with ONE grouped query per
+    page, the same "five bulk maps, then a query-free `_serialize`" pattern the
+    worklist already uses - so the SQL statement count for a page of 5 suggestion-
+    bearing rows must not exceed a page of 1."""
+    client, db, company_id, seeded = api
+    inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)
+    connection = db.get_bind()
+
+    def _seed_early_row(tag: str, line_no: int):
+        product = _product(db, f"ZZT-{tag}-{_uid()[:6]}", f"{MARKER} {tag}")
+        _lead_time(db, company_id, product, days=60)
+        return _early_link(
+            db, company_id, seeded, inquiry, product=product, qty="50",
+            delivery_date=date(2026, 6, 1), expected_date=date(2025, 1, 1),
+            line_no=line_no,
+        )
+
+    _seed_early_row("QCOUNT-ONE", 601)
+    for i in range(5):
+        _seed_early_row(f"QCOUNT-FIVE{i}", 610 + i)
+    db.commit()
+
+    def _query_count(query: str) -> tuple:
+        # SELECT only: a SAVEPOINT / RELEASE the test's OWN transaction management
+        # emits per request is not a query the route issued, and counting it would
+        # measure the harness rather than the page's own read pattern.
+        calls: list = []
+
+        def _capture(conn, cursor, statement, *_a, **_kw):
+            if statement.strip().upper().startswith("SELECT"):
+                calls.append(statement)
+
+        event.listen(connection, "before_cursor_execute", _capture)
+        try:
+            response = client.get(LIST, params={"query": query, "limit": 50})
+        finally:
+            event.remove(connection, "before_cursor_execute", _capture)
+        assert response.status_code == 200, response.text
+        return response, calls
+
+    resp_one, calls_one = _query_count("ZZT-QCOUNT-ONE")
+    resp_five, calls_five = _query_count("ZZT-QCOUNT-FIVE")
+
+    assert len(resp_one.json()["data"]) == 1
+    assert len(resp_five.json()["data"]) == 5
+    assert len(calls_five) == len(calls_one), (
+        "the suggestion lookup must be one grouped query per page, not one per row: "
+        f"{len(calls_one)} statements for 1 row, {len(calls_five)} for 5"
+    )
+
+
 def test_an_unplaced_lines_row_reports_zero_taken_and_its_full_qty_as_remaining(api):
     client, db, company_id, seeded = api
     inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)
@@ -1262,3 +2290,366 @@ def test_another_companys_rows_are_not_on_this_companys_list(api):
 
     assert all(row["item_code"] != "ZZT-OTHER-ITEM" for row in body["data"])
     assert body["pagination"]["total"] == 3
+
+
+# ------------------------------------------------------- bundled_host_changes
+
+
+def _companion_rule(db, company_id, companion, hosts, *, supplier_id=None, ratio="1"):
+    """One active companion rule, hosts in the order they must read back in
+    (`PLAN-oi-bundled-row-host-change.md`: the (i) lists each host in RULE order).
+    """
+    from app.models.product_companion import ProductCompanionRule, ProductCompanionRuleHost
+
+    rule = ProductCompanionRule(
+        id=_uid(),
+        company_id=company_id,
+        companion_product_id=companion.id,
+        supplier_id=supplier_id,
+        ratio=Decimal(ratio),
+        is_active=True,
+    )
+    db.add(rule)
+    db.flush()
+    for host in hosts:
+        db.add(ProductCompanionRuleHost(rule_id=rule.id, host_product_id=host.id))
+    db.flush()
+    return rule
+
+
+def test_a_bundled_row_lists_each_hosts_own_change_in_rule_order(api):
+    """A bundled row's (i) reads each HOST's own change, not the companion's own row
+    (the companion has none of its own: no sheet row, no PO, no Was). Host X carries a
+    Was (`previous_qty` 182, `previous_delivery_date` 2026-06-01, `qty` 280 @
+    2027-03-01); host Y has never changed. Both entries come back, in rule order,
+    values exact."""
+    client, db, company_id, seeded = api
+    inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)
+    host_x = _product(db, f"ZZT-HOSTX-{_uid()[:6]}", f"{MARKER} host X")
+    host_y = _product(db, f"ZZT-HOSTY-{_uid()[:6]}", f"{MARKER} host Y")
+    companion = _product(db, f"ZZT-SC-{_uid()[:6]}", f"{MARKER} seat cover")
+    _companion_rule(db, company_id, companion, [host_x, host_y])
+
+    host_x_row = _row(
+        db,
+        company_id,
+        inquiry,
+        item_code=host_x.product_code,
+        qty="280",
+        delivery_date=date(2027, 3, 1),
+        previous_qty=Decimal("182"),
+        previous_delivery_date=date(2026, 6, 1),
+    )
+    host_y_row = _row(
+        db,
+        company_id,
+        inquiry,
+        item_code=host_y.product_code,
+        qty="50",
+        delivery_date=date(2026, 5, 1),
+    )
+    companion_row = _row(
+        db,
+        company_id,
+        inquiry,
+        item_code=companion.product_code,
+        qty="2",
+        bundled_qty=Decimal("2"),
+        bundled_with_row_id=host_x_row.id,
+    )
+    db.commit()
+
+    body = client.get(LIST, params={"limit": 100}).json()
+    row = next(r for r in body["data"] if r["id"] == companion_row.id)
+
+    assert row["bundled_host_changes"] == [
+        {
+            "item_code": host_x.product_code,
+            "qty": "280",
+            "delivery_date": "2027-03-01",
+            "previous_qty": "182",
+            "previous_delivery_date": "2026-06-01",
+        },
+        {
+            "item_code": host_y.product_code,
+            "qty": "50",
+            "delivery_date": "2026-05-01",
+            "previous_qty": None,
+            "previous_delivery_date": None,
+        },
+    ], row["bundled_host_changes"]
+    assert host_y_row.id  # host Y's row exists; only its VALUES are read, not its id
+
+
+def test_a_non_bundled_row_carries_no_host_changes(api):
+    """A row nobody's rule ever bundled reads `bundled_host_changes` null - never an
+    empty list, never a key error."""
+    client, _db, _company_id, seeded = api
+
+    body = client.get(LIST, params={"limit": 100}).json()
+    row = next(r for r in body["data"] if r["id"] == seeded["authored_row"].id)
+
+    assert row["bundled_host_changes"] is None
+
+
+def test_a_host_with_no_row_at_all_still_gets_a_null_entry(api):
+    """A rule's second host has never had a row raised for it at all - the entry for
+    that host's item code still comes back, with every row field null (never a
+    shortened list)."""
+    client, db, company_id, seeded = api
+    inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)
+    host_x = _product(db, f"ZZT-HOSTX-{_uid()[:6]}", f"{MARKER} host X")
+    host_y = _product(db, f"ZZT-HOSTY-{_uid()[:6]}", f"{MARKER} host Y (never raised)")
+    companion = _product(db, f"ZZT-SC-{_uid()[:6]}", f"{MARKER} seat cover")
+    _companion_rule(db, company_id, companion, [host_x, host_y])
+
+    host_x_row = _row(
+        db,
+        company_id,
+        inquiry,
+        item_code=host_x.product_code,
+        qty="10",
+        delivery_date=date(2026, 4, 1),
+    )
+    companion_row = _row(
+        db,
+        company_id,
+        inquiry,
+        item_code=companion.product_code,
+        qty="1",
+        bundled_qty=Decimal("1"),
+        bundled_with_row_id=host_x_row.id,
+    )
+    db.commit()
+
+    body = client.get(LIST, params={"limit": 100}).json()
+    row = next(r for r in body["data"] if r["id"] == companion_row.id)
+
+    assert row["bundled_host_changes"][1] == {
+        "item_code": host_y.product_code,
+        "qty": None,
+        "delivery_date": None,
+        "previous_qty": None,
+        "previous_delivery_date": None,
+    }, row["bundled_host_changes"]
+
+
+def test_a_hosts_cancelled_and_redirected_rows_are_excluded(api):
+    """A host's own CANCELLED row and a REDIRECTED (back to the pool) row are both
+    excluded from `bundled_host_changes` - only a LIVE row of the host's own item code
+    counts, so a superseded or pooled row never reports as that host's current change."""
+    client, db, company_id, seeded = api
+    inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)
+    host_x = _product(db, f"ZZT-HOSTX-{_uid()[:6]}", f"{MARKER} host X")
+    host_y = _product(db, f"ZZT-HOSTY-{_uid()[:6]}", f"{MARKER} host Y (no live row)")
+    companion = _product(db, f"ZZT-SC-{_uid()[:6]}", f"{MARKER} seat cover")
+    _companion_rule(db, company_id, companion, [host_x, host_y])
+
+    host_x_row = _row(
+        db,
+        company_id,
+        inquiry,
+        item_code=host_x.product_code,
+        qty="10",
+        delivery_date=date(2026, 4, 1),
+    )
+    # Host Y carries only a cancelled row and a redirected one - never a live row.
+    _row(
+        db,
+        company_id,
+        inquiry,
+        item_code=host_y.product_code,
+        qty="5",
+        delivery_date=date(2026, 4, 5),
+        state="cancelled",
+    )
+    _row(
+        db,
+        company_id,
+        inquiry,
+        item_code=host_y.product_code,
+        qty="7",
+        delivery_date=date(2026, 4, 7),
+        redirected_to_pool=True,
+    )
+    companion_row = _row(
+        db,
+        company_id,
+        inquiry,
+        item_code=companion.product_code,
+        qty="1",
+        bundled_qty=Decimal("1"),
+        bundled_with_row_id=host_x_row.id,
+    )
+    db.commit()
+
+    body = client.get(LIST, params={"limit": 100}).json()
+    row = next(r for r in body["data"] if r["id"] == companion_row.id)
+
+    assert row["bundled_host_changes"][0]["item_code"] == host_x.product_code
+    assert row["bundled_host_changes"][1] == {
+        "item_code": host_y.product_code,
+        "qty": None,
+        "delivery_date": None,
+        "previous_qty": None,
+        "previous_delivery_date": None,
+    }, row["bundled_host_changes"]
+
+
+def test_a_hosts_delay_row_never_answers_for_its_own_live_order_row_regardless_of_sort(api):
+    """BLOCKER (review round 1, 19 Sep 2026). A host carries its own live ORDER row
+    (280 @ 2027-03-01, Was 182 @ 2026-06-01) AND a DELAY exception row on the SAME
+    item code (7 @ 2028-01-01, no Was) - the DELAY row must never answer for the
+    host's own change, and the answer must be IDENTICAL under the default sort and
+    under a sort that ties the two rows on their own sort column (`item_code`, same
+    on both) and so falls through to the id tie-break - deliberately id-ordered here
+    (the DELAY row's own id sorts FIRST) so a page-position bug fails this test on
+    every run rather than by an id coin flip.
+    """
+    client, db, company_id, seeded = api
+    inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)
+    host_x = _product(db, f"ZZT-HOSTX-{_uid()[:6]}", f"{MARKER} host X")
+    companion = _product(db, f"ZZT-SC-{_uid()[:6]}", f"{MARKER} seat cover")
+    _companion_rule(db, company_id, companion, [host_x])
+
+    # Explicit ids, deliberately in the WRONG order for a page-position bug to read
+    # correctly by luck: the DELAY row's id sorts before the ORDER row's under the
+    # `id.asc()` tie-break `list_rows` always appends, whatever column is sorted by.
+    delay_row = OrderInquiryRow(
+        id="00000000-0000-0000-0000-000000000001",
+        company_id=company_id,
+        order_inquiry_id=inquiry.id,
+        item_code=host_x.product_code,
+        qty=Decimal("7"),
+        delivery_date=date(2028, 1, 1),
+        verb=IV_DELAY,
+        state=INQUIRY_RAISED,
+    )
+    host_order_row = OrderInquiryRow(
+        id="00000000-0000-0000-0000-000000000002",
+        company_id=company_id,
+        order_inquiry_id=inquiry.id,
+        item_code=host_x.product_code,
+        qty=Decimal("280"),
+        delivery_date=date(2027, 3, 1),
+        previous_qty=Decimal("182"),
+        previous_delivery_date=date(2026, 6, 1),
+        verb=IV_ORDER,
+        state=INQUIRY_RAISED,
+    )
+    db.add_all([delay_row, host_order_row])
+    db.flush()
+    companion_row = _row(
+        db,
+        company_id,
+        inquiry,
+        item_code=companion.product_code,
+        qty="1",
+        bundled_qty=Decimal("1"),
+        bundled_with_row_id=host_order_row.id,
+    )
+    db.commit()
+
+    expected = [
+        {
+            "item_code": host_x.product_code,
+            "qty": "280",
+            "delivery_date": "2027-03-01",
+            "previous_qty": "182",
+            "previous_delivery_date": "2026-06-01",
+        }
+    ]
+
+    default_body = client.get(LIST, params={"limit": 100}).json()
+    default_row = next(r for r in default_body["data"] if r["id"] == companion_row.id)
+    assert default_row["bundled_host_changes"] == expected, default_row["bundled_host_changes"]
+
+    # Ties the two host rows on the sort column itself (both carry `item_code ==
+    # host_x.product_code`), so the page's own order for THIS pair falls straight
+    # through to the id tie-break - exactly the shape the live report showed
+    # (`sort=item_code&dir=desc`).
+    sorted_body = client.get(
+        LIST, params={"limit": 100, "sort": "item_code", "dir": "desc"}
+    ).json()
+    sorted_row = next(r for r in sorted_body["data"] if r["id"] == companion_row.id)
+    assert sorted_row["bundled_host_changes"] == expected, sorted_row["bundled_host_changes"]
+
+
+def test_a_hosts_own_oldest_live_order_row_wins_over_a_newer_one_regardless_of_sort(api):
+    """Review round 1 follow up (19 Sep 2026). A host carries TWO live ORDER rows on
+    the same item code - the OLDER one (by created_at) is the one whose figures answer
+    for the host, never the newer one, and the answer is IDENTICAL under the default
+    sort and under sort=item_code and dir=desc.
+
+    The older row is constructed SECOND in code, and both rows carry explicit
+    created_at values (created_at defaults to the transaction's own now(), tied across
+    every row one test writes) and explicit ids, deliberately ordered so a mutant that
+    picks the first candidate encountered in page order (candidates[0]) rather than the
+    OLDEST one picks the newer row every run, under both sorts, rather than by an id
+    or page order coin flip.
+    """
+    client, db, company_id, seeded = api
+    inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)
+    host_x = _product(db, f"ZZT-HOSTX-{_uid()[:6]}", f"{MARKER} host X")
+    companion = _product(db, f"ZZT-SC-{_uid()[:6]}", f"{MARKER} seat cover")
+    _companion_rule(db, company_id, companion, [host_x])
+
+    # Constructed FIRST in code, but the NEWER row by created_at - an earlier delivery
+    # date puts it FIRST under the default sort, and its own id sorts first under the
+    # item_code tie break too, so candidates[0] would pick this one under both sorts.
+    newer_row = OrderInquiryRow(
+        id="00000000-0000-0000-0000-000000000001",
+        company_id=company_id,
+        order_inquiry_id=inquiry.id,
+        item_code=host_x.product_code,
+        qty=Decimal("150"),
+        delivery_date=date(2026, 5, 1),
+        verb=IV_ORDER,
+        state=INQUIRY_RAISED,
+        created_at=datetime(2026, 9, 10, 0, 0, 0),
+    )
+    # Constructed SECOND in code, but the OLDER row by created_at - the one that must
+    # win.
+    older_row = OrderInquiryRow(
+        id="00000000-0000-0000-0000-000000000002",
+        company_id=company_id,
+        order_inquiry_id=inquiry.id,
+        item_code=host_x.product_code,
+        qty=Decimal("300"),
+        delivery_date=date(2027, 4, 1),
+        verb=IV_ORDER,
+        state=INQUIRY_RAISED,
+        created_at=datetime(2026, 1, 1, 0, 0, 0),
+    )
+    db.add_all([newer_row, older_row])
+    db.flush()
+    companion_row = _row(
+        db,
+        company_id,
+        inquiry,
+        item_code=companion.product_code,
+        qty="1",
+        bundled_qty=Decimal("1"),
+        bundled_with_row_id=older_row.id,
+    )
+    db.commit()
+
+    expected = [
+        {
+            "item_code": host_x.product_code,
+            "qty": "300",
+            "delivery_date": "2027-04-01",
+            "previous_qty": None,
+            "previous_delivery_date": None,
+        }
+    ]
+
+    default_body = client.get(LIST, params={"limit": 100}).json()
+    default_row = next(r for r in default_body["data"] if r["id"] == companion_row.id)
+    assert default_row["bundled_host_changes"] == expected, default_row["bundled_host_changes"]
+
+    sorted_body = client.get(
+        LIST, params={"limit": 100, "sort": "item_code", "dir": "desc"}
+    ).json()
+    sorted_row = next(r for r in sorted_body["data"] if r["id"] == companion_row.id)
+    assert sorted_row["bundled_host_changes"] == expected, sorted_row["bundled_host_changes"]

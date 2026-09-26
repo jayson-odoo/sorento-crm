@@ -181,14 +181,18 @@ describe('two rows deleted in quick succession', () => {
 });
 
 describe('cancelling a single row leaves the button usable again', () => {
-  it('isPending returns to false once the cancel settles, even though targetId still names the row', async () => {
+  it('isPending returns to false and the target is released once the cancel settles', async () => {
     // A real defect (supplied-with companions, review round 2): a consumer reading
     // ONLY `targetId === row.id` for its own "disabled"/"spinner" prop stayed stuck
-    // after Cancel, because `targetId` is never cleared back to null - by design,
-    // per the two-row test above, so a re-point mid-countdown is not read as the
-    // FIRST action ending. The correct read is always `targetId === row.id &&
-    // isPending` (`ProductSuppliersSection.tsx`'s own pattern) - this pins that
-    // `isPending` really does go back to false, so that combination re-enables.
+    // after Cancel. The correct read is always `targetId === row.id && isPending`
+    // (`ProductSuppliersSection.tsx`'s own pattern), and this pins that `isPending`
+    // really does go back to false, so that combination re-enables.
+    //
+    // The target is let go with it now (S7 review, 14 Sep): an `inline` surface asks
+    // "is this row the target" to decide whether to draw the countdown, so a target
+    // held after the window closed left that cell blank. Held BY NONCE, so the two-row
+    // case above still reads a re-point as a second action rather than the first
+    // one ending.
     const { result } = renderRowDeletion();
 
     await act(async () => {
@@ -203,8 +207,6 @@ describe('cancelling a single row leaves the button usable again', () => {
     });
 
     await waitFor(() => expect(result.current.isPending).toBe(false));
-    // targetId is NOT reset - the two-row test above depends on that - so a
-    // consumer must gate on isPending too, not on targetId alone.
-    expect(result.current.targetId).toBe('brand-a');
+    await waitFor(() => expect(result.current.targetId).toBeNull());
   });
 });

@@ -1,0 +1,15 @@
+console-check-1789827677  9 cases against http://127.0.0.1:8080  parser prompt pinned to version 595d1dfe-704e-4a95-9482-1f3ba832f5cf
+lane switches before: enabled=True lanes=['out_of_scope', 'access_denied', 'demand_qty', 'clarify_menu', 'escalate_offer', 'escalation_declined', 'ideate', 'low_signal', 'not_supported', 'offer_hold', 'stock_denied', 'check_promotion', 'business_query']
+lane switches for the run: enabled=True lanes=13
+PASS  Journey 1-4 - dealer sales report for hanlim, SO list, date narrow, product narrow branch=business_query  'Customer: HANLIM TRADING SDN BHD [A/C II], HANLIM TRADING SDN BHD [A/C I], HANLIM TRADING SDN BHD [A/C III], HANLIM TRAD'
+PASS  S18 - a product-only ask with no date defaults to the current calendar year branch=business_query  'Customer: all Product: SRTWT7445, SRTWT7445-LV, SRTWT7445-LV-BL, SRTWT7445-LV-BL-NEW, SRTWT7445-LV-GM, SRTWT7445-LV-NEW,'
+PASS  S18 - saying "all dates" turns the current-year default off branch=business_query  'Customer: all Product: SRTWT7445, SRTWT7445-LV, SRTWT7445-LV-BL, SRTWT7445-LV-BL-NEW, SRTWT7445-LV-GM, SRTWT7445-LV-NEW,'
+PASS  Journey 6 - project sales report for hanlim sets Channel Project branch=business_query  'Customer: HANLIM TRADING SDN BHD [A/C II], HANLIM TRADING SDN BHD [A/C I], HANLIM TRADING SDN BHD [A/C III], HANLIM TRAD'
+PASS  FUZZY - how much did hanlim buy this year reaches the sales report, not the orders list branch=business_query  'Customer: HANLIM TRADING SDN BHD [A/C II], HANLIM TRADING SDN BHD [A/C I], HANLIM TRADING SDN BHD [A/C III], HANLIM TRAD'
+PASS  SECOND DEFECT - dealer/project never turns a product-code token into a customer branch=business_query  'Customer: all Product: SRT5674-N, SRT5674-NL Channel: Dealer Location: all Delivery date: 01/08/2026 to 31/08/2026  *_Au'
+PASS  S19 - a product family stem covers its siblings (Srt5674 also matches SRT5674-N) branch=business_query  'Customer: all Product: SRT5674, SRT5674-BL, SRT5674-N, SRT5674-NL Channel: all Location: all Delivery date: 01/08/2026 t'
+PASS  TRAP - dealer inside an outstanding ask is not read as a channel word branch=business_query  'Product: all Customer: HANLIM TRADING SDN BHD [A/C II], HANLIM TRADING SDN BHD [A/C I], HANLIM TRADING SDN BHD [A/C III]'
+PASS  DENIAL - a contact without sales_orders.sales_report is refused before any fetch branch=business_query  'Sales report is not enabled for your account. Sales report is not enabled for your account.'
+lane switches restored: enabled=True lanes=['out_of_scope', 'access_denied', 'demand_qty', 'clarify_menu', 'escalate_offer', 'escalation_declined', 'ideate', 'low_signal', 'not_supported', 'offer_hold', 'stock_denied', 'check_promotion', 'business_query']
+
+9 passed, 0 failed  (console-check-1789827677)

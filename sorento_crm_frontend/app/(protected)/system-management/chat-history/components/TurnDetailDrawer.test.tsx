@@ -2,7 +2,7 @@
  * Chatbot growth r1, Slice D2 (AC-972, AC-973). Phase 2 test-first.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, within } from '@testing-library/react';
 
 import { TurnDetailDrawer } from './TurnDetailDrawer';
 import type { ChatbotTurnDetail, TurnDetail } from '../types/chatbotTurn.types';
@@ -39,6 +39,14 @@ function fullDetail(): TurnDetail {
         ms: 5,
         status: 'ok',
         summary: 'Understood as a business query.',
+        error: null,
+      },
+      {
+        name: 'sent',
+        started_at: '2026-09-07T00:00:02Z',
+        ms: 1,
+        status: 'ok',
+        summary: 'Handed the reply to the caller to send.',
         error: null,
       },
     ],
@@ -171,6 +179,26 @@ describe('TurnDetailDrawer', () => {
     expect(screen.getByText('new_key')).toBeInTheDocument();
   });
 
+  it('browser pass finding (16 Sep 2026): a trace with a sent stage renders a dedicated Sent panel with its summary, not just a row buried in Stages', () => {
+    turnState = { data: detailTurn(fullDetail()), isLoading: false, isError: false };
+    render(<TurnDetailDrawer turnId="ZZT-turn-detail-1" onOpenChange={vi.fn()} />);
+
+    fireEvent.click(screen.getByTestId('section-sent-trigger'));
+
+    const sentPanel = screen.getByTestId('section-sent');
+    expect(within(sentPanel).getByText('Handed the reply to the caller to send.')).toBeInTheDocument();
+  });
+
+  it('a turn recorded with no sent stage shows the Sent panel empty, not absent', () => {
+    turnState = { data: detailTurn(emptyDetail()), isLoading: false, isError: false };
+    render(<TurnDetailDrawer turnId="ZZT-turn-detail-1" onOpenChange={vi.fn()} />);
+
+    fireEvent.click(screen.getByTestId('section-sent-trigger'));
+
+    const sentPanel = screen.getByTestId('section-sent');
+    expect(within(sentPanel).getByText(/no sent stage/i)).toBeInTheDocument();
+  });
+
   it('renders an empty section for every kind absent from the trace', () => {
     turnState = { data: detailTurn(emptyDetail()), isLoading: false, isError: false };
     render(<TurnDetailDrawer turnId="ZZT-turn-detail-1" onOpenChange={vi.fn()} />);
@@ -198,6 +226,44 @@ describe('TurnDetailDrawer', () => {
     const badges = screen.getAllByText(/received|understood/);
     expect(badges[0]).toHaveTextContent('understood');
     expect(screen.getByText('boom')).toBeInTheDocument();
+  });
+
+  it('browser pass follow-up: the Stages tab shows a media_intake stage\'s facts, not just its badge and summary', () => {
+    // Copied VERBATIM from a real chatbot.turns.trace row on 0921 (turn
+    // 767e0472-2388-47f8-9b40-efef429b45a8), projected through the SAME
+    // `trace_detail.py::_stages()` shape the backend actually sends - `facts`
+    // was dropped from that projection entirely before this fix, so the
+    // Stages tab showed the badge and "Read the photo." with nothing else,
+    // even though `TurnPanel`'s own inline row (a different component reading
+    // the raw trace directly) already rendered the same facts correctly.
+    const detail = emptyDetail();
+    detail.stages = [
+      {
+        name: 'media_intake',
+        started_at: '2026-09-22T19:44:03.203312Z',
+        ms: 2632,
+        status: 'ok',
+        summary: 'Read the photo.',
+        error: null,
+        facts: {
+          notes: 'Simple list of product codes with no quantities or caption.',
+          status: 'completed',
+          decision: 'accepted',
+          entities: 'BRBC22293W-1, SRTWT1506, SRTWT1805',
+          modality: 'image',
+          elapsed_ms: 72,
+        },
+      },
+      ...detail.stages,
+    ];
+    turnState = { data: detailTurn(detail), isLoading: false, isError: false };
+    render(<TurnDetailDrawer turnId="ZZT-turn-detail-1" onOpenChange={vi.fn()} />);
+
+    expect(screen.getByText('media_intake')).toBeInTheDocument();
+    expect(screen.getByText('Read the photo.')).toBeInTheDocument();
+    expect(screen.getByText(/BRBC22293W-1, SRTWT1506, SRTWT1805/)).toBeInTheDocument();
+    expect(screen.getByText('accepted')).toBeInTheDocument();
+    expect(screen.getByText(/Simple list of product codes/)).toBeInTheDocument();
   });
 
   it('renders nothing when no turn is picked', () => {

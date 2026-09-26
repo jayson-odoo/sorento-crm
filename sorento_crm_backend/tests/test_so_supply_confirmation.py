@@ -791,9 +791,19 @@ def test_publishing_an_amendment_supersedes_the_active_decision(api):
 
 
 def test_a_reconciliation_link_change_supersedes_the_active_decision(api):
-    """AC-C06 (reconciliation leg, PLAN 5.3): `_persist` re-linking a Project line to a
-    different core line must also supersede an active decision built against the old
-    link."""
+    """AC-C06 (reconciliation leg, PLAN 5.3; Slice E one signal, issue #860): `_persist`
+    re-linking a Project line to a DIFFERENT core line is the one thing a reconciliation
+    run supersedes an active decision for. The old core line closes (AutoCount split/
+    replaced it) so it drops out of the candidate pool, and a fresh core line at the same
+    product/date is the only remaining candidate -- the line relinks to it, `_persist`'s
+    `relinked` list is non-empty, and `ProjectSupplyService.supersede_for_material_change`
+    fires with its exact reason text. A plain fact drift with no mapping change (the
+    non-relink case) is covered elsewhere by AC-E1c
+    (`tests/scm/test_one_signal.py::test_reconciliation_without_a_relink_leaves_the_decision_active`),
+    which asserts the decision stays active -- this test is the other branch, the actual
+    relink. Was `test_a_reconciliation_link_change_supersedes_the_active_decision`
+    asserting a bare quantity drift with no relink and tolerating the retired `challenged`
+    outcome."""
     from app.models.project_so import SOSupplyDecision
 
     client, world = api
@@ -801,8 +811,10 @@ def test_a_reconciliation_link_change_supersedes_the_active_decision(api):
     _stock(db, world.product, world.own_wh, on_hand=50)
     core_so = _core_so(db, world.company_id)
     order = _project_so(db, world.project, so_id=core_so.id)
-    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="50")
-    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    old_core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="50")
+    line = _project_line(
+        db, order, line_no=10, product=world.product, core_line=old_core_line
+    )
     db.commit()
 
     decision = SOSupplyDecision(
@@ -812,7 +824,7 @@ def test_a_reconciliation_link_change_supersedes_the_active_decision(api):
             {
                 "line_no": 10,
                 "project_line_id": line.id,
-                "core_line_id": core_line.id,
+                "core_line_id": old_core_line.id,
                 "open_qty": "50",
             }
         ],
@@ -821,9 +833,13 @@ def test_a_reconciliation_link_change_supersedes_the_active_decision(api):
     db.add(decision)
     db.commit()
 
-    # A material change on the CORE side: the line now needs a different quantity, which
-    # reconciliation would relink or flag on its next run.
-    core_line.qty_ordered = Decimal("80")
+    # The AutoCount line mapping changes: the old core line closes (no longer a
+    # candidate) and a new one appears at the same product/required date, so the
+    # matching pass relinks the Project line to it instead of leaving it missing.
+    old_core_line.line_status = "closed"
+    new_core_line = _core_line(
+        db, core_so, world.product, world.own_wh, qty_ordered="50"
+    )
     db.commit()
 
     from app.services.project_so_reconciliation_service import ProjectSOReconciliationService
@@ -832,13 +848,22 @@ def test_a_reconciliation_link_change_supersedes_the_active_decision(api):
     db.commit()
 
     db.expire_all()
+    db.refresh(line)
+    assert str(line.core_sales_order_line_id) == str(new_core_line.id)
+
     refreshed = db.get(SOSupplyDecision, decision.id)
-    assert refreshed.state in ("superseded", "challenged")
+    assert refreshed.state == "superseded"
+    assert (
+        refreshed.superseded_reason
+        == "The AutoCount line mapping changed after this revision was confirmed."
+    )
 
 
-def test_a_fact_drift_challenges_the_active_decision_on_read(api):
-    """PLAN 5.3: `proposal_for` compares each snapshot against live facts on every read and
-    flips a mismatching active decision to `challenged`."""
+def test_a_fact_drift_on_read_leaves_the_active_decision_active(api):
+    """AC-E1/AC-E2 (`PLAN-scm-change-management-one-engine.md` rule 9, issue #860):
+    `proposal_for` no longer calls `challenge_if_drifted` on the sheet read - a drift is
+    the change batch's job now, not a flip on the decision the sheet is reading. Was
+    `test_a_fact_drift_challenges_the_active_decision_on_read`, asserting the opposite."""
     from app.models.project_so import SOSupplyDecision
 
     client, world = api
@@ -865,12 +890,9 @@ def test_a_fact_drift_challenges_the_active_decision_on_read(api):
 
     response = client.get(f"{BASE}/sales-orders/{order.id}/supply")
     assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["review_state"] == "needs_cs_review"
-    assert body.get("decision", {}).get("challenged_reason")
 
     db.expire_all()
-    assert db.get(SOSupplyDecision, decision.id).state == "challenged"
+    assert db.get(SOSupplyDecision, decision.id).state == "active"
 
 
 def test_review_states_for_reads_confirmed_when_an_active_decision_exists(api):
@@ -1160,8 +1182,10 @@ def test_re_confirming_the_same_borrow_does_not_stack_a_second_shortfall_row(api
 # --------------------------------------------------------------------------- discontinued
 
 
-def test_a_discontinued_buy_without_a_reason_is_refused(api):
-    """AC-B11/AC-C03: Buy on a discontinued product needs a reason before it may confirm."""
+def test_a_discontinued_buy_without_a_reason_confirms_and_raises_the_oi_row(api):
+    """AC-39: the discontinued-buy-needs-a-reason gate is removed. A Buy on a discontinued
+    product confirms with no `buy_reason`, same as any other Buy, and still raises its
+    Order Inquiry row and an active decision revision."""
     client, world = api
     db = world.db
     discontinued = _product(db, discontinued=True)
@@ -1175,9 +1199,52 @@ def test_a_discontinued_buy_without_a_reason_is_refused(api):
         f"{BASE}/sales-orders/{order.id}/confirm",
         json={"lines": [_line_payload(line.id, buy_qty="15")]},
     )
-    assert response.status_code == 422, response.text
+    assert response.status_code == 200, response.text
     body = response.json()
-    assert any(row["line_no"] == 10 for row in body["failing_lines"])
+    assert body["inquiry_rows_created"] == 1
+
+    from app.models.project_so import SOSupplyDecision
+
+    decisions = (
+        db.query(SOSupplyDecision)
+        .filter(SOSupplyDecision.project_sales_order_id == order.id)
+        .all()
+    )
+    assert len(decisions) == 1
+    assert decisions[0].revision_no == 1
+    assert decisions[0].state == "active"
+
+
+def test_a_discontinued_buy_without_a_reason_freezes_the_warning_and_a_null_reason(api):
+    """AC-40: the frozen line snapshot still carries the lifecycle warning (it is informational,
+    not a gate), and `buy_reason` freezes as null rather than an empty string when none was
+    given."""
+    client, world = api
+    db = world.db
+    discontinued = _product(db, discontinued=True)
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, discontinued, world.own_wh, qty_ordered="15")
+    line = _project_line(db, order, line_no=10, product=discontinued, core_line=core_line)
+    db.commit()
+
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={"lines": [_line_payload(line.id, buy_qty="15")]},
+    )
+    assert response.status_code == 200, response.text
+
+    from app.models.project_so import SOSupplyDecision
+
+    decision = (
+        db.query(SOSupplyDecision)
+        .filter(SOSupplyDecision.project_sales_order_id == order.id)
+        .one()
+    )
+    assert len(decision.line_snapshots) == 1
+    snapshot = decision.line_snapshots[0]
+    assert snapshot["lifecycle_warning"] == "This product is discontinued."
+    assert snapshot["buy_reason"] is None
 
 
 def test_a_discontinued_buy_with_a_reason_confirms(api):

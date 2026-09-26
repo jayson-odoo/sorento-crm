@@ -13,6 +13,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import type { ReorderRecommendation } from '../types/reorder.types';
 import { recToPlanLine, type PlanLine } from '../lib/planLine';
 import { NO_COVER, type CoverProposal } from '../lib/coverPlan';
+import { planDecisionKind, type PlanDecision } from '../lib/planDecisions';
 import type { PoReceipt } from '../lib/poCover';
 import type { PriceAdvice, CheaperAlternative } from '../lib/priceAdvice';
 import type { LevelSuggestion } from '../lib/levelSuggestion';
@@ -145,33 +146,36 @@ describe('PlanRowPanel - four zones render (D1)', () => {
 });
 
 describe('PlanRowPanel - Cover zone (D2)', () => {
-  it('shows the stock cap, PO cap and SPO fact, and the MOQ master figure beside the input', () => {
+  it('states BRW and SPO as facts, caps the PO input, and names the MOQ master figure', () => {
     renderPanel({ cover, poReceipts });
-    expect(screen.getByText(/pool available 5/)).toBeInTheDocument();
-    expect(screen.getByText(/open 12/)).toBeInTheDocument();
-    // SPO arriving is a FACT (R2) - text, not an input.
-    expect(screen.getByText('already in net')).toBeInTheDocument();
+    // ONE FORMULA (PLAN-reorder-one-formula.md): the row's OWN pool is a FACT, not an
+    // input - it is already inside the engine's net, so a quantity here would net it a
+    // second time. Only the cross-location BORROW and the PO the buyer trusts are inputs.
+    expect(screen.queryByLabelText('BRW')).not.toBeInTheDocument();
+    expect(screen.getByText('BRW')).toBeInTheDocument();
+    expect((screen.getByLabelText('DC1') as HTMLInputElement).max).toBe('5');
+    expect((screen.getByLabelText('PO') as HTMLInputElement).max).toBe('12');
+    // SPO is a FACT (R2) - text, not an input.
+    expect(screen.getByText('SPO')).toBeInTheDocument();
     expect(screen.getByLabelText('Units to buy')).toBeInTheDocument();
     expect(screen.getByText('master 10')).toBeInTheDocument();
   });
 
-  it('SPO arriving reads the recommendation\'s own incoming_spo, never zero by default', () => {
+  it('offers no borrow row at all when the row has nowhere to borrow from', () => {
+    // A product-grain row: `coverForLine` offers it nothing, because its own on hand
+    // already sums every in-scope pool.
+    renderPanel({ cover: NO_COVER, poReceipts });
+    expect(screen.queryByLabelText('DC1')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Borrow')).not.toBeInTheDocument();
+  });
+
+  it('SPO reads the recommendation\'s own incoming_spo, never zero by default', () => {
     renderPanel({ line: line({ incoming_spo: 4 }) });
     expect(screen.getByText('4')).toBeInTheDocument();
   });
 
-  it('shows the over/short hint only when the mixture differs from the suggested quantity', () => {
-    // suggestedDecisionFor(line(order_qty:23), NO_COVER, []) -> buy 23 (rounded to moq/multiple);
-    // an edited decision of buy:50 is well over that.
+  it('never states an over/short hint - the numbers say it (owner ask, S1)', () => {
     renderPanel({ edit: { decision: { buy: 50 } } });
-    expect(screen.getByText(/over suggested/)).toBeInTheDocument();
-  });
-
-  it('says nothing about over/short when the mixture equals the suggestion', () => {
-    // No MOQ/multiple rounding in play, so the untouched row's own suggestion exactly
-    // meets the need - the fixture used elsewhere in this file rounds 23 up to 25 via
-    // its MOQ/multiple, which is itself the "over" case covered above.
-    renderPanel({ line: line({ moq: null, order_multiple: null }) });
     expect(screen.queryByText(/over suggested/)).not.toBeInTheDocument();
     expect(screen.queryByText(/short of suggested/)).not.toBeInTheDocument();
   });
@@ -212,11 +216,11 @@ describe('PlanRowPanel - Cover zone (D2)', () => {
     expect(screen.queryByText(/DC1 5/)).not.toBeInTheDocument();
   });
 
-  it('From stock is capped at the pool available quantity, never past it', () => {
+  it('the borrow is capped at what the other pool actually holds, never past it', () => {
     const { onEdit } = renderPanel({ cover });
-    fireEvent.change(screen.getByLabelText('From stock'), { target: { value: '999' } });
+    fireEvent.change(screen.getByLabelText('DC1'), { target: { value: '999' } });
     const [[patch]] = onEdit.mock.calls;
-    expect((patch as { decision: { stock?: { qty: number } } }).decision.stock?.qty).toBeLessThanOrEqual(5);
+    expect((patch as { decision: { stock?: { qty: number } } }).decision.stock?.qty).toBe(5);
   });
 });
 
@@ -547,5 +551,102 @@ describe('PlanRowPanel - no stock-as-of line, no location table (D9)', () => {
   it('explains no rules on screen - the staleness rule is not a sentence here', () => {
     renderPanel({ price: undefined });
     expect(screen.queryByText(/treated as stale/)).not.toBeInTheDocument();
+  });
+});
+
+describe('PlanRowPanel - PLAN-reorder-one-formula.md, AC-8', () => {
+  it('prefills BRW 128 / PO 339 / Buy 196 for the B2155 line', () => {
+    const b2155 = line({
+      policy_type: 'reorder_level', reorder_level: null, master_reorder_level: null,
+      order_qty: 196, recommended_qty: 196, net_position: -196,
+      on_hand: 128, outstanding_po: 0, moq: null, order_multiple: null,
+    });
+    const receipts: PoReceipt[] = [
+      { po_number: 'PO-B2155', status: 'active', expected_date: null, remaining: 339 },
+    ];
+    renderPanel({ line: b2155, cover: NO_COVER, poReceipts: receipts });
+
+    // BRW is READ-ONLY: the row's own pool is a fact the engine already spent, never a
+    // decision part - persisting it made the server refuse the save as "a mixture needs
+    // more than one part" (no `stock_takes` name a product-grain row's own pool).
+    expect(screen.queryByLabelText('BRW')).not.toBeInTheDocument();
+    expect(screen.getByText('128')).toBeInTheDocument();
+    expect((screen.getByLabelText('PO') as HTMLInputElement).value).toBe('339');
+    expect((screen.getByLabelText('Units to buy') as HTMLInputElement).value).toBe('196');
+  });
+
+  it('lowering the PO the buyer does not trust raises Buy by the same amount', () => {
+    const b2155 = line({
+      policy_type: 'reorder_level', reorder_level: null, master_reorder_level: null,
+      order_qty: 196, recommended_qty: 196, net_position: -196,
+      on_hand: 128, outstanding_po: 0, moq: null, order_multiple: null,
+    });
+    const receipts: PoReceipt[] = [
+      { po_number: 'PO-B2155', status: 'active', expected_date: null, remaining: 339 },
+    ];
+    const { onEdit } = renderPanel({ line: b2155, cover: NO_COVER, poReceipts: receipts });
+
+    fireEvent.change(screen.getByLabelText('PO'), { target: { value: '300' } });
+    const [[patch]] = onEdit.mock.calls;
+    // need 663 - own stock 128 - the 300 the buyer trusts = 235.
+    expect((patch as { decision: PlanDecision }).decision).toMatchObject({ buy: 235, po: 300 });
+    expect((patch as { decision: PlanDecision }).decision.stock).toBeUndefined();
+  });
+
+  it('a Buy of 0 records the PO alone, never a stock part the server would refuse', () => {
+    const b2155 = line({
+      policy_type: 'reorder_level', reorder_level: null, master_reorder_level: null,
+      order_qty: 196, recommended_qty: 196, net_position: -196,
+      on_hand: 128, outstanding_po: 0, moq: null, order_multiple: null,
+    });
+    const receipts: PoReceipt[] = [
+      { po_number: 'PO-B2155', status: 'active', expected_date: null, remaining: 339 },
+    ];
+    const { onEdit } = renderPanel({ line: b2155, cover: NO_COVER, poReceipts: receipts });
+
+    const buyInput = screen.getByLabelText('Units to buy');
+    fireEvent.change(buyInput, { target: { value: '0' } });
+    fireEvent.blur(buyInput);
+    const [[patch]] = onEdit.mock.calls;
+    const d = (patch as { decision: PlanDecision }).decision;
+    expect(d.buy).toBe(0);
+    expect(d.po).toBe(339);
+    expect(d.stock).toBeUndefined();
+    // `use_po`, a legal single-part decision - NOT a `mixture` whose only real part is a
+    // display figure the server has no `stock_takes` for (the 422 this replaces).
+    expect(planDecisionKind(d)).toBe('use_po');
+  });
+
+  it('a warehouse-grain row borrows from another pool, and the borrow IS the stock part', () => {
+    // Own pool 20, borrow 5 from DC1, open PO 12: need 60 = 20 + 5 + 12 + a buy of 23.
+    const wh = line({ order_qty: 23, recommended_qty: 23, on_hand: 20,
+                      moq: null, order_multiple: null });
+    const { onEdit } = renderPanel({ line: wh, cover, poReceipts });
+
+    expect(screen.getByText('20')).toBeInTheDocument();
+    expect((screen.getByLabelText('DC1') as HTMLInputElement).value).toBe('5');
+    expect((screen.getByLabelText('Units to buy') as HTMLInputElement).value).toBe('18');
+
+    fireEvent.change(screen.getByLabelText('DC1'), { target: { value: '0' } });
+    const [[patch]] = onEdit.mock.calls;
+    const d = (patch as { decision: PlanDecision }).decision;
+    // Giving the borrow back raises the buy by exactly the 5 it was covering.
+    expect(d.stock).toBeUndefined();
+    expect(d.buy).toBe(23);
+    expect(d.po).toBe(12);
+  });
+
+  it('a project-only line with an open PO still shows the PO part (P8 retired)', () => {
+    const projectOnly = line({
+      order_qty: 50, recommended_qty: 50, project_committed: 50, retail_committed: 0,
+      on_hand: 0, outstanding_po: 0, moq: null, order_multiple: null,
+    });
+    const receipts: PoReceipt[] = [
+      { po_number: 'PO-PROJ', status: 'active', expected_date: null, remaining: 20 },
+    ];
+    renderPanel({ line: projectOnly, cover: NO_COVER, poReceipts: receipts });
+
+    const poInput = screen.getByLabelText('PO') as HTMLInputElement;
+    expect(Number(poInput.value)).toBeGreaterThan(0);
   });
 });

@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Plus, Pencil, Trash2 } from 'lucide-react';
+import { Plus, Pencil, Ruler, Trash2 } from 'lucide-react';
 import {
   getCoreRowModel,
   useReactTable,
@@ -22,15 +22,25 @@ import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
+import { SpecVisibilitySection } from '@/components/spec-visibility/SpecVisibilitySection';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridTable } from '@/components/ui/data-grid-table';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { ADDITIONAL_LANDING_KINDS, portalFormKindLabel } from '@/lib/portal-form-kinds';
 import { toast } from '@/lib/toast';
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import { useMarketSegments, useMarketSegmentMutations } from '../hooks/useMarketSegments';
 import { type MarketSegment } from '../services/marketSegmentService';
+
+/** The kinds a segment may grant beyond the base four every contact already
+ *  has (PLAN-portal-forms-market-segment D3/D4; today: Price Tag Request). */
+const ADDITIONAL_PORTAL_FORM_OPTIONS = ADDITIONAL_LANDING_KINDS.map((kind) => ({
+  value: kind,
+  label: portalFormKindLabel(kind),
+}));
 
 export default function MarketSegmentsAdmin() {
   const { data: segments = [], isLoading, isError } = useMarketSegments();
@@ -38,6 +48,10 @@ export default function MarketSegmentsAdmin() {
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<MarketSegment | null>(null);
+  // Spec visibility is one row per segment, so it is edited from the row it
+  // belongs to rather than as a column every segment would have to carry
+  // (same convention as `ContactAccessTypesAdmin`'s stock visibility dialog).
+  const [specSegment, setSpecSegment] = useState<MarketSegment | null>(null);
   // Delete asks nothing (D7): a toast counts down with Cancel. A segment still
   // assigned to a contact or a team member is refused by the server, and that
   // refusal now arrives as the toast's error rather than as a warning in a
@@ -56,6 +70,7 @@ export default function MarketSegmentsAdmin() {
     is_active: true,
     sort_order: '' as string | number,
     is_requestor_selectable: false,
+    portal_form_types: [] as string[],
   });
 
   function resetForm() {
@@ -66,6 +81,7 @@ export default function MarketSegmentsAdmin() {
       is_active: true,
       sort_order: '',
       is_requestor_selectable: false,
+      portal_form_types: [],
     });
     setEditing(null);
   }
@@ -84,6 +100,7 @@ export default function MarketSegmentsAdmin() {
       is_active: row.is_active,
       sort_order: row.sort_order ?? '',
       is_requestor_selectable: row.is_requestor_selectable,
+      portal_form_types: row.portal_form_types ?? [],
     });
     setDialogOpen(true);
   }
@@ -101,6 +118,7 @@ export default function MarketSegmentsAdmin() {
             is_active: form.is_active,
             sort_order: sort,
             is_requestor_selectable: form.is_requestor_selectable,
+            portal_form_types: form.portal_form_types,
           },
         },
         {
@@ -123,6 +141,7 @@ export default function MarketSegmentsAdmin() {
           is_active: form.is_active,
           sort_order: sort ?? null,
           is_requestor_selectable: form.is_requestor_selectable,
+          portal_form_types: form.portal_form_types,
         },
         {
           onSuccess: () => {
@@ -220,14 +239,49 @@ export default function MarketSegmentsAdmin() {
           ),
       },
       {
+        id: 'portal_form_types',
+        accessorFn: (row) => (row.portal_form_types ?? []).join(', '),
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Additional portal forms" column={column} />
+        ),
+        size: 220,
+        enableSorting: false,
+        meta: { headerTitle: 'Additional portal forms', skeleton: <Skeleton className="h-6 w-32" /> },
+        cell: ({ row }) => {
+          const kinds = row.original.portal_form_types ?? [];
+          if (!kinds.length) return <span className="text-muted-foreground">-</span>;
+          return (
+            <div
+              className="flex flex-wrap gap-1"
+              title={kinds.map(portalFormKindLabel).join(', ')}
+            >
+              {kinds.map((kind) => (
+                <Badge key={kind} variant="secondary" size="sm">
+                  {portalFormKindLabel(kind)}
+                </Badge>
+              ))}
+            </div>
+          );
+        },
+      },
+      {
         id: 'actions',
         header: '',
-        size: 120,
+        size: 160,
         enableSorting: false,
         enableHiding: false,
         enableResizing: false,
         cell: ({ row }) => (
           <div className="flex gap-2">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setSpecSegment(row.original)}
+              aria-label="Spec visibility"
+              title="Spec visibility"
+            >
+              <Ruler className="size-4" />
+            </Button>
             <Button variant="ghost" size="icon" onClick={() => openEdit(row.original)} aria-label="Edit">
               <Pencil className="size-4" />
             </Button>
@@ -367,6 +421,17 @@ export default function MarketSegmentsAdmin() {
               />
               <Label htmlFor="segment-active">Active</Label>
             </div>
+            <div className="grid gap-2">
+              <Label htmlFor="segment-portal-forms">Additional portal forms</Label>
+              <SearchableMultiSelect
+                id="segment-portal-forms"
+                value={form.portal_form_types}
+                onChange={(v) => setForm((f) => ({ ...f, portal_form_types: v }))}
+                options={ADDITIONAL_PORTAL_FORM_OPTIONS}
+                placeholder="No additional portal forms"
+                emptyMessage="No additional portal forms"
+              />
+            </div>
             <div className="flex items-start gap-2">
               <Checkbox
                 id="segment-requestor-selectable"
@@ -401,6 +466,21 @@ export default function MarketSegmentsAdmin() {
               {editing ? 'Update' : 'Create'}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Spec visibility policy for one market segment */}
+      <Dialog open={!!specSegment} onOpenChange={(open) => !open && setSpecSegment(null)}>
+        <DialogContent className="max-h-[85dvh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Spec visibility - {specSegment?.name}</DialogTitle>
+          </DialogHeader>
+          {specSegment ? (
+            <SpecVisibilitySection
+              heading={null}
+              scope={{ kind: 'segment', segmentCode: specSegment.code }}
+            />
+          ) : null}
         </DialogContent>
       </Dialog>
 

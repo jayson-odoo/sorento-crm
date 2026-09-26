@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { Loader2, Mic, Paperclip, RotateCcw, SendHorizonal, Square } from 'lucide-react';
+import { TurnAttachments } from '@/components/chatbot/TurnAttachments';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -79,6 +80,9 @@ function MessageBubble({
           {isMediaPending ? <Loader2 className="mr-1 inline size-3.5 animate-spin" /> : null}
           {message.text}
         </p>
+        {message.attachments && message.attachments.length > 0 ? (
+          <TurnAttachments attachments={message.attachments} />
+        ) : null}
         {message.mediaStatus === 'failed' && message.mediaRetry ? (
           <div className="mt-1.5">
             <button

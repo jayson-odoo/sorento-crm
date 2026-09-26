@@ -19,12 +19,26 @@ from __future__ import annotations
 
 from typing import Iterable, Optional, Sequence
 
+from sqlalchemy import case
 from sqlalchemy.orm import Session
 
 from app.models.product import Product, ProductAttachment
-from app.models.resources import Attachment
+from app.models.resources import Attachment, AttachmentType
 from app.services.dealer_kit.viewer import ViewerContext
 from app.services.storage_router import resolve_signed_url
+
+# D8/AC-S10-1: a tiebreak, not a filter - a product whose only image is a
+# technical drawing still resolves it (AC-S10-3). Between two non-primary
+# images, "Product Photos" wins over anything else, which wins over
+# "Technical Specifications", so a drawing linked before the real photo (the
+# SRTKS8547 bug the plan measured) no longer wins on `created_at` alone.
+# AC-S5-11 (r10 S5): a Combo Image ranks LAST of all - it is the package
+# picture from ONE combo, not the product's own tag photo, so it never wins a
+# gallery slot over even a technical drawing.
+_PRODUCT_PHOTOS_RANK = 0
+_OTHER_TYPE_RANK = 1
+_TECHNICAL_SPECS_RANK = 2
+_COMBO_IMAGE_RANK = 3
 
 # What an anonymous reader of a public catalogue counts as. The public page is
 # the consumer-facing surface, so consumer imagery is what it may show; dealer
@@ -66,6 +80,7 @@ def primary_image_urls(
     rows = (
         db.query(ProductAttachment, Attachment)
         .join(Attachment, Attachment.id == ProductAttachment.attachment_id)
+        .outerjoin(AttachmentType, AttachmentType.id == Attachment.attachment_type_id)
         .filter(ProductAttachment.product_id.in_(product_ids))
         # Images only. `product_attachments` links whatever is attached to a
         # product - the live data holds 532 PDFs and a couple of videos - and a
@@ -77,6 +92,12 @@ def primary_image_urls(
         # manager about what exists. The picker filters the same way, so the two
         # surfaces of this feature cannot drift.
         .filter(Attachment.is_deleted.is_(False))
+        # AC-S5-11: a combo's own picture is never a catalogue tile image, not
+        # even one somebody marked primary by accident.
+        .filter(
+            (AttachmentType.type_name.is_(None))
+            | (AttachmentType.type_name != "Combo Image")
+        )
         .order_by(
             ProductAttachment.product_id,
             # Someone deliberately marked one as primary; ordering must not
@@ -136,11 +157,18 @@ def gallery_images(
     rows = (
         db.query(ProductAttachment, Attachment)
         .join(Attachment, Attachment.id == ProductAttachment.attachment_id)
+        .outerjoin(AttachmentType, AttachmentType.id == Attachment.attachment_type_id)
         .filter(ProductAttachment.product_id == product.id)
         .filter(Attachment.mime_type.ilike("image/%"))
         .filter(Attachment.is_deleted.is_(False))
         .order_by(
             (ProductAttachment.is_primary.is_(True)).desc(),
+            case(
+                (AttachmentType.type_name == "Product Photos", _PRODUCT_PHOTOS_RANK),
+                (AttachmentType.type_name == "Technical Specifications", _TECHNICAL_SPECS_RANK),
+                (AttachmentType.type_name == "Combo Image", _COMBO_IMAGE_RANK),
+                else_=_OTHER_TYPE_RANK,
+            ),
             ProductAttachment.sort_order.nullslast(),
             ProductAttachment.created_at,
         )
@@ -169,3 +197,37 @@ def gallery_images(
             }
         )
     return images
+
+
+def resign_images(db: Session, images: list[dict]) -> list[dict]:
+    """Fresh signed URLs for photos a PIN is carrying (r9 D16).
+
+    A signed URL expires in an hour, so the copy stored in
+    ``pinned_tag_data`` is dead almost immediately: the pin remembers WHICH
+    photos the tag was drawn with (by attachment id), and the URL is resolved
+    again on every read. A photo whose attachment has since gone is dropped,
+    the same rule ``gallery_images`` uses for one it cannot sign.
+    """
+    from app.models.resources import Attachment
+
+    ids = [image.get("attachment_id") for image in images or [] if image.get("attachment_id")]
+    if not ids:
+        return []
+    rows = {
+        attachment.id: attachment
+        for attachment in db.query(Attachment).filter(Attachment.id.in_(ids)).all()
+    }
+    fresh: list[dict] = []
+    for image in images:
+        attachment = rows.get(image.get("attachment_id"))
+        if attachment is None:
+            continue
+        signed = resolve_signed_url(
+            attachment.file_path,
+            provider=attachment.storage_provider,
+            strict=True,
+        )
+        if not signed:
+            continue
+        fresh.append({**image, "url": signed})
+    return fresh

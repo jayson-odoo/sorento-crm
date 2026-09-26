@@ -1,22 +1,15 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Download,
   ExternalLink,
   FileQuestion,
   LoaderCircle,
   Trash2,
-  ZoomIn,
-  ZoomOut,
 } from 'lucide-react';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
+import { Dialog, DialogContent } from '@/components/ui/dialog';
+import { PreviewModalChrome } from '@/components/common/PreviewModalChrome';
 import {
   Carousel,
   CarouselContent,
@@ -26,7 +19,9 @@ import {
   type CarouselApi,
 } from '@/components/ui/carousel';
 import { Button } from '@/components/ui/button';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { apiFetch } from '@/lib/api';
+import { splitHighlightSegments } from '@/lib/textHighlight';
 import { toast } from '@/lib/toast';
 
 /**
@@ -44,6 +39,20 @@ async function defaultFetchBytes(item: AttachmentPreviewItem): Promise<Response>
   return apiFetch(item.downloadUrl as string);
 }
 
+/** The actual browser download, given bytes already in hand - the tail end of
+ *  `downloadItem`, pulled out so `openItem` can reuse it on an already-fetched
+ *  blob instead of fetching the same bytes twice. */
+function saveBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 /**
  * A plain `<a href download>` to /download sends no auth header → 401 ("File
  * wasn't available on site"), so fetch the bytes via `fetchBytes` and save the
@@ -54,17 +63,75 @@ async function downloadItem(item: AttachmentPreviewItem, fetchBytes: FetchBytes)
   try {
     const resp = await fetchBytes(item);
     if (!resp.ok) throw new Error('Download failed');
-    const blob = await resp.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = item.name;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+    saveBlob(await resp.blob(), item.name);
   } catch {
     toast.error(`Could not download ${item.name}`);
+  }
+}
+
+/**
+ * A blob url inherits the app's own origin and carries no `Content-Disposition`, so an
+ * uploaded file of any OTHER type opened inline would run as this staff user (an HTML or
+ * SVG attachment executing script - review round 1, security blocker). Only these render
+ * safely IN THE TAB `openItem` opens; anything else - `image/svg+xml` included,
+ * deliberately, and an `xlsx` (fix round 2) - closes that tab and downloads instead, rather
+ * than handing a browser a mime type it would execute, script, or simply sit blank on.
+ */
+const OPEN_INLINE_MIME_TYPES = new Set([
+  'application/pdf',
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+  'text/plain',
+]);
+
+function mimeOf(blob: Blob): string {
+  return (blob.type || '').split(';')[0].trim().toLowerCase();
+}
+
+/**
+ * Same fix as `downloadItem` (D10, `PLAN-stock-list-bare-model-codes.md`): an item with no
+ * CDN url has no `<a href target=_blank>` that could carry auth, so a plain anchor to the
+ * same-origin `/download` route sent no Bearer token and 401ed with a raw JSON page. Open
+ * fetches the bytes the same way Download does, then opens the resulting blob in a new tab.
+ *
+ * `targetWindow` is opened SYNCHRONOUSLY in the click handler, before this async function
+ * ever runs - a `window.open` called after an `await` is a background tab a popup blocker
+ * drops, since it is no longer inside the click's own call stack. `null` here means the
+ * popup was blocked: nothing to navigate, so this falls back to `downloadItem` instead of
+ * silently doing nothing.
+ */
+async function openItem(item: AttachmentPreviewItem, fetchBytes: FetchBytes, targetWindow: Window | null) {
+  if (!item.downloadUrl) return;
+  if (!targetWindow) {
+    toast.error(`Could not open ${item.name} in a new tab - downloading instead`);
+    await downloadItem(item, fetchBytes);
+    return;
+  }
+  try {
+    const resp = await fetchBytes(item);
+    if (!resp.ok) throw new Error('Open failed');
+    const blob = await resp.blob();
+    if (!OPEN_INLINE_MIME_TYPES.has(mimeOf(blob))) {
+      // A blank tab with nothing safe to show it (an xlsx, a docx, ...) is a dead tab, not a
+      // preview - close it and fall back to the same download the button beside Open runs,
+      // reusing the bytes already fetched rather than fetching them twice.
+      targetWindow.close();
+      saveBlob(blob, item.name);
+      toast.success(`Downloaded ${item.name} - this file type cannot be shown in a tab`);
+      return;
+    }
+    const url = URL.createObjectURL(blob);
+    targetWindow.location.href = url;
+    // The tab has to finish loading the blob before revoking it would be safe, and there is
+    // no load event to hang that off across an opaque `location.href` navigation - a fixed
+    // delay is the same trade `downloadItem`'s synchronous click makes, just longer because
+    // this crosses a tab boundary instead of a same-document anchor click.
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  } catch {
+    targetWindow.close();
+    toast.error(`Could not open ${item.name}`);
   }
 }
 
@@ -139,6 +206,9 @@ export default function AttachmentPreviewModal({
   const [api, setApi] = useState<CarouselApi>();
   const [current, setCurrent] = useState(startIndex);
   const [zoom, setZoom] = useState(1);
+  // Which item's Open fetch is in flight - disables that item's own Open button and shows a
+  // spinner, the same busy pattern the Add-mapping dialogs use for their submit button.
+  const [openingItemId, setOpeningItemId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!api) return;
@@ -158,21 +228,6 @@ export default function AttachmentPreviewModal({
   const zoomBy = useCallback((factor: number) => {
     setZoom((z) => Math.min(5, Math.max(0.25, +(z * factor).toFixed(2))));
   }, []);
-
-  // Editable zoom percentage. Keep a text draft so the user can type freely,
-  // committing (clamped 25 - 500%) on Enter/blur.
-  const [zoomText, setZoomText] = useState('100');
-  useEffect(() => {
-    setZoomText(String(Math.round(zoom * 100)));
-  }, [zoom]);
-  const commitZoomText = useCallback(() => {
-    const pct = parseInt(zoomText, 10);
-    if (!Number.isNaN(pct)) {
-      setZoom(Math.min(5, Math.max(0.25, pct / 100)));
-    } else {
-      setZoomText(String(Math.round(zoom * 100)));
-    }
-  }, [zoomText, zoom]);
 
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -199,11 +254,12 @@ export default function AttachmentPreviewModal({
   if (!open || items.length === 0) return null;
   const activeItem = items[current] ?? items[0];
   const activeIsImage = kindOf(activeItem?.name ?? '') === 'image';
-  // Open-in-new-tab target: the cacheable CDN url if we have one, else the
-  // same-origin download route.
-  const openUrl = activeItem?.url?.startsWith('http')
-    ? activeItem.url
-    : activeItem?.downloadUrl;
+  // Open-in-new-tab target: the cacheable CDN url if we have one - a plain link, unchanged
+  // (AC-F3). Without one, a plain `<a href=/download target=_blank>` sends no auth header and
+  // 401s (D10), so Open becomes a button that fetches the bytes and opens the resulting blob
+  // instead (AC-F2/AC-F4).
+  const openUrl = activeItem?.url?.startsWith('http') ? activeItem.url : undefined;
+  const canOpenViaFetch = !openUrl && !!activeItem?.downloadUrl;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -211,100 +267,86 @@ export default function AttachmentPreviewModal({
         className="max-w-5xl gap-0 overflow-hidden p-0"
         onKeyDown={onKeyDown}
       >
-        {/* Stacks at phone width: title + zoom + Open + Download cannot fit on
-            one 375px row, and a plain flex-row overflows the dialog instead of
-            wrapping. */}
-        <DialogHeader className="flex-col items-stretch gap-2 border-b px-4 py-3 pr-12 text-start sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-          <div className="min-w-0">
-            <DialogTitle className="truncate text-base" title={activeItem?.name}>
-              {activeItem?.name}
-            </DialogTitle>
-            {/* DialogDescription, not a bare <p>: Radix warns (and screen readers
-                get nothing) when DialogContent has no aria-describedby, and the
-                position counter is the description this dialog already had. */}
-            <DialogDescription className="text-xs text-muted-foreground">
-              {current + 1} / {items.length}
-            </DialogDescription>
-          </div>
-          <div className="flex flex-wrap items-center gap-2 sm:shrink-0 sm:justify-end">
-            {activeIsImage && (
-              <div className="flex items-center rounded-md border">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="px-2"
-                  onClick={() => zoomBy(0.8)}
-                  disabled={zoom <= 0.25}
-                  aria-label="Zoom out"
-                >
-                  <ZoomOut className="size-4" />
+        {/* The shared preview header (r9 S1/D2) - the same bar the tag sheet
+            lightbox wears, so a Download button never moves between the two. */}
+        <PreviewModalChrome
+          title={activeItem?.name ?? ''}
+          counter={`${current + 1} / ${items.length}`}
+          zoom={
+            activeIsImage
+              ? {
+                  value: zoom,
+                  onZoomBy: zoomBy,
+                  onSetZoom: (next) => setZoom(next),
+                }
+              : null
+          }
+          actions={
+            <>
+              {openUrl && (
+                <Button variant="outline" size="sm" asChild>
+                  <a href={openUrl} target="_blank" rel="noopener noreferrer">
+                    <ExternalLink className="size-4 mr-1" />
+                    Open
+                  </a>
                 </Button>
-                <div className="flex items-center">
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    value={zoomText}
-                    onChange={(e) =>
-                      setZoomText(e.target.value.replace(/[^0-9]/g, '').slice(0, 3))
-                    }
-                    onBlur={commitZoomText}
-                    onKeyDown={(e) => {
-                      // Don't let the modal's arrow/+/- shortcuts fire while typing.
-                      e.stopPropagation();
-                      if (e.key === 'Enter') {
-                        commitZoomText();
-                        (e.target as HTMLInputElement).blur();
-                      }
-                    }}
-                    aria-label="Zoom percentage"
-                    className="w-8 bg-transparent text-right text-xs tabular-nums text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
-                  />
-                  <span className="pr-1 text-xs text-muted-foreground">%</span>
-                </div>
+              )}
+              {canOpenViaFetch && (
                 <Button
-                  variant="ghost"
+                  variant="outline"
                   size="sm"
-                  className="px-2"
-                  onClick={() => zoomBy(1.25)}
-                  disabled={zoom >= 5}
-                  aria-label="Zoom in"
+                  disabled={openingItemId === activeItem.id}
+                  onClick={() => {
+                    // Opened HERE, synchronously inside the click - a `window.open` after the
+                    // `await` in `openItem` runs outside the click's own call stack, which a
+                    // popup blocker treats as an unsolicited new tab and drops.
+                    //
+                    // No `noopener` argument (fix round 2, item 1): passing it as a WINDOW
+                    // FEATURE makes `window.open` itself return `null` even when the popup
+                    // opens fine, per spec - there is then no handle to navigate later. The
+                    // same "the new tab cannot reach back into this one" property is set by
+                    // hand on the returned reference instead.
+                    const targetWindow = window.open('', '_blank');
+                    if (targetWindow) targetWindow.opener = null;
+                    setOpeningItemId(activeItem.id);
+                    void openItem(activeItem, resolvedFetchBytes, targetWindow).finally(() => {
+                      setOpeningItemId((id) => (id === activeItem.id ? null : id));
+                    });
+                  }}
                 >
-                  <ZoomIn className="size-4" />
-                </Button>
-              </div>
-            )}
-            {openUrl && (
-              <Button variant="outline" size="sm" asChild>
-                <a href={openUrl} target="_blank" rel="noopener noreferrer">
-                  <ExternalLink className="size-4 mr-1" />
+                  {openingItemId === activeItem.id ? (
+                    <LoaderCircle className="size-4 mr-1 animate-spin" />
+                  ) : (
+                    <ExternalLink className="size-4 mr-1" />
+                  )}
                   Open
-                </a>
-              </Button>
-            )}
-            {activeItem?.downloadUrl && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => downloadItem(activeItem, resolvedFetchBytes)}
-              >
-                <Download className="size-4 mr-1" />
-                Download
-              </Button>
-            )}
-            {onDelete && activeItem && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="text-destructive hover:text-destructive"
-                onClick={() => onDelete(activeItem)}
-                disabled={deletingItemId === activeItem.id}
-              >
-                <Trash2 className="size-4 mr-1" />
-                Delete
-              </Button>
-            )}
-          </div>
-        </DialogHeader>
+                </Button>
+              )}
+              {activeItem?.downloadUrl && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => downloadItem(activeItem, resolvedFetchBytes)}
+                >
+                  <Download className="size-4 mr-1" />
+                  Download
+                </Button>
+              )}
+              {onDelete && activeItem && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-destructive hover:text-destructive"
+                  onClick={() => onDelete(activeItem)}
+                  disabled={deletingItemId === activeItem.id}
+                >
+                  <Trash2 className="size-4 mr-1" />
+                  Delete
+                </Button>
+              )}
+            </>
+          }
+        />
 
         <Carousel
           setApi={setApi}
@@ -484,6 +526,21 @@ const MAX_COLS = 40;
  */
 const SCAN_ROWS = 2000;
 
+/** Every occurrence of `query` inside `text`, wrapped in `<mark>` (AC-N6). Same helper and
+ *  the same mark classes as the chat transcript's own highlight (`RespondChatList.tsx`), so
+ *  a search match reads the same wherever this app marks one. */
+function highlightCell(text: string, query: string) {
+  return splitHighlightSegments(text, query).map((segment, i) =>
+    segment.match ? (
+      <mark key={i} className="rounded-sm bg-amber-300 px-0.5 text-zinc-900">
+        {segment.text}
+      </mark>
+    ) : (
+      <span key={i}>{segment.text}</span>
+    ),
+  );
+}
+
 function ExcelSlide({ item, fetchBytes }: { item: AttachmentPreviewItem; fetchBytes: FetchBytes }) {
   const wbRef = useRef<import('xlsx').WorkBook | null>(null);
   const xlsxRef = useRef<typeof import('xlsx') | null>(null);
@@ -491,8 +548,13 @@ function ExcelSlide({ item, fetchBytes }: { item: AttachmentPreviewItem; fetchBy
   const [error, setError] = useState<string | null>(null);
   const [sheets, setSheets] = useState<string[]>([]);
   const [active, setActive] = useState('');
-  const [rows, setRows] = useState<string[][]>([]);
-  const [truncated, setTruncated] = useState(false);
+  // Every row the sheet loaded (up to SCAN_ROWS physical rows, blank rows already dropped,
+  // columns already clamped to MAX_COLS) - search reads ALL of these, not only the 200-row
+  // slice the plain preview shows (AC-N6). NOT reset on a sheet switch by itself; `query` is
+  // its own state below and lives across `showSheet` calls, so changing sheet re-applies it.
+  const [allRows, setAllRows] = useState<string[][]>([]);
+  const [colsClamped, setColsClamped] = useState(false);
+  const [query, setQuery] = useState('');
 
   const showSheet = useCallback((name: string) => {
     const wb = wbRef.current;
@@ -503,13 +565,13 @@ function ExcelSlide({ item, fetchBytes }: { item: AttachmentPreviewItem; fetchBy
     // range, so on a sheet with a stale used-range marker it does millions of
     // cell lookups and only then hands back the 30 real rows we slice to 200.
     let range: string | undefined;
-    let colsClamped = false;
+    let clampedCols = false;
     const ref = ws?.['!ref'];
     if (ref) {
       const r = XLSX.utils.decode_range(ref);
       const endRow = Math.min(r.e.r, r.s.r + SCAN_ROWS - 1);
       const endCol = Math.min(r.e.c, r.s.c + MAX_COLS - 1);
-      colsClamped = r.e.c > endCol;
+      clampedCols = r.e.c > endCol;
       range = XLSX.utils.encode_range({ s: r.s, e: { r: endRow, c: endCol } });
     }
     // raw:false → return each cell's FORMATTED text (the `.w` value), so date
@@ -522,15 +584,32 @@ function ExcelSlide({ item, fetchBytes }: { item: AttachmentPreviewItem; fetchBy
       raw: false,
       ...(range ? { range } : {}),
     });
-    const trimmed = aoa
-      .slice(0, MAX_ROWS)
-      .map((r) => r.slice(0, MAX_COLS).map((c) => (c == null ? '' : String(c))));
-    // Deliberately NOT derived from the declared range: it is the thing that
-    // lies. Claim truncation only for rows we actually saw and dropped.
-    setTruncated(aoa.length > MAX_ROWS || colsClamped);
-    setRows(trimmed);
+    setColsClamped(clampedCols);
+    setAllRows(aoa.map((r) => r.slice(0, MAX_COLS).map((c) => (c == null ? '' : String(c)))));
     setActive(name);
   }, []);
+
+  // AC-N6: case-insensitive substring, any cell, over the FULL loaded set - not the 200-row
+  // display slice. Client-side (the sheet is already on the browser), so no debounce.
+  const trimmedQuery = query.trim();
+  const matches = useMemo(() => {
+    if (!trimmedQuery) return allRows;
+    const q = trimmedQuery.toLowerCase();
+    return allRows.filter((r) => r.some((c) => c.toLowerCase().includes(q)));
+  }, [allRows, trimmedQuery]);
+  const rows = useMemo(() => matches.slice(0, MAX_ROWS), [matches]);
+  // Wording follows what's actually being cut: a query narrows to MATCHES, no query shows the
+  // sheet's own ROWS - and the column clamp (independent of both) still gets said.
+  let footnote: string | null = null;
+  if (trimmedQuery) {
+    if (matches.length > MAX_ROWS) {
+      footnote = `Showing first ${MAX_ROWS} matches. Download for the full sheet.`;
+    } else if (colsClamped) {
+      footnote = `Showing first ${MAX_COLS} columns. Download for the full sheet.`;
+    }
+  } else if (allRows.length > MAX_ROWS || colsClamped) {
+    footnote = `Showing first ${MAX_ROWS} rows × ${MAX_COLS} columns. Download for the full sheet.`;
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -591,31 +670,47 @@ function ExcelSlide({ item, fetchBytes }: { item: AttachmentPreviewItem; fetchBy
           ))}
         </div>
       )}
-      <div className="w-full overflow-auto rounded border bg-white">
-        <table className="w-max border-collapse text-xs">
-          <tbody>
-            {rows.map((r, ri) => (
-              <tr key={ri} className={ri === 0 ? 'bg-muted/50 font-medium' : ''}>
-                {r.map((c, ci) => (
-                  <td
-                    key={ci}
-                    className="max-w-[240px] truncate border px-2 py-1"
-                    title={c}
-                  >
-                    {c}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="flex items-center gap-2">
+        <ListSearchInput
+          value={query}
+          onChange={setQuery}
+          placeholder="Search in sheet"
+          aria-label="Search in sheet"
+          className="w-full sm:w-64"
+        />
+        {trimmedQuery && (
+          <span className="shrink-0 text-xs text-muted-foreground">
+            {matches.length} of {allRows.length} rows
+          </span>
+        )}
       </div>
-      {truncated && (
-        <p className="text-xs text-muted-foreground">
-          Showing first {MAX_ROWS} rows × {MAX_COLS} columns. Download for the full
-          sheet.
-        </p>
+      {trimmedQuery && matches.length === 0 ? (
+        <p className="py-8 text-center text-xs text-muted-foreground">No cell matches</p>
+      ) : (
+        <div className="w-full overflow-auto rounded border bg-white">
+          <table className="w-max border-collapse text-xs">
+            <tbody>
+              {rows.map((r, ri) => (
+                <tr
+                  key={ri}
+                  className={ri === 0 && !trimmedQuery ? 'bg-muted/50 font-medium' : ''}
+                >
+                  {r.map((c, ci) => (
+                    <td
+                      key={ci}
+                      className="max-w-[240px] truncate border px-2 py-1"
+                      title={c}
+                    >
+                      {trimmedQuery ? highlightCell(c, trimmedQuery) : c}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
+      {footnote && <p className="text-xs text-muted-foreground">{footnote}</p>}
     </div>
   );
 }

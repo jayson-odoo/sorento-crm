@@ -26,6 +26,7 @@ import pytest
 from sqlalchemy import text
 
 from app.models.base import company_scope
+from app.models.project_so import OrderInquirySuggestedLink
 from app.services.project_order_inquiry_service import (
     TIER_ELSEWHERE,
     TIER_POOL,
@@ -619,7 +620,16 @@ def test_a_part_covered_row_reads_partly_linked_and_keeps_its_quantity(world):
 def test_auto_link_finishes_a_partly_linked_row_and_a_second_pass_links_nothing(world):
     """The cascade's idempotence, which the three automatic triggers all rely on - and
     the widening the links table brought: a PARTLY LINKED row is in scope, because it is
-    exactly the row a fresh purchase order should finish."""
+    exactly the row a fresh purchase order should finish.
+
+    S3 reversal: the remainder the walk finds is a SUGGESTION now, never a real link,
+    so the row stays `partly_linked` rather than moving to `placed`, and it re-enters
+    the walk on every pass (a suggestion is not a placement that settles the row) - so
+    `placed_rows` does NOT drop to 0 on the second pass any more. What idempotence
+    means now is that an unchanged answer is not deleted and rewritten
+    (`_same_placement`): the suggestion itself carries the SAME id and `suggested_at`
+    across both passes.
+    """
     orders = _two_purchase_orders(world)
     row = world.row("ORDER", 8)
     world.svc.place_on_po_allocations(
@@ -631,10 +641,25 @@ def test_auto_link_finishes_a_partly_linked_row_and_a_second_pass_links_nothing(
     world.db.flush()
     world.db.refresh(row)
     assert first["placed_rows"] == 1
-    assert row.state == "placed"
+    assert row.state == "partly_linked"
+    first_suggestion = (
+        world.db.query(OrderInquirySuggestedLink)
+        .filter(OrderInquirySuggestedLink.row_id == row.id)
+        .one()
+    )
+    assert first_suggestion.qty == Decimal("3")
 
     second = world.svc.auto_place_for_products(None, actor_user_id=None, trigger="zzt")
-    assert second["placed_rows"] == 0
+    assert second["placed_rows"] == 1
+    second_suggestion = (
+        world.db.query(OrderInquirySuggestedLink)
+        .filter(OrderInquirySuggestedLink.row_id == row.id)
+        .one()
+    )
+    assert second_suggestion.id == first_suggestion.id, (
+        "an unchanged answer is not deleted and rewritten"
+    )
+    assert second_suggestion.suggested_at == first_suggestion.suggested_at
 
 
 def test_an_spo_line_outside_the_pool_is_never_offered(world):
@@ -908,6 +933,9 @@ def test_the_sales_order_detail_states_where_each_lines_buy_sits(world):
             "late": False,
             "late_days": None,
             "expected_date": "2026-08-19",
+            # Declared on `SalesOrderLineLink` since the 17 Sep derived-SPO fix; False on
+            # a stored link.
+            "derived": False,
         }
     ]
 

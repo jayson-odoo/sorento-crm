@@ -42,6 +42,15 @@ class IdeationTurnRequest(BaseModel):
             "copy - this is what makes the draft accumulate across turns."
         ),
     )
+    is_test: bool = Field(
+        False,
+        description=(
+            "A test turn (#1179): the chatbot's dry run sets this. The idea is still "
+            "created in the shared service, flagged is_test so the board hides it by "
+            "default, and the endpoint does NOT persist session_vars for the contact - "
+            "the caller carries the returned pointer instead."
+        ),
+    )
 
 
 class IdeationTurnResponse(BaseModel):

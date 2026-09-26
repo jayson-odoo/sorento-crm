@@ -31,10 +31,13 @@ console is the module's own dry-run entry point.
 from __future__ import annotations
 
 import base64
+import hashlib
 import binascii
 import json
 import logging
 from datetime import datetime, timedelta, timezone
+
+from pydantic import BaseModel
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import desc, func
@@ -71,6 +74,14 @@ from app.services.chatbot.dispatch import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chatbot")
+
+
+def parser_prompt_key() -> str:
+    """The prompt registry key the parser publishes under - read from the parser itself
+    so this route and the engine can never name two different prompts."""
+    from app.services.chatbot.head.parser import PROMPT_KEY
+
+    return PROMPT_KEY
 
 VIEW = "system.chat_history.view"
 MANAGE = "system.chat_history.manage"
@@ -142,6 +153,112 @@ def _decode_cursor(cursor: str) -> tuple[datetime, str]:
         ) from exc
 
 
+def _media_facts(row: ChatbotTurn) -> dict | None:
+    """The turn's own `media_intake` trace stage's `facts` AND `raw` MERGED into
+    one dict, or `None` on a text turn (no such stage at all).
+
+    Merged rather than `facts` alone (review round S5): `job_id`/`attachment_id`/
+    the full `result` now live under the stage's `raw` (never printed on the trace
+    screen itself - `facts` alone is what `TurnPanel` renders there), but `_media_
+    block` below is a DIFFERENT projection (the `media` block on `GET /turns`) that
+    still needs `attachment_id` and `result` to build its own shaped response.
+    """
+    stage = next(
+        (r for r in (row.trace or []) if isinstance(r, dict) and r.get("stage") == "media_intake"),
+        None,
+    )
+    if stage is None:
+        return None
+    facts = stage.get("facts") or {}
+    raw = stage.get("raw") or {}
+    return {**facts, **raw}
+
+
+def _media_attachment_ids(rows) -> list[str]:
+    """Every non-null `attachment_id` a page of turns' `media_intake` facts carry -
+    review round note (c): the ONE id list `list_turns` batches its `Attachment`
+    lookup on, instead of one query per row."""
+    ids: list[str] = []
+    for row in rows:
+        facts = _media_facts(row)
+        attachment_id = facts.get("attachment_id") if facts else None
+        if attachment_id:
+            ids.append(attachment_id)
+    return ids
+
+
+def _load_attachments(db: Session, attachment_ids: list[str]) -> dict[str, "Attachment"]:
+    if not attachment_ids:
+        return {}
+    from app.models.resources import Attachment
+
+    rows = db.query(Attachment).filter(Attachment.id.in_(attachment_ids)).all()
+    return {str(a.id): a for a in rows}
+
+
+def _media_block(
+    db: Session, row: ChatbotTurn, *, attachments_by_id: dict[str, "Attachment"] | None = None
+) -> dict | None:
+    """The `media` block `GET /turns` and `/turns/{id}` both carry (chatbot
+    media-into-turn, S4, AC-1839/AC-1840): the turn's own `media_intake` trace
+    stage, plus a 15-minute signed url for whatever `attachments` row S4's worker
+    task linked to it. `None` on a text turn (no such stage at all) or a denied
+    one that stored no attachment (`url` stays null; the rest still reports what
+    was decided).
+
+    `attachments_by_id` (review round note (c)): a page's worth of `Attachment`
+    rows the CALLER already batched in one query (`_load_attachments`) - `list_turns`
+    always passes this; the single-turn detail route passes `None` and this
+    function queries for its own one row, since there is only ever one.
+    """
+    facts = _media_facts(row)
+    if facts is None:
+        return None
+    result = facts.get("result") or {}
+    attachment_id = facts.get("attachment_id")
+    url = None
+    mime_type = None
+    if attachment_id:
+        if attachments_by_id is not None:
+            attachment = attachments_by_id.get(str(attachment_id))
+        else:
+            from app.models.resources import Attachment
+
+            attachment = db.query(Attachment).filter(Attachment.id == attachment_id).first()
+        if attachment is not None:
+            from app.services.storage_router import resolve_signed_url
+
+            mime_type = attachment.mime_type
+            try:
+                # `strict=True` (review round note (b)): a media attachment's url is
+                # never worth silently degrading to an unsigned one - the customer's
+                # own photo/voice note behind a broken signer must surface as no url
+                # (already the contract here) rather than a link that quietly leaks.
+                url = resolve_signed_url(
+                    attachment.file_path,
+                    provider=attachment.storage_provider,
+                    expires_in=900,
+                    strict=True,
+                )
+            except Exception:  # noqa: BLE001 - the trace still renders without a url
+                logger.warning("chatbot turn %s: could not sign the media url", row.id, exc_info=True)
+    entities = [
+        {"raw": e} if isinstance(e, str) else e for e in (result.get("entities") or [])
+    ]
+    return {
+        "modality": facts.get("modality"),
+        "mime_type": mime_type,
+        "attachment_id": attachment_id,
+        "url": url,
+        "transcript_or_rendered_text": result.get("rendered_text") or result.get("transcript"),
+        "entities": entities,
+        "attributes": list(result.get("attributes") or []),
+        "notes": result.get("notes"),
+        "truncated": bool(result.get("truncated")),
+        "decision": facts.get("decision"),
+    }
+
+
 @router.get("/turns", response_model=ChatbotTurnListResponse)
 def list_turns(
     contact_respond_id: str | None = Query(None),
@@ -201,8 +318,18 @@ def list_turns(
     has_more = len(rows) > limit
     page = rows[:limit]
     available = retry_available(db)
+    # Review round note (c): ONE `Attachment` query for the whole page's worth of
+    # media_intake attachment ids, signed per row - not one query per turn.
+    attachments_by_id = _load_attachments(db, _media_attachment_ids(page))
+    items = [
+        {
+            **ChatbotTurnResponse.model_validate(row).model_dump(),
+            "media": _media_block(db, row, attachments_by_id=attachments_by_id),
+        }
+        for row in page
+    ]
     return ChatbotTurnListResponse(
-        items=page,
+        items=items,
         next_cursor=_encode_cursor(page[-1]) if has_more and page else None,
         retry_available=available,
         retry_unavailable_reason=None
@@ -309,7 +436,7 @@ def get_turn(
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Turn not found.")
     return ChatbotTurnDetailResponse(
-        **ChatbotTurnResponse.model_validate(row).model_dump(),
+        **{**ChatbotTurnResponse.model_validate(row).model_dump(), "media": _media_block(db, row)},
         trace_detail=compose_trace_detail(row),
     )
 
@@ -542,6 +669,7 @@ def console_turn(
         media_text=result.media_text,
         media_error=result.media_error,
         prompt_version=result.prompt_version,
+        actions=result.actions,
     )
 
 
@@ -596,3 +724,85 @@ def console_prompt_versions(
         )
         for row in rows
     ]
+
+
+# --------------------------------------------------------------------------- #
+# Prompt blocks: are the published parser blocks still what the rows say? (AC-1552)
+# --------------------------------------------------------------------------- #
+
+
+class PromptBlocksStatus(BaseModel):
+    """What the Prompts page's "domain block out of date" banner reads.
+
+    Hash based, not timestamp based: an owner who saves a domain and undoes it has
+    changed nothing, and a banner that fired on `updated_at` would say otherwise. The
+    rendered blocks ARE the comparison, so the answer is exactly "would publishing now
+    change what the parser is told".
+    """
+
+    stale: bool
+    current_hash: str
+    published_hash: str | None
+    published_version: int | None
+    published_at: datetime | None
+
+
+@router.get("/prompt-blocks/status", response_model=PromptBlocksStatus)
+def prompt_blocks_status(
+    current_user: dict = Depends(require_permission(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """Whether `chatbot_domains` / `chatbot_entity_kinds` have moved since the labelled
+    parser version was published (AC-1552).
+
+    The comparison is against `production` - the version a customer's turn actually runs
+    on. An unlabelled version carrying newer blocks is not what anybody is being answered
+    by, so it must not clear the banner.
+    """
+    _ = current_user
+    from app.models.ai_prompt import AIPromptLabel, AIPromptVersion
+    from app.services.chatbot_parser_prompt import blocks_of, prompt_blocks_hash
+
+    current_hash = prompt_blocks_hash(db)
+
+    label = (
+        db.query(AIPromptLabel)
+        .filter(
+            AIPromptLabel.name == parser_prompt_key(),
+            AIPromptLabel.label == "production",
+        )
+        .first()
+    )
+    published = (
+        db.query(AIPromptVersion).filter(AIPromptVersion.id == label.version_id).first()
+        if label is not None
+        else None
+    )
+    if published is None:
+        # Nothing is published, so nothing is out of date - there is no version for the
+        # rows to disagree with. The banner stays quiet and the Prompts page's own empty
+        # state is what says there is no parser version yet.
+        return PromptBlocksStatus(
+            stale=False,
+            current_hash=current_hash,
+            published_hash=None,
+            published_version=None,
+            published_at=None,
+        )
+
+    published_hash = (published.config_json or {}).get("blocks_hash")
+    if not published_hash:
+        # Published before the blocks carried a hash of their own (or by hand, body
+        # only): hash what that body actually says, so an older version still answers
+        # the question instead of reading as permanently stale.
+        published_hash = hashlib.sha256(
+            blocks_of(published.template).encode("utf-8")
+        ).hexdigest()
+
+    return PromptBlocksStatus(
+        stale=published_hash != current_hash,
+        current_hash=current_hash,
+        published_hash=published_hash,
+        published_version=published.version,
+        published_at=published.created_at,
+    )

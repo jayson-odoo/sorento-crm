@@ -54,9 +54,18 @@ def _full_text() -> str:
 
 
 def _slim_text() -> str:
-    from app.services.chatbot_parser_prompt import SEMANTIC_PARSER_PROMPT_SLIM
+    # SEMANTIC_PARSER_PROMPT_SLIM retired from the live module (chatbot turn
+    # re-architecture S0, AC-1506) - this migration keeps publishing the exact body it
+    # always published, from the immutable copy alembic/_legacy_prompt_bodies.py holds.
+    import sys
+    from pathlib import Path
 
-    return SEMANTIC_PARSER_PROMPT_SLIM
+    _alembic_root = Path(__file__).resolve().parent.parent
+    if str(_alembic_root) not in sys.path:
+        sys.path.insert(0, str(_alembic_root))
+    from _legacy_prompt_bodies import SEMANTIC_PARSER_PROMPT_SLIM_V1
+
+    return SEMANTIC_PARSER_PROMPT_SLIM_V1
 
 
 def _publish_one(session: Session, template: str, tag: str) -> int | None:

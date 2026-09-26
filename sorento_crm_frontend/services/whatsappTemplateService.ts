@@ -78,7 +78,8 @@ export type UseCase =
   | 'form_action_voided'
   | 'form_action_reopened'
   | 'product_discontinued'
-  | 'ticket_resolved';
+  | 'ticket_resolved'
+  | 'price_tag_update';
 
 export type ParamVariable =
   | 'contact_name'
@@ -324,6 +325,12 @@ export const USE_CASES: {
     label: 'Ticket Resolved (closing message)',
     description:
       'Sent to the CONTACT each time one of their enquiries is resolved. Map params to "Contact name" and "Full update message" (the enquiry excerpt) at minimum.',
+  },
+  {
+    key: 'price_tag_update',
+    label: 'Price Tag Request - Update',
+    description:
+      'Sent to the salesperson when their price tag request moves (received, design ready, changes requested, approved, PDF ready, ready for collection, collected, rejected) and their 24h window is closed. Map params to "Full update message" at minimum; add "Entity number" and "Portal URL" when the template carries them.',
   },
 ];
 

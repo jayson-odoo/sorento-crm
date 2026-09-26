@@ -1,6 +1,6 @@
-# Project Sales Rep - Submit a complaint, stock inquiry, purchase request, or sponsorship form
+# Project Sales Rep - Submit a complaint, stock inquiry, purchase request, sponsorship form, or price tag request
 
-This guide walks you through filing a new submission from the portal. The four submission types share the same form shape, so the steps below apply to all of them - only the specific fields differ.
+This guide walks you through filing a new submission from the portal. Stock Inquiry, Complaint, Purchase Request and Sponsorship Form share the same form shape, so the steps below apply to all four - only the specific fields differ. Price Tag Request (shown only if your account has been granted it) has a different shape - it opens as four sections instead - see [Price Tag Request](#price-tag-request) further down.
 
 > **Before you start:** make sure you can reach the portal dashboard - see [Portal overview](portal-overview.md) for how to get the link via WhatsApp and verify with OTP.
 
@@ -62,6 +62,54 @@ The **Cancel** button discards unsaved edits in the current session and returns 
 
 To delete a draft you no longer need, open it from the dashboard and use the delete action. The **Delete this draft?** dialog confirms. Toast: *"Draft deleted."*
 
+## Duplicate an existing submission
+
+You don't have to start from scratch. From the dashboard, long-press (or right-click) a card and choose **Duplicate** from the preview, or open a submission and choose **Duplicate** from its gear menu. A new draft opens with every field and line copied from the source; attachments are never copied. See [Portal overview](portal-overview.md#duplicate-an-existing-submission) for the full walkthrough.
+
+## Price Tag Request
+
+Price Tag Request is only shown on the **Submission type** combobox if your account has been granted it. Its form opens as four sections, top to bottom, instead of the Header / Items / Attachments shape above:
+
+1. **Customer** - open by default. Pick a customer; this opens **Sales Order & Lines** automatically.
+2. **Sales Order & Lines** - drop the sales order file (or **Choose file** / **Paste from clipboard**). Each attached file shows as its own thumbnail with an **Extract with AI from <filename>** action. Tap it to open the AI Extract dialog straight on that file's results table; each row shows its match - **Matched product** or **Matched set**, with the row renamed to that catalogue product's own name, once the code is found - or **Not found** when nothing answers it. Matching no longer cares about dashes, spaces or upper/lower case, so `Srt6536 DIY` still matches catalogue code `SRT6536-DIY`. Remove any row you don't want with its own remove control before clicking **Confirm and prefill**, which appends the remaining rows as lines - if the file listed the same product more than once, those rows are merged into one line with the quantities summed. AI Extract never reads a quantity off the file - the sales order doesn't say how many tags you want, only what's in the order - so every line it adds lands with **Qty (tags)** set to 1, whether or not the same product appears several times on the sheet; change the number yourself for however many tags you actually need. **Add line** stays available for typing a row in by hand, but the same product can't be added twice: picking a product already on the request shows *"<product code> is already on this request."* instead of adding a second line. Lines have no reorder arrows - they stay in the order you added them. The moment a first line lands, **Price** opens automatically.
+3. **Price** - choose **List price** or **Selling price**. Choosing either opens **Additional Information**. Choosing **List price** adds a read-only **List price** column to the lines table, filled from the product (a combo line sums the parent plus its parts) - nothing else to set. Choosing **Selling price** adds two more columns per line instead: **Promotion**, pre-filled with whichever active promotion covering that line gives the lowest total (change it only if the pre-fill is wrong, from a list scoped to promotions that actually cover that line's products), and **Selling price**, computed from the chosen promotion and shown read only. A line with no covering promotion leaves **Promotion** blank and shows a **Type a price** field in its place, so you can key in the agreed figure by hand; a line with neither prints at list price on the tag. There's no promotion picked for the request as a whole any more - every line carries its own.
+4. **Additional Information** - **Need by** and **Notes**, both optional; neither one blocks Submit. There's no printing choice to make here any more - every request you submit prints itself, and you download the PDF once it's approved. See [Printing your tags](price-tag-request-review-and-collection.md#printing-your-tags) for what happens after you approve.
+
+A section you collapse stays collapsed - it only reopens automatically the first time its trigger condition is met, never again after that. You can open or close any section by hand at any time by tapping its header, and a collapsed section that already holds values shows a one-line summary (for example the customer's name, or "List price").
+
+Click **Save Draft** or **Submit** as usual once you're done (see above).
+
+### Packages and parts on a line
+
+Some products are sold as a catalogue package: a cabinet that goes out with a table top, a mirror, a tap and a pop-up waste, and a basin the customer picks a colour of. You don't have to know the package or type the extra codes - ask for the product you know and the rest fills itself in.
+
+* **Picking the product fills its parts in.** Each part appears as its own row under the line, showing the name and the code. A choice with only one candidate fills in the same way - the open row only shows up when there's an actual choice to make.
+* **When the product is sold in more than one package**, a **Package** select appears on the line with the catalogue's own names (*2 in 1*, *3 in 1*). Choose one and its parts fill in; change it and they're replaced. Clear it and the line has no parts.
+* **A part the customer chooses from a list of two or more** arrives as an open row with its own select, placeholder *"Not sure, any of 4"*, each option showing the candidate's code and its price - the candidate's list price in List price mode, or its price under the line's promotion in Selling price mode. Pick the code if you know it. If you don't, leave it open - *"Marketing will prepare one tag per option"* - and marketing gets one tag per candidate automatically, without anyone in the office splitting it by hand.
+* **Fix the package by hand where you need to.** Remove any part row with its trash icon, and add a part the package didn't cover with **Add part** under the line - shown only on a product that has a catalogue package recorded, since a plain product has nothing to add a part to. Removed a row you shouldn't have? The **Package warning** note that shows once something's missing carries a **Restore** button that puts it straight back.
+* **Nothing here blocks Submit.** On a bathroom furniture or kitchen sink line, if the product has no package recorded, or you left the **Package** select empty, or parts are missing, the row shows a **Package warning** pill with a short note (*"No package defined"*, *"No package chosen"*, *"Missing: SRTMR502-BL"*). Submit works anyway and marketing sees the same note on their copy, so they can fill the gap.
+* **Quantity and Remarks stay per line**, not per part - marketing prints one tag per line, and one per option when you leave a choice open.
+* **Save Draft keeps all of it**: the package you chose, the parts, and the rows you left open. Once submitted, the read-only view lists the parts under each line and the warning, exactly as sent.
+
+### Viewing a submitted price tag request
+
+Once submitted, the request shows the same four sections read-only, all open, with the Sales Order thumbnails still tappable to preview. From the moment marketing marks the design ready, a **Design** card sits above them all - reading it, asking for changes on it, approving and collecting are covered in [Review a price tag design, ask for changes, approve and collect](price-tag-request-review-and-collection.md). **A submitted price tag request can't be edited directly** - the same rule as a stock inquiry. Draft requests are the exception: a draft stays fully editable until you submit it.
+
+The header (same line as the form number, muted, e.g. *"PT-202609-0007 · 3 of 3 revisions left · 1/3"*) carries a single gear holding every action for the request: **Duplicate**, **Download PDF**, and **Revise** when your company allows it.
+
+If you need to change something after submitting, use **Revise** instead:
+
+1. Open the request and tap the gear, then **Revise**.
+2. Fill in the **Reason** field - what changed, and why.
+3. The sections unlock the same way the New form does; make your changes.
+4. Tap **Submit revision**. The office stops work on the current version and picks up your revision instead.
+
+**Revise** only shows up when your company has turned on Portal Revisions for Price Tag Requests, and only while the request is at a status your admin has allowed (typically **New** or **Changes requested**) and you haven't used up your allowed revisions. When it's not available, the gear shows no Revise item and a line next to the form number explains why (for example *"This form cannot be revised."*).
+
+Every past version is kept on the **Revisions** tab of the request: the original, then each revision in order, with the reason you gave, what changed field by field, and the files attached at that point in time. A request that's been revised also shows a **Rev {n}** badge on its card / row on the dashboard.
+
+Attachments can only be added or removed on a draft, or while you're revising - once a revision is submitted (or on any status Revise isn't offered for) the Sales Order thumbnails are preview-only.
+
 ## How you'll be notified
 
 All notifications come on **WhatsApp** through Respond.io to your registered number - there is no in-portal inbox.
@@ -72,6 +120,7 @@ All notifications come on **WhatsApp** through Respond.io to your registered num
 | **Stock Inquiry** | The project sales manager flows it to purchasing **or** rejects it; **and** when purchasing posts a response. |
 | **Purchase Request** | The project sales manager **approves** it (or rejects it). |
 | **Sponsorship Form** | The project sales manager **approves** it (or rejects it). |
+| **Price Tag Request** | **Every** status change, from "received" through to collected, plus when the PDF is ready on a request you print yourself. The full list is in [Review a price tag design, ask for changes, approve and collect](price-tag-request-review-and-collection.md#how-youll-be-notified). |
 
 The WhatsApp message contains a link back to the portal so you can open the submission and read the latest details.
 
@@ -84,3 +133,4 @@ If a submission is rejected, the form is unlocked. Open it from the dashboard, f
 * [Portal overview](portal-overview.md)
 * [Project Sales Admin - Review a purchase request](../project-sales-admin/review-purchase-request.md)
 * [Project Sales Manager - Flow stock inquiry to purchasing](../project-sales-manager/flow-stock-inquiry.md)
+* [Review a price tag design, ask for changes, approve and collect](price-tag-request-review-and-collection.md)

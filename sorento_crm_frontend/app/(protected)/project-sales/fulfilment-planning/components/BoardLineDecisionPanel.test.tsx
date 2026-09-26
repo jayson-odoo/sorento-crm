@@ -13,6 +13,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { BoardDecisionPill } from './BoardDecisionPill';
 import { BoardLineDecisionPanel } from './BoardLineDecisionPanel';
 import type {
+  BoardBorrowCandidate,
   BoardCellLocation,
   BoardContribution,
   BoardDecision,
@@ -129,6 +130,58 @@ describe('BoardLineDecisionPanel: no read-only strip', () => {
   });
 });
 
+/**
+ * The Options table used to render open, five rows tall, ABOVE the editor on every line -
+ * wasting the space a planner opened the row to compose a decision in. It folds behind a
+ * plain toggle now, closed until asked for (owner, 22 Sep 2026); the table itself
+ * (`BoardLadderOptionsTable`) is unchanged, so these tests only prove the fold.
+ */
+describe('BoardLineDecisionPanel: the Options ladder is collapsible, and closed by default', () => {
+  const OPTIONS = [
+    {
+      step: 'use' as const,
+      label: 'Use our locations',
+      whole: true,
+      fulfil_date: '2026-06-29',
+      days_late: 0,
+      chosen: true,
+      gives_qty: '24',
+    },
+    {
+      step: 'buy' as const,
+      label: 'Buy',
+      whole: true,
+      fulfil_date: '2026-07-10',
+      days_late: 11,
+      chosen: false,
+      gives_qty: '24',
+    },
+  ];
+
+  it('starts closed: the table is not in the document, and the toggle states so', () => {
+    renderPanel({ options: OPTIONS });
+
+    expect(screen.queryByText('Use our locations')).not.toBeInTheDocument();
+    const toggle = screen.getByTestId(`line-options-toggle-${KEY}`);
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it('opens the table on click, and hides it again on a second click', () => {
+    renderPanel({ options: OPTIONS });
+
+    const toggle = screen.getByTestId(`line-options-toggle-${KEY}`);
+    fireEvent.click(toggle);
+
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('Use our locations')).toBeInTheDocument();
+
+    fireEvent.click(toggle);
+
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('Use our locations')).not.toBeInTheDocument();
+  });
+});
+
 describe('BoardLineDecisionPanel: Reserve inputs carry the server figure beside them (C4, B1)', () => {
   it('opens on the suggestion, and shows what each location has available', () => {
     renderPanel();
@@ -179,7 +232,7 @@ describe('BoardLineDecisionPanel: the two verbs (C9)', () => {
     fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
       target: { value: '19' },
     });
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'The site asked for less from BRW-AM.' },
     });
 
@@ -197,17 +250,21 @@ describe('BoardLineDecisionPanel: the two verbs (C9)', () => {
     );
   });
 
-  it('reject requires a reason, and is disabled without one', () => {
+  it('reject requires a reason, and is disabled without one', async () => {
     const { onDecide } = renderPanel();
 
     const reject = screen.getByRole('button', { name: 'Reject' });
     expect(reject).toBeDisabled();
 
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'The customer cancelled this line.' },
     });
     expect(reject).toBeEnabled();
-    fireEvent.click(reject);
+    // `reject()` is async (mirrors `save()`), so the state it sets afterwards lands past an
+    // `await` - wrapped so that settling is inside `act`, same as every Save assertion below.
+    await act(async () => {
+      fireEvent.click(reject);
+    });
 
     expect(onDecide).toHaveBeenCalledWith({
       verdict: 'rejected',
@@ -318,7 +375,7 @@ describe('BoardLineDecisionPanel: an approved draft carries the suggested compos
     fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
       target: { value: '19' },
     });
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'The site asked for less from BRW-AM.' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
@@ -332,6 +389,557 @@ describe('BoardLineDecisionPanel: an approved draft carries the suggested compos
         ]),
       }),
     );
+  });
+});
+
+/**
+ * BOARD-CONFIRM-LEFT-OUT (SO420745, 21 Sep 2026): an approving Save used to drop the reasons
+ * the planner typed - the discontinued Buy's own reason, and a suggested borrow row's - because
+ * the approving branch posted `decisionFromAmendDraft(suggestionDraftFrom(contribution), '')`
+ * verbatim (which seeds `buy_reason` from nothing) and the reseed afterwards put the SAME
+ * reason-less draft back on screen. `matchesSuggestion` rightly compares quantities only, so
+ * typing a reason with the quantities untouched still reads as an approval - the fix is that
+ * approval carrying the reason across, not the comparison.
+ */
+describe('BoardLineDecisionPanel: an approving save carries the reasons the planner typed (AC-1/AC-2/AC-3)', () => {
+  const discontinuedFlags = {
+    dealer_hot_selling: false,
+    dealer_hot_selling_where: [],
+    project_hot_selling: false,
+    project_hot_selling_where: [],
+    dealer_classified: false,
+    project_classified: false,
+    discontinued: true,
+    retail_classification_available: true,
+  };
+
+  it('a discontinued Buy suggestion keeps the typed reason after Save, and the blocker does not return', async () => {
+    const onDecide = vi.fn().mockResolvedValue(true);
+    render(
+      <BoardLineDecisionPanel
+        contribution={contributionOf({
+          key: 'so-a|32|SRTWT9610-GM|2026-09-10',
+          line_no: 32,
+          item_code: 'SRTWT9610-GM',
+          qty: '3',
+          qty_ordered: '3',
+          qty_outstanding: '3',
+          sources: [
+            {
+              kind: 'buy',
+              qty: '3',
+              location: null,
+              warehouse_id: null,
+              reason: 'Nothing on hand covers this line.',
+            },
+          ],
+          qty_proposed_reserve: '0',
+          qty_proposed_incoming: '0',
+          qty_proposed_buy: '3',
+          item_flags: discontinuedFlags,
+        })}
+        decision={null}
+        locations={LOCATIONS}
+        onDecide={onDecide}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
+      target: { value: 'project order' },
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
+    });
+
+    // AC-1: the SAME press carries verdict and reason both - one Save, one call.
+    expect(onDecide).toHaveBeenCalledTimes(1);
+    expect(onDecide).toHaveBeenCalledWith(
+      expect.objectContaining({
+        verdict: 'approved',
+        buy_reason: 'project order',
+        // AC-28 (review round 1, Blocking 3): the ONE box is `reason` too, not only
+        // `buy_reason` - the approving branch used to post `reason: undefined` unconditionally.
+        reason: 'project order',
+      }),
+    );
+
+    // AC-1: the box still holds what was typed, and the red blocker is gone - the reseed used
+    // to put the engine's own (reason-less) draft back, which emptied the box and brought the
+    // "buying a discontinued product needs a reason" blocker straight back.
+    expect(screen.getByLabelText(/^Reason/)).toHaveValue('project order');
+    expect(screen.queryByText(/needs a reason/)).not.toBeInTheDocument();
+  });
+
+  it('a suggested borrow row keeps its typed reason after an approving Save (AC-3)', async () => {
+    const onDecide = vi.fn().mockResolvedValue(true);
+    render(
+      <BoardLineDecisionPanel
+        contribution={contributionOf({
+          key: 'so-a|5|MWH-BRW|2026-09-10',
+          line_no: 5,
+          item_code: 'MWH-BRW',
+          qty: '5',
+          qty_ordered: '5',
+          qty_outstanding: '5',
+          sources: [
+            {
+              kind: 'borrow',
+              qty: '5',
+              location: 'MWH-IB',
+              warehouse_id: 'wh-mwh-ib',
+              reason: 'Cross-group cap allows this.',
+            },
+          ],
+          qty_proposed_reserve: '0',
+          qty_proposed_incoming: '0',
+          qty_proposed_buy: '0',
+        })}
+        decision={null}
+        locations={LOCATIONS}
+        onDecide={onDecide}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
+      target: { value: 'Confirmed with the other site on WhatsApp.' },
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
+    });
+
+    expect(onDecide).toHaveBeenCalledWith(
+      expect.objectContaining({
+        verdict: 'approved',
+        borrow: expect.arrayContaining([
+          expect.objectContaining({
+            warehouse_id: 'wh-mwh-ib',
+            reason: 'Confirmed with the other site on WhatsApp.',
+          }),
+        ]),
+      }),
+    );
+    // Fix round 2 (reviewer, nit c - kill test K2): the BORROW half of the reseed was never
+    // actually asserted on screen, only the outgoing payload - this is the same box the Buy
+    // reason test above checks, for the row the save just carried a reason for.
+    expect(screen.getByLabelText(/^Reason/)).toHaveValue(
+      'Confirmed with the other site on WhatsApp.',
+    );
+  });
+});
+
+/**
+ * Review round 1, Blocking 4, kill test 3 (AC-24): re-adding the Buy block's own retired
+ * "Reason *" textarea under a DIFFERENT label ("Why buy it") stayed green, because the only
+ * existing assertion looks up the box by its label (`/^Reason/`) rather than counting how many
+ * text areas the discontinued Buy state renders. D3's whole point is ONE box, so this pins the
+ * count directly, label aside.
+ */
+describe('BoardLineDecisionPanel: a discontinued Buy renders exactly one Reason textarea (AC-24)', () => {
+  it('renders one <textarea>, not two, when the line is discontinued and buying', () => {
+    const { container } = render(
+      <BoardLineDecisionPanel
+        contribution={contributionOf({
+          key: 'so-a|32|SRTWT9610-GM|2026-09-10',
+          line_no: 32,
+          item_code: 'SRTWT9610-GM',
+          qty: '3',
+          qty_ordered: '3',
+          qty_outstanding: '3',
+          sources: [
+            {
+              kind: 'buy',
+              qty: '3',
+              location: null,
+              warehouse_id: null,
+              reason: 'Nothing on hand covers this line.',
+            },
+          ],
+          qty_proposed_reserve: '0',
+          qty_proposed_incoming: '0',
+          qty_proposed_buy: '3',
+          item_flags: {
+            dealer_hot_selling: false,
+            dealer_hot_selling_where: [],
+            project_hot_selling: false,
+            project_hot_selling_where: [],
+            dealer_classified: false,
+            project_classified: false,
+            discontinued: true,
+            retail_classification_available: true,
+          },
+        })}
+        decision={null}
+        locations={LOCATIONS}
+        onDecide={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('Discontinued')).toBeInTheDocument();
+    expect(container.querySelectorAll('textarea')).toHaveLength(1);
+  });
+});
+
+/**
+ * Review round 1, Blocking 2: a same-agent borrow `BorrowAddDialog` adds by hand seeds the
+ * row's `reason` with `storedReason`'s own "Authorised by ..." sentence. `foldReasonIntoDraft`
+ * used to replace that outright with the panel's own box text on Save, so the authorisation
+ * the server requires (`_check_borrow`) never reached the server. The fix keeps the seeded
+ * prefix and appends the box text, the same shape `BoardDecideControl` already builds fresh.
+ */
+describe('BoardLineDecisionPanel: a hand-added same-agent borrow keeps its authorisation (review round 1, Blocking 2)', () => {
+  it('appends the typed Reason to the seeded "Authorised by" sentence instead of replacing it', async () => {
+    const onDecide = vi.fn().mockResolvedValue(true);
+    render(
+      <BoardLineDecisionPanel
+        contribution={contributionOf({
+          borrow_candidates: [
+            {
+              source: 'other_location',
+              warehouse_code: 'MWH-BB',
+              warehouse_id: 'wh-mwh-bb',
+              free_qty: '90',
+              donor_impact: {
+                free_before: '90',
+                free_after_full_borrow: '0',
+                committed_qty: '0',
+              },
+              donor_agent_code: 'JEREMY',
+              donor_core_line_id: 'core-line-1',
+              same_agent: true,
+              location: {
+                location: 'MWH-BB',
+                where: 'other_group',
+                product_id: 'prod-1',
+                warehouse_id: 'wh-mwh-bb',
+                qty: '0',
+                qty_on_hand: '90',
+                so_qty: '0',
+                spo_qty: '0',
+                available_qty: '90',
+                po_open_qty: '0',
+                incoming: [],
+              },
+            },
+          ],
+        })}
+        decision={null}
+        locations={LOCATIONS}
+        onDecide={onDecide}
+      />,
+    );
+
+    // Free 9 off the BRW reserve (15 -> 6) so the whole line still balances once the 9 is
+    // borrowed instead - D7 derives a Buy for the gap otherwise, which the borrow then closes.
+    fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
+      target: { value: '6' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add a borrow' }));
+
+    fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '9' } });
+    fireEvent.change(screen.getByLabelText(/^Authorised by agent JEREMY/), {
+      target: { value: 'Agreed on the phone, 25 Aug' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Add the borrow' }));
+
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
+      target: { value: 'Stock held for handover.' },
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
+    });
+
+    expect(onDecide).toHaveBeenCalledWith(
+      expect.objectContaining({
+        borrow: expect.arrayContaining([
+          expect.objectContaining({
+            warehouse_id: 'wh-mwh-bb',
+            reason:
+              'Authorised by agent JEREMY: Agreed on the phone, 25 Aug. Stock held for handover.',
+          }),
+        ]),
+      }),
+    );
+  });
+});
+
+/**
+ * Review round 2, Blocking 1: the round 1 fix above kept the seeded "Authorised by" sentence
+ * and appended the box text unconditionally, so re-saving a reopened line with nothing edited
+ * appended the SAME box text a second time - `foldBorrowReason` never checked whether the
+ * seeded reason already carried it. The fix rebuilds the reason from the authorisation
+ * sentence plus the current box text every time, instead of appending onto whatever was
+ * stored last, so an unedited re-save reproduces the same string rather than growing it.
+ */
+const BORROW_CANDIDATE_JEREMY: BoardBorrowCandidate = {
+  source: 'other_location',
+  warehouse_code: 'MWH-BB',
+  warehouse_id: 'wh-mwh-bb',
+  free_qty: '90',
+  donor_impact: {
+    free_before: '90',
+    free_after_full_borrow: '0',
+    committed_qty: '0',
+  },
+  donor_agent_code: 'JEREMY',
+  donor_core_line_id: 'core-line-1',
+  same_agent: true,
+  location: {
+    location: 'MWH-BB',
+    where: 'other_group',
+    product_id: 'prod-1',
+    warehouse_id: 'wh-mwh-bb',
+    qty: '0',
+    qty_on_hand: '90',
+    so_qty: '0',
+    spo_qty: '0',
+    available_qty: '90',
+    po_open_qty: '0',
+    incoming: [],
+  },
+};
+
+describe('BoardLineDecisionPanel: re-saving a reopened same-agent borrow line (review round 2, Blocking 1)', () => {
+  it('does not double the box text when the reopened line is saved again unedited', async () => {
+    const onDecide = vi.fn().mockResolvedValue(true);
+    const first = render(
+      <BoardLineDecisionPanel
+        contribution={contributionOf({ borrow_candidates: [BORROW_CANDIDATE_JEREMY] })}
+        decision={null}
+        locations={LOCATIONS}
+        onDecide={onDecide}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
+      target: { value: '6' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Add a borrow' }));
+    fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '9' } });
+    fireEvent.change(screen.getByLabelText(/^Authorised by agent JEREMY/), {
+      target: { value: 'Agreed on the phone, 25 Aug' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Add the borrow' }));
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
+      target: { value: 'Stock held for handover.' },
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
+    });
+
+    const firstDecision = onDecide.mock.calls[0][0] as BoardDecision;
+    expect(firstDecision.borrow?.[0]?.reason).toBe(
+      'Authorised by agent JEREMY: Agreed on the phone, 25 Aug. Stock held for handover.',
+    );
+
+    first.unmount();
+
+    render(
+      <BoardLineDecisionPanel
+        contribution={contributionOf({ borrow_candidates: [BORROW_CANDIDATE_JEREMY] })}
+        decision={firstDecision}
+        locations={LOCATIONS}
+        onDecide={onDecide}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Save decision' })).toBeEnabled();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
+    });
+
+    const secondDecision = onDecide.mock.calls[1][0] as BoardDecision;
+    expect(secondDecision.borrow?.[0]?.reason).toBe(firstDecision.borrow?.[0]?.reason);
+  });
+
+  it('does not double the box text when the box was seeded from a Decide-saved reason that already carries the whole "Authorised by" sentence', async () => {
+    const onDecide = vi.fn().mockResolvedValue(true);
+    // D3/R9: a Decide save folds the whole "Authorised by ...: <name>. <reason>" sentence into
+    // BOTH the top-level `reason` (what `seedReason` reads first) and every borrow row's own
+    // `reason` (`BoardDecideControl.tsx`), so on reopen the box seeds with the whole sentence,
+    // not just the typed reason.
+    const decideSavedDecision: BoardDecision = {
+      verdict: 'amended',
+      reserve: [
+        { warehouse_id: 'wh-BRW-AM', location: 'BRW-AM', qty: '9' },
+        { warehouse_id: 'wh-BRW', location: 'BRW', qty: '6' },
+      ],
+      borrow: [
+        {
+          source: 'other_location',
+          warehouse_id: 'wh-mwh-bb',
+          warehouse_code: 'MWH-BB',
+          qty: '9',
+          reason:
+            'Authorised by agent JEREMY: Agreed on the phone, 25 Aug. Stock held for handover.',
+        },
+      ],
+      timely_spo_qty: '0',
+      buy_qty: '0',
+      reason:
+        'Authorised by agent JEREMY: Agreed on the phone, 25 Aug. Stock held for handover.',
+    };
+
+    render(
+      <BoardLineDecisionPanel
+        contribution={contributionOf({ borrow_candidates: [BORROW_CANDIDATE_JEREMY] })}
+        decision={decideSavedDecision}
+        locations={LOCATIONS}
+        onDecide={onDecide}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Save decision' })).toBeEnabled();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
+    });
+
+    expect(onDecide).toHaveBeenCalledWith(
+      expect.objectContaining({
+        borrow: expect.arrayContaining([
+          expect.objectContaining({
+            warehouse_id: 'wh-mwh-bb',
+            reason:
+              'Authorised by agent JEREMY: Agreed on the phone, 25 Aug. Stock held for handover.',
+          }),
+        ]),
+      }),
+    );
+  });
+});
+
+/**
+ * Review round 1, Blocking 4, kill test 2(b): `hasUnsuggestedBorrow` (AC-27) is unguarded - a
+ * re-opened, UNEDITED covered line whose frozen decision already carries a borrow the engine
+ * itself never suggested, with no reason recorded for it (an older revision, frozen before the
+ * one-Reason-box shape existed - `seedReason` seeds nothing from a blank `borrow[0].reason`),
+ * matches its own baseline (`amendNeedsReason` reads false), so only `hasUnsuggestedBorrow`
+ * still asks for a reason. Killing that check alone left every existing test green because none
+ * of them opened a line in exactly this state.
+ */
+describe('BoardLineDecisionPanel: a reopened covered line with a hand borrow already frozen still needs a reason (AC-27)', () => {
+  it('disables Save while the Reason box is blank, and enables it once typed, with nothing else edited', () => {
+    const onDecide = vi.fn().mockResolvedValue(true);
+    render(
+      <BoardLineDecisionPanel
+        contribution={contributionOf({
+          covered: true,
+          qty: '9',
+          qty_ordered: '9',
+          qty_outstanding: '9',
+          sources: [
+            {
+              kind: 'reserve',
+              qty: '9',
+              location: 'BRW-AM',
+              warehouse_id: 'wh-BRW-AM',
+              reason: 'Free unclaimed stock at BRW-AM covers this much.',
+            },
+          ],
+          qty_proposed_reserve: '9',
+          qty_proposed_incoming: '0',
+          qty_proposed_buy: '0',
+          decision: {
+            revision_no: 1,
+            confirmed_at: '2026-08-18T02:00:00',
+            timely_spo_qty: '0',
+            reserve: [],
+            borrow: [
+              {
+                source: 'other_location',
+                warehouse_id: 'wh-mwh-bb',
+                location: 'MWH-BB',
+                qty: '9',
+                reason: '',
+              },
+            ],
+            buy_qty: '0',
+            suspected_system_issue: false,
+          },
+        })}
+        decision={null}
+        locations={LOCATIONS}
+        onDecide={onDecide}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Amend' }));
+
+    expect(screen.getByLabelText(/^Reason/)).toHaveValue('');
+    const save = screen.getByRole('button', { name: 'Save decision' });
+    expect(save).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
+      target: { value: 'Reconfirming the same borrow on reopen.' },
+    });
+    expect(save).toBeEnabled();
+  });
+});
+
+/**
+ * BOARD-CONFIRM-LEFT-OUT, fix round 2 (reviewer, S2): "same silent drop one field over" - a
+ * wholly-bought approving line shows the Order back switch and the Document cited box, but the
+ * approving branch used to take both from `suggestionDraftFrom`'s own draft (always false/''),
+ * and the reseed blanked them the same way it used to blank the Buy reason and the borrow
+ * reason (measured cause 1).
+ */
+describe('BoardLineDecisionPanel: an approving save carries Order back and the cited document (S2, fix round 2)', () => {
+  it('keeps Order back and Document cited after Save, and after the reseed', async () => {
+    const onDecide = vi.fn().mockResolvedValue(true);
+    render(
+      <BoardLineDecisionPanel
+        contribution={contributionOf({
+          key: 'so-a|9|BUY9|2026-09-10',
+          line_no: 9,
+          item_code: 'BUY9',
+          qty: '5',
+          qty_ordered: '5',
+          qty_outstanding: '5',
+          sources: [
+            {
+              kind: 'buy',
+              qty: '5',
+              location: null,
+              warehouse_id: null,
+              reason: 'Nothing on hand covers this line.',
+            },
+          ],
+          qty_proposed_reserve: '0',
+          qty_proposed_incoming: '0',
+          qty_proposed_buy: '5',
+        })}
+        decision={null}
+        locations={LOCATIONS}
+        onDecide={onDecide}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('switch', { name: 'Order back' }));
+    fireEvent.change(screen.getByLabelText('Document cited'), {
+      target: { value: 'SPO-2026/09-0042' },
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
+    });
+
+    expect(onDecide).toHaveBeenCalledWith(
+      expect.objectContaining({
+        verdict: 'approved',
+        order_back: true,
+        cited_document: 'SPO-2026/09-0042',
+      }),
+    );
+
+    // The reseed: both still on screen, the same guard the reason boxes already have.
+    expect(screen.getByRole('switch', { name: 'Order back' })).toBeChecked();
+    expect(screen.getByLabelText('Document cited')).toHaveValue('SPO-2026/09-0042');
   });
 });
 
@@ -369,7 +977,7 @@ describe('BoardLineDecisionPanel: the balance hint and Save gating (C7, D7)', ()
     const save = screen.getByRole('button', { name: 'Save decision' });
     expect(save).toBeDisabled();
 
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'Customer takes 5 now, the rest on the next shipment.' },
     });
     expect(save).toBeEnabled();
@@ -416,7 +1024,7 @@ describe('BoardLineDecisionPanel: the balance hint and Save gating (C7, D7)', ()
     const save = screen.getByRole('button', { name: 'Save decision' });
     expect(save).toBeDisabled();
 
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'Agreed a smaller own-location share with the site.' },
     });
     expect(save).toBeEnabled();
@@ -468,7 +1076,7 @@ describe('BoardLineDecisionPanel: the suspected-system-issue flag (C10)', () => 
     fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
       target: { value: '19' },
     });
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'The availability beside this line looks wrong.' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
@@ -481,14 +1089,16 @@ describe('BoardLineDecisionPanel: the suspected-system-issue flag (C10)', () => 
     );
   });
 
-  it('carries the flag on a rejection', () => {
+  it('carries the flag on a rejection', async () => {
     const { onDecide } = renderPanel();
 
     fireEvent.click(checkbox());
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'Cancelled by the customer.' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    });
 
     expect(onDecide).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -498,9 +1108,10 @@ describe('BoardLineDecisionPanel: the suspected-system-issue flag (C10)', () => 
     );
   });
 
-  it('unticking on a covered line clears the flag, in the draft AND on screen', () => {
-    // Frozen at the engine's own composition, so the untouched form IS the suggestion and the
-    // press is an approval: the flag is the only thing this decision changes.
+  it('unticking on a covered line is a change: it enables Save, amends (never approves), and clears the flag in the draft AND on screen', () => {
+    // Frozen at the engine's own composition, so the untouched FORM matches the suggestion -
+    // R1/R2 (captain, 17 Sep) still refuses the plain re-save, and only the flag itself is
+    // what this test changes.
     const frozen: BoardLineDecision = {
       revision_no: 1,
       confirmed_at: '2026-08-18T02:00:00',
@@ -517,15 +1128,23 @@ describe('BoardLineDecisionPanel: the suspected-system-issue flag (C10)', () => 
 
     fireEvent.click(screen.getByRole('button', { name: 'Amend' }));
     expect(checkbox()).toBeChecked();
+    const save = screen.getByRole('button', { name: 'Save decision' });
+    expect(save).toBeDisabled();
+
     fireEvent.click(checkbox());
-    fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
+
+    // The tick alone is a change on a covered line (R1/R2): Save takes it with no reason typed.
+    expect(checkbox()).not.toBeChecked();
+    expect(save).toBeEnabled();
+    fireEvent.click(save);
 
     // The BOOLEAN, not an absent key: `lineFor` posts `false`, so the pill must read `false`
-    // rather than falling through to the frozen `true` and contradicting the body.
-    // D11: the composition rides along too, even though only the flag changed.
+    // rather than falling through to the frozen `true` and contradicting the body. D11: the
+    // composition rides along too, even though only the flag changed - and on a covered line
+    // it is always Amended, never Approved (R1/R2): the server refuses `approved` outright.
     expect(onDecide).toHaveBeenCalledWith(
       expect.objectContaining({
-        verdict: 'approved',
+        verdict: 'amended',
         suspected_system_issue: false,
         reserve: expect.arrayContaining([
           expect.objectContaining({ warehouse_id: 'wh-BRW-AM', qty: '9' }),
@@ -709,16 +1328,18 @@ describe('BoardLineDecisionPanel: a covered row opens locked with Amend (C11)', 
   });
 
   /**
-   * An approval on an unlocked confirmed row is a REAL verdict, and it reaches the draft as
-   * one. It looked like it did - the inputs snapped back to the suggestion and the pill read
-   * Approved - while `confirmLinesFor` dropped every covered line the planner had not amended,
-   * so the press wrote nothing and the reload showed the old revision.
+   * A confirmed row is not silently un-decided by typing the engine's own numbers back into
+   * it. It looked like it was, once - the inputs snapped back to the suggestion and the pill
+   * read Approved - while `confirmLinesFor` dropped every covered line the planner had not
+   * amended, so the press wrote nothing and the reload showed the old revision.
    *
-   * The way there is the engine's own numbers: this row was confirmed at 8 from BRW-AM plus 16
-   * from the pool while the engine suggests 9 plus 15, so typing those back IS the approval.
-   * One button, and the comparison takes the verdict.
+   * R1/R2 (captain, 17 Sep 2026): on a CONFIRMED line every change is an amendment - the
+   * server refuses `approved` there outright, whatever the typed composition happens to
+   * match. This row was confirmed at 8 from BRW-AM plus 16 from the pool while the engine
+   * suggests 9 plus 15; typing the engine's own numbers back is still a change from what was
+   * frozen, so Save takes it as an amendment, and the pill still reads Saved either way.
    */
-  it('takes an approval once the engine’s numbers are typed back on the unlocked row, and the pill reads Saved (S4)', () => {
+  it('typing the engine’s numbers back on the unlocked row is still an amendment (never approved), and the pill reads Saved (S4)', () => {
     const contribution = contributionOf({
       covered: true,
       decision: {
@@ -752,10 +1373,10 @@ describe('BoardLineDecisionPanel: a covered row opens locked with Amend (C11)', 
     });
     fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
 
-    // D11: the composition rides along with the approval too.
+    // D11: the composition rides along with the amendment too.
     expect(onDecide).toHaveBeenCalledWith(
       expect.objectContaining({
-        verdict: 'approved',
+        verdict: 'amended',
         suspected_system_issue: false,
         reserve: expect.arrayContaining([
           expect.objectContaining({ warehouse_id: 'wh-BRW-AM', qty: '9' }),
@@ -779,12 +1400,16 @@ describe('BoardLineDecisionPanel: a covered row opens locked with Amend (C11)', 
   });
 
   /**
-   * AMEND OPENS ON WHAT WAS DECIDED, not on the engine's numbers (C9), and saving that is an
-   * amendment: SO404352 line 22 was confirmed at 8 from BRW-AM plus 16 from the pool while the
-   * engine suggests 9 plus 15, so the two compositions are not the same answer and only the
-   * comparison says which verdict the press takes.
+   * AMEND OPENS ON WHAT WAS DECIDED, not on the engine's numbers (C9): SO404352 line 22 was
+   * confirmed at 8 from BRW-AM plus 16 from the pool while the engine suggests 9 plus 15, so
+   * the two compositions are not the same answer.
+   *
+   * R1/R2 (captain, 17 Sep): on a covered line the server accepts nothing but a real
+   * amendment - re-saving the FROZEN composition untouched is refused with the R1 sentence
+   * (AC-F1's own case), so this test now proves the OTHER half: once the composition actually
+   * moves, Save takes it, and it is always posted as Amended, never Approved.
    */
-  it('opens on the composition the revision froze, and Save on it amends rather than approves', () => {
+  it('opens on the composition the revision froze; Save is refused until it changes, then amends', async () => {
     const { onDecide } = renderPanel({
       covered: true,
       decision: {
@@ -805,19 +1430,212 @@ describe('BoardLineDecisionPanel: a covered row opens locked with Amend (C11)', 
     expect(screen.getByLabelText('Reserve at BRW-AM')).toHaveValue(8);
     expect(screen.getByLabelText('Reserve at BRW')).toHaveValue(16);
 
-    // Re-saving what was already decided needs no reason - it overrides nothing - but it is
-    // still not the engine's composition, so the verdict is Amended.
-    fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
+    const save = screen.getByRole('button', { name: 'Save decision' });
+    // Untouched, the draft still IS the frozen decision: refused, not a silent no-op re-save.
+    expect(save).toBeDisabled();
+    // A `title` on a disabled button never reaches a real browser's hover (AC-F1's own
+    // reason): the sentence lives in a Radix Tooltip on a wrapper around the button instead.
+    fireEvent.focus(screen.getByTestId(`save-decision-trigger-${KEY}`));
+    expect((await screen.findByRole('tooltip')).textContent).toBe(
+      'This line is already confirmed. Amend it to change the decision, reject it with a ' +
+        'reason, or undo the confirmation.',
+    );
+
+    // Still balances against the 24 outstanding (10 + 14), but neither number the revision
+    // froze (8 + 16) - a genuine amendment.
+    fireEvent.change(screen.getByLabelText('Reserve at BRW-AM'), {
+      target: { value: '10' },
+    });
+    fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
+      target: { value: '14' },
+    });
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
+      target: { value: 'BRW-AM actually had more free stock than recorded.' },
+    });
+
+    expect(save).toBeEnabled();
+    fireEvent.click(save);
 
     expect(onDecide).toHaveBeenCalledWith(
       expect.objectContaining({
         verdict: 'amended',
         reserve: expect.arrayContaining([
-          expect.objectContaining({ warehouse_id: 'wh-BRW-AM', qty: '8' }),
-          expect.objectContaining({ warehouse_id: 'wh-BRW', qty: '16' }),
+          expect.objectContaining({ warehouse_id: 'wh-BRW-AM', qty: '10' }),
+          expect.objectContaining({ warehouse_id: 'wh-BRW', qty: '14' }),
         ]),
       }),
     );
+  });
+});
+
+/**
+ * R1/R2 (`PLAN-board-draft-on-confirmed-line.md`, AC-B1/AC-B2/AC-B6): the server refuses a
+ * plain Save or Reject on a covered line with a 409, and the panel says so before the round
+ * trip rather than sending a PUT the server would refuse anyway. TEST-FIRST: neither Save nor
+ * Reject carries this gate yet, so both are red against current code.
+ */
+describe('BoardLineDecisionPanel: a covered line only saves a real amendment (R2)', () => {
+  const REFUSAL =
+    'This line is already confirmed. Amend it to change the decision, reject it with a ' +
+    'reason, or undo the confirmation.';
+  const frozen: BoardLineDecision = {
+    revision_no: 1,
+    confirmed_at: '2026-08-18T02:00:00',
+    timely_spo_qty: '0',
+    reserve: [
+      { warehouse_id: 'wh-BRW-AM', location: 'BRW-AM', qty: '8' },
+      { warehouse_id: 'wh-BRW', location: 'BRW', qty: '16' },
+    ],
+    borrow: [],
+    buy_qty: '0',
+  };
+
+  /**
+   * A `title` attribute on a DISABLED button never reaches a real browser's hover: the
+   * Button primitive carries `disabled:pointer-events-none`, so no pointer event ever lands
+   * on it to trigger the native tooltip. The R1 sentence lives in a Radix Tooltip on a
+   * wrapper `<span>` around each disabled button instead - reached the same way
+   * `BoardCellBreakdownDialog.test.tsx`'s `sourceNoteOf` reaches one: `fireEvent.focus` the
+   * trigger (Radix calls the tooltip's own open handler directly on focus, unlike a pointer
+   * event jsdom cannot synthesize the way a real mouse would), then read the accessible
+   * `role="tooltip"` node's text.
+   */
+  /**
+   * AC-F2 (`board-reject-on-confirmed-line-acceptance-criteria.md`, R3(b), 22 Sep 2026):
+   * Save keeps R1/R2's own gate untouched (still the REFUSAL sentence while the draft
+   * matches the frozen composition), but Reject is no longer dead weight on a covered line
+   * - it follows the uncovered branch's own rule, disabled only while the reason is blank,
+   * carrying the same "Say why this differs first" sentence `BoardVerdictActions`' popover
+   * Reject already uses. Was AC-F1 of `PLAN-board-draft-on-confirmed-line.md`, which this
+   * test used to pin Reject as dead-disabled with the R1 sentence too.
+   */
+  it('AC-F2: Save carries the R1 sentence disabled; Reject is disabled with "Say why this line is being refused first." while the reason is blank', async () => {
+    renderPanel({ covered: true, decision: frozen });
+    fireEvent.click(screen.getByRole('button', { name: 'Amend' }));
+
+    const save = screen.getByRole('button', { name: 'Save decision' });
+    const reject = screen.getByRole('button', { name: 'Reject' });
+    expect(save).toBeDisabled();
+    expect(reject).toBeDisabled();
+
+    fireEvent.focus(screen.getByTestId(`save-decision-trigger-${KEY}`));
+    expect((await screen.findByRole('tooltip')).textContent).toBe(REFUSAL);
+
+    fireEvent.focus(screen.getByTestId(`reject-decision-trigger-${KEY}`));
+    expect((await screen.findByRole('tooltip')).textContent).toBe(
+      'Say why this line is being refused first.',
+    );
+  });
+
+  it('AC-F3: typing a reason enables Reject on a covered line, and clicking it calls onDecide with the rejection', async () => {
+    const { onDecide } = renderPanel({ covered: true, decision: frozen });
+    fireEvent.click(screen.getByRole('button', { name: 'Amend' }));
+
+    const reject = screen.getByRole('button', { name: 'Reject' });
+    expect(reject).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
+      target: { value: 'Wrong site' },
+    });
+    expect(reject).toBeEnabled();
+
+    fireEvent.click(reject);
+
+    expect(onDecide).toHaveBeenCalledWith(
+      expect.objectContaining({
+        verdict: 'rejected',
+        reason: 'Wrong site',
+        suspected_system_issue: false,
+      }),
+    );
+  });
+
+  it('AC-F4: the Reject trigger is the same DOM node before and after typing the reason (no unmount on the enabled flip)', () => {
+    renderPanel({ covered: true, decision: frozen });
+    fireEvent.click(screen.getByRole('button', { name: 'Amend' }));
+
+    const trigger = screen.getByTestId(`reject-decision-trigger-${KEY}`);
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
+      target: { value: 'Wrong site' },
+    });
+
+    expect(screen.getByTestId(`reject-decision-trigger-${KEY}`)).toBe(trigger);
+  });
+
+  it('AC-F1: before Amend is pressed, the covered line shows only Amend - no Save, no Reject', () => {
+    renderPanel({ covered: true, decision: frozen });
+
+    expect(screen.getByRole('button', { name: 'Amend' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Save decision' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Reject' })).not.toBeInTheDocument();
+  });
+
+  it('AC-F2: enables Save once the draft differs from the frozen composition and a reason is typed', () => {
+    renderPanel({ covered: true, decision: frozen });
+    fireEvent.click(screen.getByRole('button', { name: 'Amend' }));
+
+    // Still balances against the 24 outstanding (6 + 18), but neither number the revision
+    // froze (8 + 16) nor the engine's own suggestion (9 + 15) - a genuine amendment.
+    fireEvent.change(screen.getByLabelText('Reserve at BRW-AM'), {
+      target: { value: '6' },
+    });
+    fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
+      target: { value: '18' },
+    });
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
+      target: { value: 'The BRW-AM count looked short on the floor.' },
+    });
+
+    expect(screen.getByRole('button', { name: 'Save decision' })).toBeEnabled();
+  });
+
+  it('AC-F1b: the suspected-system-issue tick alone is a change too: ticking it enables Save', () => {
+    renderPanel({ covered: true, decision: frozen });
+    fireEvent.click(screen.getByRole('button', { name: 'Amend' }));
+
+    const save = screen.getByRole('button', { name: 'Save decision' });
+    expect(save).toBeDisabled();
+
+    fireEvent.click(
+      screen.getByRole('checkbox', {
+        name: 'This might be a system problem, flag it for investigation',
+      }),
+    );
+
+    expect(save).toBeEnabled();
+  });
+});
+
+/**
+ * N1 (fix round, `PLAN-board-reject-on-confirmed-line.md`): `covered` spans TWO kinds of
+ * line - an ACTIVE decision (the describe block above, `decision: frozen`), or a LIVE
+ * order-inquiry row naming it with none at all (`inquiry_decided`, migrated sheet lines,
+ * #875) - `covered: true, decision: null` here. Confirm's `rejected_line_ids` reads an
+ * active decision's `line_snapshots`, which the second kind has none of, so Reject keeps
+ * the ORIGINAL #989 shape for it: disabled outright, with `CONFIRMED_LINE_TITLE`, same as
+ * Save - never the uncovered branch's "reason non-blank" rule the ACTIVE-decision case now
+ * follows.
+ */
+describe('BoardLineDecisionPanel: an INQUIRY-ONLY covered line keeps Reject disabled (N1, fix round)', () => {
+  const REFUSAL =
+    'This line is already confirmed. Amend it to change the decision, reject it with a ' +
+    'reason, or undo the confirmation.';
+
+  it('after Amend, Reject stays disabled with CONFIRMED_LINE_TITLE even once a reason is typed', async () => {
+    renderPanel({ covered: true, decision: null });
+    fireEvent.click(screen.getByRole('button', { name: 'Amend' }));
+
+    const reject = screen.getByRole('button', { name: 'Reject' });
+    expect(reject).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
+      target: { value: 'Wrong site' },
+    });
+    // UNLIKE the active-decision case (AC-F3), typing a reason does not unlock Reject here.
+    expect(reject).toBeDisabled();
+
+    fireEvent.focus(screen.getByTestId(`reject-decision-trigger-${KEY}`));
+    expect((await screen.findByRole('tooltip')).textContent).toBe(REFUSAL);
   });
 });
 
@@ -844,7 +1662,7 @@ describe('BoardLineDecisionPanel: the saved amendment overlays on reopen', () =>
 
     expect(screen.getByLabelText('Reserve at BRW-AM')).toHaveValue(5);
     expect(screen.getByLabelText('Reserve at BRW')).toHaveValue(19);
-    expect(screen.getByLabelText(/^Why this differs/)).toHaveValue(
+    expect(screen.getByLabelText(/^Reason/)).toHaveValue(
       'Agreed a smaller own-location share with the site.',
     );
   });
@@ -962,7 +1780,7 @@ describe('BoardLineDecisionPanel: Reserve add-location (S3, AC-3.1 to AC-3.3)', 
     expect(added).toHaveValue(16);
     fireEvent.change(added, { target: { value: '16' } });
 
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'BRW can spare the rest of this line.' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
@@ -1138,7 +1956,7 @@ describe('BoardLineDecisionPanel: the Save button says it saved (S4, AC-4.1)', (
     fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
       target: { value: '19' },
     });
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'Agreed a smaller own-location share with the site.' },
     });
 
@@ -1249,7 +2067,7 @@ describe('BoardLineDecisionPanel: the Save button says it saved (S4, AC-4.1)', (
     fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
       target: { value: '19' },
     });
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'Agreed a smaller own-location share with the site.' },
     });
 
@@ -1315,6 +2133,310 @@ describe('BoardLineDecisionPanel: the Save button says it saved (S4, AC-4.1)', (
     );
     expect(screen.getByRole('button', { name: 'Save decision' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Saved' })).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * Save answers its own click (S4, AC-4.1); Reject used to answer nothing at all - no pill, no
+ * toast, no change to the button itself. It mirrors Save now: the button becomes a landed
+ * "Rejected" state once the write actually resolves, and only edits since it landed put the
+ * plain button back (owner, 22 Sep 2026).
+ */
+describe('BoardLineDecisionPanel: Reject says it landed', () => {
+  it('reads Rejected, and disabled, once the write resolves true', async () => {
+    const onDecide = vi.fn().mockResolvedValue(true);
+    const { rerender } = render(
+      <BoardLineDecisionPanel
+        contribution={contributionOf()}
+        decision={null}
+        locations={LOCATIONS}
+        onDecide={onDecide}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
+      target: { value: 'The customer cancelled this line.' },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    });
+
+    const rejectedButton = await screen.findByRole('button', { name: 'Rejected' });
+    expect(rejectedButton).toBeDisabled();
+    // Save is untouched by a Reject landing - it never claims "Saved" for a line the planner
+    // just refused.
+    expect(
+      screen.getByRole('button', { name: 'Save decision' }),
+    ).toBeInTheDocument();
+
+    // Fix round 1, B1: the REAL board patches `contribution.draft` off the same write
+    // (`useLineDraftMutation.save.onSuccess`), ahead of this panel's own `onDecide` promise
+    // resolving - so the N3 re-seed effect has to read a REJECTED draft the same honest way,
+    // never as "a draft exists, therefore Saved". Simulated here by rerendering with exactly
+    // that shape, the same way the pre-existing N3 tests above patch `contribution.draft`.
+    rerender(
+      <BoardLineDecisionPanel
+        contribution={contributionOf({
+          draft: {
+            decision: {
+              verdict: 'rejected',
+              reason: 'The customer cancelled this line.',
+            },
+            saved_by: 'Test Planner',
+            saved_at: '2026-09-22T02:00:00',
+          },
+        })}
+        decision={null}
+        locations={LOCATIONS}
+        onDecide={onDecide}
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Rejected' })).toBeDisabled();
+    expect(
+      screen.getByRole('button', { name: 'Save decision' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Saved' }),
+    ).not.toBeInTheDocument();
+  });
+
+  /**
+   * The mirror of the case above: a line whose LAST landed verb is a Save, after an earlier
+   * rejection, must not still read Rejected - `save()` clears `rejectedOnce` the same way
+   * `reject()` clears `savedOnce`.
+   */
+  it('a Save after a landed rejection reads Saved, and Reject drops back to plain', async () => {
+    const onDecide = vi.fn().mockResolvedValue(true);
+    render(
+      <BoardLineDecisionPanel
+        contribution={contributionOf()}
+        decision={null}
+        locations={LOCATIONS}
+        onDecide={onDecide}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
+      target: { value: 'The customer cancelled this line.' },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    });
+    expect(screen.getByRole('button', { name: 'Rejected' })).toBeInTheDocument();
+
+    // An edit (any edit) is what unlocks Save again - the same D4 rule already governs it.
+    fireEvent.change(screen.getByLabelText('Reserve at BRW-AM'), {
+      target: { value: '9' },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
+    });
+
+    expect(screen.getByRole('button', { name: 'Saved' })).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Rejected' }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Reject' })).toBeInTheDocument();
+  });
+
+  it('stays Reject, enabled, when the write does not land', async () => {
+    const onDecide = vi.fn().mockResolvedValue(false);
+    render(
+      <BoardLineDecisionPanel
+        contribution={contributionOf()}
+        decision={null}
+        locations={LOCATIONS}
+        onDecide={onDecide}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
+      target: { value: 'The customer cancelled this line.' },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    });
+
+    expect(onDecide).toHaveBeenCalledTimes(1);
+    expect(
+      screen.queryByRole('button', { name: 'Rejected' }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Reject' })).toBeEnabled();
+  });
+
+  it('puts Reject back, enabled, once the reason is edited after a landed rejection', async () => {
+    const onDecide = vi.fn().mockResolvedValue(true);
+    render(
+      <BoardLineDecisionPanel
+        contribution={contributionOf()}
+        decision={null}
+        locations={LOCATIONS}
+        onDecide={onDecide}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
+      target: { value: 'The customer cancelled this line.' },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    });
+    expect(
+      screen.getByRole('button', { name: 'Rejected' }),
+    ).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
+      target: { value: 'The customer cancelled this line, on second thought no.' },
+    });
+
+    expect(
+      screen.queryByRole('button', { name: 'Rejected' }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Reject' })).toBeEnabled();
+  });
+});
+
+/**
+ * Fix round 1, S4: neither Save nor Reject guarded against a SECOND click landing before the
+ * first write settled - a double-click fired two PUTs, and the board toasted twice for one
+ * press. `pending` disables the plain Save and Reject; the COVERED Reject twin was already
+ * unconditionally disabled and needs nothing more, but the COVERED Save twin is LIVE once
+ * Amend has unlocked the row (fix round 2), and a double-click there fired two `onDecide`
+ * calls the same way the plain button's did.
+ */
+describe('BoardLineDecisionPanel: Reject disables itself while its own write is in flight (fix round 1, S4)', () => {
+  it('disables Reject before the write resolves, and a second click posts nothing more', async () => {
+    let settle: (value: boolean) => void = () => {};
+    const onDecide = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          settle = resolve;
+        }),
+    );
+    render(
+      <BoardLineDecisionPanel
+        contribution={contributionOf()}
+        decision={null}
+        locations={LOCATIONS}
+        onDecide={onDecide}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
+      target: { value: 'The customer cancelled this line.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
+
+    // In flight: disabled before the write has answered at all.
+    expect(screen.getByRole('button', { name: 'Reject' })).toBeDisabled();
+
+    // A second click while it is still disabled reaches nothing - `fireEvent.click` on a
+    // disabled DOM button never fires its handler, the same guarantee `disabled` always gives.
+    fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    expect(onDecide).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      settle(true);
+    });
+    expect(screen.getByRole('button', { name: 'Rejected' })).toBeInTheDocument();
+    expect(onDecide).toHaveBeenCalledTimes(1);
+  });
+
+  it('disables the COVERED line’s own Save, once Amend has unlocked it, while its write is in flight (fix round 2)', async () => {
+    let settle: (value: boolean) => void = () => {};
+    const onDecide = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          settle = resolve;
+        }),
+    );
+    const frozen: BoardLineDecision = {
+      revision_no: 1,
+      confirmed_at: '2026-08-18T02:00:00',
+      timely_spo_qty: '0',
+      reserve: [
+        { warehouse_id: 'wh-BRW-AM', location: 'BRW-AM', qty: '8' },
+        { warehouse_id: 'wh-BRW', location: 'BRW', qty: '16' },
+      ],
+      borrow: [],
+      buy_qty: '0',
+    };
+    render(
+      <BoardLineDecisionPanel
+        contribution={contributionOf({ covered: true, decision: frozen })}
+        decision={null}
+        locations={LOCATIONS}
+        onDecide={onDecide}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Amend' }));
+    // A genuine amendment (neither the frozen 8/16 nor the engine's own 9/15), the same shape
+    // AC-F2 already uses to unlock this button.
+    fireEvent.change(screen.getByLabelText('Reserve at BRW-AM'), {
+      target: { value: '6' },
+    });
+    fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
+      target: { value: '18' },
+    });
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
+      target: { value: 'The BRW-AM count looked short on the floor.' },
+    });
+
+    const save = screen.getByRole('button', { name: 'Save decision' });
+    fireEvent.click(save);
+    expect(save).toBeDisabled();
+
+    fireEvent.click(save);
+    expect(onDecide).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      settle(true);
+    });
+    expect(onDecide).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * Fix round 3 (browser evidence, AC-8): two synchronous clicks in the SAME tick still fired
+   * two `PUT /draft` (200 then 500) - `pending` is React STATE, so it does not apply to the
+   * DOM (and therefore to `disabled`) until the re-render, and a second click landing before
+   * that commit reads the pre-render value. Both clicks here are inside ONE `act`, so React
+   * never commits between them - the same shape a real double-click hits.
+   */
+  it('guards a same-tick double click with a ref, not only the disabled state', async () => {
+    let settle: (value: boolean) => void = () => {};
+    const onDecide = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          settle = resolve;
+        }),
+    );
+    render(
+      <BoardLineDecisionPanel
+        contribution={contributionOf()}
+        decision={null}
+        locations={LOCATIONS}
+        onDecide={onDecide}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
+      target: { value: 'The customer cancelled this line.' },
+    });
+    const reject = screen.getByRole('button', { name: 'Reject' });
+
+    await act(async () => {
+      fireEvent.click(reject);
+      fireEvent.click(reject);
+    });
+
+    expect(onDecide).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      settle(true);
+    });
+    expect(screen.getByRole('button', { name: 'Rejected' })).toBeInTheDocument();
+    expect(onDecide).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -1514,7 +2636,7 @@ describe('BoardLineDecisionPanel: Buy follows the remainder of the line (D7)', (
     // The composition now differs from the engine's own suggestion (62 became 60), so Save
     // still needs the reason C7 already requires of any amendment - once it has one, the
     // 60/75 split is a legal pool-share carve-out (D5) and nothing else blocks it.
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'The site can only spare 60 today.' },
     });
     expect(
@@ -1528,7 +2650,7 @@ describe('BoardLineDecisionPanel: Buy follows the remainder of the line (D7)', (
     fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
       target: { value: '60' },
     });
-    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
       target: { value: 'The site can only spare 60 today.' },
     });
 

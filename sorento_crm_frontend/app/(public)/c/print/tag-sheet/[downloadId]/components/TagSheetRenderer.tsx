@@ -17,19 +17,25 @@ import type {
   ImpositionConfig,
   LayerPadding,
   PlacedTag,
+  SlotBinding,
   TagBindingData,
   TagImage,
   TagLayer,
+  TagOpenGroup,
+  TagPartData,
   TagSheetDoc,
   TagSheet,
   TagSpecValue,
 } from '@/lib/dealer-kit/tag-template-types';
 import { imageSourceOf } from '@/lib/dealer-kit/tag-template-types';
 import {
+  imagesOf,
   layerText,
+  priceBadgeInput,
   resolveBarcodeValue,
   resolveSlotText,
   slotImageAttachmentId,
+  subjectOf,
 } from '@/lib/dealer-kit/product-block';
 import { priceBadgeInsets, priceBadgeParts, priceBadgeTypography } from '@/lib/dealer-kit/price-badge';
 import {
@@ -51,6 +57,14 @@ import { cropWindowStyle, isCropped, type CropRect } from '@/lib/dealer-kit/imag
 // ---------------------------------------------------------------------------
 
 export interface ResolvedLineData {
+  /** The TAG this row draws (D3). The payload's map is keyed on it. */
+  tag_id: string;
+  /** "1a" - the tag's label. */
+  tag_label: string;
+  /** Groups the tag has not resolved, for D4's `ROLE: CODE / CODE` text. */
+  open_groups?: TagOpenGroup[];
+  /** The parts printed under the host on this tag (D4). */
+  parts?: TagPartData[];
   line_id: string;
   code: string;
   name: string;
@@ -124,6 +138,11 @@ function bindingOf(resolved: ResolvedLineData | null): TagBindingData | null {
     kind: 'line',
     line: {
       ...resolved,
+      // `open_groups` / `parts` still default: the payload omits them for a set
+      // line. `tag_id` and `tag_label` do not - the map this row came out of is
+      // KEYED by tag id, so a row without one cannot have been looked up.
+      open_groups: resolved.open_groups ?? [],
+      parts: resolved.parts ?? [],
       set_members: resolved.set_members ?? '',
       specs: resolved.specs ?? [],
       images: resolved.images ?? [],
@@ -259,6 +278,9 @@ function renderShapeLayer(layer: TagLayer) {
  *
  * `slotImageAttachmentId` is the SAME rule the canvas resolves a product photo
  * by (D42), so the proof on screen and the PDF cannot pick different pictures.
+ * D7: resolved against the layer's own subject first, exactly as
+ * `boundImageUrl` does on the canvas - a part subject prints THAT part's
+ * photo, and a part with none prints the empty placeholder (AC-S4-5).
  */
 function imageUrlFor(
   layer: TagLayer,
@@ -272,7 +294,8 @@ function imageUrlFor(
   } else if (props.kind !== 'product_slot') {
     return null;
   }
-  const attachmentId = slotImageAttachmentId(layer, resolved?.images ?? []);
+  const images = imagesOf(subjectOf(bindingOf(resolved), layer));
+  const attachmentId = slotImageAttachmentId(layer, images);
   return attachmentId ? media.images?.[attachmentId] ?? null : null;
 }
 
@@ -444,17 +467,17 @@ function CroppedImage({
  *
  * That shared call is the whole point of the layer type: the proof a
  * salesperson approves on screen and the PDF that reaches the printer state the
- * same price in the same shape (AC-L.1).
+ * same price in the same shape (AC-L.1). D7: `priceBadgeInput` reads the
+ * badge's own subject (Tag total by default, else a single product's own
+ * price) exactly as the canvas does - the two figures were computed inline
+ * here before this, which is exactly the second copy the shared helper
+ * exists to avoid.
  */
 function renderPriceBadgeLayer(layer: TagLayer, resolved: ResolvedLineData | null) {
   const props = layer.props;
   if (props.kind !== 'price_badge') return null;
 
-  const parts = priceBadgeParts(props, {
-    listPrice: resolved?.list_price ?? null,
-    offerPrice:
-      resolved && resolved.show_promo_price ? resolved.sell_price ?? null : null,
-  });
+  const parts = priceBadgeParts(props, priceBadgeInput(bindingOf(resolved), layer));
   const typo = priceBadgeTypography(props);
 
   // The un-padded box, at the layer's own position and rotation - unchanged
@@ -525,7 +548,13 @@ function renderPriceBadgeLayer(layer: TagLayer, resolved: ResolvedLineData | nul
             style={{
               ...figureStyle(13, 700),
               ...figureInset,
-              color: parts.amountText ? '#000000' : '#999999',
+              // D22 (PLAN-price-tag-ai-extract-resolver.md) / blocker
+              // follow-up: `priceBadgeParts` resolves the colour once, so
+              // this and `KonvaTagLayer` can never disagree, and so a
+              // `promo` badge that fell through to this same unboxed branch
+              // never honours its own (white, boxed-callout) `textColor`
+              // here - see `amountColor`'s own doc.
+              color: parts.amountColor,
             }}
           >
             {parts.plainText}
@@ -651,16 +680,18 @@ function renderProductSlotLayer(
   if (resolved) {
     switch (props.fieldKey) {
       case 'code':
-        content = resolved.code;
-        break;
       case 'name':
-        content = resolved.name;
-        break;
       case 'dimensions':
-        content = resolved.dimensions;
-        break;
       case 'spec_lines':
-        content = resolved.spec_lines;
+        // D7: through the same resolver the canvas uses, so a part subject
+        // (AC-S4-3) prints here exactly as it draws on screen - this used to
+        // read `resolved.*` directly, which is the parent ALWAYS, subject or
+        // not.
+        content =
+          resolveSlotText(
+            { slot_binding: props.fieldKey as SlotBinding, props },
+            bindingOf(resolved),
+          ) ?? '';
         break;
       case 'product_image': {
         // The product's photo, by the same rule the canvas draws it with (D42).
@@ -807,7 +838,9 @@ function BarcodeLayer({
 
   const binding = bindingOf(resolved);
   const value = isBarcode ? resolveBarcodeValue(layer, binding) : null;
-  const code = isBarcode ? resolveSlotText({ slot_binding: 'code' }, binding) : null;
+  const code = isBarcode
+    ? resolveSlotText({ slot_binding: 'code', props }, binding)
+    : null;
   const symbology = barcodeSymbologyFor(value);
 
   const barsUrl = useMemo(() => {
@@ -917,16 +950,28 @@ function TagRenderer({
     .filter((l) => l.visible !== false)
     .sort((a, b) => a.z_index - b.z_index);
 
-  return (
+  // Rotation (S7, AC-S7-8): `width_mm`/`height_mm` stay the tag's own NATURAL
+  // (unrotated) size - what its layers are laid out against - while
+  // `x_mm`/`y_mm` are the top-left of the PLACED (rotated) box. The outer div
+  // below IS that placed box (so bleed marks, drawn off it further down,
+  // print at the right corners either way); the inner one is the tag's own
+  // unrotated box, turned 90deg about its own top-left and slid back into the
+  // placed box by its own (natural) height - the same "rotate then
+  // translate" the Konva arrange preview does with a Group's offset.
+  const rotated = tag.rotation === 90;
+  const placedWidth = rotated ? tag.height_mm : tag.width_mm;
+  const placedHeight = rotated ? tag.width_mm : tag.height_mm;
+
+  const naturalBox = (
     <div
       style={{
         position: 'absolute',
-        left: `${tag.x_mm}mm`,
-        top: `${tag.y_mm}mm`,
+        left: 0,
+        top: 0,
         width: `${tag.width_mm}mm`,
         height: `${tag.height_mm}mm`,
-        overflow: 'hidden',
-        backgroundColor: '#ffffff',
+        transformOrigin: '0 0',
+        transform: rotated ? `translate(${tag.height_mm}mm, 0) rotate(90deg)` : undefined,
       }}
     >
       {sortedLayers.map((layer) => (
@@ -941,6 +986,22 @@ function TagRenderer({
           {layer.type === 'barcode' && <BarcodeLayer layer={layer} resolved={resolved} />}
         </div>
       ))}
+    </div>
+  );
+
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        left: `${tag.x_mm}mm`,
+        top: `${tag.y_mm}mm`,
+        width: `${placedWidth}mm`,
+        height: `${placedHeight}mm`,
+        overflow: 'hidden',
+        backgroundColor: '#ffffff',
+      }}
+    >
+      {naturalBox}
 
       {/* Bleed marks at corners */}
       {bleed_mm > 0 && (
@@ -1066,7 +1127,8 @@ function SheetRenderer({
       }}
     >
       {sheet.tags.map((tag) => {
-        const resolved = resolvedData[tag.request_line_id] ?? null;
+        // Keyed by REQUEST TAG since S3 (D3) - a line may print several tags.
+        const resolved = resolvedData[tag.request_tag_id] ?? null;
         return (
           <TagRenderer
             key={tag.id}

@@ -32,6 +32,51 @@ const MONTH_WORD = [
   'DEC',
 ];
 
+/**
+ * The exact stamp `project_order_inquiry_import_service.py` writes at the front of a
+ * migrated row's note (`_MIGRATION_STAMP`). Matched by prefix, not equality: the import
+ * service appends its own "Was N on D" correction fragment after it.
+ */
+const SHEET_MIGRATION_NOTE_PREFIX = 'Migrated from order inquiry sheet';
+
+/**
+ * AC-DT-6 (`PLAN-oi-decision-trail-ui.md`): the Raised column's own KIND word.
+ *
+ * Read off `raise_event_kind` when the server matched an actual `order_inquiry_raises`
+ * event (AC-DT-3) - `Raised` or `Reconfirmed`. A row with none matched carries no event
+ * at all (migrated before raises were recorded, or raised by a planning change, which
+ * writes no event of its own), so the fallback reads the row's own `note`: the sheet
+ * importer's own stamp, or the "Was <date>" / "Was <qty>, now <qty>" wording
+ * `planning_change_service.py` writes for a date move or a quantity drop. `null` when
+ * neither matches - a row this column has nothing to say about.
+ */
+/**
+ * Exactly the three notes `planning_change_service.py` writes on a row it moves or trims
+ * (its own `stamp` / `note` literals): `Was <YYYY-MM-DD>` for a date move, `No previous
+ * delivery date` when there was none to move from, `Was <qty>, now <qty>` for a quantity
+ * drop. ANCHORED AND EXACT on purpose (reviewer S2, round 1): an ordinary raise or
+ * reconfirm note also begins "Was" - `Was 5 on 2026-09-01`, `Was 5, no previous delivery
+ * date` (`project_order_inquiry_service.py`, the import service) - and a loose prefix test
+ * read every one of those as a planning change.
+ */
+const PLANNING_CHANGE_NOTE =
+  /^Was \d{4}-\d{2}-\d{2}$|^Was [\d.,]+, now |^No previous delivery date$/;
+
+export function raisedKindLabel(
+  row: Pick<OrderInquiryWorklistRow, 'raise_event_kind' | 'note'>,
+): 'Raised' | 'Reconfirmed' | 'Sheet' | 'Planning change' | null {
+  const note = row.note ?? '';
+  // The sheet stamp FIRST, before any event (reviewer B1, round 1): on the 24 Sep prod
+  // copy 10,246 migrated rows also matched migration 523's anonymous backfill `raised`
+  // event, and 2,070 more sat inside a later reconfirm's window. The note is what the row
+  // itself says about where it came from; the event is a guess about it.
+  if (note.startsWith(SHEET_MIGRATION_NOTE_PREFIX)) return 'Sheet';
+  if (row.raise_event_kind === 'raised') return 'Raised';
+  if (row.raise_event_kind === 'reconfirmed') return 'Reconfirmed';
+  if (PLANNING_CHANGE_NOTE.test(note)) return 'Planning change';
+  return null;
+}
+
 /** `2026-01` to `JAN 26`. Anything that is not a month answers null rather than guessing. */
 export function deliveryMonthLabel(month?: string | null): string | null {
   if (!month) return null;
@@ -57,6 +102,32 @@ export function orderInquiryRowHref(row: OrderInquiryWorklistRow): string | null
     return `/project-sales/${row.project_id}/sales-orders/${row.project_sales_order_id}`;
   }
   return null;
+}
+
+/**
+ * S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-1): the "SO line" column's own text -
+ * `SO402757 · L5` when the row carries a line number, the bare SO number otherwise (a
+ * row with no line to name still deserves its SO number rather than a blank cell).
+ */
+export function orderInquirySoLineLabel(
+  row: Pick<OrderInquiryWorklistRow, 'so_number' | 'line_no'>,
+): string {
+  const so = row.so_number ?? 'Not numbered';
+  return row.line_no ? `${so} · L${row.line_no}` : so;
+}
+
+/**
+ * S6 (AC-B6-1): the "SO line" column's own href, landing on the exact line
+ * (`?tab=lines&line=<core_line_id>`). `null` when either id the link needs is missing -
+ * `core_sales_order_id`, or `core_line_id` on a row whose mirror reaches no core line -
+ * so the cell falls back to plain text rather than a link that lands nowhere in
+ * particular, the same rule `orderInquiryRowHref` already follows.
+ */
+export function orderInquirySoLineHref(
+  row: Pick<OrderInquiryWorklistRow, 'core_sales_order_id' | 'core_line_id'>,
+): string | null {
+  if (!row.core_sales_order_id || !row.core_line_id) return null;
+  return `/scm/sales-orders/${row.core_sales_order_id}?tab=lines&line=${row.core_line_id}`;
 }
 
 /** A quantity as a person reads it: `600`, never `600.0000`. */
@@ -103,6 +174,96 @@ export function flowExclusionLabel(verb: string): string | null {
 }
 
 /**
+ * S3 (`PLAN-board-oi-mechanical-22sep.md`, AC-B3-1..7): the verbs Taken / Remaining are
+ * ever a real figure for - a BUY row, one that can carry a link of its own. Deliberately a
+ * different list from `FLOW_VERBS` above: that pair is scoped to `ORDER` siblings on the
+ * same SO LINE (a different question, kept as-is), while Taken/Remaining read THIS row's
+ * own `linked_qty` and so include `RESERVE_AND_ORDER` too - it still buys and still links.
+ */
+const TAKEN_REMAINING_VERBS = ['ORDER', 'ORDER_BACK', 'RESERVE_AND_ORDER'];
+
+export function isInquiryBuyRow(verb: string): boolean {
+  return TAKEN_REMAINING_VERBS.includes(verb);
+}
+
+/**
+ * Taken: this row's own links, summed, PLUS what CS has reserved off it (review round 2,
+ * B1 / `PLAN-oi-request-cs-reserve.md` section 7: "this lane only adds reserved_qty to
+ * those figures") - `linked_qty` deliberately excludes a reserve link
+ * (`links_for_rows`'s own AC-RS-12 note: a reserve link is not a PO/SPO document), so
+ * `reserved_qty` is the ONLY other place that quantity can come from.
+ */
+function inquiryRowTakenQty(
+  row: Pick<OrderInquiryWorklistRow, 'linked_qty' | 'reserved_qty'>,
+): number {
+  return Number(row.linked_qty ?? '0') + Number(row.reserved_qty ?? '0');
+}
+
+/**
+ * Taken: this row's own links, summed - `linked_qty` already IS that sum (the REAL links
+ * only, never the synthetic "via PO" entries, per `OrderInquiryRow.linked_qty`'s own doc
+ * comment) - plus `reserved_qty` (see `inquiryRowTakenQty` above). `-` on a notice row
+ * (AC-B3-3): an ADVANCE/DELAY/CHANGE_SO/... row never carries a link of its own, and a
+ * `0` there would read as "nothing was taken" rather than "this question does not apply
+ * to this row".
+ */
+export function inquiryRowTaken(
+  row: Pick<OrderInquiryWorklistRow, 'verb' | 'linked_qty' | 'reserved_qty'>,
+): string {
+  if (!isInquiryBuyRow(row.verb)) return '-';
+  return formatInquiryQty(String(inquiryRowTakenQty(row)));
+}
+
+/**
+ * Remaining: Qty minus Taken (links + reserved) minus bundled, never negative (AC-B3-2).
+ * `-` on a notice row (AC-B3-3, same reason as Taken above); `0` on a row itself
+ * `cancelled` or whose sales-order LINE is cancelled (AC-B3-4, `line_cancelled`) - that
+ * quantity is called off, not still owed.
+ */
+export function inquiryRowRemaining(
+  row: Pick<
+    OrderInquiryWorklistRow,
+    'verb' | 'qty' | 'linked_qty' | 'reserved_qty' | 'bundled_qty' | 'state' | 'line_cancelled'
+  >,
+): string {
+  if (!isInquiryBuyRow(row.verb)) return '-';
+  if (row.state === 'cancelled' || row.line_cancelled) return '0';
+  const remaining =
+    Number(row.qty ?? '0') - inquiryRowTakenQty(row) - Number(row.bundled_qty ?? '0');
+  return formatInquiryQty(String(Math.max(remaining, 0)));
+}
+
+/**
+ * Whether this row counts toward a Qty / Taken / Remaining FOOTER sum (AC-B3-4, AC-B3-5): a
+ * buy row, neither cancelled itself nor on a cancelled sales-order line. Named once so the
+ * footer and `inquiryRowRemaining`'s own `0` can never disagree about which rows are in it.
+ */
+export function inquiryRowCountsForFooter(
+  row: Pick<OrderInquiryWorklistRow, 'verb' | 'state' | 'line_cancelled'>,
+): boolean {
+  return isInquiryBuyRow(row.verb) && row.state !== 'cancelled' && !row.line_cancelled;
+}
+
+/**
+ * The three footer sums over the rows Taken/Remaining actually apply to (AC-B3-5): Qty and
+ * Taken are each a plain sum, and Remaining is the FOOTER's own subtraction - Qty footer
+ * minus Taken footer minus the bundled total - rather than a sum of each row's own already-
+ * clamped Remaining, which is the exact wording the UAC states it by.
+ */
+export function inquiryFooterTotals(
+  rows: Pick<
+    OrderInquiryWorklistRow,
+    'verb' | 'state' | 'line_cancelled' | 'qty' | 'linked_qty' | 'reserved_qty' | 'bundled_qty'
+  >[],
+): { qty: number; taken: number; remaining: number } {
+  const counted = rows.filter(inquiryRowCountsForFooter);
+  const qty = counted.reduce((total, row) => total + Number(row.qty ?? '0'), 0);
+  const taken = counted.reduce((total, row) => total + inquiryRowTakenQty(row), 0);
+  const bundled = counted.reduce((total, row) => total + Number(row.bundled_qty ?? '0'), 0);
+  return { qty, taken, remaining: Math.max(qty - taken - bundled, 0) };
+}
+
+/**
  * How many days late this document is for this row (AC-D17).
  *
  * The server derives it from the row's delivery date and the document's expected date and
@@ -120,7 +281,7 @@ export function lateDaysOf(
 /**
  * "Outstanding PO/SPO"'s coverage headline: `8 of 8`.
  *
- * A row with no links returns `null`, and the cell reads "Not found (new order)" rather
+ * A row with no links returns `null`, and the cell reads a plain dash (S5, AC-D4) rather
  * than printing "0 of 8" at somebody.
  *
  * Slice A (8 Sep 2026, nit S7 on review of `PLAN-scm-oi-reserving-feedback-8sep.md`):
@@ -185,7 +346,8 @@ export function bundledHeadline(
   const qty = Number(row.qty ?? '0');
   const remainder = qty - bundledQty;
   if (remainder <= 0) {
-    const tail = bundled.anchor_headline ?? 'Not found (new order)';
+    // S5, AC-D4: "Not found (new order)" renders nowhere any more.
+    const tail = bundled.anchor_headline ?? 'Nothing linked yet';
     return `Included with ${label} · ${tail}`;
   }
   const ownLinked = formatInquiryQty(row.linked_qty ?? '0');

@@ -57,6 +57,13 @@ class ProductCategory(Base, CompanyScopedMixin):
     # False for categories with no class meaning (MISC, PROJECT, SRTPART, VD) so they
     # cannot masquerade as a searchable class.
     is_searchable = Column(Boolean, default=True, server_default=text("true"), nullable=False)
+    # Chatbot stock ask v2 S1 (PLAN-chatbot-stock-ask-v2-24sep.md, R2): X (max quantity
+    # the assistant may confirm) and Y (days added to a shipment ETA) for every product
+    # in this category, unless the product overrides them. NULL means "not opted in" -
+    # `app.services.stock_ask_limits.effective()` resolves it to 0. No parent-category
+    # walk: only a product's OWN category is ever consulted.
+    chatbot_max_qty = Column(Integer, nullable=True)
+    chatbot_eta_offset_days = Column(Integer, nullable=True)
     created_by = Column(UUID(as_uuid=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), nullable=True)
@@ -73,6 +80,18 @@ class ProductCategory(Base, CompanyScopedMixin):
         ),
         Index("ix_product_categories_parent_category_id", "parent_category_id"),
         Index("ix_product_categories_is_active", "is_active"),
+        # Should fix 2 (reviewer pass, PR #1221, 85c2e9e7): matches
+        # sa2_0001_xy_columns's CHECK constraints by name, so `create_all`
+        # (every blank-schema test fixture, bootstrap_env) and the migration
+        # (prod) agree - `create_all` built these columns with no CHECK at all
+        # before this.
+        CheckConstraint(
+            "chatbot_max_qty >= 0", name="ck_product_categories_chatbot_max_qty_non_negative"
+        ),
+        CheckConstraint(
+            "chatbot_eta_offset_days >= 0",
+            name="ck_product_categories_chatbot_eta_offset_days_non_negative",
+        ),
     )
 
 
@@ -96,6 +115,13 @@ class Brand(Base, CompanyScopedMixin):
     # brands the active contact can see. Default mirrors the Attachment +
     # Promotion default so existing brands stay broadly visible.
     access_levels = Column(JSONB, nullable=False, server_default='["dealer","end_user"]')
+    # PLAN-brand-flows-to-purchasing.md (owner ruling 22 Sep 2026): a brand bought
+    # locally by CS on its own (TP Enterprise is the named one) never reaches
+    # purchasing - `app.services.scm.supply_origin.buy_origin_by_product` reads this
+    # BEFORE the local-buy-routing toggle and answers "local" for its products
+    # whatever the toggle state. Default true so nothing changes until an admin
+    # flips a brand.
+    flows_to_purchasing = Column(Boolean, nullable=False, default=True, server_default=text("true"))
     created_by = Column(UUID(as_uuid=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), nullable=True)
@@ -193,6 +219,10 @@ class Product(Base, CompanyScopedMixin):
     # `bar_code` overwrites it only when the incoming value is non-empty - see
     # `master_ingest_service._product_columns`.
     barcode = Column(String(100), nullable=True)
+    # PLAN-price-tag-r10.md S4: staff-authored copy for the price tag, never
+    # touched by the AutoCount masters push (`remark` above is the same shape
+    # for AutoCount's own text - the two never overwrite each other).
+    price_tag_description = Column(Text, nullable=True)
     list_price = Column(Numeric(12, 2), nullable=False)
     cost_price = Column(Numeric(12, 2), nullable=True)
     invoice_price = Column(Numeric(12, 2), nullable=True)
@@ -206,6 +236,13 @@ class Product(Base, CompanyScopedMixin):
     has_batch_tracking = Column(Boolean, default=False, server_default=text("false"), nullable=False)
     reorder_level = Column(Integer, nullable=True)
     reorder_quantity = Column(Integer, nullable=True)
+    # Chatbot stock ask v2 S1 (PLAN-chatbot-stock-ask-v2-24sep.md, R2): X (max quantity
+    # the assistant may confirm) and Y (days added to a shipment ETA). NULL means "not
+    # set on this product" - `app.services.stock_ask_limits.effective()` falls back to
+    # the product's own category, then to 0. Overrides the category value when set; no
+    # parent-category walk.
+    chatbot_max_qty = Column(Integer, nullable=True)
+    chatbot_eta_offset_days = Column(Integer, nullable=True)
     is_active = Column(Boolean, default=True, server_default=text("true"), nullable=False)
     # Whether the chatbot may answer with this product. Placeholder rows that exist
     # only for order / sample bookkeeping ("SORENTO", "SORENTOBAG") must stay
@@ -278,6 +315,18 @@ class Product(Base, CompanyScopedMixin):
         ),
         Index("ix_products_discontinued_pending", "is_discontinued", "discontinued_notified_at"),
         Index("ix_products_discontinued_notify_batch_id", "discontinued_notify_batch_id"),
+        # Should fix 2 (reviewer pass, PR #1221, 85c2e9e7): matches
+        # sa2_0001_xy_columns's CHECK constraints by name, so `create_all`
+        # (every blank-schema test fixture, bootstrap_env) and the migration
+        # (prod) agree - `create_all` built these columns with no CHECK at all
+        # before this.
+        CheckConstraint(
+            "chatbot_max_qty >= 0", name="ck_products_chatbot_max_qty_non_negative"
+        ),
+        CheckConstraint(
+            "chatbot_eta_offset_days >= 0",
+            name="ck_products_chatbot_eta_offset_days_non_negative",
+        ),
     )
 
 

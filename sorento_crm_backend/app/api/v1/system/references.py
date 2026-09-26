@@ -10,7 +10,7 @@ from datetime import date, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import String as _String
 from sqlalchemy import cast as _cast
 from sqlalchemy import func, or_
@@ -1358,6 +1358,38 @@ class ResolveReferenceRequest(BaseModel):
             "picker. Only used when `spec_fallback` is true."
         ),
     )
+    hidden_spec_keys: list[str] | None = Field(
+        default=None,
+        description=(
+            "PLAN-spec-visibility-policy.md AC-18: registry keys this contact may "
+            "not be told about (`ctx.access.hidden_spec_keys`). Dropped from the "
+            "derived spec search inputs BEFORE ranking - so a hidden key never "
+            "decides which product wins - and stripped from every candidate's "
+            "`specifications` / `matched_specs` before the response is built, so "
+            "the value cannot leak through even when the product's OWN stored "
+            "values carry it. Only used when `spec_fallback` is true. UNIONED "
+            "with the server-resolved set below when `contact_id` is also sent - "
+            "a caller-supplied list only ever NARROWS what search_specs prints, "
+            "it can never widen past what the contact's own policy hides."
+        ),
+    )
+    contact_id: str | None = Field(
+        default=None,
+        description=(
+            "Security review B/S2: when present, the route resolves THIS "
+            "contact's spec visibility policy itself (`resolve_policy` + "
+            "`hidden_keys`, the same pair `check_access` uses) rather than "
+            "trusting only the caller-supplied `hidden_spec_keys` - a caller "
+            "that forgot to compute or forward the hidden set (or sent a stale "
+            "one) must not leak a hidden key. `respond_contacts.id` or the "
+            "Respond.io id; `space_id` disambiguates the latter. Only used "
+            "when `spec_fallback` is true."
+        ),
+    )
+    space_id: str | None = Field(
+        default=None,
+        description="Respond.io workspace id, to disambiguate a Respond.io `contact_id`.",
+    )
     free_terms: list[str] | None = Field(
         default=None,
         description=(
@@ -1382,6 +1414,17 @@ class ResolveReferenceRequest(BaseModel):
             "qualifying top-K lands in `resolutions[].matches` with "
             "`match_tier='spec_search'`. Absent = response byte-identical to "
             "today. When present it supersedes `spec_fallback`."
+        ),
+    )
+    scope_terms: list[str] | None = Field(
+        default=None,
+        description=(
+            "Words that SCOPE the described set without ranking it - the class word "
+            "the caller's own parser already identified ('tap', 'kitchen sink'), sent "
+            "as a value rather than left to be sliced back out of `query`. Membership "
+            "only: unlike `free_terms` these never drive `search_specs` ranking, so a "
+            "product that qualifies purely through an id match is not evicted by the "
+            "ranker's evidence floor. Only used when `require` is present."
         ),
     )
     predicate_words: list[str] | None = Field(
@@ -1465,6 +1508,16 @@ class ResolveReferenceRequest(BaseModel):
             "to pin)."
         ),
     )
+
+    @field_validator("contact_id", mode="before")
+    @classmethod
+    def _contact_id_to_string(cls, v: Any) -> Any:
+        """The Respond.io contact id is a NUMBER on the wire (both the chatbot
+        lane and n8n forward the webhook value as-is), so coerce it before the
+        string field rejects it."""
+        if isinstance(v, int) and not isinstance(v, bool):
+            return str(v)
+        return v
 
 
 def _has_exact_product_match(result: dict[str, Any], tokens: list[str] | None = None) -> bool:
@@ -2139,6 +2192,27 @@ def _resolve_input(
         if not has_matches and fb_entry and (fb_entry.get("matches") or []):
             merged.append(fb_entry)
             found_any_fallback = True
+        elif (
+            not has_matches
+            and fb_entry
+            and not (r.get("alternatives") or [])
+            and (fb_entry.get("alternatives") or [])
+        ):
+            # AC-1703 (reviewer MB-3, 20 Sep 2026): a token that resolved NOWHERE keeps
+            # the neighbours the cross-type pass found for it. The whitelist decides
+            # which types a token is scanned against, so it decides the trigram
+            # neighbours too - and the whitelist is built from the PARSER's hint word,
+            # which is a guess about the same typed code ("SRTWT7202-new" came back
+            # hinted `product` on one live run and `inbound_shipment` on the next).
+            # Under the wrong hint the fallback pass below already finds the real
+            # product neighbours (measured: the same two `trgm` rows at 0.76 either
+            # way) and this merge threw them away, because it only carried an entry
+            # that had MATCHES - so the chatbot answered "I don't know 'new' as a
+            # product type" instead of 'Did you mean ...-BL or ...-GM?'. Rescuing the
+            # hint is what this whole fallback block is for; a neighbour is not a
+            # match, so nothing here resolves that did not resolve before, and the
+            # caller's own allow-list still filters what it prints.
+            merged.append({**r, "alternatives": list(fb_entry.get("alternatives") or [])})
         else:
             merged.append(r)
     result["resolutions"] = merged
@@ -2650,7 +2724,15 @@ def resolve_reference_post(
         # merged into `free_terms`: a derived class word scopes the set but must
         # never also drive `search_specs` ranking, which would silently evict a
         # `product_ids`-only match that carries no spec row at all.
-        scope_terms = None if payload.free_terms else _has_turn_free_terms(payload, result, query_text)
+        # An explicit `scope_terms` wins: the caller's parser NAMED the class word,
+        # which is a better answer than slicing it back out of the raw message - and
+        # the only answer at all when the message that armed the turn is not this
+        # turn's own text (a pick, a carried subject).
+        scope_terms = (
+            list(payload.scope_terms)
+            if payload.scope_terms
+            else (None if payload.free_terms else _has_turn_free_terms(payload, result, query_text))
+        )
 
         # E3/AC-1317: the "more" carry pages by 5 off the QUALIFYING ids
         # themselves, capped at `_SET_PAGE_ID_CAP` (200) - never the ordinary
@@ -2812,7 +2894,94 @@ def resolve_reference_post(
             int((time.monotonic() - started) * 1000) if understanding is not None else None
         )
 
+        # AC-18 (PLAN-spec-visibility-policy.md "Spec fallback"): a hidden key
+        # neither RANKS the catalog (dropped from `specs` before `search_specs`
+        # runs) nor PRINTS (stripped from every candidate below) - the second
+        # half is needed even though the first already ran, because a
+        # candidate's `specifications` is the product's OWN full stored values,
+        # independent of what was searched for.
+        #
+        # B/S2 (security review): the CALLER's `hidden_spec_keys` is trusted
+        # input a caller could forget to compute, forget to forward, or send
+        # stale - so when `contact_id` is also sent, the route resolves that
+        # contact's policy itself (the same `resolve_policy` + `hidden_keys`
+        # pair `check_access` uses) and UNIONS it in. The caller-supplied list
+        # only ever narrows further; it can never widen past the server's own
+        # answer for that contact.
+        hidden_spec_keys = {str(k) for k in (payload.hidden_spec_keys or [])}
+        if payload.contact_id:
+            from app.services.field_access import (
+                resolve_contact_with_null_workspace_fallback,
+            )
+            from app.services.spec_visibility import (
+                full_registry_rows,
+                hidden_keys as _hidden_keys,
+                resolve_policy as _resolve_spec_policy,
+            )
+
+            # SF-1 (security re-verify): resolved through the SAME NULL-
+            # workspace fallback `check_access` uses, not the bare
+            # `resolve_contact_id` `resolve_policy` calls internally - a
+            # contact with `workspace_id IS NULL` (16 measured) resolves to
+            # nothing through the plain path, so this route would have handed
+            # such a contact the closed DEFAULT policy while `check_access`
+            # gives them their real one. Once resolved to the internal id,
+            # `resolve_policy` re-resolving it is a same-id no-op.
+            resolved_contact_id = resolve_contact_with_null_workspace_fallback(
+                db, contact_id=payload.contact_id, space_id=payload.space_id
+            )
+            contact_policy = _resolve_spec_policy(
+                db, resolved_contact_id or payload.contact_id, payload.space_id
+            )
+            registry_keys = {key for key, _label in full_registry_rows(db)}
+            hidden_spec_keys |= _hidden_keys(contact_policy, registry_keys)
+        if hidden_spec_keys:
+            specs = [s for s in specs if s.get("key") not in hidden_spec_keys]
+
         found = search_specs(db, specs=specs, exclusions=exclusions, free_terms=free_terms)
+        if hidden_spec_keys:
+            from app.services.product_spec_rendering import render_spec_sentence
+
+            for candidate in found.get("candidates") or []:
+                spec_values = candidate.get("specifications")
+                matched_specs = candidate.get("matched_specs")
+                carried_hidden = isinstance(spec_values, dict) and (
+                    hidden_spec_keys & spec_values.keys()
+                )
+                if isinstance(spec_values, dict):
+                    filtered_values = {
+                        k: v for k, v in spec_values.items() if k not in hidden_spec_keys
+                    }
+                    candidate["specifications"] = filtered_values
+                    # B1 (code review): `summary` is the rendered sentence
+                    # (`rendered_text`), built from the SAME values - a hidden
+                    # key's own number or word survives inside it otherwise
+                    # ("... 1.2 mm thick.") - and `_emit_spec_matches` copies it
+                    # straight into `display.product_name`, the one field the
+                    # filtering above never reached. Re-rendered from the
+                    # FILTERED values through the real renderer (never a regex
+                    # edit of the old sentence, which could not tell a hidden
+                    # number from any other) - and ONLY for a candidate that
+                    # actually carried a hidden key (nit, re-verify): a
+                    # candidate with nothing to hide keeps its stored
+                    # `rendered_text` byte-identical rather than a
+                    # re-derivation that could drift from it in wording.
+                    if carried_hidden:
+                        # `render_spec_sentence` reads `{key: {"value": ...}}`;
+                        # `filtered_values` is already values-only, so each is
+                        # re-wrapped one level to match.
+                        nested = {k: {"value": v} for k, v in filtered_values.items()}
+                        # A None render (nothing left to say) falls back to the
+                        # product's own code, never the ORIGINAL summary - an
+                        # identifying code is not a leak of what filtering
+                        # removed, where the unfiltered sentence would be.
+                        candidate["summary"] = render_spec_sentence(nested) or candidate.get(
+                            "product_code", ""
+                        )
+                if isinstance(matched_specs, list):
+                    candidate["matched_specs"] = [
+                        k for k in matched_specs if k not in hidden_spec_keys
+                    ]
         result["spec_candidates"] = found["candidates"]
         result["floor_missed"] = found["floor_missed"]
 

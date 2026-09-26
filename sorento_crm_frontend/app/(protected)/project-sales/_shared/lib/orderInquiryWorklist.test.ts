@@ -4,9 +4,14 @@ import {
   deliveryMonthLabel,
   flowExclusionLabel,
   formatInquiryQty,
+  inquiryFooterTotals,
+  inquiryRowRemaining,
+  inquiryRowTaken,
   lateDaysOf,
   linkedSummary,
   orderInquiryRowHref,
+  orderInquirySoLineHref,
+  orderInquirySoLineLabel,
 } from './orderInquiryWorklist';
 
 function row(overrides: Partial<OrderInquiryWorklistRow> = {}): OrderInquiryWorklistRow {
@@ -111,7 +116,7 @@ describe('linkedSummary: the headline only (slice A, 8 Sep 2026 - AC-A3 drops la
     expect(summary).toEqual({ headline: '25 of 25' });
   });
 
-  it('answers null for a row with no links - the cell reads "Not found (new order)"', () => {
+  it('answers null for a row with no links - the cell reads a dash, never "Not found (new order)"', () => {
     expect(linkedSummary('85', '0', [])).toBeNull();
     expect(linkedSummary('85', '0', null)).toBeNull();
   });
@@ -142,6 +147,157 @@ describe('lateDaysOf (AC-D17): reads late_days off the wire, never recomputes it
 
   it('answers null when the link is not late at all', () => {
     expect(lateDaysOf({ late: false, late_days: null })).toBeNull();
+  });
+});
+
+/**
+ * S3 (`PLAN-board-oi-mechanical-22sep.md`, AC-B3-1..7): Taken = a buy row's own links,
+ * Remaining = Qty - Taken - bundled, both `-` on a notice row, both excluded (Remaining 0)
+ * once the row or its sales-order line is cancelled.
+ */
+describe('inquiryRowTaken / inquiryRowRemaining (AC-B3-2..4)', () => {
+  it('AC-B3-2: qty 300, links 140 + 24 -> Taken 164, Remaining 136', () => {
+    const buyRow = row({ verb: 'ORDER', qty: '300', linked_qty: '164', bundled_qty: '0' });
+    expect(inquiryRowTaken(buyRow)).toBe('164');
+    expect(inquiryRowRemaining(buyRow)).toBe('136');
+  });
+
+  it.each(['ADVANCE', 'DELAY', 'CHANGE_SO', 'CANCEL_BALANCE', 'PRE_ORDERED_DO_NOT_ORDER', 'ALREADY_INBOUND', 'RELEASE'])(
+    'AC-B3-3: a %s notice row prints "-" for both Taken and Remaining',
+    (verb) => {
+      const noticeRow = row({ verb, qty: '50', linked_qty: '0' });
+      expect(inquiryRowTaken(noticeRow)).toBe('-');
+      expect(inquiryRowRemaining(noticeRow)).toBe('-');
+    },
+  );
+
+  it('AC-B3-4: a row in state cancelled reads Remaining 0, not a negative or the raw subtraction', () => {
+    const cancelledRow = row({ verb: 'ORDER', qty: '50', linked_qty: '0', state: 'cancelled' });
+    expect(inquiryRowRemaining(cancelledRow)).toBe('0');
+  });
+
+  it('AC-B3-4: a buy row on a cancelled SALES-ORDER LINE also reads Remaining 0', () => {
+    const onCancelledLine = row({
+      verb: 'ORDER',
+      qty: '50',
+      linked_qty: '0',
+      line_cancelled: true,
+    });
+    expect(inquiryRowRemaining(onCancelledLine)).toBe('0');
+  });
+
+  it('never reads Remaining negative - clamps at zero once links exceed qty', () => {
+    const overLinked = row({ verb: 'ORDER', qty: '10', linked_qty: '15', bundled_qty: '0' });
+    expect(inquiryRowRemaining(overLinked)).toBe('0');
+  });
+
+  it('B1 (review round 2, PLAN-oi-request-cs-reserve.md section 7): reserved_qty counts as Taken too - qty 139, PO 40, reserved 50 -> Taken 90, Remaining 49', () => {
+    const reservedRow = row({
+      verb: 'ORDER',
+      qty: '139',
+      linked_qty: '40',
+      reserved_qty: '50',
+      bundled_qty: '0',
+    });
+    expect(inquiryRowTaken(reservedRow)).toBe('90');
+    expect(inquiryRowRemaining(reservedRow)).toBe('49');
+  });
+});
+
+describe('inquiryFooterTotals (AC-B3-5): sums over buy rows only, never a notice or cancelled row', () => {
+  it('AC-B3-5: totals ten buy rows and ignores two notice rows entirely', () => {
+    const buyRows = Array.from({ length: 10 }, (_unused, index) =>
+      row({ id: `buy-${index}`, verb: 'ORDER', qty: '10', linked_qty: '4', bundled_qty: '0' }),
+    );
+    const noticeRows = [
+      row({ id: 'notice-1', verb: 'ADVANCE', qty: '999', linked_qty: '0' }),
+      row({ id: 'notice-2', verb: 'DELAY', qty: '999', linked_qty: '0' }),
+    ];
+
+    const totals = inquiryFooterTotals([...buyRows, ...noticeRows]);
+
+    expect(totals.qty).toBe(100);
+    expect(totals.taken).toBe(40);
+    // Remaining is the FOOTER's own subtraction (qty - taken - bundled), not a sum of the
+    // rows' own already-clamped Remaining figures.
+    expect(totals.remaining).toBe(60);
+  });
+
+  it('excludes a cancelled row (or one on a cancelled line) from every sum', () => {
+    const live = row({ id: 'live', verb: 'ORDER', qty: '100', linked_qty: '30', bundled_qty: '0' });
+    const cancelled = row({
+      id: 'cancelled',
+      verb: 'ORDER',
+      qty: '500',
+      linked_qty: '200',
+      state: 'cancelled',
+    });
+    const cancelledLine = row({
+      id: 'cancelled-line',
+      verb: 'ORDER',
+      qty: '500',
+      linked_qty: '200',
+      line_cancelled: true,
+    });
+
+    const totals = inquiryFooterTotals([live, cancelled, cancelledLine]);
+
+    expect(totals.qty).toBe(100);
+    expect(totals.taken).toBe(30);
+    expect(totals.remaining).toBe(70);
+  });
+
+  it('B1: the footer sums reserved_qty into Taken alongside linked_qty', () => {
+    const reserved = row({
+      id: 'reserved',
+      verb: 'ORDER',
+      qty: '139',
+      linked_qty: '40',
+      reserved_qty: '50',
+      bundled_qty: '0',
+    });
+
+    const totals = inquiryFooterTotals([reserved]);
+
+    expect(totals.qty).toBe(139);
+    expect(totals.taken).toBe(90);
+    expect(totals.remaining).toBe(49);
+  });
+});
+
+/**
+ * S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-1): the "SO line" text and href, shared by
+ * the OI Lines tab and the worklist.
+ */
+describe('orderInquirySoLineLabel / orderInquirySoLineHref (AC-B6-1)', () => {
+  it('prints "SO402757 · L5" when the row carries a line number', () => {
+    expect(orderInquirySoLineLabel({ so_number: 'SO402757', line_no: 5 })).toBe(
+      'SO402757 · L5',
+    );
+  });
+
+  it('falls back to the bare SO number when no line number is on the row', () => {
+    expect(orderInquirySoLineLabel({ so_number: 'SO402757', line_no: null })).toBe(
+      'SO402757',
+    );
+  });
+
+  it('links to the exact line once both ids are on the row', () => {
+    expect(
+      orderInquirySoLineHref({
+        core_sales_order_id: 'core-so-1',
+        core_line_id: 'core-line-5',
+      }),
+    ).toBe('/scm/sales-orders/core-so-1?tab=lines&line=core-line-5');
+  });
+
+  it('answers null - never a link that lands nowhere - when either id is missing', () => {
+    expect(
+      orderInquirySoLineHref({ core_sales_order_id: null, core_line_id: 'core-line-5' }),
+    ).toBeNull();
+    expect(
+      orderInquirySoLineHref({ core_sales_order_id: 'core-so-1', core_line_id: null }),
+    ).toBeNull();
   });
 });
 

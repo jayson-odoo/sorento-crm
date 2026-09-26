@@ -620,27 +620,18 @@ def test_a_no_file_plan_reads_no_statement_at_all():
         assert row["holding_blocks"] == 0
 
 
-def test_a_no_file_plans_universe_is_links_aliases_and_drivers():
-    """AC-E0: membership and placement are separate questions.
+def test_a_no_file_plans_universe_is_the_sourcing_links_alone():
+    """AC-E0, as rewritten by AC-U2 (`PLAN-scm-loading-plan-lines-feedback-12sep.md`).
 
-    A plan with no statement still has a universe - what we buy from this supplier, and what
-    we have ever ruled one of their codes to mean. A product with open demand and neither
-    membership belongs to somebody else's supplier and is not asked of this one.
-
-    S4/AC-D3 widens the alias leg to SETS: a code ruled onto one of our sets joins through the
-    set's DRIVER, exactly as a set named by an actual statement would - the driver's own row
-    is what "membership" resolves to when nothing on file has holdings for the set yet.
+    A plan with no statement still has a universe - what we buy from this supplier. An alias
+    ruled onto a SET (no `product_suppliers` link is possible for a set - only for a product)
+    is no longer a membership leg of its own: the set's driver is not a row until the file
+    actually names the set. A product with open demand and no link belongs to somebody else's
+    supplier and is not asked of this one either.
     """
     with pg_session() as db:
         w = World(db)
         w.link("LINKED")
-        alias_svc.create(
-            db,
-            supplier_id=str(w.supplier.id),
-            supplier_code=f"{MARKER}-THEIRS",
-            product_id=str(w.product("ALIASED").id),
-            actor="Ms Tee",
-        )
         driver = w.product("SET-DRIVER")
         product_set = ProductSet(
             id=_uid(), set_code=f"{MARKER}-SET-{w.tag}", name="Aliased set", is_active=True
@@ -662,16 +653,12 @@ def test_a_no_file_plans_universe_is_links_aliases_and_drivers():
             actor="Ms Tee",
         )
         # Owed to a customer, and this supplier makes none of it - somebody else's product.
-        for key in ("LINKED", "ALIASED", "STRANGER", "SET-DRIVER"):
+        for key in ("LINKED", "STRANGER", "SET-DRIVER"):
             _retail_need(db, w, key, 10)
 
         out = build_svc.build(db, supplier_id=str(w.supplier.id), plan=w.plan("none"))
 
-        codes = _codes(out["rows"])
-        assert w.code("LINKED") in codes
-        assert w.code("ALIASED") in codes
-        assert w.code("SET-DRIVER") in codes
-        assert w.code("STRANGER") not in codes
+        assert _codes(out["rows"]) == [w.code("LINKED")]
 
 
 def test_a_legacy_plan_with_nothing_stamped_still_reads_the_supplier_wide_snapshot():
@@ -879,6 +866,61 @@ def test_the_unknown_codes_queue_is_scoped_to_the_plan():
         rows = alias_svc.unmatched_for_plan(db, str(mine.id))
 
         assert _codes(rows) == [f"{MARKER}-MINE"]
+
+
+# --------------------------------------------------------------------------- #
+# AC-R4b (owner feedback round 5) - the queue carries the sheet's own 型号 too
+# --------------------------------------------------------------------------- #
+
+
+def test_ac_r4b_the_plan_queue_carries_model_no_alongside_item_code():
+    """Owner feedback round 5: the Supplier codes tab's "Supplier says" showed the
+    translated words (品名/商标/规格) but never the sheet's own 型号 - `unmatched_for_plan`
+    has to hand the FE that raw text too, not only the (possibly composed) `item_code`."""
+    with pg_session() as db:
+        w = World(db)
+        mine = w.plan("stock_list")
+        db.add(
+            SupplierInventory(
+                id=_uid(),
+                supplier_id=w.supplier.id,
+                item_code=f"{MARKER}-COMPOSED",
+                model_no="8613",
+                qty_packed=1,
+                qty_unfinished=0,
+                as_of=date(2026, 7, 31),
+                loading_plan_id=str(mine.id),
+            )
+        )
+        db.flush()
+
+        rows = alias_svc.unmatched_for_plan(db, str(mine.id))
+
+        assert rows[0]["item_code"] == f"{MARKER}-COMPOSED"
+        assert rows[0]["model_no"] == "8613"
+
+
+def test_ac_r4b_the_supplier_wide_queue_carries_model_no_alongside_item_code():
+    with pg_session() as db:
+        w = World(db)
+        db.add(
+            SupplierInventory(
+                id=_uid(),
+                supplier_id=w.supplier.id,
+                item_code=f"{MARKER}-LETTERLED",
+                model_no=f"{MARKER}-LETTERLED",
+                qty_packed=1,
+                qty_unfinished=0,
+                as_of=date(2026, 7, 31),
+                loading_plan_id=None,
+            )
+        )
+        db.flush()
+
+        rows = alias_svc.unmatched_for_supplier(db, str(w.supplier.id))
+
+        assert rows[0]["item_code"] == f"{MARKER}-LETTERLED"
+        assert rows[0]["model_no"] == f"{MARKER}-LETTERLED"
 
 
 def test_a_no_file_plan_has_no_codes_to_answer_even_when_the_supplier_does():

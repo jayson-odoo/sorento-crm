@@ -295,8 +295,11 @@ def test_a_partial_decision_is_not_challenged_for_covering_fewer_lines(api):
     assert _decision(db, order) is not None
 
 
-def test_a_covered_line_that_drifts_still_challenges_the_partial_decision(api):
-    """The other half of the same rule: what the revision DID cover is still watched."""
+def test_a_covered_line_that_drifts_on_read_leaves_the_partial_decision_active(api):
+    """AC-E1/AC-E2 (`PLAN-scm-change-management-one-engine.md` rule 9, issue #860): a
+    drifted covered line is still watched, but a sheet READ no longer flips its decision -
+    that call (`challenge_if_drifted`) is retired from `proposal_for`. Was `test_a_covered_
+    line_that_drifts_still_challenges_the_partial_decision`, asserting the opposite."""
     from app.models.order import SalesOrderLine
 
     client, world = api
@@ -319,7 +322,7 @@ def test_a_covered_line_that_drifts_still_challenges_the_partial_decision(api):
 
     sheet = client.get(f"{BASE}/sales-orders/{order.id}/supply")
     assert sheet.status_code == 200, sheet.text
-    assert sheet.json()["decision"]["state"] == "challenged"
+    assert sheet.json()["decision"]["state"] == "active"
 
 
 def test_a_line_the_next_confirmation_does_not_name_keeps_its_raised_buy(api):
@@ -352,9 +355,14 @@ def test_a_line_the_next_confirmation_does_not_name_keeps_its_raised_buy(api):
     assert narrowed.status_code == 200, narrowed.text
     assert narrowed.json()["lines_decided"] == 2
     assert narrowed.json()["lines_undecided"] == 0
-    # Line 1 was decided again, so its row counts; line 2's row is carried under the new
-    # revision but purchasing already had it, and the toast must not say two rows again.
-    assert narrowed.json()["inquiry_rows_created"] == 1
+    # AC-R2-10 (`PLAN-scm-oi-handover-r2-undo.md` S2): line 1 is named again at the SAME
+    # qty and date its own raised row already carries, no links, so the widened settle-
+    # in-place gate keeps that row AS IS - it is not cancelled and nothing fresh is
+    # raised for it. Line 2's row is carried under the new revision the same as before,
+    # also not counted. Neither line contributes to `created`, so the toast must not
+    # say anything was raised - this replaces the old cancel-and-re-raise expectation
+    # ("line 1 was decided again, so its row counts").
+    assert narrowed.json()["inquiry_rows_created"] == 0
 
     db.expire_all()
     rows = (
@@ -587,14 +595,17 @@ def test_a_discontinued_covered_line_survives_a_later_confirmation_of_another_li
     assert carried["buy_reason"] == "Last batch for the show flat."
 
 
-def test_a_covered_line_whose_open_quantity_drifted_is_not_carried_and_the_revision_is_challenged(api):
+def test_a_covered_line_whose_open_quantity_drifted_is_not_carried_and_the_revision_is_superseded(api):
     """A carried line is not re-validated - but a revision whose frozen facts have moved is
     no promise anybody can keep, and carrying its snapshot verbatim into a fresh revision
     stamped confirmed NOW would be re-making that promise against facts that are gone.
-    The confirmation runs the same drift check the sheet runs (`challenge_if_drifted`)
-    before it reads the active revision for the carry: revision 1 (lines 1 and 2) is
-    challenged, line 1 alone is confirmed into revision 2, and line 2 - whose open
-    quantity moved - is undecided again rather than carried on a stale snapshot."""
+    Revision 1 (lines 1 and 2) is superseded by this confirm, line 1 alone is confirmed
+    into revision 2, and line 2 - whose open quantity moved - is undecided again rather
+    than carried on a stale snapshot. AC-E1/AC-E2 (`PLAN-scm-change-management-one-engine
+    .md` rule 9, issue #860): revision 1's terminal state is `superseded`, never
+    `challenged` - that flip (`challenge_if_drifted`) is retired from `confirm`. Was
+    `test_a_covered_line_whose_open_quantity_drifted_is_not_carried_and_the_revision_is_
+    challenged`, asserting `challenged`."""
     from app.models.order import SalesOrderLine
 
     client, world = api
@@ -635,7 +646,6 @@ def test_a_covered_line_whose_open_quantity_drifted_is_not_carried_and_the_revis
     assert [s["project_line_id"] for s in active.line_snapshots] == [str(line_1.id)], (
         "line 2's stale snapshot is not carried into a revision confirmed now"
     )
-    challenged = _decision(db, order, state="challenged")
-    assert challenged is not None and challenged.revision_no == 1
-    assert "Line 20" in (challenged.superseded_reason or "")
-    assert _decision(db, order, state="superseded") is None
+    superseded = _decision(db, order, state="superseded")
+    assert superseded is not None and superseded.revision_no == 1
+    assert _decision(db, order, state="challenged") is None

@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from urllib.parse import quote
 
@@ -361,9 +361,146 @@ def test_document_row_declares_every_ac2_field(scm_app):
     for field in (
         "id", "spo_number", "doc_date", "supplier_name", "supplier_extra_count",
         "status", "earliest_eta", "total_allocated", "total_received", "balance",
-        "line_count", "worst_overdue_days",
+        "line_count", "worst_overdue_days", "containers",
     ):
         assert field in row, (field, row)
+
+
+# =================================================================================== #
+# PLAN-spo-list-container-number.md, AC-1..AC-5: the `containers` rollup + search +
+# sort. Container numbers are ZZTU-prefixed throughout so a shared, non-empty prod-copy
+# database cannot leak a real container into a count this suite asserts on.
+# =================================================================================== #
+
+
+def test_document_row_carries_containers(scm_app):
+    """AC-1: one `{container_number, shipment_id}` entry per distinct container over
+    the document's visible lines, sorted by container number - a linked shipment
+    container and a raw, unlinked `spo_allocations.container_number`."""
+    client, db = _client(scm_app)
+    chain = _chain(db)
+    product = _product(db, chain)
+    supplier = _supplier(db)
+    shipment = _shipment(db, supplier=supplier)
+    shipment.shipping_container_number = "ZZTU1111111"
+    db.flush()
+
+    doc = unique_code("SPO-CONTAINERS")
+    _line(db, spo_number=doc, line_no=1, product=product, allocated=10, received=0,
+          shipment=shipment, supplier=supplier)
+    raw_line = _line(db, spo_number=doc, line_no=2, product=product, allocated=5, received=0)
+    raw_line.container_number = "ZZTU2222222"
+    db.flush()
+
+    r = client.get(DOCUMENTS_URL, params={"query": product.product_code, "limit": 100})
+    assert r.status_code == 200, r.text
+    row = next(row for row in r.json()["data"] if row["spo_number"] == doc)
+    assert row["containers"] == [
+        {"container_number": "ZZTU1111111", "shipment_id": str(shipment.id)},
+        {"container_number": "ZZTU2222222", "shipment_id": None},
+    ]
+
+
+def test_containers_empty_when_none(scm_app):
+    """AC-2: a document with no container on any line returns `containers: []`."""
+    client, db = _client(scm_app)
+    chain = _chain(db)
+    product = _product(db, chain)
+    doc = unique_code("SPO-NOCONTAINER")
+    _line(db, spo_number=doc, line_no=1, product=product, allocated=5, received=0)
+
+    r = client.get(DOCUMENTS_URL, params={"query": product.product_code, "limit": 100})
+    assert r.status_code == 200, r.text
+    row = next(row for row in r.json()["data"] if row["spo_number"] == doc)
+    assert row["containers"] == []
+
+
+def test_containers_dedupe_and_skip_retired(scm_app):
+    """AC-3: two lines on the same container fold into one entry, and the entry
+    carrying a shipment id wins over the raw-only duplicate; a retired
+    (zero-receipt) line's container is not counted at all."""
+    client, db = _client(scm_app)
+    chain = _chain(db)
+    product = _product(db, chain)
+    supplier = _supplier(db)
+    shipment = _shipment(db, supplier=supplier)
+    shipment.shipping_container_number = "ZZTU3333333"
+    db.flush()
+
+    doc = unique_code("SPO-DEDUPE")
+    _line(db, spo_number=doc, line_no=1, product=product, allocated=10, received=0,
+          shipment=shipment, supplier=supplier)
+    raw_dup = _line(db, spo_number=doc, line_no=2, product=product, allocated=5, received=0)
+    raw_dup.container_number = "ZZTU3333333"
+
+    retired = _line(db, spo_number=doc, line_no=3, product=product, allocated=5, received=0)
+    retired.container_number = "ZZTU4444444"
+    retired.line_status = "closed"
+    retired.retired_at = datetime.now(timezone.utc)
+    db.flush()
+
+    r = client.get(DOCUMENTS_URL, params={"query": product.product_code, "limit": 100})
+    assert r.status_code == 200, r.text
+    row = next(row for row in r.json()["data"] if row["spo_number"] == doc)
+    assert row["containers"] == [
+        {"container_number": "ZZTU3333333", "shipment_id": str(shipment.id)},
+    ]
+
+
+def test_query_matches_raw_allocation_container_number(scm_app):
+    """AC-4: the free-text search also matches the raw, unlinked
+    `spo_allocations.container_number` - not only the linked shipment's own
+    `shipping_container_number` (already covered by
+    `test_query_matches_warehouse_code_and_packing_list_container_number`)."""
+    client, db = _client(scm_app)
+    chain = _chain(db)
+    product = _product(db, chain)
+    doc = unique_code("SPO-RAWCONTAINER")
+    line = _line(db, spo_number=doc, line_no=1, product=product, allocated=5, received=0)
+    line.container_number = "ZZTU5555555"
+    db.flush()
+
+    hit = client.get(DOCUMENTS_URL, params={"state": "all", "query": "ZZTU5555", "limit": 100})
+    assert hit.status_code == 200, hit.text
+    assert {row["spo_number"] for row in hit.json()["data"]} == {doc}
+
+    miss = client.get(DOCUMENTS_URL, params={"state": "all", "query": "ZZTU9999999", "limit": 100})
+    assert miss.status_code == 200, miss.text
+    assert doc not in {row["spo_number"] for row in miss.json()["data"]}
+
+
+def test_sort_by_containers(scm_app):
+    """AC-5: `sort=containers` orders by the document's first container number,
+    server-side; documents with no container sort last in EITHER direction."""
+    client, db = _client(scm_app)
+    chain = _chain(db)
+    product = _product(db, chain)
+
+    doc_a = unique_code("SPO-SORTA")
+    line_a = _line(db, spo_number=doc_a, line_no=1, product=product, allocated=5, received=0)
+    line_a.container_number = "ZZTUAAAAAAA"
+
+    doc_z = unique_code("SPO-SORTZ")
+    line_z = _line(db, spo_number=doc_z, line_no=1, product=product, allocated=5, received=0)
+    line_z.container_number = "ZZTUZZZZZZZ"
+
+    doc_none = unique_code("SPO-SORTNONE")
+    _line(db, spo_number=doc_none, line_no=1, product=product, allocated=5, received=0)
+    db.flush()
+
+    asc = client.get(DOCUMENTS_URL, params={
+        "state": "all", "query": product.product_code, "sort": "containers", "dir": "asc",
+        "limit": 100,
+    })
+    assert asc.status_code == 200, asc.text
+    assert [row["spo_number"] for row in asc.json()["data"]] == [doc_a, doc_z, doc_none]
+
+    desc = client.get(DOCUMENTS_URL, params={
+        "state": "all", "query": product.product_code, "sort": "containers", "dir": "desc",
+        "limit": 100,
+    })
+    assert desc.status_code == 200, desc.text
+    assert [row["spo_number"] for row in desc.json()["data"]] == [doc_z, doc_a, doc_none]
 
 
 # =================================================================================== #

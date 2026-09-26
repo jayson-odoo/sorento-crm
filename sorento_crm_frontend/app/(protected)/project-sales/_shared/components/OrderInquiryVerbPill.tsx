@@ -1,5 +1,6 @@
 'use client';
 
+import { Check } from 'lucide-react';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 
 /**
@@ -82,17 +83,24 @@ export function OrderInquiryVerbPill({ verb }: { verb: string }) {
   );
 }
 
-const STATE_LABEL: Record<string, string> = {
-  raised: 'Raised',
-  actioned: 'Actioned',
+// Exported (AC-OH-61): the worklist's own State filter labels its options with these
+// SAME words, off `summary.by_state`'s keys - one map, so the pill on a row and the
+// option that filters to it never say the state two different ways.
+//
+// S5 (`PLAN-board-oi-mechanical-22sep.md`, AC-B5-1/AC-B5-2, owner's pick, 22 Sep 2026):
+// plain words for what PURCHASING DOES with the row, not the internal verb ("Raised" /
+// "Actioned" explained nothing on screen without also knowing the workflow). Stored
+// values are UNCHANGED - `raised`/`partly_linked`/`placed`/`actioned`/`cancelled` still
+// key `scm.committed_v`, the worklist filter and every saved column preference; only the
+// word a person reads moves. This is the ONE map every reader of the state (this pill,
+// the worklist's own State filter, the Lines tab, the board chips, any email template)
+// must read off - a second spelling anywhere is a defect (AC-B5-2).
+export const STATE_LABEL: Record<string, string> = {
+  raised: 'To buy',
+  actioned: 'Done',
   cancelled: 'Cancelled',
-  // The whole quantity sits on documents (AC-I1). The stored value is still `placed`,
-  // because renaming it would rewrite `scm.committed_v`, the worklist filter and every
-  // saved column preference to say the same thing in a different word.
-  placed: 'Linked',
-  // Some of it does, the rest is still demand - the middle the links table made
-  // expressible, and exactly what `committed_v` now nets.
-  partly_linked: 'Partly linked',
+  placed: 'On PO/SPO',
+  partly_linked: 'Partly on PO/SPO',
 };
 
 const STATE_PALETTE: Record<string, string> = {
@@ -110,4 +118,57 @@ export function OrderInquiryStatePill({ state }: { state: string }) {
       {label}
     </span>
   );
+}
+
+/**
+ * `PLAN-oi-request-cs-reserve.md` 3.5 (AC-RS-20/AC-RS-25): `requested` while an open
+ * reserve request row exists, `reserved` once CS has actually reserved something (and no
+ * open request). Rendered BESIDE the state pill on the worklist (its own read-only
+ * usage). Round 4 (section 6e.2, AC-RS-83/84): "The pill is no longer a button" - the
+ * Lines grid's reserve icons sit beside it in the same State cell (AC-RS-83c,
+ * `orderInquiryHeaderLinesColumns.tsx`); this pill is plain text everywhere now, amber
+ * `Request to reserve N` printing the OPEN request's own `qty_requested`, green
+ * `Reserved N` with the owner's own tick.
+ */
+export function ReservePill({
+  reserveState,
+  reservedQty,
+  requestedQty,
+}: {
+  reserveState: 'requested' | 'reserved' | 'declined' | string | null | undefined;
+  reservedQty?: string | null;
+  /** AC-RS-83: the open request row's own `qty_requested` for this row - printed only
+   * when `reserveState === 'requested'`. */
+  requestedQty?: string | null;
+}) {
+  if (!reserveState) return null;
+  if (reserveState === 'requested') {
+    return (
+      <span className={`${STATUS_PILL_BASE} normal-case ${statusPillClass('pending')}`}>
+        Request to reserve {requestedQty ?? ''}
+      </span>
+    );
+  }
+  if (reserveState === 'reserved') {
+    // Nit (review round): the GREEN key (`done`/`completed`), not `approved` (blue) -
+    // a reserve is a finished outcome, the same reading `done` carries everywhere
+    // else in `lib/status-pill.ts`.
+    return (
+      <span className={`${STATUS_PILL_BASE} normal-case gap-1 ${statusPillClass('done')}`}>
+        {/* The owner's own tick ("after confirmed the product should have a ticked
+            icon", round 3 owner words). */}
+        <Check className="size-3" aria-hidden />
+        Reserved {reservedQty ?? ''}
+      </span>
+    );
+  }
+  if (reserveState === 'declined') {
+    // 6e.4 (AC-RS-83b): CS answered "Reserve 0" - neutral, not an error and not done.
+    return (
+      <span className={`${STATUS_PILL_BASE} normal-case ${statusPillClass('draft')}`}>
+        Not reserved
+      </span>
+    );
+  }
+  return null;
 }

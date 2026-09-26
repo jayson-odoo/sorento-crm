@@ -90,6 +90,11 @@ export function PlanHeaderTab({
   const [warehouses, setWarehouses] = useState<string[]>([]);
   const [products, setProducts] = useState<string[]>([]);
   const [productLabels, setProductLabels] = useState<Record<string, string>>({});
+  /** Demand scope (21 Sep 2026): carried through Edit -> Re-plan unchanged - this tab
+   *  offers no Demand/Orders picker of its own, only re-submits whatever the run itself
+   *  was launched with. */
+  const [demandClass, setDemandClass] = useState<'project' | 'retail' | null>(null);
+  const [soNumbers, setSoNumbers] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [unsavedWarnOpen, setUnsavedWarnOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -129,6 +134,8 @@ export function PlanHeaderTab({
     setHorizonStart(run.plan_horizon_start ?? '');
     setWarehouses(run.is_all_warehouses ? [] : (run.warehouse_codes ?? []));
     setProducts(run.product_codes ?? []);
+    setDemandClass(run.demand_class ?? null);
+    setSoNumbers(run.so_numbers ?? []);
     setError(null);
     setIsEditing(true);
   };
@@ -170,6 +177,12 @@ export function PlanHeaderTab({
         product_codes: products,
         plan_horizon_start: horizonStart || null,
         plan_horizon_date: horizon || null,
+        // Re-submitted unchanged (21 Sep 2026) - this tab carries no Demand/Orders
+        // picker of its own, only what the run being re-planned was launched with. Omitted
+        // entirely on a run that named no demand scope, so a re-plan of a legacy/unnarrowed
+        // run stays byte-identical to before this existed.
+        ...(demandClass ? { demand_class: demandClass } : {}),
+        ...(demandClass === 'project' ? { so_numbers: soNumbers } : {}),
       });
       setConfirmOpen(false);
       setIsEditing(false);
@@ -185,6 +198,19 @@ export function PlanHeaderTab({
       setSubmitting(false);
     }
   };
+
+  // Demand scope (21 Sep 2026): nothing when the run carried no demand_class - every
+  // legacy run and every unnarrowed one reads exactly as before this existed. An empty
+  // `so_numbers` under Project means "every project order in range" (design 4.6), not
+  // "zero orders", so the count is shown only when there actually is one.
+  const demandSummary =
+    run.demand_class === 'retail'
+      ? 'Demand: Dealer'
+      : run.demand_class === 'project'
+        ? run.so_numbers?.length
+          ? `Demand: Project, ${fmtInt(run.so_numbers.length)} order${run.so_numbers.length === 1 ? '' : 's'}`
+          : 'Demand: Project'
+        : null;
 
   const summary = run.summary;
   const warehouseSummary = run.is_all_warehouses
@@ -309,6 +335,7 @@ export function PlanHeaderTab({
               ) : (
                 <span className="tabular-nums">
                   {describeWindow(run.plan_horizon_start, run.plan_horizon_date)}
+                  {demandSummary ? ` · ${demandSummary}` : ''}
                 </span>
               )}
             </Field>

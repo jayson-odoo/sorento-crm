@@ -118,7 +118,9 @@ describe('InsertFieldDialog', () => {
       data: DATA,
     });
 
-    expect(screen.getByText('CBF3612 in granite, 407 mm')).toBeTruthy();
+    // D20 (PLAN-price-tag-ai-extract-resolver.md, AC-S15-1): a bare spec
+    // value, no unit appended - the unit is the designer's to type.
+    expect(screen.getByText('CBF3612 in granite, 407')).toBeTruthy();
   });
 
   it('the preview follows what is typed, so a bad token is visible before Done', () => {

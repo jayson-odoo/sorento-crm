@@ -1,7 +1,8 @@
 """Tool -> chatbot domain mapping, as plain data, for services OUTSIDE the chatbot
 package boundary (AC-002, `tests/chatbot/test_import_boundary.py`).
 
-D15 first put this fact on `app.services.chatbot.contracts.DOMAIN_SPEC[domain].tools`
+D15 first put this fact on the chatbot's own domain vocabulary (then
+`contracts.DOMAIN_SPEC`, now the `chatbot_domains` table and its frozen seed)
 and had `mcp_tool_registry_service.sync_catalog` invert it directly - which is core
 importing the chatbot package, the one direction AC-002 forbids (D17, CI run on
 bf8814585). This module is the fix: the mapping lives here, in `app/services/`, so
@@ -9,26 +10,26 @@ bf8814585). This module is the fix: the mapping lives here, in `app/services/`, 
 boundary.
 
 **Nothing READS the stamped column today (8 Sep 2026).** Its one reader was the
-chatbot's tool search, and that search is gone: the business lane picks
-`contracts.DOMAIN_SPEC[domain].tools[0]` outright. Both the column and this mapping
+chatbot's tool search, and that search is gone: the business lane picks the domain
+row's own first tool outright (`turn.policy.Policy.domain(name).tools[0]`). Both the column and this mapping
 stay because dropping them is a migration on a column production never populated, and
 that is a follow-up with its own trigger (the next migration that touches
 `mcp_tools`), not a reason to churn the table now.
 
-`contracts.DOMAIN_SPEC[domain].tools` stays the hand-authored, richly-commented
-version the chatbot module itself reads (`CHATBOT_READ_ONLY_TOOLS`, the fetch lane's
+`chatbot_domains.tools` (seeded from `turn/policy_rows.py`) stays the hand-authored,
+richly-commented version the chatbot module itself reads (`CHATBOT_READ_ONLY_TOOLS`, the fetch lane's
 per-tool tables) - moving those tuples here would strand the per-tool reasoning
 comments they carry (e.g. why `crm_order_analytics` is excluded from `order`) next to
-a flat dict that has no room for them. Chosen over deriving `DOMAIN_SPEC.tools` from
+a flat dict that has no room for them. Chosen over deriving those tools from
 this module because that is the smaller diff and loses nothing: this module's own
-data is dumb by design, so nothing here needs the prose contracts.py already carries.
+data is dumb by design, so nothing here needs the prose the seed already carries.
 `tests/chatbot/test_domain_spec.py` is the guardrail that keeps the two from
 drifting - one runtime fact, told twice, checked never to disagree.
 """
 from __future__ import annotations
 
-#: tool_name -> domain name (a `DOMAIN_SPEC` key). Grouped by domain, in the same
-#: order `DOMAIN_SPEC` declares them, so a diff against that dict's flattened form is
+#: tool_name -> domain name (a `chatbot_domains.name`). Grouped by domain, in the same
+#: order the seed declares them, so a diff against that dict's flattened form is
 #: easy to eyeball. A tool in no domain is simply absent - it never enters a chatbot
 #: pool, the same rule `mcp_tools.chatbot_domain` NULL encodes.
 CHATBOT_TOOL_DOMAINS: dict[str, str] = {
@@ -44,8 +45,13 @@ CHATBOT_TOOL_DOMAINS: dict[str, str] = {
     "crm_forms_management_forms_list": "forms",
     "crm_inventory_stock_balance_list": "inventory",
     "crm_inventory_warehouses_list": "inventory",
+    # Same domain as the stock tools it sits beside (PLAN-low-stock-report S6, AC-62);
+    # the low stock INTENT is what picks it, not the domain.
+    "crm_low_stock_report": "inventory",
     "crm_order_management_orders_list": "order",
     "crm_order_management_orders_by_product_list": "order",
+    "crm_outstanding_report": "order",
+    "crm_sales_report": "order",
     "crm_master_customers_list": "order",
     "crm_incoming_stock_list": "incoming",
     "crm_incoming_stock_by_product": "incoming",
@@ -56,6 +62,7 @@ CHATBOT_TOOL_DOMAINS: dict[str, str] = {
     "crm_resource_attachments_current_stock_list": "resource_attachment",
     "crm_procurement_spo_allocations_last_receipt_list": "spo_allocation",
     "crm_procurement_po_placed_list": "purchase_order",
+    "crm_procurement_po_last_cost_list": "purchase_cost",
 }
 
 

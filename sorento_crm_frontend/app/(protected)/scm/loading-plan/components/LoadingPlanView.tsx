@@ -6,7 +6,12 @@ import { toast } from '@/lib/toast';
 import { ArrowLeft, LoaderCircle, Save, Send } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
+import {
+  Card,
+  CardHeader,
+  CardHeading,
+  CardTitle,
+} from '@/components/ui/card';
 import {
   Dialog,
   DialogBody,
@@ -21,12 +26,14 @@ import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import DetailActions from '@/components/common/DetailActions';
+import { Field } from '@/components/common/Field';
 import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
 } from '@/components/common/AttachmentPreviewModal';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useUrlTab } from '@/hooks/useUrlTab';
-import { EM_DASH, fmtDate, fmtInt } from '../../lib/format';
+import { EM_DASH, fmtInt } from '../../lib/format';
+import { describeWindow } from '../../reorder/lib/runListing';
 import {
   loadingPlanPagerQuery,
   useContainerRequestBuild,
@@ -67,9 +74,10 @@ import { PageHeader } from '@/components/common/PageHeader';
  *  enough that the highlight/remark she is checking still feels like it followed her. */
 const PREVIEW_DEBOUNCE_MS = 400;
 
-/** The record's three tabs (S2): Lines (default), Supplier codes, Sent. */
-type LoadingPlanTab = 'lines' | 'codes' | 'sent';
-const LOADING_PLAN_TABS: LoadingPlanTab[] = ['lines', 'codes', 'sent'];
+/** The record's four tabs (S2, S3 of the 14 Sep feedback batch): General (the plan's own
+ *  facts, first in the strip), Lines (still the landing tab), Supplier codes, Sent. */
+type LoadingPlanTab = 'general' | 'lines' | 'codes' | 'sent';
+const LOADING_PLAN_TABS: LoadingPlanTab[] = ['general', 'lines', 'codes', 'sent'];
 
 /**
  * One loading plan, as a record (R5).
@@ -130,6 +138,9 @@ export function LoadingPlanView({ planId }: { planId: string }) {
   const [edits, setEdits] = useState<Record<string, LoadingPlanLineEdit>>({});
   const [sendOpen, setSendOpen] = useState(false);
   const [cutOffOpen, setCutOffOpen] = useState(false);
+  // AC-N7: "Sales orders needed" is now a window, the start-side twin beside the existing
+  // end date - same two fields reorder planning's own Start Plan dialog carries.
+  const [cutOffStartDraft, setCutOffStartDraft] = useState('');
   const [cutOffDraft, setCutOffDraft] = useState('');
   const [cutOffDropOpen, setCutOffDropOpen] = useState(false);
   const [refreshOpen, setRefreshOpen] = useState(false);
@@ -332,6 +343,7 @@ export function LoadingPlanView({ planId }: { planId: string }) {
     changeCutOff: {
       disabled: readOnly,
       run: () => {
+        setCutOffStartDraft(plan?.plan_horizon_start ?? '');
         setCutOffDraft(plan?.plan_horizon_date ?? '');
         setCutOffOpen(true);
       },
@@ -374,12 +386,15 @@ export function LoadingPlanView({ planId }: { planId: string }) {
       setEdits({});
       await save.mutateAsync({});
     }
-    changeCutOff.mutate(cutOffDraft || null, {
-      onSuccess: () => {
-        setCutOffDropOpen(false);
-        setCutOffOpen(false);
+    changeCutOff.mutate(
+      { plan_horizon_start: cutOffStartDraft || null, plan_horizon_date: cutOffDraft || null },
+      {
+        onSuccess: () => {
+          setCutOffDropOpen(false);
+          setCutOffOpen(false);
+        },
       },
-    });
+    );
   };
 
   /** Send saves first (R6, AC-A15), so the document and the screen can never disagree. */
@@ -434,11 +449,11 @@ export function LoadingPlanView({ planId }: { planId: string }) {
     );
   }
 
-  const subtitle = [
-    `Started ${formatDateTimeInMalaysia(plan.started_at)}`,
-    `SO cut-off ${plan.plan_horizon_date ? fmtDate(plan.plan_horizon_date) : 'none'}`,
-    plan.document_label,
-  ].join(' · ');
+  // Review round, 12 Sep: same guard as reorder planning's own Start Plan dialog
+  // (RunPlanningModal.tsx:142-147) - a backwards window nets nothing either.
+  const cutOffWindowInvalid = Boolean(
+    cutOffStartDraft && cutOffDraft && cutOffDraft < cutOffStartDraft,
+  );
 
   // R11: the SAME merge backs the plan table's Remarks column and the preview's own qty /
   // remark inputs - a remark typed on one shows on the other before either is saved (AC-E4).
@@ -472,7 +487,7 @@ export function LoadingPlanView({ planId }: { planId: string }) {
             }
           >
             <p className="w-full text-xs text-muted-foreground">
-              {plan.plan_horizon_date ? `Until ${fmtDate(plan.plan_horizon_date)}` : 'No cut-off'}
+              {describeWindow(plan.plan_horizon_start, plan.plan_horizon_date)}
               {' · '}
               {fmtInt(lines.length)} products · {fmtInt(totalQty)} units
             </p>
@@ -501,6 +516,9 @@ export function LoadingPlanView({ planId }: { planId: string }) {
         </>
       ) : (
         <>
+          {/* Title and trail only (S3, AC-3.1). The status pill and the started / window /
+              stock-list line used to hang here; the owner reads them as a list of facts, so
+              they live on the General tab below. */}
           <PageHeader
             title={plan.supplier_name ?? EM_DASH}
             titleClassName="max-w-full truncate"
@@ -514,23 +532,7 @@ export function LoadingPlanView({ planId }: { planId: string }) {
                 Back to loading plans
               </Button>
             }
-          >
-            {/* `w-full`, not just `min-w-0`: ToolbarHeading is a WRAPPING column flex container,
-                so its lines are sized to their content and a long supplier name would push the
-                header past the viewport at 375px instead of ellipsing. */}
-            <div
-              className="flex w-full min-w-0 flex-wrap items-center gap-2"
-              title={plan.supplier_name ?? ''}
-            >
-
-              <Badge variant={STATUS_VARIANT[plan.status]} appearance="light" size="sm">
-                {STATUS_LABEL[plan.status]}
-              </Badge>
-            </div>
-            <p className="w-full text-xs text-muted-foreground" data-testid="plan-subtitle">
-              {subtitle}
-            </p>
-          </PageHeader>
+          />
 
           {/* The plan's own actions: pager, gear, primary (D6, S1). They sit under the
               toolbar rather than on it, and wrap at 375. The gear renders `planActions` - the
@@ -571,6 +573,7 @@ export function LoadingPlanView({ planId }: { planId: string }) {
               edits no matter which tab is open. */}
           <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
             <TabsList variant="line" className="mb-4 w-full justify-start">
+              <TabsTrigger value="general">General</TabsTrigger>
               <TabsTrigger value="lines">Lines</TabsTrigger>
               <TabsTrigger value="codes">
                 Supplier codes{unmatchedCodes.length ? ` (${unmatchedCodes.length})` : ''}
@@ -579,6 +582,34 @@ export function LoadingPlanView({ planId }: { planId: string }) {
                 Sent{requestNotices.length ? ` (${requestNotices.length})` : ''}
               </TabsTrigger>
             </TabsList>
+
+            <TabsContent value="general">
+              {/* The plan's own facts, as a list of label/value pairs - the same `Field` the
+                  proforma invoice's General tab reads from. One column at 375px, two from
+                  the `sm` breakpoint (AC-3.3). */}
+              <Card data-testid="plan-general">
+                <CardHeader>
+                  <CardHeading>
+                    <CardTitle>Plan</CardTitle>
+                  </CardHeading>
+                </CardHeader>
+                <section aria-label="Plan" className="grid grid-cols-1 gap-4 p-4 sm:grid-cols-2">
+                  <Field label="Status">
+                    <Badge variant={STATUS_VARIANT[plan.status]} appearance="light" size="sm">
+                      {STATUS_LABEL[plan.status]}
+                    </Badge>
+                  </Field>
+                  <Field label="Supplier">{plan.supplier_name ?? EM_DASH}</Field>
+                  <Field label="Started">{formatDateTimeInMalaysia(plan.started_at)}</Field>
+                  {/* AC-N7: the same window wording the reorder run's own header, subtitle
+                      and list use, so a plan with a start never states the end alone. */}
+                  <Field label="Plan window">
+                    {describeWindow(plan.plan_horizon_start, plan.plan_horizon_date)}
+                  </Field>
+                  <Field label="Stock list">{plan.document_label ?? EM_DASH}</Field>
+                </section>
+              </Card>
+            </TabsContent>
 
             <TabsContent value="lines">
               <ContainerRequestSection
@@ -688,35 +719,48 @@ export function LoadingPlanView({ planId }: { planId: string }) {
           <DialogHeader>
             <DialogTitle>Change the sales order cut-off</DialogTitle>
             <DialogDescription>
-              The suggestion is worked out again against the new date.
+              The suggestion is worked out again against the new window.
             </DialogDescription>
           </DialogHeader>
           <DialogBody className="space-y-2">
-            <Label htmlFor="plan-cutoff" className="text-xs">
-              Sales order cut-off
-            </Label>
-            <div className="flex flex-wrap items-center gap-2">
-              <Input
-                id="plan-cutoff"
-                type="date"
-                className="w-44"
-                value={cutOffDraft}
-                onChange={(e) => setCutOffDraft(e.target.value)}
-              />
-              {cutOffDraft ? (
-                <Button variant="ghost" size="sm" onClick={() => setCutOffDraft('')}>
-                  Clear
-                </Button>
-              ) : null}
+            <Label className="text-xs">Sales orders needed</Label>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label htmlFor="plan-cutoff-start" className="mb-1 block text-2xs text-muted-foreground">
+                  From
+                </Label>
+                <Input
+                  id="plan-cutoff-start"
+                  type="date"
+                  value={cutOffStartDraft}
+                  onChange={(e) => setCutOffStartDraft(e.target.value)}
+                />
+              </div>
+              <div>
+                <Label htmlFor="plan-cutoff" className="mb-1 block text-2xs text-muted-foreground">
+                  To
+                </Label>
+                <Input
+                  id="plan-cutoff"
+                  type="date"
+                  value={cutOffDraft}
+                  onChange={(e) => setCutOffDraft(e.target.value)}
+                />
+              </div>
             </div>
             <p className="text-2xs text-muted-foreground">Empty = every open order counts.</p>
+            {cutOffWindowInvalid ? (
+              <p className="text-2xs text-destructive">
+                The To date cannot be before the From date.
+              </p>
+            ) : null}
           </DialogBody>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCutOffOpen(false)}>
               Cancel
             </Button>
             <Button
-              disabled={changeCutOff.isPending || save.isPending}
+              disabled={changeCutOff.isPending || save.isPending || cutOffWindowInvalid}
               onClick={() => (editedCount > 0 ? setCutOffDropOpen(true) : void applyCutOff())}
             >
               {changeCutOff.isPending ? <LoaderCircle className="size-4 animate-spin" /> : null}

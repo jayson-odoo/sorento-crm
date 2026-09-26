@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Optional
 
 from app.services.scm.outstanding_reader import sheet_rows
@@ -59,13 +59,15 @@ _HEADERS: dict[str, tuple[str, ...]] = {
 #: "nothing placed".
 _NOT_ORDERED = re.compile(r"\bORDER\b", re.I)
 
-#: `ORDER BACK` written where a delivery DATE belongs. CS uses the date cell to say the
-#: quantity is not a fresh purchase at all: it is owed against something already ordered or
-#: already shipped, and the REMARK names the document (`PLAN-scm-purchasing-uat-journey.md`
-#: section 4b; every ORDER BACK row of the three SO381895 forms is shaped this way).
+#: `ORDER BACK` written where a delivery DATE belongs, OR in the REMARK cell (owner ruling
+#: R1, 22 Sep 2026: SO417310 / MKT5529SS-DIY writes it in the remark while the date cell
+#: keeps a real date). CS uses either cell to say the quantity is not a fresh purchase at
+#: all: it is owed against something already ordered or already shipped
+#: (`PLAN-scm-purchasing-uat-journey.md` section 4b; every ORDER BACK row of the three
+#: SO381895 forms writes it in the date cell instead).
 #:
-#: The two words together, and only together. `ORDER` alone in that cell is the sheet's own
-#: "nothing placed yet" and means the opposite.
+#: The two words together, and only together. `ORDER` alone in either cell is the sheet's
+#: own "nothing placed yet" and means the opposite.
 _ORDER_BACK = re.compile(r"\bORDER\s+BACK\b", re.I)
 
 #: A purchase-order number in any family the customer uses: `202510-S0025`, `SPO-2020/01-0001`,
@@ -101,11 +103,57 @@ def _number(value: Any) -> Optional[float]:
         return None
 
 
+#: A day-first date typed as TEXT rather than an Excel date (round 4, 19 Sep 2026,
+#: `JAN - DEC 2026 ORDERabc.xlsx`): SO314593's own JUNE rows say `1.6.2026` as a STRING, so
+#: `_as_date` answered `None` for them regardless of anything 7.4 or this fix's own
+#: reversal did. Measured across all 38 tabs of that file: `1.3.2026` (67 cells, d.m.yyyy),
+#: `1.12.2026` (14, d.mm.yyyy), `30-04-2026` (11, dd-mm-yyyy) and one `27/10//2026` typo
+#: (the trailing `+` tolerates the double slash). Day-first because every one of those
+#: cells reads that way - `1.3.2026` is 1 March, never 3 January - and none of them needs a
+#: two-digit year, so that shape is not matched. Never mistaken for `MARCH - APRIL 2026` (a
+#: range, not a date), `ASAP`, or any other prose cell: none of those has three digit groups
+#: in this shape at all.
+_TEXT_DATE = re.compile(r"^\s*(\d{1,2})[./-](\d{1,2})[./-]+(\d{4})\s*$")
+
+#: Excel date serials, left in "General" number format instead of a date format (round 5,
+#: 19 Sep 2026, `JAN - DEC 2026 ORDERabc.xlsx`): DELIVERY DATE and SO DATE cells come back
+#: from openpyxl as plain INTEGERS - `46024` = 2026-01-02, `46113` = 2026-04-01, `45588` =
+#: 2024-10-23 - and `_as_date` answered `None` for 15,942 of the file's 16,057 rows, which
+#: ties every one of them on `_restates`' key and collapses six real deliveries of one item
+#: into two restatements. The window is 2000-01-01 to 2099-12-31: wide enough for anything
+#: this sheet states, narrow enough that a QUANTITY typed into the date column by mistake
+#: (200, 99999) does not silently become a date in 1900 or 2170.
+_SERIAL_DATE_MIN = 36526  # 2000-01-01
+_SERIAL_DATE_MAX = 73050  # 2099-12-31
+
+
 def _as_date(value: Any) -> Optional[date]:
     if isinstance(value, datetime):
         return value.date()
     if isinstance(value, date):
         return value
+    if isinstance(value, bool):
+        # `bool` is an `int` in Python (`isinstance(True, int)` is `True`) - caught here,
+        # before the serial branch below, or `True` / `False` would read as the serial
+        # 1 / 0 and answer 1899-12-31 / 1899-12-30 instead of "not a date".
+        return None
+    if isinstance(value, (int, float)):
+        if isinstance(value, float) and not value.is_integer():
+            # A fractional serial is a TIME, or simply not a whole day count - neither is
+            # a date this sheet could mean, so it stays None rather than truncating.
+            return None
+        serial = int(value)
+        if _SERIAL_DATE_MIN <= serial <= _SERIAL_DATE_MAX:
+            return date(1899, 12, 30) + timedelta(days=serial)
+        return None
+    if isinstance(value, str):
+        match = _TEXT_DATE.match(value)
+        if match:
+            day, month, year = (int(part) for part in match.groups())
+            try:
+                return date(year, month, day)
+            except ValueError:
+                return None
     return None
 
 
@@ -253,8 +301,14 @@ def read_order_inquiry(file_data: bytes) -> OrderInquiryResult:
             po_numbers, not_ordered = _read_po(values)
             # The delivery-date cell is either a date or the words ORDER BACK. Read from
             # the raw cell, not from `_as_date`, which answers None for both a blank and a
-            # sentence and so cannot tell them apart.
-            order_back = bool(_ORDER_BACK.search(_text(values.get("delivery_date"))))
+            # sentence and so cannot tell them apart. CS also writes "order back" in the
+            # REMARK cell while the date cell still holds a real date (owner ruling R1, 22
+            # Sep 2026, SO417310 / MKT5529SS-DIY) - either cell makes the row an order back,
+            # and `delivery_date` keeps whatever `_as_date` reads regardless of which cell
+            # carried the words.
+            order_back = bool(
+                _ORDER_BACK.search(_text(values.get("delivery_date")))
+            ) or bool(_ORDER_BACK.search(_text(values.get("remark"))))
             result.rows.append(
                 OrderInquiryRow(
                     so_number=so_number,

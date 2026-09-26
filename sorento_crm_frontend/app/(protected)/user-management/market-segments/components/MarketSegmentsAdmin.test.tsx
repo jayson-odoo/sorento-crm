@@ -55,6 +55,7 @@ const SEGMENTS: MarketSegment[] = [
     is_active: true,
     sort_order: 1,
     is_requestor_selectable: false,
+    portal_form_types: [],
   },
   {
     code: 'project',
@@ -63,6 +64,7 @@ const SEGMENTS: MarketSegment[] = [
     is_active: false,
     sort_order: 2,
     is_requestor_selectable: true,
+    portal_form_types: [],
   },
 ];
 

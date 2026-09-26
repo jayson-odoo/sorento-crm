@@ -262,6 +262,13 @@ export type SalesOrderStatus =
 
 export interface SalesOrderLine {
   id: string;
+  /**
+   * AutoCount's own line number (`Seq`), kept as it arrives - the address the Lines tab
+   * sorts and labels by (PLAN-so-lines-autocount-order.md). `null` for a line AutoCount
+   * never numbered: an order-inquiry, upload, absorbed-history or manual line, or an
+   * AutoCount line pushed before this column existed.
+   */
+  line_no?: number | null;
   sku: string;
   product_name: string;
   qty_ordered: number;
@@ -284,6 +291,13 @@ export interface SalesOrderLine {
   warehouse_code?: string;
   /** `open` or `closed`. A closed line is not a commitment however much it still shows. */
   line_status?: string;
+  /**
+   * Where THIS LINE came from - never inherited from the header (R2): a line with no
+   * provenance of its own reads Manual even under an AutoCount or uploaded header, since
+   * the line itself is what carries no source system. Same vocabulary as the header's own
+   * `source`, plus `autocount`.
+   */
+  source?: string;
   /** When this line's quantity is due. Per line, for the same reason as the location. */
   required_date?: string | null;
   /**
@@ -340,6 +354,26 @@ export interface SalesOrderLine {
    * covers the line at all - the two are different answers and the column says so.
    */
   linked_to?: SalesOrderLineLink[] | null;
+  /**
+   * The planning-change BATCH ROW behind this line, when one exists. Enough for this screen
+   * to draw the same "what changed" reading the fulfilment board's own dialog gives it
+   * (`BoardChangeTable`, `board-change-icon-<id>` / `board-change-dialog`) - never the whole
+   * batch row, which carries fields (`from`/`to`, `facts`, `suggestion`, `inquiry_rows`...)
+   * this screen has no question for.
+   *
+   * Slice D: once Apply has run on a CANCELLED line, the line leaves the fulfilment board
+   * entirely (a closed line has no cell), so that dialog's "Where it went" list - where the
+   * line's held composition actually landed, e.g. `Reallocate 202607-S0080 3 to pool` - is
+   * unreachable there. This is the same fact, read here instead.
+   */
+  planning_change?: {
+    /** The batch row's own id - the `board-change-icon-<id>` / dialog title key. */
+    id: string;
+    kind: string;
+    applied_state: string;
+    /** `null` on a row Apply has not written yet. */
+    result?: { executed_reallocations: string[]; released_documents: string[] } | null;
+  } | null;
 }
 
 /** One link on the order inquiry row covering a sales order line. Never an id on screen. */
@@ -367,6 +401,12 @@ export interface SalesOrderLineLink {
   late?: boolean;
   /** BY HOW MUCH, in days (AC-D17). Null when the document is not late. */
   late_days?: number | null;
+  /**
+   * A derived SPO is an OPEN SPO allocation the row's linked PO was raised from (S5 of
+   * `PLAN-scm-oi-excel-parity.md`) - never a stored link, so the SO detail marks it "via PO"
+   * rather than treating it as a link this system made independently.
+   */
+  derived?: boolean;
 }
 
 /**
@@ -392,6 +432,15 @@ export interface SalesOrderLineInquiry {
    *  `cancelled`), not the header's: "has purchasing linked this line" is the question
    *  the column answers. `placed` reads "Linked". */
   state: string;
+  /**
+   * S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-2/AC-B6-8): the order inquiry
+   * HEADER's own id and this LINE's OI row id, addressing the "Order inquiry" cell's own
+   * link (`/project-sales/order-inquiries/<inquiry_id>?row=<row_id>`). Optional because a
+   * row raised before inquiries were numbered carries neither - absent means the cell
+   * stays plain text.
+   */
+  inquiry_id?: string | null;
+  row_id?: string | null;
 }
 
 export interface SalesOrder {
@@ -459,6 +508,21 @@ export interface SalesOrder {
    *  done about it. */
   order_inquiries?: SalesOrderInquiry[];
   /**
+   * How much of this order anybody has DECIDED, in two counts, on the LIST and on the single
+   * read (a field missing from either dict builder never reaches the screen).
+   *
+   * `plannable_lines` is how many of its lines the fulfilment board would admit - not
+   * cancelled, not marked no purchase needed, and asking for something. `planned_lines` is
+   * how many of those are already settled, by an active supply decision or by a live order
+   * inquiry row. The two are counted by the SAME predicates the board itself uses, so the
+   * list and the board cannot disagree about one order.
+   *
+   * Not the delivery question. A completed order whose stock shipped without anybody sourcing
+   * it reads 0 of 3, which is the whole point: it is the order nobody planned.
+   */
+  planned_lines?: number;
+  plannable_lines?: number;
+  /**
    * The PENDING planning-change batch this order is in, when a re-uploaded book moved one of
    * its planned lines and nobody has applied the change yet (AC-P3-1). Present on the LIST,
    * which is where the Changed badge is; `null` on every order with nothing outstanding, which
@@ -470,6 +534,11 @@ export interface SalesOrder {
 
 /** One order inquiry raised against a sales order, by NUMBER - never by id. */
 export interface SalesOrderInquiry {
+  /** The order inquiry HEADER's own id (`PLAN-oi-header-list-detail.md`, S3, AC-LK-01) -
+   *  addresses `/project-sales/order-inquiries/<id>`, never shown. Absent on a payload
+   *  from before that column existed; the link then falls back to the old filtered-list
+   *  search. */
+  id?: string | null;
   inquiry_no: string | null;
   state: string;
   /** ISO datetime, or null on a record that predates the column. */
@@ -480,7 +549,7 @@ export interface SalesOrderInquiry {
   rows_placed: number;
 }
 
-export type SalesOrderSource = 'inquiry' | 'upload' | 'history' | 'manual';
+export type SalesOrderSource = 'autocount' | 'inquiry' | 'upload' | 'history' | 'manual';
 
 /** A pairing this order's lines claim, and whether both sides are present. */
 export interface LinkedPurchaseOrder {

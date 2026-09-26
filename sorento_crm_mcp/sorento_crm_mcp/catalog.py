@@ -512,6 +512,51 @@ CATALOG: tuple[ToolSpec, ...] = (
         domain="inventory",
         escalation_team="warehouse",
     ),
+    ToolSpec(
+        "crm_low_stock_report",
+        (
+            "The LOW STOCK REPORT as an Excel workbook - use it for 'low stock', 'low stock report', "
+            "'reorder report', 'stock below level', 'what needs reordering'. Every call RUNS A FRESH "
+            "PLAN and answers with the file, so it is not a cheap lookup to retry: one call per ask.\n\n"
+            "Answers one of three shapes: the workbook as an attachment, 'being prepared' when the plan "
+            "outran the turn (the file is then sent here the moment it is ready - do NOT call again), or "
+            "'a plan is already running' when one is in flight for the company.\n\n"
+            "The workbook holds two sheets - 'Low stock' (every planned product whose BRW on hand is "
+            "below its reorder level) and 'All' (every product the plan covered), each with item code, "
+            "description, category, on hand, reorder level and quantity, the engine's suggested "
+            "quantity, dealer o/s, PO and incoming quantities with their container numbers, and the "
+            "last receipt.\n\n"
+            "SCOPE: `warehouse_codes` - EXACT warehouse codes (csv/JSON/repeated); resolve a location "
+            "TOKEN (e.g. an 'IB' suffix matching several codes) to exact codes yourself before calling, "
+            "this tool does no suffix matching. `product_codes` - exact product codes. `date_from` / "
+            "`date_to` (YYYY-MM-DD) narrow which sales orders the plan counts as demand. Omit any of "
+            "them to plan everything.\n\n"
+            "REQUIRED: pass BOTH `contact_id` (Respond.io contact id) and `space_id` - the report is "
+            "per-contact, and the call is refused without them.\n\n"
+            "COMPANY SCOPE: the plan is built for the contact's own company, resolved from the "
+            "required `contact_id` + `space_id` above - there is no all-company variant of this tool."
+        ),
+        "/api/v1/scm/low-stock-report",
+        (),
+        (
+            "warehouse_codes", "product_codes", "date_from", "date_to",
+            "contact_id", "space_id",
+        ),
+        # GET, and therefore `read_only` stays at its default False - "every GET tool is
+        # read-only by definition and does NOT set this" (see `ToolSpec.read_only`). The
+        # method is TRANSPORT here, not semantics: this call has a real side effect (it
+        # creates a reorder run and a download row), and it is a GET because the compiler
+        # injects `view=render` only on tools with no `body_params` while the chatbot lane
+        # sends `view=render` on every call - a POST tool would never reach the presenter.
+        # `crm_portal_link_get` is the standing precedent for a tool that mints an artefact
+        # and still sits on the chatbot's read list; the gate that makes that safe is the
+        # per-contact reveal key below, checked in-route before anything is created.
+        module="scm",
+        domain="inventory",
+        related_tools=("crm_inventory_stock_balance_list",),
+        escalation_team="warehouse",
+        restricted_fields=(("scm.low_stock_report", "Low stock report over chat (staff: full workbook incl. Dealer o/s, PO and SPO numbers)"),),
+    ),
     # --- order-management ---
     ToolSpec(
         "crm_order_management_orders_list",
@@ -547,6 +592,12 @@ CATALOG: tuple[ToolSpec, ...] = (
             "instead of (alongside) the flat list - use for 'DO by transporter this week', 'open DO by "
             "customer'. Applies to every bucket. `sort`/`dir`/`limit` narrow and order the rows before "
             "grouping.\n\n"
+            "`customer_query` - partial customer/debtor name or code match (case-insensitive), an "
+            "alternative to resolving `customer_ids` upstream. `warehouse_codes` - exact warehouse codes "
+            "(csv/JSON/repeated); an order qualifies when ANY of its lines sits at one of these "
+            "warehouses. The only date filter here is `actual_delivery_date_from`/"
+            "`actual_delivery_date_to` above; for a sales-order-placement-date window over open/pending "
+            "figures use crm_outstanding_report instead.\n\n"
             "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
             "results to that contact's company/companies; omit both for all-company results."
         ),
@@ -556,11 +607,19 @@ CATALOG: tuple[ToolSpec, ...] = (
             "page", "limit", "order_ids", "customer_ids", "product_ids", "transporter_ids",
             "actual_delivery_date_from", "actual_delivery_date_to", "order_status", "include_summary",
             "include_pipeline", "group_by", "sort", "dir",
+            "customer_query", "warehouse_codes",
             "contact_id", "space_id",
         ),
         domain="orders",
-        related_tools=("crm_order_management_orders_by_product_list",),
+        related_tools=("crm_order_management_orders_by_product_list", "crm_outstanding_report"),
         escalation_team="sales",
+        # S2 (security review, 13 Sep 2026): `order_status=so_outstanding`'s
+        # `outstanding_qty` and `include_pipeline`'s `so_outstanding_qty` are the SAME
+        # per-contact figure `crm_outstanding_report`'s SO block gates on D13. Declared
+        # here for the Contacts > Access > Field reveals card; the actual gate is the
+        # chatbot lane's own redirect (`lanes/business/__init__.py::run_fetch`) plus
+        # `_orders_so_outstanding`'s `b.restrict` in the presenter.
+        restricted_fields=(("sales_orders.outstanding", "Sales order outstanding"),),
     ),
     ToolSpec(
         "crm_order_management_orders_by_product_list",
@@ -579,6 +638,11 @@ CATALOG: tuple[ToolSpec, ...] = (
             "alongside it to fold `so_outstanding_qty` (open SO lines not yet a DO, same "
             "customer_ids/product_ids scope) into EVERY `summary.products` and `summary.groups` row; "
             "default false, independent of `include_summary`. Omit both for a plain DO list.\n\n"
+            "`customer_query` - partial customer/debtor name or code match (case-insensitive). "
+            "`warehouse_codes` - exact warehouse codes (csv/JSON/repeated), filtered on the SAME line "
+            "that matched the product. The only date filter here is `actual_delivery_date_from`/"
+            "`actual_delivery_date_to` above; for a sales-order-placement-date window over "
+            "open/pending figures use crm_outstanding_report instead.\n\n"
             "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
             "results to that contact's company/companies; omit both for all-company results."
         ),
@@ -587,11 +651,116 @@ CATALOG: tuple[ToolSpec, ...] = (
         (
             "page", "limit", "product_ids", "customer_ids", "transporter_ids",
             "actual_delivery_date_from", "actual_delivery_date_to", "order_status", "include_summary",
-            "include_pipeline", "sort", "dir", "contact_id", "space_id",
+            "include_pipeline", "sort", "dir",
+            "customer_query", "warehouse_codes",
+            "contact_id", "space_id",
         ),
         domain="orders",
-        related_tools=("crm_order_management_orders_list", "crm_incoming_stock_by_product"),
+        related_tools=("crm_order_management_orders_list", "crm_incoming_stock_by_product", "crm_outstanding_report"),
         escalation_team="sales",
+        # S2 (security review, 13 Sep 2026): same gate as the sibling
+        # `crm_order_management_orders_list` above - see its own comment.
+        restricted_fields=(("sales_orders.outstanding", "Sales order outstanding"),),
+    ),
+    ToolSpec(
+        "crm_outstanding_report",
+        (
+            "SO backlog + DO pending for ONE product - the report to use for any 'outstanding', 'o/s', "
+            "'backlog', 'sales order outstanding', 'DO pending', 'not yet delivered', 'not yet "
+            "transferred to DO' question. Returns TWO named blocks, never the bare word "
+            "'outstanding' alone:\n"
+            "  • `so` - Sales order outstanding: `ordered_qty` (SUM qty_ordered), `transferred_qty` "
+            "(SUM qty_delivered), `outstanding_qty` (the difference - booked, not yet turned into a "
+            "DO), `so_count`, `order_date_min`/`order_date_max`.\n"
+            "  • `do` - Delivery order pending: `pending_qty` (DO raised, not yet delivered), "
+            "`do_count`, `do_date_min`/`do_date_max`. PENDING DOs ONLY - a delivered DO is not "
+            "in this population at all, so there is no delivered or total DO quantity here.\n"
+            "`scope` = so | do | both (default both) picks which block(s) come back - the OTHER key is "
+            "absent from the body entirely, not null. Every total is also broken down as "
+            "`so_by_location`/`so_by_customer`/`do_by_location`/`do_by_customer` (code/customer_name + "
+            "that block's own quantities - the DO side carries `pending_qty` only), and as "
+            "`so_rows`/`do_rows` (one row per SO / per PENDING DO, lines rolled up).\n\n"
+            "SUBJECT: a product, a customer, or both - at least one of `product_code` / "
+            "`customer_ids` / `customer_query` is REQUIRED (422 otherwise). The breakdown "
+            "groups follow the subject: a product subject returns `so_by_location` + "
+            "`so_by_customer` (and the DO pair), a CUSTOMER subject returns `so_by_location` + "
+            "`so_by_product` (what that customer is waiting for, per product), and naming both "
+            "returns `so_by_location` only; a group the subject does not want is ABSENT from the "
+            "body. Rows always carry both `customer_name` and `product_code`.\n\n"
+            "FILTERS: `product_code` (exact, case-insensitive - no sibling-code expansion). "
+            "`product_codes` - the SEVERAL-code form of it (csv/JSON/repeated), for one question "
+            "about a whole family; the rendered header then names every code. "
+            "`customer_query` - partial match on customer NAME only (never debtor/customer code). "
+            "`customer_ids` - canonical customer UUIDs (csv/JSON/repeated); intersects with "
+            "`customer_query` when both are given. "
+            "`warehouse_codes` - exact warehouse codes (csv/JSON/repeated); resolve a location TOKEN "
+            "(e.g. an 'IB' suffix matching several codes) to exact codes yourself before calling - this "
+            "tool does not do suffix matching. `order_date_from`/`order_date_to` filter SO rows on "
+            "sales_orders.order_date and DO rows on orders.order_date (never actual_delivery_date - a "
+            "pending DO by definition has none); omit both for all dates. `detail` = so | do - render "
+            "the numbered detail list for that scope instead of the two-block report (`view=render`); "
+            "the report's own computation is unchanged by it; `detail=both` renders the sales order "
+            "list and then the delivery order list in one reply. `location_token` (max 32 chars) - the raw "
+            "location word you resolved into `warehouse_codes` (e.g. 'IB'), echoed back so the rendered "
+            "header reads 'IB (BRW-IB, MWH-IB)'. `so_refused=true` - echoed back so the rendered reply "
+            "names the withheld SO half; it changes no filter, send `scope=do` alongside it.\n\n"
+            "Use crm_order_management_orders_list / crm_order_management_orders_by_product_list instead "
+            "for a plain row list or a delivered/actual-delivery-date question.\n\n"
+            "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
+            "results to that contact's company/companies; omit both for all-company results."
+        ),
+        "/api/v1/order-management/outstanding-report",
+        (),
+        (
+            "product_code", "product_codes", "scope", "customer_query", "customer_ids",
+            "warehouse_codes",
+            "order_date_from", "order_date_to", "detail", "location_token", "so_refused",
+            "contact_id", "space_id",
+        ),
+        domain="orders",
+        related_tools=("crm_order_management_orders_list", "crm_order_management_orders_by_product_list"),
+        escalation_team="sales",
+        restricted_fields=(("sales_orders.outstanding", "Sales order outstanding"),),
+    ),
+    ToolSpec(
+        "crm_sales_report",
+        (
+            "Confirmed (transferred to DO) vs OUTSTANDING sales, by month, for a customer, a "
+            "product, or both - reads sales_order_lines only (the DO table's own money is "
+            "unusable). Returns `months[]`, latest first, each with `so_count`, ordered / "
+            "confirmed / outstanding value and quantity, and a breakdown by the OTHER axis "
+            "(`by_product` on a customer subject, `by_customer` on a product subject, neither "
+            "when both are named).\n\n"
+            "SUBJECT: a product, a customer, or both - at least one of `product_code` / "
+            "`customer_ids` / `customer_query` is REQUIRED (422 `subject_required` otherwise). "
+            "`product_code` is exact, case-insensitive, no sibling-code expansion. "
+            "`customer_query` - partial match on customer NAME only. `customer_ids` - canonical "
+            "customer UUIDs (csv/JSON/repeated).\n\n"
+            "FILTERS: `channel` - dealer | project (sales_orders.demand_class 'retail' / "
+            "'project'); absent = all, including null-class SOs. `warehouse_codes` - exact "
+            "warehouse codes (csv/JSON/repeated); resolve a location TOKEN yourself first, this "
+            "tool does no suffix matching. `location_token` (max 32 chars) - the raw location "
+            "word, echoed back so the header reads 'IB (BRW-IB, MWH-IB)'. `date_from`/`date_to` "
+            "filter on the SAME bucket date each line uses (required_date, else the SO's own "
+            "order_date); omit both for every month. `detail` = so - render the numbered sales "
+            "order list instead of the month blocks (`view=render`), one row per SO rolled up "
+            "over the whole filtered window.\n\n"
+            "Use crm_outstanding_report instead for the SO-backlog / DO-pending question; this "
+            "tool is for a SALES REPORT / sales performance / 'how much did X buy' question.\n\n"
+            "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
+            "results to that contact's company/companies; omit both for all-company results."
+        ),
+        "/api/v1/order-management/sales-report",
+        (),
+        (
+            "product_code", "customer_query", "customer_ids", "channel", "warehouse_codes",
+            "location_token", "date_from", "date_to", "detail",
+            "contact_id", "space_id",
+        ),
+        domain="orders",
+        related_tools=("crm_outstanding_report",),
+        escalation_team="sales",
+        restricted_fields=(("sales_orders.sales_report", "Sales report"),),
     ),
     ToolSpec(
         "crm_order_analytics",
@@ -1017,7 +1186,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "List PURCHASE ORDER lines PLACED but not yet fully received (qty_ordered - "
             "qty_received > 0, line open) - 'PO for X', 'PO placed, not yet shipped', 'what did "
             "we order from the supplier'. Each row carries po_number, product_code, "
-            "outstanding_qty, expected_date (the line's, else the header's), and supplier "
+            "ordered_qty, outstanding_qty, po_date, location, and supplier "
             "(RESTRICTED - a dealer never sees it, only a contact holding "
             "purchase_orders.supplier).\n\n"
             "NEVER NETTED against incoming: `spo_allocations.po_line_id` is NULL on every row, "
@@ -1025,7 +1194,8 @@ CATALOG: tuple[ToolSpec, ...] = (
             "crm_procurement_spo_allocations_last_receipt_list, and for Foundre's rule ('no stock, no "
             "incoming, but a PO is placed') the CRM probes this tool itself.\n\n"
             "FILTER BY UUID: `product_ids` (canonical product UUIDs, csv / JSON / repeated). "
-            "Date window: expected_date_from / expected_date_to.\n\n"
+            "Date window: expected_date_from / expected_date_to (filters only; the expected "
+            "date is not rendered in the reply).\n\n"
             "GROUPING: `group_by` = product | supplier | date renders headed sections. "
             "`include_summary=true` adds `summary` (po_placed_qty/po_placed_count over the "
             "filtered lines).\n\n"
@@ -1095,6 +1265,54 @@ CATALOG: tuple[ToolSpec, ...] = (
         domain="spo_allocation",
         related_tools=("crm_procurement_po_placed_list", "crm_incoming_stock_by_product"),
         escalation_team="procurement",
+    ),
+    # --- procurement: last purchase cost per product per location
+    # (PLAN-chatbot-last-purchase-cost.md, 12 Sep 2026) ---
+    ToolSpec(
+        "crm_procurement_po_last_cost_list",
+        (
+            "The last PURCHASE ORDER line PER PRODUCT PER LOCATION and its cost - 'last "
+            "purchase cost for X', 'what did we pay for X', 'last cost', 'buying price'. "
+            "Cancelled lines and cancelled POs are excluded; a line with no unit_cost is "
+            "never picked.\n\n"
+            "Each row reads in this order: PO Number, Product Code, PO Quantity, "
+            "PO Date, Cost / unit, Discount / unit, Cost after discount / unit, "
+            "Warehouse, Supplier. The three money figures are PER UNIT, DERIVED by the "
+            "backend from the LINE's own discount / line_total amounts (never a unit "
+            "figure the source data carries directly): Discount / unit is ALWAYS "
+            "present, 0.00 when the line carries no discount, Cost after discount / "
+            "unit falls back to the plain Cost / unit when the line has no line_total, "
+            "Warehouse is present ONLY when the line names one, and Supplier is "
+            "present ONLY when the purchase order names one - a line bought with no "
+            "warehouse stated, or a PO with no supplier, answers with that one field "
+            "absent.\n\n"
+            "FILTER BY UUID: `product_ids`, `warehouse_ids` (canonical UUIDs, csv / JSON "
+            "/ repeated), both optional; `warehouse_ids` narrows BEFORE the pick. "
+            "`top_n` (default 1) = lines per (product, warehouse) when `product_ids` is "
+            "given, else lines overall - a resolved product FAMILY returns up to "
+            "`top_n` lines for EACH member at EACH of its locations, not `top_n` rows "
+            "overall; with no product named, `top_n` is a plain cap over every line, "
+            "newest first, across every product.\n\n"
+            "RESTRICTED: unit_cost, discount_per_unit and unit_cost_after_discount are "
+            "gated on the contact holding purchase_orders.cost; Supplier is gated on "
+            "purchase_orders.supplier, independent of the cost grant - a dealer without "
+            "the matching grant never sees that one field.\n\n"
+            "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
+            "results to that contact's company/companies; omit both for all-company results."
+        ),
+        "/api/v1/procurement/purchase-orders/last-cost",
+        (),
+        ("product_ids", "warehouse_ids", "top_n", "contact_id", "space_id"),
+        domain="purchase_cost",
+        related_tools=(
+            "crm_procurement_po_placed_list",
+            "crm_procurement_spo_allocations_last_receipt_list",
+        ),
+        escalation_team="procurement",
+        restricted_fields=(
+            ("purchase_orders.cost", "Last purchase cost"),
+            ("purchase_orders.supplier", "PO supplier"),
+        ),
     ),
     # --- project sales (read-only; AC-K1 / AC-K2) ---
     ToolSpec(
@@ -1227,7 +1445,9 @@ CATALOG: tuple[ToolSpec, ...] = (
             "respond.io contact id) and `message_text` (what they just said), plus `session_vars` "
             "carrying the `ideation` pointer from the previous turn (null on the first). Optionally "
             "`submitter_name`, `media_selection` when a photo menu is open (comma-joined positions, "
-            "or 'all'), and `is_new_idea` to start a fresh draft over an open one. RETURNS "
+            "or 'all'), `is_new_idea` to start a fresh draft over an open one, and `is_test` "
+            "for a test turn (the idea is stored hidden from the board, no session state is "
+            "persisted). RETURNS "
             "`{status, reply_text, link?, session_vars}` - `reply_text` is what to "
             "send the customer, `session_vars.ideation` is the pointer to carry into the next turn, and "
             "`link` is the deep link once `status` is 'complete'. WRITE action: it creates and updates a "
@@ -1247,6 +1467,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "submitter_name",
             "media_selection",
             "is_new_idea",
+            "is_test",
         ),
         module="chatbot",
         external=True,

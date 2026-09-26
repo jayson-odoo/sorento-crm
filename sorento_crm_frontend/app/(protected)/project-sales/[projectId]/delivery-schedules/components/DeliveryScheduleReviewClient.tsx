@@ -30,6 +30,7 @@ import {
   useDeliverySchedules,
 } from '../../../_shared/hooks/useDeliverySchedules';
 import { usePOVersion } from '../../../_shared/hooks/usePOIntake';
+import { useReviewOriginHref } from '../../../_shared/hooks/useReviewOrigin';
 import { resolveExtractionPhase } from '../../../_shared/types/deliverySchedule.types';
 import { describeReadingTime, describeWaitingFor } from '../../../_shared/lib/readingTime';
 import type { DeliveryScheduleConfirmBody } from '../../../_shared/types/deliverySchedule.types';
@@ -107,6 +108,7 @@ export function DeliveryScheduleReviewClient({
    * not on that list, so the pager hides itself there (S3-05).
    */
   const router = useRouter();
+  const originHref = useReviewOriginHref();
   const schedules = useDeliverySchedules(demo ? undefined : projectId);
   const scheduleRows = schedules.data ?? [];
   const scheduleIndex = scheduleRows.findIndex(
@@ -701,7 +703,7 @@ export function DeliveryScheduleReviewClient({
               onValueChange={(next) => next && setViewMode(next as 'phase' | 'date')}
             >
               <ToggleGroupItem value="phase" className="px-3">
-                By phase
+                By area
               </ToggleGroupItem>
               <ToggleGroupItem value="date" className="px-3">
                 By date
@@ -746,6 +748,9 @@ export function DeliveryScheduleReviewClient({
           try {
             await confirm.mutateAsync(body);
             setConfirming(false);
+            // S4: Confirm schedule returns the user to where they came from. With no origin
+            // (a deep link or a bookmark) it stays on the page, as before this slice.
+            if (originHref) router.push(originHref);
           } catch {
             // The mutation hook already surfaced the message; keep the dialog open so the
             // reviewer can acknowledge and try again without losing what they typed.

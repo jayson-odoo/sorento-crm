@@ -7,10 +7,16 @@
  * exists.
  *
  * Sheet arrangement is a consequence of the tags rather than a thing the user
- * has to do: every line's tag is laid out in line order, quantity times, on a
- * grid auto-fit off the tag's own size and the page (S6, D8) - nothing to
- * choose. A copy somebody dragged in the Arrange view is PINNED by line and
- * copy index, so re-arranging keeps it and flows the rest around it.
+ * has to do: every tag is laid out in line order, quantity times, GROUPED BY
+ * SIZE (S7) - a size group packs its own sheets at zero gap inside a fixed 5mm
+ * printable margin, turning 90deg when that seats more, before the next size
+ * starts a fresh sheet. Nothing to drag: a manual pin (pre-S7) is gone, every
+ * arrange re-flows the whole request from its lines.
+ *
+ * Since S3 (D3) a LINE may carry several TAGS: an open choice group is split
+ * into one tag per candidate, each with its own design and price. Everything
+ * here therefore keys on the request TAG; the line is still what says which
+ * product a tag binds to, which is why every helper takes the pair.
  */
 
 import {
@@ -46,6 +52,21 @@ export interface TagRequestLine {
   product_id: string | null;
   product_set_id: string | null;
   quantity: number;
+}
+
+/**
+ * The part of a request TAG these helpers read, with the line it prints (D3).
+ *
+ * The line comes along because binding is still a LINE fact - a tag prints its
+ * line's product, whichever candidate it resolved - while identity, quantity
+ * and geometry are the tag's.
+ */
+export interface TagRequestTag {
+  id: string;
+  quantity: number;
+  /** r10 S6: marked Not printed - arrange seats no copy of it. */
+  print_excluded?: boolean;
+  line: TagRequestLine;
 }
 
 // ---------------------------------------------------------------------------
@@ -98,7 +119,7 @@ export const STARTER_TEMPLATE_ID = 'starter';
  *
  * `buildProductBlock`/`buildSetStarterBlock` do not know the line, so
  * whatever binding they seed their group with is provisional; `bindTemplateLayers`
- * below re-binds it to `bindingForLine(line)` the same way `tagForLine` binds
+ * below re-binds it to `bindingForLine(line)` the same way `tagForTag` binds
  * a real template's clone, so the starter's binding is never a stand-in id
  * (e.g. the line's own id) masquerading as a product/set id.
  */
@@ -162,23 +183,27 @@ export function starterTemplateFor(
 // ---------------------------------------------------------------------------
 
 /**
- * A fresh tag for this line, cloned from `template`.
+ * A fresh placement for this request tag, cloned from `template`.
  *
  * The clone is deep: an edit on the tag must never reach the template, which is
  * shared by every future request in that family. The size is the template's
  * PRINT size rather than its document size, because that is what gets cut.
+ *
+ * Binding comes from the tag's LINE - two tags split off the same line print
+ * the same host product and differ only in the candidate they resolved.
  */
-export function tagForLine(
-  line: TagRequestLine,
+export function tagForTag(
+  requestTag: TagRequestTag,
   template: TagTemplate,
   newId: string,
   position: { x_mm: number; y_mm: number } = { x_mm: 0, y_mm: 0 },
 ): PlacedTag {
   const layers = structuredClone(template.doc.layers) as TagLayer[];
+  const line = requestTag.line;
   return {
     id: newId,
     template_id: template.id,
-    request_line_id: line.id,
+    request_tag_id: requestTag.id,
     x_mm: position.x_mm,
     y_mm: position.y_mm,
     width_mm: template.print_size.width_mm,
@@ -340,15 +365,17 @@ export interface TagSizeBounds {
 }
 
 /**
- * The size bounds a tag may be set to on the CURRENT imposition sheet
- * (D24, S9 review S3): the usable page area after bleed on each axis, so a
- * size that could never physically fit is refused rather than drawn wrong.
+ * The size bounds a tag may be set to (D24, S9 review S3; S7: no longer
+ * per-imposition - every sheet is the same A4 page with the same 5mm
+ * printable margin, so the ceiling is a constant, page minus 10mm per axis
+ * (AC-S7-7)): a size that could never physically fit is refused rather than
+ * drawn wrong.
  */
-export function tagSizeBounds(imposition: ImpositionConfig): TagSizeBounds {
+export function tagSizeBounds(): TagSizeBounds {
   return {
     min_mm: MIN_TAG_SIZE_MM,
-    max_width_mm: imposition.page_width_mm - 2 * imposition.bleed_mm,
-    max_height_mm: imposition.page_height_mm - 2 * imposition.bleed_mm,
+    max_width_mm: USABLE_WIDTH_MM,
+    max_height_mm: USABLE_HEIGHT_MM,
   };
 }
 
@@ -384,14 +411,14 @@ export function resolveTagSize(
 // ---------------------------------------------------------------------------
 
 /**
- * "Apply this design to all lines" (AC-S5-1/2/5): the SELECTED line's tag,
- * cloned onto every other line - and for the "Use template..." picker's
- * "Apply to all lines" checkbox, `tags[sourceLineId]` is a pristine
- * `tagForLine` clone the caller already stashed under the source line, so
- * this one function covers both surfaces (D3).
+ * "Apply this design to all lines" (AC-S5-1/2/5): the SELECTED tag's design,
+ * cloned onto every other tag on the request - and for the "Use template..."
+ * picker's "Apply to all lines" checkbox, `tags[sourceTagId]` is a pristine
+ * `tagForTag` clone the caller already stashed under the source tag, so this
+ * one function covers both surfaces (D3).
  *
  * Every clone gets FRESH layer ids (group `children` remapped alongside), so
- * no two lines' tags ever share an id - the same reason `templateFromTag`
+ * no two tags ever share an id - the same reason `templateFromTag`
  * remaps ids, just fanned out to N lines instead of one template. Unlike
  * `templateFromTag`, `text_override` is copied VERBATIM (D3): this is one
  * line's tag becoming every line's tag, not a tag becoming a reusable
@@ -399,20 +426,20 @@ export function resolveTagSize(
  * is supposed to spread.
  *
  * `bindTemplateLayers` re-points each clone's group binding at the TARGET
- * line's own product/set - a straight copy would leave every other line's
- * tag pointing at the source line's item - and clears a stale barcode
- * override the same way a fresh clone from a template does.
+ * tag's own line's product/set - a straight copy would leave every other tag
+ * pointing at the source line's item - and clears a stale barcode override the
+ * same way a fresh clone from a template does.
  *
- * A line that already had a tag keeps its position/pin (AC-S5-2): those live
- * on the `PlacedTag` a caller may be carrying position/pin state on, and
- * losing them here would silently un-arrange whatever was dragged. A line
- * with no tag yet gets one too (AC-S5-5), so it never later clones from the
+ * A tag that already had a placement keeps its position/pin (AC-S5-2): those
+ * live on the `PlacedTag` a caller may be carrying position/pin state on, and
+ * losing them here would silently un-arrange whatever was dragged. A tag with
+ * no placement yet gets one too (AC-S5-5), so it never later clones from the
  * request's default template and quietly undoes the bulk apply.
  */
 /**
  * A layer array, fresh ids throughout (group `children` remapped alongside)
- * so no two lines' tags ever share one - the cloning step both
- * `applyDesignToAllLines` and `applyDesignToSiblings` (S6) need, pulled out
+ * so no two tags ever share one - the cloning step both
+ * `applyDesignToAllTags` and `applyDesignToSiblings` (S6) need, pulled out
  * once they were the same nine lines twice.
  */
 function cloneLayersWithFreshIds(layers: TagLayer[], newId: () => string): TagLayer[] {
@@ -435,31 +462,30 @@ function cloneLayersWithFreshIds(layers: TagLayer[], newId: () => string): TagLa
   });
 }
 
-export function applyDesignToAllLines(
+export function applyDesignToAllTags(
   tags: Record<string, PlacedTag>,
-  lines: TagRequestLine[],
-  sourceLineId: string,
+  requestTags: TagRequestTag[],
+  sourceTagId: string,
   newId: () => string,
 ): Record<string, PlacedTag> {
-  const source = tags[sourceLineId];
+  const source = tags[sourceTagId];
   if (!source) return tags;
 
   const next: Record<string, PlacedTag> = { ...tags };
-  for (const line of lines) {
-    if (line.id === sourceLineId) continue;
+  for (const requestTag of requestTags) {
+    if (requestTag.id === sourceTagId) continue;
 
     const layers = cloneLayersWithFreshIds(source.layers, newId);
-    const existing = next[line.id];
-    next[line.id] = {
+    const existing = next[requestTag.id];
+    next[requestTag.id] = {
       id: newId(),
       template_id: source.template_id,
-      request_line_id: line.id,
+      request_tag_id: requestTag.id,
       x_mm: existing?.x_mm ?? 0,
       y_mm: existing?.y_mm ?? 0,
       width_mm: source.width_mm,
       height_mm: source.height_mm,
-      layers: bindTemplateLayers(layers, bindingForLine(line)),
-      pinned: existing?.pinned,
+      layers: bindTemplateLayers(layers, bindingForLine(requestTag.line)),
     };
   }
   return next;
@@ -467,49 +493,50 @@ export function applyDesignToAllLines(
 
 /**
  * "Update <template>" with its sibling checkbox on (S6, AC-S6-4): the
- * SOURCE line's current tag - design AND size - cloned onto every OTHER
- * line whose CURRENT tag's `template_id` matches the same template. Unlike
- * `applyDesignToAllLines`, a line NOT already on this template (a different
- * template, or no tag at all) is left untouched rather than switched onto
- * it - Update republishes T for whoever is already using it, it does not
- * make more lines use it.
+ * SOURCE tag's current design - layout AND size - cloned onto every OTHER
+ * tag on the request whose CURRENT placement's `template_id` matches the same
+ * template. Unlike `applyDesignToAllTags`, a tag NOT already on this template
+ * (a different template, or no placement at all) is left untouched rather than
+ * switched onto it - Update republishes T for whoever is already using it, it
+ * does not make more tags use it.
  */
 export function applyDesignToSiblings(
   tags: Record<string, PlacedTag>,
-  lines: TagRequestLine[],
-  sourceLineId: string,
+  requestTags: TagRequestTag[],
+  sourceTagId: string,
   templateId: string,
   newId: () => string,
 ): Record<string, PlacedTag> {
-  const source = tags[sourceLineId];
+  const source = tags[sourceTagId];
   if (!source) return tags;
 
   const next: Record<string, PlacedTag> = { ...tags };
-  for (const line of lines) {
-    if (line.id === sourceLineId) continue;
-    const existing = next[line.id];
+  for (const requestTag of requestTags) {
+    if (requestTag.id === sourceTagId) continue;
+    const existing = next[requestTag.id];
     if (!existing || existing.template_id !== templateId) continue;
 
-    next[line.id] = {
+    next[requestTag.id] = {
       id: newId(),
       template_id: source.template_id,
-      request_line_id: line.id,
+      request_tag_id: requestTag.id,
       x_mm: existing.x_mm,
       y_mm: existing.y_mm,
       width_mm: source.width_mm,
       height_mm: source.height_mm,
       layers: bindTemplateLayers(
         cloneLayersWithFreshIds(source.layers, newId),
-        bindingForLine(line),
+        bindingForLine(requestTag.line),
       ),
-      pinned: existing.pinned,
     };
   }
   return next;
 }
 
 // ---------------------------------------------------------------------------
-// Imposition
+// Imposition (S7): every arranged sheet is the same portrait A4 page with the
+// same 5mm printable margin - nothing left to configure PER SHEET, only per
+// SIZE GROUP (see "Arranging the copies" below).
 // ---------------------------------------------------------------------------
 
 export interface LayoutSlot {
@@ -525,12 +552,11 @@ export interface ImpositionFit {
 }
 
 /**
- * A doc saved before S6 carries `preset: 'a4_3up'`/`'a4_2x2'` - `impositionSlots`
- * already lays every preset out identically (AC-S6-4), but nothing ever WROTE
- * `'auto'` back: a field edit writes `'custom'` and nothing else writes
- * anything, so the old value would live in the doc forever (S3). Called when
- * a doc is loaded, so the next autosave catches the value up to what the
- * layout has already been doing since S6.
+ * A doc saved before S6 carries `preset: 'a4_3up'`/`'a4_2x2'` - every preset
+ * has laid out identically since S6 (AC-S6-4), but nothing ever WROTE 'auto'
+ * back. Kept for a doc that still carries the old value; S7 no longer reads
+ * `imposition` off a saved doc at all (`DEFAULT_IMPOSITION` below is written
+ * on every arrange), so this is now dead code kept for API continuity only.
  */
 export function normaliseImpositionPreset(imposition: ImpositionConfig): ImpositionConfig {
   if (imposition.preset === 'a4_3up' || imposition.preset === 'a4_2x2') {
@@ -539,18 +565,52 @@ export function normaliseImpositionPreset(imposition: ImpositionConfig): Imposit
   return imposition;
 }
 
-/** Hard ceiling per axis (S2): the arrange page has unbounded number fields, and
- *  a page/tag ratio in the tens of thousands would otherwise rebuild a grid
- *  with 10^5-10^6 slots on every keystroke. */
+/** The A4 page every arranged sheet prints on (S7, Q2): always portrait, no
+ *  per-request choice. */
+const PAGE_WIDTH_MM = 210;
+const PAGE_HEIGHT_MM = 297;
+
+/** The printable margin every arranged sheet keeps on every edge (S7, Q3) -
+ *  the registration margin a printer needs, not a design choice. */
+export const PRINT_MARGIN_MM = 5;
+
+const USABLE_WIDTH_MM = PAGE_WIDTH_MM - 2 * PRINT_MARGIN_MM;
+const USABLE_HEIGHT_MM = PAGE_HEIGHT_MM - 2 * PRINT_MARGIN_MM;
+
+/**
+ * Real print tolerance (S7): every tag size field in this editor shows one
+ * decimal place, so a size chosen to divide the usable block evenly (e.g.
+ * 200mm / 3 cols = 66.666...7mm, shown and stored as 66.7mm) reads a few
+ * hundredths of a millimetre "over" taken back literally (3 x 66.7 = 200.1).
+ * A physical cut tolerates far more than that, so the fit math folds a small
+ * allowance into the floor rather than under-counting a grid the owner
+ * measured and sized on purpose.
+ */
+const FIT_TOLERANCE_MM = 0.5;
+
+/** Every arranged doc's `imposition` (S7): fixed, written on every arrange -
+ *  a doc saved under the old page/bleed/gap fields (or the even older
+ *  presets) is fully replaced rather than merged (AC-S7-7). */
+export const DEFAULT_IMPOSITION: ImpositionConfig = {
+  preset: 'auto',
+  page_width_mm: PAGE_WIDTH_MM,
+  page_height_mm: PAGE_HEIGHT_MM,
+  bleed_mm: PRINT_MARGIN_MM,
+  gap_mm: 0,
+};
+
+/** Hard ceiling per axis (S2): kept as a safety net against a pathological
+ *  tiny tag size producing a five- or six-figure slot count. */
 const MAX_IMPOSITION_AXIS = 200;
 
 /**
  * How many tags of this size fit one sheet, per axis.
  *
- * `floor((usable + gap) / (tag + gap))` folds the last gap into the division
- * so N tags separated by N-1 gaps compares correctly against the usable span
- * (usable = page minus bleed on both sides). Either axis floors to 0 when the
- * tag does not fit at all, which floors `perSheet` to 0 too (AC-S6-3).
+ * `floor((usable + gap + tolerance) / (tag + gap))` folds the last gap into
+ * the division so N tags separated by N-1 gaps compares correctly against the
+ * usable span (usable = page minus bleed on both sides), and folds in
+ * `FIT_TOLERANCE_MM` (S7, see above). Either axis floors to 0 when the tag
+ * does not fit at all, which floors `perSheet` to 0 too (AC-S6-3).
  *
  * A blank/invalid field (`NaN`) or `tag + gap === 0` (division by zero,
  * `Infinity`) is not a valid grid - `Number.isFinite` catches both and folds
@@ -567,98 +627,144 @@ export function impositionFit(
 ): ImpositionFit {
   const usableW = page_width_mm - 2 * bleed_mm;
   const usableH = page_height_mm - 2 * bleed_mm;
-  const rawCols = Math.floor((usableW + gap_mm) / (tag_width_mm + gap_mm));
-  const rawRows = Math.floor((usableH + gap_mm) / (tag_height_mm + gap_mm));
+  const rawCols = Math.floor((usableW + gap_mm + FIT_TOLERANCE_MM) / (tag_width_mm + gap_mm));
+  const rawRows = Math.floor((usableH + gap_mm + FIT_TOLERANCE_MM) / (tag_height_mm + gap_mm));
   const cols = Number.isFinite(rawCols) ? Math.min(MAX_IMPOSITION_AXIS, Math.max(0, rawCols)) : 0;
   const rows = Number.isFinite(rawRows) ? Math.min(MAX_IMPOSITION_AXIS, Math.max(0, rawRows)) : 0;
   return { cols, rows, perSheet: cols * rows };
 }
 
 /**
- * Where a tag of this size sits on one sheet, auto-fit off the tag's own
- * size (S6, D8): a grid of `impositionFit`'s cols x rows, centred in the
- * bleed box, row-major (left to right, then down).
- *
- * `imposition.preset` no longer changes the layout - every value, including
- * an old doc's `'a4_3up'` / `'a4_2x2'`, produces the same grid (AC-S6-4).
- *
- * A single centred slot (which may overflow the bleed box) when the tag does
- * not fit the page at all, rather than an empty grid: `impositionFit` is what
- * tells the designer that ("0 per sheet" and the Arrange empty state,
- * AC-S6-3) - this function still has to seat every unpinned copy SOMEWHERE,
- * because `tagsFromDoc` reads a line's design off `doc.sheets`. An empty grid
- * here means `autoArrange` places nothing, which means the next reload finds
- * no tag for any line and treats every one of them as never designed - a
- * page-size typo would silently delete every line's work.
+ * A per-size PRINT grid, named on a template's `print_size` or a saved size
+ * preset (S7, AC-S7-11/12/15): `cols x rows` cells across the usable block,
+ * `turn` seats the tag rotated 90deg in each cell.
  */
-export function impositionSlots(
-  imposition: ImpositionConfig,
-  tagW: number,
-  tagH: number,
-): LayoutSlot[] {
-  const { page_width_mm, page_height_mm, bleed_mm, gap_mm } = imposition;
-  const usableW = page_width_mm - 2 * bleed_mm;
-  const usableH = page_height_mm - 2 * bleed_mm;
-  const { cols, rows, perSheet } = impositionFit(
-    page_width_mm,
-    page_height_mm,
-    bleed_mm,
-    gap_mm,
-    tagW,
-    tagH,
-  );
-  if (perSheet === 0) {
-    return [
-      {
-        x_mm: bleed_mm + (usableW - tagW) / 2,
-        y_mm: bleed_mm + (usableH - tagH) / 2,
-      },
-    ];
+export interface SheetGridConfig {
+  cols: number;
+  rows: number;
+  turn: boolean;
+}
+
+/**
+ * Resolves the CONFIGURED grid for one size group at arrange time (AC-S7-15):
+ * the group's own template's `print_size.sheet` when it names this exact
+ * size, else a saved size preset with the same size, else null (arrange
+ * derives instead). The request designer builds this from its already-loaded
+ * templates and saved sizes; this module stays free of data fetching.
+ */
+export type SizeGridLookup = (
+  width_mm: number,
+  height_mm: number,
+  templateId: string,
+) => SheetGridConfig | null;
+
+/**
+ * What one size prints as, resolved (S7): either the CONFIGURED grid (cell =
+ * usable block / cols x rows), or the DERIVED best fit - `impositionFit` at
+ * gap 0 inside the printable margin, for rotation 0 and rotation 90, the
+ * rotation with more per sheet winning (tie: 0) - AC-S7-1/2. A configured
+ * grid whose cell cannot hold the (possibly turned) tag is REFUSED:
+ * `refusedCell` names the cell it did not fit (AC-S7-13) and the result falls
+ * back to the derived fit.
+ */
+export interface SizeGridInfo {
+  cols: number;
+  rows: number;
+  rotation: 0 | 90;
+  perSheet: number;
+  configured: boolean;
+  refusedCell?: { width_mm: number; height_mm: number };
+}
+
+function round1(n: number): number {
+  return Math.round(n * 10) / 10;
+}
+
+function deriveSizeGrid(width_mm: number, height_mm: number): SizeGridInfo {
+  const straight = impositionFit(PAGE_WIDTH_MM, PAGE_HEIGHT_MM, PRINT_MARGIN_MM, 0, width_mm, height_mm);
+  const turned = impositionFit(PAGE_WIDTH_MM, PAGE_HEIGHT_MM, PRINT_MARGIN_MM, 0, height_mm, width_mm);
+  return turned.perSheet > straight.perSheet
+    ? { cols: turned.cols, rows: turned.rows, rotation: 90, perSheet: turned.perSheet, configured: false }
+    : { cols: straight.cols, rows: straight.rows, rotation: 0, perSheet: straight.perSheet, configured: false };
+}
+
+export function resolveSizeGrid(
+  width_mm: number,
+  height_mm: number,
+  configured: SheetGridConfig | null,
+): SizeGridInfo {
+  if (!configured || configured.cols <= 0 || configured.rows <= 0) {
+    return deriveSizeGrid(width_mm, height_mm);
   }
 
-  const totalW = cols * tagW + (cols - 1) * gap_mm;
-  const totalH = rows * tagH + (rows - 1) * gap_mm;
-  const startX = bleed_mm + (usableW - totalW) / 2;
-  const startY = bleed_mm + (usableH - totalH) / 2;
+  const cellW = USABLE_WIDTH_MM / configured.cols;
+  const cellH = USABLE_HEIGHT_MM / configured.rows;
+  const rotation: 0 | 90 = configured.turn ? 90 : 0;
+  const placedW = rotation === 90 ? height_mm : width_mm;
+  const placedH = rotation === 90 ? width_mm : height_mm;
 
+  if (placedW <= cellW + FIT_TOLERANCE_MM && placedH <= cellH + FIT_TOLERANCE_MM) {
+    return {
+      cols: configured.cols,
+      rows: configured.rows,
+      rotation,
+      perSheet: configured.cols * configured.rows,
+      configured: true,
+    };
+  }
+
+  // AC-S7-13: the configured cell cannot hold the tag - name it and derive.
+  return {
+    ...deriveSizeGrid(width_mm, height_mm),
+    refusedCell: { width_mm: round1(cellW), height_mm: round1(cellH) },
+  };
+}
+
+/**
+ * Row-major slots for a `cols x rows` grid of `slotW x slotH` boxes, centred
+ * in the printable margin - the SAME code path for a derived fit (slot = the
+ * placed tag's own size, so the block centres, AC-S7-1) and a configured grid
+ * (slot = the cell size, so the grid fills the block exactly and centring is
+ * a no-op, AC-S7-12) - adjacent slots always touch (AC-S7-3).
+ */
+function gridSlots(cols: number, rows: number, slotW: number, slotH: number): LayoutSlot[] {
+  if (cols <= 0 || rows <= 0) return [];
+  const totalW = cols * slotW;
+  const totalH = rows * slotH;
+  const startX = PRINT_MARGIN_MM + (USABLE_WIDTH_MM - totalW) / 2;
+  const startY = PRINT_MARGIN_MM + (USABLE_HEIGHT_MM - totalH) / 2;
   const slots: LayoutSlot[] = [];
   for (let row = 0; row < rows; row += 1) {
     for (let col = 0; col < cols; col += 1) {
-      slots.push({
-        x_mm: startX + col * (tagW + gap_mm),
-        y_mm: startY + row * (tagH + gap_mm),
-      });
+      slots.push({ x_mm: startX + col * slotW, y_mm: startY + row * slotH });
     }
   }
   return slots;
+}
+
+/**
+ * The one overflowing, centred slot a tag too big for the page in either
+ * rotation still gets (AC-S7-10) - every copy needs somewhere to go, or the
+ * next reload finds no tag for that line at all.
+ */
+function overflowSlot(placedW: number, placedH: number): LayoutSlot {
+  return {
+    x_mm: PRINT_MARGIN_MM + (USABLE_WIDTH_MM - placedW) / 2,
+    y_mm: PRINT_MARGIN_MM + (USABLE_HEIGHT_MM - placedH) / 2,
+  };
 }
 
 // ---------------------------------------------------------------------------
 // Arranging the copies
 // ---------------------------------------------------------------------------
 
-/** One line's tag and how many of it the request asked for. */
+/** One request tag's placement and how many copies of it to print. */
 export interface ArrangeItem {
   tag: PlacedTag;
   quantity: number;
-}
-
-/** Where a copy was dragged to, if it was. */
-export interface PinnedPlacement {
-  sheet: number;
-  x_mm: number;
-  y_mm: number;
-}
-
-/**
- * The identity of one printed copy.
- *
- * Keyed on the LINE rather than on the tag, so a pin survives the tag being
- * re-cloned from another template, and so a document written before copy ids
- * existed still pins its first copy.
- */
-export function placementKey(lineId: string, copyIndex: number): string {
-  return `${lineId}#${copyIndex}`;
+  /** r10 S6 (AC-S6-8): a tag marked Not printed gets no copy and no slot,
+   *  so it never reaches a sheet, the sheet counts or the export. */
+  print_excluded?: boolean;
 }
 
 /** The placement id a copy carries in the saved document. */
@@ -668,7 +774,6 @@ function copyId(tagId: string, copyIndex: number): string {
 
 interface Copy {
   id: string;
-  key: string;
   tag: PlacedTag;
 }
 
@@ -676,74 +781,121 @@ interface Copy {
 export function copiesOf(items: ArrangeItem[]): Copy[] {
   const copies: Copy[] = [];
   for (const item of items) {
+    if (item.print_excluded) continue;
     const count = Math.max(1, Math.floor(item.quantity || 1));
     for (let index = 0; index < count; index += 1) {
-      copies.push({
-        id: copyId(item.tag.id, index),
-        key: placementKey(item.tag.request_line_id, index),
-        tag: item.tag,
-      });
+      copies.push({ id: copyId(item.tag.id, index), tag: item.tag });
     }
   }
   return copies;
 }
 
+/** What one arranged sheet holds (S7) - not stored in the doc (AC-S7-7: the
+ *  doc gains no new field), so the caller keeps this alongside `doc.sheets`
+ *  for display only ("Small Price Tag SP - 3 x 9, 27 of 30", AC-S7-6). */
+export interface SheetPlacement {
+  template_id: string;
+  width_mm: number;
+  height_mm: number;
+  rotation: 0 | 90;
+  cols: number;
+  rows: number;
+  /** The TRUE fit capacity - 0 when the tag does not fit the page in either
+   *  rotation (AC-S7-10), even though that sheet still holds one overflowing
+   *  copy. */
+  capacity: number;
+}
+
+export interface ArrangeResult {
+  sheets: TagSheet[];
+  placement: SheetPlacement[];
+}
+
 /**
- * Lay every copy out on as many sheets as it takes.
- *
- * The slot grid is sized off the LARGEST tag in the request, so a mixed request
- * still prints without two tags overlapping. A pinned copy keeps the sheet and
- * the position it was dragged to and consumes no slot, which is what makes the
- * rest flow around it rather than leaving a hole where it used to be (AC-S6-5).
- * `impositionSlots` always answers at least one slot (even one that overflows
- * the page, when the tag does not fit it at all), so every unpinned copy has
- * somewhere to go and no line's design goes missing on the next reload.
+ * Lay every copy out on as many sheets as its SIZE GROUP needs (S7): copies
+ * are grouped by `(width_mm, height_mm)`, biggest group first by area (a
+ * stable sort keeps a tie in first-seen/line order), and each group starts a
+ * FRESH sheet - two different sizes never share one (AC-S7-5). Within a
+ * group, `resolveSizeGrid` decides the layout once (a configured grid, else
+ * the derived best fit) and every sheet that group needs repeats it -
+ * AC-S7-1/2/3/12/13.
  */
 export function autoArrange(
   items: ArrangeItem[],
-  imposition: ImpositionConfig,
-  pinned: Record<string, PinnedPlacement> = {},
-): TagSheet[] {
+  gridForSize: SizeGridLookup = () => null,
+): ArrangeResult {
   const copies = copiesOf(items);
-  if (copies.length === 0) return [{ id: 'sheet-1', tags: [] }];
+  if (copies.length === 0) return { sheets: [{ id: 'sheet-1', tags: [] }], placement: [] };
 
-  const tagW = Math.max(...copies.map((c) => c.tag.width_mm));
-  const tagH = Math.max(...copies.map((c) => c.tag.height_mm));
-  const slots = impositionSlots(imposition, tagW, tagH);
-  const perSheet = Math.max(1, slots.length);
-
-  const placements: { sheet: number; tag: PlacedTag }[] = [];
-  let flowIndex = 0;
-
+  const groups = new Map<
+    string,
+    { width_mm: number; height_mm: number; template_id: string; copies: Copy[] }
+  >();
   for (const copy of copies) {
-    const pin = pinned[copy.key];
-    const sheet = pin ? pin.sheet : Math.floor(flowIndex / perSheet);
-    const slot = pin ?? slots[flowIndex % perSheet];
-    if (!pin) flowIndex += 1;
-
-    placements.push({
-      sheet,
-      tag: {
-        ...copy.tag,
-        id: copy.id,
-        x_mm: slot.x_mm,
-        y_mm: slot.y_mm,
-        // The document has to say which copies were DRAGGED, because every copy
-        // carries a position and a position cannot tell the two apart.
-        pinned: Boolean(pin),
-      },
-    });
+    const key = `${copy.tag.width_mm}x${copy.tag.height_mm}`;
+    let group = groups.get(key);
+    if (!group) {
+      group = {
+        width_mm: copy.tag.width_mm,
+        height_mm: copy.tag.height_mm,
+        template_id: copy.tag.template_id,
+        copies: [],
+      };
+      groups.set(key, group);
+    }
+    group.copies.push(copy);
   }
 
-  const sheetCount = Math.max(1, ...placements.map((p) => p.sheet + 1));
-  const sheets: TagSheet[] = Array.from({ length: sheetCount }, (_, index) => ({
-    id: `sheet-${index + 1}`,
-    tags: [],
-  }));
-  for (const placement of placements) {
-    sheets[placement.sheet].tags.push(placement.tag);
+  const ordered = [...groups.values()].sort(
+    (a, b) => b.width_mm * b.height_mm - a.width_mm * a.height_mm,
+  );
+
+  const sheets: TagSheet[] = [];
+  const placement: SheetPlacement[] = [];
+
+  for (const group of ordered) {
+    const configured = gridForSize(group.width_mm, group.height_mm, group.template_id);
+    const grid = resolveSizeGrid(group.width_mm, group.height_mm, configured);
+    const placedW = grid.rotation === 90 ? group.height_mm : group.width_mm;
+    const placedH = grid.rotation === 90 ? group.width_mm : group.height_mm;
+
+    const slots =
+      grid.perSheet === 0
+        ? [overflowSlot(placedW, placedH)]
+        : gridSlots(
+            grid.cols,
+            grid.rows,
+            grid.configured ? USABLE_WIDTH_MM / grid.cols : placedW,
+            grid.configured ? USABLE_HEIGHT_MM / grid.rows : placedH,
+          );
+    const slotsPerSheet = Math.max(1, slots.length);
+    const sheetsNeeded = Math.ceil(group.copies.length / slotsPerSheet);
+
+    for (let s = 0; s < sheetsNeeded; s += 1) {
+      const sheetCopies = group.copies.slice(s * slotsPerSheet, (s + 1) * slotsPerSheet);
+      sheets.push({
+        id: `sheet-${sheets.length + 1}`,
+        tags: sheetCopies.map((copy, slotIndex) => ({
+          ...copy.tag,
+          id: copy.id,
+          x_mm: slots[slotIndex].x_mm,
+          y_mm: slots[slotIndex].y_mm,
+          rotation: grid.rotation,
+        })),
+      });
+      placement.push({
+        template_id: group.template_id,
+        width_mm: group.width_mm,
+        height_mm: group.height_mm,
+        rotation: grid.rotation,
+        cols: grid.cols,
+        rows: grid.rows,
+        capacity: grid.perSheet,
+      });
+    }
   }
-  return sheets;
+
+  return { sheets, placement };
 }
 
 // ---------------------------------------------------------------------------
@@ -756,53 +908,23 @@ function copyIndexOf(placementId: string): number {
   return match ? Number(match[1]) : 0;
 }
 
-/** The pin key one placed copy answers to, wherever it came from. */
-export function pinKeyForPlacement(
-  tag: Pick<PlacedTag, 'id' | 'request_line_id'>,
-): string {
-  return placementKey(tag.request_line_id, copyIndexOf(tag.id));
-}
-
 /**
- * Every manual drag the saved document is carrying, ready to be re-applied.
+ * The per-TAG placements a saved document is carrying, keyed by request tag id.
  *
- * Only `pinned: true` counts. This used to read EVERY placed tag as a pin,
- * which meant one save and reopen froze the whole sheet: switching the
- * imposition preset re-imposed nothing, and bumping a line's quantity stacked
- * the new copy on top of copy 0 because every slot was already claimed. A
- * document saved before the flag existed therefore opens unpinned and is
- * re-imposed, which leaves the sheet correct rather than frozen.
- */
-export function pinnedFromDoc(doc: TagSheetDoc | null): Record<string, PinnedPlacement> {
-  const pinned: Record<string, PinnedPlacement> = {};
-  if (!doc) return pinned;
-  doc.sheets.forEach((sheet, sheetIndex) => {
-    for (const tag of sheet.tags) {
-      if (tag.pinned !== true) continue;
-      pinned[placementKey(tag.request_line_id, copyIndexOf(tag.id))] = {
-        sheet: sheetIndex,
-        x_mm: tag.x_mm,
-        y_mm: tag.y_mm,
-      };
-    }
-  });
-  return pinned;
-}
-
-/**
- * The per-line tags a saved document is carrying.
- *
- * The first copy of each line is the master: every copy holds the same layers,
- * so re-opening a saved design finds each line's tag exactly as it was drawn.
+ * The first copy of each tag is the master: every copy holds the same layers,
+ * so re-opening a saved design finds each tag exactly as it was drawn. A doc
+ * saved before S7 may carry `pinned: true` on some placements - no longer
+ * read (S7 drops pins entirely, AC-S7-4), so it re-flows exactly like any
+ * other saved doc.
  */
 export function tagsFromDoc(doc: TagSheetDoc | null): Map<string, PlacedTag> {
   const masters = new Map<string, PlacedTag>();
   if (!doc) return masters;
   for (const sheet of doc.sheets) {
     for (const tag of sheet.tags) {
-      const existing = masters.get(tag.request_line_id);
+      const existing = masters.get(tag.request_tag_id);
       if (existing && copyIndexOf(existing.id) <= copyIndexOf(tag.id)) continue;
-      masters.set(tag.request_line_id, {
+      masters.set(tag.request_tag_id, {
         ...tag,
         id: tag.id.replace(/-c\d+$/, ''),
         x_mm: 0,

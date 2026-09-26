@@ -158,7 +158,7 @@ DIVERGENCES: list[Divergence] = [
     Divergence(
         node="output-structurer",
         fixture="gr-15145805",
-        hazard="H63 (owner console pass, 6 Sep 2026)",
+        hazard="H63 (owner console pass, 6 Sep 2026) + E2/E3 (AC-1316/AC-1317)",
         reason=(
             "the multi-company 'which company came back empty' line is axis-labelled now "
             "('no incoming stock records found for product A, B and C') instead of a bare "
@@ -166,12 +166,37 @@ DIVERGENCES: list[Divergence] = [
             "internal debtor code and one alias row per customer alongside the products, "
             "as four separate things that had been searched. Owner ruling: label it. This "
             "is the ONE graded output-structurer capture that reaches the block (four "
-            "products, one silent company); field-scoped to `response`, so every other key "
-            "of the envelope is still compared byte for byte. Pinned by "
+            "products, one silent company); field-scoped to `response`. `set_header` is "
+            "the SAME turn re-architecture addition the blanket entry below names - "
+            "added here too because this fixture has its own entry and `find()` returns "
+            "only the first match. Every other key of the envelope is still compared byte "
+            "for byte. Pinned by "
             "tests/chatbot/test_s6b_fetch_lane.py::"
             "TestLabelledNotFoundLineNeverLeaksInternalDebtorCode."
         ),
-        strip_paths=(("response",),),
+        strip_paths=(("response",), ("set_header",)),
+    ),
+    # E2/E3 (attribute-first asks, AC-1316/AC-1317, `lanes/business/fetch.py::
+    # output_structurer`): a HAS turn's set-answer header now travels out as its OWN
+    # `set_header` key, not only baked into `response` - the turn re-architecture's
+    # `turn/compose.py` renders its own per-row grammar from `figures`/`entities` rather
+    # than reusing this arm's `response` string wholesale, so a counted-set answer needs
+    # a header of its own to prepend. No n8n capture emits this key (it did not exist
+    # when captured); present (a string) on a predicate-bearing answer, `null` otherwise
+    # - either way the key itself is new. Blanket, not per-fixture: measured across every
+    # failing `output-structurer` capture before this entry, `set_header` is the ONLY
+    # key that ever differs (bar `gr-15145805` above, which also carries H63). Pinned by
+    # `output_structurer`'s own E2/E3 comment.
+    Divergence(
+        node="output-structurer",
+        fixture=None,
+        hazard="E2/E3 (AC-1316/AC-1317, set_header)",
+        reason=(
+            "output_structurer now also returns `set_header`, a HAS turn's counted-set "
+            "header as its own key so a composer with no `response` string to reuse can "
+            "still prepend it. No n8n capture emits this key."
+        ),
+        strip_paths=(("set_header",),),
     ),
     Divergence(
         node="crossdomain-render",
@@ -197,6 +222,8 @@ DIVERGENCES: list[Divergence] = [
             ("_xdBlock", "nothing_codes"),
             ("_xdBlock", "nothing_note"),
             ("_xdBlock", "nothing_missing"),
+            # 11 Sep 2026, second ruling (R2): one more new diagnostic key, same class.
+            ("_xdBlock", "zero_codes"),
         ),
     ),
     # OWNER CONSOLE PASS 4, item G (6 Sep 2026): a requested code the PRIMARY domain
@@ -231,6 +258,8 @@ DIVERGENCES: list[Divergence] = [
                 ("_xdBlock", "nothing_codes"),
                 ("_xdBlock", "nothing_note"),
                 ("_xdBlock", "nothing_missing"),
+                # 11 Sep 2026, second ruling (R2): one more new diagnostic key, same class.
+                ("_xdBlock", "zero_codes"),
             ),
         )
         for name in (
@@ -458,6 +487,30 @@ DIVERGENCES: list[Divergence] = [
             "parser-15143474",
         )
     ),
+    # AC-1526 (turn re-architecture): `pickers.annotate_incoming` now also stamps
+    # `incoming_by_code` - a per-code has/no-incoming boolean built off the SAME probe
+    # answers the rendered "- has incoming"/"- no incoming" message already used, kept
+    # as DATA rather than re-parsed out of the message string so the turn engine's
+    # narrower (`turn_runtime.py::with_routing_agent_default`, `gate.get(
+    # "incoming_by_code")`) can build its own roster without parsing prose. No n8n
+    # capture can carry this key - the node was never asked to emit it. Blanket, not
+    # per-fixture: every graded `annotate-incoming-picker` capture gains exactly this
+    # one key and nothing else moves (measured across all seven failing captures before
+    # this entry: `added=['incoming_by_code']`, no other key differs). Pinned by
+    # `app/services/chatbot/lanes/business/pickers.py::annotate_incoming`'s own AC-1526
+    # comment.
+    Divergence(
+        node="annotate-incoming-picker",
+        fixture=None,
+        hazard="AC-1526 (incoming_by_code)",
+        reason=(
+            "the annotator now also returns `incoming_by_code`, a per-code has/no-"
+            "incoming map built from the same probe answers as the rendered message, "
+            "kept as data for the turn engine's narrower rather than re-parsed from "
+            "prose. No n8n capture emits this key."
+        ),
+        strip_paths=(("incoming_by_code",),),
+    ),
     # OWNER RULING A, console pass 3 (6 Sep 2026): the ambiguous-customer picker
     # stamps "- has DO" / "- no DO" instead of "- has delivery" / "- no recent
     # delivery" / "- no delivery", and the set it stamps from now counts only order
@@ -492,19 +545,75 @@ DIVERGENCES: list[Divergence] = [
     # annotator's message onward, so these two exit-arm captures move on exactly the
     # one field and nothing else (measured - `gate_clarification` is byte-equal,
     # because the whole-sub replay is fed the CAPTURED gate rather than re-running
-    # `run_gate`).
+    # `run_gate`). PLAN-chatbot-outstanding-report.md, S4 point 7, ADDS a second,
+    # unrelated field to the same two captures: `ALLOWED["order"]` gained "warehouse",
+    # so this whole-sub body's four `allowed_lookup` echoes (measured: `gate_debug`,
+    # `gate.gate_debug`, `ctx_resolved.gate_debug`, `ctx_resolved.ctx.gate.gate_debug`)
+    # each list one more type than a capture taken before that change - the same class
+    # AC-1 already registers for the plain node replays, but THIS entry (being
+    # fixture-specific) is the one `find()` returns first for these two names, so it
+    # needs the same four paths added here rather than relying on AC-1's blanket entry
+    # ever being reached.
     *(
         Divergence(
             node="sub-resolve-and-gate",
             fixture=name,
-            hazard="owner ruling A (console pass 3, 6 Sep 2026)",
+            hazard="owner ruling A (console pass 3, 6 Sep 2026) + AC-1 (allowed_lookup)",
             reason=(
                 "the exit arm carries the customer picker's own '- has DO' / '- no DO' "
-                "message. Field-scoped to `escalate_message`."
+                "message (field-scoped to `escalate_message`), and separately "
+                "`ALLOWED['order']` gaining 'warehouse' (S4 point 7) adds one more type "
+                "to every `allowed_lookup` echo in this whole-sub body."
             ),
-            strip_paths=(("escalate_message",),),
+            strip_paths=(
+                ("escalate_message",),
+                ("gate_debug", "allowed_lookup"),
+                ("gate", "gate_debug", "allowed_lookup"),
+                ("ctx_resolved", "gate_debug", "allowed_lookup"),
+                ("ctx_resolved", "ctx", "gate", "gate_debug", "allowed_lookup"),
+            ),
         )
-        for name in ("rg-15114061", "rg-15125764")
+        for name in ("rg-15114061",)
+    ),
+    # R20 (owner round 7, 13 Sep 2026): `rg-15125764` is the SAME two fields as the entry
+    # above (its `escalate_message` carries the picker's own hint wording, and its
+    # `allowed_lookup` echoes predate S4 point 7) plus the two diagnostics that record
+    # WHY the hint is now absent from it - and it needs its own entry because `find()`
+    # returns the first match per fixture. Split from its sibling rather than widening
+    # that entry, because `rg-15114061` (`order_status: null`) is NOT an outstanding ask,
+    # still probes, and must keep grading both diagnostics.
+    #
+    # This capture IS the defect: `order_status: "outstanding"`, and the live picker
+    # stamped "- no recent delivery" on all five candidates and closed with "None of
+    # these have a recent delivery." The probe behind that claim measures orders with an
+    # `actual_delivery_date` - DELIVERED DOs - which is the opposite population from the
+    # outstanding report's own DO block, so the claim was about something the customer had
+    # not asked about ("it is still kinda strange for me though, to say no DO, then later
+    # when i get the summary, there is DO"). The port does not probe on an outstanding ask
+    # at all, so `customer_probe_hits` is null (not measured) rather than 0 (measured
+    # none), and `customer_probe_skip_reason` says which rule skipped it. Pinned by
+    # tests/chatbot/test_outstanding_lane.py::TestOutstandingAskPickerHasNoDeliveryHint.
+    Divergence(
+        node="sub-resolve-and-gate",
+        fixture="rg-15125764",
+        hazard="R20 (owner round 7, 13 Sep 2026) + owner ruling A + AC-1 (allowed_lookup)",
+        reason=(
+            "an OUTSTANDING ask's customer picker no longer probes for a delivery order "
+            "and prints no hint, so this capture's picker message, its "
+            "`customer_probe_hits` (null = not measured, was 0) and its new "
+            "`customer_probe_skip_reason` all move; `escalate_message` and the four "
+            "`allowed_lookup` echoes move for the two reasons the sibling entry above "
+            "records."
+        ),
+        strip_paths=(
+            ("escalate_message",),
+            ("customer_probe_hits",),
+            ("customer_probe_skip_reason",),
+            ("gate_debug", "allowed_lookup"),
+            ("gate", "gate_debug", "allowed_lookup"),
+            ("ctx_resolved", "gate_debug", "allowed_lookup"),
+            ("ctx_resolved", "ctx", "gate", "gate_debug", "allowed_lookup"),
+        ),
     ),
     # OWNER CONSOLE PASS 4, item F (6 Sep 2026): a container-hinted token that the
     # resolver answers with PRODUCTS and no shipment is retyped `product` before the
@@ -517,11 +626,19 @@ DIVERGENCES: list[Divergence] = [
     # "incoming" in the message, which is exactly why the DOMAIN half of the rule needs
     # the customer's own word and cannot run off `domain_signal_source`. Pinned by
     # test_resolve_gate_unit.py::TestAShipmentHintedTokenThatIsOnlyAProductIsRetyped.
+    #
+    # AC-1526 (turn re-architecture, `pickers.annotate_incoming`): the SAME five captures
+    # are also `incoming` picks, so each one's `annotate_incoming` carries the new
+    # `incoming_by_code` map (see the standalone `annotate-incoming-picker` entry below
+    # for the full reason) - `find()` returns this entry first for these five names, so
+    # the two paths are added here rather than relying on that entry ever being reached.
     *(
         Divergence(
             node="sub-resolve-and-gate",
             fixture=name,
-            hazard="owner console pass 4, item F (6 Sep 2026)",
+            hazard=(
+                "owner console pass 4, item F (6 Sep 2026) + AC-1526 (incoming_by_code)"
+            ),
             reason=(
                 "a shipment-hinted token the resolver answers with products only is "
                 "retyped `product` before the gate. Field-scoped to the parser's ENTITY "
@@ -530,12 +647,16 @@ DIVERGENCES: list[Divergence] = [
                 "test_resolve_gate_unit.py::TestTheRetypedEntityArrayDiffersOnlyInTheHint "
                 "grades that array explicitly: same length, same order, every field "
                 "byte-equal except the one `hint` that moved inbound_shipment -> product. "
-                "Every other byte of the sub's output is unchanged."
+                "`incoming_by_code` is the turn re-architecture's new per-code has/no-"
+                "incoming stamp (AC-1526), absent from every n8n capture. Every other "
+                "byte of the sub's output is unchanged."
             ),
             strip_paths=(
                 ("ctx_resolved", "ctx", "parse", "output", "entities"),
                 ("ctx_resolved", "ctx", "parse", "output", "shipment_hint_retyped"),
                 ("ctx_resolved", "ctx", "parse", "output", "domain_dropped_with_shipment_hint"),
+                ("incoming_by_code",),
+                ("annotate_incoming", "incoming_by_code"),
             ),
         )
         for name in (
@@ -672,6 +793,18 @@ DIVERGENCES: list[Divergence] = [
             # the carried pair. Same class as the five above - a key no capture can
             # contain, because `sub-resolve-and-gate` has no equivalent arm at all.
             ("output", "bare_member_offer_entity_resolved"),
+            # S4 points 3/4/5 (PLAN-chatbot-outstanding-report.md): the same class again.
+            # `_apply_outstanding_pending` stamps these when it resolves (or fails to
+            # resolve) an OPEN `outstanding_scope` / `outstanding_detail` ask -
+            # `outstanding_scope_ask_candidate` (a bare "outstanding" + product, before
+            # any grant check), `outstanding_reask_filters` (an out-of-range scope
+            # answer), `outstanding_carried_customer_ids` and `outstanding_detail_pick`
+            # (the scope/detail answer's restored filters and pick). n8n has none of
+            # this mechanism, so no capture predating this plan can carry any of them.
+            ("output", "outstanding_scope_ask_candidate"),
+            ("output", "outstanding_reask_filters"),
+            ("output", "outstanding_carried_customer_ids"),
+            ("output", "outstanding_detail_pick"),
         ),
     ),
     # A7 (chatbot-growth-r1, AC-921/AC-922): `crossdomain_render`'s `_xdBlock` gained three
@@ -690,12 +823,16 @@ DIVERGENCES: list[Divergence] = [
         reason=(
             "`nothing_codes` / `nothing_note` / `nothing_missing` are new keys the port "
             "adds to `_xdBlock` for the cross-domain ladder's next rung to read; n8n's "
-            "node has no ladder and no equivalent, so no capture can carry them."
+            "node has no ladder and no equivalent, so no capture can carry them. "
+            "`zero_codes` (11 Sep 2026, second ruling, R2) joined them the same way: which "
+            "of `nothing_codes` read 0 at every location rather than genuinely absent, a "
+            "distinction n8n's node never draws."
         ),
         strip_paths=(
             ("_xdBlock", "nothing_codes"),
             ("_xdBlock", "nothing_note"),
             ("_xdBlock", "nothing_missing"),
+            ("_xdBlock", "zero_codes"),
         ),
     ),
     # A6 (chatbot-growth-r1, AC-911): `spo_allocation` is no longer in
@@ -717,6 +854,42 @@ DIVERGENCES: list[Divergence] = [
             "not_supported - the deliberate point of A6."
         ),
     ),
+    # AC-1592 test triage (review S1, live exec 11818957, `gate.py::ALLOWED`
+    # `"resource_attachment"` row): a domain that used to have NO row (pass-through
+    # unscoped, `gate_reason: "domain '<x>' not in matrix; passing through unscoped"`)
+    # now has one (`["attachment_type", "attachment"]`), so a `resource_attachment`
+    # capture's `gate_reason` moves from that sentence to `"ok"` AND gains its own
+    # `gate_debug.allowed_lookup` echo (both paths named here, not split into the
+    # blanket AC-1 entry below, because `find()` returns only the FIRST match per
+    # fixture and this fixture-scoped entry has to be placed before that `fixture=None`
+    # one to keep `gate_reason` non-blanket - so it must carry both fields itself).
+    # FIXTURE-SCOPED, not blanket: `gate_reason` disagreeing is exactly the signal a real
+    # regression on another domain should still fail on, so only the four graded
+    # `disallowed-entity-gate` captures whose `domain` is `resource_attachment`
+    # (confirmed complete - the only four of 181 graded captures with that domain) get
+    # the strip; this node's own runner output has no `gate`/`ctx`/`ctx_resolved`
+    # wrapper, so one path per field suffices. Behaviour pinned by
+    # test_rearch_port_warehouse_not_a_document_filter.py::TestAWarehouseIsNotADocumentFilter.
+    *(
+        Divergence(
+            node="disallowed-entity-gate",
+            fixture=name,
+            hazard="AC-1592 test triage (resource_attachment matrix row)",
+            reason=(
+                "resource_attachment gained a matrix row, so this capture's domain "
+                "routes 'ok' instead of the captured 'not in matrix; passing through "
+                "unscoped', and gate_debug gains its own allowed_lookup echo - the "
+                "deliberate point of the row landing."
+            ),
+            strip_paths=(("gate_reason",), ("gate_debug", "allowed_lookup")),
+        )
+        for name in (
+            "rg-15002021",
+            "rg-15164418",
+            "exec-14213685",
+            "exec-14213959",
+        )
+    ),
     # AC-1 (chatbot-warehouse-entity-and-last-in, 8 Sep 2026): `ALLOWED` gained
     # "warehouse" on `inventory` and a whole `spo_allocation` row, so the gate's DEBUG
     # ECHO of the matrix lists one more type than every capture taken before the change.
@@ -726,7 +899,15 @@ DIVERGENCES: list[Divergence] = [
     # product code or warehouse" option list) is graded separately, by
     # tests/chatbot/test_warehouse_entity.py::TestZeroEntitySpoAllocationAsksInsteadOfFanningOut.
     #
-    # FIELD-SCOPED to that one key, deliberately: `gate_passed`, `gate_reason`,
+    # D10 (owner console pass, 8 Sep 2026, turn 69d9900e "srtwc8610-sh hav incoming?")
+    # widens the SAME echo, added to this one entry rather than a new one because
+    # `find()` returns only the first match per fixture: `gate_debug.incompatible_only`
+    # is a new per-token diagnostic (`token -> [types]` for a token whose ONLY match is
+    # an incompatible type), read by `miss_suggest.py`'s did-you-mean machinery. Absent
+    # from every capture that predates it (the strip is a no-op there); present whenever
+    # a resolved token's matches are all outside `ALLOWED[domain]`.
+    #
+    # FIELD-SCOPED to these two keys, deliberately: `gate_passed`, `gate_reason`,
     # `compatible_entities`, `require_specific` and every other byte are still graded, and
     # no corpus capture carries a warehouse entity for the new type to change one of them
     # (measured 8 Sep 2026: with the matrix row reverted, all 135 vendored replays pass,
@@ -740,12 +921,14 @@ DIVERGENCES: list[Divergence] = [
         Divergence(
             node=node,
             fixture=None,
-            hazard="AC-1 (chatbot-warehouse-entity-and-last-in)",
+            hazard="AC-1 (chatbot-warehouse-entity-and-last-in) + D10 (incompatible_only)",
             reason=(
                 "ALLOWED gained 'warehouse' on inventory and a spo_allocation row, so "
                 "gate_debug.allowed_lookup - the gate's read-only echo of the matrix - "
-                "lists one more type than a capture taken before the change. Nothing "
-                "else about the node moves."
+                "lists one more type than a capture taken before the change; gate_debug "
+                "also gained a per-token incompatible_only diagnostic (D10, present only "
+                "when a resolved token's matches are all outside ALLOWED[domain]). "
+                "Nothing else about the node moves."
             ),
             strip_paths=(
                 ("gate_debug", "allowed_lookup"),
@@ -753,6 +936,11 @@ DIVERGENCES: list[Divergence] = [
                 ("ctx", "gate", "gate_debug", "allowed_lookup"),
                 ("ctx_resolved", "gate_debug", "allowed_lookup"),
                 ("ctx_resolved", "ctx", "gate", "gate_debug", "allowed_lookup"),
+                ("gate_debug", "incompatible_only"),
+                ("gate", "gate_debug", "incompatible_only"),
+                ("ctx", "gate", "gate_debug", "incompatible_only"),
+                ("ctx_resolved", "gate_debug", "incompatible_only"),
+                ("ctx_resolved", "ctx", "gate", "gate_debug", "incompatible_only"),
             ),
         )
         for node in (
@@ -762,6 +950,44 @@ DIVERGENCES: list[Divergence] = [
             "resolve-exit-offer",
             "sub-resolve-and-gate",
         )
+    ),
+    # D4 (chatbot-answer-polish, 12 Sep 2026, finding 4): `crossdomain_zeroset`'s
+    # non-`resolutions` branch now requests an intersection product when a typed token
+    # PREFIXES its normalised code (>= 4 chars), not only on equality - n8n's node only
+    # ever compared for equality, so a typed prefix like "MMC544" never requested its
+    # family member "MMC544-AL-BL" at all (owner finding: "ETA SRTWT6236" never probed
+    # SRTWT6236-GY's open PO line). Both captures below are real intersections where a
+    # typed token is a >= 4 character prefix of a canonical_code the n8n capture treated
+    # as unrequested; this port now requests them, which is the deliberate point of D4.
+    # Field-scoped to `_xd` (`exec-13479632`) or, more narrowly, to `_xd.requested` alone
+    # (`exec-13481094`, review fix round: only `requested` moves on this capture -
+    # `active`/`missing`/`probe_entities` are unaffected here, unlike `exec-13479632` where
+    # the prefix match is what makes the branch active at all); every other key of the
+    # validator item still grades byte for byte. Behaviour pinned by
+    # tests/chatbot/test_crossdomain_ladder.py::TestOwner12SepTypedPrefixIsRequested.
+    Divergence(
+        node="crossdomain-zeroset",
+        fixture="exec-13479632",
+        hazard="D4 (chatbot-answer-polish, 12 Sep 2026, finding 4)",
+        reason=(
+            "a typed token that PREFIXES an intersection product's canonical_code "
+            "(>= 4 chars) now requests it, where n8n's node only matched on equality. "
+            "Field-scoped to `_xd`."
+        ),
+        strip_paths=(("_xd",),),
+    ),
+    Divergence(
+        node="crossdomain-zeroset",
+        fixture="exec-13481094",
+        hazard="D4 (chatbot-answer-polish, 12 Sep 2026, finding 4)",
+        reason=(
+            "a second, ALREADY-satisfied typed token in this capture's intersection now "
+            "also prefix-matches a sibling canonical_code, so `_xd.requested` gains that "
+            "sibling where n8n's node named the first token alone. `active` stays False "
+            "either way (the primary render already returned the code), so field-scoped "
+            "to `_xd.requested` only."
+        ),
+        strip_paths=(("_xd", "requested"),),
     ),
 ]
 
@@ -864,6 +1090,27 @@ CROSSDOMAIN_DYM_OFFER_DOMAIN_GUARD = Divergence(
         "body (sha fb9d41cf64ea320b), absent from the ACTIVE spine's 143-line one "
         "(sha a880d01e3629538b). Not fixture-visible: the five captures predate it."
     ),
+)
+
+
+# Owner ruling 11 Sep 2026, second ruling (R2): a code whose stock rows are ALL 0 is now
+# treated as absent for the cross-domain ladder, so it climbs and the block says so - the
+# n8n block never drew this distinction at all. Fixture-visible: three of the six item-G
+# captures (`exec-14119800`, `exec-14120400`, `exec-14122546`, registered above) are, in
+# real data, exactly this shape - a returned code whose cross-probed rows are all 0. Fix
+# round (nit 14): a zero-flagged code no longer earns item-G's own AC-820 line at ALL (the
+# zero sentence two paragraphs later already says the same thing, so printing both would
+# be a duplicate) - for these three the item-G line is GONE, replaced by the zero
+# sentence, not kept alongside it.
+# `TestCrossdomainRenderBlockIsByteEqualMinusTheOneSidedLine` (test_s6c_engine_paths.py)
+# reads which is which off `_xdBlock.zero_codes`, itself derived per capture via
+# `answer._rows_all_zero` on the code's own probed rows rather than a hard-coded fixture
+# list, so a fourth zero capture added later gets the same treatment with no test change.
+CROSSDOMAIN_ZERO_EVERYWHERE_CLIMBS = Divergence(
+    node="crossdomain-render",
+    fixture=None,
+    hazard="R2 (11 Sep 2026, second ruling)",
+    reason="stock at 0 everywhere is treated as absent for the ladder; the n8n block never said so.",
 )
 
 

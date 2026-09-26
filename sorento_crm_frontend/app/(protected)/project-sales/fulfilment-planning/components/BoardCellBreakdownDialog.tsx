@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { Check, ChevronDown, ChevronRight, ExternalLink, Info, Undo2, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, ExternalLink, Info, X } from 'lucide-react';
 import { ColumnDef, RowSelectionState } from '@tanstack/react-table';
 import { Button } from '@/components/ui/button';
 import {
@@ -33,10 +33,13 @@ import { cn } from '@/lib/utils';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { spoDetailHref, spoNumberFromLabel } from '@/lib/spo-detail';
 import { PanelDataGrid } from '@/components/common/PanelDataGrid';
+import { DecisionTrailButton } from '../../_shared/components/DecisionTrailButton';
 import { OrderInquiryStatePill } from '../../_shared/components/OrderInquiryVerbPill';
 import {
   PILL_TONE,
   SHORT_LABELS,
+  boardOrderInquiryWord,
+  contributionInquiryDecision,
   contributionSuggestion,
   decisionBreakdown,
   movesOf,
@@ -51,8 +54,9 @@ import type { SuggestionRow } from '../../_shared/lib/supplyVocabulary';
 import { LADDER_VERSION } from '../../_shared/lib/supplyVocabulary';
 import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
 import { canQuickSave } from '../../_shared/lib/boardAmend';
-import { BoardDecisionPill } from './BoardDecisionPill';
+import { BoardDecisionPill, isPreMarkOnly } from './BoardDecisionPill';
 import { BoardLineDecisionPanel } from './BoardLineDecisionPanel';
+import { BoardVerdictActions } from './BoardVerdictActions';
 import { BoardTrailPopover, ItemFlagChips } from './BoardTrailPopover';
 import {
   UnsavedDecisionPrompt,
@@ -257,6 +261,20 @@ export function BoardCellBreakdownDialog({
   const expansion = useDecisionRowExpansion();
   const { expanded, setExpanded, openKey, setDirty, requestRow, requestClose } =
     expansion;
+
+  /**
+   * Open this line's decision panel, and only open it (AC-B10): the pencil is not a toggle -
+   * a planner who presses it on the row that is already open asked to see the panel, and
+   * closing it under them would read as the press having missed. Through `requestRow`, so
+   * this table's one-row-at-a-time rule and its unsaved-work question both still apply.
+   */
+  const openRow = React.useCallback(
+    (key: string) => {
+      if (openKey === key) return;
+      requestRow(key);
+    },
+    [openKey, requestRow],
+  );
   const [rowSelection, setRowSelection] = React.useState<RowSelectionState>({});
 
   /**
@@ -448,7 +466,11 @@ export function BoardCellBreakdownDialog({
    */
   const context = [
     cell.location_group ? `${cell.location_group} group` : null,
-    `${cell.total_qty} outstanding`,
+    // "to plan", not "outstanding": `total_qty` sums what each line ASKS FOR, which since
+    // the 14 Sep 2026 ruling is the plan quantity. Beside a column headed Outstanding
+    // reading 2 on the same delivered line, "3 outstanding" was the one screen stating two
+    // different numbers under one word.
+    `${cell.total_qty} to plan`,
     `${decided} decided`,
   ]
     .filter(Boolean)
@@ -469,9 +491,14 @@ export function BoardCellBreakdownDialog({
             ? 'This line is already confirmed. Amend it to change what was decided.'
             : row.original.unplannable
               ? 'This line cannot be decided here: its sales order states no fulfilment location.'
-              : draft[row.original.key]
-                ? 'Already saved. Undo it before saving it again.'
-                : undefined,
+              : isPreMarkOnly(row.original, draft[row.original.key] ?? null)
+                ? // N-2 (reviewer, fix round 2): was "Open the row to decide it", which is
+                  // no longer where the quickest answer is - the Verdict cell beside this
+                  // box now takes or refuses the proposal in one press.
+                  "This line's change is proposed, not saved. Accept or reject it in the Verdict cell."
+                : draft[row.original.key]
+                  ? 'Already saved. Undo it before saving it again.'
+                  : undefined,
         rowLabel: (row) =>
           `Select ${row.original.so_number} line ${row.original.line_no}`,
       }),
@@ -544,15 +571,34 @@ export function BoardCellBreakdownDialog({
               header: ({ column }) => (
                 <DataGridColumnHeader title="Product" column={column} />
               ),
-              cell: ({ row }) => (
-                <span
-                  className="block truncate text-sm"
-                  title={row.original.item_code}
-                >
-                  {row.original.item_code}
-                </span>
-              ),
-              size: 130,
+              cell: ({ row }) => {
+                // The SAME chip, off the SAME helper, as the list view's Product cell
+                // (AC-A7/AC-A8): one ladder, read in both places, so the two readings of
+                // the board cannot say different things about one line's documents.
+                const word = boardOrderInquiryWord(row.original.order_inquiry);
+                return (
+                  <span className="flex min-w-0 items-center gap-1.5 text-sm">
+                    <span
+                      className="block min-w-0 truncate"
+                      title={row.original.item_code}
+                    >
+                      {row.original.item_code}
+                    </span>
+                    {word ? (
+                      <Badge
+                        size="sm"
+                        appearance="light"
+                        variant="secondary"
+                        className="shrink-0"
+                        title={word.title}
+                      >
+                        {word.word}
+                      </Badge>
+                    ) : null}
+                  </span>
+                );
+              },
+              size: 150,
               minSize: 110,
               meta: { headerTitle: 'Product' },
             } as ColumnDef<BoardContribution>,
@@ -722,13 +768,27 @@ export function BoardCellBreakdownDialog({
             .join(' ');
           const share = shareNote(contribution);
           const unit = unitNote(contribution);
+          const inquiryDecision = contributionInquiryDecision(contribution);
           return (
             <div className="min-w-0">
               <div className="flex items-center gap-1">
                 {pills.length === 0 ? (
-                  <span className="text-sm text-muted-foreground">
-                    Cannot be sourced
-                  </span>
+                  // "Cannot be sourced" is about a line no ladder could answer. A line the
+                  // BOOK already decided - a live order inquiry row, no board composition
+                  // (14 Sep 2026 ruling) - was never walked, so the slot names the inquiry
+                  // purchasing holds instead of declaring the line unsourceable.
+                  inquiryDecision ? (
+                    <span
+                      className="min-w-0 truncate text-sm tabular-nums"
+                      title={inquiryDecision.inquiry_no ?? ''}
+                    >
+                      {inquiryDecision.inquiry_no ?? 'Unnumbered inquiry'}
+                    </span>
+                  ) : (
+                    <span className="text-sm text-muted-foreground">
+                      Cannot be sourced
+                    </span>
+                  )
                 ) : (
                   <PillOverflow
                     items={pills}
@@ -777,6 +837,33 @@ export function BoardCellBreakdownDialog({
                   merged.some((m) => m.kind === 'buy') && (
                     <Badge variant="secondary">Local</Badge>
                   )}
+                {/* AC-S5-1 (`PLAN-board-received-stock-own-arrival.md`): a Reserve born
+                    from goods that landed FOR this line carries `source: 'own_arrival'` -
+                    never derived from `rung === 'group_take'` alone, which also covers an
+                    ordinary group-take Reserve nothing landed for. */}
+                {(() => {
+                  const ownArrival = contribution.sources.filter(
+                    (source) => source.source === 'own_arrival',
+                  );
+                  if (ownArrival.length === 0) return null;
+                  const minor = ownArrival.reduce(
+                    (total, source) => total + toMinor(source.qty),
+                    0,
+                  );
+                  const title = ownArrival
+                    .map((source) => source.supply_document)
+                    .filter((document): document is string => Boolean(document))
+                    .join(', ');
+                  return (
+                    <Badge
+                      variant="secondary"
+                      data-testid={`received-own-arrival-${contribution.key}`}
+                      title={title || undefined}
+                    >
+                      Received {fromMinor(minor)}
+                    </Badge>
+                  );
+                })()}
                 {/* The two prose sentences behind the numbers above - why this rung fired,
                     and what was left for this line at its own pile - under one visible icon
                     rather than a silent `title` nobody hovers or two lines of wrapped text
@@ -852,37 +939,45 @@ export function BoardCellBreakdownDialog({
         header: ({ column }) => (
           <DataGridColumnHeader title="Decision" column={column} />
         ),
-        // A PILL, AND (D14) an Undo beside a saved one. The three verbs used to live here,
-        // which is why the column was 210px wide and still truncated its own composition: a
-        // decision is taken in the expanded row now, where the numbers it is made against
-        // are - Undo is the one exception, because there is nothing left to look at once a
-        // line is saved, only the choice to unsave it.
+        // A PILL, AND the row's own actions beside it (`BoardVerdictActions`, AC-B11) - the
+        // identical set the list view's Verdict column offers, so the two readings of the
+        // board teach one gesture. The composition itself is still taken in the expanded
+        // row, where the numbers it is made against are; these are the answers that need no
+        // numbers: take the proposal, refuse it with a reason, undo, or go and edit it.
         cell: ({ row }) => {
           const key = row.original.key;
-          const drafted = Boolean(draft[key]);
+          const contribution = row.original;
           return (
             <div className="flex min-w-0 items-center gap-1">
-              <BoardDecisionPill contribution={row.original} decision={draft[key] ?? null} />
-              {drafted ? (
-                <Button
-                  type="button"
-                  mode="icon"
-                  variant="ghost"
-                  size="sm"
-                  aria-label={`Undo ${row.original.so_number} line ${row.original.line_no}`}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onDecide(key, null);
-                  }}
-                >
-                  <Undo2 className="size-3.5" aria-hidden />
-                </Button>
+              <BoardDecisionPill contribution={contribution} decision={draft[key] ?? null} />
+              {/* AC-DT-5 (`PLAN-oi-decision-trail-ui.md`, round 2): the same History icon
+                  the list view's own Verdict column carries, right after the chip -
+                  same gate, including `covered` (N1, round 3: a fully-reserved /
+                  local-buy covered line can carry no `decision` object and no OI row of
+                  its own and still be worth tracing). */}
+              {contribution.decision ||
+              contribution.draft ||
+              contribution.order_inquiry ||
+              contribution.covered ? (
+                <DecisionTrailButton
+                  coreLineId={contribution.line_id ?? null}
+                  itemCode={contribution.item_code}
+                  className="shrink-0"
+                />
               ) : null}
+              <BoardVerdictActions
+                contribution={contribution}
+                decision={draft[key] ?? null}
+                onDecide={(next) => onDecide(key, next)}
+                onChange={() => openRow(key)}
+              />
             </div>
           );
         },
-        size: 140,
-        minSize: 120,
+        // AC-C2: the pill and its icons, on one line at 375px - the column was 140 for a
+        // pill and at most one icon. Resizable like every other column here.
+        size: 200,
+        minSize: 170,
         enableSorting: false,
         meta: { headerTitle: 'Decision' },
       },
@@ -893,6 +988,7 @@ export function BoardCellBreakdownDialog({
       draft,
       multiProduct,
       onDecide,
+      openRow,
       setDirty,
     ],
   );
@@ -1176,6 +1272,7 @@ export function BoardCellBreakdownDialog({
                 // agent - never a second fetch, `cell.contributions` is already the whole cell.
                 rows={filteredContributions}
                 getRowId={(row) => row.key}
+                pageResetKey={linesSearch.debouncedValue}
                 listingKey="projects.projects.view::project-board-cell-breakdown"
                 sortable
                 expanded={expanded}

@@ -1,0 +1,185 @@
+# PLAN - Order inquiry rows follow the AutoCount book, through the PO to SPO chain
+
+Status: DRAFT 18 Sep 2026. D1 and D2 RULED by the owner on the review page 18 Sep ("we must follow autocount link always"). D4 RULED: lift fully. D3 RULED 19 Sep in chat: option 1, AutoCount wins always, manual links too. All four decisions ruled.
+UAC: `oi-follow-book-chain-acceptance-criteria.md`. Branch `lane/oi-follow-book-chain`.
+Domain: SCM, order inquiries. Owner ruling 18 Sep 2026: "doesn't matter it is closed or not,
+if autocount has that linking, we must use and follow that."
+
+## 1. Journey
+
+Held in the UAC's `Journey` section. One actor (purchasing), zero decisions: the row already
+shows the documents AutoCount names for it.
+
+## 2. What was measured before writing this
+
+The owner's case, SO421886 / C-FHSS14 / qty 2, read off prod on 18 Sep:
+
+| Row | State in the CRM |
+| --- | --- |
+| SO line `...45810027:45810033` | held since 17 Sep 07:26 |
+| PO 202607-S0110 line `...45391885:45820014` | arrived 18 Sep 04:42 UTC, names that SO line, ordered 2, received 2, closed |
+| SPO-2026/09-0036 line `...45728035:45820113` | open, 2, names that PO line, SO ref empty, 0 claims |
+| Order inquiry row | "Not linked", PO and SPO blank |
+
+The feed is not at fault: the PO line reached the CRM within a minute of being saved.
+
+**This already ships, and is merely not called for live rows.** The OI sheet importer pairs
+exactly this way (`project_order_inquiry_import_service._pair`): the ref first, a purchase
+order line followed through to the shipping order it became, the purchase order line itself
+only for the remainder, nothing counted twice, cancelled lines refused, and closed or fully
+delivered lines included (D8 of that plan). Its capacity is the document's whole quantity
+less what links already hold, so "closed or not" is already how it reads. The owner's ruling
+of 14 Sep ("the source of truth is the autocount linkage") built it. Live rows never reach it:
+
+* The cascade (`auto_place_for_products`) reads claims and open balance only. A closed PO line
+  has no open balance; a chain-only SPO line has no claim.
+* `follow_book_repairing` (S5, 16 Sep) only MOVES an existing link when a ref changes. It
+  returns early when the target has no link, and `ref_moves` captures updated PO lines only,
+  never a created one and never an SPO line that names only a PO line.
+
+So this is a repair plan: call the existing pairing for live rows. It is not a build plan.
+
+Size of it on the 18 Sep 03:00 copy: 4,692 rows have need left; the book names a document for
+191 of them. Of 157 chain targets, 152 are already held by another row of the same sales
+order line (nothing to do), 19 by a different sales order line (D3), 2 are free. The daily
+flow is the point, not the backlog: every sales order bought and transferred in one sitting
+lands in this gap.
+
+## 3. Decisions for the owner (each with a recommendation)
+
+**D1. A real link, or a read-only "AutoCount says" display?** RULED 18 Sep: real link. Recommended a REAL link, written
+by the one link writer (`_write_link`), `auto = true`, trigger `autocount_ingest`, which is
+what the sheet importer has written 6,000 times. A display-only fact would be a second
+meaning in the same two columns, and the Buy card and stock debt would still count the row as
+unbought.
+
+**D2. Which document carries the link when the PO line became a shipping order?** RULED 18 Sep: shipping order first, PO line for the remainder. Recommended
+the shipping order line, with the PO shown beside it "via SPO" (the worklist already does
+this). The PO line takes only what did not ship. This is the importer's rule and the owner's
+14 Sep ruling on double counting.
+
+**D3. The book names a document another sales order's row already holds (19 rows today).**
+RULED 19 Sep: the book wins, always, manual links too. Recommended: the book wins: the holder's link is removed with a note naming the document, the
+sales order it went to and the date; the holder is offered to the cascade again; manual links
+follow too (ruling 16 Sep). Never displaced: a row of the same sales order line, and a
+redirected row holding a received document. The alternative, leaving the holder and the book
+row unlinked, keeps the screen disagreeing with AutoCount, which is what the ruling forbids.
+
+**D4. AC-RL-43 (16 Sep): a book MOVE skips a fully received document.** RULED 18 Sep on the
+review page: LIFT FULLY. A move follows AutoCount whether or not the goods have landed; the
+old row loses the document and gets the note, the new row shows it as received. AC-RL-43 is
+retired by this plan, and the test that guards it is rewritten to assert the move (AC-FB-34).
+The `oi-replan-received-links` rule at SETTLE is untouched: a replan still redirects a row
+whose document is fully received, and a fresh row of the same line still takes nothing from
+it (AC-FB-6), because the redirected row holds the capacity.
+
+## 4. Design
+
+One function, three callers, no new table, column, migration, permission or screen.
+
+**4.1 The function.** `ProjectOrderInquiryService.follow_book_for_rows(row_ids, *, trigger,
+company_id, actor_user_id)`:
+
+1. Narrow `row_ids` to linkable rows with need left (`_linkable_row_for_core_line`'s
+   predicate, `_unlinked_need`), resolve each to its core sales order line.
+2. Hand `(need, core line)` pairs to the importer's pairing. `_pair` reads only
+   `match.raisable`, `match.row.qty`, `match.core_line` and `plan.bought_rows`, so the seam is
+   a small extraction: `pair_needs(db, needs)` holding today's body, with `_pair` building its
+   `needs` from the plan and calling it. No behaviour change for the importer (AC-FB-12).
+3. Write each take through `_write_link(..., auto_trigger="autocount_ingest")`, then
+   `refresh_link_state` once for the rows touched.
+4. D3: before step 3, when a book-named target has no free capacity, find the links holding
+   it whose row is on a different core sales order line that the book does not name for that
+   target, remove them through `_remove_links` with the note, and collect those rows for one
+   cascade pass at the end.
+
+**4.2 Callers.**
+
+* Top of `auto_place_for_products`, for the rows that pass is about to deal. Every cascade
+  trigger (Confirm, Link now, the board) therefore honours the book first and deals only the
+  remainder (AC-FB-11, AC-FB-20).
+* `ingest.py` `_run_supersede_and_relink_hooks`, after `follow_book_repairing`: the SO line
+  refs named by PO lines written this push (created AND updated, AC-FB-25), resolved to rows.
+* `ingest.py` beside `_run_shipping_order_forward_match_hook`: SPO lines written this push,
+  their own SO ref or the SO ref of the PO line they name, resolved to rows.
+
+Both hooks keep the existing shape: `begin_nested`, own commit, best-effort, capped, dropped
+count on the response summary.
+
+**4.3 Backfill.** `scripts/backfill_oi_follow_book.py`, `--dry-run` default, per company, keyset
+pages of row ids, calls `follow_book_for_rows`. ORM only (raw SQL bypasses the company scope).
+
+**4.4 Frontend.** None expected. The worklist already prints a shipping order link, its source
+PO "via SPO", and the received figure. Phase 1 (frontend mock) is therefore not applicable,
+and that is recorded in the PR description. Browser verification still runs (AC-FB-50).
+
+## 5. What is deliberately not built
+
+* No chain writer for `scm.order_link_claim` (my first proposal). Ruling 9 Sep: the refs are
+  the truth; claims are many to many with no quantity. A real link makes the claim moot.
+* No "book pairing" flag column on the link. The row note already carries the trigger.
+* No reservation of a book-named document before its row exists. D3 corrects it when the row
+  arrives. Trigger to revisit: displacement notes becoming a daily sight for purchasing.
+
+## 5b. Review round, 19 Sep 2026: findings and the captain's rulings
+
+Reviewer, security reviewer and the API evidence run all reported. Every blocker was reproduced.
+
+| Finding | Ruling |
+| --- | --- |
+| Board confirm raises AWAITING rows; the book step narrowed to acknowledged rows, so the cascade linked SO421886 to the wrong line of SPO-2026/09-0036 (evidence run) | Fix. The book step acts on awaiting rows too; a link on an unconfirmed row is a draft. Rejected rows never. AC-FB-20 gets its own test. |
+| A re-deal pass (`redeal_drafts`, PO confirm and Link now) unplaces the book link it just wrote | Fix. A link on a target the book names for the row's own line is never a draft, in the same call or a later one. |
+| `follow_book_for_rows` links `redirected_to_pool` rows from the hooks and the backfill | Fix. One linkable-row predicate, the cascade's own. |
+| Displacement sized off raw `qty_ordered` while pairing nets a PO line by its own shipments: strips a holder for no gain, or misses a displacement | Fix. One capacity rule: displacement reads the pairing's own figures. Invariant: every unit displaced is a unit the book row links in the same call. |
+| Cap applied before narrowing, unordered; holder choice unordered; ambiguous PO line ref resolved with `.first()` | Fix. Cap after narrowing over `(created_at, id)`; newest link displaced first; ambiguous ref refused. |
+| Displaced holders re-enter the cascade, which re-enters the book step, unbounded | Fix. The re-offer pass skips the book step. |
+| Partial displacement does not invalidate the link tally cache; scoped tally read outside its scope | Fix. |
+| Displacement note names no trigger or actor; backfill passes no actor | Fix. |
+| Backfill counters infer from a before/after snapshot | Fix. Count what the book placed and what it displaced. |
+| Security S4: gate displacement behind the delete permission | DECLINED. Owner rulings D3 and D4 ("we must follow autocount link always", manual links too) make the AutoCount feed the authority; a gate would switch the ruling off by default. Stated plainly instead: **the AutoCount ingest key holds unlink authority over every order inquiry row of its own company.** Owner informed 19 Sep. |
+| A row already FULLY linked to a document the book does not name is never corrected (tester, 19 Sep) | LEFT AS IS, owner ruling 19 Sep: "i think it is fine for the row already fully linked". The book fills unlinked quantity only; to correct such a row a person unlinks it and the next pass follows the book. |
+| Security S4 again | Owner confirmed 19 Sep: no delete-permission gate. |
+| Book step ignores the link horizon | ACCEPTED as the rule under "always follow": a document AutoCount names is linked whatever the horizon; `after_horizon` counts only rows the cascade held back. |
+| Worklist Supplier reads the first PO link only, so an SPO-only row says "Not linked" (5,156 rows on the prod copy) | Fix in this lane (AC-FB-52): the journey promises the shipping order's supplier on the row. |
+
+## 6. Slices (one lane, one PR)
+
+| Slice | Holds | ACs |
+| --- | --- | --- |
+| S1 | `pair_needs` extraction + `follow_book_for_rows` + the cascade caller | FB-1 to FB-12, FB-20 |
+| S2 | the two ingest hooks, cap, created-line capture | FB-21 to FB-25 |
+| S3 | displacement (after D3 is ruled) and AC-RL-43 (after D4) | FB-30 to FB-33 |
+| S4 | backfill script, dry run on the 18 Sep copy | FB-40 to FB-42 |
+| S5 | browser evidence run | FB-50, FB-51 |
+| S6 | review round fixes and the Supplier column for SPO-only rows | FB-52 and the rulings in 5b |
+
+## 7. Testing seams (agreed before Phase 2)
+
+* Pytest on Postgres through `tests/_pg_fixture.py`, seeding its own company, product, sales
+  order line with `source_ref`, PO line, SPO line, inquiry row. Reuse `_seed_so_line`,
+  `_po_line`, `_spo_line` from `tests/test_ingest_documents_v5_so_po_links.py`.
+* Service seam: `follow_book_for_rows` directly. Route seam: `POST /api/v1/external/ingest`
+  for POs and SPOs, asserting the link exists after the call returns.
+* Importer regression: its existing test files, unedited.
+* Security review is in scope: external ingest surface and company scoping.
+* One agent on the backend test database at a time.
+
+## 8. Rollout
+
+Owner ruling 19 Sep 2026: no backfill run on prod. He wants to watch the automation do it.
+
+1. Deploy.
+2. The owner runs a purchase order reconcile from the shared service, which re-pushes every
+   purchase order through the ingest. Every pushed PO line that carries `from_so_line_ref`
+   triggers the book step, whether or not the line changed (`written_po_line_refs` is filled
+   from every line of the push, there is no unchanged-skip). The pairing walks from the PO line
+   to the shipping order lines already held, so a PO reconcile alone covers the chain; an SPO
+   reconcile is not required.
+3. Bound to know: each ingest request follows at most `FOLLOW_BOOK_FOR_ROWS_MAX_ROWS` (200)
+   rows and reports the rest as `book_follow_rows_dropped` on its response. Anything dropped,
+   and any row whose purchase order the reconcile did not re-push, is picked up by the next
+   linking pass: Order Inquiries, Auto link all runs the book step over every open row,
+   uncapped (measured 30 s company-wide on the prod copy).
+4. Displacements happen live during the reconcile, each with its note. The backfill script
+   stays in the repo as a DRY-RUN preview tool for a prod copy only (expected linked and
+   displaced counts before the reconcile); it is not a rollout step.

@@ -44,6 +44,20 @@ _LANE_GATED_KEYS = {
     # 8 Sep 2026: on-order info is per contact; `lanes/business/answer.
     # _apply_crossdomain_rung` skips the PO rung entirely without it.
     "purchase_orders.placed": "app/services/chatbot/lanes/business/answer.py",
+    # D13 (PLAN-chatbot-outstanding-report.md): SO figures are per contact; `lanes/
+    # business/__init__.py::run_fetch` forces scope to `do` and skips the SO query
+    # entirely without it.
+    "sales_orders.outstanding": "app/services/chatbot/lanes/business/__init__.py",
+    # PLAN-chatbot-sales-report.md S4 wiring point 4 (AC-1651): the whole TOOL is
+    # per contact, no fallback scope - `lanes/business/__init__.py::run_fetch`
+    # refuses before any fetch and arms nothing without the grant.
+    "sales_orders.sales_report": "app/services/chatbot/lanes/business/__init__.py",
+    # AC-64 (PLAN-low-stock-report.md): the whole TOOL is per contact, not one field of
+    # it - the report is a workbook, so there is nothing for a presenter to mask. Two
+    # seams enforce it and both refuse before any work: `lanes/business/__init__.py::
+    # run_fetch` answers the refusal line without fetching, and the route itself re-reads
+    # the key and 403s (AC-41), because that fetch CREATES a reorder run and sends a file.
+    "scm.low_stock_report": "app/services/chatbot/lanes/business/__init__.py",
 }
 
 

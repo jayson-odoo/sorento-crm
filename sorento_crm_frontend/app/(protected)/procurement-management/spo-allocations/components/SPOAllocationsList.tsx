@@ -22,6 +22,7 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { Label } from '@/components/ui/label';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
@@ -43,12 +44,111 @@ import { getProducts } from '@/app/(protected)/master-data-management/products/s
 import { getWarehouses } from '@/app/(protected)/inventory-management/warehouses/services/warehouseService';
 import type { Warehouse } from '@/app/(protected)/inventory-management/warehouses/types/warehouse.types';
 import { spoDocumentStatusPill, fmtEta, fmtQty, overdueClassName } from '../lib/spoDocumentStatus';
-import type { SPODocumentRow, SPODocumentState } from '../types/spoDocument.types';
+import type { SPODocumentContainer, SPODocumentRow, SPODocumentState } from '../types/spoDocument.types';
 
 interface ProductOption {
   id: string;
   product_code: string;
   product_name?: string;
+}
+
+/** `/procurement-management/packing-lists/{id}` - the packing list a container's shipment
+ *  resolves to (owner ruling, PLAN-spo-list-container-number.md). */
+const packingListHref = (shipmentId: string) => `/procurement-management/packing-lists/${shipmentId}`;
+
+/** The Container No cell (AC-6): first container, a "+N" pill for the rest that never
+ *  clutters the cell with a comma list - one packing-list link for N=1, a popover
+ *  listing every extra for N>=2. Every click stops propagation so the row's own
+ *  `rowHref` navigation does not fire. */
+function ContainersCell({ containers }: { containers: SPODocumentContainer[] | undefined }) {
+  const list = containers ?? [];
+  if (list.length === 0) {
+    return <span className="text-muted-foreground">-</span>;
+  }
+  const [first, ...rest] = list;
+  const title = list.map((c) => c.container_number).join(', ');
+  const moreLabel = `${rest.length} more container${rest.length === 1 ? '' : 's'}`;
+
+  return (
+    <span className="truncate" title={title}>
+      {first.shipment_id ? (
+        <Link
+          href={packingListHref(first.shipment_id)}
+          onClick={(e) => e.stopPropagation()}
+          className="text-primary hover:underline"
+          title={first.container_number}
+        >
+          {first.container_number}
+        </Link>
+      ) : (
+        first.container_number
+      )}
+      {rest.length === 1 ? (
+        rest[0].shipment_id ? (
+          // No `aria-label` here (unlike the other two pill shapes below): this
+          // Link's accessible name is pinned to its own visible text, "+1"
+          // (SPOAllocationsList.test.tsx `getByRole('link', { name: '+1' })`) - an
+          // aria-label on the anchor itself replaces that computed name outright,
+          // it does not add to it. `title` still carries the container number as
+          // a hover tooltip without touching the accessible name.
+          <Link
+            href={packingListHref(rest[0].shipment_id)}
+            onClick={(e) => e.stopPropagation()}
+            title={rest[0].container_number}
+            className="ms-1 inline-flex align-middle"
+          >
+            <Badge variant="secondary" size="sm">
+              +1
+            </Badge>
+          </Link>
+        ) : (
+          <Badge
+            variant="secondary"
+            size="sm"
+            aria-label={moreLabel}
+            title={rest[0].container_number}
+            className="ms-1 align-middle"
+          >
+            +1
+          </Badge>
+        )
+      ) : null}
+      {rest.length >= 2 ? (
+        <Popover>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              onClick={(e) => e.stopPropagation()}
+              aria-label={moreLabel}
+              className="ms-1 inline-flex align-middle"
+            >
+              <Badge variant="secondary" size="sm">
+                +{rest.length}
+              </Badge>
+            </button>
+          </PopoverTrigger>
+          <PopoverContent align="start" className="w-56 space-y-1.5 p-2" onClick={(e) => e.stopPropagation()}>
+            {rest.map((c) => (
+              <div key={c.container_number} className="text-sm">
+                {c.shipment_id ? (
+                  <Link
+                    href={packingListHref(c.shipment_id)}
+                    onClick={(e) => e.stopPropagation()}
+                    title={c.container_number}
+                    className="text-primary hover:underline"
+                  >
+                    {c.container_number}
+                  </Link>
+                ) : (
+                  c.container_number
+                )}
+              </div>
+            ))}
+          </PopoverContent>
+        </Popover>
+      ) : null}
+    </span>
+  );
 }
 
 /**
@@ -206,6 +306,14 @@ export default function SPOAllocationsList() {
         meta: { headerTitle: 'Supplier' },
       },
       {
+        id: 'containers',
+        accessorFn: (row) => (row.containers ?? []).map((c) => c.container_number).join(', '),
+        header: ({ column }) => <DataGridColumnHeader title="Container No" column={column} />,
+        cell: ({ row }) => <ContainersCell containers={row.original.containers} />,
+        size: 170,
+        meta: { headerTitle: 'Container No' },
+      },
+      {
         accessorKey: 'status',
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
         cell: ({ row }) => {
@@ -343,7 +451,7 @@ export default function SPOAllocationsList() {
                   value={searchInput}
                   onChange={setSearchInput}
                   isSettling={isSearchInFlight(searchSettling, isFetching, searchQuery)}
-                  placeholder="Search SPO or product..."
+                  placeholder="Search SPO, product or container..."
                   className="w-56"
                 />
                 <ToggleGroup

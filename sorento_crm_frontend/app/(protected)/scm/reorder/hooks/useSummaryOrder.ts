@@ -2,8 +2,15 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
+import type { ExportSplit } from '@/components/common/export-split';
 import { ENTITY_DOWNLOADS_QUERY_KEY, MY_DOWNLOADS_QUERY_KEY } from '@/services/myDownloadsService';
-import { exportOrderSheet, getOrderSummaryDemand } from '../services/summaryOrderService';
+import {
+  exportLowStockReport,
+  exportOiWorksheet,
+  exportOrderSheet,
+  getLowStockPreview,
+  getOrderSummaryDemand,
+} from '../services/summaryOrderService';
 import type { OrderSummaryDemandKind } from '../types/summaryOrder.types';
 
 /**
@@ -52,5 +59,68 @@ export function useExportOrderSheet(runId: string | null) {
     },
     onError: (error: Error) =>
       toast.error(error.message || 'Failed to start the order sheet export'),
+  });
+}
+
+/**
+ * The low stock report, through the same My Downloads pipeline (PLAN-low-stock-report S4,
+ * AC-2; split added PLAN-low-stock-export-split-25sep AC-17). Its own mutation rather than
+ * a third `format` on `useExportOrderSheet`, so the two report kinds carry their own toast
+ * and their own pending flag - and so a reader of the Actions menu can tell which of the
+ * two is in flight. The split chosen in `LowStockExportDialog` is the mutation variable.
+ */
+export function useExportLowStockReport(runId: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (split: ExportSplit) => exportLowStockReport(runId as string, split),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: MY_DOWNLOADS_QUERY_KEY });
+      queryClient.invalidateQueries({
+        queryKey: [...ENTITY_DOWNLOADS_QUERY_KEY, 'reorder_run', runId],
+      });
+      toast.success('Preparing the low stock report - it will appear in My Downloads.');
+    },
+    onError: (error: Error) =>
+      toast.error(error.message || 'Failed to start the low stock report'),
+  });
+}
+
+/**
+ * The split dialog's own "N rows, M sheets" preview (R4, AC-15b/AC-16b): fetched once when
+ * the dialog opens (`enabled` is the dialog's own `open` flag), never on page load and
+ * never refetched on a radio change - `previewLowStockExport` recomputes the sheet count
+ * locally. `staleTime: 0` so a stale plan (rows changed since the last open) is not shown
+ * as fresh; `retry: false` so a failed read surfaces promptly and the dialog can hide the
+ * line rather than spin.
+ */
+export function useLowStockPreview(runId: string | null, enabled: boolean) {
+  return useQuery({
+    queryKey: ['scm', 'order-summary', 'low-stock-preview', runId] as const,
+    queryFn: () => getLowStockPreview(runId as string),
+    enabled: !!runId && enabled,
+    staleTime: 0,
+    retry: false,
+  });
+}
+
+/**
+ * The OI worksheet, through the same My Downloads pipeline (Lane C, PLAN-order-sheet-oi-
+ * reports-22sep.md, AC-C1/AC-C2). Its own mutation, the same shape as
+ * `useExportLowStockReport` - so the plan's Actions menu can tell which of the three
+ * exports is in flight and toast the worksheet's own message.
+ */
+export function useExportOiWorksheet(runId: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => exportOiWorksheet(runId as string),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: MY_DOWNLOADS_QUERY_KEY });
+      queryClient.invalidateQueries({
+        queryKey: [...ENTITY_DOWNLOADS_QUERY_KEY, 'reorder_run', runId],
+      });
+      toast.success('Preparing the OI worksheet - it will appear in My Downloads.');
+    },
+    onError: (error: Error) =>
+      toast.error(error.message || 'Failed to start the OI worksheet export'),
   });
 }

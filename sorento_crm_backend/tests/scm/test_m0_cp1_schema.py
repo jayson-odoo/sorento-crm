@@ -125,6 +125,13 @@ def test_cross_schema_fk_integrity(conn):
     sp.rollback()
 
 
+# `serial_ddl`: this one runs 273's downgrade, which DROPS THE WHOLE REAL `scm`
+# SCHEMA and detaches every foreign key pointing into it, on a plain
+# `create_engine(URL)` connection. The savepoint puts it all back, but for the
+# length of the test nothing else on that database may read an scm relation.
+# `tests/ci_excluded.txt` already keeps it out of CI; the marker is what stops a
+# LOCAL `pytest tests/scm -n 4` from taking the rest of the run down with it.
+@pytest.mark.serial_ddl
 def test_migration_downgrade_upgrade_isolated(conn):
     """AC-M0.1 - 273 reverses cleanly, tested in a rolled-back txn so the sibling
     272 revision and the live DB state are never disturbed."""

@@ -149,11 +149,15 @@ def _envelope_for(
 ) -> dict[str, Any]:
     """The borrowed envelope with this turn's words in it. Never mutates `base`."""
     envelope = json.loads(json.dumps(base))
-    envelope["contact"] = {**(envelope.get("contact") or {}), "id": str(contact)}
+    # The WIRE shape: respond.io puts a numeric contact id in the webhook body, and this
+    # check exists to catch what production would hit. Sending it as a string is what let
+    # #874 (`contact_id  Input should be a valid string ... input_type=int`) past the gate.
+    wire_contact = int(contact) if str(contact).isdigit() else contact
+    envelope["contact"] = {**(envelope.get("contact") or {}), "id": wire_contact}
     envelope.setdefault("message", {})
-    envelope["message"]["contact"] = {"id": str(contact)}
+    envelope["message"]["contact"] = {"id": wire_contact}
     inner = envelope["message"].setdefault("message", {})
-    inner["contactId"] = str(contact)
+    inner["contactId"] = wire_contact
     inner["messageId"] = f"console-check-{uuid.uuid4().hex[:12]}"
     inner["message"] = {"type": "text", "text": message}
     envelope["message"]["event_type"] = "message.received"
@@ -225,21 +229,53 @@ def _post_with_pacing(
     return body
 
 
-def _pending_kind(turn_id: str | None) -> str | None:
-    """The escalation lane's `pending.kind`, off the row - it is not on the 200 body."""
-    if not turn_id:
-        return None
+def _pending_kind(body: dict[str, Any], turn_id: str | None) -> str | None:
+    """What this turn LEFT the customer looking at: `variables.pending.kind`.
+
+    Fixed 13 Sep 2026 (console run 4): this read `response.pending` off the
+    `chatbot.turns` row, a key nothing has ever written - so every `pending_kind`
+    assertion in every run of every case graded `None`, including turns the trace proves
+    were correctly armed. The marker is written by the tail into the session patch, and
+    the row keeps it in the trace's `remembered` stage
+    (`raw.session_patch.variables.pending`); the persisted `response.reply` is the SEALED
+    customer reply and carries no session state at all.
+
+    The 200 body is tried first - a DRY-RUN turn returns its would-be patch there and
+    writes nothing - then the row's trace.
+    """
+    variables = _next_state(body)
+    kind = _pending_of(variables)
+    if kind or not turn_id:
+        return kind
+
     from sqlalchemy import text
 
     db = _script_session()
     try:
         row = db.execute(
-            text("SELECT response FROM chatbot.turns WHERE id = :id"), {"id": turn_id}
+            text("SELECT trace FROM chatbot.turns WHERE id = :id"), {"id": turn_id}
         ).fetchone()
     finally:
         db.close()
-    response = (row[0] if row is not None else None) or {}
-    pending = response.get("pending") or {}
+    trace = (row[0] if row is not None else None) or []
+    if isinstance(trace, str):
+        try:
+            trace = json.loads(trace)
+        except ValueError:
+            return None
+    for stage in trace if isinstance(trace, list) else []:
+        if not isinstance(stage, dict) or stage.get("stage") != "remembered":
+            continue
+        patch = (stage.get("raw") or {}).get("session_patch")
+        kind = _pending_of((patch or {}).get("variables") if isinstance(patch, dict) else None)
+        if kind:
+            return kind
+    return None
+
+
+def _pending_of(variables: Any) -> str | None:
+    """`variables.pending.kind` as a string, or None - the one shape both sources use."""
+    pending = variables.get("pending") if isinstance(variables, dict) else None
     kind = pending.get("kind") if isinstance(pending, dict) else None
     return str(kind) if kind else None
 
@@ -357,7 +393,73 @@ def _customer_words(body: dict[str, Any]) -> str:
     return "\n".join(p for p in parts if p)
 
 
-def _grade(expect: dict[str, Any], body: dict[str, Any], pending: str | None) -> list[str]:
+def _parser_verdict(body: dict[str, Any], turn_id: str | None) -> dict[str, Any]:
+    """The parser's own emission for this turn, off the trace's `understood` stage.
+
+    Read from the TRACE, never from the reply: a parser expectation is about what the
+    model understood, and the reply is several deterministic stages downstream of that.
+    The 200 body is tried first (a dry run carries its trace inline), then the row.
+    """
+    for record in body.get("trace") or []:
+        if isinstance(record, dict) and record.get("stage") == "understood":
+            derived = (record.get("raw") or {}).get("derived")
+            if isinstance(derived, dict):
+                return derived
+    if not turn_id:
+        return {}
+
+    from sqlalchemy import text
+
+    db = _script_session()
+    try:
+        row = db.execute(
+            text("SELECT trace FROM chatbot.turns WHERE id = :id"), {"id": turn_id}
+        ).fetchone()
+    finally:
+        db.close()
+    trace = (row[0] if row is not None else None) or []
+    if isinstance(trace, str):
+        try:
+            trace = json.loads(trace)
+        except ValueError:
+            return {}
+    for record in trace if isinstance(trace, list) else []:
+        if not isinstance(record, dict) or record.get("stage") != "understood":
+            continue
+        derived = (record.get("raw") or {}).get("derived")
+        if isinstance(derived, dict):
+            return derived
+    return {}
+
+
+def _grade_parser(wanted: dict[str, Any], got: dict[str, Any]) -> list[str]:
+    """Every `expect.parser` key that the emission did not match (AC-1551).
+
+    EQUALITY per key, not containment: "the parser emitted `document: ["SO", "DO"]`
+    where the case wanted `["DO"]`" is exactly the class of drift these cases exist to
+    catch, and a subset test would call it a pass. A key the emission does not carry at
+    all is reported as absent rather than as null, because the two mean different things
+    about the prompt (a key it was never asked for versus one it declined to fill).
+    """
+    failures: list[str] = []
+    if not got:
+        return [f"no parser verdict on the trace to grade {sorted(wanted)} against"]
+    for key, expected in (wanted or {}).items():
+        if key not in got:
+            failures.append(f"parser emitted no {key!r} at all, expected {expected!r}")
+            continue
+        actual = got[key]
+        if actual != expected:
+            failures.append(f"parser {key} is {actual!r}, expected {expected!r}")
+    return failures
+
+
+def _grade(
+    expect: dict[str, Any],
+    body: dict[str, Any],
+    pending: str | None,
+    parser_verdict: dict[str, Any] | None = None,
+) -> list[str]:
     """Every expectation that did NOT hold, as sentences. Empty list is a pass."""
     failures: list[str] = []
     if "_http_error" in body:
@@ -387,6 +489,9 @@ def _grade(expect: dict[str, Any], body: dict[str, Any], pending: str | None) ->
     wanted_pending = expect.get("pending_kind")
     if wanted_pending and pending != wanted_pending:
         failures.append(f"pending kind is {pending!r}, expected {wanted_pending!r}")
+    wanted_parser = expect.get("parser")
+    if wanted_parser:
+        failures += _grade_parser(wanted_parser, parser_verdict or {})
     return failures
 
 
@@ -662,12 +767,18 @@ def _run_cases(cases, session, url, args, default_contact, run_id) -> int:
             body = _post_with_pacing(
                 session, url, args.api_key, envelope, args.timeout, sleep_seconds=args.sleep_seconds
             )
-            pending = _pending_kind(body.get("turn_id"))
+            pending = _pending_kind(body, body.get("turn_id"))
             reply = _customer_words(body)
             last_branch = body.get("branch_kind")
             last_line = reply.replace("\n", " ")[:120]
             prefix = f"turn {index + 1}: " if len(_turns_of(case)) > 1 else ""
-            case_failures += [prefix + f for f in _grade(turn.get("expect") or {}, body, pending)]
+            # Only read when a case asks for it: the fallback is a database round trip
+            # per turn, and most cases grade the reply alone.
+            wanted = turn.get("expect") or {}
+            verdict = (
+                _parser_verdict(body, body.get("turn_id")) if wanted.get("parser") else None
+            )
+            case_failures += [prefix + f for f in _grade(wanted, body, pending, verdict)]
             previous_state = _next_state(body)
         owned_by = str(case.get("expected_red_until") or "").strip()
         if owned_by:

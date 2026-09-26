@@ -1,0 +1,438 @@
+{
+  "turns": [
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "SRTWT7443 sales order outstanding",
+              "type": "text"
+            },
+            "messageId": "console-check-fec60152e70f",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789473718"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message",
+          "send_attachments"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Product: SRTWT7443\nCustomer: all\nLocation: all\nOrder date: all\n\n*Sales order outstanding*\nSales orders: 82\nOrdered: 14,262\nTransferred to DO: 15\nOutstanding: 14,247\nOrder date range: 14/12/2022 to 02/09/2026\n*_By location_*\nBRW-BB: 6,847 (O/S: 6,847)\nBRW-IB: 3,545 (O/S: 3,530)\nBRW-IR: 3,365 (O/S: 3,365)\nUnassigned: 328 (O/S: 328)\nBRW: 167 (O/S: 167)\nBRW-SMC: 10 (O/S: 10)\n*_By customer_*\nOTM GROUP SDN BHD: 2,528 (O/S: 2,528)\nEMB EMPRESS (MALAYSIA) SDN BHD (PROJECT): 1,820 (O/S: 1,820)\nECO WORLD TRADING SDN BHD (PROJECT): 1,083 (O/S: 1,083)\nPESONA METRO SDN BHD (PROJECT): 1,050 (O/S: 1,050)\nKEE LIN TRADING SDN BHD (PROJECT ACCOUNT): 986 (O/S: 986)\nSETIA-WOOD INDUSTRIES SDN BHD (PROJECT): 795 (O/S: 795)\nBUIMACO SDN BHD (PROJECT): 788 (O/S: 788)\nAPEX CONNECTION SDN BHD (PROJECT-CASH): 769 (O/S: 769)\nIDEAL BATH SDN BHD: 497 (O/S: 482)\nJV PERKASA SDN BHD (PROJECT): 442 (O/S: 442)\nLOTUS SANIWARES (FAR EAST) SDN BHD (PROJECT): 420 (O/S: 420)\nPEMBINAAN INFRA E&J SDN BHD (PROJECT): 410 (O/S: 410)\nORIONIS TECHNOLOGY (M) SDN BHD (PROJECT): 373 (O/S: 373)\nGLOBAL INGRESS SDN BHD (PROJECT): 358 (O/S: 358)\nPARAMOUNT CONSTRUCTION SDN BHD (PROJECT): 282 (O/S: 282)\nVIVA VENTURE RESOURCES(NORTH) SDN BHD (PROJECT): 248 (O/S: 248)\nUNIJOH DEVELOPMENT SDN BHD (PROJECT): 200 (O/S: 200)\nLEN MIN STEEL SDN BHD (PROJECT): 188 (O/S: 188)\nUnassigned: 178 (O/S: 178)\nYEW LEAN MARKETING SDN BHD (PROJECT): 156 (O/S: 156)\nTOONG STAR SDN BHD: 150 (O/S: 150)\nSUNWAY MARKETING SDN BHD: 104 (O/S: 104)\nAT & E BUILDING MATERIALS: 60 (O/S: 60)\nBEYOND BATH SDN BHD: 56 (O/S: 56)\nHONG BEE HARDWARE COMPANY SDN BHD (PROJECT): 46 (O/S: 46)\nCMPC ENTERPRISE (PROJECT-CASH): 40 (O/S: 40)\nBUILDERS HARDWARE HOME APPLIANCES SDN BHD: 27 (O/S: 27)\nSTONIX SDN BHD (PROJECT): 25 (O/S: 25)\nJAYAPLUS DEVELOPMENT SDN BHD (PROJECT): 19 (O/S: 19)\nEXACO MARKETING SDN BHD (PROJECT): 18 (O/S: 18)\nHILLCREST GARDENS SDN BHD: 18 (O/S: 18)\nJATI CERAMIC SDN BHD [PROJECT]: 16 (O/S: 16)\nFULLSHUN SANITARYWARE SDN BHD: 12 (O/S: 12)\nA & A CONCEPT DESIGN & CONTRACT SDN BHD (PROJECT-CASH): 10 (O/S: 10)\nCHIN CHUN HOMEMART SDN BHD: 10 (O/S: 10)\nSK ONE STOP HOME CENTRE SDN BHD: 10 (O/S: 10)\nWM BATH KITCHEN WARE: 9 (O/S: 9)\nCPI EMPOWER SDN BHD (PROJECT): 8 (O/S: 8)\nUNIMAX LIVINGMART (M) SDN BHD: 8 (O/S: 8)\nDEPARAMAX SDN BHD: 6 (O/S: 6)\nKENWEALTH TRADING SDN BHD (PROJECT): 6 (O/S: 6)\nCOMMERCE HOUSE SDN BHD (PROJECT): 5 (O/S: 5)\nI BATH STUDIO: 5 (O/S: 5)\nTOTAL HOME DIY SDN BHD: 5 (O/S: 5)\nGLORY MOTION SDN BHD: 4 (O/S: 4)\nCHINA CONSTRUCTION ENGINEERING (S.E.A.) MALAYSIA SDN BHD (PROJECT): 3 (O/S: 3)\nEUROTAN ENTERPRISE SDN BHD: 3 (O/S: 3)\nHOME PRODUCT CENTER (MALAYSIA) SDN BHD: 3 (O/S: 3)\nHARMONI BATH & KITCHEN SDN BHD [A/C I]: 2 (O/S: 2)\nJIUN YAU HARDWARE & CONSTRUCTION SDN BHD [A/C III]: 1 (O/S: 1)\nKBO LOGISTICS & SUPPLY SDN BHD (CERAMIC & ELLECI): 1 (O/S: 1)\nPERNIAGAAN W JAYA (SEMENYIH) SDN BHD - HQ (END USER): 1 (O/S: 1)\n\nReply 1 for the sales order list.",
+        "tools": [
+          {
+            "args_keys": [
+              "_diagnostics",
+              "access_levels",
+              "contact_id",
+              "date_mode",
+              "is_active",
+              "product_code",
+              "scope",
+              "space_id",
+              "view"
+            ],
+            "tool": "crm_outstanding_report"
+          }
+        ]
+      },
+      "resolutions": {
+        "resolutions": [
+          {
+            "matches": [],
+            "resolved": false,
+            "token": "SRTWT7443"
+          }
+        ],
+        "tokens": [
+          "SRTWT7443"
+        ],
+        "unresolved_tokens": [
+          "SRTWT7443"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T21:07:01.654494+09:00",
+        "turn_id": "6f228174-a4bf-4418-a2d0-0f942c31c3b8"
+      },
+      "tool_results": [
+        {
+          "args": {
+            "_diagnostics": {
+              "entities_in": 2,
+              "scalar_truncated": [],
+              "skipped": [],
+              "total_uuids_passed": 2,
+              "unmapped_types": []
+            },
+            "access_levels": [],
+            "contact_id": "437264483",
+            "date_mode": null,
+            "is_active": null,
+            "product_code": "SRTWT7443",
+            "scope": "so",
+            "space_id": "364817",
+            "view": "render"
+          },
+          "envelope": {
+            "has_result": true,
+            "response": "Product: SRTWT7443\nCustomer: all\nLocation: all\nOrder date: all\n\n*Sales order outstanding*\nSales orders: 82\nOrdered: 14,262\nTransferred to DO: 15\nOutstanding: 14,247\nOrder date range: 14/12/2022 to 02/09/2026\n*_By location_*\nBRW-BB: 6,847 (O/S: 6,847)\nBRW-IB: 3,545 (O/S: 3,530)\nBRW-IR: 3,365 (O/S: 3,365)\nUnassigned: 328 (O/S: 328)\nBRW: 167 (O/S: 167)\nBRW-SMC: 10 (O/S: 10)\n*_By customer_*\nOTM GROUP SDN BHD: 2,528 (O/S: 2,528)\nEMB EMPRESS (MALAYSIA) SDN BHD (PROJECT): 1,820 (O/S: 1,820)\nECO WORLD TRADING SDN BHD (PROJECT): 1,083 (O/S: 1,083)\nPESONA METRO SDN BHD (PROJECT): 1,050 (O/S: 1,050)\nKEE LIN TRADING SDN BHD (PROJECT ACCOUNT): 986 (O/S: 986)\nSETIA-WOOD INDUSTRIES SDN BHD (PROJECT): 795 (O/S: 795)\nBUIMACO SDN BHD (PROJECT): 788 (O/S: 788)\nAPEX CONNECTION SDN BHD (PROJECT-CASH): 769 (O/S: 769)\nIDEAL BATH SDN BHD: 497 (O/S: 482)\nJV PERKASA SDN BHD (PROJECT): 442 (O/S: 442)\nLOTUS SANIWARES (FAR EAST) SDN BHD (PROJECT): 420 (O/S: 420)\nPEMBINAAN INFRA E&J SDN BHD (PROJECT): 410 (O/S: 410)\nORIONIS TECHNOLOGY (M) SDN BHD (PROJECT): 373 (O/S: 373)\nGLOBAL INGRESS SDN BHD (PROJECT): 358 (O/S: 358)\nPARAMOUNT CONSTRUCTION SDN BHD (PROJECT): 282 (O/S: 282)\nVIVA VENTURE RESOURCES(NORTH) SDN BHD (PROJECT): 248 (O/S: 248)\nUNIJOH DEVELOPMENT SDN BHD (PROJECT): 200 (O/S: 200)\nLEN MIN STEEL SDN BHD (PROJECT): 188 (O/S: 188)\nUnassigned: 178 (O/S: 178)\nYEW LEAN MARKETING SDN BHD (PROJECT): 156 (O/S: 156)\nTOONG STAR SDN BHD: 150 (O/S: 150)\nSUNWAY MARKETING SDN BHD: 104 (O/S: 104)\nAT & E BUILDING MATERIALS: 60 (O/S: 60)\nBEYOND BATH SDN BHD: 56 (O/S: 56)\nHONG BEE HARDWARE COMPANY SDN BHD (PROJECT): 46 (O/S: 46)\nCMPC ENTERPRISE (PROJECT-CASH): 40 (O/S: 40)\nBUILDERS HARDWARE HOME APPLIANCES SDN BHD: 27 (O/S: 27)\nSTONIX SDN BHD (PROJECT): 25 (O/S: 25)\nJAYAPLUS DEVELOPMENT SDN BHD (PROJECT): 19 (O/S: 19)\nEXACO MARKETING SDN BHD (PROJECT): 18 (O/S: 18)\nHILLCREST GARDENS SDN BHD: 18 (O/S: 18)\nJATI CERAMIC SDN BHD [PROJECT]: 16 (O/S: 16)\nFULLSHUN SANITARYWARE SDN BHD: 12 (O/S: 12)\nA & A CONCEPT DESIGN & CONTRACT SDN BHD (PROJECT-CASH): 10 (O/S: 10)\nCHIN CHUN HOMEMART SDN BHD: 10 (O/S: 10)\nSK ONE STOP HOME CENTRE SDN BHD: 10 (O/S: 10)\nWM BATH KITCHEN WARE: 9 (O/S: 9)\nCPI EMPOWER SDN BHD (PROJECT): 8 (O/S: 8)\nUNIMAX LIVINGMART (M) SDN BHD: 8 (O/S: 8)\nDEPARAMAX SDN BHD: 6 (O/S: 6)\nKENWEALTH TRADING SDN BHD (PROJECT): 6 (O/S: 6)\nCOMMERCE HOUSE SDN BHD (PROJECT): 5 (O/S: 5)\nI BATH STUDIO: 5 (O/S: 5)\nTOTAL HOME DIY SDN BHD: 5 (O/S: 5)\nGLORY MOTION SDN BHD: 4 (O/S: 4)\nCHINA CONSTRUCTION ENGINEERING (S.E.A.) MALAYSIA SDN BHD (PROJECT): 3 (O/S: 3)\nEUROTAN ENTERPRISE SDN BHD: 3 (O/S: 3)\nHOME PRODUCT CENTER (MALAYSIA) SDN BHD: 3 (O/S: 3)\nHARMONI BATH & KITCHEN SDN BHD [A/C I]: 2 (O/S: 2)\nJIUN YAU HARDWARE & CONSTRUCTION SDN BHD [A/C III]: 1 (O/S: 1)\nKBO LOGISTICS & SUPPLY SDN BHD (CERAMIC & ELLECI): 1 (O/S: 1)\nPERNIAGAAN W JAYA (SEMENYIH) SDN BHD - HQ (END USER): 1 (O/S: 1)\n\nReply 1 for the sales order list.",
+            "result_type": "outstanding_report"
+          },
+          "tool": "crm_outstanding_report"
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "order",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "SRTWT7443"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_order",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": "so_outstanding",
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to check the outstanding sales order for SRTWT7443"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "1",
+              "type": "text"
+            },
+            "messageId": "console-check-cbb9bbe060a8",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {
+          "access_levels": [],
+          "contains_flyer": false,
+          "focus": {
+            "domains": {
+              "set_at": null,
+              "set_at_turn": 29,
+              "source": "current_message",
+              "value": [
+                "order"
+              ]
+            },
+            "order_status": {
+              "set_at": null,
+              "set_at_turn": 29,
+              "source": "current_message",
+              "value": "so_outstanding"
+            },
+            "products": {
+              "set_at": null,
+              "set_at_turn": 29,
+              "source": "current_message",
+              "value": [
+                {
+                  "canonical_code": null,
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "product",
+                  "raw": "SRTWT7443"
+                }
+              ]
+            }
+          },
+          "ideation": null,
+          "open_question": {
+            "asked_at": null,
+            "asked_at_turn": 29,
+            "expects": "pick",
+            "kind": "outstanding_detail",
+            "options": [
+              {
+                "domain": "order",
+                "idx": 1,
+                "label": "Sales order list",
+                "value": "so"
+              }
+            ],
+            "payload": {
+              "domain": "order",
+              "filters": {
+                "customer_ids": [],
+                "date_filter_end": null,
+                "date_filter_start": null,
+                "location_token": null,
+                "offer_text": "Reply 1 for the sales order list.",
+                "product_code": "SRTWT7443",
+                "scope": "so",
+                "warehouse_codes": []
+              },
+              "team": "customer_service"
+            }
+          }
+        },
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789473718"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message",
+          "send_attachments"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "1. *SO Number:* SO419417\n*Customer:* UNIJOH DEVELOPMENT SDN BHD (PROJECT)\n*Product:* SRTWT7443\n*Location:* BRW-BB\n*Ordered:* 4\n*Transferred to DO:* 0\n*Outstanding:* 4\n*Order Date:* 02/09/2026\n\n2. *SO Number:* SO419122\n*Customer:* BUIMACO SDN BHD (PROJECT)\n*Product:* SRTWT7443\n*Location:* BRW-BB\n*Ordered:* 788\n*Transferred to DO:* 0\n*Outstanding:* 788\n*Order Date:* 01/09/2026\n\n3. *SO Number:* SO418599\n*Customer:* AT & E BUILDING MATERIALS\n*Product:* SRTWT7443\n*Location:* BRW\n*Ordered:* 60\n*Transferred to DO:* 0\n*Outstanding:* 60\n*Order Date:* 26/08/2026\n\n4. *SO Number:* SO416867\n*Customer:* JAYAPLUS DEVELOPMENT SDN BHD (PROJECT)\n*Product:* SRTWT7443\n*Location:* BRW-BB\n*Ordered:* 15\n*Transferred to DO:* 0\n*Outstanding:* 15\n*Order Date:* 14/08/2026\n\n5. *SO Number:* SO416568\n*Customer:* ECO WORLD TRADING SDN BHD (PROJECT)\n*Product:* SRTWT7443\n*Location:* BRW-BB\n*Ordered:* 76\n*Transferred to DO:* 0\n*Outstanding:* 76\n*Order Date:* 12/08/2026\n\n6. *SO Number:* SO416443\n*Customer:* HOME PRODUCT CENTER (MALAYSIA) SDN BHD\n*Product:* SRTWT7443\n*Location:* BRW\n*Ordered:* 3\n*Transferred to DO:* 0\n*Outstanding:* 3\n*Order Date:* 12/08/2026\n\n7. *SO Number:* SO416635\n*Customer:* CHIN CHUN HOMEMART SDN BHD\n*Product:* SRTWT7443\n*Location:* BRW\n*Ordered:* 10\n*Transferred to DO:* 0\n*Outstanding:* 10\n*Order Date:* 10/08/2026\n\n8. *SO Number:* SO415810\n*Customer:* SETIA-WOOD INDUSTRIES SDN BHD (PROJECT)\n*Product:* SRTWT7443\n*Location:* BRW-BB\n*Ordered:* 486\n*Transferred to DO:* 0\n*Outstanding:* 486\n*Order Date:* 07/08/2026\n\n9. *SO Number:* SO415511\n*Customer:* UNIMAX LIVINGMART (M) SDN BHD\n*Product:* SRTWT7443\n*Location:* BRW\n*Ordered:* 8\n*Transferred to DO:* 0\n*Outstanding:* 8\n*Order Date:* 04/08/2026\n\n10. *SO Number:* SO415203\n*Customer:* JIUN YAU HARDWARE & CONSTRUCTION SDN BHD [A/C III]\n*Product:* SRTWT7443\n*Location:* BRW\n*Ordered:* 1\n*Transferred to DO:* 0\n*Outstanding:* 1\n*Order Date:* 04/08/2026\n\n11. *SO Number:* SO415053\n*Customer:* KBO LOGISTICS & SUPPLY SDN BHD (CERAMIC & ELLECI)\n*Product:* SRTWT7443\n*Location:* BRW\n*Ordered:* 1\n*Transferred to DO:* 0\n*Outstanding:* 1\n*Order Date:* 03/08/2026\n\n12. *SO Number:* SO415027\n*Customer:* A & A CONCEPT DESIGN & CONTRACT SDN BHD (PROJECT-CASH)\n*Product:* SRTWT7443\n*Location:* BRW-SMC\n*Ordered:* 10\n*Transferred to DO:* 0\n*Outstanding:* 10\n*Order Date:* 03/08/2026\n\n13. *SO Number:* SO415016\n*Customer:* CMPC ENTERPRISE (PROJECT-CASH)\n*Product:* SRTWT7443\n*Location:* BRW-IB\n*Ordered:* 40\n*Transferred to DO:* 0\n*Outstanding:* 40\n*Order Date:* 03/08/2026\n\n14. *SO Number:* SO414963\n*Customer:* KENWEALTH TRADING SDN BHD (PROJECT)\n*Product:* SRTWT7443\n*Location:* BRW-IB\n*Ordered:* 6\n*Transferred to DO:* 0\n*Outstanding:* 6\n*Order Date:* 03/08/2026\n\n15. *SO Number:* SO414796\n*Customer:* LEN MIN STEEL SDN BHD (PROJECT)\n*Product:* SRTWT7443\n*Location:* BRW-BB\n*Ordered:* 188\n*Transferred to DO:* 0\n*Outstanding:* 188\n*Order Date:* 31/07/2026\n\n16. *SO Number:* SO414762\n*Customer:* EUROTAN ENTERPRISE SDN BHD\n*Product:* SRTWT7443\n*Location:* BRW\n*Ordered:* 3\n*Transferred to DO:* 0\n*Outstanding:* 3\n*Order Date:* 31/07/2026\n\n17. *SO Number:* SO414748\n*Customer:* GLORY MOTION SDN BHD\n*Product:* SRTWT7443\n*Location:* BRW\n*Ordered:* 4\n*Transferred to DO:* 0\n*Outstanding:* 4\n*Order Date:* 31/07/2026\n\n18. *SO Number:* SO414096\n*Customer:* STONIX SDN BHD (PROJECT)\n*Product:* SRTWT7443\n*Location:* BRW-BB\n*Ordered:* 25\n*Transferred to DO:* 0\n*Outstanding:* 25\n*Order Date:* 27/07/2026\n\n19. *SO Number:* SO414007\n*Customer:* TOTAL HOME DIY SDN BHD\n*Product:* SRTWT7443\n*Location:* BRW\n*Ordered:* 5\n*Transferred to DO:* 0\n*Outstanding:* 5\n*Order Date:* 27/07/2026\n\n20. *SO Number:* SO413391\n*Customer:* WM BATH KITCHEN WARE\n*Product:* SRTWT7443\n*Location:* BRW\n*Ordered:* 9\n*Transferred to DO:* 0\n*Outstanding:* 9\n*Order Date:* 22/07/2026\n\n21. *SO Number:* SO413333\n*Customer:* FULLSHUN SANITARYWARE SDN BHD\n*Product:* SRTWT7443\n*Location:* BRW\n*Ordered:* 12\n*Transferred to DO:* 0\n*Outstanding:* 12\n*Order Date:* 22/07/2026\n\n22. *SO Number:* SO413254\n*Customer:* PERNIAGAAN W JAYA (SEMENYIH) SDN BHD - HQ (END USER)\n*Product:* SRTWT7443\n*Location:* BRW\n*Ordered:* 1\n*Transferred to DO:* 0\n*Outstanding:* 1\n*Order Date:* 22/07/2026\n\n23. *SO Number:* SO413234\n*Customer:* SK ONE STOP HOME CENTRE SDN BHD\n*Product:* SRTWT7443\n*Location:* BRW\n*Ordered:* 10\n*Transferred to DO:* 0\n*Outstanding:* 10\n*Order Date:* 22/07/2026\n\n24. *SO Number:* SO413023\n*Customer:* DEPARAMAX SDN BHD\n*Product:* SRTWT7443\n*Location:* BRW\n*Ordered:* 6\n*Transferred to DO:* 0\n*Outstanding:* 6\n*Order Date:* 20/07/2026\n\n25. *SO Number:* SO412906\n*Customer:* I BATH STUDIO\n*Product:* SRTWT7443\n*Location:* BRW\n*Ordered:* 5\n*Transferred to DO:* 0\n*Outstanding:* 5\n*Order Date:* 20/07/2026\n\n26. *SO Number:* SO412386\n*Customer:* GLOBAL INGRESS SDN BHD (PROJECT)\n*Product:* SRTWT7443\n*Location:* BRW-BB\n*Ordered:* 142\n*Transferred to DO:* 0\n*Outstanding:* 142\n*Order Date:* 16/07/2026\n\n27. *SO Number:* SO411637\n*Customer:* SETIA-WOOD INDUSTRIES SDN BHD (PROJECT)\n*Product:* SRTWT7443\n*Location:* BRW-BB\n*Ordered:* 80\n*Transferred to DO:* 0\n*Outstanding:* 80\n*Order Date:* 10/07/2026\n\n28. *SO Number:* SO410961\n*Customer:* BUILDERS HARDWARE HOME APPLIANCES SDN BHD\n*Product:* SRTWT7443\n*Location:* BRW\n*Ordered:* 27\n*Transferred to DO:* 0\n*Outstanding:* 27\n*Order Date:* 07/07/2026\n\n29. *SO Number:* SO410884\n*Customer:* HONG BEE HARDWARE COMPANY SDN BHD (PROJECT)\n*Product:* SRTWT7443\n*Location:* BRW-BB\n*Ordered:* 46\n*Transferred to DO:* 0\n*Outstanding:* 46\n*Order Date:* 06/07/2026\n\n30. *SO Number:* SO409458\n*Customer:* OTM GROUP SDN BHD\n*Product:* SRTWT7443\n*Location:* BRW-IR\n*Ordered:* 2,528\n*Transferred to DO:* 0\n*Outstanding:* 2,528\n*Order Date:* 26/06/2026\n\n31. *SO Number:* SO408498\n*Customer:* PARAMOUNT CONSTRUCTION SDN BHD (PROJECT)\n*Product:* SRTWT7443\n*Location:* BRW-BB\n*Ordered:* 282\n*Transferred to DO:* 0\n*Outstanding:* 282\n*Order Date:* 22/06/2026\n\n32. *SO Number:* SO407965\n*Customer:* APEX CONNECTION SDN BHD (PROJECT-CASH)\n*Product:* SRTWT7443\n*Location:* BRW-IB\n*Ordered:* 2\n*Transferred to DO:* 0\n*Outstanding:* 2\n*Order Date:* 16/06/2026\n\n33. *SO Number:* SO403889\n*Customer:* ECO WORLD TRADING SDN BHD (PROJECT)\n*Product:* SRTWT7443\n*Location:* BRW-BB\n*Ordered:* 38\n*Transferred to DO:* 0\n*Outstanding:* 38\n*Order Date:* 18/05/2026\n\n34. *SO Number:* SO403568\n*Customer:* ECO WORLD TRADING SDN BHD (PROJECT)\n*Product:* SRTWT7443\n*Location:* BRW-BB\n*Ordered:* 969\n*Transferred to DO:* 0\n*Outstanding:* 969\n*Order Date:* 14/05/2026\n\n35. *SO Number:* SO401403\n*Customer:* SETIA-WOOD INDUSTRIES SDN BHD (PROJECT)\n*Product:* SRTWT7443\n*Location:* BRW-BB\n*Ordered:* 86\n*Transferred to DO:* 0\n*Outstanding:* 86\n*Order Date:* 29/04/2026\n\n36. *SO Number:* SO400755\n*Customer:* APEX CONNECTION SDN BHD (PROJECT-CASH)\n*Product:* SRTWT7443\n*Location:* BRW-IB\n*Ordered:* 552\n*Transferred to DO:* 0\n*Outstanding:* 552\n*Order Date:* 24/04/2026\n\n37. *SO Number:* SO399381\n*Customer:* SETIA-WOOD INDUSTRIES SDN BHD (PROJECT)\n*Product:* SRTWT7443\n*Location:* BRW-BB\n*Ordered:* 111\n*Transferred to DO:* 0\n*Outstanding:* 111\n*Order Date:* 16/04/2026\n\n38. *SO Number:* SO396809\n*Customer:* APEX CONNECTION SDN BHD (PROJECT-CASH)\n*Product:* SRTWT7443\n*Location:* BRW-IB\n*Ordered:* 215\n*Transferred to DO:* 0\n*Outstanding:* 215\n*Order Date:* 30/03/2026\n\n39. *SO Number:* SO396359\n*Customer:* ORIONIS TECHNOLOGY (M) SDN BHD (PROJECT)\n*Product:* SRTWT7443\n*Location:* BRW-BB\n*Ordered:* 95\n*Transferred to DO:* 0\n*Outstanding:* 95\n*Order Date:* 26/03/2026\n\n40. *SO Number:* SO396352\n*Customer:* ORIONIS TECHNOLOGY (M) SDN BHD (PROJECT)\n*Product:* SRTWT7443\n*Location:* BRW-BB\n*Ordered:* 91\n*Transferred to DO:* 0\n*Outstanding:* 91\n*Order Date:* 26/03/2026\n\n41. *SO Number:* SO396351\n*Customer:* ORIONIS TECHNOLOGY (M) SDN BHD (PROJECT)\n*Product:* SRTWT7443\n*Location:* BRW-BB\n*Ordered:* 92\n*Transferred to DO:* 0\n*Outstanding:* 92\n*Order Date:* 26/03/2026\n\n42. *SO Number:* SO394580\n*Customer:* ORIONIS TECHNOLOGY (M) SDN BHD (PROJECT)\n*Product:* SRTWT7443\n*Location:* BRW-BB\n*Ordered:* 95\n*Transferred to DO:* 0\n*Outstanding:* 95\n*Order Date:* 10/03/2026\n\n43. *SO Number:* SO394320\n*Customer:* UNIJOH DEVELOPMENT SDN BHD (PROJECT)\n*Product:* SRTWT7443\n*Location:* BRW-BB\n*Ordered:* 196\n*Transferred to DO:* 0\n*Outstanding:* 196\n*Order Date:* 09/03/2026\n\n44. *SO Number:* SO394121\n*Customer:* PEMBINAAN INFRA E&J SDN BHD (PROJECT)\n*Product:* SRTWT7443\n*Location:* BRW-IB\n*Ordered:* 410\n*Transferred to DO:* 0\n*Outstanding:* 410\n*Order Date:* 06/03/2026\n\n45. *SO Number:* SO391691\n*Customer:* SETIA-WOOD INDUSTRIES SDN BHD (PROJECT)\n*Product:* SRTWT7443\n*Location:* BRW-BB\n*Ordered:* 32\n*Transferred to DO:* 0\n*Outstanding:* 32\n*Order Date:* 10/02/2026\n\n46. *SO Number:* SO390918\n*Customer:* JATI CERAMIC SDN BHD [PROJECT]\n*Product:* SRTWT7443\n*Location:* BRW-BB\n*Ordered:* 16\n*Transferred to DO:* 0\n*Outstanding:* 16\n*Order Date:* 04/02/2026\n\n47. *SO Number:* SO390829\n*Customer:* HARMONI BATH & KITCHEN SDN BHD [A/C I]\n*Product:* SRTWT7443\n*Location:* BRW\n*Ordered:* 2\n*Transferred to DO:* 0\n*Outstanding:* 2\n*Order Date:* 04/02/2026\n\n48. *SO Number:* SO389595\n*Customer:* HILLCREST GARDENS SDN BHD\n*Product:* SRTWT7443\n*Location:* BRW-BB\n*Ordered:* 18\n*Transferred to DO:* 0\n*Outstanding:* 18\n*Order Date:* 27/01/2026\n\n49. *SO Number:* SO387741\n*Customer:* KEE LIN TRADING SDN BHD (PROJECT ACCOUNT)\n*Product:* SRTWT7443\n*Location:* BRW-BB\n*Ordered:* 180\n*Transferred to DO:* 0\n*Outstanding:* 180\n*Order Date:* 15/01/2026\n\n50. *SO Number:* SO387669\n*Customer:* JAYAPLUS DEVELOPMENT SDN BHD (PROJECT)\n*Product:* SRTWT7443\n*Location:* BRW-BB\n*Ordered:* 4\n*Transferred to DO:* 0\n*Outstanding:* 4\n*Order Date:* 15/01/2026\n\n51. *SO Number:* SO385467\n*Customer:* JV PERKASA SDN BHD (PROJECT)\n*Product:* SRTWT7443\n*Location:* BRW-BB\n*Ordered:* 32\n*Transferred to DO:* 0\n*Outstanding:* 32\n*Order Date:* 02/01/2026\n\n52. *SO Number:* SO385063\n*Customer:* KEE LIN TRADING SDN BHD (PROJECT ACCOUNT)\n*Product:* SRTWT7443\n*Location:* BRW-BB\n*Ordered:* 18\n*Transferred to DO:* 0\n*Outstanding:* 18\n*Order Date:* 30/12/2025\n\n53. *SO Number:* SO384488\n*Customer:* CHINA CONSTRUCTION ENGINEERING (S.E.A.) MALAYSIA SDN BHD (PROJECT)\n*Product:* SRTWT7443\n*Location:* BRW-IB\n*Ordered:* 3\n*Transferred to DO:* 0\n*Outstanding:* 3\n*Order Date:* 26/12/2025\n\n54. *SO Number:* SO383872\n*Customer:* GLOBAL INGRESS SDN BHD (PROJECT)\n*Product:* SRTWT7443\n*Location:* BRW-BB\n*Ordered:* 182\n*Transferred to DO:* 0\n*Outstanding:* 182\n*Order Date:* 22/12/2025\n\n55. *SO Number:* SO370038\n*Customer:* CPI EMPOWER SDN BHD (PROJECT)\n*Product:* SRTWT7443\n*Location:* BRW-IR\n*Ordered:* 8\n*Transferred to DO:* 0\n*Outstanding:* 8\n*Order Date:* 01/10/2025\n\n56. *SO Number:* SO368874\n*Customer:* EMB EMPRESS (MALAYSIA) SDN BHD (PROJECT)\n*Product:* SRTWT7443\n*Location:* BRW-IB\n*Ordered:* 364\n*Transferred to DO:* 0\n*Outstanding:* 364\n*Order Date:* 24/09/2025\n\n57. *SO Number:* SO368873\n*Customer:* EMB EMPRESS (MALAYSIA) SDN BHD (PROJECT)\n*Product:* SRTWT7443\n*Location:* BRW-IB\n*Ordered:* 364\n*Transferred to DO:* 0\n*Outstanding:* 364\n*Order Date:* 24/09/2025\n\n58. *SO Number:* SO368872\n*Customer:* EMB EMPRESS (MALAYSIA) SDN BHD (PROJECT)\n*Product:* SRTWT7443\n*Location:* BRW-IB\n*Ordered:* 364\n*Transferred to DO:* 0\n*Outstanding:* 364\n*Order Date:* 24/09/2025\n\n59. *SO Number:* SO368871\n*Customer:* EMB EMPRESS (MALAYSIA) SDN BHD (PROJECT)\n*Product:* SRTWT7443\n*Location:* BRW-IB\n*Ordered:* 364\n*Transferred to DO:* 0\n*Outstanding:* 364\n*Order Date:* 24/09/2025\n\n60. *SO Number:* SO368870\n*Customer:* EMB EMPRESS (MALAYSIA) SDN BHD (PROJECT)\n*Product:* SRTWT7443\n*Location:* BRW-IB\n*Ordered:* 364\n*Transferred to DO:* 0\n*Outstanding:* 364\n*Order Date:* 24/09/2025\n\n61. *SO Number:* SO364172\n*Customer:* EXACO MARKETING SDN BHD (PROJECT)\n*Product:* SRTWT7443\n*Location:* BRW-BB\n*Ordered:* 18\n*Transferred to DO:* 0\n*Outstanding:* 18\n*Order Date:* 21/08/2025\n\n62. *SO Number:* SO362800\n*Customer:* Unassigned\n*Product:* SRTWT7443\n*Location:* Unassigned\n*Ordered:* 108\n*Transferred to DO:* 0\n*Outstanding:* 108\n*Order Date:* 13/08/2025\n\n63. *SO Number:* SO357203\n*Customer:* TOONG STAR SDN BHD\n*Product:* SRTWT7443\n*Location:* Unassigned\n*Ordered:* 150\n*Transferred to DO:* 0\n*Outstanding:* 150\n*Order Date:* 13/08/2025\n\n64. *SO Number:* SO362120\n*Customer:* COMMERCE HOUSE SDN BHD (PROJECT)\n*Product:* SRTWT7443\n*Location:* BRW-IR\n*Ordered:* 5\n*Transferred to DO:* 0\n*Outstanding:* 5\n*Order Date:* 08/08/2025\n\n65. *SO Number:* SO358264\n*Customer:* VIVA VENTURE RESOURCES(NORTH) SDN BHD (PROJECT)\n*Product:* SRTWT7443\n*Location:* BRW-IR\n*Ordered:* 220\n*Transferred to DO:* 0\n*Outstanding:* 220\n*Order Date:* 15/07/2025\n\n66. *SO Number:* SO358261\n*Customer:* VIVA VENTURE RESOURCES(NORTH) SDN BHD (PROJECT)\n*Product:* SRTWT7443\n*Location:* BRW-IR\n*Ordered:* 28\n*Transferred to DO:* 0\n*Outstanding:* 28\n*Order Date:* 15/07/2025\n\n67. *SO Number:* SO349285\n*Customer:* Unassigned\n*Product:* SRTWT7443\n*Location:* Unassigned\n*Ordered:* 70\n*Transferred to DO:* 0\n*Outstanding:* 70\n*Order Date:* 14/05/2025\n\n68. *SO Number:* SO341788\n*Customer:* KEE LIN TRADING SDN BHD (PROJECT ACCOUNT)\n*Product:* SRTWT7443\n*Location:* BRW-BB\n*Ordered:* 788\n*Transferred to DO:* 0\n*Outstanding:* 788\n*Order Date:* 17/03/2025\n\n69. *SO Number:* SO335294\n*Customer:* PESONA METRO SDN BHD (PROJECT)\n*Product:* SRTWT7443\n*Location:* BRW-BB\n*Ordered:* 525\n*Transferred to DO:* 0\n*Outstanding:* 525\n*Order Date:* 17/01/2025\n\n70. *SO Number:* SO335289\n*Customer:* PESONA METRO SDN BHD (PROJECT)\n*Product:* SRTWT7443\n*Location:* BRW-BB\n*Ordered:* 525\n*Transferred to DO:* 0\n*Outstanding:* 525\n*Order Date:* 17/01/2025\n\n71. *SO Number:* SO331785\n*Customer:* JV PERKASA SDN BHD (PROJECT)\n*Product:* SRTWT7443\n*Location:* BRW-BB\n*Ordered:* 410\n*Transferred to DO:* 0\n*Outstanding:* 410\n*Order Date:* 20/12/2024\n\n72. *SO Number:* SO331506\n*Customer:* GLOBAL INGRESS SDN BHD (PROJECT)\n*Product:* SRTWT7443\n*Location:* BRW-BB\n*Ordered:* 34\n*Transferred to DO:* 0\n*Outstanding:* 34\n*Order Date:* 18/12/2024\n\n73. *SO Number:* SO325711\n*Customer:* SUNWAY MARKETING SDN BHD\n*Product:* SRTWT7443\n*Location:* BRW-BB\n*Ordered:* 102\n*Transferred to DO:* 0\n*Outstanding:* 102\n*Order Date:* 04/11/2024\n\n74. *SO Number:* SO325707\n*Customer:* SUNWAY MARKETING SDN BHD\n*Product:* SRTWT7443\n*Location:* BRW-BB\n*Ordered:* 2\n*Transferred to DO:* 0\n*Outstanding:* 2\n*Order Date:* 04/11/2024\n\n75. *SO Number:* SO316133\n*Customer:* IDEAL BATH SDN BHD\n*Product:* SRTWT7443\n*Location:* BRW-IB\n*Ordered:* 95\n*Transferred to DO:* 0\n*Outstanding:* 95\n*Order Date:* 20/08/2024\n\n76. *SO Number:* SO316132\n*Customer:* IDEAL BATH SDN BHD\n*Product:* SRTWT7443\n*Location:* BRW-IB\n*Ordered:* 95\n*Transferred to DO:* 0\n*Outstanding:* 95\n*Order Date:* 20/08/2024\n\n77. *SO Number:* SO316131\n*Customer:* IDEAL BATH SDN BHD\n*Product:* SRTWT7443\n*Location:* BRW-IB\n*Ordered:* 95\n*Transferred to DO:* 0\n*Outstanding:* 95\n*Order Date:* 20/08/2024\n\n78. *SO Number:* SO316130\n*Customer:* IDEAL BATH SDN BHD\n*Product:* SRTWT7443\n*Location:* BRW-IB\n*Ordered:* 106\n*Transferred to DO:* 0\n*Outstanding:* 106\n*Order Date:* 20/08/2024\n\n79. *SO Number:* SO316129\n*Customer:* IDEAL BATH SDN BHD\n*Product:* SRTWT7443\n*Location:* BRW-IB\n*Ordered:* 106\n*Transferred to DO:* 15\n*Outstanding:* 91\n*Order Date:* 20/08/2024\n\n80. *SO Number:* SO314876\n*Customer:* BEYOND BATH SDN BHD\n*Product:* SRTWT7443\n*Location:* BRW-BB\n*Ordered:* 56\n*Transferred to DO:* 0\n*Outstanding:* 56\n*Order Date:* 09/08/2024\n\n81. *SO Number:* SO313699\n*Customer:* LOTUS SANIWARES (FAR EAST) SDN BHD (PROJECT)\n*Product:* SRTWT7443\n*Location:* BRW-IR\n*Ordered:* 420\n*Transferred to DO:* 0\n*Outstanding:* 420\n*Order Date:* 01/08/2024\n\n82. *SO Number:* SO245246\n*Customer:* YEW LEAN MARKETING SDN BHD (PROJECT)\n*Product:* SRTWT7443\n*Location:* BRW-IR\n*Ordered:* 156\n*Transferred to DO:* 0\n*Outstanding:* 156\n*Order Date:* 14/12/2022",
+        "tools": [
+          {
+            "args_keys": [
+              "_diagnostics",
+              "access_levels",
+              "contact_id",
+              "date_mode",
+              "detail",
+              "is_active",
+              "product_code",
+              "scope",
+              "space_id",
+              "view"
+            ],
+            "tool": "crm_outstanding_report"
+          }
+        ]
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T21:07:12.297029+09:00",
+        "turn_id": "beea7e7b-58aa-4066-a900-052bff1ca408"
+      },
+      "tool_results": [
+        {
+          "args": {
+            "_diagnostics": {
+              "entities_in": 0,
+              "scalar_truncated": [],
+              "skipped": [],
+              "total_uuids_passed": 0,
+              "unmapped_types": []
+            },
+            "access_levels": [],
+            "contact_id": "437264483",
+            "date_mode": null,
+            "detail": "so",
+            "is_active": null,
+            "product_code": "SRTWT7443",
+            "scope": "so",
+            "space_id": "364817",
+            "view": "render"
+          },
+          "envelope": {
+            "bytes": 16609,
+            "head": "{\"result_type\": \"outstanding_detail\", \"response\": \"1. *SO Number:* SO419417\\n*Customer:* UNIJOH DEVELOPMENT SDN BHD (PROJECT)\\n*Product:* SRTWT7443\\n*Location:* BRW-BB\\n*Ordered:* 4\\n*Transferred to DO:* 0\\n*Outstanding:* 4\\n*Order Date:* 02/09/2026\\n\\n2. *SO Number:* SO419122\\n*Customer:* BUIMACO SDN BHD (PROJECT)\\n*Product:* SRTWT7443\\n*Location:* BRW-BB\\n*Ordered:* 788\\n*Transferred to DO:* 0\\n*Outstanding:* 788\\n*Order Date:* 01/09/2026\\n\\n3. *SO Number:* SO418599\\n*Customer:* AT & E BUILDING MATERIALS\\n*Product:* SRTWT7443\\n*Location:* BRW\\n*Ordered:* 60\\n*Transferred to DO:* 0\\n*Outstanding:* 60\\n*Order Date:* 26/08/2026\\n\\n4. *SO Number:* SO416867\\n*Customer:* JAYAPLUS DEVELOPMENT SDN BHD (PROJECT)\\n*Product:* SRTWT7443\\n*Location:* BRW-BB\\n*Ordered:* 15\\n*Transferred to DO:* 0\\n*Outstanding:* 15\\n*Order Date:* 14/08/2026\\n\\n5. *SO Number:* SO416568\\n*Customer:* ECO WORLD TRADING SDN BHD (PROJECT)\\n*Product:* SRTWT7443\\n*Location:* BRW-BB\\n*Ordered:* 76\\n*Transferred to DO:* 0\\n*Outstanding:* 76\\n*Order Date:* 12/08/2026\\n\\n6. *SO Number:* SO416443\\n*Customer:* HOME PRODUCT CENTER (MALAYSIA) SDN BHD\\n*Product:* SRTWT7443\\n*Location:* BRW\\n*Ordered:* 3\\n*Transferred to DO:* 0\\n*Outstanding:* 3\\n*Order Date:* 12/08/2026\\n\\n7. *SO Number:* SO416635\\n*Customer:* CHIN CHUN HOMEMART SDN BHD\\n*Product:* SRTWT7443\\n*Location:* BRW\\n*Ordered:* 10\\n*Transferred to DO:* 0\\n*Outstanding:* 10\\n*Order Date:* 10/08/2026\\n\\n8. *SO Number:* SO415810\\n*Customer:* SETIA-WOOD INDUSTRIES SDN BHD (PROJECT)\\n*Product:* SRTWT7443\\n*Location:* BRW-BB\\n*Ordered:* 486\\n*Transferred to DO:* 0\\n*Outstanding:* 486\\n*Order Date:* 07/08/2026\\n\\n9. *SO Number:* SO415511\\n*Customer:* UNIMAX LIVINGMART (M) SDN BHD\\n*Product:* SRTWT7443\\n*Location:* BRW\\n*Ordered:* 8\\n*Transferred to DO:* 0\\n*Outstanding:* 8\\n*Order Date:* 04/08/2026\\n\\n10. *SO Number:* SO415203\\n*Customer:* JIUN YAU HARDWARE & CONSTRUCTION SDN BHD [A/C III]\\n*Product:* SRTWT7443\\n*Location:* BRW\\n*Ordered:* 1\\n*Transferred to DO:* 0\\n*Outstanding:* 1\\n*Order Date:* 04/08/2026\\n\\n11. *SO Number:* SO415053\\n*Customer:* KBO LOGISTICS & SUPPLY SDN BHD (CERAMIC & ELLECI)\\n*Product:* SRTWT7443\\n*Location:* BRW\\n*Ordered:* 1\\n*Transferred to DO:* 0\\n*Outstanding:* 1\\n*Order Date:* 03/08/2026\\n\\n12. *SO Number:* SO415027\\n*Customer:* A & A CONCEPT DESIGN & CONTRACT SDN BHD (PROJECT-CASH)\\n*Product:* SRTWT7443\\n*Location:* BRW-SMC\\n*Ordered:* 10\\n*Transferred to DO:* 0\\n*Outstanding:* 10\\n*Order Date:* 03/08/2026\\n\\n13. *SO Number:* SO415016\\n*Customer:* CMPC ENTERPRISE (PROJECT-CASH)\\n*Product:* SRTWT7443\\n*Location:* BRW-IB\\n*Ordered:* 40\\n*Transferred to DO:* 0\\n*Outstanding:* 40\\n*Order Date:* 03/08/2026\\n\\n14. *SO Number:* SO414963\\n*Customer:* KENWEALTH TRADING SDN BHD (PROJECT)\\n*Product:* SRTWT7443\\n*Location:* BRW-IB\\n*Ordered:* 6\\n*Transferred to DO:* 0\\n*Outstanding:* 6\\n*Order Date:* 03/08/2026\\n\\n15. *SO Number:* SO414796\\n*Customer:* LEN MIN STEEL SDN BHD (PROJECT)\\n*Product:* SRTWT7443\\n*Location:* BRW-BB\\n*Ordered:* 188\\n*Transferred to DO:* 0\\n*Outstanding:* 188\\n*Order Date:* 31/07/2026\\n\\n16. *SO Number:* SO414762\\n*Customer:* EUROTAN ENTERPRISE SDN BHD\\n*Product:* SRTWT7443\\n*Location:* BRW\\n*Ordered:* 3\\n*Transferred to DO:* 0\\n*Outstanding:* 3\\n*Order Date:* 31/07/2026\\n\\n17. *SO Number:* SO414748\\n*Customer:* GLORY MOTION SDN BHD\\n*Product:* SRTWT7443\\n*Location:* BRW\\n*Ordered:* 4\\n*Transferred to DO:* 0\\n*Outstanding:* 4\\n*Order Date:* 31/07/2026\\n\\n18. *SO Number:* SO414096\\n*Customer:* STONIX SDN BHD (PROJECT)\\n*Product:* SRTWT7443\\n*Location:* BRW-BB\\n*Ordered:* 25\\n*Transferred to DO:* 0\\n*Outstanding:* 25\\n*Order Date:* 27/07/2026\\n\\n19. *SO Number:* SO414007\\n*Customer:* TOTAL HOME DIY SDN BHD\\n*Product:* SRTWT7443\\n*Location:* BRW\\n*Ordered:* 5\\n*Transferred to DO:* 0\\n*Outstanding:* 5\\n*Order Date:* 27/07/2026\\n\\n20. *SO Number:* SO413391\\n*Customer:* WM BATH KITCHEN WARE\\n*Product:* SRTWT7443\\n*Location:* BRW\\n*Ordered:* 9\\n*Transferred to DO:* 0\\n*Outstanding:* 9\\n*Order Date:* 22/07/2026\\n\\n21. *SO Number:* SO413333\\n*Customer:* FULLSHUN SANITARYWARE SDN BHD\\n*Product:* SRTWT7443\\n*Location:* BRW\\n*Ordered:* 12\\n*Transferred to DO:* 0\\n*Outstanding:* 12\\n*Order Date:* 22/07/2026\\n\\n22. *SO Number:* SO413254\\n*Customer:* PERNIAGAAN W JAYA (SEMENYIH) SDN BHD - HQ (END USER)\\n*Product:* SRTWT7443\\n*Location:* BRW\\n*Ordered:* 1\\n*Transferred to DO:* 0\\n*Outstanding:* 1\\n*Order Date:* 22/07/2026\\n\\n23. *SO Number:* SO413234\\n*Customer:* SK ONE STOP HOME CENTRE SDN BHD\\n*Product:* SRTWT7443\\n*Location:* BRW\\n*Ordered:* 10\\n*Transferred to DO:* 0\\n*Outstanding:* 10\\n*Order Date:* 22/07/2026\\n\\n24. *SO Number:* SO413023\\n*Customer:* DEPARAMAX SDN BHD\\n*Product:* SRTWT7443\\n*Location:* BRW\\n*Ordered:* 6\\n*Transferred to DO:* 0\\n*Outstanding:* 6\\n*Order Date:* 20/07/2026\\n\\n25. *SO Number:* SO412906\\n*Customer:* I BATH STUDIO\\n*Product:* SRTWT7443\\n*Location:* BRW\\n*Ordered:* 5\\n*Transferred to DO:* 0\\n*Outstanding:* 5\\n*Order Date:* 20/07/2026\\n\\n26. *SO Number:* SO412386\\n*Customer:* GLOBAL INGRESS SDN BHD (PROJECT)\\n*Product:* SRTWT7443\\n*Location:* BRW-BB\\n*Ordered:* 142\\n*Transferred to DO:* 0\\n*Outstanding:* 142\\n*Order Date:* 16/07/2026\\n\\n27. *SO Number:* SO411637\\n*Customer:* SETIA-WOOD INDUSTRIES SDN BHD (PROJECT)\\n*Product:* SRTWT7443\\n*Location:* BRW-BB\\n*Ordered:* 80\\n*Transferred to DO:* 0\\n*Outstanding:* 80\\n*Order Date:* 10/07/2026\\n\\n28. *SO Number:* SO410961\\n*Customer:* BUILDERS HARDWARE HOME APPLIANCES SDN BHD\\n*Product:* SRTWT7443\\n*Location:* BRW\\n*Ordered:* 27\\n*Transferred to DO:* 0\\n*Outstanding:* 27\\n*Order Date:* 07/07/2026\\n\\n29. *SO Number:* SO410884\\n*Customer:* HONG BEE HARDWARE COMPANY SDN BHD (PROJECT)\\n*Product:* SRTWT7443\\n*Location:* BRW-BB\\n*Ordered:* 46\\n*Transferred to DO:* 0\\n*Outstanding:* 46\\n*Order Date:* 06/07/2026\\n\\n30. *SO Number:* SO409458\\n*Customer:* OTM GROUP SDN BHD\\n*Product:* SRTWT7443\\n*Location:* BRW-IR\\n*Ordered:* 2,528\\n*Transferred to DO:* 0\\n*Outstanding:* 2,528\\n*Order Date:* 26/06/2026\\n\\n31. *SO Number:* SO408498\\n*Customer:* PARAMOUNT CONSTRUCTION SDN BHD (PROJECT)\\n*Product:* SRTWT7443\\n*Location:* BRW-BB\\n*Ordered:* 282\\n*Transferred to DO:* 0\\n*Outstanding:* 282\\n*Order Date:* 22/06/2026\\n\\n32. *SO Number:* SO407965\\n*Customer:* APEX CONNECTION SDN BHD (PROJECT-CASH)\\n*Product:* SRTWT7443\\n*Location:* BRW-IB\\n*Ordered:* 2\\n*Transferred to DO:* 0\\n*Outstanding:* 2\\n*Order Date:* 16/06/2026\\n\\n33. *SO Number:* SO403889\\n*Customer:* ECO WORLD TRADING SDN BHD (PROJECT)\\n*Product:* SRTWT7443\\n*Location:* BRW-BB\\n*Ordered:* 38\\n*Transferred to DO:* 0\\n*Outstanding:* 38\\n*Order Date:* 18/05/2026\\n\\n34. *SO Number:* SO403568\\n*Customer:* ECO WORLD TRADING SDN BHD (PROJECT)\\n*Product:* SRTWT7443\\n*Location:* BRW-BB\\n*Ordered:* 969\\n*Transferred to DO:* 0\\n*Outstanding:* 969\\n*Order Date:* 14/05/2026\\n\\n35. *SO Number:* SO401403\\n*Customer:* SETIA-WOOD INDUSTRIES SDN BHD (PROJECT)\\n*Product:* SRTWT7443\\n*Location:* BRW-BB\\n*Ordered:* 86\\n*Transferred to DO:* 0\\n*Outstanding:* 86\\n*Order Date:* 29/04/2026\\n\\n36. *SO Number:* SO400755\\n*Customer:* APEX CONNECTION SDN BHD (PROJECT-CASH)\\n*Product:* SRTWT7443\\n*Location:* BRW-IB\\n*Ordered:* 552\\n*Transferred to DO:* 0\\n*Outstanding:* 552\\n*Order Date:* 24/04/2026\\n\\n37. *SO Number:* SO399381\\n*Customer:* SETIA-WOOD INDUSTRIES SDN BHD (PROJECT)\\n*Product:* SRTWT7443\\n*Location:* BRW-BB\\n*Ordered:* 111\\n*Transferred to DO:* 0\\n*Outstanding:* 111\\n*Order Date:* 16/04/2026\\n\\n38. *SO Number:* SO396809\\n*Customer:* APEX CONNECTION SDN BHD (PROJECT-CASH)\\n*Product:* SRTWT7443\\n*Location:* BRW-IB\\n*Ordered:* 215\\n*Transferred to DO:* 0\\n*Outstanding:* 215\\n*Order Date:* 30/03/2026\\n\\n39. *SO Number:* SO396359\\n*Customer:* ORIONIS TECHNOLOGY (M) SDN BHD (PROJECT)\\n*Product:* SRTWT7443\\n*Location:* BRW-BB\\n*Ordered:* 95\\n*Transferred to DO:* 0\\n*Outstanding:* 95\\n*Order Date:* 26/03/2026\\n\\n40. *SO Number:* SO396352\\n*Customer:* ORIONIS TECHNOLOGY (M) SDN BHD (PROJECT)\\n*Product:* SRTWT7443\\n*Location:* BRW-BB\\n*Ordered:* 91\\n*Transferred to DO:* 0\\n*Outstanding:* 91\\n*Order Date:* 26/03/2026\\n\\n41. *SO Number:* SO396351\\n*Customer:* ORIONIS TECHNOLOGY (M) SDN BHD (PROJECT)\\n*Product:* S",
+            "truncated": true
+          },
+          "tool": "crm_outstanding_report"
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": null,
+        "entities": [],
+        "entity_op": "reuse",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": null,
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "casual",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [
+          1
+        ],
+        "reference_target": "dym",
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to select the sales order list option"
+      }
+    }
+  ]
+}

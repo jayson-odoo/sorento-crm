@@ -11,9 +11,12 @@ import { useChatbotTurn } from '../hooks/useChatbotTurns';
 import { shortTurnId } from '../turnPresentation';
 import type {
   TurnDetail,
+  TurnDetailApplyDiff,
+  TurnDetailApplyDiffEntry,
   TurnDetailCrossdomain,
   TurnDetailDecay,
   TurnDetailFocus,
+  TurnDetailMemorySlot,
 } from '../types/chatbotTurn.types';
 
 /**
@@ -77,6 +80,12 @@ function Sections({ detail }: { detail: TurnDetail }) {
       <Section title="Parse" testId="section-parse">
         <ParseSection parse={detail.parse} />
       </Section>
+      <Section title="Apply" testId="section-apply">
+        <ApplySection apply={detail.apply ?? null} />
+      </Section>
+      <Section title="Memory" testId="section-memory">
+        <MemorySection memory={detail.memory ?? null} />
+      </Section>
       <Section title="Decay" testId="section-decay">
         <DecaySection decay={detail.decay} />
       </Section>
@@ -97,6 +106,9 @@ function Sections({ detail }: { detail: TurnDetail }) {
       </Section>
       <Section title="Session" testId="section-session">
         <SessionSection session={detail.session} />
+      </Section>
+      <Section title="Sent" testId="section-sent">
+        <SentSection stages={detail.stages} />
       </Section>
     </>
   );
@@ -142,6 +154,38 @@ function Code({ value }: { value: unknown }) {
   );
 }
 
+/**
+ * The `sent` stage as its own panel (browser pass 1, 16 Sep 2026): every stage the
+ * trace carries must render as a panel, and the hand-off to the caller was the one
+ * that only appeared as a row inside Stages. Read off the stage record itself - the
+ * engine records "Handed the reply to the caller to send." with the action count.
+ */
+function SentSection({ stages }: { stages: TurnDetail['stages'] }) {
+  const sent = stages.find((stage) => stage.name === 'sent');
+  if (!sent) return <Empty>No sent stage recorded.</Empty>;
+  return (
+    <div className="space-y-1 text-xs">
+      <div className="flex items-center gap-2">
+        <Badge
+          variant={sent.status === 'failed' ? 'destructive' : 'success'}
+          appearance="light"
+          size="sm"
+        >
+          {sent.status ?? 'ok'}
+        </Badge>
+        {sent.ms != null && <span className="text-muted-foreground tabular-nums">{sent.ms}ms</span>}
+      </div>
+      {sent.status === 'failed' && sent.error ? (
+        <p className="rounded-md border border-destructive/30 bg-destructive/5 px-2 py-1.5 text-destructive">
+          {sent.error}
+        </p>
+      ) : sent.summary ? (
+        <p className="text-muted-foreground">{sent.summary}</p>
+      ) : null}
+    </div>
+  );
+}
+
 function StagesSection({ stages }: { stages: TurnDetail['stages'] }) {
   if (stages.length === 0) return <Empty>No stages recorded.</Empty>;
   return (
@@ -167,6 +211,21 @@ function StagesSection({ stages }: { stages: TurnDetail['stages'] }) {
           ) : stage.summary ? (
             <p className="mt-1 text-muted-foreground">{stage.summary}</p>
           ) : null}
+          {/* Browser pass, chatbot media-into-turn: the same flattened facts
+              TurnPanel's own inline StageRow prints - a media turn's `media_intake`
+              stage carries modality/decision/entities/attributes/notes here. */}
+          {Object.keys(stage.facts ?? {}).length > 0 && (
+            <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-2.5 gap-y-0.5">
+              {Object.entries(stage.facts ?? {}).map(([key, value]) => (
+                <div key={key} className="contents">
+                  <dt className="text-muted-foreground">{key.replace(/_/g, ' ')}</dt>
+                  <dd className="min-w-0 truncate" title={String(value)}>
+                    {String(value)}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          )}
         </li>
       ))}
     </ol>
@@ -195,6 +254,193 @@ function ParseSection({ parse }: { parse: TurnDetail['parse'] }) {
           <Code value={parse.raw} />
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * The state diff as one list, whichever shape the turn carries it in.
+ *
+ * `turn_runtime.focus_diff` sends a MAP keyed by focus slot and the panel called
+ * `.map()` on it, which threw `apply.state_diff.map is not a function` and took the
+ * whole drawer down with an error boundary (browser pass 7, turn 56e10c36).
+ */
+function diffEntries(diff: TurnDetailApplyDiff | null | undefined): TurnDetailApplyDiffEntry[] {
+  if (!diff) return [];
+  if (Array.isArray(diff)) return diff;
+  return Object.entries(diff).map(([slot, moved]) => ({
+    slot,
+    before: moved?.before,
+    after: moved?.after,
+    reason: moved?.reason ?? null,
+  }));
+}
+
+/**
+ * The four readings APPLY can give a message (`turn/decide.py`), in the words an
+ * operator reads the trace in.
+ */
+const DECISION_WORDS: Record<string, string> = {
+  answer: 'Answered the open question',
+  refine: 'Narrowed the subject',
+  new_ask: 'Asked something new',
+  carry: 'Ran as itself, question left open',
+};
+
+function decisionWords(kind: string): string {
+  return DECISION_WORDS[kind] ?? kind;
+}
+
+function ApplySection({ apply }: { apply: TurnDetail['apply'] }) {
+  if (!apply) return <Empty>Not recorded on this turn (APPLY shipped in S3).</Empty>;
+  const stateDiff = diffEntries(apply.state_diff);
+  const narrowing = apply.narrowing ?? [];
+  return (
+    <div className="space-y-3 text-xs">
+      <div>
+        <div className="mb-1 font-medium text-muted-foreground">Decision</div>
+        {apply.decision ? (
+          <p>
+            <span className="font-medium">{decisionWords(apply.decision.kind)}</span>{' '}
+            <span className="text-muted-foreground">{apply.decision.why}</span>
+          </p>
+        ) : (
+          <Empty>Not recorded on this turn.</Empty>
+        )}
+      </div>
+      {apply.verdict && (
+        <div>
+          <div className="mb-1 font-medium text-muted-foreground">Verdict</div>
+          <Code value={apply.verdict} />
+        </div>
+      )}
+      <div>
+        <div className="mb-1 font-medium text-muted-foreground">State diff</div>
+        {stateDiff.length === 0 ? (
+          <Empty>Nothing changed this turn.</Empty>
+        ) : (
+          <ul className="space-y-1.5">
+            {stateDiff.map((d, i) => (
+              <li key={`${d.slot}-${i}`} className="rounded-md border px-2 py-1.5">
+                <span className="font-medium">{d.slot}</span>{' '}
+                <span className="text-muted-foreground">
+                  {JSON.stringify(d.before)} {'->'} {JSON.stringify(d.after)}
+                </span>
+                {d.reason && <p className="mt-0.5 text-muted-foreground">{d.reason}</p>}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      <div>
+        <div className="mb-1 font-medium text-muted-foreground">Narrowing applied</div>
+        {narrowing.length === 0 ? (
+          <Empty>No narrowing rule fired.</Empty>
+        ) : (
+          <ul className="space-y-1 text-muted-foreground">
+            {narrowing.map((line, i) => (
+              <li key={i}>{line}</li>
+            ))}
+          </ul>
+        )}
+      </div>
+      <div>
+        <div className="mb-1 font-medium text-muted-foreground">Reconciliation</div>
+        <p className="text-muted-foreground">{apply.reconciliation ?? 'Nothing to reconcile.'}</p>
+      </div>
+      <div>
+        <div className="mb-1 font-medium text-muted-foreground">Turn plan</div>
+        {typeof apply.plan === 'string' || !apply.plan ? (
+          <p className="text-muted-foreground">{apply.plan ?? '-'}</p>
+        ) : (
+          <Code value={apply.plan} />
+        )}
+      </div>
+      {apply.prompt_text && (
+        <Collapsible>
+          <CollapsibleTrigger className="text-primary underline-offset-2 hover:underline">
+            Prompt text sent to the parser
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <div className="mt-1 overflow-x-auto">
+              <SearchableCode text={apply.prompt_text} />
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
+      )}
+    </div>
+  );
+}
+
+function MemorySlotTable({ slots }: { slots: TurnDetailMemorySlot[] }) {
+  if (slots.length === 0) return <Empty>Nothing on this shelf.</Empty>;
+  return (
+    <table className="w-full text-xs">
+      <tbody>
+        {slots.map((slot) => (
+          <tr key={slot.key} className="border-b last:border-0">
+            <td className="w-24 py-1 pe-2 align-top font-medium">{slot.key}</td>
+            <td className="py-1 align-top text-muted-foreground">
+              {typeof slot.value === 'string' ? slot.value : JSON.stringify(slot.value)}
+              {slot.writer && (
+                <Badge variant="secondary" appearance="light" size="sm" className="ms-1.5">
+                  {slot.writer}
+                </Badge>
+              )}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function MemorySection({ memory }: { memory: TurnDetail['memory'] }) {
+  if (!memory) return <Empty>Not recorded on this turn (Memory shipped in S3).</Empty>;
+  return (
+    <div className="space-y-3 text-xs">
+      <div>
+        <div className="mb-1 font-medium text-muted-foreground">Focus - writer: APPLY</div>
+        <MemorySlotTable slots={memory.focus} />
+      </div>
+      <div>
+        <div className="mb-1 font-medium text-muted-foreground">Profile - writer: explicit picks</div>
+        <MemorySlotTable slots={memory.profile} />
+      </div>
+      <div>
+        <div className="mb-1 font-medium text-muted-foreground">
+          Episodes - writer: TAIL on topic switch
+        </div>
+        {memory.episodes ? (
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              {memory.episodes.recall_hit ? (
+                <Badge variant="success" appearance="light" size="sm">
+                  recall hit
+                </Badge>
+              ) : (
+                <Badge variant="secondary" appearance="light" size="sm">
+                  not triggered
+                </Badge>
+              )}
+              {memory.episodes.reason && (
+                <span className="text-muted-foreground">{memory.episodes.reason}</span>
+              )}
+            </div>
+            {memory.episodes.last_frame_summary && (
+              <p className="text-muted-foreground">{memory.episodes.last_frame_summary}</p>
+            )}
+            {memory.episodes.frame_count != null && (
+              <p className="text-muted-foreground">
+                {memory.episodes.frame_count} frame{memory.episodes.frame_count === 1 ? '' : 's'}{' '}
+                for this contact
+              </p>
+            )}
+          </div>
+        ) : (
+          <Empty>No episode recorded yet.</Empty>
+        )}
+      </div>
     </div>
   );
 }

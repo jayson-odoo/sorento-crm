@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-BoardGranularity = Literal["day", "week", "month"]
+BoardGranularity = Literal["day", "date", "week", "month"]
 BoardBucketKind = Literal["dated", "no_date"]
 #: `borrow` appears on a COVERED line only. The engine never proposes one - a Borrow needs a
 #: donor and a reason from a person (AC-B09) - but a line a decision already covers states the
@@ -230,7 +230,7 @@ class BoardItemFlags(BaseModel):
     #: is hot too - the hot flag above already covers it.
     dealer_classified: bool = False
     project_classified: bool = False
-    #: `products.is_discontinued`: a Buy for it needs a reason at confirm, nothing more.
+    #: `products.is_discontinued`.
     discontinued: bool = False
     #: Somebody has classified this item - a NON-NULL letter on EITHER demand class - at all.
     #: False is the PLAN's "no classification" state (no delivered demand of either class in
@@ -447,6 +447,16 @@ class BoardLineDecision(BaseModel):
     suspected_system_issue: bool = False
 
 
+class BoardLineOrderInquiryDocument(BaseModel):
+    """One document behind the line's own instruction (AC-RL-07), read through the
+    SAME `links_for_rows` reader the OI worklist chip and the SCM sales-order detail
+    already use - one voice for "where is this linked"."""
+
+    document: Optional[str] = None
+    kind: str
+    received: bool = False
+
+
 class BoardLineOrderInquiry(BaseModel):
     """The order inquiry covering one board line, in the two words a person reads it by.
 
@@ -457,6 +467,12 @@ class BoardLineOrderInquiry(BaseModel):
 
     #: `OI-000123`. Null only on a row raised before inquiries were numbered.
     inquiry_no: Optional[str] = None
+    #: S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-15): the inquiry HEADER's own id and
+    #: this row's own id. Addressing only, never rendered - the List view's OI column links
+    #: to `/project-sales/order-inquiries/<inquiry_id>?row=<row_id>` and needs both to land
+    #: on the exact row; a cell missing either falls back to plain text.
+    inquiry_id: Optional[str] = None
+    row_id: Optional[str] = None
     state: str
     #: The HANDSHAKE (`PLAN-scm-oi-handshake.md`): `awaiting`, `acknowledged`, `changed` or
     #: `rejected`. Defaulted so a row written before the handshake existed still reads, and
@@ -468,6 +484,12 @@ class BoardLineOrderInquiry(BaseModel):
     #: back with no reason is the thing this exists to stop.
     rejected_reason: Optional[str] = None
     rejected_by_name: Optional[str] = None
+    #: AC-RL-07 (`PLAN-oi-replan-received-links.md`): what backs the instruction - the
+    #: winning row's own documents, empty on a row nobody has linked.
+    documents: List[BoardLineOrderInquiryDocument] = []
+    #: Whether the winning row was itself redirected off a document that had already
+    #: landed (AC-RL-10) - the fulfilment list's `used` word reads this.
+    redirected: bool = False
 
 
 class BoardLineLending(BaseModel):
@@ -609,7 +631,7 @@ class BoardContribution(BaseModel):
     unit_line_count: int = 1
     #: What the engine proposes to meet it with, from the SAME ladder the per-order sheet runs
     #: (own location, then the shared pool under the hot-selling rules, then timely incoming,
-    #: then Buy). The three add up to `qty_outstanding`.
+    #: then Buy). The three add up to the plan quantity (`qty`).
     qty_proposed_reserve: str = "0"
     qty_proposed_incoming: str = "0"
     qty_proposed_buy: str = "0"
@@ -686,6 +708,13 @@ class BoardContribution(BaseModel):
     #: What was frozen, when the line is covered. Null otherwise, and never an empty object:
     #: "nobody decided this" and "decided, to nothing" are different answers.
     decision: Optional[BoardLineDecision] = None
+    #: AC-DT-2 (`PLAN-oi-decision-trail-ui.md`): who confirmed the ACTIVE decision that
+    #: covers this line, and when, flattened onto the line for the Confirmed chip's own
+    #: tooltip - `decision` above carries no confirmer, since it is shaped for
+    #: re-posting an amendment rather than for display. `None` on an uncovered line.
+    decided_by_name: Optional[str] = None
+    decided_at: Optional[datetime] = None
+    decision_revision: Optional[int] = None
     #: What purchasing was already TOLD about this line, reached through the planning
     #: record's mirror (`projects.sales_order_lines.core_sales_order_line_id`), and how far
     #: they got with it.
@@ -707,11 +736,25 @@ class BoardContribution(BaseModel):
     #: carry a draft with no decision (saved, not confirmed), a decision with no draft
     #: (confirmed - Confirm deletes the draft it promotes), or neither.
     draft: Optional[BoardLineDraft] = None
+    #: AC-DT-2: the same saver facts as `draft.saved_by` / `draft.saved_at`, flattened
+    #: onto the line under the trail's own names for the tooltip. `None` when nobody
+    #: has saved one, same as `draft` itself.
+    draft_saved_by_name: Optional[str] = None
+    draft_saved_at: Optional[datetime] = None
     #: S3 (`PLAN-local-supplier-oi-routing.md`): whether the product's supplier sits in
     #: the home country, computed once per product for the whole board. A `local` Buy
     #: raises no Order Inquiry row on confirm; the client marks it with a `Local` pill.
     #: `None` on a server build that skipped origin resolution (never asserted false).
     buy_origin: Optional[Literal["local", "overseas"]] = None
+    #: R3 (13 Sep browser walk): the book CANCELLED this line and a change row for it is
+    #: still PENDING - `false` for every ordinary row, which is every row `_demand_rows`
+    #: itself ever builds (`_cancelled_pending_change_rows` is the only writer of a truthy
+    #: pair). The service already computes this; declared here or `response_model` drops it
+    #: on its way out (the whole reason the contract is asserted in a route test).
+    cancelled: bool = False
+    #: The pending change row's own batch, so the cell can deep-link to it (`Changed` pill).
+    #: Null on every ordinary row, same rule as `cancelled`.
+    pending_change_batch_id: Optional[str] = None
 
 
 class BorrowDonorImpact(BaseModel):
@@ -881,6 +924,14 @@ class StockDetail(BaseModel):
     #: members. Null / empty for the ordinary one-bin read.
     group: Optional[str] = None
     bins: List[StockDetailBin] = []
+    #: PLAN-oi-request-cs-reserve.md 3.9: one entry per member of `bins` (the same set),
+    #: in `CellStockTable`'s own shape - so the OI stock grid can render the SAME
+    #: component the board's cell dialog does rather than a second matrix built from
+    #: `bins` alone, which carries on-hand only. `where` is `group` for every member of
+    #: a GROUP read (this endpoint carries no asking line, so it cannot say which one bin
+    #: is "its own") and `own` for a plain one-bin read; `net`/`net_of` are stated on a
+    #: GROUP read only, off this SAME read's own aggregate below.
+    locations: List[BoardCellLocation] = []
     qty_on_hand: str
     #: What the whole book still owes here, by the shared `is_open_demand()` rule, every demand
     #: class: a dealer order occupies the stock as completely as a project one.
@@ -1072,6 +1123,9 @@ class BoardIncoming(BaseModel):
 # `BoardContribution` names `BoardCellLocation` above the class that defines it (a line's own
 # table is a fact about the line), so the reference is resolved here, once both exist.
 BoardContribution.model_rebuild()
+# `StockDetail` does the same (PLAN-oi-request-cs-reserve.md 3.9): its own `locations` field
+# names `BoardCellLocation` above that class's definition too.
+StockDetail.model_rebuild()
 
 
 class BoardCell(BaseModel):
@@ -1107,6 +1161,45 @@ class BoardProductRow(BaseModel):
     description: Optional[str] = None
 
 
+class BoardUndo(BaseModel):
+    """Whether the order's newest confirm can be undone from the gear, and why not
+    when it cannot (`PLAN-board-undo-last-confirm.md` S1, #978)."""
+
+    revision_no: int
+    confirmed_at: Optional[datetime] = None
+    confirmed_by_name: Optional[str] = None
+    #: Set when purchasing has already acted on this order since the confirm - a
+    #: PO link (`linked`, whatever `auto` reads - review round), or a row marked
+    #: actioned - or when a journalled row's live value has drifted from what this
+    #: confirm's own journal entry wrote (`changed`, AC-R2-24, `PLAN-scm-oi-
+    #: handover-r2-undo.md` S4). Null when nothing blocks the undo.
+    refusal: Optional[Literal["linked", "actioned", "changed"]] = None
+    #: Addressing only, never rendered (no UUIDs in the UI): the pending action's
+    #: payload names the decision it was created against, so `undo_last_confirm`
+    #: can tell a Confirm written during the countdown apart and refuse `superseded`
+    #: (AC-UC-28) rather than undoing whatever happens to be newest by the time the
+    #: window lapses.
+    decision_id: str
+    #: `journal` replays this order's own journalled revision the normal way.
+    #: `reconstructed` (AC-R2-30, S5) is a best-effort undo of a decision confirmed
+    #: before the journal existed - `board_undo_map` sets this only for a requester
+    #: whose role is `superadmin`/`admin`. ALWAYS present once `undo` is present.
+    mode: Literal["journal", "reconstructed"]
+
+
+class BoardOrderDecisionHeader(BaseModel):
+    """AC-DT-1 (`PLAN-oi-decision-trail-ui.md`): the ACTIVE decision's own header facts
+    for one order - what the board panel's "Revision N, confirmed by <name>, N lines"
+    line reads. Distinct from `BoardUndo`, which is gated to a journalled (or, admin-
+    only, reconstructable) revision for the undo gear; this is a plain read of the
+    decision itself and is present whenever the order has an active one."""
+
+    revision_no: int
+    confirmed_by_name: Optional[str] = None
+    confirmed_at: Optional[datetime] = None
+    line_count: int
+
+
 class BoardOrderStanding(BaseModel):
     sales_order_id: str
     #: The planning record this order's confirmation posts to
@@ -1119,6 +1212,20 @@ class BoardOrderStanding(BaseModel):
     #: Always 0 from the server: the verdicts live in the board's client draft (13.4).
     decided_count: int = 0
     unplannable_count: int = 0
+    #: The newest PENDING planning-change batch on this order, or null
+    #: (`PLAN-scm-board-picks-up-pending-change.md`, AC-B1). Lets the board fetch and draw a
+    #: change's Was/Now table and pre-marked suggestion without a `?batch=` URL param - the
+    #: fulfilment-planning list and the SCM Sales Orders list name the same id off the same
+    #: `planning_change_service.pending_batch_id_by_sales_order`.
+    pending_change_batch_id: Optional[str] = None
+    #: Null when the order has no active decision, or its active decision carries no
+    #: journal (a pre-lane revision, or one minted by `uncover_lines` rather than the
+    #: board's own confirm routes) - there is nothing this lane can replay.
+    undo: Optional[BoardUndo] = None
+    #: AC-DT-1: the board panel's own "Revision N, confirmed by <name>, N lines" line.
+    #: Null when the order has no active decision at all - unlike `undo` above, this is
+    #: never withheld for a journal-less or unconfirmable revision.
+    decision: Optional[BoardOrderDecisionHeader] = None
 
 
 class BoardPolicy(BaseModel):

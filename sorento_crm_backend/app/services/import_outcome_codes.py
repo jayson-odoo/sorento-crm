@@ -45,6 +45,22 @@ WAREHOUSE_NOT_FOUND = "warehouse_not_found"
 GRN_HEADER_NOT_FOUND = "grn_header_not_found"
 PACKING_LIST_NOT_FOUND = "packing_list_not_found"
 ORDER_NOT_IN_MASTER = "order_not_in_master"
+#: The sheet names a sales order the CRM holds, but no line of it fits the row. Three
+#: reasons, reported as the FIRST filter that refused it, because they send the reader to
+#: three different places: the catalogue, the warehouse, or the quantity on the order.
+NO_LINE_FOR_ITEM = "no_line_for_item"
+LOCATION_DIFFERS = "location_differs"
+QTY_EXCEEDS_ORDERED = "qty_exceeds_ordered"
+#: The sales order is not project demand, so it is not planned here and no order inquiry
+#: row can hang off it.
+ORDER_NOT_PLANNABLE = "order_not_plannable"
+#: The sales order the row names DOES exist, and DOES carry lines, but every one of them is
+#: closed or cancelled - no open line survives at all (AC-S4-6, R9). Its own code rather
+#: than `NO_LINE_FOR_ITEM`, whose three reasons (catalogue, warehouse, quantity) all assume
+#: an open line exists to be checked against: here there is none, so the row is refused
+#: before any of those three checks ever runs, and the reader is sent to a fourth place -
+#: the order's own status - instead of one of those three.
+ORDER_FULLY_DELIVERED = "order_fully_delivered"
 
 # --- written, and destructive: the half a job detail exists to show ------
 #: An order line that is no longer on the uploaded book, so the upload closed it. Its own
@@ -74,6 +90,29 @@ DUPLICATE_LINE = "duplicate_line"
 #: GRN/SPO importers depend on that existing meaning (UAC AC-6.2).
 DUPLICATE_IN_FILE = "duplicate_in_file"
 ALREADY_EXISTS = "already_exists"
+#: The sales order line this row names already carries an order inquiry row, raised by the
+#: board or by an earlier upload. Left exactly as it is, links included: the sheet is a
+#: migration, not a second opinion about a row somebody has since worked on.
+ALREADY_RAISED = "already_raised"
+#: The sales order line this row names sits beside a `Replaces N used` row (a replan that
+#: redirected a received line), but its quantity or date matches no fresh row's own
+#: `previous_qty` / `previous_delivery_date` exactly (`PLAN-oi-rollback-recover-planning-
+#: rows.md`, ruling R6). Nothing is guessed at: no used row is raised, and this row is
+#: named so purchasing and customer service know which delivery to look at by hand.
+NO_USED_DELIVERY_MATCH = "no_used_delivery_match"
+#: The sales order line this row names sits beside a top-up: every live ORDER / ORDER BACK
+#: row on the line carries the ACTIVE decision's own id, but the sheet row's quantity plus
+#: theirs does not equal the decision's `buy_qty` (`PLAN-oi-rollback-recover-planning-
+#: rows.md`, ruling R8). Nothing is guessed at: no row is raised, and this row is named so
+#: purchasing and customer service know which delivery to look at by hand.
+TOP_UP_SUM_MISMATCH = "top_up_sum_mismatch"
+#: The sales order line this row names already carries a MIGRATED row, on the line's own
+#: date rather than the sheet's - the 18 Sep 2026 reversal of section 7.4. Re-uploading
+#: the same sheet, corrected, is how that date gets fixed: the migrated row's own
+#: `delivery_date` moves to the sheet's, and the fresh row beside it (raised for a later
+#: planning change) has its `previous_delivery_date` corrected too, so the Was/Now (i)
+#: stops printing the same wrong date twice. Rides on OUTCOME_UPDATED: the row WAS written.
+DELIVERY_DATE_UPDATED = "delivery_date_updated"
 ALREADY_RECEIVED_GUARD = "already_received_guard"
 #: Real money on the document with no product behind it (handling, transport, misc). Counted
 #: on the order and never written as a stock line: a quantity of 1 "HANDLING CHARGES" is not
@@ -127,6 +166,25 @@ UPSERT_ERROR = "upsert_error"
 ROW_ERROR = "row_error"
 DB_ERROR = "db_error"
 
+# --- AutoCount pull (PLAN-autocount-pull-review.md) -----------------------
+#: A row FoundryX itself left out of the snapshot (its own `excludedRows` /
+#: `excludedNonzeroCount`, e.g. a mapping failure on their side). Never applied by
+#: either preview or Confirm; rides on OUTCOME_SKIPPED, carrying FoundryX's own
+#: reason/message so the reviewer sees exactly what AutoCount refused and why.
+#: Upper-cased, unlike every other code here: it names FoundryX's own reason
+#: vocabulary rather than one of ours, so it is spelled the way FoundryX's own
+#: `excludedRows[].reason` codes are (see the cross-repo contract, Appendix A).
+AUTOCOUNT_EXCLUDED = "AUTOCOUNT_EXCLUDED"
+#: A stock row whose `location_code` matched a warehouse that exists but is inactive
+#: (AC-SP-2) - never reaches `bulk_import_stock`, FED or otherwise.
+AUTOCOUNT_NOT_APPLIED_INACTIVE = "AUTOCOUNT_NOT_APPLIED_INACTIVE"
+#: A stock row whose `location_code` matched no warehouse in this company at all.
+AUTOCOUNT_NOT_APPLIED_UNKNOWN = "AUTOCOUNT_NOT_APPLIED_UNKNOWN"
+#: A header `negativePairList` entry - FoundryX's own record of an (item, location) it
+#: read as negative on-hand. Display only, from the fetched header, never `bulk_import_
+#: stock`'s input (AC-SP-4).
+AUTOCOUNT_NEGATIVE = "AUTOCOUNT_NEGATIVE"
+
 LABELS: dict[str, str] = {
     CREATED: "Created",
     UPDATED: "Updated",
@@ -146,6 +204,11 @@ LABELS: dict[str, str] = {
     GRN_HEADER_NOT_FOUND: "GRN header not found",
     PACKING_LIST_NOT_FOUND: "Packing list not found for container",
     ORDER_NOT_IN_MASTER: "Order not found in Master sheet",
+    NO_LINE_FOR_ITEM: "No sales order line for this item",
+    LOCATION_DIFFERS: "No line for this item at that stock location",
+    QTY_EXCEEDS_ORDERED: "Quantity exceeds what the line ordered",
+    ORDER_NOT_PLANNABLE: "Not project demand, so it is not planned here",
+    ORDER_FULLY_DELIVERED: "No open line left: every line is closed or cancelled",
     LINE_CLOSED: "Closed: no longer on the uploaded book",
     LINE_WITHDRAWN: "Withdrawn: this sheet no longer lists it",
     REORDER_LEVEL_CLEARED: "Reorder level cleared: blank in the file",
@@ -153,6 +216,10 @@ LABELS: dict[str, str] = {
     DUPLICATE_LINE: "Identical line already exists on this order",
     DUPLICATE_IN_FILE: "The same row appears earlier in this file",
     ALREADY_EXISTS: "Already exists",
+    ALREADY_RAISED: "Left alone: this line already carries an order inquiry",
+    NO_USED_DELIVERY_MATCH: "Beside a used-row line, but no exact quantity/date match",
+    TOP_UP_SUM_MISMATCH: "Beside a top-up line, but the quantities do not sum to plan",
+    DELIVERY_DATE_UPDATED: "Delivery date corrected to the sheet's own",
     ALREADY_RECEIVED_GUARD: "Blocked: quantity already received",
     CHARGE_LINE: "Charge line: money on the order, no product",
     DOCUMENT_OWNED_ELSEWHERE: "Left alone: another upload owns this document",
@@ -169,6 +236,10 @@ LABELS: dict[str, str] = {
     UPSERT_ERROR: "Could not be saved",
     ROW_ERROR: "Row could not be written",
     DB_ERROR: "Database error",
+    AUTOCOUNT_EXCLUDED: "Left out by AutoCount",
+    AUTOCOUNT_NOT_APPLIED_INACTIVE: "Not applied: warehouse is inactive",
+    AUTOCOUNT_NOT_APPLIED_UNKNOWN: "Not applied: unknown location",
+    AUTOCOUNT_NEGATIVE: "AutoCount reports a negative on-hand quantity",
 }
 
 

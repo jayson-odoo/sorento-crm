@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import {
   ColumnDef,
   getCoreRowModel,
@@ -16,6 +17,7 @@ import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { IGNORE_FIELD } from '@/components/common/ImportColumnMapper';
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import { pendingEntityKey, usePendingEntityKeys } from '@/lib/pending-entity-store';
 import {
@@ -40,8 +42,19 @@ const NO_GROUPS: ImportFieldAliasGroup[] = [];
  * countdown lives in a toast the same way a list row's delete does, not a confirmation
  * dialog.
  */
+/** The Supplier codes tab links here with `?doc_type=` (AC-F5, D6) - so a person picking
+ *  "Stock list words" from that tab lands on the word list, not the page's own default. An
+ *  unrecognised or absent value falls back to the default rather than an empty grid. */
+function initialDocType(param: string | null): ImportFieldAliasDocType {
+  const known = IMPORT_FIELD_ALIAS_DOC_TYPES.some((d) => d.value === param);
+  return known ? (param as ImportFieldAliasDocType) : 'proforma_invoice';
+}
+
 export default function ImportFieldAliasesList() {
-  const [docType, setDocType] = useState<ImportFieldAliasDocType>('proforma_invoice');
+  const searchParams = useSearchParams();
+  const [docType, setDocType] = useState<ImportFieldAliasDocType>(() =>
+    initialDocType(searchParams.get('doc_type')),
+  );
   const { data: groups, isLoading } = useImportFieldAliases(docType);
   const [addOpen, setAddOpen] = useState(false);
   const removal = useDeferredRowAction({
@@ -60,7 +73,15 @@ export default function ImportFieldAliasesList() {
       {
         accessorKey: 'label',
         header: ({ column }) => <DataGridColumnHeader title="System field" column={column} />,
-        cell: ({ row }) => <span className="font-medium">{row.original.label}</span>,
+        cell: ({ row }) =>
+          // The mapper's own reserved field (F4, G2/AC-M7) surfaces here as a synthetic
+          // group so an ignored column can still be found and deleted - "Ignored" reads as
+          // a decision, where the field's own title-cased name ("Ignore") would not.
+          row.original.field === IGNORE_FIELD ? (
+            <span className="font-medium text-muted-foreground">Ignored</span>
+          ) : (
+            <span className="font-medium">{row.original.label}</span>
+          ),
         size: 200,
       },
       {
@@ -76,23 +97,34 @@ export default function ImportFieldAliasesList() {
           return (
             <div className="flex flex-wrap gap-1.5 py-1">
               {visible.map((a) => (
-                <Badge key={a.id} variant="secondary" appearance="light" size="sm" className="gap-1">
-                  {a.alias}
-                  {a.locale ? <span className="text-muted-foreground">({a.locale})</span> : null}
-                  <button
-                    type="button"
-                    aria-label={`Remove ${a.alias}`}
-                    className="ms-0.5 rounded-full hover:bg-muted"
-                    onClick={() =>
-                      removal.run({
-                        id: a.id,
-                        subject: `"${a.alias}" from ${row.original.label}`,
-                      })
-                    }
-                  >
-                    <X className="size-3" />
-                  </button>
-                </Badge>
+                <span key={a.id} className="inline-flex items-center gap-1">
+                  <Badge variant="secondary" appearance="light" size="sm" className="gap-1">
+                    {a.alias}
+                    {a.locale ? <span className="text-muted-foreground">({a.locale})</span> : null}
+                    <button
+                      type="button"
+                      aria-label={`Remove ${a.alias}`}
+                      className="ms-0.5 rounded-full hover:bg-muted"
+                      onClick={() =>
+                        removal.run({
+                          id: a.id,
+                          subject: `"${a.alias}" from ${row.original.label}`,
+                        })
+                      }
+                    >
+                      <X className="size-3" />
+                    </button>
+                  </Badge>
+                  {/* Per-supplier word row (S4, D6) - the name, never the id (no UUID in the
+                      UI), a second badge beside the alias rather than text folded into it
+                      (review round 1, item 9); a shared row (supplier_id NULL) carries
+                      none. */}
+                  {a.supplier_name ? (
+                    <Badge variant="outline" appearance="light" size="sm">
+                      {a.supplier_name}
+                    </Badge>
+                  ) : null}
+                </span>
               ))}
             </div>
           );

@@ -3,17 +3,16 @@
 `GET|PUT /api/v1/user-management/contacts/{contact_id}/portal-forms`.
 
 Resolution lives in `app.services.portal_form_visibility_service`: a contact's
-visible form types are the union of `portal_form_types` across its assigned
-access types, then per-contact rows in `contact_portal_form_overrides` win
-(`is_enabled=True` adds a type even if no access type grants it, `False`
-removes one even if every access type does). That table and resolver existed
-with nothing writing to it; this route is the admin surface that writes it.
+visible form types are the base four (`SUPPORTED_TYPES`) plus the union of
+`portal_form_types` across its assigned market segments, then per-contact
+rows in `contact_portal_form_overrides` win (`is_enabled=True` adds a type
+even if no segment grants it, `False` removes one even if the base default
+or a segment does).
 
-Only GATED kinds are subject to this at all - the four legacy submission kinds
-(complaint, stock_inquiry, purchase_request, sponsorship_form) are always on
-the portal landing and are never listed here. `GATED_FORM_TYPES` below mirrors
-`GATED_LANDING_KINDS` in `sorento_crm_frontend/lib/portal-form-kinds.ts`; the
-next gated form joins both lists.
+All five kinds in `GRANTABLE_PORTAL_FORM_TYPES` are listed here now
+(PLAN-portal-forms-market-segment D2) - not just the ones beyond the base
+default. Mirrors `LANDING_KINDS` in
+`sorento_crm_frontend/lib/portal-form-kinds.ts`.
 """
 import logging
 
@@ -27,6 +26,7 @@ from app.models.access import RespondContact
 from app.models.price_tag import ContactPortalFormOverride
 from app.services.error_handler import handle_internal_error, handle_not_found, handle_unprocessable
 from app.services.portal_form_visibility_service import inherited_form_types
+from app.services.portal_service import GRANTABLE_PORTAL_FORM_TYPES
 
 logger = logging.getLogger(__name__)
 
@@ -34,9 +34,6 @@ router = APIRouter()
 
 CONTACT_VIEW_PERMISSION = "user_management.contacts.view"
 CONTACT_EDIT_PERMISSION = "user_management.contacts.edit"
-
-# Mirrors GATED_LANDING_KINDS in sorento_crm_frontend/lib/portal-form-kinds.ts.
-GATED_FORM_TYPES: tuple[str, ...] = ("price_tag_request",)
 
 
 class ContactPortalFormOverrideInput(BaseModel):
@@ -64,7 +61,7 @@ def _build_view(db: Session, contact_id: str) -> dict:
         .all()
     }
     forms = []
-    for form_type in GATED_FORM_TYPES:
+    for form_type in GRANTABLE_PORTAL_FORM_TYPES:
         is_inherited = form_type in inherited
         override = overrides.get(form_type)
         effective = override if override is not None else is_inherited
@@ -121,8 +118,8 @@ async def update_contact_portal_forms(
     try:
         _require_contact(db, contact_id)
         for item in payload.overrides:
-            if item.form_type not in GATED_FORM_TYPES:
-                raise handle_unprocessable(f"'{item.form_type}' is not a gated form type.")
+            if item.form_type not in GRANTABLE_PORTAL_FORM_TYPES:
+                raise handle_unprocessable(f"'{item.form_type}' is not a valid portal form type.")
 
         deduped: dict[str, bool | None] = {}
         for item in payload.overrides:

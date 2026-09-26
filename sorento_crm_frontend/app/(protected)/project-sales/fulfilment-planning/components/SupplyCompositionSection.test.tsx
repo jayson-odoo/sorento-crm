@@ -389,7 +389,10 @@ describe('SupplyCompositionSection', () => {
     await waitFor(() => expect(confirmButton()).toBeEnabled());
   });
 
-  it('blocks the Confirm while a discontinued buy has no reason (AC-B11)', async () => {
+  // D2 (S1, PR #1218 review gap): AC-B11's gate was removed from `supplyComposition.ts`'s
+  // `lineBlockers` (the owner's "remove that gate" ruling) - a discontinued Buy with no
+  // reason no longer blocks Confirm here, matching AC-22's own claim for this sheet.
+  it('does not block the Confirm for a discontinued buy with no reason (AC-22)', async () => {
     getSupply.mockResolvedValue(
       proposal({
         lines: [
@@ -404,12 +407,6 @@ describe('SupplyCompositionSection', () => {
 
     renderSection();
     await screen.findByText('Line 1 · CB6633');
-
-    expect(confirmButton()).toBeDisabled();
-
-    fireEvent.change(screen.getByLabelText(/^Reason/), {
-      target: { value: 'Customer accepted the last production batch in writing.' },
-    });
 
     await waitFor(() => expect(confirmButton()).toBeEnabled());
   });

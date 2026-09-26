@@ -22,6 +22,23 @@ ancestor of this one, so importing the module is not possible yet; copying its r
 what makes "the writer and the reader agree on the shape" a thing this lane can prove
 rather than assert. When #733 merges, delete the copies and import the module - the
 assertions do not change.
+
+Retired 16 Sep 2026 (AC-1592, coordinator ruling, "pre-rearch trace key"):
+`TestTheToolEventIsPersistedAndReadable.test_a_real_turn_writes_a_tool_entry_the_reader_
+renders` and both of `TestTheEnvelopeIsCappedAtWriteTime`'s tests. Measured root cause:
+`app/services/chatbot/turn/fetch.py::run_fetch` (contract 129, "one tool entry per
+domain") is the ONLY live call site that writes a `"tool"`-kind trace event today, and it
+writes `trace.add("tool", {"domain": spec.domain})` - no `name`/`args`/`envelope`/`ms`,
+because the actual tool identity/args/response now live in the per-domain `envelope` the
+plan composes, not in the trace row. The `_tool()` copy above is the PRE-#733-merge,
+never-shipped PR #733 shape (`name`/`args`/`envelope` capped at 8 KB) this session
+confirmed has NO other live producer - `trace.add`'s `"envelope" in entry` branch
+(`cap_envelope`, the thing `TestTheEnvelopeIsCappedAtWriteTime` exercised) is currently
+dead code for the `"tool"` kind, so the 8 KB-cap scenario no longer arises on a real turn.
+Replacement coverage for "one tool trace event is written per domain, correctly shaped":
+`test_rearch_s3_fetch_fanout.py::TestOrderAndOneToolEach` (both tests). If a future PR
+reintroduces an envelope-bearing tool event, `cap_envelope`'s own write-side behaviour
+still needs a test at that point - none exists today because nothing calls it.
 """
 from __future__ import annotations
 
@@ -34,7 +51,7 @@ from app.services.chatbot.lanes.business.services import (
     FetchServices,
     ResolveGateServices,
 )
-from tests.chatbot.conftest import set_chatbot_switches
+from tests.chatbot.conftest import set_chatbot_switches, validating_resolve_entity
 from tests.chatbot.test_engine import (  # noqa: F401 - re-exported fixtures used by name
     _envelope,
     _parser_output,
@@ -45,9 +62,9 @@ from tests.chatbot.test_engine import (  # noqa: F401 - re-exported fixtures use
 
 # --------------------------------------------------------------------------- #
 # Copied from `trace_detail.py` on feat/chatbot-growth-trace-ui (PR #733).
+# `_tool`/`_cap_envelope`/`TOOL_ENVELOPE_BYTE_CAP` removed 16 Sep 2026 alongside the
+# tests that used them - see the module docstring's retirement note.
 # --------------------------------------------------------------------------- #
-
-TOOL_ENVELOPE_BYTE_CAP = 8_192
 
 
 def _kind_records(records: list[dict[str, Any]], kind: str) -> list[dict[str, Any]]:
@@ -56,36 +73,6 @@ def _kind_records(records: list[dict[str, Any]], kind: str) -> list[dict[str, An
 
 def _stage_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [r for r in records if r.get("kind") is None and r.get("stage") is not None]
-
-
-def _cap_envelope(envelope: Any) -> Any:
-    if envelope is None:
-        return None
-    try:
-        encoded = json.dumps(envelope, default=str, ensure_ascii=False)
-    except Exception:  # noqa: BLE001
-        return {"truncated": True, "note": "payload is not JSON-serialisable"}
-    encoded_bytes = encoded.encode("utf-8")
-    if len(encoded_bytes) <= TOOL_ENVELOPE_BYTE_CAP:
-        return json.loads(encoded)
-    return {
-        "truncated": True,
-        "bytes": len(encoded_bytes),
-        "head": encoded_bytes[:TOOL_ENVELOPE_BYTE_CAP].decode("utf-8", errors="ignore"),
-    }
-
-
-def _tool(records: list[dict[str, Any]]) -> dict[str, Any] | None:
-    entries = _kind_records(records, "tool")
-    if not entries:
-        return None
-    entry = entries[-1]
-    return {
-        "name": entry.get("name"),
-        "args": entry.get("args"),
-        "envelope": _cap_envelope(entry.get("envelope")),
-        "ms": entry.get("ms"),
-    }
 
 
 def _reveals(records: list[dict[str, Any]]) -> dict[str, Any]:
@@ -140,7 +127,7 @@ def _resolved_bundle() -> ResolveGateServices:
 
     return ResolveGateServices(
         access_types=lambda **_: [{"name": "Sorento Dealer"}],
-        resolve_entity=_resolve_entity,
+        resolve_entity=validating_resolve_entity(_resolve_entity),
         probe=lambda **_: None,
     )
 
@@ -196,35 +183,6 @@ def _run_a_stock_turn(session_factory, monkeypatch, *, envelope=None):
 
 
 class TestTheToolEventIsPersistedAndReadable:
-    def test_a_real_turn_writes_a_tool_entry_the_reader_renders(
-        self, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
-    ) -> None:
-        """AC-970's `tool` section, end to end: the engine calls one MCP tool, the event
-        lands in `chatbot.turns.trace`, and `trace_detail._tool` composes a section with
-        the tool's name, its arguments and its envelope."""
-        stub_parser(
-            _parser_output(
-                intent_hint="check_stock",
-                domain_hint="inventory",
-                entities=[{"raw": "SRTWC8517", "hint": "product", "current_message": True}],
-            )
-        )
-        stub_access()
-
-        result, trace = _run_a_stock_turn(session_factory, monkeypatch)
-        assert result.status == "done", result.error
-
-        tool = _tool(trace)
-        assert tool is not None, (
-            "no `tool` entry in the persisted trace - trace.add's events are not reaching "
-            "chatbot.turns.trace, so the turn-detail screen renders an empty tool section "
-            "on every real turn"
-        )
-        assert tool["name"] == "crm_inventory_stock_balance_list"
-        assert tool["args"]["product_ids"] == [PRODUCT_UUID]
-        assert tool["envelope"]["result_type"] == "stock"
-        assert isinstance(tool["ms"], int)
-
     def test_the_events_come_after_every_stage_record(
         self, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
     ) -> None:
@@ -296,78 +254,6 @@ class TestTheToolEventIsPersistedAndReadable:
         assert reveals["restricted_fields_seen"] == ["Sellable"]
         assert reveals["granted"] == []
         assert reveals["dropped"] == ["Sellable"]
-
-
-class TestTheEnvelopeIsCappedAtWriteTime:
-    def test_a_large_envelope_is_truncated_with_a_marker_in_the_column(
-        self, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
-    ) -> None:
-        """AC-970 caps the envelope at 8 KB. Capping only on READ would still write the
-        whole thing into a row that is kept forever, so the cap is applied here, at
-        `trace.add`, and the marker says the truth instead of showing a silently
-        shortened object."""
-        stub_parser(
-            _parser_output(
-                intent_hint="check_stock",
-                domain_hint="inventory",
-                entities=[{"raw": "SRTWC8517", "hint": "product", "current_message": True}],
-            )
-        )
-        stub_access()
-
-        huge = {
-            **STOCK_ENVELOPE,
-            "items": [
-                {
-                    "fields": [
-                        {"label": "Product Code", "value": f"SRTWC{index:05d}"},
-                        {"label": "On Hand", "value": index},
-                        {"label": "Note", "value": "x" * 200},
-                    ]
-                }
-                for index in range(200)
-            ],
-        }
-        _, trace = _run_a_stock_turn(session_factory, monkeypatch, envelope=huge)
-
-        tool = _tool(trace)
-        assert tool is not None
-        assert tool["envelope"]["truncated"] is True
-        assert tool["envelope"]["bytes"] > TOOL_ENVELOPE_BYTE_CAP
-        assert len(tool["envelope"]["head"].encode("utf-8")) <= TOOL_ENVELOPE_BYTE_CAP
-        # The cap is the WRITE side's: the reader's own `_cap_envelope` had nothing left
-        # to do, which is what stops the row growing without bound.
-        raw_entry = _kind_records(trace, "tool")[-1]
-        assert raw_entry["envelope"]["truncated"] is True
-
-    def test_a_multibyte_envelope_is_cut_on_bytes_and_still_decodes(
-        self, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
-    ) -> None:
-        """A code-point cut on a Chinese envelope either undercounts against the byte cap
-        or slices a character in half, and the column is JSONB - an invalid string would
-        fail the write, not degrade."""
-        stub_parser(
-            _parser_output(
-                intent_hint="check_stock",
-                domain_hint="inventory",
-                entities=[{"raw": "SRTWC8517", "hint": "product", "current_message": True}],
-            )
-        )
-        stub_access()
-
-        chinese = {
-            **STOCK_ENVELOPE,
-            "items": [
-                {"fields": [{"label": "备注", "value": "上次进货" * 2000}]}
-            ],
-        }
-        _, trace = _run_a_stock_turn(session_factory, monkeypatch, envelope=chinese)
-
-        tool = _tool(trace)
-        assert tool is not None
-        assert tool["envelope"]["truncated"] is True
-        assert len(tool["envelope"]["head"].encode("utf-8")) <= TOOL_ENVELOPE_BYTE_CAP
-        assert isinstance(tool["envelope"]["head"], str)
 
 
 class TestResumeKeepsTheTwoListsApart:

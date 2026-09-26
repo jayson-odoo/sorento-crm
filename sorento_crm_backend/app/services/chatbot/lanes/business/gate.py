@@ -32,10 +32,37 @@ aliasing is behaviourally inert: the only reader downstream of the mutation
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from functools import cmp_to_key
 from typing import Any
 
 from app.services.chatbot import jsc
+
+# PLAN-chatbot-answer-half-reattach.md "Roster cap" (owner ruling 20 Sep 2026):
+# `roster_caps=None` (the parameter never supplied at all) means the CALLER predates
+# `chatbot_entity_kinds.roster_cap` entirely - a raw `disallowed-entity-gate` port-
+# replay fixture (`tests/chatbot/test_replay.py`) or a hand-built low-level test with
+# no opinion on the feature - and gets `legacy_default` back: 10 for the customer
+# picker (`test_rearch_r3_roster_cap.py::test_a_missing_customer_key_or_none_means_10`
+# - a widening from the old literal 8, never a narrowing, so no recorded capture with
+# 8 or fewer real matches moves), uncapped for the product/attachment one (that arm
+# had NO ceiling at all before this column existed, and one port-replay capture in
+# the corpus - `exec-14213018` - genuinely has 13 real candidates; capping it by
+# default would be a port-fidelity regression `test_replay.py` has no signed
+# divergence for). A caller that DOES supply a mapping - `resolve_gate.run`, reached
+# from the real turn engine, which always builds one from every seeded
+# `chatbot_entity_kinds` row - gets that mapping honoured for real, `10` (the
+# column's own server default) for any kind missing from it.
+_DEFAULT_ROSTER_CAP = 10
+
+
+def _roster_cap(
+    roster_caps: Mapping[str, int] | None, kind: str, *, legacy_default: int | None
+) -> int | None:
+    if roster_caps is None:
+        return legacy_default
+    value = roster_caps.get(kind)
+    return int(value) if isinstance(value, int) and value > 0 else _DEFAULT_ROSTER_CAP
 
 # --------------------------------------------------------------------------- #
 # The matrices, verbatim.
@@ -53,7 +80,9 @@ ALLOWED: dict[str, list[str]] = {
     ],
     "promotion": ["product", "promotion", "category", "brand"],
     "inventory": ["product", "warehouse", "category", "brand"],
-    "order": ["order", "customer_order", "transporter", "customer", "product"],
+    # S4 point 7 (PLAN-chatbot-outstanding-report.md, D5): a location word narrows
+    # crm_outstanding_report the same way it already narrows inventory/spo_allocation.
+    "order": ["order", "customer_order", "transporter", "customer", "product", "warehouse"],
     "incoming": ["product", "inbound_shipment", "category", "brand"],
     "forms": ["form"],
     "portal_link": [],
@@ -64,7 +93,36 @@ ALLOWED: dict[str, list[str]] = {
     # through unscoped, as it used to. Per the plan, the owner accepted this matrix as
     # written; not adding an `ALLOWS_EMPTY` row is deliberate, not an oversight.
     "spo_allocation": ["product", "warehouse", "category", "brand"],
+    # PLAN-chatbot-last-purchase-cost.md, 12 Sep 2026: same shape as `spo_allocation`
+    # above, and the same "no ALLOWS_EMPTY row" ruling - a bare "last purchase cost"
+    # with no product fails the gate and asks, same as `spo_allocation`.
+    "purchase_cost": ["product", "warehouse", "category", "brand"],
+    # AC-1592 test triage (review S1, live exec 11818957): NO row here used to mean
+    # "domain not in matrix, pass every entity through unscoped" - which let an
+    # ordinary-looking warehouse code (HOLD, DISPLAY, REPAIR) reach a document-list
+    # fetch as a filter, even though none of this domain's three tools
+    # (`crm_resource_attachments_list`/`_catalogue`/`_current_stock_list`) takes a
+    # `warehouse_ids` parameter at all (confirmed: `fetch.TYPE_TO_PARAM`'s own
+    # `"warehouse"` comment names the four tools that DO, and none of these three is
+    # among them). `attachment_type` and `attachment` are the entity kinds these tools
+    # actually filter on (`fetch.TYPE_TO_PARAM` maps them to `attachment_type_ids` /
+    # `attachment_ids`, and `NARROWING_PARAMS` carries both). `attachment` was missing
+    # from the first cut of this row, and it is the kind the resolver returns for a file
+    # the customer NAMES ("catalog", "stock list"), so a named-file ask built no filter
+    # at all and `ENTITY_FILTER_REQUIRED_TOOLS` refused the whole turn as not_found -
+    # measured on replay case `console/case-024`, whose live call carried
+    # `attachment_ids` with two real uuids.
+    "resource_attachment": ["attachment_type", "attachment"],
 }
+
+#: PLAN-low-stock-report S6 (owner ruling, console round 2, 14 Sep 2026): INTENTS that
+#: permit a scope-less ask even though their DOMAIN does not. `inventory` is
+#: `ALLOWS_EMPTY: False` on purpose - a bare "stock?" must ask which product - but a bare
+#: "low stock report" is a WHOLE-BOOK question by definition: it runs every site-pool
+#: warehouse and every admitted product, which is the journey's own first phrasing.
+#: Keyed on the intent rather than by flipping the domain, so the plain stock ask keeps
+#: its narrowing prompt.
+INTENTS_ALLOWING_EMPTY: frozenset[str] = frozenset({"low_stock_report"})
 
 # S1 (promotion-picker): a promotion cannot be answered by a general search. Flipping
 # `promotion` to true routes a scope-less promotion ask past the `needsScope` renderer.
@@ -189,6 +247,49 @@ def _flatten_by_entity_type(by_entity_type: Any) -> list[Any]:
     return out
 
 
+def _warehouse_only_uuids(parser: Any, resolver: Any) -> set[str]:
+    """R18: the resolved uuids that ONLY a WAREHOUSE-hinted token matched.
+
+    The parser says what each word IS; the resolver says what each word FOUND. A uuid
+    that only a warehouse word found is not evidence about any other kind of thing,
+    whatever type the resolver stamped on it - "BRW" finding a customer called "STOCK
+    TRANSFER - BRW TO SORENTO" is the resolver doing a text search, not the customer
+    naming a company.
+
+    Fails OPEN in both directions: a uuid the customer word found as well is absent from
+    this set (the customer word is what put it on the list), and so is one reached
+    through `intersection` / `by_entity_type`, which carry no token to attribute a match
+    to at all.
+    """
+    warehouse_tokens = {
+        jsc.js_string(jsc.get(e, "raw") or "").strip().casefold()
+        for e in jsc.array(jsc.get(parser, "entities"))
+        if jsc.lower_or_empty(jsc.get(e, "hint")) == "warehouse"
+    }
+    warehouse_tokens.discard("")
+    if not warehouse_tokens:
+        return set()
+
+    def _uuid(m: Any) -> str:
+        return jsc.js_string(jsc.get(m, "uuid") or "") if jsc.truthy(m) else ""
+
+    from_warehouse: set[str] = set()
+    from_elsewhere: set[str] = set()
+    for resolution in jsc.array(jsc.get(resolver, "resolutions")):
+        token = jsc.js_string(jsc.get(resolution, "token") or "").strip().casefold()
+        bucket = from_warehouse if token in warehouse_tokens else from_elsewhere
+        for m in jsc.array(jsc.get(resolution, "matches")):
+            if _uuid(m):
+                bucket.add(_uuid(m))
+    for m in [
+        *jsc.array(jsc.get(resolver, "intersection")),
+        *_flatten_by_entity_type(jsc.get(resolver, "by_entity_type")),
+    ]:
+        if _uuid(m):
+            from_elsewhere.add(_uuid(m))
+    return from_warehouse - from_elsewhere
+
+
 def _cust_name(match: Any) -> str:
     """`_custName` - the legal name with the ACCOUNT suffix stripped, nothing else."""
     display = jsc.get(match, "display") or {}
@@ -240,8 +341,16 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
     session: Any = None,
     tier_gate: dict[str, Any] | None = None,
     aggregate: dict[str, Any] | None = None,
+    roster_caps: Mapping[str, int] | None = None,
 ) -> dict[str, Any]:
-    """`disallowed-entity-gate`'s output item. `item` is mutated and returned, as in JS."""
+    """`disallowed-entity-gate`'s output item. `item` is mutated and returned, as in JS.
+
+    `roster_caps` (PLAN-chatbot-answer-half-reattach.md "Roster cap", owner ruling
+    20 Sep 2026) is `{entity kind: chatbot_entity_kinds.roster_cap}`, read at the two
+    rosters this gate builds: the ambiguous-customer picker (kind "customer") and the
+    ambiguous-product/attachment picker (kind "product"). A missing kind or `None`
+    means 10, the column's own server default.
+    """
     parser = parser if isinstance(parser, dict) else {}
     # Annotated `Any` deliberately: `domain` indexes the matrices above, and every one of
     # those lookups is `ALLOWED[domain]` in the JS, where a null key is a plain miss.
@@ -322,12 +431,19 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
                 if jsc.truthy(token):
                     incompatible_only[jsc.js_string(token)] = list(dict.fromkeys(types))
         if len(entities) == 0:
-            gate_passed = ALLOWS_EMPTY.get(domain) is True
-            gate_reason = (
-                f"no entities; '{domain}' permits broad query"
-                if gate_passed
-                else f"no entities and '{domain}' requires a scoping entity"
-            )
+            intent = jsc.js_string(parser.get("intent_hint") or "")
+            intent_allows_empty = intent in INTENTS_ALLOWING_EMPTY
+            gate_passed = ALLOWS_EMPTY.get(domain) is True or intent_allows_empty
+            if intent_allows_empty and ALLOWS_EMPTY.get(domain) is not True:
+                # Its own reason string, so a trace says WHY a domain that normally
+                # demands a filter let this one through.
+                gate_reason = f"no entities; intent '{intent}' permits broad query"
+            else:
+                gate_reason = (
+                    f"no entities; '{domain}' permits broad query"
+                    if gate_passed
+                    else f"no entities and '{domain}' requires a scoping entity"
+                )
         elif len(compatible_entities) == 0:
             got = ", ".join(dict.fromkeys(jsc.js_string(e["entity_type"]) for e in entities))
             gate_passed = False
@@ -757,6 +873,23 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
                     }
                     for o in specific_options
                 ]
+            # Roster cap (owner ruling 20 Sep 2026): trimmed HERE, on `specific_options`
+            # itself, so the printed roster and the `compatible_entities` the FIX A block
+            # below derives from the SAME `specific_options` never disagree on which
+            # candidates are actually pickable. `legacy_default=None`: this arm was
+            # UNCAPPED before the column existed, so a caller with no `roster_caps`
+            # opinion (the raw port-replay corpus) keeps that exactly.
+            product_cap = _roster_cap(roster_caps, "product", legacy_default=None)
+            if product_cap is not None:
+                capped_options: list[dict[str, Any]] = []
+                kept = 0
+                for o in specific_options:
+                    if kept >= product_cap:
+                        break
+                    candidates = o["candidates"][: product_cap - kept]
+                    kept += len(candidates)
+                    capped_options.append({**o, "candidates": candidates})
+                specific_options = capped_options
             flat_labels = [c["label"] for o in specific_options for c in o["candidates"]]
             numbered = "\n".join(f"{i + 1}. {label}" for i, label in enumerate(flat_labels))
             # mc-prefix-collapse: say what DID resolve. A header line, never a numbered
@@ -789,6 +922,12 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
     cust_probe_entities: list[dict[str, Any]] | None = None
     cust_families: dict[str, list[str]] | None = None
 
+    # R18 (owner round 5, 13 Sep 2026): the uuids only a WAREHOUSE word found. Computed
+    # once, read twice below - by the ambiguous-customer picker (which must not list
+    # them) and by the scope drop after it (which must not SEARCH them either, or a
+    # report the customer asked for one company silently covers two).
+    warehouse_only = _warehouse_only_uuids(parser, resolver)
+
     # ── AMBIGUOUS CUSTOMER -> ASK WHICH COMPANY ─────────────────────────────
     # A fuzzy customer token can resolve to several UNRELATED companies (exec 13207261:
     # "4 smart" -> 15 accounts across 6 companies, answered with 16 orders from three of
@@ -806,12 +945,23 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
                 and len(parser["reference_positions"]) > 0
             )
         )
+        # R18 (owner round 5, 13 Sep 2026): a WAREHOUSE word is never a customer
+        # candidate. Live, "outstanding dealer quantity for hanlim" carried a stale
+        # `hint: "warehouse"` token ("BRW") beside the customer word; the resolver
+        # answered that token with customer rows too (`customers.customer_name ilike
+        # 'STOCK TRANSFER%BRW%'` is a real family on the prod copy), and this loop, which
+        # keys ONLY on the resolved `entity_type`, turned one real family into seven lines
+        # of "Which customer do you mean?". The parser already said what the word IS, so
+        # the uuids that ONLY a warehouse-hinted token matched are dropped here - a uuid
+        # the customer word matched as well is untouched, because then the customer word
+        # is what put it on the list.
         bases: dict[str, Any] = {}
         for m in flat:
             if (
                 not jsc.truthy(m)
                 or not jsc.truthy(jsc.get(m, "uuid"))
                 or jsc.js_string(jsc.get(m, "entity_type")).lower() != "customer"
+                or jsc.js_string(jsc.get(m, "uuid")) in warehouse_only
             ):
                 continue
             b = _cust_base(m)
@@ -837,7 +987,9 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
         if cust_pinned:
             cust_pin_kept = True
         if not pick_applied and not cust_pinned and len(bases) > 1:
-            reps = list(bases.values())[:8]  # cap the list; 8 lines is already a lot
+            # `legacy_default=10`: a widening from the old hard-coded eight-item slice,
+            # per `test_a_missing_customer_key_or_none_means_10`.
+            reps = list(bases.values())[: _roster_cap(roster_caps, "customer", legacy_default=10)]
             # FORWARD PROBE INPUT: keep a merged list - the candidates PLUS everything
             # else that resolved - so the probe can ask "does this customer have a
             # matching delivery?" under the SAME filters. Send the WHOLE ACCOUNT FAMILY,
@@ -1125,6 +1277,43 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
                 kept = [c for c in compatible_entities if _keep(c)]
                 if len(kept) > 0:
                     compatible_entities = kept
+
+        # ── R18: A WAREHOUSE WORD IS NOT A CUSTOMER, IN SCOPE EITHER ────────
+        # The picker above stopped LISTING them; this stops the turn SEARCHING them. A
+        # customer row that only the warehouse word found is not a company the customer
+        # named, so a report or an order list scoped by it answers a wider question than
+        # the one asked. Never empties the scope: with nothing else left, the fail-open
+        # rule is to keep what resolved and let the rest of the gate judge it.
+        if warehouse_only:
+            kept_cust = [
+                c
+                for c in compatible_entities
+                if jsc.js_string(jsc.get(c, "entity_type")).lower() != "customer"
+                or jsc.js_string(jsc.get(c, "uuid")) not in warehouse_only
+            ]
+            if kept_cust:
+                compatible_entities = kept_cust
+
+        # ── A RE-SEATED PIN IS IN SCOPE ─────────────────────────────────────
+        # R16 (owner round 5, 13 Sep 2026): `gate_passed` was decided further up, on the
+        # RESOLVER's rows alone, and the re-seat above runs after it. A turn whose only
+        # subject is the pick - "1" against a customer picker - therefore failed the
+        # "requires a scoping entity" test with the picked customer sitting in
+        # `compatible_entities`, and the customer read "I need at least one filter" over
+        # a choice they had just made. The pin IS the scope, by this block's own rule
+        # ("A PICK IS AUTHORITATIVE"), so the verdict is re-taken on what is actually in
+        # scope. Narrow on purpose: only where the resolver returned NOTHING at all, so
+        # every other reason a gate fails is untouched.
+        if (
+            not gate_passed
+            and len(entities) == 0
+            and len(compatible_entities) > 0
+            and not jsc.truthy(gate_clarification)
+        ):
+            gate_passed = True
+            gate_reason = (
+                f"'{domain}' scoped by a pinned pick; the resolver re-resolved nothing"
+            )
 
     # ── document-class precision (container-status S1) ──────────────────────
     # "container status list" returns Packing List (word:list), Stock_List (word:list) AND

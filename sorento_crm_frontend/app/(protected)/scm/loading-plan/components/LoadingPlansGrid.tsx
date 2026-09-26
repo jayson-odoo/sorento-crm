@@ -23,7 +23,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useRowPending } from '@/hooks/useDeferredRowAction';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
-import { EM_DASH, fmtDate, fmtInt, fmtOpens, fmtTrimmedDecimal } from '../../lib/format';
+import { EM_DASH, fmtInt, fmtOpens, fmtTrimmedDecimal } from '../../lib/format';
+import { describeWindow } from '../../reorder/lib/runListing';
 import { useLoadingPlanList } from '../../hooks/useFulfilment';
 import {
   type LoadingPlanRecord,
@@ -125,22 +126,31 @@ export function LoadingPlansGrid() {
         meta: { headerTitle: 'Supplier', skeleton: <Skeleton className="h-4 w-40" /> },
       },
       {
+        // AC-N7: both ends of the window, the same wording the record's own header and
+        // subtitle use (`describeWindow`), so this list never states the end alone while a
+        // plan also carries a start.
         id: 'plan_horizon_date',
+        // Sorts on the END date only - same shape as ReorderRunsGrid's own window column;
+        // the start has no independent order worth a second sort key.
         accessorFn: (row) => row.plan_horizon_date ?? '',
         header: ({ column }) => (
-          <DataGridColumnHeader title="SO cut-off" visibility column={column} />
+          <DataGridColumnHeader title="Sales orders needed" visibility column={column} />
         ),
-        cell: ({ row }) =>
-          row.original.plan_horizon_date ? (
-            <span className="tabular-nums">{fmtDate(row.original.plan_horizon_date)}</span>
-          ) : (
+        cell: ({ row }) => {
+          const text = describeWindow(
+            row.original.plan_horizon_start, row.original.plan_horizon_date,
+          );
+          return text === 'every open order' ? (
             <span className="text-muted-foreground" title="Every open order counted">
-              {EM_DASH}
+              {text}
             </span>
-          ),
-        size: 130,
+          ) : (
+            <span className="tabular-nums">{text}</span>
+          );
+        },
+        size: 190,
         enableSorting: true,
-        meta: { headerTitle: 'SO cut-off', skeleton: <Skeleton className="h-4 w-20" /> },
+        meta: { headerTitle: 'Sales orders needed', skeleton: <Skeleton className="h-4 w-20" /> },
       },
       {
         id: 'document_label',

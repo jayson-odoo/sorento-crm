@@ -36,6 +36,7 @@ export type SlotBinding =
   | 'accessories'
   | 'set_members'
   | 'barcode'
+  | 'price_tag_description'
   | null;
 
 export type ShapeType = 'rect' | 'rounded_rect' | 'ellipse' | 'line' | 'polygon';
@@ -95,6 +96,12 @@ export interface ImageLayerProps {
    * the first version of the editor still opens.
    */
   assetId?: string | null;
+  /** D7 - see `TextLayerProps.subjectPart`. An `image` layer bound to
+   *  `slot_binding: 'product_image'` reads product data exactly like a
+   *  `product_slot` layer does (browser finding: the designer's own photo
+   *  slots are `image` layers, not `product_slot`), so it needs the same
+   *  per-layer subject. */
+  subjectPart?: number;
 }
 
 /**
@@ -142,6 +149,11 @@ export interface TextLayerProps {
   strikethrough?: boolean;
   /** Internal margin (S3). Absent = 0 on every side. */
   padding?: LayerPadding;
+  /** D7: which of a combo tag's products this layer reads, when it reads
+   *  product data at all (a `{{product.*}}` / `{{spec.*}}` token). Absent =
+   *  the parent, matching every document saved before this field existed
+   *  (AC-S4-4). See `subjectOf` in `product-block.ts`. */
+  subjectPart?: number;
 }
 
 export interface ShapeLayerProps {
@@ -162,6 +174,8 @@ export interface ShapeLayerProps {
 export interface ProductSlotLayerProps {
   kind: 'product_slot';
   fieldKey: string;
+  /** D7 - see `TextLayerProps.subjectPart`. */
+  subjectPart?: number;
 }
 
 export interface BadgeLayerProps {
@@ -241,6 +255,16 @@ export interface PriceBadgeLayerProps {
    * padding: 0` so the badge draws exactly as it always did.
    */
   margin?: LayerPadding;
+  /**
+   * D7: which product's price this badge draws, on a combo tag. Unlike the
+   * other subject-aware layers, absent here is NOT "the parent" - it is
+   * **Tag total**, the parent + parts roll-up this badge always printed
+   * before this field existed (AC-S4-4), and stays the default so an
+   * existing design still prints the same figure. `-1` is the parent's own
+   * price alone; `0..n` is that part's own price. See `subjectOf` in
+   * `product-block.ts`.
+   */
+  subjectPart?: number;
 }
 
 /**
@@ -253,6 +277,8 @@ export interface PriceBadgeLayerProps {
 export interface BarcodeLayerProps {
   kind: 'barcode';
   show_code: boolean;
+  /** D7 - see `TextLayerProps.subjectPart`. */
+  subjectPart?: number;
 }
 
 export interface GroupLayerProps {
@@ -352,12 +378,21 @@ export interface TagTemplateDoc {
 // Template entity
 // ---------------------------------------------------------------------------
 
+/** A per-A4-sheet grid a template or a saved size preset may carry (S7,
+ *  AC-S7-11/12/15): arrange uses it in place of the derived best fit for any
+ *  size group that matches. Absent = arrange derives. */
+export interface TagSheetGrid {
+  cols: number;
+  rows: number;
+  turn: boolean;
+}
+
 export interface TagTemplate {
   id: string;
   name: string;
   family: TagTemplateFamily;
   doc: TagTemplateDoc;
-  print_size: { width_mm: number; height_mm: number };
+  print_size: { width_mm: number; height_mm: number; sheet?: TagSheetGrid };
   created_at: string;
   updated_at: string;
   /** The live pointer (PLAN D7). Absent = never published. */
@@ -439,23 +474,31 @@ export interface TagSheet {
 export interface PlacedTag {
   id: string;
   template_id: string;
-  request_line_id: string;
+  /**
+   * The REQUEST TAG this placement prints (D3, S3).
+   *
+   * Was `request_line_id` until one line could carry several tags: a line with
+   * an open choice group is split into one tag per candidate, and each of those
+   * has its own design, geometry and price. The line is still what the
+   * salesperson asked for; the tag is what gets printed, so the document keys
+   * on the tag. A doc written before S3 is rewritten by the S3 migration, which
+   * points each `request_line_id` at that line's single tag.
+   */
+  request_tag_id: string;
   x_mm: number;
   y_mm: number;
   width_mm: number;
   height_mm: number;
   layers: TagLayer[];
   /**
-   * This copy was DRAGGED to where it sits, so re-arranging must leave it there.
-   *
-   * Every placed tag carries a position - arrangement is what the document is -
-   * so the position alone cannot say which of them somebody chose. Without this
-   * flag, one save and reopen pinned the entire sheet: switching the imposition
-   * preset re-imposed nothing and a quantity bump dropped the new copy on top of
-   * copy 0. Absent means auto-placed, which is what a document written before
-   * the flag reads as.
+   * Turned 90deg at print time (S7): `width_mm`/`height_mm` above stay the
+   * tag's own NATURAL (unrotated) size - what its layers are laid out
+   * against - while `x_mm`/`y_mm` are the top-left of the PLACED (rotated)
+   * box the renderers draw. Absent/0 = drawn as designed. A doc saved before
+   * S7 (or before this field, on a copy nobody rotated) has none, which reads
+   * as 0 - unrotated, exactly as it always printed.
    */
-  pinned?: boolean;
+  rotation?: 0 | 90;
 }
 
 // ---------------------------------------------------------------------------
@@ -507,6 +550,13 @@ export interface ProductTagData {
   /** `products.barcode` (D14/S7). Null renders a placeholder in the editor
    * and nothing on print. */
   barcode: string | null;
+  /** Staff-authored tag copy (r10 S4). Absent/null renders nothing - no
+   *  fallback to `spec_lines` or a description. */
+  price_tag_description?: string | null;
+  /** `products.currency` (AC-A5). Optional so an older pinned/cached row
+   *  (frozen before this field existed) still renders - `resolvePath` falls
+   *  back to `MYR` when absent (AC-A7). */
+  currency?: string;
 }
 
 export interface ProductSetMemberTagData {
@@ -525,6 +575,8 @@ export interface ProductSetTagData {
   list_price: number | null;
   offer_price: number | null;
   promotion_id: string | null;
+  /** The first member's currency (AC-A11). Optional, see `ProductTagData.currency`. */
+  currency?: string;
 }
 
 /**
@@ -535,8 +587,84 @@ export interface ProductSetTagData {
  * override has to win on the tag the designer is looking at. Same shape the
  * print payload sends, so the proof and the PDF agree.
  */
+/** One choice group still undecided on a tag (D3): the salesperson left it open. */
+export interface TagOpenGroup {
+  role: string;
+  /**
+   * The group's candidates, in combo order.
+   *
+   * D3 wrote this as codes alone. It carries the id beside the code because
+   * "Pick one" has to NAME the chosen candidate to
+   * `PATCH .../tags/{tag_id}` , whose `choices` is `{role: product_id}` - a
+   * code cannot express that, and looking one up would be a second round trip
+   * for something this call already knows. Only the `code` is ever rendered
+   * (AC-X-2), and D4's printed `ROLE: CODE / CODE` text still reads it.
+   */
+  candidates: { product_id: string; code: string }[];
+}
+
+/**
+ * One part printed under the host on a tag (D3/D4).
+ *
+ * D7 (built, S9): the full product surface a subject picker can point a
+ * layer at - `spec_lines`/`specs`/`images`/`barcode`/`list_price`/
+ * `sell_price`, resolved server-side per part. Still declared optional so
+ * an OLDER pinned row (frozen before D7 landed) fails soft:
+ * `subjectOf` reads an absent field as "this part has none" - an empty
+ * placeholder, not the parent's (AC-S4-5) - rather than throwing.
+ */
+export interface TagPartData {
+  /** Carried so a caller can match a part back to the choice that produced it.
+   *  Never rendered - the code is what a reader sees (AC-X-2). */
+  product_id?: string | null;
+  code: string;
+  name: string;
+  dimensions: string;
+  spec_lines?: string[];
+  specs?: TagSpecValue[];
+  images?: TagImage[];
+  barcode?: string | null;
+  list_price?: number | null;
+  /** Offer under the LINE's promotion (D3: parts share the line's promotion),
+   *  else null. */
+  sell_price?: number | null;
+  /** This part's OWN product's currency (AC-A11), not the host's. Optional,
+   *  see `ProductTagData.currency`. */
+  currency?: string;
+  /** r10 S6: the choice group this row belongs to ("Kitchen Tap"), so the
+   *  subject picker can group the candidates under it. Absent on a fixed
+   *  part and on every row written before r10. */
+  role?: string | null;
+  /** r10 S6: true on the candidate THIS tag's own choices name - the one
+   *  `own_parts` and Tag total count. Absent on a fixed part. */
+  chosen?: boolean;
+  /** This part's OWN product's tag copy (r10 S4), not the host's. */
+  price_tag_description?: string | null;
+}
+
+/**
+ * What one TAG draws with (D3, S3).
+ *
+ * One row per tag rather than per line since S3: `line_id` still says which
+ * line asked for it, and `tag_id` is what the document, the rail and the
+ * resolved-data map key on.
+ */
 export interface LineTagData {
+  tag_id: string;
   line_id: string;
+  /** "1a", "1b" - line index plus a letter. Never an id (AC-X-2). */
+  tag_label: string;
+  /** Groups this tag has NOT resolved. Empty once marketing splits or picks. */
+  open_groups: TagOpenGroup[];
+  /** Every product a slot on this tag may point at, in part order (r10 S6):
+   *  the line's fixed parts plus EVERY candidate of every choice group, not
+   *  only the one this tag chose. Empty for a bare product. */
+  parts: TagPartData[];
+  /** The parts this tag itself prints - fixed parts plus its own chosen
+   *  candidate - which is what `set_members` and Tag total add up (r10 S6).
+   *  Absent on a row pinned before r10, where `parts` was already this list,
+   *  so readers fall back to `parts` (AC-S6-11). */
+  own_parts?: TagPartData[];
   code: string;
   name: string;
   dimensions: string;
@@ -547,6 +675,16 @@ export interface LineTagData {
   /** One line per set member, already formatted. Empty for a product line. */
   set_members: string;
   images: TagImage[];
+  /** The parent host's OWN price, alone - never the roll-up. Read by
+   *  `subjectPart: -1` (D7, AC-S4-4): the parent alone is a different figure
+   *  from `list_price`/`sell_price` below the moment a combo has priced
+   *  parts. Optional so an older pinned/cached row (pre-D7) still renders -
+   *  `productFromLineParent` falls back to subtracting `parts[]` from the
+   *  roll-up when absent. */
+  parent_list_price?: number | null;
+  /** Offer under the line's promotion, or null with none - the parent's own
+   *  half of `parent_list_price` above. */
+  parent_sell_price?: number | null;
   list_price: number | null;
   sell_price: number | null;
   show_promo_price: boolean;
@@ -554,6 +692,11 @@ export interface LineTagData {
   quantity: number;
   /** Null for a set line - a set has no barcode of its own (S7). */
   barcode: string | null;
+  /** The line's own currency (AC-A11). Optional, see `ProductTagData.currency`. */
+  currency?: string;
+  /** Staff-authored tag copy (r10 S4). Null for a set line - a set has no
+   *  description of its own, same rule as barcode above. */
+  price_tag_description?: string | null;
 }
 
 /** A binding's resolved data, whichever kind of thing it points at. */
@@ -649,7 +792,11 @@ export function defaultPriceBadgeProps(
     // The flyer's promotional block is white on red. A list-only badge paints
     // no box, so the fill only shows once somebody switches it to promo.
     fill: '#d32f2f',
-    textColor: '#ffffff',
+    // D22/B1 (security review): list_only prints its amount straight onto
+    // the tag's own background, which is what '#000000' has always drawn
+    // for it - white would be invisible there. promo is white-on-red, so
+    // its own default stays white.
+    textColor: variant === 'promo' ? '#ffffff' : '#000000',
     cornerRadius: 2,
     showNett: true,
   };

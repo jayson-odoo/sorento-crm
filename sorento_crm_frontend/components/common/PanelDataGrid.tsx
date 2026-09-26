@@ -53,10 +53,13 @@ export function PanelDataGrid<TRow extends object>({
   emptyBody,
   emptyAction,
   onRowClick,
+  rowClassName,
+  rowAttributes,
   searchPlaceholder,
   searchOf,
   renderGroupHeader,
   sortable = false,
+  onSortedRowsChange,
   rowSelection,
   onRowSelectionChange,
   enableRowSelection,
@@ -65,6 +68,9 @@ export function PanelDataGrid<TRow extends object>({
   pageSize = 10,
   paginate = true,
   scrollerMaxHeight,
+  pageResetKey,
+  focusRowId,
+  focusRequestKey,
 }: {
   /**
    * A plain heading, or a heading with an embedded link (e.g. the record's own number).
@@ -90,6 +96,16 @@ export function PanelDataGrid<TRow extends object>({
   emptyBody?: string;
   emptyAction?: React.ReactNode;
   onRowClick?: (row: TRow) => void;
+  /**
+   * Extra classes layered onto a row (the same idiom `DataGrid`'s own `rowClassName`
+   * already gives the top-level listings, e.g. a picker tinting the rows a clicked
+   * week fell in) - the PO lightbox uses it to highlight the line an opening row's
+   * link actually sits on.
+   */
+  rowClassName?: (row: TRow) => string | undefined;
+  /** Extra DOM attributes for a row, alongside `rowClassName` - kept separate so a test
+   * asserting a row's identity does not have to assert a CSS class string to do it. */
+  rowAttributes?: (row: TRow) => Record<string, string | undefined>;
   /** Shown in the search box. Omit both search props for a list too short to need one. */
   searchPlaceholder?: string;
   /**
@@ -114,6 +130,14 @@ export function PanelDataGrid<TRow extends object>({
    * asked for one. The initial order is always the order the caller passed.
    */
   sortable?: boolean;
+  /**
+   * The rows in the grid's own live order - sorted, then filtered, never paginated - each time
+   * that order changes (Should fix 3, review round 1, PR #1218 S3). OPTIONAL: a caller whose
+   * own bulk action has to claim contested stock in the order the reader currently SEES has no
+   * other way to read that order back, since `sorting` is this grid's own state. Omitted by
+   * every other panel, which never asked for it.
+   */
+  onSortedRowsChange?: (rows: TRow[]) => void;
   /**
    * Row selection, for a panel that offers bulk actions.
    *
@@ -157,6 +181,40 @@ export function PanelDataGrid<TRow extends object>({
    * default bounded, sticky-header scroller like every other list.
    */
   scrollerMaxHeight?: string | false;
+  /**
+   * Reset the page to 1 when this value changes.
+   *
+   * OPTIONAL, for a caller that filters `rows` itself before handing them
+   * here (no `searchOf`): this grid's own search box resets the page on
+   * every keystroke, but a parent-side filter changes `rows`' CONTENTS, not
+   * a value this component can see, so typing on page 3 would otherwise show
+   * whatever landed on page 3 of the new matches instead of the top ones.
+   * Pass the parent's own filter key (its search text, its dropdown value,
+   * or both joined) and a change resets the page the same way. Omit it for a
+   * grid with no external filter, or one that filters through `searchOf`,
+   * which already resets itself.
+   */
+  pageResetKey?: string;
+  /**
+   * Jump to the PAGE holding this row id (`getRowId`'s own id), in the row order paging
+   * itself already reads - sorted, then filtered, before pagination slices it. A caller
+   * whose own link names a row rather than a page (`FulfilmentBoardPanel`'s left-out banner,
+   * board-confirm-left-out AC-5) sets this instead of computing a page index by hand, which
+   * would need to duplicate whatever sort this grid is currently under.
+   */
+  focusRowId?: string | null;
+  /**
+   * Review round 2 Should fix 1 (R16): re-fire the jump above for the SAME
+   * `focusRowId`, on demand. `jumpedFocusToken` below only skips a jump it has
+   * already made for a given id - correct for a `focusRowId` that changes, but a
+   * "Go to" button always names the same highlighted line, so a second press
+   * after the reader had paged away did nothing at all (the id had not changed,
+   * so the guard fired). Bump a counter (or any other value) on every press and
+   * pass it here; a change clears the guard so the jump effect runs again even
+   * though `focusRowId` itself is unchanged. Omit it for a caller with nothing
+   * to re-press, which keeps today's once-per-id behaviour exactly as it is.
+   */
+  focusRequestKey?: string | number;
 }) {
   const [pagination, setPagination] = React.useState<PaginationState>({
     pageIndex: 0,
@@ -171,13 +229,52 @@ export function PanelDataGrid<TRow extends object>({
     return rows.filter((row) => searchOf(row).toLowerCase().includes(needle));
   }, [rows, search, searchOf]);
 
+  const pageCount = paginate ? Math.ceil(filtered.length / pagination.pageSize) || 0 : 1;
+  // Clamped for THIS render, not in an effect: a row removal (a save, a
+  // Confirm refetch) can leave `pageIndex` past the last page that still
+  // exists, and an effect would still commit one paint at the stale index
+  // first - showing "No data available" before it lands.
+  const lastPageIndex = Math.max(0, pageCount - 1);
+  const tablePagination: PaginationState = paginate
+    ? { ...pagination, pageIndex: Math.min(pagination.pageIndex, lastPageIndex) }
+    : pagination;
+
+  // The render clamp above is only a PAINT: `pagination` (the real state
+  // `table.previousPage()`/`nextPage()` step from) is still left at the
+  // stale index, so a previous-page press after a shrink computes its new
+  // page from the wrong number and looks like a dead click. Persist the
+  // same clamp into state once the render settles, so they agree again.
+  React.useEffect(() => {
+    if (!paginate) return;
+    if (pagination.pageIndex > lastPageIndex) {
+      setPagination((current) => ({ ...current, pageIndex: lastPageIndex }));
+    }
+  }, [paginate, lastPageIndex, pagination.pageIndex]);
+
+  // A parent-side filter (see `pageResetKey`'s doc) resets the page by
+  // changing this value instead of `rows`. Skips the render that mounts it,
+  // since page 0 is already where a fresh mount starts.
+  const isFirstPageResetRender = React.useRef(true);
+  React.useEffect(() => {
+    if (isFirstPageResetRender.current) {
+      isFirstPageResetRender.current = false;
+      return;
+    }
+    setPagination((current) => ({ ...current, pageIndex: 0 }));
+  }, [pageResetKey]);
+
   const table = useReactTable({
     columns: columns as ColumnDef<TRow, unknown>[],
     data: filtered,
-    pageCount: paginate ? Math.ceil(filtered.length / pagination.pageSize) || 0 : 1,
+    pageCount,
     getRowId,
+    // TanStack's own default resets `pageIndex` to 0 on every new `data`
+    // reference (a draft save, a Confirm refetch) even though the reader
+    // never touched the page - see PLAN-panel-datagrid-keep-page.md. The
+    // render-time clamp above is the only reset this grid wants for that.
+    autoResetPageIndex: false,
     state: {
-      pagination,
+      pagination: tablePagination,
       ...(sortable ? { sorting } : {}),
       ...(rowSelection ? { rowSelection } : {}),
       ...(expanded === undefined ? {} : { expanded }),
@@ -207,6 +304,71 @@ export function PanelDataGrid<TRow extends object>({
     columnResizeMode: 'onChange',
   });
 
+  // Should fix 3 (review round 1): sorted, then filtered, never paginated - the same order
+  // `focusRowId` above already reads paging by. Fires only when a caller asked for it.
+  // `getSortedRowModel()`'s own ROWS are TanStack's memoized reference (stable while nothing
+  // sorting-relevant moved), so deriving off THAT rather than re-mapping on every render is
+  // what keeps this from re-firing, and re-rendering the caller, every single paint.
+  const sortedRows = sortable ? table.getSortedRowModel().rows : null;
+  const sortedOriginals = React.useMemo(
+    () => (sortedRows ? sortedRows.map((row) => row.original) : filtered),
+    [sortedRows, filtered],
+  );
+  React.useEffect(() => {
+    onSortedRowsChange?.(sortedOriginals);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sortedOriginals]);
+
+  /**
+   * Which `focusRowId` (paired with the `focusRequestKey` it fired under) the jump
+   * below has already fired for, so a re-render (or a later arrival, S5 just below)
+   * does not repeat it - the same ref shape the list's own scroll effect uses
+   * (`FulfilmentBoardListView`, S3). Review round 2 Should fix 1 (R16): the token
+   * carries `focusRequestKey` alongside the id, not the id alone - a "Go to" button
+   * always names the SAME `focusRowId`, so without the request key a second press
+   * after the reader had paged away matched this guard and did nothing at all.
+   */
+  const jumpedFocusToken = React.useRef<string | null>(null);
+
+  // `getPrePaginationRowModel` is filtered-then-sorted, exactly what paging itself slices -
+  // no second implementation of sorting here, and it stays right if a column is later sorted
+  // ascending/descending while a jump is pending.
+  //
+  // DECLARED AFTER the `pageResetKey` effect above (nit, fix round 2 review): React runs one
+  // component's own `useEffect`s in DECLARATION order on a commit where both fire - `focusKey`
+  // and `pageResetKey` (a parent-side search clearing, `FulfilmentBoardListView`'s own B1 fix)
+  // can change in the SAME commit, and the pageReset effect's `setPagination(... pageIndex: 0)`
+  // would otherwise win the race and strand the jump on page 1. Declared after it, THIS one's
+  // `setPagination` is the later call in that flush, so its target page is what survives.
+  //
+  // S5 (fix round 3, reviewer): `filtered` is an explicit dependency, not `focusRowId` alone -
+  // a row named before the CALLER'S OWN data caught up to it (a fresher board read landing a
+  // beat after the click that asked for it) used to leave the page at 0 forever: `focusRowId`
+  // itself never changed again, so nothing re-ran this once the row actually arrived.
+  // `index === -1` returns WITHOUT touching the ref, so the NEXT render that changes
+  // `filtered` gets another try; the ref is only set once a page is actually chosen, so a row
+  // already on the right page from the start does not re-jump on every unrelated data refresh.
+  React.useEffect(() => {
+    if (!focusRowId) {
+      jumpedFocusToken.current = null;
+      return;
+    }
+    // Should fix 1 (R16): `focusRequestKey` joins the token, so bumping it alone -
+    // `focusRowId` unchanged - is itself a reason to re-run this effect and jump
+    // again, the way a genuinely new `focusRowId` already did.
+    const token = `${focusRowId}::${focusRequestKey ?? ''}`;
+    if (!paginate || jumpedFocusToken.current === token) return;
+    const rows = table.getPrePaginationRowModel().rows;
+    const index = rows.findIndex((row) => row.id === focusRowId);
+    if (index === -1) return;
+    jumpedFocusToken.current = token;
+    const targetPage = Math.floor(index / pagination.pageSize);
+    setPagination((current) =>
+      current.pageIndex === targetPage ? current : { ...current, pageIndex: targetPage },
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusRowId, filtered, focusRequestKey]);
+
   return (
     <DataGrid
       table={table}
@@ -223,6 +385,8 @@ export function PanelDataGrid<TRow extends object>({
         scrollerMaxHeight,
       }}
       onRowClick={onRowClick}
+      rowClassName={rowClassName}
+      rowAttributes={rowAttributes}
       renderGroupHeader={renderGroupHeader as never}
     >
       <Card>

@@ -9,10 +9,13 @@
  * (D11), and the screen renders them verbatim. Anything in this file that produced prose
  * out of `facts` would be the frontend quietly inventing an account of what the bot did.
  */
+import { extractTurnAttachments, type TurnAttachment } from '@/components/chatbot/TurnAttachments';
 import type {
   BranchKind,
   ChatbotTurn,
+  ChatbotTurnMedia,
   TurnStage,
+  TurnStageRecord,
   TurnTraceRecord,
 } from './types/chatbotTurn.types';
 import { TURN_STAGES } from './types/chatbotTurn.types';
@@ -40,7 +43,11 @@ const OFF_TIMELINE_STAGE_LABELS: Record<string, string> = {
   delegated: 'Handover',
 };
 
-export function stageLabel(stage: string): string {
+export function stageLabel(stage: string | null | undefined): string {
+  // A trace entry with no stage is a sub-event that slipped past the stage filter, not a
+  // stage nobody named. Returning a word beats taking the whole page down with the error
+  // boundary, which is what an unguarded `stage.replace` did.
+  if (!stage) return 'Unknown';
   return (
     STAGE_LABELS[stage as TurnStage] ??
     OFF_TIMELINE_STAGE_LABELS[stage] ??
@@ -63,6 +70,7 @@ const LANE_WORDS: Record<BranchKind, string> = {
   stock_denied: 'Stock access refused',
   demand_qty: 'Asked for a quantity',
   business_query: 'Business query',
+  media_denied: 'Media refused',
 };
 
 export function laneWords(branchKind: BranchKind | null): string {
@@ -136,7 +144,7 @@ export function shortTurnId(id: string): string {
 }
 
 export type TimelineRow =
-  | { kind: 'stage'; record: TurnTraceRecord; label: string }
+  | { kind: 'stage'; record: TurnStageRecord; label: string }
   | { kind: 'not-reached'; labels: string[] };
 
 /**
@@ -147,9 +155,19 @@ export type TimelineRow =
  * in the timeline it appeared as a second "Sent" row, which reads as a rendering fault
  * rather than as a record of what someone did, so notes come out here and the panel prints
  * them under the timeline instead.
+ *
+ * A sub-event (`kind` of `tool`, `crossdomain`, `reveals`, `decay`, `focus`,
+ * `open_question`) rides the same array and has NO `stage`. Filtering on `kind !== 'note'`
+ * let one through as a timeline row, and `stageLabel(undefined)` then took the page down.
+ * So: a stage record is one with no `kind` AND a `stage`, the same split the backend's own
+ * reader makes (`app/services/chatbot/trace_detail.py::_stage_records`).
  */
-export function stageRecords(turn: ChatbotTurn): TurnTraceRecord[] {
-  return turn.trace.filter((record) => record.kind !== 'note');
+export function isStageRecord(record: TurnTraceRecord): record is TurnStageRecord {
+  return record.kind === undefined && typeof record.stage === 'string';
+}
+
+export function stageRecords(turn: ChatbotTurn): TurnStageRecord[] {
+  return turn.trace.filter(isStageRecord);
 }
 
 /** The notes, oldest first. Rendered as footer lines, never as timeline rows. */
@@ -279,11 +297,38 @@ export function memoryChips(record: TurnTraceRecord | undefined): MemoryChip[] {
 }
 
 /** The Remembered record, when the turn got that far. */
-export function rememberedRecord(turn: ChatbotTurn): TurnTraceRecord | undefined {
-  return turn.trace.find((r) => r.stage === 'remembered');
+export function rememberedRecord(turn: ChatbotTurn): TurnStageRecord | undefined {
+  return turn.trace.filter(isStageRecord).find((r) => r.stage === 'remembered');
 }
 
 /** AC-253: manual retry is the only retry, and only from a failed turn (R4). */
 export function canRetry(turn: ChatbotTurn): boolean {
   return turn.status === 'failed';
 }
+
+/**
+ * The files a `send_attachments` action would send, or `[]` when the turn's response
+ * carries none. Thin wrapper over the shared extractor
+ * (`components/chatbot/turnAttachments.ts`) - the chatbot console reads the identical
+ * `actions[]` shape off its own `ConsoleTurnResponse`, so the extraction itself lives
+ * in one place rather than two screens reading the same wire shape two different ways.
+ */
+export function turnAttachments(turn: ChatbotTurn): TurnAttachment[] {
+  return extractTurnAttachments(turn.response?.actions);
+}
+
+/**
+ * A `media_denied` turn stops before the parser ever ran (chatbot media-into-turn,
+ * S2), so the transcript bubble renders as a plain reply - no thumbnail, no chip -
+ * even when the turn still carries a `media` block recording what was denied.
+ */
+export function isMediaDenied(turn: ChatbotTurn): boolean {
+  return turn.branch_kind === 'media_denied';
+}
+
+/** The chip on an image bubble ("Read N items"). Voice turns get no count chip - the
+ *  transcript itself is the reveal. */
+export function mediaReadCount(media: ChatbotTurnMedia): number {
+  return media.entities.length;
+}
+

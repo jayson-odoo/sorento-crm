@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import importlib.util
 from datetime import datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 
 from sqlalchemy import text
@@ -111,9 +112,16 @@ def test_a_rejected_row_is_left_exactly_as_it_is(api):
 
 
 def test_an_already_acknowledged_row_is_untouched(api):
+    """This migration's own scope is `ack_state = 'awaiting'` - what this fixture forces
+    is the pre-existing acknowledged case its WHERE clause has to leave alone, not a claim
+    about how a fresh raise reads today (`PLAN-oi-confirm-per-so.md` S1 makes that
+    `awaiting` again)."""
     _client, world = api
     row = _raise_one_row(api)["row"]
-    assert row.ack_state == ACK_ACKNOWLEDGED, "born acknowledged already"
+    row.ack_state = ACK_ACKNOWLEDGED
+    row.acknowledged_by = world.buyer
+    row.acknowledged_at = datetime.utcnow() - timedelta(days=3)
+    world.db.commit()
     stamped_by, stamped_at = row.acknowledged_by, row.acknowledged_at
 
     _run_upgrade(world.db)
@@ -161,17 +169,34 @@ def test_a_legacy_confirmed_rows_links_are_frozen_manual_before_the_backfill(api
     could re-deal or retire a document a real Confirm press already promised. The
     migration must flip those links to `auto = false` before it runs the ack_state
     backfill.
+
+    Reversal (review round 4 Blocking 1, `PLAN-oi-links-autocount-truth-24sep.md` S3):
+    since this lane the raise-time cascade writes a SUGGESTED link, never a real one, so
+    `_raise_one_row` alone no longer produces the `order_inquiry_links` row this migration
+    acts on. The legacy real link this migration exists to freeze predates S3 by
+    definition (prod data written before this lane deployed), so the fixture writes it
+    directly here - the exact shape (`auto = true`, on an already-acknowledged,
+    actor-attributed row) the migration's own WHERE clause matches, whoever wrote it.
     """
     _client, world = api
-    _po, _po_line = _open_po_line(world, qty=50)
+    _po, po_line = _open_po_line(world, qty=50)
     fixture = _raise_one_row(api, qty="10")
     row = fixture["row"]
-    links = world.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row.id).all()
-    assert links, "the raise-time cascade has to have linked it for this test to mean anything"
-    assert all(link.auto for link in links), "cascade links start auto=True"
+    link = OrderInquiryLink(
+        company_id=world.company_id,
+        row_id=row.id,
+        po_line_id=po_line.id,
+        qty=Decimal("10"),
+        auto=True,
+    )
+    world.db.add(link)
+    world.db.commit()
 
     # Simulate a genuine PRE-S1 human Confirm press: acknowledged by a real actor, before
-    # this migration ever ran (the shape `acknowledged_by IS NOT NULL` identifies).
+    # this migration ever ran (the shape `acknowledged_by IS NOT NULL` identifies). A
+    # fresh raise is born `awaiting` again (`PLAN-oi-confirm-per-so.md` S1), so `ack_state`
+    # is forced here too - this migration's own WHERE clause reads it literally.
+    row.ack_state = ACK_ACKNOWLEDGED
     row.acknowledged_by = world.buyer
     row.acknowledged_at = datetime.utcnow() - timedelta(days=3)
     world.db.commit()
@@ -196,11 +221,25 @@ def test_a_fresh_born_acknowledged_rows_links_are_left_alone(api):
     touched. `acknowledged_by IS NOT NULL` alone would ALSO match a fresh S1 row born
     acknowledged under the confirming actor (`_handshake_for_raise`'s own attribution) -
     but that ordering never happens in practice: this migration runs once, at deploy, over
-    rows the OLD code wrote, and the old code never attributed a fresh raise to anybody."""
+    rows the OLD code wrote, and the old code never attributed a fresh raise to anybody.
+
+    Reversal (review round 4 Blocking 1, S3): the raise-time cascade no longer writes a
+    real link at all (a suggestion instead, with no `auto` field to pin), so the legacy
+    real link this migration's WHERE clause is proven NOT to touch is written directly
+    here, the same way the frozen-manual test above now has to.
+    """
     _client, world = api
-    _po, _po_line = _open_po_line(world, qty=50)
+    _po, po_line = _open_po_line(world, qty=50)
     fixture = _raise_one_row(api, qty="10")
     row = fixture["row"]
+    link = OrderInquiryLink(
+        company_id=world.company_id,
+        row_id=row.id,
+        po_line_id=po_line.id,
+        qty=Decimal("10"),
+        auto=True,
+    )
+    world.db.add(link)
     row.acknowledged_by = None
     world.db.commit()
 

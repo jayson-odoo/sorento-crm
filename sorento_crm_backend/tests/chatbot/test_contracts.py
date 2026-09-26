@@ -14,19 +14,28 @@ from __future__ import annotations
 import ast
 import re
 from pathlib import Path
+from typing import Any
+
+import pytest
+from pydantic import ValidationError
 
 from app.services.chatbot import contracts
+from app.services.chatbot.lanes.escalation import ESCALATION_TEAMS
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 PACKAGE = BACKEND_ROOT / "app" / "services" / "chatbot"
 CONTRACTS_FILE = PACKAGE / "contracts.py"
+# AC-1594: SUGGESTED_TEAMS moved out of contracts.py to lanes/escalation.py -
+# escalation-lane vocabulary, not domain data (that file's own comment explains why).
+# Its OWN canonical declaration must not be flagged as a duplicate of itself.
+ESCALATION_FILE = PACKAGE / "lanes" / "escalation.py"
 
 # The vocabularies AC-109 names, plus the ones the engine itself owns.
 VOCABULARIES = {
     "MESSAGE_TYPES": contracts.MESSAGE_TYPES,
     "INTENT_HINTS": contracts.INTENT_HINTS,
     "DOMAIN_HINTS": contracts.DOMAIN_HINTS,
-    "SUGGESTED_TEAMS": contracts.SUGGESTED_TEAMS,
+    "SUGGESTED_TEAMS": ESCALATION_TEAMS,
     "SUGGESTED_AGENTS": contracts.SUGGESTED_AGENTS,
     "ENTITY_HINTS": contracts.ENTITY_HINTS,
     "SELECTION_CONTEXTS": contracts.SELECTION_CONTEXTS,
@@ -44,7 +53,7 @@ def test_every_vocabulary_is_non_empty_and_unique() -> None:
         assert len(set(values)) == len(values), f"{name} has a duplicate member"
 
 
-def test_branch_kinds_are_the_thirteen_the_router_decides() -> None:
+def test_branch_kinds_are_the_fourteen_the_router_decides() -> None:
     assert set(contracts.BRANCH_KINDS) == {
         "access_denied",
         "escalate_offer",
@@ -59,6 +68,9 @@ def test_branch_kinds_are_the_thirteen_the_router_decides() -> None:
         "stock_denied",
         "demand_qty",
         "business_query",
+        # PLAN-chatbot-media-into-turn.md, S2: a media turn that is denied, failed,
+        # or outlived its sync wait closes here - no parser call, no LLM.
+        "media_denied",
     }
 
 
@@ -67,7 +79,7 @@ def test_tag_only_branch_kinds_are_a_subset_of_branch_kinds() -> None:
 
 
 def _package_sources() -> list[Path]:
-    return [p for p in PACKAGE.rglob("*.py") if p != CONTRACTS_FILE]
+    return [p for p in PACKAGE.rglob("*.py") if p not in (CONTRACTS_FILE, ESCALATION_FILE)]
 
 
 def test_no_second_copy_of_any_vocabulary_lives_in_the_package() -> None:
@@ -121,3 +133,50 @@ def test_contracts_is_the_only_module_declaring_a_literal_of_these_names() -> No
     assert not declared, (
         "a Literal vocabulary is declared outside contracts.py: " + ", ".join(sorted(declared))
     )
+
+
+class TestEnvelopeContactIdWireShape:
+    """The respond.io contact id is a NUMBER in the webhook body, and the Envelope
+    keeps it that way.
+
+    Pinned after #874: the lane fed `ctx.contact.id` into a `contact_id: str`
+    schema field raw and every `business_query` turn in production threw
+    `contact_id  Input should be a valid string ... input_type=int`. The repair
+    stringifies at the two seams that need a string (the resolve body, and the
+    text columns the engine writes), NOT here - stringifying on the way in would
+    hide the wire shape from every test again and re-open exactly this hole.
+    """
+
+    @staticmethod
+    def _payload(contact_id: Any) -> dict[str, Any]:
+        return {
+            "contact": {"id": contact_id, "firstName": "ZZT", "custom_fields": []},
+            "message": {
+                "event_type": "message.received",
+                "contact": {"id": contact_id},
+                "message": {
+                    "messageId": "ZZT-msg-wire-1",
+                    "contactId": contact_id,
+                    "channelId": "whatsapp",
+                    "traffic": "incoming",
+                    "message": {"type": "text", "text": "price for SRTWC8517"},
+                },
+            },
+        }
+
+    def test_an_integer_contact_id_is_accepted_and_stays_an_integer(self) -> None:
+        envelope = contracts.Envelope(**self._payload(437264483))
+
+        assert envelope.contact["id"] == 437264483
+        assert isinstance(envelope.contact["id"], int)
+
+    def test_a_string_contact_id_is_still_accepted_unchanged(self) -> None:
+        envelope = contracts.Envelope(**self._payload("ZZT-contact-1"))
+
+        assert envelope.contact["id"] == "ZZT-contact-1"
+
+    def test_a_missing_or_empty_contact_id_is_still_refused(self) -> None:
+        for missing in (None, ""):
+            with pytest.raises(ValidationError) as excinfo:
+                contracts.Envelope(**self._payload(missing))
+            assert "contact.id is required" in str(excinfo.value)

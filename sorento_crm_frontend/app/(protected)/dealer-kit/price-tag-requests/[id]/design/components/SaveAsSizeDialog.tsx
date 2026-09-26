@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import type { SheetGridConfig } from '@/lib/dealer-kit/request-tags';
 import { useCreateTagSize } from '../../../../tag-sizes/hooks/useTagSizes';
 
 interface Props {
@@ -27,9 +28,12 @@ interface Props {
   onOpenChange: (open: boolean) => void;
   width_mm: number;
   height_mm: number;
+  /** The per-A4 grid typed for this size this session, if any (S7,
+   *  AC-S7-14) - carried onto the new preset in the same create call. */
+  sheetGrid?: SheetGridConfig | null;
 }
 
-export function SaveAsSizeDialog({ open, onOpenChange, width_mm, height_mm }: Props) {
+export function SaveAsSizeDialog({ open, onOpenChange, width_mm, height_mm, sheetGrid }: Props) {
   const [name, setName] = useState('');
   const [error, setError] = useState<string | null>(null);
   const createMutation = useCreateTagSize();
@@ -43,7 +47,14 @@ export function SaveAsSizeDialog({ open, onOpenChange, width_mm, height_mm }: Pr
   const submit = async () => {
     setError(null);
     try {
-      await createMutation.mutateAsync({ name: name.trim(), width_mm, height_mm });
+      await createMutation.mutateAsync({
+        name: name.trim(),
+        width_mm,
+        height_mm,
+        ...(sheetGrid
+          ? { sheet_cols: sheetGrid.cols, sheet_rows: sheetGrid.rows, sheet_turn: sheetGrid.turn }
+          : {}),
+      });
       onOpenChange(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save this size');

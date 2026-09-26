@@ -428,6 +428,12 @@ class Component:
     #: The day it lands: the SPO's arrival, or a PO line's `issue_date + lead time` (R29).
     #: This is the option's `fulfil_date` for step 3 and the date inside its sentence.
     arrival_date: Optional[date] = None
+    #: R7: `"own_arrival"` on a `RESERVE` born from the own-arrival credit (goods that
+    #: physically landed for THIS line, or the rest of its own order) - `None` on every
+    #: other component, including an ordinary `group_take` Reserve. What `set_row_decision`
+    #: reads to refuse a Buy amend over it, and what the board's own per-source dict tags
+    #: on the wire so the cell can show "Received N (own arrival)".
+    source: Optional[str] = None
 
     @property
     def stated(self) -> str:
@@ -764,6 +770,21 @@ def group_take_reason(
     )
 
 
+def _own_arrival_reason(location: str, qty: Decimal, document: Optional[str]) -> str:
+    """R7: why an own-arrival Reserve gives this much - goods that landed FOR this line
+    (or the rest of its own order), named by the document they came off, taken before
+    the ordinary group-take draw.
+
+    R7 follow-up (`PLAN-r7-landed-reads-spo-received.md`, R1/R3): that document is the
+    SPO the goods physically landed on, never the PO - a PO line's own `qty_received` is
+    the AutoCount TRANSFER onto a shipping order, not a receipt - so no "PO" noun is said
+    of it.
+    """
+    if document:
+        return f"{qty_text(qty)} landed for this line on {document}, taken first at {location}"
+    return f"{qty_text(qty)} landed for this line, taken first at {location}"
+
+
 def _cross_group_borrow_reason(location: str, qty: Decimal) -> str:
     """v4's sentence, kept for reading FROZEN snapshots that still carry the retired rung.
 
@@ -987,6 +1008,12 @@ def _remainder_buy_reason(covered: Decimal, remainder: Decimal) -> str:
     )
 
 
+#: R7: `walk_line`'s own private sentinel for "the own-arrival credit alone covered the
+#: whole remainder" - NOT a sixth wire step (the options contract above stays five steps;
+#: the credit is reported inside `use`'s own row). Never leaves this function.
+_STEP_OWN_ARRIVAL = "_own_arrival"
+
+
 # --------------------------------------------------------------------------- #
 # One line's composition (PLAN 3.2, amended by section E)
 # --------------------------------------------------------------------------- #
@@ -1024,6 +1051,11 @@ def walk_line(
     is_discontinued: bool = False,
     reorder_coverage_until: Optional[date] = None,
     group_take_candidates: Optional[Sequence[Mapping[str, Any]]] = None,
+    #: R7: the own-arrival credit candidate(s) - goods that already landed for this line
+    #: (or the rest of its own order) - drawn AHEAD of `group_take_candidates` and, unlike
+    #: them, allowed to cover PART of the line (R-C's own pattern, `pool_share`'s
+    #: exception). `use_candidates_for` builds it; a caller with none passes `None`.
+    own_arrival_candidates: Optional[Sequence[Mapping[str, Any]]] = None,
     other_group_candidates: Optional[Sequence[Mapping[str, Any]]] = None,
     #: R-M (3 Sep 2026): the OTHER groups the caller capped away entirely, and by how much
     #: their own whole open book is short. They send no candidate, so this is the only way
@@ -1183,30 +1215,52 @@ def walk_line(
     remainder = open_amount - share_qty
     need = remainder if remainder > ZERO else open_amount
 
+    # 0c. own_arrival - R7's own-arrival credit, ahead of the ordinary group-take draw.
+    #     A SECOND sub-unit beside pool_share (R-C): goods that already landed for this
+    #     line do not sit idle because the rest of the line has to be found somewhere else
+    #     - the credit is taken whatever PART of the line it covers, and only the rest asks
+    #     question 1 onward. Reported inside question 1's own row (rung GROUP_TAKE) rather
+    #     than a sixth step, because it IS that question's own answer, just never held back
+    #     to whole-or-nothing the way the ordinary draw is.
+    step_own_arrival = _Offer()
+    own_arrival_qty = ZERO
+    if remainder > ZERO and own_arrival_candidates:
+        _draw_group(step_own_arrival, own_arrival_candidates, need, group_code, group_offer)
+        own_arrival_qty = step_own_arrival.qty
+        # AC-S3-11: the credit is a claim ON the bin's pile, not a second pile beside it.
+        # What it just took comes OFF the ordinary group-take candidates at that same bin
+        # before question 1 reads them - otherwise a line needing 80, with 40 received for
+        # it and 40 on hand, is told Reserve 80 off a floor holding 40.
+        group_take_candidates = _less_drawn(group_take_candidates, step_own_arrival)
+    ladder_remainder = need - own_arrival_qty
+    ladder_need = ladder_remainder if ladder_remainder > ZERO else need
+
     # 1. use -----------------------------------------------------------------------------
     step_use = _Offer()
-    _draw_group(step_use, group_take_candidates, need, group_code, group_offer)
+    _draw_group(step_use, group_take_candidates, ladder_need, group_code, group_offer)
     _draw_other_groups(
-        step_use, other_group_candidates, need, group_code, other_group_short
+        step_use, other_group_candidates, ladder_need, group_code, other_group_short
     )
     offers[STEP_USE] = step_use
 
     # 2. order_borrow ---------------------------------------------------------------------
     offers[STEP_ORDER_BORROW] = _draw_order_borrow(
-        order_borrow_candidates, need, RUNG_ORDER_BORROW
+        order_borrow_candidates, ladder_need, RUNG_ORDER_BORROW
     )
 
     # 3. supply_borrow - the DOCUMENT a later order is waiting on, ONE document whole
     #    (R33). The caller has already chosen which document that is and refused every
     #    combination of two, so this walks one document's rows and nothing else.
-    offers[STEP_SUPPLY_BORROW] = _draw_supply_borrow(supply_borrow_candidates, need)
+    offers[STEP_SUPPLY_BORROW] = _draw_supply_borrow(supply_borrow_candidates, ladder_need)
 
     chosen: Optional[str] = None
     if remainder <= ZERO and share_qty > ZERO:
         chosen = STEP_POOL_SHARE
+    elif ladder_remainder <= ZERO and own_arrival_qty > ZERO:
+        chosen = _STEP_OWN_ARRIVAL
     else:
         for step in (STEP_USE, STEP_ORDER_BORROW, STEP_SUPPLY_BORROW):
-            if offers[step].qty >= remainder and offers[step].components:
+            if offers[step].qty >= ladder_need and offers[step].components:
                 chosen = step
                 break
         # R-L's SPILL IS GONE (R-N, 3 Sep 2026). It asked the other site pools here, after
@@ -1218,8 +1272,8 @@ def walk_line(
             # every free step and before Buy - and reported inside the first row, because
             # it is still the pool answering (R34). This half raises a debt; the free share
             # above does not.
-            borrowed = _draw_order_borrow(pool_borrow_candidates, remainder, RUNG_POOL)
-            if borrowed.qty >= remainder and borrowed.components:
+            borrowed = _draw_order_borrow(pool_borrow_candidates, ladder_remainder, RUNG_POOL)
+            if borrowed.qty >= ladder_remainder and borrowed.components:
                 for component in borrowed.components:
                     step_share.add(component)
                 # C8 (code review round 3 batch 2): the borrowed components go into
@@ -1312,21 +1366,33 @@ def walk_line(
         )
         buy = Component(
             kind=BUY,
-            qty=remainder,
+            qty=ladder_remainder,
             reason=(
-                _remainder_buy_reason(min(covered, remainder), remainder)
-                if share_qty > ZERO
+                _remainder_buy_reason(min(covered, ladder_remainder), ladder_remainder)
+                if share_qty > ZERO or own_arrival_qty > ZERO
                 else _whole_line_buy_reason(min(covered, open_amount), open_amount)
             ),
             rung=RUNG_BUY,
         )
         return Walk(
-            components=tuple(step_share.components) + (buy,), options=options
+            components=(
+                tuple(step_share.components) + tuple(step_own_arrival.components) + (buy,)
+            ),
+            options=options,
         )
     if chosen == STEP_POOL_SHARE:
         return Walk(components=tuple(step_share.components), options=options)
+    if chosen == _STEP_OWN_ARRIVAL:
+        return Walk(
+            components=tuple(step_share.components) + tuple(step_own_arrival.components),
+            options=options,
+        )
     return Walk(
-        components=tuple(step_share.components) + tuple(offers[chosen].components),
+        components=(
+            tuple(step_share.components)
+            + tuple(step_own_arrival.components)
+            + tuple(offers[chosen].components)
+        ),
         options=options,
     )
 
@@ -1385,6 +1451,48 @@ class _Offer:
             self.donor_required_date = component.donor_required_date
 
 
+def _less_drawn(
+    candidates: Optional[Sequence[Mapping[str, Any]]],
+    drawn: "_Offer",
+) -> Optional[Sequence[Mapping[str, Any]]]:
+    """`candidates` with what `drawn` already took off each bin's FLOOR subtracted
+    (AC-S3-11, 21 Sep 2026).
+
+    Used for one thing: the own-arrival credit (R7) is drawn ahead of question 1 off the
+    same physical bins question 1 is about, so the ordinary rung must not be offered those
+    units a second time. The WATER of a bin is left alone - a credit is landed stock, and
+    subtracting it from an incoming promise would net two different things against each
+    other.
+
+    Returns a new list; the caller's own candidates are never mutated (`use_candidates_for`
+    hands the same list to more than one reader).
+    """
+    if not candidates:
+        return candidates
+    left: Dict[str, Decimal] = {}
+    for component in drawn.components:
+        code = component.source_location
+        if not code:
+            continue
+        left[code] = left.get(code, ZERO) + component.qty
+    if not left:
+        return candidates
+    out: List[Mapping[str, Any]] = []
+    for candidate in candidates:
+        code = str(candidate.get("location") or "")
+        spend = left.get(code, ZERO)
+        if candidate.get("water") or spend <= ZERO:
+            out.append(candidate)
+            continue
+        qty = max(_dec(candidate.get("qty")), ZERO)
+        taken = min(qty, spend)
+        left[code] = spend - taken
+        if qty - taken <= ZERO:
+            continue
+        out.append({**candidate, "qty": qty - taken})
+    return out
+
+
 def _draw_group(
     offer: "_Offer",
     candidates: Optional[Sequence[Mapping[str, Any]]],
@@ -1408,11 +1516,14 @@ def _draw_group(
             continue
         take = min(left, capacity)
         water = bool(candidate.get("water"))
+        source = candidate.get("source")
+        is_own_arrival = source == "own_arrival"
         arrival = candidate.get("arrival_date") if water else None
         # Named only when the bucket turns out to be exactly one document (task 3);
         # `use_candidates_for` already decided that, so this reads its answer rather than
-        # guessing a second time.
-        document = candidate.get("supply_document") if water else None
+        # guessing a second time. R7's own-arrival candidate names its PO the same way,
+        # off the floor rather than the water.
+        document = candidate.get("supply_document") if (water or is_own_arrival) else None
         offer.add(
             Component(
                 kind=TIMELY_SPO if water else RESERVE,
@@ -1423,17 +1534,22 @@ def _draw_group(
                         late_days=int(candidate.get("late_days") or 0),
                     )
                     if water
-                    else group_take_reason(str(location), take, group_code, group_offer)
+                    else (
+                        _own_arrival_reason(str(location), take, document)
+                        if is_own_arrival
+                        else group_take_reason(str(location), take, group_code, group_offer)
+                    )
                 ),
                 source_location=str(location),
                 rung=RUNG_GROUP_TAKE,
+                source=source,
                 **(
                     {
                         "supply_key": candidate.get("supply_key"),
                         "supply_document": document,
                         "arrival_date": arrival,
                     }
-                    if water and document
+                    if document
                     else {}
                 ),
             ),

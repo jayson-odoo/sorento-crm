@@ -196,7 +196,21 @@ def escalate_catalog(
         include_response = False
 
     elif kind == "escalation_declined":
-        response = copy.render("escalation_declined")
+        # AC-1703's tail, captain's ruling 20 Sep 2026: a decline over a NON-escalation
+        # offer (a did-you-mean roster's own attached "would you like me to escalate"
+        # sentence, a detail offer) finishes on this SAME arm as an actual escalation
+        # decline, but gets R22(a)'s own short acknowledgement, never the generic
+        # "Escalation declined." line - that sentence names an escalation nobody asked
+        # for. `lane_parse_output` is the only place that knows which of the two this
+        # turn was (`apply`'s `trace.lane == "offer_declined"`), so the copy key is
+        # chosen off the flag it left on `ctx.parse.output`, not a second branch kind
+        # (main itself has no `branch_kind` wire concept - this is one arm choosing
+        # between two registry copies, the mechanical port of
+        # `lanes/business/__init__.py::_outstanding_offer_closed`'s own pre-existing
+        # distinction).
+        response = copy.render(
+            "offer_declined" if jsc.truthy(jsc.get(qf, "chatbot_declined_offer_copy")) else "escalation_declined"
+        )
         manual_response = True
         include_response = True
         is_escalate_offer = False  # -> cs-offer-gate FALSE -> straight to compile-state
@@ -237,13 +251,26 @@ def cs_offer_gate(
     raised a "please choose" picker must not ALSO raise a member picker, or the customer
     sees two numbered lists and their next number resolves against whichever the session
     happened to keep.
+
+    Hand pass 12, Group B2(a): the require-specific gate (`gate.require_specific`) is
+    only ONE of the shapes that raises a picker - a plain did-you-mean roster
+    (`build_suggest_offer`'s own `suggest_last_result_set`, spread onto `catalog` via
+    `lane_item = {**offer, "branch_kind": ...}`, `answer_bridge.answer_for`) raises one
+    too, and g4 never read it: turn 99c114fd's own reply printed the did-you-mean roster
+    (1-6) AND the member roster (restarting at 1) in one message, with `open_question`
+    left as `member_offer` - so a customer picking by the position the text had just
+    shown them could not even reach the did-you-mean roster. Checked directly on
+    `catalog` rather than threaded as a new parameter: `catalog` already carries it, and
+    `escalate_catalog` is the one function on this seam that has read `suggest_offer`
+    from the start (its own `not_found`-branch annotation).
     """
     routing = jsc.get(jsc.get(jsc.get(ctx, "parse"), "output") or {}, "routing") or {}
     g1 = jsc.get(catalog, "is_escalate_offer") is True
     g2 = jsc.get(routing, "suggested_team") == "customer_service"
     g3 = jsc.get(routing, "suggested_agent") == "order_enquiries"
     g4 = gate is None or jsc.get(gate, "require_specific") is not True
-    return g1 and g2 and g3 and g4
+    g4b = not jsc.truthy(jsc.get(catalog, "suggest_last_result_set"))
+    return g1 and g2 and g3 and g4 and g4b
 
 
 def build_outcome(

@@ -360,6 +360,12 @@ def test_product_tag_data_keeps_every_field(api):
         "offer_price",
         "promotion_id",
         "barcode",
+        "currency",
+        # r10 S11 (5ce3bd5d8): declared on `ProductTagData` too, so the
+        # template designer's own preview (bound to a bare product, not a
+        # request line) can resolve `{{product.price_tag_description}}`
+        # the same way the canvas already does off a line binding.
+        "price_tag_description",
     }
     assert body["code"] == product.product_code
     assert body["name"] == product.product_name
@@ -377,6 +383,9 @@ def test_product_tag_data_keeps_every_field(api):
     assert body["offer_price"] == 599.0
     assert body["promotion_id"] == promotion.id
     assert body["barcode"] == "1234567890123"
+    # AC-A12: `currency` rides the wire - `response_model` drops an
+    # undeclared field silently.
+    assert body["currency"] == "MYR"
 
 
 def test_unknown_product_is_404(api):
@@ -409,6 +418,7 @@ def test_product_set_tag_data_keeps_every_field(api):
         "list_price",
         "offer_price",
         "promotion_id",
+        "currency",
     }
     assert set(body["members"][0]) == {
         "product_id",
@@ -422,6 +432,8 @@ def test_product_set_tag_data_keeps_every_field(api):
         second.product_code,
     ]
     assert body["list_price"] == 1200.0
+    # AC-A12: the set row carries `currency` too (the first member's).
+    assert body["currency"] == "MYR"
 
 
 # ---------------------------------------------------------------------------
@@ -503,32 +515,57 @@ def test_resolve_prices_for_lines_returns_engine_prices(api):
         data={
             "debtor_name": "ZZT Dealer",
             "needed_by_date": date.today() + timedelta(days=7),
-            "promotion_id": promotion.id,
             # D5: price_mode drives show_promo_price on save, not the line
-            # payload.
+            # payload. D1 (S6): a promotion is a LINE fact - the header
+            # convenience is gone, and `_promotion` already covers this
+            # product with a `PromotionProduct` row.
             "price_mode": "selling",
             "lines": [
                 {
                     "line_type": "product",
                     "product_id": product.id,
                     "quantity": 1,
+                    "promotion_id": promotion.id,
                 }
             ],
         },
     )
+    # AC-A12 (code review 16 Sep): a resolved PART on this line, so the
+    # response's `parts[]` is not just an empty list - `diff_pin_against_live`
+    # and the resolver both walk a part's own product, and its currency has
+    # to ride the wire the same way the host's does.
+    from app.models.price_tag import PriceTagRequestLinePart
+
+    # `list_price="0.00"` so this part does not change the line's own rolled-up
+    # totals asserted below - only `parts[]` and its currency are new here.
+    part_product = _product(db, list_price="0.00")
+    db.add(
+        PriceTagRequestLinePart(
+            id=str(uuid.uuid4()),
+            line_id=request.lines[0].id,
+            product_id=part_product.id,
+            role="accessory",
+        )
+    )
     db.commit()
     line_id = request.lines[0].id
+    # The body is TAG ids since S3 (D3) - a line may print several tags, so a
+    # line id could no longer name one row. One tag per line exists from
+    # creation (`_add_lines`), so this line's first tag is the one to ask for.
+    tag_id = request.lines[0].tags[0].id
 
     with TestClient(app) as client:
         res = client.post(
             f"/api/v1/dealer-kit/price-tag-requests/{request.id}/resolve-prices",
-            json=[line_id],
+            json=[tag_id],
         )
 
     assert res.status_code == 200, res.text
     rows = res.json()
     assert len(rows) == 1
     row = rows[0]
+    assert row["tag_id"] == tag_id
+    # `line_id` still says which line asked for the tag.
     assert row["line_id"] == line_id
     assert row["code"] == product.product_code
     assert row["name"] == product.product_name
@@ -537,6 +574,195 @@ def test_resolve_prices_for_lines_returns_engine_prices(api):
     assert row["dimensions"] == "800 x 500 x 220 mm"
     assert row["spec_lines"] == "One line\nAnother line"
     assert row["barcode"] == "4567891234567"
+    # AC-A12: a line tag row carries `currency` too (response_model gate).
+    assert row["currency"] == "MYR"
+    # AC-A12: and so does each of the row's own `parts[]` entries.
+    assert len(row["parts"]) == 1
+    assert row["parts"][0]["currency"] == "MYR"
+
+
+# ---------------------------------------------------------------------------
+# AC-S4-13 (S11 browser check, phase 3, 21 Sep): `price_tag_description` is
+# computed by `tag_data_service` (see `test_dealer_kit_tag_data.py`'s
+# `test_ac_s4_4_resolve_tags_live_carries_price_tag_description_on_the_host`
+# / `..._part_row_carries_its_own_products_price_tag_description`, both
+# green) but `ResolvedLineData` and `TagPartData` - the response models THIS
+# route actually serializes through - never declare the field, so it never
+# reaches the wire. This is exactly the module docstring's own warning
+# ("FastAPI drops any field a response model does not declare, silently")
+# and it is the REAL, measured root cause of the S11 canvas defect: a text
+# layer bound to `{{product.price_tag_description}}` renders empty because
+# the designer never receives the raw template to render in the first
+# place - confirmed by curling this exact route against the lane stack for
+# a live request (`PT-202609-0018`, product `SRTKS8547`) and finding the key
+# entirely absent from every row and every part, even though `GET
+# /products/{id}` (a different route, a different schema) carries it.
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_prices_carries_price_tag_description_on_the_line_and_its_parts(api):
+    db, _as = api
+    from app.models.access import RespondContact
+    from app.models.price_tag import PriceTagRequestLinePart
+    from app.services.price_tag_request_service import PriceTagRequestService
+
+    product = _product(db)
+    product.price_tag_description = "{{product.name}} in {{spec.material}}"
+    part_product = _product(db, list_price="0.00")
+    part_product.price_tag_description = "{{product.code}} part"
+    db.flush()
+
+    contact = RespondContact(
+        id=str(uuid.uuid4()),
+        phone_number=f"+60{uuid.uuid4().hex[:9]}",
+        name=unique_code("contact"),
+    )
+    db.add(contact)
+    db.flush()
+
+    request = PriceTagRequestService.create_request(
+        db,
+        contact_id=contact.id,
+        company_id=SORENTO,
+        data={
+            "debtor_name": "ZZT Dealer",
+            "lines": [{"line_type": "product", "product_id": product.id, "quantity": 1}],
+        },
+    )
+    db.add(
+        PriceTagRequestLinePart(
+            id=str(uuid.uuid4()),
+            line_id=request.lines[0].id,
+            product_id=part_product.id,
+            role="accessory",
+        )
+    )
+    db.commit()
+    tag_id = request.lines[0].tags[0].id
+
+    with TestClient(app) as client:
+        res = client.post(
+            f"/api/v1/dealer-kit/price-tag-requests/{request.id}/resolve-prices",
+            json=[tag_id],
+        )
+
+    assert res.status_code == 200, res.text
+    row = res.json()[0]
+    assert row["price_tag_description"] == "{{product.name}} in {{spec.material}}", (
+        "the line's own price_tag_description must reach the wire - the "
+        "designer canvas has nothing to render a {{product.price_tag_"
+        "description}} token from otherwise"
+    )
+    assert len(row["parts"]) == 1
+    assert row["parts"][0]["price_tag_description"] == "{{product.code}} part", (
+        "a PART's own price_tag_description must reach the wire too, for a "
+        "layer with a subjectPart pointing at it"
+    )
+
+
+# ---------------------------------------------------------------------------
+# AC-S4-15 (S11 re-check, phase 3, 21 Sep): the test above only exercised a
+# FIXED `PriceTagRequestLinePart`. The real browser-observed shape is an
+# OPEN GROUP candidate (r10 S6) - a different branch of `_combo_products`
+# (`part.candidates`, not `part.product_id`) - so it is covered on the wire
+# separately here, chosen and non-chosen both.
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_prices_carries_price_tag_description_on_an_open_groups_candidates(
+    api,
+):
+    db, _as = api
+    from app.models.access import RespondContact
+    from app.models.product_combo import ProductCombo, ProductComboPart
+    from app.services.price_tag_request_service import PriceTagRequestService
+
+    cabinet = _product(db)
+    candidate_chosen = _product(db)
+    candidate_chosen.price_tag_description = "{{product.code}} CHOSEN"
+    candidate_other = _product(db)
+    candidate_other.price_tag_description = "{{product.code}} SIBLING"
+    combo = ProductCombo(
+        id=str(uuid.uuid4()), host_product_id=cabinet.id, name="ZZT combo", sort_order=0
+    )
+    db.add(combo)
+    db.flush()
+    for index, candidate in enumerate([candidate_chosen, candidate_other]):
+        db.add(
+            ProductComboPart(
+                id=str(uuid.uuid4()),
+                combo_id=combo.id,
+                part_product_id=candidate.id,
+                choice_group="Group",
+                sort_order=index,
+            )
+        )
+    db.flush()
+
+    contact = RespondContact(
+        id=str(uuid.uuid4()),
+        phone_number=f"+60{uuid.uuid4().hex[:9]}",
+        name=unique_code("contact"),
+    )
+    db.add(contact)
+    db.flush()
+
+    request = PriceTagRequestService.create_request(
+        db,
+        contact_id=contact.id,
+        company_id=SORENTO,
+        data={
+            "debtor_name": "ZZT Dealer",
+            "lines": [
+                {
+                    "line_type": "product",
+                    "product_id": cabinet.id,
+                    "combo_id": combo.id,
+                    "quantity": 1,
+                    "parts": [
+                        {
+                            "role": "Group",
+                            "candidates": [candidate_chosen.id, candidate_other.id],
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+    db.commit()
+    # D6: an open group of two candidates mints two tags - ask for the one
+    # whose `choices` names `candidate_chosen`.
+    tag = next(
+        t
+        for t in request.lines[0].tags
+        if str(candidate_chosen.id) in (t.choices or {}).values()
+    )
+
+    with TestClient(app) as client:
+        res = client.post(
+            f"/api/v1/dealer-kit/price-tag-requests/{request.id}/resolve-prices",
+            json=[tag.id],
+        )
+
+    assert res.status_code == 200, res.text
+    row = res.json()[0]
+    parts_by_code = {p["code"]: p for p in row["parts"]}
+    assert (
+        parts_by_code[candidate_chosen.product_code]["price_tag_description"]
+        == "{{product.code}} CHOSEN"
+    )
+    # The NON-chosen sibling still rides `parts` (the wide combo list, S6) -
+    # its own template must reach the wire too, chosen or not.
+    assert (
+        parts_by_code[candidate_other.product_code]["price_tag_description"]
+        == "{{product.code}} SIBLING"
+    )
+    own_by_code = {p["code"]: p for p in row["own_parts"]}
+    assert (
+        own_by_code[candidate_chosen.product_code]["price_tag_description"]
+        == "{{product.code}} CHOSEN"
+    )
+    assert candidate_other.product_code not in own_by_code
 
 
 # ---------------------------------------------------------------------------
@@ -575,15 +801,16 @@ def test_request_detail_lines_carry_code_name_and_prices(api):
         data={
             "debtor_name": "ZZT Dealer",
             "needed_by_date": date.today() + timedelta(days=7),
-            "promotion_id": promotion.id,
             # D5: price_mode drives show_promo_price on save, not the line
-            # payload.
+            # payload. D1 (S6): a promotion is a LINE fact - `_promotion`
+            # already covers this product with a `PromotionProduct` row.
             "price_mode": "selling",
             "lines": [
                 {
                     "line_type": "product",
                     "product_id": product.id,
                     "quantity": 1,
+                    "promotion_id": promotion.id,
                 }
             ],
         },
@@ -742,7 +969,9 @@ def test_print_payload_lines_carry_their_photos(api):
         },
     )
     db.flush()
-    line_id = request.lines[0].id
+    # `resolvedData` is keyed by TAG id since S3 (AC-S3-8), and one tag per line
+    # exists from creation - so the line's first tag is this row's key.
+    tag_id = request.lines[0].tags[0].id
 
     stem = unique_code("zzttag").lower()
     page = Page(
@@ -786,7 +1015,7 @@ def test_print_payload_lines_carry_their_photos(api):
 
     payload = resolve_tag_sheet_print_payload(db, download.id)
 
-    row = payload["resolvedData"][line_id]
+    row = payload["resolvedData"][tag_id]
     assert [img["attachment_id"] for img in row["images"]] == [photo.id]
     assert row["images"][0]["is_primary"] is True
     assert row["images"][0]["url"].startswith("https://")
@@ -924,7 +1153,8 @@ def test_print_payload_lines_carry_their_specs(api):
         },
     )
     db.flush()
-    line_id = request.lines[0].id
+    # Keyed by TAG id since S3 (AC-S3-8), same as the photos case above.
+    tag_id = request.lines[0].tags[0].id
 
     slug = unique_code("zztspec").lower()
     page = Page(
@@ -971,6 +1201,7 @@ def test_print_payload_lines_carry_their_specs(api):
     assert {
         "key": f"{stem}_material",
         "label": "Material",
-        "value": "ceramic",
+        # AC-S3-1 (r10): title-cased, like every other stored slug.
+        "value": "Ceramic",
         "unit": None,
-    } in payload["resolvedData"][line_id]["specs"]
+    } in payload["resolvedData"][tag_id]["specs"]

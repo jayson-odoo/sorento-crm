@@ -52,6 +52,13 @@ vi.mock('@/components/upload-activity', () => ({
   useImportJobDrawer: () => ({ notifyImportQueued: vi.fn() }),
 }));
 
+// ProductsList's AutoCount pull secondary action (PLAN-autocount-pull-review.md, SR2) calls
+// `useHasPermission`, which needs a NextAuth `<SessionProvider>` this file does not set up -
+// stub the whole hook at its own module rather than add a provider this suite has no use for.
+vi.mock('@/app/(protected)/system-management/import-jobs/autocount-pull/hooks/useAutocountPull', () => ({
+  useAutocountPullAction: () => ({ visible: false, label: '', onSelect: () => {} }),
+}));
+
 import ProductsList from './ProductsList';
 
 function renderList() {

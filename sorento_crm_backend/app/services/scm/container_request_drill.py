@@ -59,7 +59,7 @@ from app.services.error_handler import AppException
 from app.services.scm.container_request_service import (
     OPEN_PO_SQL,
     PL_NOT_ARRIVED_SQL,
-    PL_REMAINING_SQL,
+    PL_UNALLOCATED_SQL,
 )
 from app.services.scm.supplier_scope import is_uuid, supplier_row
 
@@ -179,13 +179,15 @@ def _po_lines(db: Session, product_id: str, *, open_lines: bool) -> list[dict]:
 
 
 def _incoming_pl_rows(db: Session, product_id: str) -> list[dict]:
-    """Unreceived packing-list quantity, by shipment. Predicate IMPORTED from
-    `container_request_service._incoming_packing_lists`, whose cell this opens: "not arrived"
-    is BOTH a null `actual_arrival_date` AND a status that is not a finished one, or stock
-    that has landed would be counted here as well as in On hand.
+    """Unreceived, unallocated packing-list quantity, by shipment. Predicate IMPORTED from
+    `container_request_service._incoming_packing_lists`, whose cell this opens (AC-N2b, 12 Sep
+    2026): "not arrived" is BOTH a null `actual_arrival_date` AND a status that is not a
+    finished one, or stock that has landed would be counted here as well as in On hand; the
+    figure is `PL_UNALLOCATED_SQL`, or a shipment already turned into an SPO would be counted
+    here as well as in the SPO cell. A shipment fully allocated names nothing here.
     """
     scope, params = company_sql_predicate(db, "s.company_id", param_prefix="dipl")
-    remaining = PL_REMAINING_SQL
+    unallocated = PL_UNALLOCATED_SQL
     sql = f"""
         SELECT s.id::text AS shipment_id,
                s.shipment_number,
@@ -193,13 +195,13 @@ def _incoming_pl_rows(db: Session, product_id: str) -> list[dict]:
                sup.supplier_name,
                s.estimated_arrival_date,
                s.shipment_status,
-               SUM({remaining}) AS qty
+               SUM({unallocated}) AS qty
         FROM inbound_shipment_lines l
         JOIN inbound_shipments s ON s.id = l.shipment_id
         LEFT JOIN suppliers sup ON sup.id = s.supplier_id
         WHERE l.product_id = CAST(:pid AS uuid)
           AND {PL_NOT_ARRIVED_SQL}
-          AND {remaining} > 0
+          AND {unallocated} > 0
           {("AND " + scope) if scope else ""}
         GROUP BY s.id, s.shipment_number, s.shipping_container_number, sup.supplier_name,
                  s.estimated_arrival_date, s.shipment_status

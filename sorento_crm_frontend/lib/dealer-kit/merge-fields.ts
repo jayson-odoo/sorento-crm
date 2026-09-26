@@ -23,8 +23,13 @@
  * other to have finished loading.
  */
 
-import { resolveSlotText } from './product-block';
-import type { SlotBinding, TagBindingData, TagSpecValue } from './tag-template-types';
+import { resolveSlotText, subjectOf } from './product-block';
+import type {
+  SlotBinding,
+  TagBindingData,
+  TagLayer,
+  TagSpecValue,
+} from './tag-template-types';
 
 /**
  * `editor` draws an unresolvable token as itself so the designer can see what
@@ -35,6 +40,11 @@ export type MergeFieldMode = 'print' | 'editor';
 
 /** How the Insert field dialog sorts the catalogue into sections. */
 export type MergeFieldGroup = 'Product' | 'Specs' | 'Set' | 'Line';
+
+/** AC-A7: an older pinned/cached payload predating `currency` renders this,
+ *  never an empty string or the raw token - same default the backend column
+ *  carries (`products.currency`, `DEFAULT_CURRENCY` in `pricing.py`). */
+const DEFAULT_TAG_CURRENCY = 'MYR';
 
 export interface MergeField {
   /** `product.code`. What goes inside the braces. */
@@ -75,6 +85,7 @@ const PATH_SLOTS: Record<string, Exclude<SlotBinding, null>> = {
   'product.name': 'name',
   'product.dimensions': 'dimensions',
   'product.spec_lines': 'spec_lines',
+  'product.price_tag_description': 'price_tag_description',
   'product.list_price': 'list_price',
   'product.sell_price': 'sell_price',
   'product.included_accessories': 'included_accessories',
@@ -89,25 +100,40 @@ const FIELD_LABELS: { path: string; label: string; group: MergeFieldGroup }[] = 
   { path: 'product.name', label: 'Name', group: 'Product' },
   { path: 'product.dimensions', label: 'Dimensions', group: 'Product' },
   { path: 'product.spec_lines', label: 'Spec lines', group: 'Product' },
+  { path: 'product.price_tag_description', label: 'Price tag description', group: 'Product' },
   { path: 'product.list_price', label: 'List price', group: 'Product' },
   { path: 'product.sell_price', label: 'Sell price', group: 'Product' },
+  { path: 'product.currency', label: 'Currency', group: 'Product' },
   { path: 'product.included_accessories', label: 'Accessories', group: 'Product' },
   { path: 'set.code', label: 'Set code', group: 'Set' },
   { path: 'set.name', label: 'Set name', group: 'Set' },
   { path: 'set.members', label: 'Members', group: 'Set' },
   { path: 'line.quantity', label: 'Quantity', group: 'Line' },
+  // D23: the resolved parts on this line's tag, joined with ", " (codes and
+  // names as two separate tokens, since a design might want either or both).
+  { path: 'line.parts', label: 'Parts (codes)', group: 'Line' },
+  { path: 'line.parts_names', label: 'Parts (names)', group: 'Line' },
 ];
 
-/** The specs the bound thing carries. A set has none of its own (D58). */
-function specsOf(data: TagBindingData): TagSpecValue[] {
-  if (data.kind === 'product') return data.product.specs ?? [];
-  if (data.kind === 'line') return data.line.specs ?? [];
+/** The specs the bound thing carries. A set has none of its own (D58).
+ *  D7: `layer`'s own subject wins when the layer has one, same as every
+ *  other product-data read - a part's specs, not the parent's. */
+function specsOf(data: TagBindingData, layer?: Pick<TagLayer, 'props'>): TagSpecValue[] {
+  const subject = layer ? subjectOf(data, layer) : data;
+  if (!subject) return [];
+  if (subject.kind === 'product') return subject.product.specs ?? [];
+  if (subject.kind === 'line') return subject.line.specs ?? [];
   return [];
 }
 
-/** `407 mm`, or `stainless steel` where the registry records no unit. */
+/**
+ * `407`, never `407 mm` (D20/AC-S15-1): the unit is the designer's to type,
+ * so a composed string like `L{{spec.dim_length}}XW{{spec.dim_width}}mm`
+ * does not print a doubled unit. `product.dimensions` (the composed slot
+ * string) is unchanged - this is only the bare `{{spec.*}}` token.
+ */
 function specText(spec: TagSpecValue): string {
-  return spec.unit ? `${spec.value} ${spec.unit}` : spec.value;
+  return spec.value;
 }
 
 /**
@@ -115,11 +141,39 @@ function specText(spec: TagSpecValue): string {
  *
  * Null rather than an empty string, because the caller decides what an
  * unanswered token looks like and the two modes decide it differently.
+ *
+ * D7: `layer`'s own subject applies to `spec.*` and the `product.*`/`set.*`
+ * paths in `PATH_SLOTS` - the tokens AC-S4-1 names as subject-aware. The
+ * three `line.*` paths read the LINE regardless of any subject: a quantity
+ * and a line's own parts list are facts about the line, not about whichever
+ * product a layer happens to be pointed at.
+ *
+ * AC-S4-13: `product.price_tag_description`'s stored text is itself a
+ * TEMPLATE now, not plain text - it is rendered once more, against the SAME
+ * subject's own data, before it reaches the caller. `String.replace`'s
+ * single left-to-right scan already makes this one pass with no recursion:
+ * a spec VALUE that happens to contain the literal text `{{product.name}}`
+ * is part of the replacement STRING, never rescanned for further tokens.
+ * AC-S4-17: that nested render goes through `renderPriceTagDescription`, not
+ * a plain `renderMergeFields` call - see that function's own comment.
  */
-function resolvePath(path: string, data: TagBindingData): string | null {
+function resolvePath(
+  path: string,
+  data: TagBindingData,
+  layer?: Pick<TagLayer, 'props'>,
+  mode: MergeFieldMode = 'print',
+): string | null {
+  if (path === 'product.price_tag_description') {
+    const subject = subjectOf(data, layer);
+    if (!subject) return null;
+    const raw = resolveSlotText({ slot_binding: 'price_tag_description', props: layer?.props }, data);
+    if (raw == null) return null;
+    return renderPriceTagDescription(raw, subject, mode);
+  }
+
   if (path.startsWith('spec.')) {
     const key = path.slice('spec.'.length);
-    const spec = specsOf(data).find((row) => row.key === key);
+    const spec = specsOf(data, layer).find((row) => row.key === key);
     return spec ? specText(spec) : null;
   }
 
@@ -127,14 +181,55 @@ function resolvePath(path: string, data: TagBindingData): string | null {
     return data.kind === 'line' ? String(data.line.quantity) : null;
   }
 
+  if (path === 'line.parts' || path === 'line.parts_names') {
+    // D23: null when the binding is not a line at all (the token's
+    // unanswered form); an empty string when it is a line with no parts.
+    if (data.kind !== 'line') return null;
+    const parts = data.line.parts ?? [];
+    return parts
+      .map((part) => (path === 'line.parts' ? part.code : part.name))
+      .join(', ');
+  }
+
+  // AC-A5/A6/A7: the SUBJECT's own currency, not a slot binding - a part
+  // subject (D7) reads that PART's currency, never the parent's. An older
+  // pinned/cached row predating this field falls back to MYR, never an
+  // empty string or the raw token.
+  if (path === 'product.currency') {
+    const subject = subjectOf(data, layer);
+    if (!subject) return DEFAULT_TAG_CURRENCY;
+    const source =
+      subject.kind === 'product'
+        ? subject.product
+        : subject.kind === 'set'
+          ? subject.set
+          : subject.line;
+    return source.currency ?? DEFAULT_TAG_CURRENCY;
+  }
+
   const slot = PATH_SLOTS[path];
   if (!slot) return null;
-  return resolveSlotText({ slot_binding: slot }, data);
+  return resolveSlotText({ slot_binding: slot, props: layer?.props }, data);
 }
 
 /** Whether any `{{token}}` appears in this text. */
 export function hasMergeField(text: string | null | undefined): boolean {
   return Boolean(text) && tokenPattern().test(text as string);
+}
+
+/**
+ * Whether `text` holds at least one `{{product.*}}` or `{{spec.*}}` token -
+ * the only ones a subject picker can affect (D7/AC-S4-1). A text layer
+ * reading only `{{line.*}}`/`{{set.*}}` tokens is about the LINE, not a
+ * specific product on it, and gets no picker.
+ */
+export function hasSubjectAwareToken(text: string | null | undefined): boolean {
+  if (!text) return false;
+  for (const match of text.matchAll(tokenPattern())) {
+    const path = match[1];
+    if (path.startsWith('product.') || path.startsWith('spec.')) return true;
+  }
+  return false;
 }
 
 /**
@@ -167,11 +262,12 @@ export function renderMergeFields(
   text: string,
   data: TagBindingData | null | undefined,
   mode: MergeFieldMode,
+  layer?: Pick<TagLayer, 'props'>,
 ): string {
   if (!text) return text;
 
   return text.replace(tokenPattern(), (whole, path: string) => {
-    const value = data ? resolvePath(path, data) : null;
+    const value = data ? resolvePath(path, data, layer, mode) : null;
     if (value != null) return value;
     // With nothing bound and nothing previewed, the editor shows the token so
     // the designer can see which field will fill this spot. Print never does.
@@ -180,13 +276,63 @@ export function renderMergeFields(
 }
 
 /**
+ * `product.price_tag_description`'s own nested render (AC-S4-17) - the ONE
+ * place a stored template's LINES matter, because a description is typed
+ * one sentence per line and a token with nothing to say must not leave a
+ * blank line sitting between two real ones on the printed tag.
+ *
+ * Scoped tightly to this one caller: an ordinary text layer's own
+ * `renderMergeFields` call is untouched, so `A\n{{spec.x}}\nB` on a plain
+ * layer still renders `A\n\nB` - collapsing THAT would be a surprise on
+ * every other tag in the system for one field's sake.
+ *
+ * A line with no `{{token}}` on it at all is kept exactly as typed, blank or
+ * not - that is the author's own line break, not a resolver's decision. A
+ * line that carries a token is rendered through the ordinary
+ * `renderMergeFields`, then right-trimmed (never left-trimmed - a token
+ * resolving empty at the START of a line, e.g. `{{product.name}} in
+ * {{spec.material}}` on a name-equals-code product, still opens on the
+ * space that follows it, exactly as `renderMergeFields` alone would print
+ * it): empty after that means the line said nothing at all and is dropped
+ * together with its own newline; anything left is kept trimmed.
+ */
+export function renderPriceTagDescription(
+  template: string,
+  data: TagBindingData | null | undefined,
+  mode: MergeFieldMode,
+  layer?: Pick<TagLayer, 'props'>,
+): string {
+  if (!template) return template;
+
+  const kept: string[] = [];
+  for (const line of template.split('\n')) {
+    if (!hasMergeField(line)) {
+      kept.push(line);
+      continue;
+    }
+    const rendered = renderMergeFields(line, data, mode, layer).replace(/\s+$/, '');
+    if (rendered === '') continue;
+    kept.push(rendered);
+  }
+  return kept.join('\n');
+}
+
+/**
  * Every field the Insert field dialog offers, grouped.
  *
  * The spec group comes from the registry rather than from a list in here, so a
  * key added on the master-data screen appears in the dialog with no code
  * change (D58).
+ *
+ * `groups` narrows the catalog to only the named groups (S11) - a product's
+ * own price tag description cannot address a line, a set or a combo part, so
+ * the Specifications tab restricts to `['Product', 'Specs']`. Omitted, every
+ * group is offered, unchanged from before this parameter existed.
  */
-export function mergeFieldCatalog(specKeys: SpecKeyOption[]): MergeField[] {
+export function mergeFieldCatalog(
+  specKeys: SpecKeyOption[],
+  groups?: MergeFieldGroup[],
+): MergeField[] {
   const fixed = FIELD_LABELS.map(({ path, label, group }) => ({
     path,
     token: `{{${path}}}`,
@@ -203,10 +349,12 @@ export function mergeFieldCatalog(specKeys: SpecKeyOption[]): MergeField[] {
 
   // Product first, then the specs a designer is most likely hunting for, then
   // the two groups that only apply to some blocks.
-  return [
+  const all = [
     ...fixed.filter((field) => field.group === 'Product'),
     ...specs,
     ...fixed.filter((field) => field.group === 'Set'),
     ...fixed.filter((field) => field.group === 'Line'),
   ];
+
+  return groups ? all.filter((field) => groups.includes(field.group)) : all;
 }

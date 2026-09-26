@@ -1,0 +1,50 @@
+{
+  "name": "handpass6-domain-lock-keeps-named-asks",
+  "source": "hand pass 6 owner console turns 08:51:24-08:52:23 and 13:53:47 (contact_respond_id 437264483, 17 Sep 2026). Ruling R-a: a settled multi-code product carry (the ten SRTWC286 variants a stock answer listed) switching to incoming/PO runs for ALL of them, no 'Which product do you mean?' roster. Measured pre-fix (psql chatbot.turns): 08:51:37 'incoming and PO' DID re-roster (has_incoming=f, has_po=f); 08:52:01 'stock, incoming and PO for all of them' dropped stock (has_stock=f); 08:52:23 'i want stock also' dropped incoming+PO (has_incoming=f, has_po=f) - an answered domain-add wording replaces rather than accumulates.",
+  "cases": [
+    {
+      "name": "domain-add-wording-keeps-every-named-domain",
+      "cold": true,
+      "turns": [
+        {
+          "text": "check stock srtwc286",
+          "expect": {
+            "branch_kind": "business_query",
+            "reply_contains": ["*stock*", "SRTWC286-SH"]
+          }
+        },
+        {
+          "text": "incoming and PO",
+          "expect": {
+            "reply_contains": ["*incoming stock*", "*outstanding purchase orders*"],
+            "reply_not_contains": ["Which product do you mean?"]
+          }
+        },
+        {
+          "text": "stock, incoming and PO for all of them",
+          "expect": {
+            "reply_contains": ["*stock*", "*incoming stock*", "*outstanding purchase orders*"],
+            "max_occurrences": {
+              "*stock*": 1,
+              "*incoming stock*": 1,
+              "*outstanding purchase orders*": 1
+            }
+          }
+        },
+        {
+          "text": "ok how about stock and PO only",
+          "expect": {
+            "reply_contains": ["*stock*", "*outstanding purchase orders*"],
+            "reply_not_contains": ["*incoming stock*"]
+          }
+        },
+        {
+          "text": "i want stock also",
+          "expect": {
+            "reply_contains": ["*stock*", "*incoming stock*", "*outstanding purchase orders*"]
+          }
+        }
+      ]
+    }
+  ]
+}

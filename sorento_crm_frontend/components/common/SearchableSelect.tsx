@@ -27,6 +27,12 @@ export type SearchableSelectOption = {
   searchText?: string;
   /** Optional secondary line under the label (e.g. customer code). */
   description?: string;
+  /**
+   * The record's own human key, where the label spells out "CODE - Name" and a caller
+   * has to fill another cell from the pick. Carried on the option because splitting the
+   * label back apart guesses at a separator the option was never promised to use.
+   */
+  code?: string;
   /** Optional grouping header (renders one CommandGroup per distinct group). */
   group?: string;
   /** Per-option disabled (Radix `SelectItem disabled` parity). */

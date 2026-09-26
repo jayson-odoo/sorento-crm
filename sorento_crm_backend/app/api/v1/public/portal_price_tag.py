@@ -25,16 +25,22 @@ from app.models.portal import PortalToken
 from app.models.dealer_kit import Page
 from app.schemas.price_tag import (
     DebtorForAgentItem,
+    LinePricingRequest,
+    LinePricingRow,
     PortalTagSheetDesignResponse,
     PriceTagRequestCreate,
     PriceTagRequestResponse,
     PriceTagRequestUpdate,
-    PromotionLookupItem,
+    RequestChangesPayload,
+    RequestChangesResponse,
     ResolvedLineData,
+    ReviewCommentResponse,
     TagItemLookupItem,
 )
+from app.services.dealer_kit import tag_data_service
 from app.services.dealer_kit.tag_sheet_export_service import latest_completed_export
-from app.services.error_handler import AppException
+from app.services.error_handler import AppException, handle_not_found
+from app.services import price_tag_review_service
 from app.services.portal_form_visibility_service import resolve_visible_form_types
 from app.services.price_tag_request_service import (
     PriceTagRequestService,
@@ -42,7 +48,8 @@ from app.services.price_tag_request_service import (
     STATUS_CHANGES_REQUESTED,
     STATUS_NEW,
     STATUS_PROOF_READY,
-    STATUS_READY,
+    STATUS_READY_FOR_COLLECTION,
+    STATUS_COLLECTED,
 )
 from app.services.storage_router import get_backend
 from app.services.uuid_path_param import validate_uuid_path
@@ -101,14 +108,23 @@ def portal_create_price_tag_request(
     token: PortalToken = Depends(get_portal_token),
     db: Session = Depends(get_db),
 ):
-    """Create a new price tag request as a draft."""
+    """Create a new price tag request as a draft.
+
+    D1 (S6): the promotion is a LINE fact now - each line's own
+    ``promotion_id``, if any, is validated (AC-S6-5) by ``_add_lines``
+    itself, against THIS contact's own audience (``tag_data_service.contact_viewer``), not by
+    a header-level check here.
+    """
     _assert_visible(db, token.contact_id)
-    req = PriceTagRequestService.create_request(
-        db,
-        contact_id=token.contact_id,
-        company_id=_resolve_company(db, token),
-        data=payload.model_dump(),
-    )
+    company_id = _resolve_company(db, token)
+    with company_scope(db, frozenset({company_id})):
+        req = PriceTagRequestService.create_request(
+            db,
+            contact_id=token.contact_id,
+            company_id=company_id,
+            data=payload.model_dump(),
+            viewer=tag_data_service.contact_viewer(db, token.contact_id),
+        )
     db.commit()
     return _detail_body(db, req)
 
@@ -143,7 +159,16 @@ def portal_get_price_tag_request(
 # designed, and still visible after approval so they can look at what they
 # approved (AC-S4-4).
 _DESIGN_VISIBLE_STATUSES = frozenset(
-    {STATUS_PROOF_READY, STATUS_CHANGES_REQUESTED, STATUS_APPROVED, STATUS_READY}
+    {
+        STATUS_PROOF_READY,
+        STATUS_CHANGES_REQUESTED,
+        STATUS_APPROVED,
+        # r9 D8: `ready` is retired and the office print's two closing steps
+        # take its place. The salesperson can still look at what they approved
+        # right up to the moment they collect it.
+        STATUS_READY_FOR_COLLECTION,
+        STATUS_COLLECTED,
+    }
 )
 
 
@@ -195,23 +220,34 @@ def portal_get_price_tag_design(
     # different document for the same page (module-cycle-free the same way
     # the export import below is).
     from app.api.v1.dealer_kit.price_tag_requests import resolve_tag_sheet_design
-    from app.services.dealer_kit import tag_data_service
+    from app.services.dealer_kit import tag_sheet_export_service
 
     # prefer="version": the salesperson must see what was deliberately
     # SAVED (and sent to them for review), never marketing's live
     # in-progress autosave - the CRM designer stays draft-first (B1's own
     # reasoning), this screen does not (review D11 follow-up).
     doc_fields = resolve_tag_sheet_design(db, page, prefer="version")
+    if doc_fields["doc"] is None:
+        # A page whose only document is an autosaved draft has nothing this
+        # reader was ever meant to see (r9 S1).
+        raise AppException(
+            status_code=404,
+            message="No design exists for this request yet.",
+            code="NOT_FOUND",
+        )
     # L3: same company scope as the sibling lookups (portal_lookup_tag_items,
     # portal_lookup_promotions) - unscoped, a two-company contact's line
     # resolution could read the OTHER company's product row for a duplicated
     # code instead of the one this request actually points at.
     with company_scope(db, frozenset({_resolve_company(db, token)})):
-        lines = [
-            ResolvedLineData.model_validate(row)
-            for row in tag_data_service.resolve_request_line_data(db, req)
-        ]
-    return PortalTagSheetDesignResponse(**doc_fields, lines=lines)
+        # The SAME resolver the PDF reads, media included (r9 S1/D1): without
+        # `assets`/`images`/`fonts` every image layer here painted a grey box
+        # and every brand face fell back to a system sans.
+        rows, media = tag_sheet_export_service.design_media(
+            db, req, doc_fields["doc"]
+        )
+    lines = [ResolvedLineData.model_validate(row) for row in rows]
+    return PortalTagSheetDesignResponse(**doc_fields, lines=lines, **media)
 
 
 # ---------------------------------------------------------------------------
@@ -277,6 +313,45 @@ def portal_download_price_tag_pdf(
     )
 
 
+@router.post(
+    "/submissions/price_tag_request/{request_id}/export", status_code=202
+)
+def portal_export_price_tag_pdf(
+    request_id: str,
+    token: PortalToken = Depends(get_portal_token),
+    db: Session = Depends(get_db),
+):
+    """Queue a NEW tag sheet PDF for the portal's Download PDF (r10 S9).
+
+    Contact-authenticated exactly like the download route above - a request
+    that has no READY export yet (or whose last one FAILED) has nothing for
+    that route to stream, and until now the portal had no way to ask for
+    one; Approve auto-queues an export (D12), but nothing retried a FAILED
+    one and the button just sat dead.
+
+    Queued as the request's own ASSIGNEE, the same actor
+    ``portal_approve_price_tag_request`` passes - the portal has no CRM user
+    of its own, and the marketing person who designed the tag sheet is the
+    natural "who asked for this PDF" answer here too.
+    `UserDownload.user_id` is a bare string, not FK-checked, so an
+    unclaimed request (no assignee yet) falls back to the contact's own id
+    rather than 422ing on "no requesting user" - a click here must always
+    get a PDF queued, the same way it always streams a READY one.
+    `request_tag_sheet_export`'s own guards (status, promotion, page/version)
+    pass their 409 straight through as the toast text.
+    """
+    _assert_visible(db, token.contact_id)
+    req = _require_own_request(db, token, request_id)
+    from app.services.dealer_kit.tag_sheet_export_service import (
+        request_tag_sheet_export,
+    )
+
+    download, _sheet_ids = request_tag_sheet_export(
+        db, request_id=req.id, user_id=req.assigned_to_id or token.contact_id,
+    )
+    return {"download_id": str(download.id)}
+
+
 # ---------------------------------------------------------------------------
 # Update (draft)
 # ---------------------------------------------------------------------------
@@ -289,11 +364,18 @@ def portal_update_price_tag_request(
     token: PortalToken = Depends(get_portal_token),
     db: Session = Depends(get_db),
 ):
-    """Update a draft price tag request."""
+    """Update a draft. R3-1 REVERSES D-P6/S8: a submitted request is
+    read-only exactly like the other portal kinds - changes go through the
+    revision engine (``PortalRevisionService.revise``) instead, gated by
+    System Settings > Portal Revisions. Back to ``_require_draft``: 409
+    ``NOT_DRAFT`` for every non-draft status, ``new`` / ``changes_requested``
+    included. The post-submit validators, override carry-over and audit row
+    S8 added here now live in ``portal_revision_service._apply_price_tag_lines``,
+    part of the revise transaction."""
     request_id = validate_uuid_path(request_id, resource="Price tag request")
     _assert_visible(db, token.contact_id)
     req = _require_own_request(db, token, request_id)
-    _require_draft(req, "Only draft requests can be updated.")
+    _require_draft(req, "Only a draft can be edited.")
 
     update_data = payload.model_dump(exclude_unset=True)
     # `lines` is a relationship, not a column: given, it REPLACES the draft's
@@ -303,7 +385,12 @@ def portal_update_price_tag_request(
     for key, value in update_data.items():
         setattr(req, key, value)
     if lines is not None:
-        PriceTagRequestService.replace_lines(db, req, lines)
+        # D1/AC-S6-5: each line's own `promotion_id` is validated here,
+        # against THIS contact's audience - same as create.
+        with company_scope(db, frozenset({req.company_id})):
+            PriceTagRequestService.replace_lines(
+                db, req, lines, viewer=tag_data_service.contact_viewer(db, req.contact_id)
+            )
 
     db.flush()
     db.commit()
@@ -356,12 +443,24 @@ def portal_submit_price_tag_request(
     # first, because "you have no dealer" is more use than a guard message about
     # a line on a request that was never going to be accepted anyway.
     PriceTagRequestService.validate_submittable(req)
-    PriceTagRequestService.validate_set_guard(db, req)
+    # The set guard used to refuse here. Warn and allow instead (D2, AC-S2-7):
+    # a guarded line with no package carries a `package_warning` marketing reads
+    # and the request goes through.
+    PriceTagRequestService.apply_package_warnings(db, req)
 
     # Clear draft and set status to new (ready for marketing).
     req.portal_draft_at = None
     req.status = STATUS_NEW
     db.flush()
+    db.commit()
+
+    # S9/D12: the copy table's first line. Submit is not a status transition -
+    # a submitted request keeps `new` until marketing claims it - so it is the
+    # one moment the transition notifier cannot cover, and the moment somebody
+    # most wants to hear that the form worked. After the commit, and before the
+    # auto-assign below can move the request on, so the salesperson reads the
+    # two messages in the order the events happened.
+    PriceTagRequestService.notify_submitted(db, req)
 
     # Fire form SLA.
     try:
@@ -440,35 +539,119 @@ def portal_approve_price_tag_request(
 # ---------------------------------------------------------------------------
 
 
-class RequestChangesPayload(BaseModel):
-    note: str = Field(..., min_length=1)
-
-
-@router.post("/submissions/price_tag_request/{request_id}/request-changes")
+@router.post(
+    "/submissions/price_tag_request/{request_id}/request-changes",
+    response_model=RequestChangesResponse,
+)
 def portal_request_changes(
     request_id: str,
     payload: RequestChangesPayload,
     token: PortalToken = Depends(get_portal_token),
     db: Session = Depends(get_db),
 ):
-    """Request changes on a proof-ready price tag request."""
+    """A whole round of pinned change requests, in one call (r9 D5).
+
+    The pins are placed locally and nothing reaches the server until Send, so
+    the salesperson can put five pins down, delete two, and the request changes
+    state exactly once.
+
+    The salesperson's own ``notes`` are no longer appended to: they are what
+    they asked for, not a log of what they later disliked. The comments are
+    rows now, each pointing at the part of the tag it is about.
+
+    ``note`` alone (no pins) is the legacy body, accepted for one release and
+    stored as one general comment.
+    """
+    request_id = validate_uuid_path(request_id, resource="Price tag request")
     _assert_visible(db, token.contact_id)
-    req = PriceTagRequestService.get_request(db, request_id)
-    if not req or req.contact_id != token.contact_id:
+    req = _require_own_request(db, token, request_id)
+    if req.status != STATUS_PROOF_READY:
+        # Checked BEFORE anything is written: a design still being drawn cannot
+        # be commented on, and a 409 that leaves rows behind is worse than no
+        # 409 at all.
         raise AppException(
-            status_code=404,
-            message="Price tag request not found.",
-            code="NOT_FOUND",
+            status_code=409,
+            message="This design is not waiting for your review.",
+            code="INVALID_TRANSITION",
         )
 
-    result = PriceTagRequestService.transition_status(
-        db, request_id, STATUS_CHANGES_REQUESTED,
+    created = price_tag_review_service.create_comments(
+        db,
+        req,
+        comments=[pin.model_dump() for pin in payload.comments],
+        note=payload.note,
+        author_contact_id=token.contact_id,
     )
-    # Store the note on the request (could be moved to a dedicated notes table later).
-    result.notes = (result.notes or "") + f"\n[Changes requested]: {payload.note}"
+    round_no = created[0].round if created else price_tag_review_service.current_round(
+        db, req
+    )
+    # S1: the round and the tally travel with the transition. Without them the
+    # bell dedups every later round against round 1 (so the assignee is told
+    # once, ever) and the salesperson's own confirmation cannot say how many
+    # change requests the one call carried.
+    PriceTagRequestService.transition_status(
+        db,
+        request_id,
+        STATUS_CHANGES_REQUESTED,
+        notify_ctx={"round": round_no, "count": len(created)},
+    )
+    db.commit()
+    return RequestChangesResponse(
+        status=STATUS_CHANGES_REQUESTED,
+        round=round_no,
+        comments=price_tag_review_service.to_responses(db, created),
+    )
+
+
+@router.get(
+    "/submissions/price_tag_request/{request_id}/review-comments",
+    response_model=list[ReviewCommentResponse],
+)
+def portal_list_review_comments(
+    request_id: str,
+    token: PortalToken = Depends(get_portal_token),
+    db: Session = Depends(get_db),
+):
+    """Every change request on this design, all rounds (D6).
+
+    Read-only for the salesperson: earlier rounds render grey beside the new
+    ones, and closing one is marketing's to do.
+    """
+    request_id = validate_uuid_path(request_id, resource="Price tag request")
+    _assert_visible(db, token.contact_id)
+    req = _require_own_request(db, token, request_id)
+    return price_tag_review_service.to_responses(
+        db, price_tag_review_service.list_comments(db, req.id)
+    )
+
+
+# ---------------------------------------------------------------------------
+# Collect (the office hand-over, r9 S3/D8)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/submissions/price_tag_request/{request_id}/collect")
+def portal_collect_price_tag_request(
+    request_id: str,
+    token: PortalToken = Depends(get_portal_token),
+    db: Session = Depends(get_db),
+):
+    """The salesperson confirming they have the tags (D8).
+
+    The same transition the office's own Mark collected makes, recorded against
+    the CONTACT rather than a user: whoever closed it is what the card says
+    afterwards, and the two are different people.
+    """
+    request_id = validate_uuid_path(request_id, resource="Price tag request")
+    _assert_visible(db, token.contact_id)
+    req = _require_own_request(db, token, request_id)
+
+    result = PriceTagRequestService.transition_status(db, req.id, STATUS_COLLECTED)
+    result.collected_by_contact_id = token.contact_id
+    result.collected_by_user_id = None
     db.flush()
     db.commit()
-    return PriceTagRequestResponse.model_validate(result)
+    return {"status": result.status}
 
 
 # ---------------------------------------------------------------------------
@@ -532,37 +715,112 @@ def portal_lookup_tag_items(
         ]
 
 
-# ---------------------------------------------------------------------------
-# Promotion lookup
-# ---------------------------------------------------------------------------
-
-
-@router.get("/lookups/promotions", response_model=list[PromotionLookupItem])
-def portal_lookup_promotions(
-    q: Optional[str] = Query(None),
+@router.get("/lookups/product-combos/{product_id}")
+def portal_lookup_product_combos(
+    product_id: str,
     token: PortalToken = Depends(get_portal_token),
     db: Session = Depends(get_db),
 ):
-    """Active-window, audience-gated promotions for the portal form's promotion
-    dropdown (S4, #477).
+    """What the picked product is sold as, plus whether its class is guarded (D2).
 
-    Gated the same way as every other price tag route: a contact who cannot see
-    the form cannot browse the promotion book through it either. Beyond that,
-    the promotions returned are only the ones this contact's own access codes
-    are entitled to (``PriceTagRequestService.lookup_promotions``) - the same
-    audience rule a promotion's price is gated by everywhere else.
+    Called once per product pick on a line. Same `_assert_visible` gate and the
+    same company scope as `price-tag-items` above: a contact who cannot see the
+    form cannot read the catalogue's packaging through it either, and a combo on
+    another company's copy of the code is not theirs.
 
-    Scoped to the SAME company ``_resolve_company`` will stamp the request with,
-    same reasoning as ``portal_lookup_tag_items``: a contact who belongs to more
-    than one company would otherwise be offered the other company's promotion
-    alongside this one.
+    `host_guarded` rides along rather than being a second endpoint. The form has
+    to compute the SAME warning the submit guard computes, and that needs to know
+    whether this product's `class_label` is in `price_tag_guarded_classes` -
+    answering it on the call the form is already making beats both a round trip
+    and shipping the tenant's settings list out to the portal. The server
+    evaluates the same list the guard evaluates, so the two cannot disagree.
     """
+    from app.models.product import Product, ProductCategory
+    from app.models.product_combo import ProductCombo, ProductComboPart
+
+    # Same first line as every other portal id route: a non-UUID path id reaches
+    # Postgres as a comparison it refuses, which is a 500 where a 404 belongs.
+    product_id = validate_uuid_path(product_id, resource="Product")
     _assert_visible(db, token.contact_id)
     with company_scope(db, frozenset({_resolve_company(db, token)})):
-        return [
-            PromotionLookupItem(**item)
-            for item in PriceTagRequestService.lookup_promotions(db, token.contact_id, q)
-        ]
+        product = db.query(Product).filter(Product.id == product_id).first()
+        if product is None:
+            raise handle_not_found("Product", product_id)
+
+        category = (
+            db.query(ProductCategory)
+            .filter(ProductCategory.id == product.category_id)
+            .first()
+        )
+        guarded = PriceTagRequestService.guarded_classes(db)
+        host_guarded = bool(category and category.class_label in guarded)
+
+        combos = (
+            db.query(ProductCombo)
+            .filter(ProductCombo.host_product_id == product_id)
+            .order_by(ProductCombo.sort_order, ProductCombo.name)
+            .all()
+        )
+        payload = []
+        for combo in combos:
+            parts = sorted(combo.parts or [], key=lambda p: (p.sort_order or 0, p.id))
+            payload.append(
+                {
+                    "combo_id": combo.id,
+                    "name": combo.name,
+                    "parts": [
+                        {
+                            "product_id": part.part_product_id,
+                            "code": (
+                                part.part_product.product_code
+                                if part.part_product is not None
+                                else ""
+                            ),
+                            "name": (
+                                part.part_product.product_name
+                                if part.part_product is not None
+                                else ""
+                            ),
+                            "choice_group": part.choice_group,
+                        }
+                        for part in parts
+                    ],
+                }
+            )
+        return {"host_guarded": host_guarded, "combos": payload}
+
+
+# ---------------------------------------------------------------------------
+# Line pricing (D1-D4, S7). Replaces the retired promotion dropdown lookup -
+# a line's own Promotion select reads THIS, not a flat promotion list, since
+# which promotions are even offered now depends on what is on the line.
+# ---------------------------------------------------------------------------
+
+
+@router.post("/lookups/line-pricing", response_model=list[LinePricingRow])
+def portal_line_pricing(
+    payload: LinePricingRequest,
+    token: PortalToken = Depends(get_portal_token),
+    db: Session = Depends(get_db),
+):
+    """What every line of the form currently in progress costs THIS contact.
+
+    Gated the same way as every other price tag route: a contact who cannot
+    see the form cannot price one through it either. Audience-scoped to this
+    contact's own access codes (AC-S7-2), same rule the retired promotion
+    dropdown enforced. Scoped to the same company ``_resolve_company`` would
+    stamp the request with, same reasoning as the other lookups.
+    """
+    _assert_visible(db, token.contact_id)
+    from app.services.dealer_kit.pricing import line_pricing
+
+    with company_scope(db, frozenset({_resolve_company(db, token)})):
+        rows = line_pricing(
+            db,
+            lines=[line.model_dump() for line in payload.lines],
+            viewer=tag_data_service.contact_viewer(db, token.contact_id),
+        )
+    return [LinePricingRow(**row) for row in rows]
 
 
 # ---------------------------------------------------------------------------
@@ -571,7 +829,20 @@ def portal_lookup_promotions(
 
 
 def _require_own_request(db: Session, token: PortalToken, request_id: str):
-    """The contact's own request, or a 404. Another contact's is not theirs to see."""
+    """The contact's own request, or a 404. Another contact's is not theirs to see.
+
+    Gap B (security review of S10): also gates on form visibility, like every
+    other price_tag_request route (``_assert_visible``) - this helper is what
+    the generic revision routes in portal.py dispatch ownership to
+    (``_require_revisable_ownership`` / ``_revision_submission_detail``), and
+    those never carried an equivalent check of their own, so a contact whose
+    grant was revoked could still list/revise/save-draft their own old
+    request. Gap E: validates the id is a UUID first, same as every other
+    caller here does before reaching ``get_request``, so a malformed id 404s
+    instead of a driver 500.
+    """
+    request_id = validate_uuid_path(request_id, resource="Price tag request")
+    _assert_visible(db, token.contact_id)
     req = PriceTagRequestService.get_request(db, request_id)
     if not req or req.contact_id != token.contact_id:
         raise AppException(
@@ -580,6 +851,43 @@ def _require_own_request(db: Session, token: PortalToken, request_id: str):
             code="NOT_FOUND",
         )
     return req
+
+
+def price_tag_neighbours(db: Session, token: PortalToken, request_id: str) -> dict:
+    """Prev/next over the contact's OWN price tag requests, newest first -
+    same ordering ``PriceTagRequestService.list_requests`` uses (review round
+    3). Called from the generic ``/submissions/{kind}/{id}/neighbours`` route
+    in portal.py, dispatched the same way ownership/detail already are for
+    this kind (``_require_revisable_ownership`` / ``_revision_submission_detail``).
+    """
+    from app.models.price_tag import PriceTagRequest
+
+    # ownership + visibility + uuid validation; raises on miss
+    req = _require_own_request(db, token, request_id)
+    ids = [
+        str(r[0])
+        for r in db.query(PriceTagRequest.id)
+        .filter(PriceTagRequest.contact_id == token.contact_id)
+        .order_by(PriceTagRequest.created_at.desc())
+        .all()
+    ]
+    try:
+        idx = ids.index(str(req.id))
+    except ValueError:
+        # Unreachable in practice - _require_own_request above already
+        # confirmed ownership - but fail closed rather than raise unhandled.
+        raise AppException(
+            status_code=404,
+            message="Price tag request not found.",
+            code="NOT_FOUND",
+        )
+    total = len(ids)
+    return {
+        "prev_id": ids[idx - 1] if idx > 0 else None,
+        "next_id": ids[idx + 1] if idx + 1 < total else None,
+        "position": idx + 1,
+        "total": total,
+    }
 
 
 def _require_draft(req, message: str, code: str = "NOT_DRAFT") -> None:
@@ -594,6 +902,35 @@ def _require_draft(req, message: str, code: str = "NOT_DRAFT") -> None:
         raise AppException(status_code=409, message=message, code=code)
 
 
+def _require_editable(req, db: Session) -> None:
+    """R3-1: the attachment gate (upload/delete). A draft is always editable;
+    a submitted request is editable while the revision policy currently
+    allows a revision for it - the same check ``revise``/``save_draft`` make
+    (``PortalRevisionService.policy_for``), never a coincidental status check
+    or the existence of a revision DRAFT row. Review round 3: keying this off
+    ``get_draft`` 409'd every attachment added mid-revision, since
+    ``PriceTagRequestForm`` composes a revision inline (reason + sections)
+    and never writes a ``PortalRevisionDraft`` row for it - that row is only
+    ever written by Save (as opposed to Send) on a revision draft.
+
+    Gap C (security review of S10) still holds with this shape: the policy is
+    re-checked against the request's CURRENT status on every call, so a
+    request that has moved on to ``ready``/``void`` since a revision was
+    last open refuses attachments outright, same as before.
+    """
+    if req.portal_draft_at is not None:
+        return
+    from app.services.portal_revision_service import PortalRevisionService
+
+    if PortalRevisionService(db).policy_for("price_tag_request", req.id).allowed:
+        return
+    raise AppException(
+        status_code=409,
+        message="This request can no longer be edited.",
+        code="NOT_EDITABLE",
+    )
+
+
 def _detail_body(db: Session, req) -> dict:
     """The request with its lines AND its PO attachments resolved.
 
@@ -602,10 +939,21 @@ def _detail_body(db: Session, req) -> dict:
     ``entity_attachment_service.list_attachments_for_entity`` - real rows once
     the PO dropzone has uploaded any, an empty list otherwise. The portal form
     reads the key unconditionally, so it always has to be present.
+
+    R3-1/AC-R7: ``revision`` (the policy block: allowed, remaining, blocked
+    reason) and ``revision_draft`` (the in-progress revise composer, if any)
+    ride along too, like the legacy kinds' detail bodies do - one call, no
+    extra round trip.
     """
-    return PriceTagRequestService.response_with_resolved_lines(db, req).model_dump(
+    from app.services.portal_revision_service import PortalRevisionService
+
+    body = PriceTagRequestService.response_with_resolved_lines(db, req).model_dump(
         mode="json"
     )
+    revision_service = PortalRevisionService(db)
+    body["revision"] = revision_service.policy_for("price_tag_request", req.id).as_dict()
+    body["revision_draft"] = revision_service.get_draft("price_tag_request", req.id)
+    return body
 
 
 def _resolve_company(db: Session, token: PortalToken) -> str:

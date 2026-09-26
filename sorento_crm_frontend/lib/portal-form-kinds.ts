@@ -33,38 +33,42 @@ export function isSubmissionKind(
 }
 
 /**
- * Form types that join the landing dropdown beside the four legacy kinds, each
- * shown only to a contact whose `visible_form_types` grants it (D45).
+ * Every form the landing dropdown can offer. Price Tag Request has a page of
+ * its own (not part of `SUBMISSION_KINDS`, which is what the generic `[type]`
+ * route guards read to decide what the shared submission pages may render),
+ * but joins this list so it shows up beside the four legacy kinds.
  *
- * Deliberately NOT part of `SUBMISSION_KINDS`: that list is what the generic
- * `[type]` route guards read to decide what the shared submission pages may
- * render, and these forms have pages of their own. The next gated form joins
- * THIS list, plus a label below and a fetch in the landing's loader.
+ * All five are gated the same way: only shown to a contact whose
+ * `visible_form_types` (server-resolved: base kinds + market segment grants,
+ * minus overrides) includes them (D2/D3). There is no "always on" kind and no
+ * "gated" subset any more - PLAN-portal-forms-market-segment D6.
  */
-export const GATED_LANDING_KINDS = ['price_tag_request'] as const;
+export const GATED_FORM_TYPE = 'price_tag_request' as const;
 
-export type PortalGatedKind = (typeof GATED_LANDING_KINDS)[number];
-
-/** Everything the landing dropdown can offer, gated or not. */
-export type PortalLandingKind = PortalSubmissionKind | PortalGatedKind;
+export type PortalLandingKind = PortalSubmissionKind | typeof GATED_FORM_TYPE;
 
 /** Every kind an access type may be granted, in the order the admin sees them. */
 export const LANDING_KINDS: readonly PortalLandingKind[] = [
   ...SUBMISSION_KINDS,
-  ...GATED_LANDING_KINDS,
+  GATED_FORM_TYPE,
 ] as const;
-
-export function isGatedLandingKind(
-  value: string | null | undefined,
-): value is PortalGatedKind {
-  return (GATED_LANDING_KINDS as readonly string[]).includes(value ?? '');
-}
 
 export function isLandingKind(
   value: string | null | undefined,
 ): value is PortalLandingKind {
-  return isSubmissionKind(value) || isGatedLandingKind(value);
+  return (LANDING_KINDS as readonly string[]).includes(value ?? '');
 }
+
+/**
+ * Every contact already gets `SUBMISSION_KINDS` (the base default,
+ * PLAN-portal-forms-market-segment D3) - a market segment can only grant more
+ * on top of that base, never take a base kind away. This is what the Market
+ * Segments admin's "Additional portal forms" field offers (AC-M2); today that
+ * is `price_tag_request` alone, and the next opt-in kind joins `LANDING_KINDS`
+ * above and appears here automatically.
+ */
+export const ADDITIONAL_LANDING_KINDS: readonly PortalLandingKind[] =
+  LANDING_KINDS.filter((k) => !isSubmissionKind(k));
 
 export const SUBMISSION_LABELS: Record<PortalSubmissionKind, string> = {
   complaint: 'Complaint',

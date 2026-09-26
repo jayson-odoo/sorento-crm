@@ -9,10 +9,14 @@
 
 import { describe, expect, it } from 'vitest';
 
-import type {
-  ProductSetTagData,
-  ProductTagData,
-  TagLayer,
+import {
+  defaultTextProps,
+  type LineTagData,
+  type ProductSetTagData,
+  type ProductTagData,
+  type TagBindingData,
+  type TagLayer,
+  type TagPartData,
 } from './tag-template-types';
 import {
   bindTemplateLayers,
@@ -21,14 +25,17 @@ import {
   buildProductBlock,
   buildSetBlock,
   formatSetMemberLine,
+  imagesOf,
   isUnlinked,
   layerDisplay,
   layerText,
+  ownPartsOf,
   priceBadgeInput,
   primaryImageOf,
   resolveBarcodeValue,
   resolveSlotText,
   slotImageAttachmentId,
+  subjectOf,
 } from './product-block';
 
 let seq = 0;
@@ -301,6 +308,10 @@ describe('resolveSlotText name slot (S2, AC-S2-2)', () => {
     const line = {
       kind: 'line' as const,
       line: {
+        tag_id: 't1',
+        tag_label: '1a',
+        open_groups: [],
+        parts: [],
         line_id: 'l1',
         code: 'SK-1234',
         name: 'SK-1234',
@@ -318,6 +329,27 @@ describe('resolveSlotText name slot (S2, AC-S2-2)', () => {
       },
     };
     expect(resolveSlotText(nameLayer, line)).toBe('');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveSlotText price slots print a bare figure, no `RM` (AC-A1, AC-A2).
+// The badge's own `showCurrency` toggle is untouched - this is only the TEXT
+// slot path, `price-badge.test.ts` covers the badge default staying `RM 760`.
+// ---------------------------------------------------------------------------
+
+describe('resolveSlotText price slots (AC-A1, AC-A2)', () => {
+  it('AC-A1: sell_price slot renders the bare offer figure, no RM prefix', () => {
+    const data = {
+      kind: 'product' as const,
+      product: product({ list_price: 1599, offer_price: 535 }),
+    };
+    expect(resolveSlotText({ slot_binding: 'sell_price' }, data)).toBe('535');
+  });
+
+  it('AC-A2: list_price slot renders the bare list figure, grouped, no RM prefix', () => {
+    const data = { kind: 'product' as const, product: product({ list_price: 1599 }) };
+    expect(resolveSlotText({ slot_binding: 'list_price' }, data)).toBe('1,599');
   });
 });
 
@@ -557,6 +589,10 @@ describe('layerDisplay', () => {
     const line = {
       kind: 'line' as const,
       line: {
+        tag_id: 't1',
+        tag_label: '1a',
+        open_groups: [],
+        parts: [],
         line_id: 'l1',
         code: 'SK-1234',
         name: 'Kitchen Sink',
@@ -718,8 +754,227 @@ describe('bindTemplateLayers clears a barcode override on clone (S9 review S5)',
     });
     expect(clone[0].text_override).toBeNull();
     // The template's own layers (what the editor still shows) are untouched -
-    // bindTemplateLayers is only ever called on a COPY (tagForLine clones
+    // bindTemplateLayers is only ever called on a COPY (tagForTag clones
     // via structuredClone before calling it).
     expect(overriddenTemplateLayers[0].text_override).toBe('4006381333931');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D7 - subjectOf, the combo subject picker (S4/S12-3, AC-S4-3/S4-4/S4-6)
+// ---------------------------------------------------------------------------
+
+function part(overrides: Partial<TagPartData> = {}): TagPartData {
+  return {
+    product_id: 'part-1',
+    code: 'TAP-1',
+    name: 'Kitchen Tap',
+    dimensions: '120 x 45 x 300 mm',
+    spec_lines: ['Chrome finish'],
+    specs: [],
+    images: [{ attachment_id: 'att-part-1', url: 'https://cdn/part-1.jpg', is_primary: true }],
+    barcode: '4009999999991',
+    list_price: 99,
+    sell_price: null,
+    ...overrides,
+  };
+}
+
+function line(overrides: Partial<LineTagData> = {}): LineTagData {
+  return {
+    tag_id: 'tag-1',
+    line_id: 'line-1',
+    tag_label: '1a',
+    open_groups: [],
+    parts: [part()],
+    code: 'CAB-01',
+    name: 'Cabinet',
+    dimensions: '800 x 500 x 220 mm',
+    spec_lines: 'Stainless steel',
+    specs: [],
+    set_members: '',
+    images: [{ attachment_id: 'att-parent', url: 'https://cdn/parent.jpg', is_primary: true }],
+    list_price: 1698,
+    sell_price: null,
+    show_promo_price: false,
+    included_accessories: '',
+    quantity: 1,
+    barcode: '4008888888882',
+    ...overrides,
+  };
+}
+
+function lineData(overrides: Partial<LineTagData> = {}): TagBindingData {
+  return { kind: 'line', line: line(overrides) };
+}
+
+describe('subjectOf (D7, AC-S4-3/S4-4/S4-6)', () => {
+  it('a layer with no subjectPart reads the parent - an existing design renders unchanged', () => {
+    const data = lineData();
+    const textLayer = { props: { ...defaultTextProps(), subjectPart: undefined } };
+
+    expect(resolveSlotText({ slot_binding: 'code', ...textLayer }, data)).toBe('CAB-01');
+    expect(
+      resolveBarcodeValue({ text_override: null, props: textLayer.props }, data),
+    ).toBe('4008888888882');
+  });
+
+  it('subjectPart: n resolves that PART, for text, image and barcode alike', () => {
+    const data = lineData({
+      parts: [part({ code: 'TAP-1', barcode: '4009999999991' }), part({ product_id: 'part-2', code: 'BASIN-1', barcode: '4009999999992', images: [{ attachment_id: 'att-part-2', url: 'https://cdn/part-2.jpg', is_primary: true }] })],
+    });
+    const textLayer = { slot_binding: 'code' as const, props: { ...defaultTextProps(), subjectPart: 1 } };
+    const barcodeLayerRef = { text_override: null, props: { kind: 'barcode' as const, show_code: true, subjectPart: 1 } };
+    const imageLayer = {
+      slot_binding: 'product_image' as const,
+      props: { kind: 'product_slot' as const, fieldKey: 'product_image', subjectPart: 1 },
+    };
+
+    expect(resolveSlotText(textLayer, data)).toBe('BASIN-1');
+    expect(resolveBarcodeValue(barcodeLayerRef, data)).toBe('4009999999992');
+    expect(
+      slotImageAttachmentId(imageLayer, imagesOf(subjectOf(data, imageLayer))),
+    ).toBe('att-part-2');
+  });
+
+  it('a price badge set to a part shows that part\'s own list price and offer', () => {
+    const data = lineData({ parts: [part({ list_price: 99, sell_price: 79 })] });
+    const badgeLayer = {
+      props: { kind: 'price_badge' as const, subjectPart: 0 } as never,
+    };
+
+    expect(priceBadgeInput(data, badgeLayer)).toEqual({ listPrice: 99, offerPrice: 79 });
+  });
+
+  it('a price badge with NO subjectPart reads Tag total - the roll-up the badge always printed', () => {
+    const data = lineData({ list_price: 1698, sell_price: 1500, show_promo_price: true });
+    const badgeLayer = { props: { kind: 'price_badge' as const } as never };
+
+    expect(priceBadgeInput(data, badgeLayer)).toEqual({ listPrice: 1698, offerPrice: 1500 });
+  });
+
+  it('a price badge set to the parent (-1) shows the parent alone, NOT the roll-up', () => {
+    // AC-S4-4: "-1 is the parent's own price alone" - distinct from Tag
+    // total once a combo actually has priced parts. The parent's OWN price
+    // (599) is less than the combo's summed total (698 = 599 + 99 tap), so a
+    // badge reading -1 must show 599, never 698.
+    const data = lineData({
+      list_price: 698,
+      sell_price: null,
+      parts: [part({ list_price: 99, sell_price: null })],
+    });
+    const badgeLayer = { props: { kind: 'price_badge' as const, subjectPart: -1 } as never };
+
+    expect(priceBadgeInput(data, badgeLayer).listPrice).toBe(599);
+  });
+
+  it('an out-of-range subjectPart falls back to the parent, same as -1 (AC-S4-6)', () => {
+    const data = lineData({ parts: [part()] });
+    const textLayer = { slot_binding: 'code' as const, props: { ...defaultTextProps(), subjectPart: 7 } };
+
+    expect(resolveSlotText(textLayer, data)).toBe('CAB-01');
+  });
+
+  it('a part missing D7\'s optional fields (a Phase 1 part) fails soft - no photo, no price, never the parent\'s', () => {
+    const bareLine = lineData({
+      parts: [
+        {
+          product_id: 'part-1',
+          code: 'TAP-1',
+          name: 'Kitchen Tap',
+          dimensions: '120 x 45 x 300 mm',
+        },
+      ],
+    });
+    const imageLayer = {
+      slot_binding: 'product_image' as const,
+      props: { kind: 'product_slot' as const, fieldKey: 'product_image', subjectPart: 0 },
+    };
+    const badgeLayer = { props: { kind: 'price_badge' as const, subjectPart: 0 } as never };
+
+    expect(
+      slotImageAttachmentId(imageLayer, imagesOf(subjectOf(bareLine, imageLayer))),
+    ).toBeNull();
+    expect(priceBadgeInput(bareLine, badgeLayer)).toEqual({ listPrice: null, offerPrice: null });
+  });
+
+  it('a single-product tag (no parts) has nothing for subjectOf to change', () => {
+    const data: TagBindingData = { kind: 'product', product: product() };
+    const layer = { props: { ...defaultTextProps(), subjectPart: 0 } };
+
+    expect(subjectOf(data, layer)).toBe(data);
+  });
+
+  // -------------------------------------------------------------------------
+  // F6 (Reviewer S8): parentAlonePrice's subtraction fallback mistreats a
+  // part with NO offer (sell_price null, "at list") as contributing ZERO to
+  // the roll-up, instead of the list price it actually contributed
+  // (AC-S1-8/S7-3: an uncovered part prints at list, which means it IS in
+  // the roll-up total at its list price - subtracting `?? 0` for it
+  // therefore under-subtracts).
+  // -------------------------------------------------------------------------
+  it("a price badge set to the parent, with no parent_sell_price pinned and a part at list, shows the parent's own offer (roll-up minus what the part actually contributed), not the parent's list price", () => {
+    // Parent's own real figures: list 900, offer 700 (covered by the line's
+    // promotion). The part (list 200) is NOT covered, so it contributes its
+    // OWN LIST PRICE (200) to the roll-up, not zero.
+    // Roll-up sell_price (line.sell_price, the tag total) = 700 + 200 = 900.
+    // Roll-up list_price (line.list_price) = 900 + 200 = 1100.
+    const data = lineData({
+      list_price: 1100,
+      sell_price: 900,
+      show_promo_price: true,
+      // Old-pin shape: no `parent_sell_price` carried, forcing the
+      // subtraction fallback.
+      parent_sell_price: undefined,
+      parts: [part({ list_price: 200, sell_price: null })],
+    });
+    const badgeLayer = { props: { kind: 'price_badge' as const, subjectPart: -1 } as never };
+
+    // Correct: 900 (roll-up) - 200 (the part's actual, list-price
+    // contribution) = 700, the parent's real offer.
+    // Today's subtraction does 900 - (null ?? 0) = 900, which is the
+    // parent's OWN LIST PRICE by coincidence of this construction - the bug
+    // this test is named for.
+    expect(priceBadgeInput(data, badgeLayer).offerPrice).toBe(700);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC-S6-3/AC-S6-11 (PLAN-price-tag-r10.md S6): `ownPartsOf` reads `own_parts`
+// when the row carries it, else falls back to `parts` (a row pinned before
+// r10, where `parts` was already the narrow list).
+// ---------------------------------------------------------------------------
+
+describe('ownPartsOf', () => {
+  function part(code: string): TagPartData {
+    return {
+      product_id: `p-${code}`,
+      code,
+      name: code,
+      dimensions: '',
+      spec_lines: [],
+      specs: [],
+      images: [],
+      barcode: null,
+      list_price: 100,
+      sell_price: null,
+      currency: 'MYR',
+    };
+  }
+
+  it('AC-S6-3: reads own_parts when present, not the wider parts list', () => {
+    const line = {
+      parts: [part('A'), part('B'), part('C')],
+      own_parts: [part('A')],
+    };
+    expect(ownPartsOf(line).map((p) => p.code)).toEqual(['A']);
+  });
+
+  it('AC-S6-11: falls back to parts when own_parts is absent (a pre-r10 pinned row)', () => {
+    const line = { parts: [part('A'), part('B')] } as {
+      parts: TagPartData[];
+      own_parts?: TagPartData[];
+    };
+    expect(ownPartsOf(line).map((p) => p.code)).toEqual(['A', 'B']);
   });
 });

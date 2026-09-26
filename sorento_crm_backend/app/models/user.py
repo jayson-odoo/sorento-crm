@@ -271,6 +271,22 @@ def _default_unsupported_domains() -> list[str]:
     return default_unsupported_domains()
 
 
+def _default_chatbot_memory():
+    """`SystemSetting.chatbot_memory`'s Python default, through the module doorway core
+    may import (AC-002) - the same shape `lane_vocabulary` declares once."""
+    from app.modules.chatbot.lane_vocabulary import default_chatbot_memory
+
+    return default_chatbot_memory()
+
+
+def _default_tier_order() -> list[str]:
+    """`tier_gate.TIER_ORDER`, via the chatbot module's doorway - same reasoning as
+    `_default_unsupported_domains` above (chatbot turn re-architecture, AC-1502)."""
+    from app.modules.chatbot.lane_vocabulary import default_tier_order
+
+    return default_tier_order()
+
+
 class SystemSetting(Base):
     __tablename__ = "system_settings"
     # id as String so UPDATE/WHERE work when DB column is TEXT (avoids "operator does not exist: text = uuid")
@@ -375,6 +391,11 @@ class SystemSetting(Base):
     # status change and anything else that can simply be set back.
     deferred_delete_seconds = Column(Integer, nullable=False, server_default="10", default=10)
     deferred_action_seconds = Column(Integer, nullable=False, server_default="5", default=5)
+    # How many days an untouched price tag collection waits before the sweep
+    # closes it (r9 D10). 0 turns the sweep off; 7 is the shipped default.
+    price_tag_auto_collect_days = Column(
+        Integer, nullable=False, server_default="7", default=7
+    )
 
     # System-health observability (PLAN-system-health-observability):
     # daily digest + immediate watchdog alerts. Recipients = role ids (like notify_*_role_ids).
@@ -434,6 +455,17 @@ class SystemSetting(Base):
     default_uom_id = Column(
         PG_UUID(as_uuid=False),
         ForeignKey("units_of_measure.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    # PLAN-oi-request-cs-reserve.md section 6c, F1: the reserve dialog's own default
+    # Location, owner-configurable ("list all the site pool with this BRW (configurable
+    # as default)"). Seeded to the BRW pool by code in `oirs_0002_reserve_round2`; NULL
+    # means "no configured default", and the dialog falls back to the row's own site
+    # pool (R3) exactly as it did before this column existed.
+    oi_reserve_default_pool_warehouse_id = Column(
+        PG_UUID(as_uuid=False),
+        ForeignKey("warehouses.id", ondelete="SET NULL"),
         nullable=True,
     )
 
@@ -535,10 +567,20 @@ class SystemSetting(Base):
     # dispatcher's 120 second lock TTL.
     media_extraction_timeout_seconds = Column(Integer, nullable=False, server_default="45", default=45)
     media_max_entities = Column(Integer, nullable=False, server_default="10", default=10)
+    # How long the low stock report route holds a chat turn open, waiting for the fresh
+    # plan and its workbook, before it answers `pending` and leaves delivery to the worker
+    # push (PLAN-low-stock-report S5, AC-43). The owner's ruling on the lavish page was a
+    # System Setting rather than a constant only a deploy can move. Range 5-90, enforced in
+    # the backend validator the way the media wait is; 40 sits under the chatbot's own 45 s
+    # queue-wait budget.
+    low_stock_sync_wait_seconds = Column(Integer, nullable=False, server_default="40", default=40)
     # R1 (H1): the corrected `check_stock` vocabulary makes two lanes reachable that
     # have been dead by typo since they were written (0/150 live fixtures). Turning them
     # on is therefore a DATA change with a test, not a surprise on deploy. Default off.
     chatbot_stock_denial_enabled = Column(Boolean, nullable=False, server_default="false", default=False)
+    # PLAN-local-buy-routing-toggle.md (18 Sep 2026): local-supplier Buy routing is a
+    # switch, not a hard rule. Default off, since off is the shipped state the owner ruled.
+    local_buy_routing_enabled = Column(Boolean, nullable=False, server_default="false", default=False)
     # AC-304 (D5): the ONE list the owner has actually changed, so it is a column and not
     # a table. `not_supported` is decided against this instead of the two literals the JS
     # carries. A6 (chatbot-growth-r1, AC-911, migration 488) removed `spo_allocation` from
@@ -570,6 +612,35 @@ class SystemSetting(Base):
         server_default='{"inventory": ["incoming", "purchase_order"], "incoming": ["inventory", "purchase_order"]}',
         default=lambda: {"inventory": ["incoming", "purchase_order"], "incoming": ["inventory", "purchase_order"]},
     )
+    # Chatbot turn re-architecture (AC-1502, captain ruling 16 Sep 2026): the tier
+    # order, ONE copy - `lanes/business/tier_gate.TIER_ORDER`'s own literal order today,
+    # retired from that module and its two other copies once this table is the only
+    # source (AC-1594). Not a `chatbot_entity_kinds` row: "tier" is not one of the 12
+    # `ENTITY_HINTS` and never gets one.
+    chatbot_tier_order = Column(
+        JSONB,
+        nullable=False,
+        server_default='["dealer", "office", "end_user"]',
+        default=lambda: _default_tier_order(),
+    )
+    # Chatbot turn re-architecture (AC-1513, AC-1561): the Memory card's four settings,
+    # in ONE JSONB rather than four columns - they are one decision ("how much does the
+    # bot remember") made on one card, and a column each would be four migrations for a
+    # screen that shows them together. `recall_default` is the per-contact toggle's
+    # default for a NEW contact (the contact's own `chatbot_recall_enabled` always wins);
+    # `episode_retention_days` is how long a closed frame is worth recalling;
+    # `profile_fields` is which profile slots the parser is told about; and
+    # `focus_reset_events` is what clears the focus besides an explicit topic reset.
+    chatbot_memory = Column(
+        JSONB,
+        nullable=False,
+        server_default=(
+            '{"recall_default": false, "episode_retention_days": 180, '
+            '"profile_fields": ["tier", "language", "default_ledgers"], '
+            '"focus_reset_events": ["topic_switch"]}'
+        ),
+        default=lambda: _default_chatbot_memory(),
+    )
     # Which lanes the CRM is allowed to FINISH, by `branch_kind`, one at a time.
     #
     # `contracts.CRM_COMPLETED_BRANCH_KINDS` says what the code CAN complete; this says
@@ -584,6 +655,20 @@ class SystemSetting(Base):
     # is ignored with a warning rather than raising, because this is operator data and a
     # typo must not take the turn engine down.
     chatbot_completed_lanes = Column(JSONB, nullable=False, server_default="[]", default=list)
+    # Price tag packages (PLAN-price-tag-combos D2): the product class labels whose
+    # request lines are warned about when they reach marketing without their catalogue
+    # package. NOT NULL with the owner's two classes as the default rather than NULL -
+    # a NULL would make the guard warn about nothing on every existing tenant, which
+    # reads as the feature not working rather than as a missing default.
+    #
+    # A JSON array rather than a table: this is one operator preference, a handful of
+    # strings long, and the second one can pay for the generalisation.
+    price_tag_guarded_classes = Column(
+        JSONB,
+        nullable=False,
+        server_default='["Bathroom Furniture", "Kitchen Sink"]',
+        default=lambda: ["Bathroom Furniture", "Kitchen Sink"],
+    )
     # AC-810: the two switches that used to be `.env` flags. They are here rather than in
     # `app/config.py` because the owner turns them on and off while watching live turns,
     # and an environment variable makes that a deploy. Read per turn by the engine.

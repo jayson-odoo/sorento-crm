@@ -11,6 +11,7 @@ this system.
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from datetime import date
 from typing import Annotated, Optional, Union
@@ -27,7 +28,7 @@ from fastapi import (
     status,
 )
 from fastapi.concurrency import run_in_threadpool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -35,6 +36,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import require_permission
 from app.models.scm import ContainerSize, LoadingPlan
+from app.schemas.scm_reorder import require_start_on_or_before_end
 from app.services.error_handler import AppException
 from app.services.scm import (
     allocation_suggestion_service,
@@ -51,6 +53,7 @@ from app.services.scm.upload_intake import read_upload, read_upload_retained
 from app.utils.http import content_disposition
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # Same capability as the other upload channels: this rewrites what a container is planned
 # from, so it sits behind the operator permission rather than the read one.
@@ -136,6 +139,11 @@ async def preview_supplier_inventory(
                     "takes. Stated, 'rows held now' counts only that plan's own rows; absent, "
                     "the supplier-wide snapshot (loading_plan_id IS NULL).",
     ),
+    header_row: Optional[int] = Form(
+        None, ge=1, le=1000,
+        description="The import column mapper's stepper (AC-M3) - which row is the "
+                    "header, overriding the guess.",
+    ),
     _user: dict = Depends(_WRITE),
     db: Session = Depends(get_db),
 ):
@@ -145,7 +153,11 @@ async def preview_supplier_inventory(
     quantities and no indication of who wrote it.
     """
     return supplier_inventory_service.preview(
-        db, await read_upload(file), supplier_id=supplier_id, loading_plan_id=loading_plan_id
+        db,
+        await read_upload(file),
+        supplier_id=supplier_id,
+        loading_plan_id=loading_plan_id,
+        header_row=header_row,
     )
 
 
@@ -159,6 +171,11 @@ async def apply_supplier_inventory(
                     "are replaced and the new ones are stamped with it; absent, the "
                     "supplier-wide snapshot is replaced as before.",
     ),
+    header_row: Optional[int] = Form(
+        None, ge=1, le=1000,
+        description="The import column mapper's stepper (AC-M3) - which row is the "
+                    "header, overriding the guess.",
+    ),
     validate_only: bool = Query(
         False,
         description="Test the file and write nothing. Returns {valid, errors, warnings, summary}.",
@@ -169,14 +186,22 @@ async def apply_supplier_inventory(
     """Replace a stock snapshot - this plan's own, or the supplier's."""
     upload = await read_upload_retained(file)
     if validate_only:
-        return supplier_inventory_service.validate(db, upload.data, supplier_id=supplier_id)
+        return supplier_inventory_service.validate(
+            db, upload.data, supplier_id=supplier_id, header_row=header_row
+        )
     plan = _plan_for_upload(db, loading_plan_id, supplier_id=supplier_id)
     out = supplier_inventory_service.apply(
         db,
         upload.data,
         supplier_id=supplier_id,
+        # The id stamps the snapshot row's `uploaded_by`, which is a principal reference.
         actor=current_user.get("id"),
+        # The NAME stamps any alias the ladder remembers along the way (S4, AC-4.1): that
+        # column is read straight off the Remembered table, and it printed a UUID at the
+        # buyer for as long as the id was the only thing handed down.
+        actor_label=_actor(current_user),
         loading_plan_id=str(plan.id) if plan is not None else None,
+        header_row=header_row,
     )
     if not out.get("readable"):
         missing = ", ".join(out.get("missing_columns") or [])
@@ -499,6 +524,10 @@ class LoadingPlanCreate(BaseModel):
     """Start a plan: whose container, how far ahead, and which document it starts from."""
 
     supplier_id: str
+    #: "Sales orders needed" window (AC-N7): the same From/To shape and the same reading
+    #: `CreateReorderRunRequest` already gives the reorder run. None on either side means
+    #: unbounded on that side; demand carrying no date at all is always counted regardless.
+    plan_horizon_start: Optional[date] = None
     #: "Sales order cut-off". None means every open order counts - the same words and the
     #: same rule the reorder run's own horizon uses.
     plan_horizon_date: Optional[date] = None
@@ -506,6 +535,11 @@ class LoadingPlanCreate(BaseModel):
     #: The retained sheet this plan was started from, so the record can offer "View uploaded
     #: list". Optional: the retain is itself best-effort, and a plan without it is still a plan.
     source_attachment_id: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _start_before_end(self):
+        require_start_on_or_before_end(self.plan_horizon_start, self.plan_horizon_date)
+        return self
 
 
 @router.post("/loading-plans", status_code=status.HTTP_201_CREATED)
@@ -519,6 +553,7 @@ def create_loading_plan(
         plan = loading_plan_service.create_record(
             db,
             supplier_id=body.supplier_id,
+            plan_horizon_start=body.plan_horizon_start,
             plan_horizon_date=body.plan_horizon_date,
             document_kind=body.document_kind,
             source_attachment_id=body.source_attachment_id,
@@ -534,7 +569,13 @@ def create_loading_plan(
 class LoadingPlanUpdate(BaseModel):
     """The only thing an open plan changes about itself: how far ahead it is planning."""
 
+    plan_horizon_start: Optional[date] = None
     plan_horizon_date: Optional[date] = None
+
+    @model_validator(mode="after")
+    def _start_before_end(self):
+        require_start_on_or_before_end(self.plan_horizon_start, self.plan_horizon_date)
+        return self
 
 
 @router.patch("/loading-plans/{plan_id}")
@@ -551,7 +592,13 @@ def update_loading_plan(
     """
     plan = _plan_or_404(db, plan_id)
     _refuse_cancelled(plan)
-    plan.plan_horizon_date = body.plan_horizon_date
+    # Only a key the caller actually sent moves the row (`model_fields_set`): both dialogs
+    # send the pair together, but a caller that PATCHes the end date alone must not null out
+    # a start nobody asked to touch.
+    if "plan_horizon_start" in body.model_fields_set:
+        plan.plan_horizon_start = body.plan_horizon_start
+    if "plan_horizon_date" in body.model_fields_set:
+        plan.plan_horizon_date = body.plan_horizon_date
     db.flush()
     out = loading_plan_service.record_dict(db, plan)
     db.commit()
@@ -810,6 +857,36 @@ class SpoCreateRequest(BaseModel):
     )
 
 
+def _header_rows(raw: Optional[str]) -> dict[str, int]:
+    """`{"<file name>": <row>}` (B6, AC-M3) - the mapper's stepper pick, per file, for a
+    multi-file upload. A JSON form field for the same reason `attach_to_blocks` is: the
+    dialog posts the whole map every time one file's row changes."""
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError) as exc:
+        raise AppException(422, "header_rows must be a JSON object", detail="header_rows") from exc
+    if not isinstance(parsed, dict):
+        raise AppException(422, "header_rows must be a JSON object", detail="header_rows")
+    out: dict[str, int] = {}
+    for name, row in parsed.items():
+        # Review round 3, R20: `int(row)` used to coerce silently - `int(True) == 1` and
+        # `int(2.7) == 2` both "succeed", so a bool or a float the stepper never actually
+        # produced was accepted with no sign anything was wrong. A plain `int` and nothing
+        # else (bool is an `int` subclass, excluded explicitly).
+        if isinstance(row, bool) or not isinstance(row, int):
+            raise AppException(
+                422, f"header_rows.{name} must be a whole number", detail="header_rows"
+            )
+        # Same bound as the single-file `header_row` Form field (security m2, review
+        # round 1) - a per-file JSON map bypasses FastAPI's own `ge`/`le` on that field,
+        # so the same range is enforced here by hand.
+        if 1 <= row <= 1000:
+            out[str(name)] = row
+    return out
+
+
 def _block_attach(raw: Optional[str]) -> dict[tuple[str, int], str]:
     """`[{"file": name, "block_index": 0, "invoice_id": "..."}]` as the service wants it
     (AC-B13): which invoice the operator picked for ONE packing-list block. A JSON form
@@ -855,6 +932,11 @@ async def preview_supplier_documents(
             "packing-list block (AC-B13)"
         ),
     ),
+    header_rows: Optional[str] = Form(
+        None,
+        description='JSON object {"<file name>": <row>} - the import column mapper\'s '
+                    "stepper pick, per file (B6, AC-M3).",
+    ),
     _user: dict = Depends(_WRITE),
     db: Session = Depends(get_db),
 ):
@@ -877,6 +959,7 @@ async def preview_supplier_documents(
         currency=currency,
         attach_to=attach_to,
         block_attach=_block_attach(attach_to_blocks),
+        header_rows=_header_rows(header_rows),
     )
     db.commit()
     return out
@@ -906,6 +989,11 @@ async def apply_supplier_documents(
             "packing-list block (AC-B13)"
         ),
     ),
+    header_rows: Optional[str] = Form(
+        None,
+        description='JSON object {"<file name>": <row>} - the import column mapper\'s '
+                    "stepper pick, per file (B6, AC-M3).",
+    ),
     current_user: dict = Depends(_WRITE),
     db: Session = Depends(get_db),
 ):
@@ -932,6 +1020,7 @@ async def apply_supplier_documents(
         translations=parsed_translations,
         attach_to=attach_to,
         block_attach=_block_attach(attach_to_blocks),
+        header_rows=_header_rows(header_rows),
     )
     db.commit()
     return out
@@ -1064,7 +1153,11 @@ def export_consolidated_packing_list(
     _user: dict = Depends(_READ),
     db: Session = Depends(get_db),
 ):
-    """The same list as a workbook, named after the container rather than after its id."""
+    """The same list as a workbook, named after the container rather than after its id.
+
+    DEPRECATED (E1, PLAN-pi-header-fields-convert-fixes-24sep.md) - the FE gear now enqueues
+    the async POST below instead of calling this synchronously. Kept mounted for one release
+    for callers outside the FE (MCP, n8n)."""
     payload = consolidated_packing_list.build(db, shipment_id)
     filename = consolidated_packing_list.export_filename(payload)
     return Response(
@@ -1072,6 +1165,66 @@ def export_consolidated_packing_list(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": content_disposition(filename)},
     )
+
+
+@router.post(
+    "/inbound-shipments/{shipment_id}/packing-list/export",
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def enqueue_packing_list_export(
+    shipment_id: str,
+    current_user: dict = Depends(_READ),
+    db: Session = Depends(get_db),
+):
+    """Queue an async xlsx export of the consolidated packing list (E1/E2) - same shape as
+    a complaint's PDF export: a `user_downloads` row now, the render on the worker. The
+    result appears in My Downloads and this shipment's own Download history."""
+    import re
+
+    from app.schemas.download import DownloadResponse
+    from app.services.download_service import DownloadService
+    from app.services.queue_service import enqueue_job
+    from app.services.scm.consolidated_packing_list import _shipment_or_404
+    from app.tasks.export_tasks import EXPORT_FAILURE_MESSAGE, generate_packing_list_xlsx
+
+    # R10 (review round 1): the SAME 404-on-non-UUID guard `build`/the task use, rather
+    # than a raw `== shipment_id` comparison against a UUID column, which Postgres
+    # refuses with `InvalidTextRepresentation` - an unhandled 500, not a 404.
+    shipment = _shipment_or_404(db, shipment_id)
+
+    # R10: the SAME filename sanitiser `export_filename` (the task) applies - the stem
+    # named here is not yet what the file is called (the task's own build recomputes the
+    # real one), but it fills the row until the render replaces it, and it must never
+    # carry whatever path-unsafe characters the container number states verbatim.
+    stem = re.sub(
+        r"[^A-Za-z0-9._-]", "",
+        str(shipment.shipping_container_number or shipment.shipment_number or shipment_id),
+    ) or str(shipment_id)
+
+    download = DownloadService(db).create(
+        user_id=str(current_user["id"]),
+        kind="packing_list_xlsx",
+        source_entity_type="inbound_shipment",
+        source_entity_id=str(shipment_id),
+        filename=f"{stem}-packing-list.xlsx",
+    )
+    try:
+        enqueue_job(
+            generate_packing_list_xlsx,
+            str(download.id),
+            str(shipment_id),
+            queue_name="imports",
+            job_timeout=600,
+        )
+    except Exception as e:  # noqa: BLE001 - enqueue failed (e.g. Redis down): mark the
+        # row failed so the drawer shows it rather than spinning forever.
+        logger.exception("enqueue_packing_list_export: could not queue for shipment %s", shipment_id)
+        # R8 (security S3): a fixed sentence, never `str(e)` - the raw message could carry
+        # a broker URL, a stack fragment, or other detail this drawer shows the user.
+        DownloadService(db).mark_failed(str(download.id), EXPORT_FAILURE_MESSAGE)
+        raise AppException(500, EXPORT_FAILURE_MESSAGE) from e
+
+    return DownloadResponse.model_validate(DownloadService(db).get(str(download.id)))
 
 
 @router.get("/inbound-shipments/{shipment_id}/line-photos")

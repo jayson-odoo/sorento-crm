@@ -48,6 +48,21 @@ from app.services.chatbot.contracts import PREVIEW
 
 logger = logging.getLogger(__name__)
 
+# The eight teams a turn can escalate to (was `contracts.SUGGESTED_TEAMS`, AC-1594/S6):
+# escalation-lane vocabulary, not domain data, so it lives here rather than on `Policy` -
+# `purchasing_certification` and `it_admin` answer from no `chatbot_domains` row of their
+# own, so a union over the domain table's `escalation_team_code` could never recover them.
+ESCALATION_TEAMS: tuple[str, ...] = (
+    "purchasing",
+    "purchasing_certification",
+    "customer_service",
+    "marketing_product",
+    "marketing_form",
+    "warehouse",
+    "marketing_promotion",
+    "it_admin",
+)
+
 # `escalation-context`'s own STOPGAP mirror of the parser fork's map. The real source is
 # the CRM `companies.code` column threaded through the resolver; kept byte-identical here
 # and in `head/output_exchange.CO_ALIASES` until that lands.
@@ -175,7 +190,8 @@ def _company_keys(company: Any) -> set[str]:
 def escalation_context(item: dict[str, Any], *, ctx: dict[str, Any]) -> dict[str, Any]:
     """The brand / company axes this escalation routes on. Pure.
 
-    A five-rung ladder, in the live body's order:
+    A SIX-rung ladder, in the live body's order (round 4, owner-approved: `carried_
+    brand` is the ONE new rung, added 22 Sep 2026):
 
     1. `picked_member` - the customer picked a row out of the frozen `last_result_set`, so
        both axes are that row's own, verbatim;
@@ -184,12 +200,28 @@ def escalation_context(item: dict[str, Any], *, ctx: dict[str, Any]) -> dict[str
     3. `sameTeam` - the roster the offer was fetched with, which splits three ways:
        `prior_state` (one company), `prior_state_no_company` (one row, no id) and
        `multi_company_unpicked` (more than one, nobody picked - the clarify arm);
-    4. `stated_brand` - a brand the customer named when no roster was involved at all;
-    5. `none`.
+    4. `carried_brand` - the OFFER TURN's own resolved brand
+       (`turn_runtime._accepted_pending_brand`, the SAME acceptance carry the agent half
+       already uses), read when NONE of the three roster arms above named one. `same_team`
+       is never true in the rearch engine today (`_prev_variables` reads `session_vars.
+       variables`, a nest `turn/tail.py`'s five session keys never write), so THIS rung is
+       what a rearch "yes" after an incoming/ETA miss actually reaches - measured live
+       (SRTSC07, 22 Sep 2026): a bare "yes" carried no brand at all, and the whole
+       Packing List team rotated instead of drawing the brand-tagged member;
+    5. `stated_brand` - a brand the customer named when no roster was involved at all;
+    6. `none`.
 
     Both axes are always what the `get-cs-members` call USED, never re-derived from this
     turn's `query_brands`: re-deriving would narrow the assignee pool to one the customer
-    was never shown.
+    was never shown. `carried_brand` is the ONE exception to "never re-derived" by
+    necessity - the rearch engine has no `get-cs-members` roster fetch to remember a
+    brand from at all, so it carries the offer turn's OWN resolved brand instead
+    (`lanes/business/gate.py`'s `routing_brand`, stamped onto the pending at MINT time,
+    read back here through the acceptance carry) - never a brand this turn re-derives
+    for itself, which is what the "never re-derived" rule is actually protecting
+    against (see also `_accepted_pending_field`'s own docstring for why the picked-
+    member and company-pick arms above stay untouched: their brand is a SPECIFIC row's
+    own and must keep outranking a generic carry).
     """
     output = jsc.get(jsc.get(ctx, "parse"), "output") or {}
     prev = _prev_variables(ctx)
@@ -213,6 +245,12 @@ def escalation_context(item: dict[str, Any], *, ctx: dict[str, Any]) -> dict[str
         if jsc.is_array(query_brands) and len(query_brands) == 1
         else None
     )
+    # Round 4 (owner-approved, 22 Sep 2026): `turn_runtime.lane_parse_output` writes
+    # this key the SAME way it already writes `preferred_assignee_id`/`company_pick`,
+    # under the SAME accept gate `_accepted_pending_field` shares with the agent carry
+    # - so an unaccepted turn carries no brand, exactly like it carries no agent.
+    raw_carried_brand = jsc.get(jsc.get(output, "escalation"), "carried_brand")
+    carried_brand = jsc.js_string(raw_carried_brand).lower() if jsc.truthy(raw_carried_brand) else None
 
     raw_pick = jsc.get(jsc.get(output, "escalation"), "company_pick")
     company_pick = jsc.js_string(raw_pick).lower().strip() if jsc.truthy(raw_pick) else None
@@ -288,6 +326,9 @@ def escalation_context(item: dict[str, Any], *, ctx: dict[str, Any]) -> dict[str
             if source_name != "multi_company_unpicked":
                 routing_brand = jsc.get(prev, "routing_brand")
                 brand_code = routing_brand if routing_brand is not None else None
+    elif carried_brand:
+        brand_code = carried_brand
+        source_name = "carried_brand"
     elif stated_brand:
         brand_code = stated_brand
         source_name = "stated_brand"
@@ -307,21 +348,43 @@ def escalation_context(item: dict[str, Any], *, ctx: dict[str, Any]) -> dict[str
 # --------------------------------------------------------------------------- #
 
 
+def _company_clarify_rows(ctx: dict[str, Any]) -> list[dict[str, Any]]:
+    """The company POOL this clarify offers, in printed order, one row per name.
+
+    The rows, not just the names, because the numbered pick the customer answers with
+    has to route: `engine._question_offered` mints the `company_pick` options off these
+    and `turn/apply.py::_answer_offer` hands the picked row's `company_id` back to
+    `escalation_context` (hand pass 11, blocker 2). Two pool rows sharing one name
+    collapse to one option, exactly as they collapse to one printed name.
+    """
+    prev = _prev_variables(ctx)
+    plan = jsc.array(jsc.get(prev, "routing_roster_plan"))
+    pools = plan if len(plan) else jsc.array(jsc.get(prev, "routing_companies"))
+    rows: list[dict[str, Any]] = []
+    seen: set[Any] = set()
+    for entry in pools:
+        name = jsc.get(entry, "company_name") if jsc.truthy(entry) else None
+        if not jsc.truthy(name) or name in seen:
+            continue
+        seen.add(name)
+        rows.append(
+            {
+                "idx": len(rows) + 1,
+                "company_id": jsc.get(entry, "company_id") or None,
+                "company_name": name,
+                "brand_code": jsc.get(entry, "brand_code") or None,
+            }
+        )
+    return rows
+
+
 def _company_clarify_options(ctx: dict[str, Any]) -> list[str]:
     """The company names this clarify offers, in printed order.
 
     Extracted so the ASK and the quick replies that answer it cannot list different
     companies: `clarify_company_reply` prints these and `_clarify_actions` taps them.
     """
-    prev = _prev_variables(ctx)
-    plan = jsc.array(jsc.get(prev, "routing_roster_plan"))
-    pools = plan if len(plan) else jsc.array(jsc.get(prev, "routing_companies"))
-    names: list[str] = []
-    for entry in pools:
-        name = jsc.get(entry, "company_name") if jsc.truthy(entry) else None
-        if jsc.truthy(name) and name not in names:
-            names.append(name)
-    return names
+    return [row["company_name"] for row in _company_clarify_rows(ctx)]
 
 
 def clarify_company_reply(item: dict[str, Any], *, ctx: dict[str, Any]) -> dict[str, Any]:
@@ -334,7 +397,8 @@ def clarify_company_reply(item: dict[str, Any], *, ctx: dict[str, Any]) -> dict[
     per name). With no names at all the ask degrades to number-or-name: never invite a
     reply that cannot resolve.
     """
-    names = _company_clarify_options(ctx)
+    rows = _company_clarify_rows(ctx)
+    names = [row["company_name"] for row in rows]
     bold = [f"*{name}*" for name in names]
     listed = " / ".join(bold)
     if len(bold) > 1:
@@ -354,7 +418,16 @@ def clarify_company_reply(item: dict[str, Any], *, ctx: dict[str, Any]) -> dict[
         if names
         else f"{lead} - reply a number or a name and I'll assign automatically."
     )
-    return {**item, "clarify_company": True, "clarify_text": clarify_text}
+    # `clarify_company_options` rides beside the text for the SAME reason
+    # `clarify_team_options` does on the team clarify: the question the customer sees and
+    # the numbered options the next turn resolves against are built from ONE list, so
+    # they cannot name different companies (hand pass 11, blocker 2).
+    return {
+        **item,
+        "clarify_company": True,
+        "clarify_text": clarify_text,
+        "clarify_company_options": rows,
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -410,17 +483,35 @@ def _malaysia(value: Any) -> str:
 
 
 def _clarify_gate(context_item: dict[str, Any], ctx: dict[str, Any]) -> bool:
-    """`clarify-company-gate`: an OPEN member picker whose pool nobody chose from.
+    """`clarify-company-gate`: an offer whose company pool nobody chose from.
 
-    Three conditions, all of them state: the previous turn left a member offer open, it
-    carried rows, and `escalation-context` came out of the ladder at
-    `multi_company_unpicked`. Assigning here would round-robin a pool the customer was
-    never shown a choice from, which is the live bug this arm exists to close.
+    `multi_company_unpicked` is the trigger on both arms, and it means one thing:
+    assigning now would round-robin a pool the customer was never asked to choose from,
+    which is the live bug this arm exists to close.
+
+    * The n8n arm, unchanged: the previous turn left a MEMBER offer open and it carried
+      rows (`selection_context` + `last_result_set`, the pair `compile-current-state`
+      persists).
+    * The re-arch arm: a multi-company ROSTER PLAN, which is the pool the escalate offer
+      itself listed. Reachable on EITHER path, deliberately (reviewer SF-1, hand pass 11
+      final re-check): this engine mints its own offer
+      (`turn_runtime.escalation_roster_plan`, off the accepted offer's own options), but
+      `tail/member_offer.cs_roster_plan` also emits one row per `gate.routing_companies`
+      entry, which `compile-current-state` persists verbatim as the SAME
+      `variables.routing_roster_plan` (`sub_answer.miss_roster_plan` caps only ITS OWN
+      producer's plan at one row). So a carried-over n8n session with a 2-row plan and no
+      `selection_context == "member_offer"` - its own member-roster read came back empty -
+      now clarifies where it used to fall through to a blind round robin. Fail-safe by
+      direction (a clarify beats a wrong assignment); the owner ruling above ("we clarify
+      the company with the user when it is not clear") covers this arm too.
     """
     prev = _prev_variables(ctx)
+    if jsc.get(context_item, "routing_source") != "multi_company_unpicked":
+        return False
+    if len(jsc.array(jsc.get(prev, "routing_roster_plan"))) > 1:
+        return True
     return (
-        jsc.get(context_item, "routing_source") == "multi_company_unpicked"
-        and jsc.get(prev, "selection_context") == "member_offer"
+        jsc.get(prev, "selection_context") == "member_offer"
         and len(jsc.array(jsc.get(prev, "last_result_set"))) > 0
     )
 
@@ -782,7 +873,7 @@ def _person_routing(
             if matched
             else _team_clarify_pairs([])
         )
-    from app.services.chatbot.head.output_exchange import offer_is_open
+    from app.services.chatbot.session_state import offer_is_open
 
     if offer_is_open(_prev_variables(ctx)):
         return _clarify_over(_team_clarify_pairs([]))
@@ -813,14 +904,12 @@ def _catalogue_teams(word: Any) -> list[str]:
     An exact member always wins outright: `purchasing` is a team in its own right and
     must not be read as the family `purchasing_certification` also belongs to.
     """
-    from app.services.chatbot.contracts import SUGGESTED_TEAMS
-
     token = jsc.nullish_str(word).strip().lower().replace(" ", "_").replace("-", "_")
     if not token:
         return []
-    if token in SUGGESTED_TEAMS:
+    if token in ESCALATION_TEAMS:
         return [token]
-    return [t for t in SUGGESTED_TEAMS if token in t.split("_")]
+    return [t for t in ESCALATION_TEAMS if token in t.split("_")]
 
 
 def _clarify_over(
@@ -856,8 +945,6 @@ def _team_clarify_pairs(hits: list) -> list[dict[str, Any]]:
     the slug, which is the only string routing can act on. De-duplicated by label, which is
     what the printed list can distinguish.
     """
-    from app.services.chatbot.contracts import SUGGESTED_TEAMS
-
     pairs: list[dict[str, Any]] = []
     seen: set[str] = set()
     for hit in hits:
@@ -866,7 +953,7 @@ def _team_clarify_pairs(hits: list) -> list[dict[str, Any]]:
         if jsc.truthy(label) and label not in seen:
             seen.add(label)
             pairs.append({"team": code, "label": label})
-    return pairs or [{"team": t, "label": _pretty_team(t)} for t in SUGGESTED_TEAMS]
+    return pairs or [{"team": t, "label": _pretty_team(t)} for t in ESCALATION_TEAMS]
 
 
 def _team_clarify_options(hits: list) -> list[str]:
@@ -1120,14 +1207,31 @@ def _sla_body(
         "team_set_code": prefer("team_set_code", jsc.get(context_item, "team") or ""),
         "brand_code": prefer("brand_code", jsc.get(context_item, "brand_code") or None),
         "company_id": prefer("company_id", jsc.get(context_item, "company_id") or None),
-        "message_id": message_id if message_id is not None else None,
+        "message_id": _numeric_message_id(message_id),
         "source_message_id": None if message_id is None else jsc.js_string(message_id),
         "source_message_text": input_message or "",
     }
 
 
+def _numeric_message_id(message_id: Any) -> int | None:
+    """`ConversationSLATrackingCreate.message_id` is an int FK-ish correlation field -
+    respond.io's own ids are base-10; a channel or harness id that is not (a dry-run /
+    test sentinel) degrades to None rather than failing the whole escalation, exactly
+    as an absent id already does. `source_message_id` (a plain string) is what keeps
+    the real value regardless."""
+    if message_id is None:
+        return None
+    try:
+        return int(str(message_id).strip())
+    except (TypeError, ValueError):
+        return None
+
+
 def _input_message(ctx: dict[str, Any]) -> str:
-    """`Call 'sub-human-intervention'`'s `input_message`, expression for expression.
+    """`Call 'sub-human-intervention'`'s `input_message` - expression for expression on
+    every branch except the quoted-message fallback, where R1 below deliberately
+    improves on the raw n8n expression rather than porting its `undefined` (see that
+    ruling's own note).
 
     Live, from the node's `workflowInputs.value.input_message` (two adjacent `{{ }}`
     blocks, concatenated with no separator by the template):
@@ -1144,13 +1248,20 @@ def _input_message(ctx: dict[str, Any]) -> str:
     `source_message_text` came out blank and the person picking the case up saw no trace
     of what the customer sent. Live falls back to the attachment's description and then to
     a `[image message]` style placeholder naming the type, and appends the quoted message
-    when the customer replied to one. Reproduced here rather than improved on: the SLA row
-    is read beside rows n8n wrote, and two spellings of the same message would be worse
-    than the placeholder.
+    when the customer replied to one.
 
     `replyTo` hangs off the WEBHOOK body (`ctx.text.message`), one level above the message
     body the first chain reads - copying its path from the wrong level is the easy mistake
     here, so both are spelled out above.
+
+    Owner ruling 22 Sep 2026, R1 (AC-EQ-1..3): the quoted body is `text` if truthy, else
+    `title` (Respond.io's quick-reply quote shape carries only `title`), else the whole
+    " reply to: ..." suffix is dropped - never n8n's `undefined`, which is what reading
+    `.text` unguarded renders for a quoted message with neither, per the n8n expression
+    quoted above. R1 is a deliberate divergence from that expression for this one
+    branch, not a port of it, at the time of this port (22 Sep 2026) - no claim is made
+    here about whether n8n's own node has since been fixed; a fresh capture that still
+    shows `undefined` for this shape is not a regression in this file.
     """
     envelope = jsc.get(jsc.get(ctx, "text"), "message")
     body = jsc.get(envelope, "message")
@@ -1164,12 +1275,14 @@ def _input_message(ctx: dict[str, Any]) -> str:
 
     text = jsc.js_string(value)
 
-    # `replyTo?.message` is the TRUTH TEST, and the text is read off it unguarded - so a
-    # quoted message with no text renders JS's own `undefined`, which is what n8n stores
-    # today. Faithful, not tidied.
     quoted = jsc.get(jsc.get(envelope, "replyTo"), "message", jsc.UNDEFINED)
     if jsc.truthy(quoted):
-        text += " reply to: " + jsc.js_string(jsc.get(quoted, "text", jsc.UNDEFINED))
+        quoted_text = jsc.get(quoted, "text", jsc.UNDEFINED)
+        quoted_body = (
+            quoted_text if jsc.truthy(quoted_text) else jsc.get(quoted, "title", jsc.UNDEFINED)
+        )
+        if jsc.truthy(quoted_body):
+            text += " reply to: " + jsc.js_string(quoted_body)
     return text
 
 

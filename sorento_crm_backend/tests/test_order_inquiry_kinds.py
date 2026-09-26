@@ -564,7 +564,8 @@ def test_the_visible_totals_honour_the_kind_filter_unlike_the_facet(api):
     everything = client.get(SUMMARY).json()
     only_po = client.get(SUMMARY, params={"kind": "po"}).json()
 
-    assert everything["total_rows"] == 5
+    # 4, not 5 - row_cancelled is excluded from the visible total by default (AC-OH-50).
+    assert everything["total_rows"] == 4
     # Only row_po carries a po link.
     assert only_po["total_rows"] == 1
     assert only_po["total_qty"] == "8"

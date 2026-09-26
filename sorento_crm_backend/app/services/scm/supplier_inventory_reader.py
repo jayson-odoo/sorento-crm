@@ -17,18 +17,41 @@ is never zero: an item nobody measured must not look like an item that takes no 
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from sqlalchemy.orm import Session
 
 from app.services.import_alias_service import AliasResolver, normalize_header
-from app.services.scm.outstanding_reader import RowProblem, sheet_rows
+from app.services.scm.outstanding_reader import RowProblem, sheet_merges, sheet_rows
+from app.services.scm.supplier_code_composer import (
+    MAX_KEY_LENGTH,
+    WordList,
+    compose,
+    is_bare,
+    raw_key,
+)
+
+logger = logging.getLogger(__name__)
 
 DOC_TYPE = "supplier_inventory"
 
 #: Without an item code and a packed figure the row cannot be placed on a container at all.
 _REQUIRED_COLUMNS = ("item_code", "qty_packed")
+#: Public alias (B7, T6) - so the import-mapping probe (B4) can flag these without
+#: importing the private name.
+REQUIRED_COLUMNS = _REQUIRED_COLUMNS
+
+#: The supplier merges one row's text/volume over a family of models that share it - 品名,
+#: 商标, 规格, 备注 and 体积(cbm) per unit are all a BODY property, the same for every model in
+#: the family. Quantities never fill through: `qty_packed`, `qty_unfinished` and `cbm_total`
+#: are each one figure for the WHOLE merged family, and copying it onto every covered row
+#: would count that figure once per row instead of once.
+#: `item_code` (型号) joins this set too (D8, AC-R1) - a supplier merges the model number over
+#: the same family the type and brand cover, and a covered row with no model of its own is
+#: not "no model number", it is the anchor's model repeated onto every row it spans.
+_MERGE_FILL_FIELDS = {"item_code", "product_name", "brand", "spec", "remark", "cbm_per_unit"}
 
 
 @dataclass
@@ -42,6 +65,10 @@ class InventoryRow:
     brand: Optional[str] = None
     spec: Optional[str] = None
     remark: Optional[str] = None
+    #: The 型号 exactly as the supplier wrote it (after merge fill-through), whatever
+    #: `item_code` ends up being - composed, raw-joined, or (letter-led) identical to it.
+    #: "Supplier says" (the Supplier codes tab) leads with this, not the composed guess.
+    model_no: Optional[str] = None
 
 
 @dataclass
@@ -92,17 +119,45 @@ def _number(value: Any) -> Optional[float]:
 
 
 def read_workbook(
-    file_data: bytes, resolver: Optional[AliasResolver] = None, *, db: Optional[Session] = None
+    file_data: bytes,
+    resolver: Optional[AliasResolver] = None,
+    *,
+    db: Optional[Session] = None,
+    words: Optional[WordList] = None,
+    header_row: Optional[int] = None,
 ) -> InventoryReadResult:
     """Parse the first sheet of a supplier stock list.
 
     `resolver` is injectable so the parsing can be tested against a file alone, with no
     database in the picture; `db` builds one from the alias table for the normal path.
+
+    `words` is the supplier's word list (D1-D5, `supplier_code_composer.py`): a bare 型号
+    (`^[-0-9]`) is composed through it into a candidate our own code; a letter-led 型号 never
+    consults it at all, so a caller with no supplier chosen yet may pass `None`.
+
+    `header_row` (B6, AC-M3) - the mapper's own stepper naming exactly which row is the
+    header; only that row's mapping is built from the probe's synthesised column texts
+    (B2/B3) instead of its own raw cells.
     """
     if resolver is None:
         if db is None:
             raise ValueError("read_workbook needs either a resolver or a session")
         resolver = AliasResolver.for_doc_type(db, DOC_TYPE)
+
+    # Memoised (review round 1, security m2, "once per read") - see the identical comment
+    # in `proforma_invoice_reader.read_workbook`.
+    _probed_cache: list = []
+
+    def _get_probed():
+        if not _probed_cache:
+            from app.services.scm.header_probe import probe as probe_headers
+
+            _probed_cache.append(probe_headers(file_data, header_row=header_row))
+        return _probed_cache[0]
+
+    header_texts: Optional[list[str]] = None
+    if header_row is not None:
+        header_texts = [c.header for c in _get_probed().columns]
 
     result = InventoryReadResult()
     try:
@@ -119,8 +174,10 @@ def read_workbook(
     col_field: dict[int, str] = {}
     all_rows = list(rows)
     for idx, raw in enumerate(all_rows):
+        row_number = idx + 1
+        source = header_texts if header_texts is not None and row_number == header_row else raw
         mapped = {}
-        for pos, cell in enumerate(raw):
+        for pos, cell in enumerate(source):
             f = resolver.field_for_header(cell)
             if f:
                 mapped[pos] = f
@@ -143,6 +200,13 @@ def read_workbook(
 
     if header_idx is None:
         result.missing_columns = list(_REQUIRED_COLUMNS)
+        # B6/AC-M4: same note as the other two readers - name every unresolved column off
+        # the alias-free probe even when nothing resolved enough to be seen as a header.
+        probed = _get_probed()
+        result.unmapped_headers = [
+            c.header for c in probed.columns
+            if c.header and resolver.raw_field_for_header(c.header) is None
+        ]
         return result
 
     present = set(col_field.values())
@@ -150,11 +214,36 @@ def read_workbook(
     if result.missing_columns:
         return result
 
+    try:
+        merges = sheet_merges(file_data)
+    except Exception:  # noqa: BLE001 - a merge-read failure must not turn a readable file
+        # into a problem row; the fill-through is lost, not the whole import.
+        logger.exception("could not read merged cells; continuing without fill-through")
+        merges = {}
+
     for offset, raw in enumerate(all_rows[header_idx + 1 :], start=header_idx + 2):
         values: dict[str, Any] = {}
         for pos, f in col_field.items():
             if pos < len(raw):
                 values[f] = raw[pos]
+            if f in _MERGE_FILL_FIELDS:
+                anchor = merges.get((offset, pos + 1))
+                if anchor is not None:
+                    anchor_row, anchor_col = anchor
+                    # A HORIZONTAL merge - the anchor sits in a different column - is a
+                    # label spanning columns (a totals row's "合计："), never a per-column
+                    # value: our own container-request export merges its total row's label
+                    # across every column, and without this guard that label got copied
+                    # into 型号 as if it were a model number repeated down a family.
+                    # Vertical only: the anchor stays in THIS column, further up the sheet.
+                    #
+                    # An anchor sitting ON or ABOVE the header row is not a data value at
+                    # all - it is the column's own caption (品名 merged over its own header
+                    # cells, or a title row spanning the sheet). `header_idx` is 0-based into
+                    # `all_rows`, so `header_idx + 1` is the header's 1-based sheet row; only
+                    # an anchor BELOW that is a model's own text.
+                    if anchor_col == pos + 1 and anchor_row > header_idx + 1:
+                        values[f] = all_rows[anchor_row - 1][anchor_col - 1]
         code = _text(values.get("item_code"))
         if code is None:
             # A blank model number is the sheet's own spacing, a total line, or a note. Only
@@ -163,6 +252,32 @@ def read_workbook(
             if _number(values.get("qty_packed")) or _number(values.get("qty_unfinished")):
                 result.problems.append(RowProblem(offset, "no model number on a row with stock"))
             continue
+
+        product_name = _text(values.get("product_name"))
+        brand = _text(values.get("brand"))
+        spec = _text(values.get("spec"))
+
+        # D1/D2: a letter-led 型号 is handed to the matcher exactly as written, whatever the
+        # word list holds - the existing catalogue's own codes never touch composition at
+        # all. Only a bare 型号 (D3-D5) is composed, and only when every word it needs
+        # resolves; otherwise the raw join is the row's key (AC-R5), still keeping siblings
+        # with different specs apart while it waits for a human to pick once.
+        if is_bare(code):
+            composed = compose(code, spec, brand, product_name, words)
+            item_code = composed if composed is not None else raw_key(
+                code, spec, brand, product_name
+            )
+            # A composed or raw-joined key this long is not a code any rung would ever bind
+            # - review round 1, item 7. Skipped as a problem row rather than stored: a
+            # `product_code`/`supplier_product_code_alias.supplier_code` column this long
+            # would 500 the insert instead of just failing to match. Checked BEFORE
+            # `total_rows` counts this row (review round 2, item 4) - a row this method
+            # never parses into `result.rows` must not count as one it did.
+            if len(item_code) > MAX_KEY_LENGTH:
+                result.problems.append(RowProblem(offset, "supplier code too long"))
+                continue
+        else:
+            item_code = code
 
         result.total_rows += 1
         packed = _number(values.get("qty_packed")) or 0.0
@@ -177,14 +292,15 @@ def read_workbook(
         result.rows.append(
             InventoryRow(
                 row_number=offset,
-                item_code=code,
+                item_code=item_code,
                 qty_packed=packed,
                 qty_unfinished=unfinished,
                 cbm_per_unit=per_unit,
-                product_name=_text(values.get("product_name")),
-                brand=_text(values.get("brand")),
-                spec=_text(values.get("spec")),
+                product_name=product_name,
+                brand=brand,
+                spec=spec,
                 remark=_text(values.get("remark")),
+                model_no=code,
             )
         )
 

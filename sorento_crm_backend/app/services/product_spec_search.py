@@ -725,7 +725,13 @@ def is_generic_free_term(term: str) -> bool:
 # silently undercount ("250mm" excluding every close-but-not-exact match).
 
 
-def filter_specs(db: Session, *, specs: list[dict] | None = None, free_terms: list[str] | None = None) -> dict:
+def filter_specs(
+    db: Session,
+    *,
+    specs: list[dict] | None = None,
+    free_terms: list[str] | None = None,
+    scope_terms: list[str] | None = None,
+) -> dict:
     """The described set as a MEMBERSHIP clause - shape B's filter leg.
 
     Any spec entry whose value is a non-empty STRING is membership-defining,
@@ -733,6 +739,20 @@ def filter_specs(db: Session, *, specs: list[dict] | None = None, free_terms: li
     of them is safe. A numeric entry is dropped here and still reaches the
     ranker as a boost, so the customer's number is heard, just not
     membership-defining (R27/AC-1352).
+
+    `scope_terms` are read the same way, one step earlier: a term the caller's
+    own parser NAMED as what the thing IS ("close couple wc", "p trap") has its
+    registry bindings joined into membership exactly as if the caller had sent
+    them under `specs`, instead of only its class reading. Hand pass 12 R8
+    (owner ruling, turn 7c39e638): "close couple wc available stock in p trap"
+    reached here with the two phrases as scope terms and NO `specs` (the chatbot
+    derives `specs` from the message text, which on a carried/picked turn is not
+    this ask's own sentence), so the only membership the set ever had was the
+    class - and the qualifying set spanned every water closet with stock,
+    wall-hung and s-trap ones included. `free_terms` keeps its old reading
+    untouched: a descriptive word there that names a VALUE key stays boost-only
+    (see the three verdicts below), because a sparse key would silently exclude
+    products that are the thing but carry no derived value for it.
 
     Different KEYS are ANDed together (a water closet AND an s_trap is a
     narrower set than either alone); repeated VALUES on the SAME key stay
@@ -758,17 +778,24 @@ def filter_specs(db: Session, *, specs: list[dict] | None = None, free_terms: li
     a member.
     """
     free_terms = [t for t in (free_terms or []) if t and t.strip()]
+    scope_terms = [t for t in (scope_terms or []) if t and t.strip()]
+    # One pass over both, so the honesty check and the class reading are identical
+    # for either kind of term; only what a BINDING does differs (see the docstring).
+    scoping = {t for t in scope_terms}
+    terms = free_terms + [t for t in scope_terms if t not in set(free_terms)]
 
     membership: dict[str, set[str]] = {}
-    for entry in specs or []:
-        key = entry.get("key")
-        value = entry.get("value")
-        if key and isinstance(value, str) and value.strip():
-            membership.setdefault(key, set()).add(value)
 
-    vocabulary = _search_vocabulary(db) if free_terms else frozenset()
+    def _join(key: Any, value: Any) -> None:
+        if key and isinstance(value, str) and value.strip():
+            membership.setdefault(str(key), set()).add(value)
+
+    for entry in specs or []:
+        _join(entry.get("key"), entry.get("value"))
+
+    vocabulary = _search_vocabulary(db) if terms else frozenset()
     unrecognized: list[str] = []
-    for term in free_terms:
+    for term in terms:
         content = _content_words(term)
         if is_generic_free_term(term):
             continue  # "no description given" - never a label, never unrecognized
@@ -776,8 +803,13 @@ def filter_specs(db: Session, *, specs: list[dict] | None = None, free_terms: li
         if classes:
             membership.setdefault("class", set()).update(classes)
         # Any registry spec at all - a value key like `mounting` counts as
-        # "understood" here even though it is never membership-defining.
+        # "understood" here even though it is never membership-defining... unless
+        # the caller named this term as the set's own SCOPE, in which case it
+        # defines membership exactly as a `specs` entry does.
         bound_specs = resolve_terms_to_specs(db, [term])
+        if term in scoping:
+            for entry in bound_specs:
+                _join(entry.get("key"), entry.get("value"))
         alien = [word for word in content if word not in vocabulary]
         if content and len(alien) == len(content):
             if term not in unrecognized:

@@ -25,7 +25,6 @@ import type {
   BoardDecision,
   BoardDraft,
   BoardOrderStanding,
-  BoardProductRow,
   BoardRowAxis,
   BoardSource,
   ConfirmBorrowComponent,
@@ -34,10 +33,11 @@ import type {
 } from '../types/fulfilmentPlanning.types';
 import {
   borrowPassThrough,
+  borrowReasonKeyOf,
   confirmLineFrom,
-  decisionFromAmendDraft,
-  suggestionDraftFrom,
+  suggestionWithReasons,
 } from './boardAmend';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { fromMinor, toMinor } from './supplyComposition';
 
 /**
@@ -54,6 +54,37 @@ import { fromMinor, toMinor } from './supplyComposition';
  */
 export function bucketLabelText(label: string): string {
   return label.replace(/^w\/c\s+/i, '');
+}
+
+/**
+ * AC-DT-1/AC-DT-4 (`PLAN-oi-decision-trail-ui.md`): the board header line beside "N to
+ * confirm - N rejected" - "Revision N - confirmed by <name>, <date time> - N lines", or
+ * "No decision yet" when the order has no active decision. One segment per order, order
+ * number first, when several orders are planned together - a single-order board (the
+ * ordinary case) prints the bare sentence with no order number in front of it.
+ */
+export function decisionHeaderText(orders: BoardOrderStanding[]): string {
+  if (orders.length === 0) return 'No decision yet';
+  const segments = orders.map((order) => {
+    const decision = order.decision;
+    const body = decision
+      ? [
+          `Revision ${decision.revision_no}`,
+          decision.confirmed_by_name || decision.confirmed_at
+            ? `confirmed by ${decision.confirmed_by_name ?? 'someone'}${
+                decision.confirmed_at
+                  ? `, ${formatDateTimeInMalaysia(decision.confirmed_at)}`
+                  : ''
+              }`
+            : null,
+          `${decision.line_count} line${decision.line_count === 1 ? '' : 's'}`,
+        ]
+          .filter(Boolean)
+          .join(' · ')
+      : 'No decision yet';
+    return orders.length > 1 ? `${order.so_number}: ${body}` : body;
+  });
+  return segments.join('; ');
 }
 
 /**
@@ -282,11 +313,41 @@ export function confirmLinesFor(
 }
 
 /**
+ * `ConfirmSupplyBody.rejected_line_ids` for one order - the mirror ids of COVERED lines a
+ * `rejected` draft is staged on (owner ruling 23 Sep 2026,
+ * `PLAN-board-reject-on-confirmed-line.md`: "we should confirm the rejection" - reject on a
+ * confirmed line is a STAGED decision like every other board decision now, and Confirm is
+ * what actually withdraws it, never the draft save). `confirmLinesFor` above already leaves
+ * a rejected line OUT of `lines` (covered or not, `lineFor`'s own rule) - this is the OTHER
+ * half of the same press for exactly the covered ones: an UNCOVERED rejected line has
+ * nothing active to withdraw, so it is excluded here, same as it always was.
+ */
+export function rejectedCoveredLineIdsFor(
+  contributions: BoardContribution[],
+  salesOrderId: string,
+  draft: BoardDraft,
+): string[] {
+  const ids: string[] = [];
+  for (const contribution of contributions) {
+    if (contribution.sales_order_id !== salesOrderId) continue;
+    // N1 (fix round, `PLAN-board-reject-on-confirmed-line.md`): `covered` spans TWO kinds
+    // of line - an ACTIVE decision, or a live order-inquiry row naming it with none
+    // (`inquiry_decided`, #875). Only the first has a `line_snapshots` entry Confirm's
+    // `rejected_line_ids` could ever name, so this reads `decision` (non-null exactly
+    // then), not `covered`.
+    if (!contribution.decision) continue;
+    if (draft[contribution.key]?.verdict !== 'rejected') continue;
+    if (contribution.project_line_id) ids.push(contribution.project_line_id);
+  }
+  return ids;
+}
+
+/**
  * Why a decided line cannot be posted by this confirmation. Every one of these is a line the
  * server would refuse, and the confirmation is atomic across the order, so posting it would take
  * every other line down with it. It is left out and NAMED instead.
  */
-export type UnpostableReason = 'no_mirror' | 'no_reserve_warehouse' | 'buy_reason_missing';
+export type UnpostableReason = 'no_mirror' | 'no_reserve_warehouse';
 
 export interface UnpostableLine {
   contribution: BoardContribution;
@@ -341,7 +402,6 @@ function lineFor(
   }
   if (decision?.verdict === 'rejected') return null;
 
-  const discontinued = Boolean(contribution.item_flags?.discontinued);
   const buyReason = decision?.buy_reason?.trim() || undefined;
 
   // AN AMENDMENT COMPOSED IN THE EDITOR IS POSTED AS COMPOSED. Every warehouse and every
@@ -350,8 +410,6 @@ function lineFor(
   // entirely from Buy has no Reserve source to read a warehouse off, so an amendment moving
   // it into a Reserve was dropped from the body while the row still read "Amended".
   if (decision?.verdict === 'amended' && decision.reserve) {
-    const buy = toMinor(decision.buy_qty ?? '0');
-    if (discontinued && buy > 0 && !buyReason) return 'buy_reason_missing';
     if (!contribution.project_line_id) return 'no_mirror';
     return confirmLineFrom(contribution.project_line_id, decision);
   }
@@ -369,20 +427,31 @@ function lineFor(
   // engine's own answer, and re-deriving from them is what makes the board agree with the
   // sheet.
   if (contribution.covered && decision?.verdict === 'approved') {
-    const suggested: BoardDecision = {
-      ...decisionFromAmendDraft(suggestionDraftFrom(contribution), ''),
-      verdict: 'approved',
-      suspected_system_issue: decision.suspected_system_issue ?? false,
-    };
-    const suggestedBuy = toMinor(suggested.buy_qty ?? '0');
-    if (discontinued && suggestedBuy > 0 && !suggested.buy_reason?.trim()) {
-      return 'buy_reason_missing';
-    }
+    // Board-confirm-left-out (measured cause 1): this used to rebuild the suggestion off
+    // `decisionFromAmendDraft` alone, which drops the `buy_reason` and any borrow reason the
+    // SAVED decision carried - a discontinued line whose planner had already typed a reason
+    // into the approving Save (below) still read `buy_reason_missing` here. Composed by the
+    // SAME helper the panel's own approving `save()` uses, off the reasons THAT decision saved.
+    const suggested = suggestionWithReasons(contribution, {
+      buy_reason: decision.buy_reason ?? undefined,
+      borrow: decision.borrow ?? [],
+      // S2 (fix round 2, reviewer): the same reasons this branch already carries across
+      // (measured cause 1) apply to the order-back instruction too - it is part of what the
+      // SAVED decision recorded, not a detail riding beside it.
+      order_back: decision.order_back,
+      cited_document: decision.cited_document ?? undefined,
+    });
+    suggested.suspected_system_issue = decision.suspected_system_issue ?? false;
     if (!contribution.project_line_id) return 'no_mirror';
     return confirmLineFrom(contribution.project_line_id, suggested);
   }
 
-  const owed = toMinor(contribution.qty_outstanding ?? contribution.qty);
+  // THE PLAN QUANTITY, not the still-owed one (14 Sep 2026 ruling). `qty` is what the
+  // server's own balance check validates a composition against (`_LineFacts.open_qty`),
+  // and since a delivered unit nobody sourced is a unit to put back the two have stopped
+  // being the same number: a composition built against `qty_outstanding` on a delivered
+  // line sums to less than the line asks for and is refused at confirm.
+  const owed = toMinor(contribution.qty);
   // The engine's own numbers when it sends them. The board now proposes what the SHEET
   // proposes - pool and borrow are considered, not just own-location reserve then buy - so
   // re-deriving a composition from the source strip would be a second, worse allocator
@@ -406,9 +475,6 @@ function lineFor(
     contribution.qty_proposed_buy === null
       ? Math.max(owed - incoming - reserveQty, 0)
       : toMinor(contribution.qty_proposed_buy);
-  // An approval carries no reason, and a Buy of a discontinued product needs one (AC-B11):
-  // the line is left out until the planner gives it in the editor.
-  if (discontinued && buy > 0 && !buyReason) return 'buy_reason_missing';
   const reserve = reserveWarehouses(contribution, reserveQty);
   // A Reserve nobody can address is not a Reserve. Leaving the line out keeps it undecided,
   // which is recoverable; posting a Reserve with no warehouse would fail the whole
@@ -422,8 +488,12 @@ function lineFor(
     reserve,
     // Ladder v2 (section E rules 4/5): group borrow and cross-group borrow are now
     // AUTO-PROPOSED, so an approved-as-is line can carry one - posted verbatim, the same
-    // way `reserve` is, because it was the engine's own donor and reason, not a person's.
-    borrow: borrowComponents(contribution),
+    // way `reserve` is, UNLESS the SAVED decision typed its own reason over the engine's
+    // (S1, fix round 2, reviewer): the approving Save (`BoardLineDecisionPanel`) already
+    // carries `decision.borrow` with whatever the planner typed on a suggested row, and this
+    // derivation used to rebuild straight off `contribution.sources` and drop it - the
+    // reason it posted was always the engine's own sentence, however this Save actually read.
+    borrow: borrowComponents(contribution, decision?.borrow ?? []),
     buy_qty: fromMinor(buy),
     buy_reason: buyReason,
     // Present only on the legacy single-number amendment, which is still an override.
@@ -435,12 +505,23 @@ function lineFor(
 
 /**
  * The engine's own auto-proposed borrows (group / cross-group, section E rules 4/5),
- * posted exactly as the proposal named them - donor, warehouse and reason included. An
+ * posted exactly as the proposal named them - donor, warehouse and quantity included. An
  * approved line never edits these, so there is nothing to re-derive: a source without an
  * addressable warehouse is dropped rather than posted as a guess, the same rule
  * `reserveWarehouses` follows.
+ *
+ * The REASON is the one field that can differ from the source: `decisionSaved`, when it names
+ * the same row (warehouse + donor, `borrowReasonKeyOf` - the same key `matchesSuggestion`
+ * compares by), is what the SAVED approval actually carries, and the engine's own sentence is
+ * only the fallback for a row the save never touched (S1, fix round 2, reviewer).
  */
-function borrowComponents(contribution: BoardContribution): ConfirmBorrowComponent[] {
+function borrowComponents(
+  contribution: BoardContribution,
+  decisionSaved: { warehouse_id?: string | null; donor_project_id?: string | null; reason: string }[],
+): ConfirmBorrowComponent[] {
+  const typedReasons = new Map(
+    decisionSaved.map((row) => [borrowReasonKeyOf(row), row.reason]),
+  );
   return contribution.sources
     .filter((source) => source.kind === 'borrow' && source.warehouse_id && toMinor(source.qty) > 0)
     .map((source) => ({
@@ -448,7 +529,14 @@ function borrowComponents(contribution: BoardContribution): ConfirmBorrowCompone
       warehouse_id: source.warehouse_id as string,
       donor_project_id: null,
       qty: source.qty,
-      reason: source.reason,
+      // `donor_project_id: null` here (not `source.donor_project_id`): the engine's own
+      // auto-proposed borrow (group / cross-group) never names a donor PROJECT, only a
+      // warehouse, and `suggestionDraftFrom`'s borrow rows agree - so every row an approving
+      // Save can carry a typed reason for is keyed on `null` here too (nit, fix round 3 review).
+      reason:
+        typedReasons.get(
+          borrowReasonKeyOf({ warehouse_id: source.warehouse_id, donor_project_id: null }),
+        ) ?? source.reason,
       // The donor and the document, through the one spread every mapper in this chain uses
       // (`borrowPassThrough`): approved as it stands, the borrow still moves the placement
       // the engine named rather than being re-checked against free stock at a bin holding a
@@ -578,10 +666,36 @@ export function plannedLineCount(
   contributions: BoardContribution[],
   salesOrderId: string,
   draft: BoardDraft,
+  /**
+   * Orders a PENDING planning-change batch currently covers (S4, fix round,
+   * `PLAN-board-reject-on-confirmed-line.md`): a batch apply has no shape for a
+   * withdrawal riding beside it, so the server refuses `rejected_line_ids` alongside
+   * `batch_id` (AC-B12) and the caller sends `[]` for such an order instead
+   * (`rejectedCoveredLineIdsFor`'s own result, zeroed). A covered-rejected line on one
+   * of these orders must not count here either, or the counter promises a withdrawal
+   * this press cannot actually carry out - the "Confirm (1)" that then posts nothing
+   * for it. Empty by default: every OTHER caller (the panel's own per-decision toast,
+   * every test that does not name a batch) is unaffected.
+   */
+  batchBlockedSalesOrderIds: ReadonlySet<string> = new Set(),
 ): number {
+  const batchBlocked = batchBlockedSalesOrderIds.has(salesOrderId);
   return contributions.filter((contribution) => {
     if (contribution.sales_order_id !== salesOrderId) return false;
     if (contribution.unplannable) return false;
+    // A CANCELLED line posts nothing and is still one of the lines this press acts on (R3):
+    // its apply is the retire path, which needs no composition to build.
+    if (contribution.cancelled) return true;
+    // An ACTIVELY covered line (an active decision, not merely a live order-inquiry row -
+    // N1, fix round, `PLAN-board-reject-on-confirmed-line.md`) with a staged reject posts
+    // nothing either (`rejected_line_ids` carries it, not `lines`), and is still one of the
+    // lines THIS press acts on - Confirm is what withdraws it (owner ruling 23 Sep 2026) -
+    // UNLESS a pending batch is holding it back (see `batchBlockedSalesOrderIds` above). An
+    // inquiry-only covered line has no active decision for Confirm to withdraw, so it falls
+    // through to `lineFor` below, which already reads it as nothing to post (not counted).
+    if (contribution.decision && draft[contribution.key]?.verdict === 'rejected') {
+      return !batchBlocked;
+    }
     const built = lineFor(contribution, draft[contribution.key]);
     return built !== null && (typeof built !== 'string' || built === 'no_mirror');
   }).length;
@@ -597,20 +711,27 @@ export function plannedLineCount(
  * CONFIRM POSTS SAVED LINES ONLY (8 Sep 2026 ruling, reverses R11): an uncovered line nobody
  * has saved a decision for is undecided, not agreed, so the counter reports nothing for it -
  * "Save all suggested" is the bulk way to agree with the engine before Confirm. A REJECTED
- * line is a decision that commits nothing, counted apart rather than simply excluded. A line
- * an active decision already COVERS and nobody has amended is not counted: the server carries
- * it into the next revision itself. A SAVED-BUT-STALE line (S4, AC-4.4) is not counted either,
- * the same reason `lineFor` will not post it.
+ * line is a decision that commits nothing, counted apart rather than simply excluded - EXCEPT
+ * a COVERED rejected line (owner ruling 23 Sep 2026, `PLAN-board-reject-on-confirmed-line.md`):
+ * that one is a withdrawal Confirm actually carries out (`rejected_line_ids`), so it counts in
+ * `toConfirm` too, beside `rejected`. A line an active decision already COVERS and nobody has
+ * amended OR rejected is not counted: the server carries it into the next revision itself. A
+ * SAVED-BUT-STALE line (S4, AC-4.4) is not counted either, the same reason `lineFor` will not
+ * post it.
  */
 export function confirmSummaryFor(
   contributions: BoardContribution[],
   draft: BoardDraft,
+  /** Threaded straight through to `plannedLineCount` (S4, fix round) - see its own doc. */
+  batchBlockedSalesOrderIds: ReadonlySet<string> = new Set(),
 ): { toConfirm: number; rejected: number; orderCount: number; changed: number } {
   // N6 (code review round 3): `confirmed > rejected > stale > saved`, the same order
   // `BoardDecisionPill` reads by. A covered line's frozen composition is what the server
   // carries forward regardless of a local click, so it is checked FIRST - a click of
   // "rejected" on an already-confirmed line cannot make Confirm refuse it, and must not be
-  // counted as a rejection either.
+  // counted as a rejection either. REJECTED is now read BEFORE the covered/amended check
+  // (23 Sep 2026 rework): a covered line's own rule below only ever exempted an UNTOUCHED or
+  // AMENDED one, and a rejected covered line is neither - it is a THIRD thing Confirm acts on.
   let rejected = 0;
   // C4 (code review round 3 batch 2): a saved line the engine has re-suggested is dropped
   // from Confirm with no trace beyond the pill itself, which is easy to miss on a board of
@@ -619,17 +740,32 @@ export function confirmSummaryFor(
   const orderIds = new Set<string>();
   for (const contribution of contributions) {
     if (contribution.unplannable) continue;
+    // A CANCELLED line is decided BY THE BOOK (R3, scenario S5): the order it was on removed
+    // it, and Confirm retires it. Nobody saves a decision for it, so the untouched-line skip
+    // below would drop it from the count and the press would silently do one thing more than
+    // it said - which is the one thing the counter exists to stop.
+    if (contribution.cancelled) {
+      orderIds.add(contribution.sales_order_id);
+      continue;
+    }
     const decision = draft[contribution.key];
     // 8 Sep 2026 ruling (reverses R11): an untouched, uncovered line is undecided, not
     // agreed - it must not pull its order into the confirmable set on its own. `decision`
     // is the caller's own draft, already merged with whatever the server sent as
     // `contribution.draft`, so its being falsy here is the whole signal that nobody saved it.
     if (!contribution.covered && !decision) continue;
-    if (contribution.covered && decision?.verdict !== 'amended') continue;
     if (decision?.verdict === 'rejected') {
       rejected += 1;
+      // An ACTIVELY covered reject (an active decision, not merely a live order-inquiry row
+      // - N1, fix round, `PLAN-board-reject-on-confirmed-line.md`) is a WITHDRAWAL Confirm
+      // carries out this same press - its order belongs in the confirmable set, same as an
+      // amendment does, so `toConfirm` counts it (`plannedLineCount`'s own new branch is
+      // what actually adds the +1 for this line). An UNCOVERED reject, or an inquiry-only
+      // one with no active decision to withdraw, stays excluded, as it always was.
+      if (contribution.decision) orderIds.add(contribution.sales_order_id);
       continue;
     }
+    if (contribution.covered && decision?.verdict !== 'amended') continue;
     if (contribution.draft?.stale) {
       changed += 1;
       continue;
@@ -637,7 +773,8 @@ export function confirmSummaryFor(
     orderIds.add(contribution.sales_order_id);
   }
   const toConfirm = [...orderIds].reduce(
-    (total, salesOrderId) => total + plannedLineCount(contributions, salesOrderId, draft),
+    (total, salesOrderId) =>
+      total + plannedLineCount(contributions, salesOrderId, draft, batchBlockedSalesOrderIds),
     0,
   );
   return { toConfirm, rejected, orderCount: orderIds.size, changed };
@@ -683,11 +820,33 @@ export function amendNeedsReason(
     !sameRows(baseline.reserve, composition.reserve, (row) => row.warehouse_id ?? '') ||
     toMinor(composition.timely_spo_qty) !== toMinor(baseline.timely_spo_qty) ||
     toMinor(composition.buy_qty) !== toMinor(baseline.buy_qty) ||
-    !sameRows(
-      baseline.borrow,
-      composition.borrow,
-      (row) => `${row.warehouse_id ?? ''}|${row.donor_project_id ?? ''}`,
-    )
+    // The same key `borrowComponents` and `suggestionWithReasons` (`boardAmend.ts`) match a
+    // typed reason by - one function, so the three can never quietly disagree about which
+    // row is which (nit, fix round 2 review).
+    !sameRows(baseline.borrow, composition.borrow, borrowReasonKeyOf)
+  );
+}
+
+/**
+ * Whether the composition carries a Borrow the engine itself never proposed (D3, S2): the
+ * server requires a reason on every borrow (`_check_borrow`), so the one Reason box is
+ * required whenever one of these is present, independent of whether the rest of the line still
+ * matches its baseline (a re-opened, unedited amendment that already borrowed by hand is still
+ * "a borrow row the engine did not suggest").
+ *
+ * Compared against the SUGGESTION baseline (never the frozen one): a covered line's own frozen
+ * borrow is what the planner already decided, and `amendNeedsReason`'s comparison against it is
+ * the rule that asks for a fresh reason there, not this one.
+ */
+export function hasUnsuggestedBorrow(
+  contribution: BoardContribution,
+  borrow: { qty: string; warehouse_id?: string | null; donor_project_id?: string | null }[],
+): boolean {
+  const suggested = new Set(
+    suggestionBaseline(contribution).borrow.map((row) => borrowReasonKeyOf(row)),
+  );
+  return borrow.some(
+    (row) => toMinor(row.qty) > 0 && !suggested.has(borrowReasonKeyOf(row)),
   );
 }
 
@@ -746,11 +905,10 @@ export function matchesSuggestion(
     sameRows(baseline.reserve, composition.reserve, (row) => row.warehouse_id ?? '') &&
     toMinor(composition.timely_spo_qty) === toMinor(baseline.timely_spo_qty) &&
     toMinor(composition.buy_qty) === toMinor(baseline.buy_qty) &&
-    sameRows(
-      baseline.borrow,
-      composition.borrow,
-      (row) => `${row.warehouse_id ?? ''}|${row.donor_project_id ?? ''}`,
-    )
+    // The SAME key `borrowComponents`/`suggestionWithReasons` (`boardAmend.ts`) match a typed
+    // reason by (nit, fix round 2 review): this is the comparison their own doc comments
+    // claim it is, not a second literal that could quietly drift from it.
+    sameRows(baseline.borrow, composition.borrow, borrowReasonKeyOf)
   );
 }
 
@@ -902,11 +1060,11 @@ export function boardAxis(
     item_code: entry.row.label,
     row_key: entry.row.key,
     bucket_key: entry.bucket,
+    // What this cell ASKS FOR, which is the plan quantity per line - the same figure the
+    // server totals a cell by. Summing `qty_outstanding` made a cell holding a delivered
+    // line read lower than the lines inside it.
     total_qty: fromMinor(
-      entry.lines.reduce(
-        (total, line) => total + toMinor(line.qty_outstanding ?? line.qty),
-        0,
-      ),
+      entry.lines.reduce((total, line) => total + toMinor(line.qty), 0),
     ),
     locations: [],
     contributions: entry.lines,
@@ -931,6 +1089,28 @@ function byLabel(left: BoardAxisRow, right: BoardAxisRow): number {
  * keep ALL their contributions - filtering inside a cell would print a total that is not the
  * cell's, which is the same rule that keeps the selection totals still under a filter.
  */
+/**
+ * The ONE matcher a search box on this board reads (S6, PLAN-scm-oi-worklist-excel-
+ * parity.md R-J): SO number, customer, agent code, item code - the same fields whichever
+ * of the grid's row filter or the list view's own row filter is asking. Sharing this
+ * function is what keeps "one search box drives Grid and List alike" true: a field added
+ * here reaches both without either one drifting out of step with the other.
+ */
+export function contributionMatchesSearch(
+  contribution: BoardContribution,
+  search: string,
+): boolean {
+  const needle = search.trim().toLowerCase();
+  if (!needle) return true;
+  return [
+    contribution.so_number,
+    contribution.customer_name,
+    contribution.project_label,
+    contribution.agent_code,
+    contribution.item_code,
+  ].some((field) => (field ?? '').toLowerCase().includes(needle));
+}
+
 export function rowMatchesSearch(
   row: BoardAxisRow,
   contributions: BoardContribution[],
@@ -944,14 +1124,7 @@ export function rowMatchesSearch(
   ) {
     return true;
   }
-  return contributions.some((contribution) =>
-    [
-      contribution.so_number,
-      contribution.customer_name,
-      contribution.project_label,
-      contribution.item_code,
-    ].some((field) => (field ?? '').toLowerCase().includes(needle)),
-  );
+  return contributions.some((contribution) => contributionMatchesSearch(contribution, search));
 }
 
 
@@ -992,37 +1165,46 @@ export function rankingNote(
 }
 
 /**
- * The list view's row order: the board's OWN product order, product by product.
+ * The LIST view's own row order (S4, PLAN-so-lines-autocount-order.md, fix round #1076 -
+ * owner ruling, 21 Sep 2026): sales order, then the line number AutoCount itself sent.
  *
- * The grid and the list are two readings of one payload, and the reader toggles between them
- * to find the same line. The grid's vertical axis is `productRows`, which the server sends in
- * its own order; the list was handed `contributions` in the order the demand query returned
- * them, so the same product sat in two different places and the toggle became a re-search.
+ * SUPERSEDES the list borrowing the grid's product axis (`orderByProductRows`, retired -
+ * fix round #1076 delta review: it had no production caller left once the list moved
+ * here, and its own unit coverage moved to the panel level -
+ * `FulfilmentBoardPanel.test.tsx`'s "AC-S4-1 (panel)" describe block). The GRID's own axis
+ * was never built from that function either - it is `boardAxis` over the server's
+ * `productRows`, unrelated to either list ordering - so this change moves the list alone:
+ * a planner comparing it against the source document reads it top to bottom the way
+ * AutoCount does, while the grid keeps its own product-by-product axis for the
+ * cross-order view. The two are no longer position-aligned and the toggle genuinely shows
+ * two different readings - the owner's call, not a defect.
  *
- * One ordering, and it is the payload's: a line sorts by where its product appears on the
- * grid's axis, then by required date, sales order and line number so the sequence is TOTAL - a
- * partial rule gives a different answer on each render and the two views drift apart again.
- * A product the axis does not name keeps its relative position at the end rather than being
- * dropped; the list is the overview of the WHOLE selection, so it may legitimately hold a line
- * the (windowed) grid does not show.
+ * No `productRows` argument: the product axis plays no part in this ordering at all, so a
+ * caller cannot accidentally influence it with the grid's own row order.
+ *
+ * `so_number` ascending, then `line_no` ascending - numeric, never lexicographic, and a
+ * line AutoCount never numbered (null/undefined) sorts LAST within its own sales order -
+ * then `item_code`, then `required_date` (undated last) only where even the item code
+ * ties.
  */
-export function orderByProductRows<T extends { item_code: string; required_date?: string | null; so_number?: string; line_no?: number }>(
-  contributions: readonly T[],
-  productRows: readonly BoardProductRow[],
-): T[] {
-  const rank = new Map<string, number>();
-  productRows.forEach((row, index) => rank.set(row.item_code, index));
-  const after = productRows.length;
+export function orderListRows<
+  T extends {
+    so_number?: string;
+    line_no?: number;
+    item_code: string;
+    required_date?: string | null;
+  },
+>(contributions: readonly T[]): T[] {
   return [...contributions].sort((a, b) => {
-    const byProduct = (rank.get(a.item_code) ?? after) - (rank.get(b.item_code) ?? after);
-    if (byProduct !== 0) return byProduct;
-    if (a.item_code !== b.item_code) return a.item_code.localeCompare(b.item_code);
-    // A line nobody dated sorts last within its product, the same way an undated order sorts
-    // last on every other listing in this product.
-    const byDate = (a.required_date ?? '9999-12-31').localeCompare(b.required_date ?? '9999-12-31');
-    if (byDate !== 0) return byDate;
     const byOrder = (a.so_number ?? '').localeCompare(b.so_number ?? '');
     if (byOrder !== 0) return byOrder;
-    return (a.line_no ?? 0) - (b.line_no ?? 0);
+    const aNumbered = a.line_no !== null && a.line_no !== undefined;
+    const bNumbered = b.line_no !== null && b.line_no !== undefined;
+    if (aNumbered !== bNumbered) return aNumbered ? -1 : 1;
+    if (aNumbered && bNumbered && a.line_no !== b.line_no) {
+      return (a.line_no as number) - (b.line_no as number);
+    }
+    if (a.item_code !== b.item_code) return a.item_code.localeCompare(b.item_code);
+    return (a.required_date ?? '9999-12-31').localeCompare(b.required_date ?? '9999-12-31');
   });
 }

@@ -12,12 +12,15 @@ import {
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
+  AlertCircle,
   ArrowLeft,
   ChevronLeft,
   ChevronRight,
+  Copy,
   FileText,
   History,
   Info,
+  PencilLine,
   Plus,
   Sparkles,
   Trash2,
@@ -43,6 +46,8 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
+import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -87,6 +92,7 @@ import {
 } from '../lib/portal-client';
 import {
   portalDetailPath,
+  portalDuplicatePath,
   portalHomePath,
   portalVerifyPath,
 } from '../lib/portal-paths';
@@ -99,7 +105,6 @@ import { AsyncCombobox } from './AsyncCombobox';
 import { DOFilterMultiSelect } from './DOFilterMultiSelect';
 import { LookupSelect } from './LookupSelect';
 import { MultiPillInput } from './MultiPillInput';
-import { ReviseAction } from './ReviseAction';
 import { RevisionHistory } from './RevisionHistory';
 import {
   InquiryFormTableRow,
@@ -432,6 +437,10 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [contact, setContact] = useState<PortalContact | null>(null);
   const [invalidFields, setInvalidFields] = useState<Set<string>>(new Set());
+  // #1227: the raw `products` row (not the cleaned/filtered index) whose unit price
+  // failed the sponsorship-only check below, so the "Unit price" cell itself can show
+  // the inline message - same shape `invalidFields` gives every other required field.
+  const [invalidLineIndex, setInvalidLineIndex] = useState<number | null>(null);
   const [staffPreviewOpen, setStaffPreviewOpen] = useState(false);
   const [neighbours, setNeighbours] =
     useState<PortalSubmissionNeighbours | null>(null);
@@ -464,6 +473,14 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
     [detail],
   );
   const revisionPolicy = detail?.revision ?? null;
+  // R3-5: the one-line revision status, moved into the header beside the form
+  // number and the prev/next counter - the ONLY place it renders now, not a
+  // second gear row's own budget text.
+  const revisionStatusText = revisionPolicy
+    ? revisionPolicy.allowed
+      ? `${revisionPolicy.remaining} of ${revisionPolicy.max} revisions left`
+      : (revisionPolicy.blocked_reason ?? null)
+    : null;
   // Where the revision actually lands, named by the backend from this type's
   // config (UAC E1a). The generic sentence is the fallback for when there is
   // nothing to name - not the target copy - because a purchase request restarting
@@ -520,13 +537,26 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
     let cancelled = false;
     fetchMe()
       .then((c) => {
-        if (!cancelled) setContact(c);
+        if (cancelled) return;
+        setContact(c);
+        // D7 r3: a `/new` page makes no request of its own to check
+        // visibility - it reuses this same `/me` fetch (already needed for
+        // form defaults) and renders the same inline blocked message the
+        // edit page's real 403 uses below. The server remains the
+        // enforcement; this only avoids an empty form (AC-L4).
+        if (
+          !submissionId &&
+          Array.isArray(c.visible_form_types) &&
+          !c.visible_form_types.includes(kind)
+        ) {
+          setError(`${SUBMISSION_LABELS[kind]} is not available for your account.`);
+        }
       })
       .catch(() => {});
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [submissionId, kind]);
 
   const defaultsFromContact = useMemo(() => {
     const name = contact?.name?.trim() ?? '';
@@ -591,34 +621,84 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [neighbours, kind, slug, router]);
 
+  // Shared by the revision-draft resume (below) and Duplicate's `?from=`
+  // prefill (D-D1): both copy fields + lines from an already-fetched source,
+  // sourced from the same field keys the form itself reads/writes.
+  const applySourceToForm = (source: Record<string, unknown>) => {
+    const next: Record<string, string | string[]> = {};
+    for (const f of fieldDefs) {
+      const v = source[f.name];
+      if (f.widget === 'do-multi-filter') {
+        if (Array.isArray(v)) {
+          next[f.name] = v.map((x) => String(x).trim()).filter(Boolean);
+        } else if (v == null || v === '') {
+          next[f.name] = [];
+        } else {
+          next[f.name] = String(v)
+            .split(/[,\n]/)
+            .map((x) => x.trim())
+            .filter(Boolean);
+        }
+      } else {
+        next[f.name] = v == null ? '' : String(v);
+      }
+    }
+    setFields(next);
+    if (showLines) {
+      const lines = (source as { products?: ProductLine[] }).products ?? [];
+      setProducts(lines.map((l) => ({ ...l })));
+    }
+    if (kind === 'complaint') {
+      const pls =
+        (
+          source as {
+            product_lines?: {
+              product_code?: string | null;
+              product_type?: string | null;
+              quantity?: string | null;
+            }[];
+          }
+        ).product_lines ?? [];
+      setComplaintLines(
+        pls
+          .filter((l) => (l.product_code ?? '').trim())
+          .map((l) => ({
+            product_code: (l.product_code ?? '').trim(),
+            product_type: (l.product_type ?? '').trim(),
+            quantity: (l.quantity ?? '').trim(),
+          })),
+      );
+    }
+  };
+
   useEffect(() => {
     if (!submissionId) {
       let cancelledNew = false;
-      const next: Record<string, string | string[]> = {};
-      const lookupFields: FieldDef[] = [];
-      for (const f of fieldDefs) {
-        if (f.widget === 'do-multi-filter') {
-          next[f.name] = [];
-          continue;
+      const seedEmptyForm = async () => {
+        const next: Record<string, string | string[]> = {};
+        const lookupFields: FieldDef[] = [];
+        for (const f of fieldDefs) {
+          if (f.widget === 'do-multi-filter') {
+            next[f.name] = [];
+            continue;
+          }
+          if (f.defaultFromContact === 'fullname') {
+            next[f.name] = defaultsFromContact.fullname;
+          } else if (f.defaultFromContact === 'first_name') {
+            next[f.name] = defaultsFromContact.first_name;
+          } else if (f.defaultFromContact === 'contact_id') {
+            next[f.name] = defaultsFromContact.contactId;
+          } else if (f.defaultToday) {
+            next[f.name] = new Date().toISOString().slice(0, 10);
+          } else {
+            next[f.name] = '';
+          }
+          if (f.widget === 'lookup-select' && f.setKey) lookupFields.push(f);
         }
-        if (f.defaultFromContact === 'fullname') {
-          next[f.name] = defaultsFromContact.fullname;
-        } else if (f.defaultFromContact === 'first_name') {
-          next[f.name] = defaultsFromContact.first_name;
-        } else if (f.defaultFromContact === 'contact_id') {
-          next[f.name] = defaultsFromContact.contactId;
-        } else if (f.defaultToday) {
-          next[f.name] = new Date().toISOString().slice(0, 10);
-        } else {
-          next[f.name] = '';
-        }
-        if (f.widget === 'lookup-select' && f.setKey) lookupFields.push(f);
-      }
-      // Seed each lookup field's binding default (Default (new forms) in the lookup
-      // admin) so the portal pre-selects it just like the system form. Must happen
-      // HERE, not in the widget: this init does a full setFields replace that would
-      // otherwise wipe a widget-applied value.
-      void (async () => {
+        // Seed each lookup field's binding default (Default (new forms) in the lookup
+        // admin) so the portal pre-selects it just like the system form. Must happen
+        // HERE, not in the widget: this init does a full setFields replace that would
+        // otherwise wipe a widget-applied value.
         await Promise.all(
           lookupFields.map((f) =>
             lookupSet(f.setKey as string)
@@ -634,7 +714,33 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
           setComplaintLines([]);
           setLoading(false);
         }
-      })();
+      };
+
+      // Duplicate (D-D1): `?from=<id>` copies fields + lines from a submission
+      // this contact owns; attachments stay empty and nothing is saved until
+      // Save draft / Submit. An owned-by-someone-else or missing source falls
+      // back to a plain empty form with a toast, rather than a dead end.
+      const fromId =
+        typeof window !== 'undefined'
+          ? new URL(window.location.href).searchParams.get('from')
+          : null;
+      if (fromId && fromId.trim()) {
+        void (async () => {
+          try {
+            const source = await fetchSubmission(kind, fromId.trim());
+            if (cancelledNew) return;
+            applySourceToForm(source as unknown as Record<string, unknown>);
+            setAttachments([]);
+            setLoading(false);
+          } catch {
+            if (cancelledNew) return;
+            toast.error('Could not copy that submission.');
+            await seedEmptyForm();
+          }
+        })();
+      } else {
+        void seedEmptyForm();
+      }
       return () => {
         cancelledNew = true;
       };
@@ -648,57 +754,14 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
         // Resume a saved-but-unsent revision (UAC: revision drafts): a stored,
         // non-stale draft prefills the form OVER the saved values, sourced from
         // the same field keys the saved submission itself is read from - so
-        // merging the draft's flat dict onto `data` and reading through the one
-        // block below covers fields, `products` and `product_lines` alike.
+        // merging the draft's flat dict onto `data` and reading through
+        // applySourceToForm covers fields, `products` and `product_lines` alike.
         const draft = data.revision_draft ?? null;
         const resumeDraft = Boolean(draft && !draft.stale);
         const source = resumeDraft
           ? { ...data, ...(draft!.fields || {}) }
           : data;
-        const next: Record<string, string | string[]> = {};
-        for (const f of fieldDefs) {
-          const v = (source as Record<string, unknown>)[f.name];
-          if (f.widget === 'do-multi-filter') {
-            if (Array.isArray(v)) {
-              next[f.name] = v.map((x) => String(x).trim()).filter(Boolean);
-            } else if (v == null || v === '') {
-              next[f.name] = [];
-            } else {
-              next[f.name] = String(v)
-                .split(/[,\n]/)
-                .map((x) => x.trim())
-                .filter(Boolean);
-            }
-          } else {
-            next[f.name] = v == null ? '' : String(v);
-          }
-        }
-        setFields(next);
-        if (showLines) {
-          const lines = (source as { products?: ProductLine[] }).products ?? [];
-          setProducts(lines.map((l) => ({ ...l })));
-        }
-        if (kind === 'complaint') {
-          const pls =
-            (
-              source as {
-                product_lines?: {
-                  product_code?: string | null;
-                  product_type?: string | null;
-                  quantity?: string | null;
-                }[];
-              }
-            ).product_lines ?? [];
-          setComplaintLines(
-            pls
-              .filter((l) => (l.product_code ?? '').trim())
-              .map((l) => ({
-                product_code: (l.product_code ?? '').trim(),
-                product_type: (l.product_type ?? '').trim(),
-                quantity: (l.quantity ?? '').trim(),
-              })),
-          );
-        }
+        applySourceToForm(source as unknown as Record<string, unknown>);
         setAttachments((data.attachments as PortalAttachment[]) ?? []);
         if (resumeDraft && draft) {
           setReason(draft.reason ?? '');
@@ -880,11 +943,56 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
     }, 50);
   };
 
+  /** Same "does this row have anything in it" test `cleanLineItems` filters on - a
+   *  fully blank row is not a line yet, so a required-unit-price check never names it. */
+  const lineHasContent = (l: ProductLine): boolean =>
+    Boolean(
+      (l.item_code ?? '').trim() ||
+        (l.quantity ?? '').trim() ||
+        (l.remark ?? '').trim() ||
+        (l.unit_price ?? '').trim() ||
+        (l.total ?? '').trim(),
+    );
+
+  /** `cleanedProducts` (what the server actually receives) numbers lines after that
+   *  same filter drops the blank ones, so a server `line:<index>` refusal and this
+   *  client check have to walk `products` the same way to land on the same row. */
+  const rawIndexForCleanedIndex = (cleanedIndex: number): number => {
+    let seen = -1;
+    for (let i = 0; i < products.length; i++) {
+      if (!lineHasContent(products[i])) continue;
+      seen += 1;
+      if (seen === cleanedIndex) return i;
+    }
+    return -1;
+  };
+
+  /** #1227: sponsorship forms only, mandatory unit price on every real line - purchase
+   *  requests are unchanged. Checked client-side before submit, same pattern
+   *  `PriceTagRequestForm` already uses (block, name the line, let the server be the
+   *  real gate). */
+  const findMissingSponsorshipUnitPrice = (): { rawIndex: number; cleanedIndex: number } | null => {
+    if (kind !== 'sponsorship_form' || !cleanedProducts) return null;
+    const cleanedIndex = cleanedProducts.findIndex((l) => {
+      const price = Number(l.unit_price);
+      return !l.unit_price || !Number.isFinite(price) || price < 0;
+    });
+    if (cleanedIndex === -1) return null;
+    return { rawIndex: rawIndexForCleanedIndex(cleanedIndex), cleanedIndex };
+  };
+
   const handleSubmit = async () => {
     const missing = collectMissingRequired();
     if (missing.length > 0) {
       setConfirmOpen(false);
       reportMissingRequired(missing);
+      return;
+    }
+    const missingPrice = findMissingSponsorshipUnitPrice();
+    setInvalidLineIndex(missingPrice ? missingPrice.rawIndex : null);
+    if (missingPrice) {
+      setConfirmOpen(false);
+      toast.error(`Line ${missingPrice.cleanedIndex + 1}: Unit price is required.`);
       return;
     }
     setSubmitting(true);
@@ -907,7 +1015,25 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
         router.replace(portalVerifyPath({ reason: 'expired' }));
         return;
       }
-      toast.error(e instanceof Error ? e.message : 'Failed to submit.');
+      // #1227: the server names a sponsorship unit-price refusal the same way it
+      // names a price tag request line (`fields: ['line:<index>']`) - surfaced the
+      // same way `lineErrorToast` does in PriceTagRequestForm: "Line N: <message>".
+      const errFields = (e as { fields?: unknown } | null)?.fields;
+      const lineField = Array.isArray(errFields)
+        ? errFields.find((f): f is string => typeof f === 'string' && f.startsWith('line:'))
+        : undefined;
+      const message = e instanceof Error ? e.message : 'Failed to submit.';
+      if (lineField) {
+        const cleanedIndex = Number(lineField.slice('line:'.length));
+        if (Number.isInteger(cleanedIndex)) {
+          setInvalidLineIndex(rawIndexForCleanedIndex(cleanedIndex));
+          toast.error(`Line ${cleanedIndex + 1}: ${message}`);
+        } else {
+          toast.error(message);
+        }
+      } else {
+        toast.error(message);
+      }
     } finally {
       setSubmitting(false);
       setConfirmOpen(false);
@@ -938,11 +1064,23 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
   };
 
   /** Gate before the confirm dialog: the reason is the one thing the journey
-   *  asks for, so an empty one never reaches the dialog. */
+   *  asks for, so an empty one never reaches the dialog.
+   *
+   *  #1232 blocking 4: a revise is a second submission path back into the
+   *  approval flow (`handleRevise` below sends `cleanedProducts` the same way
+   *  `handleSubmit` does), so it must run the SAME sponsorship unit-price
+   *  check as submit or a dealer could clear a price on revise and have it
+   *  reach the office unchecked. */
   const openReviseConfirm = () => {
     const missing = collectMissingRequired();
     if (missing.length > 0) {
       reportMissingRequired(missing);
+      return;
+    }
+    const missingPrice = findMissingSponsorshipUnitPrice();
+    if (missingPrice) {
+      setInvalidLineIndex(missingPrice.rawIndex);
+      toast.error(`Line ${missingPrice.cleanedIndex + 1}: Unit price is required.`);
       return;
     }
     const trimmed = reason.trim();
@@ -990,8 +1128,26 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
         );
         return;
       }
-      // 409 (revised elsewhere) and 422 (policy) both carry one server sentence.
-      toast.error(e instanceof Error ? e.message : 'Failed to send revision.');
+      // #1232 blocking 4: same line-naming as handleSubmit's catch, for the same
+      // server refusal shape - the client check above already covers the common
+      // case, this is the race it cannot catch.
+      const errFields = (e as { fields?: unknown } | null)?.fields;
+      const lineField = Array.isArray(errFields)
+        ? errFields.find((f): f is string => typeof f === 'string' && f.startsWith('line:'))
+        : undefined;
+      const message = e instanceof Error ? e.message : 'Failed to send revision.';
+      if (lineField) {
+        const cleanedIndex = Number(lineField.slice('line:'.length));
+        if (Number.isInteger(cleanedIndex)) {
+          setInvalidLineIndex(rawIndexForCleanedIndex(cleanedIndex));
+          toast.error(`Line ${cleanedIndex + 1}: ${message}`);
+        } else {
+          toast.error(message);
+        }
+      } else {
+        // 409 (revised elsewhere) and 422 (policy) both carry one server sentence.
+        toast.error(message);
+      }
     } finally {
       setReviseConfirmOpen(false);
     }
@@ -1323,6 +1479,26 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
     return <SectionSkeleton rows={6} className="p-6" />;
   }
 
+  // AC-L4: a deep link to a kind this contact cannot see 403s on this same
+  // detail load (`FORM_TYPE_NOT_VISIBLE`, mirroring every other portal
+  // gate). Show the server's message and a way back - no crash, no empty
+  // form rendered underneath it.
+  if (error && !detail) {
+    return (
+      <div className="w-full max-w-3xl mx-auto px-3 pt-4 pb-4 space-y-3">
+        <Alert variant="destructive">
+          <AlertIcon>
+            <AlertCircle />
+          </AlertIcon>
+          <AlertTitle>{error}</AlertTitle>
+        </Alert>
+        <Button asChild variant="outline">
+          <Link href={portalHomePath({ slug })}>Back to your forms</Link>
+        </Button>
+      </div>
+    );
+  }
+
   // The badge always reflects the real state - revising does NOT override it
   // to "Draft", because the list row shows the same real status and the two
   // must never disagree. The "nothing sent yet" message lives in the
@@ -1418,17 +1594,6 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
         <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
           This submission is not editable.
         </div>
-      )}
-      {submissionId && !reviseMode && (
-        <ReviseAction
-          variant="menu"
-          policy={revisionPolicy}
-          onRevise={() => {
-            setReviseMode(true);
-            setReason('');
-            setReasonError(null);
-          }}
-        />
       )}
       {submissionId && !reviseMode && detail?.revision_draft?.stale && (
         <Alert
@@ -1588,7 +1753,9 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
                     <th className="w-28 px-2 py-2 text-left">Quantity</th>
                     {kind === 'sponsorship_form' && (
                       <>
-                        <th className="w-32 px-2 py-2 text-left">Unit price</th>
+                        <th className="w-32 px-2 py-2 text-left">
+                          Unit price<span className="ml-0.5 text-destructive">*</span>
+                        </th>
                         <th className="w-32 px-2 py-2 text-left">Total</th>
                       </>
                     )}
@@ -1658,17 +1825,34 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
                                 min="0"
                                 step="0.01"
                                 value={line.unit_price ?? ''}
-                                onChange={(e) =>
+                                onChange={(e) => {
                                   setProducts((prev) =>
                                     prev.map((p, i) =>
                                       i === index
                                         ? { ...p, unit_price: e.target.value }
                                         : p,
                                     ),
-                                  )
-                                }
+                                  );
+                                  // Nit 2 (review round 1, PR #1232): invalidFields clears as
+                                  // soon as the field is filled - this line-scoped error must
+                                  // do the same, or it survives every edit until the next submit.
+                                  setInvalidLineIndex((prev) =>
+                                    prev === index ? null : prev,
+                                  );
+                                }}
                                 disabled={!editing}
+                                aria-invalid={invalidLineIndex === index}
+                                className={
+                                  invalidLineIndex === index
+                                    ? 'border-destructive'
+                                    : undefined
+                                }
                               />
+                              {invalidLineIndex === index && (
+                                <p className="mt-1 text-xs text-destructive">
+                                  Unit price is required.
+                                </p>
+                              )}
                             </td>
                             <td className="px-2 py-2">
                               <Input
@@ -1909,14 +2093,14 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
     // M6-02: dvh - phone-facing portal form, so a `vh` shell that sits under
     // mobile Safari's dynamic toolbar clips the form the reader is filling in.
     <div className="min-h-dvh max-w-7xl mx-auto px-4 py-6 space-y-4">
-      <div className="flex items-center justify-between">
-        <Button variant="ghost" size="sm" asChild>
+      <div className="flex items-center justify-between gap-3">
+        <Button variant="ghost" size="sm" asChild className="shrink-0">
           <Link href={portalHomePath({ type: kind })}>
             <ArrowLeft className="h-4 w-4 mr-2" />
             Back
           </Link>
         </Button>
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 items-center gap-3">
           {editing && (
             <Button
               type="button"
@@ -1924,25 +2108,71 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
               size="sm"
               onClick={() => setAiExtractOpen(true)}
               data-testid="ai-extract-trigger"
+              className="shrink-0"
             >
               <Sparkles className="h-4 w-4 mr-2 text-primary" />
               AI Extract
             </Button>
           )}
-          {detail?.reference && (
-            <span className="text-sm text-muted-foreground">
-              {detail.reference}
+          {/* R3-5: form number, revision status and the prev/next counter
+              share ONE truncating line - the revision budget/blocked
+              sentence used to live in its own gear row below the tabs. */}
+          {(detail?.reference || revisionStatusText || neighbours) && (
+            <span className="min-w-0 truncate text-sm text-muted-foreground">
+              {detail?.reference}
+              {submissionId && !reviseMode && revisionStatusText && (
+                <>
+                  {/* Separator as its own node (not concatenated into the
+                      text span itself), so "2 / 5" etc stays exact for
+                      anything that queries that leaf's own text. */}
+                  {detail?.reference && <span aria-hidden> · </span>}
+                  <span className="text-xs text-muted-foreground/70">
+                    {revisionStatusText}
+                  </span>
+                </>
+              )}
               {neighbours && (
-                <span className="ml-2 text-xs text-muted-foreground/70">
-                  {neighbours.position} / {neighbours.total}
-                </span>
+                <>
+                  {(detail?.reference || revisionStatusText) && (
+                    <span aria-hidden> · </span>
+                  )}
+                  <span className="text-xs text-muted-foreground/70">
+                    {neighbours.position} / {neighbours.total}
+                  </span>
+                </>
               )}
             </span>
           )}
-          {!detail?.reference && neighbours && (
-            <span className="text-xs text-muted-foreground/70">
-              {neighbours.position} / {neighbours.total}
-            </span>
+          {/* View-page gear (D-D1, R3-5): one gear, every action - Duplicate
+              plus Revise when the policy allows it. Read-only view only -
+              the form itself (new or editing) has nothing to duplicate or
+              revise FROM yet. */}
+          {detail && !editing && (
+            <DetailActionsMenu
+              ariaLabel="Submission actions"
+              className="shrink-0"
+            >
+              <DropdownMenuItem
+                onSelect={() => {
+                  router.push(portalDuplicatePath(kind, detail.id, slug));
+                }}
+              >
+                <Copy className="h-4 w-4" />
+                Duplicate
+              </DropdownMenuItem>
+              {revisionPolicy?.allowed && (
+                <DropdownMenuItem
+                  onSelect={() => {
+                    setReviseMode(true);
+                    setReason('');
+                    setReasonError(null);
+                  }}
+                >
+                  <PencilLine className="h-4 w-4" />
+                  Revise
+                </DropdownMenuItem>
+              )}
+            </DetailActionsMenu>
           )}
         </div>
       </div>

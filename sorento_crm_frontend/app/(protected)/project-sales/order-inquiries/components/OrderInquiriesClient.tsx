@@ -5,7 +5,6 @@ import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
   PaginationState,
-  SortingState,
   getCoreRowModel,
   getPaginationRowModel,
   useReactTable,
@@ -18,6 +17,7 @@ import {
   Link2,
   List,
   PackageSearch,
+  RotateCcw,
   Undo2,
   Unlink,
   Upload,
@@ -62,10 +62,12 @@ import { formatDateInMalaysia } from '@/lib/helpers';
 import { AutoLinkOrderInquiryDialog } from '../../_shared/components/AutoLinkOrderInquiryDialog';
 import { BulkRejectOrderInquiryDialog } from '../../_shared/components/BulkRejectOrderInquiryDialog';
 import { LinkDocumentDialog } from '../../_shared/components/LinkDocumentDialog';
+import { STATE_LABEL } from '../../_shared/components/OrderInquiryVerbPill';
 import { UnlinkAllOrderInquiryDialog } from '../../_shared/components/UnlinkAllOrderInquiryDialog';
 import { OutstandingUploadDialog } from '../../../scm/reorder/components/OutstandingUploadDialog';
 import {
   useOrderInquiryHandshake,
+  useOrderInquiryMatrix,
   useOrderInquiryWorklist,
   useOrderInquiryWorklistSummary,
   useUnplaceAllPreview,
@@ -74,12 +76,14 @@ import {
 import {
   ACK_ANY,
   ACK_FILTER_OPTIONS,
+  ackStateOf,
   isBulkRejectable,
 } from '../../_shared/lib/orderInquiryAck';
 import {
   NO_LINK_HORIZON,
   initialLinkHorizon,
   linkHorizonRequest,
+  linkOutcomeText,
   readStoredLinkHorizon,
   readUrlLinkHorizon,
   startsCleared,
@@ -89,24 +93,37 @@ import { facetSegments } from '../../_shared/lib/orderInquiryKinds';
 import type { OrderInquiryKind } from '../../_shared/lib/orderInquiryKinds';
 import { buildOrderInquiryMatrix } from '../../_shared/lib/orderInquiryMatrix';
 import { deliveryMonthLabel } from '../../_shared/lib/orderInquiryWorklist';
-import { saveBlobAs } from '../../_shared/services/fileDownload';
 import {
-  downloadOrderInquiryWorklistXlsx,
+  autoPlaceOrderInquiryRows,
+  exportOrderInquiryWorklistXlsx,
   unplaceOrderInquiryRow,
 } from '../../_shared/services/orderInquiryService';
 import type {
   OrderInquiryMatrixAxis,
   OrderInquiryMatrixCell,
   OrderInquiryMatrixGranularity,
+  OrderInquiryMatrixParams,
   OrderInquiryWorklistParams,
 } from '../../_shared/types/orderInquiry.types';
 import { OrderInquiryMatrixCellDrilldown } from './OrderInquiryMatrixCellDrilldown';
+import { OrderInquiryMonthStrip } from './OrderInquiryMonthStrip';
 import { OrderInquiryScheduleMatrix } from './OrderInquiryScheduleMatrix';
 import { OrderInquiryStrip } from './OrderInquiryStrip';
-import { useOrderInquiryWorklistColumns } from './orderInquiryWorklistColumns';
+import {
+  DEFAULT_HIDDEN_COLUMNS,
+  useOrderInquiryWorklistColumns,
+} from './orderInquiryWorklistColumns';
 import { PageHeader } from '@/components/common/PageHeader';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { useListingViewPreferences } from '@/lib/listing-column-preferences/useListingViewPreferences';
+import { SupplyKindCard } from '../../_shared/components/SupplyKindCard';
+
+/** "Link selected (2 of 3)", or "Link selected (3)" when every ticked row is eligible
+ * (S4, AC-T2): the count is never "of n" when a === n, which would say the obvious. */
+function countLabel(base: string, eligible: number, ticked: number): string {
+  return eligible === ticked ? `${base} (${ticked})` : `${base} (${eligible} of ${ticked})`;
+}
 
 /**
  * WHETHER anything in either book covers the row, and out of which one (AC-D15). The
@@ -171,12 +188,21 @@ function matrixGranularityFrom(
 }
 
 /**
- * The unpaged fetch the Schedule view groups client-side, the same limit-1000 idiom the
- * old day drilldown used. A delivery-filtered worklist has never approached that many rows
- * in practice; if one ever does, the fix is a real server-side aggregate, not a bigger
- * number here.
+ * The SO month filter's own options (S1, R-K): a 24-month window, this month centred,
+ * since the backend answers no facet for it yet (unlike delivery month, which is read
+ * off the rows that actually exist). `deliveryMonthLabel` reads the same `YYYY-MM` shape
+ * the sheet tabs do, so this filter and the month strip spell a month identically.
  */
-const MATRIX_FETCH_LIMIT = 1000;
+function soMonthOptions(): { value: string; label: string }[] {
+  const now = new Date();
+  const options: { value: string; label: string }[] = [];
+  for (let offset = -12; offset < 12; offset += 1) {
+    const date = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+    const value = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+    options.push({ value, label: deliveryMonthLabel(value) ?? value });
+  }
+  return options;
+}
 
 /** Same slug the backend gates `unplace-all(-preview)` and `mark`/`auto-place` on. */
 const ORDER_INQUIRY_ACTION_PERMISSION = 'projects.order_inquiry.action';
@@ -190,18 +216,48 @@ const ORDER_INQUIRY_ACKNOWLEDGE_PERMISSION =
   'projects.order_inquiries.acknowledge';
 
 /**
- * No default ack filter any more (S1, AC-1.5, G5): a row is born acknowledged, so "To
- * confirm" is no longer a to-do list anybody works from - the page opens on every row,
- * and the filter stays available for a rejected or changed lookup.
- *
- * A CLEARED filter travels as `?ack=all`, never as an absent parameter: an absent one
- * means "nobody has chosen" and a future default would go straight back over the choice
- * on the next reload.
+ * An absent `?ack=` now opens on To confirm (PLAN-oi-confirm-per-so, AC-CF-11: G4/G5
+ * reversed - a row is born `awaiting` again, so purchasing has a work queue to open on).
+ * `null` is left unresolved here on purpose: the caller does not yet know whether this
+ * browser has a REMEMBERED view (`useListingViewPreferences`) to fall back to before the
+ * hardcoded default applies, so the one-time memory-seed effect below is what actually
+ * turns an absent param into `to_confirm`. `ack=all` travels as a real value, never
+ * emptiness, so a reload cannot mistake a deliberate "show everything" for "nobody has
+ * chosen" and put To confirm back over it.
  */
 function ackFilterFrom(value: string | null): string {
-  if (value === null) return '';
-  return value === ACK_ANY ? '' : value;
+  return value ?? '';
 }
+
+/** The same key `DataGrid` already keys column preferences off (line ~1445 below) - one
+ * row, one listing, for columns AND for the remembered sort/filters (S6). */
+const ORDER_INQUIRY_LISTING_KEY = 'projects.projects.view::order-inquiry-worklist';
+
+/** What this page remembers per user (S6, AC-CF-17/18): every filter except page and
+ * search text, which stay session-only (AC-CF-19) - matching the shape the DataGrid's
+ * own sort/filter memory already uses on Stock Inquiries and Sales Orders.
+ * BUMP `filtersVersion` on the hook call below if this shape changes (AC-B4). */
+type OrderInquiryViewFilters = {
+  ack?: string;
+  view?: OrderInquiryView;
+  granularity?: OrderInquiryMatrixGranularity;
+  delivery_month?: string;
+  location?: string;
+  agent?: string;
+  so_month?: string;
+  po_number?: string;
+  spo_number?: string;
+  supplier_id?: string;
+  // S5 (`PLAN-oi-project-label-from-so.md` section 5): text, exact match on the Project
+  // column - the filter follows the column now, not a registered project's id. A blob
+  // stored before this shipped may still carry the old `project_id` key; nothing here
+  // reads it any more; a fresh save never writes it back.
+  project?: string;
+  raised_date?: string;
+  raised_by?: string;
+  linked?: 'po' | 'spo' | 'none';
+  kind?: OrderInquiryKind;
+};
 
 /**
  * Purchasing's own order inquiry, across every project and every adopted sales order.
@@ -228,7 +284,18 @@ function ackFilterFrom(value: string | null): string {
  * Nothing is authored here. A row is derived when CS confirms supply, which is the only
  * moment the instruction is true, so there is no Add button and there never should be.
  */
-export function OrderInquiriesClient() {
+export function OrderInquiriesClient({
+  extraHeaderActions,
+}: {
+  /**
+   * `PLAN-oi-header-list-detail.md`, AC-HL-01: the Documents | Lines toggle, rendered by
+   * the page-level view switch (`OrderInquiryHeadersOrLinesView.tsx`) BESIDE this
+   * screen's own List | Schedule toggle rather than under a second `PageHeader`. One
+   * additive, optional slot - a caller that omits it renders exactly as before, and
+   * nothing else about this component changes.
+   */
+  extraHeaderActions?: React.ReactNode;
+} = {}) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -236,8 +303,42 @@ export function OrderInquiriesClient() {
     ORDER_INQUIRY_ACTION_PERMISSION,
   );
   const canAcknowledge = useHasPermission(ORDER_INQUIRY_ACKNOWLEDGE_PERMISSION);
-  const { linkNow } = useOrderInquiryHandshake();
+  const { linkNow, acknowledge, unacknowledge } = useOrderInquiryHandshake();
   const [unlinkingSelected, setUnlinkingSelected] = React.useState(false);
+  const [linkingSelected, setLinkingSelected] = React.useState(false);
+
+  // S6: the sort and every filter this listing remembers, per user, off the SAME row the
+  // columns are already keyed by. `filters` here is the STORED blob only - what this
+  // render should actually show still lives in the plain `useState`s below, seeded from
+  // it once (the memory-seed effect, after the individual filters), because the URL has
+  // to win over the memory for a visit that names one (AC-CF-20) and half of these
+  // filters are ALSO URL-synced for sharing, which an opaque blob cannot drive directly.
+  const {
+    sorting,
+    setSorting,
+    filters: viewFilters,
+    setFilters: setViewFilters,
+    isLoading: isViewPrefsLoading,
+  } = useListingViewPreferences<OrderInquiryViewFilters>({
+    listingKey: ORDER_INQUIRY_LISTING_KEY,
+    defaultSorting: [{ id: 'delivery_date', desc: false }],
+    filtersVersion: 1,
+  });
+  // Captured ONCE, at mount, for exactly the filters that also travel in the URL: whether
+  // THIS visit named one, which is what "a URL param present on arrival wins" (AC-CF-20)
+  // has to test against - reading `searchParams` again after the sync effect below has
+  // started rewriting it would always say yes.
+  const urlProvidedFilters = React.useRef({
+    ack: searchParams.get('ack') !== null,
+    view: searchParams.get('view') !== null,
+    granularity: searchParams.get('granularity') !== null,
+    delivery_month: searchParams.get('delivery_month') !== null,
+    location: searchParams.get('location') !== null,
+    agent: searchParams.get('agent') !== null,
+    so_month: searchParams.get('so_month') !== null,
+    po_number: searchParams.get('po_number') !== null,
+    spo_number: searchParams.get('spo_number') !== null,
+  });
 
   const [view, setView] = React.useState<OrderInquiryView>(() =>
     viewFrom(searchParams.get('view')),
@@ -253,12 +354,53 @@ export function OrderInquiriesClient() {
     debouncedValue: debounced,
     isSettling: debouncedSettling,
   } = useDebouncedSearch(searchParams.get('query') ?? '');
-  const [month, setMonth] = React.useState('');
+  // S2, AC-M2: the month tab strip's own selection, URL-synced like `view`/`query` -
+  // reading `?delivery_month=` on mount so a reload or a shared link keeps the tab.
+  const [month, setMonth] = React.useState(
+    () => searchParams.get('delivery_month') ?? '',
+  );
   const [supplierFilter, setSupplierFilter] = React.useState('');
   const [projectFilter, setProjectFilter] = React.useState('');
   const [raisedDate, setRaisedDate] = React.useState('');
   const [raisedByFilter, setRaisedByFilter] = React.useState('');
   const [linkedFilter, setLinkedFilter] = React.useState('');
+  // S1, R-K: Location, Agent, SO month, PO number, SPO number. The last two are text -
+  // a buyer types the number they already hold, never picks it from a list - so they
+  // get the same debounce the search box does rather than filtering on every keystroke.
+  //
+  // All five are seeded from the URL and written back to it, exactly as `query` and
+  // `delivery_month` beside them are (AC-F1): a filter that reaches the request and the
+  // Filters badge but not the address bar is one a reload silently drops, and one the
+  // buyer cannot send to anybody.
+  const [locationFilter, setLocationFilter] = React.useState(
+    () => searchParams.get('location') ?? '',
+  );
+  const [agentFilter, setAgentFilter] = React.useState(
+    () => searchParams.get('agent') ?? '',
+  );
+  const [soMonthFilter, setSoMonthFilter] = React.useState(
+    () => searchParams.get('so_month') ?? '',
+  );
+  // AC-OH-61 (R2): the row's own state (raised / partly_linked / actioned / cancelled /
+  // placed) - a different question from `ack`/`linked`/`kind` above, and the one field
+  // that can actually reach `state=cancelled`, since the list hides cancelled by
+  // default otherwise (S5). URL-seeded and synced the same way as its siblings.
+  const [stateFilter, setStateFilter] = React.useState(
+    () => searchParams.get('state') ?? '',
+  );
+  const {
+    value: poNumberInput,
+    setValue: setPoNumberInput,
+    debouncedValue: poNumberFilter,
+    reset: resetPoNumberInput,
+  } = useDebouncedSearch(searchParams.get('po_number') ?? '');
+  const {
+    value: spoNumberInput,
+    setValue: setSpoNumberInput,
+    debouncedValue: spoNumberFilter,
+    reset: resetSpoNumberInput,
+  } = useDebouncedSearch(searchParams.get('spo_number') ?? '');
+  const soMonthChoices = React.useMemo(() => soMonthOptions(), []);
   // Sourced from `?ack=` on mount and kept URL-synced, like `view` and `query`: the plan
   // page's "N to confirm" chip links straight into this list narrowed to them, and a chip
   // that landed on an unfiltered list would leave the buyer to find them. With NO `?ack=`
@@ -327,9 +469,10 @@ export function OrderInquiriesClient() {
     pageIndex: 0,
     pageSize: 25,
   });
-  const [sorting, setSorting] = React.useState<SortingState>([
-    { id: 'delivery_date', desc: false },
-  ]);
+  // `sorting` itself comes from `useListingViewPreferences` above (S6, AC-CF-17) - it was
+  // never URL-synced, so remembering it per user is a straight swap with no URL side.
+  const [selectAllMatchingActive, setSelectAllMatchingActive] = React.useState(false);
+  const [confirmingOpen, setConfirmingOpen] = React.useState(false);
   const [matrixAxis, setMatrixAxis] = React.useState<OrderInquiryMatrixAxis>(
     () => matrixAxisFrom(searchParams.get('rows')),
   );
@@ -372,10 +515,32 @@ export function OrderInquiriesClient() {
     else next.set('granularity', matrixGranularity);
     if (debounced) next.set('query', debounced);
     else next.delete('query');
-    // A CLEARED Confirmed filter says so out loud, because an absent `ack` is what the
-    // DEFAULT is read from (AC-D12): dropping the parameter would put To confirm back on
-    // the next reload and read as the clear having failed.
-    next.set('ack', ackFilter || ACK_ANY);
+    // S2, AC-M2: "All" (the default) carries no param; any other tab does, so a reload
+    // or a shared link opens on the same tab the buyer pressed.
+    if (month) next.set('delivery_month', month);
+    else next.delete('delivery_month');
+    // S1, R-K (AC-F1): the Filters-popover values travel too, so a reload keeps them and
+    // a shared link opens on the same narrowed list. Cleared means the parameter goes,
+    // which is what "Clear filters" then says in the address bar.
+    for (const [key, value] of [
+      ['location', locationFilter],
+      ['agent', agentFilter],
+      ['so_month', soMonthFilter],
+      ['po_number', poNumberFilter],
+      ['spo_number', spoNumberFilter],
+      // AC-OH-61.
+      ['state', stateFilter],
+    ] as const) {
+      if (value) next.set(key, value);
+      else next.delete(key);
+    }
+    // AC-CF-11 (G5 reversed): To confirm - the page's own default again - carries no
+    // param, the same rule `delivery_month` above follows for ITS default, so a fresh
+    // visit and a reload of one read identically. `ack=all` (a deliberate "show
+    // everything") and every other value travel explicit, so a reload or a shared link
+    // keeps them rather than falling back to the default over the buyer's choice.
+    if (ackFilter && ackFilter !== 'to_confirm') next.set('ack', ackFilter);
+    else next.delete('ack');
     if (linkUpTo) next.set('link_up_to', linkUpTo);
     else next.delete('link_up_to');
     // A CLEARED horizon travels too (item 6). Dropping `link_up_to` and putting nothing in
@@ -393,7 +558,14 @@ export function OrderInquiriesClient() {
     matrixAxis,
     matrixGranularity,
     debounced,
+    month,
     ackFilter,
+    locationFilter,
+    agentFilter,
+    soMonthFilter,
+    poNumberFilter,
+    spoNumberFilter,
+    stateFilter,
     linkUpTo,
     horizonCleared,
     pathname,
@@ -407,9 +579,11 @@ export function OrderInquiriesClient() {
   }, [matrixAxis, matrixGranularity]);
 
   // Narrowing changes which rows exist, so page 3 of the old set is a page of nothing in
-  // the new one.
+  // the new one - and a "Select all N matching" taken under the OLD filters has nothing
+  // to do with the new set either.
   React.useEffect(() => {
     setPagination((previous) => ({ ...previous, pageIndex: 0 }));
+    setSelectAllMatchingActive(false);
   }, [
     debounced,
     month,
@@ -420,6 +594,111 @@ export function OrderInquiriesClient() {
     linkedFilter,
     ackFilter,
     kindFilter,
+    locationFilter,
+    agentFilter,
+    soMonthFilter,
+    poNumberFilter,
+    spoNumberFilter,
+    stateFilter,
+  ]);
+
+  // S6 (AC-CF-20): once, when the remembered view has resolved, every filter the URL did
+  // NOT name for this visit takes the remembered value (or the shipped default when
+  // nothing was ever remembered either). `link_up_to`/`link_horizon` are not in this
+  // list - they keep the horizon's own, older per-browser memory (`readStoredLinkHorizon`
+  // above), which already does the same job for that one field.
+  const memorySeededRef = React.useRef(false);
+  // Mirrored into STATE as well as the ref, deliberately. The ref makes this run once;
+  // the state is what everything downstream waits on, because a ref set inside this
+  // effect is already `true` for the effects that run AFTER it in the very same pass -
+  // which still see the pre-seed filter values. That is the whole of the AC-CF-18 defect:
+  // on a re-mount the write-back below fired in this pass, wrote the empty pre-seed blob
+  // over the remembered one, and the seed then read back what it had just erased.
+  const [memorySeeded, setMemorySeeded] = React.useState(false);
+  React.useEffect(() => {
+    if (memorySeededRef.current || isViewPrefsLoading) return;
+    memorySeededRef.current = true;
+    setMemorySeeded(true);
+    const stored = viewFilters ?? {};
+    const urlHad = urlProvidedFilters.current;
+    if (!urlHad.ack) setAckFilter(stored.ack ?? 'to_confirm');
+    if (!urlHad.view) setView(stored.view ?? 'list');
+    if (!urlHad.granularity) setMatrixGranularity(stored.granularity ?? 'week');
+    if (!urlHad.delivery_month) setMonth(stored.delivery_month ?? '');
+    if (!urlHad.location) setLocationFilter(stored.location ?? '');
+    if (!urlHad.agent) setAgentFilter(stored.agent ?? '');
+    if (!urlHad.so_month) setSoMonthFilter(stored.so_month ?? '');
+    if (!urlHad.po_number) resetPoNumberInput(stored.po_number ?? '');
+    if (!urlHad.spo_number) resetSpoNumberInput(stored.spo_number ?? '');
+    // These six have no URL representation at all today (Measured facts) - the memory is
+    // their only persistence, so it always applies.
+    setSupplierFilter(stored.supplier_id ?? '');
+    // A blob saved before S5 shipped may still carry the old `project_id` key - never
+    // read here, so a stored one restores to no project filter rather than a stale id
+    // the Project select no longer has an option for.
+    setProjectFilter(stored.project ?? '');
+    setRaisedDate(stored.raised_date ?? '');
+    setRaisedByFilter(stored.raised_by ?? '');
+    setLinkedFilter(stored.linked ?? '');
+    setKindFilter(stored.kind ?? null);
+  }, [isViewPrefsLoading, viewFilters, resetPoNumberInput, resetSpoNumberInput]);
+
+  // What every request on this page waits for (AC-CF-21): not just the stored row landing,
+  // but the seed above having moved it into the filters this render actually reads. The
+  // hook's own `isLoading` releases one commit earlier, which used to let the first list
+  // call go out with the shipped defaults and flash the whole worklist before the
+  // remembered filter narrowed it a render later.
+  const isViewMemoryPending = isViewPrefsLoading || !memorySeeded;
+
+  // The other half (AC-CF-18): every change here is written back to the same remembered
+  // row. Safe to run from the very first commit - `useListingViewPreferences` does not
+  // persist anything until IT has applied what was already stored, so an early call here
+  // only updates its in-memory value and is superseded the moment that happens.
+  //
+  // GUARDED on `memorySeeded` (AC-CF-18, browser pass 17 Sep): until the seed above has
+  // LANDED IN A RENDER, the filters read here are this mount's blank starting state, not
+  // anybody's choice. Writing them back was the measured defect - leave the page by the
+  // sidebar and come back, and the return mount wrote `{ack: 'to_confirm'}` over the
+  // `{ack, location}` it had just read, because this effect ran a commit before the seed
+  // did. A re-mount is indistinguishable from a first visit from in here, so there is
+  // nothing to test but "has this page decided what it shows yet".
+  React.useEffect(() => {
+    if (!memorySeeded) return;
+    const blob: OrderInquiryViewFilters = {};
+    if (ackFilter) blob.ack = ackFilter;
+    if (view !== 'list') blob.view = view;
+    if (matrixGranularity !== 'week') blob.granularity = matrixGranularity;
+    if (month) blob.delivery_month = month;
+    if (locationFilter) blob.location = locationFilter;
+    if (agentFilter) blob.agent = agentFilter;
+    if (soMonthFilter) blob.so_month = soMonthFilter;
+    if (poNumberFilter) blob.po_number = poNumberFilter;
+    if (spoNumberFilter) blob.spo_number = spoNumberFilter;
+    if (supplierFilter) blob.supplier_id = supplierFilter;
+    if (projectFilter) blob.project = projectFilter;
+    if (raisedDate) blob.raised_date = raisedDate;
+    if (raisedByFilter) blob.raised_by = raisedByFilter;
+    if (linkedFilter) blob.linked = linkedFilter as 'po' | 'spo' | 'none';
+    if (kindFilter) blob.kind = kindFilter;
+    setViewFilters(Object.keys(blob).length ? blob : null);
+  }, [
+    memorySeeded,
+    ackFilter,
+    view,
+    matrixGranularity,
+    month,
+    locationFilter,
+    agentFilter,
+    soMonthFilter,
+    poNumberFilter,
+    spoNumberFilter,
+    supplierFilter,
+    projectFilter,
+    raisedDate,
+    raisedByFilter,
+    linkedFilter,
+    kindFilter,
+    setViewFilters,
   ]);
 
   const filters = React.useMemo(
@@ -428,10 +707,28 @@ export function OrderInquiriesClient() {
       delivery_month: month || undefined,
       raised_date: raisedDate || undefined,
       supplier_id: supplierFilter || undefined,
-      project_id: projectFilter || undefined,
+      project: projectFilter || undefined,
       raised_by: raisedByFilter || undefined,
       linked: (linkedFilter || undefined) as 'po' | 'spo' | 'none' | undefined,
-      ack: (ackFilter || undefined) as OrderInquiryWorklistParams['ack'],
+      // AC-CF-11: `ack=all` (the explicit "show everything") sends no filter at all;
+      // anything else - including the transient '' before the memory-seed effect above
+      // resolves it - reads as `to_confirm`, the page's own default. The list query is
+      // gated off until that effect has run (`!isViewMemoryPending`), so `to_confirm` is
+      // never actually asked for on the transient's account.
+      ack: (ackFilter === ACK_ANY
+        ? undefined
+        : (ackFilter || 'to_confirm')) as OrderInquiryWorklistParams['ack'],
+      // S1, R-K. The backend does not read these yet (Phase 1 mock contract) - forwarded
+      // all the same so the page keeps working once it does, and unknown params are
+      // ignored server-side in the meantime.
+      location: locationFilter || undefined,
+      agent: agentFilter || undefined,
+      so_month: soMonthFilter || undefined,
+      po_number: poNumberFilter || undefined,
+      spo_number: spoNumberFilter || undefined,
+      // AC-OH-61: the row's own state - the one field that can ask for `cancelled`
+      // even though the list hides it by default otherwise (S5).
+      state: stateFilter || undefined,
     }),
     [
       debounced,
@@ -442,6 +739,12 @@ export function OrderInquiriesClient() {
       raisedByFilter,
       linkedFilter,
       ackFilter,
+      locationFilter,
+      agentFilter,
+      soMonthFilter,
+      poNumberFilter,
+      spoNumberFilter,
+      stateFilter,
     ],
   );
 
@@ -464,7 +767,7 @@ export function OrderInquiriesClient() {
       delivery_month: month || undefined,
       raised_date: raisedDate || undefined,
       supplier_id: supplierFilter || undefined,
-      project_id: projectFilter || undefined,
+      project: projectFilter || undefined,
       raised_by: raisedByFilter || undefined,
     }),
     [
@@ -488,12 +791,19 @@ export function OrderInquiriesClient() {
     [listFilters, pagination, sorting],
   );
 
-  const list = useOrderInquiryWorklist(params, { enabled: view === 'list' });
+  // Gated on `!isViewMemoryPending` (AC-CF-21): the first fetch waits for the remembered
+  // view, so it asks with the filters the buyer actually left it on rather than the
+  // shipped defaults for one request and the real ones for the next.
+  const list = useOrderInquiryWorklist(params, {
+    enabled: view === 'list' && !isViewMemoryPending,
+  });
   // Asked WITH the pressed card, so the header badges and the month / supplier / project
   // controls describe the rows actually on screen. Its `kinds` facet is the one thing
   // computed with the card dropped (server-side), which is what keeps the other two
   // cards readable while one is held down.
-  const summary = useOrderInquiryWorklistSummary(listFilters);
+  const summary = useOrderInquiryWorklistSummary(listFilters, {
+    enabled: !isViewMemoryPending,
+  });
   const planHorizon = summary.data?.link_up_to_default ?? null;
 
   // The plan's own coverage date, taken ONCE and only when neither the URL nor this
@@ -513,33 +823,31 @@ export function OrderInquiriesClient() {
     storeLinkHorizon(linkUpTo || (horizonCleared ? NO_LINK_HORIZON : null));
   }, [horizonCleared, linkUpTo]);
 
-  // The Schedule view's own request: the same filters, unpaged, so the matrix groups
-  // exactly what the list would otherwise page through.
-  const matrixParams = React.useMemo(
+  // The Schedule view's own request (S3): the same filters, plus the axis and the date
+  // cut - a server-side GROUP BY now, not an unpaged list fetch grouped in the browser,
+  // so there is no more row cap.
+  const matrixParams = React.useMemo<OrderInquiryMatrixParams>(
     () => ({
       ...listFilters,
-      limit: MATRIX_FETCH_LIMIT,
-      sort: 'delivery_date',
-      dir: 'asc' as const,
+      axis: matrixAxis,
+      by: matrixGranularity,
     }),
-    [listFilters],
+    [listFilters, matrixAxis, matrixGranularity],
   );
-  const matrixList = useOrderInquiryWorklist(matrixParams, {
-    enabled: view === 'schedule',
+  const matrixQuery = useOrderInquiryMatrix(matrixParams, {
+    enabled: view === 'schedule' && !isViewMemoryPending,
   });
   const matrix = React.useMemo(
-    () =>
-      buildOrderInquiryMatrix(
-        matrixList.data?.data ?? [],
-        matrixAxis,
-        matrixGranularity,
-      ),
-    [matrixList.data, matrixAxis, matrixGranularity],
+    () => buildOrderInquiryMatrix(matrixQuery.data?.data ?? [], matrixGranularity),
+    [matrixQuery.data, matrixGranularity],
   );
 
   const rows = React.useMemo(() => list.data?.data ?? [], [list.data]);
   const total = list.data?.total ?? 0;
   const months = summary.data?.by_month ?? [];
+  // The default (`to_confirm`, an unfilled ack has not resolved yet either) counts as
+  // filtered - the page opens narrowed on purpose (R3) - `ack=all` (a deliberate "show
+  // everything") does not.
   const filtered = Boolean(
     debounced ||
     month ||
@@ -548,8 +856,14 @@ export function OrderInquiriesClient() {
     raisedDate ||
     raisedByFilter ||
     linkedFilter ||
-    ackFilter ||
-    kindFilter,
+    (ackFilter && ackFilter !== ACK_ANY) ||
+    kindFilter ||
+    locationFilter ||
+    agentFilter ||
+    soMonthFilter ||
+    poNumberFilter ||
+    spoNumberFilter ||
+    stateFilter,
   );
 
   // S2/S3 (code review, 20 Aug 2026): what the confirm dialog names as the scope. `state`
@@ -604,7 +918,7 @@ export function OrderInquiriesClient() {
   // rows to unplace" on a company that may hold hundreds. Held off entirely rather than
   // fired-and-403'd for a person who could never press the button anyway.
   const unplacePreview = useUnplaceAllPreview(unplaceAllFilters, {
-    enabled: view === 'list' && canActOnOrderInquiry,
+    enabled: view === 'list' && canActOnOrderInquiry && !isViewMemoryPending,
   });
   const unplaceCount = unplacePreview.data?.count ?? 0;
 
@@ -619,21 +933,26 @@ export function OrderInquiriesClient() {
     data: rows,
     columns,
     getRowId: (row) => row.id,
+    // S6 (AC-OH-01): the Order inquiry column starts hidden. `initialState` only, not
+    // `state` - a saved column preference (`useListingColumnPreferences`, driven by
+    // `listingKey` below) applies afterwards via `table.setColumnVisibility` and wins.
+    initialState: {
+      columnVisibility: Object.fromEntries(
+        DEFAULT_HIDDEN_COLUMNS.map((id) => [id, false]),
+      ),
+    },
     state: { pagination, sorting, rowSelection },
     // The PREDICATE lives on the table, which is where TanStack reads `getCanSelect` from -
     // a column-level `enableRowSelection` is silently ignored, and every row would tick
-    // (`FulfilmentPlanningClient` carries the same note over the same trap). As a plain
-    // boolean this let a cancelled or already-acknowledged row be ticked, and the press
-    // then failed on the whole batch.
-    // The tick feeds TWO presses now (S1 retires Confirm): Reject, gated on
-    // `isBulkRejectable` since Reject applies to any still-owed row whatever its
-    // handshake reads; Link selected / Unlink selected, gated on the action grant and a
-    // supply state that still has something to link or unlink.
-    enableRowSelection: (row) =>
-      (canAcknowledge && isBulkRejectable(row.original)) ||
-      (canBulkLink &&
-        row.original.state !== 'cancelled' &&
-        row.original.state !== 'actioned'),
+    // (`FulfilmentPlanningClient` carries the same note over the same trap).
+    //
+    // R-A (S4, PLAN-scm-oi-worklist-excel-parity.md): every row except `cancelled` ticks,
+    // fully linked rows included - there is no per-row disabled checkbox any more. Most
+    // actions count their OWN eligible subset off the ticked rows (`selectedLinked` /
+    // `selectedRejectable` below) and say so in their own label, so a row ineligible for
+    // one action can still be ticked for another in the same batch. "Link selected" is the
+    // exception (R18): it acts on every ticked row, whatever its state.
+    enableRowSelection: (row) => row.original.state !== 'cancelled',
     onRowSelectionChange: setRowSelection,
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
@@ -657,13 +976,65 @@ export function OrderInquiriesClient() {
   const selectedRejectable = selectedRows.filter((row) =>
     isBulkRejectable(row),
   );
-  // The manual Link dialog is a ONE-row override (R8), so it is offered at exactly one
-  // tick: two ticked rows would leave the page choosing which of them it meant.
+  // What Confirm (N) acts on (PLAN-oi-confirm-per-so, AC-CF-5): ticked rows purchasing
+  // has not yet signed off - `awaiting` or `changed` - and not cancelled (cancelled rows
+  // do not tick at all, but a row can be ticked before it is cancelled elsewhere).
+  const selectedConfirmable = selectedRows.filter((row) => {
+    const state = ackStateOf(row);
+    return (state === 'awaiting' || state === 'changed') && row.state !== 'cancelled';
+  });
+  // Unconfirm (N) (PLAN-oi-worklist-split-customer-project.md, owner 18 Sep 2026): ticked rows
+  // purchasing HAS signed off - `acknowledged` or `changed` - the reverse of Confirm's
+  // own set above. Excludes a cancelled row even if ticked (review round 1, S1): its
+  // handshake is history, not something to reopen.
+  const selectedUnconfirmable = selectedRows.filter((row) => {
+    const state = ackStateOf(row);
+    return (state === 'acknowledged' || state === 'changed') && row.state !== 'cancelled';
+  });
+  // The manual Link dialog is a ONE-row override (R8/S4 "Choose document"), so it is
+  // offered at exactly one tick: two ticked rows would leave the page choosing which of
+  // them it meant.
   const linkTarget =
     selectedRows.length === 1 ? (selectedRows[0] ?? null) : null;
   const linkingRow = linkingRowId
     ? (rows.find((row) => row.id === linkingRowId) ?? null)
     : null;
+  // AC-CF-7 (review round fix): once "Select all N matching" is taken, Confirm's own
+  // count is the ELIGIBLE total (`summary.ack.to_confirm` - awaiting + changed, computed
+  // with every OTHER filter applied and the `ack` filter itself dropped, same as `kinds`
+  // above), never the list's own `total`. `total` counts every row the current filters
+  // match regardless of ack state, so on `ack=all` it over-states by every already-
+  // acknowledged and rejected row in scope - "Confirm 11809 rows?" for a press that only
+  // ever confirms the ones still to confirm.
+  const confirmCount = selectAllMatchingActive
+    ? (summary.data?.ack?.to_confirm ?? 0)
+    : selectedConfirmable.length;
+
+  /** Confirm (N) (AC-CF-5/7/8): ticked rows by id, or the whole matching scope by
+   * `filter` once "Select all N matching" is taken - the endpoint accepts exactly one. */
+  function runConfirm() {
+    setConfirmingOpen(false);
+    acknowledge.mutate(
+      selectAllMatchingActive
+        ? { filter: listFilters, horizon: horizonRequest }
+        : { rowIds: selectedConfirmable.map((row) => row.id), horizon: horizonRequest },
+      {
+        onSuccess: () => {
+          setRowSelection({});
+          setSelectAllMatchingActive(false);
+        },
+      },
+    );
+  }
+
+  /** Unconfirm (N) (PLAN-oi-worklist-split-customer-project.md): ticked rows by id only - no
+   * "Select all N matching" scope, and no confirmation dialog - reversible, a plain
+   * Confirm undoes it. */
+  function runUnconfirm() {
+    unacknowledge.mutate(selectedUnconfirmable.map((row) => row.id), {
+      onSuccess: () => setRowSelection({}),
+    });
+  }
 
   async function unlinkSelected() {
     if (selectedLinked.length === 0) return;
@@ -684,11 +1055,43 @@ export function OrderInquiriesClient() {
     }
   }
 
+  /**
+   * "Link selected" (R18, owner ruling from the hand test on stack C, 25 Sep 2026,
+   * supersedes G1): never turns a suggestion into a link on its own - "the user should
+   * always go to autocount to do linking, the link selected is to recalculate with
+   * autocount linkage in case of mistake in the automation." It is the SAME `auto-place`
+   * call "Auto link all" uses, scoped to exactly the ticked rows via `row_ids`: the book
+   * step re-runs for them (writing only what AutoCount names, in AutoCount's own name),
+   * then their suggestions refresh through the cascade the same way Auto link all's does.
+   * There is no separate route for it any more.
+   */
+  async function linkSelected() {
+    if (selectedRows.length === 0) return;
+    setLinkingSelected(true);
+    try {
+      const rowIds = selectedRows.map((row) => row.id);
+      const result = await autoPlaceOrderInquiryRows({ row_ids: rowIds });
+      toast.success(linkOutcomeText(result));
+      setRowSelection({});
+      void list.refetch();
+      void summary.refetch();
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : 'Failed to link those rows',
+      );
+    } finally {
+      setLinkingSelected(false);
+    }
+  }
+
   async function handleExport() {
     setExporting(true);
     try {
-      const blob = await downloadOrderInquiryWorklistXlsx(listFilters);
-      saveBlobAs(blob, `order-inquiry-${month || 'all-months'}.xlsx`);
+      // Lane B (AC-B6, R4): async, through My Downloads - the sync blob-save is
+      // retired from this screen (the sync GET route itself stays for one release,
+      // for MCP / other callers).
+      await exportOrderInquiryWorklistXlsx(listFilters);
+      toast.success('Preparing the order inquiry export - it will appear in My Downloads.');
     } catch (error) {
       toast.error(
         error instanceof Error
@@ -706,13 +1109,14 @@ export function OrderInquiriesClient() {
   // sees three rows, and has nothing on the toolbar offering to give the rest back.
 
   // What the chip above the grid says, so the buyer can see WHY the list is short and
-  // take the narrowing off in one press (AC-D12).
-  const ackChipLabel = ackFilter
-    ? `Confirmed: ${
-        ACK_FILTER_OPTIONS.find((option) => option.value === ackFilter)
-          ?.label ?? ackFilter
-      }`
-    : null;
+  // take the narrowing off in one press (AC-CF-11/12). `ack=all` shows no chip - it is
+  // the "show everything" state, not a narrowing - and the default (`to_confirm`) DOES,
+  // because the page opens narrowed to purchasing's own work queue on purpose.
+  const ackChipLabel =
+    ackFilter && ackFilter !== ACK_ANY
+      ? (ACK_FILTER_OPTIONS.find((option) => option.value === ackFilter)
+          ?.label ?? ackFilter)
+      : null;
 
   const filtersActiveCount =
     (month ? 1 : 0) +
@@ -721,79 +1125,526 @@ export function OrderInquiriesClient() {
     (raisedDate ? 1 : 0) +
     (raisedByFilter ? 1 : 0) +
     (linkedFilter ? 1 : 0) +
-    (ackFilter ? 1 : 0) +
-    (kindFilter ? 1 : 0);
+    (ackFilter && ackFilter !== ACK_ANY ? 1 : 0) +
+    (kindFilter ? 1 : 0) +
+    (locationFilter ? 1 : 0) +
+    (agentFilter ? 1 : 0) +
+    (soMonthFilter ? 1 : 0) +
+    (poNumberFilter ? 1 : 0) +
+    (spoNumberFilter ? 1 : 0) +
+    (stateFilter ? 1 : 0);
 
-  const openCellRow = openCell
-    ? matrix.rows.find((row) => row.key === openCell.row_key)
-    : undefined;
+  // S3: the cell already carries its own axis label; only the bucket's granularity-aware
+  // reading (`buildOrderInquiryMatrix`'s own label) still has to be looked up.
   const openCellBucket = openCell
-    ? matrix.buckets.find((bucket) => bucket.key === openCell.bucket_key)
+    ? matrix.buckets.find((bucket) => bucket.key === openCell.period)
     : undefined;
+
+  // S2, R-H: the List | Schedule toggle, moved into the PageHeader's own right slot -
+  // same line as the title rather than a separate row above the cards.
+  const viewToggle = (
+    <div
+      className="inline-flex rounded-md border border-input"
+      role="group"
+      aria-label="Order inquiry view"
+    >
+      <Button
+        type="button"
+        size="sm"
+        variant={view === 'list' ? 'primary' : 'ghost'}
+        className="rounded-e-none"
+        aria-pressed={view === 'list'}
+        onClick={() => setView('list')}
+      >
+        <List className="size-4" aria-hidden />
+        List
+      </Button>
+      <Button
+        type="button"
+        size="sm"
+        variant={view === 'schedule' ? 'primary' : 'ghost'}
+        className="rounded-s-none border-s border-input"
+        aria-pressed={view === 'schedule'}
+        onClick={() => setView('schedule')}
+      >
+        <LayoutGrid className="size-4" aria-hidden />
+        Schedule
+      </Button>
+    </div>
+  );
+
+  // S1, R-K: the Filters popover's own content, shared between the List toolbar and the
+  // Schedule toolbar (both mount the SAME `toolbarElement` below, never two copies of
+  // this JSX) - one filter UI, whichever view happens to be on screen.
+  const filtersContent = (
+    // AC-OH-70 (S7): the popover's own shared primitive
+    // (`data-grid-list-toolbar.tsx`'s `DropdownMenuContent`) has no max-height prop of
+    // its own, so the bound lives here, on the content - the same convention
+    // `data-grid-column-visibility.tsx` and the board's popovers already use, except
+    // `dvh` rather than their `vh` (mobile-vh.inventory.test.ts's fixed-viewport-unit
+    // sweep: a NEW `vh` site is not grandfathered onto the follow-up #567 allowlist,
+    // `dvh` tracks the actual visible area on mobile Safari where `vh` sits under the
+    // address bar's chrome).
+    <div className="max-h-[60dvh] space-y-3 overflow-y-auto">
+      <div className="space-y-1.5">
+        <Label className="text-xs text-muted-foreground">Location</Label>
+        <SearchableSelect
+          value={locationFilter}
+          onChange={setLocationFilter}
+          clearable
+          options={(summary.data?.locations ?? []).map((entry) => ({
+            value: entry.id,
+            label: `${entry.label} (${entry.rows})`,
+          }))}
+          placeholder="Every location"
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label className="text-xs text-muted-foreground">Agent</Label>
+        <SearchableSelect
+          value={agentFilter}
+          onChange={setAgentFilter}
+          clearable
+          options={(summary.data?.agents ?? []).map((entry) => ({
+            value: entry.id,
+            label: `${entry.label} (${entry.rows})`,
+          }))}
+          placeholder="Every agent"
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label className="text-xs text-muted-foreground">SO month</Label>
+        <SearchableSelect
+          value={soMonthFilter}
+          onChange={setSoMonthFilter}
+          clearable
+          options={soMonthChoices}
+          placeholder="Every month"
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label className="text-xs text-muted-foreground" htmlFor="po-number-filter">
+          PO number
+        </Label>
+        <Input
+          id="po-number-filter"
+          value={poNumberInput}
+          onChange={(event) => setPoNumberInput(event.target.value)}
+          placeholder="202605"
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label className="text-xs text-muted-foreground" htmlFor="spo-number-filter">
+          SPO number
+        </Label>
+        <Input
+          id="spo-number-filter"
+          value={spoNumberInput}
+          onChange={(event) => setSpoNumberInput(event.target.value)}
+          placeholder="SPO-2026/07"
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label className="text-xs text-muted-foreground">Linked</Label>
+        <SearchableSelect
+          value={linkedFilter}
+          onChange={setLinkedFilter}
+          clearable
+          options={LINKED_OPTIONS}
+          placeholder="Anywhere"
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label className="text-xs text-muted-foreground">Confirmed</Label>
+        <SearchableSelect
+          value={ackFilter}
+          onChange={setAckFilter}
+          options={ACK_FILTER_OPTIONS.map((option) => {
+            const count =
+              summary.data?.ack?.[
+                option.value as keyof NonNullable<typeof summary.data.ack>
+              ];
+            return {
+              value: option.value,
+              label: count === undefined ? option.label : `${option.label} (${count})`,
+            };
+          })}
+          placeholder="Any"
+        />
+      </div>
+      <div className="space-y-1.5">
+        {/* AC-OH-61: the row's OWN state - Raised / Partly linked / Actioned /
+            Cancelled / Linked, off `summary.by_state` (`total` is a count, not an
+            option). The one field that can ask for `state=cancelled`, since the list
+            hides cancelled by default otherwise (S5). */}
+        <Label className="text-xs text-muted-foreground">State</Label>
+        <SearchableSelect
+          value={stateFilter}
+          onChange={setStateFilter}
+          clearable
+          options={Object.entries(summary.data?.by_state ?? {})
+            .filter(([key]) => key !== 'total')
+            .map(([key, count]) => ({
+              value: key,
+              label: `${STATE_LABEL[key] ?? key} (${count})`,
+            }))}
+          placeholder="Every state"
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label className="text-xs text-muted-foreground">Supplier</Label>
+        <SearchableSelect
+          value={supplierFilter}
+          onChange={setSupplierFilter}
+          clearable
+          options={(summary.data?.suppliers ?? []).map((entry) => ({
+            value: entry.id,
+            label: entry.label,
+          }))}
+          placeholder="Every supplier"
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label className="text-xs text-muted-foreground">Project</Label>
+        <SearchableSelect
+          value={projectFilter}
+          onChange={setProjectFilter}
+          clearable
+          options={(summary.data?.projects ?? []).map((entry) => ({
+            value: entry.id,
+            label: entry.label,
+          }))}
+          placeholder="Every project"
+          // S5 (`PLAN-oi-project-label-from-so.md`): the option's own text is now the
+          // SO's project label, not a short registered-project title - long enough
+          // (e.g. "KITACON / PHASE 6A & 6B@BDR TSK PUTERI") that the trigger needs to
+          // truncate to one line with the full text in `title`, same as a picker
+          // inside a fixed-width table cell.
+          truncateTriggerLabel
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label className="text-xs text-muted-foreground">Raised by</Label>
+        <SearchableSelect
+          value={raisedByFilter}
+          onChange={setRaisedByFilter}
+          clearable
+          options={(summary.data?.raised_by ?? []).map((entry) => ({
+            value: entry.id,
+            label: entry.label,
+          }))}
+          placeholder="Everyone"
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label className="text-xs text-muted-foreground" htmlFor="raised-on">
+          Raised on
+        </Label>
+        <Input
+          id="raised-on"
+          type="date"
+          value={raisedDate}
+          onChange={(event) => setRaisedDate(event.target.value)}
+        />
+      </div>
+      {filtersActiveCount > 0 && (
+        <Button
+          variant="outline"
+          size="sm"
+          className="w-full"
+          onClick={() => {
+            setMonth('');
+            setSupplierFilter('');
+            setProjectFilter('');
+            setRaisedDate('');
+            setRaisedByFilter('');
+            setLinkedFilter('');
+            // Clearing means "show everything" (`ack=all`), never the default
+            // `to_confirm` - the default is what an UNTOUCHED filter reads as,
+            // and this press is the buyer actively asking to see it all.
+            setAckFilter(ACK_ANY);
+            setLocationFilter('');
+            setAgentFilter('');
+            setSoMonthFilter('');
+            setPoNumberInput('');
+            setSpoNumberInput('');
+            setStateFilter('');
+            // Counted above, so it is cleared here: "Clear filters" that
+            // left a card pressed would leave the screen still narrowed.
+            setKindFilter(null);
+          }}
+        >
+          Clear filters
+        </Button>
+      )}
+    </div>
+  );
+
+  // S2: the ONE toolbar (search, Filters, Columns, refresh, Actions, Upload), mounted in
+  // BOTH views rather than duplicated - `DataGridListToolbar` takes its `table` as a
+  // prop, not from a `DataGrid` context provider, so it stands on its own outside the
+  // List-only grid wrapper below.
+  //
+  // The wrapper is named without its angle bracket on purpose: `options.inventory`'s
+  // consumer scan reads the RAW file, comments and all, so a JSX-looking mention in a
+  // comment reads to it as a grid that forwards no `isPlaceholderData`.
+  const toolbarElement = (
+    <DataGridListToolbar
+      table={table}
+      searchSlot={
+        <ListSearchInput
+          value={search}
+          onChange={setSearch}
+          isSettling={isSearchInFlight(debouncedSettling, list.isFetching, debounced)}
+          placeholder="Search S/O, item, PO, SPO, customer, agent"
+          aria-label="Search order inquiry rows"
+          className="w-full max-w-xs"
+        />
+      }
+      filters={{
+        kind: 'custom',
+        active: filtersActiveCount > 0,
+        activeCount: filtersActiveCount,
+        // The page opens narrowed to what purchasing has not confirmed, and a
+        // list that is short for a reason nobody stated reads as missing data.
+        activeSummary: ackChipLabel
+          ? { label: ackChipLabel, onClear: () => setAckFilter(ACK_ANY) }
+          : undefined,
+        content: filtersContent,
+      }}
+      // Their own workbook, with their own headings and a sheet per delivery
+      // month, is the file anyone outside the system reads - so the generic
+      // selection-scoped export is replaced rather than offered beside it.
+      exportConfig={false}
+      // The bulk strip keeps its COUNT and its Clear and nothing else
+      // (item 12, AC-D13). Every press moved into the Actions menu, where
+      // each one states how many ticked rows it applies to - a strip of
+      // buttons on the left and a menu of the same names on the right was two
+      // places to look for one action.
+      bulkActions={[]}
+      secondaryActions={[
+        {
+          key: 'auto-place',
+          label: 'Auto link all…',
+          icon: Wand2,
+          onClick: () => setAutoPlacing(true),
+        },
+        ...(canBulkLink
+          ? [
+              {
+                key: 'choose-document',
+                label: 'Choose document (1)',
+                icon: Link2,
+                disabled: !linkTarget,
+                disabledReason: linkTarget
+                  ? undefined
+                  : 'Tick exactly one row to choose its document by hand.',
+                onClick: () => setLinkingRowId(linkTarget?.id ?? null),
+              },
+              {
+                key: 'link-selected',
+                // R18: acts on every ticked row, whatever its state - no eligible
+                // subset any more, so the count is never "of n".
+                label: `Link selected (${selectedRows.length})`,
+                icon: Wand2,
+                disabled: selectedRows.length === 0 || linkingSelected,
+                disabledReason:
+                  selectedRows.length === 0 ? 'Tick rows to recalculate against AutoCount.' : undefined,
+                onClick: () => void linkSelected(),
+              },
+              {
+                key: 'unlink-selected',
+                label: countLabel('Unlink selected', selectedLinked.length, selectedRows.length),
+                icon: Unlink,
+                disabled:
+                  selectedLinked.length === 0 || unlinkingSelected,
+                disabledReason:
+                  selectedLinked.length === 0
+                    ? 'Tick linked rows to unlink.'
+                    : undefined,
+                onClick: () => setUnlinkingSelectedOpen(true),
+              },
+            ]
+          : []),
+        ...(canAcknowledge
+          ? [
+              {
+                key: 'reject-selected',
+                label: countLabel('Reject selected', selectedRejectable.length, selectedRows.length),
+                icon: Ban,
+                destructive: true,
+                disabled: selectedRejectable.length === 0,
+                disabledReason:
+                  selectedRejectable.length === 0
+                    ? 'Tick rows purchasing still owes an answer on.'
+                    : undefined,
+                onClick: () => setRejectingSelected(true),
+              },
+              {
+                // Unconfirm (N) (PLAN-oi-worklist-split-customer-project.md, owner 18 Sep 2026): the
+                // reverse of Confirm, for a row taken on by mistake or a reconfirm CS
+                // has not actually made yet. Reversible - a plain Confirm undoes it -
+                // so no confirmation dialog, unlike the destructive/detach actions above.
+                key: 'unconfirm-selected',
+                label: countLabel(
+                  'Unconfirm',
+                  selectedUnconfirmable.length,
+                  selectedRows.length,
+                ),
+                icon: RotateCcw,
+                disabled: selectedUnconfirmable.length === 0 || unacknowledge.isPending,
+                disabledReason:
+                  selectedUnconfirmable.length === 0
+                    ? 'Tick rows purchasing has already confirmed.'
+                    : undefined,
+                onClick: () => runUnconfirm(),
+              },
+            ]
+          : []),
+        {
+          key: 'unplace-all',
+          label: 'Unlink all…',
+          icon: Undo2,
+          onClick: () => setUnplacingAll(true),
+          // N1: a lacking action grant, or the preview call failing for any
+          // other reason, must never read the same as "genuinely nothing to
+          // unplace" - each says its own thing.
+          disabled:
+            !canActOnOrderInquiry ||
+            unplacePreview.isError ||
+            unplaceCount === 0,
+          disabledReason: !canActOnOrderInquiry
+            ? "You don't have permission to unlink rows"
+            : unplacePreview.isError
+              ? 'Could not check linked rows - try again'
+              : unplaceCount === 0
+                ? 'No linked rows to unlink'
+                : undefined,
+        },
+        ...(canAcknowledge
+          ? [
+              {
+                key: 'upload-purchase-orders',
+                // Moved off the primary slot (PLAN-oi-confirm-per-so, AC-CF-5): the
+                // primary press is Confirm now that a row is born `awaiting` again -
+                // feeding the book is still purchasing's, just no longer the ONE thing
+                // this toolbar does.
+                label: 'Upload purchase orders',
+                icon: Upload,
+                onClick: () => setUploadingBook(true),
+              },
+            ]
+          : []),
+        {
+          key: 'export',
+          label: 'Export Excel',
+          icon: Download,
+          disabled: exporting,
+          onClick: () => void handleExport(),
+        },
+      ]}
+      // AC-CF-7: the header tick is the current page only - this is what offers the
+      // WHOLE matching set once every loaded row is ticked. Purchasing's own affordance;
+      // CS (no acknowledge grant) never ticks a row here at all.
+      selectAllMatching={
+        canAcknowledge
+          ? {
+              total,
+              loadedCount: rows.length,
+              active: selectAllMatchingActive,
+              onSelectAll: () => setSelectAllMatchingActive(true),
+              onClear: () => {
+                setSelectAllMatchingActive(false);
+                setRowSelection({});
+              },
+            }
+          : undefined
+      }
+      // Confirm (N) (AC-CF-5): the primary press once a row is born `awaiting` again -
+      // ticked rows purchasing has not yet signed off, or the whole matching scope once
+      // "Select all N matching" is taken. Disabled at 0, with the reason as its title
+      // (D3): a dead button with nothing beside it to say why reads as broken.
+      primaryAction={
+        canAcknowledge ? (
+          <Button
+            type="button"
+            size="sm"
+            disabled={confirmCount === 0 || acknowledge.isPending}
+            title={
+              confirmCount === 0
+                ? 'Tick rows still to confirm, or Select all matching.'
+                : undefined
+            }
+            onClick={() => setConfirmingOpen(true)}
+          >
+            {`Confirm (${confirmCount})`}
+          </Button>
+        ) : null
+      }
+      onRefresh={() => {
+        if (view === 'list') void list.refetch();
+        else void matrixQuery.refetch();
+        void summary.refetch();
+      }}
+      isRefreshing={
+        view === 'list'
+          ? list.isFetching && !list.isLoading
+          : matrixQuery.isFetching && !matrixQuery.isLoading
+      }
+    />
+  );
 
   return (
     <div className="space-y-5">
-      <PageHeader title="Order inquiries">
-        {/* The date every link on this page reaches up to by default: the latest
-            completed reorder plan's own Plan until (`plan_link_horizon`). Stated here
-            because it was only ever readable inside the Auto link dialog (the captain,
-            28 Aug 2026: "show the plan until ... for visibility"). */}
-        <p
-          data-testid="oi-plan-until"
-          className="text-sm text-muted-foreground"
-        >
-          {summary.isPending
-            ? 'Plan until ...'
-            : planHorizon
-              ? `Plan until ${formatDateInMalaysia(planHorizon)}`
-              : 'No Plan until in force'}
-        </p>
-      </PageHeader>
-
-      {/* List | Schedule: the list reads the spreadsheet's own columns one page at a time;
-          the schedule reads the same rows as a 2D matrix - by product, sales order,
-          customer or agent down the side, by day, week, month or year across the top. A
-          toggle, not two pages, because it is the same worklist either way. */}
-      <div
-        className="inline-flex rounded-md border border-input"
-        role="group"
-        aria-label="Order inquiry view"
-      >
-        <Button
-          type="button"
-          size="sm"
-          variant={view === 'list' ? 'primary' : 'ghost'}
-          className="rounded-e-none"
-          aria-pressed={view === 'list'}
-          onClick={() => setView('list')}
-        >
-          <List className="size-4" aria-hidden />
-          List
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          variant={view === 'schedule' ? 'primary' : 'ghost'}
-          className="rounded-s-none border-s border-input"
-          aria-pressed={view === 'schedule'}
-          onClick={() => setView('schedule')}
-        >
-          <LayoutGrid className="size-4" aria-hidden />
-          Schedule
-        </Button>
-      </div>
-
-      {/* The three cards, above BOTH views and pressed in both (AC-I11/AC-I14): what the
-          rows in view still need, in the same colours the cells and the "Linked to"
-          column draw. No legend beside them - each card carries its own swatch and its
-          own words, so there is nothing left for a legend to say. */}
-      <OrderInquiryStrip
-        totals={facetSegments(summary.data?.kinds)}
-        active={kindFilter}
-        onToggle={(kind) =>
-          setKindFilter((current) => (current === kind ? null : kind))
+      <PageHeader
+        title="Order inquiries"
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            {extraHeaderActions}
+            {viewToggle}
+          </div>
         }
       />
+
+      <div className="flex flex-wrap items-start gap-2">
+        {/* The three cards, above BOTH views and pressed in both (AC-I11/AC-I14): what the
+            rows in view still need, in the same colours the cells and the "Linked to"
+            column draw. No legend beside them - each card carries its own swatch and its
+            own words, so there is nothing left for a legend to say. */}
+        <OrderInquiryStrip
+          totals={facetSegments(summary.data?.kinds)}
+          active={kindFilter}
+          onToggle={(kind) =>
+            setKindFilter((current) => (current === kind ? null : kind))
+          }
+        />
+        {/* AC-CF-12: purchasing's own work-queue count, beside the three supply cards -
+            what still needs a press, not what still needs a document. CS never sees it -
+            it is not their queue to clear. */}
+        {canAcknowledge ? (
+          <SupplyKindCard
+            kind="to_confirm"
+            label="To confirm"
+            swatchClass="bg-amber-500"
+            selected={ackFilter === 'to_confirm'}
+            disabled={false}
+            // AC-CL-17: toggles off on a second press, the same as the three supply
+            // cards beside it (`setKindFilter` above) - the chip's own `x` already did
+            // this; the card itself never did.
+            onClick={() =>
+              setAckFilter((current) => (current === 'to_confirm' ? ACK_ANY : 'to_confirm'))
+            }
+            testId="order-inquiry-strip-to-confirm"
+          >
+            <span
+              data-testid="order-inquiry-strip-to-confirm-count"
+              className="mt-1.5 block text-lg font-semibold tabular-nums text-amber-700"
+            >
+              {summary.data?.ack?.to_confirm ?? '-'}
+            </span>
+          </SupplyKindCard>
+        ) : null}
+      </div>
 
       {/* The book this page queued has been READ (AC-H13) - the worker is done with it,
           which is when its documents exist to link against. Two next steps and no third:
@@ -852,8 +1703,19 @@ export function OrderInquiriesClient() {
         </Alert>
       ) : null}
 
+      {/* S2, R-G: the month tab strip, between the cards and the toolbar in BOTH
+          views - "All" first, then one tab per delivery month that has rows. */}
+      <OrderInquiryMonthStrip months={months} active={month} onSelect={setMonth} />
+
       {view === 'schedule' ? (
         <div className="space-y-4">
+          {/* S2, AC-M5: the same toolbar the List view carries - search, Filters,
+              Columns, refresh, Actions, Upload - so there is one filter UI whichever
+              view is on screen. */}
+          <Card>
+            <CardHeader className="block">{toolbarElement}</CardHeader>
+          </Card>
+
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-2">
               <Label
@@ -893,7 +1755,7 @@ export function OrderInquiriesClient() {
             </div>
           </div>
 
-          {matrixList.isError ? (
+          {matrixQuery.isError ? (
             <Alert variant="destructive" appearance="light">
               <AlertIcon>
                 <AlertTriangle />
@@ -901,13 +1763,13 @@ export function OrderInquiriesClient() {
               <AlertContent>
                 <AlertTitle>The schedule could not be loaded</AlertTitle>
                 <AlertDescription>
-                  {matrixList.error instanceof Error
-                    ? matrixList.error.message
+                  {matrixQuery.error instanceof Error
+                    ? matrixQuery.error.message
                     : 'Try again in a moment.'}
                 </AlertDescription>
               </AlertContent>
             </Alert>
-          ) : matrixList.isLoading ? (
+          ) : matrixQuery.isLoading || isViewMemoryPending ? (
             <div className="space-y-3">
               <Skeleton className="h-10 w-full" />
               <Skeleton className="h-72 w-full" />
@@ -946,7 +1808,10 @@ export function OrderInquiriesClient() {
           {openCell && (
             <OrderInquiryMatrixCellDrilldown
               cell={openCell}
-              rowLabel={openCellRow?.label ?? ''}
+              axis={matrixAxis}
+              granularity={matrixGranularity}
+              filters={listFilters}
+              rowLabel={openCell.axis_label}
               bucketLabel={openCellBucket?.label ?? ''}
               onClose={() => setOpenCell(null)}
             />
@@ -956,7 +1821,7 @@ export function OrderInquiriesClient() {
         <DataGrid
           table={table}
           recordCount={total}
-          isLoading={list.isLoading}
+          isLoading={list.isLoading || isViewMemoryPending}
           isPlaceholderData={list.isPlaceholderData}
           listingKey="projects.projects.view::order-inquiry-worklist"
           tableLayout={{
@@ -964,6 +1829,15 @@ export function OrderInquiriesClient() {
             columnsResizable: true,
             columnsVisibility: true,
           }}
+          // REV-S6/S1 (17 Sep review round): a redirected row reads muted -
+          // the DataGrid's own row-level hook, not a per-cell wrapper (a
+          // `display: contents` wrapper has no box, so `opacity-60` on it
+          // never applies). Precedent: PlanRowDialog.tsx's rowClassName.
+          // AC-CL-2d: a row on a cancelled line reads muted the SAME way a used row
+          // does - one class, two reasons.
+          rowClassName={(row) =>
+            row.redirected_to_pool || row.line_cancelled ? 'opacity-60' : undefined
+          }
           emptyMessage={
             <div className="px-6 py-10 text-center">
               <p className="text-sm font-semibold">
@@ -985,285 +1859,7 @@ export function OrderInquiriesClient() {
           }
         >
           <Card>
-            <CardHeader className="block">
-              <DataGridListToolbar
-                table={table}
-                searchSlot={
-                  <ListSearchInput
-                    value={search}
-                    onChange={setSearch}
-                    isSettling={isSearchInFlight(debouncedSettling, list.isFetching, debounced)}
-                    placeholder="Search S/O, item, product, customer or CS name…"
-                    aria-label="Search order inquiry rows"
-                    className="w-full max-w-xs"
-                  />
-                }
-                filters={{
-                  kind: 'custom',
-                  active: filtersActiveCount > 0,
-                  activeCount: filtersActiveCount,
-                  // The page opens narrowed to what purchasing has not confirmed, and a
-                  // list that is short for a reason nobody stated reads as missing data.
-                  activeSummary: ackChipLabel
-                    ? { label: ackChipLabel, onClear: () => setAckFilter('') }
-                    : undefined,
-                  content: (
-                    <div className="space-y-3">
-                      <div className="space-y-1.5">
-                        <Label className="text-xs text-muted-foreground">
-                          Delivery month
-                        </Label>
-                        <SearchableSelect
-                          value={month}
-                          onChange={setMonth}
-                          clearable
-                          options={months.map((entry) => ({
-                            value: entry.month,
-                            label: `${entry.label ?? deliveryMonthLabel(entry.month) ?? entry.month} (${entry.rows})`,
-                          }))}
-                          placeholder="Every month"
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label className="text-xs text-muted-foreground">
-                          Linked
-                        </Label>
-                        <SearchableSelect
-                          value={linkedFilter}
-                          onChange={setLinkedFilter}
-                          clearable
-                          options={LINKED_OPTIONS}
-                          placeholder="Anywhere"
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label className="text-xs text-muted-foreground">
-                          Confirmed
-                        </Label>
-                        <SearchableSelect
-                          value={ackFilter}
-                          onChange={setAckFilter}
-                          clearable
-                          options={ACK_FILTER_OPTIONS.map((option) => {
-                            const count =
-                              summary.data?.ack?.[
-                                option.value as keyof NonNullable<
-                                  typeof summary.data.ack
-                                >
-                              ];
-                            return {
-                              value: option.value,
-                              label:
-                                count === undefined
-                                  ? option.label
-                                  : `${option.label} (${count})`,
-                            };
-                          })}
-                          placeholder="Any"
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label className="text-xs text-muted-foreground">
-                          Supplier
-                        </Label>
-                        <SearchableSelect
-                          value={supplierFilter}
-                          onChange={setSupplierFilter}
-                          clearable
-                          options={(summary.data?.suppliers ?? []).map(
-                            (entry) => ({
-                              value: entry.id,
-                              label: entry.label,
-                            }),
-                          )}
-                          placeholder="Every supplier"
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label className="text-xs text-muted-foreground">
-                          Project
-                        </Label>
-                        <SearchableSelect
-                          value={projectFilter}
-                          onChange={setProjectFilter}
-                          clearable
-                          options={(summary.data?.projects ?? []).map(
-                            (entry) => ({
-                              value: entry.id,
-                              label: entry.label,
-                            }),
-                          )}
-                          placeholder="Every project"
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label className="text-xs text-muted-foreground">
-                          Raised by
-                        </Label>
-                        <SearchableSelect
-                          value={raisedByFilter}
-                          onChange={setRaisedByFilter}
-                          clearable
-                          options={(summary.data?.raised_by ?? []).map(
-                            (entry) => ({
-                              value: entry.id,
-                              label: entry.label,
-                            }),
-                          )}
-                          placeholder="Everyone"
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label
-                          className="text-xs text-muted-foreground"
-                          htmlFor="raised-on"
-                        >
-                          Raised on
-                        </Label>
-                        <Input
-                          id="raised-on"
-                          type="date"
-                          value={raisedDate}
-                          onChange={(event) =>
-                            setRaisedDate(event.target.value)
-                          }
-                        />
-                      </div>
-                      {filtersActiveCount > 0 && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="w-full"
-                          onClick={() => {
-                            setMonth('');
-                            setSupplierFilter('');
-                            setProjectFilter('');
-                            setRaisedDate('');
-                            setRaisedByFilter('');
-                            setLinkedFilter('');
-                            setAckFilter('');
-                            // Counted above, so it is cleared here: "Clear filters" that
-                            // left a card pressed would leave the screen still narrowed.
-                            setKindFilter(null);
-                          }}
-                        >
-                          Clear filters
-                        </Button>
-                      )}
-                    </div>
-                  ),
-                }}
-                // Their own workbook, with their own headings and a sheet per delivery
-                // month, is the file anyone outside the system reads - so the generic
-                // selection-scoped export is replaced rather than offered beside it.
-                exportConfig={false}
-                // The bulk strip keeps its COUNT and its Clear and nothing else
-                // (item 12, AC-D13). Every press moved into the Actions menu, where
-                // each one states how many ticked rows it applies to - a strip of
-                // buttons on the left and a menu of the same names on the right was two
-                // places to look for one action.
-                bulkActions={[]}
-                secondaryActions={[
-                  {
-                    key: 'auto-place',
-                    label: 'Auto link all\u2026',
-                    icon: Wand2,
-                    onClick: () => setAutoPlacing(true),
-                  },
-                  ...(canBulkLink
-                    ? [
-                        {
-                          key: 'link-selected',
-                          label: `Link selected (${linkTarget ? 1 : 0})`,
-                          icon: Link2,
-                          disabled: !linkTarget,
-                          disabledReason: linkTarget
-                            ? undefined
-                            : 'Tick exactly one row to choose its document by hand.',
-                          onClick: () =>
-                            setLinkingRowId(linkTarget?.id ?? null),
-                        },
-                        {
-                          key: 'unlink-selected',
-                          label: `Unlink selected (${selectedLinked.length})`,
-                          icon: Unlink,
-                          disabled:
-                            selectedLinked.length === 0 || unlinkingSelected,
-                          disabledReason:
-                            selectedLinked.length === 0
-                              ? 'Tick linked rows to unlink.'
-                              : undefined,
-                          onClick: () => setUnlinkingSelectedOpen(true),
-                        },
-                      ]
-                    : []),
-                  ...(canAcknowledge
-                    ? [
-                        {
-                          key: 'reject-selected',
-                          label: `Reject selected (${selectedRejectable.length})`,
-                          icon: Ban,
-                          destructive: true,
-                          disabled: selectedRejectable.length === 0,
-                          disabledReason:
-                            selectedRejectable.length === 0
-                              ? 'Tick rows purchasing still owes an answer on.'
-                              : undefined,
-                          onClick: () => setRejectingSelected(true),
-                        },
-                      ]
-                    : []),
-                  {
-                    key: 'unplace-all',
-                    label: 'Unlink all\u2026',
-                    icon: Undo2,
-                    onClick: () => setUnplacingAll(true),
-                    // N1: a lacking action grant, or the preview call failing for any
-                    // other reason, must never read the same as "genuinely nothing to
-                    // unplace" - each says its own thing.
-                    disabled:
-                      !canActOnOrderInquiry ||
-                      unplacePreview.isError ||
-                      unplaceCount === 0,
-                    disabledReason: !canActOnOrderInquiry
-                      ? "You don't have permission to unlink rows"
-                      : unplacePreview.isError
-                        ? 'Could not check linked rows - try again'
-                        : unplaceCount === 0
-                          ? 'No linked rows to unlink'
-                          : undefined,
-                  },
-                  {
-                    key: 'export',
-                    label: exporting ? 'Preparing\u2026' : 'Export Excel',
-                    icon: Download,
-                    disabled: exporting,
-                    onClick: () => void handleExport(),
-                  },
-                ]}
-                // START: feeding the book is the one thing purchasing presses here now
-                // (S1, AC-1.5) - a row is born acknowledged, so there is no second press
-                // to say yes to it any more, and a one-item dropdown read as a step that
-                // was not there.
-                primaryAction={
-                  canAcknowledge ? (
-                    <Button
-                      type="button"
-                      size="sm"
-                      onClick={() => setUploadingBook(true)}
-                    >
-                      <Upload className="size-4" aria-hidden />
-                      Upload purchase orders
-                    </Button>
-                  ) : null
-                }
-                onRefresh={() => {
-                  void list.refetch();
-                  void summary.refetch();
-                }}
-                isRefreshing={list.isFetching && !list.isLoading}
-              />
-            </CardHeader>
+            <CardHeader className="block">{toolbarElement}</CardHeader>
             <CardTable>
               {list.isError ? (
                 <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-6 py-10 text-center">
@@ -1364,6 +1960,32 @@ export function OrderInquiriesClient() {
         productCode={unplacePreview.data?.product_code}
         scopeLabels={activeUnplaceScopeLabels}
       />
+      {/* Confirm (N) (AC-CF-5), the same shape as the fulfilment board's own Confirm
+          dialog: state the count, then the press - no explanation, the count IS the
+          statement. */}
+      <AlertDialog open={confirmingOpen} onOpenChange={setConfirmingOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {`Confirm ${confirmCount} row${confirmCount === 1 ? '' : 's'}?`}
+            </AlertDialogTitle>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={acknowledge.isPending}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(event) => {
+                event.preventDefault();
+                runConfirm();
+              }}
+              disabled={acknowledge.isPending}
+            >
+              Confirm
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

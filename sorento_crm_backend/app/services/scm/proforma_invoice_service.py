@@ -28,6 +28,7 @@ from typing import Any, Optional
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session, joinedload
 
+from app.models.company import Company
 from app.models.procurement import InboundShipment, InboundShipmentLine, Supplier
 from app.models.product import Product
 from app.models.product_set import ProductSet, ProductSetMember
@@ -54,6 +55,7 @@ from app.services.scm.container_capacity import container_sizes as _container_si
 from app.services.scm.container_capacity import fit as _fit
 from app.services.scm.currency_resolution import resolve_currency
 from app.services.scm.proforma_invoice_reader import (
+    DOC_TYPE,
     ProformaDocument,
     ProformaReadResult,
     read_workbook,
@@ -117,8 +119,20 @@ def _f(value: Any) -> Optional[float]:
     return None if value is None else float(value)
 
 
-def _parse(db: Session, data: bytes) -> ProformaReadResult:
-    return read_workbook(data, db=db)
+def _parse(
+    db: Session,
+    data: bytes,
+    *,
+    supplier_id: Optional[str] = None,
+    header_row: Optional[int] = None,
+) -> ProformaReadResult:
+    # B1/B6: a supplier-scoped resolver when there is a supplier to scope to - every
+    # caller here has one except the odd internal read with none picked yet, which keeps
+    # today's shared-only behaviour rather than refusing to parse at all.
+    from app.services.import_alias_service import AliasResolver
+
+    resolver = AliasResolver.for_supplier(db, DOC_TYPE, supplier_id)
+    return read_workbook(data, resolver=resolver, header_row=header_row)
 
 
 def supplier_ref_for(
@@ -321,10 +335,15 @@ def _summarise(
     known: Optional[dict[str, dict]] = None,
     resolved: Optional[dict[int, tuple[Optional[str], str]]] = None,
     revision_candidates: Optional[dict[int, dict]] = None,
+    company_id: Optional[str] = None,
 ) -> dict[str, Any]:
     """What the file holds, described. `known` and `resolved` are injectable so `apply`,
     which needs both to do the writing, does not pay for them a second time to describe
     what it wrote.
+
+    `company_id` names the consignee (R-B/B4): the summary always shows the invoice's OWN
+    company name, never the sheet's parsed `doc.consignee` - the same rule `serialize` and
+    `_convert_carry` follow for an applied row.
 
     `supplier_check` (AC-G3) rides along here rather than living only in `validate`, so
     `preview` and `apply`'s own summary agree with it too: `{letterhead,
@@ -344,6 +363,7 @@ def _summarise(
 
     documents = []
     priced_without_currency = 0
+    consignee_name = _company_name_for(db, company_id)
     for doc in parsed.documents:
         currency, source = resolved.get(doc.index, (None, "none"))
         if doc.priced_lines and not currency:
@@ -359,6 +379,13 @@ def _summarise(
                 "invoice_date": doc.invoice_date.isoformat() if doc.invoice_date else None,
                 "container_no": doc.container_no,
                 "bl_no": doc.bl_no,
+                # R-E (owner ruling 25 Sep): SO is its own field now, distinct from BL.
+                "so_no": doc.so_no,
+                # A3 (PLAN-pi-header-fields-convert-fixes-24sep.md): the same two facts the
+                # PI General tab now shows beside container/BL, so the preview already
+                # states what apply() is about to write (H1/H2).
+                "seal_no": doc.seal_no,
+                "consignee": consignee_name,
                 "lines": len(doc.lines),
                 "qty": doc.total_qty,
                 "total": doc.line_total,
@@ -746,13 +773,15 @@ def preview(
     supplier_id: str,
     currency: Optional[str] = None,
     source_ref: Optional[str] = None,
+    header_row: Optional[int] = None,
 ) -> dict:
     """What this file holds, and what it would create, before anything is written."""
-    parsed = _parse(db, data)
+    parsed = _parse(db, data, supplier_id=supplier_id, header_row=header_row)
     out = _summarise(
         db, parsed, supplier_id=supplier_id, source_ref=source_ref,
         requested_currency=currency,
         revision_candidates=_revision_candidates(db, parsed, supplier_id=supplier_id),
+        company_id=resolve_write_company_id(get_company_scope(db), ambiguous=None),
     )
     out["ok"] = parsed.ok
     out["missing_columns"] = parsed.missing_columns
@@ -767,12 +796,14 @@ def validate(
     supplier_id: str,
     currency: Optional[str] = None,
     source_ref: Optional[str] = None,
+    header_row: Optional[int] = None,
 ) -> dict:
     """The `{valid, errors, warnings, summary}` verdict a Test means everywhere here."""
-    parsed = _parse(db, data)
+    parsed = _parse(db, data, supplier_id=supplier_id, header_row=header_row)
     summary = _summarise(
         db, parsed, supplier_id=supplier_id, source_ref=source_ref,
         requested_currency=currency,
+        company_id=resolve_write_company_id(get_company_scope(db), ambiguous=None),
     )
 
     # NOT the row problems: `apply` refuses only an unreadable file or an unresolved
@@ -860,6 +891,7 @@ def apply(
     revision_of: Optional[dict] = None,
     file_as_new: Optional[list] = None,
     loading_plan_id: Optional[str] = None,
+    header_row: Optional[int] = None,
 ) -> dict:
     """Write one proforma invoice per document in the file. Idempotent by identity.
 
@@ -875,7 +907,7 @@ def apply(
     A superseded prior keeps the plan that took IT, so an older plan goes on reading its own.
     """
     _plan_of_this_supplier(db, loading_plan_id, supplier_id=supplier_id)
-    parsed = _parse(db, data)
+    parsed = _parse(db, data, supplier_id=supplier_id, header_row=header_row)
     if not parsed.ok:
         raise AppException(
             422,
@@ -914,6 +946,7 @@ def apply(
     summary = _summarise(
         db, parsed, supplier_id=supplier_id, source_ref=source_ref,
         requested_currency=currency, known=known, resolved=resolved,
+        company_id=company_id,
     )
 
     created = updated = 0
@@ -990,9 +1023,12 @@ def apply(
         # unpriced one has nothing to denominate and stays NULL. Never a house default (AC-P3.3).
         invoice.currency = code or invoice.currency
         invoice.container_ref = doc.container_no
-        # `bl_ref` holds `提单号`, which the 6 Sep ruling put in the SO field on the draft,
-        # not in a bill of lading - the column name is historical.
         invoice.bl_ref = doc.bl_no
+        # R-E (owner ruling 25 Sep): SO is its own header field, distinct from `bl_ref` -
+        # superseded the 6 Sep rule that treated `提单号`/`bl_ref` as the SO on the draft.
+        # Written the same unconditional way `bl_ref` is (a re-upload that no longer
+        # states one clears it, same as `bl_ref` already does).
+        invoice.so_ref = doc.so_no
         # The other two header facts the document states (ruling 28). Written only when the
         # document HAS them, so a re-upload of an invoice that states neither does not wipe
         # what the packing list filled in beside it.
@@ -1551,6 +1587,92 @@ def _record_over_capacity(
     )
 
 
+def _company_name_for(db: Session, company_id: Optional[str]) -> Optional[str]:
+    if not company_id:
+        return None
+    company = db.query(Company).filter(Company.id == company_id).first()
+    return company.name if company else None
+
+
+def _company_names(db: Session, company_ids: list[str]) -> dict[str, Optional[str]]:
+    """Company name per id, in ONE query (S4, review round 2 - the same per-page
+    batching `_supplier_labels` already gives suppliers): a caller listing several
+    invoices resolves every row's consignee (R-B: always the company) from this dict
+    instead of `_company_name_for` running a fresh `companies` query per row."""
+    ids = [cid for cid in set(company_ids) if cid]
+    if not ids:
+        return {}
+    rows = db.query(Company.id, Company.name).filter(Company.id.in_(ids)).all()
+    return {str(cid): name for cid, name in rows}
+
+
+def _convert_carry(
+    db: Session,
+    invoices: list[ProformaInvoice],
+    *,
+    rows_by_invoice: Optional[dict[str, list]] = None,
+    company_name: Optional[str] = None,
+) -> dict[str, Optional[str]]:
+    """Container/seal/SO/BL/consignee exactly as `convert_to_draft_shipment` (B1) will
+    write them onto the draft - shared by it and `serialize` (B3), so the dialog's
+    "Carried onto the draft" line can never say something Convert itself would not
+    (AC-C5).
+
+    AC-D2c/R-A: container/seal/SO/BL carry ONLY when every invoice in `invoices` agrees on
+    ONE container - each invoice's own packing rows first (`rows_by_invoice`, a container
+    can differ from the header when a PI was applied before the real container was
+    assigned), else its header `container_ref`; `serialize` calls this for ONE invoice
+    with no rows, which is exactly that invoice's own header.
+
+    R-E (owner ruling 25 Sep): SO and BL are now TWO INDEPENDENT facts - `so` reads
+    `so_ref` (the forwarder's booking/SO reference, a per-supplier mapper pick, no shared
+    alias) and `bl` reads `bl_ref` (the true bill of lading, when the supplier states one
+    distinctly). This supersedes the 6 Sep rule that carried `bl_ref` into the SO field
+    alone, with nothing ever landing in a BL field. R-B (24 Sep): consignee is ALWAYS the
+    invoices' OWN COMPANY name - never `consignee_ref`, which is read off the sheet and
+    ignored here - and carries regardless of whether the container agrees.
+
+    `company_name`, when given (S4, review round 2), is used AS THE ANSWER rather than
+    resolved here - `serialize`'s own per-page `_company_names` batch already has it, and
+    a caller with several invoices to list must not pay for a fresh `companies` query
+    per row just because this function alone ran one. `None` falls back to the single-
+    invoice lookup, unchanged (`convert_to_draft_shipment`'s own one-shot call).
+    """
+    def _pi_container(inv: ProformaInvoice) -> Optional[str]:
+        if rows_by_invoice:
+            containers = {
+                r.container_no for r in rows_by_invoice.get(str(inv.id), []) if r.container_no
+            }
+            if len(containers) == 1:
+                return next(iter(containers))
+        return inv.container_ref
+
+    per_invoice_containers = {str(inv.id): _pi_container(inv) for inv in invoices}
+    distinct_containers = {v for v in per_invoice_containers.values() if v}
+    container = seal = so = bl = None
+    if len(distinct_containers) == 1:
+        container = next(iter(distinct_containers))
+        seal = next((inv.seal_ref for inv in invoices if inv.seal_ref), None)
+        so = next((inv.so_ref for inv in invoices if inv.so_ref), None)
+        bl = next((inv.bl_ref for inv in invoices if inv.bl_ref), None)
+
+    if company_name is not None:
+        consignee = company_name
+    else:
+        company_id = next((inv.company_id for inv in invoices if inv.company_id), None)
+        consignee = _company_name_for(db, company_id)
+    return {
+        "container": container,
+        "seal": seal,
+        "so": so,
+        "bl": bl,
+        "consignee": consignee,
+        # Named for the caller that reports it (`convert_to_draft_shipment`'s own
+        # `header_conflicts`) - several DIFFERENT containers named, not simply none at all.
+        "conflict": len(distinct_containers) > 1,
+    }
+
+
 def convert_to_draft_shipment(
     db: Session,
     invoice_ids: list[str],
@@ -1675,6 +1797,10 @@ def convert_to_draft_shipment(
         .order_by(ProformaInvoiceLine.invoice_id, ProformaInvoiceLine.line_no)
         .all()
     )
+    #: N-7 (review round 2 nit): which LINE NUMBER to name in a covered-sibling's own
+    #: skip note - `line.id` -> `line.line_no`, so the note can say "line N" rather than
+    #: an id nobody reads.
+    lines_by_id: dict[str, ProformaInvoiceLine] = {str(l.id): l for l in lines}
 
     # Group by (product, supplier) - the same grain a real packing list writes on, and the
     # one that lets two PIs from the same factory naming the same model become one shipment
@@ -1721,6 +1847,16 @@ def convert_to_draft_shipment(
     #: rows are matched (ACC-KT2001 dismissed BEFORE apply, AC-D3): a line whose only row
     #: is dismissed has nothing left to place, not "no packing list at all".
     lines_with_rows: set[str] = set()
+    #: R4 (review round 1): every (invoice_id, product_key) with at least one MATCHED
+    #: packing row anywhere on that invoice - a SIBLING line of the same product with no
+    #: row of its own must not ALSO fall back to the (product, supplier) grouping, or the
+    #: units the row already carries are counted a second time under the fallback's own
+    #: key (three lines of one product, one packing row boxing all of them - the fallback
+    #: is for a product the packing list never mentions at all, not this one).
+    matched_products_by_invoice: dict[str, set[str]] = {}
+    #: N-7: (invoice_id, product_key) -> the line_no of the FIRST matched-row line found
+    #: for it - named in a covered sibling's own skip note.
+    covering_line_no: dict[tuple[str, str], int] = {}
     for row in (
         db.query(ProformaInvoicePackingLine)
         .filter(ProformaInvoicePackingLine.proforma_invoice_id.in_(ids))
@@ -1732,6 +1868,15 @@ def convert_to_draft_shipment(
             lines_with_rows.add(str(row.proforma_invoice_line_id))
         if row.match_state == "matched" and row.proforma_invoice_line_id:
             packing_rows_by_line.setdefault(str(row.proforma_invoice_line_id), []).append(row)
+            product_key = str(row.product_id or row.product_set_id or "")
+            if product_key:
+                invoice_id = str(row.proforma_invoice_id)
+                matched_products_by_invoice.setdefault(invoice_id, set()).add(product_key)
+                covering_key = (invoice_id, product_key)
+                if covering_key not in covering_line_no:
+                    covering_line = lines_by_id.get(str(row.proforma_invoice_line_id))
+                    if covering_line is not None:
+                        covering_line_no[covering_key] = covering_line.line_no
         elif row.match_state in ("dismissed", "unmatched"):
             # `description_en` before `description` (S2, text glossary lane, R4) - the
             # customs-facing note reads English wherever the glossary knows it.
@@ -1810,6 +1955,24 @@ def convert_to_draft_shipment(
                 placing_cbm = _f(row.cbm_total)
                 if placing_cbm is not None:
                     placing[str(ln.invoice_id)] = placing.get(str(ln.invoice_id), 0.0) + placing_cbm
+            continue
+
+        # R4: this line has no packing row of its OWN, but the same product already has
+        # a MATCHED row elsewhere on this invoice - the row-grouped shipment line above
+        # already carries this product's quantity; falling back here would double it.
+        line_product_key = str(ln.product_id or ln.product_set_id or "")
+        if line_product_key and line_product_key in matched_products_by_invoice.get(
+            str(ln.invoice_id), set()
+        ):
+            # N-7 (review round 2 nit): named rather than silently dropped, so the
+            # operator sees WHY this line produced no shipment line of its own.
+            covering_no = covering_line_no.get((str(ln.invoice_id), line_product_key))
+            skipped.append((
+                ln,
+                f"Covered by the packing rows of line {covering_no}."
+                if covering_no is not None
+                else "Covered by the packing rows of another line of this invoice.",
+            ))
             continue
 
         if ln.product_id is None and ln.product_set_id is None:
@@ -1983,29 +2146,19 @@ def convert_to_draft_shipment(
 
     invoice_dates = [inv.invoice_date for inv in invoices if inv.invoice_date]
 
-    # AC-D2c: the header carries over when every selected PI names ONE container -
-    # its own packing rows first (a container can differ from the header when a PI was
-    # applied before the real container was assigned), else its header `container_ref`.
-    # Seal/BL live on the header alone (rows carry no seal/BL of their own).
-    def _pi_container(inv: ProformaInvoice) -> Optional[str]:
-        containers = {
-            r.container_no for r in rows_by_invoice.get(str(inv.id), []) if r.container_no
-        }
-        return next(iter(containers)) if len(containers) == 1 else inv.container_ref
-
-    per_invoice_containers = {str(inv.id): _pi_container(inv) for inv in invoices}
-    distinct_containers = {v for v in per_invoice_containers.values() if v}
+    # AC-D2c/B1: the header carries over when every selected PI names ONE container - its
+    # own packing rows first (a container can differ from the header when a PI was applied
+    # before the real container was assigned), else its header `container_ref`. Seal/SO
+    # live on the header alone (rows carry no seal/SO of their own); consignee is always
+    # the invoices' own company (R-B) regardless of whether the container agrees - see
+    # `_convert_carry`'s own docstring, shared with `serialize` (B3) so the two never
+    # disagree about what Convert is about to write.
+    carry = _convert_carry(db, invoices, rows_by_invoice=rows_by_invoice)
+    carry_container, carry_seal, carry_so, carry_bl, carry_consignee = (
+        carry["container"], carry["seal"], carry["so"], carry["bl"], carry["consignee"],
+    )
     header_conflicts: list[str] = []
-    carry_container = carry_seal = carry_bl = None
-    carry_consignee = None
-    if len(distinct_containers) == 1:
-        carry_container = next(iter(distinct_containers))
-        carry_seal = next((inv.seal_ref for inv in invoices if inv.seal_ref), None)
-        carry_bl = next((inv.bl_ref for inv in invoices if inv.bl_ref), None)
-        carry_consignee = next(
-            (inv.consignee_ref for inv in invoices if inv.consignee_ref), None
-        )
-    elif len(distinct_containers) > 1:
+    if carry["conflict"]:
         header_conflicts.append("container_number")
 
     # A NEW packing list, every time (Q6). "Add to an existing draft" is gone: a convert
@@ -2017,9 +2170,11 @@ def convert_to_draft_shipment(
         shipment_date=min(invoice_dates) if invoice_dates else _date.today(),
         shipping_container_number=carry_container,
         seal_number=carry_seal,
-        # `提单号` is the forwarder's SO, not a bill of lading (Q1 ruling, 6 Sep) - the
-        # same field `_header_of` already fills from it on the upload preview.
-        forwarder_order_ref=carry_bl,
+        # R-E (owner ruling 25 Sep): `so_ref` fills the SO field, `bl_ref` fills the BILL
+        # OF LADING field - two independent facts, superseding the 6 Sep rule that put
+        # `bl_ref` alone into the SO field with nothing ever reaching this one.
+        forwarder_order_ref=carry_so,
+        bill_of_lading_number=carry_bl,
         consignee=carry_consignee,
         shipment_status=_DRAFT_SHIPMENT_STATUS,
         created_by=created_by,
@@ -3017,6 +3172,9 @@ def list_for_supplier(
     labels = _supplier_labels(db, [str(r.supplier_id) for r in rows])
     volumes = _volumes(db, [str(r.id) for r in rows])
     placements = _quantities(db, [str(r.id) for r in rows])
+    # S4 (review round 2): one `companies` query for the whole page's consignees
+    # (R-B: always the invoice's own company), not one per row.
+    company_names = _company_names(db, [str(r.company_id) for r in rows if r.company_id])
     return {
         "data": [
             serialize(
@@ -3026,6 +3184,7 @@ def list_for_supplier(
                 supplier_labels=labels,
                 volumes=volumes,
                 placements=placements,
+                company_names=company_names,
             )
             for r in rows
         ],
@@ -3071,13 +3230,17 @@ def serialize(
     supplier_labels: Optional[dict[str, tuple[Optional[str], Optional[str]]]] = None,
     volumes: Optional[dict[str, tuple[Optional[float], int]]] = None,
     placements: Optional[dict[str, dict]] = None,
+    company_names: Optional[dict[str, Optional[str]]] = None,
 ) -> dict:
     """One invoice as the API returns it: codes and names, never a bare identifier.
 
-    `supplier_labels`, `volumes` and `placements` are the page's own lookups, resolved once
-    by a caller listing several invoices; a single serialization resolves its own. Each is
-    per-page rather than per-row because each is one query that would otherwise be asked
-    twenty-five times for the same answer.
+    `supplier_labels`, `volumes`, `placements` and `company_names` are the page's own
+    lookups, resolved once by a caller listing several invoices; a single serialization
+    resolves its own. Each is per-page rather than per-row because each is one query that
+    would otherwise be asked twenty-five times for the same answer - `company_names` (S4,
+    review round 2) is `_company_names`'s own batch, keyed by `company_id`, so the R-B
+    consignee (ALWAYS the invoice's own company) costs one `companies` query for a whole
+    page rather than one per row.
 
     NOT here: a container size, a fill percentage, an "over by" (S5, ruling 1). Capacity is a
     property of the CONTAINER this invoice's goods end up sharing with however many others,
@@ -3091,6 +3254,10 @@ def serialize(
         )
     else:
         supplier_code, supplier_name = _supplier_label(db, str(invoice.supplier_id))
+    if company_names is not None:
+        consignee_name = company_names.get(str(invoice.company_id)) if invoice.company_id else None
+    else:
+        consignee_name = _company_name_for(db, invoice.company_id)
     out: dict[str, Any] = {
         "id": str(invoice.id),
         "supplier_id": str(invoice.supplier_id),
@@ -3107,9 +3274,13 @@ def serialize(
         # The seal the packing list stated, carried onto the draft at convert (AC-D2c) and
         # shown beside the container it belongs to.
         "seal_no": invoice.seal_ref,
-        # Who the document bills (ruling 28), carried onto the draft with the other three.
-        "consignee": invoice.consignee_ref,
+        # R-B (24 Sep): the consignee is ALWAYS the invoice's own company, never the
+        # sheet's `consignee_ref` (kept on the row, unused for display - B4).
+        "consignee": consignee_name,
         "bl_no": invoice.bl_ref,
+        # R-E (owner ruling 25 Sep): SO is its own header field, distinct from BL - never
+        # derived from `bl_ref` any more (the superseded 6 Sep carry-BL-as-SO rule).
+        "so_no": invoice.so_ref,
         "total_amount": _f(invoice.total_amount),
         "line_count": invoice.line_count,
         "source_ref": invoice.source_ref,
@@ -3129,6 +3300,30 @@ def serialize(
     chain = _chain(db, invoice)
     out["revision_count"] = len(chain)
     if with_lines:
+        # B3/AC-C5: exactly what Convert (B1) will write onto the draft for THIS invoice
+        # alone - the dialog's "Carried onto the draft" line reads this instead of echoing
+        # the raw header fields above, which ignore the "one container known" condition.
+        # R6 (review round 1): passes this invoice's OWN packing rows so a container
+        # reassigned AFTER apply (the rows now say something the header never learned)
+        # carries the SAME value Convert itself would write, not the stale header one -
+        # one query, and only here (detail), never on the LIST payload's N invoices,
+        # which would otherwise be N extra queries for a line nothing there reads.
+        packing_rows = (
+            db.query(ProformaInvoicePackingLine)
+            .filter(ProformaInvoicePackingLine.proforma_invoice_id == invoice.id)
+            .all()
+        )
+        out["convert_carry"] = {
+            k: v
+            for k, v in _convert_carry(
+                db, [invoice], rows_by_invoice={str(invoice.id): packing_rows},
+                # N-5/S4: reuse the `consignee_name` already resolved above rather than
+                # have `_convert_carry` run its own second `companies` query for the
+                # same invoice.
+                company_name=consignee_name,
+            ).items()
+            if k != "conflict"
+        }
         out["revisions"] = [
             {
                 "id": str(r.id),
@@ -3386,7 +3581,13 @@ def serialize(
     out["source_files"] = [
         {
             "id": str(link.id),
+            # The ATTACHMENT's id, not the link's: preview and download act on the file,
+            # and handing them the link id asks the attachments API about a record that
+            # does not exist (S8, AC-8.3).
+            "attachment_id": str(link.attachment_id),
             "name": getattr(link.attachment, "original_filename", None),
+            "file_size_bytes": link.attachment.file_size_bytes,
+            "mime_type": link.attachment.mime_type,
             "type": (
                 link.attachment.attachment_type.type_name
                 if link.attachment and link.attachment.attachment_type

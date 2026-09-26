@@ -12,6 +12,20 @@ class RecipientConfig(BaseModel):
     role_ids: list[str] = Field(default_factory=list)
     include_promotion_owner: bool = False
     include_assigned_cs_pic: bool = False
+    #: Cc the person who raised the triggering event (`context.actor.email`), when
+    #: the trigger provides one. Reusable across triggers - not just the order
+    #: inquiry handover email it was added for (AC-H11).
+    include_actor: bool = False
+    #: Cc the person who raised the order inquiry / the person who requested the
+    #: reserve (`PLAN-oi-request-cs-reserve.md` 3.6) - reusable the same way
+    #: `include_actor` is, wherever a trigger's context puts `raiser`/`requester`.
+    include_raiser: bool = False
+    include_requester: bool = False
+    #: One email for the whole match instead of one per recipient (AC-H26) - every
+    #: resolved address on it, `include_actor`'s address moved last. Off by default:
+    #: a template that personalises `{{ recipient.name }}` per copy needs the
+    #: original one-per-recipient shape.
+    one_email: bool = False
     extra_emails: list[str] = Field(default_factory=list)
 
 

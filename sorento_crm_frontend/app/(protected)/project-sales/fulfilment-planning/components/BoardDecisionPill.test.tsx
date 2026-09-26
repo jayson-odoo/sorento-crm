@@ -3,7 +3,7 @@
  * warning flag the draft OR the frozen decision can carry.
  */
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
 import { BoardDecisionPill } from './BoardDecisionPill';
@@ -86,6 +86,18 @@ describe('BoardDecisionPill: the five labels (C3, R6)', () => {
   });
 });
 
+describe('BoardDecisionPill: a sheet-covered line reads Confirmed (AC-R2-19, owner ruling 18 Sep)', () => {
+  it('reads Confirmed for a line covered only by a live sheet-migrated inquiry row (no decision) - "With purchasing" was ruled confusing and dropped', () => {
+    render(
+      <BoardDecisionPill
+        contribution={contributionOf({ covered: true, decision: null })}
+        decision={null}
+      />,
+    );
+    expect(screen.getByTestId(`decision-pill-${KEY}`)).toHaveTextContent('Confirmed');
+  });
+});
+
 describe('BoardDecisionPill: no "rev" (R6)', () => {
   it('never prints a revision number beside Confirmed', () => {
     render(
@@ -103,6 +115,64 @@ describe('BoardDecisionPill: no "rev" (R6)', () => {
   });
 });
 
+describe('BoardDecisionPill: no popover on the Confirmed chip (round 2, PLAN-oi-decision-trail-ui.md, owner ruling after hand-testing round 1)', () => {
+  const FROZEN = { revision_no: 1, timely_spo_qty: '0', reserve: [], borrow: [], buy_qty: '10' };
+  const CONFIRMED = {
+    covered: true,
+    decision: FROZEN,
+    decided_by_name: 'Nurain',
+    decided_at: '2026-09-25T01:20:34',
+    decision_revision: 1,
+  };
+  // What the backend actually sends when a draft exists: the `draft` object AND the
+  // flattened pair, together.
+  const DRAFT = {
+    draft: {
+      decision: { verdict: 'approved' as const },
+      saved_by: 'Farah',
+      saved_at: '2026-09-25T02:00:00',
+    },
+    draft_saved_by_name: 'Farah',
+    draft_saved_at: '2026-09-25T02:00:00',
+  };
+
+  it('renders the Confirmed chip as plain text - no popover trigger, even when a draft also sits on the covered line', () => {
+    render(
+      <BoardDecisionPill
+        contribution={contributionOf({ ...CONFIRMED, ...DRAFT })}
+        decision={null}
+      />,
+    );
+    expect(screen.getByTestId(`decision-pill-${KEY}`)).toHaveTextContent('Confirmed');
+    // Round 1's own trigger is retired - the History icon (`DecisionTrailButton`, wired
+    // in the caller's own Verdict/Decision cell, not this component) opens the trail now.
+    expect(screen.queryByTestId(`decision-confirmed-trail-${KEY}`)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Confirmed by/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Saved by/)).not.toBeInTheDocument();
+  });
+
+  it('leaves the Saved-by popover on a non-confirmed draft line unchanged', () => {
+    render(
+      <BoardDecisionPill
+        contribution={contributionOf({
+          ...DRAFT,
+          decided_by_name: 'Nurain',
+          decided_at: '2026-09-25T01:20:34',
+          decision_revision: 1,
+        })}
+        decision={null}
+      />,
+    );
+    expect(screen.getByTestId(`decision-pill-${KEY}`)).toHaveTextContent('Saved');
+    const trigger = screen.getByTestId(`decision-saved-by-${KEY}`);
+    expect(trigger.tagName).toBe('BUTTON');
+    fireEvent.click(trigger);
+    expect(screen.getByText(/^Saved by Farah/)).toBeInTheDocument();
+    expect(screen.queryByText(/^Confirmed by/)).not.toBeInTheDocument();
+  });
+});
+
 describe('BoardDecisionPill: a line with no location', () => {
   it('reads "Needs a location" rather than any verdict', () => {
     render(
@@ -112,6 +182,23 @@ describe('BoardDecisionPill: a line with no location', () => {
       />,
     );
     expect(screen.getByText('Needs a location')).toBeInTheDocument();
+  });
+});
+
+describe('BoardDecisionPill: cancelled outranks unplannable (R3)', () => {
+  it('reads Cancelled, not "Needs a location", for a cancelled line that also has no location', () => {
+    render(
+      <BoardDecisionPill
+        contribution={contributionOf({
+          cancelled: true,
+          unplannable: true,
+          fulfilment_location: null,
+        })}
+        decision={null}
+      />,
+    );
+    expect(screen.getByTestId(`decision-pill-${KEY}`)).toHaveTextContent('Cancelled');
+    expect(screen.queryByText('Needs a location')).not.toBeInTheDocument();
   });
 });
 
@@ -149,6 +236,59 @@ describe('BoardDecisionPill: the warning flag (C10)', () => {
       <BoardDecisionPill
         contribution={contributionOf()}
         decision={{ verdict: 'approved' }}
+      />,
+    );
+    expect(screen.queryByTestId(`decision-flag-${KEY}`)).not.toBeInTheDocument();
+  });
+});
+
+describe('PLAN-board-change-proposed-pill: a pre-mark reads "Change proposed", not "Saved"', () => {
+  it('reads "Change proposed" for a session draft the board pre-marked itself (no server-saved draft)', () => {
+    render(
+      <BoardDecisionPill
+        contribution={contributionOf()}
+        decision={{ verdict: 'approved', preMarked: true }}
+      />,
+    );
+    expect(screen.getByTestId(`decision-pill-${KEY}`)).toHaveTextContent(
+      'Change proposed',
+    );
+  });
+
+  it('reads "Saved" once the line carries a real server-saved draft, pre-mark flag or not', () => {
+    render(
+      <BoardDecisionPill
+        contribution={contributionOf({
+          draft: {
+            decision: { verdict: 'approved' },
+            saved_by: 'Eling',
+            saved_at: '2026-09-03T01:00:00',
+          },
+        })}
+        // The pre-mark flag survives on the session's own entry until a real write REPLACES
+        // it (`decide()` writes a fresh object) - the server draft arriving first, on the
+        // SAME key, is exactly the shape `isPreMarkOnly` has to see through: `preMarked: true`
+        // present AND a real `contribution.draft` present both at once.
+        decision={{ verdict: 'approved', preMarked: true }}
+      />,
+    );
+    expect(screen.getByTestId(`decision-pill-${KEY}`)).toHaveTextContent('Saved');
+  });
+
+  it('shows no warning flag for a pre-mark, even when the frozen decision behind it was flagged (unchanged: the draft wins outright)', () => {
+    render(
+      <BoardDecisionPill
+        contribution={contributionOf({
+          decision: {
+            revision_no: 1,
+            timely_spo_qty: '0',
+            reserve: [],
+            borrow: [],
+            buy_qty: '10',
+            suspected_system_issue: true,
+          },
+        })}
+        decision={{ verdict: 'approved', preMarked: true }}
       />,
     );
     expect(screen.queryByTestId(`decision-flag-${KEY}`)).not.toBeInTheDocument();
@@ -197,6 +337,10 @@ describe('BoardDecisionPill: a saved line the engine has re-suggested (S4, AC-4.
       <BoardDecisionPill
         contribution={contributionOf({
           covered: true,
+          // A revision actually confirmed this line - this fixture's own intent is the
+          // decision-covered case (a decision-less, sheet-covered line also reads
+          // Confirmed since the 18 Sep ruling, see the describe block above).
+          decision: { revision_no: 3, timely_spo_qty: '0', reserve: [], borrow: [], buy_qty: '10' },
           draft: {
             decision: { verdict: 'amended' },
             saved_by: 'Eling',

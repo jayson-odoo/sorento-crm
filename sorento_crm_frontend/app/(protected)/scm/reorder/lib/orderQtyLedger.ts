@@ -2,9 +2,9 @@
  * The order-qty ledger's pure math (S3, UAC B).
  *
  * The ledger popover reads the SAME composition state the Decision cell and the Adjust
- * dialog use (`coverForLine` / `poOffset`, S16) rather than forking a second model of what
- * a line's buy is made of. This file adds only the two pieces the ledger itself introduces
- * on top of that state:
+ * dialog use (`composeMixture`, the one formula) rather than forking a second model of
+ * what a line's buy is made of. This file adds only the two pieces the ledger itself
+ * introduces on top of that state:
  *
  * - which cover parts are "on" right now, and what is left to buy once they are toggled;
  * - the optional forecast add-on, and replaying the ALREADY-agreed MOQ/order-multiple
@@ -16,8 +16,6 @@
  * engine's qty math). This only replays a rounding RULE that already exists, against a
  * number that only exists because the buyer is looking at the ledger live.
  */
-import type { CoverProposal } from './coverPlan';
-import { poOffset } from './poCover';
 import { trendAdvice, type TrajectoryEntry } from './trajectory';
 
 /**
@@ -97,39 +95,69 @@ export function roundBuyQty(qty: number, rounding: OrderQtyRounding): number {
   return roundOrderQty(qty, rounding.moq, rounding.order_multiple);
 }
 
-export interface MixtureResult {
-  /** Units drawn from the cover pool right now (0 when the stock toggle is off). */
+export interface MixtureParts {
+  /**
+   * THE NEED: `project + retail + level - SPO arriving`, before anything is netted off it.
+   *
+   * Reconstructed off the line's own frozen fields as `recommended_qty + on_hand + PO`
+   * (see `planEdits.suggestedDecisionFor`), never off `order_qty` - that figure is already
+   * net of on-hand AND the open PO book since #828, so measuring the parts against it
+   * netted the same units a second time.
+   */
+  need: number;
+  /**
+   * S - the row's OWN site-pool stock the need consumes, `min(on hand, need)`. A FACT read
+   * off the frozen line, not a part anybody decides: it is already inside the engine's net.
+   * Never persisted onto the decision.
+   */
   stockQty: number;
-  /** Units the open PO book absorbs right now (0 when the PO toggle is off). */
+  /**
+   * Units BORROWED from another location right now (`proposeCover`'s cross-location
+   * sources). Always 0 on a product-grain row, whose on hand already sums every in-scope
+   * pool - only a warehouse-grain row has somewhere else to borrow from.
+   */
+  borrowedQty: number;
+  /** P - how much of the open PO book the buyer trusts right now. Lowering it raises Buy. */
+  poQty: number;
+}
+
+export interface MixtureResult {
+  /** S, clamped to the need. */
+  stockQty: number;
+  /** Cross-location units borrowed, clamped to what the need has left after S. */
+  borrowedQty: number;
+  /** Units the open PO book absorbs, clamped to what is left after S and the borrow. */
   usePo: number;
-  /** What is left to buy once the two above are applied. */
+  /** What is left to buy once the three above are applied. Never negative. */
   buy: number;
 }
 
 /**
- * Recompute the buy after toggling which cover parts are in play.
+ * The one formula's parts, in the order the need consumes them: own stock, then a borrow,
+ * then the open PO, then the buy (PLAN-reorder-one-formula.md, AC-6).
  *
- * `needed` is the same base every other cover surface on the row uses - `Math.ceil(order_qty)`
- * (see `planEdits.suggestedDecisionFor`) - so a toggle here can never disagree with the
- * decision panel or the Decision pill reading the same line.
+ * `S + borrow + P + buy = need` by construction, so every surface reading this - the pill,
+ * the panel, the ledger, the sheet - states one arithmetic rather than each re-netting the
+ * engine's already-net figure. Turning the borrow off, or lowering the PO the buyer does
+ * not trust, raises Buy by exactly what it took away and never below 0.
  */
-export function composeMixture(
-  needed: number,
-  cover: CoverProposal,
-  poQty: number,
-  toggles: { stockOn: boolean; poOn: boolean; stockQty?: number },
-): MixtureResult {
-  const stockOn = toggles.stockOn && cover.coverQty > 0;
-  // The buyer's own per-location figures when they have edited them, the proposal's own
-  // total otherwise. The gap the two are measured against is the proposal's whole shortage
-  // (`coverQty + buyQty`), which is what makes an edited cover fall straight through into
-  // the buy: cover less, buy more, and never a negative order.
-  const proposed = cover.coverQty;
-  const stockQty = stockOn ? (toggles.stockQty ?? proposed) : 0;
-  const gap = cover.coverQty + cover.buyQty;
-  const afterStock = stockOn ? Math.max(0, gap - stockQty) : needed;
-  const { usePo, buy } = poOffset(afterStock, toggles.poOn ? poQty : 0);
-  return { stockQty, usePo, buy };
+export function composeMixture({
+  need,
+  stockQty,
+  borrowedQty,
+  poQty,
+}: MixtureParts): MixtureResult {
+  const base = Math.max(0, need);
+  const part = (raw: number, left: number) => Math.min(Math.max(0, raw), left);
+  const stock = part(stockQty, base);
+  const borrowed = part(borrowedQty, base - stock);
+  const usePo = part(poQty, base - stock - borrowed);
+  return {
+    stockQty: stock,
+    borrowedQty: borrowed,
+    usePo,
+    buy: Math.max(0, base - stock - borrowed - usePo),
+  };
 }
 
 /** The days a manual level covers when the row's own `suggestion_basis` never ran (no

@@ -27,8 +27,10 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from sqlalchemy.orm import Session
+
 from app.services.chatbot import jsc
-from app.services.chatbot.tail.compile_state import EM_DASH
+from app.services.chatbot.tail.reply_ladder import EM_DASH
 from app.services.chatbot.contracts import (
     CRM_COMPLETED_BRANCH_KINDS,
     SELF_CLOSING_BRANCH_KINDS,
@@ -47,19 +49,70 @@ COMPLETED_BRANCH_KINDS: frozenset[str] = CRM_COMPLETED_BRANCH_KINDS - SELF_CLOSI
 NO_SESSION_WRITE_BRANCH_KINDS: frozenset[str] = frozenset({"access_denied"})
 
 
-def access_denied_text(ctx: Mapping[str, Any], copy: CannedCopy) -> str:
-    """`sorento-sub-respond-sendmsg-respond5`'s `message` expression, verbatim.
+def access_denied_text(db: Session, ctx: Mapping[str, Any], copy: CannedCopy) -> str:
+    """`sorento-sub-respond-sendmsg-respond5`'s `message` expression, verbatim -
+    with one R18-named exception (S3, AC-1307).
 
     `Sorry, you are not allowed to access {agent}`, where the agent is the parser's
     `suggested_agent` with **em-dashes folded to hyphens**. That fold is n8n's own
     (`.replace(/\\u2014/g, '-')`) and it is on the AGENT, not on the sentence: an agent
     name that arrives with an em-dash in it is a parser emission, and the customer must
     not read a character the repo forbids anywhere else.
+
+    When the denied agent is `ideation`, the reply goes through the SAME LLM
+    composer the ideate lane itself uses (`ideation_turn_service.
+    compose_ideate_denial_reply`), facts `{denied: "ideation"}`, falling back to
+    this same canned template on any failure - the one `if agent == "ideation"`
+    case R18 names as the sole exception to "the engine is not changed by this
+    plan".
     """
     routing = jsc.get(jsc.get(jsc.get(ctx, "parse"), "output") or {}, "routing") or {}
     agent = jsc.get(routing, "suggested_agent")
     folded = jsc.js_string(agent if jsc.truthy(agent) else "").replace(EM_DASH, "-")
-    return copy.render("access_denied", team=folded)
+    fallback_text = copy.render("access_denied", team=folded)
+    if agent != "ideation":
+        return fallback_text
+
+    from app.services.ideation_turn_service import compose_ideate_denial_reply
+
+    inner = jsc.get(jsc.get(jsc.get(ctx, "text"), "message"), "message") or {}
+    user_message = jsc.js_string(jsc.get(inner, "text") or "")
+    return compose_ideate_denial_reply(
+        db, user_message=user_message, fallback_text=fallback_text
+    )
+
+
+def field_grant_denied_text(copy: CannedCopy, subject: str) -> str:
+    """The SAME `access_denied` template, subject a plain-language FEATURE name rather
+    than an agent (D6, PLAN-chatbot-last-purchase-cost.md, review B1).
+
+    `access_denied_text` above answers "is this contact allowed the AGENT" - the
+    head-level refusal, keyed on `routing.suggested_agent` (`purchasing`,
+    `warehouse`, ...). A whole-domain field-reveal gate answers a DIFFERENT
+    question - "is this contact allowed the FEATURE" - so it names the feature
+    ("purchase cost") rather than the team, and takes no `ctx`: there is no agent to
+    read. No new wording is invented; both callers render the one registered
+    `access_denied` key.
+    """
+    return copy.render("access_denied", team=subject)
+
+
+#: Contract 61's subject: the FEATURE the stock-denial switch refuses, named in the
+#: customer's own plain language rather than by a domain key, exactly as
+#: `answer.DOMAIN_GRANT_SUBJECT` names the one it pairs with.
+STOCK_DENIED_SUBJECT = "stock"
+
+
+def stock_denied_text(copy: CannedCopy) -> str:
+    """Contract 61: the contact is not allowed stock checks and asked for one anyway.
+
+    The SAME registered `access_denied` template every other refusal renders, with the
+    feature as its subject (`field_grant_denied_text`) - a denied stock check is the
+    same class of answer as a denied field reveal, and inventing a second wording for it
+    is how the two drift. A refusal is also the whole reply: the rows are never fetched
+    on this arm, so there is nothing else to say and nothing to leak.
+    """
+    return field_grant_denied_text(copy, STOCK_DENIED_SUBJECT)
 
 
 def offer_hold_clarify_text(

@@ -2,16 +2,41 @@
 import os
 # Load .env with override=True so file values beat any stale shell env
 # (e.g. a STORAGE_DEFAULT_PROVIDER exported earlier in the session).
+# SORENTO_ENV_FILE overrides which dotenv gets loaded, so tests can point at
+# a private file instead of flipping the backend's real .env under a
+# running dev server.
 from pathlib import Path as _Path
-try:
-    from dotenv import load_dotenv as _load_dotenv
+
+
+def _load_env_file() -> None:
+    try:
+        from dotenv import load_dotenv as _load_dotenv
+    except ImportError:
+        return
+    _override_path = os.environ.get("SORENTO_ENV_FILE")
+    if _override_path:
+        _resolved_override = _Path(_override_path)
+        if not _resolved_override.is_absolute():
+            _resolved_override = _Path(__file__).resolve().parent.parent / _resolved_override
+        if not _resolved_override.exists():
+            # A typo here must never fall back to the real .env - that would
+            # point a test run (or anything else setting this) at the live
+            # stack's database with no warning. See app.config's equivalent.
+            raise RuntimeError(
+                f"SORENTO_ENV_FILE={_override_path!r} does not resolve to an "
+                f"existing file (looked for {_resolved_override}); refusing "
+                f"to fall back to .env."
+            )
+        _load_dotenv(_resolved_override, override=True)
+        return
     _env_path = _Path(__file__).resolve().parent.parent / ".env"
     if _env_path.exists():
         _load_dotenv(_env_path, override=True)
     else:
         _load_dotenv(override=True)
-except ImportError:
-    pass
+
+
+_load_env_file()
 
 from fastapi import Depends, FastAPI, Request, status
 from fastapi.encoders import jsonable_encoder
@@ -298,6 +323,17 @@ async def startup_event():
             exc_info=True,
         )
     try:
+        from app.services.order_inquiry_reserve_service import (
+            register_order_inquiry_reserve_post_commit_dispatch,
+        )
+        register_order_inquiry_reserve_post_commit_dispatch()
+        logging.info("Order inquiry reserve post-commit dispatch registered")
+    except Exception as e:
+        logging.error(
+            f"Failed to register order inquiry reserve post-commit dispatch: {str(e)}",
+            exc_info=True,
+        )
+    try:
         # The status engine ships with an empty registry; every entity arrives from
         # a module. `inbound_shipment` is the first adopter in this repo, and it
         # registers a CHECKPOINT TIMELINE rather than a single-status graph - see
@@ -409,6 +445,33 @@ async def startup_event():
 
     try:
         from app.database import SessionLocal
+        from app.services import outstanding_report_bootstrap
+        _db = SessionLocal()
+        try:
+            # Runs after sync_catalog so the crm_outstanding_report row exists:
+            # enables it for the in-app assistant without an admin visiting a
+            # settings screen (same mechanism as project_mcp_bootstrap above).
+            # Additive and idempotent.
+            outstanding_report_bootstrap.run(_db)
+        finally:
+            _db.close()
+    except Exception as e:
+        logging.error(f"Outstanding report bootstrap failed at startup: {str(e)}", exc_info=True)
+
+    # AC-65 STRUCK (security N4, Phase 3): `crm_low_stock_report` is deliberately NOT added
+    # to the in-app assistant's `enabled_tools`. The assistant force-empties
+    # `contact_id`/`space_id`, which this route requires (422), so the tool could only ever
+    # 403/422 there - and a SIDE-EFFECTING tool (it creates a reorder run) must not sit on
+    # the assistant's read list at all. No bootstrap.
+
+    # AC-1642 STRUCK (security B1, Phase 3): `crm_sales_report` is deliberately NOT added to
+    # the in-app assistant's `enabled_tools` either - the assistant is a DIFFERENT auth
+    # boundary from the route's `order_management.orders.view` RBAC permission, and a staff
+    # member who is 403 on the route could otherwise read the money figures through the
+    # assistant instead, across every company. No bootstrap.
+
+    try:
+        from app.database import SessionLocal
         from app.services import project_seed_service
         _db = SessionLocal()
         try:
@@ -466,18 +529,79 @@ async def root():
     return {"message": "Sorento CRM API", "version": "1.0.0"}
 
 
+def _git_sha() -> str:
+    """The short sha of the checkout this process is running, read ONCE at import.
+
+    A stack check has to be able to say WHICH code answered it, and the deploy is the
+    only other thing that knows. `GIT_SHA` (set by the container build) wins where there
+    is no git directory at all; a local run reads it from the checkout beside this file.
+    Never per request: this shells out.
+    """
+    from os import environ
+
+    env_sha = (environ.get("GIT_SHA") or "").strip()
+    if env_sha:
+        return env_sha
+    try:
+        import subprocess
+
+        out = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=str(_Path(__file__).resolve().parent.parent),
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        return (out.stdout or "").strip() or "unknown"
+    except Exception:  # noqa: BLE001 - a health probe never fails over its own metadata
+        return "unknown"
+
+
+GIT_SHA = _git_sha()
+
+
+def _production_prompt_version(db) -> int | None:
+    """The parser prompt version carrying the `production` label, or None.
+
+    Read at REQUEST time, not at import: the label moves while the process runs (every
+    prompt publish does it), and a cached number would tell a stack check the wrong
+    thing exactly when it matters.
+    """
+    from app.models.ai_prompt import AIPromptLabel, AIPromptVersion
+
+    row = (
+        db.query(AIPromptVersion.version)
+        .join(AIPromptLabel, AIPromptLabel.version_id == AIPromptVersion.id)
+        .filter(
+            AIPromptLabel.name == "chatbot_semantic_parser",
+            AIPromptLabel.label == "production",
+        )
+        .first()
+    )
+    return int(row[0]) if row else None
+
+
 @app.get("/health")
 async def health_check():
-    """Readiness probe: 200 only if DB reachable. Blue/green deploy gates color swap on this."""
+    """Readiness probe: 200 only if DB reachable. Blue/green deploy gates color swap on this.
+
+    Also names the code and the prompt that answered, so a stack check can tell a lane
+    running yesterday's commit from one running today's (`scripts/chatbot-stack-check.sh`).
+    """
     try:
         from sqlalchemy import text
         from app.database import SessionLocal
         db = SessionLocal()
         try:
             db.execute(text("SELECT 1"))
+            prompt_version = _production_prompt_version(db)
         finally:
             db.close()
-        return {"status": "healthy"}
+        return {
+            "status": "healthy",
+            "git_sha": GIT_SHA,
+            "prompt_version": prompt_version,
+        }
     except Exception as e:
         return JSONResponse(
             status_code=503,

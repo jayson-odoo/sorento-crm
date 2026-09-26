@@ -38,7 +38,11 @@ from app.api.v1.system import (
     companies as system_companies,
 )
 from app.api.v1.assistant import record_context as assistant_record_context
-from app.modules.runtime.guards import require_module_enabled, require_module_enabled_with_api_key
+from app.modules.runtime.guards import (
+    require_any_module_enabled,
+    require_module_enabled,
+    require_module_enabled_with_api_key,
+)
 
 api_router = APIRouter()
 
@@ -133,6 +137,21 @@ api_router.include_router(
     prefix="/user-management",
     tags=["user-management"],
     dependencies=[Depends(require_module_enabled("base"))],
+)
+# Spec visibility policy (PLAN-spec-visibility-policy.md): contact-side admin,
+# so it sits under user-management rather than inventory, but mounted at the
+# TOP LEVEL rather than through `user_management.router` - that router's own
+# module gate is the JWT-only `require_module_enabled`, and `GET .../effective`
+# (AC-11) is an n8n preflight convenience that must accept X-API-Key, same as
+# `inventory.stock-visibility`'s own `/effective`. Every route inside still
+# reuses `user_management.contacts.view` / `.edit` - no new permission slug.
+from app.api.v1.user_management import spec_visibility as spec_visibility_module
+
+api_router.include_router(
+    spec_visibility_module.router,
+    prefix="/user-management/spec-visibility",
+    tags=["spec-visibility"],
+    dependencies=[Depends(require_module_enabled_with_api_key("base"))],
 )
 # Integration management (AC-AC-08). JWT only -- deliberately NOT X-API-Key:
 # an integration must not be able to mint credentials for itself or enumerate
@@ -249,6 +268,17 @@ api_router.include_router(
     prefix="/scm",
     tags=["scm"],
     dependencies=[Depends(require_module_enabled_with_api_key("scm"))],
+)
+
+# AutoCount pull + review (PLAN-autocount-pull-review.md): pull a frozen products/stock
+# snapshot from AutoCount instead of exporting + uploading the workbook by hand. Neither
+# entity's module gates the other (require_any_module_enabled) - each route enforces the
+# permission of ITS OWN entity once the pull is resolved (AC-PM-2).
+api_router.include_router(
+    integrations.autocount_pull.router,
+    prefix="/autocount/pulls",
+    tags=["autocount-pull"],
+    dependencies=[Depends(require_any_module_enabled("product", "inventory"))],
 )
 
 # Dealer Sales Kit - catalogue page builder, collections, brochure export.

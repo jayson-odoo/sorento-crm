@@ -229,6 +229,17 @@ def _handler_promotion_active_window(db, task):
     return PromotionService(db).sync_promotion_active_by_calendar_window()
 
 
+def _handler_price_tag_auto_collect(db, task):
+    """Close a price tag hand-over nobody came back for (r9 D11).
+
+    Reads the configured days off the settings row; 0 turns it off entirely.
+    """
+    from app.services.price_tag_request_service import PriceTagRequestService
+
+    collected = PriceTagRequestService.run_auto_collect(db)
+    return {"collected": collected}
+
+
 def _handler_coverage_subscription_expiry(db, task):
     """Deactivate coverage subscriptions whose expires_at has passed."""
     from app.services.coverage_subscription_service import CoverageSubscriptionService
@@ -490,6 +501,35 @@ def _chatbot_delegated_sweep_tick():
         logger.error("Chatbot delegated sweep tick failed: %s", e, exc_info=True)
 
 
+def _ideation_idle_sweep_tick():
+    """APScheduler tick: one WhatsApp reminder at 24h idle on an open ideation
+    draft, then close (S4, AC-1401 to AC-1408). Owns its own DB session;
+    best-effort and never raises - same shape as
+    `_chatbot_delegated_sweep_tick`."""
+    try:
+        from app.services.ideation_turn_service import sweep_idle_ideation_drafts
+
+        with scheduler_session() as db:
+            sweep_idle_ideation_drafts(db)
+    except Exception as e:
+        logger.error("Ideation idle sweep tick failed: %s", e, exc_info=True)
+
+
+def _autocount_pull_advance_tick():
+    """APScheduler tick: drive the AutoCount pull build -> preview transition
+    server-side (D27), so a snapshot that finishes building has its preview
+    enqueued within 30s whether or not anyone has the pull page open - see
+    PLAN-autocount-pull-server-advance.md for the 23 Sep 2026 incident this
+    closes. Owns its own DB session; best-effort and never raises."""
+    try:
+        from app.services.autocount_pull_service import advance_building_pulls
+
+        with scheduler_session() as db:
+            advance_building_pulls(db)
+    except Exception as e:
+        logger.error("AutoCount pull advance tick failed: %s", e, exc_info=True)
+
+
 def _run_queue_jobs_impl(queue_name: str, max_jobs_per_run: int) -> dict:
     """Generic queue processor used by scheduled task heartbeat."""
     return run_sync_rq_jobs(queue_name, max_jobs_per_run)
@@ -531,6 +571,7 @@ def register_task_handlers():
     register_handler("embedding_job_processor", _handler_embedding_job_processor)
     register_handler("user_sla_daily_summary", _handler_user_sla_daily_summary)
     register_handler("promotion_active_window", _handler_promotion_active_window)
+    register_handler("price_tag_auto_collect", _handler_price_tag_auto_collect)
     register_handler("respond_contacts_sync", run_respond_contacts_sync)
     register_handler("respond_templates_sync", _handler_respond_templates_sync)
     register_handler("automation_runner", _handler_automation_runner)
@@ -614,6 +655,16 @@ def start_scheduler():
         replace_existing=True,
     )
 
+    # Ideation idle draft sweep (S4, AC-1408): every 15 minutes. One WhatsApp
+    # reminder at 24h idle on an open ideation draft, then close.
+    scheduler.add_job(
+        _ideation_idle_sweep_tick,
+        trigger=IntervalTrigger(minutes=15),
+        id="ideation_idle_sweep",
+        name="Ideation idle draft sweep",
+        replace_existing=True,
+    )
+
     # SPO container relink sweep (S5, review re-check, 2026-09-06): daily. An
     # allocation whose shipment shows up AFTER the allocation was pushed
     # never otherwise gets linked - `relink_allocations_for_container`'s own
@@ -626,11 +677,22 @@ def start_scheduler():
         replace_existing=True,
     )
 
+    # AutoCount pull server advance (D27): every 30s. A pull's build -> preview
+    # transition used to happen only inside a browser's status poll; this tick is
+    # what makes it happen with no tab open (PLAN-autocount-pull-server-advance.md).
+    scheduler.add_job(
+        _autocount_pull_advance_tick,
+        trigger=IntervalTrigger(seconds=30),
+        id="autocount_pull_advance",
+        name="AutoCount pull advance",
+        replace_existing=True,
+    )
+
     scheduler.start()
     logger.info(
         "Scheduler started: scheduled tasks heartbeat (every 10s), email outbox drainer "
         "(every %ds), AI trace sweep (daily), chatbot delegated sweep (every minute), "
-        "SPO container relink sweep (daily)",
+        "SPO container relink sweep (daily), AutoCount pull advance (every 30s)",
         max(1, drain_seconds),
     )
     return scheduler

@@ -71,7 +71,10 @@ def _seed_product(db) -> tuple[str, str]:
     db.add(product)
     db.flush()
     ref = f"DK-{product.product_code}"
-    IntegrationReferenceService(db).link(
+    # Anchored: plan D14 is strict, an unanchored link on a scoped type raises
+    # ValueError. Every caller of this helper works inside the incumbent
+    # company.
+    IntegrationReferenceService(db, company_id=DEFAULT_COMPANY_ID).link(
         entity_type="products", entity_id=product.id, source_ref=ref
     )
     return str(product.id), ref

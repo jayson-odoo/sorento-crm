@@ -438,13 +438,18 @@ register(
 )
 
 
-def build_order_inquiry_link(so_number: Optional[str]) -> str:
-    """The Order Inquiries worklist, narrowed to the sales order the row belongs to.
+def build_order_inquiry_link(inquiry_id: Optional[str]) -> str:
+    """The OI detail page, for the header this email is about (S3, AC-LK-01,
+    `PLAN-oi-header-list-detail.md`).
 
-    There is no per-row detail page (`documentation/plans/scm/PLAN-scm-oi-handshake.md`) -
-    the worklist's own search IS the way in, exactly as `orderInquiryRowHref` reaches it
-    from every other screen. A row with no SO number (a claim-only or free-standing row)
-    gets the unfiltered list rather than a broken query string.
+    Before this lane there was no per-row detail page
+    (`documentation/plans/scm/PLAN-scm-oi-handshake.md`), so every email pointed at the
+    worklist's own search narrowed by the SO number instead - `orderInquiryRowHref`'s
+    own fallback everywhere else on this screen. Every one of these emails is now about
+    ONE header (a raise, a reconfirm, a handover, an undo), so the header id it already
+    holds is a better link than a search that can miss when a second amendment raises a
+    second header on the same SO. A caller with no id (nothing to point at - a fully
+    covered decision that raised no header) gets the unfiltered list.
 
     PUBLIC (nit, review of PR #471), unlike its `_build_*_link` siblings above: every one
     of those is also called from ITS OWN trigger function inside this module, so the
@@ -454,10 +459,8 @@ def build_order_inquiry_link(so_number: Optional[str]) -> str:
     """
     base = (settings.frontend_base_url or "").rstrip("/")
     path = "/project-sales/order-inquiries"
-    if so_number:
-        from urllib.parse import quote
-
-        path = f"{path}?query={quote(so_number)}"
+    if inquiry_id:
+        path = f"{path}/{inquiry_id}"
     return f"{base}{path}" if base else path
 
 
@@ -497,6 +500,141 @@ register(
         },
     ),
     _trigger_order_inquiry_changed_with_links,
+)
+
+
+def _trigger_order_inquiry_handover(
+    db: Session,
+    config: dict[str, Any],
+    timezone: str,
+) -> Iterable[TriggerMatch]:
+    """Event-driven; pull-mode evaluation yields nothing.
+
+    Matches are produced via `ProjectOrderInquiryService._record_handover`
+    (`PLAN-scm-oi-handover-email.md` S0-S3), queued mid-transaction and drained
+    post-commit by `_fire_pending_handover` - the same shape
+    `_trigger_order_inquiry_changed_with_links` above uses. One dispatch per commit,
+    covering every row a CS write raised, settled or cancelled in it.
+    """
+    return []
+
+
+register(
+    TriggerSpec(
+        type="order_inquiry_handover",
+        label="Order inquiry handover to purchasing",
+        description=(
+            "Fires once per commit that raises, settles or cancels order inquiry rows "
+            "(event-driven), shaped like the manual handover mail CS sends purchasing."
+        ),
+        config_schema={
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        },
+    ),
+    _trigger_order_inquiry_handover,
+)
+
+
+def _trigger_order_inquiry_undone(
+    db: Session,
+    config: dict[str, Any],
+    timezone: str,
+) -> Iterable[TriggerMatch]:
+    """Event-driven; pull-mode evaluation yields nothing.
+
+    Matches are produced via `ProjectOrderInquiryService._record_undo`
+    (`PLAN-board-undo-last-confirm.md` "The email"), queued mid-transaction by
+    `undo_last_confirm` and drained post-commit by `_fire_pending_undo` - the same
+    shape `_trigger_order_inquiry_handover` above uses. One dispatch per undo commit.
+    """
+    return []
+
+
+register(
+    TriggerSpec(
+        type="order_inquiry_undone",
+        label="Order inquiry undone",
+        description=(
+            "Fires once a board Confirm's undo has committed (event-driven), telling "
+            "purchasing which order inquiry rows reverted or disappeared."
+        ),
+        config_schema={
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        },
+    ),
+    _trigger_order_inquiry_undone,
+)
+
+
+def _trigger_order_inquiry_reserve_requested(
+    db: Session,
+    config: dict[str, Any],
+    timezone: str,
+) -> Iterable[TriggerMatch]:
+    """Event-driven; pull-mode evaluation yields nothing.
+
+    Matches are produced via `OrderInquiryReserveService.create_request`
+    (`PLAN-oi-request-cs-reserve.md` 3.2, R9: ONE email however many rows), queued
+    mid-transaction and drained post-commit by `register_order_inquiry_reserve_post_
+    commit_dispatch` - the same simpler shape `_trigger_order_inquiry_changed_with_links`
+    above uses (see that module's own docstring for why the transaction-chain
+    bookkeeping `order_inquiry_handover` needs does not apply here).
+    """
+    return []
+
+
+register(
+    TriggerSpec(
+        type="order_inquiry_reserve_requested",
+        label="Order inquiry: request CS to reserve",
+        description=(
+            "Fires when purchasing asks CS to reserve stock for one or more order "
+            "inquiry rows (event-driven), one email per request however many rows it "
+            "names."
+        ),
+        config_schema={
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        },
+    ),
+    _trigger_order_inquiry_reserve_requested,
+)
+
+
+def _trigger_order_inquiry_reserved(
+    db: Session,
+    config: dict[str, Any],
+    timezone: str,
+) -> Iterable[TriggerMatch]:
+    """Event-driven; pull-mode evaluation yields nothing.
+
+    Matches are produced via `OrderInquiryReserveService.reserve`
+    (`PLAN-oi-request-cs-reserve.md` 3.3), queued mid-transaction and drained the same
+    way the request trigger above is.
+    """
+    return []
+
+
+register(
+    TriggerSpec(
+        type="order_inquiry_reserved",
+        label="Order inquiry: reserved by CS",
+        description=(
+            "Fires once CS confirms what was reserved against a request (event-driven), "
+            "telling the requester what was reserved and the balance still to buy."
+        ),
+        config_schema={
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        },
+    ),
+    _trigger_order_inquiry_reserved,
 )
 
 

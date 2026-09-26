@@ -34,11 +34,13 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Mapping
 from copy import deepcopy
 from typing import Any
 
 from app.services.chatbot import jsc
 from app.services.chatbot.contracts import EXIT_CONTRACT_FIELDS
+from app.services.chatbot.lanes.business import fetch as fetch_mod
 from app.services.chatbot.lanes.business import pickers
 from app.services.chatbot.lanes.business.gate import run_gate
 from app.services.chatbot.lanes.business.predicate import derive_predicate_words, derive_require
@@ -50,10 +52,38 @@ logger = logging.getLogger(__name__)
 # `v.replace(/[-\s]+/g, '')` from the resolve-entity body's product-token fold.
 _PRODUCT_FOLD = re.compile(r"[-\s]+")
 
+# exec 12053189: a product code typed with a MINUS SIGN (U+2212, what Excel/Sheets emit
+# on paste) or an EN DASH (U+2013, what Word autocorrect emits) missed the resolver's
+# exact match, because `_PRODUCT_FOLD` is an ASCII-only, byte-graded port of n8n's own
+# `[-\s]+` and must stay that way (it is checked against real captures). The fold that
+# used to catch this ran in `head/output_exchange.py` before the resolver ever saw the
+# token; deleted in the S3 rewrite with no equivalent (AC-1592 test triage). Folded to
+# ASCII hyphen HERE, one step ahead of `_PRODUCT_FOLD`, so the graded regex still only
+# ever runs against what it was captured against.
+_UNICODE_DASH_FOLD: dict[str, str] = {
+    "\u2212": "-",  # MINUS SIGN
+    "\u2013": "-",  # EN DASH
+}
+
 # The two `sub-get-results` tools the pickers probe with, from the probe nodes' own
 # `tool` parameters. Not a registry: two literals, named where they are used.
 INCOMING_PROBE_TOOL = "crm_incoming_stock_list"
 CUSTOMER_PROBE_TOOL = "crm_order_management_orders_list"
+# The per-PRODUCT reads behind the promotion and purchase-order roster stamps
+# (owner hand pass 3, rows 1 and 7).
+PROMOTION_PROBE_TOOL = "crm_marketing_promotion_products_list"
+PURCHASE_ORDER_PROBE_TOOL = "crm_procurement_po_placed_list"
+
+#: R20 (owner round 7, 13 Sep 2026), extended by PLAN-chatbot-sales-report.md S4
+#: wiring point 8: the `order_status` values whose customer picker must not offer a
+#: delivery hint - see the `If-customer-picker` arm. The three scope words come from
+#: `fetch.ORDER_STATUS_TO_SCOPE` rather than being spelled again, bare `outstanding`
+#: is added because that table deliberately omits it (the field-reveal gate resolves
+#: it), and `sales_report` for the SAME reason as the outstanding asks: the probe
+#: measures DELIVERED DOs, a population this report does not read at all.
+OUTSTANDING_ORDER_STATUS: frozenset[str] = frozenset(
+    {"outstanding", "sales_report", *fetch_mod.ORDER_STATUS_TO_SCOPE}
+)
 
 # The probe's injected default window, from `probe-customer-orders`' semantic_input
 # expression (`$now.minus({days: 90})`). `annotate-customer-picker` mirrors this rule to
@@ -155,20 +185,20 @@ _WORD_RE = re.compile(r"[a-z0-9]+")
 def _incoming_named_in_message(message: Any) -> bool:
     """Did the customer's OWN words say incoming this turn?
 
-    `contracts.DOMAIN_SWITCH_WORDS` is the table, imported rather than copied: it is
-    already the inventoried vocabulary that decides a this-turn domain switch, and a second
-    list of the same words is how two readers of one question start disagreeing. Since D9
-    it is inverted out of `DOMAIN_SPEC[domain].switch_words` rather than hand-maintained,
-    so this reader is now two hops from the one declaration instead of one hop from a copy.
+    `turn.policy.domain_switch_words(default_policy())` is the table (AC-1594: was
+    `contracts.DOMAIN_SWITCH_WORDS`), read rather than copied: it is already the
+    inventoried vocabulary that decides a this-turn domain switch, and a second list of
+    the same words is how two readers of one question start disagreeing.
     """
-    from app.services.chatbot.contracts import DOMAIN_SWITCH_WORDS
+    from app.services.chatbot.turn.policy import default_policy, domain_switch_words
 
+    switch_words = domain_switch_words(default_policy())
     # ANY token, where `output_exchange`'s switch reader (its ~line 1125) demands EVERY
     # remaining content token name the same domain. Different questions: the switch asks
     # "is this message nothing but a domain word", this asks "did the customer say incoming
     # at all", and one incoming word anywhere is enough to keep the domain theirs.
     text = jsc.nullish_str(message).lower()
-    return any(DOMAIN_SWITCH_WORDS.get(tok) == "incoming" for tok in _WORD_RE.findall(text))
+    return any(switch_words.get(tok) == "incoming" for tok in _WORD_RE.findall(text))
 
 
 def retype_shipment_miss(
@@ -249,11 +279,36 @@ _BARE_MEMBER_OFFER_TYPES = ("product", "customer")
 _BARE_REPLY_WORD_RE = re.compile(r"[a-z0-9]+")
 
 
+def _hidden_spec_keys_from_ctx(ctx: dict[str, Any]) -> list[str]:
+    """`ctx.access.hidden_spec_keys`, the same key `check_access` sets (PLAN-
+    spec-visibility-policy.md "Spec fallback"). `[]` when access was never
+    resolved this turn - the resolve route treats an absent/empty list as
+    inert, so this is never a widening default."""
+    access = jsc.get(ctx, "access")
+    hidden = jsc.get(access, "hidden_spec_keys") if jsc.truthy(access) else None
+    return list(hidden) if jsc.is_array(hidden) else []
+
+
+def _contact_id_from_ctx(ctx: dict[str, Any]) -> str | None:
+    """`ctx.contact.id`, the SAME read `check_access`'s own caller uses
+    (`run.py`'s `contact_respond_id`) - sent alongside `hidden_spec_keys` so
+    the resolve route can resolve this contact's policy itself rather than
+    trusting only the caller-supplied list (security review B/S2).
+
+    Stringified like every sibling read of this id in this file: the Respond.io
+    contact id arrives on the wire as a JSON INTEGER, and the schema field it
+    lands in (`ResolveReferenceRequest.contact_id`) is a string."""
+    contact = jsc.get(ctx, "contact")
+    value = jsc.get(contact, "id") if jsc.truthy(contact) else None
+    return jsc.js_string(value) if jsc.truthy(value) else None
+
+
 def resolve_bare_reply_under_member_offer(
     parser: dict[str, Any],
     *,
     ctx: dict[str, Any],
     services: ResolveGateServices,
+    space_id: str | None = None,
     dry_run: bool = False,
 ) -> bool:
     """A bare reply the parser extracted NOTHING from, under an open `member_offer`,
@@ -298,7 +353,7 @@ def resolve_bare_reply_under_member_offer(
     arms. Never restricted to a single-word CODE SHAPE: the customer's own words decide
     nothing here, the resolver does.
     """
-    from app.services.chatbot.head.output_exchange import offer_is_open
+    from app.services.chatbot.session_state import offer_is_open
 
     prev = _prev_variables(ctx)
     if jsc.get(prev, "selection_context") != "member_offer" or not offer_is_open(prev):
@@ -323,6 +378,14 @@ def resolve_bare_reply_under_member_offer(
         "limit": 15,
         "spec_fallback": True,
         "understand_phrase": True,
+        # AC-18 (PLAN-spec-visibility-policy.md "Spec fallback"): this contact's
+        # hidden keys ride along so the resolve route can neither rank on one nor
+        # print it in a candidate's specifications. `contact_id` + `space_id`
+        # ride along too (security review B/S2), so the route resolves the
+        # policy itself rather than trusting only this list.
+        "hidden_spec_keys": _hidden_spec_keys_from_ctx(ctx),
+        "contact_id": _contact_id_from_ctx(ctx),
+        "space_id": space_id,
     }
     if dry_run:
         body["dry_run"] = True
@@ -455,11 +518,10 @@ def _set_page_reply(ctx: dict[str, Any], parser: dict[str, Any]) -> dict[str, An
             exit_kind="offer",
             fields={
                 "resolved": {},
-                # `set_page_terminal` (not `None`): `compile_state._set_page_carry`
-                # reads `gate_ran = gate is not None` and needs to SEE this turn
-                # ran, so it can positively CLEAR the carry rather than silently
-                # no-op and leave `_offer_carry` to re-arm the very state this
-                # reply just closed.
+                # `set_page_terminal` (not `None`): the tail needs to SEE this
+                # turn ran, so it can positively CLEAR the set-page carry rather
+                # than silently no-op and re-arm the very state this reply just
+                # closed.
                 "gate": {"set_page_terminal": True},
                 "ctx_resolved": {},
                 "aggregate": None,
@@ -522,6 +584,34 @@ def _set_page_reply(ctx: dict[str, Any], parser: dict[str, Any]) -> dict[str, An
     )
 
 
+#: The entity hints whose value IS a code the customer typed, as opposed to a word that
+#: describes a class of them. `inbound_shipment` is here because the parser hands the SAME
+#: typed product code either hint ("srtwt7202-new" came back `product` on one live run and
+#: `inbound_shipment` on the next).
+_CODE_BEARING_HINTS = ("product", "inbound_shipment")
+
+
+def _names_a_typed_code(parse_output: dict[str, Any]) -> bool:
+    """Did this turn name a product CODE, rather than only words that describe a set?
+
+    `gate._is_a_described_word` is the rule, called and never copied: a token with a digit
+    that is code-shaped is a code ("srtwc286"), anything else is a description ("bidet").
+    """
+    from app.services.chatbot.lanes.business.gate import _is_a_described_word
+
+    for entity in parse_output.get("entities") or []:
+        if not isinstance(entity, dict):
+            continue
+        if jsc.nullish_str(entity.get("hint")).strip().lower() not in _CODE_BEARING_HINTS:
+            continue
+        raw = jsc.nullish_str(entity.get("canonical_code")).strip() or jsc.nullish_str(
+            entity.get("raw")
+        ).strip()
+        if raw and not _is_a_described_word(raw):
+            return True
+    return False
+
+
 def _token_of(entity: Any) -> Any:
     """`String(x.canonical_code ?? '').trim() || (x.raw ?? '')`, product-folded.
 
@@ -534,12 +624,18 @@ def _token_of(entity: Any) -> Any:
         raw = jsc.get(entity, "raw")
         value = raw if raw is not None else ""
     if jsc.lower_or_empty(jsc.get(entity, "hint")) == "product":
+        for bad, good in _UNICODE_DASH_FOLD.items():
+            value = value.replace(bad, good)
         return _PRODUCT_FOLD.sub("", value)
     return value
 
 
 def resolve_entity_body(
-    ctx: dict[str, Any], *, dry_run: bool = False, tier_gate: dict[str, Any] | None = None
+    ctx: dict[str, Any],
+    *,
+    space_id: str | None = None,
+    dry_run: bool = False,
+    tier_gate: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The `resolve-entity` httpRequest jsonBody, key for key.
 
@@ -602,6 +698,11 @@ def resolve_entity_body(
         "limit": 15,
         "spec_fallback": True,
         "understand_phrase": True,
+        # AC-18 (PLAN-spec-visibility-policy.md "Spec fallback"): see the sibling
+        # body builder above for the reasoning.
+        "hidden_spec_keys": _hidden_spec_keys_from_ctx(ctx),
+        "contact_id": _contact_id_from_ctx(ctx),
+        "space_id": space_id,
     }
     if dry_run:
         body["dry_run"] = True
@@ -632,9 +733,46 @@ def resolve_entity_body(
     require = derive_require(parse_output, message_text=_query_text(ctx))
     if require is not None and not set(require) <= set(REQUIRE_LEGS):
         require = None
+    # The class word the PARSER named, forwarded as a value (turn re-architecture,
+    # D11): a `product_type` / `category` entity IS "which taps", and reading it off
+    # the verdict is what lets a HAS turn be described by something other than this
+    # turn's own raw text.
+    scope_terms: list[str] = []
+    for entity in parse_output.get("entities") or []:
+        if not isinstance(entity, dict):
+            continue
+        if jsc.nullish_str(entity.get("hint")).strip().lower() not in ("product_type", "category"):
+            continue
+        raw = jsc.nullish_str(entity.get("raw")).strip()
+        if raw and raw not in scope_terms:
+            scope_terms.append(raw)
+    # A CODE is not a description (F8 re-check, 20 Sep 2026). `derive_require` maps off
+    # the INTENT alone, so `check_product_attachment` / `check_incoming` / `check_stock`
+    # carried a leg on every turn - including a bare code lookup that describes no set at
+    # all. With no class word to scope by, `resolve_product_set` then answers the leg over
+    # the WHOLE catalogue and `references._emit_spec_matches` emits that population as a
+    # third, whole-query resolution of ordinary product matches (the HAS branch passes no
+    # `attach_to`). Measured on the clone for "SRTWT165-FT CERT": 200 products nobody
+    # named on `gate.compatible_entities`, a 131 KB fetch envelope, and a did-you-mean
+    # probe over 206 entities whose answer came back at the tool's 50-row page cap - which
+    # `miss_suggest._annotate` correctly refuses to attribute (`page_saturated`,
+    # `ok: false`), so the three real neighbours lost their has/no stamps and the reply
+    # fell back to the bare inline sentence (live turns 790d43c3 and 85e536be).
+    #
+    # This is the SAME rule `turn_runtime.set_page_carry` already applies one seam later
+    # and for the same measured incident ("an empty `scope_terms` describes 'every product
+    # that has stock'", turns 92d565a5 / b383d402 / 2e7ca929): a spec tier reached with
+    # nothing to scope by is a miss, not a set. Applied here it stops the population being
+    # READ at all rather than only refusing to page it. A described ask ("which taps have
+    # a cert") names a `product_type` / `category` word and is untouched; a turn naming
+    # both a code and a class word keeps its scope term and is untouched too.
+    if require is not None and not scope_terms and _names_a_typed_code(parse_output):
+        require = None
     if require is not None:
         body["require"] = require
         body["predicate_words"] = derive_predicate_words(parse_output, require, message_text=_query_text(ctx))
+        if scope_terms:
+            body["scope_terms"] = scope_terms
     return body
 
 
@@ -671,12 +809,39 @@ def build_ctx_resolved(
 # --------------------------------------------------------------------------- #
 
 
+def _report_ask_has_product_subject(parser: dict[str, Any], compatible: Any) -> bool:
+    """Second-defect fix A (captain brief, 19 Sep 2026, general seam): a REPORT
+    ask (`order_status` in `OUTSTANDING_ORDER_STATUS` - both the outstanding
+    statuses and `sales_report` share this hole, the same population R20
+    already names for the customer-picker probe) accepts EITHER a customer OR
+    a product as its subject (AC-1119 / AC-1626 / S7). Clause 3 below exists
+    for an order-domain turn in general, where a customer that failed to
+    resolve really is nothing to answer with - but a report ask has an
+    ALTERNATE subject that clause does not know about: "dealer Srt5674-N
+    August total sale quantity" parsed "Srt5674-N" as a customer (the word
+    "dealer" sits in front of it), the resolver's own `fallback_to_all_types`
+    then found it as a PRODUCT instead, and clause 3 answered a miss with NO
+    TOOL CALL AT ALL even though the report was fully answerable off that
+    product. This is checked HERE, at the one seam that already knows both
+    `order_status` and `compatible_entities`, rather than teaching the tool-
+    pick dispatch (`run_fetch`) to re-derive a decision this gate already
+    made."""
+    order_status = jsc.js_string(parser.get("order_status") or "")
+    if order_status not in OUTSTANDING_ORDER_STATUS:
+        return False
+    return any(
+        jsc.truthy(c) and jsc.lower_or_empty(jsc.get(c, "entity_type")) == "product"
+        for c in jsc.array(compatible)
+    )
+
+
 def if3_miss(ctx_resolved_ctx: dict[str, Any], *, parser: dict[str, Any]) -> bool:
     """`If3` - the miss gate, three OR'd clauses, verbatim.
 
     Clause 3 is the "customer resolved to nothing" case the first two cannot see: the
     domain accepts a customer, the parser named one, and nothing customer-shaped survived
-    the gate.
+    the gate. `_report_ask_has_product_subject` (second-defect fix A, 19 Sep 2026) is a
+    FOURTH, AND'd exception on clause 3 alone - clauses 1 and 2 are untouched.
     """
     gate = jsc.get(ctx_resolved_ctx, "gate") or {}
     resolved = jsc.get(ctx_resolved_ctx, "resolved") or {}
@@ -707,6 +872,7 @@ def if3_miss(ctx_resolved_ctx: dict[str, Any], *, parser: dict[str, Any]) -> boo
             jsc.truthy(c) and jsc.lower_or_empty(jsc.get(c, "entity_type")) == "customer"
             for c in jsc.array(compatible)
         )
+        and not _report_ask_has_product_subject(parser, compatible)
     )
 
 
@@ -842,13 +1008,15 @@ def run(
     space_id: str | None = None,
     probe_default_start: str | None = None,
     dry_run: bool = False,
+    roster_caps: Mapping[str, int] | None = None,
 ) -> dict[str, Any]:
     """One pass through `sub-resolve-and-gate`. Returns the exit arm's item.
 
     `space_id` is the default respond workspace's (D5), and it reaches the probes' own
     `semantic_input` where n8n hard-codes `364817`. `probe_default_start` is the
     `$now.minus({days: 90})` the customer probe injects, passed in rather than computed so
-    a replay is deterministic.
+    a replay is deterministic. `roster_caps` (PLAN-chatbot-answer-half-reattach.md
+    "Roster cap") is handed straight through to `gate.run_gate`.
     """
     # The two carriers' contract throws, against the values this function was handed.
     # `build_ctx` / `carry_item` themselves take the TRIGGER and are what `run_from_trigger`
@@ -900,13 +1068,15 @@ def run(
     # main resolve-entity call two lines down reads that same object to build its own
     # tokens - so a narrowed product/customer rides the ONE round trip the rest of the
     # turn makes, exactly as a customer's own explicit entity would have.
-    resolve_bare_reply_under_member_offer(parser, ctx=ctx, services=services, dry_run=dry_run)
+    resolve_bare_reply_under_member_offer(
+        parser, ctx=ctx, services=services, space_id=space_id, dry_run=dry_run
+    )
 
     # ── resolve-entity ──────────────────────────────────────────────────────
     # R25/AC-1349: the tier gate's own recomposed access_levels, when it ran
     # and produced any - see `resolve_entity_body`'s own docstring.
     resolved = services.resolve_entity(
-        resolve_entity_body(ctx, dry_run=dry_run, tier_gate=tier_gate_out)
+        resolve_entity_body(ctx, space_id=space_id, dry_run=dry_run, tier_gate=tier_gate_out)
     )
 
     # ── a container-hinted token that is ONLY a product is a product (item F) ─
@@ -935,6 +1105,7 @@ def run(
         session=jsc.get(ctx, "session"),
         tier_gate=tier_gate_out,
         aggregate=aggregate,
+        roster_caps=roster_caps,
     )
     gate_snapshot = _snapshot(gate_item)
 
@@ -982,24 +1153,158 @@ def run(
     # ── If-customer-picker ──────────────────────────────────────────────────
     if if_customer_picker(picker_gate):
         entities = jsc.get(picker_gate, "customer_probe_entities")
-        probe = _run_probe(
-            services,
-            ctx=ctx,
-            tool=CUSTOMER_PROBE_TOOL,
-            entities=entities,
-            aggregate=aggregate,
-            default_start=probe_default_start,
-            space_id=space_id,
+        # R20 (owner round 7, 13 Sep 2026): an OUTSTANDING ask does not probe, and so
+        # gets no delivery hint. `CUSTOMER_PROBE_TOOL` measures orders with an
+        # `actual_delivery_date` - DELIVERED DOs, the owner's own 6 Sep ruling for
+        # delivery enquiries - which is the OPPOSITE population from the outstanding
+        # report's DO block (DOs not yet delivered). So the picker stamped "- no DO" on
+        # every line and "None of these have a matching DO.", and the report two turns
+        # later showed a DO with 5 outstanding: "it is still kinda strange for me though,
+        # to say no DO, then later when i get the summary, there is DO." The hint cannot
+        # be made true for this ask by rewording it, and there is nothing here worth
+        # measuring, so neither happens. Decided on the ask's OWN `order_status`, not on
+        # the domain: every other order-domain picker keeps today's hint.
+        outstanding_ask = (
+            jsc.js_string(jsc.get(parser, "order_status") or "").strip() in OUTSTANDING_ORDER_STATUS
+        )
+        probe = (
+            None
+            if outstanding_ask
+            else _run_probe(
+                services,
+                ctx=ctx,
+                tool=CUSTOMER_PROBE_TOOL,
+                entities=entities,
+                aggregate=aggregate,
+                default_start=probe_default_start,
+                space_id=space_id,
+            )
         )
         annotated = pickers.annotate_customer(
             _snapshot(picker_gate), probe=probe, parser=parser
         )
+        if outstanding_ask:
+            # The annotator's UNPROBED arm renders exactly what R20 wants - the bare
+            # picker, no suffixes, no closing claim - so its wording is untouched. Only
+            # its reason is, because "probe_unavailable" would tell the operator a probe
+            # failed when one was deliberately not run.
+            annotated["customer_probe_skip_reason"] = "outstanding_ask"
         # `annotate_incoming` stays NULL on this arm: the customer annotator is not the
         # incoming one, and `sub-main-processing`'s `annotate-incoming-gate` reads exactly
         # that key to decide whether its stand-in executes.
         return exit_item(_snapshot(annotated), exit_kind="offer", fields=base_fields)
 
     return exit_item(_snapshot(ctx_resolved_item), exit_kind="not_found", fields=base_fields)
+
+
+def probe_incoming(
+    services: ResolveGateServices,
+    *,
+    ctx: dict[str, Any],
+    entities: Any,
+    aggregate: dict[str, Any] | None,
+    space_id: str | None,
+) -> Any:
+    """The incoming picker's own probe, for a caller outside the miss arm.
+
+    The arm above runs it only when the gate could not pin a single product
+    (`if_incoming_picker`: `require_specific`), which is the only way the n8n graph could
+    ever reach a picker. The re-architected narrower asks the same roster from the other
+    side - a domain switch that CARRIES ten settled variants ("incoming", after a stock
+    answer about them) is not ambiguous to the gate at all, so it never reached this
+    probe and the roster printed without the has/no-incoming stamps the same roster shows
+    when the customer names the family themselves (browser pass 3, turn 2). One probe,
+    one builder for its inputs, two callers.
+    """
+    return _run_probe(
+        services,
+        ctx=ctx,
+        tool=INCOMING_PROBE_TOOL,
+        entities=entities,
+        aggregate=aggregate,
+        default_start=None,
+        space_id=space_id,
+    )
+
+
+def probe_customer(
+    services: ResolveGateServices,
+    *,
+    ctx: dict[str, Any],
+    entities: Any,
+    aggregate: dict[str, Any] | None,
+    default_start: str | None,
+    space_id: str | None,
+) -> Any:
+    """The customer picker's own probe, for a caller outside the miss arm.
+
+    The `if_customer_picker` arm above runs it only when the gate could not pin a single
+    customer. The re-architected narrower builds the same roster from the other side (a
+    settled carry, a family widened by the resolver), so it never reached this probe and
+    printed a roster with no has/no-DO stamps at all - the owner's hand pass 2, item 2.
+    Same shape, and the same reason, as `probe_incoming` below.
+    """
+    return _run_probe(
+        services,
+        ctx=ctx,
+        tool=CUSTOMER_PROBE_TOOL,
+        entities=entities,
+        aggregate=aggregate,
+        default_start=default_start,
+        space_id=space_id,
+    )
+
+
+def probe_promotion(
+    services: ResolveGateServices,
+    *,
+    ctx: dict[str, Any],
+    entities: Any,
+    aggregate: dict[str, Any] | None,
+    space_id: str | None,
+) -> Any:
+    """"Does this product have a promotion?", per candidate - the promotion roster's own
+    probe (owner hand pass 3, row 1).
+
+    A twin of `probe_incoming`, for a roster the n8n graph never had a picker for at all:
+    the promotion domain narrows on TIER, so a product family under it was printed bare
+    while the same family under incoming carried has/no incoming. `crm_marketing_
+    promotion_products_list` is the per-PRODUCT read (`crm_marketing_promotions_list`
+    returns promotions, which cannot be attributed back to a candidate).
+    """
+    return _run_probe(
+        services,
+        ctx=ctx,
+        tool=PROMOTION_PROBE_TOOL,
+        entities=entities,
+        aggregate=aggregate,
+        default_start=None,
+        space_id=space_id,
+    )
+
+
+def probe_purchase_order(
+    services: ResolveGateServices,
+    *,
+    ctx: dict[str, Any],
+    entities: Any,
+    aggregate: dict[str, Any] | None,
+    space_id: str | None,
+) -> Any:
+    """"Does this product have a PO placed?", per candidate (owner hand pass 3, row 7).
+
+    The same shape and the same reason as `probe_promotion` above. The picker stays: the
+    owner keeps the roster and wants the stamp on it, not the roster replaced.
+    """
+    return _run_probe(
+        services,
+        ctx=ctx,
+        tool=PURCHASE_ORDER_PROBE_TOOL,
+        entities=entities,
+        aggregate=aggregate,
+        default_start=None,
+        space_id=space_id,
+    )
 
 
 def _run_probe(

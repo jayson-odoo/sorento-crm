@@ -53,7 +53,12 @@ class DownloadService:
         )
 
     def has_in_flight(
-        self, *, user_id: str, kind: str, source_entity_type: str, source_entity_id: str
+        self,
+        *,
+        user_id: str,
+        kind: str,
+        source_entity_type: Optional[str] = None,
+        source_entity_id: Optional[str] = None,
     ) -> bool:
         """One in-flight export per user, per EXACT kind, per source entity (security S5,
         AC-16b, amended - reviewer R1). The kind is matched exactly, never a prefix: two
@@ -61,25 +66,34 @@ class DownloadService:
         two different in-flight slots, so a pending PDF never blocks an Excel request for
         the same run.
 
+        `source_entity_type`/`source_entity_id` are optional (Lane B, AC-B6): an export
+        that names no record - the OI worklist's own list-page export - has both NULL on
+        the row, and the guard has to match that NULL rather than the literal string
+        `str(None)` would otherwise compare against.
+
         Sweeps this user's stale rows first (`fail_stale`) - a `pending` row a dead worker
         left behind must not lock the buyer out for the rest of the 20-minute window; once
         swept to `failed` it no longer matches the `pending`/`processing` filter below.
         """
         self.fail_stale(str(user_id))
-        return (
-            self.db.query(UserDownload.id)
-            .filter(
-                UserDownload.user_id == str(user_id),
-                UserDownload.kind == kind,
-                UserDownload.source_entity_type == source_entity_type,
-                UserDownload.source_entity_id == str(source_entity_id),
-                UserDownload.status.in_(
-                    [DownloadStatus.PENDING.value, DownloadStatus.PROCESSING.value]
-                ),
-            )
-            .first()
-            is not None
+        query = self.db.query(UserDownload.id).filter(
+            UserDownload.user_id == str(user_id),
+            UserDownload.kind == kind,
+            UserDownload.status.in_(
+                [DownloadStatus.PENDING.value, DownloadStatus.PROCESSING.value]
+            ),
         )
+        query = query.filter(
+            UserDownload.source_entity_type.is_(None)
+            if source_entity_type is None
+            else UserDownload.source_entity_type == source_entity_type
+        )
+        query = query.filter(
+            UserDownload.source_entity_id.is_(None)
+            if source_entity_id is None
+            else UserDownload.source_entity_id == str(source_entity_id)
+        )
+        return query.first() is not None
 
     def fail_stale(self, user_id: str) -> int:
         """Flip the user's long-stuck pending/processing rows to 'failed'.
@@ -188,7 +202,10 @@ class DownloadService:
         return row
 
     def mark_ready(
-        self, download_id: str, *, storage_provider: str, storage_key: str, filename: Optional[str] = None
+        self, download_id: str, *, storage_provider: str, storage_key: str,
+        filename: Optional[str] = None,
+        row_count_low: Optional[int] = None, row_count_all: Optional[int] = None,
+        row_count: Optional[int] = None, sheet_count: Optional[int] = None,
     ) -> Optional[UserDownload]:
         row = self.get(download_id)
         if row is None:
@@ -198,6 +215,21 @@ class DownloadService:
         row.storage_key = storage_key
         if filename:
             row.filename = filename
+        # PLAN-low-stock-report S3/S5 (reviewer S3): the row counts flip to READY in the
+        # SAME transaction as the status, so a poll can never read `ready` with NULL
+        # counts. Only the low stock export passes them; every other kind leaves the two
+        # columns NULL, which is what they mean for it.
+        if row_count_low is not None:
+            row.row_count_low = row_count_low
+        if row_count_all is not None:
+            row.row_count_all = row_count_all
+        # `row_count` / `sheet_count` (PLAN-stock-debt-filters-totals-export-24sep.md,
+        # AC-12b): the GENERIC pair, same same-transaction reasoning - `stock_debt_xlsx`
+        # is the first writer, low stock's own two columns above are untouched.
+        if row_count is not None:
+            row.row_count = row_count
+        if sheet_count is not None:
+            row.sheet_count = sheet_count
         row.error = None
         row.ready_at = _utc_naive_now()
         self.db.commit()

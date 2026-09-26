@@ -767,7 +767,10 @@ describe('ProformaInvoiceDetail - the tabs', () => {
     ).toBeInTheDocument();
   });
 
-  it('renders the Packing lists tab with an empty state and the Convert CTA', () => {
+  it('renders the Packing lists tab with an empty state and ONE Convert button (header only)', () => {
+    // C4/C5 (PLAN-pi-header-fields-convert-fixes-24sep.md): the empty-state's own Convert
+    // CTA is removed - only the header's Convert to packing list button exists now. RED
+    // until the coder drops `ProformaInvoicePackingListsTab`'s `emptyAction` wiring.
     state.data = detail();
     renderDetail();
     openTab('Packing lists');
@@ -775,8 +778,7 @@ describe('ProformaInvoiceDetail - the tabs', () => {
     expect(
       screen.getByText('Nothing from this invoice is in a packing list yet.'),
     ).toBeInTheDocument();
-    // The next step from the empty state is the SAME action as the header's primary.
-    expect(screen.getAllByRole('button', { name: /convert to packing list/i }).length).toBe(2);
+    expect(screen.getAllByRole('button', { name: /convert to packing list/i }).length).toBe(1);
   });
 
   it('names the packing list, and what is left when it is split (Q9)', () => {
@@ -817,9 +819,9 @@ describe('ProformaInvoiceDetail - the tabs', () => {
     expect(screen.getByText('4 of 10')).toBeInTheDocument();
   });
 
-  // Ruling 26 moved this off the Packing lists tab, which is now the containers alone: an
-  // unmatched line says so in the LINES tab's own Matched column, which is also where the
-  // reader fixes it.
+  // Ruling 26 moved this off the Packing lists tab, which is now the containers alone. S7
+  // then took the Match column with its badges: a line that binds to nothing is an EMPTY
+  // Product picker, on the Lines tab, which is also where the reader answers it.
   it('names a line nothing could carry, instead of calling it placed', () => {
     state.data = detail({
       lines: [
@@ -835,9 +837,7 @@ describe('ProformaInvoiceDetail - the tabs', () => {
     renderDetail();
     openTab('Lines');
 
-    expect(
-      screen.getByText(/No catalogue product matches this line's item code/),
-    ).toBeInTheDocument();
+    expect(screen.getAllByRole('combobox')[0]).toHaveTextContent('Search a product or set');
   });
 });
 
@@ -1163,7 +1163,8 @@ describe('F5b - revisions', () => {
 });
 
 describe('F11 - answering a supplier code by hand', () => {
-  it('offers Match to product on a line that binds to nothing', () => {
+  // S7: one always-on picker in the Product column, no second door through a Match column.
+  it('offers the product-or-set picker on a line that binds to nothing, in read mode', () => {
     state.data = detail({
       lines: [
         {
@@ -1177,10 +1178,13 @@ describe('F11 - answering a supplier code by hand', () => {
     renderDetail();
     openTab('Lines');
 
-    expect(screen.getByRole('button', { name: /match to product/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /match to product/i })).not.toBeInTheDocument();
+    expect(screen.getAllByRole('combobox')[0]).toHaveTextContent('Search a product or set');
   });
 
-  it('marks a bind the ladder worked out, and names the rung in the title', () => {
+  // S7: the rung is no longer badged on the line - what the reader acts on is the code the
+  // ruling points at, in the picker that can change it.
+  it('shows what a bind the ladder worked out points at, with no badge and no Change button', () => {
     state.data = detail({
       lines: [
         { ...detail().lines[0], match_source: 'auto', matched_by: 'token_set', match_id: 'a-1' },
@@ -1189,8 +1193,9 @@ describe('F11 - answering a supplier code by hand', () => {
     renderDetail();
     openTab('Lines');
 
-    expect(screen.getByText('auto')).toHaveAttribute('title', 'Matched by token_set');
-    expect(screen.getByRole('button', { name: /^change$/i })).toBeInTheDocument();
+    expect(screen.getAllByRole('combobox')[0]).toHaveTextContent('ITEM-1');
+    expect(screen.queryByText('auto')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^change$/i })).not.toBeInTheDocument();
   });
 
   it('says nothing about a code that matched exactly', () => {
@@ -1218,7 +1223,12 @@ describe('F11 - answering a supplier code by hand', () => {
     renderDetail();
     openTab('Lines');
 
-    fireEvent.click(screen.getByRole('button', { name: /^forget$/i }));
+    // S7: clearing the picker IS the forget - there is no Forget button beside it any more.
+    fireEvent.pointerDown(
+      within(screen.getAllByRole('combobox')[0]).getByRole('button', {
+        name: 'Clear selection',
+      }),
+    );
 
     // D7: the press IS the action, and the entity is the ALIAS row - forgetting is
     // a ruling being withdrawn, not a line being edited.
@@ -1286,23 +1296,25 @@ describe('S2 - the Product select carries a matched line through edit, and UoM c
     expect(line).not.toHaveProperty('product_set_id');
   });
 
-  it('AC-B3: clearing the product select and saving sends product_id: null', async () => {
+  // S7 replaced the old "clear the select, Save, product_id: null" round trip on a CODED
+  // line: what such a line carries is a supplier-code ruling, and the only thing clearing
+  // could mean is withdrawing it (AC-7.5). A line nothing was ever ruled on has nothing to
+  // withdraw, so it offers no clear at all - and its binding is not unbound from here.
+  it('AC-7.5: a coded line with no remembered ruling offers no clear', () => {
     state.data = detail();
     renderDetail();
     beginEdit();
     openTab('Lines');
 
     const productCombo = within(lineRow('Item code for line 1')).getAllByRole('combobox')[0];
-    fireEvent.pointerDown(within(productCombo).getByRole('button', { name: 'Clear selection' }));
-    fireEvent.click(screen.getByRole('button', { name: /^Save proforma invoice$/i }));
-
-    await waitFor(() => expect(writes.save).toHaveBeenCalledTimes(1));
-    const line = lastSavePayload().lines?.[0] ?? {};
-    expect(line.product_id).toBeNull();
-    // The set binding was never touched (it was already null) - no key for it either.
-    expect(line).not.toHaveProperty('product_set_id');
+    expect(productCombo).toHaveTextContent('ITEM-1');
+    expect(
+      within(productCombo).queryByRole('button', { name: 'Clear selection' }),
+    ).not.toBeInTheDocument();
   });
 
+  // A line the supplier gave no code for: no ruling to make, so the pick is still a draft
+  // the Save writes (AC-7.6).
   it('AC-B3: picking a different product sends the new id, and product_set_id: null for a line that was set-bound', async () => {
     getProductsMock.mockResolvedValueOnce({
       data: [{ id: 'prod-99', product_code: 'NEWCODE', product_name: 'New product' }],
@@ -1312,6 +1324,7 @@ describe('S2 - the Product select carries a matched line through edit, and UoM c
       lines: [
         {
           ...detail().lines[0],
+          item_code: '',
           product_id: null,
           product_set_id: 'set-1',
           product_code: 'SET-1',

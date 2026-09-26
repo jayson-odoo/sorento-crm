@@ -35,17 +35,15 @@ from fastapi.testclient import TestClient
 # MUST be first app import - resolves the circular import in app.modules.runtime.guards
 from app.main import app  # noqa: E402
 from tests._pg_fixture import blank_session, unique_code
+from tests import _ptag_r9_seed
 
 _BASE = "/api/v1/public/portal/submissions/price_tag_request"
 _SORENTO_COMPANY_ID = "00000000-0000-0000-0000-000000000001"
 
 
 def _seed_contact_who_can_see_the_form(db) -> str:
-    from app.models.access import (
-        ContactAccessType,
-        RespondContact,
-        respond_contact_access_types,
-    )
+    from app.models.access import RespondContact
+    from tests._portal_grant import link_contact_segment, seed_segment
 
     contact = RespondContact(
         id=str(uuid.uuid4()),
@@ -53,20 +51,9 @@ def _seed_contact_who_can_see_the_form(db) -> str:
         name=unique_code("contact"),
     )
     db.add(contact)
-    access_type = ContactAccessType(
-        code=unique_code("at"),
-        name=unique_code("Access Type"),
-        portal_form_types=["price_tag_request"],
-    )
-    db.add(access_type)
     db.flush()
-    db.execute(
-        respond_contact_access_types.insert().values(
-            contact_id=contact.id,
-            access_type_code=access_type.code,
-        )
-    )
-    db.flush()
+    segment = seed_segment(db, kinds=["price_tag_request"])
+    link_contact_segment(db, contact.id, segment.code)
     return contact.id
 
 
@@ -186,6 +173,8 @@ def _submittable_payload(product_id: str) -> dict:
     return {
         "debtor_name": "ZZT Dealer",
         "needed_by_date": str(date.today() + timedelta(days=7)),
+        # r9 D7: who prints has no default and submit refuses without it.
+        "print_by": "office",
         "lines": [{"line_type": "product", "product_id": product_id}],
     }
 
@@ -295,3 +284,14 @@ class TestTheAssignmentBlockFailingDoesNotFailSubmit:
         body = res.json()
         assert body["status"] == "new"
         assert body["assigned_to_id"] is None
+
+
+@pytest.fixture(autouse=True)
+def no_respond(monkeypatch):
+    """S8: no test run reaches api.respond.io. See `_ptag_r9_seed.block_respond`.
+
+    Every transition here goes through the real notifier, which sends over the
+    network unless something stops it - the run log used to carry a live
+    ``Window check: Respond.io list_messages failed`` per transition.
+    """
+    return _ptag_r9_seed.block_respond(monkeypatch)

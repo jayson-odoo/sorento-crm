@@ -9,8 +9,8 @@ Four claims, each one a way an import can look successful while being useless:
 * **every row is accounted for, and the total is everything the job accounted for.** Processed
   equals total: captions, rows that state nothing outstanding, rows that could not be read and
   rows that were written all carry a code, so a 4,349-row file never finishes reporting 4,290 -
-  and the total INCLUDES the lines closed (or instalments withdrawn) by absence, which have an
-  outcome and no source row, so it never finishes reporting 6 of 5 either.
+  and the total INCLUDES the lines closed by absence, which have an outcome and no source row,
+  so it never finishes reporting 6 of 5 either.
 * **closures are recorded.** A line we hold that the file no longer carries is closed, and
   closing is the destructive half of an outstanding upload - "12 updated" would hide it.
 * **the total is published before the first write**, or the upload drawer shows 0/0 for the
@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import uuid
 from datetime import date
-from io import BytesIO
 
 from fastapi.testclient import TestClient
 from sqlalchemy import text
@@ -64,40 +63,8 @@ _XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 AGENT_HEADERS = ("S/O NO", "DEBTOR CODE", "AGENT", "ITEM CODE", "QTY", "DELIVERY DATE",
                  "STOCK LOCATION", "ORDER TYPE")
 
-#: The Order Inquiry sheet's own spelling, from the customer's file.
-INQUIRY_HEADERS = ("SO NO", "ITEM CODE", "QTY", "DELIVERY DATE", "PROJECT", "PO NO")
-
-
 def _upload(data: bytes, name: str = "outstanding_so.xlsx"):
     return {"file": (name, data, _XLSX)}
-
-
-def _inquiry_workbook(sheets: dict) -> bytes:
-    """An Order Inquiry book: `{tab name: [rows]}`, header row per tab.
-
-    Generated rather than committed for the tests that need a SECOND upload of a CHANGED
-    sheet - a withdrawal is reached by the sheet's silence, so it can only be produced by
-    two files that disagree, and no single committed fixture can carry that.
-    """
-    import openpyxl
-
-    wb = openpyxl.Workbook()
-    wb.remove(wb.active)
-    for name, rows in sheets.items():
-        ws = wb.create_sheet(title=name)
-        ws.append(list(INQUIRY_HEADERS))
-        for row in rows:
-            ws.append(list(row))
-    buf = BytesIO()
-    wb.save(buf)
-    return buf.getvalue()
-
-
-def _codes(db, count: int = 2) -> tuple[str, ...]:
-    """Product codes this test owns, seeded into the company the request runs under."""
-    codes = tuple(f"{MARKER}-INQ{i}-{uuid.uuid4().hex[:6]}".upper() for i in range(count))
-    _seed_products(db, codes)
-    return codes
 
 
 def _rows(db, job_db_id: str) -> list:
@@ -448,10 +415,18 @@ def test_the_worker_writes_under_the_company_the_job_snapshotted(scm_app, monkey
 
 
 # --------------------------------------------------------------------------- #
-# order inquiry - the sheet, its restatements, and what it stops saying
+# order inquiry - one outcome per row of the sheet
 # --------------------------------------------------------------------------- #
 
 def test_the_inquiry_sheet_records_an_outcome_for_every_row(scm_app, monkeypatch):
+    """Every row of the file carries a code, and the codes are the MATCHER's now.
+
+    The sheet stopped creating the book (`PLAN-scm-oi-sheet-migration.md` D4), so a fixture
+    whose sales orders nobody seeded no longer produces a `created` row: AutoCount owns
+    those numbers and the CRM does not hold them, which is exactly `order_not_found`. What
+    this test is about is unchanged - every source row is accounted for, and processed
+    equals total.
+    """
     app, db, gcu, gcuk = scm_app
     as_company_user(app, db, gcu, gcuk)
     _seed_products(db, INQUIRY_ITEMS)
@@ -466,123 +441,34 @@ def test_the_inquiry_sheet_records_an_outcome_for_every_row(scm_app, monkeypatch
     assert job.total_rows == 9
     assert job.processed_rows == job.total_rows
     codes_seen = [r.code for r in _rows(db, job_id)]
-    assert oc.CREATED in codes_seen
-    assert oc.PRODUCT_NOT_FOUND in codes_seen, "a code we do not hold is never invented"
+    assert len(codes_seen) == 9, codes_seen
+    assert set(codes_seen) == {oc.ORDER_NOT_FOUND}, codes_seen
 
 
-def test_a_row_restating_an_instalment_is_counted_not_lost(scm_app, monkeypatch):
-    """A book of 15,797 rows describes 8,272 deliveries, and the difference is restatement.
+def test_the_inquiry_job_reports_the_migration_result_keys(scm_app, monkeypatch):
+    """AC-S1-22 at the JOB, where the operator actually reads it.
 
-    Nothing is skipped - the row's quantity is inside the instalment - so it rides on
-    `unchanged` with its own code. Reported as loss, the operator reads a working import as a
-    broken one.
+    The importer's own key set is asserted in
+    `tests/test_project_order_inquiry_import_migration.py`; this pins that what the job
+    stores under `result["upload"]` is that same set EXACTLY, so no job page can print a
+    counter the importer no longer means (`lines_created`, `instalments`, `po_claims`, ...)
+    and nothing the task wraps around the answer can quietly add one either.
     """
+    from tests.test_project_order_inquiry_import_migration import (
+        RESULT_KEYS,
+        RETIRED_KEYS,
+    )
+
     app, db, gcu, gcuk = scm_app
     as_company_user(app, db, gcu, gcuk)
-    (item,) = _codes(db, 1)
-    so = f"{MARKER}-SO-{uuid.uuid4().hex[:6]}".upper()
-    book = _inquiry_workbook({"JAN 26": [
-        (so, item, 80, date(2026, 1, 20), "TUJU RESIDENCE", ""),
-        (so, item, 40, date(2026, 1, 20), "TUJU RESIDENCE", ""),
-    ]})
+    _seed_products(db, INQUIRY_ITEMS)
 
     _c, job_id = _queue_and_run(
         app, db, monkeypatch, "/api/v1/scm/order-inquiry/apply",
-        {"file": ("inquiry.xlsx", book, _XLSX)},
+        {"file": ("order_inquiry.xlsx", ORDER_INQUIRY.read_bytes(), _XLSX)},
     )
 
-    job = _job(db, job_id)
-    assert job.total_rows == 2
-    assert job.processed_rows == 2
-    rows = _rows(db, job_id)
-    restating = [r for r in rows if r.code == oc.RESTATES_AN_INSTALMENT]
-    assert len(restating) == 1, [r.code for r in rows]
-    assert restating[0].outcome == oc.OUTCOME_UNCHANGED, "its quantity is in the instalment"
-    # Row numbers restart on every tab, so an outcome that names only "row 2" points at one
-    # row per sheet in a book of monthly tabs. The identity carries the tab.
-    written = next(r for r in rows if r.code == oc.CREATED)
-    assert written.identity["sheet"] == "JAN 26"
-    # One line for 120, not two lines and not one for 40.
-    assert db.execute(text(
-        "SELECT sol.qty_ordered FROM sales_order_lines sol "
-        "JOIN sales_orders so ON so.id = sol.sales_order_id WHERE so.so_number = :n"
-    ), {"n": so}).scalars().all() == [120]
+    upload = _job(db, job_id).result["upload"]
 
-
-def test_a_withdrawn_instalment_is_recorded_and_counted_into_the_total(scm_app, monkeypatch):
-    """The destructive half of this channel, and the second way processed could exceed total.
-
-    A withdrawal is reached by the sheet's SILENCE, so it carries an outcome and no source
-    row. With the sheet's row count as the total the job reports more rows processed than the
-    file has, which is how a page comes to show a progress bar past 100%.
-    """
-    app, db, gcu, gcuk = scm_app
-    as_company_user(app, db, gcu, gcuk)
-    kept, dropped = _codes(db, 2)
-    so = f"{MARKER}-SO-{uuid.uuid4().hex[:6]}".upper()
-    client = TestClient(app)
-    captured = stub_queue(monkeypatch)
-
-    first = _inquiry_workbook({"JAN 26": [
-        (so, kept, 10, date(2026, 1, 20), "TUJU RESIDENCE", ""),
-        (so, dropped, 5, date(2026, 1, 20), "TUJU RESIDENCE", ""),
-    ]})
-    client.post("/api/v1/scm/order-inquiry/apply",
-                files={"file": ("inquiry.xlsx", first, _XLSX)})
-    run_enqueued(captured, db, monkeypatch)
-
-    # The same book with one instalment gone: the feed owns the line, so it withdraws it.
-    second = _inquiry_workbook({"JAN 26": [
-        (so, kept, 10, date(2026, 1, 20), "TUJU RESIDENCE", ""),
-    ]})
-    client.post("/api/v1/scm/order-inquiry/apply",
-                files={"file": ("inquiry.xlsx", second, _XLSX)})
-    run_enqueued(captured, db, monkeypatch)
-
-    job_id = queued_job_id(captured)
-    job = _job(db, job_id)
-    rows = _rows(db, job_id)
-    withdrawn = [r for r in rows if r.code == oc.LINE_WITHDRAWN]
-    assert len(withdrawn) == 1, [r.code for r in rows]
-    assert withdrawn[0].row_number is None, "a withdrawal is reached by SILENCE - no row"
-    assert withdrawn[0].outcome == oc.OUTCOME_UPDATED, "the line WAS written away"
-    assert job.total_rows == 2, "1 row in the sheet, plus the instalment it withdrew"
-    assert job.processed_rows == job.total_rows, "processed may never exceed the total"
-    assert job.result["upload"]["rows"] == 1, "the sheet's own row count is kept"
-
-
-def test_a_document_another_feed_owns_is_left_alone_and_every_row_says_so(scm_app,
-                                                                          monkeypatch):
-    """Two feeds, one document: the sheet annotates it and touches no figure on it.
-
-    Recorded per ROW rather than per document, because the job's counts are counts of source
-    rows - a document skipped whole means every one of its rows was skipped, and a single
-    outcome would leave the rest unaccounted for.
-    """
-    from app.models.order import SalesOrder
-
-    app, db, gcu, gcuk = scm_app
-    as_company_user(app, db, gcu, gcuk)
-    (item,) = _codes(db, 1)
-    so = f"{MARKER}-SO-{uuid.uuid4().hex[:6]}".upper()
-    db.add(SalesOrder(id=str(uuid.uuid4()), so_number=so, status="open",
-                      source_system="scm_upload", source_ref="outstanding_so"))
-    db.flush()
-    book = _inquiry_workbook({"JAN 26": [
-        (so, item, 10, date(2026, 1, 20), "TUJU RESIDENCE", ""),
-        (so, item, 4, date(2026, 2, 20), "TUJU RESIDENCE", ""),
-    ]})
-
-    _c, job_id = _queue_and_run(
-        app, db, monkeypatch, "/api/v1/scm/order-inquiry/apply",
-        {"file": ("inquiry.xlsx", book, _XLSX)},
-    )
-
-    job = _job(db, job_id)
-    rows = _rows(db, job_id)
-    assert [r.code for r in rows] == [oc.DOCUMENT_OWNED_ELSEWHERE] * 2
-    assert job.processed_rows == job.total_rows == 2
-    assert db.execute(text(
-        "SELECT count(*) FROM sales_order_lines sol "
-        "JOIN sales_orders so ON so.id = sol.sales_order_id WHERE so.so_number = :n"
-    ), {"n": so}).scalar() == 0, "not one figure on somebody else's document was touched"
+    assert set(upload) == RESULT_KEYS, sorted(set(upload) ^ RESULT_KEYS)
+    assert not (RETIRED_KEYS & set(upload)), sorted(RETIRED_KEYS & set(upload))

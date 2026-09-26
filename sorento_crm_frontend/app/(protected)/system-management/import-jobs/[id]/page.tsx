@@ -25,6 +25,21 @@ import { PlanningChangeOutcomeCard } from '../components/PlanningChangeOutcomeCa
 import { toast } from '@/lib/toast';
 import type { OutstandingPlanningChangeBatch } from '../../../scm/reorder/services/outstandingImportService';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
+import { AutocountPullReview } from '../autocount-pull/components/AutocountPullReview';
+import { usePull } from '../autocount-pull/hooks/useAutocountPull';
+
+/** The two pull job types get the review header/counters/tabs above the usual cards
+ *  (PLAN-autocount-pull-review.md) - every other job type renders exactly as before. */
+const AUTOCOUNT_PULL_JOB_TYPES = new Set(['autocount_products_pull', 'autocount_stock_pull']);
+
+/** AC-DS-12: the entity a pull job's OWN `job_type` names, for the main header's Back
+ *  button - a fallback for the (rare) render where `pullStatus` has not loaded yet, so
+ *  the pull's own metadata `entity` is the preferred source wherever it is available. */
+function pullEntityFromJobType(jobType: string): 'products' | 'stock_balances' | null {
+  if (jobType === 'autocount_products_pull') return 'products';
+  if (jobType === 'autocount_stock_pull') return 'stock_balances';
+  return null;
+}
 
 const JOB_TYPE_LABELS: Record<string, string> = {
   order_import: 'Order Import',
@@ -41,6 +56,8 @@ const JOB_TYPE_LABELS: Record<string, string> = {
   po_history_import: 'Purchase History Import',
   sales_history_import: 'Sales History Import',
   order_inquiry_import: 'Order Inquiry Import',
+  autocount_products_pull: 'AutoCount Products Pull',
+  autocount_stock_pull: 'AutoCount Stock Pull',
 };
 
 function getJobTypeLabel(jobType: string): string {
@@ -101,8 +118,29 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
   const totalOnPage = jobIds.length;
   const showPagination = pageIndex !== null && totalOnPage > 0 && currentIndex >= 0;
 
+  const isPullJob = Boolean(job && AUTOCOUNT_PULL_JOB_TYPES.has(job.job_type));
+  // E2 (small-fix track, fix round 2): the list's row click lands on the URL with the RQ
+  // job id (`import_jobs.job_id`), which the generic job endpoints below accept alongside
+  // the DB id - but `/api/v1/autocount/pulls/{id}` only knows `import_jobs.id`. `job.id` is
+  // always that DB id once the job has loaded, so every pull-shaped call goes through it
+  // instead of the raw URL param.
+  const pullJobId = job?.id ?? '';
+  const { data: pullStatus } = usePull(pullJobId, isPullJob);
+  // The pull's own review component polls itself every 10s (AC-BD-6) - the generic 2s
+  // job-progress poll below has nothing to show while FoundryX is still building (no RQ job
+  // exists yet for that phase), so it stays off for as long as that is true.
+  const pullStillBuilding = isPullJob && pullStatus?.phase === 'building';
+  // D2 (small-fix track, browser e2e run 3): a pull job's OWN `job.result` is never the
+  // per-row envelope the generic Results / Outcome breakdown / Rows cards below expect - it
+  // is either stale (whatever the last apply on this job row left, if any) or entirely
+  // absent, so those three cards printed copy meant for pre-row-capture jobs and numbers
+  // that contradicted the pull card's own counters, in EVERY phase, not only Building /
+  // Preparing (B2's narrower guard). The pull's own Changes tab already wraps the same rows
+  // card once there is something to show (AC-RV-2); Job Summary is the only generic card a
+  // pull job keeps.
+
   // Poll for status updates if job is still processing
-  const { data: statusData } = useImportJobStatus(id, !isLoading && !!job);
+  const { data: statusData } = useImportJobStatus(id, !isLoading && !!job && !pullStillBuilding);
   const cancelJobMutation = useCancelImportJob();
 
   if (isLoading) {
@@ -169,6 +207,29 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
   const displaySkipped = progress ? progress.skipped : job.skipped_rows;
   const planningChangeBatch = planningChangeBatchOf(job.result);
 
+  // AC-DS-12/13: only the MAIN header's Back button - the loading / not-found ones above
+  // stay "Back to Import Jobs" always. A `page` param means the caller came from the
+  // Import Jobs list, so that trail wins whatever the job type; otherwise a pull job goes
+  // back to wherever it was pulled FROM (Products / Stock), never the generic list.
+  // N4 (Phase 3 review): `job.job_type` alone, never `pullStatus?.entity` - the pull's own
+  // `entity` is set once at `start_pull` from the SAME job type this derives from, so the
+  // two can never disagree, and reading it straight off `job` needs no extra `usePull`
+  // fetch to have resolved first.
+  const pullEntity = isPullJob ? pullEntityFromJobType(job.job_type) : null;
+  const backToOwnList = isPullJob && pageIndex === null && pullEntity;
+  const backLabel = backToOwnList
+    ? pullEntity === 'products'
+      ? 'Back to Products'
+      : 'Back to Stock'
+    : 'Back to Import Jobs';
+  const backHref = backToOwnList
+    ? pullEntity === 'products'
+      ? '/master-data-management/products'
+      : '/inventory-management/stock'
+    : pageIndex !== null
+      ? `/system-management/import-jobs?page=${pageIndex + 1}&pageSize=${pageSize}`
+      : '/system-management/import-jobs';
+
   return (
     <>
       <Container>
@@ -216,8 +277,8 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
                 </div>
               )}
               <Button asChild variant="outline">
-                <Link href={pageIndex !== null ? `/system-management/import-jobs?page=${pageIndex + 1}&pageSize=${pageSize}` : '/system-management/import-jobs'}>
-                  <MoveLeft /> Back to Import Jobs
+                <Link href={backHref}>
+                  <MoveLeft /> {backLabel}
                 </Link>
               </Button>
               {canCancel && (
@@ -245,6 +306,11 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
 
       <Container>
         <div className="space-y-6">
+          {/* AutoCount pull review - header pill, counters, Changes / Excel view / Compare
+              tabs, Download and Confirm. Renders above the usual cards; every other job
+              type is untouched. */}
+          {isPullJob && <AutocountPullReview jobId={pullJobId} />}
+
           {/* Summary Card */}
           <Card>
             <CardHeader>
@@ -348,57 +414,65 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
             </Card>
           )}
 
-          {/* Results Card */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Results</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 text-sm">
-                <div>
-                  <p className="text-muted-foreground">Successful</p>
-                  <p className="font-medium text-lg text-emerald-600">{displaySuccessful}</p>
+          {/* Results Card - D2: never for a pull job, any phase (see the note above
+              `isPullJob`'s own definition). */}
+          {!isPullJob && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Results</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 text-sm">
+                  <div>
+                    <p className="text-muted-foreground">Successful</p>
+                    <p className="font-medium text-lg text-emerald-600">{displaySuccessful}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">Failed</p>
+                    <p className="font-medium text-lg text-red-600">{displayFailed}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">Skipped</p>
+                    <p className="font-medium text-lg text-yellow-600">{displaySkipped}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">Processed</p>
+                    <p className="font-medium text-lg">{displayProcessed}</p>
+                  </div>
                 </div>
-                <div>
-                  <p className="text-muted-foreground">Failed</p>
-                  <p className="font-medium text-lg text-red-600">{displayFailed}</p>
-                </div>
-                <div>
-                  <p className="text-muted-foreground">Skipped</p>
-                  <p className="font-medium text-lg text-yellow-600">{displaySkipped}</p>
-                </div>
-                <div>
-                  <p className="text-muted-foreground">Processed</p>
-                  <p className="font-medium text-lg">{displayProcessed}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          )}
 
           {/* The planned-line reaction this SO book upload raised, once the worker wrote it. */}
           {planningChangeBatch && <PlanningChangeOutcomeCard batch={planningChangeBatch} />}
 
-          {/* Outcome breakdown - every reason, exact counts, never truncated */}
-          <OutcomeBreakdownCard
-            result={job.result}
-            activeCode={rowsCodeFilter}
-            onSelectCode={(code, group) => {
-              setRowsCodeFilter(code === rowsCodeFilter ? '' : code);
-              const outcomeForGroup =
-                group === 'successful' ? '' : group === 'skipped' ? 'skipped' : 'failed';
-              setRowsOutcomeFilter(code === rowsCodeFilter ? '' : outcomeForGroup);
-            }}
-          />
+          {/* Outcome breakdown - every reason, exact counts, never truncated. D2: same guard
+              as Results above. */}
+          {!isPullJob && (
+            <OutcomeBreakdownCard
+              result={job.result}
+              activeCode={rowsCodeFilter}
+              onSelectCode={(code, group) => {
+                setRowsCodeFilter(code === rowsCodeFilter ? '' : code);
+                const outcomeForGroup =
+                  group === 'successful' ? '' : group === 'skipped' ? 'skipped' : 'failed';
+                setRowsOutcomeFilter(code === rowsCodeFilter ? '' : outcomeForGroup);
+              }}
+            />
+          )}
 
-          {/* Per-row drill-down */}
-          <ImportJobRowsCard
-            jobId={id}
-            result={job.result}
-            codeFilter={rowsCodeFilter}
-            outcomeFilter={rowsOutcomeFilter}
-            onChangeCode={setRowsCodeFilter}
-            onChangeOutcome={setRowsOutcomeFilter}
-          />
+          {/* Per-row drill-down - D2: same guard as Results above. */}
+          {!isPullJob && (
+            <ImportJobRowsCard
+              jobId={id}
+              result={job.result}
+              codeFilter={rowsCodeFilter}
+              outcomeFilter={rowsOutcomeFilter}
+              onChangeCode={setRowsCodeFilter}
+              onChangeOutcome={setRowsOutcomeFilter}
+            />
+          )}
 
           {/* Error Card */}
           {job.error && (

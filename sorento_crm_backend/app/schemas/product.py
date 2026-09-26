@@ -16,6 +16,11 @@ class ProductCategoryBase(BaseModel):
     # in them is hidden from the chatbot whatever its own flag says (issue #300).
     is_searchable: bool = True
     display_order: Optional[int] = 0
+    # Chatbot stock ask v2 S1 (PLAN-chatbot-stock-ask-v2-24sep.md, R2): X and Y for
+    # every product in this category, unless the product overrides them. None means
+    # not opted in (resolves to 0, app.services.stock_ask_limits.effective()).
+    chatbot_max_qty: Optional[int] = Field(None, ge=0)
+    chatbot_eta_offset_days: Optional[int] = Field(None, ge=0)
 
 
 class ProductCategoryCreate(ProductCategoryBase):
@@ -29,13 +34,15 @@ class ProductCategoryUpdate(BaseModel):
     is_active: Optional[bool] = None
     is_searchable: Optional[bool] = None
     display_order: Optional[int] = None
+    chatbot_max_qty: Optional[int] = Field(None, ge=0)
+    chatbot_eta_offset_days: Optional[int] = Field(None, ge=0)
 
 
 class ProductCategoryResponse(ProductCategoryBase):
     id: str
     created_at: datetime
     updated_at: Optional[datetime] = None
-    
+
     class Config:
         from_attributes = True
 
@@ -52,6 +59,10 @@ class BrandBase(BaseModel):
     # resolver's promotion-domain product fallback to scope product search
     # to brands the active contact can see.
     access_levels: list[str] = []
+    # PLAN-brand-flows-to-purchasing.md: false means every product on this brand
+    # is bought locally by CS and never raises an Order Inquiry. Default true so
+    # nothing changes until an admin flips it.
+    flows_to_purchasing: bool = True
 
 
 class BrandCreate(BrandBase):
@@ -66,6 +77,7 @@ class BrandUpdate(BaseModel):
     logo_url: Optional[str] = None
     is_active: Optional[bool] = None
     access_levels: Optional[list[str]] = None
+    flows_to_purchasing: Optional[bool] = None
 
 
 class BrandResponse(BrandBase):
@@ -158,6 +170,11 @@ class ProductBase(BaseModel):
     has_batch_tracking: bool = False
     reorder_level: Optional[int] = None
     reorder_quantity: Optional[int] = None
+    # Chatbot stock ask v2 S1 (PLAN-chatbot-stock-ask-v2-24sep.md, R2): X and Y for
+    # this product; overrides the category value when set. None falls back to the
+    # product's own category, then to 0 (app.services.stock_ask_limits.effective()).
+    chatbot_max_qty: Optional[int] = Field(None, ge=0)
+    chatbot_eta_offset_days: Optional[int] = Field(None, ge=0)
     is_active: bool = True
     # Whether the chatbot may answer with this product. Independent of is_active:
     # an order placeholder stays active and is still not a chat answer (#300).
@@ -169,6 +186,10 @@ class ProductBase(BaseModel):
     # S5 (PLAN-reorder-feedback-9sep.md): the buyer's own switch, no backfill (G3) - every
     # existing product defaults false and is flipped by hand.
     exclude_from_planning: bool = False
+    # PLAN-price-tag-r10.md S4: staff-authored copy for the price tag - CRM-owned,
+    # never sent by the AutoCount masters push (AC-S4-9, `CanonicalProduct`
+    # deliberately has no field of this name).
+    price_tag_description: Optional[str] = None
 
     @field_validator("currency", mode="before")
     @classmethod
@@ -215,6 +236,8 @@ class ProductUpdate(BaseModel):
     has_batch_tracking: Optional[bool] = None
     reorder_level: Optional[int] = None
     reorder_quantity: Optional[int] = None
+    chatbot_max_qty: Optional[int] = Field(None, ge=0)
+    chatbot_eta_offset_days: Optional[int] = Field(None, ge=0)
     is_active: Optional[bool] = None
     is_searchable: Optional[bool] = None
     # D2: explicit flag wins over the description-derived value (only recomputed
@@ -222,6 +245,8 @@ class ProductUpdate(BaseModel):
     is_discontinued: Optional[bool] = None
     # S5: None means "not sent", same convention as the other planning flags on this schema.
     exclude_from_planning: Optional[bool] = None
+    # PLAN-price-tag-r10.md S4: None = untouched by this PUT (AC-S4-2/S4-9).
+    price_tag_description: Optional[str] = None
 
     @field_validator("currency", mode="before")
     @classmethod

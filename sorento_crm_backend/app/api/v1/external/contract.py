@@ -1,6 +1,8 @@
 """Ingest contract version for the ESB (D8, AC-V0-1; v2.1 shape added S4 of
 ingest-parity-standardisation; v2.2 adds the SO<->PO linkage fields below,
-ingest-contract-2-2-so-links).
+ingest-contract-2-2-so-links; v2.3 adds `brands` as a first-class EntitySpec,
+autocount-brands-ingest; v2.4 adds products code-wins plus the deletions
+`codes` field, ingest-products-code-wins).
 
 The ESB gates every new key it sends behind `sorento_contract_version = 2` on
 its consumer connection, so it needs one endpoint to ask Sorento what version
@@ -82,6 +84,10 @@ FIELDS_ADDED: dict[str, list[str]] = {
         "from_po_line_ref",
         "from_po_number",
     ],
+    # v2.4 (ingest-products-code-wins, SR0): `POST /ingest/products/deletions`
+    # accepts an optional `codes` map (source_ref -> code) alongside
+    # `source_refs`, read only for this entity - see FIELD_NOTES below.
+    "products_deletions": ["codes"],
 }
 
 # D24 (captain 2026-09-06): per-entity notes on a field's meaning that
@@ -89,7 +95,13 @@ FIELDS_ADDED: dict[str, list[str]] = {
 # `products` specifically, so this stays a one-entry dict rather than a new
 # per-field schema nothing else needs yet.
 FIELD_NOTES: dict[str, str] = {
-    "products": "name is transitional, maps to description when description is absent",
+    "products": (
+        "name is transitional, maps to description when description is absent. "
+        "v2.4: a product push resolves by code (case/whitespace-insensitive) when its "
+        "own source_ref misses but the row is already linked under this same source "
+        "system - the record updates, the STORED reference is kept as-is, and the "
+        "verdict carries the ref_mismatch warning."
+    ),
     # Both entities get the SAME sentence (D24's shape is one note per
     # entity, not per field) - from_so_external means the identical thing on
     # a purchase-order line and on a shipping-order line.
@@ -100,6 +112,17 @@ FIELD_NOTES: dict[str, str] = {
     "shipping_orders": (
         "from_so_external is the cross-book case of from_so_line_ref: the sales order "
         "lives in another database and is recorded raw, never resolved into a Sorento id"
+    ),
+    # v2.4: the deletions-only `codes` fallback above does not extend to
+    # reads - `/external/read/products` stays reference-only, so a product
+    # linked under a document-minted reference is not found there by an
+    # item-code reference.
+    "products_deletions": (
+        "codes is a source_ref -> code map read only when its own source_ref "
+        "misses and the matched product is unlinked or already under this same "
+        "source system (same ref_mismatch rule as the products push above). "
+        "/external/read/products stays reference-only: a product linked under a "
+        "document-minted reference is not found there by an item-code reference."
     ),
 }
 

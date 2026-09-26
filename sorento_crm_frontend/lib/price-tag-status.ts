@@ -9,7 +9,10 @@ export const PRICE_TAG_STATUS_PILL_CLASS: Record<string, string> = {
   proof_ready: 'bg-indigo-100 text-indigo-800',
   changes_requested: 'bg-orange-100 text-orange-800',
   approved: 'bg-blue-100 text-blue-800',
-  ready: 'bg-emerald-100 text-emerald-800',
+  // The office print's two closing steps (r9 D8). `ready` is retired: every
+  // row that carried it is `approved` after the migration.
+  ready_for_collection: 'bg-emerald-100 text-emerald-800',
+  collected: 'bg-teal-100 text-teal-800',
   rejected: 'bg-red-100 text-red-800',
   void: 'bg-slate-200 text-slate-700',
   draft: 'bg-muted text-muted-foreground',
@@ -21,7 +24,8 @@ const PRICE_TAG_STATUS_LABEL: Record<string, string> = {
   proof_ready: 'Design Ready',
   changes_requested: 'Changes Requested',
   approved: 'Approved',
-  ready: 'Ready',
+  ready_for_collection: 'Ready for collection',
+  collected: 'Collected',
   rejected: 'Rejected',
   void: 'Void',
   draft: 'Draft',

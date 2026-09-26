@@ -1,6 +1,6 @@
 """Inventory service for business logic."""
-from sqlalchemy.orm import Session
-from sqlalchemy import func, or_, and_, tuple_
+from sqlalchemy.orm import Session, aliased
+from sqlalchemy import func, or_, and_, tuple_, select
 from typing import Optional, TYPE_CHECKING
 import time
 import uuid
@@ -764,12 +764,44 @@ class StockService:
         # that cannot be true, and the person who can fix it is the one reading
         # this listing. Every row filtering out simply takes the empty path the
         # caller already handles.
+        #
+        # D5 (12 Sep 2026, finding 5): a zero row drops ONLY for a product that HAS
+        # stock somewhere the contact can see. A product zero at every visible
+        # location keeps its rows - the same "none left, not never found" rule
+        # `_apply_stock_visibility` states for compact/availability mode two
+        # sections below (its own comment there). Without this, "SRT6550-DIY ETA"
+        # read as "No incoming and no stock" (unknown product) in detailed mode
+        # while compact correctly printed "*Total:* 0 (O/S: 21) ... but PO is
+        # placed" for the same all-zero product.
+        #
+        # The EXISTS carries the SAME warehouse criterion AND the same active-warehouse
+        # restriction as the outer query, plus an EXPLICIT `company_id` equality, all
+        # mandatory: issue #832 is a correlated EXISTS escaping the `do_orm_execute`
+        # company-scope filter, so a sibling row in another company, a warehouse this
+        # policy excludes, or a warehouse the outer query never shows at all because it
+        # is `is_active=False` must not count as "has stock somewhere" - an inactive
+        # location is outside the visible set, so stock sitting there is as unseen as
+        # stock in an excluded one, and it counts only inside this filter's own
+        # subquery, never through the ORM-level auto-filter, which a correlated EXISTS
+        # does not go through.
         if (
             policy is not None
             and policy.hide_zero_locations
             and policy.mode == "detailed"
         ):
-            q = q.filter(Stock.quantity_on_hand != 0)
+            s2 = aliased(Stock)
+            has_stock_elsewhere = (
+                select(s2.id)
+                .where(
+                    s2.product_id == Stock.product_id,
+                    s2.company_id == Stock.company_id,
+                    warehouse_criterion(policy, s2.warehouse_id),
+                    s2.warehouse.has(Warehouse.is_active.is_(True)),
+                    s2.quantity_on_hand != 0,
+                )
+                .exists()
+            )
+            q = q.filter(or_(Stock.quantity_on_hand != 0, ~has_stock_elsewhere))
 
         resolved_wh_ids = resolve_identifier(
             self.db,

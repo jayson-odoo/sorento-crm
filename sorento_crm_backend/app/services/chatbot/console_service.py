@@ -11,6 +11,10 @@ process here. The ad-hoc script instead posts to a URL, because ITS whole point 
 whichever backend PROCESS is actually serving traffic, local or remote - an in-process call
 there would silently stop testing the thing it exists to test.
 
+Two named exceptions to the "zero writes outside `chatbot.turns`" claim above exist, each
+stated at its own site rather than folded into this summary: media (below) and the
+`ideate` lane's test turns (#1179, below the media block).
+
 **Deliberately NOT shared code with `scripts/chatbot_console_check.py`.** The two modules'
 shapes look alike - both borrow an envelope, both force the two lane switches on for one
 call and restore them in a `finally`, both honour `previous_conversation_state` /
@@ -33,6 +37,7 @@ flipped for the next request even if the turn itself raises.
 """
 from __future__ import annotations
 
+import base64
 import json
 import uuid
 from contextlib import contextmanager
@@ -97,6 +102,9 @@ class ConsoleTurnResult:
         "media_error",
         # Item 6: the parser prompt version the turn ran, off the `understood` stage.
         "prompt_version",
+        # The turn's own raw `actions`, carried through unfiltered - see
+        # `ConsoleTurnResponse.actions`'s own docstring.
+        "actions",
     )
 
     def __init__(self, **kwargs: Any) -> None:
@@ -105,13 +113,25 @@ class ConsoleTurnResult:
 
 
 def _borrow_envelope(db: Session, contact_respond_id: str) -> dict[str, Any]:
-    """The contact's most recent stored envelope, as the shape to borrow.
+    """The contact's most recent REAL INBOUND envelope, as the shape to borrow.
 
     Raises rather than inventing one: a hand-built envelope missing a field the engine
     reads at `received` fails there, and a console whose failures are its own bug is worse
     than no console. The phone is filled in from `respond_contacts` when the borrowed
     envelope carries none, the same backfill `chatbot_console_check.py::_base_envelope`
     does - the escalation lane's assignee read is a 400 without it.
+
+    **Only a `webhook` ingress row that is not a test.** A console turn stores its OWN
+    envelope back onto `chatbot.turns`, so borrowing "the newest row of any kind" makes
+    the console borrow from itself: one hand-built or in-process envelope with a thin
+    `contact` block poisons every console turn for that contact afterwards, and the
+    fields it is missing are read as ABSENT rather than as never-recorded. Measured on
+    the hand-pass clone (16 Sep 2026): an in-process smoke turn wrote
+    `contact.custom_fields: []`, so `engine._stock_check_denied` read `is_allowed_stock`
+    as missing on every console turn since and "check stock srtwc286" answered with the
+    demand-quantity ask instead of the stock. Contract 61/62 is right; what was wrong is
+    that the console was replaying a synthetic envelope as if respond.io had sent it.
+    The last real inbound envelope for that contact carries the field.
 
     **Through the ORM model, not raw SQL naming the `chatbot` schema.** A schema-qualified
     `FROM chatbot.turns` bypasses `search_path` entirely, so under a test's translated
@@ -122,7 +142,12 @@ def _borrow_envelope(db: Session, contact_respond_id: str) -> dict[str, Any]:
     """
     row = (
         db.query(ChatbotTurn)
-        .filter(ChatbotTurn.contact_respond_id == str(contact_respond_id), ChatbotTurn.envelope.isnot(None))
+        .filter(
+            ChatbotTurn.contact_respond_id == str(contact_respond_id),
+            ChatbotTurn.envelope.isnot(None),
+            ChatbotTurn.ingress == "webhook",
+            ChatbotTurn.is_test.is_(False),
+        )
         .order_by(ChatbotTurn.created_at.desc())
         .first()
     )
@@ -342,26 +367,33 @@ def _turn_prompt_version(db: Session, turn_id: str | None) -> int | None:
 
 _BASE_PROBE_CHARS = 200
 
+# The retired S1b slim rewrite's own opening 200 characters (chatbot turn
+# re-architecture S0, AC-1506: the slim constant is gone from the live module, but
+# every "compact"-lineage row published before this lane still needs to classify -
+# see `alembic/_legacy_prompt_bodies.py` for the full retired body).
+_COMPACT_LINEAGE_HEAD = (
+    "You are the Sorento Semantic Parser. You are given:\n"
+    "- Previous response: the assistant's last message (may be \"(none)\").\n"
+    "- previous_conversation_state: the prior state (team, agent, domain, access level"
+)
+
 
 def prompt_base(template: Any) -> str:
     """Which lineage a parser prompt version belongs to: "full" (the live-derived body,
-    `SEMANTIC_PARSER_PROMPT`), "compact" (the S1b slim rewrite, `SEMANTIC_PARSER_PROMPT_SLIM`)
-    or "other". The two bodies diverge inside their first 200 characters ("...last
-    message to the user (may be" against "...last message (may be"), and every published
-    version of either lineage is that body with rules appended or woven in further down,
-    so the opening is the lineage. Item 6 (8 Sep 2026): the console defaults to the newest
-    "full" rather than to the production label, which locally sits on the compact one."""
-    from app.services.chatbot_parser_prompt import (
-        SEMANTIC_PARSER_PROMPT,
-        SEMANTIC_PARSER_PROMPT_SLIM,
-    )
+    `SEMANTIC_PARSER_PROMPT`), "compact" (the retired S1b slim rewrite) or "other". The
+    two bodies diverge inside their first 200 characters ("...last message to the user
+    (may be" against "...last message (may be"), and every published version of either
+    lineage is that body with rules appended or woven in further down, so the opening is
+    the lineage. Item 6 (8 Sep 2026): the console defaults to the newest "full" rather
+    than to the production label, which locally sits on the compact one."""
+    from app.services.chatbot_parser_prompt import SEMANTIC_PARSER_PROMPT
 
     head = template[:_BASE_PROBE_CHARS] if isinstance(template, str) else ""
     if not head:
         return "other"
     if head == SEMANTIC_PARSER_PROMPT[:_BASE_PROBE_CHARS]:
         return "full"
-    if head == SEMANTIC_PARSER_PROMPT_SLIM[:_BASE_PROBE_CHARS]:
+    if head == _COMPACT_LINEAGE_HEAD[:_BASE_PROBE_CHARS]:
         return "compact"
     return "other"
 
@@ -431,53 +463,52 @@ def run_console_turn(
         session_vars=_next_state(body),
         trace_summary=_trace_summary(db, body.get("turn_id")),
         prompt_version=_turn_prompt_version(db, body.get("turn_id")),
+        actions=body.get("actions"),
     )
 
 
 # --------------------------------------------------------------------------- #
-# Media (commit 2): image and voice through the REAL extractor.
+# Media (chatbot media-into-turn, S2): one path, WhatsApp and console alike.
 #
-# `POST /external/media/process` (`app/api/v1/external/media.py`,
-# `documentation/plans/_archive/ideation/PLAN-chatbot-media-endpoint.md`) is the one place
-# this codebase decides, meters, records and extracts inbound media - `decide_and_record`
-# (gate, burst, quota, ledger), `enqueue_job` onto the `media` RQ queue, `process_media_
-# extraction` (the real provider call, image or voice). The console calls the SAME three
-# steps in process rather than growing a second extractor: no new prompt, no new schema,
-# no new RQ task.
+# The engine now runs the WHOLE decide/meter/enqueue/wait/extract pipeline itself,
+# inside `run_turn` (`app/services/chatbot/media_intake.py`) - so this console path's
+# only remaining job is getting the console's base64 bytes somewhere the engine's own
+# fetch can reach them, and building the SAME attachment envelope shape a real
+# WhatsApp media message carries (`message.message.message.attachment{type,url,
+# mimeType,description}`). `run_turn` decides, meters, records, enqueues and waits;
+# there is no second copy of that logic here any more.
 #
-# **Deviation from D14, flagged rather than papered over.** Every OTHER console write is
-# `chatbot.turns` only (`is_test=True`, zero writes elsewhere). Media cannot make that
-# promise: `contact_media_usage` (the ledger) and `media_extraction_job` have no `is_test`
-# column - that table shape is PLAN-chatbot-media-endpoint's, already shipped and reviewed
-# before this slice existed, and adding one is a migration to an already-live feature, out
-# of scope for a console page. A console media send therefore CONSUMES the picked contact's
-# real monthly quota and writes a real ledger row, the same as if that contact had sent a
-# WhatsApp photo. Acceptable for a manual testing tool used sparingly; stated here so it is
-# a known trade-off, not a surprise.
-#
-# **No `attachments` row.** The real pipeline never writes one either - "No image storage.
-# Bytes are fetched, sent to the model and dropped" (PLAN section 11). What DOES need
-# solving is that the pipeline fetches media by URL (`job.media_url`, a respond.io CDN
-# link), not by bytes, and a console upload arrives as base64 with nothing to link to - so
-# the bytes are put through the SAME storage backend a live upload uses
-# (`app/services/storage_router.py`, `STORAGE_DEFAULT_PROVIDER`), under a
-# `chatbot-console/` prefix, to get a URL the extractor can fetch exactly as it would a
-# real one. Nothing is inserted into `attachments`; the object is transient storage, not a
-# tracked business record.
+# **Deviation from D14, unchanged from before this collapse.** Every OTHER console
+# write is `chatbot.turns` only (`is_test=True`, zero writes elsewhere). Media cannot
+# make that promise: `contact_media_usage` (the ledger) and `media_extraction_job`
+# have no `is_test` column, so a console media send CONSUMES the picked contact's real
+# monthly quota and writes a real ledger row, the same as a WhatsApp photo would.
+# Acceptable for a manual testing tool used sparingly; stated here so it is a known
+# trade-off, not a surprise.
+# --------------------------------------------------------------------------- #
+
+# **Deviation from D14, added #1179 (PR #1182).** A console turn that routes to the
+# `ideate` lane is not a zero-write dry run either, for the same reason media is not:
+# `crm_ideation_turn` is a real business tool, called with `is_test=True` rather than
+# stood in with a placeholder, so ideation is exercisable anywhere but live WhatsApp.
+# One console ideate turn writes: an idea row in the shared service (flagged `is_test`,
+# hidden from the board by default), an `integration_log` row from the
+# `/external/ideation/turn` endpoint, a storage upload when the turn is a media-selection
+# answer (`snapshot_and_caption`, the same real upload a WhatsApp photo pick makes), and
+# spends one real LLM extraction (`extract_ideate_turn`, never stubbed here). Unlike
+# media, the CONTACT's own `respond_contacts.session_vars` stays untouched on a test turn
+# (`ideation_turn_service.handle_turn`'s `is_test` guard) - only the shared-service side
+# writes. Acceptable for the same reason media's exception is: a manual testing tool used
+# sparingly, stated here so it is a known trade-off, not a surprise.
 # --------------------------------------------------------------------------- #
 
 # Console media never claims to BE a respond.io modality string. The real ledger's
 # `modality` column is `image | voice` (`ContactMediaUsage`); the composer's own vocabulary
 # is `image | audio` (matches the owner's ask, "image/voice", and the file-picker's own
-# `accept` groups). Translated at the one seam that calls the real service.
+# `accept` groups); the WIRE attachment `type` respond.io itself uses is `image | audio`
+# too (`media_intake.detect`'s own vocabulary) - so `kind` doubles as the attachment type
+# and only the LEDGER's own column needs translating.
 _MODALITY_TO_LEDGER = {"image": "image", "audio": "voice"}
-
-# How often the synchronous wait re-reads the job row. Mirrors `/external/media.py`'s own
-# `_POLL_INTERVAL_SECONDS` - short enough not to pad a fast extraction, long enough not to
-# spin. This route is a plain `def`, which Starlette already runs off the event loop in
-# its own thread pool, so a blocking `time.sleep` here costs one worker thread for the
-# wait's duration and never blocks another request the way it would inside `async def`.
-_MEDIA_POLL_INTERVAL_SECONDS = 0.25
 
 
 def _upload_console_media(*, kind: str, filename: str, mime: str, content_base64: str) -> str:
@@ -516,42 +547,31 @@ def _upload_console_media(*, kind: str, filename: str, mime: str, content_base64
     return url
 
 
-def _extracted_text(result: dict[str, Any] | None) -> str:
-    """The one string that stands in for "what the customer said" - `rendered_text`
-    (image) or `transcript` (voice), the same value the real spine patches into the turn
-    upstream of `tf-message` (PLAN section 1.3). Falls back to whatever confirmation text
-    the extraction produced, then to nothing: an extraction that read nothing distinguishing
-    still degrades to the caption alone (PLAN section 4.5's "nothing extracted" row), which
-    `_run_console_media_turn` applies by falling back to the caption when this is empty.
+def _media_intake_result_of(turn_id: str | None) -> dict[str, Any] | None:
+    """The persisted `media_intake` trace stage's `facts` AND `raw` MERGED into one
+    dict, for the console's own `media_status`/`media_id`/`media_text`/`media_error`
+    fields - read back off the row `run_turn` just wrote, never recomputed.
+
+    Merged rather than `facts` alone (review round S5): `job_id` and the full
+    `result` now live under the record's `raw` (never printed on the trace
+    screen - `facts` alone is display-safe), but this console-internal reader is
+    not a display surface and still needs both, the same shape it always read.
     """
-    if not isinstance(result, dict):
-        return ""
-    return str(result.get("rendered_text") or result.get("transcript") or result.get("confirmation_message") or "")
-
-
-def _poll_media_job(job_id: str, timeout_seconds: float) -> dict[str, Any] | None:
-    """Wait for the worker, bounded - `None` on timeout, never an exception.
-
-    A fresh session per read, like `/external/media.py::_read_job_snapshot`: the route's
-    own session is mid-transaction by the time this runs, and re-reading a row another
-    process is writing through it would only ever see this transaction's own snapshot.
-    """
-    import time as time_mod
-
-    from app.models.media import MediaExtractionJob
-
-    deadline = time_mod.monotonic() + timeout_seconds
-    while True:
-        db = SessionLocal()
-        try:
-            row = db.query(MediaExtractionJob).filter(MediaExtractionJob.id == job_id).first()
-            if row is not None and row.status in ("completed", "failed"):
-                return {"status": row.status, "result": row.result, "error": row.error}
-        finally:
-            db.close()
-        if time_mod.monotonic() >= deadline:
-            return None
-        time_mod.sleep(_MEDIA_POLL_INTERVAL_SECONDS)
+    if not turn_id:
+        return None
+    # Review round S8: closed rather than left open - this is a SHORT read, not a
+    # session the caller goes on to use.
+    db = SessionLocal()
+    try:
+        row = db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).first()
+    finally:
+        db.close()
+    for record in (row.trace if row else None) or []:
+        if isinstance(record, dict) and record.get("stage") == "media_intake":
+            facts = record.get("facts") or {}
+            raw = record.get("raw") or {}
+            return {**facts, **raw}
+    return None
 
 
 def _run_console_media_turn(
@@ -564,151 +584,110 @@ def _run_console_media_turn(
     run_id: str,
     media: dict[str, Any],
 ) -> ConsoleTurnResult:
-    """Decide, meter, record and enqueue through the real media pipeline, wait
-    `media_sync_wait_seconds`, then run the chatbot turn on the extracted text - the same
-    order `POST /external/media/process` runs in (PLAN section 3.3), synchronous rather
-    than `asyncio.to_thread` because this route is a plain `def`.
+    """Upload the console's bytes, build the SAME attachment envelope shape a real
+    WhatsApp media message carries, and hand it to `run_turn` - the engine now runs the
+    whole decide/meter/enqueue/wait/extract pipeline itself (S2's `media_intake`
+    module), so this function's only job is getting the bytes somewhere that pipeline's
+    own fetch can reach and shaping the envelope. One path, console and WhatsApp alike
+    (AC-1816): no borrowed envelope, no `_lanes_on` bypass of its own - `run_turn`
+    forces the same lane switches through `_run_console_media_turn`'s caller,
+    `run_console_turn`, exactly as the text path does.
     """
-    from app.services.media_access_service import (
-        MediaRequest,
-        _now_utc,
-        decide_and_record,
-        mark_usage_outcome,
-        resolve_media_settings,
-    )
-    from app.services.queue_service import enqueue_job
-    from app.tasks.media_tasks import MEDIA_QUEUE, process_media_extraction
-
     kind = media.get("kind") if media.get("kind") in ("image", "audio") else "image"
     modality = _MODALITY_TO_LEDGER[kind]
+    mime = str(media.get("mime") or "")
+    content_base64 = str(media.get("content_base64") or "")
     media_url = _upload_console_media(
         kind=kind,
         filename=str(media.get("filename") or ""),
-        mime=str(media.get("mime") or ""),
-        content_base64=str(media.get("content_base64") or ""),
+        mime=mime,
+        content_base64=content_base64,
     )
+    size = len(base64.b64decode(content_base64)) if content_base64 else None
 
-    settings = resolve_media_settings(db)
-    decision = decide_and_record(
-        db,
-        MediaRequest(
-            respond_io_id=contact_respond_id,
-            message_id=f"console-media-{uuid.uuid4().hex}",
-            modality=modality,
-            media_url=media_url,
-            mime_type=str(media.get("mime") or ""),
-            caption=caption or None,
-            turn_id=run_id,
-        ),
-        settings=settings,
-        now=_now_utc(),
-    )
-    db.commit()
+    envelope_dict: dict[str, Any] = {
+        "contact": {"id": str(contact_respond_id)},
+        "message": {
+            "event_type": "message.received",
+            "contact": {"id": str(contact_respond_id)},
+            "message": {
+                "messageId": f"console-media-{uuid.uuid4().hex[:12]}",
+                "contactId": str(contact_respond_id),
+                "channelId": "whatsapp",
+                "traffic": "incoming",
+                "message": {
+                    "type": "attachment",
+                    "attachment": {
+                        "type": kind,
+                        "url": media_url,
+                        "mimeType": mime,
+                        **({"size": size} if size is not None else {}),
+                        **({"description": caption} if caption.strip() else {}),
+                    },
+                },
+            },
+        },
+        "is_test": True,
+        "test_run_id": run_id,
+        "ingress": "console",
+    }
+    if session_vars is not None:
+        envelope_dict["previous_conversation_state"] = session_vars
+    if prompt_version_id:
+        envelope_dict["prompt_overrides"] = {PARSER_PROMPT_KEY: str(prompt_version_id)}
 
-    if not decision.accepted or decision.job is None:
-        # denied_gate / denied_burst / denied_quota / denied_duration: nothing was
-        # queued. Degrade to the caption alone when one was typed (PLAN 3.5's own
-        # "failed extraction" rule, applied here since a refusal is the same kind of
-        # "no extracted text" outcome from the turn's point of view); otherwise there is
-        # nothing to answer and the console has to say so rather than go silent.
-        if caption.strip():
-            return run_console_turn(
-                db,
-                contact_respond_id=contact_respond_id,
-                text=caption,
-                session_vars=session_vars,
-                prompt_version_id=prompt_version_id,
-                run_id=run_id,
+    envelope = TurnRequest(envelope=envelope_dict).envelope
+
+    with _lanes_on():
+        result = run_turn(envelope, session_factory=SessionLocal)
+    body = result.as_dict()
+
+    reply_text, send_messages = _customer_texts(body)
+    intake_facts = _media_intake_result_of(body.get("turn_id"))
+    media_status: str | None = None
+    media_id: str | None = None
+    media_text: str | None = None
+    media_error: str | None = None
+    if intake_facts is not None:
+        status = intake_facts.get("status")
+        media_status = "done" if status == "completed" else "failed" if status == "failed" else "pending"
+        # The console's OWN poll route (`get_console_media_status`) is keyed by
+        # `MediaExtractionJob.id`, not the turn's id - the job_id `media_intake.run`
+        # stashed on the trace facts is what a `pending` caller re-polls with below.
+        media_id = intake_facts.get("job_id")
+        job_result = intake_facts.get("result") or {}
+        media_text = job_result.get("rendered_text") or job_result.get("transcript") or None
+        if media_status == "failed":
+            # `extraction_error` is the job's own raw error string, when the intake
+            # got as far as running an extraction that then failed - never shown to
+            # a real customer (whose reply stays the friendly `wording.nothing_read`/
+            # `voice_unclear` text), but this IS the console's own diagnostic surface,
+            # so `reply_text` - the SAME denial wording the turn actually replied with
+            # (`wording.nothing_read`/`voice_unclear`/a gate notice) - is the fallback
+            # for a denial that never ran an extraction at all (gate/quota/burst/no-url;
+            # review round nit: never a second, unrelated generic sentence).
+            media_error = (
+                intake_facts.get("extraction_error")
+                or reply_text
+                or "This contact's media could not be read."
             )
-        return ConsoleTurnResult(
-            turn_id=None,
-            branch_kind=None,
-            reply_text="",
-            quick_replies=[],
-            send_messages=[],
-            session_vars=None,
-            trace_summary=_empty_trace_summary(),
-            media_status="failed",
-            media_id=None,
-            media_text=None,
-            media_error=f"This contact's media access refused the attachment ({decision.decision}).",
-        )
+            media_text = None
 
-    job_id = str(decision.job.id)
-    try:
-        rq_job = enqueue_job(
-            process_media_extraction, job_id, queue_name=MEDIA_QUEUE, job_timeout=600, job_id=job_id,
-        )
-        decision.job.rq_job_id = getattr(rq_job, "id", None)
-        db.commit()
-    except Exception:  # noqa: BLE001 - a queue outage is a failed job, not a 500
-        decision.job.status = "failed"
-        decision.job.error = "Could not queue the extraction."
-        mark_usage_outcome(db, decision.job.usage_id, "not_queued")
-        db.commit()
-
-    snapshot = _poll_media_job(job_id, settings.sync_wait_seconds)
-
-    if snapshot is None:
-        # Outlived the wait. The job keeps running; the FE polls
-        # GET /console/media/{media_id} and sends a plain text turn once it resolves.
-        return ConsoleTurnResult(
-            turn_id=None,
-            branch_kind=None,
-            reply_text="",
-            quick_replies=[],
-            send_messages=[],
-            session_vars=None,
-            trace_summary=_empty_trace_summary(),
-            media_status="pending",
-            media_id=job_id,
-            media_text=None,
-            media_error=None,
-        )
-
-    if snapshot["status"] == "failed":
-        if caption.strip():
-            result = run_console_turn(
-                db,
-                contact_respond_id=contact_respond_id,
-                text=caption,
-                session_vars=session_vars,
-                prompt_version_id=prompt_version_id,
-                run_id=run_id,
-            )
-            result.media_status = "failed"
-            result.media_id = job_id
-            result.media_error = snapshot.get("error") or "Extraction failed."
-            return result
-        return ConsoleTurnResult(
-            turn_id=None,
-            branch_kind=None,
-            reply_text="",
-            quick_replies=[],
-            send_messages=[],
-            session_vars=None,
-            trace_summary=_empty_trace_summary(),
-            media_status="failed",
-            media_id=job_id,
-            media_text=None,
-            media_error=snapshot.get("error") or "Extraction failed.",
-        )
-
-    extracted = _extracted_text(snapshot.get("result"))
-    turn_text = extracted or caption
-    result = run_console_turn(
-        db,
-        contact_respond_id=contact_respond_id,
-        text=turn_text,
-        session_vars=session_vars,
-        prompt_version_id=prompt_version_id,
-        run_id=run_id,
+    return ConsoleTurnResult(
+        turn_id=body.get("turn_id"),
+        branch_kind=body.get("branch_kind"),
+        reply_text=reply_text,
+        quick_replies=_quick_replies(body),
+        send_messages=send_messages,
+        session_vars=_next_state(body),
+        trace_summary=_trace_summary(db, body.get("turn_id")),
+        prompt_version=_turn_prompt_version(db, body.get("turn_id")),
+        actions=body.get("actions"),
+        media_status=media_status,
+        media_id=media_id,
+        media_text=media_text,
+        media_error=media_error,
     )
-    result.media_status = "done"
-    result.media_id = job_id
-    result.media_text = extracted or None
-    result.media_error = None
-    return result
 
 
 class ConsoleMediaJobUnknown(AppException):
@@ -752,4 +731,6 @@ def get_console_media_status(db: Session, media_id: str) -> dict[str, Any]:
         return {"status": "pending", "text": None, "error": None}
     if row.status == "failed":
         return {"status": "failed", "text": None, "error": row.error or "Extraction failed."}
-    return {"status": "done", "text": _extracted_text(row.result) or None, "error": None}
+    job_result = row.result or {}
+    text = job_result.get("rendered_text") or job_result.get("transcript") or None
+    return {"status": "done", "text": text, "error": None}

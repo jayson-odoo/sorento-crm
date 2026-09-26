@@ -48,6 +48,14 @@ export { standingsFor };
 export interface BoardDemandLine {
   sales_order_id: string;
   so_number: string;
+  /**
+   * Addressing only - the built order's own `project_sales_order_id` is always
+   * derived below as `pso-${sales_order_id}`, so this override affects nothing at
+   * runtime. Declared so a caller distinguishing several orders in one fixture (the
+   * undo gear's own vitest suite) can still spell it on the line without a spurious
+   * excess-property type error.
+   */
+  project_sales_order_id?: string | null;
   customer_name?: string | null;
   project_label?: string | null;
   line_no: number;
@@ -176,16 +184,21 @@ export function bucketKeyFor(
 ): string {
   if (!requiredDate) return NO_DATE_BUCKET;
   if (granularity === 'month') return monthStart(requiredDate);
-  // Day granularity keys on the date itself; the 30-day window that keeps 349 of them off one
-  // screen is applied when the columns are ORDERED, never when they are assigned, so nothing is
-  // filtered out of the plan by a display choice.
-  if (granularity === 'day') return requiredDate;
+  // Day AND date granularity key on the date itself (S1, `PLAN-board-oi-mechanical-22sep.md`,
+  // AC-B1-6: "same key as day"); the 30-day window that keeps 349 of them off one screen at
+  // `day` is applied when the columns are ORDERED (`orderBuckets`), never when they are
+  // assigned, so nothing is filtered out of the plan by a display choice - and `date` never
+  // gets that window at all (AC-B1-2/AC-B1-3: one column per distinct date present).
+  if (granularity === 'day' || granularity === 'date') return requiredDate;
   return weekStart(requiredDate);
 }
 
 function bucketLabel(key: string, granularity: BoardGranularity): string {
   if (key === NO_DATE_BUCKET) return 'No date';
   const [year, month, day] = key.split('-');
+  // S1 (AC-B1-7): `date` granularity's own label is `DD/MM/YYYY`, not the "4 Sep 2026" the
+  // other three granularities share.
+  if (granularity === 'date') return `${day}/${month}/${year}`;
   const MONTHS = [
     'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
     'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
@@ -898,7 +911,7 @@ function orderBuckets(
  * would call the current week late.
  */
 function bucketEnd(key: string, granularity: BoardGranularity): string {
-  if (granularity === 'day') return key;
+  if (granularity === 'day' || granularity === 'date') return key;
   if (granularity === 'week') {
     return new Date((dayNumber(key) + 6) * DAY).toISOString().slice(0, 10);
   }

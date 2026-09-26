@@ -132,12 +132,14 @@ describe('PlanRowPanel row Save (AC-S12.1)', () => {
  */
 describe('PlanRowPanel row Save flushes an un-blurred Buy value (AC-S12.5)', () => {
   it('typing into Buy and clicking Save WITHOUT blurring calls onSave with a patch carrying buy 25', () => {
-    // order_qty 40 with no MOQ + order_multiple 25 suggests a default Buy of 50 (ceil to
-    // the multiple) - a DIFFERENT figure from what is typed below, so this proves the
-    // typed 25 actually landed rather than coincidentally matching what was already
-    // showing (React's own change-tracking treats a same-value fireEvent.change as a
-    // no-op, which the default fixture's own suggested Buy of 25 would have masked).
-    const { onSave } = renderPanel({ line: line({ order_qty: 40 }) });
+    // recommended_qty 40 (the raw buy the ONE FORMULA reads, PLAN-reorder-one-formula.md)
+    // with no MOQ + order_multiple 25 suggests a default Buy of 50 (ceil to the multiple)
+    // - a DIFFERENT figure from what is typed below, so this proves the typed 25 actually
+    // landed rather than coincidentally matching what was already showing (React's own
+    // change-tracking treats a same-value fireEvent.change as a no-op, which the default
+    // fixture's own suggested Buy of 25 would have masked). `order_qty` carried alongside
+    // it for realism - the formula no longer reads it directly.
+    const { onSave } = renderPanel({ line: line({ order_qty: 40, recommended_qty: 40 }) });
     const buyInput = screen.getByLabelText('Units to buy') as HTMLInputElement;
     expect(buyInput.value).toBe('50');
 

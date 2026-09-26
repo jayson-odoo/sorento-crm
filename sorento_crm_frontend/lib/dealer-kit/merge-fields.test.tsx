@@ -17,6 +17,7 @@ import TagSheetRenderer, {
 } from '@/app/(public)/c/print/tag-sheet/[downloadId]/components/TagSheetRenderer';
 import {
   hasMergeField,
+  hasSubjectAwareToken,
   mergeFieldCatalog,
   renderMergeFields,
   soleMergeField,
@@ -28,6 +29,7 @@ import type {
   ProductTagData,
   TagBindingData,
   TagLayer,
+  TagPartData,
   TagSheetDoc,
 } from './tag-template-types';
 import { defaultTextProps } from './tag-template-types';
@@ -92,7 +94,11 @@ function set(overrides: Partial<ProductSetTagData> = {}): TagBindingData {
 
 function lineData(overrides: Partial<LineTagData> = {}): LineTagData {
   return {
+    tag_id: 'tag-1',
     line_id: 'line-1',
+    tag_label: '1a',
+    open_groups: [],
+    parts: [],
     code: 'CBF3612',
     name: 'Kitchen Sink',
     dimensions: '800 x 500 x 220 mm',
@@ -152,11 +158,11 @@ describe('renderMergeFields - product paths', () => {
     );
   });
 
-  it('prices carry the same RM formatting the badge prints', () => {
+  it('AC-A3: prices render the bare figure - grouped, no RM prefix, matching the text-slot rule (AC-A1/A2)', () => {
     const data = product();
 
-    expect(renderMergeFields('{{product.list_price}}', data, 'print')).toBe('RM 1,599');
-    expect(renderMergeFields('{{product.sell_price}}', data, 'print')).toBe('RM 599');
+    expect(renderMergeFields('{{product.list_price}}', data, 'print')).toBe('1,599');
+    expect(renderMergeFields('{{product.sell_price}}', data, 'print')).toBe('599');
   });
 
   it('resolves several tokens inside one sentence, keeping the words around them', () => {
@@ -180,8 +186,35 @@ describe('renderMergeFields - product paths', () => {
 });
 
 describe('renderMergeFields - spec paths', () => {
-  it('renders a spec value with its unit when the registry has one', () => {
-    expect(renderMergeFields('{{spec.diameter}}', product(), 'print')).toBe('407 mm');
+  // AC-S15-1 (PLAN-price-tag-ai-extract-resolver.md D20): the unit is the
+  // designer's to type - `specText` answers the bare value now, never
+  // "value unit" - so a composed string like `L{{spec.dim_length}}XW...mm`
+  // does not print a doubled unit.
+  it('renders a spec value alone, with no unit appended (AC-S15-1)', () => {
+    expect(renderMergeFields('{{spec.diameter}}', product(), 'print')).toBe('407');
+  });
+
+  it('composes several bare spec values inside one literal string (AC-S15-1)', () => {
+    const data = product({
+      specs: [
+        { key: 'dim_length', label: 'Length', value: '860', unit: 'mm' },
+        { key: 'dim_width', label: 'Width', value: '480', unit: 'mm' },
+        { key: 'dim_height', label: 'Height', value: '250', unit: 'mm' },
+      ],
+    });
+    expect(
+      renderMergeFields(
+        'L{{spec.dim_length}}XW{{spec.dim_width}}XH{{spec.dim_height}}mm',
+        data,
+        'print',
+      ),
+    ).toBe('L860XW480XH250mm');
+  });
+
+  it('{{product.dimensions}} still renders the composed slot string unchanged (AC-S15-1)', () => {
+    expect(renderMergeFields('{{product.dimensions}}', product(), 'print')).toBe(
+      '800 x 500 x 220 mm',
+    );
   });
 
   it('renders a spec value with no unit as the value alone', () => {
@@ -236,6 +269,104 @@ describe('renderMergeFields - set and line paths', () => {
     expect(
       renderMergeFields('[{{product.sell_price}}]', line({ show_promo_price: false }), 'print'),
     ).toBe('[]');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC-S18-1/S18-2 (PLAN-price-tag-ai-extract-resolver.md D23): the parts on a
+// tag, as two Line-group merge fields.
+// ---------------------------------------------------------------------------
+
+describe('renderMergeFields - line.parts / line.parts_names paths (S18)', () => {
+  it('AC-S18-1: {{line.parts}} joins the resolved parts\' codes with ", "', () => {
+    const data = line({
+      parts: [
+        { product_id: 'p-mirror', code: 'SRTMR502-BL', name: 'ZZT Mirror', dimensions: '' },
+      ],
+    });
+    expect(renderMergeFields('{{line.parts}}', data, 'print')).toBe('SRTMR502-BL');
+  });
+
+  it('AC-S18-1: two parts join with ", " for both codes and names', () => {
+    const data = line({
+      parts: [
+        { product_id: 'p1', code: 'SRTKT71SS-BL', name: 'ZZT Kitchen Tap', dimensions: '' },
+        { product_id: 'p2', code: 'SRTMR502-BL', name: 'ZZT Mirror', dimensions: '' },
+      ],
+    });
+    expect(renderMergeFields('{{line.parts}}', data, 'print')).toBe(
+      'SRTKT71SS-BL, SRTMR502-BL',
+    );
+    expect(renderMergeFields('{{line.parts_names}}', data, 'print')).toBe(
+      'ZZT Kitchen Tap, ZZT Mirror',
+    );
+  });
+
+  it('AC-S18-2: on a line with no parts, both resolve to an empty string', () => {
+    expect(renderMergeFields('[{{line.parts}}]', line(), 'print')).toBe('[]');
+    expect(renderMergeFields('[{{line.parts_names}}]', line(), 'print')).toBe('[]');
+  });
+
+  it('AC-S18-2: on a product binding, both resolve to null - the token\'s unanswered form', () => {
+    expect(renderMergeFields('[{{line.parts}}]', product(), 'print')).toBe('[]');
+    expect(renderMergeFields('[{{line.parts_names}}]', product(), 'print')).toBe('[]');
+    // Unanswered on a BOUND (non-null) binding still draws nothing, even in
+    // editor mode - only a fully absent binding falls back to the raw token
+    // (mirrors {{line.quantity}} on a product binding, above).
+    expect(renderMergeFields('{{line.parts}}', product(), 'editor')).toBe('');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// {{product.currency}} (AC-A5 to AC-A9): the SUBJECT's own currency, never a
+// slot binding - `hasSubjectAwareToken` already treats every `product.*` path
+// as subject-aware, so D7's part-subject picker applies here with no change.
+// ---------------------------------------------------------------------------
+
+describe('renderMergeFields - product.currency (AC-A5 to AC-A9)', () => {
+  it('AC-A5: renders the bound product\'s own currency', () => {
+    expect(
+      renderMergeFields('{{product.currency}}', product({ currency: 'MYR' }), 'print'),
+    ).toBe('MYR');
+    expect(
+      renderMergeFields('{{product.currency}}', product({ currency: 'SGD' }), 'print'),
+    ).toBe('SGD');
+  });
+
+  it('AC-A6: on a line-bound tag renders the LINE\'s own currency', () => {
+    expect(
+      renderMergeFields('{{product.currency}}', line({ currency: 'SGD' }), 'print'),
+    ).toBe('SGD');
+  });
+
+  it('AC-A6: on a set renders the SET\'s own currency', () => {
+    expect(
+      renderMergeFields('{{product.currency}}', set({ currency: 'SGD' }), 'print'),
+    ).toBe('SGD');
+  });
+
+  it('AC-A6: a layer with a part subject (subjectPart: n) renders that PART\'s currency, not the parent\'s (D7)', () => {
+    const part: TagPartData = {
+      product_id: 'part-1',
+      code: 'PART-1',
+      name: 'Part One',
+      dimensions: '',
+      currency: 'SGD',
+    };
+    const data = line({ currency: 'MYR', parts: [part] });
+    const layer = { props: { kind: 'text' as const, subjectPart: 0 } };
+
+    expect(renderMergeFields('{{product.currency}}', data, 'print', layer)).toBe('SGD');
+  });
+
+  it('AC-A7: a payload with no currency field (an older pinned row) renders MYR, never empty or the raw token', () => {
+    const data = product({ currency: undefined });
+    expect(renderMergeFields('{{product.currency}}', data, 'print')).toBe('MYR');
+    expect(renderMergeFields('{{product.currency}}', data, 'editor')).toBe('MYR');
+  });
+
+  it('AC-A9: hasSubjectAwareToken is true for {{product.currency}}, so the subject picker shows', () => {
+    expect(hasSubjectAwareToken('{{product.currency}}')).toBe(true);
   });
 });
 
@@ -341,6 +472,28 @@ describe('mergeFieldCatalog', () => {
     expect(code?.label).toBe('Code');
     expect(code?.token).toBe('{{product.code}}');
   });
+
+  it('AC-S18-1: lists "Parts (codes)" and "Parts (names)" in the Line group', () => {
+    const lineFields = catalog.filter((field) => field.group === 'Line');
+    const codes = lineFields.find((field) => field.path === 'line.parts');
+    const names = lineFields.find((field) => field.path === 'line.parts_names');
+    expect(codes).toMatchObject({ label: 'Parts (codes)', token: '{{line.parts}}' });
+    expect(names).toMatchObject({ label: 'Parts (names)', token: '{{line.parts_names}}' });
+  });
+
+  it('AC-A8: lists product.currency labelled Currency in the Product group, right after Sell price', () => {
+    const productFields = catalog.filter((field) => field.group === 'Product');
+    const sellIndex = productFields.findIndex((field) => field.path === 'product.sell_price');
+    const currencyIndex = productFields.findIndex((field) => field.path === 'product.currency');
+
+    expect(sellIndex).toBeGreaterThanOrEqual(0);
+    expect(currencyIndex).toBe(sellIndex + 1);
+    expect(productFields[currencyIndex]).toMatchObject({
+      label: 'Currency',
+      token: '{{product.currency}}',
+      group: 'Product',
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -367,7 +520,7 @@ describe('the print page and the canvas resolve a token identically', () => {
             {
               id: 't1',
               template_id: 'tpl-1',
-              request_line_id: 'line-1',
+              request_tag_id: 'tag-1',
               x_mm: 0,
               y_mm: 0,
               width_mm: 95,
@@ -387,10 +540,11 @@ describe('the print page and the canvas resolve a token identically', () => {
     const onCanvas = layerText(layer, { kind: 'line', line: lineData() }, 'print');
 
     render(
-      <TagSheetRenderer doc={printDoc([layer])} resolvedData={{ 'line-1': resolved }} />,
+      <TagSheetRenderer doc={printDoc([layer])} resolvedData={{ 'tag-1': resolved }} />,
     );
 
-    expect(onCanvas).toBe('CBF3612 in stainless steel at RM 599');
+    // AC-A3: the price token is bare since this feature - no RM prefix.
+    expect(onCanvas).toBe('CBF3612 in stainless steel at 599');
     expect(screen.getByText(onCanvas)).toBeTruthy();
   });
 
@@ -405,7 +559,7 @@ describe('the print page and the canvas resolve a token identically', () => {
     const onCanvas = layerText(layer, { kind: 'line', line: lineData() }, 'print');
 
     render(
-      <TagSheetRenderer doc={printDoc([layer])} resolvedData={{ 'line-1': resolved }} />,
+      <TagSheetRenderer doc={printDoc([layer])} resolvedData={{ 'tag-1': resolved }} />,
     );
 
     expect(onCanvas).toBe('Model CBF3612');
@@ -417,9 +571,328 @@ describe('the print page and the canvas resolve a token identically', () => {
     const resolved: ResolvedLineData = lineData();
 
     render(
-      <TagSheetRenderer doc={printDoc([layer])} resolvedData={{ 'line-1': resolved }} />,
+      <TagSheetRenderer doc={printDoc([layer])} resolvedData={{ 'tag-1': resolved }} />,
     );
 
     expect(screen.getByText('Kitchen Sink')).toBeTruthy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC-S4-5/S4-6/S4-7 (PLAN-price-tag-r10.md S4): `{{product.price_tag_
+// description}}` - a subject-aware token like every other `product.*` field
+// (subjectPart/Parent resolution is generic across PATH_SLOTS, already
+// covered for every other product field; this pins the token's own entry).
+// ---------------------------------------------------------------------------
+
+describe('renderMergeFields - product.price_tag_description (AC-S4-5/S4-6)', () => {
+  it('renders the line text verbatim, including line breaks', () => {
+    const data = product({
+      price_tag_description: 'Made in Malaysia\nStainless steel',
+    } as Partial<ProductTagData>);
+
+    expect(renderMergeFields('{{product.price_tag_description}}', data, 'print')).toBe(
+      'Made in Malaysia\nStainless steel',
+    );
+  });
+
+  it('AC-S4-6: an empty description renders an empty string, never spec_lines or description', () => {
+    const data = product({ price_tag_description: null } as Partial<ProductTagData>);
+
+    expect(renderMergeFields('[{{product.price_tag_description}}]', data, 'print')).toBe('[]');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC-S4-13 (owner amendment 21 Sep, S11, amends AC-S4-5): the stored
+// `price_tag_description` is a per-product TEMPLATE now, not plain text -
+// `resolvePath` renders it ONE MORE TIME against the same subject's own
+// data before it reaches the tag. Written test-FIRST: today `resolvePath`
+// still returns the raw stored text unexpanded (a plain `PATH_SLOTS` read),
+// so every test below but the last is red on that raw, unexpanded text.
+// ---------------------------------------------------------------------------
+
+describe('renderMergeFields - product.price_tag_description is a template (AC-S4-13, S11)', () => {
+  it('a stored template resolves its own tokens against the SAME subject', () => {
+    const data = product({
+      name: 'Basin Tap',
+      price_tag_description: '{{product.name}} in {{spec.material}}',
+      specs: [{ key: 'material', label: 'Material', value: 'Stainless Steel', unit: null }],
+    } as Partial<ProductTagData>);
+
+    expect(renderMergeFields('{{product.price_tag_description}}', data, 'print')).toBe(
+      'Basin Tap in Stainless Steel',
+    );
+  });
+
+  it("with subjectPart: n the PART's own stored template renders against the PART's own data, not the parent's", () => {
+    const part: TagPartData = {
+      product_id: 'part-2',
+      code: 'PART-2',
+      name: 'Part Two',
+      dimensions: '',
+      specs: [{ key: 'finish', label: 'Finish', value: 'Matte black', unit: null }],
+      price_tag_description: '{{product.code}} - {{spec.finish}}',
+    };
+    const data = line({
+      price_tag_description: '{{product.name}} - parent template',
+      parts: [
+        { product_id: 'part-1', code: 'PART-1', name: 'Part One', dimensions: '' },
+        part,
+      ],
+    });
+    const layer = { props: { kind: 'text' as const, subjectPart: 1 } };
+
+    expect(renderMergeFields('{{product.price_tag_description}}', data, 'print', layer)).toBe(
+      'PART-2 - Matte black',
+    );
+  });
+
+  it('a SPEC VALUE that itself contains the literal text {{product.name}} is never re-expanded - one pass only', () => {
+    const data = product({
+      name: 'Basin Tap',
+      price_tag_description: '{{spec.material}}',
+      specs: [
+        { key: 'material', label: 'Material', value: 'Contains {{product.name}} literally', unit: null },
+      ],
+    } as Partial<ProductTagData>);
+
+    expect(renderMergeFields('{{product.price_tag_description}}', data, 'print')).toBe(
+      'Contains {{product.name}} literally',
+    );
+  });
+
+  it('a template naming a token the data cannot answer renders that token empty, the rest of the sentence intact', () => {
+    const data = product({
+      price_tag_description: '[{{spec.nonexistent}} tap]',
+      specs: [],
+    } as Partial<ProductTagData>);
+
+    expect(renderMergeFields('{{product.price_tag_description}}', data, 'print')).toBe('[ tap]');
+  });
+
+  it('an empty stored template still renders empty (Q5, unchanged)', () => {
+    const data = product({ price_tag_description: '' } as Partial<ProductTagData>);
+
+    expect(renderMergeFields('[{{product.price_tag_description}}]', data, 'print')).toBe('[]');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC-S4-13 on a LINE binding, from a LIVE payload (S11 browser check, 21
+// Sep): `POST /api/v1/dealer-kit/price-tag-requests/{id}/resolve-prices`
+// against the lane stack for `PT-202609-0018` (designing, line product
+// `SRTKS8547`) - the exact request the S11 browser check exercised. The
+// fixture below is that response's row 0, trimmed (long CDN image URLs
+// dropped), with `price_tag_description` added by hand: the live route does
+// NOT carry that field on the wire at all today - see
+// `test_dealer_kit_tag_data_routes.py::
+// test_resolve_prices_carries_price_tag_description_on_the_line_and_its_
+// parts`, red, which is the REAL, measured root cause of the browser-
+// observed "renders only the code line" defect (`raw` is `undefined` on
+// the live canvas, so `resolvePath` returns `null` before ever reaching the
+// nested `renderMergeFields` call the coordinator's own diagnosis names).
+//
+// With the field populated as it WILL be once that backend gap closes, this
+// block empirically checks the coordinator's second diagnosis - that
+// `resolvePath`'s nested `renderMergeFields(raw, subject, mode)` call
+// (passing no `layer`) breaks `subjectPart` resolution. It does not
+// reproduce: `subjectOf` is a no-op on an already-`kind: 'product'` subject
+// regardless of whether a `layer` is threaded through, and every case below
+// (subject-narrowed part template, empty-template part, and a same-shaped
+// line whose name genuinely differs from its code) resolves correctly with
+// today's code. The one live-real assertion that DOES differ from a naive
+// "name in material" expectation - `SRTKS8547`'s own `{{product.name}}` -
+// is `nameOrBlankIfCode` (`product-block.ts`), pre-existing and pre-r10,
+// firing exactly as it does everywhere else a name repeats its code (S2):
+// not a bug this slice introduced, and not something a merge-field
+// resolver should special-case around.
+// ---------------------------------------------------------------------------
+
+function liveSrtks8547Line(overrides: Partial<LineTagData> = {}): TagBindingData {
+  const ownPart: TagPartData = {
+    product_id: '1c91699b-fa74-4f7a-91df-fa5e5fd63729',
+    code: 'SRTKT1871SS',
+    name: 'SRTKT1871SS',
+    dimensions: '',
+    spec_lines: ['Sorento tap. Kitchen tap. Stainless steel. Pillar mounted.'],
+    specs: [
+      { key: 'material', label: 'Material', value: 'Stainless Steel', unit: null },
+      { key: 'mounting', label: 'Mounting', value: 'Pillar Mounted', unit: null },
+    ],
+    images: [],
+    barcode: null,
+    list_price: 400,
+    sell_price: null,
+    currency: 'MYR',
+    role: 'Kitchen Tap',
+    chosen: true,
+    // The part's OWN stored template - a subjectPart layer's own read.
+    price_tag_description: '{{product.code}} part',
+  };
+  const noTemplatePart: TagPartData = {
+    product_id: 'c934f9b1-029d-4488-a430-b48e947ca92e',
+    code: 'SRTKT1872SS',
+    name: 'SRTKT1872SS',
+    dimensions: '',
+    spec_lines: ['Sorento tap. Kitchen tap. Stainless steel. Wall mounted.'],
+    specs: [
+      { key: 'material', label: 'Material', value: 'Stainless Steel', unit: null },
+      { key: 'mounting', label: 'Mounting', value: 'Wall Hung', unit: null },
+    ],
+    images: [],
+    barcode: null,
+    list_price: 420,
+    sell_price: null,
+    currency: 'MYR',
+    role: 'Kitchen Tap',
+    chosen: false,
+    price_tag_description: null,
+  };
+  return {
+    kind: 'line',
+    line: {
+      tag_id: '44555443-2b63-45e9-905f-dd3a2089c196',
+      tag_label: '1a',
+      open_groups: [],
+      parts: [ownPart, noTemplatePart],
+      own_parts: [ownPart],
+      line_id: 'fe3574e1-ec40-43ac-bd8d-02d796928878',
+      code: 'SRTKS8547',
+      name: 'SRTKS8547',
+      dimensions: '850 x 470 x 230 mm',
+      spec_lines: 'Sorento kitchen sink. Stainless steel. 850 x 470 x 230 mm. 0.9 mm thick.',
+      specs: [{ key: 'material', label: 'Material', value: 'Stainless Steel', unit: null }],
+      set_members: '+ SRTKT1871SS SRTKT1871SS',
+      images: [],
+      list_price: 1490,
+      sell_price: 878,
+      parent_list_price: 1090,
+      parent_sell_price: null,
+      sell_price_basis: 'promotion',
+      show_promo_price: false,
+      included_accessories: '',
+      quantity: 1,
+      barcode: null,
+      currency: 'MYR',
+      price_tag_description: '{{product.name}} in {{spec.material}}',
+      ...overrides,
+    },
+  };
+}
+
+describe('renderMergeFields - product.price_tag_description on a LIVE line binding (AC-S4-13, S11)', () => {
+  it('SRTKS8547 itself: {{product.name}} is blank because name equals code (nameOrBlankIfCode, pre-existing) - the material half still resolves', () => {
+    const data = liveSrtks8547Line();
+
+    expect(renderMergeFields('{{product.price_tag_description}}', data, 'print')).toBe(
+      ' in Stainless Steel',
+    );
+  });
+
+  it('the SAME live shape with a name that genuinely differs from its code resolves the full sentence - the mechanism itself is sound', () => {
+    const data = liveSrtks8547Line({ name: 'Sorento Kitchen Sink' });
+
+    expect(renderMergeFields('{{product.price_tag_description}}', data, 'print')).toBe(
+      'Sorento Kitchen Sink in Stainless Steel',
+    );
+  });
+
+  it("subjectPart pointing at the chosen tap's own template ({{product.code}} part) renders THAT part's code, not the line's", () => {
+    const data = liveSrtks8547Line();
+    const layer = { props: { kind: 'text' as const, subjectPart: 0 } };
+
+    expect(renderMergeFields('{{product.price_tag_description}}', data, 'print', layer)).toBe(
+      'SRTKT1871SS part',
+    );
+  });
+
+  it('subjectPart pointing at a part with no stored template of its own renders empty, not the parent line\'s', () => {
+    const data = liveSrtks8547Line();
+    const layer = { props: { kind: 'text' as const, subjectPart: 1 } };
+
+    expect(renderMergeFields('{{product.price_tag_description}}', data, 'print', layer)).toBe('');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC-S4-17 (owner test pass, 21 Sep): a LINE of a `price_tag_description`
+// template whose entire content came from a token that resolved to nothing
+// is dropped, along with its newline - not left as a blank line. Scoped
+// tightly: a line the AUTHOR left blank on purpose (no token on it at all)
+// is kept exactly as typed, and the rule applies ONLY inside
+// `product.price_tag_description`'s own nested resolve, never to an
+// ordinary text layer's `renderMergeFields` call.
+// ---------------------------------------------------------------------------
+
+describe('product.price_tag_description drops an all-empty line (AC-S4-17)', () => {
+  it('a line whose only token has no value on this product is dropped, not left blank', () => {
+    const data = product({
+      price_tag_description: '{{product.code}}\n{{spec.steel_grade}}\n{{spec.product_type}}',
+      specs: [{ key: 'product_type', label: 'Type', value: 'Kitchen Tap', unit: null }],
+    } as Partial<ProductTagData>);
+
+    expect(renderMergeFields('{{product.price_tag_description}}', data, 'print')).toBe(
+      'CBF3612\nKitchen Tap',
+    );
+  });
+
+  it('a line with literal text plus an empty token keeps its text, trimmed', () => {
+    const data = product({
+      price_tag_description: 'Grade: {{spec.steel_grade}}',
+      specs: [],
+    } as Partial<ProductTagData>);
+
+    expect(renderMergeFields('{{product.price_tag_description}}', data, 'print')).toBe(
+      'Grade:',
+    );
+  });
+
+  it('a line the author left blank ON PURPOSE - no token on it at all - is kept', () => {
+    const data = product({
+      price_tag_description: 'Line1\n\nLine2',
+      specs: [],
+    } as Partial<ProductTagData>);
+
+    expect(renderMergeFields('{{product.price_tag_description}}', data, 'print')).toBe(
+      'Line1\n\nLine2',
+    );
+  });
+
+  it('the rule does NOT apply to an ordinary text layer - unchanged behaviour', () => {
+    const data = product({ specs: [] } as Partial<ProductTagData>);
+
+    expect(renderMergeFields('A\n{{spec.steel_grade}}\nB', data, 'print')).toBe('A\n\nB');
+  });
+});
+
+describe('mergeFieldCatalog - Price tag description (AC-S4-7)', () => {
+  it('lists Price tag description in group Product, directly after Spec lines', () => {
+    const catalog = mergeFieldCatalog([]);
+    const productFields = catalog.filter((field) => field.group === 'Product');
+    const labels = productFields.map((field) => field.label);
+
+    expect(labels).toContain('Price tag description');
+    const specIndex = labels.indexOf('Spec lines');
+    const descriptionIndex = labels.indexOf('Price tag description');
+    expect(specIndex).toBeGreaterThanOrEqual(0);
+    expect(descriptionIndex).toBe(specIndex + 1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC-S3-5 (PLAN-price-tag-r10.md S3): the FE is a pure pass-through for a
+// spec value - S3's title-casing happens server-side (`_spec_display_value`),
+// so a payload row that already carries "Stainless Steel" must render
+// exactly that, unchanged.
+// ---------------------------------------------------------------------------
+
+describe('renderMergeFields - spec.material pass-through (AC-S3-5)', () => {
+  it('renders a backend-formatted value unchanged, no client-side re-casing', () => {
+    const data = product({
+      specs: [{ key: 'material', label: 'Material', value: 'Stainless Steel', unit: null }],
+    });
+
+    expect(renderMergeFields('{{spec.material}}', data, 'print')).toBe('Stainless Steel');
   });
 });

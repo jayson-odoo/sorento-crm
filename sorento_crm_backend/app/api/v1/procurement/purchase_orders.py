@@ -11,6 +11,7 @@ from app.database import get_db
 from app.dependencies import get_current_user_or_api_key
 from app.api.v1.order_management.orders import _parse_flex_date  # shared flexible date parser
 from app.services.error_handler import AppException, handle_internal_error
+from app.services.po_last_cost_service import last_cost_rows
 from app.services.purchase_order_service import (
     PO_GROUP_BY_AXES,
     group_rows,
@@ -21,6 +22,63 @@ from app.services.uuid_list_param import parse_uuid_list
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+#: (chatbot-last-purchase-cost, review N1) registered ahead of `/placed` below. This
+#: router carries no `/{po_id}`-shaped route today, so there is nothing for "last-cost"
+#: to collide with yet - the placement is precautionary, matching `/placed`'s own
+#: position, so a future bare-uuid route added to this router cannot swallow it by
+#: registration order (Starlette matches in the order routes are added).
+@router.get("/last-cost")
+def get_purchase_orders_last_cost(
+    product_ids: Optional[list[str]] = Query(
+        None, description="Filter by canonical product UUIDs (csv / JSON / repeated)."
+    ),
+    warehouse_ids: Optional[list[str]] = Query(
+        None, description="Filter by canonical warehouse UUIDs (csv / JSON / repeated)."
+    ),
+    top_n: int = Query(
+        1, ge=1, le=50,
+        description="Lines per (product, warehouse) when product_ids is given, else lines overall.",
+    ),
+    current_user: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """The last `top_n` PO lines per `(product, warehouse)`, grouped by product, newest
+    PO date first within each product (owner ruling, live verification, 12 Sep 2026,
+    verbatim: "we need to sort by latest PO date first otherwise very confusing, so
+    first sort by the product, then latest PO date first"). With NO `product_ids` (an
+    unscoped ask), `top_n` is instead a plain cap over every line - the same ordering,
+    newest first, any product - never one row per product across the whole table.
+
+    Cancelled lines and cancelled POs are excluded; a line with no `unit_cost` never
+    answers. `Cost / unit`, `Discount / unit` and `Cost after discount / unit` are all
+    PER UNIT, derived from the line's own `discount` / `line_total` amounts - see
+    `po_last_cost_service` for the measured shape. `discount_per_unit` is ALWAYS a
+    number, `0.0` when the line carries none (owner ruling, live verification, 12 Sep
+    2026). `supplier` is the PO's own `suppliers.supplier_name`, None when it has none.
+    `warehouse_ids` narrows before the pick.
+    """
+    try:
+        rows = last_cost_rows(
+            db,
+            product_ids=parse_uuid_list(product_ids, param_name="product_ids"),
+            warehouse_ids=parse_uuid_list(warehouse_ids, param_name="warehouse_ids"),
+            top_n=top_n,
+        )
+        return JSONResponse(
+            content=jsonable_encoder(
+                {
+                    "data": rows,
+                    "pagination": {"total": len(rows), "page": 1, "limit": len(rows)},
+                    "empty": not rows,
+                }
+            )
+        )
+    except AppException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise handle_internal_error(str(e))
 
 
 @router.get("/placed")

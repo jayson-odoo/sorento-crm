@@ -154,9 +154,15 @@ export interface OrderSummaryRow {
   po_open_qty?: number;
   /** Open incoming SPO quantity for this product. */
   incoming_spo_qty?: number;
-  /** The latest `goods_received` picking line for this product, or null when it has
-   *  never been received. */
-  last_receipt?: { date: string; qty: number } | null;
+  /** The newest visible SPO allocation line for this product, received or not, or null
+   *  when it has none (PLAN-low-stock-last-in-and-list-scope S1). `spo_number` /
+   *  `container` are null on a run frozen before migration 518. */
+  last_receipt?: {
+    date: string;
+    qty: number;
+    spo_number?: string | null;
+    container?: string | null;
+  } | null;
   /** The chosen supplier's MOQ, or null when there is none on file. */
   moq?: number | null;
   /** Site-pool stock only (S14) - the export's "BRW on hand". Null on a run frozen
@@ -170,11 +176,12 @@ export interface OrderSummaryRow {
    *  #795). Null on a row nothing carries a reason for. */
   suggestion?: string | null;
   /** Open BRW PO lines behind `po_open_qty`, one entry per document (issue #795 Slice
-   *  3). Empty when nothing is open. */
-  po_open_docs?: { number: string; qty: number }[];
+   *  3). Empty when nothing is open. A PO carries no container. */
+  po_open_docs?: { number: string; container?: string | null; qty: number }[];
   /** Open incoming SPO allocations behind `incoming_spo_qty`, one entry per document
-   *  (issue #795 Slice 3). Empty when nothing is open. */
-  incoming_spo_docs?: { number: string; qty: number }[];
+   *  (issue #795 Slice 3). `container` is the box the goods are in, present only when
+   *  the SPO names one (PLAN-low-stock-report S2). Empty when nothing is open. */
+  incoming_spo_docs?: { number: string; container?: string | null; qty: number }[];
 }
 
 /** The whole report for one run, as of one date (AC-C2.9). */
@@ -422,4 +429,21 @@ export interface OrderSummaryDecisionResult {
    * is recorded.
    */
   location_allocations: OrderSummaryLocationAllocation[];
+}
+
+/**
+ * The low stock report's export dialog preview (R4/AC-15b, PLAN-low-stock-export-split-
+ * 25sep): `rows` is the visible row count (the workbook's own "All" count); `sheet_counts`
+ * is the number of GROUPS the workbook would write under each non-`none` split, keyed
+ * exactly as the workbook keys them (none-buckets included, pairs only when present). The
+ * dialog itself doubles a group count into a sheet count (R2: every group is a
+ * "<key> - Low" then "<key>" pair) - see `previewLowStockExport` in `summaryOrderService.ts`.
+ */
+export interface LowStockPreview {
+  rows: number;
+  sheet_counts: {
+    supplier: number;
+    category: number;
+    supplier_category: number;
+  };
 }

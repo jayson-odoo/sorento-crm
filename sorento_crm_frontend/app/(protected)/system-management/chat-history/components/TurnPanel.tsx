@@ -20,7 +20,7 @@ import {
   turnHeadline,
   turnNotes,
 } from '../turnPresentation';
-import type { ChatbotTurn, TurnTraceRecord } from '../types/chatbotTurn.types';
+import type { ChatbotTurn, TurnStageRecord } from '../types/chatbotTurn.types';
 
 /**
  * The turn trace under one incoming message (AC-251 to AC-256).
@@ -165,7 +165,7 @@ function StageRow({
   turn,
   retryUnavailableReason = null,
 }: {
-  record: TurnTraceRecord;
+  record: TurnStageRecord;
   label: string;
   turn: ChatbotTurn;
   retryUnavailableReason?: string | null;
@@ -348,7 +348,7 @@ function TurnFooter({ turn }: { turn: ChatbotTurn }) {
     () =>
       JSON.stringify(
         turn.trace.map((r) => ({
-          stage: r.kind === 'note' ? `note (${r.stage})` : r.stage,
+          stage: r.kind ? `${r.kind}${r.stage ? ` (${r.stage})` : ''}` : r.stage,
           status: r.status,
           ms: r.ms,
           raw: r.raw,

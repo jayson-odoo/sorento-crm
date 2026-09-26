@@ -57,6 +57,14 @@ _ADDRESSING_KEYS = {
     "so_line_id",
     "project_sales_order_id",
     "supply_decision_id",
+    # S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-7/B6-15/B6-17): the OI <-> SO line
+    # deep-link ids - addressing only, never printed (AC-B6-1, no-UUID rule holds on
+    # screen).
+    "core_line_id",
+    "sales_order_id",
+    "row_id",
+    "inquiry_id",
+    "core_sales_order_id",
 }
 
 

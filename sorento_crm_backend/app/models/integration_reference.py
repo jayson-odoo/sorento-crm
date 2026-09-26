@@ -18,7 +18,7 @@ absent, cleaning it up on discovery.
 every pre-existing record: a reference exists only when a record genuinely came
 from outside.
 """
-from sqlalchemy import Column, DateTime, ForeignKey, Index, String, UniqueConstraint
+from sqlalchemy import Column, DateTime, ForeignKey, Index, String, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
@@ -35,6 +35,15 @@ class IntegrationReference(Base):
     # allowlist -- never interpolated from caller input unchecked.
     entity_type = Column(String(50), nullable=False)
     entity_id = Column(String, nullable=False)
+
+    # autocount-brands-ingest BL-056 (D11): the anchor company for a reference
+    # to a company-scoped entity type; NULL for a shared type (`sales_agents`,
+    # `IntegrationReferenceService.SHARED_TABLES`). Nullable because a shared
+    # row genuinely has none - not because the anchor is ever optional for a
+    # scoped one, which the service enforces itself.
+    company_id = Column(
+        UUID(as_uuid=False), ForeignKey("companies.id", ondelete="CASCADE"), nullable=True
+    )
 
     # 'autocount' today. Kept explicit so a second upstream can be added without
     # the existing rows becoming ambiguous.
@@ -59,11 +68,27 @@ class IntegrationReference(Base):
     )
 
     __table_args__ = (
-        # One external document maps to exactly one local record. Without this,
-        # a re-push could create a second row and later syncs would update
-        # whichever they happened to find first.
-        UniqueConstraint(
-            "source_system", "entity_type", "source_ref", name="uq_integration_ref_source"
+        # BL-056 (D12): one external document maps to one local record PER
+        # COMPANY, not globally - two partial unique indexes, not the single
+        # global constraint this replaces. Partial rather than a `NULLS NOT
+        # DISTINCT` column so the guarantee holds on every Postgres version
+        # this app runs (prod pg17, CI pg16).
+        Index(
+            "uq_integration_ref_source_company",
+            "source_system",
+            "entity_type",
+            "source_ref",
+            "company_id",
+            unique=True,
+            postgresql_where=text("company_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_integration_ref_source_shared",
+            "source_system",
+            "entity_type",
+            "source_ref",
+            unique=True,
+            postgresql_where=text("company_id IS NULL"),
         ),
         # ...and one local record has exactly one origin. Two would make
         # "where did this come from?" unanswerable, which per-field ownership

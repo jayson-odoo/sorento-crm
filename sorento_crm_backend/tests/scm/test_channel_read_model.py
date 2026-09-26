@@ -610,11 +610,21 @@ def test_recommendation_inputs_carry_the_channel_need_breakdown(scm_app):
     assert float(rows[0]["rounded_qty"] or 0) == 49.0
 
 
-def test_project_need_bypasses_net_position_subtraction(scm_app):
-    """AC-E05, worked exactly as the plan states it: a firm project buy of 5, with on-hand
-    100 sitting far above it, must still read as project need 5 - and, because nothing else
-    is short, must still produce a recommendation at all. Under the OLD net-position-only
-    engine this location would never trigger a buy in the first place.
+def test_project_need_is_netted_once_against_the_stock_that_covers_it(scm_app):
+    """AC-E05 as the ONE FORMULA leaves it (PLAN-reorder-one-formula.md, owner ruling
+    11 Sep 2026), same question as before: where does a firm project buy of 5 go when the
+    location holds 100?
+
+    It goes INTO the net, exactly once, and the 100 covers it: `net` = 100 + 0 + 0 - 5 = 95,
+    against a reorder point of 0, so `buy = 0 - 95` clips to nothing and the row is
+    `covered`. The #794 bypass that force-triggered a buy here - firm project demand added
+    on top of the netting, so the same 5 units were bought while 100 sat on the shelf - is
+    retired, and this is the case that names the difference.
+
+    The demand is NOT lost, which is what this test has always been about: the row still
+    states `project_committed` 5 (the raw channel reading, never capped), and the covered
+    row itself states the commitment its stock is covering. Only `project_need` - the
+    DISPLAY split of what is actually being BOUGHT - is 0, because nothing is.
     """
     _, db, _, _ = scm_app
     wid = _mk_warehouse(db, "ZZTCHRM-RUN-B")
@@ -628,9 +638,19 @@ def test_project_need_bypasses_net_position_subtraction(scm_app):
     run_svc.run_reorder(created["run_id"], db=db)
 
     rows = _recs(db, created["run_id"], pid, wid)
-    assert rows, "firm project need must trigger a buy even though on-hand covers it"
-    assert rows[0]["inputs"]["project_need"] == 5
-    assert float(rows[0]["rounded_qty"] or 0) >= 5.0
+    assert rows, "the location must still state what it did about the firm project demand"
+    assert [r["rec_type"] for r in rows] == ["covered"], (
+        "100 on hand genuinely covers 5 of confirmed project demand - buying it again is "
+        "the double-count the one formula retires"
+    )
+    inputs = rows[0]["inputs"]
+    assert inputs["project_committed"] == 5, (
+        "the firm demand is still READ and still frozen on the row - only the buy is 0"
+    )
+    assert float(inputs["net"]) == 95.0, "project demand nets ONCE: 100 - 5"
+    assert inputs["project_need"] == 0, (
+        "project_need is the split of what is being bought, and nothing is being bought"
+    )
 
 
 def test_a_sheet_origin_project_order_reaches_the_plan_as_nothing_at_all(scm_app):

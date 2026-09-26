@@ -31,7 +31,9 @@ export type TurnStatus = 'queued' | 'processing' | 'delegated' | 'done' | 'faile
 
 export type TraceStatus = 'ok' | 'failed' | 'skipped';
 
-/** The 13 lanes the router decides between. */
+/** The 13 lanes the router decides between, plus `media_denied` (chatbot media-into-turn
+ *  S2): a photo or voice note the intake step refused (quota, burst, disabled number,
+ *  clip too long) before a parser ever ran. */
 export type BranchKind =
   | 'access_denied'
   | 'escalate_offer'
@@ -45,7 +47,8 @@ export type BranchKind =
   | 'not_supported'
   | 'stock_denied'
   | 'demand_qty'
-  | 'business_query';
+  | 'business_query'
+  | 'media_denied';
 
 /**
  * One stage of one turn.
@@ -54,24 +57,61 @@ export type BranchKind =
  * the customer's text and never by an LLM (D11). The screen renders them as written; it
  * does not build prose of its own out of `facts`.
  */
+/**
+ * Everything in `trace` that is NOT a stage the turn ran.
+ *
+ * `note` is something that happened TO the turn - today, an operator asking for a retry;
+ * it carries the stage the turn stopped at so the endpoint can file it with the failure.
+ * The other six are sub-events a stage produced (`TurnTrace.add`, backend
+ * `app/services/chatbot/trace.py`): one MCP tool call, one cross-domain rung probe, the
+ * field reveals, and so on. They ride the SAME array as the stage records and carry no
+ * `stage` at all, which is why the split below is on `kind` being absent and not on
+ * `kind !== 'note'` - that read crashed the panel the first time a `tool` event landed.
+ */
+export type TurnTraceKind =
+  | 'note'
+  | 'tool'
+  | 'crossdomain'
+  | 'reveals'
+  | 'decay'
+  | 'focus'
+  | 'open_question';
+
+/**
+ * One entry of `chatbot.turns.trace` - a stage record, a note, or a sub-event.
+ *
+ * Every field past `kind` is optional because a sub-event has none of them. Narrow to a
+ * stage record with `stageRecords()` / `isStageRecord()` before reading `stage`.
+ */
 export interface TurnTraceRecord {
-  /**
-   * `note` is something that happened TO the turn rather than a step it ran - today, an
-   * operator asking for a retry. Absent on every stage record. The timeline renders notes
-   * as footer lines, because a note drawn as a ninth stage row reads as a bug.
-   */
-  kind?: 'note';
+  /** Absent on a stage record. Present, and one of seven values, on everything else. */
+  kind?: TurnTraceKind;
+  stage?: TurnStage;
+  status?: TraceStatus;
+  started_at?: string;
+  ms?: number;
+  summary?: string;
+  why?: string;
+  /** Small flat dict rendered as key/value rows under the sentences. */
+  facts?: Record<string, unknown>;
+  error?: string | null;
+  /** Technical payload for the "Technical details" viewer. Byte-capped by the engine. */
+  raw?: unknown;
+  /** A sub-event spreads its own payload flat beside `kind`. */
+  [extra: string]: unknown;
+}
+
+/** A record `TurnTrace.record` wrote: carries `stage`, never `kind`. The timeline rows. */
+export interface TurnStageRecord extends TurnTraceRecord {
+  kind?: undefined;
   stage: TurnStage;
   status: TraceStatus;
   started_at: string;
   ms: number;
   summary: string;
   why: string;
-  /** Small flat dict rendered as key/value rows under the sentences. */
   facts: Record<string, unknown>;
   error: string | null;
-  /** Technical payload for the "Technical details" viewer. Byte-capped by the engine. */
-  raw: unknown;
 }
 
 /** The answer the turn returned. Null while the turn is still running, or when it failed. */
@@ -80,6 +120,35 @@ export interface TurnResponseBody {
   item?: Record<string, unknown> | null;
   reply?: { text?: string | null; quick_replies?: unknown[] } | null;
   actions?: Record<string, unknown>[] | null;
+}
+
+// `TurnAttachment` moved to `@/components/chatbot/turnAttachments` (round 2) - the
+// chatbot console shares the identical `actions[].kind === 'send_attachments'` shape
+// off its own `ConsoleTurnResponse`, so the type lives with the shared extractor
+// rather than duplicated per screen.
+
+/**
+ * What the media-intake step (chatbot media-into-turn, S2/S4) read out of an incoming
+ * photo or voice note, joined onto the turn it produced. Null on a text turn - the
+ * transcript and the turn panel both treat its absence as "not a media turn", never as
+ * a loading or error state.
+ */
+export interface ChatbotTurnMedia {
+  modality: 'image' | 'voice';
+  mime_type: string | null;
+  /** The stored `attachments` row (S4). Never rendered - the FE reads `url`. */
+  attachment_id: string | null;
+  /** Signed, short-lived CDN url (S4). Null while the bytes were never stored (denied). */
+  url: string | null;
+  /** The text handed to the parser: the entity raws joined (image) or the transcript
+   *  verbatim (voice). Null on a denied/failed job. */
+  transcript_or_rendered_text: string | null;
+  entities: Array<{ raw: string; hint?: string | null; confident?: boolean | null }>;
+  attributes: Array<{ kind: string; raw: string; entity_raw?: string | null }>;
+  notes: string | null;
+  truncated: boolean;
+  /** e.g. `accepted`, `denied_gate`, `denied_quota`, `denied_burst`, `failed`. */
+  decision: string;
 }
 
 export interface ChatbotTurn {
@@ -107,6 +176,9 @@ export interface ChatbotTurn {
   retry_requested_at?: string | null;
   trace: TurnTraceRecord[];
   response: TurnResponseBody | null;
+  /** The photo or voice note this turn read (chatbot media-into-turn, S2/S4). Null on a
+   *  text turn. */
+  media?: ChatbotTurnMedia | null;
 }
 
 export interface ChatbotTurnListResponse {
@@ -171,6 +243,11 @@ export interface TurnDetailStage {
   status: TraceStatus;
   summary: string | null;
   error: string | null;
+  /** Browser pass, chatbot media-into-turn: the SAME flattened facts `TurnPanel`'s
+   * own inline StageRow already prints (modality/decision/entities/attributes/
+   * notes/... for a media_intake stage) - absent or `{}` on a stage that carries
+   * none, same optionality as `TurnTraceRecord.facts` above. */
+  facts?: Record<string, unknown>;
 }
 
 export interface TurnDetailParse {
@@ -238,9 +315,84 @@ export interface TurnDetailSession {
   diff: TurnDetailSessionDiffEntry[];
 }
 
+/**
+ * APPLY and Memory (chatbot turn re-architecture S1/S3, AC-1514, AC-1549).
+ *
+ * Both are OPTIONAL on `TurnDetail`: a turn recorded before S3 ships never carries
+ * them, and the drawer's own `Section` renders that as the same "nothing recorded
+ * yet" empty state every other kind here already uses - never an error.
+ */
+export interface TurnDetailApplyDiffEntry {
+  slot: string;
+  before: unknown;
+  after: unknown;
+  /** Which rule moved it, e.g. "exclusive narrows the named axis". */
+  reason?: string | null;
+}
+
+/**
+ * What the backend actually sends: `turn_runtime.focus_diff` returns a MAP keyed by the
+ * focus slot (`{ customers: { before, after } }`), and only a slot that moved is in it.
+ * The array form is the older shape some recorded turns still carry, so the drawer
+ * accepts either and renders one list.
+ */
+export type TurnDetailApplyDiff =
+  | TurnDetailApplyDiffEntry[]
+  | Record<string, { before?: unknown; after?: unknown; reason?: string | null }>;
+
+/**
+ * What APPLY read the message as, before any rule acted on it: one of `answer`,
+ * `refine`, `new_ask` or `carry`, with the single rule that decided it.
+ */
+export interface TurnDetailApplyDecision {
+  kind: string;
+  why: string;
+}
+
+export interface TurnDetailApply {
+  /** The parser verdict APPLY read, as sent (contract 102 to 105's shape). */
+  verdict: Record<string, unknown> | null;
+  decision?: TurnDetailApplyDecision | null;
+  state_diff: TurnDetailApplyDiff | null;
+  /** One line per (domain, entity kind) the narrower touched this turn. */
+  narrowing: string[];
+  /** `reconciled: <from> -> <to>`, or null when nothing was rewritten. */
+  reconciliation?: string | null;
+  /**
+   * The turn's plan. The backend sends the `apply` record's own object (domains,
+   * fetch, denied, ask, lane); an older turn carries the one-line string.
+   */
+  plan: string | Record<string, unknown> | null;
+  /** The rendered user block plus hint blocks sent to the parser, capped at 64 KB. */
+  prompt_text: string | null;
+}
+
+export interface TurnDetailMemorySlot {
+  key: string;
+  value: unknown;
+  /** Who last wrote this slot, and when - "turn 9, pick", "set this turn". */
+  writer: string | null;
+}
+
+export interface TurnDetailMemoryEpisodes {
+  recall_hit: boolean;
+  /** Why recall did or did not fire, e.g. "no backward reference". */
+  reason: string | null;
+  last_frame_summary: string | null;
+  frame_count: number | null;
+}
+
+export interface TurnDetailMemory {
+  focus: TurnDetailMemorySlot[];
+  profile: TurnDetailMemorySlot[];
+  episodes: TurnDetailMemoryEpisodes | null;
+}
+
 export interface TurnDetail {
   stages: TurnDetailStage[];
   parse: TurnDetailParse | null;
+  apply?: TurnDetailApply | null;
+  memory?: TurnDetailMemory | null;
   decay: TurnDetailDecay[];
   open_question: TurnDetailOpenQuestion | null;
   focus: TurnDetailFocus[];

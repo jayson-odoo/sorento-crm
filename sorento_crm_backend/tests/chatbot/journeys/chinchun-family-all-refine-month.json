@@ -1,0 +1,66 @@
+{
+  "name": "chinchun-family-all-refine-month",
+  "source": "browser-pass-6 chain 2 (handpass3-owner-17sep-hanlim-chinchun-all-refinement-this-month.json), hand pass 3 rulings items 2/3/4",
+  "cases": [
+    {
+      "name": "hanlim-single-family-header",
+      "cold": true,
+      "turns": [
+        {
+          "text": "Delivery to hanlim",
+          "expect": {
+            "header_names_once": "HANLIM TRADING SDN BHD"
+          }
+        }
+      ]
+    },
+    {
+      "name": "chinchun-all-then-refine-then-month",
+      "cold": true,
+      "turns": [
+        {
+          "text": "Chin chun",
+          "expect": {
+            "roster_min_options": 3
+          }
+        },
+        {
+          "text": "All",
+          "expect": {
+            "header_names_once": "JIMMY - I",
+            "reply_contains": ["CHIN CHUN"]
+          }
+        },
+        {
+          "text": "4",
+          "expect": {
+            "header_names_once": "JIMMY - I",
+            "reply_not_contains": ["JIMMY - I, JIMMY - I"]
+          }
+        },
+        {
+          "text": "1",
+          "expect": {
+            "reply_contains": ["CHIN CHUN HARDWARE SDN BHD"]
+          }
+        },
+        {
+          "text": "For srtwc286 only",
+          "expect": {}
+        },
+        {
+          "text": "1",
+          "expect": {
+            "reply_contains": ["CHIN CHUN", "SRTWC286-SH-200"]
+          }
+        },
+        {
+          "text": "This month only",
+          "expect": {
+            "reply_contains": ["Order date:"]
+          }
+        }
+      ]
+    }
+  ]
+}

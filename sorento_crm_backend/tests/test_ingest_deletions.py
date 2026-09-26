@@ -113,10 +113,13 @@ class _Env:
     def __init__(self, client: TestClient, db):
         self.client = client
         self.db = db
-        self.refs = IntegrationReferenceService(db)
+        self.company_a = DEFAULT_COMPANY_ID
+        # Anchored to A; a helper seeding into B builds its OWN anchored
+        # instance (see `_link`) - plan D14 is strict, the constructor's own
+        # anchor is what gets stored, never inferred from the entity's row.
+        self.refs = IntegrationReferenceService(db, company_id=self.company_a)
 
         suffix = uuid.uuid4().hex[:8]
-        self.company_a = DEFAULT_COMPANY_ID
         other = Company(id=str(uuid.uuid4()), name=f"{MARKER} B {suffix}", code=f"ZL{suffix}")
         db.add(other)
         db.flush()
@@ -134,46 +137,54 @@ class _Env:
         db.commit()
 
     # ------------------------------------------------------------- seed helpers
-    def _link(self, entity_type: str, entity_id: str, stem: str) -> str:
+    def _link(self, entity_type: str, entity_id: str, stem: str, *, company_id: str = None) -> str:
         source_ref = _ref(stem)
-        self.refs.link(entity_type=entity_type, entity_id=str(entity_id), source_ref=source_ref)
+        svc = (
+            self.refs
+            if company_id is None or company_id == self.company_a
+            else IntegrationReferenceService(self.db, company_id=company_id)
+        )
+        svc.link(entity_type=entity_type, entity_id=str(entity_id), source_ref=source_ref)
         self.db.commit()
         return source_ref
 
     def warehouse(self, company_id: str = None) -> tuple[str, str]:
+        anchor = company_id or self.company_a
         row = Warehouse(
             # Globally unique in the model (pre-305 drift), so no code is reused
             # across the two companies in this suite.
             warehouse_code=f"{MARKER}WH{uuid.uuid4().hex[:6]}",
             warehouse_name=f"{MARKER} depot",
-            company_id=company_id or self.company_a,
+            company_id=anchor,
         )
         self.db.add(row)
         self.db.flush()
-        return self._link("warehouses", row.id, "LOC"), str(row.id)
+        return self._link("warehouses", row.id, "LOC", company_id=anchor), str(row.id)
 
     def customer(self, company_id: str = None) -> tuple[str, str]:
+        anchor = company_id or self.company_a
         row = Customer(
             customer_code=unique_code(MARKER),
             customer_name=f"{MARKER} customer",
-            company_id=company_id or self.company_a,
+            company_id=anchor,
         )
         self.db.add(row)
         self.db.flush()
-        return self._link("customers", row.id, "DEBTOR"), str(row.id)
+        return self._link("customers", row.id, "DEBTOR", company_id=anchor), str(row.id)
 
     def product(self, company_id: str = None) -> tuple[str, str]:
+        anchor = company_id or self.company_a
         row = Product(
             product_code=unique_code(MARKER),
             product_name=f"{MARKER} product",
             category_id=self._category.id,
             base_uom_id=self._uom.id,
             list_price=10,
-            company_id=company_id or self.company_a,
+            company_id=anchor,
         )
         self.db.add(row)
         self.db.flush()
-        return self._link("products", row.id, "ITEM"), str(row.id)
+        return self._link("products", row.id, "ITEM", company_id=anchor), str(row.id)
 
     def supplier(self) -> str:
         row = Supplier(

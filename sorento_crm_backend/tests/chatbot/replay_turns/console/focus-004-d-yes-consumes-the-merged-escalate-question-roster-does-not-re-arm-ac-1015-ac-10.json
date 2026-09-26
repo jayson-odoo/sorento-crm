@@ -1,0 +1,841 @@
+{
+  "turns": [
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "stock SRTWT2643",
+              "type": "text"
+            },
+            "messageId": "console-check-f81e6659ea12",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789475344"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
+        "text": "Couldn't find \"SRTWT2643\" (product). Did you mean:\n1. SRTWT2632 - no stock details\n2. SRTWT2633 - no stock details\n3. SRTWT2634 - no stock details\nReply with a code to continue, or would you like me to escalate to warehouse team?",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [
+          {
+            "matches": [],
+            "resolved": false,
+            "token": "SRTWT2643"
+          }
+        ],
+        "tokens": [
+          "SRTWT2643"
+        ],
+        "unresolved_tokens": [
+          "SRTWT2643"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T21:32:26.368437+09:00",
+        "turn_id": "6a4bbdf8-7f42-4f0e-9a83-754bb1e61a3a"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "inventory",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "SRTWT2643"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_stock",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": "specific",
+        "top_n": null,
+        "user_goal": "trying to check stock for SRTWT2643"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "1",
+              "type": "text"
+            },
+            "messageId": "console-check-e50770b7b80f",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {
+          "access_levels": [],
+          "contains_flyer": false,
+          "focus": {
+            "domains": {
+              "set_at": null,
+              "set_at_turn": 13,
+              "source": "current_message",
+              "value": [
+                "inventory"
+              ]
+            },
+            "products": {
+              "set_at": null,
+              "set_at_turn": 13,
+              "source": "current_message",
+              "value": [
+                {
+                  "canonical_code": null,
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "product",
+                  "raw": "SRTWT2643"
+                }
+              ]
+            }
+          },
+          "ideation": null,
+          "open_question": {
+            "asked_at": null,
+            "asked_at_turn": 13,
+            "expects": "pick_or_yes_no",
+            "kind": "product_pick",
+            "options": [
+              {
+                "domain": "inventory",
+                "entity_type": "product",
+                "idx": 1,
+                "label": "SRTWT2632",
+                "product": "SRTWT2632",
+                "uuid": "a3055471-8300-4c2c-94e5-0b5cd9e84442",
+                "value": "SRTWT2632"
+              },
+              {
+                "domain": "inventory",
+                "entity_type": "product",
+                "idx": 2,
+                "label": "SRTWT2633",
+                "product": "SRTWT2633",
+                "uuid": "f79939a6-8a41-4823-9e96-ab14e7a0d807",
+                "value": "SRTWT2633"
+              },
+              {
+                "domain": "inventory",
+                "entity_type": "product",
+                "idx": 3,
+                "label": "SRTWT2634",
+                "product": "SRTWT2634",
+                "uuid": "feb8a034-14fe-4946-a9ec-b6f60190877b",
+                "value": "SRTWT2634"
+              }
+            ],
+            "payload": {
+              "domain": "inventory",
+              "keep": [],
+              "offer": {
+                "domain": null,
+                "options": [
+                  {
+                    "idx": 1,
+                    "label": "warehouse",
+                    "team": "warehouse"
+                  }
+                ],
+                "team": "warehouse"
+              },
+              "offer_id": "6a4bbdf8-7f42-4f0e-9a83-754bb1e61a3a",
+              "picked": []
+            }
+          }
+        },
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789475344"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [
+          "a3055471-8300-4c2c-94e5-0b5cd9e84442"
+        ],
+        "focus_after": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
+        "text": "Here's what you want:\n\u2022 product: SRTWT2632\n\nBut no inventory matched these.\nNo stock, no incoming and nothing on order for SRTWT2632.\n\nWould you like me to escalate to purchasing team?",
+        "tools": [
+          {
+            "args_keys": [
+              "_diagnostics",
+              "access_levels",
+              "contact_id",
+              "date_mode",
+              "include_sellable",
+              "is_active",
+              "product_ids",
+              "space_id",
+              "view"
+            ],
+            "tool": "crm_inventory_stock_balance_list"
+          }
+        ]
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T21:32:46.499539+09:00",
+        "turn_id": "754d2be8-8f1a-4679-9c9e-e2142235fc78"
+      },
+      "tool_results": [
+        {
+          "args": {
+            "_diagnostics": {
+              "entities_in": 1,
+              "scalar_truncated": [],
+              "skipped": [],
+              "total_uuids_passed": 1,
+              "unmapped_types": []
+            },
+            "access_levels": [],
+            "contact_id": "437264483",
+            "date_mode": null,
+            "include_sellable": true,
+            "is_active": null,
+            "product_ids": [
+              "a3055471-8300-4c2c-94e5-0b5cd9e84442"
+            ],
+            "space_id": "364817",
+            "view": "render"
+          },
+          "envelope": {
+            "action_links": [],
+            "alternatives": [
+              {
+                "display": "SRTWT2635",
+                "id": "ce734822-e3b6-4c28-b1c9-8887fed4ca3c",
+                "is_variant": false,
+                "sim": 0.667,
+                "value": "SRTWT2635"
+              },
+              {
+                "display": "SRTWT2634-BL",
+                "id": "46b94278-1067-4ca1-8255-e196c92c6b08",
+                "is_variant": false,
+                "sim": 0.571,
+                "value": "SRTWT2634-BL"
+              },
+              {
+                "display": "SRTWT2637-GM",
+                "id": "6171c168-3611-4607-81c1-bf54493f5fb9",
+                "is_variant": false,
+                "sim": 0.571,
+                "value": "SRTWT2637-GM"
+              }
+            ],
+            "attachments": [],
+            "has_result": false,
+            "intro": "No matching results found.",
+            "items": [],
+            "last_updated_at": "2026-09-04T17:30:59.549278",
+            "relaxed_axis": "entity",
+            "result_type": "stock",
+            "stock_visibility": {
+              "hide_zero_locations": true,
+              "mode": "detailed",
+              "source": "contact",
+              "warehouse_codes": null
+            }
+          },
+          "tool": "crm_inventory_stock_balance_list"
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": null,
+        "entities": [],
+        "entity_op": "reuse",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": null,
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "casual",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [
+          1
+        ],
+        "reference_target": "dym",
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to pick suggestion 1"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "yes",
+              "type": "text"
+            },
+            "messageId": "console-check-4a3bd221f2f6",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {
+          "access_levels": [],
+          "contains_flyer": false,
+          "focus": {
+            "domains": {
+              "set_at": null,
+              "set_at_turn": 14,
+              "source": "pick",
+              "value": [
+                "inventory"
+              ]
+            },
+            "products": {
+              "set_at": null,
+              "set_at_turn": 14,
+              "source": "pick",
+              "value": [
+                {
+                  "canonical_code": "SRTWT2632",
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "product",
+                  "ordinal": 1,
+                  "raw": "SRTWT2632",
+                  "uuid": "a3055471-8300-4c2c-94e5-0b5cd9e84442"
+                }
+              ]
+            }
+          },
+          "ideation": null,
+          "open_question": {
+            "asked_at": null,
+            "asked_at_turn": 13,
+            "expects": "pick_or_yes_no",
+            "kind": "product_pick",
+            "options": [
+              {
+                "domain": "inventory",
+                "entity_type": "product",
+                "idx": 1,
+                "label": "SRTWT2632",
+                "product": "SRTWT2632",
+                "uuid": "a3055471-8300-4c2c-94e5-0b5cd9e84442",
+                "value": "SRTWT2632"
+              },
+              {
+                "domain": "inventory",
+                "entity_type": "product",
+                "idx": 2,
+                "label": "SRTWT2633",
+                "product": "SRTWT2633",
+                "uuid": "f79939a6-8a41-4823-9e96-ab14e7a0d807",
+                "value": "SRTWT2633"
+              },
+              {
+                "domain": "inventory",
+                "entity_type": "product",
+                "idx": 3,
+                "label": "SRTWT2634",
+                "product": "SRTWT2634",
+                "uuid": "feb8a034-14fe-4946-a9ec-b6f60190877b",
+                "value": "SRTWT2634"
+              }
+            ],
+            "payload": {
+              "domain": "inventory",
+              "keep": [],
+              "offer": {
+                "domain": null,
+                "options": [
+                  {
+                    "idx": 1,
+                    "label": "purchasing",
+                    "team": "purchasing"
+                  }
+                ],
+                "team": "purchasing"
+              },
+              "offer_id": "6a4bbdf8-7f42-4f0e-9a83-754bb1e61a3a",
+              "picked": []
+            }
+          }
+        },
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789475344"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message",
+          "assign_conversation",
+          "add_comment",
+          "send_message"
+        ],
+        "branch_kind": "out_of_scope",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": null,
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T21:33:03.287763+09:00",
+        "turn_id": "d3f66fd4-688b-4897-ba44-8fae1f1ed64a"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": null,
+        "entities": [],
+        "entity_op": "reuse",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": null,
+        "is_active": null,
+        "is_affirmative": true,
+        "match_mode": "and",
+        "message_type": "casual",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to confirm the pending escalation offer"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "2",
+              "type": "text"
+            },
+            "messageId": "console-check-21ab2941c29f",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {
+          "access_levels": [],
+          "contains_flyer": false,
+          "focus": {
+            "domains": {
+              "set_at": null,
+              "set_at_turn": 14,
+              "source": "pick",
+              "value": [
+                "inventory"
+              ]
+            },
+            "products": {
+              "set_at": null,
+              "set_at_turn": 14,
+              "source": "pick",
+              "value": [
+                {
+                  "canonical_code": "SRTWT2632",
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "product",
+                  "ordinal": 1,
+                  "raw": "SRTWT2632",
+                  "uuid": "a3055471-8300-4c2c-94e5-0b5cd9e84442"
+                }
+              ]
+            }
+          },
+          "ideation": null,
+          "open_question": null
+        },
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789475344"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "low_signal",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Sure - option 2 sounds good. Let me know if you\u2019d like help comparing it with the others.",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T21:33:21.574198+09:00",
+        "turn_id": "dd131c54-9bad-4df0-a202-e594fbd692bd"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": null,
+        "entities": [],
+        "entity_op": "reuse",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": null,
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "casual",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to choose option 2"
+      }
+    }
+  ]
+}

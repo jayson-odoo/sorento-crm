@@ -18,6 +18,7 @@ from app.api.v1.master_data import (
     product_specifications,
     product_sets,
     product_companions,
+    product_combos,
     sales_agents,
 )
 
@@ -43,6 +44,11 @@ router.include_router(
     prefix="/product-companion-rules",
     tags=["product-companion-rules"],
 )
+# NO prefix: the combo routes live under three path roots (`/products/{id}/combos`,
+# `/product-combos/...`, `/product-combo-parts/...`), so there is nothing common to
+# hang one on. Registered here beside product_companions, the #779 precedent this
+# slice copies.
+router.include_router(product_combos.router, tags=["product-combos"])
 router.include_router(sales_agents.router, prefix="/sales-agents", tags=["sales-agents"])
 router.include_router(lookup_sets.router, prefix="/lookup-sets", tags=["lookup-sets"])
 router.include_router(lookup_eligibility.router, prefix="/lookup-eligibility", tags=["lookup-eligibility"])

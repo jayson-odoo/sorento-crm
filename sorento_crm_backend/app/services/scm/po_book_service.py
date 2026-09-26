@@ -14,18 +14,11 @@ The openness predicate here MUST stay identical to `scm.po_ordered_v` (the check
 column the plan already shows), or the popup's receipts would not sum to the number on
 the row.
 
-RETAIL ONLY (P8, `PLAN-scm-purchasing-uat-journey.md`; captain: "why does reorder planning
-consider outstanding PO again when the OI already links to it"). A project row's purchase
-order is consumed by the ORDER INQUIRY: the raised row links to the PO line and the plan's
-Project figure drops by exactly that much. Offering the same PO again on the plan is the
-same quantity twice, and the buyer handles it twice. So a row whose demand is entirely
-project-class serves no receipts here and the plan shows it no "Use PO" - while retail,
-which has no Order Inquiry at all, keeps it: the plan is the only place a retail demand and
-a purchase order ever meet.
-
-Entirely project-class is the test, not "has any project demand". A cell carrying both
-channels has a retail need that nothing else nets against a PO, and hiding the receipts
-there would leave that half of the row buying what is already ordered.
+P8 is RETIRED (PLAN-reorder-one-formula.md, 11 Sep 2026): every row's own PO is netted
+ONCE, by the engine, since #828 - project demand is inside `net` the same way retail is,
+so a project-only row still needs its "Use PO" part shown, or the Suggestion's own
+identity (`Stock + PO + Buy = need`) breaks for exactly that row. Receipts are served for
+EVERY pair the run planned now, project-only or not.
 """
 from __future__ import annotations
 
@@ -38,8 +31,8 @@ from app.services.company_scope_sql import company_sql_predicate
 from app.services.scm.pool_predicate import ACTIVE_SITE_POOL_SQL
 
 #: PLAN-po-spo-site-pool-and-order-sheet-downloads.md, S2 (AC-9). `pairs` still keys off
-#: the run's own recommendation rows (and still drops a project-only cell, P8), but a
-#: PAIR's own line-matching rule now differs by grain: a PRODUCT-grain pair
+#: the run's own recommendation rows, but a PAIR's own line-matching rule differs by
+#: grain: a PRODUCT-grain pair
 #: (`warehouse_id IS NULL`) serves every open line to ANY active site-pool warehouse for
 #: the product - product-wide, the same rule the cell itself sums (`site_pool_supply.
 #: open_po_by_product`) - while a LOCATION-grain pair serves lines to its OWN warehouse,
@@ -58,11 +51,10 @@ def _po_book_sql(co_clause: str) -> str:
         SELECT DISTINCT rr.product_id, rr.warehouse_id
         FROM scm.reorder_recommendation rr
         WHERE rr.run_id = :run_id
-          -- P8: a cell whose demand is ALL project gets no receipts. A run frozen before
-          -- the channel split states neither figure, so both COALESCE to 0, the row is not
-          -- project-only, and its receipts are served exactly as they always were.
-          AND NOT (COALESCE((rr.inputs ->> 'project_committed')::numeric, 0) > 0
-                   AND COALESCE((rr.inputs ->> 'retail_committed')::numeric, 0) = 0)
+        -- P8 is retired (PLAN-reorder-one-formula.md): the engine nets the open PO book
+        -- for every row since #828, so a project-only cell hiding its own receipts broke
+        -- the identity Stock + PO + Buy = need for exactly that row. The PO part shows
+        -- whenever the row carries one, project-only or not.
     )
     SELECT pr.product_id::text AS product_id,
            pr.warehouse_id::text AS pair_warehouse_id,
@@ -88,9 +80,8 @@ def _po_book_sql(co_clause: str) -> str:
 
 
 def po_book_for_run(db: Session, run_id: str) -> dict[str, Any]:
-    """Open PO lines for every RETAIL-facing pair the run planned, keyed
-    ``product_id:warehouse_id``. A project-only cell is absent, which is what removes
-    "Use PO" from a project row (P8)."""
+    """Open PO lines for every pair the run planned, keyed ``product_id:warehouse_id``
+    (P8 retired, PLAN-reorder-one-formula.md - a project-only cell is served too)."""
     co, co_params = company_sql_predicate(db, "pol.company_id", param_prefix="pbk")
     co_clause = f"AND {co}" if co else ""
     out: dict[str, list[dict[str, Any]]] = {}

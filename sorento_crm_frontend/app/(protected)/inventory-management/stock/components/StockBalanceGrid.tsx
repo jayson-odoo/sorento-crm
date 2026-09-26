@@ -11,7 +11,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { ChevronRight, Upload, FileSpreadsheet, Trash2 } from 'lucide-react';
+import { ChevronRight, Upload, FileSpreadsheet, Trash2, CloudDownload } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -40,6 +40,7 @@ import { generateExcelFile, type ColumnOption } from '@/lib/excel-utils';
 import { useRouter } from 'next/navigation';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { useAutocountPullAction } from '@/app/(protected)/system-management/import-jobs/autocount-pull/hooks/useAutocountPull';
 
 const EXPORT_FILENAME = 'stock_balance_export.xlsx';
 
@@ -86,6 +87,9 @@ export default function StockBalanceGrid() {
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
 
   const canDeleteStock = useHasPermission('inventory.stock.delete');
+
+  // AutoCount pull - one more secondary action beside Import (PLAN-autocount-pull-review.md).
+  const autocountPull = useAutocountPullAction('stock_balances', 'inventory.stock.autocount_pull');
 
   const { data: stockListAttachment } = useQuery({
     queryKey: ['current-stock-list-attachment'],
@@ -357,6 +361,16 @@ export default function StockBalanceGrid() {
                 icon: Upload,
                 onClick: () => setUploadDialogOpen(true),
               },
+              ...(autocountPull.visible
+                ? [
+                    {
+                      key: 'autocount-pull',
+                      label: autocountPull.label,
+                      icon: CloudDownload,
+                      onClick: autocountPull.onSelect,
+                    },
+                  ]
+                : []),
               stockListAttachment
                 ? {
                     key: 'stock-list',

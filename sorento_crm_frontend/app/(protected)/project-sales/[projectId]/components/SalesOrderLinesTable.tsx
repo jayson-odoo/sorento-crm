@@ -394,9 +394,9 @@ export function SalesOrderLinesTable({
       },
       {
         id: 'phase_label',
-        header: ({ column }) => <DataGridColumnHeader title="Phase" column={column} />,
+        header: ({ column }) => <DataGridColumnHeader title="Area" column={column} />,
         cell: ({ row }) => {
-          const text = row.original.line.phase_label || 'Unlabeled phase';
+          const text = row.original.line.phase_label || 'Unlabeled area';
           return (
             <span className="block truncate" title={text}>
               {text}
@@ -405,7 +405,7 @@ export function SalesOrderLinesTable({
         },
         size: 160,
         minSize: 120,
-        meta: { headerTitle: 'Phase', skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'Area', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         id: 'source_po_line_no',

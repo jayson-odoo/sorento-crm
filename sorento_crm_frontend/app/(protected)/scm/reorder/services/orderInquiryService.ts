@@ -11,7 +11,7 @@
  * is the Order Inquiry sheet, which Project Sales owns (ADR 0010) behind the
  * same `/api/v1/scm/order-inquiry/*` URLs this dialog already called.
  *
- * ── BACKEND CONTRACT (app/api/v1/scm/purchase_history.py) ──────────────────
+ * ── BACKEND CONTRACT, migration tool (PLAN-scm-oi-sheet-migration.md, S1) ──
  *
  *  1) POST /api/v1/scm/order-inquiry/preview     -> 200 OrderInquiryPreview
  *  2) POST /api/v1/scm/order-inquiry/apply       -> 202 ImportQueuedResult
@@ -23,12 +23,18 @@
  *  and `problems` - the screen has to say WHICH part failed, and an error body
  *  would lose it.
  *
- *  Apply QUEUES the write and answers 202 with the job to watch. What it did -
- *  the SO<->PO links it resolved, a per-row outcome for every row - lands on
- *  that job, because the worker has not started when the request answers. A
+ *  Apply QUEUES the write and answers 202 with the job to watch. The sheet no
+ *  longer creates sales orders or writes stock locations (AutoCount owns
+ *  both); it raises order inquiry rows against the sales order line the sheet
+ *  names and pairs each row to the PO or SPO AutoCount's own linkage states,
+ *  falling back to the sheet's own remark only for need AutoCount leaves. A
  *  file the reader cannot use FAILS THE JOB with its problems on it; the only
  *  400 left is "no single active company", which is refused before any job
  *  row exists (this feed writes owned tables).
+ *
+ *  `OrderInquiryPreview` carries exactly the keys the apply result carries
+ *  (UAC AC-S1-22): `preview` computes the same match without writing, so a
+ *  count shown before Confirm is the count Confirm will produce.
  *
  * Two calls on purpose: nothing is written from a single click.
  * ============================================================================
@@ -38,30 +44,62 @@ import { extractApiError } from '@/lib/api-client';
 import type { ImportQueuedResult } from '@/components/upload-activity/importQueue';
 import type { UploadTestResult } from '../components/UploadTestVerdict';
 
+/** Why a sheet row's candidate line was refused, in the order the match checks them. */
+export type LineNotFoundReason =
+  | 'no_line_for_item'
+  | 'location_differs'
+  | 'qty_exceeds_ordered'
+  | 'order_fully_delivered';
+
+/** A sheet row that named a sales order line but none fit. */
+export interface LineNotFoundEntry {
+  so_number: string;
+  item_code: string;
+  qty: number;
+  reason: LineNotFoundReason;
+}
+
+/** A sales order the sheet named that is not project class, so its rows were refused. */
+export interface OrderNotPlannable {
+  so_number: string;
+  code: string;
+}
+
 export interface OrderInquiryPreview {
   ok: boolean;
   problems: string[];
+  /** Planning records this upload opens. 0 on a re-upload: the records already exist. */
+  orders_adopted: number;
+  /** Sales order headers that receive the origin / project-label stamp. */
+  orders_stamped: number;
+  /** Rows the import accounts for: sheet rows, with a `+` cell counted once per product it names. */
   rows: number;
+  /** Rows raised as an order inquiry row (linked or not). */
+  rows_raised: number;
+  /** Rows whose matched line already carries a non-cancelled row: skipped, untouched. */
+  rows_already_raised: number;
+  /** Of those, rows that corrected a migrated row's delivery date to the sheet's own
+   * (18 Sep 2026 reversal of the line-date rule). Never a new row, never a link/qty/state
+   * change - only the date, and its sibling's Was/Now where one exists. */
+  rows_delivery_date_updated: number;
+  /** Count of `line_not_found` below - named separately because the list is capped. */
+  rows_line_not_found: number;
+  /** Named rows with no matching line, capped at 200. */
+  line_not_found: LineNotFoundEntry[];
+  /** Sales order numbers the sheet names that the CRM does not hold, capped at 200. */
+  sales_orders_not_found: string[];
+  /** Sales orders refused for not being project class. */
+  orders_not_plannable: OrderNotPlannable[];
+  /** Raised rows that gained at least one link, whatever the source. */
+  links_written: number;
+  /** Raised rows whose link covered only part of the row's qty. */
+  links_partial: number;
+  /** Raised rows whose link came from AutoCount's own stated linkage, not the sheet's remark. */
+  links_from_autocount: number;
+  /** Cited document numbers that could not be linked at all, capped at 200. */
+  documents_not_linkable: string[];
   sheets_read: string[];
   sheets_skipped: string[];
-  /**
-   * Distinct scheduled deliveries the sheet describes: `(sales order, item, delivery date)`.
-   * Lower than `rows`, and that is the point. The book states one instalment on a month tab, a
-   * roll-up tab covering that month and a dated working snapshot, so the row count is not the
-   * amount of demand.
-   */
-  instalments: number;
-  /** Rows absorbed into an instalment already stated on another sheet. */
-  rows_restating_an_instalment: number;
-  lines_matched: number;
-  lines_unmatched: number;
-  /** Named, so somebody can see WHICH sales orders have not been uploaded yet. */
-  sales_orders_not_found: string[];
-  with_location: number;
-  unknown_locations: string[];
-  po_claims: number;
-  /** Rows whose remark is the literal `ORDER`: nothing placed yet, not a parse failure. */
-  not_ordered: number;
 }
 
 /** Pairings still waiting for one side to be uploaded. */
@@ -85,7 +123,7 @@ async function post<T>(path: string, file: File, fallback: string): Promise<T> {
   return (await res.json()) as T;
 }
 
-/** What this sheet WOULD write. Writes nothing. */
+/** What this sheet WOULD raise and link. Writes nothing. */
 export function previewOrderInquiry(file: File): Promise<OrderInquiryPreview> {
   return post('/api/v1/scm/order-inquiry/preview', file, 'Failed to read the file');
 }
@@ -102,7 +140,7 @@ export function testOrderInquiry(file: File): Promise<UploadTestResult> {
   );
 }
 
-/** Queue the sheet: project demand, stock locations, and the purchase-order claims. */
+/** Queue the sheet: raise order inquiry rows and pair them to PO/SPO documents. */
 export function applyOrderInquiry(file: File): Promise<ImportQueuedResult> {
   return post('/api/v1/scm/order-inquiry/apply', file, 'Failed to queue the upload');
 }

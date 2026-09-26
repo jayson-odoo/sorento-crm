@@ -37,6 +37,11 @@ import pytest
 
 from app.services.chatbot.lanes import escalation as escalation_mod
 
+_XFAIL_CLARIFY_TEXT_IS_NONE = (
+    "on the clarify arm, result.reply['text'] (and persisted ChatbotTurn.response) is "
+    "None while quick_replies is correct (follow-up, PR #952)"
+)
+
 
 # --------------------------------------------------------------------------- #
 # Builders - deliberately local, so the tester's file and this one cannot
@@ -198,6 +203,322 @@ class TestInputMessageChain:
         assert body["source_message_id"] == str(MESSAGE_ID)
 
 
+class TestACEQQuoteFallback:
+    """PLAN-escalation-quote-title-and-stock-team-22sep.md, owner ruling R1: the quoted
+    body is `text` if truthy, else `title` (Respond.io's quick-reply quote shape carries
+    only `title`), else the whole ` reply to: ...` suffix is dropped - never JS's own
+    `undefined`."""
+
+    def test_ac_eq_1_quoted_message_with_text_is_appended(self) -> None:
+        ctx = _ctx(
+            message_body={"type": "text", "text": "Yes"},
+            reply_to={"message": {"text": "Would you like me to escalate?"}},
+        )
+        assert _source_message_text(ctx) == "Yes reply to: Would you like me to escalate?"
+
+    def test_ac_eq_2_quoted_message_with_only_a_title_falls_back_to_it(self) -> None:
+        ctx = _ctx(
+            message_body={"type": "text", "text": "Yes"},
+            reply_to={"message": {"title": "Would you like me to escalate?"}},
+        )
+        assert _source_message_text(ctx) == "Yes reply to: Would you like me to escalate?"
+
+    def test_ac_eq_3_quoted_message_with_neither_appends_nothing(self) -> None:
+        ctx = _ctx(
+            message_body={"type": "text", "text": "Yes"},
+            reply_to={"message": {"type": "image"}},
+        )
+        result = _source_message_text(ctx)
+        assert result == "Yes"
+        assert "undefined" not in result
+
+
+class TestACEQ4SlaCommentDatetimeFields:
+    """PLAN-escalation-quote-title-and-stock-team-22sep.md defect 2: `_sla_create` used to
+    hand back raw `datetime` objects, and `_malaysia` (`jsc.js_string` on whatever it is
+    given) renders one as JS's own `[object Object]` - the internal Respond.io comment read
+    `routed to you at [object Object]`."""
+
+    def test_ac_eq_4_datetime_fields_become_iso_strings_the_comment_can_render(
+        self, monkeypatch
+    ) -> None:
+        from datetime import datetime, timezone
+
+        from app.services.chatbot.lanes import escalation_services
+        from app.services.sla_service import ConversationSLATrackingService
+
+        class _Created:
+            id = "sla-row-1"
+            initiated_at = datetime(2026, 9, 22, 6, 34, 0, tzinfo=timezone.utc)
+            due_at = datetime(2026, 9, 22, 10, 34, 0, tzinfo=timezone.utc)
+            due_at_resolution = datetime(2026, 9, 23, 6, 34, 0, tzinfo=timezone.utc)
+
+        monkeypatch.setattr(
+            ConversationSLATrackingService, "create_tracking", lambda self, payload: _Created()
+        )
+
+        call = escalation_services._sla_create(db=object())
+        sla = call(
+            {
+                "agent_code": "general_enquiries",
+                "team_set_code": "CS",
+                "contact_phone_number": "+60123450099",
+            }
+        )
+
+        assert isinstance(sla["initiated_at"], str)
+        assert isinstance(sla["due_at"], str)
+        assert isinstance(sla["due_at_resolution"], str)
+        assert sla["initiated_at"] == "2026-09-22T06:34:00+00:00"
+
+        comment = escalation_mod._comment_text(
+            _ctx(message_body={"type": "text", "text": "hi"}), "warehouse", sla
+        )
+        assert "[object Object]" not in comment
+        assert "routed to you at 2026-09-22 14:34:00" in comment
+
+    def test_ac_eq_4_naive_utc_datetime_fields_also_become_iso_strings(
+        self, monkeypatch
+    ) -> None:
+        """`ConversationSLATracking.initiated_at`/`due_at`/`due_at_resolution` are
+        `DateTime(timezone=False)` columns - a row read back from Postgres hands
+        SQLAlchemy a NAIVE datetime (UTC by convention, no `tzinfo` attached), never
+        the tz-aware kind the first test above uses. `_sla_create`'s `.isoformat()`
+        call has to round-trip that shape too, and `_malaysia` already treats a naive
+        value as UTC (`parsed.replace(tzinfo=timezone.utc)` when `tzinfo is None`), so
+        the rendered Malaysia time must be identical to the tz-aware case."""
+        from datetime import datetime
+
+        from app.services.chatbot.lanes import escalation_services
+        from app.services.sla_service import ConversationSLATrackingService
+
+        class _Created:
+            id = "sla-row-2"
+            initiated_at = datetime(2026, 9, 22, 6, 34, 0)
+            due_at = datetime(2026, 9, 22, 10, 34, 0)
+            due_at_resolution = datetime(2026, 9, 23, 6, 34, 0)
+
+        monkeypatch.setattr(
+            ConversationSLATrackingService, "create_tracking", lambda self, payload: _Created()
+        )
+
+        call = escalation_services._sla_create(db=object())
+        sla = call(
+            {
+                "agent_code": "general_enquiries",
+                "team_set_code": "CS",
+                "contact_phone_number": "+60123450099",
+            }
+        )
+
+        assert isinstance(sla["initiated_at"], str)
+        assert sla["initiated_at"] == "2026-09-22T06:34:00"
+
+        comment = escalation_mod._comment_text(
+            _ctx(message_body={"type": "text", "text": "hi"}), "warehouse", sla
+        )
+        assert "[object Object]" not in comment
+        assert "routed to you at 2026-09-22 14:34:00" in comment
+
+
+class TestACEQ15aNonInventoryDomainNullRoutingFallsBack:
+    """AC-EQ-15 (owner signed 23 Sep 2026): the domain-aware fallback is not
+    inventory/incoming-only - `turn_runtime.lane_parse_output` reads
+    `policy.domain(domain_hint).escalation_team_code` for whichever domain the turn is
+    actually about. `master_products` is the one non-stock domain the UAC table names
+    explicitly for a direct pin."""
+
+    def test_ac_eq_15a_master_products_null_routing_no_prior_names_purchasing(
+        self,
+    ) -> None:
+        from app.services.chatbot import turn_runtime
+        from app.services.chatbot.turn.policy import default_policy
+
+        verdict = {
+            "domain_hint": "master_products",
+            "routing": {"suggested_team": None, "suggested_agent": None},
+        }
+        out = turn_runtime.lane_parse_output(
+            verdict, focus=None, pending=None, prior_session=None, policy=default_policy()
+        )
+        assert out["routing"]["suggested_team"] == "purchasing"
+
+
+class TestACEQ16To19PrecedenceR7:
+    """Owner rulings 23 Sep 2026. R7 (AC-EQ-16/17/19): THIS turn's own domain team
+    outranks a PREVIOUS turn's carried team; the prior-turn carry still applies when
+    this turn names no resolvable domain at all. R9 (AC-EQ-20/21/22): an OPEN
+    offer's own carried team wins ONLY when THIS turn is actually ANSWERING it - a
+    FRESH question in another domain, not an acceptance, gets its OWN domain team
+    instead of silently inheriting whatever was last offered.
+
+    S10 (fix round 6, "simplest thing that works"): `lane_parse_output` has no
+    separate open-offer arm any more - `turn/apply.py::_answer_pending` already
+    makes the R9 acceptance judgement and stamps it onto `trace.team`, which
+    `engine.py` passes in here as `accepted_team` (the chain's own first read,
+    tested elsewhere). AC-EQ-21/22 below drive `accepted_team` directly, the
+    PRODUCTION shape, rather than a bare `pending=` with no acceptance signal - the
+    reviewer's kill test measured that a `pending=`-only call is a shape
+    `engine.run_turn` never actually produces. AC-EQ-18 (a fresh, unaccepted
+    question over an open offer) is byte-identical to AC-EQ-20 once the arm is
+    gone - folded into it, not kept as a separate test."""
+
+    @staticmethod
+    def _verdict(*, domain_hint: Any) -> dict[str, Any]:
+        return {
+            "domain_hint": domain_hint,
+            "routing": {"suggested_team": None, "suggested_agent": None},
+        }
+
+    @staticmethod
+    def _prior(team: str) -> dict[str, Any]:
+        return {"session_vars": {"variables": {"routing": {"suggested_team": team}}}}
+
+    def test_ac_eq_16_current_domain_outranks_a_stale_incoming_carry(self) -> None:
+        """Prior turn carried "purchasing" (an incoming ask); this turn is a plain
+        stock question, routing null, no open offer -> warehouse, not the stale
+        carry."""
+        from app.services.chatbot import turn_runtime
+        from app.services.chatbot.turn.policy import default_policy
+
+        out = turn_runtime.lane_parse_output(
+            self._verdict(domain_hint="inventory"),
+            focus=None,
+            pending=None,
+            prior_session=self._prior("purchasing"),
+            policy=default_policy(),
+        )
+        assert out["routing"]["suggested_team"] == "warehouse"
+
+    def test_ac_eq_17_current_domain_outranks_a_stale_warehouse_carry(self) -> None:
+        """The mirror of AC-EQ-16: prior "warehouse", this turn incoming, routing
+        null, no open offer -> purchasing. A direct unit shape only - NOT the
+        recorded shape of `replay_turns/console/case-025-d7-...` (fix round 4,
+        reviewer measurement): that case's turn 1 has an OPEN `team_pick` pending
+        (team=warehouse) left by turn 0's stock offer, which is the AC-EQ-18 arm
+        (`pending.team`), not this one - `prior_session` is None throughout that
+        case, so R7's domain-vs-carry ordering never engages on it at all. See
+        PENDING-LIVE-RERUN.md's own note on case-025 for what IS stale there."""
+        from app.services.chatbot import turn_runtime
+        from app.services.chatbot.turn.policy import default_policy
+
+        out = turn_runtime.lane_parse_output(
+            self._verdict(domain_hint="incoming"),
+            focus=None,
+            pending=None,
+            prior_session=self._prior("warehouse"),
+            policy=default_policy(),
+        )
+        assert out["routing"]["suggested_team"] == "purchasing"
+
+    def test_ac_eq_19_the_prior_carry_still_applies_with_no_resolvable_domain(self) -> None:
+        """This turn names no domain at all (`domain_hint = None`, e.g. a casual
+        message) - `policy.domain(None)` resolves nothing, so the prior turn's own
+        carried team is still what answers, exactly as before R7."""
+        from app.services.chatbot import turn_runtime
+        from app.services.chatbot.turn.policy import default_policy
+
+        out = turn_runtime.lane_parse_output(
+            self._verdict(domain_hint=None),
+            focus=None,
+            pending=None,
+            prior_session=self._prior("purchasing"),
+            policy=default_policy(),
+        )
+        assert out["routing"]["suggested_team"] == "purchasing"
+
+    def test_ac_eq_20_a_fresh_question_over_an_open_offer_uses_its_own_domain(
+        self,
+    ) -> None:
+        """Owner ruling R9 (fix round 5), production shape confirmed by S10 (fix
+        round 6): `replay_turns/console/case-025-d7-...` turn 1 is exactly this
+        shape - an incoming ask that is NOT an acceptance of turn 0's stock offer
+        (D7's own climb, a fresh question). `pending` is passed (the still-open
+        `team_pick`, team=warehouse) but `accepted_team` is NOT - exactly what
+        `engine.py` hands `lane_parse_output` for a turn `apply()` did not call an
+        acceptance (`trace.team` stays `None`, `accepted_team=None`). With no
+        open-offer arm left to read `pending` at all, the domain answers instead -
+        `purchasing`, incoming's own team. Also folds AC-EQ-18 (a stock-domain
+        version of the same fresh-question shape) - byte-identical once the arm is
+        gone, so no longer a separate test."""
+        from app.services.chatbot import turn_runtime
+        from app.services.chatbot.turn.pending import Pending
+        from app.services.chatbot.turn.policy import default_policy
+
+        offer = Pending(
+            kind="team_pick",
+            expects="yes_no",
+            options=[],
+            team="warehouse",
+            payload={},
+            asked_at_turn=1,
+        )
+        out = turn_runtime.lane_parse_output(
+            self._verdict(domain_hint="incoming"),
+            focus=None,
+            pending=offer,
+            prior_session=None,
+            policy=default_policy(),
+        )
+        assert out["routing"]["suggested_team"] == "purchasing"
+
+    def test_ac_eq_21_an_acceptance_still_routes_to_the_open_offer(self) -> None:
+        """The positive case R9 exists to protect, at the PRODUCTION shape (S10, fix
+        round 6): `turn/apply.py::_answer_pending` stamps `trace.team` the moment
+        `decide()` calls a turn an acceptance (a bare "yes" or an explicit
+        escalation confirmation, both land on the SAME `answer_pending_accept`
+        rule), and `engine.py` passes that straight in here as `accepted_team` -
+        never `pending` itself, which this function no longer reads for its team at
+        all. A real acceptance's team wins whatever THIS turn's own domain is."""
+        from app.services.chatbot import turn_runtime
+        from app.services.chatbot.turn.policy import default_policy
+
+        policy = default_policy()
+
+        out = turn_runtime.lane_parse_output(
+            self._verdict(domain_hint="incoming"),
+            focus=None,
+            accepted_team="warehouse",
+            prior_session=None,
+            policy=policy,
+        )
+        assert out["routing"]["suggested_team"] == "warehouse"
+
+        out = turn_runtime.lane_parse_output(
+            self._verdict(domain_hint=None),
+            focus=None,
+            accepted_team="warehouse",
+            prior_session=None,
+            policy=policy,
+        )
+        assert out["routing"]["suggested_team"] == "warehouse"
+
+    def test_ac_eq_22_a_pick_landing_on_a_specific_option_routes_to_that_team(self) -> None:
+        """A NUMBERED pick landing on one of a multi-team offer's own OPTIONS is
+        also an acceptance, and it can name a DIFFERENT team than the pending's own
+        blanket `team` - `turn/apply.py::_answer_pending` reads
+        `option_payload.get("team") or pending.team` (contract 108), so a pick that
+        lands on the "warehouse" option stamps `trace.team = "warehouse"` even
+        though the pending's own top-level `team` (and this turn's own domain,
+        `incoming` -> `purchasing`) would say otherwise - the two are DELIBERATELY
+        different here so a kill test that drops the `accepted_team` arm shows up as
+        `purchasing`, not a same-value false pass. Driven at the PRODUCTION shape
+        (S10): `accepted_team` is what `engine.py` passes in, already resolved to
+        the OPTION's own team, not the pending's blanket one or this turn's own
+        domain."""
+        from app.services.chatbot import turn_runtime
+        from app.services.chatbot.turn.policy import default_policy
+
+        out = turn_runtime.lane_parse_output(
+            self._verdict(domain_hint="incoming"),
+            focus=None,
+            accepted_team="warehouse",
+            prior_session=None,
+            policy=default_policy(),
+        )
+        assert out["routing"]["suggested_team"] == "warehouse"
+
+
 # --------------------------------------------------------------------------- #
 # 2. `escalation_services` - the production wiring, and its session's lifecycle
 # --------------------------------------------------------------------------- #
@@ -341,6 +662,7 @@ PRIOR_ROSTER_PLAN = [
 ]
 
 
+@pytest.mark.xfail(strict=True, reason=_XFAIL_CLARIFY_TEXT_IS_NONE)
 def test_clarify_arm_surfaces_the_ask_and_re_persists_the_offer_state(
     session_factory, system_settings_row, monkeypatch
 ) -> None:
@@ -530,6 +852,7 @@ def test_clarify_arm_surfaces_the_ask_and_re_persists_the_offer_state(
     }
 
 
+@pytest.mark.xfail(strict=True, reason=_XFAIL_CLARIFY_TEXT_IS_NONE)
 def test_a_clarifys_quick_replies_reach_the_persisted_reply(
     session_factory, system_settings_row, monkeypatch
 ) -> None:

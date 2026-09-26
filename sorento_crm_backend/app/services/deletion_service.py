@@ -41,16 +41,21 @@ from sqlalchemy.orm import Session
 from app.models.inventory import Warehouse
 from app.models.order import Customer
 from app.models.procurement import SPOAllocation, Supplier
-from app.models.product import Product, ProductCategory, UnitOfMeasure
+from app.models.product import Brand, Product, ProductCategory, UnitOfMeasure
 from app.models.sales_agent import SalesAgent
 from app.services.dependent_probe import is_referenced, referrers_of, relation_name
 from app.services.document_ingest_service import CANCELLED, DOCUMENT_SPECS
-from app.services.integration_reference_service import IntegrationReferenceService
+from app.services.integration_reference_service import (
+    IntegrationReferenceService,
+    is_unclaimed_or_same_source,
+)
 from app.services.master_ingest_service import (
     INTERNAL_ERROR_MESSAGE,
     UnsupportedIngestEntity,
     _is_company_scoped,
 )
+from app.services.master_ref_resolver import WARN_REF_MISMATCH
+from app.services.rules.master_rules import resolve_master_by_code
 from app.services.shipping_order_ingest_service import (
     LINE_CLOSED,
     SHIPPING_ORDERS_ENTITY,
@@ -73,6 +78,14 @@ class DeletionRecordResult:
     entity_id: Optional[str] = None
     # field -> reason, so the ESB can quarantine per record without parsing prose.
     errors: dict[str, str] = field(default_factory=dict)
+    # Ingest-products-code-wins, SR0: fixed-vocabulary notices, same rule as
+    # `RecordResult.warnings` - omitted from `as_dict()` when empty. The only
+    # producer today is the code rung (`_resolve_product_by_code`), which
+    # always sets `["ref_mismatch"]` when it matches - the reference the ESB
+    # sent did not resolve, so whatever it names is not what is actually
+    # stored (nothing at all, or a different reference under this same
+    # source).
+    warnings: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -102,6 +115,7 @@ class DeletionResult:
                     "outcome": r.outcome.value,
                     "entity_id": r.entity_id,
                     **({"errors": r.errors} if r.errors else {}),
+                    **({"warnings": r.warnings} if r.warnings else {}),
                 }
                 for r in self.records
             ],
@@ -122,6 +136,7 @@ ENTITY_MODELS: dict[str, type] = {
     "customers": Customer,
     "products": Product,
     "sales_agents": SalesAgent,
+    "brands": Brand,
     **{name: spec.header_model for name, spec in DOCUMENT_SPECS.items()},
 }
 
@@ -138,6 +153,7 @@ MASTER_DEACTIVATION: dict[str, tuple[str, Any]] = {
     "customers": ("is_active", False),
     "products": ("is_discontinued", True),
     "sales_agents": ("is_active", False),
+    "brands": ("is_active", False),
 }
 
 
@@ -153,10 +169,15 @@ class DeletionService:
         # incumbent company, and a deletion meant for the other one would remove
         # a row this caller never named.
         self.company_id = company_id
-        self.refs = IntegrationReferenceService(db)
+        self.refs = IntegrationReferenceService(db, company_id=self.company_id)
 
     def delete(
-        self, entity_type: str, source_refs: list[str], *, dry_run: bool = False
+        self,
+        entity_type: str,
+        source_refs: list[str],
+        *,
+        codes: Optional[dict[str, str]] = None,
+        dry_run: bool = False,
     ) -> DeletionResult:
         """Apply a batch of deletions, one verdict per reference.
 
@@ -164,6 +185,13 @@ class DeletionService:
         probe, the same delete, the same fallback - and the transaction is then
         rolled back. Simulating it instead would produce a preview that can
         disagree with the run it predicts, which is worse than no preview.
+
+        ``codes`` (ingest-products-code-wins, SR0) is an optional
+        ``source_ref -> code`` map, read only for ``entity_type == "products"``:
+        FoundryX's item-code push finds a product this way when its own
+        reference misses, the mirror of the master ingest's adopt-by-code
+        branch. Ignored for every other entity, and for any ``source_ref`` it
+        does not name.
         """
         # Shipping orders (D3, S3) resolve to MANY rows by `source_doc_ref`,
         # never to one `entity_id` via `IntegrationReferenceService` - a
@@ -190,7 +218,11 @@ class DeletionService:
         result = DeletionResult(dry_run=dry_run)
         try:
             for source_ref in source_refs:
-                result.records.append(self._delete_one(entity_type, source_ref))
+                code = None
+                if entity_type == "products" and codes:
+                    key = source_ref if isinstance(source_ref, str) else str(source_ref)
+                    code = codes.get(key)
+                result.records.append(self._delete_one(entity_type, source_ref, code=code))
         finally:
             if dry_run:
                 # In a finally, so an unexpected error mid-batch cannot leave a
@@ -256,9 +288,16 @@ class DeletionService:
             )
 
     # ------------------------------------------------------------- one record
-    def _delete_one(self, entity_type: str, source_ref: Any) -> DeletionRecordResult:
+    def _delete_one(
+        self, entity_type: str, source_ref: Any, code: Optional[str] = None
+    ) -> DeletionRecordResult:
         ref = source_ref if isinstance(source_ref, str) else str(source_ref)
         entity_id: Optional[str] = None
+        warnings: list[str] = []
+        # Fix round 1: which rung actually found the row, so a code-rung
+        # match is traced separately from an ordinary reference hit - see the
+        # two `logger.info` calls below.
+        via_code_rung = False
 
         # Each record commits or rolls back alone. Without this savepoint a
         # failed flush poisons the session and every later reference in the batch
@@ -266,6 +305,11 @@ class DeletionService:
         savepoint = self.db.begin_nested()
         try:
             entity_id = self.refs.resolve(entity_type=entity_type, source_ref=ref)
+            if entity_id is None and entity_type == "products" and code:
+                entity_id = self._resolve_product_by_code(code)
+                if entity_id is not None:
+                    warnings = [WARN_REF_MISMATCH]
+                    via_code_rung = True
             if entity_id is None or not self._in_anchor_company(entity_type, entity_id):
                 # Another company's row reads exactly like a row that is not
                 # there. It is not this caller's to delete, and telling it the
@@ -279,10 +323,22 @@ class DeletionService:
                 try:
                     self._hard_delete(entity_type, entity_id)
                     savepoint.commit()
+                    if via_code_rung:
+                        logger.info(
+                            "deletion.code_rung entity=%s company=%s source_ref=%s "
+                            "code=%s entity_id=%s outcome=%s",
+                            entity_type,
+                            self.company_id,
+                            ref,
+                            code,
+                            entity_id,
+                            DeletionOutcome.DELETED.value,
+                        )
                     return DeletionRecordResult(
                         source_ref=ref,
                         outcome=DeletionOutcome.DELETED,
                         entity_id=str(entity_id),
+                        warnings=warnings,
                     )
                 except IntegrityError:
                     # A referrer the catalogue cannot see - a trigger, a deferred
@@ -298,10 +354,22 @@ class DeletionService:
 
             self._deactivate(entity_type, entity_id)
             savepoint.commit()
+            if via_code_rung:
+                logger.info(
+                    "deletion.code_rung entity=%s company=%s source_ref=%s "
+                    "code=%s entity_id=%s outcome=%s",
+                    entity_type,
+                    self.company_id,
+                    ref,
+                    code,
+                    entity_id,
+                    DeletionOutcome.DEACTIVATED.value,
+                )
             return DeletionRecordResult(
                 source_ref=ref,
                 outcome=DeletionOutcome.DEACTIVATED,
                 entity_id=str(entity_id),
+                warnings=warnings,
             )
         except Exception:  # noqa: BLE001 - one record's failure, not the batch's
             if savepoint.is_active:
@@ -321,12 +389,39 @@ class DeletionService:
                 errors={"_": INTERNAL_ERROR_MESSAGE},
             )
 
+    def _resolve_product_by_code(self, code: str) -> Optional[str]:
+        """A product this deletion's own reference miss can still find, by
+        item code (ingest-products-code-wins, SR0) - the deletion mirror of
+        `MasterIngestService._apply_scoped`'s adopt-by-code branch.
+
+        Company-scoped the same way `resolve_master_by_code` scopes the
+        master ingest's own adopt lookup. A match is used only when it is
+        unlinked, or its own reference is under the SAME source system this
+        deletion resolves under (`is_unclaimed_or_same_source`) - a code that
+        happens to match a row another source system, or another company,
+        claims is reported exactly like no match at all (AC-DL-6, AC-DL-7).
+        """
+        candidate = resolve_master_by_code(self.db, Product, code, self.company_id)
+        if candidate is None:
+            return None
+        origin = self.refs.origin_of(entity_type="products", entity_id=candidate)
+        if not is_unclaimed_or_same_source(origin):
+            return None
+        return candidate
+
     def _in_anchor_company(self, entity_type: str, entity_id: str) -> bool:
         """Whether the resolved row belongs to the company this call anchored to.
 
-        `integration_references` is global, so a ref finds its row whatever
-        company the caller named. A shared master (`sales_agents`) carries no
-        company at all and belongs to every anchor.
+        Defence in depth, not the primary guard: `integration_references` has
+        carried a `company_id` since migration 512 (BL-056), and `self.refs`
+        is constructed with this call's own anchor, so `_delete_one`'s
+        `self.refs.resolve(...)` already cannot return an id belonging to a
+        different company - this cannot fire through a reference any more.
+        It stays for the entity-keyed paths this service also reads (the
+        `_hard_delete`/`_deactivate` row loads have no anchor check of their
+        own), and as a second check if the anchor scoping above were ever
+        bypassed. A shared master (`sales_agents`) carries no company at all
+        and belongs to every anchor.
         """
         if not _is_company_scoped(entity_type):
             return True
@@ -422,6 +517,19 @@ class DeletionService:
             .filter(getattr(spec.line_model, spec.line_fk) == str(entity_id))
             .all()
         )
+        # PLAN-oi-cancelled-line-used-confirm.md (3.2b): captured only on the
+        # TRANSITION - a repeated deletion of the same header walks lines that
+        # are already `cancelled`, and re-flagging them would ask purchasing
+        # to reconfirm a row it already settled.
+        newly_cancelled_so_line_ids: list[str] = []
         for line in lines:
+            if spec.entity_type == "sales_orders" and line.line_status != CANCELLED:
+                newly_cancelled_so_line_ids.append(line.id)
             line.line_status = CANCELLED
         self.db.flush()
+        if newly_cancelled_so_line_ids:
+            from app.services.project_order_inquiry_service import (
+                flag_rows_for_cancelled_lines,
+            )
+
+            flag_rows_for_cancelled_lines(self.db, newly_cancelled_so_line_ids)

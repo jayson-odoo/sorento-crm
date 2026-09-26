@@ -197,6 +197,26 @@ export function BoardTrailPopover({
                   </tbody>
                 </table>
               )}
+              {/* D3 (S2): ONE Reason box now writes `amend_reason`, `buy_reason` and every
+                  borrow reason with the SAME text, so a frozen line with all three set is not
+                  three different answers repeated - it is one answer, said once. Absent when
+                  nothing was stored, or when an older revision froze three different texts
+                  (each still reads in its own place: the borrow row, the trail's own "why").
+                  Placed after the table (not between the header and it) so the raw table stays
+                  in its own horizontal scroller (S4-04). */}
+              {trailReason(contribution) && (
+                <div className="border-t px-3 py-2">
+                  <p className="text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Reason
+                  </p>
+                  <p
+                    data-testid={`trail-reason-${contribution.key}`}
+                    className="mt-0.5 text-xs"
+                  >
+                    {trailReason(contribution)}
+                  </p>
+                </div>
+              )}
               {/* AND WHAT ELSE COULD HAVE BEEN DONE (R36, AC-S3-14). Beneath the questions,
                   because it is the answer to the one they raise: five rungs were checked, and
                   this is when each of them would have landed the unit. Rendered only when the
@@ -230,6 +250,23 @@ export function BoardTrailPopover({
         )}
     </>
   );
+}
+
+/**
+ * D3 (S2): what the frozen decision's `amend_reason`, `buy_reason` and every borrow reason
+ * collapse to when they are all the SAME text (blanks dropped) - the answer the one Reason box
+ * now writes everywhere at once. `null` when nothing was stored, or when they disagree (an
+ * older revision, frozen before this box existed): each still reads in its own place, so
+ * nothing here is lost, only not repeated.
+ */
+function trailReason(contribution: BoardContribution): string | null {
+  const decision = contribution.decision;
+  if (!decision) return null;
+  const texts = [decision.amend_reason, decision.buy_reason, ...(decision.borrow ?? []).map((row) => row.reason)]
+    .map((text) => text?.trim())
+    .filter((text): text is string => Boolean(text));
+  if (texts.length === 0) return null;
+  return new Set(texts).size === 1 ? texts[0] : null;
 }
 
 /** A rung says something under itself when it has a sentence, a hint, a pile or a queue to name. */
@@ -318,7 +355,7 @@ export function ItemFlagChips({
     chips.push({
       key: 'discontinued',
       label: 'Discontinued',
-      title: 'Discontinued: a Buy for it needs a reason.',
+      title: 'Discontinued',
       tone: 'pending',
     });
   }

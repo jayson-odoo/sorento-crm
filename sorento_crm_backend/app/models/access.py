@@ -77,10 +77,6 @@ class ContactAccessType(Base):
     # ContactAccessTypeService.enforce_access_levels_for_contact to resolve free-text
     # AI / user phrasing against the canonical code.
     keywords = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
-    # Which portal form types a contact with this access type may see.
-    # Resolution: union of portal_form_types across all access types the contact
-    # holds, then per-contact overrides applied (ContactPortalFormOverride).
-    portal_form_types = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -147,6 +143,11 @@ class MarketSegment(Base):
     is_requestor_selectable = Column(
         Boolean, default=False, nullable=False, server_default="false"
     )
+    # Portal forms this segment grants BEYOND the base four every contact
+    # already sees (PLAN-portal-forms-market-segment D1/D3/D4). Empty = this
+    # segment grants nothing extra. Moved here from ContactAccessType -
+    # access types no longer carry any portal-form grant.
+    portal_form_types = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -255,6 +256,23 @@ class RespondContact(Base):
     # as it did before the switch existed. Flipped in bulk or per contact by
     # scripts/set_contact_outbound.py.
     outbound_enabled = Column(Boolean, nullable=False, default=True, server_default=text("true"))
+    # Chatbot turn re-architecture (AC-1503): the Profile shelf, one JSONB blob
+    # (tier, language, default ledgers - PLAN "Design > State"), written by explicit
+    # picks (a WhatsApp pick, or the Contact > Access "Chatbot" card) and read as a
+    # `Profile:` hint block on every parse (S3, AC-1548). Recall is a separate bool
+    # column, not a profile key, because it gates a DIFFERENT thing (whether TAIL may
+    # re-parse with an `Episodes:` block, AC-1547) and defaults OFF per contact.
+    chatbot_profile = Column(JSONB(astext_type=Text()), nullable=False, server_default=text("'{}'::jsonb"))
+    chatbot_recall_enabled = Column(Boolean, nullable=False, server_default=text("false"), default=False)
+    # S6 (owner ruling, 16 Sep 2026): whether this contact may ask for stock is a CRM
+    # fact, default ON; the respond.io `is_allowed_stock` custom field is not read.
+    chatbot_stock_allowed = Column(Boolean, nullable=False, server_default=text("true"), default=True)
+    # Chatbot stock ask v2 S2 (PLAN-chatbot-stock-ask-v2-24sep.md, R7): per-contact
+    # toggles, both default OFF (unlike chatbot_stock_allowed above). notify_salesman -
+    # the customer's sales agent gets one WhatsApp line per B1/B2/B4 answered ask.
+    # packing_list_allowed - the shipment's packing list is attached on a B3 answer.
+    notify_salesman = Column(Boolean, nullable=False, server_default=text("false"), default=False)
+    packing_list_allowed = Column(Boolean, nullable=False, server_default=text("false"), default=False)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     created_by = Column(Text, nullable=True)
@@ -864,5 +882,95 @@ class StockVisibilityPolicy(Base):
             text("(true)"),
             unique=True,
             postgresql_where=text("contact_id IS NULL AND access_type_code IS NULL"),
+        ),
+    )
+
+
+class SpecVisibilityPolicy(Base):
+    """Which product spec keys (Thickness, Material, ...) the chatbot may reveal to
+    a contact. Three tiers in ONE table, distinguished by which key is set:
+
+        contact_id set     -> the per-contact override
+        segment_code set   -> the per-market-segment rule (`retail`, `project`, ...)
+        both NULL          -> the single global default
+
+    Same doctrine as ``StockVisibilityPolicy`` above, with two differences that
+    earned a sibling table rather than reusing that one (PLAN-spec-visibility-
+    policy.md "Decisions"): the tier axis is MARKET SEGMENT, not contact access
+    type - the owner's own vocabulary for this feature is retail/project - and
+    ``app.services.spec_visibility.resolve_policy`` FAILS CLOSED TO THE DEFAULT
+    POLICY on an unresolvable contact rather than to no answer at all: a stock
+    question with nobody to check against gets zero rows and no block, but a spec
+    question always gets an answer, so it has to fall back to something.
+
+    ``spec_keys`` (Show-only) and ``excluded_spec_keys`` (Hide-these) are two
+    readings of the SAME list, never both stored on a row (CHECK below): a list
+    under ``spec_keys`` is what stays VISIBLE (``null`` = every key, ``[]`` =
+    none); a list under ``excluded_spec_keys`` is what is WITHHELD (``[]`` =
+    nothing hidden - the opposite of what ``[]`` means on ``spec_keys``).
+
+    Audited (``__audit_track__``) for the same reason as stock visibility: one
+    row decides what every future answer to a contact contains.
+    """
+
+    __tablename__ = "spec_visibility_policies"
+    __audit_track__ = True
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    #: NULL unless this is the per-contact override tier.
+    contact_id = Column(
+        Text, ForeignKey("respond_contacts.id", ondelete="CASCADE"), nullable=True
+    )
+    #: NULL unless this is the per-market-segment tier. FK to the CODE with ON
+    #: UPDATE CASCADE, same reasoning as `access_type_code` above: the code is
+    #: what the admin screens and the resolver name, and a rename should carry
+    #: the rows with it.
+    segment_code = Column(
+        String(50),
+        ForeignKey("market_segments.code", ondelete="CASCADE", onupdate="CASCADE"),
+        nullable=True,
+    )
+    #: The Show-only list. NULL = every registry key visible; [] = none.
+    spec_keys = Column(ARRAY(Text), nullable=True)
+    #: `spec_keys`'s sibling, the Hide-these list. NULL = not this rule (this row
+    #: is Show-only or inert); [] = nothing hidden (the opposite of what [] means
+    #: on `spec_keys`); a list = hide exactly these.
+    excluded_spec_keys = Column(ARRAY(Text), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "contact_id IS NULL OR segment_code IS NULL",
+            name="ck_spec_visibility_policies_one_tier",
+        ),
+        # A row picks one rule, never both: "show only these" and "hide these"
+        # have no defined precedence between them.
+        CheckConstraint(
+            "spec_keys IS NULL OR excluded_spec_keys IS NULL",
+            name="ck_spec_visibility_policies_one_rule",
+        ),
+        # Three partial uniques, not one constraint: Postgres NULLs are distinct,
+        # so a plain UNIQUE would let a SECOND default row in and the resolution
+        # chain would then pick one of them at random.
+        Index(
+            "uq_spec_visibility_policies_contact",
+            "contact_id",
+            unique=True,
+            postgresql_where=text("contact_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_spec_visibility_policies_segment",
+            "segment_code",
+            unique=True,
+            postgresql_where=text("segment_code IS NOT NULL"),
+        ),
+        Index(
+            "uq_spec_visibility_policies_default",
+            text("(true)"),
+            unique=True,
+            postgresql_where=text("contact_id IS NULL AND segment_code IS NULL"),
         ),
     )

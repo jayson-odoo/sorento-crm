@@ -1033,3 +1033,145 @@ def test_e1_unplacing_then_relinking_an_open_row_re_derives_its_bundle(world):
     assert world.links_qty(companion.id) == Decimal("2")
     assert companion.bundled_qty == Decimal("1"), "the bundle survives the relink unchanged"
     assert companion.state == "placed", "2 linked + 1 bundled covers the row's 3"
+
+
+# =============================================================================================
+# Buy never exceeds what the sales order line still owes
+# (`PLAN-scm-oi-sheet-pairing-repair.md` 7.3, owner 14 Sep evening; UAC AC-R-36)
+# =============================================================================================
+
+
+def _row_on_a_core_line(world, product_key: str, qty, *, ordered, delivered):
+    """A row whose mirror line names a REAL core sales order line, ordered and delivered.
+
+    The rest of this file raises rows with no `so_line_id` at all - a bundle is about the
+    item, not about what the book still owes - so the chain the worklist joins through
+    (`order_inquiry_rows.so_line_id` -> `projects.sales_order_lines.core_sales_order_line_id`
+    -> `sales_order_lines`) has to be seeded here for the one criterion that reads it.
+    """
+    core_order, core_line, mirror = _uid(), _uid(), _uid()
+    world.db.execute(
+        text(
+            "INSERT INTO sales_orders (id, company_id, so_number, status, order_date, "
+            "demand_class, order_type) VALUES (:i, :c, :n, 'open', :d, 'project', 'project')"
+        ),
+        {"i": core_order, "c": world.company_id, "n": f"{MARKER}-SO-{core_order[:6]}",
+         "d": date(2026, 6, 1)},
+    )
+    world.db.execute(
+        text(
+            "INSERT INTO sales_order_lines (id, company_id, sales_order_id, product_id, "
+            "warehouse_id, qty_ordered, qty_delivered, unit_price, line_status) "
+            "VALUES (:i, :c, :so, :p, :w, :o, :dl, 0, 'open')"
+        ),
+        {"i": core_line, "c": world.company_id, "so": core_order,
+         "p": world.products[product_key], "w": world.warehouse,
+         "o": Decimal(str(ordered)), "dl": Decimal(str(delivered))},
+    )
+    world.db.execute(
+        text(
+            "INSERT INTO " + P + ".sales_order_lines (id, company_id, "
+            "project_sales_order_id, line_no, product_id, qty, core_sales_order_line_id, "
+            "created_at) VALUES (:i, :c, :pso, 1, :p, :q, :core, now())"
+        ),
+        {"i": mirror, "c": world.company_id, "pso": world.pso,
+         "p": world.products[product_key], "q": Decimal(str(ordered)), "core": core_line},
+    )
+    row = world.row(product_key, qty)
+    world.db.execute(
+        text("UPDATE " + P + ".order_inquiry_rows SET so_line_id = :m WHERE id = :r"),
+        {"m": mirror, "r": row.id},
+    )
+    world.db.flush()
+    world.db.refresh(row)
+    return row
+
+
+def test_ac_r_36_buy_is_capped_by_what_the_core_line_still_owes(world):
+    """AC-R-36. Buy stops at what the sales order line still OWES (plan 7.3).
+
+    `Buy = row qty - linked - bundled` never looked at delivery. SO368872 / SRTWC286-SH on
+    prod: the line ordered 364 and delivered 352, so twelve are outstanding - and the row
+    read Buy 240, which is purchasing being told to buy 240 of something the customer has
+    already had. (240 rather than 302 there because the same row was double counted across a
+    PO line and its own ship; that half is AC-R-34. Here the row carries one link of 62, so
+    the unfixed reading is 302.)
+
+    Capping by the line's outstanding moves the whole copy's Buy total only from 154,618 to
+    153,124 - 138 rows sit on a partly delivered line - so this is a correctness fix rather
+    than a big number, and it is the reading the cards, the `kind=buy` filter and the matrix
+    all share.
+    """
+    row = _row_on_a_core_line(world, "CKS1050", 364, ordered=364, delivered=352)
+    line = world.purchase_order("CKS1050", f"{MARKER}-PO-R36", "S1", 62)
+    world.svc.place_on_po_allocations(
+        row.id, [{"po_line_id": line, "qty": Decimal("62")}], actor_user_id=None
+    )
+    world.db.flush()
+
+    kinds = _worklist(world)._kinds({})
+
+    assert Decimal(kinds["po"]) == Decimal("62")
+    assert Decimal(kinds["buy"]) == Decimal("0"), (
+        "twelve of the 364 are still owed and 62 are already on a purchase order, so there "
+        "is nothing left to buy"
+    )
+    ids = {entry["id"] for entry in _worklist(world).list_rows(limit=100, kind="buy")["data"]}
+    assert row.id not in ids, "a row with nothing to buy was listed under Buy"
+
+
+def test_ac_r_36_buy_counts_the_outstanding_that_is_left(world):
+    """AC-R-36, second half: 300 delivered of 364 leaves 64 owed, 62 of them on a purchase
+    order, so Buy is 2 - the cap is a cap, not a switch that zeroes the card."""
+    row = _row_on_a_core_line(world, "CKS1050", 364, ordered=364, delivered=300)
+    line = world.purchase_order("CKS1050", f"{MARKER}-PO-R36B", "S1", 62)
+    world.svc.place_on_po_allocations(
+        row.id, [{"po_line_id": line, "qty": Decimal("62")}], actor_user_id=None
+    )
+    world.db.flush()
+
+    kinds = _worklist(world)._kinds({})
+
+    assert Decimal(kinds["buy"]) == Decimal("2")
+    ids = {entry["id"] for entry in _worklist(world).list_rows(limit=100, kind="buy")["data"]}
+    assert row.id in ids
+
+
+def test_ac_r_36_a_row_with_no_core_line_keeps_todays_reading(world):
+    """AC-R-36, the untouched case: a row whose mirror names no core sales order line - or
+    which has no mirror at all, as every other row in this file - has no outstanding to be
+    capped by, so it keeps `qty - linked - bundled` exactly as before."""
+    row = world.row("CKS1050", 10)
+    line = world.purchase_order("CKS1050", f"{MARKER}-PO-R36C", "S1", 4)
+    world.svc.place_on_po_allocations(
+        row.id, [{"po_line_id": line, "qty": Decimal("4")}], actor_user_id=None
+    )
+    world.db.flush()
+
+    assert Decimal(_worklist(world)._kinds({})["buy"]) == Decimal("6")
+
+
+def test_ac_ob_8_an_order_back_row_ignores_the_core_lines_cap(world):
+    """AC-OB-8 (R2, `PLAN-oi-order-back-not-capped.md`). The SAME shape as
+    `test_ac_r_36_buy_is_capped_by_what_the_core_line_still_owes` above - a core line
+    ordered and delivered in full, so `_LINE_OUTSTANDING` is 0 - except the row is
+    ORDER_BACK, not ORDER: an order back is a shortfall against something already
+    shipped, and a delivered borrowing line is the NORMAL case for one, not a reason to
+    read Remaining as 0. Buy (the worklist's own Remaining total, `_UNLINKED_QTY`) must
+    still read the row's own qty."""
+    row = _row_on_a_core_line(world, "CKS1050", 3, ordered=3, delivered=3)
+    world.db.execute(
+        text("UPDATE " + P + ".order_inquiry_rows SET verb = 'ORDER_BACK' WHERE id = :r"),
+        {"r": row.id},
+    )
+    world.db.flush()
+    world.db.refresh(row)
+
+    kinds = _worklist(world)._kinds({})
+
+    assert Decimal(kinds["buy"]) == Decimal("3"), (
+        "the core line owes nothing more, but an ORDER_BACK row is owed in full - the "
+        "14 Sep cap (7.3) must never touch it"
+    )
+    ids = {entry["id"] for entry in _worklist(world).list_rows(limit=100, kind="buy")["data"]}
+    assert row.id in ids

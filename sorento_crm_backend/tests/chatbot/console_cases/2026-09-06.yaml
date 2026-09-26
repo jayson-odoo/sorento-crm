@@ -75,9 +75,15 @@ cases:
 
   - name: an idea reaches the ideate lane
     text: "I have an idea for you - please add a dark mode to the dealer portal"
+    # #1179 fix round 1 (PR #1182 reviewer, Should fix 1): `reply_contains: ["idea"]` was
+    # satisfied by the OLD D14 placeholder's own word "ideation" - it asserted nothing
+    # about the real intake reply. Pinned to the #1179 acceptance phrase instead, and
+    # `cold: true` so this console-check run never continues the contact's stored draft
+    # (Blocking 2: a live pointer must not be picked up by a test turn).
+    cold: true
     expect:
       branch_kind: ideate
-      reply_contains: ["idea"]
+      reply_contains: ["Here's what I've got so far"]
 
   - name: a cold "all of them" is a clarification, not small talk
     text: "all of them"

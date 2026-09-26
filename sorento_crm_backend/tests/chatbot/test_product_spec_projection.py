@@ -59,7 +59,10 @@ def test_no_attributes_asked_keeps_base_fields_plus_one_compact_specs_line():
     assert "no spec:" not in out["response"]
 
 
-def test_compact_line_caps_at_eight_then_says_and_n_more():
+def test_no_cap_all_ten_keys_render_and_never_say_more():
+    """AC-1 (12 Sep 2026, finding 1): the Specs line lists EVERY populated spec
+    key - `_SPEC_SUMMARY_CAP` and its "and N more" tail are gone. Flips the old
+    cap-at-eight pin (this exact scenario used to assert "and 2 more")."""
     many = [
         {"key": f"k{i}", "label": f"Key{i}", "value": str(i)}
         for i in range(10)
@@ -67,8 +70,24 @@ def test_compact_line_caps_at_eight_then_says_and_n_more():
     envelope = _product_envelope(specs=many)
     out = fetch.output_structurer(envelope, {"semantic_input": {}})
     specs_field = next(f for f in out["answers"][0]["fields"] if f["label"] == "Specs")
-    assert "and 2 more" in specs_field["value"]
-    assert specs_field["value"].count(":") <= 9  # 8 "Keyn: n" pairs + trailing note
+    assert "more" not in specs_field["value"]
+    for i in range(10):
+        assert f"Key{i}: {i}" in specs_field["value"]
+
+
+def test_no_cap_twelve_keys_render_in_registry_order_every_pair_present():
+    """AC-1: a 12-key case - registry order preserved, every `Label: value` pair
+    present, comma-separated, byte-exact (proves order AND completeness, not
+    just membership)."""
+    many = [
+        {"key": f"k{i}", "label": f"Key{i}", "value": str(i)}
+        for i in range(12)
+    ]
+    envelope = _product_envelope(specs=many)
+    out = fetch.output_structurer(envelope, {"semantic_input": {}})
+    specs_field = next(f for f in out["answers"][0]["fields"] if f["label"] == "Specs")
+    expected = ", ".join(f"Key{i}: {i}" for i in range(12))
+    assert specs_field["value"] == expected
 
 
 def test_no_spec_key_at_all_is_the_plain_four_field_answer():

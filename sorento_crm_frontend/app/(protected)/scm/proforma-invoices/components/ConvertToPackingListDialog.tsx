@@ -19,6 +19,7 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useContainerSizes } from '../../hooks/useFulfilment';
 import { useProformaInvoice } from '../../hooks/useProformaInvoices';
@@ -85,6 +86,10 @@ export function ConvertToPackingListDialog({
   // checked (placed), the same default the plan rules for "default all unplaced" rows on
   // a PI nothing has convertED yet.
   const [placedRowIds, setPlacedRowIds] = useState<Set<string>>(new Set());
+  // C4: client-side filter over the placement table - the list a long PI shows (DAFUYUAN:
+  // 15 rows) is never big enough to warrant a server round trip, so this is the same "type
+  // to narrow what's on screen" a table search box does, not a debounced query.
+  const [search, setSearch] = useState('');
 
   // Re-read on every open: a remainder typed last time describes an invoice that has since
   // moved, and a stale figure here places the wrong quantity silently. The size resets to
@@ -94,6 +99,7 @@ export function ConvertToPackingListDialog({
     if (!open) return;
     setQuantities({});
     setContainerSizeId(null);
+    setSearch('');
   }, [open]);
 
   // Rows default to placed the moment they arrive - a checkbox nobody has touched yet
@@ -103,16 +109,29 @@ export function ConvertToPackingListDialog({
     setPlacedRowIds(new Set(packingRows.filter((r) => r.match_state === 'matched').map((r) => r.id)));
   }, [open, packingRows]);
 
-  /** Container / seal / BL carried onto the draft (AC-D2c), read off the INVOICE's own
-   *  header - the packing document already filled those three there at apply, and the
-   *  convert reads the same fields. Nothing is derived here: a second rule on this screen
-   *  would be a second answer, and where several invoices disagree it is the convert's own
-   *  `header_conflicts` that says so (the response, on the page behind this dialog). */
-  const headerCarryOver = {
-    container: invoice?.container_no ?? null,
-    seal: invoice?.seal_no ?? null,
-    bl: invoice?.bl_no ?? null,
+  // Container / seal / SO / BL / consignee the draft will actually receive (AC-C5/AC-C6,
+  // B3) - read straight off the server's own `convert_carry` (the PI payload field
+  // `proforma_invoice_service.serialize` computes with the SAME function `convert_to_
+  // draft_shipment` uses), never recomputed here: the dialog's line can then never say
+  // something Convert itself would not. R-E (owner ruling 25 Sep): `so` and `bl` are two
+  // INDEPENDENT facts now, never one carried into the other.
+  const carryPreview = invoice?.convert_carry ?? {
+    container: null, seal: null, so: null, bl: null, consignee: null,
   };
+  // V3 (fix round 1): the line names only what IS carried - a part with no value is
+  // dropped entirely rather than printed as "Container -".
+  const carryParts = useMemo(() => {
+    const parts: string[] = [];
+    if (carryPreview.container) parts.push(`Container ${carryPreview.container}`);
+    if (carryPreview.seal) parts.push(`Seal ${carryPreview.seal}`);
+    if (carryPreview.so) parts.push(`SO ${carryPreview.so}`);
+    if (carryPreview.bl) parts.push(`BL ${carryPreview.bl}`);
+    if (carryPreview.consignee) parts.push(`Consignee ${carryPreview.consignee}`);
+    return parts;
+  }, [
+    carryPreview.container, carryPreview.seal, carryPreview.so, carryPreview.bl,
+    carryPreview.consignee,
+  ]);
 
   const defaultSize = useMemo(
     () => (containerSizes.data ?? []).find((s) => s.is_default) ?? null,
@@ -176,7 +195,22 @@ export function ConvertToPackingListDialog({
     return out;
   }, [placeable, packingRows]);
 
-  /** Footer totals over what is on screen. Read through a ref by the footer cells, the
+  /** C4: what the search box narrows the TABLE to - never what totals sum or what
+   *  Convert writes (`placeable`/`packingRows` stay untouched), the same "find, not
+   *  select" contract every other list search box in this codebase carries. */
+  const visibleRows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return placementRows;
+    return placementRows.filter((r) => {
+      const code = r.line.item_code?.toLowerCase() ?? '';
+      const product = (r.line.product_code ?? r.line.description ?? '').toLowerCase();
+      return code.includes(q) || product.includes(q);
+    });
+  }, [placementRows, search]);
+
+  /** Footer totals over the FULL placement set, never the search-filtered `visibleRows`
+   *  (C4: "find, not select" - a search narrows what the TABLE shows, not what Convert
+   *  will place or what the footer sums). Read through a ref by the footer cells, the
    *  same way the Packing tab's own footers do: listing the rows as a `columns` dependency
    *  rebuilds every cell renderer whenever the packing query resolves. */
   const totals = useMemo(
@@ -316,7 +350,7 @@ export function ConvertToPackingListDialog({
 
   const table = useReactTable({
     columns,
-    data: placementRows.length ? placementRows : NO_ROWS,
+    data: visibleRows.length ? visibleRows : NO_ROWS,
     getRowId: (row) => row.key,
     getCoreRowModel: getCoreRowModel(),
     columnResizeMode: 'onChange',
@@ -356,12 +390,16 @@ export function ConvertToPackingListDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
+      {/* C4/V3 (fix round 1): bounded, non-scrolling shell - ONLY the table scrolls, in its
+          own inner region below, so the container-size picker, the carried-onto line, the
+          search box above and the Convert/Cancel footer below never move, even at a short
+          (800px) window. */}
+      <DialogContent className="max-h-[85dvh] w-full max-w-2xl overflow-hidden">
         <DialogHeader>
           <DialogTitle>Convert to a packing list</DialogTitle>
         </DialogHeader>
 
-        <DialogBody className="space-y-4">
+        <DialogBody className="flex max-h-[55dvh] min-h-0 flex-1 flex-col space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="convert-container-size" className="text-xs">
               Container size
@@ -388,31 +426,48 @@ export function ConvertToPackingListDialog({
           ) : null}
 
           {single && invoice ? (
-            <div className="space-y-2">
-              {/* Carried onto the draft (AC-D2c), one compact line - a fact about the
-                  invoice's own header, so it is stated whether or not anything is left to
-                  place. */}
-              {headerCarryOver.container || headerCarryOver.seal || headerCarryOver.bl ? (
+            <div className="flex min-h-0 flex-1 flex-col space-y-2">
+              {/* Carried onto the draft (AC-C5/AC-C6, B3) - one compact line naming
+                  exactly what the packing list will receive, a fact stated whether or not
+                  anything is left to place. V3 (fix round 1): a part that carries NOTHING
+                  is omitted entirely rather than printed as "Container -" - the line
+                  states what IS carried, never what is not. */}
+              {carryParts.length ? (
                 <p className="text-2xs text-muted-foreground">
                   <span className="font-medium text-foreground">Carried onto the draft: </span>
-                  Container {headerCarryOver.container ?? EM_DASH}
-                  {headerCarryOver.seal ? ` · Seal ${headerCarryOver.seal}` : ''}
-                  {headerCarryOver.bl ? ` · BL ${headerCarryOver.bl}` : ''}
+                  {carryParts.join(' · ')}
                 </p>
               ) : null}
-              <DataGrid
-                table={table}
-                recordCount={placementRows.length}
-                isLoading={false}
-                tableLayout={{ width: 'fixed', columnsResizable: true }}
-                emptyMessage={
-                  alreadyPlaced.length > 0
-                    ? `Every line of ${invoice.pi_number} is already in a packing list.`
-                    : `No line of ${invoice.pi_number} can go on a container yet.`
-                }
-              >
-                <DataGridTable />
-              </DataGrid>
+              {placementRows.length ? (
+                <ListSearchInput
+                  value={search}
+                  onChange={setSearch}
+                  placeholder="Search code or product..."
+                  aria-label="Search lines by code or product"
+                  className="w-full sm:w-72"
+                />
+              ) : null}
+              {/* C4/AC-C3 (fix round 1, V3): ONLY the table scrolls - the container-size
+                  picker, the carried-onto line and the search box above all stay fixed,
+                  so the Convert/Cancel footer never has to compete with them for a short
+                  window's vertical space. */}
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                <DataGrid
+                  table={table}
+                  recordCount={visibleRows.length}
+                  isLoading={false}
+                  tableLayout={{ width: 'fixed', columnsResizable: true }}
+                  emptyMessage={
+                    alreadyPlaced.length > 0
+                      ? `Every line of ${invoice.pi_number} is already in a packing list.`
+                      : placementRows.length > 0
+                        ? 'No line matches that search.'
+                        : `No line of ${invoice.pi_number} can go on a container yet.`
+                  }
+                >
+                  <DataGridTable />
+                </DataGrid>
+              </div>
             </div>
           ) : null}
 

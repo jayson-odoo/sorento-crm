@@ -21,6 +21,7 @@ from app.main import app  # noqa: E402
 
 from app.services.price_tag_request_service import PriceTagRequestService
 from tests._pg_fixture import blank_session, unique_code
+from tests import _ptag_r9_seed
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("SKIP_LIVE_DB_TESTS") == "1",
@@ -147,6 +148,31 @@ def _promotion(db, description: str) -> str:
     return promotion.id
 
 
+def _cover_promotion(db, promotion_id: str, product) -> None:
+    """D1/AC-S6-5: a line's promotion is accepted only if it has a
+    ``PromotionProduct`` row for a product on that line - the request-level
+    "distributes to lines" convenience is gone, so every promotion a test
+    attaches to a line has to actually cover it."""
+    from decimal import Decimal
+
+    from app.models.marketing import PromotionGroup, PromotionProduct
+
+    group = PromotionGroup(promotion_id=promotion_id, group_name="ZZT group", sort_order=0)
+    db.add(group)
+    db.flush()
+    db.add(
+        PromotionProduct(
+            id=str(uuid.uuid4()),
+            promotion_id=promotion_id,
+            promotion_group_id=str(group.id),
+            product_id=product.id,
+            promo_selling_price=Decimal("400.00"),
+            company_id=SORENTO,
+        )
+    )
+    db.flush()
+
+
 def _product(db):
     from app.models.product import Brand, Product, ProductCategory, UnitOfMeasure
 
@@ -173,20 +199,40 @@ def _product(db):
     return product
 
 
-def _submitted_request(db, *, lines: int = 2, promotion_id: str | None = None):
-    """A request the salesperson has SENT: no ``portal_draft_at``."""
+def _submitted_request(
+    db,
+    *,
+    lines: int = 2,
+    promotion_id: str | None = None,
+    price_mode: str = "list",
+):
+    """A request the salesperson has SENT: no ``portal_draft_at``.
+
+    D1: a promotion is a LINE fact, never the header - when ``promotion_id``
+    is given it is attached to the FIRST line's own dict, and (AC-S6-5) that
+    promotion must already cover that line's product, so this covers it
+    before building the line.
+    """
     contact = _contact(db, unique_code("ZZT Sales Sam"))
+    products = [_product(db) for _ in range(lines)]
+    if promotion_id and products:
+        _cover_promotion(db, promotion_id, products[0])
+    line_dicts = [
+        {
+            "line_type": "product",
+            "product_id": product.id,
+            **({"promotion_id": promotion_id} if index == 0 and promotion_id else {}),
+        }
+        for index, product in enumerate(products)
+    ]
     request = PriceTagRequestService.create_request(
         db,
         contact_id=contact.id,
         company_id=SORENTO,
         data={
             "debtor_name": "ZZT Dealer",
-            "promotion_id": promotion_id,
-            "lines": [
-                {"line_type": "product", "product_id": _product(db).id}
-                for _ in range(lines)
-            ],
+            "price_mode": price_mode,
+            "lines": line_dicts,
         },
     )
     request.portal_draft_at = None
@@ -239,6 +285,8 @@ class TestTheDetailNamesWhoClaimedIt:
         assert row.assigned_to_id == _MARKETER_ID
 
     def test_the_detail_names_the_salesperson_and_the_promotion(self, api):
+        """D1 (S6): a promotion is a LINE fact - the header carries no
+        `promotion_name` any more, so this reads it off the covered line."""
         client, db = api
         promotion_id = _promotion(db, "ZZT August Promo")
         request, contact = _submitted_request(db, promotion_id=promotion_id)
@@ -246,7 +294,8 @@ class TestTheDetailNamesWhoClaimedIt:
         body = client.get(f"{_BASE}/{request.id}").json()
 
         assert body["contact_name"] == contact.name
-        assert body["promotion_name"] == "ZZT August Promo"
+        assert "promotion_name" not in body
+        assert body["lines"][0]["promotion_name"] == "ZZT August Promo"
 
     def test_an_unclaimed_request_says_so_rather_than_guessing(self, api):
         client, db = api
@@ -260,9 +309,11 @@ class TestTheDetailNamesWhoClaimedIt:
     def test_the_detail_carries_price_mode_and_each_lines_remarks(self, api):
         """AC-S2-7: `response_model` drops an undeclared field without a
         word, so this has to be asserted on the wire, not just in the
-        service layer (`test_price_tag_request.py` covers that side)."""
+        service layer (`test_price_tag_request.py` covers that side).
+
+        D1: no promotion here - this test is about `price_mode`/`remarks`,
+        neither of which a promotion affects, so it does not seed one."""
         client, db = api
-        promotion_id = _promotion(db, "ZZT r7 Promo")
         contact = _contact(db, unique_code("ZZT Sales Sam"))
         request = PriceTagRequestService.create_request(
             db,
@@ -270,7 +321,6 @@ class TestTheDetailNamesWhoClaimedIt:
             company_id=SORENTO,
             data={
                 "debtor_name": "ZZT Dealer",
-                "promotion_id": promotion_id,
                 "price_mode": "selling",
                 "lines": [
                     {
@@ -292,6 +342,10 @@ class TestTheDetailNamesWhoClaimedIt:
 
 class TestTheListingCarriesWhatItDraws:
     def test_the_row_carries_the_line_count_and_the_names(self, api):
+        """D1 (S6): `PriceTagRequestListItem` dropped `promotion_id`/
+        `promotion_name` outright - a promotion is a line fact now, and the
+        queue's columns never showed a per-line breakdown - so this checks
+        the field is gone rather than asserting a value for it."""
         client, db = api
         promotion_id = _promotion(db, "ZZT Listing Promo")
         request, contact = _submitted_request(db, lines=3, promotion_id=promotion_id)
@@ -303,7 +357,7 @@ class TestTheListingCarriesWhatItDraws:
 
         assert row["line_count"] == 3
         assert row["contact_name"] == contact.name
-        assert row["promotion_name"] == "ZZT Listing Promo"
+        assert "promotion_name" not in row
         assert row["assigned_to_name"] is None
 
     def test_a_claimed_row_shows_the_claimer_in_the_listing(self, api):
@@ -533,7 +587,7 @@ class TestTheDesignRouteOnlySavesFromADesignableStatus:
 
     @pytest.mark.parametrize(
         "target_status",
-        ["void", "approved", "ready"],
+        ["void", "approved", "ready_for_collection"],
     )
     def test_refuses_to_save_once_the_request_has_moved_past_designing(
         self, api, target_status
@@ -545,10 +599,24 @@ class TestTheDesignRouteOnlySavesFromADesignableStatus:
         # Walk the real transition graph to the target status rather than
         # writing the column directly, so this exercises exactly the states a
         # request can actually be in.
+        #
+        # r9 D8 retired `ready`: the office hand-over replaces it, and it is
+        # only reachable when somebody has said the OFFICE prints.
+        if target_status == "ready_for_collection":
+            from app.models.price_tag import PriceTagRequest
+
+            db.query(PriceTagRequest).filter(
+                PriceTagRequest.id == request.id
+            ).update({"print_by": "office"})
+            db.flush()
         path = {
             "void": ["void"],
             "approved": ["proof_ready", "approved"],
-            "ready": ["proof_ready", "approved", "ready"],
+            "ready_for_collection": [
+                "proof_ready",
+                "approved",
+                "ready_for_collection",
+            ],
         }[target_status]
         for status in path:
             PriceTagRequestService.transition_status(db, request.id, status)
@@ -562,3 +630,169 @@ class TestTheDesignRouteOnlySavesFromADesignableStatus:
 
         assert resp.status_code == 409, resp.text
         assert self._page_version_count(db, request.id) == before
+
+
+# ---------------------------------------------------------------------------
+# S11 - PATCH one line's price basis (D5). Written test-FIRST: the route does
+# not exist yet, so every call below 404s where it should not, which is the
+# accepted "missing route" red.
+# ---------------------------------------------------------------------------
+
+
+class TestLinePricePatch:
+    def test_patch_line_promotion_sets_and_clears_pins(self, api):
+        """AC-S6-5: the PATCH's own promotion has to cover the line's product,
+        same as create/update - covered here after the request exists, since
+        the PATCH validates against what the line holds at PATCH time."""
+        client, db = api
+        request, _contact = _submitted_request(db, lines=1, price_mode="selling")
+        line = request.lines[0]
+        promotion_id = _promotion(db, "ZZT Line Promo")
+        from app.models.product import Product
+
+        product = db.query(Product).filter(Product.id == line.product_id).one()
+        _cover_promotion(db, promotion_id, product)
+        from app.services.dealer_kit import tag_data_service
+
+        tag_data_service.pin_tags(db, request, only_unpinned=True)
+        db.commit()
+        tag = line.tags[0]
+        old_pin = tag.pinned_tag_data
+        assert old_pin is not None, "seed assumption: the tag is pinned"
+
+        res = client.patch(
+            f"{_BASE}/{request.id}/lines/{line.id}", json={"promotion_id": promotion_id}
+        )
+        assert res.status_code == 200, res.text
+        body_line = next(l for l in res.json()["lines"] if l["id"] == line.id)
+        assert body_line["promotion_id"] == promotion_id
+
+        db.expire_all()
+        from app.models.price_tag import PriceTagRequestTag
+
+        refreshed = (
+            db.query(PriceTagRequestTag).filter(PriceTagRequestTag.id == tag.id).first()
+        )
+        # The PATCH itself clears the pin (`pinned_tag_data = None`), but the
+        # SAME response-building read (`_with_resolved_lines`, which every
+        # caller of this route gets back) goes through
+        # `resolve_request_line_data`, whose r9/D16 "pin on the first
+        # unpinned read" rule immediately re-pins any tag it finds unpinned -
+        # so what is observable from outside is a FRESH pin (the promotion's
+        # own change baked in, no ack yet), never a lastingly-absent one.
+        assert refreshed.pinned_tag_data is not None
+        assert refreshed.pinned_tag_data != old_pin, (
+            "the line's own promotion changed, so its tag's pin must be replaced"
+        )
+        assert refreshed.data_change_ack_hash is None
+
+    def test_patch_line_manual_price(self, api):
+        """AC-S6-4: a manual price only applies in Selling mode."""
+        client, db = api
+        request, _contact = _submitted_request(db, lines=1, price_mode="selling")
+        line = request.lines[0]
+
+        res = client.patch(
+            f"{_BASE}/{request.id}/lines/{line.id}", json={"manual_sell_price": 888.5}
+        )
+        assert res.status_code == 200, res.text
+        body_line = next(l for l in res.json()["lines"] if l["id"] == line.id)
+        # `Decimal` fields serialise as a JSON string, not a float.
+        assert body_line["manual_sell_price"] == "888.50"
+        assert float(body_line["manual_sell_price"]) == 888.5
+
+    def test_patch_line_409_on_a_terminal_request(self, api):
+        client, db = api
+        request, _contact = _submitted_request(db, lines=1)
+        request.status = "collected"
+        db.commit()
+
+        res = client.patch(
+            f"{_BASE}/{request.id}/lines/{request.lines[0].id}",
+            json={"manual_sell_price": 100},
+        )
+        assert res.status_code == 409, res.text
+
+    def test_patch_line_403_without_process(self, api):
+        client, db = api
+        from app.models.user import UserPermission, UserRolePermission
+
+        db.query(UserRolePermission).filter(
+            UserRolePermission.permission_id.in_(
+                db.query(UserPermission.id).filter(
+                    UserPermission.slug == "dealer_kit.price_tag_requests.process"
+                )
+            )
+        ).delete(synchronize_session=False)
+        db.commit()
+        request, _contact = _submitted_request(db, lines=1)
+
+        res = client.patch(
+            f"{_BASE}/{request.id}/lines/{request.lines[0].id}",
+            json={"manual_sell_price": 100},
+        )
+        assert res.status_code == 403, res.text
+
+    def test_patch_line_404_for_a_line_on_another_request(self, api):
+        """A 404 has to come from the CROSS-REQUEST check, not from the route
+        being absent - proven by first patching request_a's OWN line and
+        requiring that to succeed, so a coincidental "every unknown path 404s"
+        cannot pass this test for the wrong reason. AC-S6-4: a manual price
+        only applies in Selling mode."""
+        client, db = api
+        request_a, _ = _submitted_request(db, lines=1, price_mode="selling")
+        request_b, _ = _submitted_request(db, lines=1, price_mode="selling")
+
+        own_line = client.patch(
+            f"{_BASE}/{request_a.id}/lines/{request_a.lines[0].id}",
+            json={"manual_sell_price": 100},
+        )
+        assert own_line.status_code == 200, own_line.text
+
+        res = client.patch(
+            f"{_BASE}/{request_a.id}/lines/{request_b.lines[0].id}",
+            json={"manual_sell_price": 100},
+        )
+        assert res.status_code == 404, res.text
+
+    def test_patch_line_404_for_a_malformed_line_id(self, api):
+        """R8a: `_line_or_404` filters `PriceTagRequestLine.id == line_id`
+        with NO `validate_uuid_path` on `line_id` (unlike `request_id`, which
+        the route DOES run through it) - a bad-format id must read as a
+        guaranteed-missing row (404), not a Postgres `DataError` (500)."""
+        client, db = api
+        request, _ = _submitted_request(db, lines=1, price_mode="selling")
+
+        res = client.patch(
+            f"{_BASE}/{request.id}/lines/not-a-uuid",
+            json={"manual_sell_price": 100},
+        )
+        assert res.status_code == 404, res.text
+
+    def test_patch_line_manual_price_rejects_out_of_bounds_values(self, api):
+        """R6: `manual_sell_price` has no `Field` bound at all - -5 and 0 are
+        valid `Decimal`s pydantic happily accepts, and `1E+400` is a valid
+        (if absurd) arbitrary-precision `Decimal` too, so all three save
+        as-is today with no 422. 175.50 stays accepted (the existing
+        `test_patch_line_manual_price` already covers that at 888.5)."""
+        client, db = api
+        request, _ = _submitted_request(db, lines=1, price_mode="selling")
+        line_id = request.lines[0].id
+
+        for bad in (-5, 0, "1E+400"):
+            res = client.patch(
+                f"{_BASE}/{request.id}/lines/{line_id}",
+                json={"manual_sell_price": bad},
+            )
+            assert res.status_code == 422, (bad, res.text)
+
+
+@pytest.fixture(autouse=True)
+def no_respond(monkeypatch):
+    """S8: no test run reaches api.respond.io. See `_ptag_r9_seed.block_respond`.
+
+    Every transition here goes through the real notifier, which sends over the
+    network unless something stops it - the run log used to carry a live
+    ``Window check: Respond.io list_messages failed`` per transition.
+    """
+    return _ptag_r9_seed.block_respond(monkeypatch)

@@ -72,9 +72,49 @@ SUPPORTED_ENTITY_TYPES = {
     "picking_lines",
     "orders",
     "order_lines",
+    # autocount-brands-ingest AC-15: brands joined the ingest surface.
+    "brands",
 }
 
+# Tables where a row serves every company (`company_id` NULL). Moved here from
+# `master_ingest_service` (autocount-brands-ingest BL-056, D11): this service
+# needs it too now, for its own `company_id` column, and the refs service
+# cannot import the ingest service (circular) - `master_ingest_service`
+# re-exports both names, so `deletion_service.py` and `master_read_service.py`
+# keep importing from where they always have.
+SHARED_TABLES = {"sales_agents"}
+
+
+def _is_company_scoped(table: str) -> bool:
+    return table not in SHARED_TABLES
+
+
 DEFAULT_SOURCE_SYSTEM = "autocount"
+
+
+def is_unclaimed_or_same_source(origin: Optional[IntegrationReference]) -> bool:
+    """Whether an already-fetched ``origin_of()`` result is missing entirely
+    (the row is unclaimed), or claims the row under the constant AutoCount
+    source system already.
+
+    The one predicate the code-wins seams (`MasterIngestService._apply_scoped`'s
+    adopt branch, `DeletionService`'s code fallback - ingest-products-code-wins,
+    SR0) share: a product AutoCount already claims, or has never claimed at
+    all, resolves by code instead of conflicting/refusing, but a row another
+    source system claims still refuses - only the SAME source (or nobody yet)
+    gets to say "this is the same thing, just under a different key". Takes
+    the origin rather than re-resolving it, since both call sites already
+    hold one from their own `origin_of()`/`resolve()` call and this runs on a
+    batch that pushes thousands of records.
+
+    Compares against `DEFAULT_SOURCE_SYSTEM` specifically, not a parameter -
+    there is exactly one source system on this surface today (D3, PLAN
+    "Accepted consequences"). The trigger to widen this into a real
+    comparison (an `integration_id` alongside it, say) is a second
+    `source_system` value actually appearing, or a second integration issued
+    a key on `autocount` - not before.
+    """
+    return origin is None or origin.source_system == DEFAULT_SOURCE_SYSTEM
 
 
 def _require_supported(entity_type: str) -> str:
@@ -87,8 +127,15 @@ def _require_supported(entity_type: str) -> str:
 
 
 class IntegrationReferenceService:
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, *, company_id: Optional[str] = None):
         self.db = db
+        # BL-056 (D14, strict - captain's ruling on fix round 1): the anchor
+        # company a scoped `resolve()`/`link()` reads and writes under. Every
+        # real caller (the six ingest/read/deletion constructors) always has
+        # one. A scoped call with no anchor raises `ValueError` rather than
+        # guessing - never a global fallback, never inferred from the entity's
+        # own row.
+        self.company_id = company_id
 
     # ------------------------------------------------------------------ write
 
@@ -106,18 +153,25 @@ class IntegrationReferenceService:
 
         Re-linking the same pair updates in place, which is what makes ingest
         idempotent: a re-push must never create a second record.
+
+        BL-056 (D12/D14): the same ``source_ref`` may exist once PER COMPANY
+        for a scoped ``entity_type`` - so "already linked" is scoped to the
+        anchor too, and linking the same ref under a different company is a
+        brand new row, never a conflict with this one.
         """
         _require_supported(entity_type)
+        anchor = self._require_anchor_if_scoped(entity_type)
 
-        existing = (
-            self.db.query(IntegrationReference)
-            .filter(
-                IntegrationReference.source_system == source_system,
-                IntegrationReference.entity_type == entity_type,
-                IntegrationReference.source_ref == source_ref,
-            )
-            .first()
+        existing_query = self.db.query(IntegrationReference).filter(
+            IntegrationReference.source_system == source_system,
+            IntegrationReference.entity_type == entity_type,
+            IntegrationReference.source_ref == source_ref,
         )
+        if anchor is not None:
+            existing_query = existing_query.filter(IntegrationReference.company_id == anchor)
+        else:
+            existing_query = existing_query.filter(IntegrationReference.company_id.is_(None))
+        existing = existing_query.first()
         if existing is not None:
             if str(existing.entity_id) != str(entity_id):
                 # One external document maps to one local record. A second
@@ -165,10 +219,29 @@ class IntegrationReferenceService:
             source_ref=source_ref,
             source_doc_no=source_doc_no,
             integration_id=integration_id,
+            company_id=anchor,
         )
         self.db.add(row)
         self.db.flush()
         return row
+
+    def _require_anchor_if_scoped(self, entity_type: str) -> Optional[str]:
+        """The company_id to read/write for `entity_type`, or None for a
+        shared type (BL-056 D14, strict).
+
+        A scoped type with no anchor at construction raises `ValueError` -
+        never a global fallback (`resolve()`) and never inferred from the
+        entity's own row (`link()`). Every real caller (the six ingest/read/
+        deletion constructors) always has an anchor; this only fires for a
+        caller with none of its own to give.
+        """
+        if not _is_company_scoped(entity_type):
+            return None
+        if self.company_id is None:
+            raise ValueError(
+                f"company-scoped entity_type {entity_type!r} requires an anchor company_id"
+            )
+        return self.company_id
 
     def unlink(self, *, entity_type: str, entity_id: str) -> int:
         """Drop the mapping for a record. Call when deleting the record itself."""
@@ -206,18 +279,27 @@ class IntegrationReferenceService:
         Returns None -- and removes the mapping -- when the referenced record has
         since been deleted, so ingest treats it as new rather than updating a
         row that is gone.
+
+        BL-056 (D14, strict): a scoped ``entity_type`` resolves only within
+        THIS instance's anchor company - a ref linked under a different
+        company is reported exactly like one that was never linked at all.
+        A scoped call with no anchor raises ``ValueError`` rather than
+        guessing which company to search; every real caller (the six ingest/
+        read/deletion services) always has one.
         """
         _require_supported(entity_type)
+        anchor = self._require_anchor_if_scoped(entity_type)
 
-        row = (
-            self.db.query(IntegrationReference)
-            .filter(
-                IntegrationReference.source_system == source_system,
-                IntegrationReference.entity_type == entity_type,
-                IntegrationReference.source_ref == source_ref,
-            )
-            .first()
+        query = self.db.query(IntegrationReference).filter(
+            IntegrationReference.source_system == source_system,
+            IntegrationReference.entity_type == entity_type,
+            IntegrationReference.source_ref == source_ref,
         )
+        if anchor is not None:
+            query = query.filter(IntegrationReference.company_id == anchor)
+        else:
+            query = query.filter(IntegrationReference.company_id.is_(None))
+        row = query.first()
         if row is None:
             return None
 

@@ -1,6 +1,8 @@
 import '@testing-library/jest-dom';
 import { configure } from '@testing-library/dom';
 import { MotionGlobalConfig } from 'motion/react';
+import { afterEach, vi } from 'vitest';
+import { cleanup } from '@testing-library/react';
 
 /*
   Testing Library gives an async assertion one second to come true.
@@ -26,6 +28,28 @@ if (!globalThis.ResizeObserver) {
     unobserve() {}
     disconnect() {}
   } as unknown as typeof ResizeObserver;
+}
+
+// Same story for IntersectionObserver: jsdom has none, and embla-carousel's
+// `SlidesInView` plugin calls it unconditionally on mount - so ANY render of the
+// shared `AttachmentPreviewModal` (its carousel, real, not stubbed per-file) dies
+// with a ReferenceError before a test can assert anything. `AttachmentPreviewModal.
+// test.tsx` itself works around this by mocking `@/components/ui/carousel`
+// wholesale; a caller that renders the modal indirectly (a lightbox opened from
+// another screen, chatbot media-into-turn's Chat History drawer among them) has
+// no such mock and needs the global stub instead.
+if (!globalThis.IntersectionObserver) {
+  globalThis.IntersectionObserver = class {
+    root = null;
+    rootMargin = '';
+    thresholds: ReadonlyArray<number> = [];
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+    takeRecords() {
+      return [];
+    }
+  } as unknown as typeof IntersectionObserver;
 }
 
 // Same story for matchMedia: jsdom has none, and the DataGrid asks it whether it
@@ -80,3 +104,23 @@ if (typeof Element !== 'undefined') {
   Element.prototype.setPointerCapture ??= function setPointerCapture() {};
   Element.prototype.releasePointerCapture ??= function releasePointerCapture() {};
 }
+
+// A test file that ends with a Radix DropdownMenu / Dialog / Popover / Sheet still open leaves
+// FocusScope's unmount effect pending: its cleanup does `setTimeout(() => dispatchEvent(new
+// CustomEvent(...)), 0)` against the container node. Testing Library's own auto cleanup unmounts
+// the surface after the last test in the file, which arms that timer - but on a loaded CI runner
+// vitest can tear the jsdom environment down before the 0ms timer fires, so the CustomEvent gets
+// built against an already-dead realm and jsdom's dispatchEvent throws "parameter 1 is not of
+// type 'Event'". It is timing-dependent, so it passes locally and fails only on CI, and it looks
+// like a bug in whichever test happened to run last rather than in the surface it left open.
+//
+// Call `cleanup()` here (idempotent alongside Testing Library's own afterEach, and this one is
+// guaranteed to run before the drain below regardless of vitest's afterEach ordering) and then
+// drain one real macrotask so FocusScope's timer fires while the window is still alive. Skip the
+// drain under fake timers: a fake timer never fires on its own, so there is nothing to race, and
+// awaiting a real setTimeout while timers are faked would just hang.
+afterEach(async () => {
+  cleanup();
+  if (vi.isFakeTimers()) return;
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+});

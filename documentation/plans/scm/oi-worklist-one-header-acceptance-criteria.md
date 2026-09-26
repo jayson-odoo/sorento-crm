@@ -1,0 +1,190 @@
+# Order inquiries: one header per SO, hide cancelled, Was/Now after a redirect, cascade skips used rows, raised-by per row - acceptance criteria
+
+Status: contract
+Plan: `PLAN-oi-worklist-one-header.md`
+
+## Journey
+
+Purchasing (Eling) opens Procurement > Supply Chain > Order Inquiries and searches an SO
+number. They need to see, per item, what is still to buy, what is already on a PO or SPO,
+what has been received, and what old row was used up. They do not need rows a later
+revision cancelled. For a line whose earlier supply was received and released to stock
+(`redirected_to_pool`, shown as `used`), the fresh buy row tells them in one place what it
+replaces: the (i) Was/Now shows the old quantity, the old date and which document was
+received. Every row of one sales order sits under one order inquiry number. The Raised by
+column names the person who raised THAT row, never the person who last pressed Confirm on
+the order.
+
+CS (Jayson or Eling) confirms a planning change on the fulfilment board. The system raises
+ORDER rows and DELAY / ADVANCE rows under the SO's single header. Nothing is asked of CS.
+
+Purchasing is told by the existing handover email, unchanged.
+
+Origin: SO314593 on prod, 17 Sep 2026. The B2154-NL line moved 182 to 220 and 01/06/2026 to
+01/03/2027. Prod showed three ORDER rows (one cancelled by the re-confirm after the network
+outage, one used, one live), two order inquiry numbers (OI-000477 and OI-000734), Raised by
+Eling on a row Jayson migrated, and 24 pcs of SPO-2026/09-0036 auto-linked at 10:11:15 onto
+the released 182 row instead of the live 220 row.
+
+## Rulings (owner, 17 Sep 2026)
+
+- R1 One header per SO: planning-change reactions (DELAY / ADVANCE / ORDER) land on the
+  order's existing `amendment_id IS NULL` header. OCN amendments on project-authored SOs
+  keep their own header (no evidence today; trigger noted in the plan).
+- R2 The list hides `cancelled` rows unless the State filter asks for them.
+- R3 The fresh ORDER row raised after a received row is released to stock carries Was/Now.
+- R4 (revised on the plan page, 17 Sep: 'i just need the order row') No DELAY / ADVANCE row
+  for a line whose confirm restated the line itself: a fresh ORDER row with Was/Now after a
+  redirect, or a row settled in place. The ORDER row's (i) carries the date change. A line the
+  confirm did NOT restate (open placed supply, no fresh row) still gets its DELAY row.
+- R7 The Filters popover must scroll (today it clips below the viewport).
+- R8 The worklist page is slow on prod (`?ack=all&link_up_to=2027-10-31`); measure on the
+  0915_1900 copy before changing anything, then fix the measured hot spot.
+- R5 Order inquiry column hidden by default; the number stays on the header, the email and
+  the URL.
+- R6 Two defects: the auto-link cascade must skip `redirected_to_pool` rows; Raised by reads
+  the row's own person before the header's.
+- R9 (owner ruling, 17 Sep, found on `sorento_oioh_stack` via TPE-9204 / SO314595) A line
+  decided as a LOCAL buy is not purchasing's job, so it must not sit on the order inquiry
+  worklist at all: its still-raised ORDER rows are cancelled "Superseded by revision N"
+  exactly as for any decided line, no fresh ORDER row is raised, and no DELAY / ADVANCE
+  row either (the same no-reaction list a settled or redirected line already joins).
+  Placed or actioned rows stay - they are history. Supersedes the old S3
+  `PLAN-local-supplier-oi-routing.md` rule that left a local line's raised row untouched.
+
+## Phase 1 - frontend (mock)
+
+- AC-OH-01 [FE] Given the worklist list view, when it first loads with no saved column
+  preference, then the Order inquiry column is hidden and appears in the Columns menu, and
+  ticking it shows the column.
+- AC-OH-02 [FE] Given a row with `previous_qty` set and `redirected_to_pool` false, when
+  the Qty cell renders, then the (i) shows "Was <previous_qty> on <previous date>" and the
+  note text (the existing Was/Now affordance, no new component).
+
+## Phase 2 - backend
+
+### Cascade skips used rows
+
+- AC-OH-10 [BE] Given a row with `redirected_to_pool = true`, state `partly_linked`, an
+  unlinked remainder, and an open SPO allocation for its product, when
+  `auto_place_for_products` runs for that product (any trigger, `include_awaiting` either
+  way), then no link is written on that row and its state is unchanged.
+- AC-OH-11 [BE] Given the same product with a fresh `raised` row on the same line, when the
+  cascade runs, then the open SPO is linked to the fresh row, not the used one.
+- AC-OH-12 [BE] Given `link_now` (Link now / Auto link all) on that product, then the used row
+  is skipped the same way (same query, one seam).
+
+### Raised by per row
+
+- AC-OH-20 [BE] Given a row with `supply_decision_id` set, when the worklist lists it, then
+  `raised_by_name` is the decision's `confirmed_by` (unchanged).
+- AC-OH-21 [BE] Given a migrated row (`supply_decision_id` NULL, `acknowledged_by` = the
+  migrator) whose header `raised_by` was later re-stamped by another user's Confirm, when
+  the worklist lists it, then `raised_by_name` is the migrator.
+- AC-OH-22 [BE] Given a row with neither a decision nor `acknowledged_by`, then
+  `raised_by_name` falls back to the header `raised_by` (unchanged).
+- AC-OH-23 [BE] Given the `raised_by` list filter with the migrator's id, then the migrated
+  row is in the result; with the re-confirmer's id, it is not.
+
+### One header per SO
+
+- AC-OH-30 [BE] Given an order with an existing `amendment_id IS NULL` header, when a
+  planning-change batch applies with a DELAY reaction, then the DELAY row's
+  `order_inquiry_id` is that header, and no new `order_inquiries` row exists for the order.
+- AC-OH-31 [BE] Given an order with NO header yet, when a batch applies with only a DELAY
+  reaction, then exactly one header is minted (`amendment_id IS NULL`) and the row sits on it.
+- AC-OH-32 [BE] Given a batch apply that confirms (raising ORDER rows) and reacts (DELAY),
+  then both rows share one `order_inquiry_id`.
+- AC-OH-33 [BE] No `so_amendments` row with `from_version_kind = 'planning_change_batch'`
+  is written by the apply any more.
+- AC-OH-34 [BE] Given existing headers whose amendment is `planning_change_batch` (prod:
+  OI-000734 and siblings), when the migration runs, then their rows are moved to the same
+  order's `amendment_id IS NULL` header (minted when absent, `raised_by` copied from the
+  moved header), the emptied header and its synthetic amendment are deleted, and row ids,
+  links, claims and handover records are untouched. Downgrade is a no-op with a comment.
+- AC-OH-35 [BE] The handover email for a batch apply still fires once, naming the single
+  header.
+
+### Was/Now on the fresh row after a redirect
+
+- AC-OH-40 [BE] Given a line whose only row is linked to a fully received document, when a
+  confirm replans the line (new qty and date), then the released row is `redirected_to_pool`
+  (unchanged) and the fresh ORDER row carries `previous_qty` = the released row's qty,
+  `previous_delivery_date` = the released row's delivery date, and a note
+  `Replaces <qty> used; <document> received <date or "in full"> into <location>`.
+- AC-OH-41 [BE] Given a later reconfirm of that line with no new redirect, then the next
+  fresh row does NOT carry the released row's Was/Now again (stamped only in the decision
+  that released it).
+- AC-OH-42 [BE] Given two released rows on the line in one decision, then `previous_qty` is
+  their sum and the note names each document.
+- AC-OH-44 [BE] Given a planning-change apply whose confirm released a received row and raised
+  a fresh ORDER row with Was/Now for the line, then NO DELAY / ADVANCE row is written for that
+  line (the apply's `settled_in_place` list, which already suppresses the DELAY row for a
+  settled line, includes the redirected line).
+- AC-OH-45 [BE] Given a planning-change apply on a line the confirm did not restate (a
+  lone placed row with no link), then the DELAY row is still written (unchanged).
+- AC-OH-43 [BE] The handover record for the fresh row (`_record_handover`, kind `raised`) is
+  written as today; no new record kind.
+
+### Hide cancelled by default
+
+- AC-OH-50 [BE] Given the worklist list with no `state` param, then `cancelled` rows are
+  absent and `total_rows` excludes them.
+- AC-OH-51 [BE] Given `state=cancelled`, then only cancelled rows are returned.
+- AC-OH-52 [BE] Facets `by_state` still count cancelled rows, so the State filter offers
+  the value.
+- AC-OH-53 [BE] The three cards (Buy / Purchased / Incoming) are unchanged (they already
+  exclude `_NOT_OWED_STATES`).
+- AC-OH-54 [BE] The three cards and the schedule matrix are unchanged (they never
+  counted cancelled). The month strip's own `_by_month` DOES now exclude cancelled - it
+  never had a filter of its own, so it inherits the same default `_base` exclusion the
+  list and `total_rows` do (S5, S6 revised) - and so matches what the list itself shows.
+
+### Filters popover scrolls
+
+- AC-OH-70 [FE] Given the worklist Filters popover open at a 700px tall viewport, then its
+  content scrolls inside the popover (max height bounded by the viewport, `overflow-y: auto`)
+  and the last field is reachable (State sits after Confirmed since S5b); nothing clips. Verified at 375px and 1280px.
+
+### Worklist speed
+
+- AC-OH-80 [BE] Measured on `sorento_ai_automation_0915_1900` with the prod query string
+  (`ack=all&link_up_to=2027-10-31`, page 1, default sort): the time of each request the page
+  makes on load (list, facets, month strip, cards, matrix if fetched) is recorded in the plan
+  before any change. The slowest request is named with its EXPLAIN ANALYZE hot spot.
+- AC-OH-81 [BE] After the fix, the same measurement shows the page's slowest request under
+  1.5 s on the copy, and the list response is unchanged in shape (existing worklist tests
+  green).
+
+### A local buy is not purchasing's job (R9)
+
+- AC-OH-90 [BE] Given a line whose confirm decides it as a LOCAL buy (`origin == "local"`)
+  and which carries a still-`raised` ORDER row from an earlier revision, when
+  `refresh_for_decision` runs, then that row is cancelled with note "Superseded by
+  revision N" (no fresh ORDER row is raised for the line), while a `placed`/`actioned` row
+  on the same line is left untouched.
+- AC-OH-91 [BE] Given the same local line named in a planning-change apply's reaction pass,
+  then no DELAY / ADVANCE row is written for it - the line joins `settled_in_place`, the
+  same no-reaction list a settled or redirected line already joins.
+
+## Phase 3 - end to end
+
+- AC-OH-60 [E2E] On the lane stack against a copy of SO314593's shape (one sheet row linked
+  158 to a received SPO, one open SPO for the product, mirror stale on qty and date): apply
+  the planning change, press Confirm. The worklist for that SO shows, for B2154-NL: one
+  ORDER 220 with (i) Was 182, one 182 `used` greyed, NO DELAY row (R4 revised - the ORDER
+  row's own (i) already carries the date change). No cancelled row. One order inquiry
+  number. Raised by on the migrated row is the migrator. The open SPO is linked to the
+  220 row, not the used one.
+- AC-OH-61 [E2E] Filters > State = Cancelled shows the cancelled rows for that SO.
+- AC-OH-62 [E2E] Columns menu shows Order inquiry unticked; ticking it shows the column.
+- AC-OH-63 [E2E] 375px and 1280px: the list is usable and nothing clips.
+
+## Not in scope (backlog)
+
+- OCN amendment headers on project-authored SOs stay per amendment. Trigger to fold them
+  too: a project-authored SO shows two headers on the worklist.
+- Removing the order inquiry number altogether. Trigger: nobody quotes it in an email or
+  sheet for a month after R5 ships.
+- Netting far-dated buys against on-hand stock (ladder v8 rule "stock kept for nearer
+  orders"). Owner accepted the rule on 16 Sep.
