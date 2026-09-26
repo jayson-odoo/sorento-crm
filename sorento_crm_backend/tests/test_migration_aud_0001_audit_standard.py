@@ -106,7 +106,9 @@ def test_upgrade_then_downgrade():
             raw.exec_driver_sql(f'SET LOCAL search_path TO "{scratch}"')
             conn = raw.execution_options(schema_translate_map={None: scratch})
 
-            _run(conn, module.upgrade)
+            # CONCURRENTLY cannot run inside this test's outer transaction; the recorder test
+            # in test_audit_standard_s0_round2.py pins that upgrade() builds them that way.
+            _run(conn, lambda: module._upgrade(concurrently=False))
             cols = {c["name"] for c in sa.inspect(raw).get_columns("audit_logs", schema=scratch)}
             assert NEW_COLUMNS <= cols
             assert "'EVENT'" in _check(raw, scratch)

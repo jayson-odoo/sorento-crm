@@ -183,3 +183,135 @@ class TestS1FlagNotForTheAppRole:
         db.execute(text("SET LOCAL sorento.audit_maintenance = 'on'"))
         db.execute(text("DELETE FROM audit_logs WHERE id = :i"), {"i": row_id})
         assert db.execute(text("SELECT count(*) FROM audit_logs WHERE id = :i"), {"i": row_id}).scalar() == 0
+
+
+# --- S2: the migration does not block audited writes while it builds ------------------
+
+
+class _Recorder:
+    """Stands in for alembic's ``op``: records every SQL string and whether it ran inside
+    ``autocommit_block()`` (outside the migration's transaction)."""
+
+    def __init__(self):
+        self.statements: list[tuple[str, bool]] = []
+        self._autocommit = False
+        outer = self
+
+        class _Bind:
+            def execute(self, clause, *a, **k):
+                outer.statements.append((str(clause), outer._autocommit))
+
+                class _R:
+                    def scalar(self_inner):
+                        return None
+
+                return _R()
+
+        class _Ctx:
+            from contextlib import contextmanager
+
+            @contextmanager
+            def autocommit_block(self):
+                outer._autocommit = True
+                try:
+                    yield
+                finally:
+                    outer._autocommit = False
+
+        self._bind, self._ctx = _Bind(), _Ctx()
+
+    def get_bind(self):
+        return self._bind
+
+    def get_context(self):
+        return self._ctx
+
+    def execute(self, sql, *a, **k):
+        self.statements.append((str(sql), self._autocommit))
+
+    def add_column(self, table, column, *a, **k):
+        self.statements.append((f"ADD COLUMN {table}.{column.name}", self._autocommit))
+
+    def create_index(self, name, table, cols, **kw):
+        concurrently = " CONCURRENTLY" if kw.get("postgresql_concurrently") else ""
+        self.statements.append((f"CREATE INDEX{concurrently} {name}", self._autocommit))
+
+
+def _load_aud_0001():
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[1] / "alembic" / "versions" / "aud_0001_audit_standard_s0.py"
+    spec = importlib.util.spec_from_file_location("m_aud_0001_round2", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class TestS2MigrationLocks:
+    def _record_upgrade(self):
+        module = _load_aud_0001()
+        rec = _Recorder()
+        module.op = rec
+        module.upgrade()
+        return rec.statements
+
+    def test_s2_every_index_is_built_concurrently_outside_the_transaction(self):
+        statements = self._record_upgrade()
+        indexes = [(sql, auto) for sql, auto in statements if "CREATE INDEX" in sql.upper()]
+        assert len(indexes) == 3, indexes
+        for sql, autocommit in indexes:
+            assert "CONCURRENTLY" in sql.upper(), sql
+            assert autocommit, f"CREATE INDEX CONCURRENTLY cannot run in a transaction: {sql}"
+
+    def test_s2_the_check_is_added_not_valid_then_validated_on_its_own(self):
+        statements = self._record_upgrade()
+        adds = [(s, a) for s, a in statements if "ADD CONSTRAINT AUDIT_LOGS_ACTION_CHECK" in s.upper()]
+        assert adds and all("NOT VALID" in s.upper() and not a for s, a in adds), adds
+        validates = [(s, a) for s, a in statements if "VALIDATE CONSTRAINT AUDIT_LOGS_ACTION_CHECK" in s.upper()]
+        # VALIDATE takes only SHARE UPDATE EXCLUSIVE, but inside the migration's transaction the
+        # ADD's ACCESS EXCLUSIVE is still held; it must run after that transaction commits.
+        assert len(validates) == 1 and validates[0][1], validates
+
+    def test_s2_an_invalid_index_left_by_an_interrupted_build_is_rebuilt(self):
+        """A failed CREATE INDEX CONCURRENTLY leaves an INVALID index that IF NOT EXISTS would
+        keep forever; the upgrade drops and rebuilds it."""
+        import os
+
+        import sqlalchemy as sa
+        from alembic.migration import MigrationContext
+        from alembic.operations import Operations
+
+        from app.database import engine
+
+        module = _load_aud_0001()
+        scratch = f"zzs_s2_{os.getpid()}_{uuid.uuid4().hex[:6]}"
+        with engine.connect() as raw:
+            outer = raw.begin()
+            try:
+                raw.exec_driver_sql(f'CREATE SCHEMA "{scratch}"')
+                raw.exec_driver_sql(
+                    f'CREATE TABLE "{scratch}".audit_logs ('
+                    "id uuid PRIMARY KEY, entity_type varchar(100) NOT NULL, "
+                    "entity_id varchar(100) NOT NULL, action varchar(20) NOT NULL, "
+                    "changed_at timestamp NOT NULL DEFAULT now(), "
+                    "CONSTRAINT audit_logs_action_check CHECK (action IN "
+                    "('CREATE','READ','UPDATE','DELETE','IMPORT')))"
+                )
+                raw.exec_driver_sql(f'SET LOCAL search_path TO "{scratch}"')
+                raw.exec_driver_sql(f'ALTER TABLE "{scratch}".audit_logs ADD COLUMN event varchar(100)')
+                raw.exec_driver_sql(f'CREATE INDEX ix_audit_logs_event ON "{scratch}".audit_logs (event)')
+                raw.exec_driver_sql(
+                    "UPDATE pg_index SET indisvalid = false "
+                    f"WHERE indexrelid = '\"{scratch}\".ix_audit_logs_event'::regclass"
+                )
+                ctx = MigrationContext.configure(raw.execution_options(schema_translate_map={None: scratch}))
+                with Operations.context(ctx):
+                    module._upgrade(concurrently=False)
+                valid = raw.execute(
+                    sa.text("SELECT indisvalid FROM pg_index WHERE indexrelid = to_regclass(:n)"),
+                    {"n": f'"{scratch}".ix_audit_logs_event'},
+                ).scalar()
+                assert valid is True
+            finally:
+                outer.rollback()

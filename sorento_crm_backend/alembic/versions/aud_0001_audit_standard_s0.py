@@ -22,6 +22,12 @@ now, we must do the right thing now" - evolve `audit_logs` in place, no second t
    DDL is frozen here (a migration keeps meaning what it meant when it ran);
    `app.models.audit` carries the same text for create_all.
 
+Locks (review S2): the three indexes are built CONCURRENTLY and the widened CHECK is added
+NOT VALID, both so every audited business write (an INSERT here) keeps flowing while the
+table is scanned; VALIDATE CONSTRAINT and the index builds run in an autocommit block after
+the rest commits. So the upgrade is rerun-safe (IF NOT EXISTS, DROP ... IF EXISTS), and an
+INVALID index left by an interrupted build is dropped and rebuilt.
+
 Any later migration that rewrites audit rows (the S-1 password scrub) must run
 `SET LOCAL sorento.audit_maintenance = 'on'` first.
 
@@ -90,30 +96,94 @@ _OLD_ALLOWED = "('CREATE','READ','UPDATE','DELETE','IMPORT')"
 _NEW_ALLOWED = "('CREATE','READ','UPDATE','DELETE','IMPORT','EVENT')"
 
 _COLUMNS = (
-    ("root_entity_type", sa.String(100)),
-    ("root_entity_id", sa.String(100)),
-    ("event", sa.String(100)),
-    ("source", sa.String(20)),
-    ("reason", sa.Text()),
-    ("correlation_id", sa.String(64)),
+    ("root_entity_type", "VARCHAR(100)"),
+    ("root_entity_id", "VARCHAR(100)"),
+    ("event", "VARCHAR(100)"),
+    ("source", "VARCHAR(20)"),
+    ("reason", "TEXT"),
+    ("correlation_id", "VARCHAR(64)"),
+)
+
+# CREATE INDEX CONCURRENTLY: a plain build takes a SHARE lock, which blocks the INSERT every
+# audited business write makes for as long as the build scans audit_logs (review S2).
+_INDEXES = (
+    ("ix_audit_logs_event", "CREATE INDEX {c} IF NOT EXISTS ix_audit_logs_event ON audit_logs (event)"),
+    (
+        "ix_audit_logs_correlation_id",
+        "CREATE INDEX {c} IF NOT EXISTS ix_audit_logs_correlation_id ON audit_logs (correlation_id)",
+    ),
+    (
+        "ix_audit_logs_root_entity",
+        "CREATE INDEX {c} IF NOT EXISTS ix_audit_logs_root_entity ON audit_logs (root_entity_type, root_entity_id)",
+    ),
 )
 
 
-def upgrade() -> None:
-    for name, type_ in _COLUMNS:
-        op.add_column("audit_logs", sa.Column(name, type_, nullable=True))
-    op.create_index("ix_audit_logs_event", "audit_logs", ["event"])
-    op.create_index("ix_audit_logs_correlation_id", "audit_logs", ["correlation_id"])
-    op.create_index("ix_audit_logs_root_entity", "audit_logs", ["root_entity_type", "root_entity_id"])
+def _index_valid(bind, name: str):
+    """pg_index.indisvalid for ``name`` (True / False), or None when there is no such index."""
+    return bind.execute(
+        sa.text("SELECT indisvalid FROM pg_index WHERE indexrelid = to_regclass(:name)"),
+        {"name": name},
+    ).scalar()
 
-    op.execute("ALTER TABLE audit_logs DROP CONSTRAINT IF EXISTS audit_logs_action_check")
-    op.execute(f"ALTER TABLE audit_logs ADD CONSTRAINT audit_logs_action_check CHECK (action IN {_NEW_ALLOWED})")
-    op.execute("ALTER TABLE audit_logs ALTER COLUMN changed_at SET DEFAULT clock_timestamp()")
 
-    op.execute(ENSURE_MAINTAINER_ROLE_SQL)
-    op.execute(APPEND_ONLY_FUNCTION_SQL)
+def _ensure_index(bind, name: str, statement: str, *, concurrently: bool) -> None:
+    """Build ``name``, never leaving an INVALID one behind (identity_0001_s0_model's pattern).
+
+    An interrupted or failed CREATE INDEX CONCURRENTLY leaves an INVALID index, which
+    `IF NOT EXISTS` would then keep forever. So: drop an INVALID one before building, check
+    again after, rebuild once, and stop naming the index if it is still INVALID.
+    """
+    c = "CONCURRENTLY" if concurrently else ""
+    drop = f"DROP INDEX {c} IF EXISTS {name}"
+    create = statement.format(c=c)
+    if _index_valid(bind, name) is False:
+        bind.execute(sa.text(drop))
+    bind.execute(sa.text(create))
+    if _index_valid(bind, name) is False:
+        bind.execute(sa.text(drop))
+        bind.execute(sa.text(create))
+        if _index_valid(bind, name) is False:
+            raise RuntimeError(f"aud_0001_audit_standard_s0: index {name} is still INVALID after a rebuild; drop it and rerun.")
+
+
+def _upgrade(concurrently: bool) -> None:
+    """Rerun-safe: the autocommit block below commits the first half on its own, so a rerun
+    after a failed index build must find every earlier step already done and move on."""
+    bind = op.get_bind()
+    for name, ddl in _COLUMNS:
+        bind.execute(sa.text(f"ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS {name} {ddl}"))
+
+    # NOT VALID: the ADD takes ACCESS EXCLUSIVE only for the catalogue change, not for a scan
+    # of every row; VALIDATE (SHARE UPDATE EXCLUSIVE, writes carry on) runs after this
+    # transaction commits, or the ADD's lock would still be held through the scan.
+    bind.execute(sa.text("ALTER TABLE audit_logs DROP CONSTRAINT IF EXISTS audit_logs_action_check"))
+    bind.execute(
+        sa.text(f"ALTER TABLE audit_logs ADD CONSTRAINT audit_logs_action_check CHECK (action IN {_NEW_ALLOWED}) NOT VALID")
+    )
+    bind.execute(sa.text("ALTER TABLE audit_logs ALTER COLUMN changed_at SET DEFAULT clock_timestamp()"))
+
+    bind.execute(sa.text(ENSURE_MAINTAINER_ROLE_SQL))
+    bind.execute(sa.text(APPEND_ONLY_FUNCTION_SQL))
+    bind.execute(sa.text("DROP TRIGGER IF EXISTS audit_logs_append_only_row ON audit_logs"))
+    bind.execute(sa.text("DROP TRIGGER IF EXISTS audit_logs_append_only_truncate ON audit_logs"))
     for statement in APPEND_ONLY_TRIGGERS_SQL:
-        op.execute(statement)
+        bind.execute(sa.text(statement))
+
+    def _finish(b, concurrent: bool) -> None:
+        b.execute(sa.text("ALTER TABLE audit_logs VALIDATE CONSTRAINT audit_logs_action_check"))
+        for name, statement in _INDEXES:
+            _ensure_index(b, name, statement, concurrently=concurrent)
+
+    if concurrently:
+        with op.get_context().autocommit_block():
+            _finish(op.get_bind(), True)
+    else:
+        _finish(bind, False)
+
+
+def upgrade() -> None:
+    _upgrade(concurrently=True)
 
 
 def downgrade() -> None:
@@ -126,8 +196,7 @@ def downgrade() -> None:
     op.execute(f"ALTER TABLE audit_logs ADD CONSTRAINT audit_logs_action_check CHECK (action IN {_OLD_ALLOWED})")
     op.execute("ALTER TABLE audit_logs ALTER COLUMN changed_at SET DEFAULT now()")
 
-    op.drop_index("ix_audit_logs_root_entity", table_name="audit_logs")
-    op.drop_index("ix_audit_logs_correlation_id", table_name="audit_logs")
-    op.drop_index("ix_audit_logs_event", table_name="audit_logs")
-    for name, _type in reversed(_COLUMNS):
+    for name, _statement in reversed(_INDEXES):
+        op.execute(f"DROP INDEX IF EXISTS {name}")
+    for name, _ddl in reversed(_COLUMNS):
         op.drop_column("audit_logs", name)
