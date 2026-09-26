@@ -21,7 +21,7 @@ Python constant, so without this the fallback edit would never reach a live turn
 See ``documentation/plans/ideation/PLAN-ideation-chat-reply-format.md``.
 
 Revision ID: ideation_reply_fmt_prompts
-Revises: sb3_company_stock_push_at
+Revises: sales_0002_team_leader
 Create Date: 2026-09-26
 """
 from alembic import op
@@ -30,7 +30,7 @@ from app.services.ai_prompt_seed import bump_prompt_to_fallback, seed_prompt_reg
 
 
 revision = "ideation_reply_fmt_prompts"
-down_revision = "sb3_company_stock_push_at"
+down_revision = "sales_0002_team_leader"
 branch_labels = None
 depends_on = None
 
