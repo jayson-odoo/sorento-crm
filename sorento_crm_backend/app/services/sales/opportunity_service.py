@@ -88,15 +88,23 @@ def customer_options(db: Session, *, q: Optional[str], sales_agent_id: Optional[
     blocked = None
     if q:
         normalized_q = _normalize(q)
-        exact = (
-            db.query(Customer).filter(_normalize_expr(Customer.customer_name) == normalized_q).first()
+        exact_matches = (
+            db.query(Customer).filter(_normalize_expr(Customer.customer_name) == normalized_q).all()
         )
-        if exact is None:
+        if not exact_matches:
             prospect = {"name": q}
-        elif sales_agent_id is not None and exact.sales_agent_id != sales_agent_id:
+        elif sales_agent_id is not None and not any(
+            c.sales_agent_id == sales_agent_id for c in exact_matches
+        ):
+            # Nit (Phase 3): blocked only when the exact name belongs to NO customer of
+            # THIS agent's own - two customers can share a normalized name (a real prod
+            # case elsewhere in this app), and an unordered `.first()` used to pick
+            # whichever row Postgres felt like, occasionally the wrong one, blocking an
+            # agent from a name they actually already own.
+            other = exact_matches[0]
             blocked = {
-                "name": exact.customer_name,
-                "message": f"{exact.customer_name} is another agent's customer",
+                "name": other.customer_name,
+                "message": f"{other.customer_name} is another agent's customer",
             }
     return {"items": items, "prospect": prospect, "blocked": blocked}
 
