@@ -20,8 +20,17 @@ def focus_row_label(row: Mapping[str, Any]) -> Any:
     ladder (`name or canonical_code or raw`, no `display_name` at all), so a caller
     that HAD filled `display_name` onto a fresh roster's carried rows still printed
     the customer ROLLUP code instead of naming every ledger.
+
+    #1262 slice 5 (F4), AC-S5-4: a row carrying the parser's own `quantity` prints
+    it beside the code, "M210-GM (x5)" - the ONE place this reads, never a second
+    regex pulling a quantity back out of `raw` (owner ruling 1). A row with no
+    quantity at all (every row before this slice) prints exactly as it always did.
     """
-    return row.get("display_name") or row.get("name") or row.get("raw") or row.get("canonical_code")
+    label = row.get("display_name") or row.get("name") or row.get("raw") or row.get("canonical_code")
+    quantity = row.get("quantity")
+    if label and isinstance(quantity, (int, float)) and not isinstance(quantity, bool) and quantity:
+        return f"{label} (x{quantity:g})"
+    return label
 
 
 def fold_token(value: str) -> str:

@@ -142,6 +142,12 @@ def _build_json_schema() -> dict[str, Any]:
                         # hinted kind FIRST only when this is true; a low-confidence
                         # kind hint goes straight to reconciliation instead.
                         "hint_confident": {"type": ["boolean", "null"]},
+                        # #1262 slice 5 (F4), owner ruling 1: the parser OWNS quantity -
+                        # a leading/trailing "xN"/"N pcs" beside a product is this
+                        # entity's own count, never folded into `raw`/`canonical_code`
+                        # and never regex-stripped back out of them downstream. `null`
+                        # is "no quantity said" (every entity before this slice).
+                        "quantity": {"type": ["number", "null"]},
                     },
                     "required": [
                         "raw",
@@ -150,6 +156,7 @@ def _build_json_schema() -> dict[str, Any]:
                         "current_message",
                         "confident",
                         "hint_confident",
+                        "quantity",
                     ],
                 },
             },

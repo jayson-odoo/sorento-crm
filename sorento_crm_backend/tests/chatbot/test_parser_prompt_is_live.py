@@ -29,6 +29,7 @@ from app.services.chatbot_parser_prompt import (
     LAST_COST_ADDENDUM,
     LIVE_SYSTEM_MESSAGE_SHA256,
     LOW_STOCK_ADDENDUM,
+    QUANTITY_ADDENDUM,
     SALES_REPORT_ADDENDUM,
     SEMANTIC_PARSER_PROMPT,
 )
@@ -143,6 +144,10 @@ LIVE_CHARS = 46942  # the fetched file, leading `=` included
 # every OTHER carried axis; `replace` drops the whole scope to this message's own
 # entities alone). Net +676. Measured via `_without_growth_r1_addendum
 # (SEMANTIC_PARSER_PROMPT)` against the coder's landed change, not derived.
+# #1262 slice 5 (F4, 26 Sep 2026): `QUANTITY_ADDENDUM` stacks AFTER
+# `SALES_REPORT_ADDENDUM`, the newest outermost suffix - stripped first in
+# `_without_growth_r1_addendum`, below. It does not move CONSTANT_CHARS (which
+# measures the body BEFORE every later addendum, growth r1's own included).
 CONSTANT_CHARS = 63657
 
 
@@ -152,14 +157,17 @@ def _without_growth_r1_addendum(text: str) -> str:
     `LAST_COST_ADDENDUM` (migration 511, 12 Sep 2026), then `LOW_STOCK_ADDENDUM`
     (PLAN-low-stock-report.md S7, 14 Sep 2026), then `SALES_REPORT_ADDENDUM`
     (PLAN-chatbot-sales-report.md S4 wiring point 1, migration
-    `519_chatbot_sales_report_vocab`) now stack AFTER `GROWTH_R1_ADDENDUM` on both
-    bodies, the same way this one stacked after the live text - so they come off
-    FIRST, newest outermost, before the `removesuffix` this function has always done. Each addendum is an APPENDED block, so both come off by suffix rather than by
+    `519_chatbot_sales_report_vocab`), then `QUANTITY_ADDENDUM` (issue #1262 slice 5,
+    26 Sep 2026) now stack AFTER `GROWTH_R1_ADDENDUM` on both bodies, the same way
+    this one stacked after the live text - so they come off FIRST, newest
+    outermost, before the `removesuffix` this function has always done. Each addendum is an APPENDED block, so both come off by suffix rather than by
     the index slice the warehouse-arrival edit needs (that one sits INSIDE the
     requested-attributes section). The assertion that `GROWTH_R1_ADDENDUM` really is the
     tail once `LAST_COST_ADDENDUM` is off lives in
     `test_parser_growth_r1_reachability.py::test_the_addendum_is_appended_to_both_bodies`.
     """
+    if text.endswith(QUANTITY_ADDENDUM):
+        text = text[: -len(QUANTITY_ADDENDUM)]
     if text.endswith(SALES_REPORT_ADDENDUM):
         text = text[: -len(SALES_REPORT_ADDENDUM)]
     if text.endswith(LOW_STOCK_ADDENDUM):
