@@ -13,8 +13,7 @@ import type { ExportSplit } from '@/components/common/export-split';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { formatDateInMalaysia } from '@/lib/helpers';
-import { fmtInt } from '../../lib/format';
+import { fmtInt, fmtWallStamp } from '../../lib/format';
 import { useLowStockDownload } from '../hooks/useLowStockDownload';
 import { useLowStockView } from '../hooks/useLowStockView';
 import type { LowStockFacet, LowStockView } from '../types/lowStockReport.types';
@@ -170,8 +169,10 @@ export function LowStockReportView({ runId }: { runId?: string }) {
   return (
     <div className="space-y-4">
       <PageHeader title="Low stock report">
-        {data?.run.as_of ? (
-          <p className="text-sm text-muted-foreground">{formatDateInMalaysia(data.run.as_of)}</p>
+        {data?.run.generated_at || data?.run.as_of ? (
+          <p className="text-sm text-muted-foreground">
+            Daily plan, {fmtWallStamp(data.run.generated_at ?? data.run.as_of)}
+          </p>
         ) : null}
       </PageHeader>
 

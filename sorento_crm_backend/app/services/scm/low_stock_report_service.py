@@ -175,6 +175,7 @@ def _split(db: Session, run_id: Optional[str]) -> dict:
     return {
         "run_id": rep["run_id"],
         "as_of": rep.get("as_of") or svc._today().isoformat(),
+        "generated_at": rep.get("generated_at"),
         "master": master,
         "all_rows": ordered,
         "low_rows": [r for r in ordered if _is_low(r)],
@@ -357,7 +358,8 @@ def build_low_stock_view(db: Session, *, run_id: Optional[str],
                 sheets.append({"title": base, "row_indexes": _indexes(group_rows), "low": False})
 
     return {
-        "run": {"run_id": frozen["run_id"], "as_of": frozen["as_of"]},
+        "run": {"run_id": frozen["run_id"], "as_of": frozen["as_of"],
+                "generated_at": frozen["generated_at"]},
         "split": split,
         "columns": columns,
         "rows": rows,

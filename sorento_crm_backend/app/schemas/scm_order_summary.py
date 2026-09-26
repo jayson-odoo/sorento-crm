@@ -318,6 +318,9 @@ class LowStockViewRunOut(BaseModel):
 
     run_id: str
     as_of: Optional[str] = None
+    #: When the plan was computed (Malaysia wall time, no zone), for the page's "Daily plan,
+    #: <d Mon yyyy HH:MM>" subtitle (review N3). None on a run with no rows.
+    generated_at: Optional[str] = None
 
 
 class LowStockViewSheetOut(BaseModel):

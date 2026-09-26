@@ -44,7 +44,7 @@ const RUN_ID = '0b6f3c8e-1d2a-4c5b-9e7f-123456789abc';
 
 function view(overrides: Partial<LowStockView> = {}): LowStockView {
   return {
-    run: { run_id: RUN_ID, as_of: '2026-09-26' },
+    run: { run_id: RUN_ID, as_of: '2026-09-26', generated_at: '2026-09-26T07:40:12.345678' },
     split: 'supplier_category',
     columns: ['Item code', 'Description', 'BRW on hand'],
     rows: [
@@ -98,7 +98,8 @@ describe('LowStockReportView', () => {
 
     expect(await screen.findByRole('tab', { name: 'Acme - BASIN - Low' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Low stock report' })).toBeInTheDocument();
-    expect(screen.getByText('26/09/2026')).toBeInTheDocument();
+    // Review N3: the subtitle reads as the approved mockup.
+    expect(screen.getByText('Daily plan, 26 Sep 2026 07:40')).toBeInTheDocument();
     expect(screen.getByText('2 rows, 2 sheets')).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Supplier and category' })).toHaveAttribute(
       'data-state',
@@ -111,6 +112,15 @@ describe('LowStockReportView', () => {
       categories: [],
     });
     expect(document.body.textContent).not.toContain(RUN_ID);
+  });
+
+  it('a plan with no computed time names its date alone', async () => {
+    getLowStockView.mockResolvedValue(
+      view({ run: { run_id: RUN_ID, as_of: '2026-09-05', generated_at: null } }),
+    );
+    renderPage();
+
+    expect(await screen.findByText('Daily plan, 5 Sep 2026')).toBeInTheDocument();
   });
 
   it('refetches with the chosen split', async () => {

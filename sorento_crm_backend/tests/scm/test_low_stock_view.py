@@ -351,8 +351,13 @@ def test_view_route_404_invisible_run_fields_declared(scm_app):
             "run", "split", "columns", "rows", "sheets", "facets", "counts",
             "over_cap", "max_rows", "filename",
         }, body.keys()
-        assert set(body["run"]) >= {"run_id", "as_of"}
+        assert set(body["run"]) >= {"run_id", "as_of", "generated_at"}
         assert body["run"]["run_id"] == run_id
+        # Review N3: the page's subtitle names the plan's time, off the same frozen read.
+        computed_at = db.execute(text(
+            "SELECT computed_at FROM scm.order_summary_row WHERE run_id = :r LIMIT 1"
+        ), {"r": run_id}).scalar()
+        assert body["run"]["generated_at"] == computed_at.isoformat()
         assert body["split"] == "supplier"
         assert set(body["sheets"][0]) >= {"title", "row_indexes", "low"}
         assert set(body["facets"]) == {"suppliers", "categories"}

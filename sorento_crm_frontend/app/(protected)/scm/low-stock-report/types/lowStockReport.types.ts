@@ -25,7 +25,12 @@ export interface LowStockFacet {
 
 export interface LowStockView {
   /** `run_id` is opaque: the export needs it, the screen never shows it. */
-  run: { run_id: string; as_of: string | null };
+  run: {
+    run_id: string;
+    as_of: string | null;
+    /** When the plan was computed, Malaysia wall time with no zone (`2026-09-26T07:40:12`). */
+    generated_at: string | null;
+  };
   split: ExportSplit;
   columns: string[];
   rows: LowStockCell[][];

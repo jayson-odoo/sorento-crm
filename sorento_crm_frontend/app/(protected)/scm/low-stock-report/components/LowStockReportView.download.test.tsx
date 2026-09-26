@@ -36,7 +36,7 @@ const shownRequest: LowStockRequest = {
 };
 
 const shownView: LowStockView = {
-  run: { run_id: RUN_ID, as_of: '2026-09-26' },
+  run: { run_id: RUN_ID, as_of: '2026-09-26', generated_at: null },
   split: 'category',
   columns: ['Item code', 'Description', 'BRW on hand'],
   rows: [['A-1', 'Basin', 3]],
