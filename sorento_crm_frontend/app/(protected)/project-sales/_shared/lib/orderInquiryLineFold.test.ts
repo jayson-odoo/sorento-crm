@@ -12,7 +12,6 @@ import {
   lineFooterTotals,
   lineHistoryEntries,
   reserveHistoryRowOf,
-  usedRowIdsToConfirm,
 } from './orderInquiryLineFold';
 import type { OrderInquiryWorklistRow } from '../types/orderInquiry.types';
 
@@ -131,7 +130,7 @@ describe('AC-ND-7 (G1): the #1248 case folds to the current need; the used row g
 
   it('History lists Now first (with its Was), then the used row', () => {
     const [line] = foldInquiryLines([used, fresh]);
-    const entries = lineHistoryEntries(line, []);
+    const entries = lineHistoryEntries(line);
     expect(entries.map((entry) => [entry.row.id, entry.what])).toEqual([
       ['fresh', 'Now'],
       ['used', 'Used'],
@@ -152,11 +151,6 @@ describe('AC-ND-7 (G1): the #1248 case folds to the current need; the used row g
     expect(line.state).toBe('raised');
   });
 
-  it('G6: confirming the line also confirms its used rows still in changed', () => {
-    expect(usedRowIdsToConfirm([used, fresh], ['fresh'])).toEqual(['used']);
-    expect(usedRowIdsToConfirm([used, fresh], [])).toEqual([]);
-    expect(usedRowIdsToConfirm([{ ...used, ack_state: 'acknowledged' }, fresh], ['fresh'])).toEqual([]);
-  });
 });
 
 describe('AC-ND-10 / AC-ND-11: cancelled line and Nothing to buy', () => {
@@ -180,31 +174,67 @@ describe('AC-ND-10 / AC-ND-11: cancelled line and Nothing to buy', () => {
   });
 });
 
-describe('AC-ND-4 (G4): SO Qty is mocked until S1 sends so_line_qty', () => {
-  it('reads so_line_qty when the payload carries it', () => {
+describe('AC-ND-4 (G4, S2): SO Qty is the sales order line qty the server sends', () => {
+  it('reads so_line_qty, whatever the rows asked for', () => {
     const [line] = foldInquiryLines([row({ id: 'a', core_line_id: 'cl-4', qty: '3', so_line_qty: '5' })]);
     expect(line.soQty).toBe(5);
-    expect(line.soQtyMocked).toBe(false);
+    expect(line).not.toHaveProperty('soQtyMocked');
   });
 
-  it('falls back to what the line asked for, flagged as mocked', () => {
-    const [line] = foldInquiryLines([row({ id: 'a', core_line_id: 'cl-4', qty: '3' })]);
-    expect(line.soQty).toBe(3);
-    expect(line.soQtyMocked).toBe(true);
-    const [cancelled] = foldInquiryLines([row({ id: 'b', core_line_id: 'cl-5', qty: '4', line_cancelled: true })]);
+  it('a row that names no sales order line has no SO Qty, never a figure borrowed off its rows', () => {
+    const [line] = foldInquiryLines([row({ id: 'a', core_line_id: null, line_no: null, qty: '3', so_line_qty: null })]);
+    expect(line.soQty).toBeNull();
+  });
+
+  it('a cancelled line still reads the SO Qty the sales order shows', () => {
+    const [cancelled] = foldInquiryLines([
+      row({ id: 'b', core_line_id: 'cl-5', qty: '4', so_line_qty: '4', line_cancelled: true }),
+    ]);
     expect(cancelled.soQty).toBe(4);
+  });
+});
+
+describe('AC-ND-20 (S2): the one Lines fetch carries cancelled rows; they are history, never a line', () => {
+  it('a cancelled row folds into its line as history and adds to no quantity', () => {
+    const [line] = foldInquiryLines([
+      row({ id: 'now', core_line_id: 'cl-1', qty: '5', so_line_qty: '5' }),
+      row({ id: 'old', core_line_id: 'cl-1', qty: '2', state: 'cancelled', note: 'Superseded by revision 2' }),
+    ]);
+    expect(line.liveRows.map((r) => r.id)).toEqual(['now']);
+    expect(line.historyRows.map((r) => r.id)).toEqual(['old']);
+    expect([line.requested, line.remaining]).toEqual([5, 5]);
+  });
+
+  it('a line whose every row is cancelled is not rendered (the header counts it out too, G10)', () => {
+    const lines = foldInquiryLines([
+      row({ id: 'a', core_line_id: 'cl-1', line_no: 1 }),
+      row({ id: 'b', core_line_id: 'cl-2', line_no: 2, state: 'cancelled' }),
+      row({ id: 'c', core_line_id: null, line_no: null, state: 'cancelled' }),
+    ]);
+    expect(lines.map((line) => line.lineNo)).toEqual([1]);
+  });
+
+  it('a line of only a used row still renders as Nothing to buy (O2)', () => {
+    const lines = foldInquiryLines([
+      row({ id: 'u', core_line_id: 'cl-3', line_no: 3, redirected_to_pool: true }),
+      row({ id: 'x', core_line_id: 'cl-3', line_no: 3, state: 'cancelled' }),
+    ]);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].state).toBe('nothing_to_buy');
   });
 });
 
 describe('AC-ND-17 (G4, G10): footer totals over the line rows, cancelled lines excluded', () => {
   it('sums SO Qty, Requested, Taken; Remaining is the footer subtraction', () => {
     const lines = foldInquiryLines([
-      row({ id: 'a', core_line_id: 'cl-1', qty: '5' }),
-      row({ id: 'b', core_line_id: 'cl-2', qty: '6', linked_qty: '6', state: 'partly_linked' }),
-      row({ id: 'c', core_line_id: 'cl-2', qty: '4' }),
-      row({ id: 'd', core_line_id: 'cl-5', qty: '4', line_cancelled: true }),
+      row({ id: 'a', core_line_id: 'cl-1', qty: '5', so_line_qty: '5' }),
+      row({ id: 'b', core_line_id: 'cl-2', qty: '6', so_line_qty: '12', linked_qty: '6', state: 'partly_linked' }),
+      row({ id: 'c', core_line_id: 'cl-2', qty: '4', so_line_qty: '12' }),
+      row({ id: 'd', core_line_id: 'cl-5', qty: '4', so_line_qty: '4', line_cancelled: true }),
+      row({ id: 'e', core_line_id: null, line_no: null, qty: '1', so_line_qty: null }),
     ]);
-    expect(lineFooterTotals(lines)).toEqual({ soQty: 15, requested: 15, taken: 6, remaining: 9 });
+    // SO Qty is counted once per line (12, not 24), a line with no SO Qty adds nothing.
+    expect(lineFooterTotals(lines)).toEqual({ soQty: 17, requested: 16, taken: 6, remaining: 10 });
   });
 
   it('S3: footer Remaining is the sum of the line Remaining cells, so an over-covered line nets nothing off another', () => {
@@ -219,7 +249,6 @@ describe('AC-ND-17 (G4, G10): footer totals over the line rows, cancelled lines 
 
 describe('AC-ND-15: History row labels', () => {
   it('labels superseded, re-raised, cancel balance and plain cancelled rows, newest first after Now', () => {
-    const [line] = foldInquiryLines([row({ id: 'now', core_line_id: 'cl-1', raised_at: '2026-09-25T08:00:00Z' })]);
     // Review S1: only notes the backend really writes. A carry and a plain supersede both
     // stamp "Superseded by revision N"; the carry is the one a later row of the line
     // raises again at the same qty (`s` held 4, the line now asks 10).
@@ -230,7 +259,11 @@ describe('AC-ND-15: History row labels', () => {
       row({ id: 'x', core_line_id: 'cl-1', state: 'cancelled', raised_at: '2026-09-20T08:00:00Z' }),
       row({ id: 'other', core_line_id: 'cl-9', state: 'cancelled' }),
     ];
-    const entries = lineHistoryEntries(line, cancelled);
+    const [line] = foldInquiryLines([
+      row({ id: 'now', core_line_id: 'cl-1', raised_at: '2026-09-25T08:00:00Z' }),
+      ...cancelled,
+    ]);
+    const entries = lineHistoryEntries(line);
     expect(entries.map((entry) => [entry.row.id, entry.what])).toEqual([
       ['now', 'Now'],
       ['r', 'Re-raised'],
@@ -244,10 +277,9 @@ describe('AC-ND-15: History row labels', () => {
     const [line] = foldInquiryLines([
       row({ id: 'used', core_line_id: 'cl-1', qty: '2', state: 'placed', redirected_to_pool: true, raised_at: '2026-09-25T07:00:00Z' }),
       row({ id: 'fresh', core_line_id: 'cl-1', qty: '5', raised_at: '2026-09-25T08:00:00Z' }),
-    ]);
-    const entries = lineHistoryEntries(line, [
       row({ id: 'carried', core_line_id: 'cl-1', qty: '2', state: 'cancelled', note: 'Superseded by revision 2', raised_at: '2026-09-19T08:00:00Z' }),
     ]);
+    const entries = lineHistoryEntries(line);
     expect(entries.map((entry) => [entry.row.id, entry.what])).toEqual([
       ['fresh', 'Now'],
       ['used', 'Used'],
@@ -257,16 +289,17 @@ describe('AC-ND-15: History row labels', () => {
   });
 
   it('S1: a superseded row no later row raises again at its qty stays Superseded', () => {
-    const [line] = foldInquiryLines([row({ id: 'fresh', core_line_id: 'cl-1', qty: '5', raised_at: '2026-09-25T08:00:00Z' })]);
-    const entries = lineHistoryEntries(line, [
+    const [line] = foldInquiryLines([
+      row({ id: 'fresh', core_line_id: 'cl-1', qty: '5', raised_at: '2026-09-25T08:00:00Z' }),
       row({ id: 'old', core_line_id: 'cl-1', qty: '2', state: 'cancelled', note: 'Superseded by revision 2', raised_at: '2026-09-19T08:00:00Z' }),
     ]);
+    const entries = lineHistoryEntries(line);
     expect(entries[1].what).toBe('Superseded');
   });
 
   it('rows on a cancelled line read Line cancelled', () => {
     const [line] = foldInquiryLines([row({ id: 'a', core_line_id: 'cl-5', line_cancelled: true })]);
-    expect(lineHistoryEntries(line, []).map((entry) => entry.what)).toEqual(['Line cancelled']);
+    expect(lineHistoryEntries(line).map((entry) => entry.what)).toEqual(['Line cancelled']);
   });
 });
 

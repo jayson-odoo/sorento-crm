@@ -255,9 +255,10 @@ describe('Confirm label / disabled follow the ticked scope (AC-DP-05, S5)', () =
   });
 
   // `PLAN-oi-no-double-count-25sep.md` AC-ND-12 + G6 (owner ruling 26 Sep 2026): the
-  // grid ticks sales order LINES; Confirm (N) counts lines, and confirming a line also
-  // confirms its used rows still in `changed`.
-  it('ticks a line, counts it once, and Confirm sweeps its used row', async () => {
+  // grid ticks sales order LINES and Confirm (N) counts lines. S2 (AC-ND-24, AC-ND-27):
+  // Confirm sends the ticked line's LIVE row ids only; the server takes on the line's
+  // used rows in the same call, and a cancelled row from the history fetch is never sent.
+  it('ticks a line, counts it once, and Confirm sends its live rows only', async () => {
     const lineRow = (over: Partial<OrderInquiryWorklistRow>) =>
       ({
         ...LINKED_LINE,
@@ -272,6 +273,7 @@ describe('Confirm label / disabled follow the ticked scope (AC-DP-05, S5)', () =
       lineRow({ id: 'row-used', state: 'placed', redirected_to_pool: true, ack_state: 'changed' }),
       lineRow({ id: 'row-a', state: 'raised', ack_state: 'changed' }),
       lineRow({ id: 'row-b', state: 'raised', ack_state: 'awaiting' }),
+      lineRow({ id: 'row-old', state: 'cancelled', ack_state: 'changed' }),
     ]);
     renderDetail('oi-1');
     await screen.findByRole('button', { name: 'Confirm' });
@@ -281,7 +283,7 @@ describe('Confirm label / disabled follow the ticked scope (AC-DP-05, S5)', () =
 
     await waitFor(() => expect(acknowledgeRowsSpy).toHaveBeenCalledTimes(1));
     const sent = (acknowledgeRowsSpy.mock.calls[0] as unknown[])[0] as string[];
-    expect([...sent].sort()).toEqual(['row-a', 'row-b', 'row-used']);
+    expect([...sent].sort()).toEqual(['row-a', 'row-b']);
   });
 
   it('is disabled on a Completed header with nothing ticked', async () => {

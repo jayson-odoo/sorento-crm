@@ -1,5 +1,5 @@
 /**
- * `PLAN-oi-no-double-count-25sep.md` S0 (issue #1248), AC-ND-13..16, owner rulings 26 Sep
+ * `PLAN-oi-no-double-count-25sep.md` S0 and S2 (issue #1248), AC-ND-13..16, AC-ND-20, owner rulings 26 Sep
  * 2026: ONE History dialog per sales order line (G2) with line tabs Rows | Decisions, plus
  * Reserve only when the line has reserve history (G3). Rows lists every row that is not
  * the line's current need, the used row included (G1, G6); the Was / now story reads only
@@ -10,17 +10,11 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const getOrderInquiryHeaderCancelledRows = vi.fn();
+const apiFetch = vi.fn();
 const getDecisionTrail = vi.fn();
 
-vi.mock('../../../_shared/services/orderInquiryService', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../../_shared/services/orderInquiryService')>();
-  return {
-    ...actual,
-    getOrderInquiryHeaderCancelledRows: (...args: unknown[]) =>
-      getOrderInquiryHeaderCancelledRows(...args),
-  };
-});
+// Every read the order inquiry services make goes through this one client.
+vi.mock('@/lib/api', () => ({ apiFetch: (...args: unknown[]) => apiFetch(...args) }));
 
 vi.mock('../../../_shared/services/orderInquiryReserveService', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../_shared/services/orderInquiryReserveService')>();
@@ -78,7 +72,6 @@ function renderDialog(
   return render(
     <QueryClientProvider client={client}>
       <OrderInquiryLineHistoryDialog
-        inquiryId="oi-1"
         line={line}
         onOpenChange={() => {}}
         {...props}
@@ -89,7 +82,6 @@ function renderDialog(
 
 beforeEach(() => {
   vi.clearAllMocks();
-  getOrderInquiryHeaderCancelledRows.mockResolvedValue([]);
   getDecisionTrail.mockResolvedValue([]);
 });
 
@@ -120,7 +112,6 @@ describe('AC-ND-15 (G1, G6): the Rows tab', () => {
   it('lists Now first with its Was, then the used row with its document', async () => {
     renderDialog([USED, FRESH]);
     const dialog = await screen.findByRole('dialog');
-    // S2: the grid renders once the cancelled rows have loaded.
     await within(dialog).findByText('Now');
     const bodyRows = within(dialog).getAllByRole('row').filter((r) => r.closest('tbody'));
     expect(bodyRows).toHaveLength(2);
@@ -130,15 +121,14 @@ describe('AC-ND-15 (G1, G6): the Rows tab', () => {
     expect(within(bodyRows[1]).getByText('PO-2026/09-0023')).toBeInTheDocument();
   });
 
-  it("reads the inquiry's cancelled rows for this line only, labelled", async () => {
-    getOrderInquiryHeaderCancelledRows.mockResolvedValue([
+  it("S2 (AC-ND-20): lists the line's cancelled rows from the one Lines fetch, labelled", async () => {
+    renderDialog([
+      USED,
+      FRESH,
       row({ id: 'sup', state: 'cancelled', note: 'Superseded by revision 2', raised_at: '2026-09-18T08:00:00Z' }),
-      row({ id: 'other', core_line_id: 'cl-9', line_no: 9, state: 'cancelled', note: 'Superseded by revision 2' }),
     ]);
-    renderDialog([USED, FRESH]);
     const dialog = await screen.findByRole('dialog');
     expect(await within(dialog).findByText('Superseded')).toBeInTheDocument();
-    expect(getOrderInquiryHeaderCancelledRows).toHaveBeenCalledWith('oi-1');
     const bodyRows = within(dialog).getAllByRole('row').filter((r) => r.closest('tbody'));
     expect(bodyRows).toHaveLength(3);
   });
@@ -150,21 +140,16 @@ describe('AC-ND-15 (G1, G6): the Rows tab', () => {
   });
 });
 
-describe('S2: the Rows tab never shows a false empty state', () => {
-  it('shows a skeleton, not "No earlier rows", while the cancelled rows are loading', async () => {
-    getOrderInquiryHeaderCancelledRows.mockReturnValue(new Promise(() => {}));
-    renderDialog([FRESH]);
-    const dialog = await screen.findByRole('dialog');
-    expect(within(dialog).getByRole('status', { name: 'Loading' })).toBeInTheDocument();
-    expect(within(dialog).queryByText('No earlier rows for this line.')).not.toBeInTheDocument();
-  });
-
-  it('shows the read error, not "No earlier rows", when the cancelled rows fail to load', async () => {
-    getOrderInquiryHeaderCancelledRows.mockRejectedValue(new Error('Could not load cancelled rows'));
-    renderDialog([FRESH]);
-    const dialog = await screen.findByRole('dialog');
-    expect(await within(dialog).findByText('Could not load cancelled rows')).toBeInTheDocument();
-    expect(within(dialog).queryByText('No earlier rows for this line.')).not.toBeInTheDocument();
+describe('S2 (AC-ND-20): the Rows tab makes no read of its own', () => {
+  it('renders the rows at once, with no fetch and no loading state', () => {
+    renderDialog([
+      FRESH,
+      row({ id: 'sup', state: 'cancelled', note: 'Superseded by revision 2', raised_at: '2026-09-18T08:00:00Z' }),
+    ]);
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText('Superseded')).toBeInTheDocument();
+    expect(within(dialog).queryByRole('status', { name: 'Loading' })).not.toBeInTheDocument();
+    expect(apiFetch).not.toHaveBeenCalled();
   });
 });
 
