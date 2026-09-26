@@ -1104,6 +1104,14 @@ a list of teams, so teams must exist before or with the first targets screen. Ro
 Slice ids stay stable (no AC is renumbered); which lane builds an AC is stated where it moved.
 Round 4 Q5 asks the owner to confirm.
 
+**Round 5 (Owner ruling 26 Sep 06:09, T5: "the point is we need to do it now and not backlog or
+defer").** Every slice is built now, in three waves, with lanes inside a wave running in
+parallel (section 6, "Lanes after round 5"): wave 1 S6; wave 2 S1 beside S2; wave 3 S7, S4, S3
+and S5 side by side, S5 merging last. What the owner can use at the end of each wave: after wave
+1, every agent in a team; after wave 2, live targets for teams and agents (delivered by DO date
+once DO data exists) and salespeople logging opportunities in the portal; after wave 3, dealer
+targets, commission, pipeline and the WhatsApp updates.
+
 ## 5. Considered and not chosen
 
 - **Reuse `projects.leads` for opportunities.** Project leads belong to the Project Sales module
@@ -1240,6 +1248,22 @@ or `dealer`; S6 widens it.
   - Tests add: range boundaries (first and last day counted, the day after not), split golden
     table (2.5 months by month, 10 weeks by 2 weeks, 31 Jan start by month), the 104 period cap,
     one-line rendering (no row taller than one line at 1280), the first-target ordering rule.
+- **Round 5 (Owner ruling 26 Sep 06:09, R2, R3, R4, T2, T3), S1 runs in wave 2 beside S2:**
+  - tables in schema `sales` (3.7 map); `sales.targets.parent_target_id` (T3, 3.8);
+  - the team target form: team header plus an Agents table with a figure each, the read-only
+    sum, one save creating the children (S1-27); `TEAM_TARGET_IS_SUM` on a team period PATCH;
+    parent edits rewrite children (S1-28);
+  - the team CTE matches membership on the order date (T2, S6-14);
+  - person-label widening for agents and team members (R2, S1-29);
+  - delivered by DO date through `delivered_by_date`, with the residual rule and the interim
+    behaviour (R3, 3.2, S1-26); `order_lines.sales_order_line_id` added here only if the DO
+    lane has not merged first;
+  - amounts stay tax inclusive (R4, no change).
+  - Tests add: DO golden set (a line half delivered by a linked DO in October and half before
+    the integration counts the DO half in October and the rest on the order date; a cancelled DO
+    counts nothing; a DO in November moves only its own quantity to November; no linked DO at all
+    gives round 2's figure), team sum after every write path, children follow a parent edit,
+    person-label widening.
 
 ### S2. Opportunities, logged by salespeople in the portal (UAC S2-1 to S2-14)
 
@@ -1260,6 +1284,11 @@ or `dealer`; S6 widens it.
   exact-name match suppresses the prospect option, case and spaces ignored, another agent's
   customer blocked, lines with qty 0 rejected, zero lines allowed.
 - DoD: as S1, plus security-reviewer (external ingest surface).
+- Round 5 (Owner ruling 26 Sep 06:09, R1, T5): wave 2, beside S1; it needs only S6's module.
+  R1 accepted: the portal kind is granted to Sorento's own dealer-channel sales agents, each
+  resolved through `sales_agents.contact_id`, never to dealers' shop staff. Tables
+  `sales.opportunities` and `sales.opportunity_lines` (3.7). Measure the agent contact coverage
+  (section 7) at the start of this lane, not before S2.
 
 ### S3. Pipeline beside the target (UAC S3-1 to S3-4)
 
@@ -1271,6 +1300,9 @@ or `dealer`; S6 widens it.
 - Round 3 (L2, S3-5): team rows carry the sum of their current members' pipeline.
 - Round 4 (N6, N7, S3-6): pipeline counts `expected_close_date` inside the period shown, not a
   month.
+- Round 5 (T2, T5): wave 3, after S1 and S2 merge. A team row's pipeline sums the opportunities
+  of agents who are members on each opportunity's expected close date (the T2 rule applied to
+  pipeline), S3-7.
 - DoD: as S1.
 
 ### S4. Commission tiers (UAC S4-1 to S4-9)
@@ -1285,6 +1317,10 @@ or `dealer`; S6 widens it.
 - Round 3 (L2, T4, S4-10): tiers on a team target give a "Team pool" figure on the team row,
   never split to agents.
 - DoD: the owner checks one agent's period against their own spreadsheet.
+- Round 5 (Owner ruling 26 Sep 06:09, R5, T4, T5): wave 3. `marginal` is the default method
+  once tiers exist; **`retroactive` ("Highest rate on everything") is built in this lane**, not
+  deferred; the team form's Agent tiers table is copied to each child target (3.8); the team
+  pool is computed on the summed team figure (S4-12).
 
 ### S5. Per-contact WhatsApp broadcast (UAC S5-1 to S5-13)
 
@@ -1306,6 +1342,9 @@ or `dealer`; S6 widens it.
   linked to the contact, else the dealer it is primary contact for, else null), so no new
   endpoint. The agent-browser run starts from Internal
   Users.
+- Round 5 (T5): wave 3, built beside S7, S4 and S3 and merged after S3 and S4 (section 6,
+  "Lanes after round 5"). The table is `sales.update_subscriptions` (3.7). A team subscription's
+  per-agent lines list the agents who were members during the period shown (T2).
 - DoD: the Meta-approved template is mapped on prod before any recipient is enabled; the owner
   enables their own row after one Send now looks right; security-reviewer (outbound business
   figures to external contacts).
@@ -1321,6 +1360,17 @@ moved in (S1-17, N1). Its team-target ACs (S6-4 to S6-7, S6-10) build in S1. The
 not touch `sales_targets`, which S1 creates. DoD: every active agent can be placed in a team on
 the dev DB, 1280 and 375, security-reviewer (new slugs and company-scoped tables). The bullets
 below are round 3's and are read with this paragraph.
+
+**Round 5 (Owner ruling 26 Sep 06:09, T1, T2, T5, and the module question).** S6 is wave 1 and
+also creates the `sales` module and the `sales` schema (3.7). T1 accepted: `sales.teams` and
+`sales.team_members`, not the core `teams`. T2: membership is dated (`valid_from`, `valid_to`,
+3.8); the team modal shows **Moves on** (default today) when a picked agent is in another team;
+removing an agent closes their membership instead of deleting it; the team page's Agents
+section lists members on the Active on date, and a member who left during a shown period keeps
+a muted line with a "Left 14 Oct" pill (S6-14, S6-15). Tests add: the move golden set (orders
+before the move date stay with the old team, orders on and after it go to the new one), no
+overlapping memberships, one open membership, first team from the beginning, remove keeps
+history.
 
 Owner ruling 26 Sep (Lavish), L2 and L4; written to round 3 T1 to T5.
 
@@ -1353,6 +1403,8 @@ N5 (teams first) is why S1 grew; dealers are the part of S1 that stands without 
   "Dealer" in the modal's Target for with a searchable dealer select.
 - Tests: S1-11 and S7-1 to S7-3; vitest for the subject switch; agent-browser run.
 - DoD: as S1.
+- Round 5 (T5): wave 3, beside S4, S3 and S5. A dealer target's delivered basis uses the same
+  DO-date rule (3.2). The column is `sales.targets.customer_id` (3.7).
 
 ## 7. Risks
 
@@ -1370,6 +1422,21 @@ N5 (teams first) is why S1 grew; dealers are the part of S1 that stands without 
 - **Team figures move with the agent** (round 3 T2). With current membership, moving an agent
   rewrites the team's past periods too. The audit trail on `sales_team_members` shows when; dated
   membership is the named trigger in 3.8.
+  Round 5 (Owner ruling 26 Sep 06:09, T2): retired; membership is dated, so a move no longer
+  rewrites the past. What remains: a move typed with the wrong **Moves on** date shifts orders
+  between teams; the audit trail shows who moved whom on which date, and Edit on the membership
+  corrects it.
+- **DO data arrives after S1 is designed** (round 5, R3). Until the DO integration links DO
+  lines to sales order lines, delivered reads as before (by order date). Risk: the DO lane links
+  only some lines (for example DOs typed without an SO reference in AutoCount); those lines keep
+  the order-date residual, so delivered is still complete, only dated partly by order date.
+  Measure the linked share on the dev DB when the DO lane lands and show the owner.
+- **Team figure is typed per agent** (round 5, T3). A new member has no figure until the owner
+  adds one; the team page shows "No figure yet" with Add figure on that agent's line, so the gap
+  is on screen, not silent.
+- **Parallel lanes** (round 5, T5). Four lanes in wave 3 touch `achievement_service` and the
+  targets list response. Kept small by the one-seam-per-lane split in section 6; the lane merging
+  second resolves the conflict and re-runs the full sales test file before its PR is ready.
 - **Prospect duplicates** (round 4, N10). A prospect is free text, so "Seri Indah" and "Seri
   Indah Reno" become two prospects. The exact-name check stops the common case only; the CRM
   list can be sorted by prospect name to spot the rest. **Trigger for a prospects list:** the
@@ -1539,6 +1606,20 @@ round 4. Each note keeps the owner's words and says how it is built.
 None of the Lavish points changes R1 to R5; they stand as written. R2 (person label) also widens
 each member agent of a team target (3.2).
 
+Owner's answers, PR #1260 comment 5843775673, 26 Sep 2026 06:09Z (verbatim, binding):
+
+- **R1. Owner ruling 26 Sep 06:09:** "yeah correct". Accepted as recommended (3.5, S2).
+- **R2. Owner ruling 26 Sep 06:09:** "yeah". Accepted as recommended: a target on an agent, and
+  each member of a team, counts every code with the same person label (3.2, S1-29).
+- **R3. Owner ruling 26 Sep 06:09:** "we will have DO integreation as soon as next Monday so by
+  that time we will be able to know". Delivered counts by DO date once DO lines are linked to
+  sales order lines; until then, and for any delivered quantity no linked DO explains, it counts
+  by order date as recommended (3.2 "Delivered, by DO date", S1-26).
+- **R4. Owner ruling 26 Sep 06:09:** "yeah". Accepted as recommended: amounts stay tax
+  inclusive; the ex-tax check on real orders stays a measurement, not a slice.
+- **R5. Owner ruling 26 Sep 06:09:** "yeah". Accepted as recommended: `marginal` by default, with
+  "Highest rate on everything" selectable on any target and built in S4 (3.1, 3.3).
+
 ## 10. Round 3 questions (posted on PR #1260, comment 5843719967)
 
 - **T1. Reuse the existing `teams` table, or a new sales team table?** (Owner's L4.) Recommend: a
@@ -1559,6 +1640,24 @@ each member agent of a team target (3.2).
 - **T5. When teams ship.** Recommend: their own lane S6, built right after S1 and before
   opportunities, so S1 (each agent against a live figure) is not delayed; the Sales menu move and
   the Set target button ride in S1.
+
+Owner's answers, PR #1260 comment 5843775673, 26 Sep 2026 06:09Z (verbatim, binding):
+
+- **T1. Owner ruling 26 Sep 06:09:** "okay can". Accepted: new `sales.teams` and
+  `sales.team_members` (3.7 names, 3.8).
+- **T2. Owner ruling 26 Sep 06:09:** "hmm when we move agent to new team, only new order
+  received in the new team is considred the ales of the new team right?". Yes: membership is dated
+  (`valid_from`, `valid_to`); team achievement sums orders by the membership in force on each
+  order's date; a move on date D sends orders dated D and later to the new team (3.8, S6-14,
+  S6-15). An agent's first team counts from the beginning (round 5 question V1).
+- **T3. Owner ruling 26 Sep 06:09:** "I can set individual on each agent and add up to team ah".
+  A team target's figure is the sum of its agents' targets for each period, set in one form; no
+  team-level override (recommended, 3.8, S1-27, S1-28).
+- **T4. Owner ruling 26 Sep 06:09:** "yeap ok". Accepted: tiers on a team target give one Team
+  pool figure per period, never split among agents (3.3, S4-10, S4-12).
+- **T5. Owner ruling 26 Sep 06:09:** "okay, the point is we need to do it now and not backlog or
+  defer". Every slice is in scope now, thin lanes in three waves with parallel lanes (section 4,
+  section 6 "Lanes after round 5"); nothing goes to the backlog (section 12).
 
 ## 11. Round 4 questions (posted on PR #1260, comment 5843826713)
 
@@ -1593,3 +1692,46 @@ team pool among agents, and a "sum of agents' targets" check column. Round 4 add
 "Add suggested" for recipients, pricing opportunity lines, a prospects list, and moving the
 Sales Agents URL. Each has its trigger named above; deferred items go to
 `documentation/backlogs/backlog.md` once round 4 is answered.
+
+**Round 5 (Owner ruling 26 Sep 06:09, T5).** Nothing in this plan is deferred or backlogged, and
+nothing is added to `documentation/backlogs/backlog.md`. Every slice (S1 to S7) is built now.
+Dated team membership leaves this list: T2 asked for it and S6 builds it. "Highest rate on
+everything" is built in S4. What remains above was never asked for by the owner; it is not a
+slice and not a backlog item, only a named trigger so nobody builds it speculatively
+(PRINCIPLES.md "Simplest thing that works"). If the owner wants any of it now, it joins a wave.
+Round 5 adds none (a team-level override of the summed figure is ruled out by T3, not deferred).
+
+## 13. Round 5: how the owner's answers were applied (PR #1260 comment 5843775673, 06:09Z)
+
+| Answer | Ruling | Applied in |
+| --- | --- | --- |
+| R1 | accept: own dealer-channel agents get the portal form first | 3.5, S2 note |
+| R2 | accept: every code with the same person label counts | 3.2, S1-29 |
+| R3 | delivered counts by DO date once DO data exists; order date until then and for unexplained quantity | 3.2 "Delivered, by DO date", S1-26, section 7 |
+| R4 | accept: tax inclusive | no change |
+| R5 | accept: marginal default, "Highest rate on everything" selectable and built in S4 | 3.1, S4 note |
+| T1 | accept: new sales team tables | 3.7 map, 3.8 |
+| T2 | dated membership; orders count for the team in force on the order date | 3.2, 3.8, S6-14, S6-15, S3-7 |
+| T3 | team target = sum of its agents' targets; no team override | 3.1, 3.8, S1-27, S1-28, S4-12 |
+| T4 | accept: team pool, never split | 3.3, S4-10 |
+| T5 | every slice now, nothing deferred; thin lanes in waves, parallel where independent | section 4, section 6, section 12 |
+| "new schema and module called sales?" | recommend yes to both: module `sales`, schema `sales` (ADR-0011 precedent) | header, 3.7 "Module and schema" |
+
+No criterion was deleted. New UAC criteria: S1-26 to S1-29, S3-7, S4-12, S6-14, S6-15.
+
+## 14. Round 5 questions (posted on PR #1260 as the "Round 5" comment)
+
+- **V1. An agent's first team (T2).** Recommend: when an agent who has never been in a team is
+  put in one, their earlier orders count for that team too (`valid_from` empty); only a later
+  move starts on a date. Otherwise the owner's first setup after S6 leaves every team target that
+  starts before the setup day short. Alternative: the first team also starts on the day it is
+  set (a Moves on date for every placement).
+- **V2. What the DO integration writes (R3).** Recommend: Monday's DO lane lands AutoCount DOs in
+  the existing Delivery Orders tables (`orders`, `order_lines`) and adds one column,
+  `order_lines.sales_order_line_id`, from AutoCount's "transferred from" SO line; the targets
+  read only that. Alternative: a new DO table, in which case one query in the targets service
+  changes and nothing else.
+- **V3. The `sales` schema (the owner's own question).** Recommend: yes, module `sales` with its
+  tables in a `sales` schema (`sales.targets`, `sales.teams`, ...), as Project Sales moved to
+  `projects` in ADR-0011; nothing is built yet, so it costs one line per model. Alternative:
+  module `sales` with its tables in `public` under a `sales_` prefix (the round 1 to 4 text).
